@@ -1,0 +1,565 @@
+{
+  "description": "Redaction vectors for redactStatement() in src/lib/query-events/redact.ts. Each case pins the statement text an engine's query runs, the statement a query event stores under queryLog.statementCapture redacted, and its statement_fingerprint, the lowercase hex SHA-256 of the UTF-8 bytes of that statement. form names the construct a case exercises.",
+  "vectors": [
+    {
+      "name": "postgres: single-quoted literals become ? and double-quoted names stay",
+      "engine": "postgres",
+      "form": "single-quoted",
+      "input": "SELECT id, \"Email\" FROM \"User\" WHERE name = 'O''Brien' AND note = ''",
+      "statement": "SELECT id, \"Email\" FROM \"User\" WHERE name = ? AND note = ?",
+      "statement_fingerprint": "b414b4c1a482e4052a71bfe582596f0fcd18cbadbd31cd4b3e8324e4044a53e0"
+    },
+    {
+      "name": "postgres: E'' escape strings become ?",
+      "engine": "postgres",
+      "form": "e-string",
+      "input": "SELECT * FROM logs WHERE line LIKE E'%\\t%' OR line = e'caf\\u00e9'",
+      "statement": "SELECT * FROM logs WHERE line LIKE ? OR line = ?",
+      "statement_fingerprint": "648b5192e4a706556bd63764922bbe8803a9dcc2c43b441d51f8f38acd4f7e82"
+    },
+    {
+      "name": "postgres: a quote behind a backslash cannot be settled, so the rest of the statement is masked",
+      "engine": "postgres",
+      "form": "escaped-quote",
+      "input": "UPDATE notes SET body = E'it\\'s', owner = 'ann' WHERE id = 7",
+      "statement": "UPDATE notes SET body = ?",
+      "statement_fingerprint": "a206fda6421cc235fad21a8d663ed5a35b2cde87dbf2f31ee4371271c1bf8c1a"
+    },
+    {
+      "name": "postgres: N'' national strings become ?",
+      "engine": "postgres",
+      "form": "n-string",
+      "input": "INSERT INTO people (name, city) VALUES (N'Zoë', n'Köln')",
+      "statement": "INSERT INTO people (name, city) VALUES (?, ?)",
+      "statement_fingerprint": "fb86428c8be701ef4ffed1333ce38cfce66e43004f03a544cc684693f32037b6"
+    },
+    {
+      "name": "postgres: dollar-quoted bodies, tagged or not, become ?",
+      "engine": "postgres",
+      "form": "dollar-quoted",
+      "input": "CREATE FUNCTION greet() RETURNS text LANGUAGE sql AS $body$ SELECT 'hi; DROP TABLE t' $body$; SELECT $$it's$$",
+      "statement": "CREATE FUNCTION greet() RETURNS text LANGUAGE sql AS ?; SELECT ?",
+      "statement_fingerprint": "d97a4cb7c50c5094039c77c0a695889c14d0de84e6709e98d26e3f5057d9ac22"
+    },
+    {
+      "name": "postgres: q'' is no PostgreSQL form, so it reads as names and literals and nothing quoted is kept",
+      "engine": "postgres",
+      "form": "q-quoted",
+      "input": "SELECT q'[it's]' AS v",
+      "statement": "SELECT q?s]?",
+      "statement_fingerprint": "aecb2f856db6323d66f39de364550a80b1b6483be7c04838a228707585a8dcb1"
+    },
+    {
+      "name": "postgres: integers, decimals, exponents, hex and grouped digits become ?, and digits inside names stay",
+      "engine": "postgres",
+      "form": "number",
+      "input": "SELECT * FROM t1 WHERE a = 42 AND b > -3.14 AND c < 1.5e-5 AND d <> 0x1F AND e = 1_000 LIMIT 10",
+      "statement": "SELECT * FROM t1 WHERE a = ? AND b > -? AND c < ? AND d <> ? AND e = ? LIMIT ?",
+      "statement_fingerprint": "69d468dd0345e4e04c6f71db50ba16438e73e3a42b9fbaf22a80b2678f9ef9ba"
+    },
+    {
+      "name": "postgres: a -- comment becomes ?",
+      "engine": "postgres",
+      "form": "line-comment",
+      "input": "SELECT id -- owner is ann@example.com\nFROM accounts",
+      "statement": "SELECT id ? FROM accounts",
+      "statement_fingerprint": "d62374f080f3095af86a1e921b0db7d8846ca5d27485b6840d7de8189dd3fb8e"
+    },
+    {
+      "name": "postgres: block comments nest and each becomes one ?",
+      "engine": "postgres",
+      "form": "block-comment",
+      "input": "/* ticket 4711 /* nested */ still comment */ SELECT/*x*/1",
+      "statement": "? SELECT ? ?",
+      "statement_fingerprint": "513b966cbf6fce095064fb284330c3d989765f311c95c53728dfc0d9fcab7308"
+    },
+    {
+      "name": "postgres: # is an operator, not a comment",
+      "engine": "postgres",
+      "form": "hash-comment",
+      "input": "SELECT flags # 5, data #>> '{a,b}' FROM t",
+      "statement": "SELECT flags # ?, data #>> ? FROM t",
+      "statement_fingerprint": "707b6a48de3fbd9b44db4da5873f39bcf9ec0b19e885812a97a3cb788aabf72c"
+    },
+    {
+      "name": "postgres: array literals and subscripts are code, so the literals inside them become ?",
+      "engine": "postgres",
+      "form": "subscript",
+      "input": "SELECT ARRAY['a', 'b'], tags[1], m['k'] FROM t WHERE ids = ANY('{1,2}')",
+      "statement": "SELECT ARRAY[?, ?], tags[?], m[?] FROM t WHERE ids = ANY(?)",
+      "statement_fingerprint": "39b5add029cec5b39757ce2e34bf0e9af588dafcae21a8215d2051f1dbc6b8c5"
+    },
+    {
+      "name": "postgres: B'', X'' and U&'' literals become ?, typed literals keep their type, and U&\"\" names stay",
+      "engine": "postgres",
+      "form": "prefixed",
+      "input": "SELECT B'1010', X'1F', U&'d\\0061t', interval '1 day', DATE '2024-01-31', U&\"d\\0061t\"",
+      "statement": "SELECT ?, ?, ?, interval ?, DATE ?, U&\"d\\0061t\"",
+      "statement_fingerprint": "91b8d2eaaa2335ce85be11568a8ec3f183678d0d476699f0e43dc5c7365c764d"
+    },
+    {
+      "name": "postgres: a role password is a literal and becomes ?",
+      "engine": "postgres",
+      "form": "credential",
+      "input": "ALTER ROLE app WITH LOGIN PASSWORD 'hunter2' VALID UNTIL '2027-01-01'",
+      "statement": "ALTER ROLE app WITH LOGIN PASSWORD ? VALID UNTIL ?",
+      "statement_fingerprint": "d1184c3aa5bba128f0205e1f8714b66445599aae2eb33984a455b1dda5118e01"
+    },
+    {
+      "name": "postgres: the userinfo of a URI written as code is masked",
+      "engine": "postgres",
+      "form": "uri",
+      "input": "\\connect postgres://admin:hunter2@db.internal:5432/app",
+      "statement": "\\connect postgres://[REDACTED]@db.internal:?/app",
+      "statement_fingerprint": "a5dfb8c932ff691a6ef64f3e060db96b0946a3e286b0bfa6526ccb77b25edfbb"
+    },
+    {
+      "name": "postgres: whitespace collapses to single spaces and the ends are trimmed",
+      "engine": "postgres",
+      "form": "whitespace",
+      "input": "  SELECT\n\tid,\r\n   name\n\nFROM   users  ;  ",
+      "statement": "SELECT id, name FROM users ;",
+      "statement_fingerprint": "88af1f18dac89b19f8985599b90ae156db90932e4d846b2e49dce99bef00337d"
+    },
+    {
+      "name": "postgres: a quoted name that never closes keeps nothing from its quote on",
+      "engine": "postgres",
+      "form": "unclosed-name",
+      "input": "SELECT \"unclosed FROM t WHERE note = 'secret'",
+      "statement": "SELECT ?",
+      "statement_fingerprint": "66cbb3a40d4bbd150b75825ad291a6545399f3098fc1079e4d8b5bb061a6a481"
+    },
+    {
+      "name": "mysql: single- and double-quoted strings become ?",
+      "engine": "mysql",
+      "form": "single-quoted",
+      "input": "SELECT * FROM users WHERE name = 'O''Brien' AND city = \"Berlin\"",
+      "statement": "SELECT * FROM users WHERE name = ? AND city = ?",
+      "statement_fingerprint": "0942acdfcc303a9e3926ffa13541bbd3f918d4b02faf6451175ed6aab8751df0"
+    },
+    {
+      "name": "mysql: a quote behind a backslash cannot be settled, so the rest of the statement is masked",
+      "engine": "mysql",
+      "form": "escaped-quote",
+      "input": "SELECT * FROM users WHERE name = 'O\\'Brien' AND pin = '1234'",
+      "statement": "SELECT * FROM users WHERE name = ?",
+      "statement_fingerprint": "fbf4d83d9836cf85d01059e679bcbf7dc463eea0579afacc0267f0f8c33640d3"
+    },
+    {
+      "name": "mysql: an E'' literal becomes ?",
+      "engine": "mysql",
+      "form": "e-string",
+      "input": "SELECT E'abc' AS v",
+      "statement": "SELECT ? AS v",
+      "statement_fingerprint": "94ddc27d81062008e74c954452b83188be26ececf60f8b5001b647d721bd6c02"
+    },
+    {
+      "name": "mysql: N'', charset-introduced, hex and bit literals become ?",
+      "engine": "mysql",
+      "form": "n-string",
+      "input": "SELECT N'Zoë', _utf8mb4'Köln', X'4D7953514C', b'1010'",
+      "statement": "SELECT ?, ?, ?, ?",
+      "statement_fingerprint": "1ac1ad9989865ed2c55092e7a643ccdab60ab19c9c39bd791bd4fec8f53b3c37"
+    },
+    {
+      "name": "mysql: a dollar-quoted run becomes ?",
+      "engine": "mysql",
+      "form": "dollar-quoted",
+      "input": "SELECT $$secret$$ AS v",
+      "statement": "SELECT ? AS v",
+      "statement_fingerprint": "94ddc27d81062008e74c954452b83188be26ececf60f8b5001b647d721bd6c02"
+    },
+    {
+      "name": "mysql: q'' is no MySQL form, so the q stays and the literal becomes ?",
+      "engine": "mysql",
+      "form": "q-quoted",
+      "input": "SELECT q'[secret]' AS v",
+      "statement": "SELECT q? AS v",
+      "statement_fingerprint": "21a0c699be93acbc65b969a243c617bcdb10aa906c0c15d344efcf24943bbcf5"
+    },
+    {
+      "name": "mysql: numbers become ?",
+      "engine": "mysql",
+      "form": "number",
+      "input": "UPDATE accounts SET balance = balance - 250.75 WHERE id = 17 LIMIT 1",
+      "statement": "UPDATE accounts SET balance = balance - ? WHERE id = ? LIMIT ?",
+      "statement_fingerprint": "7f4126351e85d972b8b607d8b13614d034c4db6feaf0a68293a9d51a383bc0ba"
+    },
+    {
+      "name": "mysql: a -- comment becomes ?",
+      "engine": "mysql",
+      "form": "line-comment",
+      "input": "DELETE FROM sessions -- expired for ann@example.com\nWHERE id = 3",
+      "statement": "DELETE FROM sessions ? WHERE id = ?",
+      "statement_fingerprint": "c2ddd2dc0eb971fa6a05a4c42d17c3d39ae2f0582dff38cd83cfb6996faeb768"
+    },
+    {
+      "name": "mysql: block comments end at the first */ and executable comments become ? too",
+      "engine": "mysql",
+      "form": "block-comment",
+      "input": "SELECT /* a /* b */ id, /*!40101 SQL_NO_CACHE */ name FROM t",
+      "statement": "SELECT ? id, ? name FROM t",
+      "statement_fingerprint": "d517922780f6915cbf049e0cf06c92cf0122c85ffd58a83af5300ad9f1c4ee71"
+    },
+    {
+      "name": "mysql: a # comment becomes ?",
+      "engine": "mysql",
+      "form": "hash-comment",
+      "input": "SELECT id FROM users # owner: ann@example.com\nWHERE id = 1",
+      "statement": "SELECT id FROM users ? WHERE id = ?",
+      "statement_fingerprint": "fc20cb1a49fa1a98b276b3c14d3852d6d23736129492a10868dd9d67125e446f"
+    },
+    {
+      "name": "mysql: backtick names stay",
+      "engine": "mysql",
+      "form": "quoted-name",
+      "input": "SELECT `order`, `user id` FROM `my db`.`orders` WHERE `status` = 'paid'",
+      "statement": "SELECT `order`, `user id` FROM `my db`.`orders` WHERE `status` = ?",
+      "statement_fingerprint": "2887ae345c62dcce431b3126c56a07d29356897ecb0caf9fec52a1bd708d7d77"
+    },
+    {
+      "name": "mysql: an account password becomes ? and the plugin name stays",
+      "engine": "mysql",
+      "form": "credential",
+      "input": "CREATE USER 'ann'@'%' IDENTIFIED WITH caching_sha2_password BY 'S3cret!' REQUIRE SSL",
+      "statement": "CREATE USER ?@? IDENTIFIED WITH caching_sha2_password BY ? REQUIRE SSL",
+      "statement_fingerprint": "3114b1884401d1dd14a786d0d6b85f92d4a2b095f2a028815b57d824d30f794b"
+    },
+    {
+      "name": "mssql: single-quoted literals become ?, bracketed names stay and double-quoted runs become ?",
+      "engine": "mssql",
+      "form": "single-quoted",
+      "input": "SELECT * FROM [dbo].[Users] WHERE [Name] = 'Ann' AND \"Status\" = 'active'",
+      "statement": "SELECT * FROM [dbo].[Users] WHERE [Name] = ? AND ? = ?",
+      "statement_fingerprint": "a1eae73efa6ecfcc2c4d9849d84c5c0d0660a2affcdf8478779aef0e1f6aa88f"
+    },
+    {
+      "name": "mssql: an E'' literal becomes ?",
+      "engine": "mssql",
+      "form": "e-string",
+      "input": "SELECT E'abc'",
+      "statement": "SELECT ?",
+      "statement_fingerprint": "66cbb3a40d4bbd150b75825ad291a6545399f3098fc1079e4d8b5bb061a6a481"
+    },
+    {
+      "name": "mssql: N'' literals become ?",
+      "engine": "mssql",
+      "form": "n-string",
+      "input": "INSERT INTO dbo.People (Name) VALUES (N'Zoë Ann')",
+      "statement": "INSERT INTO dbo.People (Name) VALUES (?)",
+      "statement_fingerprint": "6e7104006f1fd9be5ab068686f97e7b8a6e3f36bfda0442f7fc2aebecccd60b8"
+    },
+    {
+      "name": "mssql: a money literal and a dollar-quoted run become ?",
+      "engine": "mssql",
+      "form": "dollar-quoted",
+      "input": "SELECT $12.50 AS price, $$x$$ AS v",
+      "statement": "SELECT $? AS price, ? AS v",
+      "statement_fingerprint": "8d8feadbc566f688b0077ac4416f656a6adc679f92e8e954f1d4d5dd6c6a2bd4"
+    },
+    {
+      "name": "mssql: q'' is no T-SQL form, so the q stays and the literal becomes ?",
+      "engine": "mssql",
+      "form": "q-quoted",
+      "input": "SELECT q'[x]' AS v",
+      "statement": "SELECT q? AS v",
+      "statement_fingerprint": "21a0c699be93acbc65b969a243c617bcdb10aa906c0c15d344efcf24943bbcf5"
+    },
+    {
+      "name": "mssql: numbers and binary literals become ?",
+      "engine": "mssql",
+      "form": "number",
+      "input": "SELECT TOP 5 * FROM Orders WHERE Total > 99.5 AND Flags = 0x1F",
+      "statement": "SELECT TOP ? * FROM Orders WHERE Total > ? AND Flags = ?",
+      "statement_fingerprint": "2c323debb5adb1ac4bf84598e61f30651183b541e9ff6dc1bbaee7b22facd78b"
+    },
+    {
+      "name": "mssql: a -- comment becomes ?",
+      "engine": "mssql",
+      "form": "line-comment",
+      "input": "SELECT 1 -- note: ann\nFROM dbo.t",
+      "statement": "SELECT ? ? FROM dbo.t",
+      "statement_fingerprint": "aaef9bc3298599d732db3feeb8056a50dda1bc4fb6e0502150618657b938ad8e"
+    },
+    {
+      "name": "mssql: block comments nest and become one ?",
+      "engine": "mssql",
+      "form": "block-comment",
+      "input": "/* outer /* inner */ still comment */ SELECT 1",
+      "statement": "? SELECT ?",
+      "statement_fingerprint": "fd34a0f380634b1ce2107e2f9b574c7a54a7a1bbdd12ff4eb81c349e9db323e9"
+    },
+    {
+      "name": "mssql: # names a temporary table, not a comment",
+      "engine": "mssql",
+      "form": "hash-comment",
+      "input": "SELECT * INTO #recent FROM Orders; DROP TABLE ##shared",
+      "statement": "SELECT * INTO #recent FROM Orders; DROP TABLE ##shared",
+      "statement_fingerprint": "806b0007710ac840a1bedbfb55a1850521516c354b81640cead3f7a9800bf230"
+    },
+    {
+      "name": "mssql: a login password becomes ? and variables keep their names",
+      "engine": "mssql",
+      "form": "credential",
+      "input": "CREATE LOGIN ann WITH PASSWORD = N'S3cret!' MUST_CHANGE, CHECK_POLICY = ON; DECLARE @n INT = 10",
+      "statement": "CREATE LOGIN ann WITH PASSWORD = ? MUST_CHANGE, CHECK_POLICY = ON; DECLARE @n INT = ?",
+      "statement_fingerprint": "96e987772366e76e7e1e9551a2cbec92496cf699efe426c832f8f9d4c2d737fe"
+    },
+    {
+      "name": "oracle: single-quoted literals become ? and double-quoted names stay",
+      "engine": "oracle",
+      "form": "single-quoted",
+      "input": "SELECT ename FROM emp WHERE job = 'CLERK' AND \"Dept Name\" = 'it''s'",
+      "statement": "SELECT ename FROM emp WHERE job = ? AND \"Dept Name\" = ?",
+      "statement_fingerprint": "d09e2c836271e3a48b95416b73391914b5c7878ea1e5f60f60475cd24a5057c2"
+    },
+    {
+      "name": "oracle: an E'' literal becomes ?",
+      "engine": "oracle",
+      "form": "e-string",
+      "input": "SELECT E'x' FROM dual",
+      "statement": "SELECT ? FROM dual",
+      "statement_fingerprint": "326dcbb7f4f1339acf3258c2324732283287bef0282ed93d7cda714106ebaa9f"
+    },
+    {
+      "name": "oracle: N'' literals become ?",
+      "engine": "oracle",
+      "form": "n-string",
+      "input": "SELECT N'Zoë' FROM dual",
+      "statement": "SELECT ? FROM dual",
+      "statement_fingerprint": "326dcbb7f4f1339acf3258c2324732283287bef0282ed93d7cda714106ebaa9f"
+    },
+    {
+      "name": "oracle: a dollar-quoted run becomes ?",
+      "engine": "oracle",
+      "form": "dollar-quoted",
+      "input": "SELECT $$x$$ FROM dual",
+      "statement": "SELECT ? FROM dual",
+      "statement_fingerprint": "326dcbb7f4f1339acf3258c2324732283287bef0282ed93d7cda714106ebaa9f"
+    },
+    {
+      "name": "oracle: q'', Q'' and nq'' alternate-quoted literals become ?",
+      "engine": "oracle",
+      "form": "q-quoted",
+      "input": "SELECT q'[it's]', Q'{a}b}', nq'!x!' FROM dual",
+      "statement": "SELECT ?, ?, ? FROM dual",
+      "statement_fingerprint": "73d0f9b87c7ccb721a1a98cba71ae3b2c9e9e9d7cd97ea41a65738fb222a47ba"
+    },
+    {
+      "name": "oracle: numbers, exponents and suffixed literals become ?",
+      "engine": "oracle",
+      "form": "number",
+      "input": "SELECT 1.5e3, 42, .5, 7D FROM dual",
+      "statement": "SELECT ?, ?, ?, ? FROM dual",
+      "statement_fingerprint": "9504d882248d87889ca73368d62189aa57d0c861a9679bb86d158e7cce771c49"
+    },
+    {
+      "name": "oracle: a -- comment becomes ?, apostrophes inside it included",
+      "engine": "oracle",
+      "form": "line-comment",
+      "input": "SELECT 1 FROM dual -- ann's row",
+      "statement": "SELECT ? FROM dual ?",
+      "statement_fingerprint": "8935ca3a2e9f860b8cbca6acf8880ccb8f1b502a204a58163727555ac711494c"
+    },
+    {
+      "name": "oracle: a hint is a comment and becomes ?",
+      "engine": "oracle",
+      "form": "block-comment",
+      "input": "SELECT /*+ INDEX(e emp_idx) */ * FROM emp e",
+      "statement": "SELECT ? * FROM emp e",
+      "statement_fingerprint": "79b14435f00aaa89071866758afd99cf538b26f214ddd4de15381e4e6b031b5e"
+    },
+    {
+      "name": "oracle: # is part of a name, not a comment",
+      "engine": "oracle",
+      "form": "hash-comment",
+      "input": "SELECT emp#, \"SAL#\" FROM emp",
+      "statement": "SELECT emp#, \"SAL#\" FROM emp",
+      "statement_fingerprint": "d608711122dbfe805f069c497857b4ae4403781942fcb80128840d8327de2eee"
+    },
+    {
+      "name": "oracle: an unquoted password after IDENTIFIED BY and the old one after REPLACE become ?",
+      "engine": "oracle",
+      "form": "credential",
+      "input": "ALTER USER scott IDENTIFIED BY tiger REPLACE lion ACCOUNT UNLOCK",
+      "statement": "ALTER USER scott IDENTIFIED BY ? REPLACE ? ACCOUNT UNLOCK",
+      "statement_fingerprint": "99d2e8ee3bad792aa68aadf82fda1fdb936f2665dc469577105463f3b1320002"
+    },
+    {
+      "name": "oracle: a PL/SQL block keeps its bind names and masks its literals",
+      "engine": "oracle",
+      "form": "procedural",
+      "input": "BEGIN UPDATE emp SET sal = 5000 WHERE empno = :id AND ename = 'KING'; END;",
+      "statement": "BEGIN UPDATE emp SET sal = ? WHERE empno = :id AND ename = ?; END;",
+      "statement_fingerprint": "40f9f12c1aeb2398fbd303885046f95d60f443539165fe93a49433965536521a"
+    },
+    {
+      "name": "mongodb: the operation and collection stay, every value becomes ? and the keys stay",
+      "engine": "mongodb",
+      "form": "command",
+      "input": "{\"collection\": \"users\", \"operation\": \"find\", \"filter\": {\"email\": \"ann@example.com\", \"age\": {\"$gte\": 21}}, \"options\": {\"limit\": 10, \"sort\": {\"name\": 1}}}",
+      "statement": "{\"collection\":\"users\",\"operation\":\"find\",\"filter\":{\"email\":?,\"age\":{\"$gte\":?}},\"options\":{\"limit\":?,\"sort\":{\"name\":?}}}",
+      "statement_fingerprint": "4ed513e311df91c8ad1ef920eb09b788e713ed91cd2b963e735acf52767c699d"
+    },
+    {
+      "name": "mongodb: a pipeline keeps its stages and operators, and Extended JSON values become ?",
+      "engine": "mongodb",
+      "form": "command",
+      "input": "{\"database\": \"shop\", \"collection\": \"orders\", \"operation\": \"aggregate\", \"pipeline\": [{\"$match\": {\"_id\": {\"$oid\": \"650000000000000000000001\"}, \"tags\": {\"$in\": [\"a\", \"b\"]}}}, {\"$group\": {\"_id\": \"$status\", \"n\": {\"$sum\": 1}}}]}",
+      "statement": "{\"database\":\"shop\",\"collection\":\"orders\",\"operation\":\"aggregate\",\"pipeline\":[{\"$match\":{\"_id\":{\"$oid\":?},\"tags\":{\"$in\":[?,?]}}},{\"$group\":{\"_id\":?,\"n\":{\"$sum\":?}}}]}",
+      "statement_fingerprint": "0e1955a6464e9e784e16ccadfa8ed872f9dec5a7285d56a6aca5ad9d842ab138"
+    },
+    {
+      "name": "mongodb: booleans and null become ? and empty containers stay",
+      "engine": "mongodb",
+      "form": "command",
+      "input": "{\"collection\": \"users\", \"operation\": \"insertOne\", \"documents\": [{\"name\": \"Ann\", \"admin\": true, \"manager\": null, \"tags\": [], \"meta\": {}}]}",
+      "statement": "{\"collection\":\"users\",\"operation\":\"insertOne\",\"documents\":[{\"name\":?,\"admin\":?,\"manager\":?,\"tags\":[],\"meta\":{}}]}",
+      "statement_fingerprint": "043535fe834bcc1028c438c9e3735425bea27ed585b7004c8cac9fc81ab2b680"
+    },
+    {
+      "name": "mongodb: only top-level string values of operation, collection and database stay",
+      "engine": "mongodb",
+      "form": "command",
+      "input": "{\"collection\": {\"$ne\": \"x\"}, \"operation\": 5, \"filter\": {\"collection\": \"secret\", \"operation\": \"drop\"}}",
+      "statement": "{\"collection\":{\"$ne\":?},\"operation\":?,\"filter\":{\"collection\":?,\"operation\":?}}",
+      "statement_fingerprint": "c860c543d774577bac73a518cc2f402bb2a8f651f8aeb682a7a8dd360cd542ad"
+    },
+    {
+      "name": "mongodb: text that is not one JSON document keeps nothing",
+      "engine": "mongodb",
+      "form": "command",
+      "input": "db.users.find({ name: \"Ann\" })",
+      "statement": "?",
+      "statement_fingerprint": "8a8de823d5ed3e12746a62ef169bcf372be0ca44f0a1236abc35df05d96928e1"
+    },
+    {
+      "name": "redis: the command stays and every argument becomes ?",
+      "engine": "redis",
+      "form": "command",
+      "input": "SET session:4711 \"token-abc\" EX 3600",
+      "statement": "SET ? ? ? ?",
+      "statement_fingerprint": "0c385d5b35a9839f153fe8a6a8abd7fc9b3f98cd01e18072ff10c91340a8aa0a"
+    },
+    {
+      "name": "redis: a JSON command reads like its plain form, in upper case as the provider sends it",
+      "engine": "redis",
+      "form": "command",
+      "input": "{\"command\": \"hset\", \"args\": [\"user:1\", \"email\", \"ann@example.com\"]}",
+      "statement": "HSET ? ? ?",
+      "statement_fingerprint": "bd4066874b0aeac9f05c5fb5cf8c3b8fceb624346c7344d3612ceaac97e93fa7"
+    },
+    {
+      "name": "redis: comments and later alternatives are not the command that runs",
+      "engine": "redis",
+      "form": "command",
+      "input": "# cheat sheet\nget user:1\n\nDEL user:1",
+      "statement": "GET ?",
+      "statement_fingerprint": "a221aeb29e6255b5eb2095d05d47b1e6e91cf4d1a4a878b083d2539fbee0bacc"
+    },
+    {
+      "name": "redis: an ACL password is an argument and becomes ?",
+      "engine": "redis",
+      "form": "credential",
+      "input": "ACL SETUSER ann on >pa55word ~* +@read",
+      "statement": "ACL ? ? ? ? ? ?",
+      "statement_fingerprint": "ced20291a7352fba1c59863053ba899d0f7ffa26ff533c932140f1d4cd19258c"
+    },
+    {
+      "name": "redis: a JSON command without args names the command alone",
+      "engine": "redis",
+      "form": "command",
+      "input": "{\"command\": \"PING\"}",
+      "statement": "PING",
+      "statement_fingerprint": "906055e56391a9362ff2e354e21a9e0ded69135ecadbea28eabcdf931686acbd"
+    },
+    {
+      "name": "redis: a refused second command keeps nothing",
+      "engine": "redis",
+      "form": "command",
+      "input": "SET a 1\nSET b 2",
+      "statement": "?",
+      "statement_fingerprint": "8a8de823d5ed3e12746a62ef169bcf372be0ca44f0a1236abc35df05d96928e1"
+    },
+    {
+      "name": "redis: an unclosed quote keeps nothing",
+      "engine": "redis",
+      "form": "command",
+      "input": "SET greeting \"hello",
+      "statement": "?",
+      "statement_fingerprint": "8a8de823d5ed3e12746a62ef169bcf372be0ca44f0a1236abc35df05d96928e1"
+    },
+    {
+      "name": "redis: only comments keep nothing",
+      "engine": "redis",
+      "form": "command",
+      "input": "# nothing to run\n\n",
+      "statement": "?",
+      "statement_fingerprint": "8a8de823d5ed3e12746a62ef169bcf372be0ca44f0a1236abc35df05d96928e1"
+    },
+    {
+      "name": "redis: a JSON command that does not parse keeps nothing",
+      "engine": "redis",
+      "form": "command",
+      "input": "{\"command\": \"GET\", \"args\": [}",
+      "statement": "?",
+      "statement_fingerprint": "8a8de823d5ed3e12746a62ef169bcf372be0ca44f0a1236abc35df05d96928e1"
+    },
+    {
+      "name": "redis: a JSON command whose command is not a string keeps nothing",
+      "engine": "redis",
+      "form": "command",
+      "input": "{\"command\": 7, \"args\": []}",
+      "statement": "?",
+      "statement_fingerprint": "8a8de823d5ed3e12746a62ef169bcf372be0ca44f0a1236abc35df05d96928e1"
+    },
+    {
+      "name": "redis: a JSON command whose args are not an array keeps nothing",
+      "engine": "redis",
+      "form": "command",
+      "input": "{\"command\": \"GET\", \"args\": \"k\"}",
+      "statement": "?",
+      "statement_fingerprint": "8a8de823d5ed3e12746a62ef169bcf372be0ca44f0a1236abc35df05d96928e1"
+    },
+    {
+      "name": "redis: a JSON command with an empty command keeps nothing",
+      "engine": "redis",
+      "form": "command",
+      "input": "{\"command\": \"\", \"args\": [\"k\"]}",
+      "statement": "?",
+      "statement_fingerprint": "8a8de823d5ed3e12746a62ef169bcf372be0ca44f0a1236abc35df05d96928e1"
+    },
+    {
+      "name": "redis: the userinfo of a URI pasted as the command is masked",
+      "engine": "redis",
+      "form": "uri",
+      "input": "redis://default:s3cret@cache:6379",
+      "statement": "REDIS://[REDACTED]@CACHE:6379",
+      "statement_fingerprint": "b46e0ae0386e820491cb42210df2184abc8d3bdf5af7341f87872b774e1bced7"
+    },
+    {
+      "name": "clickhouse: a SQL engine without an established name quote masks every quoted run",
+      "engine": "clickhouse",
+      "form": "quoted-name",
+      "input": "SELECT \"user\", count() FROM events WHERE kind = 'click' // by hour\nFORMAT JSON",
+      "statement": "SELECT ?, count() FROM events WHERE kind = ? ? FORMAT JSON",
+      "statement_fingerprint": "117b6528106d645dc91dee4b6f21255d2b1f10f193bb306ee96bbeefa89eca35"
+    },
+    {
+      "name": "couchbase: a SQL engine without a grammar row keeps nothing",
+      "engine": "couchbase",
+      "form": "opaque",
+      "input": "SELECT * FROM bucket WHERE email = \"ann@example.com\"",
+      "statement": "?",
+      "statement_fingerprint": "8a8de823d5ed3e12746a62ef169bcf372be0ca44f0a1236abc35df05d96928e1"
+    },
+    {
+      "name": "kafka: a non-SQL engine without a reader keeps nothing",
+      "engine": "kafka",
+      "form": "opaque",
+      "input": "{\"topic\": \"orders\", \"partition\": 0, \"offset\": \"earliest\"}",
+      "statement": "?",
+      "statement_fingerprint": "8a8de823d5ed3e12746a62ef169bcf372be0ca44f0a1236abc35df05d96928e1"
+    }
+  ]
+}

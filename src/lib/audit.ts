@@ -425,8 +425,11 @@ const AUDIT_SCHEMA = "libredb.audit.v1";
 export const MAX_AUDIT_FIELD_LENGTH = 254;
 /** The address derivation's "no usable signal" placeholder; never recorded as if it were one. */
 const UNKNOWN_ADDRESS = "unknown";
-/** Redaction marker for a URI's userinfo segment. Never a value real credentials could equal. */
-const CREDENTIAL_REDACTION = "[REDACTED]";
+/**
+ * Redaction marker for a URI's userinfo segment. Never a value real credentials could equal.
+ * Exported for the query event redactor, which writes the same marker for every credential it masks.
+ */
+export const CREDENTIAL_REDACTION = "[REDACTED]";
 /**
  * Where a connection string's userinfo can be collapsed before the value reaches either
  * destination. Once the `scheme://` boundary is found, everything to the end of the string is in
@@ -480,7 +483,8 @@ function isLetter(ch: string): boolean {
   return (ch >= "a" && ch <= "z") || (ch >= "A" && ch <= "Z");
 }
 
-function redactUriCredentials(value: string): string {
+/** Exported for the query event redactor (`src/lib/query-events/redact.ts`), which applies the same rule to a statement. */
+export function redactUriCredentials(value: string): string {
   let searchFrom = 0;
   for (;;) {
     const delimiter = value.indexOf("://", searchFrom);
