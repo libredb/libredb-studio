@@ -1193,6 +1193,8 @@ A cluster's assessment is not the state of its data but the state of its workloa
 The provider lists the namespace's controllers independently of its pods (Deployments, StatefulSets, DaemonSets, Jobs and CronJobs), then its pods and its Warning events, and walks ownership from a pod through its ReplicaSet to a Deployment and from a Job to its CronJob.
 It answers one row per workload: its kind and name, desired and ready counts in the kind's own terms, pods not ready, the cumulative restart count with the last termination's time and reason, the containers missing requests, limits, readiness or liveness probes, and the Warning events by reason.
 A controller that wants replicas and has no pod is a row, because that is the finding.
+A pod whose controller is none of those kinds, such as a database operator's custom resource, an Argo Rollout or an orphan ReplicaSet, counts under a row for that controller, with no desired count, so an operator-managed database's failing pods are never left out.
+Such a controller with no pod in the namespace has no row.
 One call is one statement charge, carries at most 500 workloads, and is refused rather than truncated past that ceiling or past the run's byte budget; a profile lands on the ledger as `workloads-profiled`.
 
 Its goal verifier is `agent-database-assessment-kubectl.1`: the investigation baseline over the run's own artifacts, with a workload profile counted as meaningful even when it holds no row, and then at least one profile.

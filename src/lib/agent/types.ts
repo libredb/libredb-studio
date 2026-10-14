@@ -469,9 +469,6 @@ export interface AgentResourceSettings {
   readonly limits: AgentResourceQuantities;
 }
 
-/** The workload kinds that own a container and whose pod template a user edits to change its resources. */
-export type AgentWorkloadKind = "Deployment" | "StatefulSet" | "DaemonSet" | "Job" | "CronJob" | "ReplicaSet" | "Pod";
-
 /**
  * One side of a before/after plan comparison (#330 T3).
  *
@@ -1374,12 +1371,13 @@ export type AgentRunEvent =
        * The same event kind as an index or a rewrite, because it is the same act: the run proposes, the user decides.
        * It carries no `statement`, since there is nothing to hand an editor: the change is to a workload's manifest,
        * which this runtime never writes. `current` and `proposed` are Kubernetes quantities the schema validated as
-       * such, and the owner is named so the user knows which manifest to edit.
+       * such, and the owner is named so the user knows which manifest to edit. Its kind is whatever owns the pod, a
+       * database operator's custom resource included, so it is any non-empty kind and not a closed list.
        */
       readonly kind: "recommendation";
       readonly change: "resources";
       readonly namespace: string;
-      readonly ownerKind: AgentWorkloadKind;
+      readonly ownerKind: string;
       readonly ownerName: string;
       readonly container: string;
       readonly current: AgentResourceSettings;

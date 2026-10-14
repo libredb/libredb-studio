@@ -356,7 +356,8 @@ Agent mode:
 - The agent reads through `kubectl.query.read`, one kubectl read of at most 4,096 characters under the statement row cap; a watch and the paging clause `# libredb:page` are refused.
 - Resource efficiency adds `inspect_usage` (`cluster.usage.read`), one row per container of a namespace with its metrics-server usage against its requests and limits.
 - Cluster health adds `profile_workloads` (`cluster.workloads.read`), one row per workload of a namespace with its desired and ready counts, restarts, missing requests, limits and probes, and its Warning events.
-- Each of the two readings is one statement charge and is refused past 500 rows, with advice to narrow by namespace or selector.
+- A workload is a Deployment, StatefulSet, DaemonSet, Job, CronJob or bare Pod, or any other controller that owns a pod there, such as an operator's custom resource, a Rollout or an orphan ReplicaSet, whose row has no desired count.
+- Each of the two readings is one statement charge and is refused past 500 rows: `inspect_usage` with advice to narrow by a label selector or ask for a smaller namespace, `profile_workloads`, which takes no selector, with advice to profile a smaller namespace or read the workloads in question with `run_read_query`.
 - The agent runs as the agent token of section 4.11 when one is set, else as the connection's token.
 
 What the agent reads is masked in machine mode before it is written, at any depth of any object, pod templates, a ControllerRevision's `data` and pod specs inside custom resources included; keys are kept and values become `<redacted>`:

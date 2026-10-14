@@ -1016,7 +1016,8 @@ const resourceSettings = z.strictObject({ requests: resourceQuantities, limits: 
 const resourcesRecommendationSchema = z.strictObject({
   change: z.literal("resources"),
   namespace: z.string().min(1),
-  ownerKind: z.enum(["Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob", "ReplicaSet", "Pod"]),
+  // Any kind `inspect_usage` reports: a database operator's custom resource owns pods as a Deployment does.
+  ownerKind: z.string().min(1),
   ownerName: z.string().min(1),
   container: z.string().min(1),
   current: resourceSettings,
@@ -1259,7 +1260,7 @@ export const AGENT_TOOL_DEFINITIONS: Readonly<Record<AgentToolName, AgentToolDef
   profile_workloads: {
     name: "profile_workloads",
     description:
-      "Profile the workloads of one namespace: one row per Deployment, StatefulSet, DaemonSet, Job, CronJob and bare Pod, with desired and ready counts in the kind's own terms, pods not ready, cumulative restarts with the latest termination's reason and time, how many containers run without requests, limits, a readiness probe or a liveness probe, and the Warning events by reason. Pass namespace. More than 500 workloads are refused.",
+      "Profile the workloads of one namespace: one row per Deployment, StatefulSet, DaemonSet, Job, CronJob and bare Pod, and one per other controller that owns a pod there (an operator's custom resource, a Rollout, an orphan ReplicaSet) with no desired count, with desired and ready counts in the kind's own terms, pods not ready, cumulative restarts with the latest termination's reason and time, how many containers run without requests, limits, a readiness probe or a liveness probe, and the Warning events by reason. Pass namespace. More than 500 workloads are refused.",
     inputSchema: clusterWorkloadsReadInput,
     operationId: "cluster.workloads.read",
   },

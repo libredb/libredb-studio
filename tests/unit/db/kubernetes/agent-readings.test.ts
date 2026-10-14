@@ -557,7 +557,7 @@ describe("readWorkloadProfile", () => {
             warning("Deployment", "web", "ProgressDeadlineExceeded", 1),
             warning("Pod", "web-1", "Unhealthy", 2),
             warning("Job", "migrate", "BackoffLimitExceeded"),
-            // A pod that is gone, and a ReplicaSet no Deployment owns, belong to no workload listed.
+            // A pod that is gone, and a ReplicaSet no Deployment owns that has no pod, belong to no row.
             warning("Pod", "web-0", "BackOff", 9),
             warning("ReplicaSet", "orphan-1", "FailedCreate"),
           ],
@@ -596,6 +596,75 @@ describe("readWorkloadProfile", () => {
         warningEvents: "Failed=1",
       },
     ]);
+  });
+
+  test("a pod whose controller is no listed kind is counted under that controller's own row, events included", async () => {
+    const crashed = {
+      name: "app",
+      restartCount: 5,
+      lastState: { terminated: { reason: "Error", finishedAt: "2026-10-10T11:00:00Z" } },
+    };
+    const { result } = await profiled(
+      routes(
+        profileRoutes({
+          // An Argo Rollout's ReplicaSet lifts to the Rollout; an orphan ReplicaSet names no controller above it.
+          [REPLICA_SETS]: [named("canary-7f4", [owner("Rollout", "canary")]), named("stray-1")],
+          [PODS]: [
+            livePod("canary-7f4-a", [owner("ReplicaSet", "canary-7f4")], { ready: false, statuses: [crashed] }),
+            livePod("canary-7f4-b", [owner("ReplicaSet", "canary-7f4")]),
+            // A CloudNativePG Cluster owns its pods directly.
+            livePod("pg-1", [owner("Cluster", "pg")], { ready: false, statuses: [crashed] }),
+            livePod("stray-1-x", [owner("ReplicaSet", "stray-1")], { ready: false, statuses: [crashed] }),
+          ],
+          [WARNING_EVENTS]: [
+            warning("Pod", "canary-7f4-a", "BackOff", 4),
+            warning("ReplicaSet", "canary-7f4", "FailedCreate"),
+            warning("Rollout", "canary", "RolloutAborted"),
+            warning("Pod", "pg-1", "Unhealthy", 2),
+            warning("Cluster", "pg", "ReconcileError"),
+            warning("Pod", "stray-1-x", "BackOff"),
+            warning("ReplicaSet", "stray-1", "FailedCreate", 3),
+          ],
+        }),
+      ),
+    );
+    const failing = {
+      ...QUIET,
+      desired: null,
+      ready: 0,
+      podsNotReady: 1,
+      restarts: 5,
+      lastTerminationReason: "Error",
+      lastTerminationAt: "2026-10-10T11:00:00Z",
+    };
+    expect(result.rows).toEqual([
+      { kind: "Cluster", name: "pg", ...failing, warningEvents: "ReconcileError=1, Unhealthy=2" },
+      { kind: "ReplicaSet", name: "stray-1", ...failing, warningEvents: "BackOff=1, FailedCreate=3" },
+      {
+        kind: "Rollout",
+        name: "canary",
+        ...failing,
+        ready: 1,
+        warningEvents: "BackOff=4, FailedCreate=1, RolloutAborted=1",
+      },
+    ]);
+  });
+
+  test("rows for controllers of no listed kind count toward the 500-row ceiling", async () => {
+    const many = (count: number) =>
+      Array.from({ length: count }, (_, index) => controller(`web-${index}`, { replicas: 0 }, {}));
+    const crPod = livePod("pg-1", [owner("Cluster", "pg")]);
+    const within = machineContext(routes(profileRoutes({ [DEPLOYMENTS]: many(499), [PODS]: [crPod] })));
+    expect((await readWorkloadProfile(within.context, { namespace: "shop" })).kind).toBe("rows");
+    const past = machineContext(
+      routes(
+        profileRoutes({
+          [DEPLOYMENTS]: many(499),
+          [PODS]: [crPod, livePod("kv-1", [owner("VirtualMachineInstance", "kv")])],
+        }),
+      ),
+    );
+    expect(await readWorkloadProfile(past.context, { namespace: "shop" })).toEqual({ kind: "over-ceiling" });
   });
 
   test("an empty namespace answers zero rows", async () => {

@@ -379,9 +379,11 @@ const keyOf = (owner: Owner): string => `${owner.kind}/${owner.name}`;
 /**
  * The workload profile of one namespace: one row per controller, Deployment, StatefulSet, DaemonSet, Job and CronJob,
  * listed whether or not it has pods, and one per pod no controller owns. A pod counts under its controller, a
- * ReplicaSet's lifted to its Deployment; a Job's pods count under the Job, and the CronJob's row reads its own active
- * Jobs. A list discovery does not serve is empty; a list past one statement's read, or more than 500 workloads,
- * answers `over-ceiling`.
+ * ReplicaSet's lifted to the controller above it; a Job's pods count under the Job, and the CronJob's row reads its
+ * own active Jobs. A pod whose controller is of no listed kind (a database operator's custom resource, an Argo
+ * Rollout, an orphan ReplicaSet) counts under a row for that controller, with no desired count, so a failing pod is
+ * never left out; such a controller with no pod in the namespace has no row. A list discovery does not serve is
+ * empty; a list past one statement's read, or more than 500 workloads, answers `over-ceiling`.
  */
 export async function readWorkloadProfile(
   context: KubectlContext,
@@ -406,6 +408,9 @@ export async function readWorkloadProfile(
   const workloads = WORKLOAD_KINDS.flatMap(({ kind }, at) => lists[at].items.map((item) => workloadOf(kind, item)));
   const podsOf = new Map<string, Json[]>(workloads.map((workload) => [keyOf(workload), []]));
   const podOwners = new Map<string, Owner>();
+  // Controllers of no listed kind (an operator's custom resource, an Argo Rollout, an orphan ReplicaSet), in the order
+  // their first pod is met, each with the pods it owns.
+  const unlisted = new Map<string, { readonly owner: Owner; readonly pods: Json[] }>();
   for (const pod of pods) {
     const owner = controllerOf({ ...pod, kind: "Pod" }, owners);
     podOwners.set(nameOf(pod), owner);
@@ -419,8 +424,27 @@ export async function readWorkloadProfile(
         podSpec: objectOf(pod.spec) ?? {},
       });
       podsOf.set(keyOf(owner), [pod]);
-    } else podsOf.get(keyOf(owner))?.push(pod);
+      continue;
+    }
+    const owned = podsOf.get(keyOf(owner));
+    if (owned !== undefined) {
+      owned.push(pod);
+      continue;
+    }
+    const entry = { owner, pods: [pod] };
+    unlisted.set(keyOf(owner), entry);
+    podsOf.set(keyOf(owner), entry.pods);
   }
+  // Its desired count is in a schema Studio does not read, so it is null; its containers are its first pod's.
+  for (const { owner, pods: owned } of unlisted.values())
+    workloads.push({
+      kind: owner.kind,
+      name: owner.name,
+      desired: null,
+      ready: owned.filter(isReady).length,
+      lastSchedule: null,
+      podSpec: objectOf(owned[0].spec) ?? {},
+    });
   if (workloads.length > CLUSTER_READING_MAX_ROWS) return { kind: "over-ceiling" };
   const warnings = new Map<string, Map<string, number>>();
   for (const event of events) {
@@ -430,7 +454,7 @@ export async function readWorkloadProfile(
       object.kind === "Pod"
         ? podOwners.get(object.name)
         : object.kind === "ReplicaSet"
-          ? owners.get(keyOf(object))
+          ? (owners.get(keyOf(object)) ?? object)
           : object;
     if (workload === undefined || !podsOf.has(keyOf(workload))) continue;
     const reasons = warnings.get(keyOf(workload)) ?? new Map<string, number>();

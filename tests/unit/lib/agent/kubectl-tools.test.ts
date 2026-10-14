@@ -596,6 +596,20 @@ describe("recommend_change on kubectl", () => {
     );
   });
 
+  test("a container under a custom resource's owner kind, as inspect_usage reports it, is recorded", () => {
+    const outcome = recommend({ ...RESOURCES, ownerKind: "Cluster", ownerName: "pg" });
+
+    if (outcome.kind !== "recommended") throw new Error(`expected a recommendation, got ${outcome.kind}`);
+    expect(outcome.recommendation).toMatchObject({ ownerKind: "Cluster", ownerName: "pg" });
+  });
+
+  test("an empty owner kind is invalid input", () => {
+    expect(recommend({ ...RESOURCES, ownerKind: "" })).toMatchObject({
+      kind: "unavailable",
+      reasonCode: "INVALID_TOOL_INPUT",
+    });
+  });
+
   test.each(["250 millicores", "1.5.0", "", "-"])("a quantity that is not one (%s) is invalid input", (quantity) => {
     const outcome = recommend({
       ...RESOURCES,
