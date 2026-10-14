@@ -850,6 +850,12 @@ export type AgentGuidanceNotice =
    */
   | "plan-bar"
   /**
+   * A resource-efficiency run that has just READ usage, told what its report will be judged on. The `plan-bar`
+   * pattern for the cluster's optimization: delivered as a `user` message riding on the turn about to be taken, once
+   * per run, and bounded across a resume by the ledger.
+   */
+  | "usage-bar"
+  /**
    * A run that stopped having read nothing, on a set holding both reading tools.
    * Delivered as a `user` message; once per run, and only where the model's profile
    * says the retry earned its turn.

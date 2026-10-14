@@ -79,6 +79,7 @@ const GUIDANCE_HEADLINE: Record<Extract<AgentRunEvent, { kind: "guidance-issued"
   "turn-cut-off": "A turn ran long and was cut; asked again",
   "report-reserve": "Told this is its last turn",
   "plan-bar": "Told what the report is judged on",
+  "usage-bar": "Told what the report is judged on",
   // The call the model wrote out instead of making: the reader sees a turn that did nothing,
   // and this names what it actually was.
   "tool-call-as-text": "Wrote a tool call as text; asked to make it properly",
@@ -866,6 +867,9 @@ const SHORTFALL_SENTENCES: Readonly<Record<AgentGoalShortfall, string>> = {
     "The run reported what it found but never produced an answer to show, so there is nothing to put in front of you.",
   "answer-uncited":
     "The run presented one result as the answer and its report rests on other evidence entirely, so the claims and the picture are not about the same thing.",
+  "no-usage-reading": "No usage was read, so how the containers use their requests was never established.",
+  "no-usage-evidence": "The report rests on no usage reading of this run.",
+  "no-usage-metrics": "This cluster serves no usage metrics: install metrics-server to measure usage.",
   cancelled: "The run was stopped before it could finish.",
 };
 

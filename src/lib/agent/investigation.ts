@@ -360,6 +360,16 @@ const AGENT_PLAN_BAR_NOTICE = [
   "Neither is recorded yet. Before you call compose_report, either call inspect_plan on a rewritten form of the statement and then compare_plans with the two artifact ids, or call recommend_change for an index citing the plan artifact you already hold.",
 ].join(" ");
 
+/**
+ * What a resource-efficiency run is told the moment it reads usage: the `AGENT_PLAN_BAR_NOTICE` argument on a
+ * cluster. The bar is otherwise delivered by holding `compose_report`, which the report reserve suppresses, so a run
+ * that spends its turns reading would hear it only once it could no longer act on it.
+ */
+const AGENT_USAGE_BAR_NOTICE = [
+  "You have a usage reading in hand, and this workflow is judged on it: a report answers when a resources recommendation cites that reading, or when the report cites it and says nothing needs to change.",
+  'Before you call compose_report, either call recommend_change with change "resources" citing the inspect_usage artifact, or compose the report citing it.',
+].join(" ");
+
 export const AGENT_REPORT_RESERVE_NOTICE = [
   "This run is nearly out of room: treat this as your last turn.",
   "Call compose_report now with what you have already established, and leave out what you have not.",
@@ -808,6 +818,27 @@ function shortfallNotice(
       // `compare_plans` and `recommend_change`. Narrowing would take away the tool this very
       // sentence asks for.
       narrow: false,
+    };
+  }
+  // The resource-efficiency arms. Both are narrowed: `inspect_usage` and `recommend_change` are the variant's
+  // `narrowedExtras`, so the tools these sentences name survive the narrowing. `no-usage-metrics` has no arm, because
+  // there is nothing the model can do about a cluster without metrics-server; the rail's sentence names it instead.
+  if (shortfall === "no-usage-reading") {
+    return {
+      said: [
+        "This workflow is judged on a usage reading, and this run has taken none: a report without one is scored as having established nothing.",
+        "Your compose_report call was not run. Call inspect_usage on the namespace in question, then either recommend_change citing its artifact id or compose_report citing it, and then call compose_report.",
+      ].join(" "),
+      narrow: true,
+    };
+  }
+  if (shortfall === "no-usage-evidence") {
+    return {
+      said: [
+        "Your report rests on no usage reading of this run: a resources recommendation, or a finding that nothing needs to change, must cite the inspect_usage artifact it rests on.",
+        "Your compose_report call was not run. Cite the inspect_usage artifact id in the recommendation or in a claim, and then call compose_report again.",
+      ].join(" "),
+      narrow: true,
     };
   }
   return null;
@@ -1712,6 +1743,13 @@ const WORKFLOW_TOOL_RULES: Readonly<
       "Some values never reach you: env values, annotation values, ConfigMap data, a container's command and args, and Secret names and values read as <redacted>. Say so where it matters rather than guessing what they hold.",
       "Report what the evidence supports, and nothing further.",
     ].join(" "),
+    "query-optimization": [
+      "Read usage with inspect_usage on the namespace in question, narrowed by a label selector where the objective names a workload: one row per container, its CPU and memory use against its requests and limits.",
+      "Usage is metrics-server's latest sample, a moment and not a history. Say so, and never claim a trend.",
+      'Before you report, either call recommend_change with change "resources" for a container whose requests or limits do not fit what it uses, citing the inspect_usage artifact, or, if every container is sized sensibly, report that nothing needs to change and cite the inspect_usage artifact.',
+      "A recommendation is offered to the user and never applied by this run.",
+      "If the cluster serves no usage metrics, say so: install metrics-server to measure usage. Do not estimate usage from anything else.",
+    ].join(" "),
     operations: SQL_WORKFLOW_TOOL_RULES.operations,
     // The SQL analysis rules less the profile, which a cluster has no table for, and with the chart rule said up
     // front: every cell of a kubectl grid is text, so a chart is refused as not numeric and a table is the answer.
@@ -2452,6 +2490,7 @@ const AGENT_INSTRUMENT_RESULT: Readonly<Partial<Record<AgentToolName, AgentRunEv
   compare_plans: "plan-comparison",
   profile_table: "table-profiled",
   present_answer: "answer-composed",
+  inspect_usage: "usage-read",
 });
 
 /**
@@ -2771,6 +2810,7 @@ export function guidanceDelivered(events: readonly AgentRunEvent[]): Readonly<Re
     "turn-cut-off": 0,
     "report-reserve": 0,
     "plan-bar": 0,
+    "usage-bar": 0,
     "unread-stop": 0,
     "present-before-report": 0,
     "cite-what-you-read": 0,
@@ -3386,6 +3426,10 @@ export async function runInvestigation(
     let reserveAnnounced = delivered["report-reserve"] > 0;
     // Read from the ledger for the reason the line above is: a resumed run has already heard it.
     let planBarAnnounced = delivered["plan-bar"] > 0;
+    // The usage bar, seeded the same way.
+    let usageBarAnnounced = delivered["usage-bar"] > 0;
+    /** Whether THIS turn read usage, so the usage bar is announced after the turn's results, as the plan bar is. */
+    let usageBarDue = false;
     /*
       Whether THIS turn read a plan, so the bar can be announced once the turn's results are all in.
       It cannot be announced where the plan is read: every tool call in one assistant message must
@@ -3480,6 +3524,18 @@ export async function runInvestigation(
       planBarAnnounced = true;
       messages.push({ role: "user", content: notice(AGENT_PLAN_BAR_NOTICE) });
       await issueGuidance("plan-bar");
+    };
+
+    /**
+     * Tells a resource-efficiency run, once, what its report is judged on, at the moment it holds a usage reading.
+     * Safe for the reasons `announcePlanBar` is. Due only on a reading that landed: a cluster with no usage metrics
+     * gave the run nothing to cite, and telling it that it holds a reading would be false.
+     */
+    const announceUsageBar = async (): Promise<void> => {
+      if (!usageBarDue || usageBarAnnounced) return;
+      usageBarAnnounced = true;
+      messages.push({ role: "user", content: notice(AGENT_USAGE_BAR_NOTICE) });
+      await issueGuidance("usage-bar");
     };
 
     /**
@@ -4314,9 +4370,14 @@ export async function runInvestigation(
           if (call.toolName === "inspect_plan") planBarDue = true;
           else if (++planlessCalls >= 2) planBarDue = true;
         }
+        if (call.toolName === "inspect_usage" && holdsTool("inspect_usage") && !usageBarAnnounced) {
+          const { record: sofar } = await service.resume(context.runId);
+          if (sofar.events.some((event) => event.kind === "usage-read")) usageBarDue = true;
+        }
       }
       // After every result this turn owes, never between two of them.
       await announcePlanBar();
+      await announceUsageBar();
       return null;
     };
 

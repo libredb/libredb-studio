@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createLocalWorld } from "@workflow/world-local";
+import { persistedRunFacts, workflowAvailability } from "@/lib/agent/agent-manifest";
 import { forgetHeldSnapshots } from "@/lib/agent/context-snapshot";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
@@ -20,11 +21,23 @@ import { createTargetScope } from "@/lib/db/operations/policy";
 import { QueryError } from "@/lib/db/errors";
 import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
 import { KubernetesProvider } from "@/lib/db/providers/platform/kubernetes";
+import { CLUSTER_USAGE_FIELDS } from "@/lib/db/providers/platform/kubernetes/agent-readings";
 import { kubectlStatementLanguage } from "@/lib/db/providers/platform/kubernetes/labels";
-import type { DatabaseProvider, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
+import type { ClusterUsageReading, DatabaseProvider, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
 import type { DatabaseConnection, QueryResult } from "@/lib/types";
 import { kubernetesConnection } from "../../../helpers/kubernetes-connection";
-import { answersProse, modelOver, scriptedModel, type Turn } from "../../../isolated/fixtures/agent-scripted-model";
+import {
+  answersProse,
+  callsTool,
+  modelOver,
+  offeredCitationsIn,
+  promptText,
+  reportCitingWhatWasOffered,
+  reportOnAll,
+  type ScriptedTurn,
+  scriptedModel,
+  type Turn,
+} from "../../../isolated/fixtures/agent-scripted-model";
 
 /**
  * What a plan run records about the statement it drafted, driven through the real loop.
@@ -161,13 +174,25 @@ describe("the statement a plan run drafted", () => {
   });
 });
 
+/** What one kubectl drive leaves behind: every request the model saw, and the ledger it wrote. */
+interface KubectlDrive {
+  readonly runId: string;
+  readonly dataDir: string;
+  readonly turns: readonly Turn[];
+  readonly events: readonly AgentRunEvent[];
+}
+
 /**
- * The first request an agent-mode kubectl investigation sends, driven through the real loop on a Kubernetes
- * connection's own declarations. The provider double's object surface is one namespace holding `pods` pods (one by
- * default, and enough to overflow the packing when the omission advice is under test), or, with `unreadable`, a
- * container listing the cluster refuses, so the capture is unavailable.
+ * One agent-mode kubectl drive through the real loop on a Kubernetes connection's own declarations, opened the way
+ * the start route opens it: the language and any verifier its variant persists are written to the record. The
+ * provider double's object surface is one namespace holding `pods` pods (one by default, and enough to overflow the
+ * packing when the omission advice is under test), or, with `unreadable`, a container listing the cluster refuses,
+ * so the capture is unavailable. `usage` answers `readClusterUsage`.
+ *
+ * With `resume`, the drive is a fresh process over an earlier drive's ledger, and `unreachable` makes every provider
+ * acquisition throw, so whatever it decides it decides from the ledger alone.
  */
-async function kubectlInvestigationOpening(
+async function kubectlDrive(
   options: {
     readonly unreadable?: boolean;
     readonly pods?: number;
@@ -175,13 +200,17 @@ async function kubectlInvestigationOpening(
     readonly autoExecute?: boolean;
     /** Events a dead earlier drive already recorded, so the drive is a resume of that run. */
     readonly prior?: readonly AgentRunEvent[];
+    readonly turns?: readonly ScriptedTurn[];
+    readonly usage?: () => Promise<ClusterUsageReading>;
+    readonly resume?: { readonly dataDir: string; readonly runId: string };
+    readonly unreachable?: boolean;
   } = {},
-): Promise<{ system: string; opening: string }> {
+): Promise<KubectlDrive> {
   const { unreadable = false, pods = 1, workflowType = "investigation", autoExecute = false, prior = [] } = options;
   const podNames = Array.from({ length: pods }, (_, index) => `web-${String(index).padStart(4, "0")}-checkout-api`);
   forgetHeldSnapshots();
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-kubectl-investigation-"));
-  dataDirs.push(dataDir);
+  const dataDir = options.resume?.dataDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "agent-kubectl-investigation-"));
+  if (options.resume === undefined) dataDirs.push(dataDir);
   const connection = kubernetesConnection({ id: "conn_k8s", database: "shop" });
   const engine = new KubernetesProvider(connection);
   const provider = {
@@ -193,27 +222,36 @@ async function kubectlInvestigationOpening(
     listObjects: async (container: readonly string[], kind: string) =>
       kind === "pods" ? podNames.map((name) => ({ path: [...container, name], name, kind })) : [],
     describeObjects: async () => ({ details: [] }),
+    readClusterUsage: async () => (options.usage ?? (async () => USAGE_ROWS))(),
   } as unknown as DatabaseProvider;
   const store = new AgentRunStore({ world: createLocalWorld({ dataDir, recoverActiveRuns: false }) });
   const tracker = new ExecutionBudgetTracker();
   const artifacts = new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 });
   const service = new AgentRunService({ store, resources: { tracker, artifacts } });
-  const run = await service.start({
-    mode: "agent",
-    workflowType,
-    autoExecute,
-    statementLanguage: "kubectl",
-    actor: { sessionId: "sess_1", role: "user" },
-    connectionId: connection.id,
-    objective: "Which pods in shop are restarting?",
-  });
+  let runId = options.resume?.runId;
+  if (runId === undefined) {
+    const availability = workflowAvailability("agent", workflowType, "kubernetes");
+    if (!availability.open) throw new Error(`${workflowType} does not open on kubernetes`);
+    const run = await service.start({
+      mode: "agent",
+      workflowType,
+      autoExecute,
+      ...persistedRunFacts("agent", workflowType, availability),
+      actor: { sessionId: "sess_1", role: "user" },
+      connectionId: connection.id,
+      objective: "Which pods in shop are restarting?",
+    });
+    runId = run.runId;
+  }
   for (const event of prior) {
     // oxlint-disable-next-line no-await-in-loop -- a ledger is ordered: each event lands after the one before it.
-    await store.appendEvent(run.runId, event);
+    await store.appendEvent(runId, event);
   }
-  const script = scriptedModel(answersProse("No report."), answersProse("No report."), answersProse("No report."));
+  const script = scriptedModel(
+    ...(options.turns ?? [answersProse("No report."), answersProse("No report."), answersProse("No report.")]),
+  );
 
-  await runInvestigation(run.runId, {
+  const drive = runInvestigation(runId, {
     service,
     model: await modelOver(script.fetch),
     resources: {
@@ -224,15 +262,35 @@ async function kubectlInvestigationOpening(
       scope: createTargetScope(connection.id),
       tracker,
       artifacts,
-      deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS.investigation.runDeadlineMs, () => 10_000),
+      deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS[workflowType].runDeadlineMs, () => 10_000),
       repairs: new AgentRepairLedger(),
-      acquireProvider: async () => provider,
+      acquireProvider: async () => {
+        if (options.unreachable) throw new Error("no connection is reachable from this process");
+        return provider;
+      },
     },
   });
+  // A script that runs out is the driving process dying, which the drive surfaces as a rejection.
+  await drive.catch(() => undefined);
 
-  const [first] = script.turns as Turn[];
+  const view = await store.read(runId);
+  if (!view) throw new Error(`run ${runId} has no ledger`);
+  return { runId, dataDir, turns: script.turns, events: view.record.events };
+}
+
+/** The first request an agent-mode kubectl drive sends, split into its system prompt and everything else. */
+async function kubectlInvestigationOpening(
+  options: Parameters<typeof kubectlDrive>[0] = {},
+): Promise<{ system: string; opening: string }> {
+  const { turns } = await kubectlDrive(options);
+  const [first] = turns;
   if (first === undefined) throw new Error("the drive sent no request");
-  const messages = (first.body.messages ?? []) as { role?: string; content?: unknown }[];
+  return splitPrompt(first);
+}
+
+/** One request's messages as text, the system prompt apart from the rest. */
+function splitPrompt(turn: Turn): { system: string; opening: string } {
+  const messages = (turn.body.messages ?? []) as { role?: string; content?: unknown }[];
   const text = (role: (value: string | undefined) => boolean): string =>
     messages
       .filter((message) => role(message.role))
@@ -240,6 +298,40 @@ async function kubectlInvestigationOpening(
       .join("\n");
   return { system: text((value) => value === "system"), opening: text((value) => value !== "system") };
 }
+
+/** The tool names one request offered. */
+function offeredTools(turn: Turn): string[] {
+  return ((turn.body.tools ?? []) as { function?: { name?: string } }[]).map((tool) => tool.function?.name ?? "");
+}
+
+/** One container's usage against its requests, as `readClusterUsage` answers it. */
+const USAGE_ROWS: ClusterUsageReading = {
+  kind: "rows",
+  result: {
+    rows: [
+      {
+        namespace: "shop",
+        ownerKind: "Deployment",
+        ownerName: "web",
+        pod: "web-1",
+        container: "api",
+        cpuMillicores: 120,
+        memoryBytes: 52_428_800,
+        cpuRequestMillicores: 500,
+        cpuLimitMillicores: 1000,
+        memoryRequestBytes: 268_435_456,
+        memoryLimitBytes: 536_870_912,
+        cpuRequestRatio: 0.24,
+        memoryRequestRatio: 0.1953125,
+        window: "30s",
+        timestamp: "2026-10-14T09:00:00Z",
+      },
+    ],
+    fields: [...CLUSTER_USAGE_FIELDS],
+    rowCount: 1,
+    executionTime: 3,
+  },
+};
 
 describe("an agent-mode kubectl investigation", () => {
   test("opens on the cluster's inventory with no SQL tool named and no relations block", async () => {
@@ -303,16 +395,7 @@ describe("an agent-mode kubectl data analysis", () => {
   });
 });
 
-/*
-  B29 (#330 T4): the assistant-message neutraliser. The SDK's own assistant messages
-  carry the model's tool-call arguments verbatim, and those are the model's words, not
-  the server's. These tests pin the three rules that make the fix safe: every marker is
-  defanged, `toolCallId` and `toolName` are never touched, and nothing the SDK returned
-  is mutated.
-*/
 describe("a resumed kubectl run that already recommended a resources change", () => {
-  // The resume summary reads the ledger whatever the workflow, so the investigation variant carries it: the
-  // query-optimization variant that records this event in a real run is not in the manifest yet (Task 32).
   test("is told the resources change it already recommended, by container and owner, with no statement", async () => {
     const recommended: AgentRunEvent = {
       kind: "recommendation",
@@ -328,7 +411,7 @@ describe("a resumed kubectl run that already recommended a resources change", ()
       evidence: [{ source: "artifact", correlationId: "usage_1" }],
     };
 
-    const { opening } = await kubectlInvestigationOpening({ prior: [recommended] });
+    const { opening } = await kubectlInvestigationOpening({ workflowType: "query-optimization", prior: [recommended] });
 
     expect(opening).toContain(
       "New requests and limits for container api of Deployment/web were already recommended and are recorded. Do not propose them a second time.",
@@ -339,6 +422,211 @@ describe("a resumed kubectl run that already recommended a resources change", ()
   });
 });
 
+const USAGE_BAR =
+  "You have a usage reading in hand, and this workflow is judged on it: a report answers when a resources recommendation cites that reading, or when the report cites it and says nothing needs to change.";
+
+/** A report citing every artifact the run produced so far, taken from the transcript as a model would take it. */
+const reportOnUsage = reportOnAll("Every container in shop uses a fraction of what it requests.");
+
+/** A report citing only the captured inventory, whatever readings the run holds. */
+const reportOnInventoryOnly: ScriptedTurn = (turn) =>
+  callsTool(
+    "compose_report",
+    {
+      claims: [
+        {
+          claim: "The namespace looks well sized.",
+          evidence: offeredCitationsIn(turn).filter(
+            (citation) => (citation as { source?: string }).source === "context-snapshot",
+          ),
+        },
+      ],
+    },
+    "call_report",
+  )(turn);
+
+describe("a kubectl resource-efficiency run", () => {
+  test("its system prompt carries the resource-efficiency rules and objective", async () => {
+    const { system } = await kubectlInvestigationOpening({ workflowType: "query-optimization" });
+
+    expect(system).toContain(
+      "Read usage with inspect_usage on the namespace in question, narrowed by a label selector where the objective names a workload: one row per container, its CPU and memory use against its requests and limits.",
+    );
+    expect(system).toContain("Usage is metrics-server's latest sample, a moment and not a history.");
+    expect(system).toContain("A recommendation is offered to the user and never applied by this run.");
+    expect(system).toContain("install metrics-server to measure usage");
+    expect(system).toContain("Your objective is resource efficiency");
+  });
+
+  test("a report before any usage reading is held with the no-usage-reading sentence, and the run is narrowed to its verdict's tools", async () => {
+    const drive = await kubectlDrive({
+      workflowType: "query-optimization",
+      turns: [
+        reportCitingWhatWasOffered("The namespace looks well sized."),
+        callsTool("inspect_usage", { namespace: "shop" }, "call_usage"),
+        reportOnUsage,
+      ],
+    });
+
+    const held = drive.events.find((event) => event.kind === "call-held");
+    expect(held).toMatchObject({ kind: "call-held", tool: "compose_report", shortfall: "no-usage-reading" });
+    const afterHold = promptText(drive.turns[1] as Turn);
+    expect(afterHold).toContain(
+      "This workflow is judged on a usage reading, and this run has taken none: a report without one is scored as having established nothing.",
+    );
+    expect(afterHold).toContain("Call inspect_usage on the namespace in question");
+    expect(offeredTools(drive.turns[1] as Turn).sort()).toEqual(
+      expect.arrayContaining(["compose_report", "inspect_usage", "recommend_change"]),
+    );
+    expect(offeredTools(drive.turns[1] as Turn)).not.toContain("run_read_query");
+
+    const finished = drive.events.find((event) => event.kind === "run-finished");
+    expect(finished).toMatchObject({
+      goalVerdict: { outcome: "answered", verifier: "agent-query-optimization-kubectl.1" },
+    });
+  });
+
+  test("a report resting on no usage reading is held with the no-usage-evidence sentence", async () => {
+    const drive = await kubectlDrive({
+      workflowType: "query-optimization",
+      turns: [
+        callsTool("inspect_usage", { namespace: "shop" }, "call_usage"),
+        reportOnInventoryOnly,
+        answersProse("No report."),
+      ],
+    });
+
+    expect(drive.events.find((event) => event.kind === "call-held")).toMatchObject({
+      shortfall: "no-usage-evidence",
+    });
+    expect(promptText(drive.turns[2] as Turn)).toContain(
+      "Your report rests on no usage reading of this run: a resources recommendation, or a finding that nothing needs to change, must cite the inspect_usage artifact it rests on.",
+    );
+  });
+
+  test("a completed inspect_usage writes usage-read, and the usage bar is delivered once after the first", async () => {
+    const drive = await kubectlDrive({
+      workflowType: "query-optimization",
+      turns: [
+        callsTool("inspect_usage", { namespace: "shop", selector: "app=web" }, "call_usage"),
+        callsTool("inspect_usage", { namespace: "shop" }, "call_usage_2"),
+        answersProse("No report."),
+        answersProse("No report."),
+      ],
+    });
+
+    const reads = drive.events.filter((event) => event.kind === "usage-read");
+    expect(reads).toHaveLength(2);
+    expect(reads[0]).toMatchObject({ namespace: "shop", selector: "app=web" });
+    expect(reads[1]).toMatchObject({ namespace: "shop" });
+    expect(reads[1]).not.toHaveProperty("selector");
+    const completedIds = drive.events.flatMap((event) =>
+      event.kind === "tool-completed" ? [event.artifact.correlationId] : [],
+    );
+    for (const read of reads) {
+      if (read.kind !== "usage-read") throw new Error("not a usage reading");
+      expect(completedIds).toContain(read.artifact.correlationId);
+    }
+
+    const bars = drive.events.filter((event) => event.kind === "guidance-issued" && event.notice === "usage-bar");
+    expect(bars).toHaveLength(1);
+    expect(promptText(drive.turns[1] as Turn)).toContain(USAGE_BAR);
+  });
+
+  test("a cluster with no usage metrics writes usage-unavailable, hears no usage bar, and is judged no-usage-metrics", async () => {
+    const drive = await kubectlDrive({
+      workflowType: "query-optimization",
+      usage: async () => ({ kind: "metrics-unavailable" }),
+      turns: [
+        callsTool("inspect_usage", { namespace: "shop" }, "call_usage"),
+        reportCitingWhatWasOffered("This cluster serves no usage metrics."),
+        answersProse("No report."),
+      ],
+    });
+
+    expect(drive.events.filter((event) => event.kind === "usage-unavailable")).toEqual([
+      expect.objectContaining({ kind: "usage-unavailable", namespace: "shop" }),
+    ]);
+    expect(drive.events.some((event) => event.kind === "usage-read")).toBe(false);
+    expect(drive.events.some((event) => event.kind === "guidance-issued" && event.notice === "usage-bar")).toBe(false);
+    // Nothing the model can do about a missing metrics-server, so the report is not held for it.
+    expect(drive.events.some((event) => event.kind === "call-held")).toBe(false);
+    expect(drive.events.find((event) => event.kind === "run-finished")).toMatchObject({
+      goalVerdict: {
+        outcome: "unanswered",
+        verifier: "agent-query-optimization-kubectl.1",
+        unmet: ["no-usage-metrics"],
+      },
+    });
+  });
+
+  test("the same reading asked twice is replayed, and an invalid one asked twice is refused before the cluster", async () => {
+    const drive = await kubectlDrive({
+      workflowType: "query-optimization",
+      turns: [
+        callsTool("inspect_usage", { namespace: "shop" }, "call_usage"),
+        callsTool("inspect_usage", { namespace: "shop" }, "call_usage_2"),
+        callsTool("inspect_usage", { namespace: "Shop" }, "call_usage_3"),
+        callsTool("inspect_usage", { namespace: "Shop" }, "call_usage_4"),
+        answersProse("No report."),
+        answersProse("No report."),
+      ],
+    });
+
+    expect(drive.events.filter((event) => event.kind === "usage-read")).toHaveLength(1);
+    expect(promptText(drive.turns[2] as Turn)).toContain("This exact call was already made in this run.");
+    expect(promptText(drive.turns[4] as Turn)).toContain(
+      "(inspect_usage) was refused before the database was reached, so nothing ran and nothing was recorded.",
+    );
+    expect(
+      drive.events.filter((event) => event.kind === "tool-invoked" && event.tool === "inspect_usage"),
+    ).toHaveLength(2);
+  });
+
+  test("reopened in a fresh process with no connection reachable, it is told what it measured and judged by the kubectl rule (Review Focus 3)", async () => {
+    // The first process reads usage, asks for an invalid reading the cluster never sees, and dies.
+    const first = await kubectlDrive({
+      workflowType: "query-optimization",
+      usage: async () => USAGE_ROWS,
+      turns: [
+        callsTool("inspect_usage", { namespace: "shop", selector: "app=web" }, "call_usage"),
+        callsTool("inspect_usage", { namespace: "Shop" }, "call_usage_2"),
+      ],
+    });
+    const read = first.events.find((event) => event.kind === "usage-read");
+    if (read?.kind !== "usage-read") throw new Error("the first process read no usage");
+
+    const resumed = await kubectlDrive({
+      workflowType: "query-optimization",
+      resume: { dataDir: first.dataDir, runId: first.runId },
+      unreachable: true,
+      prior: [{ kind: "usage-unavailable", atMs: 1, namespace: "web" }],
+      turns: [callsTool("inspect_usage", { namespace: "Shop" }, "call_usage_3"), reportOnUsage],
+    });
+
+    const opening = promptText(resumed.turns[0] as Turn);
+    expect(opening).toContain(
+      `Container usage in namespace shop (selector app=web) was already read, artifact ${read.artifact.correlationId}.`,
+    );
+    expect(opening).toContain("Usage could not be read in namespace web");
+    expect(offeredTools(resumed.turns[0] as Turn)).toContain("inspect_usage");
+    // The invalid call the dead process left unsettled is not sent again, whatever this process can reach.
+    expect(promptText(resumed.turns[1] as Turn)).toContain(
+      "(inspect_usage) was started before this run was interrupted and its outcome was never recorded",
+    );
+    expect(resumed.events.find((event) => event.kind === "run-finished")).toMatchObject({
+      goalVerdict: { outcome: "answered", verifier: "agent-query-optimization-kubectl.1" },
+    });
+  });
+});
+
+/*
+  B29 (#330 T4): the assistant-message neutraliser. The SDK's own assistant messages
+  carry the model's tool-call arguments verbatim, and those are the model's words, not
+  the server's. These tests pin the three rules that make the fix safe: every marker is
+  defanged, `toolCallId` and `toolName` are never touched, and nothing the SDK returned
+  is mutated.
+*/
 describe("neutraliseAssistantMessages (B29)", () => {
   type AssistantMessages = Parameters<typeof neutraliseAssistantMessages>[0];
   type AnyPart = {

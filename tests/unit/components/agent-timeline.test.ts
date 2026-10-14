@@ -2614,6 +2614,26 @@ describe("an ending says whether the run ANSWERED, not only how it stopped (B24)
     expect(view.items[1]?.detail).toContain("before-and-after plan comparison");
   });
 
+  test("a resource-efficiency shortfall names usage, and a cluster without metrics names metrics-server", () => {
+    const said = (code: "no-usage-reading" | "no-usage-evidence" | "no-usage-metrics") =>
+      foldLedgerEntries([
+        OPENED,
+        finished(
+          "succeeded",
+          { outcome: "unanswered", verifier: "agent-query-optimization-kubectl.1", unmet: [code] },
+          "report-composed",
+        ),
+      ]).items[1]?.detail;
+
+    expect(said("no-usage-reading")).toContain(
+      "No usage was read, so how the containers use their requests was never established.",
+    );
+    expect(said("no-usage-evidence")).toContain("The report rests on no usage reading of this run.");
+    expect(said("no-usage-metrics")).toContain(
+      "This cluster serves no usage metrics: install metrics-server to measure usage.",
+    );
+  });
+
   test("every shortfall has words, so none reaches a user as a raw code", () => {
     for (const code of [
       "no-report",
@@ -2625,6 +2645,9 @@ describe("an ending says whether the run ANSWERED, not only how it stopped (B24)
       "no-table-profile",
       "no-reading",
       "no-answer",
+      "no-usage-reading",
+      "no-usage-evidence",
+      "no-usage-metrics",
       "cancelled",
     ]) {
       const view = foldLedgerEntries([
@@ -3137,6 +3160,7 @@ describe("an answer reads as the app's decision, with the model's caption quoted
       "plan-statement",
       "turn-cut-off",
       "report-reserve",
+      "usage-bar",
       "unread-stop",
       // The three delivered as a tool result (B51). They reach a reader through the
       // `call-held` entry, so these ids only render here for a ledger written by a build

@@ -43,7 +43,14 @@
 
 import { requiredVariant } from "./agent-manifest";
 import { readPlanStatement } from "./plan-draft";
-import type { AgentReportClaim, AgentRunEvent, AgentRunMode, AgentRunRecord, AgentRunWorkflowType } from "./types";
+import type {
+  AgentEvidenceReference,
+  AgentReportClaim,
+  AgentRunEvent,
+  AgentRunMode,
+  AgentRunRecord,
+  AgentRunWorkflowType,
+} from "./types";
 
 /**
  * Which rule judged a run. Versioned in the value, like the execution policy: a
@@ -79,6 +86,14 @@ export type AgentGoalVerifierId =
    * different rules is exactly what a versioned id exists to prevent.
    */
   | "agent-query-optimization.3"
+  /**
+   * Resource efficiency on a cluster, the kubectl query optimization: a usage reading of this run, cited by a
+   * resources recommendation or by a report that recommends nothing.
+   *
+   * Its own id rather than a new version of the SQL one, because it is a different bar and not a revision of it:
+   * a statement and a container are different subjects, and both rules stay live side by side.
+   */
+  | "agent-query-optimization-kubectl.1"
   | "agent-database-assessment.1"
   /**
    * Kept for the reason `agent-query-optimization.1` is kept: it shipped on `main` and
@@ -202,6 +217,28 @@ export type AgentGoalShortfall =
    * beside a picture, and every field this ledger holds would have called it answered.
    */
   | "answer-uncited"
+  /**
+   * A resource-efficiency run never read usage.
+   *
+   * The template's own artifact. Whether a container is sized for what it uses can only be said from what it uses,
+   * and a run that reported from the cluster's objects alone has described the requests and not measured them.
+   */
+  | "no-usage-reading"
+  /**
+   * A resource-efficiency run read usage, and its answer does not rest on that reading: the resources recommendation
+   * cites something else, or the report recommends nothing and cites no usage reading.
+   *
+   * The link between the reading and the conclusion, kept apart from `no-usage-reading` because the run here did
+   * the measuring and then answered beside it.
+   */
+  | "no-usage-evidence"
+  /**
+   * A resource-efficiency run could not read usage because the cluster serves no usage metrics, and read none.
+   *
+   * Kept apart from `no-usage-reading` because the cause is the cluster and not the run: metrics.k8s.io is absent or
+   * metrics-server does not answer, and the reader is owed that sentence rather than one about the model.
+   */
+  | "no-usage-metrics"
   /**
    * The run was stopped before it could conclude. Substituted for the missing
    * output rather than reported alongside it: a user's stop is not a defect of the
@@ -438,6 +475,33 @@ function verifyQueryOptimizationGoal(run: VerifiableAgentRun): readonly AgentGoa
   return grounded ? [] : ["no-plan-evidence"];
 }
 
+/** Every usage reading THIS run took, by the id a citation would name. */
+function usageArtifacts(events: readonly AgentRunEvent[]): ReadonlySet<string> {
+  return new Set(events.flatMap((event) => (event.kind === "usage-read" ? [event.artifact.correlationId] : [])));
+}
+
+/**
+ * Resource efficiency on a cluster: the investigation baseline over the run's own artifacts, with a usage reading
+ * counted as meaningful even when empty (a namespace with nothing running is an answer); then either a resources
+ * recommendation citing a usage reading of this run, or a report citing one and recommending nothing, because a
+ * well-sized namespace must not force an invented change. A run whose only reading was "metrics unavailable" stays
+ * unanswered under its own name, so the rail can say metrics-server is missing rather than that the model failed.
+ */
+function verifyQueryOptimizationKubectlGoal(run: VerifiableAgentRun): readonly AgentGoalShortfall[] {
+  const usage = usageArtifacts(run.events);
+  const baseline = verifyInvestigationGoal(run, usage);
+  if (baseline.length > 0) return baseline;
+  if (usage.size === 0)
+    return run.events.some((event) => event.kind === "usage-unavailable") ? ["no-usage-metrics"] : ["no-usage-reading"];
+  const cites = (evidence: readonly AgentEvidenceReference[]) =>
+    evidence.some((reference) => reference.source === "artifact" && usage.has(reference.correlationId));
+  const resources = run.events.flatMap((event) =>
+    event.kind === "recommendation" && event.change === "resources" ? [event] : [],
+  );
+  if (resources.length > 0) return resources.some((event) => cites(event.evidence)) ? [] : ["no-usage-evidence"];
+  return composedClaims(run.events).some((claim) => cites(claim.evidence)) ? [] : ["no-usage-evidence"];
+}
+
 /**
  * The assessment bar: the investigation baseline, and then a table actually
  * profiled.
@@ -590,6 +654,7 @@ function verifyOperationsGoal(run: VerifiableAgentRun): readonly AgentGoalShortf
 const AGENT_GOAL_RULES: Readonly<Partial<Record<AgentGoalVerifierId, GoalRule>>> = Object.freeze({
   "agent-investigation.1": (run: VerifiableAgentRun) => verifyInvestigationGoal(run),
   "agent-query-optimization.3": verifyQueryOptimizationGoal,
+  "agent-query-optimization-kubectl.1": verifyQueryOptimizationKubectlGoal,
   "agent-database-assessment.1": verifyDatabaseAssessmentGoal,
   "agent-operations.2": verifyOperationsGoal,
   "agent-data-analysis.1": verifyDataAnalysisGoal,

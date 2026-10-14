@@ -300,6 +300,29 @@ export const AGENT_WORKFLOW_VARIANTS: Readonly<
       requires: Object.freeze<AgentVariantRequirement[]>([]),
       verifier: "agent-investigation.1",
     }),
+    /**
+     * Resource efficiency: the cluster's optimization is not a slow statement but a container sized for what it does
+     * not use, so the run reads usage against requests and limits and may recommend new ones.
+     *
+     * `inspect_usage` and `recommend_change` are kept on a narrowed run because the verdict accepts either a resources
+     * recommendation citing a usage reading or a report citing one, and both need the reading first. It requires the
+     * usage reading of the engine, without which every tool the verdict asks for could only refuse.
+     */
+    "query-optimization": Object.freeze({
+      tools: Object.freeze<AgentToolName[]>(["run_read_query", "inspect_usage", "recommend_change", "compose_report"]),
+      narrowedExtras: Object.freeze<AgentToolName[]>(["inspect_usage", "recommend_change"]),
+      classifierDescription:
+        "which workloads are over- or under-provisioned: the CPU and memory their containers use against their requests and limits",
+      objective:
+        "Your objective is resource efficiency: which containers use far less, or far more, CPU and memory than they request, and what requests and limits would fit what they use.",
+      planDeliverable: Object.freeze({
+        kind: "statement",
+        noun: "the kubectl read that measures usage against requests",
+      }),
+      canAutoExecute: false,
+      requires: Object.freeze<AgentVariantRequirement[]>(["cluster-usage-reading"]),
+      verifier: "agent-query-optimization-kubectl.1",
+    }),
     operations: OPERATIONS_VARIANT,
     /**
      * A read presented as the answer, the SQL analysis without its profile: a cluster has no table to count.

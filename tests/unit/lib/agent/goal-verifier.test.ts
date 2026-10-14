@@ -843,6 +843,143 @@ describe("a data-analysis run answers when it also produced something to show", 
   });
 });
 
+describe("agent-query-optimization-kubectl.1", () => {
+  const verify = (events: AgentRunEvent[]) =>
+    verifyRunGoal({
+      mode: "agent",
+      workflowType: "query-optimization",
+      status: "succeeded",
+      events,
+      statementLanguage: "kubectl",
+      verifier: "agent-query-optimization-kubectl.1",
+    });
+
+  const USAGE = "4f2c9a10-0000-4000-8000-0000000000a1";
+  const READ = "4f2c9a10-0000-4000-8000-0000000000a2";
+
+  /** A usage reading this run took, with the settled step a reading writes beside it. */
+  function usageRead(correlationId: string, rowCount: number): AgentRunEvent[] {
+    const reference: AgentArtifactReference = {
+      correlationId,
+      runId: "arun_1",
+      operationId: "cluster.usage.read",
+      summary: { rowCount, columnNames: ["container", "cpuMillicores"], elapsedMs: 4 },
+    };
+    return [
+      { kind: "tool-completed", atMs: 20, stepId: `step_${correlationId}`, artifact: reference },
+      { kind: "usage-read", atMs: 21, artifact: reference, namespace: "shop" },
+    ];
+  }
+
+  function resources(...evidence: [AgentEvidenceReference, ...AgentEvidenceReference[]]): AgentRunEvent {
+    return {
+      kind: "recommendation",
+      atMs: 25,
+      change: "resources",
+      namespace: "shop",
+      ownerKind: "Deployment",
+      ownerName: "web",
+      container: "api",
+      current: { requests: { cpu: "500m", memory: "256Mi" }, limits: { cpu: "1", memory: "512Mi" } },
+      proposed: { requests: { cpu: "150m", memory: "128Mi" }, limits: { cpu: "500m", memory: "256Mi" } },
+      rationale: "The container uses a third of what it requests.",
+      evidence,
+    };
+  }
+
+  test("a resources recommendation citing a usage reading answers", () => {
+    const verdict = verify([
+      contextCaptured,
+      ...usageRead(USAGE, 3),
+      resources({ source: "artifact", correlationId: USAGE }),
+      reportCiting(ARTIFACT(USAGE)),
+    ]);
+    expect(verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization-kubectl.1", unmet: [] });
+  });
+
+  test("a report citing a usage reading and recommending nothing answers: nothing to change is an answer (A10)", () => {
+    const verdict = verify([contextCaptured, ...usageRead(USAGE, 3), reportCiting(ARTIFACT(USAGE))]);
+    expect(verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization-kubectl.1", unmet: [] });
+  });
+
+  test("an EMPTY usage reading cited still counts as meaningful", () => {
+    // A namespace with nothing running is an answer, so the baseline's emptiness census skips the reading.
+    const verdict = verify([contextCaptured, ...usageRead(USAGE, 0), reportCiting(ARTIFACT(USAGE))]);
+    expect(verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization-kubectl.1", unmet: [] });
+  });
+
+  test("no usage reading is no-usage-reading", () => {
+    const verdict = verify([contextCaptured, completed(READ, 4), reportCiting(ARTIFACT(READ))]);
+    expect(verdict).toEqual({
+      outcome: "unanswered",
+      verifier: "agent-query-optimization-kubectl.1",
+      unmet: ["no-usage-reading"],
+    });
+  });
+
+  test("a recommendation citing something else is no-usage-evidence", () => {
+    const verdict = verify([
+      contextCaptured,
+      completed(READ, 4),
+      ...usageRead(USAGE, 3),
+      resources({ source: "artifact", correlationId: READ }),
+      // The report citing the reading does not rescue a recommendation that rests on something else.
+      reportCiting(ARTIFACT(USAGE)),
+    ]);
+    expect(verdict).toEqual({
+      outcome: "unanswered",
+      verifier: "agent-query-optimization-kubectl.1",
+      unmet: ["no-usage-evidence"],
+    });
+  });
+
+  test("a report recommending nothing and citing no usage reading is no-usage-evidence", () => {
+    const verdict = verify([contextCaptured, completed(READ, 4), ...usageRead(USAGE, 3), reportCiting(ARTIFACT(READ))]);
+    expect(verdict.unmet).toEqual(["no-usage-evidence"]);
+  });
+
+  test("metrics unavailable as the only reading is no-usage-metrics, unanswered", () => {
+    const verdict = verify([
+      contextCaptured,
+      { kind: "usage-unavailable", atMs: 20, namespace: "shop" },
+      completed(READ, 4),
+      reportCiting(ARTIFACT(READ)),
+    ]);
+    expect(verdict).toEqual({
+      outcome: "unanswered",
+      verifier: "agent-query-optimization-kubectl.1",
+      unmet: ["no-usage-metrics"],
+    });
+  });
+
+  test("no report is no-report, as every rule says first", () => {
+    expect(verify([contextCaptured, ...usageRead(USAGE, 3)]).unmet).toEqual(["no-report"]);
+    expect(verify([contextCaptured, { kind: "usage-unavailable", atMs: 20, namespace: "shop" }]).unmet).toEqual([
+      "no-report",
+    ]);
+  });
+
+  test("a kubectl optimization reopened from its ledger is judged by the kubectl rule, persisted or not", () => {
+    // Review Focus 3: the SQL investigation case cannot tell the two dispatches apart, because both name the same
+    // verifier. Here the language alone, read back from a ledger, must select the resource-efficiency rule.
+    const ledger = {
+      mode: "agent",
+      workflowType: "query-optimization",
+      status: "succeeded",
+      events: [contextCaptured, ...usageRead(USAGE, 3), reportCiting(ARTIFACT(USAGE))],
+      statementLanguage: "kubectl",
+    } as const;
+    expect(verifyRunGoal(ledger)).toEqual({
+      outcome: "answered",
+      verifier: "agent-query-optimization-kubectl.1",
+      unmet: [],
+    });
+    expect(verifyRunGoal({ ...ledger, verifier: "agent-query-optimization-kubectl.1" }).verifier).toBe(
+      "agent-query-optimization-kubectl.1",
+    );
+  });
+});
+
 describe("the verifier registry", () => {
   test("names one rule per workflow type, so a new workflow cannot inherit another one's bar", () => {
     expect(Object.keys(AGENT_WORKFLOW_GOALS).sort()).toEqual([
