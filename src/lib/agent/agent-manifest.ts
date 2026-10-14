@@ -22,6 +22,7 @@ export const AGENT_STATEMENT_LANGUAGE: Readonly<Record<DatabaseType, AgentStatem
   postgres: "sql",
   bigquery: null,
   snowflake: null,
+  spark: null,
   mysql: "sql",
   sqlite: "sql",
   libsql: null,
