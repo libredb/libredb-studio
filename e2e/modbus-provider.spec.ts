@@ -114,7 +114,11 @@ test.describe("a read of the fixture, as a reader sees it", () => {
         .monaco;
       monaco?.editor.getEditors()[0]?.setValue(statement);
     }, READ);
-    await page.keyboard.press("Control+Enter");
+    // The button, not the shortcut. The editor's own hint reads "Cmd/Ctrl+Enter", so a spec that
+    // presses one of them passes on the platform it was written on and quietly runs nothing on
+    // the other: MEASURED here, the statement reached the editor and the panel still read "Ready
+    // to query". Six specs in this suite click RUN; this is the same reason they do.
+    await page.getByRole("button", { name: "RUN", exact: true }).click();
     // The first value of the fixture's holding table, which is also the proof the read ran.
     await expect(page.getByText(String(holding(0)), { exact: false }).first()).toBeVisible({ timeout: 20000 });
   });
@@ -126,11 +130,27 @@ test.describe("a read of the fixture, as a reader sees it", () => {
      * about. Reverting `ProviderCapabilities.maskingExemptColumns` on the Modbus provider turns
      * this case red.
      */
-    // One assertion for one fact: the whole run is on screen, read as a set rather than as five
-    // separate claims about the same read.
-    const shown = await page.locator("[role='row'], tr").allInnerTexts();
-    const flat = shown.join(" ");
-    expect([0, 1, 2, 3, 4].filter((address) => flat.includes(String(holding(address))))).toHaveLength(5);
+    /*
+     * Read by their own text, one assertion for one fact.
+     *
+     * NOT by scanning rows: `[role='row'], tr` matched nothing in this grid and handed back an
+     * empty array, which fails the same way an absent value does - the test went red for the
+     * scanner's reason while every value was on screen. The grid draws its own divs and
+     * virtualizes columns besides, so the row is not a thing to count.
+     *
+     * It cannot pass vacuously either: the flow above has already waited for the first value, so
+     * reaching here means the read ran, and all five are asserted together rather than as five
+     * separate claims about one read.
+     */
+    const onScreen = await Promise.all(
+      [0, 1, 2, 3, 4].map((address) =>
+        page
+          .getByText(String(holding(address)), { exact: false })
+          .first()
+          .isVisible(),
+      ),
+    );
+    expect(onScreen).toEqual([true, true, true, true, true]);
     // ABSENCE, and the defect's own signature: the masked form of a value, anywhere in the grid.
     await expect(page.getByText("********", { exact: false })).toHaveCount(0);
   });
@@ -145,7 +165,11 @@ test.describe("a read of the fixture, as a reader sees it", () => {
   test("no Explain tab is offered, because this engine plans nothing", async ({ page }) => {
     // ABSENCE, tied to `supportsExplain: false`. Modbus has no planner to ask: a read is four
     // function codes, and a tab offering to explain one would promise something no device answers.
-    await expect(page.getByRole("tab", { name: "Explain", exact: true })).toHaveCount(0);
+    // By the test id the panel carries for exactly this ambiguity: the tabs are plain buttons,
+    // not `role="tab"`, and the query editor renders an "Explain" button of its own.
+    // `e2e/explain-sqlite.spec.ts` asserts this same id IS visible on an engine that declares
+    // `explainFormat`, which is what keeps this absence from being an absence of the selector.
+    await expect(page.getByTestId("bottom-panel-tab-explain")).toHaveCount(0);
   });
 
   test("no cell opens an editor, because nothing here can be written", async ({ page }) => {
@@ -153,7 +177,20 @@ test.describe("a read of the fixture, as a reader sees it", () => {
     // structural here rather than configured: there is no code in the provider that builds a write.
     const cell = page.getByText(String(holding(0)), { exact: false }).first();
     await cell.dblclick();
-    await expect(page.locator("[role='gridcell'] input, td input")).toHaveCount(0);
+    /*
+     * By the editor's own shape, not by a grid role this grid does not use.
+     *
+     * The first writing of this looked for `[role='gridcell'] input, td input`, which matches
+     * nothing here whatever the product does - an absence that is true for the selector's reason
+     * rather than the engine's. The cell editor is an `<input autoFocus>`
+     * (`ResultsGrid.tsx:736`), so if one had opened it would be THE focused input on the page;
+     * the query editor is Monaco, whose own field is a textarea.
+     *
+     * And the branch this asserts is real: with `editingEnabled` false the cell renders without
+     * an `onDoubleClick` at all (`ResultsGrid.tsx:823`), which is what `supportsInlineRowEdit:
+     * false` buys on this engine.
+     */
+    await expect(page.locator("input:focus")).toHaveCount(0);
   });
 
   test("the address column carries no masked-column lock", async ({ page }) => {
