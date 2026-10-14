@@ -28,12 +28,12 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S9 · 6
-- [Drivers and connections](#drivers-and-connections) — D1-D348, U17 · 248
+- [Drivers and connections](#drivers-and-connections) — D1-D351, U17 · 251
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U139 · 129
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U143 · 133
 - [Dependencies](#dependencies) — P1-P9 · 7
-- [Documentation](#documentation) — DOC3-DOC25 · 22
+- [Documentation](#documentation) — DOC3-DOC32 · 29
 - [Release pipeline](#release-pipeline) — REL1-REL8 · 8
 - [Chart configuration surface](#chart-configuration-surface) — N1 · 1
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H14 · 4
@@ -3562,6 +3562,37 @@ Found 2026-10-13 while reviewing #1629.
 
 **Done when:** the profile lives in its own module under a `sql/mysql/` directory, its pure checks have unit tests of their own, and `tests/integration/db/mysql-provider.test.ts` and `tests/live/mysql-agent-profile.ts` pass unchanged.
 
+### D349. Milvus `wkbToWkt` reads any byte order but 1 as big-endian, and names a mixed multi-geometry by its container
+
+`wkbToWkt` in `src/lib/db/providers/vector/milvus/field-data.ts` reads a geometry's byte order as `data.getUint8(at) === 1`, so every value other than 1 is read as big-endian, although WKB defines only 0 (big-endian) and 1 (little-endian).
+A value whose byte-order byte is 2, with big-endian fields, decodes as `POINT (1 2)` instead of being reported as a form Studio does not decode.
+The multi-geometry branch decodes each part with `geometry()` and keeps only its body without checking the part's type, so a MULTIPOINT holding a LINESTRING is written `MULTIPOINT ((0 0, 1 1))`, WKT that names a value it does not hold; MULTILINESTRING and MULTIPOLYGON share the branch.
+Both measured 2026-10-14 on `main` with a scratch script over `wkbToWkt`.
+
+Found 2026-10-13 while reviewing the Apache Spark provider (#1759); pre-existing.
+
+**Done when:** a byte order other than 0 or 1 answers undefined, a MULTIPOINT, MULTILINESTRING or MULTIPOLYGON part that is not a POINT, LINESTRING or POLYGON respectively answers undefined, and `tests/unit/db/milvus/field-data.test.ts` has a case for each.
+
+### D350. The schema-diff migration says BigQuery has no foreign-key constraint
+
+`NO_FOREIGN_KEYS` in `src/lib/schema-diff/migration-generator.ts` names BigQuery, so an added or dropped foreign key is declined with `-- BigQuery: Cannot add a foreign key. The engine has no foreign-key constraint.` (and the `Cannot drop` twin).
+BigQuery does have foreign keys, declared `NOT ENFORCED`, as it has primary keys, and the same file's `NO_PRIMARY_KEY_CONSTRAINT` row for BigQuery already says so for the primary key: "BigQuery accepts a primary key only as PRIMARY KEY (...) NOT ENFORCED."
+The decline itself may stay; its reason is false.
+
+Found 2026-10-13 while reviewing the Apache Spark provider (#1759); pre-existing.
+
+**Done when:** BigQuery's foreign-key decline gives a reason of its own (the key exists only as `FOREIGN KEY (...) REFERENCES ... NOT ENFORCED`), or the generator writes that form, with the BigQuery cases in `tests/unit/schema-diff/migration-dialects.test.ts` pinning the new text.
+
+### D351. Snowflake's unreadable-value sentence writes "a OBJECT" and "a ARRAY"
+
+`SNOWFLAKE_DECODE_SENTENCES.unreadable` in `src/lib/db/providers/sql/snowflake/decode.ts` composes `Snowflake sent a ${columnType} value in column ...` with a fixed "a".
+`columnTypeOf` passes an unnamed type through upper-cased, and `decodeCell` refuses a non-string cell of any type, so an OBJECT or ARRAY column yields "Snowflake sent a OBJECT value" and "Snowflake sent a ARRAY value" (measured 2026-10-14 on `main` through `decodeCell`).
+The named types (NUMBER, DECFLOAT, FLOAT, VARCHAR, BOOLEAN, BINARY, DATE, TIME, the three TIMESTAMP types) all take "a", so only the pass-through names are wrong.
+
+Found 2026-10-14 while reviewing the Apache Spark provider (#1759); pre-existing.
+
+**Done when:** the sentence chooses its article from the type name it composes, as `KEY_TYPE_NAMES` in `auth.ts` does for key types, and `tests/unit/db/snowflake/decode.test.ts` pins the OBJECT and ARRAY sentences.
+
 ## Value interpolation
 
 ### V1. Query history records the placeholders, not the values that were bound
@@ -5398,6 +5429,48 @@ Found 2026-10-13 while reviewing #1629.
 
 **Done when:** the claim's height no longer grows with the engine list (for example a count with the names behind a disclosure), the spacing #1629 took back is restored, and `tests/components/LoginPage.test.tsx` still pins that the claim names only engines agent mode executes on.
 
+### U140. The connection dialog's field census leaves six shipped types out
+
+The docblock of the "declared connection-field copy (#1085)" block in `tests/components/ConnectionModal.test.tsx` says its `SHIPPED` table holds "every shipped type", but the table has no row for BigQuery, Snowflake, Neo4j, MQTT, Firestore or OPC UA, six of the thirty-six in `SHIPPED_DATABASE_TYPES` (counted 2026-10-14 on `main`).
+The same docblock calls Prometheus and Kafka "the shipped entries that declare either" label or hint, while `src/lib/db-ui-config.ts` now declares field copy for libSQL, Db2, etcd, Neo4j, Milvus, Qdrant, InfluxDB and InfluxDB 3 as well.
+So a change to the labels or hints of those six types reaches no census row.
+
+Found 2026-10-13 while building the Apache Spark provider (#1759); pre-existing.
+
+**Done when:** `SHIPPED` has a row for every id in `SHIPPED_DATABASE_TYPES`, a test holds the two sets equal so the next type cannot be left out, and the docblock names the declaring entries by what they declare rather than by a list.
+
+### U141. JSON export drops an own `__proto__` key from every engine's rows
+
+`jsonSafe` in `src/lib/export/json.ts` rebuilds an object as `out[key] = ...` over `Object.entries`, so an own key named `__proto__` sets the copy's prototype instead of a property, and `JSON.stringify` then leaves it out.
+`binaryCellsAsHex` in the same file builds a row the same way, so a column named `__proto__` is dropped from the row as well.
+Measured 2026-10-14 on `main`: `jsonText(JSON.parse('{"__proto__":{"a":1},"b":2}'))` answers `{"b":2}`, nested inside another value too, and `binaryCellsAsHex` of a row with a `__proto__` column answers the row without it.
+Every engine's JSON export, Copy as JSON and row-detail Copy JSON go through these two functions.
+
+Found 2026-10-13 while reviewing the Apache Spark provider (#1759); pre-existing.
+
+**Done when:** both functions build their copy with `Object.fromEntries` or `Object.defineProperty`, so an own `__proto__` key survives as data, and `tests/unit/lib/export/json.test.ts` pins it for a nested value and for a column.
+
+### U142. The login page's engine list has no room left at 1366x768 once Apache Spark lands
+
+The desktop engine list on the login page (`DesktopDatabases` in `src/components/login/database-showcase.tsx`) wraps one pill per engine, and its docblock records how each new engine has been paid for out of the row gap, now 4px (`gap-y-1`) with thirty-six entries.
+The Apache Spark provider (#1759) measured on 2026-10-13 that the thirty-seventh entry wraps 1366x768 into a sixth row and scrolls it to 777px at 4px, and moved the gap to 2px (`gap-y-0.5`), where the four sizes need 784, 767, 749 and 695px of 800, 768, 900 and 1080.
+That leaves 1px at 1366x768 and no smaller row gap to give, so the engine after Spark will make the page scroll at that size.
+U139 is the same pressure on the agent claim above it.
+
+Found 2026-10-13 while building the Apache Spark provider (#1759); a known upcoming limit of `main`'s layout.
+
+**Done when:** the list's height no longer grows with the engine count (for example a fixed number of rows with the rest behind a count, or columns sized to the viewport), the row gap is back at 4px or more, and `e2e/login.spec.ts` asserts no vertical scroll at 1280x800 and 1366x768 with one engine added past the shipped set.
+
+### U143. A skipped INSERT row names the dialect by its type id
+
+When a cell has no literal in the target dialect, the SQL INSERT export writes `-- Row N skipped: column X holds <held>, which <dialect> has no literal for.` (`skippedRow` in `src/lib/export/result-export.ts`).
+`<dialect>` is the `DatabaseType` id, so the file reads "which snowflake has no literal for", "which trino ...", "which cassandra ...", where every other sentence a user reads names the engine by its display label ("Snowflake", "Trino", "Apache Cassandra").
+On `main` no held phrase (`UnwritableValue` in `src/lib/export/typed-literals.ts`) ends in a "which" clause of its own, so the line does not yet read "which" twice; a held phrase that adds one would.
+
+Found 2026-10-13 while building the Apache Spark provider (#1759); pre-existing.
+
+**Done when:** the comment names the engine by its `DB_UI_CONFIG` label, the "which" clause cannot follow a held phrase that already has one (a sentence shape that does not chain two relative clauses), and the skipped-row cases in `tests/unit/lib/export/result-export.test.ts` pin the new text.
+
 ## Dependencies
 
 ### P1. The desktop shell's `glib` advisory has no reachable fix while Tauri v2 targets GTK 3
@@ -5850,6 +5923,84 @@ Section 5.1 says the provider sends `jobs.cancel` when the call fails or is abor
 Found 2026-10-12 while designing the Snowflake provider.
 
 **Done when:** the sentence names only what aborts the call today, or BigQuery gains `cancelQuery` and the route's abort reaches it, with the doc and a test saying which.
+
+### DOC26. docs/AGENT.md counts the measured models as thirty-six, a number that moved with the engines
+
+The end of "Supported models" in `docs/AGENT.md` says "What the thirty-six have is a measurement.", while the section opens "Thirty-five models run every agent surface.".
+The sentence counted models until the Snowflake merge (a6c304a8c), whose sweep of engine numerals from thirty-five to thirty-six took this model count with them.
+Neither number matches `docs/llms/README.md`, the table the section points to, which opens "Forty-six models are supported." and then speaks of "the thirty-five" a paragraph later.
+
+Found 2026-10-13 while building the Apache Spark provider (#1759); pre-existing.
+
+**Done when:** the model count is settled from the table's rows, `docs/AGENT.md` and `docs/llms/README.md` state the same number (or `docs/AGENT.md` points to the table instead of counting), and a test reads the count from the table so an engine-count sweep can no longer reach it.
+
+### DOC27. README_ko.md names MQTT and RabbitMQ twice in two engine lists
+
+`README_ko.md:150` and `README_ko.md:183` list "Apache Kafka, MQTT, RabbitMQ, etcd, ..." and end with "Kubernetes, MQTT, RabbitMQ, OPC UA", so both engines appear twice in each.
+`README.md:129` and `README_zh.md:145` name them once, at the end.
+
+Found 2026-10-13 while building the Apache Spark provider (#1759); pre-existing.
+
+**Done when:** both Korean lines name each engine once in `README.md`'s order, and `readme:check` still passes.
+
+### DOC28. The README newest-engine chain test lost its RabbitMQ to Snowflake link
+
+The README chain case in `tests/unit/db/s3/provider-doc.test.ts` pins each "X came before Y" link of `README.md`'s newest-engine history, and its own comment says each link is pinned at both ends.
+The Snowflake provider (31c3ca8c3) added `expect(readme).toContain("RabbitMQ came before Snowflake: the management API browses")`, and the merge that brought in OPC UA beside it dropped that line: the chain now pins "Snowflake came before OPC UA" and "Firestore came before RabbitMQ" with nothing between, so `README.md:132` can be deleted or reworded and the test stays green.
+
+Found 2026-10-13 while building the Apache Spark provider (#1759); pre-existing.
+
+**Done when:** the case pins "RabbitMQ came before Snowflake" again, its comment names that link, and a test derives the chain's links from the README's lines so that no link can be skipped.
+
+### DOC29. Seven hand-kept engine lists miss BigQuery and Firestore, and CATALOG_LISTING.md says they are complete
+
+No gate reads these lists for completeness, and each misses engines that shipped (checked 2026-10-14 on `main` against the labels of `EXTERNAL_DATABASE_TYPES`):
+
+- `packaging/winget/LibreDB.Studio.locale.en-US.yaml.tmpl:23-25`, `packaging/chocolatey/libredb-studio.nuspec.tmpl:37`, `desktop/src-tauri/tauri.conf.json:33`, `snap/snapcraft.yaml:37-41` and `deploy/koyeb/CATALOG_SUBMISSION.md:54-56` miss BigQuery and Firestore.
+- The "Databases it speaks:" lists of `packaging/flatpak/org.libredb.Studio.metainfo.xml:34-65` and `packaging/flatpark/org.libredb.Studio.metainfo.xml:43-74` miss BigQuery, Firestore and Snowflake.
+
+`packaging/linux/nfpm.yaml`, which is gated, names all of them, with Firestore after Couchbase and BigQuery between Databend and Snowflake.
+The BigQuery (#1672) and Firestore (#1695) changes never added themselves to the seven files, and the Snowflake change never reached the two metainfo lists.
+`deploy/rancher/CATALOG_LISTING.md` then says three false things about them:
+
+- Lines 111-118 say winget's, chocolatey's and tauri's "exhaustive descriptions still name every engine", and that the claim "was false until a review read them", which reads as true again; it is not.
+- Line 109 says the AUR package "is twelve ahead" and that its `pkgdesc` says thirty, while `packaging/aur/PKGBUILD` pins `pkgver=0.17.0` (eighteen engines) and its `pkgdesc` says thirty-five, so it is seventeen ahead, and the list of engines 0.17.0 lacks stops at MQTT, without BigQuery, Firestore, RabbitMQ, Snowflake or OPC UA.
+- Line 107's pointer "see BACKLOG D39 - nothing counts these lists" lands on D39, a slow-query entry.
+
+Found 2026-10-13 while building the Apache Spark provider (#1759); pre-existing.
+
+**Done when:** the seven lists name every shipped engine in `nfpm.yaml`'s order (Firestore written "Firestore (read-only)" in the metainfo lists, as they write the other read-only engines), the three `CATALOG_LISTING.md` passages say what is true and point at this entry or its successor, and a test compares each list with the shipped labels so the next engine cannot miss one.
+
+### DOC30. OPC UA is missing from the README connection caption, stack table and prerequisites
+
+`README.md:158` (the connection screenshot's caption), `README.md:372` (the stack table's Database row) and `README.md:465` (the prerequisites' target database list) name every external engine but OPC UA, and so do `README_zh.md:172`, `README_zh.md:337` and `README_zh.md:424` and `README_ko.md:193` (checked 2026-10-14 on `main`).
+`README_ko.md:379` and `README_ko.md:462` lag further: they also miss Firestore, BigQuery, Databend, Snowflake, S3-compatible object storage and Kubernetes.
+The not-SQL sentence of `README_zh.md:158` and `README_ko.md:175` starts at Oxia, where `README.md:145` names OPC UA, Kubernetes and S3-compatible object storage first.
+The other six translations' engine lists name OPC UA.
+
+Found 2026-10-13 while building the Apache Spark provider (#1759); pre-existing.
+
+**Done when:** each of these lines names the engines its English counterpart names, and `readme:check` or a README test compares each list with the shipped labels.
+
+### DOC31. A composed-sql.ts comment says every shipped grammar row declares backslashAlwaysEscapes false
+
+The docblock above `assertSelector` in `src/lib/agent/composed-sql.ts` says the per-dialect fact `backslashAlwaysEscapes` is one "that every shipped row declares false".
+In `src/lib/sql/grammar.ts`, `DATABEND_GRAMMAR`, `BIGQUERY_GRAMMAR` and `SNOWFLAKE_GRAMMAR` declare it `true`.
+The function's rule, refusing any backslash in a selector, is unaffected: the docblock already says it is correct whichever way a row declares the fact, so only the sentence is stale.
+S2's heading and its "Every shipped row but Databend's" sentence in this file are stale the same way.
+
+Found 2026-10-13 while building the Apache Spark provider (#1759); pre-existing.
+
+**Done when:** the docblock says the rule holds whichever way a row declares the fact without counting the rows, and S2's heading and sentence name the rows that declare it `true` or stop counting them.
+
+### DOC32. docs/AGENT.md says composed-sql.ts composes for four engines
+
+The repository layout in `docs/AGENT.md` annotates `composed-sql.ts` as "the SQL the SERVER writes, per dialect: four of the thirty-six".
+`CATALOG_COMPOSERS` in `src/lib/agent/composed-sql.ts` has five rows (PostgreSQL, SQLite, DuckDB, SQL Server and MySQL) since #1629 added MySQL's; the thirty-six is the size of `DatabaseType` and is right today.
+
+Found 2026-10-13 while building the Apache Spark provider (#1759); pre-existing.
+
+**Done when:** the annotation names the composed dialects, or counts `CATALOG_COMPOSERS` with no denominator that moves with each engine, and `tests/unit/agent-documentation.test.ts` holds it to the record.
 
 ## Release pipeline
 
