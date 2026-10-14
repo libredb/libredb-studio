@@ -3991,6 +3991,36 @@ describe("AgentRail", () => {
      * to claim it is not to promise it: `onRunStatement` is an optional public prop,
      * so any embedding host can be in this state.
      */
+    /*
+      The hand-over is the variant's `canAutoExecute`, read for the connection's own language. An engine with no
+      statement language has no variant to hand anything over from, so it is not offered the promise; a host that
+      names no engine at all keeps the SQL reading, which is what every host passing no type has always seen.
+    */
+    describe("the hand-over follows the connection's statement language", () => {
+      test("an engine with no statement language reaches no consent step", async () => {
+        const fetchMock = mockAgentFetch([OPENED_LINE, STARTED_LINE]);
+        const view = analyze({ connectionType: "mongodb" });
+        fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by region" } });
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-start"));
+        });
+
+        expect(view.queryByTestId("agent-consent")).toBeNull();
+        expect(startBodyOf(fetchMock).autoExecute).toBe(false);
+      });
+
+      test.each([undefined, null, "postgres"])("a connection type of %p is offered it", async (connectionType) => {
+        mockAgentFetch([OPENED_LINE, STARTED_LINE]);
+        const view = analyze({ connectionType });
+        fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by region" } });
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-start"));
+        });
+
+        expect(view.getByTestId("agent-consent")).toBeTruthy();
+      });
+    });
+
     describe("a host with no runner is not offered the promise", () => {
       test("no consent step is reached at all on the workflow that otherwise has one", async () => {
         const fetchMock = mockAgentFetch([OPENED_LINE, STARTED_LINE]);

@@ -21,12 +21,13 @@ import type { AgentRunConnection } from "@/hooks/use-connection-payload";
 import { isMobileViewport, useIsMobile } from "@/hooks/use-mobile";
 import { describeAgentCapability } from "@/lib/agent/capability-labels";
 /*
-  The list the SERVER gates a profiled acquisition on, read here for one presentation:
-  an engine outside it cannot execute an agent run's statement, and saying so before
-  Start is pressed is cheaper for the user than a run that ends `engine-unsupported`.
-  It gates nothing — the refusal is the factory's, and this is a notice about it.
+  The record the SERVER decides availability from, read here for two presentations: an
+  engine with no statement language cannot execute an agent run's statement, and saying
+  so before Start is pressed is cheaper for the user than a refused start; and a workflow
+  variant says whether its answer may be handed over. It gates nothing: the refusal is
+  the route's, and this is a notice about it.
 */
-import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
+import { AGENT_STATEMENT_LANGUAGE, agentVariant } from "@/lib/agent/agent-manifest";
 import {
   AGENT_MAX_OBJECTIVE_LENGTH,
   AGENT_REPORT_RESERVE_MS,
@@ -41,7 +42,6 @@ import {
 */
 import { agentPosture } from "@/lib/agent/posture";
 import {
-  AGENT_WORKFLOW_PRESENTS_ANSWER,
   DEFAULT_AGENT_WORKFLOW_TYPE,
   type AgentChartSpec,
   type AgentRunMode,
@@ -1111,7 +1111,10 @@ export const AgentRail = React.memo(function AgentRail({
 
     Agent mode and a workflow that is offered `present_answer` are the server's own
     rule: a run with no such tool has nothing to hand over, and the route refuses the
-    setting outright.
+    setting outright. It is read off the workflow's variant for the connection's
+    statement language, so an engine with no language has no variant and is offered
+    nothing. A host that names no engine reads the SQL variant, which is what every host
+    passing no type has always been offered.
 
     `onRunStatement` is the HOST's half, and it was missing (#373 review). It is an
     optional public prop, so an embedding host may have no way to run a statement at
@@ -1121,8 +1124,15 @@ export const AgentRail = React.memo(function AgentRail({
     cannot perform is not offered, which is the rule the stop control and the hydration
     affordances already follow.
   */
-  const canHandOver = (candidate: AgentRunWorkflowType): boolean =>
-    mode === "agent" && AGENT_WORKFLOW_PRESENTS_ANSWER[candidate] && onRunStatement !== undefined;
+  const canHandOver = (candidate: AgentRunWorkflowType): boolean => {
+    const language = connectionType === null ? undefined : AGENT_STATEMENT_LANGUAGE[connectionType];
+    return (
+      mode === "agent" &&
+      language !== null &&
+      agentVariant(language, candidate)?.canAutoExecute === true &&
+      onRunStatement !== undefined
+    );
+  };
 
   /**
    * The connection this run was opened on, kept for as long as the rail follows it.
@@ -1884,7 +1894,7 @@ export const AgentRail = React.memo(function AgentRail({
     state, which is what is true.
   */
   const engineUnsupported =
-    mode === "agent" && connectionType !== null && !AGENT_EXECUTION_ENGINES.includes(connectionType);
+    mode === "agent" && connectionType !== null && AGENT_STATEMENT_LANGUAGE[connectionType] === null;
 
   /*
     Whether the amber card above is ALREADY saying what the refused start would say, which
@@ -2500,7 +2510,7 @@ export const AgentRail = React.memo(function AgentRail({
           Agent mode on an engine that has no read-only statement path (item 5).
 
           The facts are the posture's, so this card invents nothing: the engines that DO
-          have one are named from `AGENT_EXECUTION_ENGINES` rather than typed, the two
+          have one are named from the posture's own list rather than typed, the two
           ways forward are the two that are actually open — plan mode drafts here, and the
           operations workflow sends no statement at all — and no run would open at all.
           (It used to say the run would END `engine-unsupported` before its first

@@ -13,7 +13,7 @@
 import type { DatabaseType } from "@/lib/types";
 import type { AgentGoalVerifierId } from "./goal-verifier";
 import type { AgentToolName } from "./tools";
-import type { AgentRunWorkflowType } from "./types";
+import type { AgentRunMode, AgentRunWorkflowType } from "./types";
 
 /** The statement languages agent mode can send. A later engine reuses one or registers a new id here. */
 export type AgentStatementLanguageId = "sql" | "kubectl";
@@ -337,4 +337,111 @@ export function planObjectiveOf(
   workflow: AgentRunWorkflowType,
 ): string {
   return (agentVariant(language, workflow) ?? requiredVariant("sql", workflow)).objective;
+}
+
+/**
+ * Whether a run of one workflow opens on one engine in one mode, and under what.
+ *
+ * Read by the start route, which refuses before a run id or a model turn is spent, and by the rail and the strip,
+ * which say the same thing before Start is pressed. One function rather than three readings of the tables, so the
+ * notice and the refusal cannot disagree about an engine.
+ */
+export type AgentWorkflowAvailability =
+  | {
+      readonly open: true;
+      /** The language to persist on the run; null where the engine has none (operations and planning only). */
+      readonly statementLanguage: AgentStatementLanguageId | null;
+      /** The variant the run is opened under; null for a planning run on an engine with no language. */
+      readonly variant: AgentWorkflowVariant | null;
+    }
+  | { readonly open: false; readonly cause: "no-adapter" }
+  | { readonly open: false; readonly cause: "no-variant" | "requirement-unmet"; readonly sentence: string };
+
+/**
+ * The tables availability is decided from. A parameter rather than read inline so the two refusals the manifest
+ * cannot produce while every language it holds is total stay tested: a language whose variants are being filled in
+ * is exactly where they occur.
+ */
+interface AgentAvailabilityTables {
+  readonly languages: Readonly<Record<DatabaseType, AgentStatementLanguageId | null>>;
+  readonly variants: Readonly<
+    Record<AgentStatementLanguageId, Readonly<Partial<Record<AgentRunWorkflowType, AgentWorkflowVariant>>>>
+  >;
+  readonly requirementEngines: Readonly<Record<AgentVariantRequirement, readonly DatabaseType[]>>;
+}
+
+const MANIFEST_TABLES: AgentAvailabilityTables = Object.freeze({
+  languages: AGENT_STATEMENT_LANGUAGE,
+  variants: AGENT_WORKFLOW_VARIANTS,
+  requirementEngines: AGENT_REQUIREMENT_ENGINES,
+});
+
+const NO_VARIANT_SENTENCE =
+  "Agent mode does not offer this workflow on this engine. The operations workflow runs here, and plan mode drafts here.";
+
+/** Each requirement's refusal names what the engine lacks, and both ways forward that remain. */
+const REQUIREMENT_SENTENCES: Readonly<Record<AgentVariantRequirement, string>> = Object.freeze({
+  "sql-composers":
+    "Agent mode has no verified catalog or plan composition for this engine, so this workflow's tools could only refuse. The operations workflow runs here, and plan mode drafts here.",
+  "cluster-usage-reading":
+    "This engine serves no usage reading, so this workflow's tools could only refuse. The operations workflow runs here, and plan mode drafts here.",
+  "cluster-workload-reading":
+    "This engine serves no workload profile, so this workflow's tools could only refuse. The operations workflow runs here, and plan mode drafts here.",
+});
+
+/** `agentVariant` over the given tables, guarded the same way against a workflow naming an inherited property. */
+function variantIn(
+  tables: AgentAvailabilityTables,
+  language: AgentStatementLanguageId,
+  workflow: AgentRunWorkflowType,
+): AgentWorkflowVariant | undefined {
+  const variants = tables.variants[language];
+  return Object.hasOwn(variants, workflow) ? variants[workflow] : undefined;
+}
+
+/**
+ * The arms in the order they exclude each other. Plan mode first, because it executes nothing it drafts and so no
+ * adapter gates it. Then operations, which sends no statement and opens on every engine, language or not. Only then
+ * does the language matter, then whether it has the workflow, then whether the engine holds what the variant needs.
+ */
+export function workflowAvailability(
+  mode: AgentRunMode,
+  workflow: AgentRunWorkflowType,
+  type: DatabaseType,
+  tables: AgentAvailabilityTables = MANIFEST_TABLES,
+): AgentWorkflowAvailability {
+  const language = tables.languages[type];
+  if (mode === "planning") {
+    return {
+      open: true,
+      statementLanguage: language,
+      variant: language === null ? null : (variantIn(tables, language, workflow) ?? null),
+    };
+  }
+  if (workflow === "operations") return { open: true, statementLanguage: language, variant: OPERATIONS_VARIANT };
+  if (language === null) return { open: false, cause: "no-adapter" };
+  const variant = variantIn(tables, language, workflow);
+  if (variant === undefined) return { open: false, cause: "no-variant", sentence: NO_VARIANT_SENTENCE };
+  const unmet = variant.requires.find((requirement) => !tables.requirementEngines[requirement].includes(type));
+  if (unmet !== undefined) return { open: false, cause: "requirement-unmet", sentence: REQUIREMENT_SENTENCES[unmet] };
+  return { open: true, statementLanguage: language, variant };
+}
+
+/**
+ * What a run opened under an availability persists: the language unless it is sql, the verifier unless it is the SQL
+ * one. Absence is what both fields read as, so an SQL run writes the header bytes it always wrote. A plan is judged by
+ * the planning rule whatever its variant says, so it never persists a verifier.
+ */
+export function persistedRunFacts(
+  mode: AgentRunMode,
+  workflow: AgentRunWorkflowType,
+  availability: Extract<AgentWorkflowAvailability, { open: true }>,
+): { readonly statementLanguage?: AgentStatementLanguageId; readonly verifier?: AgentGoalVerifierId } {
+  const language = availability.statementLanguage;
+  const sqlVerifier = requiredVariant("sql", workflow).verifier;
+  const verifier = mode === "agent" ? availability.variant?.verifier : undefined;
+  return {
+    ...(language === null || language === "sql" ? {} : { statementLanguage: language }),
+    ...(verifier === undefined || verifier === sqlVerifier ? {} : { verifier }),
+  };
 }

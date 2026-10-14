@@ -18,6 +18,7 @@ import * as realAuth from "@/lib/auth";
 import * as realSeed from "@/lib/seed/resolve-connection";
 import * as realGate from "@/lib/agent/capability-gate";
 import * as realDb from "@/lib/db";
+import * as realManifest from "@/lib/agent/agent-manifest";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { AgentRunStoreError } from "@/lib/agent/run-store";
 import { agentPosture } from "@/lib/agent/posture";
@@ -157,6 +158,13 @@ const mockStream = mock(
 const mockDriveAgentRun = mock(async () => ({ runId: "arun_new", status: "succeeded" }));
 
 /**
+ * The manifest's own answer unless a test names another. The route has two refusals the manifest cannot produce
+ * today, a missing variant and an unmet requirement, and this is how their branch is driven.
+ */
+const realWorkflowAvailability = realManifest.workflowAvailability;
+const mockWorkflowAvailability = mock(realWorkflowAvailability);
+
+/**
  * Re-applied in `beforeEach` as well as at import time: `mock.module` replaces a
  * module process-wide, and `tests/api/agent/drive.test.ts` mocks the same runtime
  * module in the same process under `bun run test`. Re-registering makes the file
@@ -173,6 +181,10 @@ function installMocks(): void {
   mock.module("@/lib/seed/resolve-connection", () => ({ ...realSeed, resolveConnection: mockResolveConnection }));
   // Opening a database's session connects; the suite answers it instead (#1530).
   mock.module("@/lib/db", () => ({ ...realDb, getOrCreateProvider: mockGetOrCreateProvider }));
+  mock.module("@/lib/agent/agent-manifest", () => ({
+    ...realManifest,
+    workflowAvailability: mockWorkflowAvailability,
+  }));
   mock.module("@/lib/agent/runtime", () => ({
     getAgentRunService: mock(async () => ({
       start: mockStart,
@@ -222,6 +234,9 @@ beforeEach(() => {
   mockResolveConnection.mockClear();
   mockPause.mockClear();
   mockUnpause.mockClear();
+  mockWorkflowAvailability.mockClear();
+  // The captured original, not the namespace's: once the module is replaced, the namespace answers the mock itself.
+  mockWorkflowAvailability.mockImplementation(realWorkflowAvailability);
 });
 
 afterEach(() => {
@@ -700,6 +715,64 @@ describe("POST /api/agent/runs", () => {
     expect(res.status).toBe(202);
     expect(mockStart).toHaveBeenCalledTimes(1);
   });
+
+  test("a MongoDB investigation is refused with the posture's own paragraph", async () => {
+    mockResolveConnection.mockResolvedValueOnce({ id: "seed:docs", name: "Docs", type: "mongodb" });
+
+    const res = await POST(startRequest({ ...VALID_BODY, workflowType: "investigation" }));
+    const body = await parseResponseJSON<{ error: string; refused?: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(body.error).toBe(
+      agentPosture({ mode: "agent", engine: "mongodb", engineLabel: getDBConfig("mongodb").label, handover: false })
+        .body,
+    );
+    expect(body.refused).toBe("engine-unsupported");
+    expect(mockStart).not.toHaveBeenCalled();
+  });
+
+  test("a Postgres run is opened with no statement language and no verifier, so its header is unchanged", async () => {
+    for (const mode of ["agent", "planning"]) {
+      mockStart.mockClear();
+      const res = await POST(startRequest({ ...VALID_BODY, mode, workflowType: "query-optimization" }));
+      expect(res.status, mode).toBe(202);
+      const input = mockStart.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(Object.hasOwn(input, "statementLanguage"), mode).toBe(false);
+      expect(Object.hasOwn(input, "verifier"), mode).toBe(false);
+    }
+  });
+
+  test("a run opened under another language persists it, and its verifier", async () => {
+    const variant = {
+      ...realManifest.requiredVariant("sql", "investigation"),
+      verifier: "agent-database-assessment.1" as const,
+    };
+    mockWorkflowAvailability.mockImplementationOnce(() => ({ open: true, statementLanguage: "kubectl", variant }));
+
+    const res = await POST(startRequest({ ...VALID_BODY, workflowType: "investigation" }));
+
+    expect(res.status).toBe(202);
+    expect(mockStart.mock.calls[0]?.[0]).toMatchObject({
+      statementLanguage: "kubectl",
+      verifier: "agent-database-assessment.1",
+    });
+  });
+
+  test.each(["no-variant", "requirement-unmet"] as const)(
+    "a %s refusal answers its own sentence under the engine marker, before a run or a model call",
+    async (cause) => {
+      mockWorkflowAvailability.mockImplementationOnce(() => ({ open: false, cause, sentence: `refused: ${cause}` }));
+
+      const res = await POST(startRequest({ ...VALID_BODY, workflowType: "investigation" }));
+      const body = await parseResponseJSON<{ error: string; refused?: string }>(res);
+
+      expect(res.status).toBe(400);
+      expect(body).toEqual({ error: `refused: ${cause}`, refused: "engine-unsupported" });
+      expect(mockWorkflowAvailability).toHaveBeenCalledWith("agent", "investigation", "postgres");
+      expect(mockStart).not.toHaveBeenCalled();
+      expect(mockAdmitAgentModel).not.toHaveBeenCalled();
+    },
+  );
 
   test("an engine that HAS a read-only statement path opens every workflow", async () => {
     // The negative control: without it the refusal above could be refusing everything.

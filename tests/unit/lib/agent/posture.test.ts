@@ -1,6 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as manifest from "@/lib/agent/agent-manifest";
 import { AGENT_EXECUTION_ENGINES, namedList } from "@/lib/agent/engine-support";
 import { AGENT_HANDOVER_BUDGET, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { agentPosture, autoExecuteTerms } from "@/lib/agent/posture";
@@ -283,6 +284,31 @@ describe("the engine names follow the enforcing list", () => {
       expect(withThree({ mode: "agent", engine: "mysql", engineLabel: "MySQL", handover: false }).tone).toBe("reads");
     } finally {
       mock.module("@/lib/agent/engine-support", () => ({ AGENT_EXECUTION_ENGINES: real, namedList }));
+    }
+  });
+
+  test("whether an engine executes is the manifest's answer: an engine with a statement language reads", async () => {
+    // Captured as a plain object before the substitution: the namespace itself follows the replacement.
+    const real = { ...manifest };
+    try {
+      mock.module("@/lib/agent/agent-manifest", () => ({
+        ...real,
+        AGENT_STATEMENT_LANGUAGE: { ...real.AGENT_STATEMENT_LANGUAGE, mongodb: "sql", postgres: null },
+      }));
+      const { agentPosture: fromManifest } = await import("@/lib/agent/posture");
+
+      expect(fromManifest({ mode: "agent", engine: "mongodb", engineLabel: "MongoDB", handover: false }).tone).toBe(
+        "reads",
+      );
+      expect(
+        fromManifest({ mode: "agent", engine: "postgres", engineLabel: "PostgreSQL", handover: false }).headline,
+      ).toBe("Cannot execute on PostgreSQL");
+      // No connection is still no engine, whatever the manifest holds: it reads as unresolved, not as SQL.
+      expect(fromManifest({ mode: "agent", engine: null, engineLabel: "", handover: false }).headline).toBe(
+        "Cannot execute yet",
+      );
+    } finally {
+      mock.module("@/lib/agent/agent-manifest", () => real);
     }
   });
 

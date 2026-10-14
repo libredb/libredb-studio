@@ -15,8 +15,8 @@
  *
  * Three properties are load-bearing and easy to lose:
  *
- *  - **Client-safe imports only** - types, `AGENT_EXECUTION_ENGINES`, `getDBConfig` and the
- *    policy constants. A provider module here would drag `oracledb`/`mssql` toward a bundle
+ *  - **Client-safe imports only** - types, `AGENT_EXECUTION_ENGINES`, the manifest's
+ *    `AGENT_STATEMENT_LANGUAGE`, `getDBConfig` and the policy constants. A provider module here would drag `oracledb`/`mssql` toward a bundle
  *    that must not have them, which is the rule `engine-support.ts` records in its header.
  *  - **Every engine name and every number is DERIVED.** Not one is typed as a literal, and
  *    not one is a count. The point of #425 is that "7+" was written when the answer was 7
@@ -29,6 +29,7 @@
  *    carries the full claim rather than the missing half.
  */
 
+import { AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
 import { AGENT_EXECUTION_ENGINES, namedList } from "@/lib/agent/engine-support";
 import { AGENT_HANDOVER_BUDGET, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import type { AgentRunMode, AgentRunWorkflowType } from "@/lib/agent/types";
@@ -198,8 +199,11 @@ function readsPosture(): AgentPosture {
  * does the hand-over matter, which is why a ticked hand-over on an unsupported engine still
  * reads as blocked rather than as widened.
  *
- * `AGENT_EXECUTION_ENGINES` is read on every call, not folded into a constant at module
- * load, so the copy follows the list in the process that is running.
+ * Whether the engine executes is `AGENT_STATEMENT_LANGUAGE`'s answer, the record the start
+ * route refuses from, so the strip and the refusal cannot disagree about an engine. It and
+ * `AGENT_EXECUTION_ENGINES`, which names the engines in the copy, are read on every call,
+ * not folded into a constant at module load, so the copy follows the lists in the process
+ * that is running.
  */
 export function agentPosture(input: {
   readonly mode: AgentRunMode;
@@ -209,6 +213,6 @@ export function agentPosture(input: {
 }): AgentPosture {
   if (input.mode === "planning") return planPosture();
   if (input.engine === null) return unresolvedPosture();
-  if (!AGENT_EXECUTION_ENGINES.includes(input.engine)) return unsupportedPosture(input.engineLabel);
+  if (AGENT_STATEMENT_LANGUAGE[input.engine] === null) return unsupportedPosture(input.engineLabel);
   return input.handover ? widenedPosture() : readsPosture();
 }

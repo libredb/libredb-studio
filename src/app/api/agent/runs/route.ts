@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
+import { persistedRunFacts, workflowAvailability } from "@/lib/agent/agent-manifest";
 import { admitAgentModel } from "@/lib/agent/capability-gate";
 import { isAgentRuntimeEnabled, isThreadContextEnabled } from "@/lib/agent/config";
 import { connectionIdentity } from "@/lib/agent/context-snapshot";
-import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
 import {
   AGENT_HISTORY_PAGE_DEFAULT,
   AGENT_HISTORY_PAGE_MAX,
@@ -18,7 +18,6 @@ import { threadContextFor } from "@/lib/agent/thread-context";
 import {
   AGENT_TERMINAL_STATUSES,
   AGENT_WORKFLOW_PRESENTS_ANSWER,
-  AGENT_WORKFLOW_SENDS_STATEMENTS,
   DEFAULT_AGENT_WORKFLOW_TYPE,
   type AgentRunFailureReason,
   type AgentRunMode,
@@ -324,31 +323,35 @@ export async function POST(req: Request) {
       can change it. So the run spent a run id, a grounding capture and a model turn to
       reach a sentence that was already available here.
 
-      Three things this checks, in the order they exclude each other:
+      The decision is the manifest's `workflowAvailability`, which checks, in the order
+      they exclude each other:
 
        - **The MODE.** Plan mode drafts on every engine and executes nothing it drafts,
          so an unsupported engine is no reason to refuse one.
-       - **The WORKFLOW**, read off `AGENT_WORKFLOW_SENDS_STATEMENTS` rather than a list
-         written here. `operations` sends no statement at all, and refusing it would
+       - **The WORKFLOW.** `operations` sends no statement at all, and refusing it would
          withhold a workflow that runs on every engine over a claim that is not true of
          it (#411) — which is the same reason the rail's amber pre-start card does not
          gate Start. The workflow has to be known first, and under Automatic it is: the
          rail classifies at `POST /api/agent/classify` and names the workflow in this
          request, so the refusal lands after the classify call and before the open.
-       - **The ENGINE**, from `AGENT_EXECUTION_ENGINES` — the one named mirror of the
-         factory's own gate (`requiresReadOnlyStatements && typeof provider.queryReadOnly
-         !== "function"`), which `tests/unit/lib/agent/engine-support.test.ts` keeps
-         equal to the provider prototypes it claims to describe. Read here rather than
-         probed off a constructed provider, because a construction is not free on the
-         engines this refusal is about: on a single-writer file the second handle throws
-         rather than opening (B49), and it is the same constant the rail, the safety
-         strip and the login hero already read, so the notice and the refusal cannot
-         disagree about which engines they are talking about.
+       - **The ENGINE'S LANGUAGE**, from `AGENT_STATEMENT_LANGUAGE`, keyed by type-id
+         and held by `tests/unit/lib/agent/agent-manifest.test.ts` to every provider
+         that has `queryReadOnly`, the factory's own gate. Read here rather than probed
+         off a constructed provider, because a construction is not free on the engines
+         this refusal is about: on a single-writer file the second handle throws rather
+         than opening (B49), and it is the same record the rail and the safety strip
+         read, so the notice and the refusal cannot disagree about which engines they
+         are talking about.
+       - **The VARIANT and what it requires.** A language may have no variant of the
+         workflow, or a variant whose tools need a reading this engine does not serve;
+         either is refused with the manifest's own sentence.
 
-      The sentence is the posture's, which is the one the rail's own amber card shows as
-      its reason — it names the engines that DO have such a path, that `operations` runs
-      here, and that plan mode drafts here, so a refused user is told both ways forward
-      rather than a third phrasing of the same fact.
+      An engine with no language is answered with the posture's sentence, which is the one
+      the rail's own amber card shows as its reason: it names the engines that DO have
+      such a path, that `operations` runs here, and that plan mode drafts here, so a
+      refused user is told both ways forward rather than a third phrasing of the same
+      fact. The other two refusals carry the same marker, because they are the same kind
+      of fact: the request has to change its workflow, its mode or its connection.
 
       Ahead of `admitAgentModel` on purpose: that gate probes the configured model,
       which is a model call. The engine fact needs no model to establish, so it is
@@ -361,18 +364,17 @@ export async function POST(req: Request) {
       is the same status the route's other cross-field refusal (`autoExecute` on a
       workflow that presents no answer) answers with.
     */
-    if (
-      mode === "agent" &&
-      AGENT_WORKFLOW_SENDS_STATEMENTS[requestedWorkflow] &&
-      !AGENT_EXECUTION_ENGINES.includes(connection.type)
-    ) {
+    const availability = workflowAvailability(mode as AgentRunMode, requestedWorkflow, connection.type);
+    if (!availability.open) {
       return badRequest(
-        agentPosture({
-          mode: "agent",
-          engine: connection.type,
-          engineLabel: getDBConfig(connection.type).label,
-          handover: false,
-        }).body,
+        availability.cause === "no-adapter"
+          ? agentPosture({
+              mode: "agent",
+              engine: connection.type,
+              engineLabel: getDBConfig(connection.type).label,
+              handover: false,
+            }).body
+          : availability.sentence,
         // The only refusal here that a client can already be explaining for itself, so
         // the only one that carries a code (#513).
         "engine-unsupported",
@@ -529,6 +531,9 @@ export async function POST(req: Request) {
       // the request that predates the field, so a run that starts its own conversation
       // writes the same bytes a run opened before conversations existed did.
       ...(thread === undefined ? {} : { thread }),
+      // The language and the verifier the run was opened under, each written only where it
+      // differs from what its absence reads as, so an SQL run's header keeps its bytes.
+      ...persistedRunFacts(mode as AgentRunMode, requestedWorkflow, availability),
       actor: { sessionId: guard.session.username, role: guard.session.role },
       connectionId: connection.id,
       // The database this run is ACTUALLY reading, written unconditionally - including
