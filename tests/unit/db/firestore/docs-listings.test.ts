@@ -138,7 +138,7 @@ describe("the READMEs and Docker Hub", () => {
     const couchbase = lines.findIndex((line) => line.startsWith("| **Couchbase** |"));
     expect(lines[couchbase + 1]).toBe("| **Firestore** | none, REST | Read-only Admin SDK query chain |");
     expect(hub).toContain(
-      "Firestore, Prometheus, InfluxDB, Apache Kafka, MQTT, RabbitMQ, OPC UA, MTConnect, Oxia, S3-compatible object storage and Kubernetes are read-only too",
+      "Firestore, Prometheus, InfluxDB, Apache Kafka, MQTT, RabbitMQ, OPC UA, MTConnect, Modbus, NETCONF, Sparkplug B, SNMP, Oxia, S3-compatible object storage and Kubernetes are read-only too",
     );
   });
 });

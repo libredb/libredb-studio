@@ -82,6 +82,31 @@ async function device(bank: readonly number[], options: { exception?: number } =
   return dev;
 }
 
+/**
+ * Waits for the DEVICE's own side of a fact, rather than assuming it has happened.
+ *
+ * A client's `connect` resolves when the handshake completes on the client; the server's
+ * `connection` handler runs on the server's own turn of the loop, and nothing orders the two. So
+ * `await connect()` followed at once by `expect(dev.connections).toBe(1)` reads a counter that may
+ * not have been written yet - which is a fact about the ASSERTION and not about the provider.
+ * MEASURED, and the measurement is not the one this comment first carried. It said the file alone
+ * was green and only the whole-directory run fell, so load was the cause; that reading was
+ * retracted - the green run had been of a different file. Re-measured, this test falls ALONE too:
+ * five runs of five at one head and three of three at the next, each 12 pass / 1 fail, with the
+ * whole-directory run sometimes passing. So the race is in every run and load does not create it,
+ * it only makes it lose more often; a run that passes is the race won, not the race absent.
+ * A poll keeps the same claim (one connection arrived, and no more than one) without the race, and
+ * it fails on the budget rather than passing silently, so a provider that never dials still fails.
+ */
+async function arrives(what: () => boolean, budgetMs = 1000): Promise<void> {
+  const until = Date.now() + budgetMs;
+  while (Date.now() < until) {
+    if (what()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`The device's side never arrived within ${budgetMs} ms.`);
+}
+
 const MAP = JSON.stringify([
   { name: "volts", unitId: 1, table: "holding_register", address: 0, type: "uint16", unit: "V" },
   { name: "amps", unitId: 1, table: "holding_register", address: 1, type: "uint16", unit: "A" },
@@ -119,9 +144,11 @@ describe("connect answers for the device, not only for the map", () => {
     const dev = await device([230]);
     await provider(dev.port).connect();
     // The dial sends nothing and holds nothing: one connection, no ADU, and it is closed.
-    expect(dev.connections).toBe(1);
+    await arrives(() => dev.connections === 1);
     expect(dev.received).toHaveLength(0);
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await arrives(() => dev.closes === 1);
+    // And not more than one of either, once both sides have been seen.
+    expect(dev.connections).toBe(1);
     expect(dev.closes).toBe(1);
   });
 
@@ -129,7 +156,7 @@ describe("connect answers for the device, not only for the map", () => {
     delete process.env[FLAG];
     const dev = await device([230]);
     await expect(provider(dev.port, "[]").connect()).resolves.toBeUndefined();
-    expect(dev.connections).toBe(1);
+    await arrives(() => dev.connections === 1);
   });
 
   test("a malformed map is still refused before any socket is opened", async () => {
@@ -188,8 +215,7 @@ describe("a read reaches the device and comes back", () => {
     // twice says a NEW socket was used; it does not say the first one was closed, because a read
     // that leaked its socket would dial again all the same. The close count is what says that, and
     // without it dropping `socket.destroy()` from the finally broke no test at all (MEASURED).
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(dev.closes).toBe(2);
+    await arrives(() => dev.closes === 2);
     expect((dev.received[0] as Buffer).readUInt16BE(0)).toBe(1);
     expect((dev.received[1] as Buffer).readUInt16BE(0)).toBe(1);
   });

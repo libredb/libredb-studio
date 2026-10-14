@@ -310,6 +310,10 @@ monitoring, limitations, …) see the prime docs in **[`docs/providers/`](./prov
 | MQTT | `mqtt` | Key-Value (broker topics over MQTT, read-only) | [providers/mqtt.md](./providers/mqtt.md) |
 | OPC UA | `opcua` | Industrial (an address space over `opc.tcp`, read-only) | [providers/opcua.md](./providers/opcua.md) |
 | MTConnect | `mtconnect` | Industrial (an agent over HTTP, read-only) | [providers/mtconnect.md](./providers/mtconnect.md) |
+| Modbus | `modbus` | Industrial (a device or a gateway over TCP, read-only) | [providers/modbus.md](./providers/modbus.md) |
+| NETCONF | `netconf` | Network (a device's YANG datastores over NETCONF on SSH, read-only) | [providers/netconf.md](./providers/netconf.md) |
+| Sparkplug B | `sparkplug` | Industrial (one MQTT broker over the Sparkplug B topic namespace, read-only) | [providers/sparkplug.md](./providers/sparkplug.md) |
+| SNMP | `snmp` | Network (one agent over SNMPv2c on UDP, read-only) | [providers/snmp.md](./providers/snmp.md) |
 | LibreDB | `libredb` | Embedded (key-value) | [providers/libredb.md](./providers/libredb.md) |
 
 ## Core Interface
