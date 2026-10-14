@@ -106,10 +106,21 @@ describe("the grid leaves a Modbus address column open, and says why", () => {
     });
   });
 
-  test("THE DEFECT, pinned: without the engine's declaration the same column is masked", async () => {
+  /**
+   * THE REJECTED FIX, held shut.
+   *
+   * The cheap way to stop a register number being starred out is to take `address` out of the
+   * Address rule. It would work here and it would quietly stop masking a real
+   * `customers.address` on every other connection - and the cost of that is not measurable in
+   * this repository, because what the rule protects is in the user's own schema.
+   *
+   * So this case passes no declaration: it asks what the rules do when no engine has spoken, and
+   * the answer must still be "masked". MEASURED: with `address` removed from `builtin-address`
+   * it is the only case in this file that falls. It is not a canary for the exemption - the two
+   * cases above are - it is the guard on the door the exemption was built to avoid.
+   */
+  test("the rules themselves are untouched: with no declaration the same column is still masked", async () => {
     const { fields } = await readColumns(RANGE);
-    // This is what every reader saw before the exemption existed, and it is held here so the
-    // test above cannot pass by the rules having changed rather than by the engine being heard.
     const { masked, exempt } = splitMaskedColumns(fields, DEFAULT_MASKING_CONFIG, undefined);
     expect({ masked: masked.has("address"), exempt: exempt.size }).toEqual({ masked: true, exempt: 0 });
   });
