@@ -26,6 +26,7 @@ Browser → Redirect to app (/ or /admin based on role)
     - [Zitadel](#zitadel)
     - [Google Workspace](#google-workspace)
   - [Configuration Reference](#configuration-reference)
+  - [Automatic redirect to the provider](#automatic-redirect-to-the-provider)
   - [Role Mapping](#role-mapping)
   - [Security Features](#security-features)
   - [Troubleshooting](#troubleshooting)
@@ -309,6 +310,7 @@ The difference is the realm role (`admin` or `user`), mapped through `OIDC_ROLE_
 | `OIDC_ROLE_CLAIM` | No | — | Claim path for role extraction (dot-notation supported) |
 | `OIDC_ADMIN_ROLES` | No | `admin` | Comma-separated values that map to admin role |
 | `OIDC_PROMPT` | No | `login` | The `prompt` sent on sign-in: `login`, `consent`, `select_account`, or `omit` to send none; see [Single sign-on with OIDC_PROMPT](#single-sign-on-with-oidc_prompt) |
+| `OIDC_AUTO_REDIRECT` | No | off | `true`, `1`, `on` or `yes` sends a signed-out `GET /login` straight to the identity provider; see [Automatic redirect to the provider](#automatic-redirect-to-the-provider) |
 | `AUTH_SESSION_TTL_SECONDS` | No | `86400` | Session lifetime in seconds, from 300 to 86400; see [Session lifetime](#session-lifetime) |
 
 ### Single sign-on with OIDC_PROMPT
@@ -322,6 +324,16 @@ Any other value, `none` included, is a configuration error: sign-in lands on `/l
 `none` is refused because the provider answers it with `login_required` whenever there is no session, which leaves the user on an error instead of a sign-in form.
 
 > Storage configuration (`STORAGE_PROVIDER` etc.) is independent of auth. See [STORAGE.md](./STORAGE.md).
+
+### Automatic redirect to the provider
+
+By default the login page shows a single sign-on button, and the user clicks it to reach the identity provider.
+With `OIDC_AUTO_REDIRECT=true`, a signed-out `GET /login` answers 307 to `<BASE_PATH>/api/auth/oidc/login` instead, so the user sees the provider's sign-in page directly.
+The values `true`, `1`, `on` and `yes` (trimmed, any case) turn it on; unset or empty leaves it off, and any other value leaves it off with one warning in the server log.
+A safe `next` on the login address is carried along, so a deep link still opens what it named after sign-in; an unsafe one is dropped.
+Every OIDC failure lands on `/login?error=<code>`, and a login address with `error` always renders the page, so a failing provider shows its error instead of looping.
+After a logout the provider returns to `/login`, which then starts a new sign-in at the provider.
+The flag has no effect unless `NEXT_PUBLIC_AUTH_PROVIDER=oidc`.
 
 ### Role Mapping
 

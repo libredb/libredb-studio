@@ -13,6 +13,7 @@ import { auditMcpDenial, authenticateMcpRequest } from "@/lib/mcp/bearer";
 import { MCP_PATH } from "@/lib/mcp/config";
 import { mcpOriginHostRefusal } from "@/lib/mcp/origin-policy";
 import { getJwtSecret } from "@/lib/config/auth-env";
+import { readOidcAutoRedirect } from "@/lib/config/oidc-auto-redirect";
 import { withSecurityHeaders } from "@/lib/security/config";
 import { RETURN_PATH_PARAM, safeReturnPath, sessionRequiredBody, signInPath } from "@/lib/api/session-ended";
 
@@ -123,11 +124,10 @@ export async function proxy(request: NextRequest) {
       } catch {
         // Invalid token, allow access to login page
         logger.debug("Invalid token on login page, allowing access", { route: "proxy" });
-        return withSecurityHeaders(NextResponse.next());
       }
     }
-    // No token, allow access to login page
-    return withSecurityHeaders(NextResponse.next());
+    // No valid token: the identity provider when OIDC_AUTO_REDIRECT asks for it, else the login page
+    return withSecurityHeaders(oidcAutoRedirect(request) ?? NextResponse.next());
   }
 
   // The agent runtime's drive callback (#329). It is deliberately NOT on the public list
@@ -234,6 +234,21 @@ export async function proxy(request: NextRequest) {
     logger.warn("JWT verification failed, refusing the session", { route: "proxy" });
     return withSecurityHeaders(signInRequired(request, pathname, "Session expired. Sign in again."));
   }
+}
+
+/**
+ * The redirect a signed-out GET /login takes straight to the identity provider (OIDC_AUTO_REDIRECT,
+ * docs/OIDC.md), or null to render the login page. It carries `next` only when safeReturnPath
+ * accepts it, and it is skipped whenever `error` is present: every OIDC failure lands on
+ * /login?error=..., so a failing provider shows its error instead of looping.
+ */
+function oidcAutoRedirect(request: NextRequest): NextResponse | null {
+  if (request.method !== "GET" || process.env.NEXT_PUBLIC_AUTH_PROVIDER !== "oidc") return null;
+  const { searchParams } = request.nextUrl;
+  if (searchParams.has("error") || !readOidcAutoRedirect()) return null;
+  const returnPath = safeReturnPath(searchParams.get(RETURN_PATH_PARAM));
+  const query = returnPath === null ? "" : `?${new URLSearchParams({ [RETURN_PATH_PARAM]: returnPath })}`;
+  return NextResponse.redirect(new URL(withBasePath(`/api/auth/oidc/login${query}`), request.url));
 }
 
 /**
