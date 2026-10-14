@@ -43,9 +43,10 @@ type Persona = "admin" | "reader" | "viewer" | "shop-only" | "studio-reader";
 /**
  * A provider that replays one persona's capture. The connection matches the capture's in what reaches a request: the
  * token personas default to the namespace shop, the admin to `default`. The token and the TLS panel reach no request
- * line, so the test connection's own stand in for them.
+ * line, so the test connection's own stand in for them. `execution` is the provider's execution context, so a test
+ * can open it under the agent's read-only profile.
  */
-function replayed(set: string, persona: Persona) {
+function replayed(set: string, persona: Persona, execution: { readonly readOnly?: boolean } = {}) {
   const capture = readCapture(path.join(FIXTURES, set, `${persona}.json`));
   const replay = replayTransport(capture.exchanges);
   const overrides: Partial<DatabaseConnection> = persona === "admin" ? {} : { database: "shop" };
@@ -55,6 +56,7 @@ function replayed(set: string, persona: Persona) {
     {
       createTransport: replay.factory,
     },
+    execution,
   );
   return { provider, replay, capture };
 }
@@ -166,6 +168,44 @@ describe("v1.35.5, the reader: every read a user makes, on a real server's answe
     expect(replay.missed).toEqual([]);
     await provider.disconnect();
   });
+});
+
+/**
+ * The named `-o yaml` reads of the reader capture. A list read on the agent path asks for one row past its budget,
+ * which no capture recorded, so only a named read replays there.
+ */
+const NAMED_YAML_STATEMENTS = READER_STATEMENTS.filter((text) => /^kubectl get \S+ \S+ .*-o yaml$/.test(text));
+
+/** The planted values each named read's answer holds, as the capture recorded them and the editor shows them. */
+const PLANTED_IN: Readonly<Record<string, readonly string[]>> = {
+  "kubectl get secret k8s-marker-secret-name -n shop -o yaml": [M.secretName, M.annotationValue],
+};
+
+/** The agent's budget: the rows it may carry, plus the one that tells it the read overflowed. */
+const AGENT_BUDGET = { statementTimeoutMs: 10_000, maxResultRows: 201, maxResultBytes: 262_144 };
+
+describe("v1.35.5, the reader: the agent's reads of a real server's answers are masked", () => {
+  test("the capture holds named -o yaml reads, and each names the values it holds", () => {
+    expect(NAMED_YAML_STATEMENTS).toEqual(Object.keys(PLANTED_IN));
+  });
+
+  test.each([...NAMED_YAML_STATEMENTS])(
+    "%s: query() shows the planted values, queryReadOnly() none of them",
+    async (text) => {
+      const { provider, replay } = replayed("v1.35.5", "reader", { readOnly: true });
+      await provider.connect();
+      const editor = JSON.stringify((await provider.query(text)).rows);
+      const machine = JSON.stringify((await provider.queryReadOnly(text, AGENT_BUDGET)).rows);
+      for (const value of PLANTED_IN[text] ?? []) {
+        expect({ value, editor: editor.includes(value) }).toEqual({ value, editor: true });
+        expect({ value, machine: machine.includes(value) }).toEqual({ value, machine: false });
+      }
+      expect(holdsSecretValue(machine)).toBe(false);
+      expect(machine).toContain("<redacted>");
+      expect(replay.missed).toEqual([]);
+      await provider.disconnect();
+    },
+  );
 });
 
 describe("v1.35.5, the other personas", () => {
