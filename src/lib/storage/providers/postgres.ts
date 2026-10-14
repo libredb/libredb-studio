@@ -29,6 +29,7 @@ import {
 } from "../types";
 import { readSchemaName } from "../schema-name";
 import { logger } from "@/lib/logger";
+import { pgSslConfig } from "@/lib/pg-ssl";
 
 let Pool: typeof import("pg").Pool;
 type PoolClient = import("pg").PoolClient;
@@ -98,7 +99,7 @@ export class PostgresStorageProvider implements ServerStorageProvider {
       connectionString: this.connectionString,
       max: 5,
       idleTimeoutMillis: 30000,
-      ssl: this.buildSSLConfig(),
+      ssl: pgSslConfig(this.connectionString),
     });
 
     // An idle client the server drops has no query to reject, so `pg` destroys it and
@@ -593,67 +594,5 @@ export class PostgresStorageProvider implements ServerStorageProvider {
     if (!this.pool) {
       throw new Error("PostgreSQL storage not initialized. Call initialize() first.");
     }
-  }
-
-  private buildSSLConfig(): boolean | { rejectUnauthorized: boolean } {
-    const { host, searchParams } = this.parseConnectionString(this.connectionString);
-
-    const sslMode = searchParams.get("sslmode")?.toLowerCase();
-    if (sslMode === "disable") return false;
-    // `verify-system` is not a libpq sslmode - it is this product's own mode name
-    // (src/lib/types.ts), and someone configuring STORAGE_POSTGRES_URL from the connection
-    // form's vocabulary will write it. It means "verify against the runtime's trust store",
-    // so it is the one value here that turns verification ON; without this branch it fell
-    // through to the non-local default below and got `rejectUnauthorized: false`, i.e. the
-    // opposite of what it says (D26). The libpq spellings keep their existing behaviour: this
-    // pool has no channel for a CA PEM, so a verifying default would break every deployment
-    // whose storage database presents a self-signed certificate.
-    if (sslMode === "verify-system") return { rejectUnauthorized: true };
-    if (sslMode === "require" || sslMode === "prefer" || sslMode === "verify-ca" || sslMode === "verify-full") {
-      return { rejectUnauthorized: false };
-    }
-
-    const sslParam = searchParams.get("ssl")?.toLowerCase();
-    if (sslParam === "false" || sslParam === "0" || sslParam === "no") {
-      return false;
-    }
-    if (sslParam === "true" || sslParam === "1" || sslParam === "yes") {
-      return { rejectUnauthorized: false };
-    }
-
-    if (this.isLocalHost(host)) return false;
-    return { rejectUnauthorized: false };
-  }
-
-  private parseConnectionString(connectionString: string): {
-    host: string;
-    searchParams: URLSearchParams;
-  } {
-    try {
-      const parsed = new URL(connectionString);
-      return {
-        host: parsed.hostname.toLowerCase(),
-        searchParams: parsed.searchParams,
-      };
-    } catch {
-      return {
-        host: "",
-        searchParams: new URLSearchParams(),
-      };
-    }
-  }
-
-  private isLocalHost(host: string): boolean {
-    const localHosts = new Set([
-      "localhost",
-      "::1",
-      "host.docker.internal",
-      "docker.for.mac.localhost",
-      "docker.for.win.localhost",
-      "gateway.docker.internal",
-    ]);
-    if (localHosts.has(host)) return true;
-    if (host.startsWith("127.")) return true;
-    return false;
   }
 }
