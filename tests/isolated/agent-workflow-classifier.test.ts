@@ -121,6 +121,39 @@ describe("classifying an objective into a workflow", () => {
     expect(system).toContain("exactly one of those identifiers and nothing else");
   });
 
+  /**
+   * The classifier speaks the connection's language: a cluster's optimization is a container sized for what it does
+   * not use, and its assessment is the health of its workloads, so a model told the SQL lines would file "which pods
+   * are over-provisioned" under nothing it recognises. The SQL prompt itself is pinned byte for byte by the golden.
+   */
+  test("on kubectl the model is told the cluster's own line for each workflow", async () => {
+    replies("query-optimization");
+
+    const classification = await classifyAgentWorkflow("which pods are over-provisioned", {
+      statementLanguage: "kubectl",
+    });
+
+    const system = lastCall?.system ?? "";
+    expect(system).toContain(
+      "query-optimization: which workloads are over- or under-provisioned: the CPU and memory their containers use against their requests and limits",
+    );
+    expect(system).toContain(
+      "database-assessment: the health of a namespace's workloads: replicas not ready, restarts, missing requests, limits or probes, warning events",
+    );
+    expect(system).not.toContain("a specific statement that is too slow");
+    expect(classification).toEqual({ workflowType: "query-optimization", outcome: "classified" });
+  });
+
+  test("with no language the model is told the SQL lines", async () => {
+    await classifyAgentWorkflow("this select takes 40 seconds");
+
+    const system = lastCall?.system ?? "";
+    expect(system).toContain(
+      "query-optimization: a specific statement that is too slow, and how the engine reaches its rows",
+    );
+    expect(system).not.toContain("over- or under-provisioned");
+  });
+
   test("the objective is handed to the model as data, never as instructions", async () => {
     // The objective is user text going into a system-instructed call, so the prompt
     // says what it is. Cheap, and the only thing standing between a pasted

@@ -1308,12 +1308,12 @@ export const AgentRail = React.memo(function AgentRail({
    * reintroduced in front of the same button. An abort lands in the `catch` below, so
    * it reaches the fallback every other failure reaches.
    */
-  const classifyObjective = async (text: string): Promise<AgentWorkflowClassification> => {
+  const classifyObjective = async (text: string, onConnection: string): Promise<AgentWorkflowClassification> => {
     try {
       const res = await appFetch("/api/agent/classify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ objective: text }),
+        body: JSON.stringify({ objective: text, connectionId: onConnection }),
         signal: AbortSignal.timeout(CLASSIFY_REQUEST_TIMEOUT_MS),
       });
       const body = (await res.json()) as { workflowType?: unknown; outcome?: unknown };
@@ -1376,7 +1376,8 @@ export const AgentRail = React.memo(function AgentRail({
     }
 
     setClassifying(true);
-    const classification = await classifyObjective(asked);
+    // The connection the run is opened on, so the objective is classified in that engine's own terms.
+    const classification = await classifyObjective(asked, connection.id);
     setClassifying(false);
     hold({
       workflowType: classification.workflowType,

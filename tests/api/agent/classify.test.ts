@@ -18,6 +18,7 @@ import { AGENT_MAX_OBJECTIVE_LENGTH } from "@/lib/agent/execution-policy";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import * as realAuth from "@/lib/auth";
 import * as realClassifier from "@/lib/agent/workflow-classifier";
+import * as realSeed from "@/lib/seed/resolve-connection";
 
 const mockGetSession = mock(
   async (): Promise<{ role: string; username: string } | null> => ({ role: "user", username: "ada" }),
@@ -26,6 +27,12 @@ const mockGetSession = mock(
 const mockClassify = mock<typeof realClassifier.classifyAgentWorkflow>(async () => ({
   workflowType: "query-optimization",
   outcome: "classified",
+}));
+
+const mockResolveConnection = mock(async (body: { connectionId?: string }) => ({
+  id: body.connectionId ?? "seed:sales",
+  name: "Sales",
+  type: "postgres",
 }));
 
 /**
@@ -39,6 +46,7 @@ function installMocks(): void {
     ...realClassifier,
     classifyAgentWorkflow: mockClassify,
   }));
+  mock.module("@/lib/seed/resolve-connection", () => ({ ...realSeed, resolveConnection: mockResolveConnection }));
 }
 
 installMocks();
@@ -56,6 +64,7 @@ beforeEach(() => {
   delete process.env[AGENT_ENABLED_ENV];
   configureAgentModel();
   mockClassify.mockClear();
+  mockResolveConnection.mockClear();
   mockClassify.mockImplementation(async () => ({ workflowType: "query-optimization", outcome: "classified" }));
 });
 
@@ -133,6 +142,54 @@ describe("POST /api/agent/classify", () => {
     expect(res.status).toBe(200);
     expect(body).toEqual({ workflowType: "query-optimization", outcome: "classified" });
     expect(mockClassify).toHaveBeenCalledWith("this update takes 40 seconds, why");
+  });
+
+  test("a Kubernetes connection is classified in kubectl's own terms", async () => {
+    mockResolveConnection.mockResolvedValueOnce({ id: "seed:cluster", name: "Cluster", type: "kubernetes" });
+
+    const res = await POST(
+      classifyRequest({ objective: "which pods are over-provisioned", connectionId: "seed:cluster" }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockResolveConnection).toHaveBeenCalledWith(
+      { connectionId: "seed:cluster" },
+      { role: "user", username: "ada" },
+    );
+    expect(mockClassify).toHaveBeenCalledWith("which pods are over-provisioned", { statementLanguage: "kubectl" });
+  });
+
+  test("an SQL connection is classified in SQL's terms", async () => {
+    const res = await POST(classifyRequest({ objective: "why is checkout slow", connectionId: "seed:sales" }));
+
+    expect(res.status).toBe(200);
+    expect(mockClassify).toHaveBeenCalledWith("why is checkout slow", { statementLanguage: "sql" });
+  });
+
+  test("a connection with no statement language is classified in SQL's terms", async () => {
+    mockResolveConnection.mockResolvedValueOnce({ id: "seed:cache", name: "Cache", type: "redis" });
+
+    const res = await POST(classifyRequest({ objective: "what is connected", connectionId: "seed:cache" }));
+
+    expect(res.status).toBe(200);
+    expect(mockClassify).toHaveBeenCalledWith("what is connected", { statementLanguage: undefined });
+  });
+
+  test("with no connection id nothing is resolved and no language is passed", async () => {
+    const res = await POST(classifyRequest({ objective: "why is checkout slow" }));
+
+    expect(res.status).toBe(200);
+    expect(mockResolveConnection).not.toHaveBeenCalled();
+    expect(mockClassify).toHaveBeenCalledWith("why is checkout slow");
+  });
+
+  test.each([[42], [""], ["   "]])("a connection id of %p is refused", async (connectionId) => {
+    const res = await POST(classifyRequest({ objective: "why is checkout slow", connectionId }));
+    const body = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(body.error).toBe("connectionId must be a non-empty string when provided");
+    expect(mockClassify).not.toHaveBeenCalled();
   });
 
   /*

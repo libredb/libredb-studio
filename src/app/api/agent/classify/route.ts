@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
+import { AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
 import { isAgentRuntimeEnabled } from "@/lib/agent/config";
 import { AGENT_MAX_OBJECTIVE_LENGTH } from "@/lib/agent/execution-policy";
-import { classifyAgentWorkflow } from "@/lib/agent/workflow-classifier";
+import { type AgentWorkflowClassification, classifyAgentWorkflow } from "@/lib/agent/workflow-classifier";
 import { createErrorResponse } from "@/lib/api/errors";
 import { guardRoute } from "@/lib/api/require-session";
+import { resolveConnection } from "@/lib/seed/resolve-connection";
 
 /**
  * Reads one objective and names the workflow a run would open as
@@ -77,7 +79,23 @@ export async function POST(req: Request) {
       return badRequest(`objective must be at most ${AGENT_MAX_OBJECTIVE_LENGTH} characters`);
     }
 
-    const classification = await classifyAgentWorkflow(objective);
+    // The connection is optional, so a caller that sends none is classified in SQL's terms as before. A supplied
+    // one is resolved under the caller's own session, the way the run route resolves it, so the language comes from
+    // a connection this caller may open and never from a type the body claims.
+    const { connectionId } = body;
+    if (connectionId !== undefined && (typeof connectionId !== "string" || connectionId.trim() === "")) {
+      return badRequest("connectionId must be a non-empty string when provided");
+    }
+
+    let classification: AgentWorkflowClassification;
+    if (connectionId === undefined) {
+      classification = await classifyAgentWorkflow(objective);
+    } else {
+      const connection = await resolveConnection({ connectionId }, guard.session);
+      classification = await classifyAgentWorkflow(objective, {
+        statementLanguage: AGENT_STATEMENT_LANGUAGE[connection.type] ?? undefined,
+      });
+    }
 
     return NextResponse.json(
       { workflowType: classification.workflowType, outcome: classification.outcome },

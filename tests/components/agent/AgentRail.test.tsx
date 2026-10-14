@@ -4896,8 +4896,10 @@ describe("AgentRail", () => {
       await startWith(view, "why is checkout slow");
 
       expect(classifyCalls(fetchMock)).toHaveLength(1);
+      // The connection the run is opened on goes with the objective, so it is classified in that engine's language.
       expect(JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))).toEqual({
         objective: "why is checkout slow",
+        connectionId: "seed:sales",
       });
       expect(openRequests(fetchMock)[0]).toEqual({
         mode: "planning",

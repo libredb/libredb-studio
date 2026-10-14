@@ -13,7 +13,7 @@ import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
 import { AgentRunService } from "@/lib/agent/run-service";
 import { AgentRunStore } from "@/lib/agent/run-store";
 import { AGENT_ANSWER_CONTRACT } from "@/lib/agent/tools";
-import type { AgentRunEvent, AgentRunWorkflowType } from "@/lib/agent/types";
+import type { AgentRunEvent, AgentRunMode, AgentRunWorkflowType } from "@/lib/agent/types";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
@@ -203,6 +203,8 @@ async function kubectlDrive(
     readonly unreadable?: boolean;
     readonly pods?: number;
     readonly workflowType?: AgentRunWorkflowType;
+    /** Agent mode unless said otherwise; a planning drive is opened the way the route opens a plan. */
+    readonly mode?: AgentRunMode;
     readonly autoExecute?: boolean;
     /** Events a dead earlier drive already recorded, so the drive is a resume of that run. */
     readonly prior?: readonly AgentRunEvent[];
@@ -213,7 +215,14 @@ async function kubectlDrive(
     readonly unreachable?: boolean;
   } = {},
 ): Promise<KubectlDrive> {
-  const { unreadable = false, pods = 1, workflowType = "investigation", autoExecute = false, prior = [] } = options;
+  const {
+    unreadable = false,
+    pods = 1,
+    workflowType = "investigation",
+    mode = "agent",
+    autoExecute = false,
+    prior = [],
+  } = options;
   const podNames = Array.from({ length: pods }, (_, index) => `web-${String(index).padStart(4, "0")}-checkout-api`);
   forgetHeldSnapshots();
   const dataDir = options.resume?.dataDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "agent-kubectl-investigation-"));
@@ -238,13 +247,13 @@ async function kubectlDrive(
   const service = new AgentRunService({ store, resources: { tracker, artifacts } });
   let runId = options.resume?.runId;
   if (runId === undefined) {
-    const availability = workflowAvailability("agent", workflowType, "kubernetes");
+    const availability = workflowAvailability(mode, workflowType, "kubernetes");
     if (!availability.open) throw new Error(`${workflowType} does not open on kubernetes`);
     const run = await service.start({
-      mode: "agent",
+      mode,
       workflowType,
       autoExecute,
-      ...persistedRunFacts("agent", workflowType, availability),
+      ...persistedRunFacts(mode, workflowType, availability),
       actor: { sessionId: "sess_1", role: "user" },
       connectionId: connection.id,
       objective: "Which pods in shop are restarting?",
@@ -400,6 +409,28 @@ describe("an agent-mode kubectl data analysis", () => {
     const { system } = await kubectlInvestigationOpening({ workflowType: "data-analysis", autoExecute: true });
 
     expect(system).not.toContain("AUTO-EXECUTE IS ON");
+  });
+});
+
+/**
+ * A plan on a cluster asks for the cluster's own deliverable where the workflow has one, and the SQL variant's where
+ * it inherits. The record carries the language, so the prompt is chosen from the ledger and not from the connection.
+ */
+describe("a kubectl plan", () => {
+  test.each([
+    ["query-optimization", "the kubectl read that measures usage against requests"],
+    ["database-assessment", "the kubectl read that establishes each workload's state"],
+    ["investigation", "the statement that answers the question"],
+  ] as const)("of %s asks for %s", async (workflowType, noun) => {
+    const { runId, dataDir, turns } = await kubectlDrive({ mode: "planning", workflowType });
+    const view = await new AgentRunStore({ world: createLocalWorld({ dataDir, recoverActiveRuns: false }) }).read(
+      runId,
+    );
+    const [first] = turns;
+    if (first === undefined) throw new Error("the drive sent no request");
+
+    expect(view?.record.statementLanguage).toBe("kubectl");
+    expect(splitPrompt(first).system).toContain(noun);
   });
 });
 
