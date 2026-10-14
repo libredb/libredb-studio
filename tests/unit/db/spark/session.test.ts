@@ -507,6 +507,54 @@ describe("releases", () => {
     expect(releasesOf(handle.sessionId)).toHaveLength(1);
   });
 
+  test("releaseAll waits for a statement session still in setup, so its release follows the session's Config", async () => {
+    let unblock: (() => void) | undefined;
+    const slow = deps({
+      configSet: async (session, pairs) => {
+        await new Promise<void>((resolve) => {
+          unblock = resolve;
+        });
+        return deps().configSet(session, pairs);
+      },
+    });
+    const sessions = new SparkSessions(slow, {});
+    const pending = sessions.forScope(undefined);
+    await Promise.resolve();
+    const released = sessions.releaseAll();
+    unblock?.();
+    const handle = await pending;
+    await released;
+    expect(sessions.openCount()).toBe(0);
+    expect(entriesOf(handle.sessionId).map((entry) => entry.rpc)).toStrictEqual(["Config", "ReleaseSession"]);
+  });
+
+  test("releaseAll answers once a release that began before it, a statement's own, has answered", async () => {
+    let unblock: (() => void) | undefined;
+    const sessions = new SparkSessions(
+      deps({
+        release: async (session) => {
+          await new Promise<void>((resolve) => {
+            unblock = resolve;
+          });
+          return deps().release(session);
+        },
+      }),
+      {},
+    );
+    const handle = await sessions.forScope(undefined);
+    const ending = sessions.endStatementSession(handle);
+    let answered = false;
+    const released = sessions.releaseAll().then(() => {
+      answered = true;
+    });
+    for (let turn = 0; turn < 5; turn++) await Promise.resolve();
+    expect(answered).toBe(false);
+    unblock?.();
+    await Promise.all([ending, released]);
+    expect(answered).toBe(true);
+    expect(releasesOf(handle.sessionId)).toHaveLength(1);
+  });
+
   test("after endScope the scope's next statement sets up a new session, not the released one", async () => {
     const sessions = new SparkSessions(deps(), {});
     const ended = await sessions.forScope("n");
@@ -884,8 +932,12 @@ describe("the metadata session after the server closed it", () => {
       .readMetadata(async () => {
         throw new SparkError("session-closed", "first");
       })
-      .catch(() => "failed");
-    expect(second).toBe("failed");
+      .then(
+        () => undefined,
+        (failure: unknown) => failure,
+      );
+    expect(second).toBeInstanceOf(SparkError);
+    expect(second).toMatchObject({ category: "session-closed", message: SPARK_ERROR_SENTENCES.metadataSessionLost });
     const failing = await sessions
       .readMetadata(async () => {
         throw new SparkError("session-closed", "x");

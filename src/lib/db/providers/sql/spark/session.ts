@@ -59,6 +59,10 @@ const closed = (error: unknown) =>
 export class SparkSessions {
   private readonly scopes = new Map<string, Promise<SparkSessionHandle>>();
   private readonly open = new Set<SparkSessionHandle>();
+  /** The setups of statement sessions, which no scope holds, while they run; releaseAll waits for them as for a scope. */
+  private readonly statementSetups = new Set<Promise<SparkSessionHandle>>();
+  /** Releases sent and not yet answered, a statement's own included; releaseAll answers only after them. */
+  private readonly releasing = new Set<Promise<void>>();
   private metadataEntry: MetadataEntry | undefined;
   private released = false;
 
@@ -69,7 +73,13 @@ export class SparkSessions {
 
   /** The scope's session, set up on its first statement and shared by the rest; no scope, a new statement session. */
   forScope(scope: string | undefined): Promise<SparkSessionHandle> {
-    if (scope === undefined) return this.create("statement");
+    if (scope === undefined) {
+      const created = this.create("statement");
+      this.statementSetups.add(created);
+      const settled = () => this.statementSetups.delete(created);
+      created.then(settled, settled);
+      return created;
+    }
     const existing = this.scopes.get(scope);
     if (existing !== undefined) return existing;
     const created = this.create("request");
@@ -187,11 +197,16 @@ export class SparkSessions {
     this.released = true;
   }
 
-  /** Closes the registry and releases every session, a setup still in flight included once it settles. */
+  /**
+   * Closes the registry and releases every session, a setup still in flight included once it settles, so a release
+   * never reaches the server before the session's first call. It answers once every release has answered, the ones a
+   * statement or a scope's end sent before it included, so the channel closes after all of them.
+   */
   async releaseAll(): Promise<void> {
     this.released = true;
     const pending = [
       ...this.scopes.values(),
+      ...this.statementSetups,
       ...(this.metadataEntry === undefined ? [] : [this.metadataEntry.promise]),
     ];
     this.scopes.clear();
@@ -199,6 +214,7 @@ export class SparkSessions {
     // Every handle a pending setup answers is still in `open`, so `open` after the wait holds them all.
     await Promise.all(pending.map((promise) => promise.catch(() => undefined)));
     await Promise.all([...this.open].map((handle) => this.release(handle)));
+    await Promise.all(this.releasing);
   }
 
   /** Sessions created and not yet released or discarded. */
@@ -249,10 +265,15 @@ export class SparkSessions {
   /** Releases a handle once; a failed release changes nothing (the deps logged it). */
   private async release(handle: SparkSessionHandle): Promise<void> {
     if (!this.open.delete(handle)) return;
-    try {
-      await this.deps.release(handle);
-    } catch {
-      // The statement's result is already decided, and Spark drops the session after its idle timeout.
-    }
+    const sent = (async () => {
+      try {
+        await this.deps.release(handle);
+      } catch {
+        // The statement's result is already decided, and Spark drops the session after its idle timeout.
+      }
+    })();
+    this.releasing.add(sent);
+    await sent;
+    this.releasing.delete(sent);
   }
 }
