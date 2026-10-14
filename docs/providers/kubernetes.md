@@ -340,7 +340,7 @@ No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: this version reads 
 - `enforcesReadOnly`; the read-only box changes nothing, because nothing writes.
 - Plan mode sees the namespaces it walked, the kinds, their counts and object names; it walks the Default namespace and `Cluster` only and is told how many other namespaces it did not read.
 - Secret names are withheld from plan mode: the Secrets kind appears with its count.
-- Namespace names listed by the `Cluster` walk are withheld the same way: the Namespaces kind appears with its count, so no name of a namespace plan mode did not read reaches the model.
+- Namespace names pass: the `Cluster` walk lists every namespace by name, the ones plan mode did not read included.
 - No value, label, annotation, env value, ConfigMap key or Secret key reaches the model, and the AI panels receive no Kubernetes name.
 - MCP is not offered for Kubernetes, and agent execution refuses its investigation and data-analysis workflows before a run opens (B105).
 - The operations workflow opens on Kubernetes in both modes, as on every engine, because it sends no statement; its reports of sessions, slow queries, health, storage, table statistics and index usage come back empty or N/A here.
@@ -442,7 +442,6 @@ Not measured: an etcd-backed managed cluster, Rancher's proxy, OpenShift (its pr
 - `get -w` takes no `-o name`, `-o json` or `-o yaml` (D288), and `auth can-i --list` shows the server's rules without kubectl's compaction (D289).
 - Test Connection records no `Audit-Id` from the API server (D287).
 - One ServiceAccount token per connection makes every Studio user one identity in the cluster's audit log.
-- Namespace names reach plan mode as container names; on a multi-tenant cluster they may name customers (B106).
 - No agent execution and no MCP (B105).
 
 ## 15. References

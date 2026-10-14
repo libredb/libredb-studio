@@ -773,16 +773,17 @@ describe("the key-browser declaration", () => {
 /**
  * THE WITHHELD-NAMES DECLARATION, held to the preconditions its promise rests on.
  *
- * `machineNames: "withheld"` keeps a kind's names out of the agent's grounding walk, and the walk is the only
- * machine surface the declaration reaches. So it keeps its promise only where no other machine surface lists the
- * kind: the kind is not a relation, which MCP's `inspect_schema` and the app's schema read list whatever the
- * declaration says; the engine is not offered to MCP; and the provider has no `queryReadOnly`, the path the agent's
- * read tool runs a statement through.
+ * `machineNames: "withheld"` keeps a kind's names out of the agent's grounding walk. So it keeps its promise only
+ * where no other machine surface lists the kind: the kind is not a relation, which MCP's `inspect_schema` and the
+ * app's schema read list whatever the declaration says; the engine is not offered to MCP; and where the provider has
+ * `queryReadOnly`, the path the agent's read tool runs a statement through, its `machineRedaction.maskedNameKinds`
+ * names the kind, so the output masks those names. This census holds that declaration static; the masking itself is
+ * the provider's own redaction test.
  *
  * `WITHHELD_KINDS` is the committed expectation, one `<type-id>/<kind id>` per such kind, and the registration of
  * an engine that declares one moves it.
  */
-const WITHHELD_KINDS: readonly string[] = Object.freeze(["kubernetes/secrets", "kubernetes/namespaces"]);
+const WITHHELD_KINDS: readonly string[] = Object.freeze(["kubernetes/secrets"]);
 
 /** The breaches of the three preconditions above in one declaration, one sentence each. */
 function withheldNamesBreaches(
@@ -804,7 +805,13 @@ function withheldNamesBreaches(
     breaches.push(`${type} withholds the names of ${ids} and is offered to MCP`);
   }
   if (provider.queryReadOnly !== undefined) {
-    breaches.push(`${type} withholds the names of ${ids} and has queryReadOnly, through which the agent reads it`);
+    const masked = new Set(capabilities.machineRedaction?.maskedNameKinds ?? []);
+    for (const kind of withheld) {
+      if (!masked.has(kind.id))
+        breaches.push(
+          `${type}/${kind.id} withholds its names and has queryReadOnly, and its machine redaction does not mask them`,
+        );
+    }
   }
   return breaches;
 }
@@ -856,9 +863,17 @@ describe("the withheld-names declaration", () => {
     ]);
   });
 
-  test("a provider with queryReadOnly is refused by name", () => {
+  test("a provider with queryReadOnly whose machine redaction masks the kind has no breach", () => {
+    const capabilities = {
+      ...declaring([SECRET]),
+      machineRedaction: { maskedNameKinds: ["secret"] },
+    } as ProviderCapabilities;
+    expect(withheldNamesBreaches("kv", capabilities, { queryReadOnly: () => undefined }, false)).toEqual([]);
+  });
+
+  test("a provider with queryReadOnly whose machine redaction does not mask the kind is refused by name", () => {
     expect(withheldNamesBreaches("kv", declaring([SECRET]), { queryReadOnly: () => undefined }, false)).toEqual([
-      "kv withholds the names of secret and has queryReadOnly, through which the agent reads it",
+      "kv/secret withholds its names and has queryReadOnly, and its machine redaction does not mask them",
     ]);
   });
 });

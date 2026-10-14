@@ -1302,6 +1302,16 @@ export interface ProviderCapabilities {
    */
   readonly agentCredential?: "token";
   /**
+   * The object kinds whose names this provider masks in `queryReadOnly` output, the agent's read path, by kind id.
+   * Absent: it masks none. A kind declared `machineNames: "withheld"` keeps that promise on a provider with
+   * `queryReadOnly` only when it is listed here, and the census in `tests/isolated/object-source-declarations.test.ts`
+   * refuses one that is not; the masking itself is the provider's own, proved by its redaction test. Kubernetes
+   * declares `["secrets"]`.
+   *
+   * Optional for the same published-interface reason as `enforcesReadOnly`.
+   */
+  readonly machineRedaction?: { readonly maskedNameKinds: readonly string[] };
+  /**
    * True when this engine's provider reads `ProviderExecutionContext.allowExternalFileAccess` and
    * opens its editor handle under that file-access posture: `false` closes every statement-level file
    * and network route outside the handle's private temp directory and its database's own file names
@@ -2842,11 +2852,13 @@ export interface ObjectKindSpec {
    * sensitive, such as stored secrets, whose names often say what they hold.
    *
    * Read through `kindNamesWithheld()` in `src/lib/db/object-kinds.ts`. The walk knows such a kind's size only
-   * through its count, so a provider that declares it counts it in `countObjects`. The walk is the only machine
-   * surface the declaration reaches, so it holds only where no other one lists the kind: the kind's role is not
-   * `relation` (MCP's `inspect_schema` and the app's schema read list relations, and `relationKindIds` refuses a
-   * withheld one), the engine is not `MCP_EXPOSABLE`, and the provider has no `queryReadOnly`, the agent's read
-   * path. The fleet declarations guard in `tests/isolated/object-source-declarations.test.ts` holds all three.
+   * through its count, so a provider that declares it counts it in `countObjects`. The declaration holds only where
+   * no other machine surface lists the kind: the kind's role is not `relation` (MCP's `inspect_schema` and the app's
+   * schema read list relations, and `relationKindIds` refuses a withheld one), and the engine is not `MCP_EXPOSABLE`.
+   * The kind's names are withheld from grounding, and masked in `queryReadOnly` output where the provider has one,
+   * which the provider declares in `ProviderCapabilities.machineRedaction.maskedNameKinds`; the census in
+   * `tests/isolated/object-source-declarations.test.ts` holds that declaration static, and the behaviour is the
+   * provider's own redaction test.
    */
   readonly machineNames?: "withheld";
   /**

@@ -41,7 +41,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B110 · 45
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B110 · 44
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP3 · 3
 
@@ -7174,19 +7174,11 @@ Found 2026-10-09 while designing the S3 provider.
 
 ### B105. Kubernetes has no agent execution and no MCP surface
 
-`MCP_EXPOSABLE.kubernetes` is false and the provider implements no `queryReadOnly`, so agent execution of a workflow that sends statements and MCP `run_read_query` refuse it, while the operations workflow opens as on every engine; plan mode works, walking the session's namespace and `Cluster`, with Secret and Namespace names withheld (`docs/providers/kubernetes.md` section 9).
+`MCP_EXPOSABLE.kubernetes` is false and the provider implements no `queryReadOnly`, so agent execution of a workflow that sends statements and MCP `run_read_query` refuse it, while the operations workflow opens as on every engine; plan mode works, walking the session's namespace and `Cluster`, with Secret names withheld (`docs/providers/kubernetes.md` section 9).
 
 Found 2026-10-10 while designing the Kubernetes provider.
 
 **Done when:** an MCP metadata surface that returns no value, label, annotation or Secret name is designed, and `run_read_query` serves the kubectl subset under its own read policy, with tests; cited in `docs/AGENT.md` beside B104.
-
-### B106. Kubernetes namespace names reach plan mode as container names
-
-Plan mode's inventory names the namespaces it walked and counts the ones it did not read, and those names reach the configured model; on a multi-tenant cluster they may name customers.
-
-Found 2026-10-10 while designing the Kubernetes provider; an open question of the design.
-
-**Done when:** the owner decides whether a provider may withhold container names from machine surfaces, and either a declaration does it with a test, or the item is closed as accepted and `docs/AGENT.md` says so.
 
 ### B107. Firestore has no agent execution and no MCP surface
 
@@ -7195,7 +7187,7 @@ Every Firestore read is billed, and no read contract for the query chain under a
 
 Found 2026-10-12 while designing the Firestore provider.
 
-**Done when:** an MCP metadata surface that reads no document is designed, `MCP_EXPOSABLE.firestore` turns true for it, and `run_read_query` and agent execution serve a `queryReadOnly` that runs one console statement under a per-run read bound, with tests; cited in `docs/AGENT.md` beside B106.
+**Done when:** an MCP metadata surface that reads no document is designed, `MCP_EXPOSABLE.firestore` turns true for it, and `run_read_query` and agent execution serve a `queryReadOnly` that runs one console statement under a per-run read bound, with tests; cited in `docs/AGENT.md` beside B105.
 
 ### B108. RabbitMQ has no agent execution and no MCP `run_read_query`
 

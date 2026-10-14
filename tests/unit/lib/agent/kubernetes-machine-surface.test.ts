@@ -23,6 +23,11 @@ import { jsonAnswer, recordingKubernetesTransport, testSeams } from "../../../he
  * machine surface: the agent's grounding walk, the task packer, the operations packer, or the snapshot they are built
  * from. Labels and annotations are absent key and value alike.
  *
+ * The agent's `queryReadOnly` output is relaxed by its own machine redaction, which passes what a statement asks for and
+ * masks Secret names; that path is not this file's. This file governs the grounding walk and the packers, where labels,
+ * annotation keys and ConfigMap and Secret keys stay absent. Namespace names pass: the `Cluster` walk names every
+ * namespace it lists, by decision, and Secrets are still counted, not named.
+ *
  * The fake API server plants every marker of docker/kubernetes/sample.yaml where a real server would carry it: on
  * every listed row's metadata (a server answering `includeObject=Metadata` sends it whether or not it was asked for),
  * in every object a GET answers, a Secret's data and its last-applied annotation, a ConfigMap's data and a Deployment's
@@ -106,7 +111,7 @@ function tablePage(name: string, kind: string): NodeResponse {
   });
 }
 
-/** A namespace the walk does not read: its name stays off every machine surface, as the namespace count says. */
+/** A namespace the walk does not read: the `Cluster` walk lists it by name, as it lists every namespace. */
 const UNREAD_NAMESPACE = "tenant-unread-marker";
 
 const fallback = fakeCluster({
@@ -164,7 +169,6 @@ const FORBIDDEN = [
   ["a Secret key", M.secretKey],
   ["a label key", M.labelKey],
   ["an annotation key", M.annotationKey],
-  ["the name of a namespace the walk did not read", UNREAD_NAMESPACE],
 ] as const;
 
 const SURFACES = ["snapshot", "the task packer", "the operations packer"] as const;
@@ -187,6 +191,13 @@ describe("the Kubernetes machine surfaces", () => {
     expect(surfaces["the task packer"]).toContain("shop-config");
     expect(surfaces["the task packer"]).toMatch(/\bweb\b/);
     expect(surfaces["the task packer"]).toContain("withheld");
+  });
+
+  test("the Cluster walk names the namespaces it lists, the unread one too, and still names no Secret", () => {
+    for (const surface of SURFACES) {
+      expect(surfaces[surface]).toContain(UNREAD_NAMESPACE);
+      expect(surfaces[surface]).not.toContain(M.secretName);
+    }
   });
 
   describe.each([...SURFACES])("%s", (surface) => {

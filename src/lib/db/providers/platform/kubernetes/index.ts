@@ -144,6 +144,8 @@ export class KubernetesProvider extends BaseDatabaseProvider {
       agentWalkScope: { mode: "session-default", alsoWalk: [[CLUSTER_CONTAINER]] },
       // The agent's identity is its own ServiceAccount token when `agentPassword` is set, else the connection's token.
       agentCredential: "token",
+      // The agent's reads mask every Secret name its output carries, so the withheld kind holds on `queryReadOnly` too.
+      machineRedaction: { maskedNameKinds: ["secrets"] },
       // Nothing a statement runs changes the tree.
       schemaRefreshPattern: "(?!)",
     };
