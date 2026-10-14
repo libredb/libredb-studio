@@ -112,9 +112,9 @@ describe("CreateTableModal", () => {
     expect(baseElement.querySelectorAll('input[placeholder="column_name"]').length).toBe(1);
   });
 
-  // ── 4. Table name sanitization (lowercase + underscores) ───────────────────
+  // ── 4. Names are preserved and quoted in generated SQL (#1435) ────────────
 
-  test("table name input sanitizes to lowercase and underscores", () => {
+  test("table name input preserves case and special characters", () => {
     const { baseElement } = render(
       <CreateTableModal isOpen onClose={mock(() => {})} onTableCreated={mock(() => {})} />,
     );
@@ -122,14 +122,140 @@ describe("CreateTableModal", () => {
     const tableNameInput = baseElement.querySelector("#tableName") as HTMLInputElement;
     expect(tableNameInput).not.toBeNull();
 
-    // Type mixed-case with special characters
     act(() => {
       fireEvent.change(tableNameInput, { target: { value: "My Table-Name!123" } });
     });
 
-    // The onChange handler lowercases and replaces non-alphanumeric/underscore with _
-    expect(tableNameInput.value).toBe("my_table_name_123");
+    expect(tableNameInput.value).toBe("My Table-Name!123");
   });
+
+  for (const { dbType, quote } of [
+    { dbType: "postgres", quote: '"' },
+    { dbType: "mysql", quote: "`" },
+  ] as const) {
+    test(`${dbType} keeps Unicode table and column names in the preview and submitted SQL`, () => {
+      const onTableCreated = mock((_sql: string) => {});
+      const { baseElement } = render(
+        <CreateTableModal isOpen dbType={dbType} onClose={mock(() => {})} onTableCreated={onTableCreated} />,
+      );
+
+      const tableNameInput = baseElement.querySelector("#tableName") as HTMLInputElement;
+      act(() => {
+        fireEvent.change(tableNameInput, { target: { value: "Ürün Tablo" } });
+      });
+      act(() => {
+        fireEvent.click(within(baseElement).getByText("Add Column"));
+      });
+      const columnInput = baseElement.querySelectorAll<HTMLInputElement>('input[placeholder="column_name"]')[1];
+      act(() => {
+        fireEvent.change(columnInput, { target: { value: "başlık" } });
+      });
+
+      expect(tableNameInput.value).toBe("Ürün Tablo");
+      expect(columnInput.value).toBe("başlık");
+      const preview = (baseElement.querySelector("pre") as HTMLElement).textContent || "";
+      expect(preview).toContain(`CREATE TABLE ${quote}Ürün Tablo${quote} (`);
+      expect(preview).toContain(`${quote}başlık${quote} VARCHAR(255)`);
+
+      act(() => {
+        fireEvent.click(within(baseElement).getByText("CREATE TABLE"));
+      });
+      expect(onTableCreated).toHaveBeenCalledTimes(1);
+      expect(onTableCreated.mock.calls[0][0]).toBe(preview);
+    });
+  }
+
+  for (const { dbType, name, column, quotedName, quotedColumn } of [
+    { dbType: "postgres", name: 'A"B', column: 'C"D', quotedName: '"A""B"', quotedColumn: '"C""D"' },
+    { dbType: "mysql", name: "A`B", column: "C`D", quotedName: "`A``B`", quotedColumn: "`C``D`" },
+    { dbType: "mssql", name: "A]B", column: "C]D", quotedName: "[A]]B]", quotedColumn: "[C]]D]" },
+    { dbType: "sqlite", name: 'A"B', column: 'C"D', quotedName: '"A""B"', quotedColumn: '"C""D"' },
+    { dbType: "libsql", name: 'A"B', column: 'C"D', quotedName: '"A""B"', quotedColumn: '"C""D"' },
+    { dbType: "duckdb", name: 'A"B', column: 'C"D', quotedName: '"A""B"', quotedColumn: '"C""D"' },
+    { dbType: "trino", name: 'A"B', column: 'C"D', quotedName: '"A""B"', quotedColumn: '"C""D"' },
+  ] as const) {
+    test(`${dbType} escapes quote characters in table and auto-increment column names`, () => {
+      const { baseElement } = render(
+        <CreateTableModal isOpen dbType={dbType} onClose={mock(() => {})} onTableCreated={mock(() => {})} />,
+      );
+      act(() => {
+        fireEvent.change(baseElement.querySelector("#tableName") as HTMLInputElement, { target: { value: name } });
+        fireEvent.change(baseElement.querySelector('input[placeholder="column_name"]') as HTMLInputElement, {
+          target: { value: column },
+        });
+      });
+      const preview = baseElement.querySelector("pre")?.textContent || "";
+      expect(preview).toContain(`CREATE TABLE ${quotedName} (`);
+      expect(preview).toContain(`${quotedColumn} `);
+    });
+  }
+
+  test("quoted ASCII names also permit reserved words", () => {
+    const { baseElement } = render(
+      <CreateTableModal isOpen dbType="postgres" onClose={mock(() => {})} onTableCreated={mock(() => {})} />,
+    );
+    act(() => {
+      fireEvent.change(baseElement.querySelector("#tableName") as HTMLInputElement, { target: { value: "select" } });
+      fireEvent.change(baseElement.querySelector('input[placeholder="column_name"]') as HTMLInputElement, {
+        target: { value: "order" },
+      });
+    });
+    const preview = baseElement.querySelector("pre")?.textContent || "";
+    expect(preview).toContain('CREATE TABLE "select" (');
+    expect(preview).toContain('"order" INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY');
+  });
+
+  for (const { dbType, name, error } of [
+    { dbType: "postgres", name: "ü".repeat(32), error: "63 bytes" },
+    { dbType: "mysql", name: "a".repeat(65), error: "64 characters" },
+    { dbType: "mysql", name: "name ", error: "end with a space" },
+    { dbType: "mysql", name: "name😀", error: "supplementary" },
+    { dbType: "mssql", name: "a".repeat(129), error: "128 characters" },
+    { dbType: "oracle", name: "a".repeat(129), error: "128 bytes" },
+    { dbType: "oracle", name: 'A"B', error: "double quote" },
+    { dbType: "postgres", name: "a\0b", error: "null character" },
+  ] as const) {
+    test(`${dbType} reports unsupported table name under its field and blocks creation: ${error}`, () => {
+      const onTableCreated = mock((_sql: string) => {});
+      const { baseElement } = render(
+        <CreateTableModal isOpen dbType={dbType} onClose={mock(() => {})} onTableCreated={onTableCreated} />,
+      );
+      const input = baseElement.querySelector("#tableName") as HTMLInputElement;
+      act(() => {
+        fireEvent.change(input, { target: { value: name } });
+      });
+      expect(input.value).toBe(name);
+      expect(baseElement.querySelector("#tableName-error")?.textContent).toContain(error);
+      act(() => {
+        fireEvent.click(within(baseElement).getByText("CREATE TABLE"));
+      });
+      expect(onTableCreated).not.toHaveBeenCalled();
+    });
+  }
+
+  for (const { dbType, name, error } of [
+    { dbType: "oracle", name: 'A"B', error: "double quote" },
+    { dbType: "oracle", name: "ROWID", error: "ROWID" },
+    { dbType: "mysql", name: "başlık ", error: "end with a space" },
+  ] as const) {
+    test(`${dbType} reports unsupported column name under that column and blocks creation: ${error}`, () => {
+      const onTableCreated = mock((_sql: string) => {});
+      const { baseElement } = render(
+        <CreateTableModal isOpen dbType={dbType} onClose={mock(() => {})} onTableCreated={onTableCreated} />,
+      );
+      act(() => {
+        fireEvent.change(baseElement.querySelector("#tableName") as HTMLInputElement, { target: { value: "orders" } });
+        fireEvent.change(baseElement.querySelector('input[placeholder="column_name"]') as HTMLInputElement, {
+          target: { value: name },
+        });
+      });
+      expect(baseElement.querySelector("#columnName-error-0")?.textContent).toContain(error);
+      act(() => {
+        fireEvent.click(within(baseElement).getByText("CREATE TABLE"));
+      });
+      expect(onTableCreated).not.toHaveBeenCalled();
+    });
+  }
 
   // ── 5. SQL preview with column definitions ─────────────────────────────────
 
@@ -145,8 +271,8 @@ describe("CreateTableModal", () => {
     });
 
     const text = baseElement.textContent || "";
-    expect(text).toContain("CREATE TABLE users");
-    expect(text).toContain("id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY");
+    expect(text).toContain('CREATE TABLE "users"');
+    expect(text).toContain('"id" INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY');
   });
 
   // ── 6. NOT NULL in SQL for non-nullable columns ────────────────────────────
@@ -193,7 +319,7 @@ describe("CreateTableModal", () => {
 
     // SQL should now contain NOT NULL for the status column
     const text = baseElement.textContent || "";
-    expect(text).toContain("status VARCHAR(255) NOT NULL");
+    expect(text).toContain('"status" VARCHAR(255) NOT NULL');
   });
 
   // ── 7. UNIQUE in SQL for unique columns ────────────────────────────────────
@@ -242,7 +368,7 @@ describe("CreateTableModal", () => {
     });
 
     const text = baseElement.textContent || "";
-    expect(text).toContain("sku VARCHAR(255) NOT NULL UNIQUE");
+    expect(text).toContain('"sku" VARCHAR(255) NOT NULL UNIQUE');
   });
 
   // ── 8. DEFAULT value in SQL ────────────────────────────────────────────────
@@ -278,8 +404,8 @@ describe("CreateTableModal", () => {
     // DEFAULT ("GENERATED BY DEFAULT AS IDENTITY"), so a document-wide check no longer
     // says anything about this column.
     const text = baseElement.textContent || "";
-    expect(text).toContain("level VARCHAR(255)");
-    expect(text).not.toContain("level VARCHAR(255) DEFAULT");
+    expect(text).toContain('"level" VARCHAR(255)');
+    expect(text).not.toContain('"level" VARCHAR(255) DEFAULT');
   });
 
   // ── 9. Validate empty table name -> button disabled ─────────────────────────
@@ -304,7 +430,7 @@ describe("CreateTableModal", () => {
 
   // ── 9b. Validate empty table name -> error toast (guard inside handleCreate) ─
 
-  test("empty table name keeps the create button disabled and whitespace is sanitized", () => {
+  test("whitespace-only table name remains visible but cannot be created", () => {
     const onTableCreated = mock(() => {});
     const { baseElement } = render(
       <CreateTableModal isOpen onClose={mock(() => {})} onTableCreated={onTableCreated} />,
@@ -314,18 +440,12 @@ describe("CreateTableModal", () => {
     const createBtn = body.getByText("CREATE TABLE").closest("button") as HTMLButtonElement;
     expect(createBtn.disabled).toBe(true);
 
-    // The name input sanitizes every character outside [a-z0-9_] to "_", so a
-    // whitespace-only name is impossible through the UI: typing spaces yields
-    // underscores and the name validation inside handleCreate stays defensive-only.
     const tableNameInput = baseElement.querySelector("#tableName") as HTMLInputElement;
     act(() => {
       fireEvent.change(tableNameInput, { target: { value: "   " } });
     });
-    expect(tableNameInput.value).toBe("___");
-    expect(createBtn.disabled).toBe(false);
-
-    // A DOM click on the disabled empty-name state never reaches React, so
-    // creation only proceeds with a sanitized non-empty name.
+    expect(tableNameInput.value).toBe("   ");
+    expect(createBtn.disabled).toBe(true);
     expect(onTableCreated).not.toHaveBeenCalled();
   });
 
@@ -382,8 +502,8 @@ describe("CreateTableModal", () => {
     expect(onTableCreated).toHaveBeenCalledTimes(1);
     // Verify the SQL was passed
     const sqlArg = (onTableCreated as ReturnType<typeof mock>).mock.calls[0][0] as string;
-    expect(sqlArg).toContain("CREATE TABLE customers");
-    expect(sqlArg).toContain("id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY");
+    expect(sqlArg).toContain('CREATE TABLE "customers"');
+    expect(sqlArg).toContain('"id" INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY');
 
     expect(onClose).toHaveBeenCalledTimes(1);
   });
@@ -502,10 +622,10 @@ describe("CreateTableModal", () => {
 
     // SQL preview should show the default type
     const text = baseElement.textContent || "";
-    expect(text).toContain("description VARCHAR(255)");
+    expect(text).toContain('"description" VARCHAR(255)');
 
     // Also verify the default id column uses the identity spelling
-    expect(text).toContain("id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY");
+    expect(text).toContain('"id" INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY');
   });
 
   // ── 16. One dialect per engine (#648) ──────────────────────────────────────
@@ -529,24 +649,26 @@ describe("CreateTableModal", () => {
    * table read `id SERIAL PRIMARY KEY`, which parses on two of the eight.
    */
   const AUTO_INCREMENT_BY_ENGINE: ReadonlyArray<[DatabaseType, string]> = [
-    ["postgres", "id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY"],
-    ["mysql", "id INT AUTO_INCREMENT PRIMARY KEY"],
-    ["mssql", "id INT IDENTITY(1,1) PRIMARY KEY"],
-    ["oracle", "id NUMBER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY"],
+    ["postgres", '"id" INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY'],
+    ["mysql", "`id` INT AUTO_INCREMENT PRIMARY KEY"],
+    ["mssql", "[id] INT IDENTITY(1,1) PRIMARY KEY"],
+    ["oracle", '"id" NUMBER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY'],
     // AUTOINCREMENT has to follow PRIMARY KEY and the type has to be exactly INTEGER;
     // both were measured on SQLite 3.53.4, where the other orderings are syntax errors.
-    ["sqlite", "id INTEGER PRIMARY KEY AUTOINCREMENT"],
-    ["libsql", "id INTEGER PRIMARY KEY AUTOINCREMENT"],
-    ["duckdb", "id INTEGER PRIMARY KEY DEFAULT nextval('widgets_id_seq')"],
+    ["sqlite", '"id" INTEGER PRIMARY KEY AUTOINCREMENT'],
+    ["libsql", '"id" INTEGER PRIMARY KEY AUTOINCREMENT'],
+    ["duckdb", '"id" INTEGER PRIMARY KEY DEFAULT nextval(\'"widgets_id_seq"\')'],
     // Trino's column grammar is a name, a type and an optional NOT NULL — no generated
     // value, and no PRIMARY KEY to attach one to.
-    ["trino", "id INTEGER NOT NULL"],
+    ["trino", '"id" INTEGER NOT NULL'],
   ];
 
   for (const [dbType, expected] of AUTO_INCREMENT_BY_ENGINE) {
     test(`${dbType}: default id column is that engine's auto-increment key`, () => {
       const sql = previewFor(dbType);
-      expect(sql).toContain(`CREATE TABLE widgets (\n  ${expected}\n);`);
+      const open = dbType === "mysql" ? "`" : dbType === "mssql" ? "[" : '"';
+      const close = dbType === "mssql" ? "]" : open;
+      expect(sql).toContain(`CREATE TABLE ${open}widgets${close} (\n  ${expected}\n);`);
       expect(sql).not.toContain("SERIAL");
     });
   }
@@ -557,8 +679,8 @@ describe("CreateTableModal", () => {
     // "Catalog Error: Sequence with name nope does not exist!", so the order of these two
     // statements is the fix and not a formatting choice. IF NOT EXISTS because the
     // sequence outlives a DROP TABLE and a bare CREATE SEQUENCE would then fail.
-    expect(sql.indexOf("CREATE SEQUENCE IF NOT EXISTS widgets_id_seq;")).toBe(0);
-    expect(sql.indexOf("CREATE TABLE widgets")).toBeGreaterThan(0);
+    expect(sql.indexOf('CREATE SEQUENCE IF NOT EXISTS "widgets_id_seq";')).toBe(0);
+    expect(sql.indexOf('CREATE TABLE "widgets"')).toBeGreaterThan(0);
   });
 
   test("trino hides the options its grammar has no place for", () => {
@@ -653,12 +775,12 @@ describe("CreateTableModal", () => {
       fireEvent.change(colInputs[1], { target: { value: "body" } });
     });
     // SQLite's list starts at TEXT; "VARCHAR(255)" is not one of its affinity spellings.
-    expect(baseElement.querySelector("pre")?.textContent).toContain("body TEXT");
+    expect(baseElement.querySelector("pre")?.textContent).toContain('"body" TEXT');
   });
 
   test("no connection yet keeps the PostgreSQL behaviour the form already had", () => {
     // The first render the app produces is `dbType={undefined}`; see the mount-shape tests below.
-    expect(previewFor(undefined)).toContain("id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY");
+    expect(previewFor(undefined)).toContain('"id" INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY');
   });
 
   test("opening it for an engine without create-table support throws instead of writing PostgreSQL DDL", () => {
@@ -698,7 +820,7 @@ describe("CreateTableModal", () => {
     });
     rerender(<CreateTableModal isOpen dbType="trino" onClose={mock(() => {})} onTableCreated={mock(() => {})} />);
     const sql = baseElement.querySelector("pre")?.textContent || "";
-    expect(sql).toContain("id INTEGER NOT NULL");
+    expect(sql).toContain('"id" INTEGER NOT NULL');
     expect(sql).not.toContain("__auto_increment__");
   });
 
@@ -727,7 +849,7 @@ describe("CreateTableModal", () => {
         target: { value: "widgets" },
       });
     });
-    expect(baseElement.querySelector("pre")?.textContent).toContain("id INTEGER NOT NULL");
+    expect(baseElement.querySelector("pre")?.textContent).toContain('"id" INTEGER NOT NULL');
   });
 
   test("a create on one engine does not fix the form's columns to it", () => {
@@ -752,7 +874,7 @@ describe("CreateTableModal", () => {
         target: { value: "notes" },
       });
     });
-    expect(baseElement.querySelector("pre")?.textContent).toContain("id INTEGER PRIMARY KEY AUTOINCREMENT");
+    expect(baseElement.querySelector("pre")?.textContent).toContain('"id" INTEGER PRIMARY KEY AUTOINCREMENT');
   });
 
   test("a type chosen on one engine does not survive into the next", () => {
@@ -779,7 +901,7 @@ describe("CreateTableModal", () => {
         Array.from(baseElement.querySelectorAll('[role="option"]')).find((o) => o.textContent === "JSONB") as Element,
       );
     });
-    expect(baseElement.querySelector("pre")?.textContent).toContain("payload JSONB");
+    expect(baseElement.querySelector("pre")?.textContent).toContain('"payload" JSONB');
 
     rerender(<CreateTableModal {...props} dbType="sqlite" />);
     act(() => {
@@ -789,7 +911,7 @@ describe("CreateTableModal", () => {
     });
     const sql = baseElement.querySelector("pre")?.textContent || "";
     expect(sql).not.toContain("JSONB");
-    expect(sql).toContain("id INTEGER PRIMARY KEY AUTOINCREMENT");
+    expect(sql).toContain('"id" INTEGER PRIMARY KEY AUTOINCREMENT');
   });
 
   // ── 18. Unchecking PK on an auto-increment column ──────────────────────────
@@ -804,7 +926,7 @@ describe("CreateTableModal", () => {
       });
     });
     expect(baseElement.querySelector("pre")?.textContent).toContain(
-      "id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY",
+      '"id" INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY',
     );
 
     // Row 0: PK=checkboxes[0], Null=checkboxes[1], Unq=checkboxes[2]
@@ -817,7 +939,7 @@ describe("CreateTableModal", () => {
     // would read "".
     const sql = baseElement.querySelector("pre")?.textContent || "";
     expect(sql).not.toContain("PRIMARY KEY");
-    expect(sql).toContain("id INTEGER NOT NULL UNIQUE");
+    expect(sql).toContain('"id" INTEGER NOT NULL UNIQUE');
     expect(baseElement.querySelectorAll('[role="combobox"]')[0].textContent).toBe("INTEGER");
   });
 
@@ -877,41 +999,72 @@ describe("CreateTableModal", () => {
   test("a table asked for in a container is created in it, and the header says where (#1391)", () => {
     // Measured on MySQL 26.7.0: Create Table under `e2e_other` used to create `e2e.ct_other`.
     const { sql, text } = previewIn("mysql", ["e2e_other"], MYSQL_CAPS);
-    expect(sql).toContain("CREATE TABLE e2e_other.ct_other (");
+    expect(sql).toContain("CREATE TABLE e2e_other.`ct_other` (");
     expect(text).toContain("In e2e_other");
     expect(text).not.toContain("Define schema structure");
   });
 
   test("each segment is quoted in the connection's own dialect (#1391)", () => {
-    expect(previewIn("mysql", ["e2e-other"], MYSQL_CAPS).sql).toContain("CREATE TABLE `e2e-other`.ct_other (");
-    expect(previewIn("postgres", ["Sales"], PG_CAPS).sql).toContain('CREATE TABLE "Sales".ct_other (');
+    expect(previewIn("mysql", ["e2e-other"], MYSQL_CAPS).sql).toContain("CREATE TABLE `e2e-other`.`ct_other` (");
+    expect(previewIn("postgres", ["Sales"], PG_CAPS).sql).toContain('CREATE TABLE "Sales"."ct_other" (');
   });
 
-  test("only the container is quoted; the typed name is written as the flat button writes it (#1391)", () => {
-    // Oracle folds an unquoted name to upper case, so quoting the typed `orders` would create a
-    // lowercase table that a later `SELECT * FROM orders` cannot find (ORA-00942).
+  test("the typed table name is quoted without changing its case in a container (#1435)", () => {
+    // Oracle folds an unquoted name to upper case; quoting preserves the user's lowercase name.
     const ORACLE_CAPS = { queryLanguage: "sql", defaultPort: 1521 } as unknown as ProviderCapabilities;
-    expect(previewIn("oracle", ["APP"], ORACLE_CAPS, "orders").sql).toContain("CREATE TABLE APP.orders (");
-    // A mixed-case PostgreSQL schema keeps its case through quoting; the table name stays as typed.
-    expect(previewIn("postgres", ["MySchema"], PG_CAPS, "orders").sql).toContain('CREATE TABLE "MySchema".orders (');
+    expect(previewIn("oracle", ["APP"], ORACLE_CAPS, "orders").sql).toContain('CREATE TABLE APP."orders" (');
+    expect(previewIn("postgres", ["MySchema"], PG_CAPS, "orders").sql).toContain('CREATE TABLE "MySchema"."orders" (');
   });
 
   test("DuckDB's sequence is created beside the table it numbers (#1391)", () => {
     const { sql } = previewIn("duckdb", ["main"], PG_CAPS, "widgets");
-    expect(sql).toContain("CREATE SEQUENCE IF NOT EXISTS main.widgets_id_seq;");
-    expect(sql).toContain("DEFAULT nextval('main.widgets_id_seq')");
-    expect(sql).toContain("CREATE TABLE main.widgets (");
+    expect(sql).toContain('CREATE SEQUENCE IF NOT EXISTS main."widgets_id_seq";');
+    expect(sql).toContain("DEFAULT nextval('main.\"widgets_id_seq\"')");
+    expect(sql).toContain('CREATE TABLE main."widgets" (');
   });
 
   test("a quote inside the sequence's name stays inside its string literal (#1391)", () => {
     const { sql } = previewIn("duckdb", ["it's"], PG_CAPS, "widgets");
-    expect(sql).toContain(`DEFAULT nextval('"it''s".widgets_id_seq')`);
+    expect(sql).toContain(`DEFAULT nextval('"it''s"."widgets_id_seq"')`);
   });
 
-  test("no container, or no capabilities to quote it with, keeps the bare name (#1391)", () => {
+  test("DuckDB executes a generated sequence name with quotes and apostrophes", async () => {
+    const { baseElement } = render(
+      <CreateTableModal isOpen dbType="duckdb" onClose={mock(() => {})} onTableCreated={mock(() => {})} />,
+    );
+    act(() => {
+      fireEvent.change(baseElement.querySelector("#tableName") as HTMLInputElement, {
+        target: { value: `Kid's "Table"` },
+      });
+      fireEvent.change(baseElement.querySelector('input[placeholder="column_name"]') as HTMLInputElement, {
+        target: { value: `id's "count"` },
+      });
+    });
+    const sql = baseElement.querySelector("pre")?.textContent || "";
+    const [createSequence, createTable] = sql.split(";\n");
+    expect(createSequence).toMatch(/^CREATE SEQUENCE IF NOT EXISTS "libredb\$[0-9a-f]+_seq"$/);
+    const sequenceName = createSequence.slice("CREATE SEQUENCE IF NOT EXISTS ".length);
+    expect(createTable).toContain(`DEFAULT nextval('${sequenceName}')`);
+
+    const { DuckDBInstance } = await import("@duckdb/node-api");
+    const instance = await DuckDBInstance.create(":memory:");
+    const connection = await instance.connect();
+    try {
+      await connection.run(createSequence);
+      await connection.run(createTable);
+      await connection.run('INSERT INTO "Kid\'s ""Table""" DEFAULT VALUES');
+      const rows = await connection.runAndReadAll('SELECT "id\'s ""count""" AS value FROM "Kid\'s ""Table"""');
+      expect(rows.getRowObjectsJson()).toEqual([{ value: 1 }]);
+    } finally {
+      connection.disconnectSync();
+      instance.closeSync();
+    }
+  });
+
+  test("no container, or no capabilities to quote it with, keeps the table unqualified (#1391)", () => {
     const bare = previewIn("mysql", [], MYSQL_CAPS);
-    expect(bare.sql).toContain("CREATE TABLE ct_other (");
+    expect(bare.sql).toContain("CREATE TABLE `ct_other` (");
     expect(bare.text).toContain("Define schema structure");
-    expect(previewIn("mysql", ["e2e_other"], undefined).sql).toContain("CREATE TABLE ct_other (");
+    expect(previewIn("mysql", ["e2e_other"], undefined).sql).toContain("CREATE TABLE `ct_other` (");
   });
 });
