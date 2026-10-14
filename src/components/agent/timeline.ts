@@ -10,6 +10,7 @@ import {
   type AgentEvidenceReference,
   type AgentReadingDenyCode,
   type AgentReportClaim,
+  type AgentResourceQuantities,
   type AgentRunEvent,
   type AgentRunFailureReason,
   type AgentRunMode,
@@ -519,6 +520,15 @@ const PLAN_ESTIMATE_CAVEAT =
 
 /** Said on every recommendation, because the run does not make the change. */
 const NOT_APPLIED_CAVEAT = "Not applied: nothing here runs this statement.";
+
+/**
+ * One side of a resources change, as a user would read it beside a manifest: both quantities, with the one that is
+ * not set named as unset, or `unset` alone when the container sets neither.
+ */
+function describeResourceSide(quantities: AgentResourceQuantities): string {
+  if (quantities.cpu === undefined && quantities.memory === undefined) return "unset";
+  return `cpu ${quantities.cpu ?? "unset"}, memory ${quantities.memory ?? "unset"}`;
+}
 
 /**
  * What an answer's `handover` means, in the app's own words.
@@ -1086,6 +1096,9 @@ function describeEvent(
           tone: "progress",
           headline: "Resources recommended",
           detail: `${event.rationale} Not applied: nothing here changes the cluster.`,
+          // The change itself, quoted rather than narrated because the owner and container names are the cluster's
+          // own text; it is what the user writes into the manifest, so it is offered to the clipboard and nowhere else.
+          quoted: `${event.ownerKind}/${event.ownerName}, container ${event.container}: requests ${describeResourceSide(event.current.requests)} to ${describeResourceSide(event.proposed.requests)}; limits ${describeResourceSide(event.current.limits)} to ${describeResourceSide(event.proposed.limits)}`,
         };
       }
       return {
@@ -1110,26 +1123,28 @@ function describeEvent(
                 .map((finding) => `${finding.column}: ${finding.code} — ${finding.detail}`)
                 .join(" ")}`,
       };
-    // Placeholders until their cards are written: the fold is total, so a kind the ledger admits must have an entry.
+    // The namespace is spoken in the headline the way a profiled table's name is: it is the subject of the entry.
     case "usage-read":
       return {
         tone: "progress",
-        headline: "Usage read",
-        detail: `Namespace ${event.namespace}, ${event.artifact.summary.rowCount} container(s)`,
+        headline: `Read container usage in ${event.namespace}`,
+        detail: `${event.artifact.summary.rowCount} container(s), against their requests and limits.`,
         artifactId: event.artifact.correlationId,
       };
     case "workloads-profiled":
       return {
         tone: "progress",
-        headline: "Workloads profiled",
-        detail: `Namespace ${event.namespace}, ${event.artifact.summary.rowCount} workload(s)`,
+        headline: `Profiled the workloads of ${event.namespace}`,
+        detail: `${event.artifact.summary.rowCount} workload(s).`,
         artifactId: event.artifact.correlationId,
       };
     case "usage-unavailable":
+      // `neutral`, for the reason a schema that was not captured is: the run continues without the reading, so
+      // `progress` would claim it got somewhere and `refused` would claim the server turned a call back.
       return {
         tone: "neutral",
-        headline: "Usage metrics unavailable",
-        detail: `Namespace ${event.namespace}: metrics-server is not installed or not answering.`,
+        headline: "No usage metrics",
+        detail: "This cluster serves no metrics.k8s.io, so usage could not be read: install metrics-server.",
       };
     case "answer-composed":
       return {

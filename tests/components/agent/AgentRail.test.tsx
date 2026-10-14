@@ -2829,6 +2829,47 @@ describe("AgentRail", () => {
       expect(onApplyStatement).toHaveBeenCalledWith("SELECT count(*) FROM orders");
     });
 
+    /*
+      A resources recommendation changes a workload's manifest, which nothing here writes and no editor holds, so its
+      entry quotes the change and offers no hand-off, even to a host that takes statements.
+    */
+    test("a resources recommendation quotes the change and offers nothing to apply", async () => {
+      mockAgentFetch([
+        OPENED_LINE,
+        STARTED_LINE,
+        `${JSON.stringify({
+          kind: "event",
+          event: {
+            kind: "recommendation",
+            atMs: 1_002,
+            change: "resources",
+            namespace: "shop",
+            ownerKind: "Deployment",
+            ownerName: "web",
+            container: "web",
+            current: { requests: { cpu: "500m", memory: "256Mi" }, limits: {} },
+            proposed: { requests: { cpu: "150m", memory: "128Mi" }, limits: {} },
+            rationale: "The container uses a third of its request.",
+            evidence: [{ source: "artifact", correlationId: "corr_9" }],
+          },
+        })}\n`,
+      ]);
+      const onApplyStatement = mock(() => {});
+      const { findAllByText, findByText, queryAllByTestId } = await runWith({ onApplyStatement });
+
+      // The headline is said twice while the run is open: by the entry, and by the answer card naming the newest step.
+      expect((await findAllByText("Resources recommended")).length).toBeGreaterThan(0);
+      expect(
+        (
+          await findByText(
+            "Deployment/web, container web: requests cpu 500m, memory 256Mi to cpu 150m, memory 128Mi; limits unset to unset",
+          )
+        ).tagName,
+      ).toBe("PRE");
+      expect(queryAllByTestId("agent-apply-statement")).toHaveLength(0);
+      expect(onApplyStatement).not.toHaveBeenCalled();
+    });
+
     test("a host that offers neither gets no controls, rather than disabled ones", async () => {
       mockAgentFetch([OPENED_LINE, STARTED_LINE, DRAFTED_LINE, COMPLETED_LINE]);
       const { findAllByTestId, queryAllByTestId } = await runWith({});

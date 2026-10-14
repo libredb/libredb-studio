@@ -2468,6 +2468,40 @@ describe("a resources recommendation folds", () => {
     ]);
 
     expect(view.items).toHaveLength(2);
+    expect(view.items[1]).toMatchObject({
+      tone: "progress",
+      headline: "Resources recommended",
+      detail: "The container uses a third of its request. Not applied: nothing here changes the cluster.",
+      quoted:
+        "Deployment/web, container web: requests cpu 500m, memory 256Mi to cpu 150m, memory 128Mi; limits cpu 1, memory 512Mi to cpu 500m, memory 256Mi",
+    });
+    expect(view.items[1]?.applySql).toBeUndefined();
+  });
+
+  test("a side with nothing set reads as unset, and a half-set side names the missing half", () => {
+    const view = foldLedgerEntries([
+      OPENED,
+      event({
+        kind: "event",
+        event: {
+          kind: "recommendation",
+          atMs: 6,
+          change: "resources",
+          namespace: "shop",
+          ownerKind: "StatefulSet",
+          ownerName: "db",
+          container: "postgres",
+          current: { requests: {}, limits: {} },
+          proposed: { requests: { cpu: "250m" }, limits: { memory: "1Gi" } },
+          rationale: "The container has no requests at all.",
+          evidence: [{ source: "artifact", correlationId: "u1" }],
+        },
+      } as AgentLedgerEntry & { kind: "event" }),
+    ]);
+
+    expect(view.items[1]?.quoted).toBe(
+      "StatefulSet/db, container postgres: requests unset to cpu 250m, memory unset; limits unset to cpu unset, memory 1Gi",
+    );
     expect(view.items[1]?.applySql).toBeUndefined();
   });
 });
@@ -2502,10 +2536,19 @@ describe("a cluster usage reading folds", () => {
       }),
     ]);
 
-    expect(view.items[1]).toMatchObject({ headline: "Usage read", artifactId: "corr-usage" });
-    expect(view.items[1]?.detail).toContain("shop");
-    expect(view.items[2]?.headline).toBe("Usage metrics unavailable");
-    expect(view.items[2]?.detail).toContain("metrics-server");
+    expect(view.items[1]).toMatchObject({
+      tone: "progress",
+      headline: "Read container usage in shop",
+      detail: "3 container(s), against their requests and limits.",
+      artifactId: "corr-usage",
+    });
+    expect(view.items[1]?.applySql).toBeUndefined();
+    expect(view.items[2]).toMatchObject({
+      tone: "neutral",
+      headline: "No usage metrics",
+      detail: "This cluster serves no metrics.k8s.io, so usage could not be read: install metrics-server.",
+    });
+    expect(view.items[2]?.artifactId).toBeUndefined();
     expect(view.items[3]?.headline).toBe("This cluster serves no usage metrics");
     expect(view.items[3]?.detail).toBe("METRICS_UNAVAILABLE");
   });
@@ -2531,9 +2574,13 @@ describe("a workload profile folds", () => {
       }),
     ]);
 
-    expect(view.items[1]).toMatchObject({ headline: "Workloads profiled", artifactId: "corr-profile" });
-    expect(view.items[1]?.detail).toContain("shop");
-    expect(view.items[1]?.detail).toContain("5 workload(s)");
+    expect(view.items[1]).toMatchObject({
+      tone: "progress",
+      headline: "Profiled the workloads of shop",
+      detail: "5 workload(s).",
+      artifactId: "corr-profile",
+    });
+    expect(view.items[1]?.applySql).toBeUndefined();
   });
 });
 
