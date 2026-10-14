@@ -41,7 +41,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B110 · 44
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B111 · 45
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP3 · 3
 
@@ -7172,13 +7172,12 @@ Found 2026-10-09 while designing the S3 provider.
 
 **Done when:** an MCP metadata surface that lists buckets and never returns an object key is designed; `MCP_EXPOSABLE.s3` turns true for it; and `run_read_query` and agent execution serve a `queryReadOnly` that runs one console read command, with tests; cited in `docs/AGENT.md` beside B103.
 
-### B105. Kubernetes has no agent execution and no MCP surface
+### B105. Kubernetes has no MCP surface
 
-`MCP_EXPOSABLE.kubernetes` is false and the provider implements no `queryReadOnly`, so agent execution of a workflow that sends statements and MCP `run_read_query` refuse it, while the operations workflow opens as on every engine; plan mode works, walking the session's namespace and `Cluster`, with Secret names withheld (`docs/providers/kubernetes.md` section 9).
+`MCP_EXPOSABLE.kubernetes` is false and the MCP fence reads SQL only, so MCP `run_read_query` and `inspect_schema` refuse a Kubernetes connection, while agent mode reads it through `kubectl.query.read` under machine redaction (`docs/providers/kubernetes.md` section 9).
+Found 2026-10-10 while designing the Kubernetes provider; narrowed to its MCP half when agent execution landed.
 
-Found 2026-10-10 while designing the Kubernetes provider.
-
-**Done when:** an MCP metadata surface that returns no value, label, annotation or Secret name is designed, and `run_read_query` serves the kubectl subset under its own read policy, with tests; cited in `docs/AGENT.md` beside B104.
+**Done when:** an MCP surface for kubectl reads is designed that applies the agent's machine redaction to every answer, `MCP_EXPOSABLE.kubernetes` turns true for it, and `run_read_query` serves it with tests; cited in `docs/AGENT.md` beside B104.
 
 ### B107. Firestore has no agent execution and no MCP surface
 
@@ -7214,6 +7213,14 @@ A RabbitMQ plan run's chip read "41 streams read" while the capture held 17 stre
 Found 2026-10-12 in a plan-mode pass of the RabbitMQ provider.
 
 **Done when:** the chip names objects of several kinds as what they are, by kind or by a neutral noun, with a test over a capture that holds three kinds.
+
+### B111. DuckDB is offered profile_table, which can only refuse
+
+`profile_table` is offered to the database-assessment and data-analysis workflows on DuckDB, and `composeTableProfile` (`src/lib/agent/table-profile.ts`) has no verified DuckDB composition, so every call answers `UNSUPPORTED_DIALECT`.
+Kept as it is when the agent layer moved to workflow variants, so the SQL surface stayed byte-identical.
+Found 2026-10-14 while building the statement-language layer.
+
+**Done when:** DuckDB gains a verified profile composition with tests, or its SQL variants stop offering `profile_table` through a requirement, with the eval and docs updated; cited in `docs/AGENT.md`.
 
 ## Passkey deferrals (#785)
 

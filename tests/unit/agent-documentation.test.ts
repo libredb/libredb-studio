@@ -30,9 +30,12 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { operatorCopyViolations } from "../../scripts/sync-chart-version.mjs";
+import { AGENT_WORKFLOW_VARIANTS } from "@/lib/agent/agent-manifest";
 import { AGENT_EXECUTION_ENGINES, namedList } from "@/lib/agent/engine-support";
 import { AGENT_HISTORY_MAX_CONVERSATIONS, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
+import { agentPosture } from "@/lib/agent/posture";
 import { getDBConfig } from "@/lib/db-ui-config";
+import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
@@ -451,5 +454,122 @@ describe("every agent-mode engine sentence is the one engine list (#246)", () =>
 
   test("the seed loader's sample comment states it", () => {
     expect(prose("src/lib/seed/index.ts")).toContain(`Agent mode executes statements on ${list};`);
+  });
+});
+
+/**
+ * Agent execution on Kubernetes changed six claims this document makes, and each is pinned against the code that
+ * decides it, so the row that drifts is the one that fails: the engine paragraph and the boundary it names, the
+ * descriptor table, the kubectl variants, their verdicts, the posture row and the stated residue. The residue is
+ * the same six lines `docs/providers/kubernetes.md` section 9 carries, word for word, because a reader of either
+ * page is owed the whole of what machine redaction leaves unmasked.
+ */
+describe("docs/AGENT.md states agent execution on Kubernetes as the code decides it", () => {
+  const sectionOf = (heading: string): string => AGENT_DOC.split(heading)[1]?.split(/^#{2,3} /m)[0] ?? "";
+  const cells = (row: string): string[] =>
+    row
+      .split("|")
+      .slice(1, -1)
+      .map((cell) => cell.trim());
+  const ticked = (cell: string): string[] => [...cell.matchAll(/`([^`]+)`/g)].map((m) => m[1]);
+
+  test("the engine paragraph names every executing engine, links the Kubernetes provider and names its boundary", () => {
+    const paragraph = AGENT_DOC.split("- **Agent mode requires ")[1]?.split(/\n\n/)[0] ?? "";
+    expect(paragraph.length).toBeGreaterThan(0);
+    for (const type of AGENT_EXECUTION_ENGINES) expect(paragraph).toContain(getDBConfig(type).label);
+    expect(paragraph).toContain("(../src/lib/db/providers/platform/kubernetes/index.ts)");
+    expect(paragraph).toContain("request allowlist");
+    expect(paragraph).toContain("RBAC");
+  });
+
+  test("the R1 paragraph admits a Studio-enforced final-request allowlist and never a parser", () => {
+    const paragraph =
+      AGENT_DOC.split("**The curated read is a fifth operation descriptor**")[1]?.split(/\n\n/)[0] ?? "";
+    expect(paragraph).not.toContain("must NAME the database-native mechanism");
+    expect(paragraph).toContain("final method and path");
+    expect(paragraph).toContain("never a parser");
+  });
+
+  test("the descriptor table holds every registered descriptor, each row as the registry declares it", () => {
+    const registry = createCanonicalOperationRegistry();
+    const header = "| Descriptor | Risk class | Access level | Cost | Audit action | Reached by |";
+    const table = AGENT_DOC.split(header)[1]?.split(/\n\n/)[0] ?? "";
+    const rows = table
+      .split("\n")
+      .filter((line) => line.startsWith("| `"))
+      .map(cells);
+    expect(rows.map((row) => ticked(row[0])[0]).sort()).toEqual([...registry.registeredIds()]);
+    for (const id of ["kubectl.query.read", "cluster.usage.read", "cluster.workloads.read"]) {
+      expect(rows.some((row) => ticked(row[0])[0] === id)).toBe(true);
+    }
+    for (const row of rows) {
+      const resolution = registry.resolve(ticked(row[0])[0]);
+      expect(resolution.kind).toBe("resolved");
+      if (resolution.kind !== "resolved") continue;
+      const { descriptor } = resolution;
+      expect(row[1]).toBe(`R${descriptor.riskClass}`);
+      expect(row[2]).toBe(`\`${descriptor.accessLevel}\``);
+      expect(row[3]).toBe(`\`${descriptor.resourceCost}\``);
+      // The audit stream records the descriptor's own id as the action (`execution.ts`).
+      expect(row[4]).toBe(`\`${descriptor.id}\``);
+    }
+  });
+
+  test("the Kubernetes variants table lists each variant's tools and narrowed extras", () => {
+    const section = sectionOf("### On a Kubernetes connection");
+    const variants = AGENT_WORKFLOW_VARIANTS.kubectl;
+    const workflows = Object.keys(variants).filter((workflow) => workflow !== "operations");
+    expect(workflows.length).toBe(4);
+    for (const workflow of workflows) {
+      const variant = variants[workflow as keyof typeof variants];
+      const row = section.split("\n").find((line) => line.startsWith(`| \`${workflow}\``));
+      expect(row).toBeDefined();
+      const [, tools, extras] = cells(row ?? "");
+      expect(ticked(tools).sort()).toEqual([...(variant?.tools ?? [])].sort());
+      const narrowed = [...(variant?.narrowedExtras ?? [])].sort();
+      if (narrowed.length === 0) expect(extras).toBe("none");
+      else expect(ticked(extras).sort()).toEqual(narrowed);
+    }
+    for (const absent of ["inspect_plan", "compare_plans", "profile_table"]) expect(section).toContain(`\`${absent}\``);
+    expect(section).toContain("grounding inventory");
+  });
+
+  test("the verdict section names both kubectl verifiers and their four shortfalls", () => {
+    const section = sectionOf("## Whether the run answered");
+    for (const variant of Object.values(AGENT_WORKFLOW_VARIANTS.kubectl)) {
+      expect(section).toContain(`\`${variant?.verifier}\``);
+    }
+    for (const shortfall of ["no-usage-reading", "no-usage-evidence", "no-usage-metrics", "no-workload-profile"]) {
+      expect(section).toContain(`\`${shortfall}\``);
+    }
+  });
+
+  test("the posture table carries the kubectl reads arm in the words the strip renders", () => {
+    const posture = agentPosture({ mode: "agent", engine: "kubernetes", engineLabel: "Kubernetes", handover: false });
+    const boundary = posture.qualifier.split(", ").at(-1) ?? "";
+    expect(boundary).toContain("request allowlist");
+    const row = AGENT_DOC.split("\n").find((line) => line.startsWith("| `reads`") && line.includes(`*${boundary}*`));
+    expect(row).toBeDefined();
+  });
+
+  test("the withheld-names paragraph says Secret names are masked in agent reads and namespace names pass", () => {
+    const line = AGENT_DOC.split("\n").find((text) => text.startsWith("Kubernetes declares both:")) ?? "";
+    expect(line).toContain("maskedNameKinds");
+    expect(line).toContain("masked in its agent reads");
+    expect(line).toContain("namespace names pass");
+  });
+
+  test("Known limitations carries the residue of machine redaction verbatim", () => {
+    const section = sectionOf("## Known limitations");
+    for (const line of [
+      "Log lines and event messages are free text the server wrote; a credential an application prints reaches the model.",
+      "Status and condition messages pass.",
+      "Label values pass, and can hold anything a team put there.",
+      "Custom-resource fields with no structural rule pass in -o yaml and -o json.",
+      "A guessed Secret name can be confirmed to exist through get secret NAME or auth can-i get secrets/NAME; RBAC decides that.",
+      "The connection's Namespaces field lists the tree; it does not bound a statement, which may use -A or any -n.",
+    ]) {
+      expect(section).toContain(`- ${line}\n`);
+    }
   });
 });
