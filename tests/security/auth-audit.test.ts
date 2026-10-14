@@ -28,9 +28,9 @@ const mockDecryptState = mock(async () => ({
   state: "state",
   nonce: "nonce",
 }));
-const mockExchangeCode = mock(
-  async () => ({ email: "user@example.com", sub: "user-123" }) as Record<string, unknown> | null,
-);
+/** An ID token's claims as openid-client hands them over: `iss` and `sub` are always there. */
+const ID_TOKEN_CLAIMS = { iss: "https://example.auth0.com", sub: "user-123", email: "user@example.com" };
+const mockExchangeCode = mock(async () => ({ ...ID_TOKEN_CLAIMS }) as Record<string, unknown> | null);
 const mockDiscoverProvider = mock(async () => "mock-config");
 const mockGetOIDCConfig = mock(() => ({ roleClaim: "roles", adminRoles: ["admin"] }));
 
@@ -76,7 +76,7 @@ beforeEach(() => {
     name === "oidc-state" ? { name, value: "state-cookie" } : undefined,
   );
   mockDecryptState.mockImplementation(async () => ({ code_verifier: "v", state: "s", nonce: "n" }));
-  mockExchangeCode.mockImplementation(async () => ({ email: "user@example.com", sub: "user-123" }));
+  mockExchangeCode.mockImplementation(async () => ({ ...ID_TOKEN_CLAIMS }));
   mockDiscoverProvider.mockImplementation(async () => "mock-config");
 });
 
