@@ -41,7 +41,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B111 · 45
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B113 · 47
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP3 · 3
 
@@ -7221,6 +7221,24 @@ Kept as it is when the agent layer moved to workflow variants, so the SQL surfac
 Found 2026-10-14 while building the statement-language layer.
 
 **Done when:** DuckDB gains a verified profile composition with tests, or its SQL variants stop offering `profile_table` through a requirement, with the eval and docs updated; cited in `docs/AGENT.md`.
+
+### B112. A run's persisted workflow type is never checked when the ledger is read
+
+`foldLedger` in `src/lib/agent/run-store.ts` takes `workflowType` from the ledger as written, defaulting only a missing one, and no check asks whether the value is a workflow Studio knows.
+Five plain-object tables are then indexed with it: `WORKFLOW_TOOL_RULES` (`src/lib/agent/investigation.ts`), `AGENT_WORKFLOW_PRESENTS_ANSWER` (`src/lib/agent/types.ts`), `AGENT_WORKFLOW_BUDGETS` (`src/lib/agent/execution-policy.ts`), `WORKFLOW_DETAIL` (`src/lib/agent/er-diagram.ts`) and `AGENT_WORKFLOW_ACCEPTS_SNAPSHOT_CITATION` (`src/lib/agent/tools.ts`).
+A ledger carrying an unknown or renamed workflow reads `undefined` from each: the boolean tables take it for false, and a budget read such as `runDeadlineMs` fails as a `TypeError` with no name for the cause.
+The workflow-variant lookup (`agentVariant` in `src/lib/agent/agent-manifest.ts`) guards its own index against an inherited name such as `toString`; these five tables do not.
+Found 2026-10-14 while building agent execution on Kubernetes.
+
+**Done when:** a ledger header whose `workflowType` is not an `AgentRunWorkflowType` is refused at read with a named error, with a test that writes such a header and reads it back; cited in `docs/AGENT.md`.
+
+### B113. The agent user guide cites code by line number and carries em dashes
+
+`docs/AGENT_GUIDE.md` cites code as `file:line` in 41 places (`timeline.ts:499`, `goal-verifier.ts:349-355` and `AgentRail.tsx:401-447` among them), and those numbers have drifted as the files changed, so a reader following one lands on unrelated code.
+The same page carries 154 lines with an em dash, against the repository's writing rule.
+Found 2026-10-14 while building agent execution on Kubernetes.
+
+**Done when:** every code citation in `docs/AGENT_GUIDE.md` names a file and a symbol instead of a line, no em or en dash remains on the page, and a guard test fails on a new `file:line` citation there; cited in `docs/AGENT.md`.
 
 ## Passkey deferrals (#785)
 
