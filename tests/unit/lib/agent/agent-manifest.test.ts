@@ -305,7 +305,8 @@ describe("workflowAvailability", () => {
         investigation: { ...sqlInvestigation, requires: ["cluster-usage-reading"] },
       },
     },
-    requirementEngines: AGENT_REQUIREMENT_ENGINES,
+    // Held empty here whatever the live mirror says, so the refusal is driven by the table and not by the census.
+    requirementEngines: { ...AGENT_REQUIREMENT_ENGINES, "cluster-usage-reading": [] },
   } as const;
 
   test("a workflow the language has no variant of is refused with the no-variant sentence", () => {

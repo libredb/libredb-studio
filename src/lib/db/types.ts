@@ -1312,6 +1312,15 @@ export interface ProviderCapabilities {
    */
   readonly machineRedaction?: { readonly maskedNameKinds: readonly string[] };
   /**
+   * The curated cluster readings this provider answers for the agent, each one audited call and one statement charge
+   * instead of composed statements: `"usage"` is `readClusterUsage` (`cluster.usage.read`). Absent: it answers none.
+   * `AGENT_REQUIREMENT_ENGINES` in `src/lib/agent/agent-manifest.ts` mirrors it per engine type, and
+   * `agent-manifest.test.ts` holds the mirror to this declaration.
+   *
+   * Optional for the same published-interface reason as `enforcesReadOnly`.
+   */
+  readonly agentReadings?: readonly ("usage" | "workloads")[];
+  /**
    * True when this engine's provider reads `ProviderExecutionContext.allowExternalFileAccess` and
    * opens its editor handle under that file-access posture: `false` closes every statement-level file
    * and network route outside the handle's private temp directory and its database's own file names
@@ -1765,6 +1774,22 @@ export interface ReadOnlyStatementBudget {
   maxResultBytes: number;
 }
 
+/** One namespace, and optionally a label selector over its pods, for a curated cluster reading. */
+export interface ClusterUsageInput {
+  readonly namespace: string;
+  readonly selector?: string;
+}
+
+/**
+ * What a cluster usage reading answers: the rows, or why there are none. `metrics-unavailable` is the cluster's own
+ * fact (no metrics.k8s.io, or one whose backend does not answer), not a failure of the read; `over-ceiling` refuses a
+ * reading past its row ceiling rather than truncating it.
+ */
+export type ClusterUsageReading =
+  | { readonly kind: "rows"; readonly result: QueryResult }
+  | { readonly kind: "metrics-unavailable" }
+  | { readonly kind: "over-ceiling" };
+
 /**
  * What the caller wants out of the one statement it is sending: the statement's own
  * result, or the engine's ESTIMATE of how it would be run.
@@ -1962,6 +1987,13 @@ export interface DatabaseProvider {
    * that lack it rather than falling back to `query()` (fail closed).
    */
   queryReadOnly?(sql: string, budget: ReadOnlyStatementBudget, mode?: ReadOnlyStatementMode): Promise<QueryResult>;
+
+  /**
+   * Container usage against requests and limits in one namespace, for the agent's `cluster.usage.read`. Optional:
+   * only a provider declaring `agentReadings` `"usage"` implements it, and it answers only under the agent read-only
+   * profile, bounded by `budget` as `queryReadOnly` is.
+   */
+  readClusterUsage?(input: ClusterUsageInput, budget: ReadOnlyStatementBudget): Promise<ClusterUsageReading>;
 
   /**
    * End a transaction that a statement run through `query()` left open on the session

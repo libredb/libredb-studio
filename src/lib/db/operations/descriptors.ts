@@ -331,6 +331,42 @@ export const kubectlQueryReadDescriptor: RegistrableOperationDescriptor = {
   },
 };
 
+/** One namespace (a DNS-1123 label, as the API server names one) and an optional label selector over its pods. */
+const clusterUsageReadInput = z.strictObject({
+  namespace: z.string().regex(/^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/),
+  selector: z
+    .string()
+    .min(1)
+    .max(1024)
+    .refine((text) => text.trim() !== "", "a label selector may not be blank")
+    .optional(),
+});
+
+/**
+ * Container usage against requests and limits in one namespace, on a `kubernetes` connection: a curated reading the
+ * agent takes instead of composing `kubectl top` and `kubectl get pods`.
+ *
+ * R1 `data-read`, not metadata: the selector is model-written and reaches the API server, and the answer is the
+ * cluster's own usage data, so it sits under the same boundary as `kubectl.query.read`. `heavy` on the
+ * `db.schema.read` precedent: one charge buys a reading of several lists (PodMetrics, pods, ReplicaSets, Jobs). It has
+ * its own ceiling of 500 rows, and a reading past it is refused rather than truncated.
+ */
+export const clusterUsageReadDescriptor: RegistrableOperationDescriptor = {
+  id: "cluster.usage.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  inputSchema: clusterUsageReadInput,
+  verification: {
+    reviewedBy: "Kubernetes agent execution design review",
+    boundary: KUBECTL_READ_BOUNDARY,
+    verifiedOn: "2026-10-14",
+  },
+};
+
 const CANONICAL_DESCRIPTORS: readonly RegistrableOperationDescriptor[] = Object.freeze([
   sqlQueryReadDescriptor,
   sqlExplainEstimateDescriptor,
@@ -339,6 +375,7 @@ const CANONICAL_DESCRIPTORS: readonly RegistrableOperationDescriptor[] = Object.
   dbOperationsReadDescriptor,
   dbSchemaReadDescriptor,
   kubectlQueryReadDescriptor,
+  clusterUsageReadDescriptor,
 ]);
 
 /**

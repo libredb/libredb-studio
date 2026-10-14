@@ -113,7 +113,7 @@ export type AgentVariantRequirement = "sql-composers" | "cluster-usage-reading" 
 export const AGENT_REQUIREMENT_ENGINES: Readonly<Record<AgentVariantRequirement, readonly DatabaseType[]>> =
   Object.freeze({
     "sql-composers": Object.freeze<DatabaseType[]>(["postgres", "sqlite", "duckdb", "mssql", "mysql"]),
-    "cluster-usage-reading": Object.freeze<DatabaseType[]>([]),
+    "cluster-usage-reading": Object.freeze<DatabaseType[]>(["kubernetes"]),
     "cluster-workload-reading": Object.freeze<DatabaseType[]>([]),
   } satisfies Record<AgentVariantRequirement, readonly DatabaseType[]>);
 

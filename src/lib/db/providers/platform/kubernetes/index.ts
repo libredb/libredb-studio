@@ -9,9 +9,10 @@
  * failure sentence `errors.ts`. What stays here is the session's lifecycle, the declarations and the one call shape
  * every module reads through.
  *
- * Read-only whatever `readOnly` says: no request path writes, and no maintenance is offered. `queryReadOnly` serves
- * the agent under the read-only profile (`machine-read.ts`, `machine-redaction.ts`); MCP is not offered
- * (`MCP_EXPOSABLE.kubernetes`). The clock, the randomness and the transport factory are seams.
+ * Read-only whatever `readOnly` says: no request path writes, and no maintenance is offered. `queryReadOnly` and
+ * the curated `readClusterUsage` (`agent-readings.ts`) serve the agent under the read-only profile (`machine-read.ts`,
+ * `machine-redaction.ts`); MCP is not offered (`MCP_EXPOSABLE.kubernetes`). The clock, the randomness and the
+ * transport factory are seams.
  *
  * The console is `console/`: `query()` runs one statement through `console/run.ts` under the run registry, so a
  * cancel stops it, and `prepareQuery` pages only the list form of a single-type get (`console/paging.ts`).
@@ -21,6 +22,8 @@ import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { ConnectionError, DatabaseConfigError, QueryCancelledError, QueryError } from "@/lib/db/errors";
 import type {
   ActiveSessionDetails,
+  ClusterUsageInput,
+  ClusterUsageReading,
   Container,
   DatabaseObject,
   DatabaseOverview,
@@ -47,6 +50,7 @@ import type {
 } from "@/lib/db/types";
 import { createRunRegistry, type RunRegistry } from "@/lib/db/utils/bounded-limiter";
 import type { DatabaseConnection, QueryWarning, WithTunnelFarEnd } from "@/lib/types";
+import { readClusterUsage } from "./agent-readings";
 import { createKubernetesClient, DEFAULT_KUBERNETES_SEAMS, type KubernetesCall, type KubernetesSeams } from "./client";
 import { kubernetesConnectWarnings } from "./connect-warnings";
 import { ExplainCache, resultOf, statementCall } from "./console/context";
@@ -58,7 +62,7 @@ import { DiscoveryCache, readDiscovery, requireSupportedServer } from "./discove
 import { CLUSTER_CONTAINER, KUBERNETES_OBJECT_KINDS, KUBERNETES_ROW_ACTIONS } from "./kinds";
 import { KUBERNETES_LABELS } from "./labels";
 import { KUBERNETES_DEFAULT_PORT, KUBERNETES_TYPE } from "./limits";
-import { readKubectlForMachine } from "./machine-read";
+import { type MachineOptions, type MachineSession, readKubectlForMachine, withMachineContext } from "./machine-read";
 import { kubernetesHealth, kubernetesOverview } from "./monitoring";
 import {
   countKubernetesObjects,
@@ -159,6 +163,8 @@ export class KubernetesProvider extends BaseDatabaseProvider {
       agentCredential: "token",
       // The agent's reads mask every Secret name its output carries, so the withheld kind holds on `queryReadOnly` too.
       machineRedaction: { maskedNameKinds: ["secrets"] },
+      // Container usage against requests and limits, read in one call for the agent (`readClusterUsage`).
+      agentReadings: ["usage"],
       // Nothing a statement runs changes the tree.
       schemaRefreshPattern: "(?!)",
     };
@@ -295,13 +301,28 @@ export class KubernetesProvider extends BaseDatabaseProvider {
     mode?: ReadOnlyStatementMode,
   ): Promise<QueryResult> {
     const session = this.requireSession();
-    return readKubectlForMachine(
-      { surface: session.surface, explainCache: session.explainCache, lifetime: session.lifetime.signal },
-      statement,
-      budget,
-      mode,
-      { readOnly: this.readOnlyProfile, seams: this.seams, appVersion: getAppVersion() },
+    return readKubectlForMachine(this.machineSession(session), statement, budget, mode, this.machineOptions());
+  }
+
+  /** Container usage against requests and limits for the agent (`cluster.usage.read`), in the machine context. */
+  public async readClusterUsage(
+    input: ClusterUsageInput,
+    budget: ReadOnlyStatementBudget,
+  ): Promise<ClusterUsageReading> {
+    const session = this.requireSession();
+    return withMachineContext(this.machineSession(session), budget, this.machineOptions(), (context) =>
+      readClusterUsage(context, input),
     );
+  }
+
+  /** The session as the agent's reads see it: its surface, its explain cache and its lifetime. */
+  private machineSession(session: KubernetesSession): MachineSession {
+    return { surface: session.surface, explainCache: session.explainCache, lifetime: session.lifetime.signal };
+  }
+
+  /** What every agent read is held to: the read-only profile, the clock and sleep seams, and the version it reports. */
+  private machineOptions(): MachineOptions {
+    return { readOnly: this.readOnlyProfile, seams: this.seams, appVersion: getAppVersion() };
   }
 
   /** Stops a running statement by its id and answers true; an id that names no run answers false. */

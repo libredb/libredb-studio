@@ -51,7 +51,7 @@ export interface MachineOptions {
 
 const EXPIRED = Symbol("expired");
 
-async function withMachineContext<T>(
+export async function withMachineContext<T>(
   session: MachineSession,
   budget: ReadOnlyStatementBudget,
   options: MachineOptions,

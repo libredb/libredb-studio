@@ -222,11 +222,23 @@ const declared = walkFrom("values-and-types");
  * `AgentRail.tsx` filed outside an `agent/` directory both match. Deliberately
  * over-broad — a false positive here is a conversation, a false negative is the
  * hole this file exists to close — and it costs nothing today: no module under
- * `src/` matches it except the agent modules themselves.
+ * `src/` matches it except the agent modules themselves and the ones
+ * `NOT_AGENT_CODE` names.
  */
 function isAgentModule(file: string): boolean {
-  return /(^|\/)(agent|use-agent)/i.test(relative(file));
+  const name = relative(file);
+  return !NOT_AGENT_CODE.has(name) && /(^|\/)(agent|use-agent)/i.test(name);
 }
+
+/**
+ * The false positives that conversation settled, by exact path rather than by
+ * category, so a second one is looked at rather than waved through. Each is
+ * provider code under `src/lib/db`, which imports nothing from `src/lib/agent`:
+ * only its own name is excused, and every module it reaches is still walked and
+ * still checked. The Kubernetes provider's curated readings answer the agent's
+ * `cluster.usage.read` and ship in the package with the provider.
+ */
+const NOT_AGENT_CODE: ReadonlySet<string> = new Set(["src/lib/db/providers/platform/kubernetes/agent-readings.ts"]);
 
 // ---------------------------------------------------------------------------
 // The scanner itself, before anything is concluded from it
@@ -318,6 +330,7 @@ describe("the scanner reads what it claims to read", () => {
     for (const ordinaryFile of [
       "src/components/studio/BottomPanel.tsx",
       "src/lib/db/operations/execution.ts",
+      "src/lib/db/providers/platform/kubernetes/agent-readings.ts",
       "src/workspace/StudioWorkspace.tsx",
     ]) {
       expect(isAgentModule(path.join(ROOT, ordinaryFile))).toBe(false);

@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import {
+  clusterUsageReadDescriptor,
   createCanonicalOperationRegistry,
   dbOperationsReadDescriptor,
   dbSchemaReadDescriptor,
@@ -29,11 +30,12 @@ const canonicalDescriptors = [
   dbOperationsReadDescriptor,
   dbSchemaReadDescriptor,
   kubectlQueryReadDescriptor,
+  clusterUsageReadDescriptor,
 ];
 
 describe("canonical operation registry", () => {
-  test("registers exactly the seven canonical descriptors: no write, DDL, or admin operation exists", () => {
-    // Seven since the Kubernetes agent read, which has its own id so the SQL contract
+  test("registers exactly the eight canonical descriptors: no write, DDL, or admin operation exists", () => {
+    // Eight since the Kubernetes usage reading, a curated read with its own row ceiling. Seven since the Kubernetes agent read, which has its own id so the SQL contract
     // and its audit action stay exactly what they were. Six since #414, which gave the provider's own schema inspection an id so that
     // grounding on an engine with no composed catalog goes through the audited path
     // rather than beside it. Five since the `operations` workflow, which added the
@@ -43,6 +45,7 @@ describe("canonical operation registry", () => {
     // descriptor can be added without somebody noticing.
     const registry = createCanonicalOperationRegistry();
     expect(registry.registeredIds()).toEqual([
+      "cluster.usage.read",
       "db.operations.read",
       "db.schema.read",
       "kubectl.query.read",
@@ -215,6 +218,39 @@ describe("kubectl.query.read", () => {
     expect(schema.safeParse({ statement: "get pods -n shop" }).success).toBe(true);
     expect(schema.safeParse({ sql: "get pods -n shop" }).success).toBe(false);
     expect(schema.safeParse({ statement: "get pods", extra: 1 }).success).toBe(false);
+  });
+});
+
+describe("cluster.usage.read", () => {
+  test("is R1 data-read, heavy, never approval-gated, registered, and bounded as kubectl.query.read is", () => {
+    expect(clusterUsageReadDescriptor).toMatchObject({
+      id: "cluster.usage.read",
+      riskClass: 1,
+      accessLevel: "data-read",
+      resourceCost: "heavy",
+      requiresApproval: false,
+      supportsDryRun: false,
+      requiredCapabilities: [],
+    });
+    expect(clusterUsageReadDescriptor.verification?.boundary).toBe(kubectlQueryReadDescriptor.verification?.boundary);
+    const resolution = createCanonicalOperationRegistry().resolve("cluster.usage.read");
+    if (resolution.kind !== "resolved") throw new Error(`expected resolved, got ${resolution.kind}`);
+    expect(resolution.descriptor.riskClass).toBe(1);
+    // A curated reading, not a statement the model wrote.
+    expect(isStatementReadOperation("cluster.usage.read")).toBe(false);
+  });
+
+  test("takes a namespace name and an optional label selector that is not blank, and nothing else", () => {
+    const schema = clusterUsageReadDescriptor.inputSchema;
+    expect(schema.safeParse({ namespace: "shop" }).success).toBe(true);
+    expect(schema.safeParse({ namespace: "shop", selector: "app=web" }).success).toBe(true);
+    expect(schema.safeParse({ namespace: "Shop" }).success).toBe(false);
+    expect(schema.safeParse({ namespace: "-shop" }).success).toBe(false);
+    expect(schema.safeParse({ namespace: "a".repeat(64) }).success).toBe(false);
+    expect(schema.safeParse({ namespace: "shop", selector: "" }).success).toBe(false);
+    expect(schema.safeParse({ namespace: "shop", selector: "   " }).success).toBe(false);
+    expect(schema.safeParse({ namespace: "shop", selector: "a".repeat(1025) }).success).toBe(false);
+    expect(schema.safeParse({ namespace: "shop", statement: "get pods" }).success).toBe(false);
   });
 });
 
