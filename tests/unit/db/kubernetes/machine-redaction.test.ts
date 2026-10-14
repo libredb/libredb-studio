@@ -123,6 +123,86 @@ describe("value rules, at any depth", () => {
     }
   });
 
+  test("a ConfigMap and a Secret embedded in a custom resource are masked like root ones, keys kept", () => {
+    const policy = {
+      apiVersion: "kyverno.io/v1",
+      kind: "ClusterPolicy",
+      metadata: { name: "seed" },
+      spec: {
+        rules: [
+          {
+            name: "seed",
+            generate: {
+              data: {
+                kind: "ConfigMap",
+                data: { [M.configMapKey]: M.configMapValue },
+                binaryData: { blob: "aGVsbG8=" },
+              },
+            },
+          },
+          {
+            name: "secret",
+            generate: {
+              data: {
+                kind: "Secret",
+                metadata: { name: M.secretName },
+                data: { [M.secretKey]: "c2VjcmV0" },
+                stringData: { password: M.secretValue },
+              },
+            },
+          },
+        ],
+      },
+    };
+    const masked = maskObjectForMachine({ group: "kyverno.io", resource: "clusterpolicies" }, policy);
+    expectMasked(policy, masked, M.configMapKey, M.configMapValue);
+    expectMasked(policy, masked, "password", M.secretValue);
+    expectMasked(policy, masked, M.secretKey, "c2VjcmV0");
+    expectMasked(policy, masked, '"blob"', "aGVsbG8=");
+    expect(json(policy)).toContain(M.secretName);
+    expect(json(masked)).not.toContain(M.secretName);
+    expect(json(masked)).toContain('"name":"seed"');
+  });
+
+  test("a Crossplane Object's Secret manifest loses its name and stringData values, keys kept", () => {
+    const object = {
+      kind: "Object",
+      metadata: { name: "db-credentials" },
+      spec: {
+        forProvider: {
+          manifest: {
+            apiVersion: "v1",
+            kind: "Secret",
+            metadata: { name: M.secretName, namespace: "shop" },
+            stringData: { password: M.secretValue },
+          },
+        },
+      },
+    };
+    const masked = maskObjectForMachine({ group: "kubernetes.crossplane.io", resource: "objects" }, object);
+    expectMasked(object, masked, "password", M.secretValue);
+    expect(json(object)).toContain(M.secretName);
+    expect(json(masked)).not.toContain(M.secretName);
+    expect(json(masked)).toContain('"namespace":"shop"');
+    expect(json(masked)).toContain('"name":"db-credentials"');
+  });
+
+  test("an embedded map field that is not a map has no keys to keep, so it becomes the marker", () => {
+    const object = {
+      kind: "Widget",
+      spec: {
+        seed: { kind: "Secret", stringData: M.secretValue },
+        config: { kind: "ConfigMap", data: M.configMapValue },
+      },
+    };
+    const masked = maskObjectForMachine(WIDGETS, object);
+    expect(json(object)).toContain(M.secretValue);
+    expect(json(masked)).not.toContain(M.secretValue);
+    expect(json(masked)).not.toContain(M.configMapValue);
+    expect(json(masked)).toContain(`"stringData":"${MACHINE_REDACTED}"`);
+    expect(json(masked)).toContain(`"data":"${MACHINE_REDACTED}"`);
+  });
+
   test("the input is not changed, so routing can still read it", () => {
     const object = { kind: "Pod", metadata: metadata(), spec: plantedPodSpec() };
     const before = json(object);

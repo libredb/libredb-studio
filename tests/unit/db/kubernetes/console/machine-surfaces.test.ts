@@ -183,6 +183,28 @@ describe("Tables", () => {
     expectMasked(document.editor, document.machine, "MARKER_ENV", M.envValue);
   });
 
+  test("-o yaml of a custom resource embedding a ConfigMap and a Secret masks their values and the Secret's name", async () => {
+    const widget = {
+      apiVersion: "probe.libredb.dev/v1",
+      kind: "Widget",
+      metadata: { name: "w2", namespace: "shop" },
+      spec: {
+        seed: { kind: "ConfigMap", data: { [M.configMapKey]: M.configMapValue } },
+        credentials: {
+          kind: "Secret",
+          metadata: { name: M.secretName },
+          stringData: { password: M.secretValue },
+        },
+      },
+    };
+    const widgets = "/apis/probe.libredb.dev/v1/namespaces/shop/widgets";
+    const document = await both({ [`GET ${widgets}/w2`]: jsonAnswer(widget) }, "get widget w2 -n shop -o yaml");
+    expectMasked(document.editor, document.machine, M.configMapKey, M.configMapValue);
+    expectMasked(document.editor, document.machine, "password", M.secretValue);
+    expect(document.editor).toContain(M.secretName);
+    expect(document.machine).not.toContain(M.secretName);
+  });
+
   test("get events: a Secret's object cell and the event's name are masked, a Pod's are not", async () => {
     const columns = [
       { name: "Last Seen" },

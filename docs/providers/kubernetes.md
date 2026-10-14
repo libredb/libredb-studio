@@ -359,12 +359,12 @@ Agent mode:
 - Each of the two readings is one statement charge and is refused past 500 rows, with advice to narrow by namespace or selector.
 - The agent runs as the agent token of section 4.11 when one is set, else as the connection's token.
 
-What the agent reads is masked in machine mode before it is written, at any depth of any object, pod templates and pod specs inside custom resources included; keys are kept and values become `<redacted>`:
+What the agent reads is masked in machine mode before it is written, at any depth of any object, pod templates, a ControllerRevision's `data` and pod specs inside custom resources included; keys are kept and values become `<redacted>`:
 - the `value` of every element of an `env` array and of an `httpHeaders` array;
 - every element of a container's `command` and `args`, and of an `exec.command` under a probe or a lifecycle hook;
 - the values of every `annotations` map under any `metadata`;
-- ConfigMap `data` and `binaryData` values;
-- Secret `data` and `stringData` values, and the last-applied annotation;
+- ConfigMap `data` and `binaryData` values, of a ConfigMap embedded in another object too, such as a policy's generate template;
+- Secret `data` and `stringData` values and the last-applied annotation, and the name of a Secret embedded in another object, such as a Crossplane `Object` manifest, with its values;
 - a Secret's name wherever a field is defined to hold one: `secretName`, `secretRef.name` and every `*SecretRef.name`, a volume's or projected source's `secret.name`, `secretKeyRef.name`, `imagePullSecrets`, a ServiceAccount's `secrets`, an Ingress's `tls` secret, and an owner reference or an event's object when its kind is Secret;
 - the `resourceNames` of a Role or ClusterRole rule whose resources include `secrets` or `*` in the core group.
 

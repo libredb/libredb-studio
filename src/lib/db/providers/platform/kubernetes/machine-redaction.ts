@@ -7,12 +7,13 @@
  * Structural, not by path: a rule matches a field by its shape wherever it sits, so a pod spec inside a Deployment's
  * template, a PodTemplate, a ControllerRevision's `data` or a custom resource is masked like a Pod's own. Values are
  * masked and keys kept (A1, A5): env values, probe and hook header values, a container's command and args, exec
- * commands, every annotation value and ConfigMap data. Labels pass, keys and values. Names pass, except a Secret's
- * (A4), which `maskSecretNames` handles: every `secretName` string, the `name` of a `secretRef`, `secretKeyRef`,
- * `secret` or any `*SecretRef`, each `imagePullSecrets` and ServiceAccount `secrets` entry, an owner, involved,
- * regarding or related reference whose kind is `Secret`, and the `resourceNames` of an RBAC rule that reaches core
- * Secrets (`coversSecrets`). The root object's own name is masked when the request reads core Secrets or its kind is
- * `Secret`, and so is an Event's about a Secret, because the server derives the Event's name from the Secret's.
+ * commands, every annotation value, and the data of every ConfigMap and Secret, embedded ones included (`maskByKind`).
+ * Labels pass, keys and values. Names pass, except a Secret's (A4), which `maskSecretNames` handles: every
+ * `secretName` string, the `name` of a `secretRef`, `secretKeyRef`, `secret` or any `*SecretRef`, each
+ * `imagePullSecrets` and ServiceAccount `secrets` entry, an owner, involved, regarding or related reference whose kind
+ * is `Secret`, and the `resourceNames` of an RBAC rule that reaches core Secrets (`coversSecrets`). An object's own name is masked when its kind is `Secret`, at any depth; the root's also
+ * when the request reads core Secrets, and an Event's about a Secret, because the server derives the Event's name
+ * from the Secret's.
  * What no rule reaches is the stated residue (`docs/providers/kubernetes.md` section 9): log lines and event messages,
  * status and condition messages, label values, and custom-resource fields with no rule.
  *
@@ -50,6 +51,31 @@ function maskElements(node: Json, key: string): void {
 /** Whether a request reads core ConfigMaps, whose data is masked whether or not each item carries its kind. */
 function readsConfigMaps(target: RedactionTarget): boolean {
   return target.group === "" && target.resource === "configmaps";
+}
+
+/** A map field's values masked, its keys kept; a field present but not a map has no keys, so it becomes the marker. */
+function maskMapFields(node: Json, fields: readonly string[]): void {
+  for (const field of fields) {
+    const map = node[field];
+    if (isObject(map)) node[field] = maskedValues(map);
+    else if (map !== undefined) node[field] = MACHINE_REDACTED;
+  }
+}
+
+const CONFIG_MAP_FIELDS = ["data", "binaryData"] as const;
+const SECRET_FIELDS = ["data", "stringData"] as const;
+
+/**
+ * The kind rules, applied to every node that says what it is: a ConfigMap or a Secret embedded in another object (a
+ * policy's generate template, a Crossplane `Object` manifest, a chart's values) is masked as a root one is. A Secret's
+ * own name goes with its values, because a manifest that creates a Secret names it.
+ */
+function maskByKind(node: Json): void {
+  if (node.kind === "ConfigMap") maskMapFields(node, CONFIG_MAP_FIELDS);
+  if (node.kind !== "Secret") return;
+  maskMapFields(node, SECRET_FIELDS);
+  if (isObject(node.metadata) && typeof node.metadata.name === "string")
+    node.metadata = { ...node.metadata, name: MACHINE_REDACTED };
 }
 
 /** The value rules, applied to one node whose children are already masked copies. */
@@ -154,14 +180,11 @@ export function maskObjectForMachine(target: RedactionTarget, object: Readonly<R
   const masked = walk(object, 0, (node) => {
     maskValues(node);
     maskSecretNames(node);
+    maskByKind(node);
   }) as Json;
-  if (readsConfigMaps(target) || masked.kind === "ConfigMap") {
-    for (const field of ["data", "binaryData"] as const) {
-      const map = masked[field];
-      if (isObject(map)) masked[field] = maskedValues(map);
-    }
-  }
-  const nameIsASecret = readsSecrets(target) || masked.kind === "Secret" || eventAboutASecret;
+  // A typed list's items carry no kind, so the request target says what they are.
+  if (readsConfigMaps(target)) maskMapFields(masked, CONFIG_MAP_FIELDS);
+  const nameIsASecret = readsSecrets(target) || eventAboutASecret;
   if (nameIsASecret && isObject(masked.metadata) && typeof masked.metadata.name === "string")
     masked.metadata = { ...masked.metadata, name: MACHINE_REDACTED };
   return masked;
