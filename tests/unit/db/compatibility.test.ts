@@ -18,13 +18,18 @@ import {
   EXTERNAL_DATABASE_TYPES,
   isExternalDatabaseType,
   MCP_EXPOSABLE,
+  OPENS_LOCAL_FILE,
+  OPENS_SERVER_LEVEL_WITHOUT_DATABASE,
   READ_ONLY_ENFORCED,
   READS_FILE_ACCESS_POSTURE,
   SHIPPED_DATABASE_TYPES,
 } from "@/lib/db/compatibility";
+import { createDatabaseProvider } from "@/lib/db/factory";
+import { isFileBased } from "@/lib/db-ui-config";
 import type { DatabaseType } from "@/lib/types";
 import { isQueryFenceTag } from "@/lib/sql/fence-tags";
 import { parse as parseYaml } from "yaml";
+import { CENSUS_CONNECTION } from "../../helpers/census-connection";
 
 /**
  * The compose service that reproduces each registry entry.
@@ -658,5 +663,85 @@ describe("MCP_EXPOSABLE (#1089)", () => {
       "firestore",
       "opcua",
     ]);
+  });
+});
+
+/**
+ * `OPENS_LOCAL_FILE` (governance row admission, spec 7.7): the engines whose connection is a file on Studio's own
+ * host. Admission never governs one, whatever `GOVERNANCE_ALLOWED_ENGINES` says, and reads this record rather than a
+ * type id. The governance layer must not load `src/lib/db-ui-config.ts`, which value-imports the React icon
+ * components, so the record is held equal here to that file's own answer: `isFileBased()`, the connection form's
+ * file path in place of a server address.
+ */
+describe("OPENS_LOCAL_FILE (spec 7.7)", () => {
+  test("answers for every shipped type-id and for nothing else", () => {
+    expect(Object.keys(OPENS_LOCAL_FILE).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
+  });
+
+  test("is frozen, so no reader can change an answer at run time", () => {
+    expect(Object.isFrozen(OPENS_LOCAL_FILE)).toBe(true);
+  });
+
+  test.each([...SHIPPED_DATABASE_TYPES])(
+    "%s: the record answers what the connection form's file path declares",
+    (type) => {
+      expect(OPENS_LOCAL_FILE[type]).toBe(isFileBased(type));
+    },
+  );
+
+  test("sqlite, duckdb and libredb open a local file, and no other engine does", () => {
+    // Vacuity, by name: a record that answered false everywhere would pass the census above against a form that
+    // also drew no file path.
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => OPENS_LOCAL_FILE[type])).toEqual(["sqlite", "duckdb", "libredb"]);
+  });
+});
+
+/**
+ * Whether `type`'s provider, built from the census connection with no database and no connection string, reports
+ * `catalogSessions`: a session of its own to each database the caller picks (#1530). Nothing connects.
+ *
+ * A provider that refuses to be built without a database opens nothing without one, so it answers false. That the
+ * refusal is about the database is shown by building the same census connection with its database, which must work.
+ */
+async function reportsCatalogSessionsWithoutDatabase(type: DatabaseType): Promise<boolean> {
+  const withoutDatabase = { ...CENSUS_CONNECTION[type], database: undefined, connectionString: undefined };
+  try {
+    return (await createDatabaseProvider(withoutDatabase)).getCapabilities().catalogSessions === true;
+  } catch {
+    await createDatabaseProvider(CENSUS_CONNECTION[type]);
+    return false;
+  }
+}
+
+/**
+ * `OPENS_SERVER_LEVEL_WITHOUT_DATABASE` (governance row admission, spec 7.7): the engines whose provider reaches the
+ * whole server when a connection names no database. Admission skips such a definition as SERVER_LEVEL_NOT_ALLOWED and
+ * reads this record rather than a type id, so it is held equal to what every shipped provider declares.
+ */
+describe("OPENS_SERVER_LEVEL_WITHOUT_DATABASE (spec 7.7)", () => {
+  test("answers for every shipped type-id and for nothing else", () => {
+    expect(Object.keys(OPENS_SERVER_LEVEL_WITHOUT_DATABASE).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
+  });
+
+  test("is frozen, so no reader can change an answer at run time", () => {
+    expect(Object.isFrozen(OPENS_SERVER_LEVEL_WITHOUT_DATABASE)).toBe(true);
+  });
+
+  test("OPENS_SERVER_LEVEL_WITHOUT_DATABASE matches the engines whose provider reports catalogSessions without a database", async () => {
+    const reports = await Promise.all(SHIPPED_DATABASE_TYPES.map(reportsCatalogSessionsWithoutDatabase));
+    const measured = SHIPPED_DATABASE_TYPES.filter((_, index) => reports[index]);
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => OPENS_SERVER_LEVEL_WITHOUT_DATABASE[type])).toEqual(measured);
+    // Vacuity, by name: a record and a census that both found nothing would agree above.
+    expect(measured).toEqual(["postgres"]);
+  });
+
+  test("a PostgreSQL provider given a database, or a connection string, opens no catalog sessions", async () => {
+    // The other half of the measurement: the record is about the missing database, not about the engine.
+    const withDatabase = { ...CENSUS_CONNECTION.postgres, connectionString: undefined };
+    const withString = { ...CENSUS_CONNECTION.postgres, database: undefined, connectionString: "postgres://h/app" };
+    const providers = await Promise.all(
+      [withDatabase, withString].map((connection) => createDatabaseProvider(connection)),
+    );
+    expect(providers.map((provider) => provider.getCapabilities().catalogSessions)).toEqual([undefined, undefined]);
   });
 });
