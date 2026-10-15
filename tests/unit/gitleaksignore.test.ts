@@ -62,16 +62,26 @@ describe(".gitleaksignore", () => {
     // checked in unchanged: its shared secret, key schedule context, secret,
     // key and exporter secret are published test values. They name the commit
     // that added the fixture and move onto a squash commit if one lands it.
+    // The 5 after THOSE are the same values as the merge commit of STU-02,
+    // df6a913a, re-presents them: the merge adds the file to its first parent,
+    // so the scanner reports it under fingerprints naming the merge.
     //
-    // The last 21 are the fixed ephemeral private keys of the lsb1 test vectors
-    // (STU-03), one per vector: each is the SHA-256 of a published label marked
-    // test only, so anyone can derive it. They name the commit that added the
-    // vectors and move onto a squash commit if one lands it.
+    // The 21 after them are the fixed ephemeral private keys of the lsb1 test
+    // vectors (STU-03), one per vector: each is the SHA-256 of a published label
+    // marked test only, so anyone can derive it. They name the commit that added
+    // the vectors and move onto a squash commit if one lands it. The 21 after
+    // THOSE are the same keys as the merge commit of STU-03, 5dc202d4,
+    // re-presents them.
+    //
+    // The last 2 are the placeholder password of the fixture DDL's unit test
+    // (STU-16), a sequential hex filler the test only compares DDL text with:
+    // once as its commit 86379702 adds it and once as its merge 642655a8
+    // re-presents it.
     //
     // This number is the point of the test: a suppression is a decision someone
     // has to make on purpose, so both a line silently dropped and a line
     // silently added land here as a failing diff rather than as nothing.
-    expect(contentLines).toHaveLength(77);
+    expect(contentLines).toHaveLength(105);
   });
 
   test("every non-comment, non-blank line is a well-formed fingerprint", () => {
