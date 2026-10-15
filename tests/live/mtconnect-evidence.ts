@@ -40,11 +40,56 @@ const sequenceOf = (xml: string, key: string): number => {
   return Number(found[1]);
 };
 
+/**
+ * The roots an agent answers a request in this script with, MEASURED over the captures this script
+ * produced: `MTConnectDevices` for `/probe`, `MTConnectStreams` for `/current` and `/sample`,
+ * `MTConnectAssets` for `/assets` and `/asset/...`, and `MTConnectError` for the out-of-range read.
+ * A body with no such root is not an answer this script may keep.
+ */
+const DOCUMENT_ROOTS = ["MTConnectDevices", "MTConnectStreams", "MTConnectAssets", "MTConnectError"];
+
+/**
+ * The bound on one capture.
+ *
+ * MEASURED on the captures in `tests/fixtures/mtconnect/`: the largest is `current.xml` at 4,789
+ * bytes and every one of the twenty-two begins with `<?xml`. 256 KiB is far above the largest and
+ * far below anything that would matter on disk, so the bound costs a real capture nothing and still
+ * means this script cannot be told to write an arbitrary amount of someone else's bytes into the
+ * fixture set.
+ */
+const MAX_CAPTURE_BYTES = 262144;
+
+/**
+ * Reads one answer, and refuses to hand back anything this script should not write down.
+ *
+ * The three checks are not about an agent misbehaving. They are about this script being pointed at
+ * the wrong thing: `MTCONNECT_ORIGIN` is an environment variable, the port is one digit away from
+ * other services, and a body that is HTML or empty would otherwise be written into the fixture set
+ * verbatim and replayed by the integration test as though an agent had sent it. Checking here
+ * rather than in `save` is deliberate: every capture and every number in the README comes through
+ * this function, so one check covers both writes.
+ */
 const get = async (request: string): Promise<string> => {
   const answer = await fetch(`${ORIGIN}${request}`);
   const body = await answer.text();
   if (!answer.ok && !request.includes("999999999")) {
     throw new Error(`${request} answered ${answer.status}, and this capture needs an answer`);
+  }
+  if (body.length > MAX_CAPTURE_BYTES) {
+    throw new Error(
+      `${request} answered ${body.length} bytes, past the ${MAX_CAPTURE_BYTES} a capture may be. Is ${ORIGIN} an MTConnect agent?`,
+    );
+  }
+  if (!body.startsWith("<?xml")) {
+    throw new Error(
+      `${request} answered something that does not begin with an XML declaration. Is ${ORIGIN} an MTConnect agent?`,
+    );
+  }
+  const root = DOCUMENT_ROOTS.find((name) => body.includes(`<${name}`));
+  if (root === undefined) {
+    throw new Error(
+      `${request} answered XML whose root is none of ${DOCUMENT_ROOTS.join(", ")}. Is ${ORIGIN} an MTConnect agent?`,
+    );
   }
   return body;
 };
