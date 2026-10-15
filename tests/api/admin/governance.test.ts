@@ -61,6 +61,7 @@ const CONNECTION: AdmittedConnection = {
     seedId: "warehouse",
     literal: true,
   },
+  envelopes: { read: ENVELOPE },
 };
 
 function snapshot(loadedAt: number): GovernanceSnapshot {

@@ -2273,6 +2273,7 @@ A source that fails is reported here with `state: "error"` while `GET /api/conne
 >
 > `POST /api/db/disconnect` takes `{"connectionId": "<id>"}` and answers `{"success": true}`.
 > Under governance it removes only the caller's own providers of that connection, the ones opened for the session's identity provider subject, for the editor and the agent alike.
+> It rolls back the caller's open transaction there first, and answers within 15 seconds even when the database does not: it waits at most 5 seconds for the rollback and at most 10 for the provider's sessions to close.
 > Another user's providers, transactions and running statements on the same connection stay as they are.
 > Without governance it removes every provider and SSH tunnel of the connection, whoever opened them.
 > `POST /api/db/cancel` reaches only the statements the caller's own provider runs, so under governance a `queryId` that another user's statement runs under answers `{"cancelled": false}` and stops nothing.

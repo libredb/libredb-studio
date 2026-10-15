@@ -262,6 +262,18 @@ Studio opens a governed connection for each person separately, even when two peo
 - A disconnect request (`POST /api/db/disconnect`) closes only the providers of the person who sends it, never another person's sessions or transactions on the same connection.
 - A session that carries no identity provider subject is refused instead of being given a provider that every person shares.
 
+When a reload takes a person's access to a connection away or changes it, Studio closes that person's providers of the connection right after it swaps the new snapshot in, without waiting for their next request:
+
+- Access is taken away when the grant row is deleted, the connection is gone or admission now skips it, or the grant expired since the previous reload.
+- Access changes when the grant's level changes, either way, or when the control plane sealed again a credential the grant opens: the read credential for every grant, and the write credential for a write grant.
+  A change that opens the connection the same way, such as a new name, closes nothing.
+- An open interactive transaction is rolled back first, and Studio waits at most 5 seconds for the rollback.
+  So a revoked person's uncommitted changes are discarded, typically within a second of the change that revoked them.
+- Then the provider's database sessions are closed, and Studio waits at most 10 seconds for that.
+  Sessions that do not close in time are abandoned and logged, so a database that hangs never holds the next reload.
+- The person's next request on the connection is answered from the new snapshot: 404 `CONNECTION_NOT_FOUND` without a grant, or 409 `TRANSACTION_CREDENTIAL_CHANGED` when their transaction was open under a level or credential that changed.
+- A provider idle for 30 minutes, and every provider at shutdown, is closed the same way, its open transaction rolled back first.
+
 Without governance every person who opens a connection with the same credential shares one provider, as before.
 
 ## Snapshot protocol
@@ -284,7 +296,8 @@ COMMIT;
 - It names its columns and never selects `*`, and it reads only the columns of the version it supports, so a column appended within version 1 never breaks an older Studio.
 - The new snapshot replaces the old one at once.
   Opened credentials are cached by the SHA-256 of their envelope together with the additional authenticated data they opened under, and never logged.
-- On every reload Studio compares the effective grants with the previous snapshot and closes exactly the database sessions of the subject and connection pairs that lost access, or whose level or credential changed.
+- On every reload Studio compares the effective grants with the previous snapshot and closes exactly the database sessions of the subject and connection pairs that lost access, a grant that expired since the previous reload included, or whose level or read or write envelope changed.
+  It rolls back an open transaction there first, as [Per-user providers](#per-user-providers) describes.
 - A load uses at most 4 pooled connections, a 5 second connect timeout, a 10 second statement timeout and a 20 second deadline for the whole load.
 
 ## Change notification
@@ -712,6 +725,7 @@ Steps 1, 2 and 5 are Studio's, and steps 3 and 4 are the control plane's:
 3. Switch the control plane to the new public key.
    It publishes the canary of the new key id, and every heartbeat should report `ok` for that key id before the next step.
 4. Enter again, in the control plane, every credential still sealed under the old key id.
+   Each credential entered again is sealed anew, so Studio closes the sessions it opened and rolls back their open transactions; do this at a quiet time.
 5. Remove the old private key from the keyring of every Studio instance and restart Studio.
    Keep the old private key in escrow for as long as backups that hold envelopes sealed to it are kept.
 

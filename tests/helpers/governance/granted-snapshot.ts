@@ -3,8 +3,10 @@
  * subject, built directly instead of loaded, so a test states exactly which subject holds which grant until when.
  *
  * A record has the shape admission gives it (src/lib/governance/admission.ts): the `seed:` id every connection route
- * resolves, `managed: true`, every role, and the server-only `literal` marker. The loader itself, admission and the
- * effective grant rules are tested in tests/unit/lib/governance/snapshot.test.ts and admission.test.ts.
+ * resolves, `managed: true`, every role, and the server-only `literal` marker. A connection's envelopes are fixed text
+ * named after its id and level, standing for the sealed credentials its records were opened from. The loader itself,
+ * admission and the effective grant rules are tested in tests/unit/lib/governance/snapshot.test.ts and
+ * admission.test.ts.
  */
 import type { AdmittedConnection } from "@/lib/governance/admission";
 import type { EffectiveGrant, GovernanceSnapshot } from "@/lib/governance/state";
@@ -41,7 +43,13 @@ export function admittedConnection(id: string, options: ConnectionOptions = {}):
     createdAt: new Date("2026-10-15T08:00:00.000Z"),
     literal: true,
   });
-  return { id, read: record(READ_CREDENTIAL), ...(options.write ? { write: record(WRITE_CREDENTIAL) } : {}) };
+  if (!options.write) return { id, read: record(READ_CREDENTIAL), envelopes: { read: `envelope-read-${id}` } };
+  return {
+    id,
+    read: record(READ_CREDENTIAL),
+    write: record(WRITE_CREDENTIAL),
+    envelopes: { read: `envelope-read-${id}`, write: `envelope-write-${id}` },
+  };
 }
 
 /** One effective grant: what `subject` may do on `connection`, until `expiresAt` in epoch ms, or for good. */

@@ -34,6 +34,7 @@ const { effectiveGrant, governanceState, resetGovernanceState } = await import("
 const { resetGovernanceKeyring } = await import("@/lib/governance/keyring");
 const { pgSslConfig } = await import("@/lib/pg-ssl");
 const { logger } = await import("@/lib/logger");
+const { registerOwnerRemoval } = await import("@/lib/db/owner-removal");
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 
@@ -687,6 +688,101 @@ describe("what the snapshot keeps", () => {
 
     expect(governanceState().failure).toBeNull();
     expect([...snapshot().connections.keys()]).toEqual(["orders"]);
+  });
+});
+
+// ─── Teardown after a reload (spec 4.3, 7.4, 9.4) ────────────────────────────
+//
+// Once a reload swaps its snapshot in, the loader asks every copy of the provider factory to remove the providers of
+// each subject and connection whose access the reload took away or changed (src/lib/db/owner-removal.ts). No factory
+// is loaded here, so each case registers the removal a copy of the factory would. Every `connectionRow()` call seals
+// its envelopes afresh, as the control plane does on a credential change, so a reload that serves the same row objects
+// again changes nothing a connection opens with.
+
+describe("teardown after a reload", () => {
+  test("a reload asks every copy of the factory to remove exactly the providers whose access it took away or changed", async () => {
+    const removals: unknown[][] = [];
+    const unregister = registerOwnerRemoval(async (connectionId, scope) => {
+      removals.push([connectionId, scope]);
+    });
+    try {
+      const orders = connectionRow("orders", { write: WRITE });
+      const billing = connectionRow("billing");
+      serve({
+        connections: [orders, billing],
+        grants: [
+          grantRow("alice", "orders", "write"),
+          grantRow("bob", "orders", "read"),
+          grantRow("carol", "billing", "read"),
+        ],
+      });
+      await loadGovernanceSnapshot();
+      // The first snapshot replaces nothing, so there is nothing to tear down.
+      expect(removals).toEqual([]);
+
+      // Alice is downgraded and Carol's grant is deleted; Bob's grant opens the connection as before.
+      serve({
+        connections: [orders, billing],
+        grants: [grantRow("alice", "orders", "read"), grantRow("bob", "orders", "read")],
+      });
+      await loadGovernanceSnapshot();
+      await settle();
+      expect(removals).toEqual([
+        ["seed:orders", { owner: "alice" }],
+        ["seed:billing", { owner: "carol" }],
+      ]);
+      expect(logs.info).toHaveBeenCalledWith("Governance access changed, closing the providers it opened", {
+        route: "governance/snapshot",
+        connections: ["orders", "billing"],
+      });
+
+      // The same rows again change nothing; the read credential sealed again changes what every grant opens.
+      removals.length = 0;
+      await loadGovernanceSnapshot();
+      await settle();
+      expect(removals).toEqual([]);
+      serve({
+        connections: [connectionRow("orders", { write: WRITE }), billing],
+        grants: [grantRow("alice", "orders", "read"), grantRow("bob", "orders", "read")],
+      });
+      await loadGovernanceSnapshot();
+      await settle();
+      expect(removals).toEqual([
+        ["seed:orders", { owner: "alice" }],
+        ["seed:orders", { owner: "bob" }],
+      ]);
+    } finally {
+      unregister();
+    }
+  });
+
+  test("a load does not wait for its teardown, and a removal that fails is logged with its connection", async () => {
+    const unregister = registerOwnerRemoval(async (connectionId) => {
+      if (connectionId === "seed:orders") return new Promise<void>(() => {});
+      throw new Error("the factory refused the removal");
+    });
+    try {
+      serve({
+        connections: [connectionRow("orders"), connectionRow("billing")],
+        grants: [grantRow("alice", "orders", "read"), grantRow("alice", "billing", "read")],
+      });
+      await loadGovernanceSnapshot();
+
+      // Both grants are deleted: the removal for orders never ends, and the one for billing fails.
+      serve({ connections: [connectionRow("orders"), connectionRow("billing")] });
+      await loadGovernanceSnapshot();
+
+      expect([...snapshot().grants.keys()]).toEqual([]);
+      await settle();
+      expect(logs.warn.mock.calls.filter(([message]: unknown[]) => message === "Governance teardown failed")).toEqual([
+        [
+          "Governance teardown failed",
+          { route: "governance/snapshot", connectionId: "billing", error: "the factory refused the removal" },
+        ],
+      ]);
+    } finally {
+      unregister();
+    }
   });
 });
 
