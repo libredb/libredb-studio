@@ -97,7 +97,7 @@ The chart is tightly coupled to the Dockerfile:
 Liveness stays on `GET /api/db/health`, which depends on nothing, so a governance source that is down never gets a healthy pod restarted.
 `GET /api/ready` is the readiness endpoint ([API_DOCS.md](./API_DOCS.md#get-apiready), [GOVERNANCE.md](./GOVERNANCE.md#freshness-and-readiness)): it answers `200` with `status` `ready` without governance, and under governance `503` while the snapshot is loading, misconfigured or incompatible, so a pod receives traffic only once it can serve data routes.
 It reads only in-process state and opens no user database, so it is as cheap to probe as the liveness path.
-Under governance point `readinessProbe.httpGet.path` at `/api/ready`.
+Under `governance.enabled` the chart moves the shipped readiness path to `/api/ready` itself (section 11), and a readiness probe the operator wrote with another path is kept as it is.
 
 ### 3. Storage Modes
 
@@ -191,7 +191,10 @@ Most non-sensitive configuration flows through a ConfigMap (the seed-connection 
 | `PASSKEY_ORIGIN` | `config.passkeyOrigin` | When non-empty (chart default: `""`, omitted) |
 | `SEED_CONFIG_PATH` / `SEED_CACHE_TTL_MS` | `seedConnections.*` — set **directly on the Deployment** (not via the ConfigMap) | When `seedConnections.enabled` |
 | `LLM_PROVIDER/MODEL/API_URL` | `config.llm*` | When set |
-| `OIDC_*` | `config.oidc*` | When `authProvider=oidc` |
+| `OIDC_*` | `config.oidc*` | When `authProvider=oidc`; `OIDC_USER_ROLES`, `OIDC_PROMPT`, `OIDC_AUTO_REDIRECT` and `OIDC_LOGOUT_HINT` only when set |
+| `AUTH_SESSION_TTL_SECONDS` | `config.sessionTtlSeconds` | When set |
+| `STORAGE_POSTGRES_SCHEMA` | `config.storagePostgresSchema` | When non-empty |
+| `GOVERNANCE_*` | `governance.*` (section 11) | When `governance.enabled` |
 
 "Fixed" above describes what the ConfigMap writes, not what the container ends up with: the ConfigMap arrives through `envFrom`, `extraEnv` renders into the container's `env:` list, and an explicit `env` entry always wins over an `envFrom` key of the same name. Any row above can therefore be overridden through `extraEnv`, though only some are safe to: `PORT` is rendered from `service.targetPort` and also drives the container's named `http` port and all three probes, so overriding it through `extraEnv` alone moves the app off the port the probes still target and the pod never becomes Ready. `HOSTNAME` is the one row whose ConfigMap value is deliberately **empty**. Empty is a sentinel, not an omission: it means "nobody chose", and the container's entrypoint then resolves its own bind address, preferring `::` — which it proves is dual-stack by connecting an IPv4 client to a throwaway `::` listener, rather than inferring it from a sysctl. It falls back to `0.0.0.0` when the namespace has no IPv6, or when `::` really is IPv6-only while a non-loopback IPv4 address exists. The key is written rather than omitted so that a pod name injected as `HOSTNAME` by the runtime can never reach the server; `config.bindAddress` overrules the resolver:
 
@@ -245,6 +248,30 @@ The MCP server is off by default, and the chart's job is to write nothing until 
 - `mcp.enabled: true` writes `LIBREDB_MCP_ENABLED`, `LIBREDB_MCP_URL`, `LIBREDB_MCP_TOKEN_LABEL` and `LIBREDB_MCP_TOKEN_TTL_DAYS`, each quoted, because `EnvVar.value` is a string; they are written before `extraEnv`, so an operator can still override one.
 - An enabled block without `mcp.url` or `mcp.tokenLabel` fails the render and names the value, because the app accepts no token without either, and only the operator knows the public address, its TLS termination and its `basePath`.
 - The block is read through `default dict`, so a values set that predates it, as an upgrade with `--reuse-values` carries, keeps rendering; `tests/unit/helm-chart-mcp.test.ts` pins all four rules.
+
+### 11. Governance
+
+Governance is off by default, and the chart writes no `GOVERNANCE_*` variable, mounts no keyring and keeps readiness on `/api/db/health` until `governance.enabled` is true ([GOVERNANCE.md](./GOVERNANCE.md)).
+Enabled, the chart wires the environment of appendix B.1 of the on-prem design:
+
+- The ConfigMap carries `GOVERNANCE_SOURCE=postgres`, `GOVERNANCE_POSTGRES_SCHEMA` (default `bridge`), `GOVERNANCE_PRIVATE_KEYS_FILE` and, only when set, `GOVERNANCE_REFRESH_MS`, `GOVERNANCE_MAX_STALENESS_MS` and `GOVERNANCE_ALLOWED_ENGINES`.
+- `GOVERNANCE_POSTGRES_URL` is a mandatory `secretKeyRef` to the chart's Secret or to `secrets.existingSecret`, under the mapped key `governancePostgresUrl` (default `governance-postgres-url`).
+- The keyring comes from the same Secret, under the mapped key `governancePrivateKeys` (default `governance-private-keys`), as one file at `/etc/libredb/governance/keyring.json` in a read-only volume with `defaultMode` 0400, never as an environment variable.
+  The file is root-owned, and the kubelet adds group read for `podSecurityContext.fsGroup`, which is how uid 1001 reads it, so the render fails without an `fsGroup` unless the OpenShift adaptation assigns one.
+- The readiness probe moves to `/api/ready`, and liveness and startup stay on `/api/db/health`, so a governance source that is down never gets a healthy pod restarted.
+
+An installer therefore writes two Secret keys beyond the usual ones, `governance-postgres-url` and `governance-private-keys`.
+
+**Instance id.** `GOVERNANCE_INSTANCE_ID` is `governance.instanceId`, or the chart's fullname when it is empty, so a rollout or a recreated pod updates the same heartbeat row.
+With more than one replica each pod reports its own name through the downward API, because one shared id would merge the heartbeats of different pods, and a set `governance.instanceId` then fails the render.
+
+**Render guards.** A values set the boot preflight would refuse fails the render instead, naming the value: `authProvider` other than `oidc`, an empty `config.oidcRoleClaim`, `config.oidcUserRoles` or `config.storagePostgresSchema`, a governance URL or keyring with neither an inline value nor `secrets.existingSecret`, `seedConnections.enabled`, `mcp.enabled` or `agent.enabled=true`, a set `secrets.adminPassword` or `secrets.userPassword`, or an `extraEnv` entry whose name starts with `GOVERNANCE_`.
+Under governance the chart also takes no `ADMIN_PASSWORD`, `USER_EMAIL` or `USER_PASSWORD` from `secrets.existingSecret`.
+
+**Replicas.** Studio keeps interactive transactions, rate limits and per-user providers in process memory, so `replicaCount` above 1 or `autoscaling.enabled` renders only with `stickySessions.enabled=true`.
+That value only records that the operator configured cookie affinity at the ingress or load balancer: the chart renders no affinity annotation and has no cookie name value, because the affinity belongs to the ingress controller.
+
+`tests/unit/helm-chart-governance.test.ts` pins these rules, and the block is read through `default dict`, so a values set that predates it keeps rendering.
 
 ## Release Pipeline
 

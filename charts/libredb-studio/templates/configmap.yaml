@@ -63,4 +63,41 @@ data:
   OIDC_ROLE_CLAIM: {{ .Values.config.oidcRoleClaim | quote }}
   {{- end }}
   OIDC_ADMIN_ROLES: {{ .Values.config.oidcAdminRoles | quote }}
+  {{- with get .Values.config "oidcUserRoles" }}
+  OIDC_USER_ROLES: {{ . | quote }}
+  {{- end }}
+  {{- with get .Values.config "oidcPrompt" }}
+  OIDC_PROMPT: {{ . | quote }}
+  {{- end }}
+  {{- if get .Values.config "oidcAutoRedirect" }}
+  OIDC_AUTO_REDIRECT: "true"
+  {{- end }}
+  {{- if get .Values.config "oidcLogoutHint" }}
+  OIDC_LOGOUT_HINT: "true"
+  {{- end }}
+  {{- end }}
+  {{- /* null and "" both mean unset, for the reason authCookieSecure gives above. */}}
+  {{- $sessionTtl := get .Values.config "sessionTtlSeconds" }}
+  {{- if and (not (kindIs "invalid" $sessionTtl)) (ne (toString $sessionTtl) "") }}
+  AUTH_SESSION_TTL_SECONDS: {{ $sessionTtl | toString | quote }}
+  {{- end }}
+  {{- with get .Values.config "storagePostgresSchema" }}
+  STORAGE_POSTGRES_SCHEMA: {{ . | quote }}
+  {{- end }}
+  {{- /* Governance (docs/GOVERNANCE.md): nothing by default. Enabled, the non-secret values; the URL
+         comes from the Secret and GOVERNANCE_INSTANCE_ID from the pod spec, in deployment.yaml. */}}
+  {{- if include "libredb-studio.governanceEnabled" . }}
+  {{- $gov := .Values.governance }}
+  GOVERNANCE_SOURCE: "postgres"
+  GOVERNANCE_POSTGRES_SCHEMA: {{ get $gov "postgresSchema" | default "bridge" | quote }}
+  GOVERNANCE_PRIVATE_KEYS_FILE: "{{ include "libredb-studio.governanceKeyringDir" . }}/keyring.json"
+  {{- range $key, $name := dict "refreshMs" "GOVERNANCE_REFRESH_MS" "maxStalenessMs" "GOVERNANCE_MAX_STALENESS_MS" }}
+  {{- $value := get $gov $key }}
+  {{- if and (not (kindIs "invalid" $value)) (ne (toString $value) "") }}
+  {{ $name }}: {{ $value | toString | quote }}
+  {{- end }}
+  {{- end }}
+  {{- with get $gov "allowedEngines" }}
+  GOVERNANCE_ALLOWED_ENGINES: {{ . | quote }}
+  {{- end }}
   {{- end }}

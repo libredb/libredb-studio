@@ -128,6 +128,14 @@
         "storagePostgresUrl": {
           "type": "string",
           "description": "PostgreSQL connection URL for storage"
+        },
+        "governancePostgresUrl": {
+          "type": "string",
+          "description": "The governance source URL for Studio's own role (GOVERNANCE_POSTGRES_URL): required when governance.enabled=true unless existingSecret carries it"
+        },
+        "governancePrivateKeys": {
+          "type": "string",
+          "description": "The keyring document that opens sealed credentials, mounted read-only at /etc/libredb/governance/keyring.json and never an environment variable: required when governance.enabled=true unless existingSecret carries it"
         }
       }
     },
@@ -199,6 +207,63 @@
         "oidcAdminRoles": {
           "type": "string",
           "description": "OIDC admin role values"
+        },
+        "oidcUserRoles": {
+          "type": "string",
+          "description": "OIDC_USER_ROLES (comma-separated): empty writes nothing; required when governance.enabled=true"
+        },
+        "oidcPrompt": {
+          "type": "string",
+          "enum": ["", "login", "omit", "consent", "select_account"],
+          "description": "OIDC_PROMPT: empty writes nothing and the app sends login; omit sends no prompt, so a provider session signs in silently"
+        },
+        "oidcAutoRedirect": {
+          "type": "boolean",
+          "description": "OIDC_AUTO_REDIRECT: false (default) writes nothing, true sends a signed-out visitor of /login straight to the identity provider"
+        },
+        "oidcLogoutHint": {
+          "type": "boolean",
+          "description": "OIDC_LOGOUT_HINT: false (default) writes nothing, true sends id_token_hint with the end-session request"
+        },
+        "sessionTtlSeconds": {
+          "anyOf": [{ "type": "null" }, { "type": "string", "maxLength": 0 }, { "type": "integer", "minimum": 300, "maximum": 86400 }],
+          "description": "AUTH_SESSION_TTL_SECONDS: null (default) writes nothing and the app keeps 86400, otherwise whole seconds from 300 to 86400"
+        },
+        "storagePostgresSchema": {
+          "type": "string",
+          "pattern": "^$|^[a-z_][a-z0-9_]{0,62}$",
+          "description": "STORAGE_POSTGRES_SCHEMA: empty writes nothing, otherwise a lowercase identifier of up to 63 characters; required when governance.enabled=true"
+        }
+      }
+    },
+    "governance": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Run Studio under governance: writes GOVERNANCE_SOURCE=postgres, mounts the keyring and moves the readiness probe to /api/ready"
+        },
+        "postgresSchema": {
+          "type": "string",
+          "pattern": "^[a-z_][a-z0-9_]{0,62}$",
+          "description": "GOVERNANCE_POSTGRES_SCHEMA: the schema the governance source lives in"
+        },
+        "instanceId": {
+          "type": "string",
+          "pattern": "^$|^[A-Za-z0-9._:-]{1,128}$",
+          "description": "GOVERNANCE_INSTANCE_ID: empty uses the chart's fullname with one replica and each pod's name with more; a set value fails the render with more than one replica"
+        },
+        "refreshMs": {
+          "anyOf": [{ "type": "null" }, { "type": "string", "maxLength": 0 }, { "type": "integer", "minimum": 1000, "maximum": 600000 }],
+          "description": "GOVERNANCE_REFRESH_MS: null (default) writes nothing and the app keeps 30000"
+        },
+        "maxStalenessMs": {
+          "anyOf": [{ "type": "null" }, { "type": "string", "maxLength": 0 }, { "type": "integer", "minimum": 1000, "maximum": 3600000 }],
+          "description": "GOVERNANCE_MAX_STALENESS_MS: null (default) writes nothing and the app keeps 120000; at least refreshMs"
+        },
+        "allowedEngines": {
+          "type": "string",
+          "description": "GOVERNANCE_ALLOWED_ENGINES (comma-separated engine type ids): empty (default) writes nothing and the app keeps its default list"
         }
       }
     },
@@ -487,6 +552,15 @@
           "minimum": 1,
           "maximum": 100,
           "description": "Target memory utilization"
+        }
+      }
+    },
+    "stickySessions": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Records that cookie affinity is configured at the ingress: under governance.enabled, more than one replica or autoscaling renders only with this set. Renders nothing itself"
         }
       }
     },

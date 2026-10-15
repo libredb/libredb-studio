@@ -387,11 +387,109 @@ Return the PostgreSQL URL when subchart is enabled
 {{- printf "postgresql://%s:$(POSTGRES_PASSWORD)@%s:5432/%s" .Values.postgresql.auth.username (include "libredb-studio.postgresql.fullname" .) .Values.postgresql.auth.database }}
 {{- end }}
 
-{{/* Prefix only the shipped health path; preserve explicit HTTP/exec/TCP probes. */}}
+{{/* Prefix only the shipped health path; preserve explicit HTTP/exec/TCP probes. With `ready` set
+(the readiness probe under governance) the shipped path moves to /api/ready (spec 12.1). */}}
 {{- define "libredb-studio.probe" -}}
 {{- $probe := deepCopy .probe -}}
 {{- if and $probe.httpGet (eq ($probe.httpGet.path | default "") "/api/db/health") -}}
-{{- $_ := set $probe.httpGet "path" (printf "%s/api/db/health" .basePath) -}}
+{{- $_ := set $probe.httpGet "path" (printf "%s%s" .basePath (ternary "/api/ready" "/api/db/health" (.ready | default false))) -}}
 {{- end -}}
 {{- toYaml $probe -}}
 {{- end -}}
+
+{{/*
+Whether this release runs Studio under governance (GOVERNANCE_SOURCE=postgres, docs/GOVERNANCE.md).
+`default dict` keeps a values set that predates the block, as an upgrade with --reuse-values carries,
+rendering as before.
+*/}}
+{{- define "libredb-studio.governanceEnabled" -}}
+{{- if get (.Values.governance | default dict) "enabled" }}
+{{- true }}
+{{- end }}
+{{- end }}
+
+{{/*
+Whether the governance release may run more than one pod: replicaCount above 1, or autoscaling.enabled
+as the operator set it. The raw value rather than autoscalingEnabled, because governance needs
+PostgreSQL storage, so the sqlite exception that helper makes never applies here.
+*/}}
+{{- define "libredb-studio.governanceMultiReplica" -}}
+{{- if or .Values.autoscaling.enabled (gt (int .Values.replicaCount) 1) }}
+{{- true }}
+{{- end }}
+{{- end }}
+
+{{/*
+The Secret key of a governance value, `governancePostgresUrl` or `governancePrivateKeys`, as
+secrets.existingSecretKeys maps it. The documented default stands in for a key the map lacks, as a
+values set from before these keys carries.
+*/}}
+{{- define "libredb-studio.governanceSecretKey" -}}
+{{- $defaults := dict "governancePostgresUrl" "governance-postgres-url" "governancePrivateKeys" "governance-private-keys" }}
+{{- get (.root.Values.secrets.existingSecretKeys | default dict) .name | default (get $defaults .name) }}
+{{- end }}
+
+{{/* Where the keyring Secret is mounted, and the file GOVERNANCE_PRIVATE_KEYS_FILE names. */}}
+{{- define "libredb-studio.governanceKeyringDir" -}}
+/etc/libredb/governance
+{{- end }}
+
+{{/*
+The governance render guards (spec 9.5). Each mirrors a refusal of the boot preflight
+(src/lib/governance/preflight.ts) or a v1 constraint, so a values set Studio would refuse to start
+with fails the render instead, naming the value to fix. Included from deployment.yaml.
+*/}}
+{{- define "libredb-studio.governanceGuards" -}}
+{{- if include "libredb-studio.governanceEnabled" . }}
+{{- $gov := .Values.governance }}
+{{- $sticky := get (.Values.stickySessions | default dict) "enabled" }}
+{{- if ne (.Values.authProvider | toString | trim | lower) "oidc" }}
+{{- fail (printf "governance.enabled requires authProvider=oidc, not %q: under governance the identity provider is the only way to sign in" (.Values.authProvider | toString)) }}
+{{- end }}
+{{- if not .Values.config.oidcRoleClaim }}
+{{- fail "governance.enabled requires config.oidcRoleClaim, the ID-token claim that carries the roles, such as libredb_roles" }}
+{{- end }}
+{{- if not (get .Values.config "oidcUserRoles") }}
+{{- fail "governance.enabled requires config.oidcUserRoles, the role values that make a user, such as user" }}
+{{- end }}
+{{- if not (get .Values.config "storagePostgresSchema") }}
+{{- fail "governance.enabled requires config.storagePostgresSchema, the schema of Studio's storage tables, such as studio" }}
+{{- end }}
+{{- if and (not (get .Values.secrets "governancePostgresUrl")) (not .Values.secrets.existingSecret) }}
+{{- fail "governance.enabled requires secrets.governancePostgresUrl, or secrets.existingSecret with the governance URL under its governancePostgresUrl key (default governance-postgres-url)" }}
+{{- end }}
+{{- if and (not (get .Values.secrets "governancePrivateKeys")) (not .Values.secrets.existingSecret) }}
+{{- fail "governance.enabled requires secrets.governancePrivateKeys, or secrets.existingSecret with the keyring under its governancePrivateKeys key (default governance-private-keys)" }}
+{{- end }}
+{{- if .Values.seedConnections.enabled }}
+{{- fail "governance.enabled refuses seedConnections.enabled: the governance source is the only catalog of connections" }}
+{{- end }}
+{{- if get (.Values.mcp | default dict) "enabled" }}
+{{- fail "governance.enabled refuses mcp.enabled: MCP under governance is not supported in this release" }}
+{{- end }}
+{{- if eq (get (.Values.agent | default dict) "enabled" | toString) "true" }}
+{{- fail "governance.enabled refuses agent.enabled=true: the agent under governance is not supported in this release; leave agent.enabled unset or set it to false" }}
+{{- end }}
+{{- if .Values.secrets.adminPassword }}
+{{- fail "governance.enabled refuses secrets.adminPassword: under governance nobody signs in with a password" }}
+{{- end }}
+{{- if .Values.secrets.userPassword }}
+{{- fail "governance.enabled refuses secrets.userPassword: under governance nobody signs in with a password" }}
+{{- end }}
+{{- range .Values.extraEnv }}
+{{- if hasPrefix "GOVERNANCE_" (.name | default "" | toString) }}
+{{- fail (printf "governance.enabled refuses extraEnv entry %s: the chart writes every GOVERNANCE_ variable from the governance values" .name) }}
+{{- end }}
+{{- end }}
+{{- if and (include "libredb-studio.governanceMultiReplica" .) (not $sticky) }}
+{{- fail "governance.enabled with replicaCount above 1 or autoscaling.enabled requires stickySessions.enabled: Studio keeps transactions, rate limits and per-user providers in process memory, so configure cookie affinity at the ingress and then set stickySessions.enabled=true" }}
+{{- end }}
+{{- if and (include "libredb-studio.governanceMultiReplica" .) (get $gov "instanceId") }}
+{{- fail "governance.instanceId must stay empty with replicaCount above 1 or autoscaling.enabled: every pod then reports its own name as instance id, and one shared id would merge their heartbeats" }}
+{{- end }}
+{{- $fsGroup := get .Values.podSecurityContext "fsGroup" }}
+{{- if and (or (kindIs "invalid" $fsGroup) (eq (toString $fsGroup) "")) (not (include "libredb-studio.adaptOpenShiftSecurityContext" .)) }}
+{{- fail "governance.enabled requires podSecurityContext.fsGroup (1001): the keyring Secret file is root-owned, and uid 1001 reads it only through the group" }}
+{{- end }}
+{{- end }}
+{{- end }}
