@@ -177,7 +177,7 @@ describe("the declaration is a closed set", () => {
 });
 
 /**
- * THE CLAIM THIS PROVIDER MAKES ABOUT ITS NEIGHBOURS (KURAL 109, in source).
+ * THE CLAIM THIS PROVIDER MAKES ABOUT ITS NEIGHBOURS, as the source states it.
  *
  * `capabilities.ts` argues that MTConnect declares no `keyScan` because every provider that does
  * has an UNBOUNDED keyspace, while a device model bounds this one. The argument is sound and the

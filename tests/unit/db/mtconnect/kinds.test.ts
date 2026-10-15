@@ -33,7 +33,7 @@ describe("the kinds this provider declares", () => {
     const enumerable = enumerableKinds(capabilitiesWith(MTCONNECT_OBJECT_KINDS));
     expect(enumerable.map((kind) => kind.id)).toEqual(["dataitem", "condition", "asset"]);
     // Three as a literal, not as `MTCONNECT_OBJECT_KINDS.length`: against its own length this would
-    // hold for an empty declaration too, so the count would say nothing (KURAL 53).
+    // hold for an empty declaration too, so the count would say nothing.
     expect(enumerable).toHaveLength(3);
   });
 

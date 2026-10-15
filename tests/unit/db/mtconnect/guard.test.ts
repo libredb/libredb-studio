@@ -69,7 +69,7 @@ describe("the route table", () => {
   });
 
   /**
-   * The sentence beside the table, against the table (KURAL 109 in source).
+   * The sentence beside the table, against the table, as the source states it.
    *
    * MEASURED: the docblock said "The five routes" while the table held seven, and the same file's
    * header said seven eight lines above it - `/assets/{assetIds}` and `/swagger` had been added
@@ -167,7 +167,7 @@ describe("the request line", () => {
   test("that refusal prints the carriage return raw, which is a defect of its own", () => {
     /*
      * RECORDED, NOT FIXED, and deliberately so: the fix belongs to the sentence builder rather
-     * than to this guard, and it is listed in koordinasyon/SONRAKI-PRLAR.md.
+     * than to this guard, and it is left for a change of its own.
      * `GET /probe<CR>POST /x` is shown to the reader as `GET /probePOST /x` - a string that was
      * never typed and is not what was refused, because the terminal eats the control character.
      * The pattern this replaced quoted the line through JSON.stringify, which showed `\r`.

@@ -138,7 +138,7 @@ describe("the default row cap", () => {
 });
 
 /**
- * The other numbers a mutation showed nothing was holding (#1722, KURAL 70).
+ * The other numbers a mutation showed nothing was holding (#1722).
  *
  * MEASURED by changing each definition in a copy of the tree and running this directory: `MAX_PATH_BYTES`
  * 4096 to 8 failed 10 tests and `MAX_PARAM_BYTES` 256 to 2 failed 8, so those two were already held. These
@@ -174,7 +174,7 @@ describe("the numbers nothing was holding", () => {
 });
 
 /**
- * The two settings the provider SENDS, as opposed to the rules that read them (#1722, KURAL 56).
+ * The two settings the provider SENDS, as opposed to the rules that read them (#1722).
  *
  * MEASURED in a copy of the tree: `window: session.window` changed to `undefined` where the request
  * options are built left all 202 tests green, and so did widening the limiter from one permit per
@@ -313,7 +313,7 @@ describe("a result says when this provider's row cap cut it", () => {
 });
 
 /**
- * THE ORDER A RESULT COMES BACK IN (#1722, KURAL 153).
+ * THE ORDER A RESULT COMES BACK IN (#1722).
  *
  * `sortRows` is tested directly and thoroughly in `rows.test.ts`, including the branch that
  * compares two sequence numbers by LENGTH first. What nothing tested is that `query()` CALLS it.
@@ -357,7 +357,7 @@ describe("a result is ordered by the plant's clock, not by the document's layout
 });
 
 /**
- * WHAT A READER IS TOLD WHEN THE AGENT REFUSES (#1722, KURAL 153).
+ * WHAT A READER IS TOLD WHEN THE AGENT REFUSES (#1722).
  *
  * The agent answers its refusals as an `MTConnectError` document with an `errorCode` and an
  * `ErrorMessage`, five of which are captured in the fixtures. Those documents are parsed in

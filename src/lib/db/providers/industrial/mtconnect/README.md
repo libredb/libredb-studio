@@ -1,7 +1,6 @@
 # MTConnect provider, work in progress
 
-Issue #1722. Read only. The specification this directory implements is
-`~/projects/koordinasyon/sartname/1722-mtconnect-spec-EN.md`.
+Issue #1722. Read only: the provider sends GET and nothing else.
 
 What is here, and what each file rests on:
 
