@@ -9,8 +9,9 @@
  * records its failure and never throws.
  *
  * It also starts the change notification listener (`listener.ts`, spec 7.3), which asks for a load after every
- * LISTEN and for every window of notifications, and registers `stopGovernance()` as the shutdown hook `governance`
- * (src/lib/shutdown.ts), so a SIGTERM closes the listener's connection and the pool before the process exits.
+ * LISTEN and for every window of notifications, and the heartbeat (`heartbeat.ts`, spec 7.2), and registers
+ * `stopGovernance()` as the shutdown hook `governance` (src/lib/shutdown.ts), so a SIGTERM stops the beats and closes
+ * the listener's connection and the pool before the process exits.
  *
  * Loads are single-flight: `requestGovernanceLoad()` joins the load under way, if there is one, so the refresher, a
  * readiness probe and a change notification never run two loads at once. Each load that ends sets the next timer from
@@ -19,6 +20,7 @@
 import { onShutdown } from "@/lib/shutdown";
 import { governanceRefreshMs } from "./config";
 import { closeGovernancePool } from "./db";
+import { startGovernanceHeartbeat, stopGovernanceHeartbeat } from "./heartbeat";
 import { startGovernanceListener, stopGovernanceListener } from "./listener";
 import { loadGovernanceSnapshot } from "./snapshot";
 import { governanceState } from "./state";
@@ -94,8 +96,8 @@ export async function requestFreshGovernanceLoad(): Promise<void> {
 }
 
 /**
- * Starts the refresher and the change notification listener of this process, once, and registers their stop as a
- * shutdown hook. The first load runs at once and is not awaited.
+ * Starts the refresher, the change notification listener and the heartbeat of this process, once, and registers their
+ * stop as a shutdown hook. The first load and the first beat run at once and are not awaited.
  */
 export function startGovernance(): void {
   const state = refresher();
@@ -103,18 +105,20 @@ export function startGovernance(): void {
   state.started = true;
   void requestGovernanceLoad();
   startGovernanceListener(requestFreshGovernanceLoad);
+  startGovernanceHeartbeat();
   onShutdown("governance", stopGovernance);
 }
 
 /**
- * Stops the refresher and the listener and closes the governance pool. A load under way records its outcome when it
- * ends, and schedules nothing after it.
+ * Stops the refresher, the heartbeat and the listener and closes the governance pool. A load under way records its
+ * outcome when it ends, and schedules nothing after it.
  */
 export async function stopGovernance(): Promise<void> {
   const state = refresher();
   state.started = false;
   clearTimeout(state.timer);
   state.timer = undefined;
+  stopGovernanceHeartbeat();
   await stopGovernanceListener();
   await closeGovernancePool();
 }

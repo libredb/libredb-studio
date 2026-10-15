@@ -32,6 +32,11 @@ import {
 
 const realPg = await import("pg");
 mock.module("pg", () => ({ Pool: FakePool, Client: FakeListenerClient, types: realPg.types }));
+// The heartbeat `startGovernance()` starts would share the pool and the log these cases count.
+mock.module("@/lib/governance/heartbeat", () => ({
+  startGovernanceHeartbeat: () => {},
+  stopGovernanceHeartbeat: () => {},
+}));
 
 const { governanceListenerStatus, startGovernanceListener, stopGovernanceListener } = await import(
   "@/lib/governance/listener"

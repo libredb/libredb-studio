@@ -4,12 +4,14 @@
  *
  * It is built from the state holder and the listener at the moment of the request: the source and schema, the
  * contract versions on both sides, the freshness state, the age and load time of the snapshot, why the latest load
- * failed, how many connections were admitted, the rows admission skipped, the key ids of the keyring, and the
- * listener's state, how long it has held and when the last change notification arrived. The canary, settings and sink
- * slices add their sections here.
+ * failed, how many connections were admitted, the rows admission skipped, the key ids of the keyring, the result of
+ * each key id's seal canary, and the listener's state, how long it has held and when the last change notification
+ * arrived. The settings and sink slices add their sections here.
  *
  * Like the heartbeat, it carries ids, levels, paths and codes only: never a definition value, an envelope, a
- * credential or a statement. A load failure is reported by its kind and code, without the driver's message.
+ * credential or a statement. The one exception is the full message of the latest load failure, which only an
+ * administrator reads here: the public `GET /api/ready` names the cause in Studio's own words alone, and without this
+ * message an operator would have the log alone to find a privilege or object the server named.
  */
 import type { AdmissionSkip, SkippedItem } from "./admission";
 import { type GovernanceSource, governancePostgresSchema, governanceSource } from "./config";
@@ -18,7 +20,7 @@ import { type FreshnessState, governanceFreshness } from "./freshness";
 import type { EnvelopeCode } from "./hpke";
 import { governanceKeyring } from "./keyring";
 import { governanceListenerStatus, type ListenerState } from "./listener";
-import { governanceState, type LoadFailure } from "./state";
+import { type CanaryResult, governanceState, type LoadFailure } from "./state";
 
 /** A row, or a row's write level, that admission left out, with the envelope code the heartbeat item has no field for. */
 export type GovernanceStatusSkip = SkippedItem & { readonly envelopeCode?: EnvelopeCode };
@@ -48,12 +50,16 @@ export interface GovernanceStatus {
     readonly kind: LoadFailure["kind"];
     /** The SQLSTATE or the driver's error code, or null when the failure carries none. */
     readonly code: string | null;
+    /** The failure's full message, the server's own words included. Never a value or a credential. */
+    readonly message: string;
   } | null;
   /** How many connections the snapshot admitted, or null before a successful load. */
   readonly admittedConnections: number | null;
   readonly skipped: readonly GovernanceStatusSkip[];
   /** The key ids of the keyring this process opens envelopes with, in the order the file lists them. */
   readonly keyringKids: readonly string[];
+  /** For each key id with a seal canary, `ok` or the code its envelope failed with; null before a successful load. */
+  readonly canary: Readonly<Record<string, CanaryResult>> | null;
   /** The change notification listener of this process, or null when none runs. */
   readonly listener: {
     readonly state: ListenerState;
@@ -101,10 +107,13 @@ export function governanceStatus(nowMs = Date.now()): GovernanceStatus {
         ? null
         : { loadedAt: new Date(snapshot.loadedAt).toISOString(), ageMs: nowMs - snapshot.loadedAt },
     lastError:
-      failure === null ? null : { at: new Date(failure.at).toISOString(), kind: failure.kind, code: failure.code },
+      failure === null
+        ? null
+        : { at: new Date(failure.at).toISOString(), kind: failure.kind, code: failure.code, message: failure.detail },
     admittedConnections: snapshot?.connections.size ?? null,
     skipped: (snapshot?.skipped ?? []).map(skipOf),
     keyringKids: [...governanceKeyring().keys()],
+    canary: snapshot?.canary ?? null,
     listener: listenerAt(nowMs),
   };
 }

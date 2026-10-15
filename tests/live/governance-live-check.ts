@@ -16,6 +16,7 @@
  *
  * The listener cases start Studio's change notification listener with its production reload and no refresher, so a
  * snapshot changes only when a notification makes it, and with a ping every half second instead of every minute.
+ * The heartbeat cases send beats as `libredb_studio` and read the row back as the superuser.
  *
  * It is NOT in `bun run test`: the runner excludes `tests/live/` by name (`EXCLUDED` in `tests/runner/discover.ts`).
  * CI runs it in the "Functional Smoke (PostgreSQL, RabbitMQ)" job of .github/workflows/ci.yml, against a throwaway
@@ -32,6 +33,8 @@ import { Client, type Notification } from "pg";
 import { pingChannel } from "../../src/lib/governance/contract";
 import { closeGovernancePool } from "../../src/lib/governance/db";
 import { governanceFreshness } from "../../src/lib/governance/freshness";
+import { sendGovernanceHeartbeat } from "../../src/lib/governance/heartbeat";
+import { canonicalJson } from "../../src/lib/governance/jcs";
 import { resetGovernanceKeyring } from "../../src/lib/governance/keyring";
 import {
   governanceListenerStatus,
@@ -45,6 +48,7 @@ import { resolveConnection, SeedConnectionError } from "../../src/lib/seed/resol
 import { buildFixtureDdl, FIXTURE_OWNER, readFixtureManifest } from "../helpers/governance/fixture-ddl";
 import { keyringFileOf, removeKeyringFiles, type TestKey, testKey } from "../helpers/governance/keyring-file";
 import { sealSecret } from "../helpers/governance/lsb1-seal";
+import packageJson from "../../package.json";
 
 const MANIFEST = readFixtureManifest();
 const SCHEMA = `"${MANIFEST.schema}"`;
@@ -134,6 +138,9 @@ const GRANTS = [
   { subject: "bob@example.com", connection: "live-both", level: "read", expires: LATER },
 ] as const;
 
+/** The binding every canary is sealed for (spec 8.4). */
+const CANARY_BINDING = { connectionId: "canary", level: "read", engine: "canary", definition: {} } as const;
+
 async function seed(client: Client, key: TestKey): Promise<void> {
   await client.query(
     `INSERT INTO ${SCHEMA}.contract_source (version, status, sunset_after, notify_channel) VALUES ($1, 'current', NULL, $2)`,
@@ -157,6 +164,11 @@ async function seed(client: Client, key: TestKey): Promise<void> {
      FROM jsonb_to_recordset($1::jsonb) AS r(id text, name text, engine text, definition jsonb, read text, write text)`,
     [JSON.stringify(connections)],
   );
+  // The control plane's canary for the key Studio holds (spec 8.4).
+  await client.query(`INSERT INTO ${SCHEMA}.seal_canary_v1_source (kid, envelope, created_at) VALUES ($1, $2, now())`, [
+    key.kid,
+    sealSecret(key.publicKey, CANARY_BINDING, { user: "libredb-canary" }),
+  ]);
   await client.query(
     `INSERT INTO ${SCHEMA}.grants_v1_source (subject, connection_id, level, expires_at, downgraded, granted_at)
      SELECT subject, connection, level, expires, false, now()
@@ -394,6 +406,76 @@ const CASES: readonly LiveCase[] = [
     },
   },
   {
+    name: "the heartbeat row appears for the instance with the canary ok",
+    run: async ({ superuser, key }) => {
+      await loadGovernanceSnapshot();
+      same(loadedSnapshot().canary, { [key.kid]: "ok" }, "the canary results of the snapshot");
+      await sendGovernanceHeartbeat();
+      const rows = (await superuser((client) =>
+        client.query(
+          `SELECT instance_id, studio_version, supported_contracts, contract_version, keyring_kids, listener_state, skipped, sink, canary FROM ${SCHEMA}.studio_instances_v1`,
+        ),
+      )) as { rows: Record<string, unknown>[] };
+      same(rows.rows.length, 1, "heartbeat rows");
+      const { skipped, sink, canary, ...columns } = rows.rows[0];
+      same(
+        columns,
+        {
+          instance_id: INSTANCE_ID,
+          studio_version: packageJson.version,
+          supported_contracts: [1],
+          contract_version: 1,
+          keyring_kids: [key.kid],
+          listener_state: "listening",
+        },
+        "the heartbeat row",
+      );
+      // jsonb keeps its keys in its own order, so the JSON columns are compared in canonical form.
+      same(
+        canonicalJson({ skipped, sink, canary }),
+        canonicalJson({
+          skipped: loadedSnapshot().skipped.map(({ item }) => item),
+          sink: { queued: 0, dropped: 0, rejected: 0, lastFlushAt: null, backingOff: false, lastSqlstate: null },
+          canary: { [key.kid]: "ok" },
+        }),
+        "the heartbeat's JSON columns",
+      );
+    },
+  },
+  {
+    name: "a second beat advances last_seen_at and keeps started_at",
+    run: async ({ superuser }) => {
+      const read = async () =>
+        (
+          (await superuser((client) =>
+            client.query(
+              `SELECT started_at, last_seen_at, snapshot_loaded_at FROM ${SCHEMA}.studio_instances_v1 WHERE instance_id = $1`,
+              [INSTANCE_ID],
+            ),
+          )) as { rows: { started_at: Date; last_seen_at: Date; snapshot_loaded_at: Date }[] }
+        ).rows[0];
+      const first = await read();
+      // now() is the start of the beat's transaction, so a few milliseconds apart are enough to tell two beats apart.
+      await sleep(20);
+      await sendGovernanceHeartbeat();
+      const second = await read();
+      check(
+        second.last_seen_at.getTime() > first.last_seen_at.getTime(),
+        `last_seen_at should advance, got ${first.last_seen_at.toISOString()} then ${second.last_seen_at.toISOString()}`,
+      );
+      same(second.started_at.toISOString(), first.started_at.toISOString(), "started_at after the second beat");
+      check(
+        Math.abs(second.started_at.getTime() - performance.timeOrigin) < 1,
+        `started_at should be the process start time, got ${second.started_at.toISOString()}`,
+      );
+      same(
+        second.snapshot_loaded_at.getTime(),
+        loadedSnapshot().loadedAt,
+        "snapshot_loaded_at, the load time of the snapshot in use",
+      );
+    },
+  },
+  {
     name: "revoking SELECT on one view turns the state misconfigured, naming that view",
     run: async ({ superuser }) => {
       await superuser((client) => client.query(`REVOKE SELECT ON ${SCHEMA}.grants_v1 FROM libredb_studio`));
@@ -432,6 +514,8 @@ async function main(): Promise<void> {
     process.env.GOVERNANCE_POSTGRES_URL = urlFor(admin, database, studio);
     process.env.GOVERNANCE_INSTANCE_ID = INSTANCE_ID;
     process.env.GOVERNANCE_PRIVATE_KEYS_FILE = keyringFileOf(key);
+    // The Next.js build injects the version a heartbeat reports; this script runs outside it.
+    process.env.NEXT_PUBLIC_APP_VERSION = packageJson.version;
     process.env.LOG_LEVEL ??= "error";
     const context: LiveContext = { superuser: (run) => asSuperuser(fixture, run), key };
     for (const liveCase of CASES) {

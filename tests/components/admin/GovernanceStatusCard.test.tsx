@@ -22,6 +22,7 @@ function status(overrides: Partial<GovernanceStatus> = {}): GovernanceStatus {
     admittedConnections: 3,
     skipped: [],
     keyringKids: [KID],
+    canary: { [KID]: "ok" },
     listener: {
       state: "listening",
       since: "2026-10-15T07:30:00.000Z",
@@ -120,7 +121,12 @@ describe("GovernanceStatusCard", () => {
         status({
           freshness: "unavailable",
           snapshot: { loadedAt: "2026-10-15T08:00:00.000Z", ageMs: 150_400 },
-          lastError: { at: "2026-10-15T08:02:30.000Z", kind: "transient", code: "ECONNREFUSED" },
+          lastError: {
+            at: "2026-10-15T08:02:30.000Z",
+            kind: "transient",
+            code: "ECONNREFUSED",
+            message: "connect ECONNREFUSED 10.0.0.5:5432",
+          },
         }),
       ),
     });
@@ -128,10 +134,12 @@ describe("GovernanceStatusCard", () => {
 
     expect((await findByTestId("governance-freshness")).textContent).toBe("Unavailable");
     expect(getByTestId("governance-snapshot-age").textContent).toBe("150 s (loaded 2026-10-15T08:00:00.000Z)");
-    expect(getByTestId("governance-last-error").textContent).toBe("transient ECONNREFUSED at 2026-10-15T08:02:30.000Z");
+    expect(getByTestId("governance-last-error").textContent).toBe(
+      "transient ECONNREFUSED at 2026-10-15T08:02:30.000Z: connect ECONNREFUSED 10.0.0.5:5432",
+    );
   });
 
-  test("a fresh state shows the source, the contract, the admitted count and the key ids, and no last error", async () => {
+  test("a fresh state shows the source, the contract, the admitted count, the key ids and canaries, and no last error", async () => {
     mockGlobalFetch({ "/api/admin/governance": answer(status()) });
     const { findByTestId, getByTestId, queryByTestId } = await renderCard();
 
@@ -140,6 +148,7 @@ describe("GovernanceStatusCard", () => {
     expect(getByTestId("governance-contract").textContent).toBe("active 1; supported 1; published 1");
     expect(getByTestId("governance-admitted").textContent).toBe("3");
     expect(getByTestId("governance-kids").textContent).toBe(KID);
+    expect(getByTestId("governance-canary").textContent).toBe(`${KID}: ok`);
     expect(getByTestId("governance-listener").textContent).toBe(
       "listening for 1804 s (since 2026-10-15T07:30:00.000Z)",
     );
@@ -184,7 +193,13 @@ describe("GovernanceStatusCard", () => {
           contract: { supported: [1], published: null, active: null },
           snapshot: null,
           admittedConnections: null,
-          lastError: { at: "2026-10-15T08:00:01.000Z", kind: "misconfigured", code: null },
+          canary: null,
+          lastError: {
+            at: "2026-10-15T08:00:01.000Z",
+            kind: "misconfigured",
+            code: null,
+            message: "GOVERNANCE_PRIVATE_KEYS_FILE is not set",
+          },
         }),
       ),
     });
@@ -194,7 +209,32 @@ describe("GovernanceStatusCard", () => {
     expect(getByTestId("governance-contract").textContent).toBe("active none yet; supported 1; published none yet");
     expect(getByTestId("governance-snapshot-age").textContent).toBe("none yet");
     expect(getByTestId("governance-admitted").textContent).toBe("none yet");
-    expect(getByTestId("governance-last-error").textContent).toBe("misconfigured at 2026-10-15T08:00:01.000Z");
+    expect(getByTestId("governance-canary").textContent).toBe("none yet");
+    expect(getByTestId("governance-last-error").textContent).toBe(
+      "misconfigured at 2026-10-15T08:00:01.000Z: GOVERNANCE_PRIVATE_KEYS_FILE is not set",
+    );
+  });
+
+  test("shows each key id's canary result, and says so when the governance source publishes none", async () => {
+    const answers = [
+      answer(status({ canary: { [KID]: "ok", fedcba9876543210: "UNKNOWN_KID" } })),
+      answer(status({ canary: {} })),
+    ];
+    let calls = 0;
+    mockGlobalFetch({ "/api/admin/governance": () => answers[Math.min(calls++, answers.length - 1)] });
+    const { captured, restore } = captureAutoRefresh();
+
+    try {
+      const { findByText } = await renderCard();
+      await findByText(`${KID}: ok, fedcba9876543210: UNKNOWN_KID`);
+
+      await act(async () => {
+        captured.fire!();
+      });
+      await findByText("none published");
+    } finally {
+      restore();
+    }
   });
 
   test("lists each skipped row with its level, path, code and envelope code", async () => {

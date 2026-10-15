@@ -11,7 +11,12 @@
  * process's keyring. Each grant row on an admitted connection becomes the effective grant of its subject: `write` only
  * where the row says write and this instance opened the write envelope, and `read` otherwise, with its `expires_at`
  * kept for a check at every decision (`effectiveGrant()` in `state.ts`). Revocations are kept as the latest
- * `revoked_before` of each subject, and the settings and canary rows as read, for the stores that check them.
+ * `revoked_before` of each subject, and the settings rows as read, for the store that checks them.
+ *
+ * Every load also opens the seal canary of each key id (spec 8.4): the envelope of `{"user":"libredb-canary"}` that the
+ * control plane sealed for connection `canary`, level `read`, engine `canary` and definition `{}`. The snapshot keeps
+ * `ok` or the envelope's code for each kid, which the heartbeat and the admin status report, so a control plane that
+ * seals to a wrong public key shows up before its first real connection.
  *
  * A grant or revocation row that breaks a rule the contract publishes for its view grants or revokes nothing and is
  * counted in a log line, as a governance source that breaks a CHECK hands Studio a row it skips. Two rows for one
@@ -28,8 +33,10 @@ import { buildSnapshotStatements, type SNAPSHOT_READS, SUPPORTED_CONTRACT_VERSIO
 import { withGovernanceClient } from "./db";
 import { IncompatibleContractError, KeyringUnavailableError, loadFailureOf, SnapshotReadError } from "./freshness";
 import { governanceKeyring } from "./keyring";
+import { SealedSecretError, type SecretBinding } from "./lsb1";
 import { openGovernedSecret } from "./secrets";
 import {
+  type CanaryResult,
   type CanaryRow,
   type EffectiveGrant,
   type GovernanceSnapshot,
@@ -47,6 +54,13 @@ const LOAD_DEADLINE_MS = 20_000;
 const SUBJECT_MAX_LENGTH = 512;
 
 const ROUTE = "governance/snapshot";
+
+/** The binding every canary is sealed for (spec 8.4). */
+const CANARY_BINDING: SecretBinding = { connectionId: "canary", level: "read", engine: "canary", definition: {} };
+/** The user a canary carries, and nothing else. */
+const CANARY_USER = "libredb-canary";
+/** The CHECK on `kid` in `seal_canary_v1`, the form of a key id (spec 8.1). */
+const KID = /^[0-9a-f]{16}$/;
 
 type Row = Readonly<Record<string, unknown>>;
 
@@ -191,6 +205,37 @@ function latestRevocations(rows: readonly Row[]): Tally<Map<string, number>> {
   return { bySubject, ignored };
 }
 
+/**
+ * What one canary envelope gives: `ok` when it opens to exactly `{"user":"libredb-canary"}`, PLAINTEXT_INVALID when it
+ * opens to anything else, and the envelope's code when it does not open. An error that is no envelope's fault, such
+ * as a keyring that does not load, fails the load.
+ */
+function canaryResult(envelope: unknown): CanaryResult {
+  if (typeof envelope !== "string") return "FORMAT";
+  try {
+    const opened = openGovernedSecret(envelope, CANARY_BINDING);
+    const keys = Object.keys(opened);
+    return keys.length === 1 && opened.user === CANARY_USER ? "ok" : "PLAINTEXT_INVALID";
+  } catch (error) {
+    if (!(error instanceof SealedSecretError)) throw error;
+    return error.code;
+  }
+}
+
+/** The result of each key id's canary. A row whose kid breaks the contract's CHECK reports nothing and is counted. */
+function canaryResults(rows: readonly CanaryRow[]): Tally<Record<string, CanaryResult>> {
+  const byKid: Record<string, CanaryResult> = {};
+  let ignored = 0;
+  for (const { kid, envelope } of rows) {
+    if (typeof kid !== "string" || !KID.test(kid)) {
+      ignored += 1;
+      continue;
+    }
+    byKid[kid] = canaryResult(envelope);
+  }
+  return { bySubject: byKid, ignored };
+}
+
 function buildSnapshot(rows: SourceRows, loadedAt: number): GovernanceSnapshot {
   const { admitted, skipped } = admitConnectionRows(rows.connections, {
     allowedEngines: governanceAllowedEngines(),
@@ -199,8 +244,14 @@ function buildSnapshot(rows: SourceRows, loadedAt: number): GovernanceSnapshot {
   const connections = new Map(admitted.map((connection) => [connection.id, connection]));
   const grants = effectiveGrants(rows.grants, connections);
   const revocations = latestRevocations(rows.revocations);
-  if (grants.ignored > 0 || revocations.ignored > 0) {
-    logger.warn("Governance rows ignored", { route: ROUTE, grants: grants.ignored, revocations: revocations.ignored });
+  const canary = canaryResults(rows.canaries);
+  if (grants.ignored > 0 || revocations.ignored > 0 || canary.ignored > 0) {
+    logger.warn("Governance rows ignored", {
+      route: ROUTE,
+      grants: grants.ignored,
+      revocations: revocations.ignored,
+      canaries: canary.ignored,
+    });
   }
   return {
     loadedAt,
@@ -211,7 +262,7 @@ function buildSnapshot(rows: SourceRows, loadedAt: number): GovernanceSnapshot {
     grants: grants.bySubject,
     revocations: revocations.bySubject,
     settings: rows.settings,
-    canaries: rows.canaries,
+    canary: canary.bySubject,
   };
 }
 

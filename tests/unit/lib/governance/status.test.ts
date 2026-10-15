@@ -1,6 +1,7 @@
 /**
  * The governance status an administrator reads (spec 9.3, 12.2): built from the state holder and the listener at the
- * moment of the request, with ids, levels, paths and codes only, never a value, an envelope or a driver message.
+ * moment of the request, with ids, levels, paths and codes only, never a value or an envelope, and the full message of
+ * the latest load failure, which only an administrator reads.
  *
  * The listener is replaced by a status this file sets, so each case reports the listener it names;
  * tests/api/admin/governance.test.ts reports a real one.
@@ -62,7 +63,7 @@ const snapshotAt = (loadedAt: number): GovernanceSnapshot => ({
   grants: new Map(),
   revocations: new Map(),
   settings: [],
-  canaries: [],
+  canary: { [KEY_A.kid]: "ok", [KEY_B.kid]: "AUTH_FAILED" },
 });
 
 const ENV_KEYS = [
@@ -115,11 +116,12 @@ describe("governanceStatus", () => {
       admittedConnections: null,
       skipped: [],
       keyringKids: [KEY_A.kid, KEY_B.kid],
+      canary: null,
       listener: null,
     });
   });
 
-  test("a loaded snapshot reports its versions, age, load time, admitted count and skips with their envelope code", () => {
+  test("a loaded snapshot reports its versions, age, load time, admitted count, skips with their envelope code and canaries", () => {
     process.env.GOVERNANCE_POSTGRES_SCHEMA = "governance";
     recordGovernanceSnapshot(snapshotAt(T));
 
@@ -142,6 +144,7 @@ describe("governanceStatus", () => {
         { kind: "connection", id: "crm", path: "password", code: "DEFINITION_HAS_SECRET" },
       ],
       keyringKids: [KEY_A.kid, KEY_B.kid],
+      canary: { [KEY_A.kid]: "ok", [KEY_B.kid]: "AUTH_FAILED" },
       listener: null,
     });
   });
@@ -168,7 +171,7 @@ describe("governanceStatus", () => {
     });
   });
 
-  test("a failed load keeps the snapshot and reports the failure's kind and code without the driver message", () => {
+  test("a failed load keeps the snapshot and reports the failure's kind, code and full message, and no value", () => {
     recordGovernanceSnapshot(snapshotAt(T));
     recordGovernanceFailure({
       at: T + 150_000,
@@ -182,9 +185,13 @@ describe("governanceStatus", () => {
 
     expect(status.freshness).toBe("unavailable");
     expect(status.snapshot).toEqual({ loadedAt: "2026-10-15T08:00:00.000Z", ageMs: 150_000 });
-    expect(status.lastError).toEqual({ at: "2026-10-15T08:02:30.000Z", kind: "transient", code: "ECONNREFUSED" });
+    expect(status.lastError).toEqual({
+      at: "2026-10-15T08:02:30.000Z",
+      kind: "transient",
+      code: "ECONNREFUSED",
+      message: "connect ECONNREFUSED 10.0.0.5:5432",
+    });
     const body = JSON.stringify(status);
-    expect(body).not.toContain("10.0.0.5");
     expect(body).not.toContain(PASSWORD);
     expect(body).not.toContain("db.internal.example");
   });

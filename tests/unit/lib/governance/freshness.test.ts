@@ -35,7 +35,7 @@ const snapshotAt = (loadedAt: number): GovernanceSnapshot => ({
   grants: new Map(),
   revocations: new Map(),
   settings: [],
-  canaries: [],
+  canary: {},
 });
 
 const transientAt = (at: number): LoadFailure => ({

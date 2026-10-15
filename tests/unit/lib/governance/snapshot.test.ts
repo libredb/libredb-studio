@@ -639,14 +639,14 @@ describe("effective grants", () => {
       route: "governance/snapshot",
       grants: 8,
       revocations: 0,
+      canaries: 0,
     });
   });
 });
 
 describe("what the snapshot keeps", () => {
-  test("revocations keep the latest revoked_before per subject, and settings and canary rows are kept as read", async () => {
+  test("revocations keep the latest revoked_before per subject, and settings rows are kept as read", async () => {
     const settings = [{ key: "query.timeoutMs", value: 30000, updated_at: new Date("2026-10-14T12:00:00.000Z") }];
-    const canary = [{ kid: KEY.kid, envelope: "lsb1.0123456789abcdef.not-opened-here" }];
     serve({
       revocations: [
         { subject: "alice", revoked_before: new Date("2026-10-15T08:00:00.000Z") },
@@ -657,7 +657,6 @@ describe("what the snapshot keeps", () => {
         { subject: "", revoked_before: new Date("2026-10-15T08:00:00.000Z") },
       ],
       settings,
-      canary,
     });
 
     await loadGovernanceSnapshot();
@@ -667,11 +666,11 @@ describe("what the snapshot keeps", () => {
       ["bob", Number.POSITIVE_INFINITY],
     ]);
     expect(snapshot().settings).toEqual(settings);
-    expect(snapshot().canaries).toEqual(canary);
     expect(logs.warn).toHaveBeenCalledWith("Governance rows ignored", {
       route: "governance/snapshot",
       grants: 0,
       revocations: 2,
+      canaries: 0,
     });
   });
 
@@ -688,6 +687,68 @@ describe("what the snapshot keeps", () => {
 
     expect(governanceState().failure).toBeNull();
     expect([...snapshot().connections.keys()]).toEqual(["orders"]);
+  });
+});
+
+/** The canary binding of spec 8.4: connection `canary`, level `read`, engine `canary`, definition `{}`. */
+const CANARY_BINDING = { connectionId: "canary", level: "read", engine: "canary", definition: {} } as const;
+const CANARY_PLAINTEXT = { user: "libredb-canary" };
+
+describe("seal canaries", () => {
+  test("a canary sealed to an unknown kid is reported as UNKNOWN_KID for that kid", async () => {
+    const stranger = testKey();
+    serve({
+      canary: [
+        { kid: KEY.kid, envelope: sealSecret(KEY.publicKey, CANARY_BINDING, CANARY_PLAINTEXT) },
+        { kid: stranger.kid, envelope: sealSecret(stranger.publicKey, CANARY_BINDING, CANARY_PLAINTEXT) },
+      ],
+    });
+
+    await loadGovernanceSnapshot();
+
+    expect(snapshot().canary).toEqual({ [KEY.kid]: "ok", [stranger.kid]: "UNKNOWN_KID" });
+    expect(logs.warn).not.toHaveBeenCalled();
+  });
+
+  test("a canary sealed for another binding, with another plaintext, or not an envelope reports its code", async () => {
+    const kids = ["0000000000000001", "0000000000000002", "0000000000000003", "0000000000000004"];
+    serve({
+      canary: [
+        { kid: kids[0], envelope: sealSecret(KEY.publicKey, { ...CANARY_BINDING, level: "write" }, CANARY_PLAINTEXT) },
+        { kid: kids[1], envelope: sealSecret(KEY.publicKey, CANARY_BINDING, { user: "someone-else" }) },
+        { kid: kids[2], envelope: sealSecret(KEY.publicKey, CANARY_BINDING, { ...CANARY_PLAINTEXT, password: "x" }) },
+        { kid: kids[3], envelope: "not-an-envelope" },
+      ],
+    });
+
+    await loadGovernanceSnapshot();
+
+    expect(snapshot().canary).toEqual({
+      [kids[0]]: "AUTH_FAILED",
+      [kids[1]]: "PLAINTEXT_INVALID",
+      [kids[2]]: "PLAINTEXT_INVALID",
+      [kids[3]]: "FORMAT",
+    });
+  });
+
+  test("a canary row without a kid of the contract's form is ignored and counted, and one without a text envelope is FORMAT", async () => {
+    serve({
+      canary: [
+        { kid: "NOT-A-KID", envelope: sealSecret(KEY.publicKey, CANARY_BINDING, CANARY_PLAINTEXT) },
+        { kid: null, envelope: null },
+        { kid: KEY.kid, envelope: null },
+      ],
+    });
+
+    await loadGovernanceSnapshot();
+
+    expect(snapshot().canary).toEqual({ [KEY.kid]: "FORMAT" });
+    expect(logs.warn).toHaveBeenCalledWith("Governance rows ignored", {
+      route: "governance/snapshot",
+      grants: 0,
+      revocations: 0,
+      canaries: 2,
+    });
   });
 });
 
