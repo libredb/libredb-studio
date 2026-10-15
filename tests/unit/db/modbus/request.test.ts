@@ -127,6 +127,9 @@ describe("one range by address", () => {
     ["unit", '{"unit":1.5,"table":"coil","address":0,"count":1}'],
     ["address", '{"unit":1,"table":"coil","address":"100","count":1}'],
     ["count", '{"unit":1,"table":"coil","address":0,"count":null}'],
+    // The fourth kind a caller can write: not null, not a list, not text and not a number, so the
+    // sentence names the type rather than the value. No case reached that arm before this one.
+    ["count", '{"unit":1,"table":"coil","address":0,"count":true}'],
   ] as const) {
     test(`"${key}" has to be a whole number`, () => {
       expect(() => parse(text)).toThrow(new RegExp(`"${key}" must be a whole number`));
