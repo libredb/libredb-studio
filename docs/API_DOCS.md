@@ -2012,7 +2012,8 @@ Mints a token for the signed-in user and role; it reads no body field and spends
 
 ### Storage API
 
-The write-through storage sync layer (see [`docs/STORAGE.md`](STORAGE.md)). Data is per-user, keyed by the session username.
+The write-through storage sync layer (see [`docs/STORAGE.md`](STORAGE.md)).
+Data is per-user, keyed by the session username, or under governance by `sub:` followed by the identity provider's subject ([`docs/STORAGE.md`](STORAGE.md#governance-mode)).
 
 In server storage mode a browser tab that has matched its copy of the workspace to the signed-in account sends that account's username, URI-encoded, in the `X-LibreDB-Workspace-Owner` header on every request it makes through `appFetch`, not only on the storage routes.
 When the header is present and does not name the session's username, the middleware (`src/proxy.ts`) answers `409 { "error": "...", "code": "WORKSPACE_OWNER_MISMATCH" }` before any route runs, and the browser reloads the tab so the owner check runs again for the account signed in now.

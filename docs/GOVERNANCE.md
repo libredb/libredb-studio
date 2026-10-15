@@ -138,6 +138,10 @@ The identity provider needs:
 
 `docs/OIDC.md` describes the session claims and a Keycloak realm set up this way.
 
+The identity provider's `sub` also keys each user's server storage in Studio: their saved queries, history and the rest of their workspace are filed under `sub:` followed by the subject, never under the email.
+So a later email change at the identity provider does not move a user's storage, and the next sign-in finds the same rows.
+`docs/STORAGE.md` describes the key under governance mode.
+
 ## Objects
 
 | Object | Kind | `libredb_studio` | `libredb_platform` | Purpose |

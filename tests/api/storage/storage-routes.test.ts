@@ -1,10 +1,13 @@
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
 import { NextRequest } from "next/server";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 
 // ── Mock auth ────────────────────────────────────────────────────────────────
 
-let mockSession: { username: string; role: string } | null = { username: "admin@test.com", role: "admin" };
+let mockSession: { username: string; role: string; idpSubject?: string; idpIssuer?: string } | null = {
+  username: "admin@test.com",
+  role: "admin",
+};
 
 mock.module("@/lib/auth", () => ({
   getSession: async () => mockSession,
@@ -356,5 +359,79 @@ describe("API routes: provider error propagation", () => {
       }),
     );
     expect(mockProvider.mergeData).toHaveBeenCalledWith("user@test.com", { connections: [] });
+  });
+});
+
+// ── The owner key under governance (docs/STORAGE.md, docs/GOVERNANCE.md) ────
+
+describe("API routes: the storage owner key", () => {
+  const HISTORY = [{ id: "h1", query: "SELECT 1" }];
+  let savedSource: string | undefined;
+
+  beforeEach(() => {
+    savedSource = process.env.GOVERNANCE_SOURCE;
+    clearRateLimitState();
+    // An OIDC session: the email for display, the identity provider's subject and issuer for identity.
+    mockSession = {
+      username: "alice@example.com",
+      role: "user",
+      idpSubject: "kc-user-1",
+      idpIssuer: "https://idp.example/realms/libredb",
+    };
+    providerEnabled = true;
+    mockProvider.getAllData.mockClear();
+    mockProvider.setCollection.mockClear();
+    mockProvider.mergeData.mockClear();
+  });
+
+  afterEach(() => {
+    if (savedSource === undefined) delete process.env.GOVERNANCE_SOURCE;
+    else process.env.GOVERNANCE_SOURCE = savedSource;
+  });
+
+  /** GET /api/storage, PUT /api/storage/history and POST /api/storage/migrate, one after the other; their statuses. */
+  async function callEachRoute(): Promise<number[]> {
+    const read = await GET(getRequest());
+    const write = await PUT(
+      new NextRequest("http://localhost/api/storage/history", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ data: HISTORY }),
+      }),
+      { params: Promise.resolve({ collection: "history" }) },
+    );
+    const merge = await POST(
+      new NextRequest("http://localhost/api/storage/migrate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ history: HISTORY }),
+      }),
+    );
+    return [read.status, write.status, merge.status];
+  }
+
+  test("governance keys getAllData, setCollection and mergeData by sub:<idpSubject>", async () => {
+    process.env.GOVERNANCE_SOURCE = "postgres";
+    expect(await callEachRoute()).toEqual([200, 200, 200]);
+    expect(mockProvider.getAllData).toHaveBeenCalledWith("sub:kc-user-1");
+    expect(mockProvider.setCollection).toHaveBeenCalledWith("sub:kc-user-1", "history", HISTORY);
+    expect(mockProvider.mergeData).toHaveBeenCalledWith("sub:kc-user-1", { history: HISTORY });
+  });
+
+  test("without governance an OIDC session's rows stay keyed by its username, exactly as before", async () => {
+    delete process.env.GOVERNANCE_SOURCE;
+    expect(await callEachRoute()).toEqual([200, 200, 200]);
+    expect(mockProvider.getAllData).toHaveBeenCalledWith("alice@example.com");
+    expect(mockProvider.setCollection).toHaveBeenCalledWith("alice@example.com", "history", HISTORY);
+    expect(mockProvider.mergeData).toHaveBeenCalledWith("alice@example.com", { history: HISTORY });
+  });
+
+  test("governance answers 500 and reads or writes no rows for a session without an IdP subject", async () => {
+    process.env.GOVERNANCE_SOURCE = "postgres";
+    mockSession = { username: "alice@example.com", role: "user" };
+    expect(await callEachRoute()).toEqual([500, 500, 500]);
+    expect(mockProvider.getAllData).not.toHaveBeenCalled();
+    expect(mockProvider.setCollection).not.toHaveBeenCalled();
+    expect(mockProvider.mergeData).not.toHaveBeenCalled();
   });
 });

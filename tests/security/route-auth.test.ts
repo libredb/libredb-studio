@@ -496,6 +496,8 @@ describe("routes that reach a provider require a session", () => {
     "@/lib/storage/connection-secrets":
       "the credential field classification; withoutSecretFields copies a connection record without its secrets and opens nothing",
     "@/lib/storage/factory": "the app's own storage backend (STORAGE_PROVIDER), not a user database",
+    "@/lib/storage/owner-key":
+      "derives the storage row key from the session, the username or under governance sub: and the identity provider's subject, reading GOVERNANCE_SOURCE through @/lib/governance/config; opens nothing",
     "@/lib/storage/types": "the storage backend's interfaces",
     "@/lib/totp": "second-factor verification: an HMAC over the submitted code and an in-process spent-step map",
   };

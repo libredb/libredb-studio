@@ -7,6 +7,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getStorageProvider } from "@/lib/storage/factory";
+import { storageOwnerKey } from "@/lib/storage/owner-key";
 import type { StorageData } from "@/lib/storage/types";
 import { createErrorResponse } from "@/lib/api/errors";
 import { guardRoute } from "@/lib/api/require-session";
@@ -29,7 +30,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Invalid JSON in request body" }, { status: 400 });
     }
 
-    await provider.mergeData(guard.session.username, body);
+    await provider.mergeData(storageOwnerKey(guard.session), body);
 
     return NextResponse.json({ ok: true, migrated: Object.keys(body) });
   } catch (error) {
