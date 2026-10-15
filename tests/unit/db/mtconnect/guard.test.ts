@@ -14,6 +14,7 @@ import {
   assertSequence,
   guardRequestLine,
   MtcRefusal,
+  pathFunctionNames,
   type MtcWindow,
 } from "@/lib/db/providers/industrial/mtconnect/guard";
 import { MTC_REFUSED_KEYS, MTC_ROUTES, MTC_ROUTES_LEFT_OUT } from "@/lib/db/providers/industrial/mtconnect/routes";
@@ -345,6 +346,88 @@ describe("the path subset", () => {
  * into the `#` rule and every such request was refused as carrying a fragment, which is a sentence
  * about a URL and not about a comment. Found by writing the generator, not by reading the guard.
  */
+describe("the bound on the request line itself", () => {
+  test("a line past the bound is refused before anything else is read", () => {
+    const uzun = `GET /sample?path=${"a".repeat(9000)}`;
+    expect(uzun.length).toBeGreaterThan(8192);
+    expect(code(() => guardRequestLine(uzun, OPTIONS))).toBe("request-too-long");
+  });
+
+  test("the refusal names the bound and the length it was given", () => {
+    let message = "";
+    try {
+      guardRequestLine("GET /probe".padEnd(9000, "x"), OPTIONS);
+    } catch (error) {
+      message = error instanceof Error ? error.message : "";
+    }
+    expect(message).toContain("8192");
+    expect(message).toContain("9000");
+  });
+
+  test("a request at the widest the provider can legitimately send still passes", () => {
+    // The widest real line: a path parameter at MAX_PATH_BYTES beside a device segment and the
+    // numbers. It is refused for its path, not for its length, which is what pins that the line
+    // bound sits above the path bound rather than in front of it.
+    const widest = `GET /Device1/sample?path=${"//DataItem".repeat(400)}&from=1&count=100`;
+    expect(widest.length).toBeLessThan(8192);
+    expect(code(() => guardRequestLine(widest, OPTIONS))).not.toBe("request-too-long");
+  });
+});
+
+describe("the path's function-name scan", () => {
+  // The scan reads each name backwards from its own `(` because the forward form was quadratic in
+  // the length of a path holding no `(` (MEASURED: 9.9 ms at 4,096 characters, 2.5 s at 65,536).
+  // These cases pin that the two forms accept and refuse the same names; the duration is recorded
+  // in the source rather than asserted here, because a wall-clock bound in the suite would measure
+  // the machine's load as much as the scan.
+  const FORWARD = (path: string): readonly string[] =>
+    [...path.matchAll(/([A-Za-z][A-Za-z0-9-]*)\s*\(/g)].map((call) => call[1] ?? "");
+
+  test("a name is read even when the characters before it cannot start one", () => {
+    // `9foo(` names `foo`, exactly as a forward scan anchored on a letter did. Asserted on the
+    // names rather than on the refusal, because `9foo` and `foo` are both refused and a refusal
+    // would therefore pass whichever of the two the scan read.
+    expect(pathFunctionNames("//DataItem[9foo(@id)]")).toEqual(["foo"]);
+    expect(pathFunctionNames("//DataItem[-foo(@id)]")).toEqual(["foo"]);
+    expect(pathFunctionNames("9-a(")).toEqual(["a"]);
+    // A name that is allowed must not be read as a different, allowed-looking one either.
+    expect(pathFunctionNames('//DataItem[contains(@id,"d1")]')).toEqual(["contains"]);
+  });
+
+  test("whitespace between the name and its parenthesis does not hide the name", () => {
+    expect(code(() => assertPathInSubset("//DataItem[position ()=1]"))).toBe("path-function");
+    expect(code(() => assertPathInSubset("//DataItem[position\t()=1]"))).toBe("path-function");
+  });
+
+  test("a parenthesis with no name before it is not a function call", () => {
+    // Grouping parentheses carry no name, so they must not be read as one and must not refuse.
+    expect(code(() => assertPathInSubset('//DataItem[(@id="d1")]'))).not.toBe("path-function");
+    expect(code(() => assertPathInSubset('//DataItem[((@id="d1"))]'))).not.toBe("path-function");
+  });
+
+  test("the allowed names still pass and are not read as something else", () => {
+    expect(code(() => assertPathInSubset('//DataItem[contains(@id,"d1")]'))).toBe("accepted");
+  });
+
+  test("the backward scan finds the same names as the forward one over a generated corpus", () => {
+    // A generated corpus rather than a list, because the two forms differ only in corners nobody
+    // thinks to write down. The alphabet carries the corners on purpose: digits and `-` inside a
+    // name, a leading digit, stacked and empty parentheses, quotes and whitespace.
+    const alphabet = [..."abzAZ019-_()[]@:'\" \t/.,*|="];
+    let seed = 1722;
+    const next = (): number => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+    const differ: string[] = [];
+    for (let attempt = 0; attempt < 20000; attempt++) {
+      let path = "";
+      for (let index = 0; index < 1 + Math.floor(next() * 24); index++) {
+        path += alphabet[Math.floor(next() * alphabet.length)] ?? "";
+      }
+      if (JSON.stringify(pathFunctionNames(path)) !== JSON.stringify(FORWARD(path))) differ.push(path);
+    }
+    expect(differ).toEqual([]);
+  });
+});
+
 describe("comment lines above the request", () => {
   test("a comment line is dropped and the request below it runs", () => {
     const request = guardRequestLine("# PART_COUNT on Mazak\nGET /Mazak/current", {

@@ -42,7 +42,8 @@ export type MtcRefusalCode =
   | "path-too-many-alternatives"
   | "path-too-long"
   | "param-too-long"
-  | "two-requests";
+  | "two-requests"
+  | "request-too-long";
 
 export class MtcRefusal extends Error {
   constructor(
@@ -117,6 +118,27 @@ const MAX_PATH_BYTES = 4096;
  * `123456.2207`. 256 bytes is far above every measured one and far below the request budget.
  */
 const MAX_PARAM_BYTES = 256;
+
+/**
+ * The bound on the whole request line, before any of it is read.
+ *
+ * Every other bound in this file is measured after the line has been split, trimmed and matched,
+ * so until this one existed the guard did that work on text of any length: a pasted megabyte
+ * reached three regular expressions before the first refusal. The bound is on the line rather
+ * than on the path because it has to come first to be worth anything.
+ *
+ * MEASURED, the widest request this provider can legitimately send is a `/sample` with a path
+ * parameter at `MAX_PATH_BYTES`, a device segment at `MAX_PARAM_BYTES`, and `from`, `count` and
+ * `interval` beside it: 4,096 + 256 + the route and the three numbers, under 4,500 bytes. 8,192 is
+ * above every such line and below the agent's own header budget of about 8 KiB (decision K-61),
+ * so a line this guard accepts is a line the agent would still answer.
+ */
+const MAX_REQUEST_BYTES = 8192;
+
+/** The three character classes the path's function-name scan walks, compiled once. */
+const WHITESPACE = /\s/;
+const NAME_CHAR = /[A-Za-z0-9-]/;
+const NAME_HEAD = /[A-Za-z]/;
 
 function refuse(code: MtcRefusalCode, message: string): never {
   throw new MtcRefusal(code, message);
@@ -216,8 +238,7 @@ export function assertPathInSubset(path: string): void {
     );
   }
 
-  for (const call of path.matchAll(/([A-Za-z][A-Za-z0-9-]*)\s*\(/g)) {
-    const name = call[1];
+  for (const name of pathFunctionNames(path)) {
     if (name === "and" || name === "or") continue;
     if (!ALLOWED_FUNCTIONS.includes(name)) {
       refuse(
@@ -226,6 +247,32 @@ export function assertPathInSubset(path: string): void {
       );
     }
   }
+}
+
+/**
+ * READ EACH NAME BACKWARDS FROM ITS OWN `(`, RATHER THAN SCANNING FORWARD FOR A NAME. The
+ * forward form was `path.matchAll(/([A-Za-z][A-Za-z0-9-]*)\s*\(/g)`, and on a path that holds no
+ * `(` at all every position started a name that ran to the end before failing, which is quadratic
+ * in the length of the path: MEASURED at 9.9 ms for 4,096 characters, 38 ms for 8,192 and 38 s for
+ * 262,144. `MAX_PATH_BYTES` kept that bounded, but the bound was the only thing keeping it
+ * bounded, and it is declared a hundred lines away from the loop it was protecting. Walking back
+ * from each `(` reads every character a constant number of times, because the walk stops at the
+ * previous `(`. The two forms accept and refuse exactly the same names, which is pinned by a
+ * differential test over a generated corpus rather than by reading the two expressions.
+ */
+export function pathFunctionNames(path: string): readonly string[] {
+  const names: string[] = [];
+  for (let open = path.indexOf("("); open !== -1; open = path.indexOf("(", open + 1)) {
+    let end = open;
+    while (end > 0 && WHITESPACE.test(path[end - 1] ?? "")) end -= 1;
+    let start = end;
+    while (start > 0 && NAME_CHAR.test(path[start - 1] ?? "")) start -= 1;
+    // A name begins with a letter, so `9foo(` names `foo` exactly as the forward form did.
+    while (start < end && !NAME_HEAD.test(path[start] ?? "")) start += 1;
+    if (start === end) continue;
+    names.push(path.slice(start, end));
+  }
+  return names;
 }
 
 /** A sequence number as the provider will send it, or a refusal. */
@@ -291,6 +338,16 @@ export function guardRequestLine(line: string, options: MtcGuardOptions): MtcReq
   // above the request it builds. Without this the whole text reached the `#` rule below and every
   // generated request was refused as carrying a fragment, which is a sentence about a URL and not
   // about a comment. A `#` after the route is still a fragment and still refused.
+  // LENGTH FIRST, BECAUSE EVERYTHING BELOW READS THE WHOLE LINE. The split, the trims and the
+  // method match each walk the text end to end, so a bound that comes after them is not a bound on
+  // the work. This one is measured against the widest request the provider can send, not against
+  // what an editor can hold.
+  if (line.length > MAX_REQUEST_BYTES) {
+    refuse(
+      "request-too-long",
+      `A request may be at most ${MAX_REQUEST_BYTES} bytes, and this one is ${line.length}. The agent answers nothing at all past about 8 KiB of request headers: it closes the connection without an error document.`,
+    );
+  }
   const lines = line
     .split("\n")
     .map((text) => text.trim())
