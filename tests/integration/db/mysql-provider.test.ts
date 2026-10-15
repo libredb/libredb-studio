@@ -12,12 +12,16 @@ import type { ColumnSchema, DatabaseConnection } from "@/lib/types";
 import type { DatabaseProvider, MaintenanceOperation, ObjectKindSpec } from "@/lib/db/types";
 import { maintenanceControl } from "@/lib/db/types";
 import {
+  AuthenticationError,
   DatabaseConfigError,
   ExecutionProfileError,
   NO_TRANSACTION_OPENED,
+  PermissionDeniedError,
   QueryError,
   TRANSACTION_STATE_UNREPORTED,
 } from "@/lib/db/errors";
+import { createErrorResponse } from "@/lib/api/errors";
+import { ApiErrorCode } from "@/lib/api/error-codes";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { asBytes, binaryText } from "@/lib/export/binary";
 import { mysqlJsonStrategy } from "@/lib/explain/mysql-json";
@@ -1157,6 +1161,55 @@ describe("MySQLProvider", () => {
 
       test("stays null when the column is NULL", async () => {
         expect(await queryBinary(null)).toBeNull();
+      });
+    });
+
+    /**
+     * A grant the account lacks, told from a refused credential by the error number mysql2 carries. The agent
+     * read-only profile met both shapes on MySQL 26.7.0 and MariaDB 12.3.2 (`docs/providers/mysql.md` section 12.1):
+     * 1142 `…command denied to user` and 1227 `Access denied; you need…`, the second answered as an authentication
+     * failure because its words begin like a refused login's.
+     */
+    describe("an access refusal", () => {
+      const refusal = (message: string, errno: number, code: string, sqlState: string) =>
+        Object.assign(new Error(message), { code, errno, sqlState, sqlMessage: message });
+
+      async function refusedWith(error: Error): Promise<unknown> {
+        provider = new MySQLProvider(makeMySQLConfig());
+        await provider.connect();
+        mockExecuteFn = () => Promise.reject(error);
+        return provider.query("INSERT INTO orders VALUES (1)").catch((failure: unknown) => failure);
+      }
+
+      test.each([
+        ["1142", "INSERT command denied to user 'reader'@'%' for table 'orders'", 1142, "ER_TABLEACCESS_DENIED_ERROR"],
+        [
+          "1227",
+          "Access denied; you need (at least one of) the SUPER privilege(s) for this operation",
+          1227,
+          "ER_SPECIFIC_ACCESS_DENIED_ERROR",
+        ],
+        ["1044", "Access denied for user 'reader'@'%' to database 'shop'", 1044, "ER_DBACCESS_DENIED_ERROR"],
+      ])("a missing privilege (%s) is a PermissionDeniedError answered 403", async (_errno, message, errno, code) => {
+        const refused = await refusedWith(refusal(message, errno, code, "42000"));
+
+        expect(refused).toBeInstanceOf(PermissionDeniedError);
+        const response = createErrorResponse(refused, { route: "api/db/query" });
+        expect(response.status).toBe(403);
+        expect(await response.json()).toEqual({
+          error: `Permission denied: ${message}`,
+          code: ApiErrorCode.PERMISSION_DENIED,
+          statusCode: 403,
+        });
+      });
+
+      test("a refused credential (1045) is still an AuthenticationError answered 401", async () => {
+        const refused = await refusedWith(
+          refusal("Access denied for user 'app'@'%' (using password: YES)", 1045, "ER_ACCESS_DENIED_ERROR", "28000"),
+        );
+
+        expect(refused).toBeInstanceOf(AuthenticationError);
+        expect(createErrorResponse(refused, { route: "api/db/query" }).status).toBe(401);
       });
     });
   });

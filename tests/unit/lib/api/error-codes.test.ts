@@ -24,6 +24,7 @@ const GROUPS = {
     "QUERY_ERROR",
     "CONFIG_ERROR",
     "AUTH_ERROR",
+    "PERMISSION_DENIED",
     "TIMEOUT_ERROR",
     "CONNECTION_ERROR",
     "POOL_EXHAUSTED",
@@ -67,6 +68,11 @@ describe("ApiErrorCode", () => {
 
   test("contains generic error codes", () => {
     for (const code of GROUPS.generic) expect(ApiErrorCode[code]).toBe(code);
+  });
+
+  test("contains the database's privilege refusal code, distinct from its refused credential's AUTH_ERROR", () => {
+    expect(ApiErrorCode.PERMISSION_DENIED).toBe("PERMISSION_DENIED");
+    expect(ApiErrorCode.PERMISSION_DENIED).not.toBe(ApiErrorCode.AUTH_ERROR);
   });
 
   test("contains the session-required code, distinct from a database's AUTH_ERROR", () => {

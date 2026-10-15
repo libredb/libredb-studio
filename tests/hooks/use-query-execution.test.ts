@@ -24,6 +24,7 @@ mock.module("@/components/QuerySafetyDialog", () => ({
 }));
 
 import { useQueryExecution } from "@/hooks/use-query-execution";
+import { onSessionEnded } from "@/lib/config/base-path";
 import { oxiaRefusal } from "@/lib/db/providers/keyvalue/oxia/guard";
 import { milvusRefusal } from "@/lib/db/providers/vector/milvus/guard";
 import { qdrantRefusal } from "@/lib/db/providers/vector/qdrant/guard";
@@ -850,6 +851,36 @@ describe("useQueryExecution", () => {
     expect(tabs[0].runError).toBeUndefined();
     expect(tabs[0].result?.rows).toHaveLength(2);
     expect(tabs[0].resultQuery).toBe("SELECT * FROM users");
+  });
+
+  // A privilege the credential lacks is the run's error like any other refusal, never a session problem: the
+  // browser signs in again only for a 401 carrying AUTH_REQUIRED (`appFetch` in src/lib/config/base-path.ts).
+  test("a refused privilege (403 PERMISSION_DENIED) is the run's error and leaves the session alone", async () => {
+    const { tabs, setTabs } = mutableTabs([createTab()]);
+    const sentence = "Permission denied: permission denied for table orders";
+    mockGlobalFetch({
+      "/api/db/query": {
+        ok: false,
+        status: 403,
+        json: { error: sentence, code: "PERMISSION_DENIED", statusCode: 403 },
+      },
+    });
+    const sessionEnded = mock(() => {});
+    const unregister = onSessionEnded(sessionEnded);
+    try {
+      const params = createDefaultParams({ tabs, currentTab: tabs[0], setTabs });
+      const { result } = renderHook(() => useQueryExecution(params));
+
+      await act(async () => {
+        await result.current.executeQuery("INSERT INTO orders VALUES (1)");
+      });
+
+      expect(tabs[0].runError).toBe(sentence);
+      expect(mockToastError).toHaveBeenCalledWith("Query Error", { description: sentence });
+      expect(sessionEnded).not.toHaveBeenCalled();
+    } finally {
+      unregister();
+    }
   });
 
   /**

@@ -11,6 +11,7 @@ import {
   DatabaseConfigError,
   ConnectionError,
   AuthenticationError,
+  PermissionDeniedError,
   PoolExhaustedError,
   QueryError,
   QueryCancelledError,
@@ -133,6 +134,17 @@ export function createErrorResponse(error: unknown, context?: { route?: string }
         ...(error.fixStatement === undefined ? {} : { fixStatement: error.fixStatement }),
       },
       { status: 401 },
+    );
+  }
+
+  // --- DB: PermissionDeniedError ---
+  // The database accepted the credential and refused the statement for a privilege it lacks: 403, so no client reads
+  // it as a refused credential or an ended session (the browser signs in again only for AUTH_REQUIRED).
+  if (error instanceof PermissionDeniedError) {
+    logger.warn("Database permission denied", { route, provider: error.provider });
+    return NextResponse.json(
+      { error: error.message, code: ApiErrorCode.PERMISSION_DENIED, statusCode: 403 },
+      { status: 403 },
     );
   }
 

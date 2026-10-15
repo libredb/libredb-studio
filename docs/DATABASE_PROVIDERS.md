@@ -506,13 +506,14 @@ try {
 
 ```
 DatabaseError (base)
-├── DatabaseConfigError  - Configuration errors
-├── ConnectionError      - Connection failures
-├── AuthenticationError  - Invalid credentials
-├── PoolExhaustedError   - No available connections
-├── QueryError           - SQL/MQL syntax/execution errors
-├── TimeoutError         - Query/connection timeouts
-└── QueryCancelledError  - Query cancelled by the user
+├── DatabaseConfigError    - Configuration errors
+├── ConnectionError        - Connection failures
+├── AuthenticationError    - Invalid credentials
+├── PermissionDeniedError  - A privilege the credential lacks
+├── PoolExhaustedError     - No available connections
+├── QueryError             - SQL/MQL syntax/execution errors
+├── TimeoutError           - Query/connection timeouts
+└── QueryCancelledError    - Query cancelled by the user
 ```
 
 ## Provider-Specific Features

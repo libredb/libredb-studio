@@ -12,7 +12,16 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ConnectionError, DatabaseConfigError, DatabaseError, QueryError, TimeoutError } from "@/lib/db/errors";
+import {
+  ConnectionError,
+  DatabaseConfigError,
+  DatabaseError,
+  PermissionDeniedError,
+  QueryError,
+  TimeoutError,
+} from "@/lib/db/errors";
+import { createErrorResponse } from "@/lib/api/errors";
+import { ApiErrorCode } from "@/lib/api/error-codes";
 import {
   callerBoundTruncationReason,
   isSourcePartUnavailable,
@@ -928,6 +937,37 @@ describe("Db2Provider: query", () => {
     };
     const provider = await connected();
     await expect(provider.query("SELECT * FROM APP.NOPE")).rejects.toThrow("APP.NOPE");
+  });
+
+  // SQL0551N and SQL0552N, the authorization ID lacking a privilege (SQLSTATE 42501 and 42502 in Db2's SQLSTATE
+  // messages), which db2-node carries in `sqlstate` and `sqlcode` as the server reported them.
+  test.each([
+    [
+      "42501",
+      -551,
+      'SQL Error [SQLSTATE=42501, SQLCODE=-551]: "READER" does not have the required authorization or privilege to perform operation "INSERT" on object "APP.ORDERS".',
+    ],
+    [
+      "42502",
+      -552,
+      'SQL Error [SQLSTATE=42502, SQLCODE=-552]: "READER" does not have the privilege to perform operation "CREATE TABLE".',
+    ],
+  ] as const)("a missing privilege (%s) is a PermissionDeniedError answered 403", async (sqlstate, sqlcode, words) => {
+    userQuery = async () => {
+      throw Object.assign(new Error(words), { sqlstate, sqlcode });
+    };
+    const provider = await connected();
+
+    const refused = await provider.query("INSERT INTO APP.ORDERS VALUES (1)").catch((e: unknown) => e);
+
+    expect(refused).toBeInstanceOf(PermissionDeniedError);
+    const response = createErrorResponse(refused, { route: "api/db/query" });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error: `Permission denied: ${words}`,
+      code: ApiErrorCode.PERMISSION_DENIED,
+      statusCode: 403,
+    });
   });
 });
 

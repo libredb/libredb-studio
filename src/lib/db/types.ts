@@ -3766,11 +3766,11 @@ export interface ObjectEditCurrentText {
  *
  * A PROVIDER DOES NOT THROW FOR A VERDICT ITS ENGINE REACHED. It RETURNS one of these, which is
  * what makes "a deliberate engine refusal is never a 500" a property of this type rather than of a
- * mapping table. MEASURED against the mapper this repository already has: `42501` becomes HTTP 401
- * "Authentication failed: permission denied for schema app" for a credential that is connected and
- * correct, `42P13` becomes HTTP 500, and SQLSTATE, `hint`, `severity`, `detail` and `where` are all
- * destroyed. Exceptions stay for what they are for, a programming error or an unexpected driver
- * fault.
+ * mapping table. MEASURED against the mapper this repository had when this type was written: `42501`
+ * became HTTP 401 "Authentication failed: permission denied for schema app" for a credential that is
+ * connected and correct, `42P13` became HTTP 500, and SQLSTATE, `hint`, `severity`, `detail` and
+ * `where` were all destroyed. Exceptions stay for what they are for, a programming error or an
+ * unexpected driver fault.
  */
 export type ObjectEditOutcome =
   /** The engine replaced the addressed object and destroyed nothing else. */

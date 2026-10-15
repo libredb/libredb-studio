@@ -91,7 +91,7 @@ const { POST } = await import("@/app/api/db/profile/route");
 const { KafkaProvider } = await import("@/lib/db/providers/stream/kafka/index");
 const { EtcdProvider } = await import("@/lib/db/providers/keyvalue/etcd/index");
 const { SQLiteProvider } = await import("@/lib/db/providers/sql/sqlite");
-const { ConnectionError, QueryError, TimeoutError } = await import("@/lib/db/errors");
+const { ConnectionError, PermissionDeniedError, QueryError, TimeoutError } = await import("@/lib/db/errors");
 const { InfluxDB3Provider, InfluxDBProvider } = await import("@/lib/db/providers/timeseries/influxdb/index");
 const { createInfluxClient } = await import("@/lib/db/providers/timeseries/influxdb/client");
 const { INFLUX_ERROR_SENTENCES } = await import("@/lib/db/providers/timeseries/influxdb/errors");
@@ -494,6 +494,31 @@ describe("POST /api/db/profile", () => {
 
     expect(res.status).toBe(503);
     expect(data.error).toBe("Connection terminated");
+  });
+
+  // A grant the credential lacks refuses every measure of the column alike, so asking each one again only meets it
+  // again: the profile ends with the refusal's own 403, as it ended with a 401 while the refusal was mapped as a
+  // refused credential.
+  test("a missing privilege ends the profile with a 403, not a column warning", async () => {
+    const sqlProvider = createMockProvider({ capabilities: { queryLanguage: "sql" } });
+    const sent: string[] = [];
+    (sqlProvider.query as ReturnType<typeof mock>).mockImplementation(async (sql: string) => {
+      sent.push(sql);
+      if (sql.startsWith("SELECT COUNT(*) AS total FROM")) return { rows: [{ total: 3 }], fields: [] };
+      throw new PermissionDeniedError("Permission denied: permission denied for table salaries", "postgres", sql);
+    });
+    mockGetOrCreateProvider.mockResolvedValueOnce(sqlProvider);
+    const body = { connection: validConnection, tablePath: ["public", "salaries"], columns: ["amount", "grade"] };
+
+    const res = await POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never);
+    const data = await parseResponseJSON<{ error: string; code: string }>(res);
+
+    expect(res.status).toBe(403);
+    expect(data).toMatchObject({
+      error: "Permission denied: permission denied for table salaries",
+      code: "PERMISSION_DENIED",
+    });
+    expect(sent).toHaveLength(2);
   });
 
   test("refuses column names that are not strings", async () => {

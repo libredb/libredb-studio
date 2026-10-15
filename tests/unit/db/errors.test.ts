@@ -4,6 +4,7 @@ import {
   DatabaseConfigError,
   ConnectionError,
   AuthenticationError,
+  PermissionDeniedError,
   PoolExhaustedError,
   QueryError,
   TimeoutError,
@@ -139,6 +140,25 @@ describe("AuthenticationError", () => {
   test("is instanceof DatabaseError", () => {
     const err = new AuthenticationError("fail");
     expect(err).toBeInstanceOf(DatabaseError);
+  });
+});
+
+describe("PermissionDeniedError", () => {
+  test('sets name to "PermissionDeniedError"', () => {
+    expect(new PermissionDeniedError("denied").name).toBe("PermissionDeniedError");
+  });
+
+  test("sets code to PERMISSION_DENIED and keeps the provider and the statement", () => {
+    const err = new PermissionDeniedError("denied", "postgres", "INSERT INTO orders VALUES (1)");
+    expect(err.code).toBe("PERMISSION_DENIED");
+    expect(err.provider).toBe("postgres");
+    expect(err.query).toBe("INSERT INTO orders VALUES (1)");
+  });
+
+  test("is a DatabaseError and not a refused credential", () => {
+    const err = new PermissionDeniedError("denied");
+    expect(err).toBeInstanceOf(DatabaseError);
+    expect(err).not.toBeInstanceOf(AuthenticationError);
   });
 });
 
@@ -280,6 +300,10 @@ describe("isRetryableError", () => {
 
   test("AuthenticationError is NOT retryable", () => {
     expect(isRetryableError(new AuthenticationError("bad creds"))).toBe(false);
+  });
+
+  test("PermissionDeniedError is NOT retryable", () => {
+    expect(isRetryableError(new PermissionDeniedError("permission denied for table orders"))).toBe(false);
   });
 
   test("DatabaseConfigError is NOT retryable", () => {
@@ -512,14 +536,6 @@ describe("mapDatabaseError: a statement's own fault, by driver code (#1427)", ()
       shaped("Duplicate entry '1' for key 't1.PRIMARY'", { code: "ER_DUP_ENTRY", errno: 1062, sqlState: "23000" }),
     ],
     [
-      "MySQL table privilege (1142, 42000)",
-      shaped("SELECT command denied to user 'u'@'%' for table 't'", {
-        code: "ER_TABLEACCESS_DENIED_ERROR",
-        errno: 1142,
-        sqlState: "42000",
-      }),
-    ],
-    [
       "PostgreSQL-wire unique violation (23505)",
       shaped('duplicate key value violates unique constraint "t_pkey"', { code: "23505" }),
     ],
@@ -620,11 +636,6 @@ describe("mapDatabaseError: a statement's own fault, by driver code (#1427)", ()
       }),
       DatabaseError,
     ],
-    [
-      "PostgreSQL permission denied (42501) stays an authentication failure",
-      shaped("permission denied for table t", { code: "42501" }),
-      AuthenticationError,
-    ],
   ];
 
   for (const [name, error, expected] of notStatementFaults) {
@@ -634,6 +645,280 @@ describe("mapDatabaseError: a statement's own fault, by driver code (#1427)", ()
       expect(mapped).not.toBeInstanceOf(QueryError);
     });
   }
+});
+
+/**
+ * A refused privilege is not a refused credential, and the driver's code tells them apart wherever the driver gives
+ * one. Answering a missing grant as an authentication failure sent a user whose password is right to re-enter it:
+ * PostgreSQL's 42501 came back as HTTP 401 "Authentication failed: permission denied for table orders". Each shape is
+ * the one the installed driver raises: `pg` puts the SQLSTATE in `code`, `mysql2` the error number in `errno` beside
+ * `sqlState`, `mssql` the server's number in `number`, `oracledb` in `errorNum`, `db2-node` the SQLSTATE and SQLCODE
+ * in `sqlstate` and `sqlcode`, and the MongoDB driver its code and name in `code` and `codeName`. The codes and
+ * texts are each engine's reference: PostgreSQL's Appendix A, the MySQL 8.4 and MariaDB error references, SQL
+ * Server's Database Engine errors, Oracle's error help, Db2's SQLSTATE and SQLCODE messages and MongoDB's error codes.
+ */
+describe("mapDatabaseError: a refused privilege is not a refused credential", () => {
+  const shaped = (message: string, fields: Record<string, unknown>) => Object.assign(new Error(message), fields);
+  const mysql = (message: string, errno: number, code: string, sqlState: string) =>
+    shaped(message, { code, errno, sqlState, sqlMessage: message });
+  const mssql = (message: string, number: number, severity: number) =>
+    shaped(message, { code: "EREQUEST", number, class: severity });
+  const oracle = (message: string, errorNum: number) =>
+    shaped(message, { errorNum, code: `ORA-${String(errorNum).padStart(5, "0")}` });
+
+  const privilegeRefusals: [string, Error][] = [
+    ["PostgreSQL insufficient_privilege (42501)", shaped("permission denied for table orders", { code: "42501" })],
+    ["PostgreSQL ownership refusal (42501)", shaped("must be owner of table orders", { code: "42501" })],
+    [
+      "MySQL database access (1044)",
+      mysql("Access denied for user 'reader'@'%' to database 'shop'", 1044, "ER_DBACCESS_DENIED_ERROR", "42000"),
+    ],
+    [
+      "MySQL table privilege (1142)",
+      mysql(
+        "INSERT command denied to user 'reader'@'%' for table 'orders'",
+        1142,
+        "ER_TABLEACCESS_DENIED_ERROR",
+        "42000",
+      ),
+    ],
+    [
+      "MariaDB table privilege (1142), which qualifies the table",
+      mysql(
+        "INSERT command denied to user 'reader'@'%' for table `shop`.`orders`",
+        1142,
+        "ER_TABLEACCESS_DENIED_ERROR",
+        "42000",
+      ),
+    ],
+    [
+      "MySQL column privilege (1143)",
+      mysql(
+        "SELECT command denied to user 'reader'@'%' for column 'secret' in table 'orders'",
+        1143,
+        "ER_COLUMNACCESS_DENIED_ERROR",
+        "42000",
+      ),
+    ],
+    [
+      "MySQL global privilege (1227)",
+      mysql(
+        "Access denied; you need (at least one of) the SUPER privilege(s) for this operation",
+        1227,
+        "ER_SPECIFIC_ACCESS_DENIED_ERROR",
+        "42000",
+      ),
+    ],
+    [
+      "MySQL routine privilege (1370)",
+      mysql(
+        "EXECUTE command denied to user 'reader'@'%' for routine 'shop.refund'",
+        1370,
+        "ER_PROCACCESS_DENIED_ERROR",
+        "42000",
+      ),
+    ],
+    [
+      "SQL Server object permission (229)",
+      mssql("The INSERT permission was denied on the object 'orders', database 'shop', schema 'dbo'.", 229, 14),
+    ],
+    [
+      "SQL Server column permission (230)",
+      mssql(
+        "The SELECT permission was denied on the column 'secret' of the object 'orders', database 'shop', schema 'dbo'.",
+        230,
+        14,
+      ),
+    ],
+    ["SQL Server database permission (262)", mssql("CREATE TABLE permission denied in database 'shop'.", 262, 16)],
+    ["SQL Server action permission (297)", mssql("The user does not have permission to perform this action.", 297, 16)],
+    [
+      "SQL Server server permission (300)",
+      mssql("VIEW SERVER PERFORMANCE STATE permission was denied on object 'server', database 'master'.", 300, 14),
+    ],
+    [
+      "SQL Server database access (916)",
+      mssql(
+        'The server principal "reader" is not able to access the database "hr" under the current security context.',
+        916,
+        14,
+      ),
+    ],
+    ["Oracle insufficient privileges (ORA-01031)", oracle("ORA-01031: insufficient privileges", 1031)],
+    [
+      "Oracle CREATE SESSION missing (ORA-01045)",
+      oracle("ORA-01045: Login denied. User READER does not have CREATE SESSION privilege.", 1045),
+    ],
+    [
+      "Db2 SQL0551N (42501)",
+      shaped(
+        'SQL Error [SQLSTATE=42501, SQLCODE=-551]: "READER" does not have the required authorization or privilege to perform operation "INSERT" on object "SHOP.ORDERS".',
+        { sqlstate: "42501", sqlcode: -551 },
+      ),
+    ],
+    [
+      "Db2 SQL0552N (42502)",
+      shaped(
+        'SQL Error [SQLSTATE=42502, SQLCODE=-552]: "READER" does not have the privilege to perform operation "CREATE TABLE".',
+        { sqlstate: "42502", sqlcode: -552 },
+      ),
+    ],
+    [
+      "Db2 SQL1060N (no CONNECT privilege)",
+      shaped('SQL Error [SQLSTATE=08004, SQLCODE=-1060]: User "READER" does not have the CONNECT privilege.', {
+        sqlstate: "08004",
+        sqlcode: -1060,
+      }),
+    ],
+    [
+      "MongoDB Unauthorized (13)",
+      shaped('not authorized on shop to execute command { insert: "items", ordered: true }', {
+        code: 13,
+        codeName: "Unauthorized",
+      }),
+    ],
+  ];
+
+  for (const [name, error] of privilegeRefusals) {
+    test(`${name} is a PermissionDeniedError that says permission was denied, in the engine's own words`, () => {
+      const mapped = mapDatabaseError(error, "postgres", "INSERT INTO orders VALUES (1)");
+      expect(mapped).toBeInstanceOf(PermissionDeniedError);
+      expect(mapped.code).toBe(ApiErrorCode.PERMISSION_DENIED);
+      expect(mapped.message).toBe(`Permission denied: ${error.message}`);
+      expect(mapped.query).toBe("INSERT INTO orders VALUES (1)");
+    });
+  }
+
+  test("a refused privilege keeps the SQLSTATE its driver reported", () => {
+    const mapped = mapDatabaseError(shaped("permission denied for table orders", { code: "42501" }), "postgres");
+    expect(mapped.sqlstate).toBe("42501");
+  });
+
+  const credentialRefusals: [string, Error][] = [
+    ["PostgreSQL invalid_password (28P01)", shaped('password authentication failed for user "app"', { code: "28P01" })],
+    [
+      "PostgreSQL pg_hba refusal (28000)",
+      shaped('no pg_hba.conf entry for host "10.0.0.7", user "app", database "shop", no encryption', { code: "28000" }),
+    ],
+    ["PostgreSQL unknown role (28000)", shaped('role "ghost" does not exist', { code: "28000" })],
+    [
+      "MySQL wrong password (1045)",
+      mysql("Access denied for user 'app'@'10.0.0.7' (using password: YES)", 1045, "ER_ACCESS_DENIED_ERROR", "28000"),
+    ],
+    [
+      "MySQL no password given (1698)",
+      mysql("Access denied for user 'app'@'localhost'", 1698, "ER_ACCESS_DENIED_NO_PASSWORD_ERROR", "28000"),
+    ],
+    [
+      "MySQL expired password (1820)",
+      mysql("You must reset your password using ALTER USER statement", 1820, "ER_MUST_CHANGE_PASSWORD", "HY000"),
+    ],
+    [
+      "MySQL expired password at login (1862)",
+      mysql(
+        "Your password has expired. To log in you must change it using a client that supports expired passwords.",
+        1862,
+        "ER_MUST_CHANGE_PASSWORD_LOGIN",
+        "HY000",
+      ),
+    ],
+    [
+      "MySQL locked account (3118)",
+      mysql("Access denied for user 'app'@'%'. Account is locked.", 3118, "ER_ACCOUNT_HAS_BEEN_LOCKED", "HY000"),
+    ],
+    [
+      "MySQL account blocked after failed logins (3955)",
+      mysql(
+        "Access denied for user 'app'@'%'. Account is blocked for 1 day(s) (1 day(s) remaining) due to 3 consecutive failed logins.",
+        3955,
+        "ER_USER_ACCESS_DENIED_FOR_USER_ACCOUNT_BLOCKED_BY_PASSWORD_LOCK",
+        "HY000",
+      ),
+    ],
+    // tedious raises a refused login as ELOGIN without the server's error number (18456), so its words decide.
+    ["SQL Server refused login (ELOGIN)", shaped("Login failed for user 'app'.", { code: "ELOGIN" })],
+    [
+      "Oracle invalid credential (ORA-01017)",
+      oracle("ORA-01017: invalid credential or not authorized; logon denied", 1017),
+    ],
+    ["Oracle null password (ORA-01005)", oracle("ORA-01005: Login denied due to invalid password.", 1005)],
+    ["Oracle locked account (ORA-28000)", oracle("ORA-28000: The account is locked; login denied.", 28000)],
+    [
+      "Oracle expired account (ORA-28001)",
+      oracle("ORA-28001: The account has expired. The password must be changed.", 28001),
+    ],
+    [
+      "Db2 SQL30082N (security processing failed)",
+      shaped(
+        'SQL Error [SQLSTATE=08001, SQLCODE=-30082]: Security processing failed with reason "24" ("USERNAME AND/OR PASSWORD INVALID").',
+        { sqlstate: "08001", sqlcode: -30082 },
+      ),
+    ],
+    [
+      "MongoDB AuthenticationFailed (18)",
+      shaped("Authentication failed.", { code: 18, codeName: "AuthenticationFailed" }),
+    ],
+  ];
+
+  for (const [name, error] of credentialRefusals) {
+    test(`${name} stays an AuthenticationError`, () => {
+      const mapped = mapDatabaseError(error, "postgres");
+      expect(mapped).toBeInstanceOf(AuthenticationError);
+      expect(mapped.code).toBe(ApiErrorCode.AUTH_ERROR);
+      expect(mapped.message).toBe(`Authentication failed: ${error.message}`);
+    });
+  }
+
+  // A code that names neither refusal decides by itself, so a name that holds one of the words is not read as one: a
+  // column called password is the statement's fault, not a refused credential.
+  const neitherRefusal: [string, Error, new (...args: never[]) => DatabaseError][] = [
+    ["PostgreSQL unknown column (42703)", shaped('column "password" does not exist', { code: "42703" }), QueryError],
+    [
+      "PostgreSQL unknown relation (42P01)",
+      shaped('relation "user_passwords" does not exist', { code: "42P01" }),
+      QueryError,
+    ],
+    [
+      "MySQL unknown column (1054)",
+      mysql("Unknown column 'password' in 'field list'", 1054, "ER_BAD_FIELD_ERROR", "42S22"),
+      QueryError,
+    ],
+    ["SQL Server unknown column (207)", mssql("Invalid column name 'password'.", 207, 16), QueryError],
+    ["Oracle invalid identifier (ORA-00904)", oracle('ORA-00904: "PASSWORD": invalid identifier', 904), QueryError],
+    ["bun:sqlite unknown column", shaped("no such column: password", { code: "SQLITE_ERROR", errno: 1 }), QueryError],
+    [
+      "node:sqlite unknown column",
+      shaped("no such column: password", { code: "ERR_SQLITE_ERROR", errcode: 1, errstr: "SQL logic error" }),
+      QueryError,
+    ],
+    [
+      "a MongoDB server error whose code is neither (2, BadValue)",
+      shaped("the password field must be a string", { code: 2, codeName: "BadValue" }),
+      DatabaseError,
+    ],
+  ];
+
+  for (const [name, error, expected] of neitherRefusal) {
+    test(`${name} naming a password is read by its code, not by its words`, () => {
+      const mapped = mapDatabaseError(error, "postgres");
+      expect(mapped.constructor).toBe(expected);
+      expect(mapped.message).toBe(error.message);
+    });
+  }
+
+  // Only an error that carries no code is read by its words, as every error used to be.
+  test("an error with no code that says permission denied is a PermissionDeniedError", () => {
+    const error = shaped("EACCES: permission denied, open '/data/app.duckdb'", { code: "EACCES", errno: -13 });
+    const mapped = mapDatabaseError(error, "duckdb");
+    expect(mapped).toBeInstanceOf(PermissionDeniedError);
+    expect(mapped.message).toBe("Permission denied: EACCES: permission denied, open '/data/app.duckdb'");
+  });
+
+  test("an error with no code that names a password is an AuthenticationError", () => {
+    // `pg` raises this one itself, before the server says anything, so it carries no SQLSTATE.
+    const error = new Error("SASL: SCRAM-SERVER-FIRST-MESSAGE: client password must be a string");
+    expect(mapDatabaseError(error, "postgres")).toBeInstanceOf(AuthenticationError);
+  });
 });
 
 // ============================================================================

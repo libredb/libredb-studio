@@ -6,7 +6,16 @@ import {
   sourceBoundTruncationReason,
 } from "@/lib/db/object-kinds";
 import type oracledb from "oracledb";
-import { ConnectionError, DatabaseConfigError, DatabaseError, QueryError } from "@/lib/db/errors";
+import {
+  AuthenticationError,
+  ConnectionError,
+  DatabaseConfigError,
+  DatabaseError,
+  PermissionDeniedError,
+  QueryError,
+} from "@/lib/db/errors";
+import { createErrorResponse } from "@/lib/api/errors";
+import { ApiErrorCode } from "@/lib/api/error-codes";
 import type { DatabaseConnection } from "@/lib/types";
 import type { DatabaseProvider } from "@/lib/db/types";
 import { readFileSync } from "node:fs";
@@ -992,6 +1001,41 @@ describe("OracleProvider", () => {
 
       const result = await provider.query("DELETE FROM r5_types WHERE id = 4242");
       expect(result.rowCount).toBe(0);
+    });
+
+    // node-oracledb's Thin mode puts the server's number in `errorNum` and the ORA- prefix in `code`
+    // (`lib/thin/protocol/protocol.js` and `transformErr` in `lib/errors.js`, 6.10).
+    test("a missing privilege (ORA-01031) is a PermissionDeniedError answered 403", async () => {
+      await provider.connect();
+      mockExecuteFn = async () => {
+        throw Object.assign(new Error("ORA-01031: insufficient privileges"), { errorNum: 1031, code: "ORA-01031" });
+      };
+
+      const refused = await provider.query("INSERT INTO orders VALUES (1)").catch((error: unknown) => error);
+
+      expect(refused).toBeInstanceOf(PermissionDeniedError);
+      const response = createErrorResponse(refused, { route: "api/db/query" });
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({
+        error: "Permission denied: ORA-01031: insufficient privileges",
+        code: ApiErrorCode.PERMISSION_DENIED,
+        statusCode: 403,
+      });
+    });
+
+    test("a refused credential (ORA-01017) is still an AuthenticationError answered 401", async () => {
+      await provider.connect();
+      mockExecuteFn = async () => {
+        throw Object.assign(new Error("ORA-01017: invalid credential or not authorized; logon denied"), {
+          errorNum: 1017,
+          code: "ORA-01017",
+        });
+      };
+
+      const refused = await provider.query("SELECT 1 FROM DUAL").catch((error: unknown) => error);
+
+      expect(refused).toBeInstanceOf(AuthenticationError);
+      expect(createErrorResponse(refused, { route: "api/db/query" }).status).toBe(401);
     });
 
     // A PL/SQL block and DDL both leave `rowsAffected` unset or 0 on the wire

@@ -2261,7 +2261,8 @@ DBA can act on.
 | Missing `host` (no connection string) | `DatabaseConfigError` |
 | Operation before `connect()` | `DatabaseConfigError` (via `ensureConnected()`) |
 | `connect()` fails | `ConnectionError` (carries host/port) |
-| `ORA-01017` / *invalid username/password* | `AuthenticationError` |
+| A privilege the user lacks, by `errorNum`: `ORA-01031` insufficient privileges, `ORA-01045` no `CREATE SESSION` | `PermissionDeniedError`, answered `403 PERMISSION_DENIED` with `Permission denied: ` before the server's sentence |
+| A refused credential, by `errorNum`: `ORA-01017` an invalid credential, `ORA-01005` a null password, `ORA-28000` a locked account, `ORA-28001` an expired one | `AuthenticationError`, answered `401 AUTH_ERROR`; a message with no `errorNum` is still read by its words (*ORA-01017*, *password*) |
 | `ORA-12541` / `ORA-12154` / `TNS:` | `ConnectionError` |
 | `ORA-00942` (table or view does not exist) | `QueryError` |
 | `NJS-138` (server predates Oracle 12.1, Thin-mode incompatible) | `DatabaseConfigError`, **not retryable** — see [§4.4](#44-thick-mode-opt-in-oracle_client_lib_dir) |

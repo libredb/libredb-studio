@@ -491,7 +491,11 @@ mock.module("mongodb", () => ({
 // ============================================================================
 
 const { MongoDBProvider } = await import("@/lib/db/providers/document/mongodb");
-const { DatabaseConfigError, ConnectionError, QueryError } = await import("@/lib/db/errors");
+const { AuthenticationError, DatabaseConfigError, ConnectionError, PermissionDeniedError, QueryError } = await import(
+  "@/lib/db/errors"
+);
+const { createErrorResponse } = await import("@/lib/api/errors");
+const { ApiErrorCode } = await import("@/lib/api/error-codes");
 const { assertObjectSurface } = await import("../../helpers/object-surface-conformance");
 const { isSourcePartUnavailable } = await import("@/lib/db/object-kinds");
 
@@ -1290,6 +1294,44 @@ describe("MongoDBProvider", () => {
       await expect(
         provider.query(JSON.stringify({ database: "analytics", collection: "events", operation: "find" })),
       ).rejects.toThrow(sentence);
+    });
+
+    // The server's reply as the driver hands it on, measured in this file's #789 notes: `code: 13` and
+    // `codeName: "Unauthorized"` on a MongoServerError. A role without the action is a missing privilege, not a
+    // refused credential, and it used to fall through to a 500.
+    test("a command the role may not run (13, Unauthorized) is a PermissionDeniedError answered 403", async () => {
+      const sentence = 'not authorized on analytics to execute command { find: "events" }';
+      mockFindErrors["analytics.events"] = Object.assign(serverErrorReply(sentence), {
+        code: 13,
+        codeName: "Unauthorized",
+      });
+
+      const refused = await provider
+        .query(JSON.stringify({ database: "analytics", collection: "events", operation: "find" }))
+        .catch((error: unknown) => error);
+
+      expect(refused).toBeInstanceOf(PermissionDeniedError);
+      const response = createErrorResponse(refused, { route: "api/db/query" });
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({
+        error: `Permission denied: ${sentence}`,
+        code: ApiErrorCode.PERMISSION_DENIED,
+        statusCode: 403,
+      });
+    });
+
+    test("a refused credential (18, AuthenticationFailed) is still an AuthenticationError answered 401", async () => {
+      mockFindErrors["analytics.events"] = Object.assign(serverErrorReply("Authentication failed."), {
+        code: 18,
+        codeName: "AuthenticationFailed",
+      });
+
+      const refused = await provider
+        .query(JSON.stringify({ database: "analytics", collection: "events", operation: "find" }))
+        .catch((error: unknown) => error);
+
+      expect(refused).toBeInstanceOf(AuthenticationError);
+      expect(createErrorResponse(refused, { route: "api/db/query" }).status).toBe(401);
     });
 
     test("a non-string or empty database is a QueryError naming the key", async () => {

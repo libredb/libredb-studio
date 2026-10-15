@@ -9,6 +9,12 @@ export const ApiErrorCode = {
   QUERY_ERROR: "QUERY_ERROR",
   CONFIG_ERROR: "CONFIG_ERROR",
   AUTH_ERROR: "AUTH_ERROR",
+  /**
+   * A database accepted the credential and refused the statement for a privilege that credential lacks (403), such as
+   * PostgreSQL's `permission denied for table orders`. Distinct from AUTH_ERROR, which is a database refusing the
+   * credential itself: answering a missing grant with that code told the user to re-enter a password that was right.
+   */
+  PERMISSION_DENIED: "PERMISSION_DENIED",
   TIMEOUT_ERROR: "TIMEOUT_ERROR",
   CONNECTION_ERROR: "CONNECTION_ERROR",
   POOL_EXHAUSTED: "POOL_EXHAUSTED",

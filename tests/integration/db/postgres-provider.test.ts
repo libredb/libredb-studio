@@ -17,10 +17,12 @@ import { TUNNEL_FAR_END, type DatabaseConnection } from "@/lib/types";
 import type { ContainerLevels, ObjectEditRefusalClass, ReadOnlyStatementBudget } from "@/lib/db/types";
 import { maintenanceControl } from "@/lib/db/types";
 import {
+  AuthenticationError,
   ConnectionError,
   DatabaseConfigError,
   DatabaseError,
   ExecutionProfileError,
+  PermissionDeniedError,
   PoolExhaustedError,
   QueryError,
   NO_TRANSACTION_OPENED,
@@ -1213,6 +1215,40 @@ describe("PostgresProvider", () => {
       };
 
       await expect(provider.query("SELEC * FROM users")).rejects.toThrow();
+    });
+
+    // A credential that is right and lacks a grant: the installer's interop suite saw this 42501 answered 401
+    // "Authentication failed: permission denied for table orders".
+    test("a missing privilege (42501) is a PermissionDeniedError answered 403, not a refused credential", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      mockQueryFn = async () => {
+        throw Object.assign(new Error("permission denied for table orders"), { code: "42501" });
+      };
+
+      const refused = await provider.query("INSERT INTO orders VALUES (1)").catch((error: unknown) => error);
+
+      expect(refused).toBeInstanceOf(PermissionDeniedError);
+      const response = createErrorResponse(refused, { route: "api/db/query" });
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({
+        error: "Permission denied: permission denied for table orders",
+        code: ApiErrorCode.PERMISSION_DENIED,
+        statusCode: 403,
+      });
+    });
+
+    test("a refused credential (28000) is still an AuthenticationError answered 401", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      mockQueryFn = async () => {
+        throw Object.assign(new Error('role "ghost" does not exist'), { code: "28000" });
+      };
+
+      const refused = await provider.query("SELECT 1").catch((error: unknown) => error);
+
+      expect(refused).toBeInstanceOf(AuthenticationError);
+      expect(createErrorResponse(refused, { route: "api/db/query" }).status).toBe(401);
     });
   });
 

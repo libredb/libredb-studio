@@ -248,12 +248,16 @@ mock.module("mssql", () => {
 // Now import the provider (after mock is in place)
 import { MSSQLProvider } from "@/lib/db/providers/sql/mssql";
 import {
+  AuthenticationError,
   ConnectionError,
   DatabaseConfigError,
   DatabaseError,
   ExecutionProfileError,
+  PermissionDeniedError,
   QueryError,
 } from "@/lib/db/errors";
+import { createErrorResponse } from "@/lib/api/errors";
+import { ApiErrorCode } from "@/lib/api/error-codes";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import type { DatabaseConnection } from "@/lib/types";
 import type { DatabaseProvider, ReadOnlyStatementBudget } from "@/lib/db/types";
@@ -741,6 +745,41 @@ describe("MSSQLProvider", () => {
         { name: "p1", value: 42 },
         { name: "p2", value: "alice" },
       ]);
+    });
+
+    // The refusals section 12.1 measured on SQL Server 2022 for a principal without the grant: INSERT, UPDATE and
+    // DELETE answer Msg 229 and CREATE TABLE Msg 262, and mssql carries the server's number on the error.
+    test.each([
+      ["229", "The INSERT permission was denied on the object 'orders', database 'shop', schema 'dbo'.", 229, 14],
+      ["262", "CREATE TABLE permission denied in database 'shop'.", 262, 16],
+    ])("a missing permission (Msg %s) is a PermissionDeniedError answered 403", async (_msg, message, number, cls) => {
+      await provider.connect();
+      mockQueryFn = async () => {
+        throw Object.assign(new Error(message), { code: "EREQUEST", number, class: cls, state: 1 });
+      };
+
+      const refused = await provider.query("INSERT INTO orders VALUES (1)").catch((error: unknown) => error);
+
+      expect(refused).toBeInstanceOf(PermissionDeniedError);
+      const response = createErrorResponse(refused, { route: "api/db/query" });
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({
+        error: `Permission denied: ${message}`,
+        code: ApiErrorCode.PERMISSION_DENIED,
+        statusCode: 403,
+      });
+    });
+
+    test("a refused login, which tedious raises without the server's number, is still an AuthenticationError", async () => {
+      await provider.connect();
+      mockQueryFn = async () => {
+        throw Object.assign(new Error("Login failed for user 'app'."), { code: "ELOGIN" });
+      };
+
+      const refused = await provider.query("SELECT 1").catch((error: unknown) => error);
+
+      expect(refused).toBeInstanceOf(AuthenticationError);
+      expect(createErrorResponse(refused, { route: "api/db/query" }).status).toBe(401);
     });
   });
 

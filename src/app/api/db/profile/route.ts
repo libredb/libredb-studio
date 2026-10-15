@@ -4,6 +4,7 @@ import {
   ConnectionError,
   DatabaseConfigError,
   DatabaseError,
+  PermissionDeniedError,
   PoolExhaustedError,
   QueryCancelledError,
   TimeoutError,
@@ -72,13 +73,15 @@ function reasonOf(error: unknown): string {
 
 /**
  * The failures that say nothing about the column: the connection, the session or the request
- * itself is gone or out of time. Asking the next measure would only meet them again, and on a
- * table big enough to reach a statement timeout every retry is another full scan, so they end
- * the whole profile and reach `createErrorResponse`, which answers each with its own status.
+ * itself is gone or out of time, or the credential lacks a privilege the read needs. Asking the
+ * next measure would only meet them again, and on a table big enough to reach a statement
+ * timeout every retry is another full scan, so they end the whole profile and reach
+ * `createErrorResponse`, which answers each with its own status.
  */
 const ENDS_PROFILE = [
   ConnectionError,
   AuthenticationError,
+  PermissionDeniedError,
   PoolExhaustedError,
   TimeoutError,
   QueryCancelledError,

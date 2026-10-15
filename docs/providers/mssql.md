@@ -1469,7 +1469,8 @@ is the thing a DBA can act on.
 | Missing `host`/`database` (no connection string) | `DatabaseConfigError` |
 | Operation before `connect()` | `DatabaseConfigError` (via `ensureConnected()`) |
 | `connect()` fails | `ConnectionError` (carries host/port) |
-| Message contains *login failed* | `AuthenticationError` |
+| A permission the principal lacks, by the error number `mssql` carries: `229` on an object, `230` on a column, `262` in a database, `297` for an action, `300` on a server-level object, `916` a database the login may not enter | `PermissionDeniedError`, answered `403 PERMISSION_DENIED` with `Permission denied: ` before the server's sentence |
+| Message contains *login failed* | `AuthenticationError`, answered `401 AUTH_ERROR`. tedious raises a refused login as `ELOGIN` without the server's error number (`18456`), so the words decide this one |
 | *Cannot open database* | `ConnectionError` |
 | Cancellation messages (*canceling statement*, *query was cancelled*, *query execution was interrupted*, *kill query*) | `QueryCancelledError` — matched **before** the timeout check |
 | `requestTimeout` exceeded (message contains *timeout*) | `TimeoutError` |

@@ -1343,8 +1343,9 @@ engine as broken.
 | `path` absent, or not an array of strings | `400` | `{ "error": "\"path\" must be an array of path segments" }` |
 | `path` empty | `400` | `{ "error": "\"path\" must name an object, and an empty path names none" }` |
 | `kind` absent, not a string, or blank | `400` | `{ "error": "\"kind\" must be a non-empty string" }` |
-| The engine refused the read: a kind it does not declare, a path shape that kind does not take, a permission error | `400` | `{ "error": "<the engine's own sentence>", "code": "QUERY_ERROR" }` |
+| The engine refused the read: a kind it does not declare, a path shape that kind does not take | `400` | `{ "error": "<the engine's own sentence>", "code": "QUERY_ERROR" }` |
 | No session | `401` | `{ "error": "Authentication required", "code": "AUTH_REQUIRED" }` |
+| The engine refused the read for a privilege the connection's credential lacks | `403` | `{ "error": "Permission denied: <the engine's own sentence>", "code": "PERMISSION_DENIED" }`, on the engines [Error Codes](#error-codes) lists |
 | Seed connection not available for the caller's role | `403` | the existing `SeedConnectionError` body |
 | Rate limited | `429` | `{ "error": "...", "code": "RATE_LIMITED" }` |
 | Anything undeclared | `500` | `createErrorResponse`'s body |
@@ -2540,7 +2541,7 @@ interface ActiveSession {
 | `200` | Success |
 | `400` | Bad Request - Invalid parameters or query syntax |
 | `401` | Unauthorized - Missing or invalid authentication |
-| `403` | Forbidden - Insufficient permissions, or the request's Origin does not match this deployment (`ORIGIN_MISMATCH`) |
+| `403` | Forbidden - Insufficient permissions: a database refused a statement for a privilege its credential lacks (`PERMISSION_DENIED`), or Studio's own policy refused the request; or the request's Origin does not match this deployment (`ORIGIN_MISMATCH`) |
 | `413` | Payload Too Large - the request body, or one part's text, is above the object edit routes' own bound, or a statement is above the console text bound its connection type declares (`POST /api/db/query`) |
 | `429` | Too Many Requests - Rate limit exceeded. Applies to `POST /api/auth/login` and every session-guarded route (see "Rate Limiting" below), not only the AI endpoints |
 | `499` | Client Closed Request - Query cancelled by the client |
@@ -2560,7 +2561,15 @@ interface ActiveSession {
 
 ### Error Codes
 
-An engine error is `QUERY_ERROR` when the driver's own code says the statement is at fault, read from the code and never the message (#1427): a SQLSTATE of class `0A`, `21`, `22`, `23`, `42` or `44` (PostgreSQL-wire, MySQL-wire and Db2 drivers), a SQL Server error number for a syntax, name, constraint, conversion or object-permission error (`102`, `156`, `208`, `2627`, `2812` and their neighbours), an Oracle statement error (`ORA-00001`, `ORA-00900` to `ORA-00999`, `ORA-01400`, `ORA-01722`, `ORA-02290` to `ORA-02292` and their neighbours) or a SQLite `SQLITE_ERROR`, `SQLITE_CONSTRAINT`, `SQLITE_MISMATCH` or `SQLITE_RANGE`. So `SELEC 1`, an unknown table and a duplicate key answer `400` on MySQL as on PostgreSQL. Connection, authentication, timeout and cancellation errors keep their own codes, MySQL's account limits `1203` (`max_user_connections`) and `1226` (`max_questions` and the like) stay `DATABASE_ERROR` although their SQLSTATE is `42000`, and an engine error with no recognised code is still `DATABASE_ERROR`.
+An engine error is `QUERY_ERROR` when the driver's own code says the statement is at fault, read from the code and never the message (#1427): a SQLSTATE of class `0A`, `21`, `22`, `23`, `42` or `44` (PostgreSQL-wire, MySQL-wire and Db2 drivers), a SQL Server error number for a syntax, name, constraint or conversion error (`102`, `156`, `208`, `2627`, `2812` and their neighbours), an Oracle statement error (`ORA-00001`, `ORA-00900` to `ORA-00999`, `ORA-01400`, `ORA-01722`, `ORA-02290` to `ORA-02292` and their neighbours) or a SQLite `SQLITE_ERROR`, `SQLITE_CONSTRAINT`, `SQLITE_MISMATCH` or `SQLITE_RANGE`.
+So `SELEC 1`, an unknown table and a duplicate key answer `400` on MySQL as on PostgreSQL.
+A refusal of the caller is read from the driver's code before any of that, and is never the statement's fault.
+A privilege the credential lacks is `PERMISSION_DENIED` (403): SQLSTATE `42501` (PostgreSQL and its wire relatives, and Db2's SQL0551N) or `42502` (Db2's SQL0552N), MySQL and MariaDB `1044`, `1142`, `1143`, `1227` and `1370`, SQL Server `229`, `230`, `262`, `297`, `300` and `916`, Oracle `ORA-01031` and `ORA-01045`, Db2 SQLCODE `-1060`, and MongoDB `13` (`Unauthorized`).
+A refused credential stays `AUTH_ERROR` (401): SQLSTATE class `28` (PostgreSQL's `28000` and `28P01`, MySQL's `1045` and `1698`), MySQL `1820`, `1862`, `3118` and `3955`, Oracle `ORA-01005`, `ORA-01017`, `ORA-28000` and `ORA-28001`, Db2 SQLCODE `-30082`, and MongoDB `18` (`AuthenticationFailed`).
+Only an error that carries no code is read by its words: "permission denied" is `PERMISSION_DENIED`, and "password", "authentication", "access denied" and "login failed" are `AUTH_ERROR`, which is how a refused SQL Server login is read, because its driver raises it without the server's `18456`.
+So a column called `password` is a `QUERY_ERROR`, never an `AUTH_ERROR`.
+Connection, timeout and cancellation errors keep their own codes, MySQL's account limits `1203` (`max_user_connections`) and `1226` (`max_questions` and the like) stay `DATABASE_ERROR` although their SQLSTATE is `42000`, and an engine error with no recognised code is still `DATABASE_ERROR`.
+These are the shared mapping's rules, which the engines named above go through; a provider that maps its own driver's errors, such as ClickHouse, Trino or Redis, answers its refusals the way its provider doc describes.
 
 These are the values of the `code` field emitted by `createErrorResponse` (`src/lib/api/error-codes.ts`):
 
@@ -2569,7 +2578,8 @@ These are the values of the `code` field emitted by `createErrorResponse` (`src/
 | `QUERY_ERROR` | SQL syntax or execution error (400) |
 | `QUERY_CANCELLED` | Query cancelled by the client (499) |
 | `CONFIG_ERROR` | Invalid database configuration (400) |
-| `AUTH_ERROR` | Authentication failed (401) |
+| `AUTH_ERROR` | A database refused the credential (401), read from the driver's code as the paragraph above says |
+| `PERMISSION_DENIED` | A database accepted the credential and refused the statement for a privilege that credential lacks (403), with `"Permission denied: "` in front of the engine's own sentence; read from the driver's code as the paragraph above says. The browser treats it as the statement's error and never signs in again for it |
 | `CUSTOM_CONNECTIONS_DISABLED` | `ALLOW_CUSTOM_CONNECTIONS` is off, or governance mode is on, and the request supplied a connection that is not a seed (403); see `GET /api/connections/policy`. A seed the caller's role may not open is refused with `AUTH_ERROR` (403) instead |
 | `CONNECTION_NOT_FOUND` | Governance mode only: the connection a request names does not exist or is not granted to the caller (404), and the two are indistinguishable; see [Connections under governance](#connections-under-governance) |
 | `GOVERNANCE_UNAVAILABLE` | Governance mode only: the governance snapshot is still loading, too old, misconfigured or incompatible (503), so `GET /api/connections/managed` and every database route that opens a connection answer it instead; see [Connections under governance](#connections-under-governance) |

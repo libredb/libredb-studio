@@ -1298,11 +1298,11 @@ function routineIdentityHeader(text: string): string {
 /**
  * SQLSTATE to an apply verdict, AS DATA (#789 Phase 3).
  *
- * A TABLE and never a chain of message substrings, and the reason is a shipped defect this
- * apply must not inherit: `errors.ts` turns a message containing `permission denied` into an
- * `AuthenticationError` answered HTTP 401, so a `42501` on an apply would send a user whose
+ * A TABLE and never a chain of message substrings, and the reason was a shipped defect this
+ * apply did not inherit: `errors.ts` turned a message containing `permission denied` into an
+ * `AuthenticationError` answered HTTP 401, so a `42501` on an apply would have sent a user whose
  * credential is connected and correct back to re-enter a password that was never wrong, and a
- * `42P13` becomes HTTP 500 because its message matches none of its substrings.
+ * `42P13` became HTTP 500 because its message matched none of its substrings.
  *
  * THE THREE PRIVATE CODES are this design's own, raised by the emitted unit's guard blocks, and
  * they are three codes rather than one because they mean three DIFFERENT outcomes. `LB001` is a

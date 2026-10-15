@@ -104,6 +104,20 @@ export class AuthenticationError extends DatabaseError {
 }
 
 /**
+ * Permission denied - the database accepted the credential and refused the statement for a privilege that credential
+ * lacks, such as PostgreSQL's `permission denied for table orders`. Not an AuthenticationError, whose 401 tells the
+ * user to re-enter a password that is right; `mapDatabaseError` reads which of the two a refusal is from the driver's
+ * code.
+ */
+export class PermissionDeniedError extends DatabaseError {
+  constructor(message: string, provider?: DatabaseType, query?: string) {
+    super(message, provider, ApiErrorCode.PERMISSION_DENIED, query);
+    this.name = "PermissionDeniedError";
+    Object.setPrototypeOf(this, PermissionDeniedError.prototype);
+  }
+}
+
+/**
  * Pool exhausted error - no available connections in pool
  */
 export class PoolExhaustedError extends DatabaseError {
@@ -311,8 +325,12 @@ export function isRetryableError(error: unknown): boolean {
     return false;
   }
 
-  // Auth and config errors are not retryable
-  if (error instanceof AuthenticationError || error instanceof DatabaseConfigError) {
+  // Auth, privilege and config errors are not retryable
+  if (
+    error instanceof AuthenticationError ||
+    error instanceof PermissionDeniedError ||
+    error instanceof DatabaseConfigError
+  ) {
     return false;
   }
 
@@ -448,7 +466,8 @@ export function describeOracleClientLoadFailure(libDir: string, detail: string):
  * violation, `42` syntax error or access rule violation and `44` WITH CHECK OPTION violation.
  * Every other class is the connection's, the transaction's or the server's (`08` connection,
  * `40` rollback, `53` resources, `57` operator intervention, `XX` internal), and keeps the
- * class the rest of `mapDatabaseError` gives it.
+ * class the rest of `mapDatabaseError` gives it. A refused privilege in class `42` (`42501`,
+ * `42502`) never reaches it: the access refusals are decided first (`accessRefusalOf`).
  */
 const STATEMENT_SQLSTATE = /^(0A|2[123]|4[24])[0-9A-Z]{3}$/;
 
@@ -472,22 +491,22 @@ const MSSQL_STATEMENT_ERRORS = new Set([
   // Constraints and values: NOT NULL, a FOREIGN KEY or CHECK conflict, a unique key, a value that
   // does not convert, an arithmetic overflow, a divide by zero, and a truncated string.
   515, 547, 2601, 2627, 245, 8114, 8115, 8134, 2628, 8152,
-  // An object that already exists, and a permission the principal lacks on an object.
-  2714, 229, 230, 262,
+  // An object that already exists. A permission the principal lacks is an access refusal
+  // (`MSSQL_ACCESS_REFUSALS`), decided before this list is read.
+  2714,
 ]);
 
 /**
  * Oracle error numbers for a statement the server parsed or ran and refused (#1427): unique
  * constraint (1), the `ORA-009xx` parse and name-resolution range, NOT NULL (1400, 1407),
- * insufficient privileges (1031), invalid number (1722), a value larger than its column (1438,
- * 12899), date format errors (1830 to 1861), check and referential constraints (2290 to 2292)
- * and a PL/SQL compilation error (6550).
+ * invalid number (1722), a value larger than its column (1438, 12899), date format errors
+ * (1830 to 1861), check and referential constraints (2290 to 2292) and a PL/SQL compilation
+ * error (6550). Insufficient privileges (1031) is an access refusal (`ORACLE_ACCESS_REFUSALS`).
  */
 function isOracleStatementError(errorNum: number): boolean {
   return (
     errorNum === 1 ||
     (errorNum >= 900 && errorNum <= 999) ||
-    errorNum === 1031 ||
     errorNum === 1400 ||
     errorNum === 1407 ||
     errorNum === 1438 ||
@@ -561,6 +580,131 @@ function driverSqlstate(error: Error): string | undefined {
 }
 
 /**
+ * What a server's refusal of the caller is: `privilege`, a privilege the credential lacks, answered 403, or
+ * `credential`, the credential itself refused, answered 401.
+ */
+type AccessRefusal = "privilege" | "credential";
+
+/**
+ * SQLSTATEs of a refused privilege: `42501` insufficient_privilege (PostgreSQL's Appendix A, also Db2's SQL0551N) and
+ * `42502` (Db2's SQL0552N). Class `28`, invalid authorization specification, is a refused credential: PostgreSQL's
+ * `28000` and `28P01`, and the `28000` MySQL gives its 1045 and 1698.
+ */
+const PRIVILEGE_SQLSTATES = new Set(["42501", "42502"]);
+const CREDENTIAL_SQLSTATE_CLASS = "28";
+
+/**
+ * MySQL and MariaDB error numbers of an access refusal, from their error references. A privilege, each with SQLSTATE
+ * `42000`: 1044 a database, 1142 a table, 1143 a column, 1227 a global privilege such as SUPER, 1370 a routine. The
+ * account: 1045 and 1698 a refused login, 1820 and 1862 an expired password, 3118 a locked account and 3955 one
+ * blocked after failed logins, the last four with SQLSTATE `HY000`.
+ */
+const MYSQL_ACCESS_REFUSALS: ReadonlyMap<number, AccessRefusal> = new Map([
+  [1044, "privilege"],
+  [1142, "privilege"],
+  [1143, "privilege"],
+  [1227, "privilege"],
+  [1370, "privilege"],
+  [1045, "credential"],
+  [1698, "credential"],
+  [1820, "credential"],
+  [1862, "credential"],
+  [3118, "credential"],
+  [3955, "credential"],
+]);
+
+/**
+ * SQL Server error numbers of a refused privilege, from its Database Engine errors: 229 on an object, 230 on a column,
+ * 262 in a database, 297 for an action, 300 on a server-level object, 916 a database the login may not enter. tedious
+ * raises a refused login as `ELOGIN` without the server's 18456, so the words decide that one.
+ */
+const MSSQL_ACCESS_REFUSALS: ReadonlyMap<number, AccessRefusal> = new Map([
+  [229, "privilege"],
+  [230, "privilege"],
+  [262, "privilege"],
+  [297, "privilege"],
+  [300, "privilege"],
+  [916, "privilege"],
+]);
+
+/**
+ * Oracle error numbers of an access refusal, from Oracle's error help: ORA-01031 insufficient privileges and ORA-01045
+ * a user without CREATE SESSION; ORA-01017 an invalid credential, ORA-01005 a null password, ORA-28000 a locked
+ * account and ORA-28001 an expired one.
+ */
+const ORACLE_ACCESS_REFUSALS: ReadonlyMap<number, AccessRefusal> = new Map([
+  [1031, "privilege"],
+  [1045, "privilege"],
+  [1017, "credential"],
+  [1005, "credential"],
+  [28000, "credential"],
+  [28001, "credential"],
+]);
+
+/**
+ * Db2 SQLCODEs of an access refusal whose SQLSTATE is a connection class: SQL1060N, a user without the CONNECT
+ * privilege (`08004`), and SQL30082N, security processing failed (`08001`).
+ */
+const DB2_ACCESS_REFUSALS: ReadonlyMap<number, AccessRefusal> = new Map([
+  [-1060, "privilege"],
+  [-30082, "credential"],
+]);
+
+/** MongoDB server codes of an access refusal, from its error codes: 13 `Unauthorized`, 18 `AuthenticationFailed`. */
+const MONGODB_ACCESS_REFUSALS: ReadonlyMap<number, AccessRefusal> = new Map([
+  [13, "privilege"],
+  [18, "credential"],
+]);
+
+/** The refusal `code` names in `table`, when it is a number the table holds. */
+function refusalIn(table: ReadonlyMap<number, AccessRefusal>, code: unknown): AccessRefusal | undefined {
+  return typeof code === "number" ? table.get(code) : undefined;
+}
+
+/**
+ * Whether the driver's own code fields say the server refused the caller, and how: a refusal, `null` when the code
+ * names neither, and `undefined` when the error carries no code this module reads. Only the last is read by its
+ * words, so a column called `password` is the statement's fault and never a refused credential.
+ *
+ * The fields are the ones `isStatementFault` reads, plus `db2-node`'s `sqlcode` and the MongoDB driver's numeric
+ * `code` beside its `codeName`. mysql2's `errno` counts only beside the `sqlState` every server error carries, which
+ * `bun:sqlite`'s `errno` and a system error's do not.
+ */
+function accessRefusalOf(error: Error): AccessRefusal | null | undefined {
+  const fields = error as Error & {
+    code?: unknown;
+    codeName?: unknown;
+    sqlState?: unknown;
+    errno?: unknown;
+    number?: unknown;
+    errorNum?: unknown;
+    sqlcode?: unknown;
+    errcode?: unknown;
+  };
+  const sqlstate = driverSqlstate(error);
+  if (sqlstate !== undefined && PRIVILEGE_SQLSTATES.has(sqlstate)) return "privilege";
+  if (sqlstate?.startsWith(CREDENTIAL_SQLSTATE_CLASS)) return "credential";
+  const mysqlErrno = typeof fields.sqlState === "string" ? fields.errno : undefined;
+  const mongoCode = typeof fields.codeName === "string" ? fields.code : undefined;
+  const refusal =
+    refusalIn(MYSQL_ACCESS_REFUSALS, mysqlErrno) ??
+    refusalIn(MSSQL_ACCESS_REFUSALS, fields.number) ??
+    refusalIn(ORACLE_ACCESS_REFUSALS, fields.errorNum) ??
+    refusalIn(DB2_ACCESS_REFUSALS, fields.sqlcode) ??
+    refusalIn(MONGODB_ACCESS_REFUSALS, mongoCode);
+  if (refusal !== undefined) return refusal;
+  const carriesCode =
+    sqlstate !== undefined ||
+    [mysqlErrno, mongoCode, fields.number, fields.errorNum, fields.sqlcode].some((code) => typeof code === "number") ||
+    (typeof fields.code === "string" && fields.code.startsWith("SQLITE_")) ||
+    (fields.code === "ERR_SQLITE_ERROR" && typeof fields.errcode === "number");
+  return carriesCode ? null : undefined;
+}
+
+/** The words of a refused credential, read only in an error that carries no code. */
+const CREDENTIAL_WORDS = ["password", "authentication", "access denied", "login failed", "ora-01017"];
+
+/**
  * Map native database errors to our error types, keeping the driver's SQLSTATE on the mapped error.
  */
 export function mapDatabaseError(error: unknown, provider: DatabaseType, query?: string): DatabaseError {
@@ -591,28 +735,30 @@ function mapNativeError(error: Error, provider: DatabaseType, query?: string): D
     return new ConnectionError(`Failed to connect to ${provider} database: ${error.message}`, provider);
   }
 
-  // Oracle Thin-mode refusals. This runs BEFORE the authentication branch on
-  // purpose: NJS-116's own text is "password verifier type 0x... is not
-  // supported by node-oracledb in Thin mode", so the generic `password` match
-  // below would otherwise turn a configuration problem into "wrong credentials"
-  // and send the operator to reset something that is not broken.
+  // Oracle Thin-mode refusals. This runs BEFORE the access refusals on
+  // purpose: NJS-116 carries no server code and its own text is "password
+  // verifier type 0x... is not supported by node-oracledb in Thin mode", so the
+  // `password` match below would otherwise turn a configuration problem into
+  // "wrong credentials" and send the operator to reset something that is not broken.
   const thinModeRefusal = describeOracleThinModeRefusal(message);
   if (thinModeRefusal) {
     return new DatabaseConfigError(`${thinModeRefusal}: ${error.message}. ${ORACLE_THICK_MODE_REMEDY}`, provider);
   }
 
-  // Authentication errors
-  if (
-    message.includes("password") ||
-    message.includes("authentication") ||
-    message.includes("access denied") ||
-    message.includes("permission denied")
-  ) {
+  // Access refusals, read from the driver's code wherever the error carries one (`accessRefusalOf`): a privilege the
+  // credential lacks is not a refused credential, and answering it 401 "Authentication failed" sent a user whose
+  // password is right to re-enter it. The words decide only an error with no code: "permission denied" names a
+  // missing privilege, and the credential words a refused credential.
+  const refusal = accessRefusalOf(error);
+  if (refusal === "privilege" || (refusal === undefined && message.includes("permission denied"))) {
+    return new PermissionDeniedError(`Permission denied: ${error.message}`, provider, query);
+  }
+  if (refusal === "credential" || (refusal === undefined && CREDENTIAL_WORDS.some((word) => message.includes(word)))) {
     return new AuthenticationError(`Authentication failed: ${error.message}`, provider);
   }
 
   // The statement's own fault, read from the driver's code fields (#1427). Placed after the
-  // connection and authentication branches so nothing they classify changes class, and before
+  // connection branch and the access refusals so nothing they classify changes class, and before
   // every later substring branch, so a statement error whose text happens to hold "timeout" or
   // "pool" is not read as one. The engine's message is kept as it is, unprefixed, because it is
   // what the reader corrects the statement from.
@@ -648,23 +794,17 @@ function mapNativeError(error: Error, provider: DatabaseType, query?: string): D
     return new TimeoutError(`Query timeout: ${error.message}`, provider, undefined, query);
   }
 
-  // Oracle errors
-  if (message.includes("ora-01017") || message.includes("invalid username/password")) {
-    return new AuthenticationError(`Authentication failed: ${error.message}`, provider);
-  }
+  // Oracle errors. ORA-01017 is an access refusal, decided above with the others.
   if (message.includes("ora-12541") || message.includes("ora-12154") || message.includes("tns:")) {
     return new ConnectionError(`Failed to connect to Oracle: ${error.message}`, provider);
   }
   if (message.includes("ora-00942")) {
     return new QueryError(`Table or view does not exist: ${error.message}`, provider, query);
   }
-  // NJS-138 and its siblings are handled above, before the authentication
-  // branch - see describeOracleThinModeRefusal().
+  // NJS-138 and its siblings are handled above, before the access refusals -
+  // see describeOracleThinModeRefusal().
 
-  // MSSQL errors
-  if (message.includes("login failed")) {
-    return new AuthenticationError(`Authentication failed: ${error.message}`, provider);
-  }
+  // MSSQL errors. A refused login is an access refusal, decided above with the others.
   if (message.includes("cannot open database")) {
     return new ConnectionError(`Database not found: ${error.message}`, provider);
   }

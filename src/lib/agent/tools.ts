@@ -1978,15 +1978,14 @@ function auditDeadlineRefusal(
  * Note which classes are deliberately NOT here, because both look like they belong
  * and both would re-break the repair loop:
  *
- * - **`AuthenticationError`** covers two unrelated events. `mapDatabaseError` answers
- *   it for anything matching `password`/`authentication`/`access denied`/
- *   `permission denied` (`src/lib/db/errors.ts`), which folds a wrong agent credential
- *   together with `permission denied for table secrets`. The second is routine on the
- *   least-privilege `agentUser` this programme recommends — per-table `SELECT` grants
- *   are what bound an agent's reads — so it is the model's first probe of an ungranted
- *   object, and reading a different table is exactly the repair that helps. They are
- *   indistinguishable by class but not by PHASE, which is what `runStatement` splits
- *   on: a credential failure happens while connecting, a grant failure while running.
+ * - **`PermissionDeniedError`**, which `mapDatabaseError` answers for a privilege the
+ *   credential lacks (`src/lib/db/errors.ts`), such as `permission denied for table
+ *   secrets`. It is routine on the least-privilege `agentUser` this programme recommends,
+ *   whose per-table `SELECT` grants are what bound an agent's reads, so it is the model's
+ *   first probe of an ungranted object, and reading a different table is exactly the
+ *   repair that helps. A refused credential, `AuthenticationError`, stays out as it was
+ *   when it also carried those refusals: it happens while connecting, a phase
+ *   `runStatement` propagates whatever the class.
  * - **`QueryCancelledError`** covers an OPERATOR cancel (`pg_cancel_backend`,
  *   `canceling statement due to user request`) and stays repairable at the query
  *   phase for the same reason a `TimeoutError` is: narrowing the read is a rewrite

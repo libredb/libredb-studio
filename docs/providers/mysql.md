@@ -2144,6 +2144,7 @@ through `mapDatabaseError`: a `sqlState` of class `42`, `0A`, `22`, `23`, `21` o
 `1064 ER_PARSE_ERROR` is `42000`) is the statement's own fault and answers `400 QUERY_ERROR` with the
 server's sentence; anything else, such as TiDB's `8200 OPTIMIZE TABLE is not supported` (`HY000`),
 keeps a 5xx (#1387, #1427).
+The exception is a privilege the account lacks, errno `1044`, `1142`, `1143`, `1227` or `1370` with `sqlState` `42000`, which answers `403 PERMISSION_DENIED` ([§11](#11-error-handling)).
 
 ### 9.1 Which verbs the connected server has, measured at connect
 
@@ -2360,14 +2361,19 @@ Native `mysql2` errors are mapped by the shared `mapDatabaseError()`
 | Missing `host`/`database` (no connection string) | `DatabaseConfigError` |
 | Operation before `connect()` | `DatabaseConfigError` (via `ensureConnected()`) |
 | `connect()` fails | `ConnectionError` (carries host/port) |
-| Access denied (`ER_ACCESS_DENIED`, message contains *access denied*) | `AuthenticationError` |
+| A privilege the account lacks, by errno: `1044` a database, `1142` a table, `1143` a column, `1227` a global privilege such as `SUPER`, `1370` a routine (all `sqlState` `42000`) | `PermissionDeniedError`, answered `403 PERMISSION_DENIED` with `Permission denied: ` before the server's sentence |
+| A refused account, by errno: `1045` and `1698` a refused login (`sqlState` `28000`), `1820` and `1862` an expired password, `3118` a locked account, `3955` an account blocked after failed logins | `AuthenticationError`, answered `401 AUTH_ERROR` |
 | Connection refused / DNS (`ECONNREFUSED`, `getaddrinfo`) | `ConnectionError` |
 | Killed query (*"Query execution was interrupted"*) | `QueryCancelledError` |
 | Driver message contains *timeout* / *timed out* (e.g. `Lock wait timeout exceeded`, connection-acquire timeout) | `TimeoutError` |
 | Other server errors (most `ER_*` codes) | `QueryError` / `DatabaseError` carrying the original message |
 
-> The mapper is **text-heuristic**, so MySQL `ER_*` codes that don't match a known phrase fall
-> through to a generic `QueryError`/`DatabaseError` with the driver's message preserved. Note the
+The two refusals are told apart by the errno, not by the words: `1044` and `1227` begin "Access denied" as a refused login does, and the agent read-only profile met both as "Authentication failed" before they had their own class ([§12.1](#121-the-principal-is-the-first-layer-because-a-read-only-transaction-ends-where-ddl-begins)).
+MariaDB answers the same numbers, and TiDB declares the same `1142`, `1143` and `1227`.
+
+> The access refusals and a statement's own fault are read from the errno and `sqlState`; any
+> other `ER_*` error falls to the message-based branches, and one none of them matches stays a
+> generic `DatabaseError` with the driver's message preserved. Note the
 > nuance on timeouts: a driver error whose message contains *timeout*/*timed out* **does** map to
 > `TimeoutError` (the mapping is provider-agnostic). What MySQL lacks is a **server-side query
 > timeout derived from `queryTimeout`** — the provider never configures one

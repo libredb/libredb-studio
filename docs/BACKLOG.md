@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S9 · 6
-- [Drivers and connections](#drivers-and-connections) — D1-D363, U17 · 262
+- [Drivers and connections](#drivers-and-connections) — D1-D364, U17 · 262
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U144 · 131
@@ -3527,16 +3527,6 @@ Not fixed in #1629: a new provider PR changes no other provider.
 
 **Done when:** a plan run and an operations run on a SQL Server connection as `sa` read the schema, an Agent-mode run on it is still refused before its first statement with `PROFILE_PRIVILEGES_TOO_BROAD`, a provider test pins both, and `docs/providers/mssql.md` says where the check runs.
 
-### D346. A privilege refusal is reported as an authentication failure
-
-`mapDatabaseError` in `src/lib/db/errors.ts` returns an `AuthenticationError` ("Authentication failed: ...") for any message containing "access denied" or "permission denied".
-Those words also name refusals of a statement by a connected, authenticated session: MySQL's 1227 (`Access denied; you need (at least one of) the SUPER privilege`) and 1044 (`Access denied for user ... to database`), and PostgreSQL's `permission denied for table`.
-Measured 2026-10-13 through the MySQL agent read-only profile on MySQL 26.7.0 and MariaDB 12.3.2: `SET GLOBAL`, `GRANT` and `SELECT ... INTO OUTFILE` sent as `libredb_agent` came back as "Authentication failed: Access denied ...", which tells a user or a model that the login is wrong when the statement is what was refused.
-
-Found 2026-10-13 while reviewing #1629.
-
-**Done when:** a refusal that arrives on an open session maps to a query-class error that says the statement lacked a privilege, a failed login still maps to `AuthenticationError`, and `tests/unit/db/errors.test.ts` pins MySQL 1045, 1227 and 1044 and PostgreSQL's `permission denied for table` to their classes.
-
 ### D347. Percona Server is refused by the MySQL agent read-only profile
 
 `assertAgentEngineIsAdmissible` in `src/lib/db/providers/sql/mysql.ts` refuses a server whose `@@version_comment` names Percona Server with `PROFILE_UNSUPPORTED_TARGET`, because the profile's layers were measured on MySQL and MariaDB only.
@@ -3717,6 +3707,20 @@ Measured 2026-10-14 from the development host for `SELECT 2 AS ID, REPEAT('ğ', 
 The identity rule is the transport's bound on what it parses, so it was not loosened for one provider.
 
 **Done when:** the Snowflake provider reads the status answer that carries partition 0 compressed, through a streaming gunzip under the same byte bound as a partition (the byte transport and `rows.ts` already decode gzip partitions that way), and an 8 MB text cell measures within a small factor of a raw gzip fetch.
+
+### D364. Providers that map their own errors answer a missing privilege as a refused credential or a statement error
+
+`mapDatabaseError` in `src/lib/db/errors.ts` answers a privilege the credential lacks with `PermissionDeniedError`, HTTP 403 `PERMISSION_DENIED`, read from the driver's code, and PostgreSQL, MySQL, SQL Server, Oracle, Db2 and MongoDB reach it.
+A provider that maps its own driver's errors decides that refusal itself, and the mappers read on 2026-10-15 decide it two other ways.
+
+- As a refused credential, `AuthenticationError` and 401 `AUTH_ERROR`, which tells a user whose credential is right to re-enter it: ClickHouse `ACCESS_DENIED` (`mapClickHouseError` in `src/lib/db/providers/sql/clickhouse/index.ts`), Druid `FORBIDDEN` (`src/lib/db/providers/sql/druid/index.ts`), Couchbase HTTP 403 (`mapCouchbaseError` in `src/lib/db/providers/document/couchbase/index.ts`, pinned by its integration test "a missing privilege becomes an AuthenticationError"), Trino `PERMISSION_DENIED` (`FAULT_CATEGORIES` in `src/lib/db/providers/sql/trino/http-transport.ts`), Elasticsearch and OpenSearch HTTP 403 (`responseFailure` in `src/lib/db/providers/sql/search/http-transport.ts`), Kafka's `authorization` category (`src/lib/db/providers/stream/kafka/errors.ts`) and RabbitMQ's `NOT_ALLOWED - access to vhost` (`amqpCloseError` in `src/lib/db/providers/stream/rabbitmq/errors.ts`); Qdrant `forbidden`, Firestore 403 and InfluxDB 403 only at connect.
+- As a statement error, `QueryError` and 400 `QUERY_ERROR`: Cassandra `Unauthorized` (`mapCassandraError` in `src/lib/db/providers/sql/cassandra/index.ts`), Snowflake `003001` (`src/lib/db/providers/sql/snowflake/errors.ts`), Milvus `permission-denied` (`src/lib/db/providers/vector/milvus/errors.ts`), Redis `NOPERM` (`RedisProvider.query` in `src/lib/db/providers/keyvalue/redis.ts`), RabbitMQ 403 on a channel, and Qdrant, Firestore and InfluxDB after connect.
+
+Redis is one of the six engines governance admits by default (`GOVERNANCE_ALLOWED_ENGINES`), so a write refused under a read grant answers 400 there and 403 on the other five.
+
+Found 2026-10-15 while separating the two refusals in `mapDatabaseError`; each provider's own mapper was left as it was, because each is a decision with measurements of its own.
+
+**Done when:** each provider above answers its authorization refusal with `PermissionDeniedError` and keeps its credential refusal an `AuthenticationError`, its provider doc names the code it reads, and its `tests/integration/db/<type-id>-provider.test.ts` pins both, each refusal measured on its engine.
 
 ## Value interpolation
 
@@ -6793,21 +6797,19 @@ decide the class, and the agent's repairable-versus-environment split inherits t
 driver's code fields (`isStatementFault` in `src/lib/db/errors.ts`: SQLSTATE classes `0A`, `21`, `22`,
 `23`, `42`, `44` from `pg`, `mysql2` and `db2-node`, SQL Server error numbers, Oracle `errorNum`,
 SQLite result codes) before the `timeout`, `cancel`, `pool` and `relation` substring branches, so
-`no such table: pooled_items` is a `QueryError` now, not a `PoolExhaustedError`. What is left runs
-BEFORE that check, on purpose, so that nothing it classified changed class in that PR:
+`no such table: pooled_items` is a `QueryError` now, not a `PoolExhaustedError`.
+The access refusals followed, read from the same fields before that check (`accessRefusalOf`): a privilege the credential lacks is a `PermissionDeniedError`, a refused credential an `AuthenticationError`, and their words decide only an error with no code, so `relation "user_passwords" does not exist` is a `QueryError` now.
+What is left:
 
-- `relation "user_passwords" does not exist` matches `password` → `AuthenticationError`. Harmless on the
-  agent path today only because a query-phase `AuthenticationError` is repairable there, which is a
-  coincidence rather than a design.
+- The connection branch still runs first and reads only words (`econnrefused`, `connection refused`,
+  `connect etimedout`, `getaddrinfo`), never SQLSTATE class `08`.
 - `Connection terminated unexpectedly` matches nothing → base `DatabaseError`. A dead socket is offered
   to a model as a statement it could rewrite (bounded at three attempts).
 - An error with no code field at all (RisingWave answers its parser errors as `XX000`, HTTP drivers
   carry none) still reaches the substring branches.
 
-**Done when:** the connection and authentication branches read the driver's code first too (SQLSTATE
-class `28` and `08`, MySQL `1045`, SQL Server `18456`, Oracle `1017`), so an identifier can no longer
-decide any class a code could, and the `permission denied` reading (`42501`, now an
-`AuthenticationError` and answered 401) is decided on purpose rather than inherited.
+**Done when:** the connection branch reads the driver's code first too (SQLSTATE class `08`), so an
+identifier can no longer decide any class a code could.
 
 ### B5. The agent run ledger cannot fence two writers, so single ownership has to be asserted above it
 

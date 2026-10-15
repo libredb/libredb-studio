@@ -789,7 +789,7 @@ A third Materialize fact, and it is the sharper one: `pg_get_viewdef` returns **
 
 Widening the arms to `XX000` is NOT an obvious fix and is deliberately not done here: `XX000` is Materialize's generic internal error, so keying on it would turn a real internal failure into this object's refusal, which is the exact confusion the refusal-versus-absence rule exists to prevent. That is a code decision, recorded here rather than taken, and this section is the record: the measurement above is the whole of it, re-runnable with the commands beside it.
 Each is reported as the part's `unavailable`, the server's own sentence unprefixed and NOT passed through `mapDatabaseError()`, for the reason the count refusal gives one section up: the mapper's prefix would put this product's words in front of the server's.
-Measured, and it is why the plain spelling is load-bearing rather than cosmetic: `mapDatabaseError()` returns both sentences above unchanged, and rewrites a message containing "permission denied" into `Authentication failed: ...`.
+Measured, and it is why the plain spelling is load-bearing rather than cosmetic: `mapDatabaseError()` returns both sentences above unchanged, and puts `Permission denied: ` in front of a refused privilege (`42501`).
 Everything else RAISES, including a transport failure, because nobody answering is not the server answering "no", and "Connection terminated unexpectedly" rendered as this object's own refusal is a symptom presented as a fact about the object.
 
 **No identifier escaper, and that is a property of the statements rather than a decision.**
@@ -1515,8 +1515,8 @@ The agent's read-only path (`queryReadOnly()`, section 12) and the internal cata
 reads do not report notices.
 
 Native `pg` errors are normalised through `mapDatabaseError()` into the shared
-[`errors.ts`](../../src/lib/db/errors.ts) classes (syntax → `QueryError`, auth → `AuthenticationError`,
-timeout → `TimeoutError`, etc.). A PostgreSQL `statement_timeout` or `lock_timeout` is a timeout even
+[`errors.ts`](../../src/lib/db/errors.ts) classes (syntax → `QueryError`, a missing privilege → `PermissionDeniedError`,
+a refused credential → `AuthenticationError`, timeout → `TimeoutError`, etc.). A PostgreSQL `statement_timeout` or `lock_timeout` is a timeout even
 though the engine reports it as `canceling statement due to …`, so since #1145 it maps to `TimeoutError`;
 only an operator cancel (`pg_cancel_backend`, `due to user request`) stays a `QueryCancelledError`.
 
@@ -2103,6 +2103,7 @@ A statement the server refuses is thrown as the driver raised it, and `POST /api
 types it through `mapDatabaseError`: a SQLSTATE of class `42`, `0A`, `22`, `23`, `21` or `44` is the
 statement's own fault and answers `400 QUERY_ERROR` with the server's sentence; anything else keeps a
 5xx (#1387, #1427).
+The exception is a privilege the connection's role lacks, `42501`, which answers `403 PERMISSION_DENIED`.
 
 ### 9.1 What the connected server accepts, measured at connect
 
@@ -2330,10 +2331,14 @@ the shared hierarchy:
 | `statement_timeout` or `lock_timeout` exceeded (`canceling statement due to statement timeout` / `due to lock timeout`) | `TimeoutError` — a time budget elapsed, so since #1145 `mapDatabaseError()` recognises these **before** its cancellation branch and keeps the engine's text |
 | User cancel via `pg_cancel_backend` (`canceling statement due to user request`) | `QueryCancelledError` |
 | Generic timeout / connection-acquire timeout (message contains "timeout"/"timed out") | `TimeoutError` |
-| Bad password / authentication | `AuthenticationError` |
+| A privilege the role lacks (SQLSTATE `42501`: `permission denied for table orders`, `must be owner of table orders`) | `PermissionDeniedError`, answered `403 PERMISSION_DENIED` with `Permission denied: ` before the server's sentence |
+| A refused credential (SQLSTATE class `28`: `28P01` a wrong password, `28000` a `pg_hba.conf` refusal or an unknown role) | `AuthenticationError`, answered `401 AUTH_ERROR` |
 | Pool exhausted / too many connections | `PoolExhaustedError` |
 
-`isRetryableError()` treats connection/timeout errors as retryable, but not auth, config, or
+The two refusals are read from the SQLSTATE and never from the words, so `column "password" does not exist` (`42703`) is a `QueryError`.
+Only an error `pg` raises itself, which carries no SQLSTATE, is read by its words, such as `SASL: SCRAM-SERVER-FIRST-MESSAGE: client password must be a string`.
+
+`isRetryableError()` treats connection/timeout errors as retryable, but not auth, privilege, config, or
 syntax errors.
 
 ---

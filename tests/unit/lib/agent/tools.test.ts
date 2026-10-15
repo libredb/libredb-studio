@@ -3067,8 +3067,8 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
     // A least-privilege `agentUser` with per-table grants (the deployment
     // `execution-policy.ts` and postgres.md §12.3 recommend) makes this the model's
     // routine first probe of an ungranted object. `mapDatabaseError` answers
-    // `AuthenticationError` for any "permission denied", so a run would otherwise die
-    // on it every time and never learn to look elsewhere.
+    // `PermissionDeniedError` for it, which stays out of `ENVIRONMENT_FAILURES`, so a
+    // run does not die on it every time and can learn to look elsewhere.
     ["permission denied for table secrets", "postgres"],
   ] as const)("a statement the engine rejected with %p is repairable, not a raw throw", async (message, dialect) => {
     const mapped = mapDatabaseError(new Error(message), dialect);
@@ -3115,17 +3115,13 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
   });
 
   /**
-   * The ACQUISITION phase, which is what lets the two readings of an
-   * `AuthenticationError` be separated without inspecting message text.
+   * The ACQUISITION phase.
    *
-   * `mapDatabaseError` answers `AuthenticationError` for any `password` /
-   * `authentication` / `access denied` / `permission denied` message, which folds a
-   * wrong agent credential together with `permission denied for table secrets`. They
-   * are indistinguishable by CLASS but they arise at different phases: a credential
-   * failure comes from connecting, a table grant failure comes from running the
-   * statement. So nothing that fails before the statement is even sent can be a
-   * statement the model could repair, whatever its class — and that is asserted here
-   * over every class rather than for the credential case alone.
+   * A refused agent credential (`AuthenticationError`) arises while connecting, and a
+   * missing table grant (`PermissionDeniedError`, `permission denied for table
+   * secrets`) while running the statement. So nothing that fails before the statement
+   * is even sent can be a statement the model could repair, whatever its class, and
+   * that is asserted here over every class rather than for the credential case alone.
    */
   test.each([
     ["a wrong agent credential", new AuthenticationError("password authentication failed", "postgres")],
@@ -3153,7 +3149,7 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
    * base class and is offered a repair) but fails UNSAFE for a new error CLASS: an
    * `IdleTimeoutError` added to `errors.ts` and not added to `ENVIRONMENT_FAILURES`
    * would be silently offered to the model as a statement it could rewrite, burning
-   * the repair budget on an environment fault. A test naming the eight classes that
+   * the repair budget on an environment fault. A test naming the nine classes that
    * exist today could not catch that — it would still pass. So this walks the error
    * module's own exports, finds every `DatabaseError` subclass, drives one through
    * the tool, and requires the verdict to be one somebody wrote down here.
@@ -3180,6 +3176,8 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
       TimeoutError: "repairable",
       QueryCancelledError: "repairable",
       AuthenticationError: "repairable",
+      // A grant the agent's least-privilege credential lacks: reading another object is the repair.
+      PermissionDeniedError: "repairable",
       ConnectionError: "propagates",
       PoolExhaustedError: "propagates",
       DatabaseConfigError: "propagates",

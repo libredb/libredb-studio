@@ -328,6 +328,7 @@ A row whose value count differs from the column count is refused with a query er
 The driver's diagnostics are passed through as result warnings, after the LOB warning of K24.
 A failure the driver raises itself carries a `driverCode` and no SQLSTATE: `DB2_PARAMETER_COUNT` and `DB2_PARAMETER_TYPE`, a wrong number of parameters or a value that does not fit its target, are a query error, and `DB2_PROTOCOL` and `DB2_INVALID_OPTION` are the driver's own and stay a plain database error whatever their words say, each with the driver's message (K17, fixed in 1.0.25).
 Every other error goes through the shared `mapDatabaseError()`, which reads the SQLSTATE and SQLCODE when the driver's message carries them.
+A privilege the user lacks, SQLSTATE `42501` (SQL0551N) or `42502` (SQL0552N), or SQLCODE `-1060` for a user without the `CONNECT` privilege, answers `403 PERMISSION_DENIED`; SQLCODE `-30082`, security processing failed, is a refused credential and answers `401 AUTH_ERROR`.
 
 ### 7.2 Paging
 
