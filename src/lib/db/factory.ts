@@ -753,6 +753,15 @@ export async function profiledCacheKey(
   requester: EditorExecutionContext = {},
 ): Promise<string> {
   const key = await providerCacheKey(connection, requester.allowExternalFileAccess === true, requester.owner);
+  return withProfile(profile, key);
+}
+
+/**
+ * `key`, a key of the writable cache, with `profile` framed onto it: the key the profiled cache holds the entry of that
+ * profile under. {@link profiledCacheKey} keys an acquisition with it, and the key scope of `removeProvider` names the
+ * profiled entries of one record with it, so the two never frame a profile differently.
+ */
+function withProfile(profile: string, key: string): string {
   return `${profile.length}:${profile}${key}`;
 }
 
@@ -1173,8 +1182,8 @@ export async function getOrCreateProvider(
  * own. The transaction route records the key a governed `begin` resolved, and a later request that resolves another
  * one, because the owner's grant level or the connection's credential changed, has the transaction rolled back on the
  * provider {@link findCachedProvider} answers for the recorded key (spec 9.4). And without governance the disconnect
- * route removes only the entry the caller's own record names, by the key scope of `removeProvider` (spec 17). The
- * package does not re-export it.
+ * route removes only the entries the caller's own record names, its editor entry and its execution-profile entries, by
+ * the key scope of `removeProvider` (docs/SECURITY.md, note 0.9). The package does not re-export it.
  */
 export async function editorCacheKey(
   connection: DatabaseConnection,
@@ -1473,24 +1482,27 @@ export async function acquireExecutionProfileProvider(
 }
 
 /**
- * Remove a provider from cache and disconnect. Also removes the connection's
- * execution-profile providers: a deleted or re-credentialed connection must
- * not leave a stale agent pool running under the old configuration.
+ * Remove the cached providers of `connectionId` and disconnect them, from the writable cache and the execution-profile
+ * cache alike: a deleted or re-credentialed connection must not leave a stale agent pool running under the old
+ * configuration. The scope decides which entries of the connection go, and no scope ever reaches another connection's:
  *
- * With an owner scope, only the entries opened for `scope.owner` go, from both caches (spec 9.4): under governance every
- * user's providers are their own, so one user's disconnect must not tear down another user's pool, session state or
- * transaction. An engine that keeps one handle per file records no owner on it (`providerOwner`), so its one handle,
- * which every owner shares, is left to the removal without a scope.
- *
- * With a key scope, only the entry of the connection cached under `scope.key` goes, the key {@link editorCacheKey}
- * answers for one record of it (spec 17): without governance every caller of a connection shares its provider, so a
- * disconnect may remove only the entry the caller's own record names, never one another user opened with another
- * record of the same id. The key frames the server and the credentials, so naming a connection id reaches nothing.
+ * - Without a scope, every entry of the connection in both caches, and then its SSH tunnel, as before owners existed.
+ * - With an owner scope, every entry of either cache opened for `scope.owner`, and no other. Under governance every
+ *   user's providers are their own (docs/GOVERNANCE.md#per-user-providers), so one user's disconnect must not tear down
+ *   another user's pool, session state or transaction. An engine that keeps one handle per file records no owner on it
+ *   (`providerOwner`), so its one handle, which every owner shares, is left to the removal without a scope.
+ * - With a key scope, the entry the writable cache holds under `scope.key`, which {@link editorCacheKey} answers for one
+ *   record of the connection, and the entries the profiled cache holds under that key with a profile framed onto it
+ *   (`withProfile`), the record's own execution-profile providers. No other entry goes: one opened with another record
+ *   of the same id, or under another file-access posture, is cached under another key. Without governance every caller
+ *   of a connection shares its provider, so a disconnect may remove only what the caller's own record names
+ *   (docs/SECURITY.md, note 0.9). The key frames the server and the credentials, so naming a connection id reaches
+ *   nothing.
  *
  * The SSH tunnel serves every entry of the connection, so a scoped removal closes it only once no entry of either cache
  * still serves the connection, as the idle sweep does. A scope that names neither an owner nor a key as a string, or
  * names both, is refused before anything is removed: matching on a missing owner would remove the entries every caller
- * shares. Without a scope every entry of the connection goes and its tunnel is closed, as before owners existed.
+ * shares.
  *
  * An owned entry is torn down (`teardownProvider`): it leaves the cache first, an open transaction on it is rolled
  * back, and a pool that hangs is abandoned, so the removal of a user's providers, which the governance loader asks for
@@ -1506,18 +1518,23 @@ export async function removeProvider(
   const byKey = typeof scopedKey === "string" && owner === undefined;
   if (scope !== undefined && !byKey && !(typeof owner === "string" && scopedKey === undefined)) {
     throw new DatabaseConfigError(
-      "removeProvider takes a scope only with the owner whose providers it removes or the key of the one cache entry it removes, as a string, and never with both.",
+      "removeProvider takes a scope only with the owner whose providers it removes or the cache key of the record whose providers it removes, as a string, and never with both.",
     );
   }
-  const removes = (key: string, entry: CachedProvider): boolean =>
-    entry.connectionId === connectionId && (scope === undefined || (byKey ? key === scopedKey : entry.owner === owner));
+  // A key scope names the record's writable entry by the key itself, and its profiled entries by the key with each
+  // profile framed onto it.
+  const profiledKeys: ReadonlySet<string> = new Set(
+    byKey ? Array.from(EXECUTION_PROFILES, (profile) => withProfile(profile, scopedKey)) : [],
+  );
+  const removes = (entry: CachedProvider, keyed: boolean): boolean =>
+    entry.connectionId === connectionId && (scope === undefined || (byKey ? keyed : entry.owner === owner));
   const teardowns: Promise<void>[] = [];
 
   // A connection can hold more than one entry now - one per distinct server-and-credentials
   // it was opened with - so this removes every entry serving it, the way the profiled loop
   // below always has.
   for (const [key, entry] of providerCache) {
-    if (!removes(key, entry)) continue;
+    if (!removes(entry, key === scopedKey)) continue;
     if (entry.owner !== undefined) {
       teardowns.push(teardownProvider(providerCache, key, entry));
       continue;
@@ -1531,7 +1548,7 @@ export async function removeProvider(
   }
 
   for (const [key, entry] of profiledProviderCache) {
-    if (!removes(key, entry)) continue;
+    if (!removes(entry, profiledKeys.has(key))) continue;
     if (entry.owner !== undefined) {
       teardowns.push(teardownProvider(profiledProviderCache, key, entry));
       continue;

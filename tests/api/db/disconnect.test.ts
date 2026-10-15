@@ -165,7 +165,7 @@ describe("POST /api/db/disconnect", () => {
 // ─── Caller-scoped disconnect without governance (spec 17) ──────────────────
 //
 // Without governance every caller of a connection shares its provider, so the route cannot scope a disconnect by owner.
-// It resolves the caller's own record through resolveConnection, as every route does, and removes only the cache entry
+// It resolves the caller's own record through resolveConnection, as every route does, and removes only the cache entries
 // that record's provider key names, through the factory's key scope. The key frames the server and the credentials, so
 // a request that names another user's connection id closes nothing of theirs, neither their provider nor the SSH
 // tunnel it reaches the connection through. A seed id removes nothing: one provider serves every user of that seed,

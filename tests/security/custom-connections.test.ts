@@ -61,7 +61,7 @@ const DB_ROUTES = discoverRoutes(DB_API_DIR);
 /** Routes under src/app/api/db that build no provider, each with its reason. */
 const ROUTES_THAT_BUILD_NO_PROVIDER: Record<string, string> = {
   disconnect:
-    "closes a provider already in the cache and never builds one; it resolves a connection the caller supplies only to name the cache entry it closes, so while custom connections are off it is refused there with the same 403 (tests/api/db/disconnect.test.ts)",
+    "closes a provider already in the cache and never builds one; it resolves a connection the caller supplies only to name the cache entries it closes, so while custom connections are off it is refused there with the same 403 (tests/api/db/disconnect.test.ts)",
 };
 
 /** The two routes that also read a bare connection object as the whole body. */

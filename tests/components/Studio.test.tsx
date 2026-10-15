@@ -941,8 +941,8 @@ describe("Studio", () => {
     expect(dialog.queryByText("Delete connection?")).toBeNull();
   });
 
-  // Spec 17: without governance the server removes only the provider the caller's own record names, so a connection of
-  // the user's own, which has no seed id, reaches it as its record and never as a bare id.
+  // Without governance the server removes only the providers the caller's own record names (docs/SECURITY.md, note 0.9),
+  // so a connection of the user's own, which has no seed id, reaches it as its record and never as a bare id.
   test("deleting a custom connection posts its record to /api/db/disconnect", () => {
     const fetchMock = mock(async () => new Response(JSON.stringify({ success: true }), { status: 200 }));
     globalThis.fetch = fetchMock as unknown as typeof fetch;

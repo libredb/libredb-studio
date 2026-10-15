@@ -1257,7 +1257,8 @@ export default function Studio() {
   const handleDeleteConnection = (id: string) => {
     // Clean up the server-side provider cache and close connections and tunnels, best effort. The connection is sent as
     // every route is sent one, a connection of the user's own as its record: without governance the server removes only
-    // the provider that record's own key names, and refuses a bare id outside the seed namespace (spec 17).
+    // the providers that record's own key names, and refuses a bare id outside the seed namespace (docs/API_DOCS.md, the
+    // note on `POST /api/db/disconnect`).
     const deleted = conn.connections.find((c) => c.id === id);
     if (deleted) {
       appFetch("/api/db/disconnect", {

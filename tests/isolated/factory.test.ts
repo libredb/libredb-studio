@@ -1767,8 +1767,9 @@ describe("removeProvider with an owner scope (spec 9.4)", () => {
 // ─── removeProvider with a key scope (spec 17) ───────────────────────────────
 //
 // Without governance every caller of a connection shares its provider, so a disconnect cannot be scoped by owner. The
-// disconnect route resolves the caller's own record instead and removes only the entry that record's key names
-// (`editorCacheKey`), which frames the server and the credentials, so naming another user's connection id closes
+// disconnect route resolves the caller's own record instead and removes only the entries that record's key names
+// (`editorCacheKey`): its editor entry, and its execution-profile entries, which are cached under the same key with the
+// profile framed onto it. The key frames the server and the credentials, so naming another user's connection id closes
 // nothing of theirs. The SSH tunnel serves every entry of the connection, so it closes only once nothing serves it.
 
 describe("removeProvider with a key scope (spec 17)", () => {
@@ -1807,6 +1808,45 @@ describe("removeProvider with a key scope (spec 17)", () => {
     expect(mockCloseSSHTunnel).toHaveBeenCalledTimes(1);
     expect(mockCloseSSHTunnel).toHaveBeenCalledWith("conn-orders");
     expect(getProviderCacheStats().connections).toEqual(["conn-billing"]);
+  });
+
+  test("a key scope removes the profiled entries of the record its key names, and nothing of another record's", async () => {
+    // An execution profile caches a record's provider under that record's editor key with the profile framed onto it
+    // (`profiledCacheKey`). A removal by the key must take those entries too, or they and the tunnel they reach the
+    // connection through stay open until the idle sweep.
+    const alice = makeConnection("postgres", { id: "conn-orders", user: "alice", password: "a-pw", sshTunnel: TUNNEL });
+    const bob = makeConnection("postgres", { id: "conn-orders", user: "bob", password: "b-pw", sshTunnel: TUNNEL });
+    const alicesEditor = await getOrCreateProvider(alice);
+    const alicesAgents = [
+      await acquireExecutionProfileProvider(alice, "agent-read-only"),
+      await acquireExecutionProfileProvider(alice, "agent-operations"),
+      await acquireExecutionProfileProvider(alice, "agent-handover"),
+    ];
+    const bobsEditor = await getOrCreateProvider(bob);
+    const bobsAgent = await acquireExecutionProfileProvider(bob, "agent-read-only");
+
+    await removeProvider("conn-orders", { key: await editorCacheKey(alice) });
+
+    // Alice's editor entry goes, and so does her entry under every profile.
+    expect([alicesEditor, ...alicesAgents].map((provider) => provider.isConnected())).toEqual([
+      false,
+      false,
+      false,
+      false,
+    ]);
+    // Bob's record names other keys, so his editor and profiled entries stay, and the tunnel they share stays open.
+    expect([bobsEditor.isConnected(), bobsAgent.isConnected()]).toEqual([true, true]);
+    expect(getProviderCacheStats()).toEqual({ size: 1, connections: ["conn-orders"] });
+    expect(getExecutionProfileCacheStats()).toEqual({ size: 1, connections: ["conn-orders"] });
+    expect(mockCloseSSHTunnel).not.toHaveBeenCalled();
+
+    // Bob's key takes the last entries of the connection, his profiled one included, so the tunnel closes with them.
+    await removeProvider("conn-orders", { key: await editorCacheKey(bob) });
+    expect([bobsEditor.isConnected(), bobsAgent.isConnected()]).toEqual([false, false]);
+    expect(getProviderCacheStats().size).toBe(0);
+    expect(getExecutionProfileCacheStats().size).toBe(0);
+    expect(mockCloseSSHTunnel).toHaveBeenCalledTimes(1);
+    expect(mockCloseSSHTunnel).toHaveBeenCalledWith("conn-orders");
   });
 
   test.each([

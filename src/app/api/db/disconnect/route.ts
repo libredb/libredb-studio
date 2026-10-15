@@ -19,9 +19,10 @@ const SEED_NAMESPACE = "seed:";
  * Without governance every caller of a connection shares its provider, so there is no owner to scope by, and removing
  * every provider of the id would let any signed-in user tear down other users' providers and SSH tunnels by naming it
  * (spec 17). A connection of the user's own is resolved from the record the request carries, as every route resolves
- * it, and only the entry its own provider key names goes: the key frames the server and the credentials, so a record
- * naming another user's connection id names an entry of its own. A `seed:` id removes nothing, because one provider
- * serves every user of that seed, and the idle sweep reclaims it.
+ * it, and only the entries its own provider key names go, the editor's and the execution profiles' (`removeProvider`):
+ * the key frames the server and the credentials, so a record naming another user's connection id names entries of its
+ * own. A `seed:` id removes nothing, because one provider serves every user of that seed, and the idle sweep reclaims
+ * it.
  */
 async function removeCallersProviders(
   body: Parameters<typeof resolveConnection>[0],

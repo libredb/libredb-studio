@@ -129,7 +129,7 @@ An owned provider opens its pool with no idle connection and at most as many con
 A cancel is sent through the caller's own provider, so a query id that another user's statement runs under answers `cancelled: false` and stops nothing.
 `POST /api/db/disconnect` removes only the caller's own providers of the connection it names, editor and agent alike, so a request naming a connection another user has open closes nothing of theirs.
 An engine that keeps one handle per file, such as DuckDB, keeps that one handle for every owner, and governance admits no engine that opens a local file.
-Without governance every user of a connection still shares its provider, and a disconnect removes only the provider cached under the key of the caller's own record: it resolves a connection of the user's own from the record the request carries, the key frames that record's server and credentials, and the connection's SSH tunnel closes only once no provider of it is left.
+Without governance every user of a connection still shares its provider, and a disconnect removes only the providers cached under the key of the caller's own record, the editor's provider of that record and any agent provider opened from it: it resolves a connection of the user's own from the record the request carries, the key frames that record's server and credentials, and the connection's SSH tunnel closes only once no provider of it is left.
 So a request naming another user's connection id closes neither their provider nor their tunnel, and a `seed:` id removes nothing, because one provider serves every user of that seed and the idle sweep reclaims it.
 
 **1.1.** The Content-Security-Policy permits inline scripts, because the application is statically
