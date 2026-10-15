@@ -1,4 +1,5 @@
 import type { EditorExecutionContext } from "@/lib/db/types";
+import { governanceEnabled } from "@/lib/governance/config";
 import type { DatabaseConnection } from "@/lib/types";
 
 /**
@@ -7,6 +8,18 @@ import type { DatabaseConnection } from "@/lib/types";
  * operator's, and so are the roles on the record.
  */
 const SEED_NAMESPACE = "seed:";
+
+/**
+ * The pool size of each user's provider under governance (spec 9.4): the default of the runtime setting
+ * `provider.poolMaxPerUser` (spec 7.8), which `tests/unit/lib/api/execution-context.test.ts` holds equal to the
+ * registry's.
+ */
+const OWNER_POOL_MAX = 3;
+
+// One template literal, never a concatenation across lines: bun's line coverage under-counts the continuation lines
+// of a message built that way.
+const SUBJECT_MISSING_MESSAGE =
+  "Under governance every provider belongs to one user, named by the identity provider's subject, and this session carries none";
 
 /**
  * Whether a role other than admin can resolve this record: a seed the operator's configuration offers
@@ -20,6 +33,18 @@ function openToNonAdminRoles(connection: DatabaseConnection): boolean {
   if (connection.id?.startsWith(SEED_NAMESPACE) !== true) return false;
   const roles: unknown = (connection as { roles?: unknown }).roles;
   return Array.isArray(roles) && roles.some((role) => role !== "admin");
+}
+
+/**
+ * The owner of a governed session's providers (spec 9.4): its identity provider subject, the key grants name a user
+ * by, never the username, which is a display label (spec 3.2 D2).
+ */
+function governedOwner(session: { idpSubject?: string }): string {
+  const subject = session.idpSubject;
+  // getSession() refuses a session without a subject under governance (src/lib/local-accounts.ts), and no grant names
+  // one, so one that gets here is an error, never a reason to hand it the provider every user of a connection shares.
+  if (typeof subject !== "string" || subject === "") throw new Error(SUBJECT_MISSING_MESSAGE);
+  return subject;
 }
 
 /**
@@ -49,10 +74,18 @@ function openToNonAdminRoles(connection: DatabaseConnection): boolean {
  *
  * It is deliberately NOT the agent read-only profile: this closes file access without making the
  * database read-only, which is the owner-scoped change.
+ *
+ * Under governance (`GOVERNANCE_SOURCE`, docs/GOVERNANCE.md) it also names the owner of a per-user provider
+ * (spec 9.4): `owner`, the session's identity provider subject, and `ownerPoolMax`, the pool size of that user's
+ * provider. The factory keys, opens and records a provider per owner, so two users of one connection never share a
+ * pool, a database session state or an interactive transaction. Without governance neither field is set, and every
+ * caller of a connection shares its provider exactly as before.
  */
 export function editorExecutionContext(
-  session: { role: string },
+  session: { role: string; idpSubject?: string },
   connection: DatabaseConnection,
 ): EditorExecutionContext {
-  return { allowExternalFileAccess: session.role === "admin" && !openToNonAdminRoles(connection) };
+  const allowExternalFileAccess = session.role === "admin" && !openToNonAdminRoles(connection);
+  if (!governanceEnabled()) return { allowExternalFileAccess };
+  return { allowExternalFileAccess, owner: governedOwner(session), ownerPoolMax: OWNER_POOL_MAX };
 }

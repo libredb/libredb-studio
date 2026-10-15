@@ -1,5 +1,5 @@
 import { connectionFingerprint } from "./connection-fingerprint";
-import { READS_FILE_ACCESS_POSTURE } from "./compatibility";
+import { READS_FILE_ACCESS_POSTURE, SINGLE_WRITER_FILE } from "./compatibility";
 import type { DatabaseConnection, WithTunnelFarEnd } from "@/lib/types";
 
 /**
@@ -54,6 +54,12 @@ import type { DatabaseConnection, WithTunnelFarEnd } from "@/lib/types";
  *   lives on `ProviderExecutionContext`, server-derived from the session role and the resolved
  *   connection's audience, never on the
  *   connection, so a request body cannot move a handle between the two pools.
+ * - The owner, under governance (spec 9.4): `ProviderExecutionContext.owner`, the identity provider
+ *   subject of the session the provider is opened for, so every user of a connection gets a provider,
+ *   a pool and a database session state of their own. It is appended last, as `owner:<subject>`, and
+ *   only when an owner is given, so a key without one stays byte-identical to the key before owners
+ *   existed. An engine that keeps one handle per file (`SINGLE_WRITER_FILE`) leaves it out, see
+ *   {@link providerOwner}.
  *
  * WHY THE ID IS SAFE IN THE KEY. Reaching a cached entry now costs the victim's id AND their
  * server AND their credentials. The first is guessable and the second is often public; the third
@@ -80,6 +86,7 @@ import type { DatabaseConnection, WithTunnelFarEnd } from "@/lib/types";
 export async function providerCacheKey(
   connection: DatabaseConnection & WithTunnelFarEnd,
   allowExternalFileAccess?: boolean,
+  owner?: string,
 ): Promise<string> {
   const [server, credentials] = await Promise.all([connectionFingerprint(connection), credentialDigest(connection)]);
   const mode = connection.readOnly === true ? "read-only" : "read-write";
@@ -93,9 +100,27 @@ export async function providerCacheKey(
   if (READS_FILE_ACCESS_POSTURE[connection.type] && allowExternalFileAccess === false) {
     parts.push(`${connection.type}-deny-file-access`);
   }
+  // Last, and only when there is one: without an owner the key is byte-identical to before owners existed.
+  const keyedOwner = providerOwner(connection, owner);
+  if (keyedOwner !== undefined) parts.push(`owner:${keyedOwner}`);
   // Length-framed like the two digests it joins: an id ending in a digit must not be able to
   // answer the same key as a shorter id followed by a longer fingerprint.
   return parts.map((value) => `${value.length}:${value}`).join("");
+}
+
+/**
+ * The owner a provider of `connection` is kept apart for (spec 9.4): `owner` as given, or undefined when every
+ * caller shares the provider, because none was given or because the engine keeps one handle per file.
+ *
+ * A provider per user on such an engine would be a second handle on one file, which DuckDB lets checkpoint over
+ * the first one's committed rows and LibreDB refuses, so `SINGLE_WRITER_FILE` decides it before any provider
+ * exists, not a `connection.type` branch (CLAUDE.md). Governance admits no engine that opens a local file
+ * (`OPENS_LOCAL_FILE`), so Studio never names an owner here; an embedder of the factory that does gets the one
+ * shared handle. The key and the factory both ask this, so the entry the factory records and the key it is cached
+ * under always name the same owner.
+ */
+export function providerOwner(connection: DatabaseConnection, owner: string | undefined): string | undefined {
+  return SINGLE_WRITER_FILE[connection.type] ? undefined : owner;
 }
 
 /**

@@ -376,6 +376,61 @@ export const READS_FILE_ACCESS_POSTURE: Readonly<Record<DatabaseType, boolean>> 
 });
 
 /**
+ * Which shipped engines keep one handle per database file in this process: the static answer
+ * `ProviderCapabilities.singleWriterFile` gives once a provider is built.
+ *
+ * Static because `providerCacheKey` decides before a provider exists: under governance every user of a
+ * connection gets a provider of their own (spec 9.4), and the key frames the user as its owner, except on
+ * these engines, where a provider per user would be a second handle on one file. DuckDB keeps its own copy
+ * of the catalog in a second read-write handle and checkpoints it over the file when it closes, and LibreDB
+ * refuses the second open outright, so every user of such a connection is served the one open handle.
+ * Reading `connection.type` there was the alternative and is forbidden by `CLAUDE.md`.
+ *
+ * An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join without someone
+ * answering, and `tests/unit/db/compatibility.test.ts` holds every entry equal to what that engine's
+ * provider declares. Frozen like the records above it.
+ */
+export const SINGLE_WRITER_FILE: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
+  postgres: false,
+  bigquery: false,
+  snowflake: false,
+  spark: false,
+  mysql: false,
+  sqlite: false,
+  libsql: false,
+  duckdb: true,
+  oracle: false,
+  db2: false,
+  mssql: false,
+  clickhouse: false,
+  druid: false,
+  trino: false,
+  cassandra: false,
+  elasticsearch: false,
+  opensearch: false,
+  mongodb: false,
+  couchbase: false,
+  redis: false,
+  prometheus: false,
+  kafka: false,
+  etcd: false,
+  neo4j: false,
+  milvus: false,
+  qdrant: false,
+  influxdb: false,
+  influxdb3: false,
+  oxia: false,
+  databend: false,
+  s3: false,
+  kubernetes: false,
+  mqtt: false,
+  firestore: false,
+  rabbitmq: false,
+  opcua: false,
+  libredb: true,
+});
+
+/**
  * Which shipped engines a seed connection may expose to MCP clients (#246): the seed schema refuses
  * `mcp: true` at load on an engine where this answers false, naming the engine, so an opt-in the
  * product does not honour fails the file instead of listing a connection. Static for the reason

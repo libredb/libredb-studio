@@ -15,7 +15,7 @@ import { connectPhase, DatabaseConfigError, ExecutionProfileError } from "./erro
 import { createSSHTunnel, closeSSHTunnel, hasTunnel } from "@/lib/ssh/tunnel";
 import type { TunnelInfo } from "@/lib/ssh/tunnel";
 import { readSecret } from "@/lib/storage/encryption";
-import { providerCacheKey } from "./provider-cache-key";
+import { providerCacheKey, providerOwner } from "./provider-cache-key";
 import { READ_ONLY_ENFORCED, READS_FILE_ACCESS_POSTURE } from "./compatibility";
 import { TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
 import { logger } from "@/lib/logger";
@@ -43,10 +43,12 @@ import * as path from "path";
  *   `enable_external_access: 'false'`, so `read_csv`, `COPY`, `ATTACH` of a file and
  *   `INSTALL` are refused outside its private temp directory and its database's own file
  *   names (docs/providers/duckdb.md section 3.16) while the database stays writable; pass
- *   `{ allowExternalFileAccess: true }` for the full editor reach.
+ *   `{ allowExternalFileAccess: true }` for the full editor reach. An `owner` makes the provider
+ *   that user's own (spec 9.4): its pool opens with `min: 0` and `max: ownerPoolMax`.
  * @returns Promise<DatabaseProvider> instance
- * @throws DatabaseConfigError if connection type is not supported, or if its `readOnly` cannot be
- *   honoured (see assertReadOnlyHonoured)
+ * @throws DatabaseConfigError if connection type is not supported, if its `readOnly` cannot be
+ *   honoured (see assertReadOnlyHonoured), or if an owner comes without a whole `ownerPoolMax`
+ *   from 1 (see assertOwnerPoolHonoured)
  *
  * @example
  * // SQL Database
@@ -142,16 +144,43 @@ export function assertReadOnlyHonoured(connection: DatabaseConnection): void {
   }
 }
 
+/**
+ * Refuse an owner without a pool size its provider can open with (spec 9.4), before anything is built or dialled.
+ *
+ * An owned provider opens its pool with `min: 0` and `max: ownerPoolMax`, so the size must be a whole number from 1.
+ * pg would refuse nothing else: it opens its default of 10 for 0, NaN or no size at all, and a pool with a negative
+ * size never hands out a connection, so the owner's share would be lifted, or the provider wedged, without a word.
+ * It runs where `assertReadOnlyHonoured` runs and for the reason that function gives: `getOrCreateProvider` and
+ * `acquireExecutionProfileProvider` open the SSH tunnel before they build the provider. `editorExecutionContext`
+ * always sets the owner and the size together, so the refusal reaches only a context built elsewhere.
+ */
+function assertOwnerPoolHonoured(connection: DatabaseConnection, execution: ProviderExecutionContext): void {
+  if (execution.owner === undefined) return;
+  const max: unknown = execution.ownerPoolMax;
+  if (typeof max !== "number" || !Number.isInteger(max) || max < 1) {
+    throw new DatabaseConfigError(
+      "ownerPoolMax must be a whole number from 1 when an owner is given: it is the most connections the owner's provider may open.",
+      connection.type,
+    );
+  }
+}
+
 export async function createDatabaseProvider(
   connection: DatabaseConnection,
   options: ProviderOptions = {},
   execution: ProviderExecutionContext = {},
 ): Promise<DatabaseProvider> {
   assertReadOnlyHonoured(connection);
+  assertOwnerPoolHonoured(connection, execution);
   console.log(`[DB] Creating ${sanitize(connection.type)} provider for "${sanitize(connection.name || "")}"`);
 
   // Explicit overrides (such as the connectivity probe) take precedence over saved settings.
   options = { ...options, queryTimeout: options.queryTimeout ?? connection.queryTimeout };
+  // An owned provider serves one user (spec 9.4): its pool opens nothing until that user asks, and never more than
+  // the user's share, whatever size the caller's options name. The rest of the caller's pool options stand.
+  if (execution.owner !== undefined) {
+    options = { ...options, pool: { ...options.pool, min: 0, max: execution.ownerPoolMax } };
+  }
 
   switch (connection.type) {
     // SQL Databases - dynamically imported to reduce memory
@@ -545,6 +574,12 @@ interface CachedProvider {
    */
   connectionId: string;
   /**
+   * The user this entry was opened for (spec 9.4), the `owner` its key frames, or undefined for an
+   * entry every caller of the connection shares. Recorded for the reason `connectionId` is: the key
+   * is a digest and cannot be read back, so "which entries are this user's" matches on this field.
+   */
+  owner?: string;
+  /**
    * The file this entry holds open, when the provider declares
    * `ProviderCapabilities.singleWriterFile` - see `findOpenSingleWriterProvider`.
    * `null` on every other provider, which is all of them but one.
@@ -703,7 +738,8 @@ const profiledProviderCache = new Map<string, ProfiledCachedProvider>();
  *
  * The requester's file-access posture is in it too, for an engine that reads one, exactly as in
  * the writable key: SQLite refuses a denied requester at connect, so a handle a trusted requester
- * opened must never answer a denied requester's key. Absent reads as denied.
+ * opened must never answer a denied requester's key. Absent reads as denied. So is the requester's
+ * owner (spec 9.4), as in the writable key: one user's acquisition is never served another's.
  *
  * Exported for one caller that must join concurrent first acquisitions on exactly this key
  * without deriving a second one: src/lib/mcp/context.ts.
@@ -713,7 +749,7 @@ export async function profiledCacheKey(
   profile: ExecutionProfile,
   requester: EditorExecutionContext = {},
 ): Promise<string> {
-  const key = await providerCacheKey(connection, requester.allowExternalFileAccess === true);
+  const key = await providerCacheKey(connection, requester.allowExternalFileAccess === true, requester.owner);
   return `${profile.length}:${profile}${key}`;
 }
 
@@ -847,12 +883,22 @@ function startIdleSweep(): void {
 }
 
 /**
+ * The owner fields a cached provider is built with (spec 9.4): the owner its key frames and the requester's pool
+ * size, or nothing for a provider every caller shares, so a context without an owner reaches the provider exactly as
+ * it did before owners existed. `owner` is what `providerOwner` answered for the connection.
+ */
+function ownerContext(owner: string | undefined, requester: EditorExecutionContext): EditorExecutionContext {
+  return owner === undefined ? {} : { owner, ownerPoolMax: requester.ownerPoolMax };
+}
+
+/**
  * Get or create a database provider with caching
  * Useful for API routes to reuse connections
  *
  * @param connection - Database connection configuration
  * @param options - Optional provider options
- * @param execution - The DuckDB editor file-access posture (non-admin DuckDB file access), and nothing else. Studio's
+ * @param execution - The DuckDB editor file-access posture (non-admin DuckDB file access), and under governance the
+ *   owner of a per-user provider (spec 9.4), and nothing else. Studio's
  *   routes derive it with `editorExecutionContext` from the verified session and the resolved
  *   connection. ABSENT MEANS DENY: called without it, as an embedder that predates the posture
  *   calls it, a DuckDB handle opens with `enable_external_access: 'false'`, so `read_csv`,
@@ -861,6 +907,9 @@ function startIdleSweep(): void {
  *   stays writable. Pass
  *   `{ allowExternalFileAccess: true }` for the full editor reach. SQLite refuses a denied handle at
  *   connect, since its drivers cannot confine a statement's file access; every other engine ignores it.
+ *   With an `owner`, the provider is that user's own: cached apart from every other user's, opened
+ *   with the pool of `ownerPoolMax`, and its entry records the owner; an engine that keeps one handle
+ *   per file shares that handle whatever the owner (`providerOwner`).
  *   A `readOnly` in it is refused (`DatabaseConfigError`): this cache holds writable providers,
  *   and a read-only one comes from `createDatabaseProvider` or an execution profile.
  * @returns Cached or new DatabaseProvider instance
@@ -875,6 +924,7 @@ export async function getOrCreateProvider(
   // refused before the key is computed, as the DatabaseConfigError the provider would have raised (#1539).
   assertConnectionIdPresent(connection);
   assertReadOnlyHonoured(connection);
+  assertOwnerPoolHonoured(connection, execution);
   // The writable cache never holds a read-only handle, and its key frames no such mode for an
   // execution context: a readOnly reaching the provider from here would be served to every later
   // editor request, or a read-only caller handed the writable one. The type has no such field; a
@@ -889,7 +939,10 @@ export async function getOrCreateProvider(
   // handle it opens and the key it is cached under agree, and absent reads as deny (fail closed).
   // SQLite and DuckDB read it; engines without that capability ignore it.
   const allowExternalFileAccess = execution.allowExternalFileAccess === true;
-  const cacheKey = await providerCacheKey(connection, allowExternalFileAccess);
+  // The user this provider is opened for under governance (spec 9.4), or undefined for the provider every caller
+  // shares: the key, the provider and the entry all take this one value, so they never disagree about it.
+  const owner = providerOwner(connection, execution.owner);
+  const cacheKey = await providerCacheKey(connection, allowExternalFileAccess, owner);
 
   // Check cache
   const cached = providerCache.get(cacheKey);
@@ -968,9 +1021,13 @@ export async function getOrCreateProvider(
   }
 
   // Create new provider (async - dynamically loads the provider module). Only the derived posture
-  // is handed on, so the handle opens under exactly the posture its key frames; every provider but
-  // DuckDB ignores it (non-admin DuckDB file access).
-  const provider = await createDatabaseProvider(effectiveConnection, options, { allowExternalFileAccess });
+  // and owner are handed on, so the handle opens under exactly what its key frames; every provider but
+  // DuckDB ignores the posture (non-admin DuckDB file access), and an owner opens the pool of that
+  // user's share (spec 9.4).
+  const provider = await createDatabaseProvider(effectiveConnection, options, {
+    allowExternalFileAccess,
+    ...ownerContext(owner, execution),
+  });
   try {
     await connectPhase(() => provider.connect());
   } catch (error) {
@@ -987,6 +1044,7 @@ export async function getOrCreateProvider(
   providerCache.set(cacheKey, {
     provider,
     connectionId: connection.id,
+    owner,
     lastUsed: Date.now(),
     singleWriterFile,
     // Recorded so the single-writer borrow lends a DuckDB handle only to a caller of the same
@@ -1138,7 +1196,8 @@ function assertAgentCredentialForm(connection: DatabaseConnection, provider: Dat
  * also decides which open single-writer handle an `agent-operations` acquisition may borrow:
  * one opened under that same posture, so an admin's agent is grounded from the admin's
  * own editor handle as before, and a requester is never lent a handle wider than its own.
- * Absent means deny, like everywhere else on this channel.
+ * Absent means deny, like everywhere else on this channel. Its owner (spec 9.4) makes the
+ * profiled provider that user's own, as in the writable cache, with the pool of `ownerPoolMax`.
  */
 export async function acquireExecutionProfileProvider(
   connection: DatabaseConnection,
@@ -1150,10 +1209,14 @@ export async function acquireExecutionProfileProvider(
   // The id refusal shares the place for the same reason: the profiled key frames connection.id (#1539).
   assertConnectionIdPresent(connection);
   assertReadOnlyHonoured(connection);
+  assertOwnerPoolHonoured(connection, requester);
   if (!EXECUTION_PROFILES.has(profile)) {
     throw new ExecutionProfileError(`Unknown execution profile: ${String(profile)}`, "UNSUPPORTED_PROFILE");
   }
 
+  // The requester's own provider under governance (spec 9.4), as in the writable cache: `profiledCacheKey` frames
+  // the same owner, and the provider and its entry take it from here.
+  const owner = providerOwner(connection, requester.owner);
   const cacheKey = await profiledCacheKey(connection, profile, requester);
   const cached = profiledProviderCache.get(cacheKey);
   if (cached && cached.provider.config.queryTimeout !== connection.queryTimeout) {
@@ -1237,6 +1300,7 @@ export async function acquireExecutionProfileProvider(
   const provider = await createDatabaseProvider(effectiveConnection, options, {
     ...acquisition.context,
     allowExternalFileAccess: requester.allowExternalFileAccess === true,
+    ...ownerContext(owner, requester),
   });
   if (credential !== null) {
     try {
@@ -1261,7 +1325,7 @@ export async function acquireExecutionProfileProvider(
     throw error;
   }
 
-  profiledProviderCache.set(cacheKey, { provider, lastUsed: Date.now(), connectionId: connection.id });
+  profiledProviderCache.set(cacheKey, { provider, lastUsed: Date.now(), connectionId: connection.id, owner });
   startIdleSweep();
 
   return provider;
