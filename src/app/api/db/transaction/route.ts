@@ -8,6 +8,7 @@ import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
 import { editorProvider } from "@/lib/api/editor-provider";
+import { editorExecutionContext } from "@/lib/api/execution-context";
 import { readBoundParams } from "@/lib/api/bound-params";
 import { rowsWithNonFiniteWords } from "@/lib/non-finite";
 import { countCodeStatements, splitExecutionUnits, type ExecutionUnit } from "@/lib/sql/statement-splitter";
@@ -134,8 +135,12 @@ export async function POST(req: NextRequest) {
 
     // Each database of a server-level connection holds its own transaction (#1530), so ownership is per database.
     const catalog = requestCatalog(body);
+    // Under governance each user's transaction is held on that user's own provider (spec 9.4), so ownership is per
+    // user as well: the key and the record carry the owner the editor context names, the session's identity provider
+    // subject. Without governance there is none, and the key is the one every user of the connection shares.
+    const { owner: subject } = editorExecutionContext(guard.session, connection);
     const provider = await editorProvider(guard.session, connection, catalog);
-    const owned = transactionKey(connection.id, catalog);
+    const owned = transactionKey(connection.id, catalog, subject);
 
     if (!isTransactionProvider(provider)) {
       return NextResponse.json(
@@ -144,9 +149,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // The provider holds ONE transaction per connection id and every Studio user on that
-    // connection drives it, so the caller's right to act on it is decided here, before any
-    // action runs. See src/lib/api/transaction-ownership.ts for what was measured.
+    // The provider holds ONE transaction, and without governance every Studio user who reaches it
+    // drives it, so the caller's right to act on it is decided here, before any action runs. See
+    // src/lib/api/transaction-ownership.ts for what was measured.
     const inTransaction = provider.isInTransaction();
     let owner = transactionOwner(owned);
     if (!inTransaction && owner) {
@@ -156,7 +161,9 @@ export async function POST(req: NextRequest) {
       releaseTransaction(owned);
       owner = null;
     }
-    const ownedByYou = owner !== null && owner.username === guard.session.username;
+    // Under governance the owner is the subject, and the username a display label that can change (spec 3.2 D2).
+    const ownedByYou =
+      owner !== null && (subject === undefined ? owner.username === guard.session.username : owner.subject === subject);
     const heldByAnother = owner !== null && !ownedByYou;
 
     if (owner !== null && !ownedByYou && action !== "status") {
@@ -182,7 +189,7 @@ export async function POST(req: NextRequest) {
         // server that never says whether a transaction is open is refused rather than trusted.
         const opened = await provider.beginTransaction({ requireReportedState: body.requireReportedState === true });
         // After the provider, never before: a begin that throws must leave no owner behind.
-        claimTransaction(owned, guard.session.username);
+        claimTransaction(owned, guard.session.username, subject);
         // `stateReported: false` lets the UI say Studio cannot verify this transaction; `null`
         // is a provider that does not say, which is not a claim either way.
         return NextResponse.json({

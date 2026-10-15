@@ -23,6 +23,7 @@ import {
   READ_ONLY_ENFORCED,
   READS_FILE_ACCESS_POSTURE,
   SHIPPED_DATABASE_TYPES,
+  SINGLE_WRITER_FILE,
 } from "@/lib/db/compatibility";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { isFileBased } from "@/lib/db-ui-config";
@@ -743,5 +744,33 @@ describe("OPENS_SERVER_LEVEL_WITHOUT_DATABASE (spec 7.7)", () => {
       [withDatabase, withString].map((connection) => createDatabaseProvider(connection)),
     );
     expect(providers.map((provider) => provider.getCapabilities().catalogSessions)).toEqual([undefined, undefined]);
+  });
+});
+
+/**
+ * `SINGLE_WRITER_FILE` (per-user providers, spec 9.4): the engines whose provider keeps one handle per file in this
+ * process. The provider cache key leaves the owner out for them, because a provider per user would be a second handle
+ * on one file, and it decides before any provider exists, so it reads this record rather than a type id. Held equal
+ * here to what every shipped provider declares, built from the census connection with nothing connecting.
+ */
+describe("SINGLE_WRITER_FILE (spec 9.4)", () => {
+  test("answers for every shipped type-id and for nothing else", () => {
+    expect(Object.keys(SINGLE_WRITER_FILE).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
+  });
+
+  test("is frozen, so no reader can change an answer at run time", () => {
+    expect(Object.isFrozen(SINGLE_WRITER_FILE)).toBe(true);
+  });
+
+  test("SINGLE_WRITER_FILE matches the engines whose capabilities declare singleWriterFile", async () => {
+    const providers = await Promise.all(
+      SHIPPED_DATABASE_TYPES.map((type) => createDatabaseProvider(CENSUS_CONNECTION[type])),
+    );
+    const measured = SHIPPED_DATABASE_TYPES.filter(
+      (_, index) => providers[index].getCapabilities().singleWriterFile === true,
+    );
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => SINGLE_WRITER_FILE[type])).toEqual(measured);
+    // Vacuity, by name: a record and a census that both found nothing would agree above.
+    expect(measured).toEqual(["duckdb", "libredb"]);
   });
 });

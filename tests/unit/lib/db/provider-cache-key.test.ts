@@ -263,6 +263,61 @@ describe("providerCacheKey frames every public field that decides who a connecti
   });
 });
 
+/**
+ * The owner of a per-user provider (spec 9.4). Under governance every user of a connection gets a provider of their
+ * own, so the key frames the user's identity provider subject as one more length-framed part. Without an owner the
+ * key is today's, byte for byte, which is what keeps an install without governance exactly as it was. An engine that
+ * keeps one handle per file (`SINGLE_WRITER_FILE`) leaves the owner out, because a provider per user would be a
+ * second handle on the file.
+ */
+describe("providerCacheKey frames the owner of a per-user provider (spec 9.4)", () => {
+  const libredb: DatabaseConnection = {
+    id: "store",
+    name: "Store",
+    type: "libredb",
+    database: "/srv/data/store.libredb",
+    createdAt: new Date(0),
+  };
+  const duck: DatabaseConnection = {
+    id: "warehouse",
+    name: "Warehouse",
+    type: "duckdb",
+    database: "/srv/data/warehouse.duckdb",
+    createdAt: new Date(0),
+  };
+  const sqlite: DatabaseConnection = {
+    id: "local",
+    name: "Local",
+    type: "sqlite",
+    database: "/srv/data/local.db",
+    createdAt: new Date(0),
+  };
+
+  test("an owner appends a framed segment, no owner is byte-identical, and duckdb and libredb ignore the owner", async () => {
+    // The key this connection answered before owners existed, pinned byte for byte.
+    const today =
+      "7:cluster64:e2db789313b86b9d6312f61cf097d28ccb162834df6429c22d049c2d64f138c564:a955208a182148bc3f483b9983aab19b4d188b568948e46de77efd445e57d7c210:read-write";
+    expect(await providerCacheKey(base)).toBe(today);
+    expect(await providerCacheKey(base, undefined, undefined)).toBe(today);
+
+    // The owner is the last part, framed like every other one, so two subjects never answer one key.
+    expect(await providerCacheKey(base, undefined, "alice-subject")).toBe(`${today}19:owner:alice-subject`);
+    expect(await providerCacheKey(base, true, "f:ldap-1:bob")).toBe(`${today}18:owner:f:ldap-1:bob`);
+    // After the file-access posture, on an engine that reads one.
+    expect(await providerCacheKey(sqlite, false, "alice-subject")).toBe(
+      `${await providerCacheKey(sqlite, false)}19:owner:alice-subject`,
+    );
+
+    for (const connection of [duck, libredb]) {
+      for (const posture of [true, false]) {
+        expect(await providerCacheKey(connection, posture, "alice-subject")).toBe(
+          await providerCacheKey(connection, posture),
+        );
+      }
+    }
+  });
+});
+
 test("SQLite denied callers cannot reuse an administrator's handle", async () => {
   const connection: DatabaseConnection = {
     id: "sqlite-posture",

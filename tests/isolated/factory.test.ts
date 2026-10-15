@@ -51,7 +51,7 @@ import type { DatabaseProvider, QueryResult } from "@/lib/db/types";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, relative as relativePath } from "node:path";
-import type { DatabaseConnection, ReadOnlyStatementBudget } from "@/lib/db/types";
+import type { DatabaseConnection, EditorExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import { ConnectionError, DatabaseConfigError, ExecutionProfileError, TimeoutError } from "@/lib/db/errors";
 import { READ_ONLY_ENFORCED, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
@@ -132,25 +132,28 @@ const mockPgPool = {
   on: () => {},
 };
 
+/**
+ * The configuration of every pg Pool a PostgreSQL provider built, oldest first, so the pool an owned
+ * provider opens (spec 9.4) is read where the driver receives it. A test that reads it empties it first.
+ */
+const pgPoolConfigs: { min?: number; max?: number; idleTimeoutMillis?: number }[] = [];
+
 // The provider imports `types` from pg for its per-pool parsers, so the mock has to export
 // it. These rows never reach a parser, and the real registry is passed rather than a stub.
 // `Client` likewise: the provider subclasses it to keep server notices (#1401), and the
 // mocked pool never builds one.
 const { types: realPgTypes, Client: realPgClient } = await import("pg");
 
+class MockPgPool {
+  constructor(config: { min?: number; max?: number; idleTimeoutMillis?: number }) {
+    pgPoolConfigs.push(config);
+    return mockPgPool;
+  }
+}
+
 mock.module("pg", () => ({
-  default: {
-    Pool: class {
-      constructor() {
-        return mockPgPool;
-      }
-    },
-  },
-  Pool: class {
-    constructor() {
-      return mockPgPool;
-    }
-  },
+  default: { Pool: MockPgPool },
+  Pool: MockPgPool,
   Client: realPgClient,
   types: realPgTypes,
 }));
@@ -1454,6 +1457,105 @@ describe("getOrCreateProvider cache isolation", () => {
   });
 });
 
+// ─── Per-user providers (spec 9.4) ───────────────────────────────────────────
+//
+// Under governance every user of a connection gets a provider of their own: the execution context
+// names the session's identity provider subject as `owner`, the cache key frames it, and the provider
+// opens a pool of the user's own share, `ownerPoolMax`. A context without an owner is what every
+// install without governance passes, and the tests above pin that nothing about it changed.
+
+describe("per-user providers (spec 9.4)", () => {
+  const owned = (owner: string, ownerPoolMax = 3): EditorExecutionContext => ({ owner, ownerPoolMax });
+
+  test("two owners resolving one connection get two provider instances", async () => {
+    const conn = makeConnection("postgres", { id: "seed:orders" });
+
+    const alice = await getOrCreateProvider(conn, {}, owned("alice-subject"));
+    const bob = await getOrCreateProvider(conn, {}, owned("bob-subject"));
+
+    expect(bob).not.toBe(alice);
+    // The control that the cache is still a cache: the same owner asking again gets its own provider back.
+    expect(await getOrCreateProvider(conn, {}, owned("alice-subject"))).toBe(alice);
+    // And a caller that names no owner gets the provider every such caller shares, apart from both.
+    const shared = await getOrCreateProvider(conn);
+    expect(new Set([alice, bob, shared]).size).toBe(3);
+    expect(getProviderCacheStats()).toEqual({ size: 3, connections: ["seed:orders", "seed:orders", "seed:orders"] });
+  });
+
+  test("an owned provider is created with pool min 0 and max ownerPoolMax", async () => {
+    pgPoolConfigs.length = 0;
+
+    await getOrCreateProvider(makeConnection("postgres", { id: "seed:owned-pool" }), {}, owned("alice-subject", 3));
+    // A caller's own pool options stand, except the size: min and max are the owner's share.
+    await getOrCreateProvider(
+      makeConnection("postgres", { id: "seed:owned-pool-options" }),
+      { pool: { min: 4, max: 50, idleTimeout: 5_000 } },
+      owned("alice-subject", 2),
+    );
+    // Without an owner the pool is the one every provider opened before owners existed.
+    await getOrCreateProvider(makeConnection("postgres", { id: "seed:shared-pool" }));
+
+    expect(pgPoolConfigs.map(({ min, max, idleTimeoutMillis }) => ({ min, max, idleTimeoutMillis }))).toEqual([
+      { min: 0, max: 3, idleTimeoutMillis: 30_000 },
+      { min: 0, max: 2, idleTimeoutMillis: 5_000 },
+      { min: 2, max: 10, idleTimeoutMillis: 30_000 },
+    ]);
+  });
+
+  test("an owner's execution-profile acquisitions are its own too, opened with the owner's pool", async () => {
+    const conn = makeConnection("postgres", { id: "seed:orders-agent" });
+    pgPoolConfigs.length = 0;
+
+    const alice = await acquireExecutionProfileProvider(conn, "agent-read-only", {}, owned("alice-subject"));
+    const bob = await acquireExecutionProfileProvider(conn, "agent-read-only", {}, owned("bob-subject"));
+
+    expect(bob).not.toBe(alice);
+    expect(await acquireExecutionProfileProvider(conn, "agent-read-only", {}, owned("alice-subject"))).toBe(alice);
+    expect(pgPoolConfigs.map(({ min, max }) => ({ min, max }))).toEqual([
+      { min: 0, max: 3 },
+      { min: 0, max: 3 },
+    ]);
+    // The profiled key is the writable key with the profile framed onto it, so the owner is its last part as well.
+    expect(await profiledCacheKey(conn, "agent-read-only", owned("alice-subject"))).toBe(
+      `${await profiledCacheKey(conn, "agent-read-only")}19:owner:alice-subject`,
+    );
+  });
+
+  test.each([undefined, 0, -1, 2.5, Number.NaN, "3"])(
+    "an owner with ownerPoolMax %p is refused before anything is built or dialled",
+    async (ownerPoolMax) => {
+      // A pool size pg cannot honour would be replaced or wedged silently: 0 and NaN open its default of 10, and a
+      // negative size never hands out a connection. So an owner states a whole size from 1, or nothing is opened.
+      const conn = makeConnection("postgres", {
+        id: "seed:owned-bad-pool",
+        sshTunnel: {
+          enabled: true,
+          host: "bastion.example.com",
+          port: 22,
+          username: "admin",
+          authMethod: "password",
+          password: "secret",
+        },
+      });
+      const execution = { owner: "alice-subject", ownerPoolMax } as EditorExecutionContext;
+
+      const refusals = await Promise.all([
+        getOrCreateProvider(conn, {}, execution).catch((error: unknown) => error),
+        acquireExecutionProfileProvider(conn, "agent-read-only", {}, execution).catch((error: unknown) => error),
+        createDatabaseProvider(conn, {}, execution).catch((error: unknown) => error),
+      ]);
+
+      for (const refusal of refusals) {
+        expect(refusal).toBeInstanceOf(DatabaseConfigError);
+        expect((refusal as Error).message).toContain("ownerPoolMax");
+      }
+      expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+      expect(getProviderCacheStats().size).toBe(0);
+      expect(getExecutionProfileCacheStats().size).toBe(0);
+    },
+  );
+});
+
 // ─── removeProvider ────────────────────────────────────────────────────────
 
 describe("removeProvider", () => {
@@ -2617,6 +2719,18 @@ describe("single-writer file reuse", () => {
     expect(findOpenSingleWriterProvider(dotted)).toBe(writable);
     expect(findOpenSingleWriterProvider(relative)).toBe(writable);
     await removeProvider(held.id);
+  });
+
+  test("a single-writer file keeps one handle for every owner, because a provider per user would be a second handle", async () => {
+    // Per-user providers stop at the engines that keep one handle per file (spec 9.4): a second owner's provider
+    // would be a second handle on the file, which this engine refuses (the first test of this group) and DuckDB
+    // corrupts. So the owner is left out of the key, and every owner is served the one open handle.
+    const conn = libredbConn();
+    const alice = await getOrCreateProvider(conn, {}, { owner: "alice-subject", ownerPoolMax: 3 });
+
+    expect(await getOrCreateProvider(conn, {}, { owner: "bob-subject", ownerPoolMax: 3 })).toBe(alice);
+    expect(await getOrCreateProvider(conn)).toBe(alice);
+    expect(getProviderCacheStats().size).toBe(1);
   });
 
   test("a connection with no file path holds no file, and matches nothing", async () => {

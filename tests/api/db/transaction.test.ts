@@ -1,4 +1,4 @@
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
@@ -41,11 +41,13 @@ const mockTxProvider = {
 // Non-transaction provider (no transaction methods)
 const mockNonTxProvider = createMockProvider();
 
-const mockGetOrCreateProvider = mock(async () => mockTxProvider as never);
+// Typed with the factory's arguments, so a test can hand each owner of a connection a provider of its own.
+const mockGetOrCreateProvider = mock<(...args: unknown[]) => Promise<never>>(async () => mockTxProvider as never);
 
-const mockGetSession = mock(
-  async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
-);
+/** A session as `getSession` answers it; under governance it carries the identity provider subject too. */
+type MockSession = { role: string; username: string; idpSubject?: string };
+
+const mockGetSession = mock(async (): Promise<MockSession | null> => ({ role: "admin", username: "admin" }));
 
 // ─── Mock auth + seed resolution BEFORE importing route ─────────────────────
 mock.module("@/lib/auth", () => ({
@@ -102,6 +104,7 @@ mock.module("@/lib/db", () => ({
 
 // ─── Import route handler AFTER mocking ─────────────────────────────────────
 const { POST } = await import("@/app/api/db/transaction/route");
+const { transactionKey } = await import("@/lib/api/transaction-ownership");
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 const validConnection = {
@@ -1031,5 +1034,142 @@ describe("POST /api/db/transaction on a server-level connection (#1530)", () => 
         await send({ action: "rollback", catalog });
       }
     }
+  });
+});
+
+// ─── Per-user transactions under governance (spec 3.2 D7, 9.4) ──────────────
+//
+// Under governance every user of a connection has a provider of their own, so a transaction is one
+// user's: the factory keys the provider by the owner the execution context names, the session's
+// identity provider subject, and the ownership record is keyed and owned by that subject too. Without
+// it, a user whose own provider holds no transaction would drop another user's record on reconcile, and
+// that user's transaction would become anyone's to end.
+describe("POST /api/db/transaction under governance (spec 9.4)", () => {
+  let savedSource: string | undefined;
+
+  beforeEach(() => {
+    savedSource = process.env.GOVERNANCE_SOURCE;
+    process.env.GOVERNANCE_SOURCE = "postgres";
+    clearRateLimitState();
+  });
+
+  afterEach(() => {
+    if (savedSource === undefined) delete process.env.GOVERNANCE_SOURCE;
+    else process.env.GOVERNANCE_SOURCE = savedSource;
+    mockGetOrCreateProvider.mockImplementation(async () => mockTxProvider as never);
+    mockGetSession.mockImplementation(async () => ({ role: "admin", username: "admin" }));
+  });
+
+  /** A provider double whose transaction state changes, as each owner's own provider would. */
+  function transactionProvider() {
+    let open = false;
+    return {
+      ...baseMockProvider,
+      beginTransaction: mock(async () => {
+        open = true;
+      }),
+      commitTransaction: mock(async () => {
+        open = false;
+      }),
+      rollbackTransaction: mock(async () => {
+        open = false;
+      }),
+      isInTransaction: mock(() => open),
+      queryInTransaction: mock(async () => ({ rows: [], fields: [], rowCount: 0, executionTime: 1 })),
+    };
+  }
+
+  /**
+   * The factory as it keys providers: one per owner the execution context names, and one shared by every caller
+   * that names none, which is every caller without governance.
+   */
+  function providerPerOwner() {
+    const shared = transactionProvider();
+    const owned = new Map<string, ReturnType<typeof transactionProvider>>();
+    mockGetOrCreateProvider.mockImplementation(async (...args: unknown[]) => {
+      const owner = (args[2] as { owner?: string } | undefined)?.owner;
+      if (owner === undefined) return shared as never;
+      if (!owned.has(owner)) owned.set(owner, transactionProvider());
+      return owned.get(owner) as never;
+    });
+    return { shared, of: (owner: string) => owned.get(owner) };
+  }
+
+  function as(username: string, idpSubject: string) {
+    mockGetSession.mockImplementation(async () => ({ role: "user", username, idpSubject }));
+  }
+
+  function send(body: Record<string, unknown>) {
+    return POST(
+      createMockRequest("/api/db/transaction", {
+        method: "POST",
+        body: { connection: { ...validConnection, id: "seed:orders" }, ...body },
+      }) as never,
+    );
+  }
+
+  test("governance: user B neither sees nor joins user A's open transaction and can begin its own", async () => {
+    const providers = providerPerOwner();
+
+    as("alice@example.com", "alice-subject");
+    expect((await send({ action: "begin" })).status).toBe(200);
+
+    // B does not see A's transaction: nothing is open for B, and nothing is held by anyone else.
+    as("bob@example.com", "bob-subject");
+    expect(await parseResponseJSON<Record<string, unknown>>(await send({ action: "status" }))).toEqual({
+      inTransaction: false,
+      ownedByYou: false,
+      heldByAnotherSession: false,
+      startedAt: null,
+    });
+    // Nor joins it: B's statement runs on B's own provider, never inside A's transaction.
+    expect((await send({ action: "query", sql: "SELECT 1" })).status).toBe(200);
+    // And B begins a transaction of its own.
+    expect((await send({ action: "begin" })).status).toBe(200);
+    expect(providers.of("bob-subject")?.beginTransaction).toHaveBeenCalledTimes(1);
+
+    // A's transaction is still A's, untouched by anything B did.
+    as("alice@example.com", "alice-subject");
+    expect(await parseResponseJSON(await send({ action: "status" }))).toMatchObject({
+      inTransaction: true,
+      ownedByYou: true,
+      heldByAnotherSession: false,
+    });
+    expect((await send({ action: "commit" })).status).toBe(200);
+    expect(providers.of("alice-subject")?.queryInTransaction).not.toHaveBeenCalled();
+    expect(providers.of("alice-subject")?.commitTransaction).toHaveBeenCalledTimes(1);
+    expect(providers.of("bob-subject")?.isInTransaction()).toBe(true);
+    // No request reached the provider every caller shares.
+    expect(providers.shared.beginTransaction).not.toHaveBeenCalled();
+
+    as("bob@example.com", "bob-subject");
+    expect((await send({ action: "rollback" })).status).toBe(200);
+  });
+
+  test("governance: the transaction belongs to the subject, so a session whose username changed keeps it", async () => {
+    // Under governance the subject names the user and the username is a display label (spec 3.2 D2): an email
+    // changed in the identity provider must not lock its owner out of the transaction it opened.
+    const providers = providerPerOwner();
+
+    as("alice@example.com", "alice-subject");
+    expect((await send({ action: "begin" })).status).toBe(200);
+
+    as("alice.smith@example.org", "alice-subject");
+    expect(await parseResponseJSON(await send({ action: "status" }))).toMatchObject({
+      inTransaction: true,
+      ownedByYou: true,
+      heldByAnotherSession: false,
+    });
+    expect((await send({ action: "rollback" })).status).toBe(200);
+    expect(providers.of("alice-subject")?.rollbackTransaction).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("transactionKey (spec 9.4)", () => {
+  test("without an owner the key is byte-identical, and an owner is framed into it", () => {
+    expect(transactionKey("seed:orders")).toBe("seed:orders");
+    expect(transactionKey("seed:orders", "shop")).toBe('["seed:orders","shop"]');
+    expect(transactionKey("seed:orders", undefined, "alice-subject")).toBe('["seed:orders",null,"alice-subject"]');
+    expect(transactionKey("seed:orders", "shop", "alice-subject")).toBe('["seed:orders","shop","alice-subject"]');
   });
 });

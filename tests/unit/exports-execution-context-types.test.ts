@@ -49,3 +49,35 @@ describe("the DuckDB file-access opt-in a package consumer can name (non-admin D
     ]);
   });
 });
+
+/**
+ * Per-user providers (spec 9.4). Studio names the owner only under governance, and an embedder that keeps a provider
+ * per user names it the same way: `owner` and `ownerPoolMax` are optional fields of both published context types, and
+ * the assignments below are checked by `bun run typecheck`.
+ */
+describe("the owner of a per-user provider a package consumer can name (spec 9.4)", () => {
+  test("EditorExecutionContext publishes owner and ownerPoolMax as optional fields", async () => {
+    const alice: EditorExecutionContext = { allowExternalFileAccess: true, owner: "alice-subject", ownerPoolMax: 3 };
+    const bob: EditorExecutionContext = { allowExternalFileAccess: true, owner: "bob-subject", ownerPoolMax: 3 };
+    const shared: EditorExecutionContext = { allowExternalFileAccess: true };
+    const built: ProviderExecutionContext = { owner: "alice-subject", ownerPoolMax: 3 };
+    const connection: DatabaseConnection = {
+      id: "embedder-owned",
+      name: "embedder-owned",
+      type: "sqlite",
+      database: ":memory:",
+      createdAt: new Date(0),
+    };
+
+    const providers = [
+      await getOrCreateProvider(connection, {}, alice),
+      await getOrCreateProvider(connection, {}, bob),
+      await getOrCreateProvider(connection, {}, shared),
+    ];
+
+    // One provider per owner, and the one without an owner shared apart from both.
+    expect(new Set(providers).size).toBe(3);
+    expect(await getOrCreateProvider(connection, {}, alice)).toBe(providers[0]);
+    expect((await createDatabaseProvider(connection, {}, built)).type).toBe("sqlite");
+  });
+});

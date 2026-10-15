@@ -4,16 +4,26 @@
  * The provider's transaction state (`txActive` / `txClient` in
  * `src/lib/db/providers/sql/postgres.ts`, and the equivalents in the mysql, mssql and oracle
  * providers) lives on the provider instance, and `getOrCreateProvider` caches one instance per
- * `connection.id`. Every Studio user who reaches that connection therefore drives ONE
- * transaction. Measured on PostgreSQL 18.4 on 2026-09-13, through the product's own route, two
+ * connection, server and credentials (`providerCacheKey`), not per user. Every Studio user who
+ * reaches a connection with the same credentials therefore drives ONE transaction. Measured on
+ * PostgreSQL 18.4 on 2026-09-13, through the product's own route, two
  * sessions on one connection id: `user` opened a transaction and inserted a row, `admin` was
  * refused its own `begin` with HTTP 400 "Transaction already active", and was then allowed to
  * `rollback` with HTTP 200. The engine had zero rows afterwards and `user`'s own `commit` came
  * back "No active transaction". A second Studio user destroyed the first one's uncommitted work.
  *
+ * UNDER GOVERNANCE EVERY USER HAS A PROVIDER OF THEIR OWN (spec 9.4), and so a transaction of their
+ * own: the provider's cache key frames the owner the execution context names, the session's
+ * identity provider subject, and `transactionKey` frames the same owner, so one user neither sees
+ * nor joins another user's transaction, and every record under such a key is that user's. Both keys
+ * gain the owner together (spec 3.2 D7): a record shared across users' own providers would let a
+ * user whose provider holds no transaction drop another user's record on the reconcile below.
+ *
  * SESSION means the authenticated account, `UserPayload.username` from the JWT the route already
  * has through `guardRoute`. That is the only stable identity field in the payload - the comment in
- * `require-session.ts` says so, and the rate limiter is keyed on it for the same reason. There is
+ * `require-session.ts` says so, and the rate limiter is keyed on it for the same reason. Under
+ * governance it is the identity provider subject instead, which the record keeps beside the
+ * username, because there the username is a display label that can change (spec 3.2 D2). There is
  * no per-tab or per-browser identifier anywhere in the token or the cookie, so two tabs of ONE
  * account share a transaction, deliberately: that is the same person, and the alternative would be
  * inventing an id the product does not have.
@@ -45,6 +55,12 @@
 interface TransactionOwner {
   /** `UserPayload.username` of the session that ran the successful `begin`. */
   username: string;
+  /**
+   * Under governance, the identity provider subject of that session, the owner its key frames: the
+   * identity the route compares, since a username is only a display label there. Absent without
+   * governance.
+   */
+  subject?: string;
   /** When the transaction was opened, for the refusal message and for `status`. */
   startedAt: number;
   /** When the owner last acted on it. The idle lease below is measured from here. */
@@ -71,10 +87,13 @@ export function transactionOwner(connectionId: string): TransactionOwner | null 
   return owner;
 }
 
-/** Record `username` as the owner. Called only after `beginTransaction()` has actually succeeded. */
-export function claimTransaction(connectionId: string, username: string): void {
+/**
+ * Record `username`, and under governance its identity provider `subject`, as the owner. Called only after
+ * `beginTransaction()` has actually succeeded.
+ */
+export function claimTransaction(connectionId: string, username: string, subject?: string): void {
   const now = Date.now();
-  owners.set(connectionId, { username, startedAt: now, lastActiveAt: now });
+  owners.set(connectionId, { username, subject, startedAt: now, lastActiveAt: now });
 }
 
 /** Extend the owner's lease after an authorized action. A no-op when there is no record. */
@@ -88,7 +107,12 @@ export function releaseTransaction(connectionId: string): void {
   owners.delete(connectionId);
 }
 
-/** A transaction's owner key: per database on a server-level connection, whose databases each hold one (#1530). */
-export function transactionKey(connectionId: string, catalog?: string): string {
+/**
+ * A transaction's owner key: per database on a server-level connection, whose databases each hold one (#1530), and
+ * under governance per owner, the identity provider subject whose own provider holds it (spec 9.4). Without an owner
+ * the key is byte-identical to the key before owners existed.
+ */
+export function transactionKey(connectionId: string, catalog?: string, owner?: string): string {
+  if (owner !== undefined) return JSON.stringify([connectionId, catalog ?? null, owner]);
   return catalog === undefined ? connectionId : JSON.stringify([connectionId, catalog]);
 }
