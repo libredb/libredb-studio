@@ -394,6 +394,28 @@ describe("which database a connection would be read from", () => {
     expect(connectionResolutionKey({ ...base, port: 5433 })).not.toBe(same);
   });
 
+  test("a register map moves the key, because the panels keyed on it hold the previous map's tree", () => {
+    // Modbus's map is NOT a target and NOT a credential, so the summary criterion - which database,
+    // and as whom - does not reach it: the same device answers, to the same nobody, either way. The
+    // reason it is `resolution` is what READS this key. `use-provider-metadata` makes it part of
+    // `readKey`, `use-connection-pulse` keys the pulse on it and `SchemaDiff` keys its snapshot on
+    // it, so a map that changed while the key did not would leave the previous map's points drawn.
+    //
+    // And the map DEFINES the names rather than filtering them, which is why Kubernetes' namespace
+    // list is `cosmetic` and this is not: `volts` is one address under one document and another
+    // under the next, so the two are not two views of one answer.
+    const same = connectionResolutionKey({ ...base, type: "modbus" });
+    const one = JSON.stringify([{ name: "volts", unitId: 1, table: "holding_register", address: 100, type: "uint16" }]);
+    const other = JSON.stringify([{ name: "volts", unitId: 3, table: "coil", address: 5, type: "bool" }]);
+
+    expect(connectionResolutionKey({ ...base, type: "modbus", registerMap: one })).not.toBe(same);
+    // The same NAME over a different address is the case the key has to separate, not merely a
+    // different document: two maps of equal length naming one point each.
+    expect(connectionResolutionKey({ ...base, type: "modbus", registerMap: other })).not.toBe(
+      connectionResolutionKey({ ...base, type: "modbus", registerMap: one }),
+    );
+  });
+
   test("a container present on one side only is a difference, and so is a field inside it", () => {
     // The nested tables are read the same way as the top one, and an absent container is
     // not an empty one: adding SSL changes where and as whom the connection connects.

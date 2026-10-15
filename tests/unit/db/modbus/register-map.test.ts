@@ -167,6 +167,44 @@ describe("type and table have to agree", () => {
  * nothing checked how many there were. Now the document is typed into the dialog, stored with the
  * connection and sent with every read, so its size is one of the connection's own rules.
  */
+/**
+ * The figure itself, written out, for the reason the neighbours are written out: `MAX_ADU_BYTES` is
+ * pinned at 260 and `MAX_IDENTIFICATION_OBJECT_BYTES` at 244. Those two DERIVE from the protocol,
+ * so a change to either would be a change to Modbus. This one was CHOSEN from a measured range,
+ * which is the kind of number that needs its own declaration: nothing else in the suite notices if
+ * it moves, so without this case the next hand could multiply it sixteen-fold and stay green.
+ */
+describe("the bound's figure is declared, not inferred", () => {
+  test("a register map carries at most 65536 bytes", () => {
+    expect(MAX_REGISTER_MAP_BYTES).toBe(65536);
+  });
+
+  test("the figure leaves room for far more points than a device names", () => {
+    // The two shapes it was measured against: the provider's own example map, and a point with
+    // every optional field set. The claim is the headroom, not the arithmetic - so both ends are
+    // computed from real documents rather than restated as constants.
+    const plain = JSON.stringify([{ name: "v", unitId: 1, table: "holding_register", address: 10, type: "uint16" }]);
+    const widest = JSON.stringify([
+      {
+        name: "a".repeat(40),
+        unitId: 255,
+        table: "holding_register",
+        address: 65535,
+        type: "float64",
+        registers: 4,
+        wordOrder: "low_first",
+        byteOrder: "low_first",
+        scale: 0.001,
+        offset: -100,
+        unit: "kWh",
+      },
+    ]);
+
+    expect(Math.floor(MAX_REGISTER_MAP_BYTES / Buffer.byteLength(widest, "utf8"))).toBeGreaterThan(200);
+    expect(Math.floor(MAX_REGISTER_MAP_BYTES / Buffer.byteLength(plain, "utf8"))).toBeGreaterThan(500);
+  });
+});
+
 describe("the whole document is bounded, not only each point", () => {
   /** A map of `count` points, each a different name so none is a duplicate. */
   const many = (count: number) =>

@@ -610,12 +610,17 @@ export interface DatabaseConnection {
    * `connection-secrets.ts`, which would mask the map in the dialog and store it as a credential,
    * and a reader cannot correct a document they cannot see.
    *
-   * WHY `resolution` IN `CONNECTION_RELEVANCE`, where Kubernetes' namespace list is `cosmetic`.
-   * The namespace list FILTERS names the cluster itself defines, so a copy differing in it still
-   * reaches the same objects. A register map DEFINES the names: `volts` is unit 1, holding register
-   * 100 under one map and can be unit 3, coil 5 under another, so a read keyed to a connection
-   * whose map has changed would match a name to an address it was not taken from. That is the
-   * silent mismatch `connectionResolutionKey` exists to prevent.
+   * WHY `resolution` IN `CONNECTION_RELEVANCE`, and it is NOT the summary criterion there. That
+   * record's docblock asks which database a connection reaches and as whom, and this field answers
+   * neither: the same device answers, and Modbus TCP authenticates nobody. The reason is what READS
+   * the key. `use-provider-metadata` makes `connectionResolutionKey` part of its `readKey`,
+   * `use-connection-pulse` keys the pulse on it and `SchemaDiff` keys its snapshot on it, so a map
+   * that changed while the key did not would leave the PREVIOUS map's points drawn on screen.
+   *
+   * And the map DEFINES the names rather than filtering them, which is why Kubernetes' namespace
+   * list is `cosmetic` and this is not: that list narrows names the cluster itself defines, while
+   * `volts` is unit 1, holding register 100 under one document and can be unit 3, coil 5 under the
+   * next. Two such maps are not two views of one answer.
    *
    * Bounded by `MAX_REGISTER_MAP_BYTES` at the parser rather than here, so a seed file and a
    * dialog answer the same way. Read by no other engine.
