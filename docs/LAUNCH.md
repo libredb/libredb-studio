@@ -46,6 +46,10 @@ In that mode the identity provider manages the accounts and no session is checke
 In that mode, and while the configuration is broken, the `/launch` page answers before any script runs, so the token stays in the address bar and the browser history.
 That is harmless: the fragment never reaches a server, the token is never spent and Studio refuses it for as long as that answer holds, it expires a minute after the platform minted it, and its audience names only this Studio, so whoever reads it from that browser within the minute holds no more than the link itself gave.
 
+Governance mode (`GOVERNANCE_SOURCE`, see [GOVERNANCE.md](./GOVERNANCE.md)) switches launch sign-in off, whatever the three variables and `NEXT_PUBLIC_AUTH_PROVIDER` say: the identity provider is the only way in.
+The route answers `404` with `{"success": false, "message": "Launch sign-in is not enabled on this server."}` and the `/launch` page answers `404` with the same sentence, both before the launch configuration is read, as if launch sign-in did not exist.
+The boot check of governance mode refuses a set `LAUNCH_TOKEN_SECRET` as well, and the `404` stands even where that check did not run.
+
 A platform that deploys Studio can set all three itself at deploy time: a secret it generates at random for that Studio and keeps, the Studio's own id on the platform as the audience, and the platform's name as the issuer, so nothing has to be set by hand.
 Generate the secret at random rather than derive it from values the platform's users can see: anyone who can compute the secret can sign in to Studio as anyone, with either role.
 
@@ -163,12 +167,12 @@ Every answer carries `Cache-Control: no-store`.
 | `400` | `{"success": false, "message": "Invalid request body"}` | The body is not JSON or carries no non-empty string `token` |
 | `401` | `{"success": false, "message": "<reason>"}` | The token is refused, or the account is disabled |
 | `403` | `{"success": false, "message": "This email belongs to a Studio account that a launch link cannot sign in to. Sign in with that account's password, or ask a Studio admin."}` | The email is `ADMIN_EMAIL`, or with `STORAGE_PROVIDER=local` `USER_EMAIL` while `USER_PASSWORD` is set; in the server store, the account has a password, an authenticator or a passkey, or a launch created it for another `iss` or `sub` |
-| `404` | `{"success": false, "message": "Launch sign-in is not enabled on this server."}` | `LAUNCH_TOKEN_SECRET` is unset or empty and `NEXT_PUBLIC_AUTH_PROVIDER` is not `oidc` |
+| `404` | `{"success": false, "message": "Launch sign-in is not enabled on this server."}` | `LAUNCH_TOKEN_SECRET` is unset or empty and `NEXT_PUBLIC_AUTH_PROVIDER` is not `oidc`, or governance mode is on |
 | `409` | `{"success": false, "message": "This browser is already signed in to Studio as <current>, and this launch link is for <email>. Sign out, then open Studio again from the platform to continue as <email>.", "signedInAs": "<current>", "launchFor": "<email>"}` | The browser holds a valid session for another account; that session stays and the token is spent |
 | `409` | `{"success": false, "message": "<reason>"}` | The role change would demote the last enabled admin, or the account changed at the same moment |
 | `413` | `{"success": false, "message": "Request body is too large"}` | The body is over 8192 bytes |
 | `429` | `{"error": "Too many requests. Try again in <seconds> seconds.", "code": "RATE_LIMITED", "statusCode": 429, "retryable": true}` with `Retry-After` | The address spent its failed sign-in budget |
-| `503` | `{"success": false, "message": "<problem>"}` | `NEXT_PUBLIC_AUTH_PROVIDER=oidc`, the launch variables are misconfigured, the server cannot sign sessions, or more launches arrived in the last minute than the process can remember |
+| `503` | `{"success": false, "message": "<problem>"}` | `NEXT_PUBLIC_AUTH_PROVIDER=oidc` outside governance mode, the launch variables are misconfigured, the server cannot sign sessions, or more launches arrived in the last minute than the process can remember |
 
 Every refusal and every malformed body spends one unit of the `login_client` budget, the per-address budget of the password sign-in, and it is checked before the body is read.
 A successful launch clears the address's failures.
@@ -209,7 +213,7 @@ The token itself is never logged or recorded.
 | "This launch link is not valid yet: the clocks of the platform and this Studio disagree." | Studio's clock is behind the platform's by more than 5 seconds; synchronise both with NTP |
 | "This launch link has already been used." | The link was opened twice, for example by reloading the page or by a link scanner; open Studio again from the platform |
 | "This launch link was issued for a different Studio." | `LAUNCH_TOKEN_AUDIENCE` differs from the platform's name for this Studio |
-| "Launch sign-in is not enabled on this server." | `LAUNCH_TOKEN_SECRET` is not set in Studio's environment |
+| "Launch sign-in is not enabled on this server." | `LAUNCH_TOKEN_SECRET` is not set in Studio's environment, or Studio runs in governance mode, which has no launch sign-in; sign in through the identity provider |
 | "This account is disabled in Studio." | An admin disabled the account under Admin, Accounts |
 | "This email belongs to a Studio account that a launch link cannot sign in to." | Studio already has an account with that email that signs in with a password, or that a launch created for another person on the platform; sign in to it with its password, or have an admin delete it so a launch can create the person's own |
 | "You are already signed in to Studio" | The browser is signed in as another account; sign out on that page, then open Studio again from the platform |

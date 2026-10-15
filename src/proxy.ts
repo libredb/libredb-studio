@@ -14,6 +14,7 @@ import { MCP_PATH } from "@/lib/mcp/config";
 import { mcpOriginHostRefusal } from "@/lib/mcp/origin-policy";
 import { getJwtSecret } from "@/lib/config/auth-env";
 import { readOidcAutoRedirect } from "@/lib/config/oidc-auto-redirect";
+import { governanceEnabled } from "@/lib/governance/config";
 import { withSecurityHeaders } from "@/lib/security/config";
 import { RETURN_PATH_PARAM, safeReturnPath, sessionRequiredBody, signInPath } from "@/lib/api/session-ended";
 
@@ -42,6 +43,17 @@ const WORKSPACE_OWNER_MISMATCH_BODY = {
   error: "This page's workspace belongs to a different account than the one signed in. Reload the page.",
   code: ApiErrorCode.WORKSPACE_OWNER_MISMATCH,
 };
+
+/** The sentence POST /api/auth/launch answers while launch sign-in is off. */
+const LAUNCH_NOT_ENABLED = "Launch sign-in is not enabled on this server.";
+
+/** What the /launch page answers instead of loading: plain text, never cached. */
+function launchPageAnswer(text: string, status: number): NextResponse {
+  return new NextResponse(text, {
+    status,
+    headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
+  });
+}
 
 /** The account a workspace owner header names, or null when it is not a valid encoding. */
 function decodedOwner(value: string): string | null {
@@ -142,22 +154,17 @@ export async function proxy(request: NextRequest) {
     return withSecurityHeaders(NextResponse.next());
   }
 
-  // Under OIDC, or with a broken launch configuration, no launch can sign anyone in (docs/LAUNCH.md), so the
-  // page answers what POST /api/auth/launch answers instead of loading a form that can only fail. Kept above
-  // the public list, which tests/api/proxy.test.ts pins literal by literal. This answer leaves the token in the
-  // address bar and the history entry, which is harmless: the fragment never reaches a server, the token is
-  // unspent and refused here while this answer holds, it expires a minute after minting, and its audience
-  // names only this Studio.
+  // Under governance, under OIDC, or with a broken launch configuration, no launch can sign anyone in
+  // (docs/LAUNCH.md), so the page answers what POST /api/auth/launch answers instead of loading a form that can
+  // only fail. Governance mode has no launch sign-in at all, so it answers 404 before the launch configuration is
+  // read, as if launch sign-in did not exist. Kept above the public list, which tests/api/proxy.test.ts pins
+  // literal by literal. This answer leaves the token in the address bar and the history entry, which is harmless:
+  // the fragment never reaches a server, the token is unspent and refused here while this answer holds, it
+  // expires a minute after minting, and its audience names only this Studio.
   if (pathname === "/launch") {
+    if (governanceEnabled()) return withSecurityHeaders(launchPageAnswer(LAUNCH_NOT_ENABLED, 404));
     const launch = readLaunchConfig();
-    if (launch.state === "misconfigured") {
-      return withSecurityHeaders(
-        new NextResponse(launch.problem, {
-          status: 503,
-          headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
-        }),
-      );
-    }
+    if (launch.state === "misconfigured") return withSecurityHeaders(launchPageAnswer(launch.problem, 503));
   }
 
   // Allow public routes

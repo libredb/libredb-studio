@@ -30,6 +30,7 @@ const VARS = [
   "LAUNCH_TOKEN_ISSUER",
   "STORAGE_PROVIDER",
   "NEXT_PUBLIC_AUTH_PROVIDER",
+  "GOVERNANCE_SOURCE",
 ] as const;
 const saved: Record<string, string | undefined> = {};
 const NOT_LINKED =
@@ -169,6 +170,33 @@ describe("POST /api/auth/launch configuration", () => {
         success: false,
         message: "Launch sign-in is not available when NEXT_PUBLIC_AUTH_PROVIDER=oidc.",
       });
+    } finally {
+      errorSpy.mockRestore();
+    }
+    expect(cookieJar.get("auth-token")).toBeUndefined();
+    expect(routeEvents()).toEqual([]);
+  });
+
+  // Governance mode has no launch sign-in (docs/GOVERNANCE.md). The launch variables are set after boot, so the boot
+  // refusal of LAUNCH_TOKEN_SECRET never ran, and the route answers as if launch sign-in were off, before the launch
+  // configuration is read: the 503 of the OIDC rule is never reached, and nothing is logged, audited or signed in.
+  test("POST /api/auth/launch answers 404 under governance", async () => {
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      for (const [source, provider] of [
+        ["postgres", "oidc"],
+        ["postgress", "local"],
+      ] as const) {
+        process.env.GOVERNANCE_SOURCE = source;
+        process.env.NEXT_PUBLIC_AUTH_PROVIDER = provider;
+        const response = await send({ token: await mint() }, freshAddress());
+        expect(response.status).toBe(404);
+        expect(await response.json()).toEqual({
+          success: false,
+          message: "Launch sign-in is not enabled on this server.",
+        });
+      }
+      expect(errorSpy).not.toHaveBeenCalled();
     } finally {
       errorSpy.mockRestore();
     }

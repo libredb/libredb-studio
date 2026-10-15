@@ -7,6 +7,7 @@ import { consumeRateLimit, resetRateLimit } from "@/lib/api/rate-limit";
 import { type AuditEvent, type AuditReason, emitAuditEvent } from "@/lib/audit";
 import { getSession, login } from "@/lib/auth";
 import { AuthConfigError } from "@/lib/auth-errors";
+import { governanceEnabled } from "@/lib/governance/config";
 import { isRecord } from "@/lib/is-record";
 import { readLaunchConfig } from "@/lib/launch/config";
 import { type LaunchClaims, LaunchTokenError, verifyLaunchToken } from "@/lib/launch/verify";
@@ -80,6 +81,9 @@ function accountRefusal(status: number): AuditReason {
  */
 export async function POST(request: Request) {
   const ip = clientAddress(request);
+  // Governance mode has no launch sign-in (docs/GOVERNANCE.md): the route answers as if launch sign-in were off,
+  // before the launch configuration is read, whatever LAUNCH_TOKEN_SECRET says.
+  if (governanceEnabled()) return answer({ success: false, message: NOT_ENABLED }, 404);
   const config = readLaunchConfig();
   // Off answers as if the route did not exist, before any budget is checked or any body read, so a
   // deployment that never configured launch sign-in behaves exactly as before. Misconfigured includes

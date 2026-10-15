@@ -99,6 +99,28 @@ describe("POST /api/agent/classify", () => {
     expect(mockClassify).not.toHaveBeenCalled();
   });
 
+  /*
+    Governance mode holds the agent off in this version (docs/GOVERNANCE.md): the same
+    404 as the operator's off-switch, after the session check and before the body or
+    the connection is read, with a model configured.
+  */
+  test("governance: classify answers 404", async () => {
+    const saved = process.env.GOVERNANCE_SOURCE;
+    process.env.GOVERNANCE_SOURCE = "postgres";
+    try {
+      const res = await POST(classifyRequest({ objective: "why is checkout slow", connectionId: "seed:sales" }));
+      const body = await parseResponseJSON<{ error: string }>(res);
+
+      expect(res.status).toBe(404);
+      expect(body.error).toBe("The agent runtime is not enabled on this server");
+      expect(mockResolveConnection).not.toHaveBeenCalled();
+      expect(mockClassify).not.toHaveBeenCalled();
+    } finally {
+      if (saved === undefined) delete process.env.GOVERNANCE_SOURCE;
+      else process.env.GOVERNANCE_SOURCE = saved;
+    }
+  });
+
   test("a body that is not JSON is refused", async () => {
     const res = await POST(
       new Request("http://localhost/api/agent/classify", { method: "POST", body: "not json at all" }),

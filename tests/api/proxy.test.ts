@@ -176,6 +176,52 @@ describe("proxy", () => {
         resetLaunchConfigWarning();
       }
     });
+
+    // Governance mode has no launch sign-in (docs/GOVERNANCE.md), so the page answers as if launch sign-in did not
+    // exist, before the launch configuration is read, with or without a session and whatever the launch variables say.
+    // An unknown GOVERNANCE_SOURCE counts as on, so the page fails closed under a typo too.
+    test("/launch answers 404 under governance", async () => {
+      const names = [
+        "GOVERNANCE_SOURCE",
+        "NEXT_PUBLIC_AUTH_PROVIDER",
+        "LAUNCH_TOKEN_SECRET",
+        "LAUNCH_TOKEN_AUDIENCE",
+        "LAUNCH_TOKEN_ISSUER",
+      ] as const;
+      const saved = names.map((name) => process.env[name]);
+      process.env.LAUNCH_TOKEN_SECRET = "l".repeat(48);
+      process.env.LAUNCH_TOKEN_AUDIENCE = "studio-1";
+      process.env.LAUNCH_TOKEN_ISSUER = "platform";
+      const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+      try {
+        for (const [source, provider] of [
+          ["postgres", "oidc"],
+          ["postgress", "local"],
+        ] as const) {
+          process.env.GOVERNANCE_SOURCE = source;
+          process.env.NEXT_PUBLIC_AUTH_PROVIDER = provider;
+          for (const token of [undefined, await createToken("user")]) {
+            const res = await proxy(createNextRequest("/launch", token));
+
+            expect(res.status).toBe(404);
+            expect(await res.text()).toBe("Launch sign-in is not enabled on this server.");
+            expect(res.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+            expect(res.headers.get("cache-control")).toBe("no-store");
+            expect(res.headers.get("x-frame-options")).toBe("DENY");
+          }
+        }
+        // The launch configuration was never read, so its OIDC problem was never logged.
+        expect(errorSpy).not.toHaveBeenCalled();
+      } finally {
+        names.forEach((name, index) => {
+          const value = saved[index];
+          if (value === undefined) delete process.env[name];
+          else process.env[name] = value;
+        });
+        errorSpy.mockRestore();
+        resetLaunchConfigWarning();
+      }
+    });
   });
 
   // ───────────────────────────────────────────────────────────────────────────

@@ -1147,6 +1147,29 @@ describe("POST /api/agent/runs", () => {
     expect(mockStart).not.toHaveBeenCalled();
   });
 
+  /*
+    Governance mode holds the agent off in this version (docs/GOVERNANCE.md). The boot
+    refuses LIBREDB_AGENT_ENABLED switched on, and this sets GOVERNANCE_SOURCE after
+    boot beside a configured model, so the 404 is the runtime's own refusal.
+  */
+  test("governance: POST /api/agent/runs answers 404 although an LLM is configured", async () => {
+    const saved = process.env.GOVERNANCE_SOURCE;
+    process.env.GOVERNANCE_SOURCE = "postgres";
+    try {
+      const res = await POST(startRequest(VALID_BODY));
+      const body = await parseResponseJSON<{ error: string }>(res);
+
+      expect(res.status).toBe(404);
+      expect(body.error).toBe("The agent runtime is not enabled on this server");
+      expect(mockAdmitAgentModel).not.toHaveBeenCalled();
+      expect(mockResolveConnection).not.toHaveBeenCalled();
+      expect(mockStart).not.toHaveBeenCalled();
+    } finally {
+      if (saved === undefined) delete process.env.GOVERNANCE_SOURCE;
+      else process.env.GOVERNANCE_SOURCE = saved;
+    }
+  });
+
   test("an unknown mode is refused", async () => {
     const res = await POST(startRequest({ ...VALID_BODY, mode: "autonomous" }));
 

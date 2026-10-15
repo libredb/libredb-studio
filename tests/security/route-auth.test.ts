@@ -470,6 +470,8 @@ describe("routes that reach a provider require a session", () => {
       "reads ALLOW_CUSTOM_CONNECTIONS from process.env and logs an unrecognised value once; opens nothing",
     "@/lib/config/oidc-logout-hint":
       "reads OIDC_LOGOUT_HINT from process.env and names the logout hint cookie and its path; opens nothing",
+    "@/lib/governance/config":
+      "reads GOVERNANCE_SOURCE and the other GOVERNANCE_* settings from process.env; opens nothing, the governance source included",
     "@/lib/is-record": "a plain-object type guard; data only",
     "@/lib/launch/config": "reads the three LAUNCH_TOKEN_* variables; opens nothing",
     "@/lib/launch/verify":
