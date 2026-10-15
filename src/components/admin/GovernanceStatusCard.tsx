@@ -157,12 +157,12 @@ function StatusBody({ status }: { status: GovernanceStatus }) {
 }
 
 /**
- * The governance status (GET /api/admin/governance, spec 9.3): the freshness state, the contract versions, the
- * snapshot's age, the latest load failure with its full message, the admitted and skipped rows, the keyring's key ids,
- * the seal canary of each key id, the change notification listener's state, how long it has held and the last
- * notification, where each runtime setting comes from with the setting keys that were ignored, and the query event
- * sink's queue, drops, rejections, last flush and backoff, so an admin sees why a governed connection is missing, why
- * a change arrives late, why a setting has no effect, or whether query events reach the governance source, without
+ * The governance status (GET /api/admin/governance, docs/GOVERNANCE.md#admin-status): the freshness state, the contract
+ * versions, the snapshot's age, the latest load failure with its full message, the admitted and skipped rows, the
+ * keyring's key ids, the seal canary of each key id, the change notification listener's state, how long it has held and
+ * the last notification, where each runtime setting comes from with the setting keys that were ignored, and the query
+ * event sink's queue, drops, rejections, last flush and backoff, so an admin sees why a governed connection is missing,
+ * why a change arrives late, why a setting has no effect, or whether query events reach the governance source, without
  * the server logs. Mounted on the Overview page beside SeedSourcesCard. Renders nothing with governance off and on a
  * failed read.
  */

@@ -180,8 +180,8 @@ export async function proxy(request: NextRequest) {
     pathname === "/health" ||
     pathname === "/api/health" ||
     pathname === "/api/db/health" ||
-    // Readiness (spec 7.5, docs/GOVERNANCE.md): an orchestrator's probe carries no session, and the route reads only
-    // the in-process governance state.
+    // Readiness (docs/GOVERNANCE.md#freshness-and-readiness): an orchestrator's probe carries no session, and the route
+    // reads only the in-process governance state.
     pathname === "/api/ready" ||
     // Storage config endpoint (public, returns only mode info)
     pathname === "/api/storage/config" ||

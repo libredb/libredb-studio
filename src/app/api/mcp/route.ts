@@ -36,9 +36,10 @@ const reportedSwitchValues = new Set<string>();
 
 /**
  * The switch as this request reads it. A valid runtime `mcp.enabled` from the control plane wins over
- * LIBREDB_MCP_ENABLED (spec 7.8), and the other MCP variables stay prerequisites. It is applied here rather than in
- * readMcpSwitch() because the proxy imports src/lib/mcp/config.ts and must never load the settings store. Only
- * governance sets a runtime value, and the governance hold answers first, so in this version the value has no effect.
+ * LIBREDB_MCP_ENABLED (docs/GOVERNANCE.md#runtime-settings), and the other MCP variables stay prerequisites. It is
+ * applied here rather than in readMcpSwitch() because the proxy imports src/lib/mcp/config.ts and must never load the
+ * settings store. Only governance sets a runtime value, and the governance hold answers first, so in this version the
+ * value has no effect.
  */
 function readMcpSwitchForRequest(): McpSwitchReading {
   const runtime = isMcpHeldByGovernance() ? undefined : runtimeSetting("mcp.enabled");

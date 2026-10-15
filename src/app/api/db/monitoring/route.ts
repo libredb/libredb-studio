@@ -19,10 +19,10 @@ export async function POST(req: NextRequest) {
   const guard = await guardRoute({ route: "POST /api/db/monitoring", bucket: "query", request: req });
   if ("response" in guard) return guard.response;
 
-  // Under governance (spec 9.3) users who share a read principal would see each other's statements in
-  // `pg_stat_activity`, so monitoring is admin-only there. The refusal comes before the body is read
-  // and before a connection is resolved, and is audited as the maintenance route's is. Without
-  // governance every session keeps the access it always had.
+  // Under governance (docs/GOVERNANCE.md#grants-and-the-connection-list) users who share a read principal would see
+  // each other's statements in `pg_stat_activity`, so monitoring is admin-only there. The refusal comes before the body
+  // is read and before a connection is resolved, and is audited as the maintenance route's is. Without governance every
+  // session keeps the access it always had.
   if (governanceEnabled() && guard.session.role !== "admin") {
     auditRoleDenial({ route: "POST /api/db/monitoring", user: guard.session.username, request: req });
     return NextResponse.json({ error: "Unauthorized. Admin access required." }, { status: 403 });

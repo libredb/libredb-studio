@@ -71,9 +71,10 @@ export async function POST(req: NextRequest) {
   const guard = await guardRoute({ route: "POST /api/db/query", bucket: "query", request: req });
   if ("response" in guard) return guard.response;
 
-  // THE QUERY EVENT OF THIS REQUEST (spec 7.9). What it names is held out here, so the `catch` below can record a
-  // request that failed at any step: refused before its connection resolved, refused by the admission gate, or run.
-  // `stage` says which, and the statement is the text the user submitted, never the EXPLAIN or the bound built from it.
+  // THE QUERY EVENT OF THIS REQUEST (docs/GOVERNANCE.md#query-events). What it names is held out here, so the `catch`
+  // below can record a request that failed at any step: refused before its connection resolved, refused by the
+  // admission gate, or run. `stage` says which, and the statement is the text the user submitted, never the EXPLAIN or
+  // the bound built from it.
   const started = queryEventStart();
   const events = queryEventRequest("editor", guard.session, req);
   let requestedId: string | undefined;

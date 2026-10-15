@@ -126,7 +126,8 @@ export async function POST(req: NextRequest) {
     // `level` travels only when asked, so a walk without it hands the provider exactly the four keys it
     // always did, with no `level` key at all.
     const forwarded: KeyScanOptions = { ...options, ...(level ? { level: true as const } : {}) };
-    // One `key-scan` event per page, which reads key names (spec 7.9), with the keys it answered as its row count.
+    // One `key-scan` event per page, which reads key names (docs/GOVERNANCE.md#query-events), with the keys it answered
+    // as its row count.
     return await runRecorded(
       {
         source: "key-scan",

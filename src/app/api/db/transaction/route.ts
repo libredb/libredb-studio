@@ -138,7 +138,10 @@ function isTransactionProvider(provider: unknown): provider is TransactionProvid
   );
 }
 
-/** How long the rollback of a transaction whose credential changed may take before the answer goes out (spec 9.4). */
+/**
+ * How long the rollback of a transaction whose credential changed may take before the answer goes out
+ * (docs/GOVERNANCE.md#per-user-providers).
+ */
 const CREDENTIAL_CHANGE_ROLLBACK_MS = 5000;
 
 // One string literal each, never a concatenation across lines: bun's line coverage under-counts the continuation lines
@@ -150,7 +153,8 @@ const CREDENTIAL_CHANGED_UNCONFIRMED =
 
 /**
  * Roll back the transaction a governed owner opened on the provider cached under `providerKey`, the key its `begin`
- * resolved, once a request of theirs resolves another key (spec 9.4), and answer whether it is known to have ended.
+ * resolved, once a request of theirs resolves another key (docs/GOVERNANCE.md#per-user-providers), and answer whether
+ * it is known to have ended.
  *
  * A provider that is no longer cached was disconnected when it was removed, which ended its transaction, and a
  * transaction its provider already ended (PostgresProvider and MySQLProvider roll back after their own TX_TIMEOUT_MS)
@@ -194,8 +198,9 @@ const STATEMENT_ACTIONS: ReadonlySet<unknown> = new Set(["begin", "query", "comm
 const IN_TRANSACTION_ACTIONS: ReadonlySet<unknown> = new Set(["query", "commit", "rollback"]);
 
 /**
- * Under governance, what every query event of a transaction the caller opens says about who and where (spec 7.9): the
- * session's subject, username and role, and the connection with the grant level its credential carries.
+ * Under governance, what every query event of a transaction the caller opens says about who and where
+ * (docs/GOVERNANCE.md#query-events): the session's subject, username and role, and the connection with the grant level
+ * its credential carries.
  */
 function transactionEventScope(
   session: UserPayload,
@@ -259,9 +264,10 @@ export async function POST(req: NextRequest) {
 
     // Each database of a server-level connection holds its own transaction (#1530), so ownership is per database.
     const catalog = requestCatalog(body);
-    // Under governance each user's transaction is held on that user's own provider (spec 9.4), so ownership is per
-    // user as well: the key and the record carry the owner the editor context names, the session's identity provider
-    // subject. Without governance there is none, and the key is the one every user of the connection shares.
+    // Under governance each user's transaction is held on that user's own provider
+    // (docs/GOVERNANCE.md#per-user-providers), so ownership is per user as well: the key and the record carry the owner
+    // the editor context names, the session's identity provider subject. Without governance there is none, and the key
+    // is the one every user of the connection shares.
     const execution = editorExecutionContext(guard.session, connection);
     const subject = execution.owner;
     const owned = transactionKey(connection.id, catalog, subject);
@@ -313,7 +319,8 @@ export async function POST(req: NextRequest) {
       recordTimedOut(owner);
       owner = null;
     }
-    // Under governance the owner is the subject, and the username a display label that can change (spec 3.2 D2).
+    // Under governance the owner is the subject, and the username a display label that can change
+    // (docs/GOVERNANCE.md#row-semantics).
     const ownedByYou =
       owner !== null && (subject === undefined ? owner.username === guard.session.username : owner.subject === subject);
     const heldByAnother = owner !== null && !ownedByYou;
@@ -336,13 +343,15 @@ export async function POST(req: NextRequest) {
     }
 
     // Every action that sends a statement, a script of several included, passes the admission gate first, so
-    // while the query event sink cannot record a statement's event the statement is refused rather than run (spec 7.9).
+    // while the query event sink cannot record a statement's event the statement is refused rather than run
+    // (docs/GOVERNANCE.md#query-events).
     if (STATEMENT_ACTIONS.has(action)) admitQueryExecution();
     // Under governance every statement this route sends belongs to a transaction the caller owns, whose record carries
-    // the scope of its query events (spec 7.9). Without that record a statement would reach the database with no event
-    // behind it: right after the provider's own timeout (the reconcile above), or on a transaction whose record is
-    // gone. Every provider that implements the transaction interface refuses a statement outside a transaction with
-    // "No active transaction" anyway, so this is refused the same way, before the provider runs anything.
+    // the scope of its query events (docs/GOVERNANCE.md#query-events). Without that record a statement would reach the
+    // database with no event behind it: right after the provider's own timeout (the reconcile above), or on a
+    // transaction whose record is gone. Every provider that implements the transaction interface refuses a statement
+    // outside a transaction with "No active transaction" anyway, so this is refused the same way, before the provider
+    // runs anything.
     if (subject !== undefined && owner === null && IN_TRANSACTION_ACTIONS.has(action)) {
       throw new QueryError(NO_OWNED_TRANSACTION, connection.type);
     }
@@ -420,7 +429,8 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ error: optionError }, { status: 400 });
         }
 
-        // Under governance one `open` event per query action, carrying the text the user submitted (spec 7.9).
+        // Under governance one `open` event per query action, carrying the text the user submitted
+        // (docs/GOVERNANCE.md#query-events).
         const started = queryEventStart();
         const recordStatement = (status: "success" | "error", outcome: { rowCount?: number; error?: unknown }) => {
           if (owner === null) return;

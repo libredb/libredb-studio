@@ -272,7 +272,8 @@ export async function POST(req: NextRequest) {
             { $project: Object.fromEntries(outermostFieldPaths(colList).map((c) => [c, 1])) },
           ],
         });
-        // The run is recorded with the address as the route writes it into both reads (spec 7.9).
+        // The run is recorded with the address as the route writes it into both reads
+        // (docs/GOVERNANCE.md#query-events).
         return await runRecorded(profileUnit(JSON.stringify(address)), async () => {
           const sampleResult = await provider.query(profileQuery);
           const totalCountResult = await provider.query(
@@ -320,7 +321,8 @@ export async function POST(req: NextRequest) {
       // string: two containers may hold one label, and a name may itself contain a dot.
       const safeTable = quoteObjectPath(path, capabilities);
 
-      // The run is recorded with the quoted path as its statement, never the reads Studio built around it (spec 7.9).
+      // The run is recorded with the quoted path as its statement, never the reads Studio built around it
+      // (docs/GOVERNANCE.md#query-events).
       return await runRecorded(profileUnit(safeTable), async () => {
         const countResult = await provider.query(`SELECT COUNT(*) AS total FROM ${safeTable}`);
         const totalRows = Number(field(countResult.rows[0], "total") ?? 0);

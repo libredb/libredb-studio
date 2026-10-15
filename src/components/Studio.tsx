@@ -1462,7 +1462,8 @@ export default function Studio() {
             />
 
             {conn.statementCapture === "full" && (
-              // One line, never a dialog: the server's query log records every statement in full (spec 9.3).
+              // One line, never a dialog: the server's query log records every statement in full
+              // (docs/GOVERNANCE.md#grants-and-the-connection-list).
               <p role="note" className="px-3 py-1 text-xs text-fg-secondary border-b border-hairline bg-sunken">
                 {STATEMENT_CAPTURE_NOTICE}
               </p>

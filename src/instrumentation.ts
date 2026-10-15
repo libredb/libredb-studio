@@ -20,18 +20,18 @@ export async function register(): Promise<void> {
   const { verifyAuthEnvAtBoot } = await import("@/lib/config/auth-preflight");
   if (!verifyAuthEnvAtBoot()) return;
 
-  // Governance preflight (spec 9.2): with GOVERNANCE_SOURCE set, refuse an
-  // environment that contradicts governance mode, such as a password, a seed
-  // file or a missing governance URL, before anything acts on it. It checks
-  // nothing while governance is off.
+  // Governance preflight (docs/GOVERNANCE.md#boot-checks): with
+  // GOVERNANCE_SOURCE set, refuse an environment that contradicts governance
+  // mode, such as a password, a seed file or a missing governance URL, before
+  // anything acts on it. It checks nothing while governance is off.
   const { verifyGovernanceEnvAtBoot } = await import("@/lib/governance/preflight");
   if (!verifyGovernanceEnvAtBoot()) return;
 
-  // Governance snapshot (spec 7.5): load the governance source in the
-  // background and keep it current. Not awaited, so the server serves at once
-  // and data routes answer 503 until the first load succeeds; a database
-  // outage never stops it. Imported only under governance, so a Studio without
-  // GOVERNANCE_SOURCE never loads the governance pool.
+  // Governance snapshot (docs/GOVERNANCE.md#operating-notes): load the
+  // governance source in the background and keep it current. Not awaited, so
+  // the server serves at once and data routes answer 503 until the first load
+  // succeeds; a database outage never stops it. Imported only under governance,
+  // so a Studio without GOVERNANCE_SOURCE never loads the governance pool.
   const { governanceEnabled } = await import("@/lib/governance/config");
   if (governanceEnabled()) {
     const { startGovernance } = await import("@/lib/governance/start");

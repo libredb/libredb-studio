@@ -15,9 +15,10 @@ const NO_ACTIVE_TRANSACTION = "No active transaction";
 
 /**
  * Whether a refused answer of `POST /api/db/transaction` says the transaction the editor holds is gone: a 409
- * TRANSACTION_CREDENTIAL_CHANGED, after which Studio rolled it back because the caller's access changed (spec 9.4), or
- * the provider's "No active transaction", after it rolled the transaction back on its own five-minute timer. Any other
- * refusal leaves the transaction open on the server, so the editor keeps it.
+ * TRANSACTION_CREDENTIAL_CHANGED, after which Studio rolled it back because the caller's access changed
+ * (docs/GOVERNANCE.md#per-user-providers), or the provider's "No active transaction", after it rolled the transaction
+ * back on its own five-minute timer. Any other refusal leaves the transaction open on the server, so the editor keeps
+ * it.
  */
 export function transactionGone(answer: { code?: unknown; error?: unknown }): boolean {
   return (

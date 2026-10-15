@@ -119,8 +119,8 @@ function shownSet(result: QueryResult, unit: ExecutionUnit) {
 }
 
 /**
- * Where a script's units record their query events (spec 7.9): one `multi-query` event per unit that ran, with its
- * index and the correlation id every unit of the request shares.
+ * Where a script's units record their query events (docs/GOVERNANCE.md#query-events): one `multi-query` event per unit
+ * that ran, with its index and the correlation id every unit of the request shares.
  */
 interface UnitEvents {
   readonly request: QueryEventRequest;
@@ -213,8 +213,8 @@ export async function POST(req: NextRequest) {
   const guard = await guardRoute({ route: "POST /api/db/multi-query", bucket: "query", request: req });
   if ("response" in guard) return guard.response;
 
-  // A request refused before any unit ran records one `refused` event (spec 7.9): before its connection resolved, or
-  // at the admission gate. What that event names is held out here for the `catch` below.
+  // A request refused before any unit ran records one `refused` event (docs/GOVERNANCE.md#query-events): before its
+  // connection resolved, or at the admission gate. What that event names is held out here for the `catch` below.
   const started = queryEventStart();
   const events = queryEventRequest("multi-query", guard.session, req);
   let requestedId: string | undefined;

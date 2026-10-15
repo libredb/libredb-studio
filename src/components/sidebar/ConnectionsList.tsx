@@ -51,7 +51,10 @@ interface ConnectionsListProps {
   accessUnavailable?: boolean;
 }
 
-/** The empty governed list (spec 9.3): the user has no grants, and an administrator gives them. */
+/**
+ * The empty governed list (docs/GOVERNANCE.md#grants-and-the-connection-list): the user has no grants, and an
+ * administrator gives them.
+ */
 const NO_GRANTS_MESSAGE = "No databases have been granted to you yet. Ask an administrator for access.";
 
 const ACCESS_UNAVAILABLE_MESSAGE =

@@ -13,16 +13,16 @@ const SEED_NAMESPACE = "seed:";
 /**
  * Removes the providers of `connectionId` that the caller's disconnect may remove, and nothing else.
  *
- * Under governance every user's providers are their own (spec 9.4), so the caller's disconnect removes only the
- * caller's: the owner the editor context names, the session's identity provider subject.
+ * Under governance every user's providers are their own (docs/GOVERNANCE.md#per-user-providers), so the caller's
+ * disconnect removes only the caller's: the owner the editor context names, the session's identity provider subject.
  *
  * Without governance every caller of a connection shares its provider, so there is no owner to scope by, and removing
  * every provider of the id would let any signed-in user tear down other users' providers and SSH tunnels by naming it
- * (spec 17). A connection of the user's own is resolved from the record the request carries, as every route resolves
- * it, and only the entries its own provider key names go, the editor's and the execution profiles' (`removeProvider`):
- * the key frames the server and the credentials, so a record naming another user's connection id names entries of its
- * own. A `seed:` id removes nothing, because one provider serves every user of that seed, and the idle sweep reclaims
- * it.
+ * (docs/SECURITY.md, note 0.9). A connection of the user's own is resolved from the record the request carries, as
+ * every route resolves it, and only the entries its own provider key names go, the editor's and the execution profiles'
+ * (`removeProvider`): the key frames the server and the credentials, so a record naming another user's connection id
+ * names entries of its own. A `seed:` id removes nothing, because one provider serves every user of that seed, and the
+ * idle sweep reclaims it.
  *
  * Answers whether it asked the factory to remove anything, so the route logs what the disconnect did.
  */

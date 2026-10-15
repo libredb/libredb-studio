@@ -10,7 +10,10 @@ import { governanceFreshness } from "@/lib/governance/freshness";
 import { governanceState } from "@/lib/governance/state";
 import type { z } from "zod";
 
-/** The body of every answer, the readiness body of the conformance manifest (spec 7.5, 7.10). */
+/**
+ * The body of every answer, the readiness body of the conformance manifest
+ * (docs/GOVERNANCE.md#freshness-and-readiness).
+ */
 export type ReadinessBody = z.infer<typeof ReadinessBodySchema>;
 
 /** The answer is the state of this process at this moment, never one rendered at build time. */
@@ -20,7 +23,7 @@ export const dynamic = "force-dynamic";
 const NO_STORE = { "Cache-Control": "no-store" } as const;
 
 /**
- * GET /api/ready: readiness (spec 7.5, 12.1, docs/GOVERNANCE.md). Liveness stays on `/api/db/health`.
+ * GET /api/ready: readiness (docs/GOVERNANCE.md#freshness-and-readiness). Liveness stays on `/api/db/health`.
  *
  * Public, because an orchestrator's probe carries no session. It reads the in-process governance state only and
  * touches no user database. Without governance it answers 200 `ready`. Under governance it answers the freshness

@@ -20,7 +20,7 @@ async function requireAdmin(request: Request, route: string) {
 }
 
 /**
- * The governance status for the admin Overview card (spec 9.3, docs/GOVERNANCE.md): the contract versions, the
+ * The governance status for the admin Overview card (docs/GOVERNANCE.md#admin-status): the contract versions, the
  * freshness state, the snapshot's age, the latest load failure, the admitted and skipped rows and the keyring's key
  * ids. It names ids, levels, paths and codes only, never a definition value, an envelope, a credential or a statement.
  * With governance off it answers `{ governance: null }`.

@@ -5,7 +5,10 @@ import { customConnectionsAllowed } from "@/lib/config/custom-connections";
 import { governanceEnabled } from "@/lib/governance/config";
 import { runtimeSetting } from "@/lib/governance/settings";
 
-/** What Studio captures when the control plane set no valid `queryLog.statementCapture`: the default of spec 7.8. */
+/**
+ * What Studio captures when the control plane set no valid `queryLog.statementCapture`: the default
+ * docs/GOVERNANCE.md#runtime-settings gives.
+ */
 const DEFAULT_STATEMENT_CAPTURE = "none";
 
 export const dynamic = "force-dynamic";
@@ -24,8 +27,8 @@ export const dynamic = "force-dynamic";
  *
  * Under governance (`GOVERNANCE_SOURCE`, docs/GOVERNANCE.md) the answer adds `governance: true`, so
  * the connection list can tell a user with no grants that an administrator grants access, and
- * `statementCapture`, the active `queryLog.statementCapture` (spec 9.3), so the editor can tell a
- * user that statements are recorded in full. Without governance both fields are absent and the
+ * `statementCapture`, the active `queryLog.statementCapture` (docs/GOVERNANCE.md#grants-and-the-connection-list), so
+ * the editor can tell a user that statements are recorded in full. Without governance both fields are absent and the
  * answer is the one it always was.
  *
  * The answer only decides what the editor offers. The rule itself is enforced in
