@@ -48,6 +48,16 @@ function governedOwner(session: { idpSubject?: string }): string {
 }
 
 /**
+ * The owner of the providers a session's requests run on (spec 9.4): under governance the session's identity provider
+ * subject, and without governance none, because every caller of a connection shares its provider. The one place it is
+ * decided: `editorExecutionContext` names it for the providers a request opens, and `POST /api/db/disconnect` removes
+ * only this owner's providers, so the two can never disagree about whose providers they are.
+ */
+export function sessionOwner(session: { idpSubject?: string }): string | undefined {
+  return governanceEnabled() ? governedOwner(session) : undefined;
+}
+
+/**
  * The server-derived execution context for an ordinary (editor) database request (non-admin DuckDB file access).
  *
  * Built from the VERIFIED session role and the RESOLVED connection, never from the request body, so a
@@ -86,6 +96,7 @@ export function editorExecutionContext(
   connection: DatabaseConnection,
 ): EditorExecutionContext {
   const allowExternalFileAccess = session.role === "admin" && !openToNonAdminRoles(connection);
-  if (!governanceEnabled()) return { allowExternalFileAccess };
-  return { allowExternalFileAccess, owner: governedOwner(session), ownerPoolMax: OWNER_POOL_MAX };
+  const owner = sessionOwner(session);
+  if (owner === undefined) return { allowExternalFileAccess };
+  return { allowExternalFileAccess, owner, ownerPoolMax: OWNER_POOL_MAX };
 }

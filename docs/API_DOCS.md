@@ -2255,6 +2255,12 @@ A source that fails is reported here with `state: "error"` while `GET /api/conne
 >
 > Under governance (`GOVERNANCE_SOURCE=postgres`, see [GOVERNANCE.md](GOVERNANCE.md)) `POST /api/db/monitoring` is admin-only: a session whose role is not `admin` gets `403` with `{"error": "Unauthorized. Admin access required."}` before any connection is resolved, and the denial is audited as `permission_denied` with reason `insufficient_role`.
 > Without governance every signed-in session keeps its monitoring access.
+>
+> `POST /api/db/disconnect` takes `{"connectionId": "<id>"}` and answers `{"success": true}`.
+> Under governance it removes only the caller's own providers of that connection, the ones opened for the session's identity provider subject, for the editor and the agent alike.
+> Another user's providers, transactions and running statements on the same connection stay as they are.
+> Without governance it removes every provider and SSH tunnel of the connection, whoever opened them.
+> `POST /api/db/cancel` reaches only the statements the caller's own provider runs, so under governance a `queryId` that another user's statement runs under answers `{"cancelled": false}` and stops nothing.
 
 ---
 

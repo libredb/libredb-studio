@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { removeProvider } from "@/lib/db/factory";
 import { guardRoute } from "@/lib/api/require-session";
+import { sessionOwner } from "@/lib/api/execution-context";
 import { logger } from "@/lib/logger";
 
 export async function POST(req: NextRequest) {
@@ -16,7 +17,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: "connectionId is required" }, { status: 400 });
     }
 
-    await removeProvider(connectionId);
+    // Under governance every user's providers are their own (spec 9.4), so the caller's disconnect removes only the
+    // caller's: the owner the editor context names, the session's identity provider subject. Without governance there
+    // is none, and every provider of the connection goes, as before.
+    const owner = sessionOwner(guard.session);
+    if (owner === undefined) await removeProvider(connectionId);
+    else await removeProvider(connectionId, { owner });
 
     logger.info("[DB] Provider disconnected and removed from cache", { connectionId });
 
