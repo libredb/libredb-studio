@@ -155,3 +155,32 @@ eb6b696af19d6b6ac7b53406bbd4201fb0890058:tests/fixtures/s3/captures/silo-2026-10
 425df4998010d2a3807431a583fa16e643839726:tests/fixtures/governance/hpke-cfrg-x25519-sha256-aes256gcm.json:generic-api-key:23
 425df4998010d2a3807431a583fa16e643839726:tests/fixtures/governance/hpke-cfrg-x25519-sha256-aes256gcm.json:generic-api-key:24
 425df4998010d2a3807431a583fa16e643839726:tests/fixtures/governance/hpke-cfrg-x25519-sha256-aes256gcm.json:generic-api-key:26
+
+# The lsb1 test vectors (STU-03): the fixed ephemeral private key of each of
+# the 21 vectors in tests/fixtures/governance/lsb1-vectors.json, one per
+# vector. Each is the SHA-256 of a published label ("libredb lsb1 test
+# vectors, test only: ephemeral key of <id>"), so anyone can derive it, and it
+# seals only that vector's sample credential to a recipient key derived the
+# same way. scripts/generate-governance-vectors.ts writes the file, and a
+# published lsb1 vector never changes, so these lines never move.
+ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:37
+ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:71
+ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:111
+ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:155
+ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:203
+ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:250
+ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:293
+ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:335
+ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:387
+ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:433
+ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:479
+ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:525
+ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:571
+ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:617
+ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:663
+ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:709
+ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:755
+ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:801
+ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:847
+ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:893
+ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:940

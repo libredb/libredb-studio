@@ -464,7 +464,29 @@ An envelope that does not open fails with one of these codes, and no message car
 
 The canary proves the seal before the first real credential is created: the control plane publishes, for each key id it seals to, the envelope of `{"user":"libredb-canary"}` sealed for connection `canary`, level `read`, engine `canary` and definition `{}`.
 Studio opens every canary on every load and reports `ok` or the failure code per key id in its heartbeat's `canary` column, so a wrong public key shows up at once.
-The vectors file holds positive and negative cases with their exact codes, and a control plane's sealer reproduces each positive envelope byte for byte from its fixed ephemeral key.
+
+The vectors file, `tests/fixtures/governance/lsb1-vectors.json`, holds positive and negative cases with their exact codes, and it is what a control plane tests its sealer against.
+Studio generates it with `scripts/generate-governance-vectors.ts`, and `bun scripts/generate-governance-vectors.ts --check` exits 0 only when the file is exactly what the script builds.
+Its keys are test keys and protect nothing: each private key is the SHA-256 of the UTF-8 of a published label under `testKeys`, so anyone can derive it, and none may ever seal or open a real credential.
+`keyring` is the opening Studio's keyring in the form of a keyring file, `{"version":1,"keys":[...]}`, and every key in the file is the unpadded base64url of its raw 32 bytes.
+Each vector records these fields:
+
+| Field | What it holds |
+| --- | --- |
+| `id`, `description` | The vector's stable name, and what it shows. |
+| `recipientPublicKey`, `kid` | The public key the envelope is sealed to, and its kid. |
+| `binding` | The `connectionId`, `level`, `engine` and `definition` the envelope is sealed for. |
+| `definitionJcs` | The RFC 8785 text of the definition. |
+| `aadHex` | The additional authenticated data, in lowercase hex. |
+| `ephemeralPrivateKey` | The fixed ephemeral key, which a real seal draws afresh every time. |
+| `plaintext` | The credential set, sealed as the UTF-8 of its JSON text, which is also its RFC 8785 text. |
+| `envelope` | The envelope sealed from the fields above. |
+| `opening` | The `envelope` and `binding` Studio is given: the sealed ones, except that a negative vector changes one of them in a single respect. |
+| `expected` | `ok` when Studio opens the envelope to `plaintext`, otherwise the code it fails with. |
+
+From a vector's `recipientPublicKey`, `binding`, `plaintext` and `ephemeralPrivateKey`, a control plane's sealer must produce its `envelope` byte for byte, and its key id, canonical JSON and additional authenticated data must equal `kid`, `definitionJcs` and `aadHex`.
+The positive vectors cover the canary, text beyond ASCII, the characters canonical JSON escapes, a nested `ssl` object with a PEM `caCert`, numbers and booleans, key order, the write level and all nine plaintext keys.
+The negative vectors cover every code above: `FORMAT` for base64url that is not the canonical encoding of its bytes and for padded standard base64, `UNKNOWN_KID`, `AUTH_FAILED` for a changed level, connection id, engine, host and TLS mode and for a flipped ciphertext bit, `LOW_ORDER_POINT` for two points of small order, and `PLAINTEXT_INVALID` for an unknown key and for a value that is not a string.
 An `lsb1` vector never changes; a change to one would be a new format, `lsb2`.
 
 ## API codes
