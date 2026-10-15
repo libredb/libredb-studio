@@ -24,6 +24,7 @@ import { maybeInviteToStar } from "@/lib/community/star-prompt-toast";
 import { sandboxRefusal } from "@/lib/editor/sandbox-refusal";
 import { historyMaskOf, maskStatementForHistory } from "@/lib/history-mask";
 import { buildConnectionPayload } from "./use-connection-payload";
+import { transactionGone } from "./use-transaction-control";
 
 export interface QueryExecutionOptions {
   /** The database to run in on a server-level connection when not the active one: an object's (#1530). */
@@ -797,6 +798,9 @@ export function useQueryExecution({
             toast({ title: "Query Cancelled", description: "Query execution was cancelled." });
             return false;
           }
+          // The transaction this run was sent into is gone on the server (`transactionGone`), so the controls stop
+          // offering it and the next statement runs outside a transaction instead of being refused again.
+          if (useTransaction && !isPlaygroundRun && transactionGone(error)) onTransactionEnded?.();
 
           throw new Error(errorMessage);
         }

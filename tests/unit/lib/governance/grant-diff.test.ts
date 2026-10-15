@@ -6,10 +6,21 @@
  * exactly which grant a subject held before the reload and after it. A record's envelopes stand for the sealed
  * credentials the loader opened it from: a connection whose credential the control plane sealed again carries another.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import type { AdmittedConnection } from "@/lib/governance/admission";
-import { changedGrants } from "@/lib/governance/grant-diff";
+import type { QueryEventInput } from "@/lib/query-events/types";
 import { admittedConnection, type GrantSpec, grantedSnapshot } from "../../../helpers/governance/granted-snapshot";
+
+// The sink is replaced, so a recorded event is read here instead of being queued for the governance pool (STU-30).
+const recorded: QueryEventInput[] = [];
+mock.module("@/lib/query-events/sink", () => ({
+  recordQueryEvent: (input: QueryEventInput) => {
+    recorded.push(input);
+  },
+}));
+
+const { changedGrants, endRevokedTransactions } = await import("@/lib/governance/grant-diff");
+const { claimTransaction, releaseTransaction, transactionKey } = await import("@/lib/api/transaction-ownership");
 
 const T0 = Date.parse("2026-10-15T08:00:00.000Z");
 
@@ -105,5 +116,58 @@ describe("changedGrants", () => {
         T0 + 1,
       ),
     ).toEqual([]);
+  });
+});
+
+describe("endRevokedTransactions (spec 7.9, 9.4)", () => {
+  test("tearing down a revoked pair with an open transaction records rolled-back", () => {
+    // Alice opened a transaction on orders under her write grant; Bob holds one on billing, which keeps its grant.
+    const scope = (subject: string, connectionId: string) => ({
+      principal: { subject, username: `${subject}@example.com`, role: "user" as const },
+      connection: {
+        id: `seed:${connectionId}`,
+        name: connectionId,
+        engine: "postgres" as const,
+        accessLevel: "write" as const,
+      },
+    });
+    const alices = transactionKey("seed:orders", undefined, "alice");
+    const bobs = transactionKey("seed:billing", undefined, "bob");
+    const alice = claimTransaction(alices, "alice@example.com", "alice", "key-a", scope("alice", "orders"));
+    claimTransaction(bobs, "bob@example.com", "bob", "key-b", scope("bob", "billing"));
+    try {
+      const previous = grantedSnapshot(
+        [ORDERS, BILLING],
+        [
+          { subject: "alice", connection: ORDERS, level: "write" },
+          { subject: "bob", connection: BILLING, level: "write" },
+        ],
+        T0,
+      );
+      // The control plane takes Alice's grant away, and the reload tears down her providers of orders.
+      const next = grantedSnapshot(
+        [ORDERS, BILLING],
+        [{ subject: "bob", connection: BILLING, level: "write" }],
+        T0 + 1,
+      );
+      const changed = changedGrants(previous, next, T0 + 1);
+      expect(changed).toEqual([{ subject: "alice", connectionId: "orders" }]);
+
+      endRevokedTransactions(changed);
+
+      expect(recorded).toHaveLength(1);
+      expect(recorded[0]).toMatchObject({
+        source: "transaction",
+        principal: { subject: "alice" },
+        connection: { id: "seed:orders", accessLevel: "write" },
+        statement: "ROLLBACK",
+        status: "success",
+        transactionId: alice.transactionId,
+        transactionOutcome: "rolled-back",
+      });
+    } finally {
+      releaseTransaction(alices);
+      releaseTransaction(bobs);
+    }
   });
 });

@@ -43,7 +43,7 @@ import { governanceAllowedEngines, governancePostgresSchema } from "./config";
 import { buildSnapshotStatements, type SNAPSHOT_READS, SUPPORTED_CONTRACT_VERSIONS } from "./contract";
 import { withGovernanceClient } from "./db";
 import { IncompatibleContractError, KeyringUnavailableError, loadFailureOf, SnapshotReadError } from "./freshness";
-import { type ChangedGrant, changedGrants } from "./grant-diff";
+import { type ChangedGrant, changedGrants, endRevokedTransactions } from "./grant-diff";
 import { governanceKeyring } from "./keyring";
 import { SealedSecretError, type SecretBinding } from "./lsb1";
 import { openGovernedSecret } from "./secrets";
@@ -369,6 +369,8 @@ async function tearDownChangedGrants(previous: GovernanceSnapshot, next: Governa
     }
   };
   await Promise.all(changed.map(removeOne));
+  // The teardown rolled back their open transactions, which ends each one's query events.
+  endRevokedTransactions(changed);
 }
 
 /**

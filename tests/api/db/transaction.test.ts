@@ -23,6 +23,7 @@ import {
   NO_TRANSACTION_OPENED,
 } from "@/lib/db/errors";
 import type { BeginTransactionOptions, BeginTransactionResult } from "@/lib/db/types";
+import type { QueryEventInput } from "@/lib/query-events/types";
 
 // ─── Create mock provider with transaction methods ──────────────────────────
 const baseMockProvider = createMockProvider();
@@ -119,9 +120,24 @@ mock.module("@/lib/db/factory", () => ({
   findCachedProvider: mockFindCachedProvider,
 }));
 
+// ─── Query events (spec 7.9) ────────────────────────────────────────────────
+//
+// The sink is replaced, so a recorded event is read here instead of being queued for the governance pool (STU-30), and
+// the admission gate is a double a test can close; tests/unit/lib/query-events/admission.test.ts pins the real gate.
+const realSink = { ...(await import("@/lib/query-events/sink")) };
+const recordedEvents: QueryEventInput[] = [];
+mock.module("@/lib/query-events/sink", () => ({
+  ...realSink,
+  recordQueryEvent: (input: QueryEventInput) => {
+    recordedEvents.push(input);
+  },
+}));
+const mockAdmitQueryExecution = mock(() => {});
+mock.module("@/lib/query-events/admission", () => ({ admitQueryExecution: mockAdmitQueryExecution }));
+
 // ─── Import route handler AFTER mocking ─────────────────────────────────────
 const { POST } = await import("@/app/api/db/transaction/route");
-const { transactionKey } = await import("@/lib/api/transaction-ownership");
+const { releaseTransaction, transactionKey } = await import("@/lib/api/transaction-ownership");
 const { registerOwnerRemoval } = await import("@/lib/db/owner-removal");
 const { swapGovernanceSnapshot } = await import("@/lib/governance/snapshot");
 const { recordGovernanceSnapshot, resetGovernanceState } = await import("@/lib/governance/state");
@@ -242,6 +258,33 @@ describe("POST /api/db/transaction", () => {
 
     expect(res.status).toBe(401);
     expect(data.error).toContain("Authentication required");
+  });
+
+  test("without governance a transaction records no query event and arms no timer", async () => {
+    recordedEvents.length = 0;
+    const timers = spyOn(globalThis, "setTimeout");
+    try {
+      for (const body of [
+        { action: "begin" },
+        { action: "query", sql: "INSERT INTO t VALUES (1)" },
+        { action: "commit" },
+        { action: "begin" },
+        { action: "rollback" },
+      ]) {
+        // oxlint-disable-next-line no-await-in-loop -- one action after another, as the editor sends them.
+        const res = await POST(
+          createMockRequest("/api/db/transaction", {
+            method: "POST",
+            body: { connection: validConnection, ...body },
+          }) as never,
+        );
+        expect(res.status).toBe(200);
+      }
+      expect(recordedEvents).toEqual([]);
+      expect(timers).not.toHaveBeenCalled();
+    } finally {
+      timers.mockRestore();
+    }
   });
 
   test("begin action returns status active", async () => {
@@ -1101,6 +1144,11 @@ describe("POST /api/db/transaction under governance (spec 9.4)", () => {
     mockGetOrCreateProvider.mockImplementation(async () => mockTxProvider as never);
     mockFindCachedProvider.mockImplementation(() => null);
     mockGetSession.mockImplementation(async () => ({ role: "admin", username: "admin" }));
+    mockAdmitQueryExecution.mockReset();
+    recordedEvents.length = 0;
+    // A record a test left open would be reconciled, and recorded, by the next test's first request.
+    for (const subject of ["alice-subject", "bob-subject"])
+      releaseTransaction(transactionKey("seed:orders", undefined, subject));
   });
 
   /** A provider double whose transaction state changes, as each owner's own provider would. */
@@ -1181,7 +1229,13 @@ describe("POST /api/db/transaction under governance (spec 9.4)", () => {
       createMockRequest("/api/db/transaction", {
         method: "POST",
         body: {
-          connection: { ...validConnection, id: "seed:orders", ...(user === undefined ? {} : { user }) },
+          // A governed connection carries the level of its credential, as `resolveConnection` hands it to the route.
+          connection: {
+            ...validConnection,
+            id: "seed:orders",
+            grantLevel: user === "reader" ? "read" : "write",
+            ...(user === undefined ? {} : { user }),
+          },
           ...body,
         },
       }) as never,
@@ -1430,6 +1484,10 @@ describe("POST /api/db/transaction under governance (spec 9.4)", () => {
       expect(res.status).toBe(409);
       expect(await parseResponseJSON(res)).toMatchObject({ code: "TRANSACTION_CREDENTIAL_CHANGED", rolledBack: true });
       expect(writer?.rollbackTransaction).toHaveBeenCalledTimes(1);
+      // The reload recorded the rollback it caused, once: the 409 that told her records nothing more.
+      expect(recordedEvents.map((event) => [event.transactionOutcome, event.statement, event.status])).toEqual([
+        ["rolled-back", "ROLLBACK", "success"],
+      ]);
       // She begins again under the read credential.
       expect((await send({ action: "begin" }, "reader")).status).toBe(200);
       expect(providers.of("reader", "alice-subject")?.isInTransaction()).toBe(true);
@@ -1439,6 +1497,174 @@ describe("POST /api/db/transaction under governance (spec 9.4)", () => {
       resetGovernanceState();
       for (const spy of quiet) spy.mockRestore();
     }
+  });
+
+  // ─── Transaction events (spec 7.9) ────────────────────────────────────────
+
+  /** The events recorded so far, reduced to what a test compares. */
+  const outcomes = () =>
+    recordedEvents.map((event) => [event.transactionOutcome, event.statement, event.status, event.transactionId]);
+
+  test("governance: begin, query and commit record one open event and one committed event with the same transaction_id", async () => {
+    providerPerOwner();
+    as("alice@example.com", "alice-subject");
+
+    expect((await send({ action: "begin" })).status).toBe(200);
+    expect((await send({ action: "status" })).status).toBe(200);
+    // Begin and status run no statement of the user's, so they record nothing.
+    expect(recordedEvents).toEqual([]);
+    expect((await send({ action: "query", sql: "INSERT INTO orders VALUES (1)" })).status).toBe(200);
+    expect((await send({ action: "commit" })).status).toBe(200);
+
+    expect(recordedEvents).toHaveLength(2);
+    const [statement, committed] = recordedEvents;
+    expect(statement).toMatchObject({
+      source: "transaction",
+      principal: { subject: "alice-subject", username: "alice@example.com", role: "user" },
+      connection: { id: "seed:orders", name: "Test DB", engine: "postgres", accessLevel: "write" },
+      statement: "INSERT INTO orders VALUES (1)",
+      status: "success",
+      rowCount: 0,
+      transactionOutcome: "open",
+    });
+    expect(committed).toMatchObject({
+      source: "transaction",
+      statement: "COMMIT",
+      status: "success",
+      transactionOutcome: "committed",
+    });
+    expect(statement.transactionId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(committed.transactionId).toBe(statement.transactionId);
+    expect(mockAdmitQueryExecution).toHaveBeenCalledTimes(2);
+
+    // The next transaction carries another id, and its rollback ends it.
+    expect((await send({ action: "begin" })).status).toBe(200);
+    expect((await send({ action: "query", sql: "UPDATE orders SET n = 1; DELETE FROM orders" })).status).toBe(200);
+    expect((await send({ action: "rollback" })).status).toBe(200);
+    const next = recordedEvents.slice(2);
+    expect(next.map((event) => [event.transactionOutcome, event.statement, event.status])).toEqual([
+      ["open", "UPDATE orders SET n = 1; DELETE FROM orders", "success"],
+      ["rolled-back", "ROLLBACK", "success"],
+    ]);
+    expect(next[0]?.transactionId).not.toBe(statement.transactionId);
+    expect(next[1]?.transactionId).toBe(next[0]?.transactionId);
+  });
+
+  test("governance: the 409 TRANSACTION_CREDENTIAL_CHANGED path records rolled-back for the old transaction", async () => {
+    const providers = providerPerKey();
+    as("alice@example.com", "alice-subject");
+    expect((await send({ action: "begin" }, "writer")).status).toBe(200);
+    expect((await send({ action: "query", sql: "INSERT INTO orders VALUES (1)" }, "writer")).status).toBe(200);
+    const opened = recordedEvents[0]?.transactionId;
+
+    const res = await send({ action: "query", sql: "SELECT 1" }, "reader");
+
+    expect(res.status).toBe(409);
+    expect(providers.of("writer", "alice-subject")?.rollbackTransaction).toHaveBeenCalledTimes(1);
+    expect(outcomes()).toEqual([
+      ["open", "INSERT INTO orders VALUES (1)", "success", opened],
+      ["rolled-back", "ROLLBACK", "success", opened],
+    ]);
+    expect(recordedEvents[1]?.connection.accessLevel).toBe("write");
+  });
+
+  test("governance: an unconfirmed rollback after a credential change records rolled-back with status error", async () => {
+    const providers = providerPerKey();
+    const errors = spyOn(logger, "error").mockImplementation(() => {});
+    try {
+      as("alice@example.com", "alice-subject");
+      expect((await send({ action: "begin" }, "writer")).status).toBe(200);
+      providers.of("writer", "alice-subject")?.rollbackTransaction.mockImplementationOnce(async () => {
+        throw new ConnectionError("Connection terminated unexpectedly", "postgres");
+      });
+
+      expect((await send({ action: "status" }, "reader")).status).toBe(409);
+
+      expect(recordedEvents.map((event) => [event.transactionOutcome, event.status])).toEqual([
+        ["rolled-back", "error"],
+      ]);
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  test("governance: a transaction the provider timed out is recorded once by the reconcile", async () => {
+    const providers = providerPerOwner();
+    as("alice@example.com", "alice-subject");
+    expect((await send({ action: "begin" })).status).toBe(200);
+    // The provider's TX_TIMEOUT_MS rolled it back with no session behind it.
+    await providers.of("alice-subject")?.rollbackTransaction();
+
+    expect((await send({ action: "status" })).status).toBe(200);
+    expect((await send({ action: "status" })).status).toBe(200);
+
+    expect(recordedEvents.map((event) => [event.transactionOutcome, event.statement, event.status])).toEqual([
+      ["timed-out", null, "cancelled"],
+    ]);
+  });
+
+  test("governance: a failing statement records an open event with status error", async () => {
+    const providers = providerPerOwner();
+    as("alice@example.com", "alice-subject");
+    expect((await send({ action: "begin" })).status).toBe(200);
+    providers.of("alice-subject")?.queryInTransaction.mockImplementationOnce(async () => {
+      throw new QueryError('relation "missing" does not exist', "postgres");
+    });
+
+    expect((await send({ action: "query", sql: "SELECT * FROM missing" })).status).toBe(400);
+
+    expect(recordedEvents).toHaveLength(1);
+    expect(recordedEvents[0]).toMatchObject({
+      statement: "SELECT * FROM missing",
+      status: "error",
+      errorCode: "QUERY_ERROR",
+      errorMessage: 'relation "missing" does not exist',
+      transactionOutcome: "open",
+    });
+    expect(recordedEvents[0]?.rowCount).toBeUndefined();
+  });
+
+  test("governance: a COMMIT that ends the transaction in failure records rolled-back, one that leaves it open records open", async () => {
+    const providers = providerPerOwner();
+    as("alice@example.com", "alice-subject");
+    expect((await send({ action: "begin" })).status).toBe(200);
+    const provider = providers.of("alice-subject");
+    // PostgreSQL ends a transaction whose COMMIT fails, as with a deferred constraint.
+    provider?.commitTransaction.mockImplementationOnce(async () => {
+      await provider.rollbackTransaction();
+      throw new QueryError("deferred constraint violated", "postgres");
+    });
+    expect((await send({ action: "commit" })).status).toBe(400);
+
+    expect((await send({ action: "begin" })).status).toBe(200);
+    // A ROLLBACK the server did not answer leaves the transaction open.
+    provider?.rollbackTransaction.mockImplementationOnce(async () => {
+      throw new ConnectionError("Connection terminated unexpectedly", "postgres");
+    });
+    expect((await send({ action: "rollback" })).status).toBe(503);
+
+    expect(recordedEvents.map((event) => [event.transactionOutcome, event.statement, event.status])).toEqual([
+      ["rolled-back", "COMMIT", "error"],
+      ["open", "ROLLBACK", "error"],
+    ]);
+    expect(recordedEvents[1]?.transactionId).not.toBe(recordedEvents[0]?.transactionId);
+    expect((await send({ action: "rollback" })).status).toBe(200);
+  });
+
+  test("governance: a closed admission gate refuses begin and query before the provider runs them", async () => {
+    const providers = providerPerOwner();
+    as("alice@example.com", "alice-subject");
+    const { SeedConnectionError } = await import("@/lib/seed/resolve-connection");
+    mockAdmitQueryExecution.mockImplementation(() => {
+      throw new SeedConnectionError("Query execution is unavailable while this server cannot record query events", 503);
+    });
+
+    expect((await send({ action: "begin" })).status).toBe(503);
+    expect((await send({ action: "query", sql: "SELECT 1" })).status).toBe(503);
+
+    expect(providers.of("alice-subject")?.beginTransaction).not.toHaveBeenCalled();
+    expect(providers.of("alice-subject")?.queryInTransaction).not.toHaveBeenCalled();
+    expect(recordedEvents).toEqual([]);
   });
 });
 
