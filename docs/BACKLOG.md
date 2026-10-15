@@ -7769,6 +7769,8 @@ On PostgreSQL `pool.end()` waits for every checked-out client, so a `disconnect(
 A shared provider is disconnected without a rollback first, by `removeProvider`, by `clearProviderCache` at shutdown, and when a request names another query timeout (D115), so deleting a custom connection that has an open transaction leaves the request waiting.
 On MySQL `end()` closes the held connection, so `disconnect()` returns and the server rolls back, but `txActive` stays true, and five minutes later the timer logs a timeout that never happened and sends a `ROLLBACK` to a closed connection.
 An owned provider is rolled back before it is disconnected (`teardownProvider` in `src/lib/db/factory.ts`), so this is the shared providers' defect.
+On a server-level PostgreSQL connection the transaction lives on a catalog session, a provider of its own in `catalogSessions`, and the parent's `isInTransaction()` does not report it.
+So a fix inside `PostgresProvider.disconnect()` covers it, because `closeAll()` calls each session's own `disconnect()`, while a fix that checks only the parent's `isInTransaction()` would miss it.
 
 **Done when:** both providers' `disconnect()` roll back and release a held transaction and clear the timer before they end the pool, and a test per provider shows `disconnect()` resolving without the timer firing, `isInTransaction()` false and no timer left pending.
 
