@@ -135,6 +135,12 @@ const CONNECTION_RELEVANCE: Record<keyof DatabaseConnection, FieldRelevance> = {
   // The secret half authenticates but does not itself decide the catalog view.
   apiKeyId: "resolution",
   apiKeySecret: "resolution",
+  // Modbus: not a target and not a credential, and still `resolution`, where Kubernetes' namespace list
+  // above is `cosmetic`. That list FILTERS names the cluster defines; this document DEFINES them. `volts`
+  // is unit 1, holding register 100 under one map and can be unit 3, coil 5 under another, so a read keyed
+  // to a connection whose map has changed would match a name to an address it was not taken from - the one
+  // direction this record exists to make impossible.
+  registerMap: "resolution",
   // Whether a Db2 connection may connect with no TLS at all (#786): like every transport field
   // below, it decides whether, and how, the connection connects.
   allowInsecureAuth: "resolution",

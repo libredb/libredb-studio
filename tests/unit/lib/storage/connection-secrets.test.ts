@@ -171,6 +171,10 @@ describe("the classification is exhaustive by construction", () => {
         "securityPolicyUri",
         "clientCertificatePath",
         "clientPrivateKeyPath",
+        // Modbus's register map: addresses on a device the user wrote down. Modbus TCP defines no
+        // authentication at all, so there is nothing here to leak, and masking a document would
+        // stop the person who wrote it from fixing it.
+        "registerMap",
       ].sort(),
     );
   });

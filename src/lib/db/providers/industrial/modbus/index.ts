@@ -167,7 +167,7 @@ export function atBoundary(error: unknown): unknown {
  * through here, because a conversion that has to be remembered at each call site is one that will
  * be forgotten at the seventh.
  */
-function readMap(config: unknown): ReturnType<typeof parseRegisterMap> {
+function readMap(config: DatabaseConnection): ReturnType<typeof parseRegisterMap> {
   try {
     return parseRegisterMap(mapOf(config));
   } catch (error) {
@@ -175,10 +175,16 @@ function readMap(config: unknown): ReturnType<typeof parseRegisterMap> {
   }
 }
 
-/** Read from the connection. A field, so the map travels with the connection it belongs to. */
-function mapOf(config: unknown): string | undefined {
-  const map = (config as { registerMap?: unknown }).registerMap;
-  return typeof map === "string" ? map : undefined;
+/**
+ * Read from the connection. A declared field, so the map travels with the connection it belongs to
+ * and the dialog can offer a box for it.
+ *
+ * The cast this replaced read the property off `unknown`, which was the honest shape while the
+ * field was not on `DatabaseConnection`: it said "whatever is there, if a string". Now the type
+ * carries it and the three write-list readers classify it, so the property is read as what it is.
+ */
+function mapOf(config: DatabaseConnection): string | undefined {
+  return config.registerMap;
 }
 
 export class ModbusProvider extends BaseDatabaseProvider {

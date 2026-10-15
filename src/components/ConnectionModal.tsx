@@ -343,6 +343,8 @@ export function ConnectionModal({
     serverCertificateThumbprint,
     setServerCertificateThumbprint,
     setTlsServerName,
+    registerMap,
+    setRegisterMap,
     amqpPort,
     setAmqpPort,
     connectionString,
@@ -1385,6 +1387,39 @@ export function ConnectionModal({
                         className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
                       />
                       <DeclaredFieldHint config={uiConfig} field="tlsServerName" />
+                    </div>
+                  )}
+
+                  {/*
+                    Modbus's register map, a text area rather than a box because it is a JSON document
+                    and the engine answers no discovery request: without it a connection can read a
+                    range by address, and no point has a name. Not masked and not a secret - the
+                    protocol defines no authentication at all, and a document nobody can read is a
+                    document nobody can correct. The provider parses it and its refusals quote the
+                    position they name, so the text is sent as written.
+                  */}
+                  {takesConnectionField(type, "registerMap") && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Database strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
+                        <Label htmlFor="registerMap" className="text-xs font-medium text-fg-muted">
+                          {connectionFieldLabel(uiConfig, "registerMap", "Register map")}
+                        </Label>
+                      </div>
+                      <textarea
+                        id="registerMap"
+                        value={registerMap}
+                        onChange={(e) => setRegisterMap(e.target.value)}
+                        placeholder={connectionFieldPlaceholder(uiConfig, "registerMap", "")}
+                        autoComplete="off"
+                        spellCheck={false}
+                        autoCorrect="off"
+                        autoCapitalize="off"
+                        rows={6}
+                        aria-describedby={describedByHint(uiConfig, "registerMap")}
+                        className="w-full rounded-md bg-panel border border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono text-fg p-3"
+                      />
+                      <DeclaredFieldHint config={uiConfig} field="registerMap" />
                     </div>
                   )}
 

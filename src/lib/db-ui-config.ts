@@ -122,6 +122,9 @@ export interface DatabaseUIConfig {
     // Studio's SSL modes, which have no meaning to a server offering None, Sign and SignAndEncrypt.
     | "securityMode"
     | "serverCertificateThumbprint"
+    // Modbus only: the register map, a JSON document rather than a word, drawn as a text area. The
+    // protocol answers no discovery request, so this is the only thing that can name a point.
+    | "registerMap"
   )[];
   /**
    * The connection dialog's label for a field, where this engine names the field differently from
@@ -1378,11 +1381,23 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     // Modbus TCP has no connection string form of its own, and inventing one would be ours rather than the
     // protocol's.
     showConnectionStringToggle: false,
-    // Host and Port, and nothing else. The protocol defines no authentication at all - no user, no password,
+    // Host, Port and the register map. The protocol defines no authentication at all - no user, no password,
     // no token - so the form offers no credential to fill in; what protects a device is mbaps or a network
-    // path you control. The register map the provider reads is NOT a field here yet: where that document
-    // lives is still open (#1723 section 6 item 1), and a field added now would have to move.
-    connectionFields: ["host", "port"],
+    // path you control.
+    //
+    // The map is a field on the connection, which was an open question until the write list answered it:
+    // `keyof DatabaseConnection` is what a user may fill in, send and have stored, and this is a document
+    // the user writes. It is not `password`, because it is not a secret and a masked document cannot be
+    // corrected; BigQuery's key file sits in `password` because that one IS a credential.
+    connectionFields: ["host", "port", "registerMap"],
+    fieldLabels: { registerMap: "Register map" },
+    fieldHints: {
+      registerMap:
+        "A JSON array of points, each naming a unit, a table, a zero-based PDU address and a type. Without it a connection can still read a range by address, but no point has a name. Vendor documentation often counts addresses from one; these are the addresses that go on the wire.",
+    },
+    fieldPlaceholders: {
+      registerMap: '[{ "name": "volts", "unitId": 1, "table": "holding_register", "address": 100, "type": "uint16" }]',
+    },
     // The dialog's own sentence says the mode can be turned off, which is false here.
     readOnlyHint: MODBUS_READ_ONLY_HINT,
   },

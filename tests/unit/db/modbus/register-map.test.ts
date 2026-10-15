@@ -10,6 +10,7 @@
  * plausible number and raises nothing.
  */
 import { describe, expect, test } from "bun:test";
+import { MAX_REGISTER_MAP_BYTES } from "@/lib/db/providers/industrial/modbus/constants";
 import { ModbusMapError, parseRegisterMap } from "@/lib/db/providers/industrial/modbus/register-map";
 
 const one = (extra: Record<string, unknown> = {}) =>
@@ -158,5 +159,56 @@ describe("type and table have to agree", () => {
     expect(() =>
       parseRegisterMap(one({ address: 65535, type: "uint32", wordOrder: "high_first", byteOrder: "high_first" })),
     ).toThrow(/past the end/);
+  });
+});
+
+/**
+ * The total bound, which did not exist while the map was not a field: each point was checked and
+ * nothing checked how many there were. Now the document is typed into the dialog, stored with the
+ * connection and sent with every read, so its size is one of the connection's own rules.
+ */
+describe("the whole document is bounded, not only each point", () => {
+  /** A map of `count` points, each a different name so none is a duplicate. */
+  const many = (count: number) =>
+    JSON.stringify(
+      Array.from({ length: count }, (_unused, at) => ({
+        name: `p${at}`,
+        unitId: 1,
+        table: "holding_register",
+        address: at,
+        type: "uint16",
+      })),
+    );
+
+  test("a document inside the bound is parsed, and every point in it arrives", () => {
+    const document = many(200);
+    expect(Buffer.byteLength(document, "utf8")).toBeLessThanOrEqual(MAX_REGISTER_MAP_BYTES);
+
+    expect(parseRegisterMap(document).points).toHaveLength(200);
+  });
+
+  test("a document over the bound is refused, with both figures in the sentence", () => {
+    // Grown by points rather than by padding one name, so the refusal is about the document a
+    // reader could actually paste rather than about a string nothing would produce.
+    let document = many(400);
+    while (Buffer.byteLength(document, "utf8") <= MAX_REGISTER_MAP_BYTES) {
+      document = many(Math.ceil(JSON.parse(document).length * 1.5));
+    }
+    const bytes = Buffer.byteLength(document, "utf8");
+
+    const run = () => parseRegisterMap(document);
+
+    expect(run).toThrow(ModbusMapError);
+    expect(run).toThrow(String(bytes));
+    expect(run).toThrow(String(MAX_REGISTER_MAP_BYTES));
+  });
+
+  test("the bound is applied before the document is parsed, so broken JSON over it reads as too big", () => {
+    // The two refusals are different sentences, and which one answers says which rule ran first.
+    // A bound that only runs after `JSON.parse` has not bounded the parse.
+    const broken = `${"x".repeat(MAX_REGISTER_MAP_BYTES + 1)}`;
+
+    expect(() => parseRegisterMap(broken)).toThrow(/bytes and the most one connection carries/);
+    expect(() => parseRegisterMap(broken)).not.toThrow(/not valid JSON/);
   });
 });

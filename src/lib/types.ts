@@ -595,6 +595,32 @@ export interface DatabaseConnection {
    */
   apiKeyId?: string;
   apiKeySecret?: string;
+  /**
+   * Modbus only: the register map, as the JSON document the provider parses. A point names a unit,
+   * a table, a zero-based PDU address, a type and the orders a value wider than one register needs.
+   *
+   * WHY IT IS A FIELD. Modbus has no discovery: the protocol offers no request that lists what a
+   * device holds, so the map is the only thing that can name a point, and the user is who writes
+   * it. `keyof DatabaseConnection` is the write list of what a user may fill in, send and have
+   * stored (see `WithTunnelFarEnd`, which is deliberately NOT a field because nobody fills it in),
+   * and a document the user writes belongs on it. The length is no argument against that: BigQuery
+   * carries a whole key file's JSON in `password`.
+   *
+   * WHY NOT `password`. It is not a secret. `password` is classified `secret` in
+   * `connection-secrets.ts`, which would mask the map in the dialog and store it as a credential,
+   * and a reader cannot correct a document they cannot see.
+   *
+   * WHY `resolution` IN `CONNECTION_RELEVANCE`, where Kubernetes' namespace list is `cosmetic`.
+   * The namespace list FILTERS names the cluster itself defines, so a copy differing in it still
+   * reaches the same objects. A register map DEFINES the names: `volts` is unit 1, holding register
+   * 100 under one map and can be unit 3, coil 5 under another, so a read keyed to a connection
+   * whose map has changed would match a name to an address it was not taken from. That is the
+   * silent mismatch `connectionResolutionKey` exists to prevent.
+   *
+   * Bounded by `MAX_REGISTER_MAP_BYTES` at the parser rather than here, so a seed file and a
+   * dialog answer the same way. Read by no other engine.
+   */
+  registerMap?: string;
 }
 
 export interface ForeignKeySchema {

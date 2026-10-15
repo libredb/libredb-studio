@@ -85,6 +85,23 @@ export const UNIT_ID_MAX = 255;
 export const UNIT_ID_SERIAL_RESERVED_FROM = 248;
 
 /**
+ * The most a register map may carry, in UTF-8 bytes, checked before the document is parsed.
+ *
+ * WHY THERE IS A BOUND AT ALL. The map is a field on the connection, so it travels with every
+ * request a read makes and is stored with the connection record. Before this there was no total
+ * bound anywhere - the parser checked each point and nothing checked how many there were - so a
+ * document of any size reached the parser, the payload and storage without meeting a rule.
+ *
+ * WHY THIS FIGURE. MEASURED against the shapes a point actually has: the provider's own example
+ * map is 79 bytes a point, and a point with every optional field set and a forty-character name is
+ * 248. So this admits about 264 of the widest points or 829 plain ones, where a device's named
+ * points run to tens or low hundreds. It is a bound on what a reader can paste into one
+ * connection, not a statement about the protocol: a device can hold 255 units of four tables of
+ * 65536 addresses, and naming all of them would not be a map.
+ */
+export const MAX_REGISTER_MAP_BYTES = 65536;
+
+/**
  * The sentences the product has to say out loud, kept here because `index.ts` imports this file and
  * a sentence nothing imports is a sentence that drifts.
  *

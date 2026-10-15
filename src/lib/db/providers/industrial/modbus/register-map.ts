@@ -17,7 +17,13 @@
  * the PDU address, which is what goes on the wire, and v1 offers no parser.
  */
 import { REGISTERS_OF_TYPE, type ByteOrder, type WordOrder } from "./values";
-import { TABLE_SIZE, UNIT_ID_MAX, UNIT_ID_MIN, UNIT_ID_SERIAL_RESERVED_FROM } from "./constants";
+import {
+  MAX_REGISTER_MAP_BYTES,
+  TABLE_SIZE,
+  UNIT_ID_MAX,
+  UNIT_ID_MIN,
+  UNIT_ID_SERIAL_RESERVED_FROM,
+} from "./constants";
 import type { Table } from "./pdu";
 
 export class ModbusMapError extends Error {}
@@ -167,6 +173,15 @@ function checkPoint(raw: unknown, index: number, warnings: string[]): MapPoint {
 export function parseRegisterMap(document: string | undefined | null): ParsedMap {
   if (document === undefined || document === null || document.trim().length === 0)
     return { points: [], isEmpty: true, warnings: [] };
+
+  // The bound comes BEFORE the parse, for the reason the frame reader applies its own bound at the
+  // header: a rule that runs after the work is done has not bounded the work. `JSON.parse` of a
+  // multi-megabyte document builds the whole tree first, and this document arrives from a form.
+  const bytes = Buffer.byteLength(document, "utf8");
+  if (bytes > MAX_REGISTER_MAP_BYTES)
+    throw new ModbusMapError(
+      `The register map is ${bytes} bytes and the most one connection carries is ${MAX_REGISTER_MAP_BYTES}. It travels with every read and is stored with the connection, so a larger document is refused rather than truncated.`,
+    );
 
   let parsed: unknown;
   try {
