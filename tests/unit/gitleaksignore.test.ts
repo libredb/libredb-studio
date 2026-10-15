@@ -58,15 +58,20 @@ describe(".gitleaksignore", () => {
     // them, went when its squash f447c9b7 landed: no ref reaches that merge any
     // more, and the squash commit does not touch the capture sets.
     //
-    // The last 5 are the CFRG HPKE test vector of the lsb1 suite (STU-02),
+    // The 5 after them are the CFRG HPKE test vector of the lsb1 suite (STU-02),
     // checked in unchanged: its shared secret, key schedule context, secret,
     // key and exporter secret are published test values. They name the commit
     // that added the fixture and move onto a squash commit if one lands it.
     //
+    // The last 21 are the fixed ephemeral private keys of the lsb1 test vectors
+    // (STU-03), one per vector: each is the SHA-256 of a published label marked
+    // test only, so anyone can derive it. They name the commit that added the
+    // vectors and move onto a squash commit if one lands it.
+    //
     // This number is the point of the test: a suppression is a decision someone
     // has to make on purpose, so both a line silently dropped and a line
     // silently added land here as a failing diff rather than as nothing.
-    expect(contentLines).toHaveLength(56);
+    expect(contentLines).toHaveLength(77);
   });
 
   test("every non-comment, non-blank line is a well-formed fingerprint", () => {
