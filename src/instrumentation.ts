@@ -27,6 +27,17 @@ export async function register(): Promise<void> {
   const { verifyGovernanceEnvAtBoot } = await import("@/lib/governance/preflight");
   if (!verifyGovernanceEnvAtBoot()) return;
 
+  // Governance snapshot (spec 7.5): load the governance source in the
+  // background and keep it current. Not awaited, so the server serves at once
+  // and data routes answer 503 until the first load succeeds; a database
+  // outage never stops it. Imported only under governance, so a Studio without
+  // GOVERNANCE_SOURCE never loads the governance pool.
+  const { governanceEnabled } = await import("@/lib/governance/config");
+  if (governanceEnabled()) {
+    const { startGovernance } = await import("@/lib/governance/start");
+    startGovernance();
+  }
+
   const { logger } = await import("@/lib/logger");
 
   // LibreDB sample: programmatic and fast — seeded synchronously as before.

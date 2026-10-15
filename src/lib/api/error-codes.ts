@@ -59,6 +59,13 @@ export const ApiErrorCode = {
    */
   CUSTOM_CONNECTIONS_DISABLED: "CUSTOM_CONNECTIONS_DISABLED",
 
+  /**
+   * Under governance, the snapshot of the governance source cannot be served (503): it is still loading, older
+   * than GOVERNANCE_MAX_STALENESS_MS, misconfigured or incompatible (docs/GOVERNANCE.md, freshness and readiness).
+   * Distinct from CONNECTION_ERROR, which is a user's database failing: with this code no user database was tried.
+   */
+  GOVERNANCE_UNAVAILABLE: "GOVERNANCE_UNAVAILABLE",
+
   // Application rate limiting (distinct from LLM_RATE_LIMIT, which is the provider's limit)
   RATE_LIMITED: "RATE_LIMITED",
 

@@ -19,6 +19,7 @@ Studio publishes the contract before it implements all of it: until a release's 
 - [Snapshot protocol](#snapshot-protocol)
 - [Change notification](#change-notification)
 - [Freshness and readiness](#freshness-and-readiness)
+- [Operating notes](#operating-notes)
 - [Heartbeat](#heartbeat)
 - [Versioning and upgrade order](#versioning-and-upgrade-order)
 - [Row admission and skip codes](#row-admission-and-skip-codes)
@@ -294,6 +295,33 @@ The connection behind `GOVERNANCE_POSTGRES_URL` must therefore reach the primary
 The manifest publishes the body as JSON Schema with an example for each status.
 A background refresher retries every 5 seconds with jitter while the snapshot is absent or expired, so an instance that started before PostgreSQL becomes ready on its own, and the process never exits because the database is down.
 An unavailable governance source never ends a session either: data routes answer 503 instead, so an outage sets off no wave of sign-ins.
+
+## Operating notes
+
+How an instance keeps its snapshot current:
+
+- Studio starts its first load when the server starts, without delaying the start, so data routes answer 503 `GOVERNANCE_UNAVAILABLE` until that load succeeds.
+- It loads again whenever the snapshot reaches the age `GOVERNANCE_REFRESH_MS`, and every 4 to 6 seconds while it has no snapshot or one older than that, whether or not any request arrives.
+- One load runs at a time: a load asked for while another is under way, such as by the readiness probe, joins that load instead of starting a second one.
+- A snapshot's age counts from the moment its load started, so its data is never older than its age says.
+- A load that finds the schema, an object or a column missing, or a privilege of Studio's role missing, makes the state `misconfigured` at once, even when the snapshot in use is recent, and data routes answer 503 until a load succeeds.
+  Its `detail` names the object Studio read, then the server's message and SQLSTATE, such as `bridge.grants_v1: permission denied for view grants_v1 (SQLSTATE 42501)`.
+  PostgreSQL reports a schema missing from a qualified name as 42P01 and a schema without `USAGE` as 42501, so either way the message names the schema.
+- No common contract version makes the state `incompatible` at once, in the same way.
+- Any other failure, such as an outage, a refused connection or a timeout, keeps the snapshot in use: the state turns `degraded` once that snapshot is `GOVERNANCE_REFRESH_MS` old, and `unavailable` once it is `GOVERNANCE_MAX_STALENESS_MS` old.
+  A snapshot that reaches the maximum staleness is `unavailable` even when no load has failed.
+- The first load that succeeds again serves at once, and Studio logs the first load and every failed load with its cause, never with a value or a credential.
+
+How an instance connects to the governance source:
+
+- `GOVERNANCE_POSTGRES_URL` must reach the primary, directly or through a session-mode pooler, because neither a hot standby nor a transaction-mode pooler carries the listener's `LISTEN`.
+- Set `sslmode=verify-full` in the URL wherever the network between Studio and PostgreSQL is not isolated, and make the certificate authority that signed the server's certificate known to Studio, with `sslrootcert` naming its file in the URL or with `NODE_EXTRA_CA_CERTS`.
+  Studio's PostgreSQL driver treats `sslmode=require` as `verify-full` too, so a trusted certificate authority is needed either way.
+- Always set `sslmode`: a URL without it gets the same TLS setting `STORAGE_POSTGRES_URL` gets, which encrypts a connection to a remote host without verifying the server, and leaves a connection to a local one unencrypted.
+- Budget 5 connections of the governance source's database per Studio instance, besides its storage pool: at most 4 pooled connections for loads and 1 dedicated connection for the listener.
+- Each pooled connection names itself `libredb-studio-governance` in `application_name`, so it shows up as such in `pg_stat_activity`.
+- A load waits at most 5 seconds for a connection, each statement runs under a `statement_timeout` of 10 seconds and is abandoned by Studio after 15, and the whole load gives up after 20 seconds, so a governance source that hangs never holds a load for long.
+  Studio closes the connection of a load that gave up, and a statement still running on it keeps its server process busy until it ends, at most the 10 seconds of `statement_timeout`, because PostgreSQL notices a closed connection only when it next reads from it.
 
 ## Heartbeat
 

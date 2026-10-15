@@ -33,6 +33,7 @@ const GROUPS = {
   rateLimit: ["RATE_LIMITED"],
   session: ["AUTH_REQUIRED", "WORKSPACE_OWNER_MISMATCH"],
   connectionPolicy: ["CUSTOM_CONNECTIONS_DISABLED"],
+  governance: ["GOVERNANCE_UNAVAILABLE"],
   generic: ["INTERNAL_ERROR", "NETWORK_ERROR"],
 } as const;
 
@@ -74,6 +75,11 @@ describe("ApiErrorCode", () => {
   test("contains the custom-connections refusal code, distinct from a role refusal's AUTH_ERROR", () => {
     expect(ApiErrorCode.CUSTOM_CONNECTIONS_DISABLED).toBe("CUSTOM_CONNECTIONS_DISABLED");
     expect(ApiErrorCode.CUSTOM_CONNECTIONS_DISABLED).not.toBe(ApiErrorCode.AUTH_ERROR);
+  });
+
+  test("contains the governance code a data route answers while the snapshot cannot be served", () => {
+    for (const code of GROUPS.governance) expect(ApiErrorCode[code]).toBe(code);
+    expect(ApiErrorCode.GOVERNANCE_UNAVAILABLE).not.toBe(ApiErrorCode.CONNECTION_ERROR);
   });
 
   test("contains the application rate-limit error code", () => {
