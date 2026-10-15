@@ -13,14 +13,23 @@
  * the reader makes of them. A child that outgrows the limit ends with "JavaScript heap out of memory" and fails its
  * case.
  *
- * The child's longest event-loop delay during the statement is read with `perf_hooks.monitorEventLoopDelay`; 50 ms
- * leaves room for a loaded runner above the 0.2 to 9 ms measured for streaming reads of this size. It is read in a
- * child with Node's default old space, not the limited one: at the limit the 76 MB read runs at the heap's edge, and
- * V8's full collections, 40 to 90 per read and up to 26 ms each on a loaded 20-core machine (measured 2026-10-13 with
- * --trace-gc), stall the loop for reasons that are not the reader's. The stall is asserted on Linux only: CI's
- * macos-latest runner measured 51.7 ms at the limit and 82.1 ms with the default old space (runs 38329987927 and
- * 38332056658, 2026-10-13), where Linux CI and that loaded machine measured 0.2 to 26 ms, and the reader is the same
- * JavaScript on every platform.
+ * The stall is the most CPU time the child's main thread spends in one turn of its event loop during the statement: a
+ * 1 ms timer reads `process.threadCpuUsage()` on every tick, and the largest difference between two ticks is the
+ * turn. 50 ms leaves room for a loaded runner above the 4 to 6.4 ms measured for streaming reads of this size. It was
+ * the longest event-loop delay, read with `perf_hooks.monitorEventLoopDelay`, which also counts the time the system
+ * does not run the process: that read 55.1 and 55.7 ms in two coverage runs on a 20-core machine running other suites
+ * at once (2026-10-15), and with the file pinned to one CPU beside ten busy loops it read 39 to 85.1 ms and failed 3
+ * of 10 runs. Under that same load the turn read 4.5 to 6.4 ms in 10 runs whose delay read 37 to 70.9 ms. The delay is
+ * still read and printed, and two cases pin the difference: a turn the main thread spends waiting, as a preempted
+ * process waits, is not counted, and one it spends computing is. A wait the reader made itself would be missed too; it
+ * makes none, since its reads and its gunzip are asynchronous and its own work is computation.
+ *
+ * The stall is read in a child with Node's default old space, not the limited one: at the limit the 76 MB read runs at
+ * the heap's edge, and V8's full collections, 40 to 90 per read and up to 26 ms each on a loaded 20-core machine
+ * (measured 2026-10-13 with --trace-gc), stall the loop for reasons that are not the reader's. It is asserted on Linux
+ * only: CI's macos-latest runner measured an event-loop delay of 51.7 ms at the limit and 82.1 ms with the default old
+ * space (runs 38329987927 and 38332056658, 2026-10-13), where Linux CI and that loaded machine measured 0.2 to 26 ms,
+ * and the reader is the same JavaScript on every platform.
  *
  * The child is the node on PATH, so CI's Node 24 runs it; NODE_TRANSPORT_NODES, split on the path delimiter, names
  * other binaries, as it does for the runtimes test.
@@ -68,15 +77,37 @@ interface ChildReport {
   readonly requests: readonly string[];
   readonly bodyBytes: number;
   readonly longestDelayMs: number;
+  /** The most CPU time the main thread spent in one turn of the event loop during the statement. */
+  readonly longestTurnCpuMs: number;
   readonly peakUsedMiB: number;
 }
 
 /**
- * Runs in the child, from its text, so it names nothing outside itself: one statement through the real transport and
- * statements, its partitions answered with the bodies `shape` names, and the heap and event-loop delay meanwhile.
+ * What the server does to the child's main thread when partition 1 is asked for, so a test can hold one turn of the
+ * event loop for 200 ms without the reader: "wait" holds it without running, as a preempted process is held, and
+ * "compute" holds it running.
  */
-async function runCase(deps: ChildDeps, shape: string, bombFile: string): Promise<ChildReport> {
+type Hold = "none" | "wait" | "compute";
+
+/**
+ * Runs in the child, from its text, so it names nothing outside itself: one statement through the real transport and
+ * statements, its partitions answered with the bodies `shape` names, and the heap, the event-loop delay and the main
+ * thread's CPU time meanwhile.
+ */
+async function runCase(deps: ChildDeps, shape: string, bombFile: string, hold: string): Promise<ChildReport> {
   const mib = (bytes: number) => Math.round((bytes / (1024 * 1024)) * 10) / 10;
+  const threadCpuMs = () => {
+    const { user, system } = process.threadCpuUsage();
+    return (user + system) / 1000;
+  };
+  const holdMainThread = () => {
+    if (hold === "wait") Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
+    if (hold === "compute") {
+      // Busy until the main thread has run 200 ms more, however long the system takes to give it that time.
+      const until = threadCpuMs() + 200;
+      while (threadCpuMs() < until) Math.sqrt(until);
+    }
+  };
   const handle = "019c06a4-0000-df4f-0000-00100006589e";
   const status = `/api/v2/statements/${handle}`;
   // 76 MB of two-cell rows, written into Buffers and gzipped once, five partitions of about 15.2 MB decoded each.
@@ -116,6 +147,7 @@ async function runCase(deps: ChildDeps, shape: string, bombFile: string): Promis
     if (request.method === "POST" && url.pathname === "/api/v2/statements") {
       json(202, { code: "333334", statementHandle: handle, statementStatusUrl: status });
     } else if (url.searchParams.has("partition")) {
+      if (url.searchParams.get("partition") === "1") holdMainThread();
       const body = partitions[Number(url.searchParams.get("partition")) - 1];
       response.writeHead(200, { "content-type": "application/json", "content-encoding": "gzip" });
       response.end(body);
@@ -168,6 +200,15 @@ async function runCase(deps: ChildDeps, shape: string, bombFile: string): Promis
   }, 5);
   const delay = deps.monitorEventLoopDelay({ resolution: 1 });
   delay.enable();
+  // The main thread's CPU time between two ticks: what one turn of the event loop spent running. Time the system did
+  // not run the process passes between ticks too, and counts in the delay above, but it is no CPU time.
+  let lastTickCpuMs = threadCpuMs();
+  let longestTurnCpuMs = 0;
+  const ticks = setInterval(() => {
+    const now = threadCpuMs();
+    longestTurnCpuMs = Math.max(longestTurnCpuMs, now - lastTickCpuMs);
+    lastTickCpuMs = now;
+  }, 1);
   let error: string | null = null;
   let rows = 0;
   let cut = false;
@@ -181,6 +222,7 @@ async function runCase(deps: ChildDeps, shape: string, bombFile: string): Promis
     error = (caught as Error).message;
   }
   delay.disable();
+  clearInterval(ticks);
   clearInterval(sampler);
   peak = Math.max(peak, deps.getHeapStatistics().used_heap_size);
   await statements.close();
@@ -194,6 +236,7 @@ async function runCase(deps: ChildDeps, shape: string, bombFile: string): Promis
     requests,
     bodyBytes,
     longestDelayMs: Math.round(delay.max / 1e5) / 10,
+    longestTurnCpuMs: Math.round(longestTurnCpuMs * 10) / 10,
     peakUsedMiB: mib(peak),
   };
 }
@@ -219,7 +262,7 @@ beforeAll(async () => {
       `import { createSnowflakeTransport, snowflakeProductionDeps } from ${JSON.stringify(join(SOURCES, "providers/sql/snowflake/transport.ts"))};`,
       `const runCase = ${runCase.toString()};`,
       "const deps = { createSnowflakeTransport, createSnowflakeStatements, snowflakeProductionDeps, patTokenSource, httpOrigin, createServer, monitorEventLoopDelay, getHeapStatistics, gzipSync, readFileSync };",
-      "const report = await runCase(deps, process.argv[2], process.argv[3]);",
+      "const report = await runCase(deps, process.argv[2], process.argv[3], process.argv[4]);",
       'process.stdout.write(JSON.stringify(report) + "\\n");',
       "process.exit(0);",
       "",
@@ -245,9 +288,14 @@ function nodeBinaries(): string[] {
 }
 
 /** Runs one case in a Node child, with its old space limited to `heapLimitMiB` when one is given. */
-async function runChild(binary: string, shape: string, heapLimitMiB?: number): Promise<ChildReport> {
+async function runChild(
+  binary: string,
+  shape: string,
+  heapLimitMiB?: number,
+  hold: Hold = "none",
+): Promise<ChildReport> {
   const limit = heapLimitMiB === undefined ? [] : [`--max-old-space-size=${heapLimitMiB}`];
-  const child = Bun.spawn([binary, ...limit, "--expose-gc", at("child.js"), shape, at("bomb.gz")], {
+  const child = Bun.spawn([binary, ...limit, "--expose-gc", at("child.js"), shape, at("bomb.gz"), hold], {
     cwd: dir,
     stdout: "pipe",
     stderr: "pipe",
@@ -298,15 +346,37 @@ for (const binary of nodeBinaries()) {
 
   describe(`a result past the budget with the default old space, in a Node child (${binary})`, () => {
     test.skipIf(process.platform !== "linux")(
-      "76 MB in partitions 1 to 5 never stalls the event loop 50 ms",
+      "76 MB in partitions 1 to 5 never holds the event loop for 50 ms of CPU",
       async () => {
         const report = await runChild(binary, "large");
         console.log(
-          `snowflake wire heap: 76 MB, default old space, longest event-loop delay ${report.longestDelayMs} ms`,
+          `snowflake wire heap: 76 MB, default old space, longest turn ${report.longestTurnCpuMs} ms of CPU, longest event-loop delay ${report.longestDelayMs} ms`,
         );
         expect(report.error).toBeNull();
         expect(report.cut).toBe(true);
-        expect(report.longestDelayMs).toBeLessThan(STALL_LIMIT_MS);
+        expect(report.longestTurnCpuMs).toBeLessThan(STALL_LIMIT_MS);
+      },
+      120_000,
+    );
+
+    test.skipIf(process.platform !== "linux")(
+      "a turn the main thread spends waiting, as a preempted process waits, is not the reader's stall",
+      async () => {
+        const report = await runChild(binary, "large", undefined, "wait");
+        expect(report.error).toBeNull();
+        // The control: the clock saw the 200 ms.
+        expect(report.longestDelayMs).toBeGreaterThanOrEqual(150);
+        expect(report.longestTurnCpuMs).toBeLessThan(STALL_LIMIT_MS);
+      },
+      120_000,
+    );
+
+    test.skipIf(process.platform !== "linux")(
+      "a turn the main thread spends computing is counted",
+      async () => {
+        const report = await runChild(binary, "large", undefined, "compute");
+        expect(report.error).toBeNull();
+        expect(report.longestTurnCpuMs).toBeGreaterThanOrEqual(200);
       },
       120_000,
     );
