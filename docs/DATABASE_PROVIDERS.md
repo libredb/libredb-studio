@@ -262,7 +262,7 @@ QueryEditor                      /api/db/query
 
 ## Supported Databases
 
-Thirty-eight type-ids are supported by thirty-six provider modules: two pairs share one, `elasticsearch` and `opensearch` in `providers/sql/search/`, and `influxdb` and `influxdb3` in `providers/timeseries/influxdb/`.
+Thirty-nine type-ids are supported by thirty-seven provider modules: two pairs share one, `elasticsearch` and `opensearch` in `providers/sql/search/`, and `influxdb` and `influxdb3` in `providers/timeseries/influxdb/`.
 The count is derived from the exhaustive `SHIPPED` record in
 [`src/lib/db/compatibility.ts`](../src/lib/db/compatibility.ts) rather than written here twice - and
 the TABLE under it has to be checked by hand, which is the lesson a review left here: the numeral was
@@ -311,9 +311,6 @@ monitoring, limitations, …) see the prime docs in **[`docs/providers/`](./prov
 | OPC UA | `opcua` | Industrial (an address space over `opc.tcp`, read-only) | [providers/opcua.md](./providers/opcua.md) |
 | MTConnect | `mtconnect` | Industrial (an agent over HTTP, read-only) | [providers/mtconnect.md](./providers/mtconnect.md) |
 | Modbus | `modbus` | Industrial (a device or a gateway over TCP, read-only) | [providers/modbus.md](./providers/modbus.md) |
-| NETCONF | `netconf` | Network (a device's YANG datastores over NETCONF on SSH, read-only) | [providers/netconf.md](./providers/netconf.md) |
-| Sparkplug B | `sparkplug` | Industrial (one MQTT broker over the Sparkplug B topic namespace, read-only) | [providers/sparkplug.md](./providers/sparkplug.md) |
-| SNMP | `snmp` | Network (one agent over SNMPv2c on UDP, read-only) | [providers/snmp.md](./providers/snmp.md) |
 | LibreDB | `libredb` | Embedded (key-value) | [providers/libredb.md](./providers/libredb.md) |
 
 ## Core Interface

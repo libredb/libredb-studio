@@ -44,9 +44,6 @@ in lockstep with the code (see the tri-sync rule in [`../../CLAUDE.md`](../../CL
 | OPC UA | `opcua` | Industrial (address space) | `node-opcua-client` (pure JavaScript, `opc.tcp`) | JSON (read request) | [opcua.md](./opcua.md) |
 | MTConnect | `mtconnect` | Industrial (agent) | none: Studio's own client over the shared `node:http(s)` transport | A request line in the agent's own URL grammar | [mtconnect.md](./mtconnect.md) |
 | Modbus | `modbus` | Industrial (device or gateway) | none: Studio's own client over a raw socket through the shared egress rule | One JSON read request against a register map the user supplies | [modbus.md](./modbus.md) |
-| NETCONF | `netconf` | Network (one device) | `ssh2` (the SSH transport only; Studio opens the socket and hands it over, and the NETCONF framing, requests and session are Studio's own) | One NETCONF read request per execution, no statement terminator | [netconf.md](./netconf.md) |
-| Sparkplug B | `sparkplug` | Industrial (a broker's Sparkplug namespace) | `mqtt-packet` (its parser only; the packets Studio sends are Studio's own) | One JSON read request naming a group, edge node, device, window and row limit | [sparkplug.md](./sparkplug.md) |
-| SNMP | `snmp` | Network (one agent) | none: Studio's own client over one UDP socket through the shared egress rule | Four read commands: `get`, `next`, `walk` and `table`, parsed before the socket is touched | [snmp.md](./snmp.md) |
 | LibreDB | `libredb` | Embedded (Key-Value) | `@libredb/libredb` | JSON (command grammar) | [libredb.md](./libredb.md) |
 
 ## Conventions

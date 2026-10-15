@@ -159,7 +159,7 @@ And nothing is held back. Single sign-on, ER diagrams, the AI features and the N
 
 <p align="center">
   <img src="public/screenshots/connection-modal.png" alt="Multi-Database Connection Manager" width="100%" />
-  <br/><em>Connect to PostgreSQL, MySQL, Oracle, Db2 LUW, SQL Server, MongoDB, Couchbase, Firestore, ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Databend, Snowflake, Apache Spark, Cassandra, Redis, SQLite, DuckDB, libSQL, Prometheus, Apache Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Oxia, S3-compatible object storage, Kubernetes, MTConnect or Modbus with SSL/TLS and SSH Tunnel support (Kafka takes TLS and no tunnel, and OPC UA carries its own transport security instead of the shared panel).</em>
+  <br/><em>Connect to PostgreSQL, MySQL, Oracle, Db2 LUW, SQL Server, MongoDB, Couchbase, Firestore, ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Databend, Snowflake, Apache Spark, Cassandra, Redis, SQLite, DuckDB, libSQL, Prometheus, Apache Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Oxia, S3-compatible object storage, Kubernetes, MTConnect and Modbus with SSL/TLS and SSH Tunnel support (Kafka takes TLS and no tunnel, and OPC UA carries its own transport security instead of the shared panel).</em>
 </p>
 
 ---
@@ -990,7 +990,7 @@ extraEnvFrom:
 | `defaults` | No | Default values merged into all connections |
 | `connections[].id` | Yes | Unique slug (`[a-z0-9-]+`, max 64 chars) |
 | `connections[].name` | Yes | Display name in UI |
-| `connections[].type` | Yes | `postgres`, `mysql`, `sqlite`, `libsql`, `duckdb`, `oracle`, `db2`, `mssql`, `clickhouse`, `druid`, `trino`, `bigquery`, `databend`, `snowflake`, `spark`, `cassandra`, `elasticsearch`, `opensearch`, `mongodb`, `couchbase`, `firestore`, `redis`, `prometheus`, `kafka`, `mqtt`, `rabbitmq`, `etcd`, `neo4j`, `milvus`, `qdrant`, `influxdb`, `influxdb3`, `oxia`, `s3`, `kubernetes`, `opcua`, `mtconnect`, `libredb` |
+| `connections[].type` | Yes | `postgres`, `mysql`, `sqlite`, `libsql`, `duckdb`, `oracle`, `db2`, `mssql`, `clickhouse`, `druid`, `trino`, `bigquery`, `databend`, `snowflake`, `spark`, `cassandra`, `elasticsearch`, `opensearch`, `mongodb`, `couchbase`, `firestore`, `redis`, `prometheus`, `kafka`, `mqtt`, `rabbitmq`, `etcd`, `neo4j`, `milvus`, `qdrant`, `influxdb`, `influxdb3`, `oxia`, `s3`, `kubernetes`, `opcua`, `mtconnect`, `modbus`, `libredb` |
 | `connections[].roles` | Yes | `["*"]` (everyone), `["admin"]`, `["user"]`, or `["admin", "user"]` |
 | `connections[].managed` | No | `true` = admin-controlled, not editable in the UI (default), `false` = editable copy for user |
 | `connections[].readOnly` | No | `true` refuses every write on an engine that enforces it (etcd); refused on an unmanaged connection |
