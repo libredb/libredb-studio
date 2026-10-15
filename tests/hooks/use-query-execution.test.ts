@@ -3783,6 +3783,34 @@ describe("useQueryExecution", () => {
     globalThis.fetch = originalFetch;
   });
 
+  test("a statement the server answers with a gone transaction ends the editor transaction", async () => {
+    // A 409 TRANSACTION_CREDENTIAL_CHANGED (Studio rolled the transaction back) and the provider's "No active
+    // transaction" after its own five-minute rollback both mean nothing is open any more, so the editor leaves
+    // transaction mode. Any other failure inside the transaction leaves it open.
+    const originalFetch = globalThis.fetch;
+    const answers: [number, Record<string, unknown>, boolean][] = [
+      [409, { error: "Your access changed.", code: "TRANSACTION_CREDENTIAL_CHANGED", rolledBack: true }, true],
+      [400, { error: "No active transaction", code: "QUERY_ERROR", statusCode: 400 }, true],
+      [400, { error: 'relation "t" does not exist', code: "QUERY_ERROR", statusCode: 400 }, false],
+    ];
+    for (const [status, body, ends] of answers) {
+      globalThis.fetch = (async () =>
+        new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } })) as never;
+      const onTransactionEnded = mock(() => {});
+      const params = createDefaultParams({ transactionActive: true, onTransactionEnded });
+      const { result } = renderHook(() => useQueryExecution(params));
+
+      // oxlint-disable-next-line no-await-in-loop -- one answer at a time, each on a fresh hook.
+      await act(async () => {
+        await result.current.executeQuery("INSERT INTO t VALUES (1)");
+      });
+
+      expect(onTransactionEnded).toHaveBeenCalledTimes(ends ? 1 : 0);
+    }
+
+    globalThis.fetch = originalFetch;
+  });
+
   // ── SANDBOX refuses what would commit its transaction ─────────────────
 
   test("playground mode refuses a statement the provider declares as committing implicitly", async () => {

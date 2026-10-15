@@ -220,6 +220,61 @@ describe("useTransactionControl", () => {
     );
   });
 
+  test("a 409 TRANSACTION_CREDENTIAL_CHANGED and a provider rollback answer both end the editor transaction", async () => {
+    // The server no longer holds the transaction in either answer: Studio rolled it back after the caller's grant level
+    // or credential changed (spec 9.4), or the provider rolled it back on its own five-minute timer, after which the
+    // provider answers every statement and ROLLBACK "No active transaction". The editor leaves transaction mode, so the
+    // next statement runs outside a transaction instead of being refused until the user switches connection.
+    const connection = makeConnection();
+    const answers = [
+      {
+        ok: false,
+        status: 409,
+        json: { error: "Your access changed.", code: "TRANSACTION_CREDENTIAL_CHANGED", rolledBack: true },
+      },
+      { ok: false, status: 400, json: { error: "No active transaction", code: "QUERY_ERROR", statusCode: 400 } },
+    ];
+    for (const answer of answers) {
+      mockGlobalFetch({ "/api/db/transaction": { ok: true, status: 200, json: { status: "active" } } });
+      const { result } = renderHook(() => useTransactionControl({ activeConnection: connection }));
+      // oxlint-disable-next-line no-await-in-loop -- one answer at a time, each on a fresh hook.
+      await act(async () => {
+        await result.current.handleTransaction("begin");
+      });
+      expect(result.current.transactionActive).toBe(true);
+
+      mockGlobalFetch({ "/api/db/transaction": answer });
+      // oxlint-disable-next-line no-await-in-loop -- as above.
+      await act(async () => {
+        await result.current.handleTransaction("rollback");
+      });
+
+      expect(result.current.transactionActive).toBe(false);
+      expect(mockToastError).toHaveBeenCalledWith(
+        "Transaction Error",
+        expect.objectContaining({ description: answer.json.error }),
+      );
+    }
+
+    // Any other refusal leaves the transaction to the user: it is still open on the server.
+    mockGlobalFetch({ "/api/db/transaction": { ok: true, status: 200, json: { status: "active" } } });
+    const { result } = renderHook(() => useTransactionControl({ activeConnection: connection }));
+    await act(async () => {
+      await result.current.handleTransaction("begin");
+    });
+    mockGlobalFetch({
+      "/api/db/transaction": {
+        ok: false,
+        status: 400,
+        json: { error: 'deferred constraint "fk" violated', code: "QUERY_ERROR" },
+      },
+    });
+    await act(async () => {
+      await result.current.handleTransaction("commit");
+    });
+    expect(result.current.transactionActive).toBe(true);
+  });
+
   test("handleTransaction shows destructive toast on network error", async () => {
     const connection = makeConnection();
     // Override fetch to throw a network error

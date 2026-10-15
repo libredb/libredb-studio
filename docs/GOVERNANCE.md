@@ -646,6 +646,17 @@ Studio records one query event per executed unit:
 | `key-scan` | One per page of a key scan (`POST /api/db/keys/scan`), which reads key names. Its statement is the page request, `SCAN <cursor> [MATCH <pattern>] COUNT <count>` on every engine that walks a key space, its `statement_type` is `OTHER`, and `row_count` is the number of keys the page returned. |
 
 A later version adds `agent`, `agent-handover` and `mcp` once the agent and MCP run under governance, and a control plane shows any source it does not know as it is.
+
+The rows of one interactive transaction share `transaction_id`, a UUID Studio generates when `BEGIN` succeeds.
+`BEGIN` and the transaction status record nothing, and each statement request records one `open` row with the text submitted, with `status` `error` when it failed.
+Exactly one terminal row ends a transaction, with `statement_type` `OTHER`:
+
+- `committed`, statement `COMMIT`, for the person's commit.
+- `rolled-back`, statement `ROLLBACK`, for the person's rollback and for the rollbacks Studio makes itself: when the grant level or credential under the transaction changed (409 `TRANSACTION_CREDENTIAL_CHANGED`, with `status` `error` when Studio could not confirm the rollback), and when a reload takes the grant away and closes the person's providers.
+- `timed-out`, with no statement and `status` `cancelled`, when the database driver rolled the transaction back at its five-minute limit, which Studio notices at most 1 second after the limit or at the person's next request.
+
+A `COMMIT` or `ROLLBACK` that fails records `status` `error`: `rolled-back` when the transaction ended with it, else `open`.
+A statement that itself ends the transaction, such as a typed `COMMIT`, records only its `open` row.
 Catalog and metadata reads, schema browsing, monitoring, health checks and pool statistics are not query events.
 
 Delivery:

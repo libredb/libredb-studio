@@ -62,10 +62,41 @@
  * evidence for that.
  *
  * Process-local, like the provider cache it shadows. A restart drops every record, which lands on
- * the unowned case above rather than on a lockout.
+ * the unowned case above rather than on a lockout. The records live in a global under a registered
+ * symbol, one map per process, because the governance loader that tears down a revoked user's
+ * providers runs in another bundle than the route that claims them (src/lib/db/owner-removal.ts).
+ *
+ * TRANSACTION EVENTS, under governance (spec 7.9). Every record carries a `transactionId` from
+ * `randomUUID()`, and under governance the scope its query events need: who opened it, and the
+ * connection and grant level it runs on. The route records one `open` event per statement run in it,
+ * and exactly one terminal event ends it, through `endTransactionEvent`, which marks the record so a
+ * second path that sees the same end records nothing: `committed` and `rolled-back` from the owner's
+ * COMMIT and ROLLBACK and from Studio's own rollbacks (a credential that changed, a grant a reload
+ * took away), and `timed-out` from whichever of three paths sees the provider's own timeout first:
+ * the timer `watchTransactionTimeout` arms at claim, the route's reconcile, or the lapsed lease.
  */
+import { randomUUID } from "node:crypto";
+import { queryEventStart } from "@/lib/query-events/build";
+import { recordQueryEvent } from "@/lib/query-events/sink";
+import type {
+  QueryEventConnection,
+  QueryEventPrincipal,
+  QueryEventStart,
+  QueryEventStatus,
+  TransactionOutcome,
+} from "@/lib/query-events/types";
 
-interface TransactionOwner {
+/** What every query event of a governed transaction says about who ran it and where (spec 7.9). */
+export interface TransactionEventScope {
+  readonly principal: QueryEventPrincipal;
+  readonly connection: QueryEventConnection;
+  readonly clientIp?: string;
+}
+
+/** How a transaction ended, as its one terminal event says. */
+export type TransactionEnd = Exclude<TransactionOutcome, "open">;
+
+export interface TransactionOwner {
   /** `UserPayload.username` of the session that ran the successful `begin`. */
   username: string;
   /**
@@ -84,61 +115,181 @@ interface TransactionOwner {
   startedAt: number;
   /** When the owner last acted on it. The idle lease below is measured from here. */
   lastActiveAt: number;
+  /** The `transaction_id` every query event of this transaction carries. */
+  readonly transactionId: string;
+  /** Under governance, the scope of its query events; absent without governance, where none is recorded. */
+  readonly events?: TransactionEventScope;
+  /** Whether its terminal event was recorded, so no second path records another. */
+  ended: boolean;
 }
 
 /** See the "owner never comes back" note above: this is `TX_TIMEOUT_MS`, measured. */
 export const OWNERSHIP_IDLE_MS = 5 * 60 * 1000;
 
-const owners = new Map<string, TransactionOwner>();
+/**
+ * How long after its begin the timer of `watchTransactionTimeout` looks for a transaction the provider ended on its own:
+ * the providers' `TX_TIMEOUT_MS`, which `OWNERSHIP_IDLE_MS` measures, plus a second for the provider's own timer to run.
+ */
+export const TRANSACTION_TIMEOUT_CHECK_MS = OWNERSHIP_IDLE_MS + 1000;
+
+const OWNERS_KEY = Symbol.for("libredb-studio.transaction-owners");
+
+type OwnersHolder = { [OWNERS_KEY]?: Map<string, TransactionOwner> };
+
+function owners(): Map<string, TransactionOwner> {
+  const holder = globalThis as OwnersHolder;
+  holder[OWNERS_KEY] ??= new Map();
+  return holder[OWNERS_KEY];
+}
+
+/** What a transaction event says beyond its scope: the statement, how it ended, and when it started. */
+export interface TransactionEventDetail {
+  readonly statement: string | null;
+  readonly status: QueryEventStatus;
+  readonly started: QueryEventStart;
+  readonly rowCount?: number;
+  readonly errorCode?: string;
+  readonly errorMessage?: string;
+}
+
+/** Records one event of `owner`'s transaction with `outcome`; nothing without governance, where it has no scope. */
+function recordEvent(owner: TransactionOwner, outcome: TransactionOutcome, detail: TransactionEventDetail): void {
+  if (owner.events === undefined) return;
+  recordQueryEvent({
+    source: "transaction",
+    ...owner.events,
+    ...detail,
+    transactionId: owner.transactionId,
+    transactionOutcome: outcome,
+  });
+}
+
+/** Records a statement run inside `owner`'s transaction: one `open` event. */
+export function recordTransactionStatement(owner: TransactionOwner, detail: TransactionEventDetail): void {
+  recordEvent(owner, "open", detail);
+}
+
+/**
+ * Records the one terminal event of `owner`'s transaction, and nothing when one was recorded already, so of the paths
+ * that see the same end only the first records it. It does not release the record: a path that ends the transaction
+ * releases it as before.
+ */
+export function endTransactionEvent(
+  owner: TransactionOwner,
+  end: TransactionEnd,
+  detail: TransactionEventDetail,
+): void {
+  if (owner.ended) return;
+  owner.ended = true;
+  recordEvent(owner, end, detail);
+}
+
+/** The terminal event of a transaction the provider ended on its own timer: no statement, ended now. */
+export function recordTimedOut(owner: TransactionOwner): void {
+  endTransactionEvent(owner, "timed-out", { statement: null, status: "cancelled", started: queryEventStart() });
+}
 
 /**
  * The live owner of `connectionId`'s transaction, or null when there is none on record or the
  * lease has lapsed. Reading is what expires a lapsed lease: there is no timer, so a process that
- * never asks again never pays for one.
+ * never asks again never pays for one. Under governance every provider rolls back after its own
+ * `TX_TIMEOUT_MS` from BEGIN, which a lease measured from the last action never outlasts, so a lapsed
+ * lease records the transaction as `timed-out` unless another path recorded its end.
  */
 export function transactionOwner(connectionId: string): TransactionOwner | null {
-  const owner = owners.get(connectionId);
+  const owner = owners().get(connectionId);
   if (!owner) return null;
   if (Date.now() - owner.lastActiveAt >= OWNERSHIP_IDLE_MS) {
-    owners.delete(connectionId);
+    owners().delete(connectionId);
+    recordTimedOut(owner);
     return null;
   }
   return owner;
 }
 
 /**
- * Record `username`, and under governance its identity provider `subject` and the `providerKey` of the provider the
- * transaction runs on, as the owner. Called only after `beginTransaction()` has actually succeeded.
+ * Record `username`, and under governance its identity provider `subject`, the `providerKey` of the provider the
+ * transaction runs on and the scope of its query `events`, as the owner, with a new `transactionId`. Called only after
+ * `beginTransaction()` has actually succeeded. Returns the record.
  */
-export function claimTransaction(connectionId: string, username: string, subject?: string, providerKey?: string): void {
+export function claimTransaction(
+  connectionId: string,
+  username: string,
+  subject?: string,
+  providerKey?: string,
+  events?: TransactionEventScope,
+): TransactionOwner {
   const now = Date.now();
-  owners.set(connectionId, { username, subject, providerKey, startedAt: now, lastActiveAt: now });
+  const owner: TransactionOwner = {
+    username,
+    subject,
+    providerKey,
+    startedAt: now,
+    lastActiveAt: now,
+    transactionId: randomUUID(),
+    events,
+    ended: false,
+  };
+  owners().set(connectionId, owner);
+  return owner;
+}
+
+/**
+ * Under governance, arms an unreferenced timer that records `owner`'s transaction as `timed-out` once
+ * `TRANSACTION_TIMEOUT_CHECK_MS` have passed, when `owner` is still the record under `connectionId` and `stillOpen`,
+ * the provider's `isInTransaction`, says the provider no longer holds a transaction: the provider rolled it back on its
+ * own timer. The record stays for the route's reconcile to release. Without governance it arms nothing.
+ */
+export function watchTransactionTimeout(connectionId: string, owner: TransactionOwner, stillOpen: () => boolean): void {
+  if (owner.events === undefined) return;
+  const timer = setTimeout(() => {
+    if (owners().get(connectionId) === owner && !stillOpen()) recordTimedOut(owner);
+  }, TRANSACTION_TIMEOUT_CHECK_MS);
+  // The check must never hold the process open on its own.
+  timer.unref?.();
+}
+
+/**
+ * Records `rolled-back` for every open transaction `subject` holds on the connection Studio names `connectionId`, in any
+ * of its databases: the governance loader calls it for each pair whose providers it tears down, because the teardown
+ * rolls those transactions back (spec 9.4). The records stay, so the owner's next request still learns what happened.
+ */
+export function endOwnerTransactions(connectionId: string, subject: string): void {
+  for (const owner of owners().values()) {
+    if (owner.subject !== subject || owner.events?.connection.id !== connectionId) continue;
+    endTransactionEvent(owner, "rolled-back", { statement: "ROLLBACK", status: "success", started: queryEventStart() });
+  }
 }
 
 /**
  * Under governance, release the live record under `connectionId` when its begin resolved a provider other than
- * `providerKey`, the key the current request resolves, and answer the key it was opened on, so the caller can roll the
- * transaction back on that provider; null when the record names this key, names none, or there is no live record.
+ * `providerKey`, the key the current request resolves, and answer the released record, whose `providerKey` is the key
+ * it was opened on, so the caller can roll the transaction back on that provider; null when the record names this key,
+ * names none, or there is no live record.
  *
- * Read and released in one synchronous step, so of two requests that arrive together only one is handed the key: the
- * other finds no record, and its own provider holds no transaction.
+ * Read and released in one synchronous step, so of two requests that arrive together only one is handed the record:
+ * the other finds no record, and its own provider holds no transaction.
  */
-export function releaseIfProviderChanged(connectionId: string, providerKey: string): string | null {
-  const opened = transactionOwner(connectionId)?.providerKey;
-  if (opened === undefined || opened === providerKey) return null;
-  owners.delete(connectionId);
-  return opened;
+export function releaseIfProviderChanged(
+  connectionId: string,
+  providerKey: string,
+): (TransactionOwner & { readonly providerKey: string }) | null {
+  const owner = transactionOwner(connectionId);
+  if (owner?.providerKey === undefined || owner.providerKey === providerKey) return null;
+  owners().delete(connectionId);
+  // The record itself, never a copy, so a terminal event recorded through it marks the one record every path reads.
+  return owner as TransactionOwner & { readonly providerKey: string };
 }
 
 /** Extend the owner's lease after an authorized action. A no-op when there is no record. */
 export function touchTransaction(connectionId: string): void {
-  const owner = owners.get(connectionId);
+  const owner = owners().get(connectionId);
   if (owner) owner.lastActiveAt = Date.now();
 }
 
 /** Forget the owner: the transaction ended, or the provider ended it without a session. */
 export function releaseTransaction(connectionId: string): void {
-  owners.delete(connectionId);
+  owners().delete(connectionId);
 }
 
 /**

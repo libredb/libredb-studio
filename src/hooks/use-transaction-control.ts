@@ -4,7 +4,27 @@ import { appFetch } from "@/lib/config/base-path";
 import { useState, useCallback } from "react";
 import type { DatabaseConnection } from "@/lib/types";
 import { useToast } from "@/hooks/use-toast";
+import { ApiErrorCode } from "@/lib/api/error-codes";
 import { buildConnectionPayload, catalogField } from "./use-connection-payload";
+
+/**
+ * The sentence every transaction provider (postgres, mysql, mssql, oracle) answers a statement, COMMIT or ROLLBACK with
+ * when it holds no transaction, which the route passes on as a 400 QUERY_ERROR.
+ */
+const NO_ACTIVE_TRANSACTION = "No active transaction";
+
+/**
+ * Whether a refused answer of `POST /api/db/transaction` says the transaction the editor holds is gone: a 409
+ * TRANSACTION_CREDENTIAL_CHANGED, after which Studio rolled it back because the caller's access changed (spec 9.4), or
+ * the provider's "No active transaction", after it rolled the transaction back on its own five-minute timer. Any other
+ * refusal leaves the transaction open on the server, so the editor keeps it.
+ */
+export function transactionGone(answer: { code?: unknown; error?: unknown }): boolean {
+  return (
+    answer.code === ApiErrorCode.TRANSACTION_CREDENTIAL_CHANGED ||
+    (answer.code === ApiErrorCode.QUERY_ERROR && answer.error === NO_ACTIVE_TRANSACTION)
+  );
+}
 
 interface UseTransactionControlParams {
   activeConnection: DatabaseConnection | null;
@@ -37,6 +57,7 @@ export function useTransactionControl({ activeConnection, catalog }: UseTransact
 
         const data = await res.json();
         if (!res.ok) {
+          if (transactionGone(data)) setTransactionActive(false);
           toast({ title: "Transaction Error", description: data.error, variant: "destructive" });
           return;
         }
