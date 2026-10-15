@@ -1,6 +1,6 @@
 apiVersion: v2
 name: libredb-studio
-description: Web-based SQL IDE for cloud-native teams supporting thirty-seven engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Apache Spark, Apache Cassandra, libSQL, Prometheus, Apache Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, InfluxDB, InfluxDB 3, Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA MTConnect and Modbus
+description: Web-based SQL IDE for cloud-native teams supporting thirty-eight engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Apache Spark, Apache Cassandra, libSQL, Prometheus, Apache Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, InfluxDB, InfluxDB 3, Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA, MTConnect and Modbus
 type: application
 version: 0.1.94
 appVersion: "0.18.3"
@@ -114,6 +114,9 @@ keywords:
   # One keyword, like opcua above: `mtconnect` is the type-id and the protocol an evaluator
   # searches for, and the agent itself is not a product name anyone would search.
   - mtconnect
+  # One keyword, like mtconnect above: `modbus` is the type-id and the protocol an evaluator
+  # looking for a device reader searches for.
+  - modbus
   - web-ide
 maintainers:
   - name: cevheri

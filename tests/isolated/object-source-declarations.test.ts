@@ -328,7 +328,7 @@ describe("the fleet census of object source declarations", () => {
     expect([...CENSUS_TYPES].sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
     // EXTERNAL_DATABASE_TYPES.length (36 with db2, neo4j, milvus, qdrant, influxdb, influxdb3, oxia, databend,
     // bigquery, snowflake, s3, kubernetes, mqtt, firestore, rabbitmq, opcua and mtconnect) plus the embedded store.
-    expect(CENSUS_TYPES).toHaveLength(38);
+    expect(CENSUS_TYPES).toHaveLength(39);
     expect(Object.keys(SOURCE_DECLARATIONS).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
   });
 
@@ -354,8 +354,8 @@ describe("the fleet census of object source declarations", () => {
     // kinds and its stage, s3 two source-bearing kinds, kubernetes 37 source-bearing kinds and its Custom Resources
     // kind, firestore one source-bearing kind and one other, rabbitmq three source-bearing kinds, opcua one
     // source-bearing kind, and mtconnect three kinds of which two are not source-bearing: a data item and a
-    expect(rows.filter((row) => row.kind.hasSource !== true)).toHaveLength(42);
-    expect(rows).toHaveLength(184);
+    expect(rows.filter((row) => row.kind.hasSource !== true)).toHaveLength(46);
+    expect(rows).toHaveLength(188);
   });
 
   test("the MariaDB branch declares two more, which an unconnected provider cannot show", async () => {
@@ -471,7 +471,7 @@ describe("the fleet census of object source declarations", () => {
       }
     }
     // 181 unconnected kinds plus the MariaDB branch's eight: MTConnect's three joined (#1722), of which
-    expect(rows).toHaveLength(192);
+    expect(rows).toHaveLength(196);
 
     const halfDeclared = rows
       .filter((row) => row.kind.sourceLanguage !== undefined && row.kind.hasSource !== true)
