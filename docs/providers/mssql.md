@@ -219,11 +219,11 @@ statement timeout like Postgres's `statement_timeout`. An overrunning query stil
 ### 3.6 Transaction auto-rollback timeout on an owned provider only
 
 Transactions use an `mssql.Transaction` (`beginTransaction()`, [`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts)).
-A provider created with an `owner` in its execution context, which only governance does (`ProviderExecutionContext.owner`, spec 9.4), arms the 5-minute auto-rollback timer of Postgres and MySQL at `BEGIN`.
+A provider created with an `owner` in its execution context, which only governance does (`ProviderExecutionContext.owner`, see [Per-user providers](../GOVERNANCE.md#per-user-providers)), arms the 5-minute auto-rollback timer of Postgres and MySQL at `BEGIN`.
 When it fires, `expireTransaction()` rolls the transaction back and releases it, so its pooled connection goes back to the pool; a rollback that fails is logged, and the transaction is released all the same.
 `commitTransaction()`, `rollbackTransaction()` and `disconnect()` clear the timer.
 A provider without an owner, which is every install without governance, arms **no** timer, like Oracle without an owner, so its transaction lifetime is unchanged.
-Arming the timer in every mode is a product decision that needs an amendment of spec 9 first.
+Arming the timer in every mode would change the transaction lifetime of every install without governance, so it waits for a product decision ([GOV3](../BACKLOG.md#gov3-arming-the-mssql-and-oracle-transaction-timeout-in-every-mode-needs-a-design-decision-first)).
 
 ### 3.7 Named-instance support
 

@@ -265,7 +265,7 @@ spec:
             {{- end }}
             {{- /* Governance: the URL from the Secret, never optional, and a stable instance id. One pod
                    reports the chart's fullname (or governance.instanceId), so a rollout updates the same
-                   heartbeat row (spec 7.2); more than one reports each pod's own name. */}}
+                   heartbeat row (docs/GOVERNANCE.md#instance-id); more than one reports each pod's own name. */}}
             {{- if include "libredb-studio.governanceEnabled" . }}
             - name: GOVERNANCE_POSTGRES_URL
               valueFrom:
@@ -417,7 +417,7 @@ spec:
         {{- /* The keyring, from the same Secret as the URL, as one read-only file. 256 is mode 0400,
                written in decimal because YAML 1.2 readers take 0400 as four hundred. The file is
                root-owned and the kubelet adds group read for podSecurityContext.fsGroup, the group
-               uid 1001 reads it through, which the governance guards require (spec 8.4). */}}
+               uid 1001 reads it through, which the governance guards require (docs/GOVERNANCE.md#keyring). */}}
         {{- if include "libredb-studio.governanceEnabled" . }}
         - name: governance-keyring
           secret:

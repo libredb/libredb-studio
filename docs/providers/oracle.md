@@ -200,12 +200,12 @@ from `NUM_ROWS`, an optimizer estimate that can be stale or `NULL`.
 ### 3.4 Transaction auto-rollback timeout on an owned provider only
 
 `beginTransaction()` ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)) checks out a connection and marks the transaction active.
-A provider created with an `owner` in its execution context, which only governance does (`ProviderExecutionContext.owner`, spec 9.4), also arms the 5-minute auto-rollback timer of the Postgres and MySQL providers there.
+A provider created with an `owner` in its execution context, which only governance does (`ProviderExecutionContext.owner`, see [Per-user providers](../GOVERNANCE.md#per-user-providers)), also arms the 5-minute auto-rollback timer of the Postgres and MySQL providers there.
 `createDatabaseProvider` hands the execution context to `OracleProvider` for this.
 When the timer fires, `expireTransaction()` rolls the transaction back and closes the held connection, which releases it to the pool; a rollback or a close that fails is logged, and the transaction is released all the same.
 `commitTransaction()`, `rollbackTransaction()` and `disconnect()` clear the timer.
 A provider without an owner, which is every install without governance, arms **no** timer: an abandoned transaction holds its connection (and locks) until explicitly committed or rolled back, or the connection is reclaimed by the pool.
-Arming the timer in every mode is a product decision that needs an amendment of spec 9 first.
+Arming the timer in every mode would change the transaction lifetime of every install without governance, so it waits for a product decision ([GOV3](../BACKLOG.md#gov3-arming-the-mssql-and-oracle-transaction-timeout-in-every-mode-needs-a-design-decision-first)).
 
 ### 3.5 SSL through the connect string, not a `buildSSLConfig()`
 

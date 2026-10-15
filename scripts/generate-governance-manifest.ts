@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 /**
- * Writes tests/fixtures/governance/contract-v1.json, the manifest of governance contract v1 (spec 7.10), from
- * src/lib/governance/contract.ts and src/lib/governance/settings-registry.ts.
+ * Writes tests/fixtures/governance/contract-v1.json, the manifest of governance contract v1
+ * (docs/GOVERNANCE.md#conformance-files), from src/lib/governance/contract.ts and
+ * src/lib/governance/settings-registry.ts.
  *
  * A control plane vendors this file from a Studio release, pinned by its SHA-256, and builds on it: its database
  * tests check that every object exists with the listed columns, types, CHECKs and grants and run every listed

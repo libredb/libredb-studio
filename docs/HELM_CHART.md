@@ -252,7 +252,7 @@ The MCP server is off by default, and the chart's job is to write nothing until 
 ### 11. Governance
 
 Governance is off by default, and the chart writes no `GOVERNANCE_*` variable, mounts no keyring and keeps readiness on `/api/db/health` until `governance.enabled` is true ([GOVERNANCE.md](./GOVERNANCE.md)).
-Enabled, the chart wires the environment of appendix B.1 of the on-prem design:
+Enabled, the chart wires the environment that [Studio configuration](./GOVERNANCE.md#studio-configuration) describes:
 
 - The ConfigMap carries `GOVERNANCE_SOURCE=postgres`, `GOVERNANCE_POSTGRES_SCHEMA` (default `bridge`), `GOVERNANCE_PRIVATE_KEYS_FILE` and, only when set, `GOVERNANCE_REFRESH_MS`, `GOVERNANCE_MAX_STALENESS_MS` and `GOVERNANCE_ALLOWED_ENGINES`.
 - `GOVERNANCE_POSTGRES_URL` is a mandatory `secretKeyRef` to the chart's Secret or to `secrets.existingSecret`, under the mapped key `governancePostgresUrl` (default `governance-postgres-url`).

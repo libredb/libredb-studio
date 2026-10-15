@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
- * Writes tests/fixtures/governance/lsb1-vectors.json, the test vectors of `lsb1` sealed credentials (spec 8.5), with
- * the test sealer in tests/helpers/governance/lsb1-seal.ts.
+ * Writes tests/fixtures/governance/lsb1-vectors.json, the test vectors of `lsb1` sealed credentials
+ * (docs/GOVERNANCE.md#sealed-credentials-lsb1), with the test sealer in tests/helpers/governance/lsb1-seal.ts.
  *
  * A control plane vendors this file from a Studio release, pinned by its SHA-256, and tests its sealer against it:
  * from each vector's recipient public key, binding, plaintext and fixed ephemeral key it must seal the vector's

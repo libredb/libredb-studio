@@ -7659,13 +7659,13 @@ So a storage database with a self-signed certificate fails with `sslmode=require
 
 PostgreSQL and MySQL roll back an editor transaction left open for five minutes (`TX_TIMEOUT_MS` in `src/lib/db/providers/sql/postgres.ts` and `src/lib/db/providers/sql/mysql.ts`).
 The MSSQL and Oracle providers have no such timer, so an abandoned transaction there holds its locks until the provider is torn down.
-The governance design arms the same five-minute timer for MSSQL and Oracle only on providers created with an owner, so installs without governance keep today's transaction lifetime.
+Governance mode arms the same five-minute timer for MSSQL and Oracle only on providers created with an owner, so installs without governance keep today's transaction lifetime.
 Arming it in every mode would change behaviour for users who never enable governance, so it is a product decision and not a fix.
 
 This entry is a question for the product owner: should every mode get the five-minute limit on MSSQL and Oracle?
-A yes needs the governance design amended before any code changes.
+The answer comes before any code changes.
 
-**Done when:** the product owner has decided, and either the design is amended and both providers arm the timer in every mode with a test that a transaction left open past the limit is rolled back, or this entry is deleted with the decision recorded in the provider docs.
+**Done when:** the product owner has decided, and either both providers arm the timer in every mode with a test that a transaction left open past the limit is rolled back, or this entry is deleted with the decision recorded in the provider docs.
 
 ### GOV4. Pooled PostgreSQL editor clients are released without `DISCARD ALL`
 

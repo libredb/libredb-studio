@@ -388,7 +388,7 @@ Return the PostgreSQL URL when subchart is enabled
 {{- end }}
 
 {{/* Prefix only the shipped health path; preserve explicit HTTP/exec/TCP probes. With `ready` set
-(the readiness probe under governance) the shipped path moves to /api/ready (spec 12.1). */}}
+(the readiness probe under governance) the shipped path moves to /api/ready (docs/HELM_CHART.md#11-governance). */}}
 {{- define "libredb-studio.probe" -}}
 {{- $probe := deepCopy .probe -}}
 {{- if and $probe.httpGet (eq ($probe.httpGet.path | default "") "/api/db/health") -}}
@@ -435,7 +435,7 @@ values set from before these keys carries.
 {{- end }}
 
 {{/*
-The governance render guards (spec 9.5). Each mirrors a refusal of the boot preflight
+The governance render guards (docs/HELM_CHART.md#11-governance). Each mirrors a refusal of the boot preflight
 (src/lib/governance/preflight.ts) or a v1 constraint, so a values set Studio would refuse to start
 with fails the render instead, naming the value to fix. Included from deployment.yaml.
 */}}
