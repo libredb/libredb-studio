@@ -131,7 +131,13 @@ const HANDOVER_TERMS: Readonly<Record<AgentStatementLanguageId, (budgets: Statem
   sql: sqlHandoverTerms,
   kubectl: () =>
     "A kubectl answer is never run in your editor: the hand-over is not offered on this engine, so the run produces its answer on its own read-only path only.",
+  mongo: mongoHandoverTerms,
 };
+
+/** The MongoDB consent sentence: the principal's own inability to write bounds both paths. */
+function mongoHandoverTerms(budgets: StatementBudgets): string {
+  return `The run always produces its answer on its own read-only path, bounded to ${budgets.maxResultRows} rows and ${budgets.statementTimeoutMs / 1000} seconds, on a connection whose inability to write the server itself proved. Tick this and it will also put that command in your editor and run it there — on the connection the run was opened on, at the editor's ${AGENT_HANDOVER_BUDGET.maxResultRows}-row limit and with no time limit. The command is the editor's own envelope either way, and its writes are refused by the fence before the engine and by the principal's roles at it. Commands whose plan reads as expensive, or which the run measured as slow, are put in the editor without being run.`;
+}
 
 /** The SQL consent sentence: the database's own read-only session bounds both paths. */
 function sqlHandoverTerms(budgets: StatementBudgets): string {
@@ -213,6 +219,13 @@ const WIDENED_POSTURE: Readonly<Record<AgentStatementLanguageId, () => AgentPost
     body: handoverTerms(STATEMENT_BOUNDS, "sql"),
   }),
   kubectl: () => kubectlReadsPosture(),
+  mongo: () => ({
+    tone: "widened",
+    headline: "Reads only, and one command in your editor",
+    qualifier: `${AGENT_HANDOVER_BUDGET.maxResultRows} rows, no time limit, same principal`,
+    title: "Reads only, and one command lands in your editor",
+    body: handoverTerms(STATEMENT_BOUNDS, "mongo"),
+  }),
 };
 
 function widenedPosture(language: AgentStatementLanguageId): AgentPosture {
@@ -226,7 +239,27 @@ function widenedPosture(language: AgentStatementLanguageId): AgentPosture {
 const READS_POSTURE: Readonly<Record<AgentStatementLanguageId, () => AgentPosture>> = {
   sql: sqlReadsPosture,
   kubectl: kubectlReadsPosture,
+  mongo: mongoReadsPosture,
 };
+
+/**
+ * Agent mode on MongoDB: the boundary is the server's own refusal of the principal's writes, proven at open.
+ *
+ * The qualifier names the same numbers the SQL arm does, because the budgets are the same budgets; what differs is
+ * who holds them, and the body says so in the engine's own terms - `maxTimeMS` and the probe, not a read-only
+ * transaction, because MongoDB has none to name.
+ */
+function mongoReadsPosture(): AgentPosture {
+  const rows = STATEMENT_BOUNDS.maxResultRows;
+  const seconds = STATEMENT_BOUNDS.statementTimeoutMs / 1000;
+  return {
+    tone: "reads",
+    headline: "Reads only",
+    qualifier: `${rows} rows and ${seconds} s per statement, enforced by the server`,
+    title: "Agent mode reads, under a boundary the server enforces",
+    body: `Agent mode runs commands it wrote itself, bounded to ${rows} rows and ${seconds} seconds each: the deadline is maxTimeMS, the server's own, and find and aggregate are capped at the row budget before they cross the wire. The connection it runs on was proven read-only at open - the server was asked to refuse a write and did - so a connection that can write, or a server with authentication off, is refused before the run begins. Writes and the write stages of a pipeline are refused by the fence before the engine. Nothing reaches your editor unless you tick the hand-over when the run opens.`,
+  };
+}
 
 function readsPosture(language: AgentStatementLanguageId): AgentPosture {
   return READS_POSTURE[language]();

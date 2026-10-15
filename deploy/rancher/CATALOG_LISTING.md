@@ -63,7 +63,7 @@ What gets mailed is `pcsc-listing.html` beside this file, not the sections below
 > probe instead of writing a literal, which is why `DECLARES_EXPLAIN_FORMAT` in
 > `tests/unit/marketplace-copy.test.ts` carries a second alternative for them. Alongside it is the read-only agent rail
 > ([`docs/AGENT.md`](https://github.com/libredb/libredb-studio/blob/main/docs/AGENT.md)),
-> which executes statements on PostgreSQL, SQLite, DuckDB, SQL Server and MySQL only (`queryReadOnly`
+> which executes statements on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL and MongoDB only (`queryReadOnly`
 > exists on those five providers alone), with the database and not the IDE refusing the write. Do
 > NOT write "in a read-only session": that is true of PostgreSQL, SQLite and DuckDB only. SQL
 > Server has no read-only transaction and no session-level read-only switch, and bounds the run by
@@ -187,7 +187,7 @@ versions are documented and validated for every release.
 - Optional AI assistance (Gemini, OpenAI, or a self-hosted model; off by default):
   plain-English query explanation on the engines that return an EXPLAIN plan (PostgreSQL,
   MySQL, SQLite, libSQL, DuckDB, Couchbase, ClickHouse, Apache Druid, Trino, Databend, BigQuery, Snowflake, Apache Spark). Plus a
-  read-only investigation agent on PostgreSQL, SQLite, DuckDB, SQL Server and MySQL that never writes — the
+  read-only investigation agent on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL and MongoDB that never writes — the
   database, not the IDE, is what refuses the write
 - Hardened chart defaults: non-root, read-only root filesystem, NetworkPolicy, PDB,
   HPA, Ingress/TLS

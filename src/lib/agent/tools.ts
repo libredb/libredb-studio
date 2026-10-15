@@ -239,7 +239,15 @@ export type AgentOperationId =
   /** Container usage in one namespace, a curated cluster reading; see `clusterUsageReadDescriptor` for its id. */
   | "cluster.usage.read"
   /** One namespace's workload profile, a curated cluster reading; see `clusterWorkloadsReadDescriptor` for its id. */
-  | "cluster.workloads.read";
+  | "cluster.workloads.read"
+  /** One MongoDB command the model wrote, on a `mongodb` connection; see `mongoQueryReadDescriptor` for its id. */
+  | "mongo.query.read"
+  /** A scoped MongoDB catalog read from the provider's own inventory; see `mongoSchemaReadDescriptor` for its id. */
+  | "mongo.schema.read"
+  /** The estimating plan of one MongoDB command; see `mongoPlanEstimateDescriptor` for its id. */
+  | "mongo.plan.estimate"
+  /** A MongoDB collection profile composed as an aggregation; see `mongoTableProfileDescriptor` for its id. */
+  | "mongo.table.profile";
 
 export interface AgentToolDefinition {
   readonly name: AgentToolName;
@@ -366,6 +374,15 @@ export type AgentToolUnavailableCode =
    * it. This one confirms the object and refuses the action.
    */
   | "OBJECT_NOT_PROFILABLE"
+  /**
+   * A catalog KIND the engine does not serve, refused with the reason and the reading that DOES serve it.
+   *
+   * Split from `OBJECT_NOT_PROFILABLE` because the two refuse different things: that one refuses an ACTION on an
+   * object the inventory holds, and this one refuses a KIND the engine's catalog never answers - MongoDB's
+   * `relations`, for one, because the engine declares no foreign key at all and an empty block would read as an
+   * absence it never stated.
+   */
+  | "KIND_REFUSED"
   /** A catalog read matched no object at all, so there is nothing to inspect or cite. */
   | "CATALOG_MATCHED_NOTHING"
   /**
@@ -487,10 +504,12 @@ export interface AgentOperationRequest {
   readonly sql: string;
   /**
    * The key the descriptor's input carries the statement under: `sql` for `sql.query.read`, `statement` for
-   * `kubectl.query.read`. Absent reads as `sql`, so every server-composed SQL read is unchanged. The request keeps
-   * `sql` as its own field name because it is this server's text, not the model's argument.
+   * `kubectl.query.read`, `command` for `mongo.query.read`. Absent reads as `sql`, so every server-composed SQL read
+   * is unchanged. The request keeps `sql` as its own field name because it is this server's text, not the model's
+   * argument - which is also why a mongo command arrives here as canonical JSON TEXT: the model wrote an object,
+   * `runReadQueryTool` canonicalised it, and every layer from the descriptor to the provider reads one form.
    */
-  readonly argument?: "sql" | "statement";
+  readonly argument?: "sql" | "statement" | "command";
   /** Prose naming what the result is, for the untrusted-content header. */
   readonly label?: string;
   /** Declared target dimensions, so a scope allowlist can bound them. */
@@ -530,7 +549,7 @@ export interface AgentOperationRequest {
 // Tool definitions and server-side selection
 // ============================================================================
 
-const catalogSelectorSchema = z.strictObject({
+export const catalogSelectorSchema = z.strictObject({
   /**
    * Which inventory to read. Absent means the column inventory, which is what a
    * bare catalog inspection has always meant — so a model that never sends this
@@ -1311,6 +1330,96 @@ const KUBECTL_RESOURCE_EFFICIENCY_TOOLS: Readonly<Partial<Record<AgentToolName, 
   recommend_change: KUBECTL_RECOMMEND_CHANGE,
 });
 
+// ─── MongoDB (issue #1614) ───────────────────────────────────────────────────
+
+/**
+ * The command the MODEL writes: a JSON object, not escaped text. Writing an envelope as a string inside JSON is the
+ * one shape a model reliably gets wrong, so the schema takes the object and `runReadQueryTool` canonicalises it to
+ * the text every server layer reads - one parse, one form, no double encoding to fail.
+ */
+const readMongoCommandSchema = z.strictObject({
+  command: z.record(z.string(), z.unknown()),
+  /** Why the model wrote this read; accepted and not recorded, as `readStatementSchema`'s rationale. */
+  rationale: z.string().optional(),
+});
+
+const MONGO_RUN_READ_QUERY: AgentToolDefinition = Object.freeze({
+  name: "run_read_query",
+  description:
+    'Run one bounded read-only command envelope as JSON: {"collection": "<name>", "operation": "find" | "findOne" | "aggregate" | "count" | "distinct", "filter": {...}, "pipeline": [...], "field": "<name>" (distinct only), "options": {"limit": N}, "database": "<name>" (optional)}. Writes and the write stages of a pipeline ($out, $merge) are refused before the database is reached, and you are told why.',
+  inputSchema: readMongoCommandSchema,
+  operationId: "mongo.query.read",
+});
+
+/** The catalog arm: the selector the SQL tool takes, answered from the provider's own inventory. */
+const MONGO_INSPECT_SCHEMA: AgentToolDefinition = Object.freeze({
+  name: "inspect_schema",
+  description:
+    "Read the database's own catalog, optionally narrowed to one database or collection. Pass kind to choose the inventory: columns (the default: collections and their fields, inferred from a sample of documents) or indexes (the indexes each collection declares). MongoDB declares no foreign keys, so a relations read is refused rather than answered empty. The read is the same inventory the sidebar reads; it is subject to the same row budget as any read and is refused, not truncated, if it overflows.",
+  inputSchema: catalogSelectorSchema,
+  operationId: "mongo.schema.read",
+});
+
+/** The estimating plan: the command wrapped in the explain the engine itself plans with. */
+const readMongoPlanSchema = z.strictObject({
+  command: z.record(z.string(), z.unknown()),
+  rationale: z.string().optional(),
+});
+
+const MONGO_INSPECT_PLAN: AgentToolDefinition = Object.freeze({
+  name: "inspect_plan",
+  description:
+    "Ask the engine for the ESTIMATED plan of one read-only command envelope, the same JSON shape run_read_query takes. The plan is the explain command at queryPlanner verbosity - it is planned, never executed, so no document is touched and no timings are produced.",
+  inputSchema: readMongoPlanSchema,
+  operationId: "mongo.plan.estimate",
+});
+
+/** The profile arm: the same selector the SQL tool takes, composed into an aggregation instead of SQL. */
+const MONGO_PROFILE_TABLE: AgentToolDefinition = Object.freeze({
+  name: "profile_table",
+  description:
+    "Profile one collection the run has already inventoried. The server chooses the fields from the captured inventory and composes the aggregation; you supply only the collection and how deep to go. Depth basic counts documents and missing values, distribution adds distinct counts, pattern adds a shape test for personal data. Only COUNTS are returned — no value is ever read out of any field.",
+  inputSchema: profileSelectorSchema,
+  operationId: "mongo.table.profile",
+});
+
+/**
+ * The index card, the mongo recommendation: a change the run PROPOSES and the user applies in their own tool. The
+ * editor's envelope runs reads and writes on documents, but creates no index, so unlike the SQL card there is no
+ * statement here to hand the editor - the collection, the keys and the options are the recommendation, and they are
+ * stated as data rather than as a command the editor would refuse.
+ */
+const mongoIndexRecommendationSchema = z.strictObject({
+  change: z.literal("index"),
+  /** The collection the index belongs to, as the run's own inventory spelled it. */
+  collection: z.string().min(1),
+  /** The index keys, in the MongoDB form: {"field": 1} or {"field": -1} or {"field": "text"}. */
+  keys: z.record(z.string(), z.union([z.number(), z.string()])),
+  /** Index options, in the engine's own form: {"name": "...", "unique": true} and their kind. */
+  options: z.record(z.string(), z.unknown()).optional(),
+  rationale: z.string().optional(),
+  evidence: z.array(evidenceSchema).min(1),
+});
+
+const MONGO_RECOMMEND_CHANGE: AgentToolDefinition = Object.freeze({
+  name: "recommend_change",
+  description: `Propose one index for the user to create themselves, stating the collection, the keys and any options. Nothing is applied by this run and nothing here changes the database: the recommendation is data the user reads, not a command this editor runs. State what the inspected plan showed about how the collection is reached, and cite it. ${AGENT_EVIDENCE_CONTRACT}`,
+  inputSchema: mongoIndexRecommendationSchema,
+});
+
+/**
+ * The tool definitions a MongoDB workflow replaces: the statement tool for its command argument, the catalog and
+ * plan tools for their mongo arms, the profile for its aggregation, and the recommendation for its index card.
+ * `compare_plans` is replaced by NOTHING - the variant does not offer it, for the reason its manifest entry states.
+ */
+const MONGO_STATEMENT_TOOLS: Readonly<Partial<Record<AgentToolName, AgentToolDefinition>>> = Object.freeze({
+  run_read_query: MONGO_RUN_READ_QUERY,
+  inspect_schema: MONGO_INSPECT_SCHEMA,
+  inspect_plan: MONGO_INSPECT_PLAN,
+  profile_table: MONGO_PROFILE_TABLE,
+  recommend_change: MONGO_RECOMMEND_CHANGE,
+});
+
 /**
  * The tool definitions a workflow on a language replaces, keyed by language and then by workflow, because a
  * language's tools are not uniform across its workflows: one kubectl workflow may be offered a schema another is not.
@@ -1330,6 +1439,12 @@ const TOOL_OVERRIDES: Readonly<
     "query-optimization": KUBECTL_RESOURCE_EFFICIENCY_TOOLS,
     "database-assessment": KUBECTL_STATEMENT_TOOLS,
     "data-analysis": KUBECTL_STATEMENT_TOOLS,
+  }),
+  mongo: Object.freeze({
+    investigation: MONGO_STATEMENT_TOOLS,
+    "query-optimization": MONGO_STATEMENT_TOOLS,
+    "database-assessment": MONGO_STATEMENT_TOOLS,
+    "data-analysis": MONGO_STATEMENT_TOOLS,
   }),
 });
 
@@ -1413,6 +1528,12 @@ const UNAVAILABLE_TEXT: Readonly<Record<AgentToolUnavailableCode, string>> = Obj
   // evidence object wrong was answered with a sentence about statements.
   INVALID_TOOL_INPUT:
     "The arguments did not match the shape this tool declares, so nothing was done. Correct them and call the tool again.",
+  /**
+   * Said by the mongo catalog arm alone today, for a KIND the engine's catalog never answers. The detail carries the
+   * reason and the reading that serves the request, so the refusal is a redirection rather than a dead end.
+   */
+  KIND_REFUSED:
+    "That kind of inventory is not one this engine's catalog answers. The refusal's detail says why, and names the reading that serves what you asked for.",
   /*
     The true sentence for an inventory that exists and is empty.
 
@@ -1635,7 +1756,7 @@ function approvalText(operationId: string): string {
   ].join(" ");
 }
 
-function unavailable(
+export function unavailable(
   reasonCode: AgentToolUnavailableCode,
   detail?: string,
 ): AgentToolOutcome & { kind: "unavailable" } {
@@ -2067,7 +2188,7 @@ async function runStatement(
   validatedInput: unknown,
   budget: ExecutionBudget,
   phase: { statementSent: boolean },
-  argument: "sql" | "statement",
+  argument: "sql" | "statement" | "command",
   mode?: ReadOnlyStatementMode,
 ): Promise<QueryResult> {
   const provider = await context.acquireProvider(context.connection, AGENT_EXECUTION_PROFILE);
@@ -2142,7 +2263,7 @@ export async function executeAgentOperation(
  * clamp, the audited execution, the artifact — is written once here, because a
  * second copy of a gate order is a second thing that can be got wrong quietly.
  */
-interface AuditedAgentCall {
+export interface AuditedAgentCall {
   readonly operationId: AgentOperationId;
   /** Canonical text this call is identified by in the repair ledger. */
   readonly fingerprintSource: string;
@@ -2311,7 +2432,10 @@ function otherStatementAdvice(
   return undefined;
 }
 
-async function runAuditedAgentCall(context: AgentToolContext, call: AuditedAgentCall): Promise<AgentToolOutcome> {
+export async function runAuditedAgentCall(
+  context: AgentToolContext,
+  call: AuditedAgentCall,
+): Promise<AgentToolOutcome> {
   // Outside agent mode only a grounding read passes, and the flag is set by nothing
   // the model can reach: `selectAgentTools` still hands a planning run an empty tool
   // set, so no dispatch of a model's tool call ever arrives here with it.
@@ -3147,7 +3271,21 @@ export async function readObjectInventoryForGrounding(context: AgentToolContext)
       label: "provider object inventory",
       grounding: true,
       invoke: async (_validatedInput, budget, phase) => {
-        const provider = await context.acquireProvider(context.connection, AGENT_OPERATIONS_PROFILE);
+        // Which profile grounds the run, decided by what the run is: a statement-sending
+        // agent run on an engine with a statement language grounds under ITS OWN boundary,
+        // so the acquisition opens the execution profile - whose connect proves the engine
+        // and the principal - and a run whose boundary cannot open is refused at its
+        // grounding, before any model turn, exactly as a composed-catalog engine's grounding
+        // already is (the acquisition below `sql.query.read`). Plan mode and the operations
+        // workflow keep the operations profile: they send no statement of the model's, and
+        // #1744's D345 names the shape where THEIR grounding is refused a debt. Kubernetes
+        // changes profile here with no behavior change: its profiled connect verifies
+        // nothing, its boundary is per-request, and its tests hold that.
+        const groundingProfile =
+          context.mode === "agent" && context.workflowType !== "operations" && context.statementLanguage !== undefined
+            ? AGENT_EXECUTION_PROFILE
+            : AGENT_OPERATIONS_PROFILE;
+        const provider = await context.acquireProvider(context.connection, groundingProfile);
         const startedAtMs = context.clock?.() ?? Date.now();
         phase.statementSent = true;
 
@@ -3658,7 +3796,13 @@ export async function runReadQueryTool(context: AgentToolContext, input: unknown
   const parsed = parseToolInput(definition.inputSchema, input);
   if (!parsed.ok) return unavailable("INVALID_TOOL_INPUT", parsed.problems);
   const argument = AGENT_LANGUAGE_COPY[language].argument;
-  const statement = (parsed.value as Readonly<Record<string, string>>)[argument];
+  // The mongo language's model argument is a JSON OBJECT: the model writes the envelope structurally, and the
+  // canonical text every server layer reads - the descriptor's input, the ledger's statement, the repair identity,
+  // the provider's parse - is produced once, here, in sorted-key form, so no layer can disagree with another about
+  // what the model wrote. The other languages' arguments are text already and pass through untouched.
+  const raw = (parsed.value as Readonly<Record<string, unknown>>)[argument];
+  const statement = canonicalCommandText(raw);
+  if (statement === null) return unavailable("INVALID_TOOL_INPUT", `The ${argument} is empty, and nothing was sent.`);
   const server = languageServer(language);
   // The reader's own sentence, before the policy pipeline: the pipeline's input stage keeps only a reason code, so
   // without this a model refused for `exec` would read only that its read had the wrong shape. SQL keeps its generic
@@ -3671,6 +3815,24 @@ export async function runReadQueryTool(context: AgentToolContext, input: unknown
     argument,
     label: "read result",
   });
+}
+
+/**
+ * One model argument as the canonical statement text: a string as written, a JSON object as its sorted-key text.
+ * Null for anything that carries no statement. The sort is the same one the repair fingerprint and the draft entry
+ * use, so three serialisations of one read cannot disagree.
+ */
+function canonicalCommandText(raw: unknown): string | null {
+  if (typeof raw === "string" && raw.length > 0) return raw;
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const canonical = JSON.stringify(raw, (_key, value: unknown) =>
+    value !== null && typeof value === "object" && !Array.isArray(value)
+      ? Object.fromEntries(
+          Object.entries(value as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+        )
+      : value,
+  );
+  return canonical !== undefined && canonical.length > 2 ? canonical : null;
 }
 
 // ============================================================================
@@ -4195,6 +4357,8 @@ export async function inspectPlanTool(
  * whose sides the model labelled could attribute a plan to a statement that never
  * produced it, and the whole before/after claim rests on that not happening.
  */
+const ESTIMATING_PLAN_OPERATIONS: ReadonlySet<string> = new Set(["sql.explain.estimate", "mongo.plan.estimate"]);
+
 function estimatedPlansOf(events: readonly AgentRunEvent[]): ReadonlyMap<string, { stepId: string; sql: string }> {
   const sqlByStep = new Map<string, string>();
   for (const event of events) {
@@ -4202,7 +4366,11 @@ function estimatedPlansOf(events: readonly AgentRunEvent[]): ReadonlyMap<string,
   }
   const plans = new Map<string, { stepId: string; sql: string }>();
   for (const event of events) {
-    if (event.kind !== "tool-completed" || event.artifact.operationId !== "sql.explain.estimate") continue;
+    // The estimating-plan OPERATIONS, not one id: a language's plan arm carries its own
+    // descriptor (`mongo.plan.estimate` beside `sql.explain.estimate`), and the notion a
+    // verifier or the auto-execute gate holds - "the run inspected the plan of a statement" -
+    // is about the KIND of artifact, not the dialect it was asked in.
+    if (event.kind !== "tool-completed" || !ESTIMATING_PLAN_OPERATIONS.has(event.artifact.operationId)) continue;
     const sql = sqlByStep.get(event.stepId);
     if (sql !== undefined) plans.set(event.artifact.correlationId, { stepId: event.stepId, sql });
   }
@@ -4376,7 +4544,7 @@ function inventoriedTable(
  * The LAST one, because a run may capture more than once and the newest is the one
  * its later statements were drafted against.
  */
-function capturedSnapshot(events: readonly AgentRunEvent[]): AgentContextSnapshot | null {
+export function capturedSnapshot(events: readonly AgentRunEvent[]): AgentContextSnapshot | null {
   let snapshot: AgentContextSnapshot | null = null;
   for (const event of events) {
     if (event.kind === "context-captured" && event.snapshot !== undefined) snapshot = event.snapshot;
@@ -4683,6 +4851,37 @@ export function recommendChangeTool(
       // The container and the owner are text the model itself sent in this call, so quoting them back adds no
       // untrusted content.
       modelText: `Recommendation recorded: new requests and limits for container ${container} of ${ownerKind}/${ownerName}, offered to the user and not applied. It is theirs to apply.`,
+    };
+  }
+  if (parsed.value.change === "index" && "collection" in parsed.value) {
+    // The mongo index card: a change stated as data - the collection, the keys, the options - rather than as a
+    // statement, because the editor's envelope runs reads and writes on documents and creates no index. The
+    // collection's name is untrusted database content, so it is fenced rather than spliced into the sentence the
+    // model reads as the server speaking, exactly as the SQL card's statement would be.
+    const mongoCard = parsed.value as unknown as {
+      readonly collection: string;
+      readonly keys: Record<string, number | string>;
+      readonly options?: Record<string, unknown>;
+      readonly rationale?: string;
+      readonly evidence: readonly AgentEvidenceReference[];
+    };
+    if (!mongoCard.evidence.every((reference) => verifiedAgainst(run.events, reference))) {
+      return unavailable(
+        "UNVERIFIABLE_EVIDENCE",
+        unverifiableCitation(run.events, [{ evidence: [...mongoCard.evidence] }]),
+      );
+    }
+    return {
+      kind: "recommended",
+      recommendation: {
+        change: "index" as const,
+        collection: mongoCard.collection,
+        keys: mongoCard.keys,
+        ...(mongoCard.options === undefined ? {} : { options: mongoCard.options }),
+        ...(mongoCard.rationale === undefined ? {} : { rationale: mongoCard.rationale }),
+        evidence: mongoCard.evidence as [AgentEvidenceReference, ...AgentEvidenceReference[]],
+      },
+      modelText: `Recommendation recorded: one index, offered to the user and not created. It is theirs to apply, in their own tool. ${fenceUntrustedContent(`collection: ${mongoCard.collection}`, { label: "indexed collection name", operationId: "mongo.plan.estimate", reference: "recommendation" })}`,
     };
   }
   if (!matchesCard(parsed.value.change, parsed.value.statement)) {

@@ -206,7 +206,7 @@ what comes back, and finishes by composing a report whose every claim cites the 
   and `EXPLAIN ANALYZE` is default-denied because it would run the statement. This pipeline is the
   agent's alone: statements you run yourself in the editor call the provider directly
   (`src/app/api/db/query/route.ts:44`) and are neither policy-checked nor audited this way.
-- **Agent mode reads PostgreSQL, SQLite, DuckDB, SQL Server, MySQL and Kubernetes.** The read-only profile
+- **Agent mode reads PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes and MongoDB.** The read-only profile
   exists only where a provider implements it: `queryReadOnly` on
   `postgres.ts`, `sqlite.ts`, `duckdb/index.ts`, `mssql.ts`, `mysql.ts` and `kubernetes/index.ts`, and nowhere else.
   On Kubernetes the boundary is Studio's request allowlist plus the agent identity's RBAC. On any

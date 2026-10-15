@@ -58,10 +58,19 @@ import {
   type ObjectPathShapeEngine,
 } from "@/lib/db/object-kinds";
 import { comparePaths } from "@/lib/db/object-path";
-import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../errors";
+import {
+  DatabaseConfigError,
+  ConnectionError,
+  QueryError,
+  ExecutionProfileError,
+  mapDatabaseError,
+} from "../../errors";
 import { formatBytes } from "../../utils/pool-manager";
 import { unionFields, uniquelyKeyedRows } from "../../utils/result-fields";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
+import { readMongoForAgent, verifyAgentProfile } from "./mongodb-agent";
+import { admitMongoStatement, parseAdmittedMongoStatement } from "../../operations/mongo-admission";
+import type { ProviderExecutionContext, ReadOnlyStatementBudget, ReadOnlyStatementMode } from "../../types";
 
 /**
  * MongoDB's identity for the shared container-path renderer.
@@ -180,7 +189,7 @@ const EJSON_CANONICAL = { relaxed: false, useBigInt64: true } as const;
 const INT64_MIN = -(BigInt(2) ** BigInt(63));
 const INT64_MAX = BigInt(2) ** BigInt(63) - BigInt(1);
 
-function parseExtendedJson(text: string): Document {
+export function parseExtendedJson(text: string): Document {
   return reviveExtendedJson(JSON.parse(text), "") as Document;
 }
 
@@ -246,6 +255,38 @@ function serializeBigInt(value: unknown): unknown {
   if (typeof value !== "bigint") return value;
   const asNumber = Number(value);
   return Number.isSafeInteger(asNumber) ? asNumber : value.toString();
+}
+
+/**
+ * One value as the grid - and the agent's read-only profile, which shares this serializer
+ * so an answer's rows and the editor's rows for the same statement cannot differ - shows it.
+ * An array's entries go through the same rules as a field's (#1423): an ObjectId, a Date or
+ * a Long inside an array used to be copied field by field.
+ */
+export function serializeMongoValue(value: unknown): unknown {
+  if (value === null || value === undefined) return value;
+  if (typeof value !== "object") return serializeBigInt(value);
+  if (value instanceof ObjectId) return value.toString();
+  // Before the Binary branch: a UUID is a subtype-4 Binary, and its hex is what identifies it.
+  const uuid = uuidText(value);
+  if (uuid !== null) return uuid;
+  if (value instanceof Binary) return `<Binary: ${value.length()} bytes>`;
+  if (value instanceof Decimal128) return value.toString();
+  if (value instanceof Date) return value.toISOString();
+  // Only an echo of what the statement wrote (`insertedId` of a `$numberDouble`
+  // `_id`) is a Double here: the driver promotes every double it reads to a number.
+  if (value instanceof mongodbDriver.BSON.Double) return value.valueOf();
+  if (Array.isArray(value)) return value.map((entry) => serializeMongoValue(entry));
+  const scalar = bsonScalarText(value);
+  if (scalar !== undefined) return scalar;
+  return serializeMongoDocument(value as Document);
+}
+
+/** One document through the value rules above, as both the grid and the agent profile read it. */
+export function serializeMongoDocument(doc: Document): Record<string, unknown> {
+  const serialized: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(doc)) serialized[key] = serializeMongoValue(value);
+  return serialized;
 }
 
 /**
@@ -904,8 +945,21 @@ export class MongoDBProvider extends BaseDatabaseProvider {
   private client: MongoClient | null = null;
   private db: Db | null = null;
 
-  constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
+  /**
+   * Whether this provider was opened under the agent read-only execution profile. Only
+   * then does `queryReadOnly` run, and only then does `connect()` prove the profile's
+   * boundary - the engine identified on the wire and the principal's inability to write,
+   * both by the server's own answers (`mongodb-agent.ts`). The verification runs at THIS
+   * connection's open rather than lazily on the first read because a profiled MongoDB
+   * connection is only ever opened for statement-sending paths: plan mode and the
+   * operations workflow ground through their own profile and never reach this one, which
+   * is the shape #1744's D345 names the reference for MySQL.
+   */
+  private readonly readOnlyProfile: boolean;
+
+  constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderExecutionContext = {}) {
     super(config, options);
+    this.readOnlyProfile = execution.readOnly === true;
     this.validate();
   }
 
@@ -1096,10 +1150,27 @@ export class MongoDBProvider extends BaseDatabaseProvider {
         // Test connection
         await this.db.command({ ping: 1 });
 
+        // Under the profile, the connection IS the boundary's proof: the engine is
+        // identified by its own buildInfo and the principal's inability to write is
+        // proven by the server's refusal of one write (`mongodb-agent.ts`). A refusal
+        // here is a `ExecutionProfileError`, which the grounding path reads as the
+        // run's own refusal with advice rather than as a broken connection. Plan mode
+        // and the operations workflow never open a provider under this profile, so
+        // this refusal is exactly the statement-sending runs'.
+        if (this.readOnlyProfile) {
+          await verifyAgentProfile(this.client, dbName);
+        }
+
         this.setConnected(true);
         return;
       }
     } catch (error) {
+      // A profile verdict is not a connection failure and must not be wrapped as one:
+      // the refusal's own code (`PROFILE_PRIVILEGES_TOO_BROAD`, `PROFILE_UNSUPPORTED_TARGET`)
+      // is what the grounding path reads to name the run's reason and the advice, and a
+      // `ConnectionError` here would bury it in "failed to connect". The client still
+      // closes below before it is rethrown.
+      const isProfileVerdict = error instanceof ExecutionProfileError;
       this.setError(error instanceof Error ? error : new Error(String(error)));
       // The error path must leave no client behind (#1573): `connect()` used to keep
       // `this.client` set while `this.db` stayed null, so a later `connect()` found
@@ -1110,6 +1181,7 @@ export class MongoDBProvider extends BaseDatabaseProvider {
         this.db = null;
         await client.close().catch(() => {});
       }
+      if (isProfileVerdict) throw error;
       throw new ConnectionError(
         `Failed to connect to MongoDB: ${error instanceof Error ? error.message : error}`,
         "mongodb",
@@ -1390,6 +1462,52 @@ export class MongoDBProvider extends BaseDatabaseProvider {
     });
   }
 
+  /**
+   * The agent read-only execution profile's statement path (issue #1614).
+   *
+   * The statement is the EDITOR's own command envelope, parsed by the same Extended-JSON
+   * reader `query()` parses it with and admitted by the same fence the run's tool path
+   * admits it through (`mongo-admission.ts`) - the provider re-admits rather than trusts
+   * the caller, so a statement that reached this method any other way meets the same
+   * refusal the model would. The read itself is bounded five ways in `mongodb-agent.ts`:
+   * the five read operations only, `maxTimeMS` as the server's own deadline, `find` and
+   * `aggregate` capped one row past the budget server-side, a client-owned backstop, and
+   * the row and byte verdicts on the assembled result.
+   *
+   * The connection this runs on was verified at open - the engine identified on the wire
+   * and the principal's inability to write proven by the server's refusal of a probe
+   * write - so what reaches the engine here is bounded by roles the server itself holds.
+   * Refused outside the profile: a provider nobody verified has no boundary to run
+   * agent semantics on, and `query()`'s own envelope accepts writes this path must never
+   * send.
+   */
+  public async queryReadOnly(
+    statement: string,
+    budget: ReadOnlyStatementBudget,
+    mode: ReadOnlyStatementMode = "execute",
+  ): Promise<QueryResult> {
+    this.ensureConnected();
+    if (!this.readOnlyProfile) {
+      throw new QueryError(
+        "Read-only execution requires a provider opened under the agent read-only profile",
+        "mongodb",
+        statement,
+      );
+    }
+    const admission = admitMongoStatement(statement);
+    if (admission !== null) {
+      throw new QueryError(admission.message, "mongodb", statement);
+    }
+    const envelope = parseAdmittedMongoStatement(statement) as unknown as Parameters<typeof readMongoForAgent>[2];
+    const read = await readMongoForAgent(this.client!, this.getDatabaseName(), envelope, budget, mode, statement);
+    return {
+      rows: read.rows,
+      fields: read.fields,
+      rowCount: read.rowCount,
+      executionTime: read.executionTime,
+    };
+  }
+
   private parseQuery(queryStr: string): MongoQuery {
     try {
       const parsed = parseExtendedJson(queryStr.trim());
@@ -1417,9 +1535,7 @@ export class MongoDBProvider extends BaseDatabaseProvider {
   }
 
   private serializeDocument(doc: Document): Record<string, unknown> {
-    const serialized: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(doc)) serialized[key] = this.serializeValue(value);
-    return serialized;
+    return serializeMongoDocument(doc);
   }
 
   /**
@@ -1427,22 +1543,7 @@ export class MongoDBProvider extends BaseDatabaseProvider {
    * (#1423): an ObjectId, a Date or a Long inside an array used to be copied field by field.
    */
   private serializeValue(value: unknown): unknown {
-    if (value === null || value === undefined) return value;
-    if (typeof value !== "object") return serializeBigInt(value);
-    if (value instanceof ObjectId) return value.toString();
-    // Before the Binary branch: a UUID is a subtype-4 Binary, and its hex is what identifies it.
-    const uuid = uuidText(value);
-    if (uuid !== null) return uuid;
-    if (value instanceof Binary) return `<Binary: ${value.length()} bytes>`;
-    if (value instanceof Decimal128) return value.toString();
-    if (value instanceof Date) return value.toISOString();
-    // Only an echo of what the statement wrote (`insertedId` of a `$numberDouble`
-    // `_id`) is a Double here: the driver promotes every double it reads to a number.
-    if (value instanceof mongodbDriver.BSON.Double) return value.valueOf();
-    if (Array.isArray(value)) return value.map((entry) => this.serializeValue(entry));
-    const scalar = bsonScalarText(value);
-    if (scalar !== undefined) return scalar;
-    return this.serializeDocument(value as Document);
+    return serializeMongoValue(value);
   }
 
   // ============================================================================

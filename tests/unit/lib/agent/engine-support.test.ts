@@ -85,22 +85,20 @@ function parseFactoryDispatch(): Map<DatabaseType, { exportName: string; specifi
 const databaseTypes = parseDatabaseTypes();
 const dispatch = parseFactoryDispatch();
 
-/** The one id whose module cannot be imported under Bun - see the file header. */
-const UNIMPORTABLE: DatabaseType = "mongodb";
-
+/**
+ * mongodb is measured like every other engine now: its module imports under the Bun this
+ * suite runs on, and #1614 gave its provider a `queryReadOnly` of its own. The source-scan
+ * branch this replaced existed because the module could not be imported under Bun 1.3.14
+ * (`bson` reached `node:v8 isBuildingSnapshot`), and its conservative fallback - "no mention
+ * of the method at all" - was only ever able to be too strict. The import has been verified
+ * to work under the current Bun (`bun -e` against the module, 2026-10-15); if it ever fails
+ * again, the failure is loud right here, and the honest fix is to re-measure, not to fold
+ * back to a scan that cannot see a method it was written to assume absent.
+ */
 async function hasReadOnlyPath(type: DatabaseType): Promise<boolean> {
   const entry = dispatch.get(type);
   if (!entry) throw new Error(`no createProvider case for "${type}"`);
   const modulePath = join(repoRoot, "src", "lib", "db", entry.specifier);
-
-  if (type === UNIMPORTABLE) {
-    const source = readFileSync(`${modulePath}.ts`, "utf8");
-    expect({ id: type, mentionsQueryReadOnly: source.includes("queryReadOnly") }).toEqual({
-      id: type,
-      mentionsQueryReadOnly: false,
-    });
-    return false;
-  }
 
   const imported = (await import(modulePath)) as Record<string, unknown>;
   const exported = imported[entry.exportName];

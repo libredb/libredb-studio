@@ -1101,6 +1101,17 @@ function describeEvent(
           quoted: `${event.ownerKind}/${event.ownerName}, container ${event.container}: requests ${describeResourceSide(event.current.requests)} to ${describeResourceSide(event.proposed.requests)}; limits ${describeResourceSide(event.current.limits)} to ${describeResourceSide(event.proposed.limits)}`,
         };
       }
+      // A mongo index change is stated as data - the collection, the keys - for the same reason the resources card
+      // states its own: the editor's command envelope creates no index, so there is nothing to hand it. The card
+      // offers the change to the clipboard, in the engine's own spelling of a createIndexes call.
+      if ("collection" in event) {
+        return {
+          tone: "progress",
+          headline: "Index recommended",
+          detail: `${event.rationale ?? ""} ${NOT_APPLIED_CAVEAT}`,
+          quoted: JSON.stringify({ createIndexes: event.collection, indexes: [{ key: event.keys, ...(event.options ?? {}) }] }),
+        };
+      }
       return {
         tone: "progress",
         headline: event.change === "index" ? "Index recommended" : "Rewrite recommended",

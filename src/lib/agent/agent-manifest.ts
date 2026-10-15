@@ -16,7 +16,7 @@ import type { AgentToolName } from "./tools";
 import type { AgentRunMode, AgentRunWorkflowType } from "./types";
 
 /** The statement languages agent mode can send. A later engine reuses one or registers a new id here. */
-export type AgentStatementLanguageId = "sql" | "kubectl";
+export type AgentStatementLanguageId = "sql" | "kubectl" | "mongo";
 
 export const AGENT_STATEMENT_LANGUAGE: Readonly<Record<DatabaseType, AgentStatementLanguageId | null>> = Object.freeze({
   postgres: "sql",
@@ -36,7 +36,7 @@ export const AGENT_STATEMENT_LANGUAGE: Readonly<Record<DatabaseType, AgentStatem
   cassandra: null,
   elasticsearch: null,
   opensearch: null,
-  mongodb: null,
+  mongodb: "mongo",
   couchbase: null,
   redis: null,
   prometheus: null,
@@ -69,7 +69,7 @@ export interface AgentLanguageCopy {
   /** What one unit the model sends is called. */
   readonly noun: string;
   /** The name of the model argument that carries it. Persisted event fields keep `sql` whatever this says. */
-  readonly argument: "sql" | "statement";
+  readonly argument: "sql" | "statement" | "command";
   /** What the boundary refuses, as the rules name it. */
   readonly writes: string;
   /** What a refused statement never reaches. */
@@ -98,6 +98,21 @@ export const AGENT_LANGUAGE_COPY: Readonly<Record<AgentStatementLanguageId, Agen
     reached: "the cluster",
     defect: "your kubectl statement",
     adviceKeys: Object.freeze(["get", "top", "logs", "events"]),
+  }),
+  /**
+   * The first non-SQL database language. The noun is COMMAND because that is what MongoDB calls what the envelope
+   * carries, and the argument is `command` because the model writes it as a JSON object rather than as text: the
+   * server canonicalises it to text the moment it is read, so the persisted statement, the ledger and the editor
+   * hand-over all carry the same canonical form the fence admitted.
+   */
+  mongo: Object.freeze({
+    subject: "a MongoDB database",
+    noun: "command",
+    argument: "command",
+    writes: "writes and pipeline stages that write",
+    reached: "the database",
+    defect: "your MongoDB command",
+    adviceKeys: Object.freeze(["find", "aggregate", "count", "distinct"]),
   }),
 } satisfies Record<AgentStatementLanguageId, AgentLanguageCopy>);
 
@@ -364,6 +379,91 @@ export const AGENT_WORKFLOW_VARIANTS: Readonly<
         "Your objective is a question about this cluster's objects. Establish the answer from what you read and produce something to show for it.",
       planDeliverable: "inherits",
       canAutoExecute: false,
+      requires: Object.freeze<AgentVariantRequirement[]>([]),
+      verifier: "agent-data-analysis.1",
+    }),
+  }),
+  /**
+   * The MongoDB variants (issue #1614): the read-class four CAN be offered whole, because the engine answers
+   * each of them - the catalog from the provider's own inventory, the plan from the `explain` command at
+   * `queryPlanner` verbosity - so no tool here can only refuse. This differs from kubectl's deliberate
+   * narrowing, which exists because a cluster has neither a catalog composer nor a plan.
+   *
+   * `requires` is empty by a different argument than kubectl's: there, the requirements gate cluster readings
+   * only this engine family has. Here the language IS the gate - the arms the tools dispatch to are chosen by
+   * the language in the server code, so an engine that holds this variant's tools holds them by holding the
+   * language. A later document engine reusing the `mongo` id would register its own arms with it.
+   */
+  mongo: Object.freeze({
+    investigation: Object.freeze({
+      tools: Object.freeze<AgentToolName[]>(["inspect_schema", "run_read_query", "compose_report"]),
+      narrowedExtras: Object.freeze<AgentToolName[]>([]),
+      classifierDescription: "a question about the database that is answered from what the run establishes",
+      objective: "Your objective is a question about this MongoDB database. Answer it from what you establish.",
+      planDeliverable: "inherits",
+      canAutoExecute: false,
+      requires: Object.freeze<AgentVariantRequirement[]>([]),
+      verifier: "agent-investigation.1",
+    }),
+    /**
+     * The optimization template without `compare_plans`, and that absence is a refusal to overclaim rather than a
+     * gap: a comparison's whole value is the structural access reading (`plan-summary.ts`), which is verified for
+     * two SQL grammars and reads every other dialect as `unknown` by design - a mongo comparison would state that
+     * two plans differ in a way nobody has read. `agent-query-optimization.3`'s other arm (an index recommendation
+     * grounded in an inspected plan) is the bar this variant is built to reach, and `inspect_plan` here runs the
+     * `explain` command at `queryPlanner` verbosity, which plans without executing - the estimate the SQL engines
+     * take from `EXPLAIN`, in this engine's own word.
+     */
+    "query-optimization": Object.freeze({
+      tools: Object.freeze<AgentToolName[]>([
+        "inspect_schema",
+        "run_read_query",
+        "inspect_plan",
+        "recommend_change",
+        "compose_report",
+      ]),
+      narrowedExtras: Object.freeze<AgentToolName[]>(["recommend_change"]),
+      classifierDescription: "a specific command that is too slow, and how the engine reaches its documents",
+      objective:
+        "Your objective is a command that is too slow. What matters is HOW the engine reaches its documents, and what change would make it reach them differently.",
+      planDeliverable: Object.freeze({ kind: "statement", noun: "the rewritten command" }),
+      canAutoExecute: false,
+      requires: Object.freeze<AgentVariantRequirement[]>([]),
+      verifier: "agent-query-optimization.3",
+    }),
+    /** The assessment template's own tool, on top of the catalog and the read: the profile counts through aggregation. */
+    "database-assessment": Object.freeze({
+      tools: Object.freeze<AgentToolName[]>(["inspect_schema", "run_read_query", "profile_table", "compose_report"]),
+      narrowedExtras: Object.freeze<AgentToolName[]>(["profile_table"]),
+      classifierDescription: "the state of the data itself: where it is incomplete, inconsistent or surprising",
+      objective:
+        "Your objective is the state of this MongoDB database itself: where its documents are incomplete, inconsistent or surprising.",
+      planDeliverable: Object.freeze({ kind: "statement", noun: "the command that measures the quality concern" }),
+      canAutoExecute: false,
+      requires: Object.freeze<AgentVariantRequirement[]>([]),
+      verifier: "agent-database-assessment.1",
+    }),
+    operations: OPERATIONS_VARIANT,
+    /**
+     * The analysis template, and the one workflow whose auto-execute is offered: the command the answer presents
+     * is the editor's own envelope, so handing it to the editor hands it something the editor runs natively - the
+     * same contract the SQL engines' hand-over already holds, with no translation layer between the answer and the
+     * editor to get wrong.
+     */
+    "data-analysis": Object.freeze({
+      tools: Object.freeze<AgentToolName[]>([
+        "inspect_schema",
+        "run_read_query",
+        "profile_table",
+        "present_answer",
+        "compose_report",
+      ]),
+      narrowedExtras: Object.freeze<AgentToolName[]>(["present_answer"]),
+      classifierDescription: "a question about the data whose answer is a result the user wants to see",
+      objective:
+        "Your objective is a question about the data in this MongoDB database. Establish the answer from the data and produce something to show for it.",
+      planDeliverable: Object.freeze({ kind: "statement", noun: "the command that produces the answer" }),
+      canAutoExecute: true,
       requires: Object.freeze<AgentVariantRequirement[]>([]),
       verifier: "agent-data-analysis.1",
     }),

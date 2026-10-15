@@ -6,6 +6,7 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { AGENT_EXECUTION_ENGINES, namedList } from "@/lib/agent/engine-support";
+import { AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
 import { getDBConfig } from "@/lib/db-ui-config";
 import { MCP_EXPOSABLE } from "@/lib/db/compatibility";
 import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
@@ -40,9 +41,15 @@ describe("the tool descriptions", () => {
     expect(LIST_CONNECTIONS_DESCRIPTION).not.toContain(MCP_UNTRUSTED_NOTICE);
   });
 
-  test("run_read_query names the execution engines that MCP is offered on", () => {
+  test("run_read_query names the execution engines whose MCP statement path it speaks", () => {
+    // The same filter the tool derives with: offered by MCP_EXPOSABLE, and speaking the SQL this
+    // tool's input is. MongoDB is agent-executable (issue #1614) and MCP-exposed, but its
+    // statement is a command envelope this SQL tool cannot run - naming it would advertise a
+    // tool that only ever refuses there, the same reason Kubernetes is absent.
     const derived = namedList(
-      AGENT_EXECUTION_ENGINES.filter((type) => MCP_EXPOSABLE[type]).map((type) => getDBConfig(type).label),
+      AGENT_EXECUTION_ENGINES.filter(
+        (type) => MCP_EXPOSABLE[type] && (AGENT_STATEMENT_LANGUAGE[type] ?? "sql") === "sql",
+      ).map((type) => getDBConfig(type).label),
     );
     expect(RUN_READ_QUERY_ENGINES).toBe(derived);
     expect(derived).toBe("PostgreSQL, SQLite, DuckDB, SQL Server and MySQL");

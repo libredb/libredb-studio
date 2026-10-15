@@ -72,8 +72,8 @@ describe("agentPosture in plan mode", () => {
   test("an engine agent mode cannot execute on gets the identical plan posture", () => {
     const onMongo = agentPosture({
       mode: "planning",
-      engine: "mongodb",
-      engineLabel: getDBConfig("mongodb").label,
+      engine: "cassandra",
+      engineLabel: getDBConfig("cassandra").label,
       handover: false,
     });
     const onPostgres = agentPosture({
@@ -168,17 +168,17 @@ describe("agentPosture in agent mode, where it cannot execute", () => {
   test("an unsupported engine is blocked, and the copy names what still runs", () => {
     const posture = agentPosture({
       mode: "agent",
-      engine: "mongodb",
-      engineLabel: getDBConfig("mongodb").label,
+      engine: "cassandra",
+      engineLabel: getDBConfig("cassandra").label,
       handover: false,
     });
 
     expect(posture.tone).toBe("blocked");
-    expect(posture.headline).toBe("Cannot execute on MongoDB");
+    expect(posture.headline).toBe("Cannot execute on Apache Cassandra");
     expect(posture.qualifier).toBe("plan mode drafts here, and the operations workflow still runs");
-    expect(posture.title).toBe("Agent mode has no read-only statement path on MongoDB");
+    expect(posture.title).toBe("Agent mode has no read-only statement path on Apache Cassandra");
     expect(posture.body).toBe(
-      `Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: ${EXECUTION_ENGINE_NAMES}. On MongoDB a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine.`,
+      `Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: ${EXECUTION_ENGINE_NAMES}. On Apache Cassandra a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine.`,
     );
   });
 
@@ -255,7 +255,7 @@ describe("the posture on Kubernetes", () => {
   });
 
   test("the engine-less arms no longer call every listed engine database-native", () => {
-    const unsupported = agentPosture({ mode: "agent", engine: "mongodb", engineLabel: "MongoDB", handover: false });
+    const unsupported = agentPosture({ mode: "agent", engine: "cassandra", engineLabel: "Cassandra", handover: false });
     expect(unsupported.body).not.toContain("database-native");
     expect(unsupported.body).toContain("Kubernetes");
     const unresolved = agentPosture({ mode: "agent", engine: null, engineLabel: "", handover: false });
@@ -335,8 +335,8 @@ describe("the engine names follow the enforcing list", () => {
       const { agentPosture: withThree } = await import("@/lib/agent/posture");
       const blocked = withThree({
         mode: "agent",
-        engine: "mongodb",
-        engineLabel: getDBConfig("mongodb").label,
+        engine: "cassandra",
+        engineLabel: getDBConfig("cassandra").label,
         handover: false,
       });
 
@@ -373,7 +373,7 @@ describe("the engine names follow the enforcing list", () => {
   });
 
   test("the list is read per call, so nothing in the copy is frozen at module load", () => {
-    expect(agentPosture({ mode: "agent", engine: "mongodb", engineLabel: "MongoDB", handover: false }).body).toContain(
+    expect(agentPosture({ mode: "agent", engine: "cassandra", engineLabel: "Apache Cassandra", handover: false }).body).toContain(
       `boundary it declares: ${EXECUTION_ENGINE_NAMES}.`,
     );
   });

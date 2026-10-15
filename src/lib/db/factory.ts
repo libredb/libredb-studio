@@ -267,10 +267,12 @@ export async function createDatabaseProvider(
       return new OpenSearchProvider(connection, options);
     }
 
-    // Document Databases - dynamically imported
+    // Document Databases - dynamically imported. The execution context reaches the
+    // MongoDB constructor like the SQL engines' and Kubernetes': it is what the agent
+    // read-only profile's connect-time verification keys on (issue #1614).
     case "mongodb": {
       const { MongoDBProvider } = await import("./providers/document/mongodb");
-      return new MongoDBProvider(connection, options);
+      return new MongoDBProvider(connection, options, execution);
     }
 
     case "couchbase": {
@@ -1033,7 +1035,7 @@ export type ExecutionProfile = "agent-read-only" | "agent-operations" | "agent-h
  * statements, so it is served only where the provider can bound one (the engine's own
  * read-only mechanism, or on Kubernetes the request allowlist plus the identity's RBAC),
  * and only the providers of AGENT_EXECUTION_ENGINES implement that: PostgreSQL, SQLite,
- * DuckDB, SQL Server, MySQL and Kubernetes (`src/lib/agent/engine-support.ts`). `agent-operations` sends no statement
+ * DuckDB, SQL Server, MySQL, Kubernetes and MongoDB (`src/lib/agent/engine-support.ts`). `agent-operations` sends no statement
  * at all — it calls the curated reporting methods every provider implements — so
  * requiring a read-only STATEMENT path of it would refuse an engine over a capability
  * the profile never uses. `agent-handover` sends a statement too — the one a run

@@ -138,7 +138,15 @@ import {
   runReadQueryTool,
   selectAgentTools,
   presentableArtifact,
+  capturedSnapshot,
 } from "./tools";
+import {
+  mongoInspectSchemaTool,
+  mongoInspectPlanTool,
+  mongoProfileTablePlan,
+  runMongoProfile,
+  mongoProfileModelText,
+} from "./mongo-tools";
 import {
   AGENT_WORKFLOW_PRESENTS_ANSWER,
   type AgentContextSnapshot,
@@ -1789,6 +1797,42 @@ const WORKFLOW_TOOL_RULES: Readonly<
       "At least one of those claims must cite the artifact you presented: a report about other evidence entirely is prose beside a picture, and the run is scored as not having answered.",
     ].join(" "),
   }),
+  /**
+   * The MongoDB tool rules: the read-class four exist here, so the rules say how THIS engine spells them - the
+   * command envelope rather than SQL, the aggregation that stands in for a GROUP BY, and the sample-inferred
+   * schema the inventory carries, which is the one honest limit a MongoDB run is told about its own grounding.
+   */
+  mongo: Object.freeze({
+    investigation: [
+      "Read the database with run_read_query, one command envelope at a time: find, findOne, aggregate, count and distinct are the reads there are, each as JSON.",
+      "Narrow every read to what the question needs with a filter, or a $match stage before any $group: a read past the row budget is refused, never cut.",
+      "A pipeline stage that writes ($out, $merge) is refused, as is any write operation: this run reads and reports, and what it establishes goes into the report.",
+      "The schema inventory was sampled from documents, not declared: a field the sample never saw is absent from it, so say what you read rather than what the schema implies.",
+      "Report what the evidence supports, and nothing further.",
+    ].join(" "),
+    "query-optimization": [
+      "inspect_plan runs the explain command at queryPlanner verbosity: the plan the engine WOULD use, with no document touched. Compare two plans with compare_plans before recommending.",
+      "What a plan names is this engine's own vocabulary - COLLSCAN, IXSCAN, the index it chose - and the recommendation says what change would make it choose differently: an index, a filter, or a shape.",
+      "recommend_change offers the change to the user and never applies it: this run is read-only by construction.",
+    ].join(" "),
+    "database-assessment": [
+      "You must call profile_table on at least one collection before you report: this workflow answers with the counts that tool takes, and counts you compose yourself with run_read_query do not establish them.",
+      "Only COUNTS come back. No value is read out of any field, so do not claim what a field contains — claim what its counts show.",
+      "MongoDB declares no foreign keys and no nullability: a field may be absent or null, and the profile's counts are the honest way to tell which is which.",
+      "Grade what you find against completeness, uniqueness, consistency and validity, and say which of the four each finding speaks to.",
+    ].join(" "),
+    operations: SQL_WORKFLOW_TOOL_RULES.operations,
+    "data-analysis": [
+      "Answer from data you have READ. The schema inventory tells you where to look; only a result you ran can be the answer.",
+      "profile_table at basic depth tells a large collection from a small one, and a field the documents fill from one they do not: it returns document counts and how many documents have a value, and reads no value out of any field.",
+      "When you have the answer, call present_answer with the artifact id of the read that IS the answer.",
+      "Only a result of run_read_query can be presented: a plan describes a command without running it, and a profile counts a collection rather than answering the question. Cite either as evidence, but present a read.",
+      "A chart names columns of THAT result: they are checked against the result's real column names and refused if they do not match.",
+      AGENT_ANSWER_CONTRACT,
+      "Then call compose_report. The presentation shows the result; the claims are what say what it means.",
+      "At least one of those claims must cite the artifact you presented: a report about other evidence entirely is prose beside a picture, and the run is scored as not having answered.",
+    ].join(" "),
+  }),
 } satisfies Record<AgentStatementLanguageId, Partial<Record<AgentRunWorkflowType, string>>>);
 
 /** The tool rules an agent-mode run is given. A language with no rules for the workflow is an error, never silence. */
@@ -1943,6 +1987,15 @@ const GROUNDING_COPY: Readonly<
     relations: false,
     ungrounded: (detail: string, noun: AgentInventoryNoun) =>
       `${detail}\nSo nothing about this cluster has been established for you: not one ${noun.singular} name. Read what you need with run_read_query, starting with get on the kinds your objective names.`,
+  },
+  /**
+   * MongoDB holds `inspect_schema` (its catalog arm reads the provider's own inventory), so its omission advice
+   * names that tool the way SQL's does. `relations` is false because MongoDB declares no foreign keys, and a
+   * relations block that can only ever be empty is a block the model reads as a claim of absence it cannot check.
+   */
+  mongo: {
+    omissionAdvice: "Ask inspect_schema for the collection to list its fields.",
+    relations: false,
   },
 });
 
@@ -2234,7 +2287,9 @@ function describePriorProgress(record: AgentRunRecord): string | null {
       );
     } else if (event.kind === "recommendation") {
       lines.push(
-        `A ${event.change} was already recommended and is recorded: ${event.statement}. Do not propose it a second time.`,
+        "collection" in event
+          ? `A ${event.change} was already recommended and is recorded: on collection ${event.collection}. Do not propose it a second time.`
+          : `A ${event.change} was already recommended and is recorded: ${event.statement}. Do not propose it a second time.`,
       );
     }
   }
@@ -2372,12 +2427,39 @@ function deriveStepId(toolName: string, input: unknown): string {
 /**
  * The model's own statement, when the arguments carry one under the language's `argument`. Used for the draft entry,
  * whose field stays `sql` whatever the language calls its argument, so a persisted event reads the same.
+ *
+ * The mongo language's `command` arrives as a JSON OBJECT - the model writes the envelope structurally rather
+ * than as escaped text - and is canonicalised to the same sorted-key text the fingerprint, the operation input
+ * and the provider's read all carry, so the draft, the ledger and the editor hand-over agree by construction.
  */
-function draftedStatement(input: unknown, argument: "sql" | "statement"): { sql: string; rationale: string } | null {
+function draftedStatement(
+  input: unknown,
+  argument: "sql" | "statement" | "command",
+): { sql: string; rationale: string } | null {
   if (input === null || typeof input !== "object") return null;
-  const { [argument]: sql, rationale } = input as Readonly<Record<string, unknown>>;
-  if (typeof sql !== "string" || sql.length === 0) return null;
-  return { sql, rationale: typeof rationale === "string" && rationale.length > 0 ? rationale : "(none given)" };
+  const { [argument]: statement, rationale } = input as Readonly<Record<string, unknown>>;
+  if (typeof statement === "string" && statement.length > 0) {
+    return {
+      sql: statement,
+      rationale: typeof rationale === "string" && rationale.length > 0 ? rationale : "(none given)",
+    };
+  }
+  if (argument === "command" && statement !== null && typeof statement === "object" && !Array.isArray(statement)) {
+    const canonical = JSON.stringify(statement, (_key, value: unknown) =>
+      value !== null && typeof value === "object" && !Array.isArray(value)
+        ? Object.fromEntries(
+            Object.entries(value as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+          )
+        : value,
+    );
+    if (canonical !== undefined && canonical.length > 2) {
+      return {
+        sql: canonical,
+        rationale: typeof rationale === "string" && rationale.length > 0 ? rationale : "(none given)",
+      };
+    }
+  }
+  return null;
 }
 
 /**
@@ -2393,9 +2475,18 @@ function draftedStatement(input: unknown, argument: "sql" | "statement"): { sql:
 export const DATABASE_TOOL_HANDLERS: Readonly<
   Record<DatabaseToolName, (context: AgentToolContext, input: unknown) => Promise<AgentToolOutcome>>
 > = Object.freeze({
-  inspect_schema: (context, input) => inspectSchemaTool(context, input as { schema?: string; table?: string }),
+  // The mongo arms dispatch by the run's own persisted language, never by connection type:
+  // the same seam the tool definitions dispatch through (`agentToolDefinition`), so the
+  // offer and the execution cannot disagree about which arm serves a call.
+  inspect_schema: (context, input) =>
+    context.statementLanguage === "mongo"
+      ? mongoInspectSchemaTool(context, input as { schema?: string; table?: string })
+      : inspectSchemaTool(context, input as { schema?: string; table?: string }),
   run_read_query: runReadQueryTool,
-  inspect_plan: (context, input) => inspectPlanTool(context, input as { sql: string }),
+  inspect_plan: (context, input) =>
+    context.statementLanguage === "mongo"
+      ? mongoInspectPlanTool(context, input)
+      : inspectPlanTool(context, input as { sql: string }),
   inspect_operations: inspectOperationsTool,
 });
 
@@ -4571,6 +4662,72 @@ async function handleCall(input: {
  * That costs a statement out of twenty; it cannot double-count anything, because
  * the profile changes no state.
  */
+/**
+ * The MongoDB arm of `profile_table`: composition from the SNAPSHOT, one settled step, one `table-profiled` event.
+ *
+ * The shape mirrors the SQL arm's - resolve from the run's own inventory, settle the step, write the event inside it,
+ * replay from the ledger - with the one difference the languages have: the composed statement is an aggregation
+ * envelope (`mongo-tools.ts`), and the step identity is the collection and depth rather than the table and a
+ * `fromColumn` the first arm does not offer.
+ */
+async function mongoProfileTable(
+  service: AgentRunService,
+  context: AgentToolContext,
+  record: AgentRunRecord,
+  input: unknown,
+  known: Set<string>,
+  notAttempted: Set<string>,
+): Promise<CallResult> {
+  const objects = capturedSnapshot(record.events)?.objects ?? [];
+  const planned = mongoProfileTablePlan(objects, input as { schema?: string; table?: string; depth?: string });
+  if ("refusal" in planned) return { kind: "answered", text: `Profile refused: ${planned.refusal}` };
+
+  const stepId = deriveStepId("profile_table", {
+    ...(planned.target.schema === undefined ? {} : { schema: planned.target.schema }),
+    table: planned.target.table,
+    depth: planned.depth,
+  });
+  known.add(stepId);
+
+  let modelText = "";
+  const result = await service.runStep(
+    record.runId,
+    { stepId, tool: "profile_table", operationId: "mongo.table.profile" },
+    async () => {
+      const read = await runMongoProfile(context, planned);
+      if ("outcome" in read) {
+        modelText = read.outcome.modelText;
+        if (read.outcome.kind === "refused") return { kind: "refused", refusal: read.outcome.refusal };
+        notAttempted.add(stepId);
+        return { kind: "not-attempted" };
+      }
+      modelText = mongoProfileModelText(read.profile, read.artifact, planned);
+      await service.recordEvent(record.runId, {
+        kind: "table-profiled",
+        artifact: read.artifact,
+        profile: read.profile,
+      });
+      return { kind: "completed", artifact: read.artifact };
+    },
+  );
+
+  if (result.kind === "cancelled") return { kind: "cancelled" };
+  if (result.kind === "paused") return { kind: "paused" };
+  if (result.kind === "performed") return { kind: "answered", text: modelText };
+  if (result.kind === "replayed") {
+    return {
+      kind: "answered",
+      text: `That exact profile was already taken in this run. ${describeSettled(result.event, "profile_table")}`,
+    };
+  }
+  return {
+    kind: "answered",
+    text: notAttempted.has(result.stepId)
+      ? refusedBeforeDatabaseText(result.stepId, "profile_table")
+      : indeterminateText(result.stepId, "profile_table"),
+  };
+}
+
 async function profileTable(
   service: AgentRunService,
   context: AgentToolContext,
@@ -4579,6 +4736,12 @@ async function profileTable(
   notAttempted: Set<string>,
 ): Promise<CallResult> {
   const { record } = await service.resume(context.runId);
+  // The mongo arm: the same step machinery, with an aggregation composed from the snapshot
+  // where the SQL arm composes catalog SQL. Split here rather than inside planTableProfile
+  // because the two compositions share nothing but the event they end in.
+  if (context.statementLanguage === "mongo") {
+    return mongoProfileTable(service, context, record, call.input, known, notAttempted);
+  }
   // Resolution and composition first, and they reach nothing: the step's identity
   // has to come from what the profile RESOLVED to, so that two requests naming the
   // same table settle as one step rather than executing twice.

@@ -1426,6 +1426,25 @@ export type AgentRunEvent =
     })
   | (AgentRunEventBase & {
       /**
+       * One MongoDB index, proposed and NOT created (issue #1614).
+       *
+       * The same event kind as a statement's index recommendation, because it is the same act: the run proposes, the
+       * user decides. It carries no `statement`, for the reason the resources card carries none - there is nothing to
+       * hand an editor, because the editor's command envelope runs reads and writes on documents and creates no
+       * index. The change is stated as DATA the user reads and applies in their own tool: the collection, the keys
+       * in the engine's own form (`{"field": 1}`), and any options. `keys` and `options` are validated by the card's
+       * schema, not by this type, which says only that they are records - the engine's spelling of a key is its own.
+       */
+      readonly kind: "recommendation";
+      readonly change: "index";
+      readonly collection: string;
+      readonly keys: Record<string, string | number>;
+      readonly options?: Record<string, unknown>;
+      readonly rationale?: string;
+      readonly evidence: readonly [AgentEvidenceReference, ...AgentEvidenceReference[]];
+    })
+  | (AgentRunEventBase & {
+      /**
        * One table profiled, as COUNTS and the findings derived from them.
        *
        * The database-assessment template's own artifact. Nothing here is a value

@@ -261,7 +261,7 @@ describe("workflowAvailability", () => {
     }
   });
 
-  test.each(["prometheus", "mongodb"] as const)(
+  test.each(["prometheus"] as const)(
     "%s opens operations and planning, and refuses a statement workflow in agent mode",
     (type) => {
       expect(workflowAvailability("agent", "operations", type).open).toBe(true);
@@ -334,7 +334,7 @@ describe("workflowAvailability", () => {
   });
 
   test("operations on an engine with no language opens under the one operations variant", () => {
-    expect(workflowAvailability("agent", "operations", "mongodb")).toEqual({
+    expect(workflowAvailability("agent", "operations", "redis")).toEqual({
       open: true,
       statementLanguage: null,
       variant: requiredVariant("sql", "operations"),
@@ -342,11 +342,36 @@ describe("workflowAvailability", () => {
   });
 
   test("a plan on an engine with no language opens under no variant", () => {
-    expect(workflowAvailability("planning", "investigation", "mongodb")).toEqual({
+    expect(workflowAvailability("planning", "investigation", "redis")).toEqual({
       open: true,
       statementLanguage: null,
       variant: null,
     });
+  });
+
+  test("a MongoDB run opens under its own language and variants (issue #1614)", () => {
+    expect(workflowAvailability("agent", "data-analysis", "mongodb")).toEqual({
+      open: true,
+      statementLanguage: "mongo",
+      variant: requiredVariant("mongo", "data-analysis"),
+    });
+    expect(workflowAvailability("agent", "operations", "mongodb")).toEqual({
+      open: true,
+      statementLanguage: "mongo",
+      variant: requiredVariant("mongo", "operations"),
+    });
+    expect(workflowAvailability("planning", "investigation", "mongodb")).toEqual({
+      open: true,
+      statementLanguage: "mongo",
+      variant: requiredVariant("mongo", "investigation"),
+    });
+    // Every statement-sending workflow has a mongo variant: none of them may be the SQL
+    // variant wearing a different name, and this is where that would show first.
+    for (const workflow of ["investigation", "query-optimization", "database-assessment"] as const) {
+      const open = workflowAvailability("agent", workflow, "mongodb");
+      if (!open.open) throw new Error(`refused ${workflow}`);
+      expect(open.statementLanguage).toBe("mongo");
+    }
   });
 
   /*
@@ -411,7 +436,7 @@ describe("workflowAvailability", () => {
 
   test("a run on an engine with no language persists nothing either", () => {
     for (const mode of ["agent", "planning"] as const) {
-      const open = workflowAvailability(mode, "operations", "mongodb");
+      const open = workflowAvailability(mode, "operations", "redis");
       if (!open.open) throw new Error("refused");
       expect(persistedRunFacts(mode, "operations", open), mode).toEqual({});
     }

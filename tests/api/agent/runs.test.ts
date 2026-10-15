@@ -110,6 +110,7 @@ const mockStart = mock(
     workflowSource?: string;
     workflowReading?: string;
     autoExecute?: boolean;
+    statementLanguage?: string;
     actor: FakeRun["actor"];
     connectionId: string;
     connectionIdentity?: string;
@@ -716,15 +717,15 @@ describe("POST /api/agent/runs", () => {
     expect(mockStart).toHaveBeenCalledTimes(1);
   });
 
-  test("a MongoDB investigation is refused with the posture's own paragraph", async () => {
-    mockResolveConnection.mockResolvedValueOnce({ id: "seed:docs", name: "Docs", type: "mongodb" });
+  test("a Cassandra investigation is refused with the posture's own paragraph", async () => {
+    mockResolveConnection.mockResolvedValueOnce({ id: "seed:docs", name: "Docs", type: "cassandra" });
 
     const res = await POST(startRequest({ ...VALID_BODY, workflowType: "investigation" }));
     const body = await parseResponseJSON<{ error: string; refused?: string }>(res);
 
     expect(res.status).toBe(400);
     expect(body.error).toBe(
-      agentPosture({ mode: "agent", engine: "mongodb", engineLabel: getDBConfig("mongodb").label, handover: false })
+      agentPosture({ mode: "agent", engine: "cassandra", engineLabel: getDBConfig("cassandra").label, handover: false })
         .body,
     );
     // The listed engines include a cluster, which no database bounds, so the refusal
@@ -733,6 +734,16 @@ describe("POST /api/agent/runs", () => {
     expect(body.error).not.toContain("database-native");
     expect(body.refused).toBe("engine-unsupported");
     expect(mockStart).not.toHaveBeenCalled();
+  });
+
+  test("a MongoDB investigation opens under the mongo language (issue #1614)", async () => {
+    mockResolveConnection.mockResolvedValueOnce({ id: "seed:docs", name: "Docs", type: "mongodb" });
+
+    const res = await POST(startRequest({ ...VALID_BODY, workflowType: "investigation" }));
+
+    expect(res.status).toBe(202);
+    expect(mockStart).toHaveBeenCalledTimes(1);
+    expect(mockStart.mock.calls[0]?.[0].statementLanguage).toBe("mongo");
   });
 
   test("a Postgres run is opened with no statement language and no verifier, so its header is unchanged", async () => {

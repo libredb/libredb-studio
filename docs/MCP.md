@@ -22,7 +22,7 @@ It is off by default.
     On Apache Spark it lists the tables and views of one namespace, read with SHOW and DESCRIBE statements that start no Spark job on Studio's own session; a namespace is named in Spark's spelling, its parts joined by dots.
   - `run_read_query` runs one read-only statement: a `SELECT` (a `WITH` is fine), `VALUES`, `TABLE`, or `EXPLAIN` without `ANALYZE`.
     Runs on PostgreSQL, SQLite, DuckDB, SQL Server and MySQL; other engines refuse it, so use inspect_schema there.
-    Kubernetes is executed by agent mode and is not offered to MCP.
+    Kubernetes is executed by agent mode and is not offered to MCP; MongoDB is too (issue #1614): its `run_read_command` arm is a follow-up, so MCP clients use inspect_schema there today.
 - Read-only is the database's own enforcement, not a filter over SQL text: `run_read_query` takes the connection under Studio's agent read-only execution profile and runs through the provider's read-only statement path, which PostgreSQL enforces with a read-only transaction, SQLite and DuckDB with a read-only open, SQL Server by verifying the principal cannot write, and MySQL and MariaDB by a least-privilege principal beside a read-only transaction.
   A statement check runs first as defence in depth.
 - A result that carries database content starts with a text block telling the model to treat what follows as untrusted data.

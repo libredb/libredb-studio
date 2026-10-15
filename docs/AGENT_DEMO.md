@@ -147,7 +147,7 @@ is not. That sentence is unchanged by #414 and is the reason it was written this
 is where the condition holds, not the rule — and it now holds on ten engines rather than two, which is
 a demo you can give rather than a caveat you have to make. Operate reads what the engine reports about itself, so it needs no SQL and reaches
 everything. The other four workflows write SQL and need a database-native read-only statement path,
-which today only PostgreSQL, SQLite, DuckDB, SQL Server and MySQL provide; everywhere else the run ends with
+which today only PostgreSQL, SQLite, DuckDB, SQL Server, MySQL and MongoDB provide; everywhere else the run ends with
 *"The agent cannot run on this database engine: it offers no read-only execution profile."*
 
 **Grounding was engine-dependent and nothing else**, in every workflow — until #414, after which the

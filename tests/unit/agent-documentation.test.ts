@@ -437,8 +437,8 @@ describe("every agent-mode engine sentence is the one engine list (#246)", () =>
   const list = namedList(AGENT_EXECUTION_ENGINES.map((type) => getDBConfig(type).label));
   const prose = (relative: string) => read(relative).replace(/\n[ \t]*(?:\*|\/\/|#)?[ \t]*/g, " ");
 
-  test("the derived list is today's six engines", () => {
-    expect(list).toBe("PostgreSQL, SQLite, DuckDB, SQL Server, MySQL and Kubernetes");
+  test("the derived list is today's seven engines", () => {
+    expect(list).toBe("PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes and MongoDB");
   });
 
   test(".env.example states it, and says plan mode is grounded on every engine", () => {

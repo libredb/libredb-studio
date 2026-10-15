@@ -28,7 +28,7 @@ Three properties frame everything below, and each of them is load-bearing rather
   ([`tools.ts`](../src/lib/agent/tools.ts)) is its only production call site, and the editor's
   `/api/db/query` reaches the provider directly in `POST()`
   ([`query/route.ts`](../src/app/api/db/query/route.ts)).
-- **Agent mode requires PostgreSQL, SQLite, DuckDB, SQL Server, MySQL or Kubernetes, except the `operations` workflow, which runs anywhere.**
+- **Agent mode requires PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes or MongoDB, except the `operations` workflow, which runs anywhere.**
   They are the only providers implementing `queryReadOnly`:
   [`postgres.ts`](../src/lib/db/providers/sql/postgres.ts),
   [`sqlite.ts`](../src/lib/db/providers/sql/sqlite.ts),
@@ -63,12 +63,12 @@ Three properties frame everything below, and each of them is load-bearing rather
   on which of its two readings it takes**: `agent-read-only` on the dialects `CATALOG_PLANS` serves,
   because it composes catalog statements, and `agent-operations` everywhere else, because asking a
   provider to describe its own schema sends nothing an engine has to plan.
-  That is what lets grounding reach the thirty-two the read-only profile refuses, and it still cannot narrow any workflow's reach: the profile whose acquisition would be refused is never the profile that capture asks for.
+  That is what lets grounding reach the thirty-one the read-only profile refuses, and it still cannot narrow any workflow's reach: the profile whose acquisition would be refused is never the profile that capture asks for.
   Everything else about
   the three acquisitions is identical: the same `readOnly: true` open, the same optional
   least-privilege `agentUser`, and the same profiled cache, so neither an operations run nor an
   editor replay is ever handed the editor's writable pool.
-  **Plan mode grounds itself the same way**: the server reads the schema, and on PostgreSQL and SQLite the engine's estimated statistics beside it, before the model's first turn, so a plan run is now ordinarily grounded on every engine, including the thirty-two where an agent run cannot read anything at all.
+  **Plan mode grounds itself the same way**: the server reads the schema, and on PostgreSQL and SQLite the engine's estimated statistics beside it, before the model's first turn, so a plan run is now ordinarily grounded on every engine, including the thirty-one where an agent run cannot read anything at all.
   What is left of the old engine
   rule is narrower and still worth stating: the engine no longer decides WHETHER a plan run is
   grounded, only whether it is grounded through a composed statement or through its provider, and
@@ -991,6 +991,10 @@ The table is the registry `createCanonicalOperationRegistry()` builds (`src/lib/
 | `kubectl.query.read` | R1 | `data-read` | `heavy` | `kubectl.query.read` | `run_read_query` on Kubernetes |
 | `cluster.usage.read` | R1 | `data-read` | `heavy` | `cluster.usage.read` | `inspect_usage` on Kubernetes |
 | `cluster.workloads.read` | R1 | `data-read` | `heavy` | `cluster.workloads.read` | `profile_workloads` on Kubernetes |
+| `mongo.query.read` | R1 | `data-read` | `heavy` | `mongo.query.read` | `run_read_query` on MongoDB (issue #1614) |
+| `mongo.schema.read` | R0 | `metadata-read` | `moderate` | `mongo.schema.read` | `inspect_schema` on MongoDB |
+| `mongo.plan.estimate` | R1 | `data-read` | `moderate` | `mongo.plan.estimate` | `inspect_plan` on MongoDB |
+| `mongo.table.profile` | R1 | `data-read` | `heavy` | `mongo.table.profile` | `profile_table` on MongoDB |
 
 The three Kubernetes descriptors are R1 under one boundary, Studio's request allowlist on the final method and path plus the identity's RBAC (the R1 contract is stated under [The operations template](#the-operations-template)).
 `cluster.usage.read` and `cluster.workloads.read` are R1 `data-read` and not metadata, although the server chooses their requests: a namespace or a selector the model wrote reaches the API server, and the answer is the cluster's own state.

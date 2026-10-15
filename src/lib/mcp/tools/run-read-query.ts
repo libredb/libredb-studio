@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { AGENT_EXECUTION_ENGINES, namedList } from "@/lib/agent/engine-support";
+import { AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
 import { getDBConfig } from "@/lib/db-ui-config";
 import { MCP_EXPOSABLE } from "@/lib/db/compatibility";
 import { ExecutionProfileError } from "@/lib/db/errors";
@@ -103,10 +104,16 @@ const RUN_READ_QUERY_TITLE = "Run a read-only query";
  * Derived from the engine list, as src/lib/agent/posture.ts derives its own sentence, filtered by
  * MCP_EXPOSABLE. MCP is offered per engine by MCP_EXPOSABLE, and the engines agent mode executes
  * statements on are a different list: Kubernetes is executed by the agent and closed to MCP, so
- * naming it here would advertise a tool that only ever refuses there.
+ * naming it here would advertise a tool that only ever refuses there. MongoDB is the same shape
+ * from the other side (issue #1614, decision 2): agent mode executes its command envelope, but
+ * THIS tool's input is a SQL statement and its provider's read-only path parses the envelope, so
+ * naming it here would advertise a SQL tool that can only refuse there. Its own MCP arm is a
+ * recorded follow-up on the issue, and until it lands the split is stated rather than blurred.
  */
 export const RUN_READ_QUERY_ENGINES = namedList(
-  AGENT_EXECUTION_ENGINES.filter((type) => MCP_EXPOSABLE[type]).map((type) => getDBConfig(type).label),
+  AGENT_EXECUTION_ENGINES.filter(
+    (type) => MCP_EXPOSABLE[type] && (AGENT_STATEMENT_LANGUAGE[type] ?? "sql") === "sql",
+  ).map((type) => getDBConfig(type).label),
 );
 export const RUN_READ_QUERY_DESCRIPTION = `Run one read-only SQL statement on a connection: a SELECT (a WITH is fine), VALUES, TABLE, or EXPLAIN without ANALYZE. Runs on ${RUN_READ_QUERY_ENGINES}; other engines refuse it, so use inspect_schema there. Returns at most max_rows rows (default 100, at most 500) and at most 32 KiB; truncated and pagination.hasMore say when rows were cut, and pagination.nextOffset is the offset of the next page when the query can be paged. ${MCP_UNTRUSTED_NOTICE}`;
 

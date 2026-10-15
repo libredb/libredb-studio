@@ -14,13 +14,14 @@
  */
 import { createHash } from "node:crypto";
 import { admitKubectlStatement } from "@/lib/db/operations/kubectl-admission";
+import { admitMongoStatement } from "@/lib/db/operations/mongo-admission";
 import { readKubectlRun } from "@/lib/db/providers/platform/kubernetes/console/paging";
 import type { AgentStatementLanguageId } from "./agent-manifest";
 import { fingerprintStatement } from "./repair-ledger";
 
 export interface AgentLanguageServerAdapter {
   /** The descriptor this language's model-written reads are evaluated under. */
-  readonly readOperation: "sql.query.read" | "kubectl.query.read";
+  readonly readOperation: "sql.query.read" | "kubectl.query.read" | "mongo.query.read";
   /** Total over any text: the repair ledger's identity of one call. */
   readonly fingerprint: (text: string) => string;
   /** The sentence for a read refused past the row budget. */
@@ -84,6 +85,59 @@ export function kubectlRowCapAdvice(statement: string, allowed: string): string 
     : advice(allowed);
 }
 
+/**
+ * A MongoDB command's identity in the repair ledger: the envelope with every object's keys in code-unit order,
+ * so `{"collection": "orders", "operation": "find"}` and `{"operation": "find", "collection": "orders"}` are ONE
+ * read and two collections are two. Total: a line that does not parse is identified by its raw text, so a
+ * refused line is still refused the second time. The fingerprint is taken over the text the pipeline carries
+ * rather than over the object the model sent, so the ledger, the timeline and the editor hand-over - which all
+ * carry text - agree with it by construction.
+ *
+ * Exported for its tests; the registry below is its production reader.
+ */
+export function fingerprintMongo(text: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text.trim());
+  } catch {
+    return createHash("sha256").update(`mongo-raw:${text}`).digest("hex");
+  }
+  return createHash("sha256")
+    .update(`mongo:${stableJson(parsed)}`)
+    .digest("hex");
+}
+
+/**
+ * The row-cap advice of the operations that read many documents, naming only what THAT operation narrows with:
+ * a sentence that tells an aggregate to add a filter would name a key no stage carries. The keys are
+ * `AGENT_LANGUAGE_COPY.mongo.adviceKeys`, and `statement-languages.test.ts` holds the two to each other.
+ */
+const MONGO_ROW_CAP_ADVICE: Readonly<Record<string, (allowed: string) => string>> = Object.freeze({
+  find: (allowed: string) =>
+    `Ask for at most ${allowed} documents: narrow the filter, or set "options": {"limit": ${allowed}}, and run it again.`,
+  aggregate: (allowed: string) =>
+    `Ask for at most ${allowed} documents: add a $match stage before the $group, or a $limit stage, and run it again.`,
+  count: (allowed: string) =>
+    `A count answers one row: narrow the filter to the part of the data it is about, and run it again.`,
+  distinct: (allowed: string) =>
+    `Ask for at most ${allowed} values: narrow the filter to a smaller part of the collection, and run it again.`,
+});
+
+/** The sentence for a MongoDB read refused past the row budget. Exported for its tests, like the fingerprint. */
+export function mongoRowCapAdvice(statement: string, allowed: string): string {
+  let operation: string | undefined;
+  try {
+    const parsed = JSON.parse(statement.trim()) as Record<string, unknown>;
+    if (typeof parsed.operation === "string") operation = parsed.operation;
+  } catch {
+    /* a line that does not parse gets the generic sentence */
+  }
+  const advice = operation === undefined ? undefined : MONGO_ROW_CAP_ADVICE[operation];
+  return advice === undefined
+    ? `Ask for at most ${allowed} rows: narrow the command to less of the collection, and run it again.`
+    : advice(allowed);
+}
+
 const AGENT_LANGUAGE_SERVER: Readonly<Record<AgentStatementLanguageId, AgentLanguageServerAdapter>> = Object.freeze({
   sql: Object.freeze({
     readOperation: "sql.query.read",
@@ -98,6 +152,14 @@ const AGENT_LANGUAGE_SERVER: Readonly<Record<AgentStatementLanguageId, AgentLang
     admit: admitKubectlStatement,
     shapeAdvice:
       "The statement's shape falls outside what a bounded read-only inspection may be, which is a decision about the contract rather than about a valid kubectl statement; a differently shaped read may still be admitted.",
+  }),
+  mongo: Object.freeze({
+    readOperation: "mongo.query.read",
+    fingerprint: fingerprintMongo,
+    rowCapAdvice: mongoRowCapAdvice,
+    admit: admitMongoStatement,
+    shapeAdvice:
+      "The command's shape falls outside the envelope a bounded read-only inspection may be, which is a decision about the contract rather than about a valid MongoDB read; a differently shaped command may still be admitted.",
   }),
 } satisfies Record<AgentStatementLanguageId, AgentLanguageServerAdapter>);
 

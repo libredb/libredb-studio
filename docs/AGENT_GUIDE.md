@@ -229,7 +229,7 @@ now two different sentences, and the difference is the whole of what changed:
 
 - **Grounding: every engine.** What a Plan run is TOLD about your database. It needs no read-only
   statement path, because the provider reading sends no statement, so it reaches all thirty-eight engines.
-- **Agent mode: PostgreSQL, SQLite, DuckDB, SQL Server, MySQL and Kubernetes.** What a run may DO by itself. Its tools
+- **Agent mode: PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes and MongoDB.** What a run may DO by itself. Its tools
   execute statements and need a read-only path the provider implements, which only those six providers do, so a
   schema-workflow Agent run on any other engine still ends *"The agent cannot run on this database
   engine: it offers no read-only execution profile."* — after grounding has succeeded, which is
@@ -403,7 +403,7 @@ as an ordinary citable result.
 Two consequences you will notice:
 
 - **It runs on every engine.** The other workflows need a database-native read-only statement path,
-  which only PostgreSQL, SQLite, DuckDB, SQL Server and MySQL have; this one needs none, so a run opened on
+  which only PostgreSQL, SQLite, DuckDB, SQL Server, MySQL and MongoDB have; this one needs none, so a run opened on
   Oracle, Cassandra, MongoDB or Redis works rather than ending `engine-unsupported`.
 - **It has no free-form SQL, and its schema is a short list of names.** There is no `inspect_schema`
   and no `run_read_query` here, and the run is told so in its opening message rather than being left
@@ -945,7 +945,7 @@ Stated plainly, because a surface that hides its edges is the one that surprises
   it. `/api/db/query` calls the provider directly (`src/app/api/db/query/route.ts:44`), so an editor
   query is neither policy-checked nor written to the agent audit trail. The controls above describe
   what the agent is held to, not a guarantee the whole product enforces.
-- **Agent mode runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL and Kubernetes only.** The read-only profile has to
+- **Agent mode runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes and MongoDB only.** The read-only profile has to
   be implemented by the provider, and only six do: `queryReadOnly` exists on `postgres.ts`,
   `sqlite.ts`, `duckdb/index.ts`, `mssql.ts`, `mysql.ts` and `kubernetes/index.ts`. The six do not draw the boundary the same way.
   Kubernetes has no read-only session at all, so there the boundary is Studio's request allowlist, checked on the
@@ -957,7 +957,7 @@ Stated plainly, because a surface that hides its edges is the one that surprises
   Acquiring a profiled provider for any other engine raises `PROFILE_UNSUPPORTED_BY_PROVIDER`
   (`src/lib/db/factory.ts`), which the runtime reports as `engine-unsupported`
   (`src/lib/agent/runtime.ts`) — the rail says so in as many words
-  (`src/components/agent/timeline.ts`). So on the other thirty-two ids in the `DatabaseType` union
+  (`src/components/agent/timeline.ts`). So on the other thirty-one ids in the `DatabaseType` union
   (`src/lib/types.ts`), an Agent-mode run cannot read anything: Oracle, Db2 LUW, libSQL, MongoDB, Redis,
   ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Apache Spark, Cassandra, Couchbase, Firestore, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, MQTT, RabbitMQ, OPC UA, MTConnect, etcd, Neo4j, Milvus, Qdrant, Oxia, Databend, S3-compatible object storage and LibreDB. That
   last id is the bundled **LibreDB sample** connection, whose provider implements no `queryReadOnly`

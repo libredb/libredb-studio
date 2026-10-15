@@ -47,6 +47,7 @@ export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = [
   "mssql",
   "mysql",
   "kubernetes",
+  "mongodb",
 ];
 
 /**
@@ -66,6 +67,12 @@ export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = [
  * `en-GB` does not), and these strings are asserted in tests and read by users of an
  * English-only interface. A join nobody can localise is the one that renders the same on
  * a server, in a browser and in CI.
+ *
+ * The sixth engine (MongoDB, #1614) is the first whose boundary is not a session at all - no
+ * read-only transaction exists there, so the profile proves the principal's inability to write
+ * with a negative write probe and bounds the reads with the engine's own `maxTimeMS` and row
+ * caps - which is why the posture copy (`posture.ts`) says the boundary in each language's own
+ * words rather than one shared sentence about sessions.
  */
 export function namedList(names: readonly string[]): string {
   if (names.length <= 2) return names.join(" and ");

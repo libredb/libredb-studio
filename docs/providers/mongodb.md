@@ -1326,6 +1326,67 @@ Over the API: `POST /api/db/query` (JSON MQL in the `sql` field) and `POST /api/
 
 ---
 
+### The agent read-only execution profile (issue #1614)
+
+Agent mode executes on MongoDB through `queryReadOnly`, under a boundary the SERVER holds, in
+five stated layers ([`mongodb-agent.ts`](../../src/lib/db/providers/document/mongodb-agent.ts),
+[`mongo-admission.ts`](../../src/lib/db/operations/mongo-admission.ts)):
+
+1. **The principal is proven by a NEGATIVE WRITE PROBE, at the profiled connection's open.**
+   The profile asks the server to refuse a write - an `insertOne` into a probe collection - and
+   takes only that refusal as proof: measured on MongoDB 9.0.4, the `read`-role user's insert
+   answers `MongoServerError` code 13, "not authorized". A server started without `--auth`
+   accepts the write (measured 2026-09-27 on the same fixture: a `read`-only user wrote with
+   `insertOne` and with `$out`), and is refused with `PROFILE_PRIVILEGES_TOO_BROAD` after the
+   probe cleans up its own document - role restrictions are not enforced at all without
+   authentication, which is why reading `connectionStatus` would prove nothing. The probe
+   writes into the CONNECTED database only; a principal granted `readWrite` on another database
+   passes it, and what contains it there is the fence below and the server's own per-database
+   authorization of every read the envelope may aim elsewhere. The docker seed
+   (`docker/mongodb-init/02-agent-principal.js`) creates exactly this shape: `libredb_agent`,
+   `read` on `app` and nothing else, on a fresh data directory only.
+2. **The engine is identified on the wire, fail-closed.** `buildInfo` must positively answer the
+   shape a MongoDB answers (`version`, `versionArray`, `storageEngines` carrying `wiredTiger`);
+   FerretDB, measured, answers a `ferretdb: {version, package}` field of its own and no
+   `allocator`, `javascriptEngine` or `storageEngines` at all, and is refused with
+   `PROFILE_UNSUPPORTED_TARGET` until its own enforcement is measured - the D347 precedent that
+   also keeps Percona off the MySQL wire. Amazon DocumentDB and Azure Cosmos DB fail the same
+   positive shape in the fail-closed direction.
+3. **The statement is the EDITOR's own command envelope** - `{"collection": ...,
+   "operation": "find" | "findOne" | "aggregate" | "count" | "distinct", "filter": ...,
+   "pipeline": ..., "options": {...}}` - parsed by the same Extended-JSON reader `query()`
+   parses it with, so what the run executes is what the user's editor runs for the same text,
+   and an auto-executed answer's hand-over needs no translation. The fence admits the five read
+   operations and refuses everything else: a write operation (the editor's envelope accepts
+   them; this path never sends one), a write's payload under a read's name, the write stages of
+   a pipeline (`$out`, `$merge`), an unknown top-level key, a document that names no one
+   command, and past 4,096 characters - the kubectl fence's deliberately narrower contract, for
+   its reason: a model has no reason to send a longer read.
+4. **The read is bounded five ways.** `maxTimeMS` is the SERVER's own deadline (measured: code
+   50 ended a `$where` `sleep()` past its 500 ms budget, and the refusal is mapped to the
+   statement-deadline sentence the SQL profile established); `find` and `aggregate` are capped
+   one row past the budget SERVER-SIDE (`limit` clamped, a trailing `$limit`), so an unbounded
+   cursor is never materialised in Node; a client-owned backstop ends a silent server; and the
+   assembled result is refused on the row budget's one-past signal and the byte budget, which is
+   where a `distinct` - whose reply is the whole array of values, not a cursor - is bounded.
+   The profile answers in the same `QueryResult` shape every engine does, serialized through
+   the same value rules the grid reads.
+5. **The estimating plan is the engine's own word for it.** `mode: "estimate-plan"` wraps the
+   envelope's operation in the `explain` command at `queryPlanner` verbosity, which plans and
+   does not execute - measured on 9.0.4, the reply carries `queryPlanner.winningPlan` and runs
+   no pipeline - and the profile arms the catalog tool from the provider's own inventory and the
+   profile tool through an aggregation composed server-side, whose `$group` output carries the
+   same aliases the SQL composition emits, so the findings and thresholds both engines' profiles
+   share are one implementation ([`mongo-tools.ts`](../../src/lib/agent/mongo-tools.ts)).
+
+**What this profile does not overclaim:** MongoDB has no read-only transaction - that is the
+whole reason the boundary is the principal's inability to write rather than a session - and the
+profiler, once switched on, writes on every read (`getSlowQueries` reads `system.profile`; the
+empty panel is the ordinary case). The boundary is about what THIS principal can do, not about
+what the server records. `distribution`-depth profiling is refused rather than composed: a
+distinct count here has no one-statement shape that does not materialise the set, and trading
+the profile's one-statement-per-table contract silently is worse than saying so.
+
 ## 13. Known limitations & future work
 
 - **Schema is inferred from a 100-document sample.** Fields outside the sample don't appear;

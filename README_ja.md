@@ -190,9 +190,9 @@ StudioのAIの中心は、エディタの隣にあるエージェントレール
   書き込みとDDLはデータベースに届く前に拒否され、`EXPLAIN ANALYZE`は文を実際に実行してしまうため既定で
   不許可です。このパイプラインはエージェント専用です。あなたがエディタで自分で実行する文はプロバイダを直接
   呼び出しており（`src/app/api/db/query/route.ts:44`）、ここでのポリシー判定も監査も受けません。
-- **Agentモードが対応するのはPostgreSQL・SQLite・DuckDB・SQL Server・MySQLだけ**：読み取り専用プロファイルはデータベース側の
+- **Agentモードが対応するのはPostgreSQL・SQLite・DuckDB・SQL Server・MySQL・MongoDBだけ**：読み取り専用プロファイルはデータベース側の
   機能で保証されるため、それを実装したプロバイダにしか存在しません。`postgres.ts`、`sqlite.ts`、`duckdb/index.ts`、
-  `mssql.ts`、`mysql.ts`の`queryReadOnly`のみで、他にはありません。それ以外のエンジンでは、文を送るワークフローのAgentモードは
+  `mssql.ts`、`mysql.ts`、`mongodb.ts`の`queryReadOnly`のみで、他にはありません。それ以外のエンジンでは、文を送るワークフローのAgentモードは
   開始時点で拒否され、Runは作られません。プロバイダのファクトリまで到達したものは`engine-unsupported`で終わります。
   **Plan**モードはどの接続でも開けます。そこでのモデルはツールを使わず、あなたの文を1つも実行せず、何も書き込まず、
   あなた自身が実行するための文を起草するだけです。そのGROUNDINGはすべてのエンジンに届きます。PostgreSQLとSQLiteでは

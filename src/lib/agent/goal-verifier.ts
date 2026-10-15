@@ -418,14 +418,14 @@ type GoalRule = (run: VerifiableAgentRun) => readonly AgentGoalShortfall[];
  * two halves of one decision, and the half that drifted would be the one a reader
  * could not interpret.
  */
-/** The operation an inspected plan is read under. */
-const PLAN_OPERATION = "sql.explain.estimate";
+/** The operations an inspected plan is read under: each statement language's estimating arm carries its own id. */
+const PLAN_OPERATIONS: ReadonlySet<string> = new Set(["sql.explain.estimate", "mongo.plan.estimate"]);
 
 /** Every plan THIS run read from the engine, by the id a citation would name. */
 function planArtifacts(events: readonly AgentRunEvent[]): ReadonlySet<string> {
   const ids = new Set<string>();
   for (const event of events) {
-    if (event.kind === "tool-completed" && event.artifact.operationId === PLAN_OPERATION) {
+    if (event.kind === "tool-completed" && PLAN_OPERATIONS.has(event.artifact.operationId)) {
       ids.add(event.artifact.correlationId);
     }
   }

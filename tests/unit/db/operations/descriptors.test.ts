@@ -7,6 +7,10 @@ import {
   dbSchemaReadDescriptor,
   isStatementReadOperation,
   kubectlQueryReadDescriptor,
+  mongoPlanEstimateDescriptor,
+  mongoQueryReadDescriptor,
+  mongoSchemaReadDescriptor,
+  mongoTableProfileDescriptor,
   sqlExplainAnalyzeDescriptor,
   sqlExplainEstimateDescriptor,
   sqlQueryReadDescriptor,
@@ -33,11 +37,15 @@ const canonicalDescriptors = [
   kubectlQueryReadDescriptor,
   clusterUsageReadDescriptor,
   clusterWorkloadsReadDescriptor,
+  mongoQueryReadDescriptor,
+  mongoSchemaReadDescriptor,
+  mongoPlanEstimateDescriptor,
+  mongoTableProfileDescriptor,
 ];
 
 describe("canonical operation registry", () => {
-  test("registers exactly the nine canonical descriptors: no write, DDL, or admin operation exists", () => {
-    // Nine since the Kubernetes workload profile, the second curated cluster reading. Eight since the Kubernetes usage reading, a curated read with its own row ceiling. Seven since the Kubernetes agent read, which has its own id so the SQL contract
+  test("registers exactly the thirteen canonical descriptors: no write, DDL, or admin operation exists", () => {
+    // Thirteen since the MongoDB agent arms (issue #1614): the command read, the scoped catalog, the estimating plan and the composed profile, four ids of one engine, each for the reason its docblock states. Twelve would have been one fewer, folding the plan into the read the way SQL did not fold its own: the SQL estimate kept its own id so the audit action stays what it was, and the mongo estimate keeps its for the same reason. Ten since the Kubernetes workload profile, the second curated cluster reading. Nine since the Kubernetes usage reading, a curated read with its own row ceiling. Eight since the Kubernetes agent read, which has its own id so the SQL contract
     // and its audit action stay exactly what they were. Six since #414, which gave the provider's own schema inspection an id so that
     // grounding on an engine with no composed catalog goes through the audited path
     // rather than beside it. Five since the `operations` workflow, which added the
@@ -52,6 +60,10 @@ describe("canonical operation registry", () => {
       "db.operations.read",
       "db.schema.read",
       "kubectl.query.read",
+      "mongo.plan.estimate",
+      "mongo.query.read",
+      "mongo.schema.read",
+      "mongo.table.profile",
       "sql.explain.analyze",
       "sql.explain.estimate",
       "sql.query.read",
