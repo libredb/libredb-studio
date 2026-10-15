@@ -1,6 +1,7 @@
 import { describe, test, expect, mock, beforeEach, afterEach, jest, spyOn } from "bun:test";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
+import { admittedConnection, grantedSnapshot } from "../../helpers/governance/granted-snapshot";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { API_CODES } from "@/lib/governance/contract";
 import { logger } from "@/lib/logger";
@@ -121,6 +122,9 @@ mock.module("@/lib/db/factory", () => ({
 // ─── Import route handler AFTER mocking ─────────────────────────────────────
 const { POST } = await import("@/app/api/db/transaction/route");
 const { transactionKey } = await import("@/lib/api/transaction-ownership");
+const { registerOwnerRemoval } = await import("@/lib/db/owner-removal");
+const { swapGovernanceSnapshot } = await import("@/lib/governance/snapshot");
+const { recordGovernanceSnapshot, resetGovernanceState } = await import("@/lib/governance/state");
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 const validConnection = {
@@ -1151,6 +1155,19 @@ describe("POST /api/db/transaction under governance (spec 9.4)", () => {
     return {
       of: (user: string, owner: string) => providers.get(keyOf(user, owner)),
       evict: (user: string, owner: string) => providers.delete(keyOf(user, owner)),
+      /**
+       * The owner-scoped removal of the factory (spec 9.4): every provider of `owner` on `connectionId` leaves the
+       * cache, and an open transaction on it is rolled back, as `teardownProvider` in src/lib/db/factory.ts does.
+       */
+      removeOwner: async (connectionId: string, owner: string) => {
+        for (const [key, provider] of [...providers]) {
+          const [id, , keyOwner] = JSON.parse(key) as [string, string | null, string | null];
+          if (id !== connectionId || keyOwner !== owner) continue;
+          providers.delete(key);
+          // oxlint-disable-next-line no-await-in-loop -- one provider at a time, as the double has no pool to wait on.
+          if (provider.isInTransaction()) await provider.rollbackTransaction();
+        }
+      },
     };
   }
 
@@ -1372,6 +1389,55 @@ describe("POST /api/db/transaction under governance (spec 9.4)", () => {
     } finally {
       jest.useRealTimers();
       errors.mockRestore();
+    }
+  });
+
+  // ─── A grant a reload takes away or changes (spec 4.3, 7.4, 9.4) ──────────
+  //
+  // The reload that reads a downgrade does not wait for the owner's next request: once it swaps the new snapshot in, it
+  // asks every copy of the factory to tear down the owner's providers of that connection, and the teardown rolls back
+  // the open transaction there (src/lib/governance/snapshot.ts, src/lib/db/owner-removal.ts). The factory's own
+  // teardown is pinned in tests/isolated/factory.test.ts; here the route's factory is the double above, registered as
+  // a copy of the factory registers itself.
+
+  test("governance: a downgrade from write to read rolls back the open write transaction", async () => {
+    const providers = providerPerKey();
+    const removals: unknown[][] = [];
+    const unregister = registerOwnerRemoval(async (connectionId, scope) => {
+      removals.push([connectionId, scope]);
+      await providers.removeOwner(connectionId, scope.owner);
+    });
+    const ORDERS = admittedConnection("orders", { write: true });
+    const granted = (level: "read" | "write") =>
+      grantedSnapshot([ORDERS], [{ subject: "alice-subject", connection: ORDERS, level }]);
+    const quiet = [spyOn(logger, "info"), spyOn(logger, "debug")].map((spy) => spy.mockImplementation(() => {}));
+    try {
+      recordGovernanceSnapshot(granted("write"));
+      as("alice@example.com", "alice-subject");
+      expect((await send({ action: "begin" }, "writer")).status).toBe(200);
+      const writer = providers.of("writer", "alice-subject");
+      expect(writer?.isInTransaction()).toBe(true);
+
+      // The control plane downgrades the grant, and the reload that reads it swaps the new snapshot in.
+      await swapGovernanceSnapshot(granted("read"));
+
+      // The reload itself rolled the write transaction back, before any request of Alice's.
+      expect(removals).toEqual([["seed:orders", { owner: "alice-subject" }]]);
+      expect(writer?.rollbackTransaction).toHaveBeenCalledTimes(1);
+      expect(writer?.isInTransaction()).toBe(false);
+      // Her next request resolves the read credential and learns what happened, and nothing is rolled back twice.
+      const res = await send({ action: "status" }, "reader");
+      expect(res.status).toBe(409);
+      expect(await parseResponseJSON(res)).toMatchObject({ code: "TRANSACTION_CREDENTIAL_CHANGED", rolledBack: true });
+      expect(writer?.rollbackTransaction).toHaveBeenCalledTimes(1);
+      // She begins again under the read credential.
+      expect((await send({ action: "begin" }, "reader")).status).toBe(200);
+      expect(providers.of("reader", "alice-subject")?.isInTransaction()).toBe(true);
+      expect((await send({ action: "rollback" }, "reader")).status).toBe(200);
+    } finally {
+      unregister();
+      resetGovernanceState();
+      for (const spy of quiet) spy.mockRestore();
     }
   });
 });

@@ -16,6 +16,7 @@ import { createSSHTunnel, closeSSHTunnel, hasTunnel } from "@/lib/ssh/tunnel";
 import type { TunnelInfo } from "@/lib/ssh/tunnel";
 import { readSecret } from "@/lib/storage/encryption";
 import { providerCacheKey, providerOwner } from "./provider-cache-key";
+import { registerOwnerRemoval } from "./owner-removal";
 import { READ_ONLY_ENFORCED, READS_FILE_ACCESS_POSTURE } from "./compatibility";
 import { TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
 import { logger } from "@/lib/logger";
@@ -578,6 +579,7 @@ interface CachedProvider {
    * The user this entry was opened for (spec 9.4), the `owner` its key frames, or undefined for an
    * entry every caller of the connection shares. Recorded for the reason `connectionId` is: the key
    * is a digest and cannot be read back, so "which entries are this user's" matches on this field.
+   * An entry with an owner is torn down when it goes (`teardownProvider`), never only disconnected.
    */
   owner?: string;
   /**
@@ -760,6 +762,96 @@ function connectionStillServed(connectionId: string): boolean {
   return Array.from(profiledProviderCache.values()).some((entry) => entry.connectionId === connectionId);
 }
 
+// ============================================================================
+// Teardown of an owned provider (spec 9.4)
+// ============================================================================
+
+/** How long a teardown waits for the rollback of an owned provider's open transaction (spec 9.4). */
+const TEARDOWN_ROLLBACK_MS = 5_000;
+/** How long a teardown waits for an owned provider's disconnect before it abandons the pool (spec 9.4). */
+const TEARDOWN_DISCONNECT_MS = 10_000;
+
+/** What `within` answers for work that did not settle before its deadline. */
+const TIMED_OUT = Symbol("timed out");
+
+/**
+ * Waits for `work` at most `ms`: answers once it resolves, or TIMED_OUT once `ms` pass first, and throws what it
+ * rejects with before then. A rejection after the deadline is already handled by the race, and the timer never holds
+ * the process open.
+ */
+async function within(work: Promise<void>, ms: number): Promise<void | typeof TIMED_OUT> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<typeof TIMED_OUT>((resolve) => {
+    timer = setTimeout(() => resolve(TIMED_OUT), ms);
+    timer.unref?.();
+  });
+  try {
+    return await Promise.race([work, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** The interactive transaction session that `POST /api/db/transaction` drives, on a provider that implements one. */
+interface TransactionSession {
+  isInTransaction(): boolean;
+  rollbackTransaction(): Promise<void>;
+}
+
+/** The provider's transaction session while it holds a transaction open, or null. */
+function openTransaction(provider: DatabaseProvider): TransactionSession | null {
+  const session = provider as DatabaseProvider & Partial<TransactionSession>;
+  if (typeof session.isInTransaction !== "function" || typeof session.rollbackTransaction !== "function") return null;
+  return session.isInTransaction() ? (session as TransactionSession) : null;
+}
+
+/**
+ * Tear down an owned provider (spec 9.4): the provider of one user, closed because that user's access changed or the
+ * provider went idle. Its entry is deleted from `cache` first, so no request is handed the provider while it closes; an
+ * open transaction is rolled back, waited for at most TEARDOWN_ROLLBACK_MS; and the provider is disconnected, waited
+ * for at most TEARDOWN_DISCONNECT_MS. The rollback comes first because the disconnect would otherwise wait on the very
+ * session the transaction holds: `pg`'s `pool.end()` waits for every checked-out client.
+ *
+ * A rollback or a disconnect that fails is logged, and a disconnect that does not finish in time is logged and its pool
+ * abandoned, because a client stuck in a statement, or in a rollback that never answered, never comes back. So the
+ * teardown ends within 15 s whatever the user's database does, and it never rejects.
+ */
+async function teardownProvider(cache: Map<string, CachedProvider>, key: string, entry: CachedProvider): Promise<void> {
+  cache.delete(key);
+  const { provider, connectionId: id } = entry;
+  try {
+    // Inside the try, as `keepsRunInFlight` guards `hasRunsInFlight`: a provider that throws here is not left open.
+    const session = openTransaction(provider);
+    if (session !== null) {
+      const rollback = await within(session.rollbackTransaction(), TEARDOWN_ROLLBACK_MS);
+      if (rollback === TIMED_OUT) {
+        logger.warn(
+          `[DB] The open transaction of an owned provider of ${sanitize(id)} did not roll back within ${TEARDOWN_ROLLBACK_MS} ms, so the provider is closed with it open.`,
+          { connectionId: id },
+        );
+      } else {
+        const line = `[DB] Rolled back the open transaction of an owned provider of ${sanitize(id)} before closing it.`;
+        logger.info(line, { connectionId: id });
+      }
+    }
+  } catch (error) {
+    logger.warn(
+      `[DB] The open transaction of an owned provider of ${sanitize(id)} failed to roll back, so the provider is closed with it open.`,
+      { connectionId: id, error: String(error) },
+    );
+  }
+  try {
+    if ((await within(provider.disconnect(), TEARDOWN_DISCONNECT_MS)) === TIMED_OUT) {
+      logger.warn(
+        `[DB] Abandoned the pool of owned provider ${sanitize(id)}: its disconnect did not finish within ${TEARDOWN_DISCONNECT_MS} ms.`,
+        { connectionId: id },
+      );
+    }
+  } catch (error) {
+    logger.warn(`[DB] Error disconnecting owned provider ${sanitize(id)}`, { connectionId: id, error: String(error) });
+  }
+}
+
 /** Idle timeout: evict providers unused for 30 minutes */
 const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 /** Sweep interval: check for idle providers every 5 minutes */
@@ -791,6 +883,8 @@ function keepsRunInFlight(
 /**
  * Evict providers that have been idle longer than maxIdleMs.
  * Called by the periodic sweep timer, but also exported for direct testing.
+ * An owned provider (spec 9.4) is torn down (`teardownProvider`), so an open transaction it still holds is rolled back
+ * and a pool that hangs is abandoned; a provider every caller shares is disconnected as before.
  *
  * @returns number of evicted providers
  */
@@ -809,15 +903,20 @@ export async function evictIdleProviders(maxIdleMs: number = IDLE_TIMEOUT_MS): P
         continue;
       }
       logger.info(`[DB] Evicting idle provider: ${sanitize(id)} (idle ${idleMinutes}min)`);
-      try {
-        await entry.provider.disconnect();
-      } catch (error) {
-        logger.warn(`[DB] Error disconnecting idle provider ${sanitize(id)}`, {
-          connectionId: id,
-          error: String(error),
-        });
+      if (entry.owner !== undefined) {
+        // oxlint-disable-next-line no-await-in-loop -- the tunnel below may close only once this provider has closed.
+        await teardownProvider(providerCache, key, entry);
+      } else {
+        try {
+          await entry.provider.disconnect();
+        } catch (error) {
+          logger.warn(`[DB] Error disconnecting idle provider ${sanitize(id)}`, {
+            connectionId: id,
+            error: String(error),
+          });
+        }
+        providerCache.delete(key);
       }
-      providerCache.delete(key);
       // Close the shared tunnel only when nothing serves the connection
       // anymore — a live profiled provider still needs it, and so does another
       // entry of this connection opened with different credentials.
@@ -843,15 +942,20 @@ export async function evictIdleProviders(maxIdleMs: number = IDLE_TIMEOUT_MS): P
         continue;
       }
       logger.info(`[DB] Evicting idle profiled provider: ${sanitize(entry.connectionId)}`);
-      try {
-        await entry.provider.disconnect();
-      } catch (error) {
-        logger.warn(`[DB] Error disconnecting idle profiled provider ${sanitize(entry.connectionId)}`, {
-          connectionId: entry.connectionId,
-          error: String(error),
-        });
+      if (entry.owner !== undefined) {
+        // oxlint-disable-next-line no-await-in-loop -- the tunnel below may close only once this provider has closed.
+        await teardownProvider(profiledProviderCache, key, entry);
+      } else {
+        try {
+          await entry.provider.disconnect();
+        } catch (error) {
+          logger.warn(`[DB] Error disconnecting idle profiled provider ${sanitize(entry.connectionId)}`, {
+            connectionId: entry.connectionId,
+            error: String(error),
+          });
+        }
+        profiledProviderCache.delete(key);
       }
-      profiledProviderCache.delete(key);
       if (!connectionStillServed(entry.connectionId)) {
         try {
           await closeSSHTunnel(entry.connectionId);
@@ -1379,6 +1483,11 @@ export async function acquireExecutionProfileProvider(
  * sweep does. A scope whose owner is not a string is refused before anything is removed: matching on a missing owner
  * would remove the entries every caller shares. Without a scope every entry of the connection goes and its tunnel is
  * closed, as before owners existed.
+ *
+ * An owned entry is torn down (`teardownProvider`): it leaves the cache first, an open transaction on it is rolled
+ * back, and a pool that hangs is abandoned, so the removal of a user's providers, which the governance loader asks for
+ * when a grant is taken away or changed (`src/lib/db/owner-removal.ts`), ends within 15 s. The owned entries are torn
+ * down at once, and before the tunnel goes. An entry every caller shares is disconnected as before.
  */
 export async function removeProvider(connectionId: string, scope?: { owner: string }): Promise<void> {
   if (scope !== undefined && typeof scope.owner !== "string") {
@@ -1388,12 +1497,17 @@ export async function removeProvider(connectionId: string, scope?: { owner: stri
   }
   const removes = (entry: CachedProvider): boolean =>
     entry.connectionId === connectionId && (scope === undefined || entry.owner === scope.owner);
+  const teardowns: Promise<void>[] = [];
 
   // A connection can hold more than one entry now - one per distinct server-and-credentials
   // it was opened with - so this removes every entry serving it, the way the profiled loop
   // below always has.
   for (const [key, entry] of providerCache) {
     if (!removes(entry)) continue;
+    if (entry.owner !== undefined) {
+      teardowns.push(teardownProvider(providerCache, key, entry));
+      continue;
+    }
     try {
       await entry.provider.disconnect();
     } catch (error) {
@@ -1404,6 +1518,10 @@ export async function removeProvider(connectionId: string, scope?: { owner: stri
 
   for (const [key, entry] of profiledProviderCache) {
     if (!removes(entry)) continue;
+    if (entry.owner !== undefined) {
+      teardowns.push(teardownProvider(profiledProviderCache, key, entry));
+      continue;
+    }
     try {
       await entry.provider.disconnect();
     } catch (error) {
@@ -1414,6 +1532,7 @@ export async function removeProvider(connectionId: string, scope?: { owner: stri
     }
     profiledProviderCache.delete(key);
   }
+  await Promise.all(teardowns);
 
   // Another owner's entries keep the tunnel they reach the connection through.
   if (scope !== undefined && connectionStillServed(connectionId)) return;
@@ -1426,8 +1545,14 @@ export async function removeProvider(connectionId: string, scope?: { owner: stri
   }
 }
 
+// Every copy of this module a process loads registers its owner-scoped removal, because the governance loader runs in
+// another Next.js bundle than the route handlers that fill these caches (src/lib/db/owner-removal.ts).
+registerOwnerRemoval(removeProvider);
+
 /**
- * Clear all cached providers (shared and execution-profile)
+ * Clear all cached providers (shared and execution-profile), all at once.
+ * An owned provider (spec 9.4) is torn down (`teardownProvider`), so an open transaction it holds is rolled back before
+ * it closes, and it is waited for at most 15 s; a provider every caller shares is disconnected as before.
  */
 export async function clearProviderCache(): Promise<void> {
   // Stop idle sweep
@@ -1438,7 +1563,11 @@ export async function clearProviderCache(): Promise<void> {
 
   const disconnectPromises: Promise<void>[] = [];
 
-  for (const entry of providerCache.values()) {
+  for (const [key, entry] of providerCache) {
+    if (entry.owner !== undefined) {
+      disconnectPromises.push(teardownProvider(providerCache, key, entry));
+      continue;
+    }
     disconnectPromises.push(
       entry.provider.disconnect().catch((error) => {
         // The id is an argument, never part of the first one: `console.error`'s first argument
@@ -1448,6 +1577,10 @@ export async function clearProviderCache(): Promise<void> {
     );
   }
   for (const [key, entry] of profiledProviderCache) {
+    if (entry.owner !== undefined) {
+      disconnectPromises.push(teardownProvider(profiledProviderCache, key, entry));
+      continue;
+    }
     disconnectPromises.push(
       entry.provider.disconnect().catch((error) => {
         console.error("[DB] Error disconnecting profiled provider", sanitize(entry.connectionId), error);

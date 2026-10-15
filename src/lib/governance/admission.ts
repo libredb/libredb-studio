@@ -76,6 +76,13 @@ export interface AdmittedConnection {
   readonly read: ManagedConnection;
   /** The record with the write credential, when the row has a write envelope that opened and merged. */
   readonly write?: ManagedConnection;
+  /**
+   * The envelope each record was opened from, as the governance source returned it. A reload that reads another one
+   * for a level knows that the control plane sealed that credential again (spec 7.4), as it must when the credential
+   * or the definition changes (spec 8.4), and tears down the providers opened with the old one (`grant-diff.ts`).
+   * Sealed, so it reveals nothing, and like the records it is never logged or reported.
+   */
+  readonly envelopes: { readonly read: string; readonly write?: string };
 }
 
 /** A row, or a row's write level, that admission left out. */
@@ -235,15 +242,18 @@ function mergedRecord({ row, id, engine, definition }: RowContext, secret: Opene
   };
 }
 
-/** The credential set `envelope` carries, or the code it fails with. A column that holds no text holds no envelope. */
+/**
+ * The credential set `envelope` carries, with the envelope it opened, or the code it fails with. A column that holds no
+ * text holds no envelope.
+ */
 function openEnvelope(
   options: AdmissionOptions,
   envelope: unknown,
   binding: SecretBinding,
-): { readonly secret: OpenedSecret } | { readonly envelopeCode: EnvelopeCode } {
+): { readonly secret: OpenedSecret; readonly envelope: string } | { readonly envelopeCode: EnvelopeCode } {
   if (typeof envelope !== "string") return { envelopeCode: "FORMAT" };
   try {
-    return { secret: options.openSecret(envelope, binding) };
+    return { secret: options.openSecret(envelope, binding), envelope };
   } catch (error) {
     if (error instanceof SealedSecretError) return { envelopeCode: error.code };
     throw error;
@@ -258,16 +268,16 @@ function pathOf(issue: z.core.$ZodIssue): { readonly path?: string } {
 }
 
 /**
- * The record of one credential level, marked literal, or the skip of that level. The envelope is opened for this row's
- * own binding, with the definition exactly as the governance source returned it, so an envelope moved from another row
- * or sealed for a changed definition fails AUTH_FAILED.
+ * The record of one credential level, marked literal, with the envelope it was opened from, or the skip of that level.
+ * The envelope is opened for this row's own binding, with the definition exactly as the governance source returned it,
+ * so an envelope moved from another row or sealed for a changed definition fails AUTH_FAILED.
  */
 function levelRecord(
   context: RowContext,
   level: Level,
   envelope: unknown,
   options: AdmissionOptions,
-): { readonly record: ManagedConnection } | { readonly skip: AdmissionSkip } {
+): { readonly record: ManagedConnection; readonly envelope: string } | { readonly skip: AdmissionSkip } {
   const { id, engine, definition } = context;
   const opening = openEnvelope(options, envelope, { connectionId: id, level, engine, definition });
   if ("envelopeCode" in opening) {
@@ -281,7 +291,7 @@ function levelRecord(
     };
   }
   const [record] = filterByRoles([parsed.data], ["*"]);
-  return { record: Object.assign(record, { literal: true as const }) };
+  return { record: Object.assign(record, { literal: true as const }), envelope: opening.envelope };
 }
 
 /** How a skip names a row whose id is malformed: as written, or by its JSON text when that is not a non-empty string. */
@@ -319,10 +329,12 @@ function admitRow(row: ConnectionRow, repeated: ReadonlySet<unknown>, options: A
   const context: RowContext = { row, id, engine, definition };
   const read = levelRecord(context, "read", row.read_secret, options);
   if ("skip" in read) return read;
-  if (row.write_secret === null || row.write_secret === undefined) return { connection: { id, read: read.record } };
+  const readOnly: AdmittedConnection = { id, read: read.record, envelopes: { read: read.envelope } };
+  if (row.write_secret === null || row.write_secret === undefined) return { connection: readOnly };
   const write = levelRecord(context, "write", row.write_secret, options);
-  if ("skip" in write) return { connection: { id, read: read.record }, skip: write.skip };
-  return { connection: { id, read: read.record, write: write.record } };
+  if ("skip" in write) return { connection: readOnly, skip: write.skip };
+  const envelopes = { read: read.envelope, write: write.envelope };
+  return { connection: { id, read: read.record, write: write.record, envelopes } };
 }
 
 /**

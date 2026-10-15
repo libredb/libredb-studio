@@ -47,6 +47,7 @@ const CONNECTION: AdmittedConnection = {
     seedId: "reporting",
     literal: true,
   },
+  envelopes: { read: "lsb1.STATUS-UNIT-ENVELOPE" },
 };
 
 const snapshotAt = (loadedAt: number): GovernanceSnapshot => ({
@@ -211,6 +212,7 @@ describe("governanceStatus", () => {
     const body = JSON.stringify(status);
     expect(body).not.toContain(PASSWORD);
     expect(body).not.toContain("db.internal.example");
+    expect(body).not.toContain(CONNECTION.envelopes.read);
   });
 
   test("throws when the keyring does not load", () => {

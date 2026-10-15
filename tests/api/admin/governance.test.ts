@@ -62,6 +62,7 @@ const CONNECTION: AdmittedConnection = {
     seedId: "warehouse",
     literal: true,
   },
+  envelopes: { read: ENVELOPE },
 };
 
 /** The rows of `settings_v1` a snapshot was loaded from, as the settings store checks them. */

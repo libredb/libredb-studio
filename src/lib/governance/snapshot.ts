@@ -23,16 +23,24 @@
  * counted in a log line, as a governance source that breaks a CHECK hands Studio a row it skips. Two rows for one
  * subject and connection grant nothing either, because Studio cannot tell which one the control plane meant.
  *
+ * Once a new snapshot is in place, the loader tears down the providers of every subject and connection whose access it
+ * took away or changed (`grant-diff.ts`, spec 7.4, 9.4): it asks every copy of the provider factory to remove that
+ * subject's providers of the connection, which rolls back an open transaction and closes the provider's sessions. The
+ * load does not wait for it, so a user's database that hangs never holds the next load, and a removal that fails is
+ * logged.
+ *
  * A load never throws: it records the new snapshot, or why it failed (`freshness.ts`), and the process keeps running
  * through any outage. Nothing it logs carries a value, a credential or an envelope.
  */
 import type { PoolClient } from "pg";
+import { removeOwnerProviders } from "@/lib/db/owner-removal";
 import { logger } from "@/lib/logger";
 import { type AdmissionSkip, type AdmittedConnection, admitConnectionRows, type ConnectionRow } from "./admission";
 import { governanceAllowedEngines, governancePostgresSchema } from "./config";
 import { buildSnapshotStatements, type SNAPSHOT_READS, SUPPORTED_CONTRACT_VERSIONS } from "./contract";
 import { withGovernanceClient } from "./db";
 import { IncompatibleContractError, KeyringUnavailableError, loadFailureOf, SnapshotReadError } from "./freshness";
+import { type ChangedGrant, changedGrants } from "./grant-diff";
 import { governanceKeyring } from "./keyring";
 import { SealedSecretError, type SecretBinding } from "./lsb1";
 import { openGovernedSecret } from "./secrets";
@@ -317,17 +325,50 @@ function logLoaded(snapshot: GovernanceSnapshot, previous: GovernanceState): voi
 }
 
 /**
+ * Asks every copy of the provider factory to remove the providers of each subject and connection whose access `next`
+ * took away or changed since `previous` (spec 7.4, 9.4). A route resolves a governed connection under the id
+ * `seed:<id>`, which its providers are cached under, and the subject owns them. Settles once every removal has ended,
+ * and never rejects: a removal that fails is logged with the connection it was for.
+ */
+async function tearDownChangedGrants(previous: GovernanceSnapshot, next: GovernanceSnapshot): Promise<void> {
+  const changed = changedGrants(previous, next, Date.now());
+  if (changed.length === 0) return;
+  const connections = [...new Set(changed.map(({ connectionId }) => connectionId))];
+  logger.info("Governance access changed, closing the providers it opened", { route: ROUTE, connections });
+  const removeOne = async ({ subject, connectionId }: ChangedGrant): Promise<void> => {
+    try {
+      await removeOwnerProviders(`seed:${connectionId}`, subject);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn("Governance teardown failed", { route: ROUTE, connectionId, error: message });
+    }
+  };
+  await Promise.all(changed.map(removeOne));
+}
+
+/**
+ * Swaps `snapshot` in at once, and then starts tearing down the providers of every grant it took away or changed since
+ * the snapshot it replaces; the first snapshot of the process replaces nothing, so it tears nothing down. Returns the
+ * teardown, which settles once every removal has ended and never rejects. The loader does not wait for it.
+ */
+export function swapGovernanceSnapshot(snapshot: GovernanceSnapshot): Promise<void> {
+  const previous = governanceState();
+  recordGovernanceSnapshot(snapshot);
+  logLoaded(snapshot, previous);
+  return previous.snapshot === null ? Promise.resolve() : tearDownChangedGrants(previous.snapshot, snapshot);
+}
+
+/**
  * Loads the governance source once and records the outcome in the state holder: the new snapshot, swapped in at
  * once, or why the load failed. It never throws, so neither a database outage nor a misconfigured source can stop the
- * process. The snapshot's load time is the moment the load started, so its age is never understated.
+ * process. The snapshot's load time is the moment the load started, so its age is never understated. The teardown the
+ * swap starts runs on without it, off the notification that may have asked for this load.
  */
 export async function loadGovernanceSnapshot(): Promise<void> {
   const startedAt = Date.now();
   try {
     const snapshot = await readSnapshot(startedAt);
-    const previous = governanceState();
-    recordGovernanceSnapshot(snapshot);
-    logLoaded(snapshot, previous);
+    void swapGovernanceSnapshot(snapshot);
   } catch (error) {
     const failure = loadFailureOf(error, Date.now());
     recordGovernanceFailure(failure);

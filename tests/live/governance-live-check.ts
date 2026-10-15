@@ -26,10 +26,13 @@
  *     bun tests/live/governance-live-check.ts
  *
  * Point it at a DISPOSABLE server, as a superuser: it creates and drops a database and the roles `libredb_studio`,
- * `libredb_platform` and `libredb_fixture_owner`.
+ * `libredb_platform`, `libredb_fixture_owner` and `libredb_live_target`. The revocation case opens a governed
+ * connection to that same server, as `libredb_live_target`, so Studio must reach it at the host and port of the URL.
  */
 import { randomBytes } from "node:crypto";
 import { Client, type Notification } from "pg";
+import { editorExecutionContext } from "../../src/lib/api/execution-context";
+import { clearProviderCache, getOrCreateProvider, getProviderCacheStats } from "../../src/lib/db/factory";
 import { pingChannel } from "../../src/lib/governance/contract";
 import { closeGovernancePool } from "../../src/lib/governance/db";
 import { governanceFreshness } from "../../src/lib/governance/freshness";
@@ -52,7 +55,9 @@ import packageJson from "../../package.json";
 
 const MANIFEST = readFixtureManifest();
 const SCHEMA = `"${MANIFEST.schema}"`;
-const ROLES = [FIXTURE_OWNER, "libredb_platform", "libredb_studio"];
+/** The role a governed connection to the fixture server writes as: the credential its envelopes carry. */
+const TARGET_ROLE = "libredb_live_target";
+const ROLES = [FIXTURE_OWNER, "libredb_platform", "libredb_studio", TARGET_ROLE];
 const INSTANCE_ID = "libredb-studio-live-check";
 /** How often the live check's listener pings itself, so the ping case waits seconds rather than minutes. */
 const PING_INTERVAL_MS = 500;
@@ -103,6 +108,15 @@ function same(actual: unknown, expected: unknown, what: string): void {
 interface LiveContext {
   readonly superuser: (run: (client: Client) => Promise<unknown>) => Promise<unknown>;
   readonly key: TestKey;
+  /** The superuser URL of the fixture database: the server a governed connection of a case can point at. */
+  readonly fixtureUrl: string;
+}
+
+/** The transaction session of the PostgreSQL provider, which `POST /api/db/transaction` drives. */
+interface LiveTransactionProvider {
+  beginTransaction(): Promise<unknown>;
+  queryInTransaction(sql: string): Promise<unknown>;
+  isInTransaction(): boolean;
 }
 
 const DEFINITION = { host: "orders.db.example.internal", port: 5432, database: "orders", ssl: { mode: "require" } };
@@ -476,6 +490,85 @@ const CASES: readonly LiveCase[] = [
     },
   },
   {
+    name: "revoking a grant during an open transaction on a governed connection to the fixture server removes the uncommitted row within 2 s",
+    run: async ({ superuser, key, fixtureUrl }) => {
+      const alice = { role: "user", username: "alice@example.com", idpSubject: "alice@example.com" };
+      const credential = { user: TARGET_ROLE, password: randomBytes(16).toString("hex") };
+      // The fixture server itself, as Studio reaches it, so the governed connection really opens.
+      const server = new URL(fixtureUrl);
+      const definition = {
+        host: server.hostname,
+        port: Number(server.port || 5432),
+        database: server.pathname.slice(1),
+        ssl: { mode: server.searchParams.get("sslmode") ?? "disable" },
+      };
+      const seal = (level: "read" | "write") =>
+        sealSecret(key.publicKey, { connectionId: "live-target", level, engine: "postgres", definition }, credential);
+      await superuser(async (client) => {
+        await client.query(
+          `DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${TARGET_ROLE}') THEN CREATE ROLE ${TARGET_ROLE}; END IF; END $$`,
+        );
+        await client.query(`ALTER ROLE ${TARGET_ROLE} LOGIN PASSWORD '${credential.password}'`);
+        await client.query("CREATE TABLE public.live_revocation (id integer PRIMARY KEY, written_by text NOT NULL)");
+        await client.query(`GRANT SELECT, INSERT ON public.live_revocation TO ${TARGET_ROLE}`);
+        // The connection and Alice's write grant on it arrive together, in one commit and so in one reload.
+        await client.query("BEGIN");
+        await client.query(
+          `INSERT INTO ${SCHEMA}.connections_v1_source (connection_id, name, engine, environment, group_name, color, definition, read_secret, write_secret, mcp_enabled, updated_at)
+           VALUES ('live-target', 'Connection live-target', 'postgres', 'production', NULL, NULL, $1, $2, $3, false, now())`,
+          [JSON.stringify(definition), seal("read"), seal("write")],
+        );
+        await client.query(
+          `INSERT INTO ${SCHEMA}.grants_v1_source (subject, connection_id, level, expires_at, downgraded, granted_at)
+           VALUES ($1, 'live-target', 'write', NULL, false, now())`,
+          [alice.idpSubject],
+        );
+        await client.query("COMMIT");
+      });
+      await until(
+        () => {
+          const { snapshot } = governanceState();
+          return (
+            snapshot !== null && effectiveGrant(snapshot, alice.idpSubject, "live-target", Date.now()) !== undefined
+          );
+        },
+        2000,
+        "the arrival of Alice's write grant",
+      );
+
+      // Alice opens a transaction on her own provider, as the transaction route does, and writes a row in it.
+      const record = await resolveConnection({ connectionId: "seed:live-target" }, alice);
+      const opened = await getOrCreateProvider(record, {}, editorExecutionContext(alice, record));
+      const provider = opened as unknown as LiveTransactionProvider;
+      await provider.beginTransaction();
+      await provider.queryInTransaction("INSERT INTO public.live_revocation (id, written_by) VALUES (1, 'alice')");
+
+      // The control plane revokes the grant. Nothing here reloads the snapshot or removes a provider.
+      const revokedAt = Date.now();
+      await superuser((client) =>
+        client.query(`DELETE FROM ${SCHEMA}.grants_v1_source WHERE subject = $1 AND connection_id = 'live-target'`, [
+          alice.idpSubject,
+        ]),
+      );
+      // Another session writes the same key: it waits for Alice's transaction to end, and succeeds only once that
+      // transaction rolled back and took her uncommitted row with it, because a commit would make the key a duplicate.
+      await superuser(async (client) => {
+        await client.query("SET statement_timeout = 2000");
+        await client.query("INSERT INTO public.live_revocation (id, written_by) VALUES (1, 'probe')");
+      }).catch((error: unknown) => {
+        throw new Error(`Alice's uncommitted row still held its key 2 s after the revocation: ${String(error)}`);
+      });
+      const elapsed = Date.now() - revokedAt;
+      check(elapsed <= 2000, `the uncommitted row was removed ${elapsed} ms after the revocation, more than 2 s`);
+      const table = (await superuser((client) => client.query("SELECT written_by FROM public.live_revocation"))) as {
+        rows: unknown[];
+      };
+      same(table.rows, [{ written_by: "probe" }], "the rows of the table");
+      same(provider.isInTransaction(), false, "whether Alice's provider holds a transaction");
+      same(getProviderCacheStats().connections, [], "the providers still cached");
+    },
+  },
+  {
     name: "revoking SELECT on one view turns the state misconfigured, naming that view",
     run: async ({ superuser }) => {
       await superuser((client) => client.query(`REVOKE SELECT ON ${SCHEMA}.grants_v1 FROM libredb_studio`));
@@ -517,7 +610,7 @@ async function main(): Promise<void> {
     // The Next.js build injects the version a heartbeat reports; this script runs outside it.
     process.env.NEXT_PUBLIC_APP_VERSION = packageJson.version;
     process.env.LOG_LEVEL ??= "error";
-    const context: LiveContext = { superuser: (run) => asSuperuser(fixture, run), key };
+    const context: LiveContext = { superuser: (run) => asSuperuser(fixture, run), key, fixtureUrl: fixture };
     for (const liveCase of CASES) {
       try {
         // oxlint-disable-next-line no-await-in-loop -- the cases run in order, each on the state the one before it left.
@@ -536,6 +629,8 @@ async function main(): Promise<void> {
   } finally {
     await stopGovernanceListener();
     await closeGovernancePool();
+    // A provider a case opened to the fixture server, which a failed case may have left open.
+    await clearProviderCache();
     resetGovernanceState();
     resetGovernanceKeyring();
     removeKeyringFiles();

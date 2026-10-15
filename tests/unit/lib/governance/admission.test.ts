@@ -134,7 +134,8 @@ afterAll(() => {
 describe("admitConnectionRows", () => {
   test("a row written as the contract says is admitted with a read and a write record, each bound to its own row", () => {
     const definition = { ...DEFINITION };
-    const result = admit([connectionRow({ definition, write: WRITE })]);
+    const row = connectionRow({ definition, write: WRITE });
+    const result = admit([row]);
 
     expect(result.skipped).toEqual([]);
     expect(result.admitted).toHaveLength(1);
@@ -164,6 +165,8 @@ describe("admitConnectionRows", () => {
     // Each envelope was opened for its own level, with the definition exactly as the row holds it.
     expect(opened).toEqual([bindingOf(ID, "read"), bindingOf(ID, "write")]);
     expect(opened[0].definition).toBe(definition);
+    // And kept as read, so a reload tells a credential sealed again from the one its providers were opened with.
+    expect(connection.envelopes).toEqual({ read: String(row.read_secret), write: String(row.write_secret) });
   });
 
   test("a definition carrying password is skipped as DEFINITION_HAS_SECRET at path password with no value in the skip", () => {
@@ -261,6 +264,8 @@ describe("admitConnectionRows", () => {
     expect(result.admitted).toHaveLength(1);
     expect(result.admitted[0].read.user).toBe("reader");
     expect(result.admitted[0].write).toBeUndefined();
+    // Only the envelope a record was opened from is kept.
+    expect(Object.keys(result.admitted[0].envelopes)).toEqual(["read"]);
     expect(result.skipped).toEqual([
       { item: skipItem(ID, "WRITE_SECRET_UNOPENABLE", { level: "write" }), envelopeCode: "AUTH_FAILED" },
     ]);
