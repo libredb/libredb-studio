@@ -42,6 +42,28 @@ const DEFAULT_TARGET = "127.0.0.1:1502";
 const RUNTIME = typeof Bun === "undefined" ? `node ${process.versions.node}` : `bun ${Bun.version}`;
 
 /**
+ * The image this check's expected values were measured against.
+ *
+ * `MODBUS_LIVE_DIGEST` was exported by the CI step and read by nothing, which is a pin that
+ * records an intention and enforces none. It is a gate now, the way `RABBITMQ_LIVE_DIGEST` is one
+ * (`tests/helpers/rabbitmq-live.ts`): set to anything else, this check refuses rather than
+ * measuring a device whose tables it cannot vouch for.
+ *
+ * Unset is allowed and says so in the summary, because a developer runs this against the compose
+ * fixture with no environment at all. What stops CI from quietly dropping the export is
+ * `tests/unit/db/modbus/live-environment.test.ts`, which holds the step to it.
+ */
+const PINNED_DIGEST = "sha256:32bfe144512e1f070cf7e7e2513cdcb774d74db142ee5dbad45b21d6d705ab97";
+const declaredDigest = process.env.MODBUS_LIVE_DIGEST;
+if (declaredDigest !== undefined && declaredDigest !== PINNED_DIGEST) {
+  console.error(
+    `modbus-live-check: MODBUS_LIVE_DIGEST is ${declaredDigest}, and this check's values were measured ` +
+      `against ${PINNED_DIGEST}; nothing was dialled.`,
+  );
+  process.exit(2);
+}
+
+/**
  * The fixture's four tables, as formulas rather than as a table of numbers.
  *
  * `docker/modbus/README.md` carries the same four and says why they look like this: an off-by-one
@@ -332,5 +354,6 @@ await check("nothing changed: the four tables read the same as they did at the s
   same(await fingerprint(), before, "the fingerprint of all four tables");
 });
 
-console.log(`${tally.passed} of ${tally.total} checks passed on ${TARGET} (${RUNTIME})`);
+const against = declaredDigest === undefined ? "digest not declared" : `digest ${declaredDigest.slice(0, 14)}`;
+console.log(`${tally.passed} of ${tally.total} checks passed on ${TARGET} (${RUNTIME}, ${against})`);
 process.exit(tally.passed === tally.total ? 0 : 1);

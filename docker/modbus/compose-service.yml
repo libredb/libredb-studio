@@ -24,7 +24,7 @@
     # thing configured here is the values. It also took zero lines of wrapper code, which the two
     # alternatives did not: libmodbus is a C library and not a server, so using it means writing
     # the server that wraps it.
-    image: oitc/modbus-server@sha256:32bfe144512e1f070cf7e7e2513cdcb774d74db142ee5dbad45b21d6d705ab97
+    image: oitc/modbus-server:2.3.0@sha256:32bfe144512e1f070cf7e7e2513cdcb774d74db142ee5dbad45b21d6d705ab97
     container_name: libredb-modbus
     hostname: libredb-modbus
     restart: unless-stopped

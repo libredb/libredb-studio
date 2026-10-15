@@ -22,6 +22,8 @@ const read = (name: string): string => readFileSync(path.join(ROOT, "docker/modb
 const COMPOSE = read("compose-service.yml");
 const CI_STEP = read("ci-step.yml");
 const README = read("README.md");
+/** The live check carries the pin too, because it refuses a digest it did not measure. */
+const LIVE_CHECK = readFileSync(path.join(ROOT, "tests/live/modbus-live-check.ts"), "utf8");
 
 /** Every `sha256:...` a text names, which is what "they name one digest" is asked about. */
 const digestsIn = (text: string): string[] => [...text.matchAll(/sha256:[0-9a-f]{64}/g)].map((found) => found[0]);
@@ -47,19 +49,32 @@ function composeService(text: string): Record<string, unknown> {
 }
 
 describe("the two delivery files name one device", () => {
-  test("the compose fragment pins the image by digest and nothing else", () => {
+  test("the compose fragment names a version AND pins it by digest", () => {
     const image = composeService(COMPOSE).image;
     expect(typeof image).toBe("string");
-    // By digest, never by tag: the values this fixture answers with ARE the expected outcomes,
-    // so a tag that moved would change the device under tests that never mention a version.
-    expect(String(image)).toMatch(/^oitc\/modbus-server@sha256:[0-9a-f]{64}$/);
+    // Both, and each does a different job. The digest is what pins it: the values this fixture
+    // answers with ARE the expected outcomes, so a tag that moved would change the device under
+    // tests that never mention a version. The tag is what a reader learns the version from -
+    // a bare digest says nothing about what it is, and `2.3.0` is the tag that carries this one.
+    expect(String(image)).toMatch(/^oitc\/modbus-server:\d+\.\d+\.\d+@sha256:[0-9a-f]{64}$/);
   });
 
-  test("CI runs the digest the compose fragment declares, and the README documents it", () => {
+  test("four files name one digest: compose, CI, the README and the live check", () => {
     const [fromCompose] = digestsIn(COMPOSE);
     expect(fromCompose).toBeDefined();
     expect(new Set(digestsIn(CI_STEP))).toEqual(new Set([fromCompose as string]));
     expect(digestsIn(README)).toContain(fromCompose as string);
+    // The live check refuses a `MODBUS_LIVE_DIGEST` it did not measure against, so its own pin
+    // has to be the same one: a gate holding a stale digest refuses the right device.
+    expect(digestsIn(LIVE_CHECK)).toContain(fromCompose as string);
+  });
+
+  test("the digest the CI step exports is one the live check will accept", () => {
+    // It was exported and read by nothing, which is a pin that records an intention and enforces
+    // none. The gate is what makes the export worth writing, and this is the pair held together.
+    expect(CI_STEP).toContain('export MODBUS_LIVE_DIGEST="${image#*@}"');
+    expect(LIVE_CHECK).toContain("process.env.MODBUS_LIVE_DIGEST");
+    expect(LIVE_CHECK).toContain("nothing was dialled");
   });
 
   test("a planted second digest is caught", () => {
@@ -125,6 +140,11 @@ describe("the CI step tells a fixture that never answered from a check that fail
     expect(CI_STEP).toContain("modbus-ready-probe.ts --tables");
     expect(CI_STEP).toContain("nothing speaking Modbus answered");
     expect(CI_STEP).toContain("its tables are not this fixture's");
+    // The sentences name the address that was actually asked. They said "on 1502" while the probe
+    // read `MODBUS_PROBE`, so a run against another port was refused by a sentence naming a port
+    // it had never dialled.
+    expect(CI_STEP).not.toMatch(/answered on 1502/);
+    expect(CI_STEP).toContain("answered on $MODBUS_PROBE");
   });
 
   test("the fixture is removed however the step ends", () => {

@@ -3,7 +3,7 @@
 `modbus_server.json` configures the `modbus` service of `database-compose.yml`, which runs
 `oitc/modbus-server` pinned by digest:
 
-    oitc/modbus-server@sha256:32bfe144512e1f070cf7e7e2513cdcb774d74db142ee5dbad45b21d6d705ab97
+    oitc/modbus-server:2.3.0@sha256:32bfe144512e1f070cf7e7e2513cdcb774d74db142ee5dbad45b21d6d705ab97
 
 The image wraps **pymodbus 3.12.x**, so the framing, the function-code decoding and the exception
 responses are all third-party: the only thing this file decides is the values.
