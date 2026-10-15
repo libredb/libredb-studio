@@ -640,8 +640,8 @@ Studio records one query event per executed unit:
 | `editor` | One per editor statement; `explain` is set for a plan request. |
 | `multi-query` | One per executed unit of a multi-statement run, with `unit_index`; units that never ran leave no row. |
 | `transaction` | One per statement in an interactive transaction (`transaction_outcome` `open`), plus one when it ends: `committed`, `rolled-back` or `timed-out`. All rows of one transaction share `transaction_id`. |
-| `object-edit` | One per applied object edit, with `correlation_id` set to the edit plan's id. |
-| `maintenance` | One per administrator maintenance action. |
+| `object-edit` | One per applied object edit, with `correlation_id` set to the edit plan's id and the statement the plan sends: its statements one per line, or its command line. The status is `success` when the edit applied, and `error` for any other outcome, with the engine's code when it refused the edit; an apply refused with `AUDIT_UNAVAILABLE` records one `refused` event instead. |
+| `maintenance` | One per administrator maintenance action, with status `error` when the action threw or the engine reported it did not run. The statement is NULL, because the engine's provider builds it and Studio's route never sees its text; an action refused with `AUDIT_UNAVAILABLE` records one `refused` event instead. |
 | `profile` | One per data profile run (`POST /api/db/profile`), which reads aggregates of user data. Its statement is the profiled object's path as the route quotes it into its reads, such as `"public"."orders"`, or for MongoDB the JSON address of the collection, such as `{"database":"shop","collection":"items"}`; its `statement_type` is `SELECT` on every engine, and `row_count` is NULL. |
 | `key-scan` | One per page of a key scan (`POST /api/db/keys/scan`), which reads key names. Its statement is the page request, `SCAN <cursor> [MATCH <pattern>] COUNT <count>` on every engine that walks a key space, its `statement_type` is `OTHER`, and `row_count` is the number of keys the page returned. |
 

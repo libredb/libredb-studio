@@ -8,6 +8,15 @@ import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { auditRoleDenial, guardRoute } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
 import { editorProvider } from "@/lib/api/editor-provider";
+import { clientAddress } from "@/lib/api/client-address";
+import { ApiErrorCode } from "@/lib/api/error-codes";
+import type { UserPayload } from "@/lib/auth";
+import type { GovernedConnection } from "@/lib/governance/visible";
+import { admitQueryExecution } from "@/lib/query-events/admission";
+import { queryEventStart } from "@/lib/query-events/build";
+import { recordQueryEvent } from "@/lib/query-events/sink";
+import type { QueryEventInput, QueryEventStatus } from "@/lib/query-events/types";
+import type { DatabaseConnection } from "@/lib/types";
 import { logger } from "@/lib/logger";
 
 export async function POST(request: Request) {
@@ -149,11 +158,25 @@ export async function POST(request: Request) {
       ...(engineUser === undefined ? {} : { engineUser }),
     } as const;
 
+    // The query event of this action (docs/GOVERNANCE.md, "Query events"), recorded under governance only. The
+    // admission gate runs before the action reaches the engine, so a refused action runs nothing and leaves one
+    // `refused` event. The statement is null: the provider builds it inside `runMaintenance` and never returns it.
+    const started = queryEventStart();
+    const recordMaintenanceEvent = (status: QueryEventStatus, errorCode?: string) =>
+      recordQueryEvent(maintenanceEvent(guard.session, connection, request, started, status, errorCode));
+    try {
+      admitQueryExecution();
+    } catch (error) {
+      recordMaintenanceEvent("refused", ApiErrorCode.AUDIT_UNAVAILABLE);
+      throw error;
+    }
+
     const startTime = Date.now();
     let result: Awaited<ReturnType<typeof provider.runMaintenance>>;
     try {
       result = await provider.runMaintenance(type, target, requestedContainer);
     } catch (error) {
+      recordMaintenanceEvent("error");
       // A run that THREW is still a run: it may have reached the engine before it failed, and
       // until #1091's review recorded the gap (R04 G8) it left no row at all. The row takes the
       // closed reason `maintenance_execution_failed` and never the thrown message, which
@@ -178,6 +201,8 @@ export async function POST(request: Request) {
       throw mapDatabaseError(error, connection.type);
     }
     const duration = Date.now() - startTime;
+    // The engine's verdict, read as the audit row below reads it.
+    recordMaintenanceEvent(result.success === false ? "error" : "success");
 
     // Isolated in its own try/catch: runMaintenance() above has already succeeded and its result
     // is already decided by the time this runs, so a broken audit sink must never turn a
@@ -204,4 +229,34 @@ export async function POST(request: Request) {
   } catch (error) {
     return createErrorResponse(error, { route: "api/db/maintenance" });
   }
+}
+
+/**
+ * The query event of one maintenance action: an administrator's action on the connection this request resolved. Under
+ * governance the connection is a governed record, which carries the level of its credential, and the session carries
+ * the identity provider subject its grant names.
+ */
+function maintenanceEvent(
+  session: UserPayload,
+  connection: DatabaseConnection,
+  request: Request,
+  started: QueryEventInput["started"],
+  status: QueryEventStatus,
+  errorCode: string | undefined,
+): QueryEventInput {
+  return {
+    source: "maintenance",
+    principal: { subject: session.idpSubject ?? "", username: session.username, role: session.role },
+    connection: {
+      id: connection.id,
+      name: connection.name,
+      engine: connection.type,
+      accessLevel: (connection as Partial<GovernedConnection>).grantLevel ?? null,
+    },
+    statement: null,
+    status,
+    started,
+    errorCode,
+    clientIp: clientAddress(request),
+  };
 }
