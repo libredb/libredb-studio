@@ -120,3 +120,44 @@ describe("resolve-connection with custom connections switched off", () => {
     expect((error as SeedConnectionError).code).toBeUndefined();
   });
 });
+
+/*
+ * Governance mode serves the connections of the governance source only (docs/GOVERNANCE.md), so custom connections
+ * are off whatever ALLOW_CUSTOM_CONNECTIONS says. The boot check refuses a value that keeps them on; with it bypassed
+ * and the variable unset, which is on everywhere else, a connection the caller supplies is still refused here.
+ */
+describe("resolve-connection under governance", () => {
+  beforeEach(() => {
+    resetCache();
+    delete process.env.ALLOW_CUSTOM_CONNECTIONS;
+    process.env.GOVERNANCE_SOURCE = "postgres";
+  });
+
+  afterEach(() => {
+    delete process.env.GOVERNANCE_SOURCE;
+  });
+
+  it("refuses a connection of the caller's own with 403 CUSTOM_CONNECTIONS_DISABLED although ALLOW_CUSTOM_CONNECTIONS is unset", async () => {
+    const own: DatabaseConnection = {
+      id: "user-conn",
+      name: "Platform database",
+      type: "postgres",
+      host: "platform-postgres",
+      createdAt: new Date(),
+    };
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+
+    try {
+      const error = await resolveConnection({ connection: own }, { role: "admin", username: "test" }).catch(
+        (thrown: unknown) => thrown,
+      );
+
+      expect(error).toBeInstanceOf(SeedConnectionError);
+      expect((error as SeedConnectionError).statusCode).toBe(403);
+      expect((error as SeedConnectionError).message).toBe("Custom connections are disabled on this server");
+      expect((error as SeedConnectionError).code).toBe("CUSTOM_CONNECTIONS_DISABLED");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});

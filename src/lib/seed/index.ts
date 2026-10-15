@@ -1,4 +1,5 @@
 import * as fs from "fs";
+import { governanceEnabled } from "@/lib/governance/config";
 import { filterByRoles } from "./connection-filter";
 import { getDiscoveredConnections } from "./discovery-loader";
 import { isSampleEnabled, resolveSamplePath, buildSampleConnection } from "./libredb-sample";
@@ -35,7 +36,16 @@ function projectOperatorEntries(entries: readonly OperatorEntry[], roles: string
   );
 }
 
+/**
+ * The seed connections these roles may see: the operator entries, then the discovered connections, then the samples.
+ *
+ * Governance mode (`GOVERNANCE_SOURCE`, docs/GOVERNANCE.md) replaces all three with the governance source, so under it
+ * this reads no source at all and answers an empty list, whatever the environment says: not the seed file at its
+ * default path, which Studio reads while SEED_CONFIG_PATH is unset, not the discovery export and not a sample. The
+ * boot preflight refuses an environment that turns any of them on, and this holds on a server where it was bypassed.
+ */
 export async function getManagedConnections(roles: string[]): Promise<ManagedConnection[]> {
+  if (governanceEnabled()) return [];
   const operator = await loadOperatorSources();
   const fromOperators = projectOperatorEntries(operator.entries, roles);
 
@@ -102,7 +112,8 @@ export async function getManagedConnections(roles: string[]): Promise<ManagedCon
  * Seed ids whose async seeding is still in flight — advertised by the managed
  * connections API so clients poll until the sample appears (or seeding ends).
  * Empty when nothing is seeding: embedded in platform, instrumentation never
- * runs, the state stays "idle", and clients never poll.
+ * runs, the state stays "idle", and clients never poll. Empty under governance
+ * too, where the SQLite sample is off.
  */
 export function getPendingSeeds(): string[] {
   if (isSqliteSampleEnabled() && getSqliteSampleSeedState() === "seeding") {
@@ -116,8 +127,12 @@ export async function getSeedConnectionById(seedId: string, roles: string[]): Pr
   return all.find((c) => c.seedId === seedId) ?? null;
 }
 
-/** The operator entries only: no discovered connection and no sample, so a 403 never confirms a discovered id. */
+/**
+ * The operator entries only: no discovered connection and no sample, so a 403 never confirms a discovered id. Under
+ * governance none at all, because no source is read (see getManagedConnections).
+ */
 export async function getSeedConnectionByIdUnfiltered(seedId: string): Promise<ManagedConnection | null> {
+  if (governanceEnabled()) return null;
   const operator = await loadOperatorSources();
   const all = projectOperatorEntries(operator.entries, ["*", "admin", "user"]);
   return all.find((c) => c.seedId === seedId) ?? null;

@@ -51,6 +51,7 @@ const ENV_KEYS = [
   "AUTH_COOKIE_SECURE",
   "TRUST_PROXY_HEADERS",
   "RATE_LIMIT_QUERY_MAX",
+  "GOVERNANCE_SOURCE",
 ] as const;
 const savedEnv: Record<string, string | undefined> = {};
 
@@ -323,6 +324,45 @@ describe("GET /api/admin/discovery: states", () => {
       expect(error).toHaveBeenCalled();
     } finally {
       error.mockRestore();
+    }
+  });
+});
+
+// Governance mode switches discovery off (docs/SEED_CONNECTIONS.md#governance-mode). The boot check refuses
+// SEED_DISCOVERY_PATH under governance, and the route answers null where it was bypassed, without asking the loader.
+describe("GET /api/admin/discovery: governance", () => {
+  test("governance answers discovery null", async () => {
+    // Control: without governance the export is read and reported.
+    process.env.SEED_DISCOVERY_PATH = exportPath;
+    writeExport();
+    expect((await answer()).body.discovery?.state).toBe("ok");
+    discoveryCalls = 0;
+
+    process.env.GOVERNANCE_SOURCE = "postgres";
+    const { status, body } = await answer();
+
+    expect(status).toBe(200);
+    expect(body).toEqual({ discovery: null });
+    expect(discoveryCalls).toBe(0);
+  });
+
+  test("governance keeps the admin check: a standard user gets the shared 403", async () => {
+    process.env.SEED_DISCOVERY_PATH = exportPath;
+    writeExport();
+    process.env.GOVERNANCE_SOURCE = "postgres";
+    mockGetSession.mockResolvedValueOnce({ role: "user", username: "user" });
+    const sink = spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      const res = await GET(request());
+
+      expect(res.status).toBe(403);
+      expect(await parseResponseJSON<{ error: string }>(res)).toEqual({
+        error: "Unauthorized. Admin access required.",
+      });
+      expect(discoveryCalls).toBe(0);
+    } finally {
+      sink.mockRestore();
     }
   });
 });

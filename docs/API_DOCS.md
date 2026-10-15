@@ -2088,6 +2088,7 @@ It answers what this server lets a session do with connections of its own:
 ```
 
 `customConnections` is `false` when `ALLOW_CUSTOM_CONNECTIONS` is `false`, `0`, `off` or `no`, or any value that is not one of those or `true`, `1`, `on` or `yes` (the switch fails closed; one pair of surrounding quotes is stripped first).
+It is also `false` in governance mode (`GOVERNANCE_SOURCE` set), whatever `ALLOW_CUSTOM_CONNECTIONS` says ([`docs/SEED_CONNECTIONS.md`](SEED_CONNECTIONS.md#governance-mode)).
 Every database route then refuses a connection supplied in the request body, as `connection` or as the whole body, with `403 { "error": "Custom connections are disabled on this server", "code": "CUSTOM_CONNECTIONS_DISABLED", "statusCode": 403 }`, before any provider is built.
 A seed named by `connectionId`, or by an inline record whose `id` is `seed:<id>`, is unaffected.
 `POST /api/admin/fleet-health` reports such an item as `{ "status": "error", "error": "Custom connections are disabled on this server" }` beside the others.
@@ -2134,7 +2135,7 @@ Every change, and every refused one, is an `account` event in the audit log nami
 
 The status of the CapRover discovery source ([SEED_CONNECTIONS.md](./SEED_CONNECTIONS.md)), read by the admin Overview page.
 It goes through the shared route guard: `401` with no session, `403` for a non-admin.
-With `SEED_DISCOVERY_PATH` unset it answers `{ "discovery": null }`.
+With `SEED_DISCOVERY_PATH` unset it answers `{ "discovery": null }`, and so it does in governance mode (`GOVERNANCE_SOURCE` set), whatever `SEED_DISCOVERY_PATH` says ([`docs/SEED_CONNECTIONS.md`](./SEED_CONNECTIONS.md#governance-mode)).
 Otherwise it answers `{ "discovery": { "platform": "caprover", "state", "message", "generatedAt", "checkedAt", "error": { "code", "message" } | null, "connected": [{ "name", "type" }], "skipped": [{ "appName", "reason" }] }, "transport": { "plainHttp", "cookieSecureOff" } }`, where `state` is `ok`, `waiting`, `stale` or `error`.
 It names apps and engine types only, never a host name or an environment value.
 `plainHttp` is true when the request arrived over http on a host that is not loopback; `X-Forwarded-Proto` and `X-Forwarded-Host` are read unless `TRUST_PROXY_HEADERS` is `false`, `off` or `0`, in any letter case.
@@ -2147,6 +2148,7 @@ The status of the operator seed sources ([SEED_CONNECTIONS.md](./SEED_CONNECTION
 It goes through the shared route guard: `401` with no session, `403` for a non-admin.
 It answers `{ "sources": [{ "source", "location", "state", "checkedAt", "error": { "code", "message" } | null, "connected": [{ "id", "name", "type" }], "skipped": [{ "id", "origin", "reason", "variable"?, "field"? }], "notes": [...] }] }`, one entry per enabled source in load order, where `state` is `ok`, `empty`, `missing` or `error`.
 The only operator source today is `SEED_CONFIG_PATH`, so `sources` holds at most that one entry: `source` is `"SEED_CONFIG_PATH"` and `location` is the seed file's path.
+In governance mode (`GOVERNANCE_SOURCE` set) no operator source is read, so it answers `{ "sources": [] }` ([`docs/SEED_CONNECTIONS.md`](./SEED_CONNECTIONS.md#governance-mode)).
 `missing` is a file named explicitly in `SEED_CONFIG_PATH` that does not exist; the default path absent is `empty`.
 `error.code` is `unreadable`, `unparseable`, `invalid` or `duplicate-id`.
 `notes` is always empty.
@@ -2418,7 +2420,7 @@ These are the values of the `code` field emitted by `createErrorResponse` (`src/
 | `QUERY_CANCELLED` | Query cancelled by the client (499) |
 | `CONFIG_ERROR` | Invalid database configuration (400) |
 | `AUTH_ERROR` | Authentication failed (401) |
-| `CUSTOM_CONNECTIONS_DISABLED` | `ALLOW_CUSTOM_CONNECTIONS` is off and the request supplied a connection that is not a seed (403); see `GET /api/connections/policy`. A seed the caller's role may not open is refused with `AUTH_ERROR` (403) instead |
+| `CUSTOM_CONNECTIONS_DISABLED` | `ALLOW_CUSTOM_CONNECTIONS` is off, or governance mode is on, and the request supplied a connection that is not a seed (403); see `GET /api/connections/policy`. A seed the caller's role may not open is refused with `AUTH_ERROR` (403) instead |
 | `AUTH_REQUIRED` | No Studio session, or one that no longer verifies (401). Answered by the middleware and the route-level session checks rather than `createErrorResponse`; the only 401 the browser answers by sending the user to sign in |
 | `WORKSPACE_OWNER_MISMATCH` | The request's `X-LibreDB-Workspace-Owner` header names an account other than the signed-in one (409). Answered by the middleware rather than `createErrorResponse`; the browser reloads the tab for it (see [Storage API](#storage-api)) |
 | `TIMEOUT_ERROR` | Query exceeded time limit (408); `POST /api/ai/query-safety` answers it with 504 when the model does not answer in time |
@@ -2713,7 +2715,7 @@ async function streamAIExplanation(query: string, explainPlan: string) {
 | `USER_PASSWORD` | No | Optional lower-privilege account password; the `user` account exists only when this is set |
 | `USER_EMAIL` | No | Regular-user login email (default `user@libredb.org`, only used when `USER_PASSWORD` is set) |
 | `DB_HTTP_BLOCK_PRIVATE_HOSTS` | No | Off when unset. `true`, `on`, or `1` blocks HTTP database requests and RabbitMQ's AMQP dial to loopback, private, link-local, unique-local and selected special-use addresses; `false`, `off`, or `0` allows them. DNS answers are checked at socket connection time. Invalid values fail closed for HTTP databases and RabbitMQ. Other non-HTTP drivers and SSH tunnel hosts are outside this guard; HTTP connections through an SSH tunnel are refused while it is enabled. |
-| `ALLOW_CUSTOM_CONNECTIONS` | No | On when unset. `false`, `0`, `off` or `no`, or any unrecognised value (it fails closed and logs an error), refuses, with 403, every connection a request supplies that is not a seed, on every route that builds a database provider; see `GET /api/connections/policy` |
+| `ALLOW_CUSTOM_CONNECTIONS` | No | On when unset, and off in governance mode whatever its value. `false`, `0`, `off` or `no`, or any unrecognised value (it fails closed and logs an error), refuses, with 403, every connection a request supplies that is not a seed, on every route that builds a database provider; see `GET /api/connections/policy` |
 | `LLM_PROVIDER` | No | AI provider: gemini, openai, ollama, custom |
 | `LLM_API_KEY` | No | AI provider API key |
 | `LLM_MODEL` | No | AI model name |
