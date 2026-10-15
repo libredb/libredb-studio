@@ -52,6 +52,8 @@ mock.module("@/lib/seed/resolve-connection", () => {
 mock.module("@/lib/db/factory", () => ({
   getOrCreateProvider: mockGetOrCreateProvider,
   createDatabaseProvider: mock(async () => mockSQLProvider),
+  // src/lib/api/editor-provider.ts imports it, and the route loads that module.
+  findCachedProvider: mock(() => null),
 }));
 
 // ─── Import route handler AFTER mocking ─────────────────────────────────────

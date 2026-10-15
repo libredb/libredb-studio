@@ -1,7 +1,9 @@
-import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterEach, jest, spyOn } from "bun:test";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
+import { API_CODES } from "@/lib/governance/contract";
+import { logger } from "@/lib/logger";
 import {
   QueryError,
   DatabaseError,
@@ -100,6 +102,20 @@ mock.module("@/lib/db", () => ({
   isAuthenticationError,
   isRetryableError,
   mapDatabaseError,
+}));
+
+// ─── The factory's writable cache as the route reads it under governance (spec 9.4) ─────────
+//
+// `editorCacheKey` frames what the factory's key frames for these tests: the connection, the credential it opens with,
+// and the owner. `findCachedProvider` answers nothing until a test registers its providers.
+const mockEditorCacheKey = mock(async (connection: { id: string; user?: string }, execution?: { owner?: string }) =>
+  JSON.stringify([connection.id, connection.user ?? null, execution?.owner ?? null]),
+);
+const mockFindCachedProvider = mock<(key: string) => unknown>(() => null);
+
+mock.module("@/lib/db/factory", () => ({
+  editorCacheKey: mockEditorCacheKey,
+  findCachedProvider: mockFindCachedProvider,
 }));
 
 // ─── Import route handler AFTER mocking ─────────────────────────────────────
@@ -828,6 +844,28 @@ describe("POST /api/db/transaction", () => {
     expect(mockTxProvider.beginTransaction).toHaveBeenCalledTimes(2);
   });
 
+  test("without governance no provider key is computed or compared, so another credential is answered as before", async () => {
+    // The credential-change refusal is governance's (spec 9.4): without it the record names no provider key, and a
+    // request that opens the connection with another credential reaches the shared provider exactly as it always did.
+    openableProvider();
+    mockEditorCacheKey.mockClear();
+    mockFindCachedProvider.mockClear();
+
+    asSession("alice");
+    expect((await call("d72-credential", { action: "begin" })).status).toBe(200);
+    const res = await POST(
+      createMockRequest("/api/db/transaction", {
+        method: "POST",
+        body: { connection: { ...validConnection, id: "d72-credential", user: "another-user" }, action: "commit" },
+      }) as never,
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockTxProvider.commitTransaction).toHaveBeenCalledTimes(1);
+    expect(mockEditorCacheKey).not.toHaveBeenCalled();
+    expect(mockFindCachedProvider).not.toHaveBeenCalled();
+  });
+
   test("status is answered for every session and says who holds the transaction", async () => {
     openableProvider();
 
@@ -1057,6 +1095,7 @@ describe("POST /api/db/transaction under governance (spec 9.4)", () => {
     if (savedSource === undefined) delete process.env.GOVERNANCE_SOURCE;
     else process.env.GOVERNANCE_SOURCE = savedSource;
     mockGetOrCreateProvider.mockImplementation(async () => mockTxProvider as never);
+    mockFindCachedProvider.mockImplementation(() => null);
     mockGetSession.mockImplementation(async () => ({ role: "admin", username: "admin" }));
   });
 
@@ -1095,15 +1134,39 @@ describe("POST /api/db/transaction under governance (spec 9.4)", () => {
     return { shared, of: (owner: string) => owned.get(owner) };
   }
 
+  /**
+   * The factory as it caches providers under governance: one per key, and the key frames the credential the connection
+   * opens with as well as the owner, so a grant level that changes resolves another provider. `findCachedProvider`
+   * answers from the same providers, and `evict` stands in for the idle sweep or a disconnect removing one.
+   */
+  function providerPerKey() {
+    const providers = new Map<string, ReturnType<typeof transactionProvider>>();
+    mockGetOrCreateProvider.mockImplementation(async (...args: unknown[]) => {
+      const key = await mockEditorCacheKey(args[0] as { id: string }, args[2] as { owner?: string });
+      if (!providers.has(key)) providers.set(key, transactionProvider());
+      return providers.get(key) as never;
+    });
+    mockFindCachedProvider.mockImplementation((key: string) => providers.get(key) ?? null);
+    const keyOf = (user: string, owner: string) => JSON.stringify(["seed:orders", user, owner]);
+    return {
+      of: (user: string, owner: string) => providers.get(keyOf(user, owner)),
+      evict: (user: string, owner: string) => providers.delete(keyOf(user, owner)),
+    };
+  }
+
   function as(username: string, idpSubject: string) {
     mockGetSession.mockImplementation(async () => ({ role: "user", username, idpSubject }));
   }
 
-  function send(body: Record<string, unknown>) {
+  /** `user` is the database user of the credential the caller's grant level resolves, absent for the tests above. */
+  function send(body: Record<string, unknown>, user?: string) {
     return POST(
       createMockRequest("/api/db/transaction", {
         method: "POST",
-        body: { connection: { ...validConnection, id: "seed:orders" }, ...body },
+        body: {
+          connection: { ...validConnection, id: "seed:orders", ...(user === undefined ? {} : { user }) },
+          ...body,
+        },
       }) as never,
     );
   }
@@ -1162,6 +1225,154 @@ describe("POST /api/db/transaction under governance (spec 9.4)", () => {
     });
     expect((await send({ action: "rollback" })).status).toBe(200);
     expect(providers.of("alice-subject")?.rollbackTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  // ─── A credential that changes under an open transaction (spec 9.4) ───────
+  //
+  // The connection a governed request resolves carries the credential of the caller's grant level, and the provider's
+  // cache key frames that credential, so a grant downgraded from write to read, or a credential sealed again, resolves
+  // a provider other than the one the transaction was opened on. That transaction would otherwise stay open under a
+  // credential the caller no longer holds, on a provider their requests no longer reach.
+
+  test("governance: a request that resolves a different provider key rolls back the old transaction and answers 409 TRANSACTION_CREDENTIAL_CHANGED", async () => {
+    const providers = providerPerKey();
+    as("alice@example.com", "alice-subject");
+
+    // A write grant: the connection opens with the write credential, and the transaction is held on that provider.
+    expect((await send({ action: "begin" }, "writer")).status).toBe(200);
+    const writer = providers.of("writer", "alice-subject");
+    expect(writer?.isInTransaction()).toBe(true);
+
+    // The grant is downgraded to read: the same connection now opens with the read credential, under another key.
+    mockGetOrCreateProvider.mockClear();
+    const res = await send({ action: "query", sql: "INSERT INTO orders VALUES (1)" }, "reader");
+    const data = await parseResponseJSON<{ error: string; code: string; rolledBack: boolean }>(res);
+
+    expect(res.status).toBe(409);
+    expect(data.code).toBe("TRANSACTION_CREDENTIAL_CHANGED");
+    // The status and the code are the ones governance contract v1 publishes for this refusal (spec 7.10).
+    const published: readonly { code: string; httpStatus: number }[] = API_CODES;
+    expect(published).toContainEqual({ code: data.code, httpStatus: res.status });
+    expect(data.rolledBack).toBe(true);
+    expect(data.error).toBe(
+      "Your access to this connection changed while your transaction was open, so the transaction was rolled back and none of its changes were saved. Begin a new transaction to continue with your current access.",
+    );
+    // Rolled back on the provider that holds it, and the statement ran nowhere: the answer opens no provider at all.
+    expect(writer?.rollbackTransaction).toHaveBeenCalledTimes(1);
+    expect(writer?.isInTransaction()).toBe(false);
+    expect(writer?.queryInTransaction).not.toHaveBeenCalled();
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+
+    // The record went with it: the next request runs under the read credential, and its begin opens a transaction there.
+    expect((await send({ action: "begin" }, "reader")).status).toBe(200);
+    expect(providers.of("reader", "alice-subject")?.beginTransaction).toHaveBeenCalledTimes(1);
+    expect((await send({ action: "rollback" }, "reader")).status).toBe(200);
+    expect(writer?.rollbackTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  test("governance: when the old provider is no longer cached the record is released and the answer is still 409", async () => {
+    const providers = providerPerKey();
+    as("alice@example.com", "alice-subject");
+    expect((await send({ action: "begin" }, "writer")).status).toBe(200);
+    const writer = providers.of("writer", "alice-subject");
+    // The idle sweep or a disconnect removed the provider, and its transaction ended with its connection.
+    providers.evict("writer", "alice-subject");
+
+    const res = await send({ action: "commit" }, "reader");
+
+    expect(res.status).toBe(409);
+    expect(await parseResponseJSON(res)).toMatchObject({ code: "TRANSACTION_CREDENTIAL_CHANGED", rolledBack: true });
+    // Nothing was left to roll back, and the commit reached no provider.
+    expect(writer?.rollbackTransaction).not.toHaveBeenCalled();
+    expect(writer?.commitTransaction).not.toHaveBeenCalled();
+    // Released: the next begin is answered under the new credential.
+    expect((await send({ action: "begin" }, "reader")).status).toBe(200);
+    expect((await send({ action: "rollback" }, "reader")).status).toBe(200);
+  });
+
+  test("governance: a transaction its provider already ended is not rolled back again, and even status answers 409", async () => {
+    const providers = providerPerKey();
+    as("alice@example.com", "alice-subject");
+    expect((await send({ action: "begin" }, "writer")).status).toBe(200);
+    const writer = providers.of("writer", "alice-subject");
+    // PostgresProvider's TX_TIMEOUT_MS rolled it back with no session behind it, and the provider stays cached.
+    await writer?.rollbackTransaction();
+    writer?.rollbackTransaction.mockClear();
+
+    // Status is answered for every session otherwise, but the caller's own transaction ended without a word to them,
+    // so it learns that here rather than from a status that only says nothing is open.
+    const res = await send({ action: "status" }, "reader");
+
+    expect(res.status).toBe(409);
+    expect(await parseResponseJSON(res)).toMatchObject({ code: "TRANSACTION_CREDENTIAL_CHANGED", rolledBack: true });
+    expect(writer?.rollbackTransaction).not.toHaveBeenCalled();
+  });
+
+  test("governance: a rollback that fails is logged, and the answer is still 409 with rolledBack false", async () => {
+    const providers = providerPerKey();
+    const errors = spyOn(logger, "error").mockImplementation(() => {});
+    try {
+      as("alice@example.com", "alice-subject");
+      expect((await send({ action: "begin" }, "writer")).status).toBe(200);
+      const writer = providers.of("writer", "alice-subject");
+      writer?.rollbackTransaction.mockImplementationOnce(async () => {
+        throw new ConnectionError("Connection terminated unexpectedly", "postgres");
+      });
+
+      const res = await send({ action: "rollback" }, "reader");
+      const data = await parseResponseJSON<{ error: string; code: string; rolledBack: boolean }>(res);
+
+      expect(res.status).toBe(409);
+      expect(data.code).toBe("TRANSACTION_CREDENTIAL_CHANGED");
+      expect(data.rolledBack).toBe(false);
+      expect(data.error).toBe(
+        "Your access to this connection changed while your transaction was open, so the transaction cannot continue. Studio asked the database to roll it back and could not confirm that it did; none of its changes were committed. Begin a new transaction to continue with your current access.",
+      );
+      expect(errors).toHaveBeenCalledTimes(1);
+      expect(errors.mock.calls[0]?.[2]).toEqual({ route: "api/db/transaction", connectionId: "seed:orders" });
+      // Released all the same: the record names a provider the caller's requests no longer reach.
+      expect((await send({ action: "begin" }, "reader")).status).toBe(200);
+      expect((await send({ action: "rollback" }, "reader")).status).toBe(200);
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  test("governance: a rollback that does not finish within 5 s is abandoned, and the answer is still 409", async () => {
+    const providers = providerPerKey();
+    const errors = spyOn(logger, "error").mockImplementation(() => {});
+    as("alice@example.com", "alice-subject");
+    expect((await send({ action: "begin" }, "writer")).status).toBe(200);
+    const writer = providers.of("writer", "alice-subject");
+    writer?.rollbackTransaction.mockImplementationOnce(() => new Promise<void>(() => {}));
+
+    jest.useFakeTimers();
+    try {
+      let answered = false;
+      const pending = send({ action: "query", sql: "SELECT 1" }, "reader").then((res) => {
+        answered = true;
+        return res;
+      });
+      // Bun's fake timers leave setImmediate real, so this lets the request run up to the rollback it waits on.
+      for (let turn = 0; turn < 50 && writer?.rollbackTransaction.mock.calls.length === 0; turn++) {
+        // oxlint-disable-next-line no-await-in-loop -- a poll: each turn lets the request run one step further.
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      expect(writer?.rollbackTransaction).toHaveBeenCalledTimes(1);
+
+      jest.advanceTimersByTime(4999);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(answered).toBe(false);
+
+      jest.advanceTimersByTime(1);
+      const res = await pending;
+      expect(res.status).toBe(409);
+      expect(await parseResponseJSON(res)).toMatchObject({ code: "TRANSACTION_CREDENTIAL_CHANGED", rolledBack: false });
+      expect(String(errors.mock.calls[0]?.[1])).toContain("timed out after 5000ms");
+    } finally {
+      jest.useRealTimers();
+      errors.mockRestore();
+    }
   });
 });
 

@@ -33,7 +33,7 @@ const GROUPS = {
   rateLimit: ["RATE_LIMITED"],
   session: ["AUTH_REQUIRED", "WORKSPACE_OWNER_MISMATCH"],
   connectionPolicy: ["CUSTOM_CONNECTIONS_DISABLED"],
-  governance: ["CONNECTION_NOT_FOUND", "GOVERNANCE_UNAVAILABLE"],
+  governance: ["CONNECTION_NOT_FOUND", "GOVERNANCE_UNAVAILABLE", "TRANSACTION_CREDENTIAL_CHANGED"],
   generic: ["INTERNAL_ERROR", "NETWORK_ERROR"],
 } as const;
 
@@ -85,6 +85,10 @@ describe("ApiErrorCode", () => {
   test("contains the governed miss, one code for a connection that does not exist and one not granted", () => {
     expect(ApiErrorCode.CONNECTION_NOT_FOUND).toBe("CONNECTION_NOT_FOUND");
     expect(ApiErrorCode.CONNECTION_NOT_FOUND).not.toBe(ApiErrorCode.AUTH_ERROR);
+  });
+
+  test("contains the governed refusal of a transaction whose grant level or credential changed while it was open", () => {
+    expect(ApiErrorCode.TRANSACTION_CREDENTIAL_CHANGED).toBe("TRANSACTION_CREDENTIAL_CHANGED");
   });
 
   test("contains the application rate-limit error code", () => {

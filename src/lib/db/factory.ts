@@ -941,9 +941,9 @@ export async function getOrCreateProvider(
   // SQLite and DuckDB read it; engines without that capability ignore it.
   const allowExternalFileAccess = execution.allowExternalFileAccess === true;
   // The user this provider is opened for under governance (spec 9.4), or undefined for the provider every caller
-  // shares: the key, the provider and the entry all take this one value, so they never disagree about it.
+  // shares: the provider, the entry and the key `editorCacheKey` frames all take this value, so they never disagree.
   const owner = providerOwner(connection, execution.owner);
-  const cacheKey = await providerCacheKey(connection, allowExternalFileAccess, owner);
+  const cacheKey = await editorCacheKey(connection, execution);
 
   // Check cache
   const cached = providerCache.get(cacheKey);
@@ -1057,6 +1057,40 @@ export async function getOrCreateProvider(
   startIdleSweep();
 
   return provider;
+}
+
+/**
+ * The key `getOrCreateProvider` caches the provider of `connection` under for `execution`: {@link providerCacheKey} of
+ * the connection, of its file-access posture as a definite boolean, absent read as deny, and of the owner that
+ * `providerOwner` answers. A connection without an id is refused before the key frames it, as in `getOrCreateProvider`
+ * (#1539).
+ *
+ * Exported for one caller that must compare keys without deriving a second one, as `profiledCacheKey` is for its own:
+ * the transaction route records the key a governed `begin` resolved, and a later request that resolves another one,
+ * because the owner's grant level or the connection's credential changed, has the transaction rolled back on the
+ * provider {@link findCachedProvider} answers for the recorded key (spec 9.4). The package does not re-export it.
+ */
+export async function editorCacheKey(
+  connection: DatabaseConnection,
+  execution: EditorExecutionContext = {},
+): Promise<string> {
+  assertConnectionIdPresent(connection);
+  return providerCacheKey(
+    connection,
+    execution.allowExternalFileAccess === true,
+    providerOwner(connection, execution.owner),
+  );
+}
+
+/**
+ * The provider the writable cache holds under `key`, which {@link editorCacheKey} answers, or null when it holds none
+ * there: the idle sweep, a disconnect or a teardown removed it, and disconnected it on the way out. A lookup, not a
+ * use: it opens nothing and leaves the entry's idle clock alone. For `cachedEditorProvider` in
+ * src/lib/api/editor-provider.ts, on which the transaction route rolls back a transaction whose owner's credential
+ * changed (spec 9.4); the package does not re-export it.
+ */
+export function findCachedProvider(key: string): DatabaseProvider | null {
+  return providerCache.get(key)?.provider ?? null;
 }
 
 // ============================================================================

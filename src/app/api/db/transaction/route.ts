@@ -2,21 +2,27 @@ import { firstResultSet } from "@/lib/api/first-result-set";
 import { pageOfProbe, pageOptionError, probePastPage } from "@/lib/api/page-probe";
 import { NextRequest, NextResponse } from "next/server";
 import { getOrCreateProvider } from "@/lib/db";
+import { editorCacheKey } from "@/lib/db/factory";
 import type { BeginTransactionOptions, BeginTransactionResult, DatabaseProvider, QueryResult } from "@/lib/db/types";
+import type { DatabaseConnection } from "@/lib/types";
 import { createErrorResponse } from "@/lib/api/errors";
+import { ApiErrorCode } from "@/lib/api/error-codes";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
-import { editorProvider } from "@/lib/api/editor-provider";
+import { cachedEditorProvider, editorProvider } from "@/lib/api/editor-provider";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { readBoundParams } from "@/lib/api/bound-params";
 import { rowsWithNonFiniteWords } from "@/lib/non-finite";
 import { countCodeStatements, splitExecutionUnits, type ExecutionUnit } from "@/lib/sql/statement-splitter";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { noteAppendedBound } from "@/lib/db/utils/query-limiter";
+import { withTimeout } from "@/lib/db/utils/pool-manager";
+import { logger } from "@/lib/logger";
 import {
   claimTransaction,
   OWNERSHIP_IDLE_MS,
+  releaseIfProviderChanged,
   releaseTransaction,
   touchTransaction,
   transactionKey,
@@ -119,6 +125,48 @@ function isTransactionProvider(provider: unknown): provider is TransactionProvid
   );
 }
 
+/** How long the rollback of a transaction whose credential changed may take before the answer goes out (spec 9.4). */
+const CREDENTIAL_CHANGE_ROLLBACK_MS = 5000;
+
+// One string literal each, never a concatenation across lines: bun's line coverage under-counts the continuation lines
+// of a message built that way.
+const CREDENTIAL_CHANGED_ROLLED_BACK =
+  "Your access to this connection changed while your transaction was open, so the transaction was rolled back and none of its changes were saved. Begin a new transaction to continue with your current access.";
+const CREDENTIAL_CHANGED_UNCONFIRMED =
+  "Your access to this connection changed while your transaction was open, so the transaction cannot continue. Studio asked the database to roll it back and could not confirm that it did; none of its changes were committed. Begin a new transaction to continue with your current access.";
+
+/**
+ * Roll back the transaction a governed owner opened on the provider cached under `providerKey`, the key its `begin`
+ * resolved, once a request of theirs resolves another key (spec 9.4), and answer whether it is known to have ended.
+ *
+ * A provider that is no longer cached was disconnected when it was removed, which ended its transaction, and a
+ * transaction its provider already ended (PostgresProvider and MySQLProvider roll back after their own TX_TIMEOUT_MS)
+ * is not sent a second rollback, which the provider would refuse with "No active transaction". A rollback that fails,
+ * or does not finish within CREDENTIAL_CHANGE_ROLLBACK_MS, is logged and answered as unconfirmed rather than waited
+ * for: the transaction runs on a credential its owner no longer resolves, so their requests no longer reach it, and
+ * what is left of it ends with its provider.
+ */
+async function rollBackOnProvider(
+  providerKey: string,
+  catalog: string | undefined,
+  connection: DatabaseConnection,
+): Promise<boolean> {
+  try {
+    const session = await cachedEditorProvider(providerKey, catalog);
+    if (session !== null && isTransactionProvider(session) && session.isInTransaction()) {
+      const rollback = session.rollbackTransaction();
+      await withTimeout(rollback, CREDENTIAL_CHANGE_ROLLBACK_MS, connection.type, "Rollback after a credential change");
+    }
+    return true;
+  } catch (error) {
+    logger.error("A transaction whose credential changed was released without a confirmed rollback", error, {
+      route: "api/db/transaction",
+      connectionId: connection.id,
+    });
+    return false;
+  }
+}
+
 export async function POST(req: NextRequest) {
   const guard = await guardRoute({ route: "POST /api/db/transaction", bucket: "query", request: req });
   if ("response" in guard) return guard.response;
@@ -138,9 +186,27 @@ export async function POST(req: NextRequest) {
     // Under governance each user's transaction is held on that user's own provider (spec 9.4), so ownership is per
     // user as well: the key and the record carry the owner the editor context names, the session's identity provider
     // subject. Without governance there is none, and the key is the one every user of the connection shares.
-    const { owner: subject } = editorExecutionContext(guard.session, connection);
-    const provider = await editorProvider(guard.session, connection, catalog);
+    const execution = editorExecutionContext(guard.session, connection);
+    const subject = execution.owner;
     const owned = transactionKey(connection.id, catalog, subject);
+    // Under governance the provider's cache key also frames the credential of the caller's grant level, and the record
+    // keeps the key its begin resolved (src/lib/api/transaction-ownership.ts). A transaction the caller's key no longer
+    // names is rolled back where it runs and answered here, for every action, before a provider of the new credential
+    // is opened at all. Without governance no key is computed, and every request goes on as before.
+    const providerKey = subject === undefined ? undefined : await editorCacheKey(connection, execution);
+    const openedOn = providerKey === undefined ? null : releaseIfProviderChanged(owned, providerKey);
+    if (openedOn !== null) {
+      const rolledBack = await rollBackOnProvider(openedOn, catalog, connection);
+      return NextResponse.json(
+        {
+          error: rolledBack ? CREDENTIAL_CHANGED_ROLLED_BACK : CREDENTIAL_CHANGED_UNCONFIRMED,
+          code: ApiErrorCode.TRANSACTION_CREDENTIAL_CHANGED,
+          rolledBack,
+        },
+        { status: 409 },
+      );
+    }
+    const provider = await editorProvider(guard.session, connection, catalog);
 
     if (!isTransactionProvider(provider)) {
       return NextResponse.json(
@@ -188,8 +254,9 @@ export async function POST(req: NextRequest) {
         // SANDBOX sends `requireReportedState: true`: it is about to promise a rollback, so a
         // server that never says whether a transaction is open is refused rather than trusted.
         const opened = await provider.beginTransaction({ requireReportedState: body.requireReportedState === true });
-        // After the provider, never before: a begin that throws must leave no owner behind.
-        claimTransaction(owned, guard.session.username, subject);
+        // After the provider, never before: a begin that throws must leave no owner behind. Under governance the record
+        // also keeps the key of the provider this transaction runs on, which the check above compares.
+        claimTransaction(owned, guard.session.username, subject, providerKey);
         // `stateReported: false` lets the UI say Studio cannot verify this transaction; `null`
         // is a provider that does not say, which is not a claim either way.
         return NextResponse.json({
@@ -302,8 +369,10 @@ export async function POST(req: NextRequest) {
       }
 
       case "status": {
-        // Never refused, for any caller: this is the surface that tells a user why the connection
-        // is busy and when it comes back, so refusing it would hide the refusal above. The three
+        // Never refused because another session holds the transaction: this is the surface that tells
+        // a user why the connection is busy and when it comes back, so refusing it would hide the
+        // refusal above. (Under governance the caller's OWN transaction whose credential changed is
+        // answered with 409 before this, because that is the news it would otherwise hide.) The three
         // booleans are distinguishable on purpose - an open transaction with no live owner record
         // (a restarted process, or a lapsed lease) reports `inTransaction` true with both of the
         // others false, and that state is the one any session is allowed to end.

@@ -19,6 +19,16 @@
  * gain the owner together (spec 3.2 D7): a record shared across users' own providers would let a
  * user whose provider holds no transaction drop another user's record on the reconcile below.
  *
+ * A CREDENTIAL THAT CHANGES UNDER AN OPEN TRANSACTION, under governance (spec 9.4). A governed request
+ * opens the connection with the credential of the caller's grant level, and the provider's cache key
+ * frames that credential, so a grant downgraded from write to read, or a credential the control plane
+ * sealed again, resolves a provider other than the one the transaction was opened on. So the record
+ * keeps the provider cache key its begin resolved, and a request that resolves another key has the
+ * record released by `releaseIfProviderChanged`: the route rolls the transaction back on the provider
+ * that holds it and answers 409 TRANSACTION_CREDENTIAL_CHANGED. Without that, the reconcile below would
+ * drop the record because the NEW provider holds no transaction, and the old one would stay open under a
+ * credential its owner no longer holds, on a provider their requests no longer reach.
+ *
  * SESSION means the authenticated account, `UserPayload.username` from the JWT the route already
  * has through `guardRoute`. That is the only stable identity field in the payload - the comment in
  * `require-session.ts` says so, and the rate limiter is keyed on it for the same reason. Under
@@ -61,6 +71,12 @@ interface TransactionOwner {
    * governance.
    */
   subject?: string;
+  /**
+   * Under governance, the cache key of the provider that `begin` ran on, which frames the credential of the owner's
+   * grant level: a request that resolves another key no longer reaches this transaction (see the credential note
+   * above). Absent without governance, where a record is never compared by key.
+   */
+  providerKey?: string;
   /** When the transaction was opened, for the refusal message and for `status`. */
   startedAt: number;
   /** When the owner last acted on it. The idle lease below is measured from here. */
@@ -88,12 +104,27 @@ export function transactionOwner(connectionId: string): TransactionOwner | null 
 }
 
 /**
- * Record `username`, and under governance its identity provider `subject`, as the owner. Called only after
- * `beginTransaction()` has actually succeeded.
+ * Record `username`, and under governance its identity provider `subject` and the `providerKey` of the provider the
+ * transaction runs on, as the owner. Called only after `beginTransaction()` has actually succeeded.
  */
-export function claimTransaction(connectionId: string, username: string, subject?: string): void {
+export function claimTransaction(connectionId: string, username: string, subject?: string, providerKey?: string): void {
   const now = Date.now();
-  owners.set(connectionId, { username, subject, startedAt: now, lastActiveAt: now });
+  owners.set(connectionId, { username, subject, providerKey, startedAt: now, lastActiveAt: now });
+}
+
+/**
+ * Under governance, release the live record under `connectionId` when its begin resolved a provider other than
+ * `providerKey`, the key the current request resolves, and answer the key it was opened on, so the caller can roll the
+ * transaction back on that provider; null when the record names this key, names none, or there is no live record.
+ *
+ * Read and released in one synchronous step, so of two requests that arrive together only one is handed the key: the
+ * other finds no record, and its own provider holds no transaction.
+ */
+export function releaseIfProviderChanged(connectionId: string, providerKey: string): string | null {
+  const opened = transactionOwner(connectionId)?.providerKey;
+  if (opened === undefined || opened === providerKey) return null;
+  owners.delete(connectionId);
+  return opened;
 }
 
 /** Extend the owner's lease after an authorized action. A no-op when there is no record. */

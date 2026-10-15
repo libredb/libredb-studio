@@ -377,6 +377,8 @@ const {
   getExecutionProfileCacheStats,
   withOneShotTunnel,
   assertReadOnlyHonoured,
+  editorCacheKey,
+  findCachedProvider,
 } = await import("@/lib/db/factory");
 // Existing SQLite cache tests exercise trusted callers. Explicitly grant their file posture;
 // denied callers are tested separately against the unwrapped factory below.
@@ -1554,6 +1556,38 @@ describe("per-user providers (spec 9.4)", () => {
       expect(getExecutionProfileCacheStats().size).toBe(0);
     },
   );
+});
+
+// ─── The writable cache's key and lookup, for the transaction route (spec 9.4) ──
+
+describe("editorCacheKey and findCachedProvider (spec 9.4)", () => {
+  const owned = (owner: string): EditorExecutionContext => ({ owner, ownerPoolMax: 3 });
+
+  test("editorCacheKey is the key getOrCreateProvider caches under, and findCachedProvider answers what is cached there", async () => {
+    // The transaction route records the key a governed begin resolved and later looks the provider up by it, to roll
+    // back a transaction whose credential changed; both only work if this key is the one the provider is cached under.
+    const writer = makeConnection("postgres", { id: "seed:orders", user: "writer", password: "write-secret" });
+    const reader = makeConnection("postgres", { id: "seed:orders", user: "reader", password: "read-secret" });
+
+    const provider = await getOrCreateProvider(writer, {}, owned("alice-subject"));
+
+    expect(findCachedProvider(await editorCacheKey(writer, owned("alice-subject")))).toBe(provider);
+    // Another credential, another owner, or no owner at all names another key, under which nothing is cached.
+    expect(findCachedProvider(await editorCacheKey(reader, owned("alice-subject")))).toBeNull();
+    expect(findCachedProvider(await editorCacheKey(writer, owned("bob-subject")))).toBeNull();
+    expect(findCachedProvider(await editorCacheKey(writer))).toBeNull();
+    // A lookup opens nothing.
+    expect(getProviderCacheStats().size).toBe(1);
+  });
+
+  test("editorCacheKey refuses a connection without an id, as getOrCreateProvider does", async () => {
+    const refusal = await editorCacheKey(makeConnection("postgres", { id: "" }), owned("alice-subject")).catch(
+      (error: unknown) => error,
+    );
+
+    expect(refusal).toBeInstanceOf(DatabaseConfigError);
+    expect((refusal as Error).message).toBe("Connection ID is required");
+  });
 });
 
 // ─── removeProvider ────────────────────────────────────────────────────────
