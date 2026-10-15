@@ -102,7 +102,8 @@ describe("Test Connection on a Modbus address", () => {
       expect(status).toBe(200);
       // The caution rides in `warnings`, which is where the route puts it; the sentence a user
       // reads is composed from it client-side by `cautionSentence` in
-      // `src/hooks/use-connection-form.ts:344` and rendered at `ConnectionModal.tsx:1979`, with an
+      // `src/hooks/use-connection-form.ts` and rendered by the banner `ConnectionModal.tsx` draws
+      // for `testResult.tone === "warning"`, with an
       // amber tone rather than a green tick. That composition was READ, not executed here.
       const warnings = body.warnings as { message: string }[] | undefined;
       expect(warnings?.length).toBe(1);

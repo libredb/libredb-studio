@@ -2,8 +2,8 @@
  * The object tree, built from the map and never from the device.
  *
  * WHY AN ABSENT MAP RETURNS AN EMPTY LIST AND NEVER THROWS. Read from source, not guessed:
- * `src/hooks/use-connection-manager.ts:335-362` on `origin/main` raises the red "Schema Error"
- * toast in exactly one place, inside the `catch` block, and calls `setSchemaError(null)` when the
+ * `src/hooks/use-connection-manager.ts` raises the red "Schema Error" toast in exactly one place,
+ * inside `readSchema`'s `catch`, and calls `setSchemaError(null)` on the line above it when the
  * inventory read succeeds. An empty result therefore takes the success path and shows no toast,
  * while a throw takes the other path. If `listObjects` threw for a connection whose map has not
  * been filled in, every such connection would greet its user with a red error for a state that is

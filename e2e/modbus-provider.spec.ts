@@ -183,11 +183,12 @@ test.describe("a read of the fixture, as a reader sees it", () => {
      * The first writing of this looked for `[role='gridcell'] input, td input`, which matches
      * nothing here whatever the product does - an absence that is true for the selector's reason
      * rather than the engine's. The cell editor is an `<input autoFocus>`
-     * (`ResultsGrid.tsx:736`), so if one had opened it would be THE focused input on the page;
+     * (the `autoFocus` input in `ResultsGrid.tsx`), so if one had opened it would be THE focused
+     * input on the page;
      * the query editor is Monaco, whose own field is a textarea.
      *
      * And the branch this asserts is real: with `editingEnabled` false the cell renders without
-     * an `onDoubleClick` at all (`ResultsGrid.tsx:823`), which is what `supportsInlineRowEdit:
+     * an `onDoubleClick` at all (the cell's handler in `ResultsGrid.tsx`), which is what `supportsInlineRowEdit:
      * false` buys on this engine.
      */
     await expect(page.locator("input:focus")).toHaveCount(0);

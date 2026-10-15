@@ -3,8 +3,8 @@
  *
  * This is bound by a test because the failure it prevents is invisible to every other test: a throw
  * here reaches the user as a red "Schema Error" toast, and the unit suite would stay green. The
- * toast is raised in one place only, inside the `catch` of
- * `src/hooks/use-connection-manager.ts:335-362`, so an empty list takes the success path.
+ * toast is raised in one place only, inside `readSchema`'s `catch` in
+ * `src/hooks/use-connection-manager.ts`, so an empty list takes the success path.
  */
 import { describe, expect, test } from "bun:test";
 import {

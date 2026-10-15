@@ -300,7 +300,7 @@ export class ModbusProvider extends BaseDatabaseProvider {
    *
    * `connectWarnings` and not `testConnectionWarnings` because it needs no request: it reads the
    * connection's own map. The dialog renders it as a caution rather than a green tick
-   * (`src/hooks/use-connection-form.ts:344`, `cautionSentence`).
+   * (`cautionSentence` in `src/hooks/use-connection-form.ts`).
    */
   public connectWarnings(): QueryWarning[] {
     return readMap(this.config).isEmpty
