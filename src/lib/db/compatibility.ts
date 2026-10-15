@@ -564,6 +564,114 @@ export const CONNECTION_STRING_ACCEPTED: Readonly<Record<DatabaseType, boolean>>
 });
 
 /**
+ * Which shipped engines open a file on Studio's own host rather than reach a server: the connection is a path, and
+ * the provider opens it inside Studio's process. A governance source can never grant one (spec 7.7): row admission in
+ * `src/lib/governance/admission.ts` skips it as ENGINE_UNSUPPORTED whatever `GOVERNANCE_ALLOWED_ENGINES` says,
+ * because a grant would hand its users a file of the host Studio runs on.
+ *
+ * Static because admission decides from a row before any provider exists, and reads this record rather than a type
+ * id. Kept here because the governance layer must not load `src/lib/db-ui-config.ts`, which value-imports the React
+ * icon components; `tests/unit/db/compatibility.test.ts` holds every entry equal to that file's `isFileBased()`, the
+ * connection form's own answer. An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records above it.
+ */
+export const OPENS_LOCAL_FILE: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
+  postgres: false,
+  bigquery: false,
+  snowflake: false,
+  spark: false,
+  mysql: false,
+  // A database file opened through `bun:sqlite` or `node:sqlite` in Studio's own process.
+  sqlite: true,
+  libsql: false,
+  // A database file (or `:memory:`) opened by the native DuckDB addon in Studio's own process.
+  duckdb: true,
+  oracle: false,
+  db2: false,
+  mssql: false,
+  clickhouse: false,
+  druid: false,
+  trino: false,
+  cassandra: false,
+  elasticsearch: false,
+  opensearch: false,
+  mongodb: false,
+  couchbase: false,
+  redis: false,
+  prometheus: false,
+  kafka: false,
+  etcd: false,
+  neo4j: false,
+  milvus: false,
+  qdrant: false,
+  influxdb: false,
+  influxdb3: false,
+  oxia: false,
+  databend: false,
+  s3: false,
+  kubernetes: false,
+  mqtt: false,
+  firestore: false,
+  rabbitmq: false,
+  opcua: false,
+  // The embedded store this app creates, a file on Studio's own volume.
+  libredb: true,
+});
+
+/**
+ * Which shipped engines reach the whole server when a connection names no database (#1530): the provider then
+ * declares `catalogSessions` and opens a session of its own to each database the caller picks, so one credential
+ * reaches every database it can sign in to. A governance source grants one database per connection, so row admission
+ * in `src/lib/governance/admission.ts` skips such an engine's definition without a database as
+ * SERVER_LEVEL_NOT_ALLOWED (spec 7.7).
+ *
+ * Static for the reason `OPENS_LOCAL_FILE` is. `tests/unit/db/compatibility.test.ts` builds every shipped provider
+ * with no database and no connection string, nothing connecting, and holds this record equal to the engines whose
+ * provider then reports `catalogSessions`. An exhaustive Record for the reason `EXTERNAL` gives, frozen like the
+ * records above it.
+ */
+export const OPENS_SERVER_LEVEL_WITHOUT_DATABASE: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
+  // An empty `database` on discrete fields reaches the whole server (`serverLevel` in providers/sql/postgres.ts);
+  // a connection string never does.
+  postgres: true,
+  bigquery: false,
+  snowflake: false,
+  spark: false,
+  mysql: false,
+  sqlite: false,
+  libsql: false,
+  duckdb: false,
+  oracle: false,
+  db2: false,
+  mssql: false,
+  clickhouse: false,
+  druid: false,
+  trino: false,
+  cassandra: false,
+  elasticsearch: false,
+  opensearch: false,
+  mongodb: false,
+  couchbase: false,
+  redis: false,
+  prometheus: false,
+  kafka: false,
+  etcd: false,
+  neo4j: false,
+  milvus: false,
+  qdrant: false,
+  influxdb: false,
+  influxdb3: false,
+  oxia: false,
+  databend: false,
+  s3: false,
+  kubernetes: false,
+  mqtt: false,
+  firestore: false,
+  rabbitmq: false,
+  opcua: false,
+  libredb: false,
+});
+
+/**
  * How much of the product works against a wire-compatible engine.
  *
  * - `full` - every introspection surface answered. Caveats may still record data
