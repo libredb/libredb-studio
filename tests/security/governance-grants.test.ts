@@ -374,6 +374,7 @@ describe("under governance, a grant is the only way to a connection", () => {
       kind: "misconfigured",
       code: "42501",
       detail: "bridge.grants_v1: denied",
+      publicDetail: "bridge.grants_v1: 42501",
     });
     const warn = spyOn(logger, "warn").mockImplementation(() => {});
     try {

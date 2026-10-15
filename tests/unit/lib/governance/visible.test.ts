@@ -286,7 +286,13 @@ describe("under governance", () => {
     recordGovernanceSnapshot(
       grantedSnapshot([BILLING], [{ subject: ALICE.idpSubject, connection: BILLING, level: "read" }], T - 40_000),
     );
-    recordGovernanceFailure({ at: T, kind: "transient", code: "ECONNREFUSED", detail: "connect ECONNREFUSED" });
+    recordGovernanceFailure({
+      at: T,
+      kind: "transient",
+      code: "ECONNREFUSED",
+      detail: "connect ECONNREFUSED",
+      publicDetail: "ECONNREFUSED",
+    });
 
     expect((await visibleConnections(ALICE)).map((connection) => connection.seedId)).toEqual(["billing"]);
   });
@@ -302,12 +308,25 @@ describe("under governance", () => {
         "misconfigured: the latest load lacked a privilege, even with a fresh snapshot",
         () => {
           recordGovernanceSnapshot(grantedSnapshot([BILLING], [], T));
-          recordGovernanceFailure({ at: T, kind: "misconfigured", code: "42501", detail: "bridge.grants_v1: denied" });
+          recordGovernanceFailure({
+            at: T,
+            kind: "misconfigured",
+            code: "42501",
+            detail: "bridge.grants_v1: denied",
+            publicDetail: "bridge.grants_v1: 42501",
+          });
         },
       ],
       [
         "incompatible: no common contract version",
-        () => recordGovernanceFailure({ at: T, kind: "incompatible", code: null, detail: "no common version" }),
+        () =>
+          recordGovernanceFailure({
+            at: T,
+            kind: "incompatible",
+            code: null,
+            detail: "no common version",
+            publicDetail: "no common version",
+          }),
       ],
     ];
 

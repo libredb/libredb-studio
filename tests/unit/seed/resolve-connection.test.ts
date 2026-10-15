@@ -596,7 +596,13 @@ describe("resolve-connection under governance", () => {
   });
 
   it("governance: a snapshot that cannot be served answers 503 GOVERNANCE_UNAVAILABLE for every seed id, audited as no miss", async () => {
-    recordGovernanceFailure({ at: T, kind: "misconfigured", code: "42501", detail: "bridge.grants_v1: denied" });
+    recordGovernanceFailure({
+      at: T,
+      kind: "misconfigured",
+      code: "42501",
+      detail: "bridge.grants_v1: denied",
+      publicDetail: "bridge.grants_v1: 42501",
+    });
 
     for (const connectionId of ["seed:billing", "seed:orders", "seed:no-such-connection"]) {
       // oxlint-disable-next-line no-await-in-loop -- one request at a time, as a browser sends them.
