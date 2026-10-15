@@ -10,10 +10,19 @@ const mockQuery = mock(async (..._args: any[]): Promise<any> => ({ rows: [] }));
 const mockRelease = mock(() => {});
 const mockEnd = mock(async () => {});
 
-const mockClient = {
+/**
+ * A checked-out pool client: a real EventEmitter like the one `pg` hands back, because pg-pool
+ * stops listening for `error` on a client while it is checked out, so an `error` event the
+ * provider does not listen for would end the process.
+ */
+function poolClient<T extends object>(fields: T): EventEmitter & T {
+  return Object.assign(new EventEmitter(), fields);
+}
+
+const mockClient = poolClient({
   query: mockQuery,
   release: mockRelease,
-};
+});
 
 /**
  * A real EventEmitter, fresh per construction, mirroring what `pg` hands back. An `error`
@@ -240,10 +249,10 @@ describe("PostgresStorageProvider", () => {
     await provider.initialize();
 
     const mockClientQuery = mock(async (): Promise<{ rows: unknown[] }> => ({ rows: [] }));
-    const client = {
+    const client = poolClient({
       query: mockClientQuery,
       release: mock(() => {}),
-    };
+    });
     mockPool.connect = mock(async () => client);
 
     await provider.mergeData("admin@test.com", {
@@ -268,10 +277,10 @@ describe("PostgresStorageProvider", () => {
       return { rows: [] };
     });
     const mockClientRelease = mock(() => {});
-    const client = {
+    const client = poolClient({
       query: mockClientQuery,
       release: mockClientRelease,
-    };
+    });
     mockPool.connect = mock(async () => client);
 
     await expect(
@@ -298,10 +307,10 @@ describe("PostgresStorageProvider", () => {
     await provider.initialize();
 
     const mockClientQuery = mock(async (): Promise<{ rows: unknown[] }> => ({ rows: [] }));
-    const client = {
+    const client = poolClient({
       query: mockClientQuery,
       release: mock(() => {}),
-    };
+    });
     mockPool.connect = mock(async () => client);
 
     await provider.mergeData("admin@test.com", {
@@ -494,7 +503,7 @@ describe("PostgresStorageProvider", () => {
     };
     const clientQuery = mock(async (): Promise<{ rows: unknown[]; rowCount: number }> => ({ rows: [], rowCount: 1 }));
     const release = mock(() => {});
-    mockPool.connect = mock(async () => ({ query: clientQuery, release }));
+    mockPool.connect = mock(async () => poolClient({ query: clientQuery, release }));
     const warnSpy = spyOn(logger, "warn").mockImplementation(() => {});
     try {
       await provider.insertAccount(account);
@@ -527,7 +536,7 @@ describe("PostgresStorageProvider", () => {
         sql.includes("COUNT(*)") ? { rows: [{ n: 1 }] } : { rows: [] },
     );
     const release = mock(() => {});
-    mockPool.connect = mock(async () => ({ query: clientQuery, release }));
+    mockPool.connect = mock(async () => poolClient({ query: clientQuery, release }));
     await provider.deleteAccount("ada@example.com", { keepEnabledAdmin: true });
     const sql = (clientQuery.mock.calls as unknown[][]).map((call) => call[0] as string);
     expect(sql[0]).toBe("BEGIN");
@@ -544,7 +553,7 @@ describe("PostgresStorageProvider", () => {
         sql.includes("COUNT(*)") ? { rows: [{ n: "0" }], rowCount: 1 } : { rows: [], rowCount: 1 },
     );
     const release = mock(() => {});
-    mockPool.connect = mock(async () => ({ query: clientQuery, release }));
+    mockPool.connect = mock(async () => poolClient({ query: clientQuery, release }));
     const account = {
       email: "ada@example.com",
       passwordHash: "scrypt$hash",
@@ -572,7 +581,7 @@ describe("PostgresStorageProvider", () => {
       return { rows: [] };
     });
     const release = mock(() => {});
-    mockPool.connect = mock(async () => ({ query: clientQuery, release }));
+    mockPool.connect = mock(async () => poolClient({ query: clientQuery, release }));
     await expect(provider.deleteAccount("ada@example.com")).rejects.toThrow(/row delete refused/);
     const sql = (clientQuery.mock.calls as unknown[][]).map((call) => call[0] as string);
     expect(sql).toContain("ROLLBACK");
@@ -598,7 +607,7 @@ describe("PostgresStorageProvider", () => {
       if (answer instanceof Error) throw answer;
       return { rows: answer.rows ?? [], rowCount: answer.rowCount === undefined ? 1 : answer.rowCount };
     });
-    mockPool.connect = mock(async () => ({ query, release }));
+    mockPool.connect = mock(async () => poolClient({ query, release }));
     return { statements, release, sql: () => statements.map((statement) => statement.sql) };
   }
 
@@ -778,6 +787,114 @@ describe("PostgresStorageProvider", () => {
     await expect(provider.updateAccount(ACCOUNT, { expected: ACCOUNT })).rejects.toBe(failure);
     expect(rolledBack.sql()).toEqual(["BEGIN", expect.stringContaining("UPDATE accounts"), "ROLLBACK"]);
     expect(rolledBack.release).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * A pool client whose backend ends during a transaction. pg-pool removes its own `error`
+   * listener while a client is checked out, so `emitError` records whether the event would have
+   * escaped as an unhandled error, which ends the process.
+   */
+  function lostBackendClient(reply: (sql: string, client: { emitError: (error: Error) => void }) => Promise<unknown>) {
+    const escaped: unknown[] = [];
+    const statements: string[] = [];
+    const release = mock((_error?: Error | boolean) => {});
+    const client = poolClient({
+      query: mock(async (sql: string) => {
+        statements.push(sql);
+        return reply(sql, { emitError });
+      }),
+      release,
+    });
+    function emitError(error: Error): void {
+      try {
+        client.emit("error", error);
+      } catch (unhandled) {
+        escaped.push(unhandled);
+      }
+    }
+    mockPool.connect = mock(async () => client);
+    return { client, escaped, statements, release };
+  }
+
+  test("an error event on the checked-out client during a transaction rejects the transaction instead of escaping as an unhandled error", async () => {
+    await provider.initialize();
+    const terminated = Object.assign(new Error("terminating connection due to administrator command"), {
+      code: "57P01",
+    });
+    const notQueryable = new Error("Client has encountered a connection error and is not queryable");
+    let lost = false;
+    // The backend ends between two statements: pg emits the server's error on the idle client,
+    // and every later statement on it fails.
+    const backend = lostBackendClient(async (sql, { emitError }) => {
+      if (lost) throw notQueryable;
+      if (sql.includes("DELETE FROM passkey_credentials")) {
+        lost = true;
+        emitError(terminated);
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const warnSpy = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      await expect(provider.insertAccount(ACCOUNT)).rejects.toBe(notQueryable);
+      expect(backend.escaped).toEqual([]);
+      expect(warnSpy).toHaveBeenCalledWith(
+        "PostgreSQL storage connection error during a transaction",
+        expect.objectContaining({ provider: "postgres", error: terminated.message, code: "57P01" }),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+    expect(backend.statements.at(-1)).toBe("ROLLBACK");
+    expect(backend.release).toHaveBeenCalledTimes(1);
+    expect(backend.release).toHaveBeenCalledWith(notQueryable);
+    // The listener goes with the release; pg-pool's own idle listener takes over from there.
+    expect(backend.client.listenerCount("error")).toBe(0);
+  });
+
+  test("a failed ROLLBACK keeps the original error and releases the client with it", async () => {
+    await provider.initialize();
+    const terminated = Object.assign(new Error("terminating connection due to administrator command"), {
+      code: "57P01",
+    });
+    const ended = new Error("Connection terminated unexpectedly");
+    // The backend ends during a statement: the statement fails with 57P01, and the socket closing
+    // under the ROLLBACK fails it and emits on the client.
+    const backend = lostBackendClient(async (sql, { emitError }) => {
+      if (sql.includes("UPDATE accounts")) throw terminated;
+      if (sql === "ROLLBACK") {
+        emitError(ended);
+        throw ended;
+      }
+      return { rows: [], rowCount: 1 };
+    });
+    const warnSpy = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      await expect(provider.updateAccount(ACCOUNT, { expected: ACCOUNT })).rejects.toBe(terminated);
+      expect(warnSpy).toHaveBeenCalledWith(
+        "PostgreSQL storage ROLLBACK failed; discarding the connection",
+        expect.objectContaining({ provider: "postgres", error: ended.message }),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+    expect(backend.escaped).toEqual([]);
+    expect(backend.statements).toEqual(["BEGIN", expect.stringContaining("UPDATE accounts"), "ROLLBACK"]);
+    expect(backend.release).toHaveBeenCalledTimes(1);
+    expect(backend.release).toHaveBeenCalledWith(terminated);
+    expect(backend.client.listenerCount("error")).toBe(0);
+  });
+
+  test("a transaction that rolls back cleanly returns its client to the pool for reuse", async () => {
+    await provider.initialize();
+    const refused = new Error("statement refused");
+    const backend = lostBackendClient(async (sql) => {
+      if (sql.includes("UPDATE accounts")) throw refused;
+      return { rows: [], rowCount: 1 };
+    });
+    await expect(provider.updateAccount(ACCOUNT, { expected: ACCOUNT })).rejects.toBe(refused);
+    expect(backend.release).toHaveBeenCalledTimes(1);
+    expect(backend.release).toHaveBeenCalledWith(undefined);
+    expect(backend.client.listenerCount("error")).toBe(0);
   });
 
   test("updateAccount is conditional on the version it read", async () => {
