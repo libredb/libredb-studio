@@ -653,10 +653,12 @@ Exactly one terminal row ends a transaction, with `statement_type` `OTHER`:
 
 - `committed`, statement `COMMIT`, for the person's commit.
 - `rolled-back`, statement `ROLLBACK`, for the person's rollback and for the rollbacks Studio makes itself: when the grant level or credential under the transaction changed (409 `TRANSACTION_CREDENTIAL_CHANGED`, with `status` `error` when Studio could not confirm the rollback), and when a reload takes the grant away and closes the person's providers.
+  A close that fails records nothing and keeps the transaction's record, because the transaction may still be open, and is logged as `Governance teardown failed` with `transactionOutcome` `unknown`; the path that later sees the transaction end records its row.
 - `timed-out`, with no statement and `status` `cancelled`, when the database driver rolled the transaction back at its five-minute limit, which Studio notices at most 1 second after the limit or at the person's next request.
 
 A `COMMIT` or `ROLLBACK` that fails records `status` `error`: `rolled-back` when the transaction ended with it, else `open`.
 A statement that itself ends the transaction, such as a typed `COMMIT`, records only its `open` row.
+A statement, `COMMIT` or `ROLLBACK` request from a person who holds no open transaction on the connection, such as one sent right after the five-minute limit, is refused with 400 `QUERY_ERROR` before anything reaches the database, so no statement runs in a transaction without its row.
 
 How the editor and a multi-statement run record:
 
@@ -682,7 +684,7 @@ Delivery:
   A refusal for good is not a reason to wait, so Studio does not back off after it.
 - At shutdown Studio inserts every queued event at once, batch after batch and without waiting out a backoff, for at most 4 seconds, and logs how many events it could not send.
 - With `queryLog.onSinkFailure` set to `refuse`, Studio refuses new executions with 503 `AUDIT_UNAVAILABLE` while it is backing off or its queue is at least 90% full, which is 9000 events.
-  It checks before a statement reaches the database, so a refused request runs nothing, and it admits executions again once an insert settles its whole batch and the queue holds fewer than 9000 events.
+  It checks before a statement reaches the database, for an interactive transaction's `BEGIN`, statements, `COMMIT` and `ROLLBACK` alike, so a refused request runs nothing, and it admits executions again once an insert settles its whole batch and the queue holds fewer than 9000 events.
   A row the database refused for good never trips it, because Studio drops that row and goes on without backing off.
   The sink state's `backingOff` and `queued`, in the [heartbeat](#heartbeat) and on the [admin status](#admin-status), show when it applies.
 - With `continue`, the default, Studio keeps executing while it cannot record query events: their events wait in the queue, and once it is full the newest are dropped and counted in `dropped`.

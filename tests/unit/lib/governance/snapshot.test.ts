@@ -8,6 +8,7 @@
  */
 import { afterAll, afterEach, beforeEach, describe, expect, jest, mock, spyOn, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import type { QueryEventInput } from "@/lib/query-events/types";
 import path from "node:path";
 import { keyringFileOf, removeKeyringFiles, testKey, writeKeyringFile } from "../../../helpers/governance/keyring-file";
 import { sealSecret } from "../../../helpers/governance/lsb1-seal";
@@ -27,6 +28,16 @@ import {
 const realPg = await import("pg");
 mock.module("pg", () => ({ Pool: FakePool, Client: realPg.Client, types: realPg.types }));
 
+// The sink is replaced, so a recorded event is read here instead of being queued for the governance pool (STU-30).
+const realSink = { ...(await import("@/lib/query-events/sink")) };
+const recordedEvents: QueryEventInput[] = [];
+mock.module("@/lib/query-events/sink", () => ({
+  ...realSink,
+  recordQueryEvent: (input: QueryEventInput) => {
+    recordedEvents.push(input);
+  },
+}));
+
 const { loadGovernanceSnapshot } = await import("@/lib/governance/snapshot");
 const { closeGovernancePool } = await import("@/lib/governance/db");
 const { governanceFreshness, governanceServable } = await import("@/lib/governance/freshness");
@@ -37,6 +48,9 @@ const { resetGovernanceKeyring } = await import("@/lib/governance/keyring");
 const { pgSslConfig } = await import("@/lib/pg-ssl");
 const { logger } = await import("@/lib/logger");
 const { registerOwnerRemoval } = await import("@/lib/db/owner-removal");
+const { claimTransaction, releaseTransaction, transactionKey, transactionOwner } = await import(
+  "@/lib/api/transaction-ownership"
+);
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 
@@ -838,11 +852,61 @@ describe("teardown after a reload", () => {
       expect(logs.warn.mock.calls.filter(([message]: unknown[]) => message === "Governance teardown failed")).toEqual([
         [
           "Governance teardown failed",
-          { route: "governance/snapshot", connectionId: "billing", error: "the factory refused the removal" },
+          {
+            route: "governance/snapshot",
+            connectionId: "billing",
+            error: "the factory refused the removal",
+            transactionOutcome: "unknown",
+          },
         ],
       ]);
     } finally {
       unregister();
+    }
+  });
+
+  test("a teardown that fails records no rolled-back event and keeps the transaction's ownership record", async () => {
+    const unregister = registerOwnerRemoval(async (connectionId) => {
+      if (connectionId === "seed:billing") throw new Error("the factory refused the removal");
+    });
+    // Alice holds an open transaction on each connection, under her write grant.
+    const scope = (connectionId: string) => ({
+      principal: { subject: "alice", username: "alice@example.com", role: "user" as const },
+      connection: {
+        id: `seed:${connectionId}`,
+        name: connectionId,
+        engine: "postgres" as const,
+        accessLevel: "write" as const,
+      },
+    });
+    const orders = transactionKey("seed:orders", undefined, "alice");
+    const billing = transactionKey("seed:billing", undefined, "alice");
+    const ordersTransaction = claimTransaction(orders, "alice@example.com", "alice", "key-o", scope("orders"));
+    const billingTransaction = claimTransaction(billing, "alice@example.com", "alice", "key-b", scope("billing"));
+    recordedEvents.length = 0;
+    try {
+      serve({
+        connections: [connectionRow("orders", { write: WRITE }), connectionRow("billing", { write: WRITE })],
+        grants: [grantRow("alice", "orders", "write"), grantRow("alice", "billing", "write")],
+      });
+      await loadGovernanceSnapshot();
+
+      // Both grants are deleted: the removal for orders rolls its transaction back, and the one for billing fails.
+      serve({ connections: [connectionRow("orders", { write: WRITE }), connectionRow("billing", { write: WRITE })] });
+      await loadGovernanceSnapshot();
+      await settle();
+
+      expect(recordedEvents.map((event) => [event.transactionId, event.transactionOutcome])).toEqual([
+        [ordersTransaction.transactionId, "rolled-back"],
+      ]);
+      // The billing transaction may still be open: its record stays, with no terminal event, for the owner's next request.
+      expect(transactionOwner(billing)).toBe(billingTransaction);
+      expect(billingTransaction.ended).toBe(false);
+    } finally {
+      unregister();
+      releaseTransaction(orders);
+      releaseTransaction(billing);
+      recordedEvents.length = 0;
     }
   });
 });

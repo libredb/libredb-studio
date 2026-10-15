@@ -18,6 +18,7 @@ import { countCodeStatements, splitExecutionUnits, type ExecutionUnit } from "@/
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { noteAppendedBound } from "@/lib/db/utils/query-limiter";
 import { withTimeout } from "@/lib/db/utils/pool-manager";
+import { QueryError } from "@/lib/db/errors";
 import { logger } from "@/lib/logger";
 import type { UserPayload } from "@/lib/auth";
 import { clientAddress } from "@/lib/api/client-address";
@@ -180,6 +181,19 @@ async function rollBackOnProvider(
 }
 
 /**
+ * Under governance, the answer to a statement action from a caller who owns no transaction record here. One string
+ * literal, for the coverage reason above.
+ */
+const NO_OWNED_TRANSACTION =
+  "No transaction of yours is open on this connection, so Studio sent nothing to the database. Begin a new transaction to run statements in one.";
+
+/** The actions that send a statement to the database: BEGIN, the caller's own, COMMIT and ROLLBACK. */
+const STATEMENT_ACTIONS: ReadonlySet<unknown> = new Set(["begin", "query", "commit", "rollback"]);
+
+/** Of those, the ones that run inside the caller's transaction. */
+const IN_TRANSACTION_ACTIONS: ReadonlySet<unknown> = new Set(["query", "commit", "rollback"]);
+
+/**
  * Under governance, what every query event of a transaction the caller opens says about who and where (spec 7.9): the
  * session's subject, username and role, and the connection with the grant level its credential carries.
  */
@@ -321,11 +335,22 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Every action that sends a statement, a script of several included, passes the admission gate first, so
+    // while the query event sink cannot record a statement's event the statement is refused rather than run (spec 7.9).
+    if (STATEMENT_ACTIONS.has(action)) admitQueryExecution();
+    // Under governance every statement this route sends belongs to a transaction the caller owns, whose record carries
+    // the scope of its query events (spec 7.9). Without that record a statement would reach the database with no event
+    // behind it: right after the provider's own timeout (the reconcile above), or on a transaction whose record is
+    // gone. Every provider that implements the transaction interface refuses a statement outside a transaction with
+    // "No active transaction" anyway, so this is refused the same way, before the provider runs anything.
+    if (subject !== undefined && owner === null && IN_TRANSACTION_ACTIONS.has(action)) {
+      throw new QueryError(NO_OWNED_TRANSACTION, connection.type);
+    }
+
     switch (action) {
       case "begin": {
         // SANDBOX sends `requireReportedState: true`: it is about to promise a rollback, so a
         // server that never says whether a transaction is open is refused rather than trusted.
-        admitQueryExecution();
         const opened = await provider.beginTransaction({ requireReportedState: body.requireReportedState === true });
         // After the provider, never before: a begin that throws must leave no owner behind. Under governance the record
         // also keeps the key of the provider this transaction runs on, which the check above compares, and the scope of
@@ -395,7 +420,6 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ error: optionError }, { status: 400 });
         }
 
-        admitQueryExecution();
         // Under governance one `open` event per query action, carrying the text the user submitted (spec 7.9).
         const started = queryEventStart();
         const recordStatement = (status: "success" | "error", outcome: { rowCount?: number; error?: unknown }) => {

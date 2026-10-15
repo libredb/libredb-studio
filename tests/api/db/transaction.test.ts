@@ -1256,8 +1256,9 @@ describe("POST /api/db/transaction under governance (spec 9.4)", () => {
       heldByAnotherSession: false,
       startedAt: null,
     });
-    // Nor joins it: B's statement runs on B's own provider, never inside A's transaction.
-    expect((await send({ action: "query", sql: "SELECT 1" })).status).toBe(200);
+    // Nor joins it: B holds no transaction, so B's statement is refused before any provider runs it.
+    expect((await send({ action: "query", sql: "SELECT 1" })).status).toBe(400);
+    expect(providers.of("bob-subject")?.queryInTransaction).not.toHaveBeenCalled();
     // And B begins a transaction of its own.
     expect((await send({ action: "begin" })).status).toBe(200);
     expect(providers.of("bob-subject")?.beginTransaction).toHaveBeenCalledTimes(1);
@@ -1535,7 +1536,7 @@ describe("POST /api/db/transaction under governance (spec 9.4)", () => {
     });
     expect(statement.transactionId).toMatch(/^[0-9a-f-]{36}$/);
     expect(committed.transactionId).toBe(statement.transactionId);
-    expect(mockAdmitQueryExecution).toHaveBeenCalledTimes(2);
+    expect(mockAdmitQueryExecution).toHaveBeenCalledTimes(3);
 
     // The next transaction carries another id, and its rollback ends it.
     expect((await send({ action: "begin" })).status).toBe(200);
@@ -1665,6 +1666,73 @@ describe("POST /api/db/transaction under governance (spec 9.4)", () => {
     expect(providers.of("alice-subject")?.beginTransaction).not.toHaveBeenCalled();
     expect(providers.of("alice-subject")?.queryInTransaction).not.toHaveBeenCalled();
     expect(recordedEvents).toEqual([]);
+  });
+
+  test("under governance a query action without a transaction the caller owns sends no statement unrecorded", async () => {
+    const providers = providerPerOwner();
+    as("alice@example.com", "alice-subject");
+    expect((await send({ action: "begin" })).status).toBe(200);
+    const provider = providers.of("alice-subject");
+    // The provider's own timeout rolled the transaction back, and the reconcile of the next request drops the record.
+    await provider?.rollbackTransaction();
+    provider?.rollbackTransaction.mockClear();
+
+    const afterTimeout = await send({ action: "query", sql: "INSERT INTO orders VALUES (1)" });
+    expect(afterTimeout.status).toBe(400);
+    expect((await parseResponseJSON<{ error: string }>(afterTimeout)).error).toContain("No transaction of yours");
+
+    // A transaction the provider holds with no record of the caller's behind it, as a record lost to a race would leave.
+    expect((await send({ action: "begin" })).status).toBe(200);
+    releaseTransaction(transactionKey("seed:orders", undefined, "alice-subject"));
+    for (const body of [
+      { action: "query", sql: "INSERT INTO orders VALUES (2)" },
+      { action: "query", sql: "UPDATE orders SET n = 1; DELETE FROM orders" },
+      { action: "commit" },
+      { action: "rollback" },
+    ]) {
+      expect((await send(body)).status).toBe(400);
+    }
+
+    expect(provider?.queryInTransaction).not.toHaveBeenCalled();
+    expect(provider?.commitTransaction).not.toHaveBeenCalled();
+    expect(provider?.rollbackTransaction).not.toHaveBeenCalled();
+    // Only the timeout's own terminal event: no statement reached the database without its event.
+    expect(recordedEvents.map((event) => [event.transactionOutcome, event.statement])).toEqual([["timed-out", null]]);
+  });
+
+  test("under governance every action that sends a statement is refused with AUDIT_UNAVAILABLE while the sink refuses", async () => {
+    const providers = providerPerOwner();
+    as("alice@example.com", "alice-subject");
+    expect((await send({ action: "begin" })).status).toBe(200);
+    const provider = providers.of("alice-subject");
+    provider?.beginTransaction.mockClear();
+    const { SeedConnectionError } = await import("@/lib/seed/resolve-connection");
+    mockAdmitQueryExecution.mockImplementation(() => {
+      throw Object.assign(
+        new SeedConnectionError("Query execution is unavailable while this server cannot record query events", 503),
+        { code: "AUDIT_UNAVAILABLE" },
+      );
+    });
+
+    for (const body of [
+      { action: "query", sql: "INSERT INTO orders VALUES (1)" },
+      { action: "query", sql: "UPDATE orders SET n = 1; DELETE FROM orders" },
+      { action: "commit" },
+      { action: "rollback" },
+      { action: "begin" },
+    ]) {
+      const res = await send(body);
+      expect(res.status).toBe(503);
+      expect((await parseResponseJSON<{ code: string }>(res)).code).toBe("AUDIT_UNAVAILABLE");
+    }
+
+    expect(provider?.beginTransaction).not.toHaveBeenCalled();
+    expect(provider?.queryInTransaction).not.toHaveBeenCalled();
+    expect(provider?.commitTransaction).not.toHaveBeenCalled();
+    expect(provider?.rollbackTransaction).not.toHaveBeenCalled();
+    expect(recordedEvents).toEqual([]);
+    // The transaction is still the caller's, and the status answer sends no statement.
+    expect((await send({ action: "status" })).status).toBe(200);
   });
 });
 
