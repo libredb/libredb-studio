@@ -51,6 +51,16 @@ With these files a control plane can:
 
 An installer pairs a control plane only with the Studio release whose files that control plane vendored.
 
+Studio holds itself to the same manifest.
+Its live check, `tests/live/governance-live-check.ts`, builds a governance source in a throwaway PostgreSQL 17 database from the manifest alone, with `tests/helpers/governance/fixture-ddl.ts`: the roles, one source table per read view with exactly the published columns and CHECKs, the views with the published options, the grants, and a statement-level trigger on each source table that sends the view's notification kind.
+It seeds connections sealed to a fresh key and runs Studio's own snapshot loader as `libredb_studio`, so a view shape, a grant or a statement that drifts from the manifest fails Studio's CI before a control plane meets it.
+Run it against a disposable server as a superuser, because it creates and drops a database and the roles:
+
+```sh
+LIBREDB_LIVE_POSTGRES_URL='postgresql://postgres:<password>@127.0.0.1:55432/postgres?sslmode=disable' \
+  bun tests/live/governance-live-check.ts
+```
+
 ## Schema and roles
 
 The contract lives in one schema, `bridge` unless `GOVERNANCE_POSTGRES_SCHEMA` names another.

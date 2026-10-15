@@ -428,6 +428,10 @@ jobs:
           # STORAGE_POSTGRES_SCHEMA on the same server: a throwaway database and a role that owns only schema
           # studio and has no CREATE on public, so one unqualified table, foreign key or index fails the step.
           bun tests/live/storage-schema-postgres.ts
+          # Governance on the same server: a throwaway database holding a governance source built from the published
+          # manifest, read by the real snapshot loader as libredb_studio. Any failed case exits non-zero and fails the
+          # step; later governance slices add their cases to the same script.
+          bun tests/live/governance-live-check.ts
           docker rm -f passkey-contract-pg
         env:
           LIBREDB_LIVE_POSTGRES_URL: postgresql://postgres:contract@127.0.0.1:55432/postgres?sslmode=disable
