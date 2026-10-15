@@ -168,8 +168,9 @@ Both depend on exports the client does not document as public API; the seam guar
 ### 3.5 A host that embeds the provider factory
 
 The client handles some answers inside its socket handler, where an exception is uncaught.
-The adapter keeps every input known to throw there away from the client: it refuses an internal topic ([§6.1](#kinds-folders-and-identity)), a group that is not a consumer group ([§6.1](#consumer-groups-and-lag)) and a SASL user that is not a string ([§4.2](#42-authentication-and-never-in-the-clear-k3)) before the call, and a read's answer never reaches the client's READ_COMMITTED filter ([§3.4](#34-one-client-per-connection-and-no-fetch-session)).
-A malformed answer, which a hostile broker can send ([§4.4](#44-the-broker-chooses-where-studio-connects-next)), can still throw there on the client's other calls: for example a consumer group member whose assignment is shorter than its version and count, which the client's `describeGroups` decodes unchecked.
+The adapter keeps every input known to throw there away from the client: it refuses an internal topic ([§6.1](#kinds-folders-and-identity)) and a SASL user that is not a string ([§4.2](#42-authentication-and-never-in-the-clear-k3)) before the call, and a read's answer never reaches the client's READ_COMMITTED filter ([§3.4](#34-one-client-per-connection-and-no-fetch-session)).
+A malformed answer, which a hostile broker can send ([§4.4](#44-the-broker-chooses-where-studio-connects-next)), can still throw there on the client's other calls.
+`describeGroups` is no longer one of them: since `@platformatic/kafka` 2.13.0 it resolves a classic group whose member's subscription or assignment it cannot decode with the group's `error` set and only the members before that one, and the provider refuses that group its whole description instead ([§6.1](#consumer-groups-and-lag)).
 In the standalone server, whose Next.js router server registers an `uncaughtException` handler, the exception is logged and that one call never settles until its timeout.
 A host that embeds the package's provider factory, `createDatabaseProvider` or `getOrCreateProvider` from `src/exports/providers.ts`, in a Node process that installs no `uncaughtException` handler, ends the process instead.
 Such a host should install a handler before it connects a Kafka provider to a broker it does not trust.
@@ -457,7 +458,7 @@ Listings are filtered by the principal's Describe ACL: a principal with no ACL g
 
 Groups are listed with both types, classic and the Kafka 4 `consumer` protocol (KIP-848), because a listing with no type filter omits KIP-848 groups.
 The listing keeps consumer groups only, by Kafka's own rule, the one `kafka-consumer-groups.sh --list` applies: a `consumer` group, or a `classic` group whose protocol type is `consumer` or empty.
-Kafka Connect and Schema Registry coordinate through classic groups that are not consumer groups; they are not listed, the client would fail inside its socket handler decoding their member metadata as a subscription, and they have no committed offsets to show lag for.
+Kafka Connect and Schema Registry coordinate through classic groups that are not consumer groups; they are not listed, because a consumer group is what this reading lists and they have no committed offsets to show lag for.
 A broker below ListGroups v5, such as Apache Kafka before 3.8, reports no group type, so its groups are listed as classic, and a Kafka 3.7 broker with the early-access KIP-848 protocol switched on can hold consumer-protocol groups that this reading cannot tell apart.
 A classic group is described by `describeGroups`, and a `consumer` group by ConsumerGroupDescribe (API 69), because `describeGroups` reports a KIP-848 group as `Dead` while the broker says `Empty`, and API 69 refuses a classic one.
 An error API 69 answers for the group is read by its protocol error name, as [§10](#10-error-handling) reads any other and never by the broker's text: a refused group or topic is an `AuthenticationError` naming it, a coordinator that moved or is still loading a `QueryError` naming the error, and `GROUP_ID_NOT_FOUND`, for an id with no consumer-protocol group, a `QueryError` saying so.
@@ -466,6 +467,8 @@ Lag per partition is the high watermark minus the committed offset, the log end 
 A partition with no committed offset shows lag as `null` with the note "no committed offset", never 0 and never the whole log, and a committed or assigned topic whose latest offsets cannot be read, an internal topic or one with a leaderless partition, keeps its rows with no latest offset and the reason.
 The broker leaves every topic the principal may not describe out of a group's committed offsets, with no error, and the protocol gives the provider no way to see it: such a topic the group only committed on has no rows, and one a member of a classic group is assigned keeps its rows with no committed or latest offset and the broker's refusal as the reason.
 A consumer-protocol group with a member assigned such a topic is refused its whole description, which its source shows as that refusal ([§6.2](#62-object-source-789)).
+A classic group with a member whose subscription or assignment the client cannot decode is refused its whole description, a `QueryError` naming the group, because the client then answers only the members before that one and the list would read as complete.
+The listing, every other group and every topic are unaffected.
 
 ### 6.2 Object source (#789)
 
@@ -558,6 +561,7 @@ Mapped from the protocol error name, the client's error code and the Node error 
 | a partition the topic does not have | `QueryError` naming the partitions the topic has |
 | an unknown topic ("Unknown topic <name>.") | `QueryError`: the topic does not exist |
 | an internal topic, refused by name before any request names it | `QueryError`: internal to Kafka and not readable here |
+| a classic group whose member's subscription or assignment the client cannot decode | `QueryError` naming the group: the member list would be incomplete ([§6.1](#consumer-groups-and-lag)) |
 | a partition with no leader | `QueryError` naming the leaderless partitions |
 | `OFFSET_OUT_OF_RANGE` on a fetch | `QueryError` naming the partition, the offset and the range read again once after the refusal, or the offsets answer read again that left the partition out ([§5.1](#51-the-read-request)) |
 | a broker whose Fetch range does not hold version 13 | `QueryError` naming the broker's range and the version a read sends |

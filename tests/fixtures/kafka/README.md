@@ -1,6 +1,7 @@
 # Kafka fixtures
 
 Verbatim answers of `@platformatic/kafka` 2.11.0 against the compose `kafka`, `redpanda` and `kafka-auth` services, captured before any provider code was written (#1088, spec section 10, gate 4).
+The two `describe-groups-classic-undecodable-*.json` captures are the exception: they are `@platformatic/kafka` 2.13.0 answers, taken later for #1520, with their provenance below.
 A test that needs a real broker answer loads one of these files through `tests/helpers/kafka-fixtures.ts` instead of writing its own.
 The capture harness is local and never committed; it called every surface separately, recorded a pass or the verbatim error, and rendered the tables below from the files, so no value in them was typed by hand.
 
@@ -27,6 +28,12 @@ bun docker/kafka/seed-binary.ts localhost:29092
 
 Before and after each broker's whole capture the harness took the broker state the read-only guarantee covers (topics, groups and their committed offsets, every partition's earliest and latest offset, the topic and broker configs, and on `kafka-auth` the ACLs), and the two snapshots were identical on all three brokers.
 On Kafka and Redpanda the broker log of that window named neither the never-joined group nor an auto-created topic.
+
+The two `describe-groups-classic-undecodable-*.json` captures postdate the rest and were taken with a different client version: `@platformatic/kafka` 2.13.0 (the version the provider now pins) under Bun 1.4.2, against the compose `kafka` service of the Kafka row above (`apache/kafka:4.3.1`, `apache/kafka@sha256:77e3df9054047a88b520d0cc46e16696d3b22022e1d580aeccd2632df6532837`, cluster id `4L6g3nShT-eMCtK--X86sw`), captured 2026-10-14T19:57Z, the broker freshly started.
+Each group was built by a disposable client using the library's JoinGroup v5 and SyncGroup v3 as three static members of classic group `issue1520-subscription` / `issue1520-assignment`, protocol type `consumer`, protocol `issue1520-custom`.
+After a valid rebalance, the member the broker listed second was rebroken: its subscription became `0001 00000001 000f 6973737565313532302d746f706963 ffffffff 00` (version 1, a complete v0 body, one stray byte), or the leader sent it the assignment `0000 00000005` (5 topics declared, none present).
+The raw DescribeGroups v5 answer held all three members in Stable state; the client's answer holds the first one and `error`.
+The error was encoded like the failure captures (`message`, `code`, `class`, its enumerable fields, `cause`), without `stack`, which Bun makes enumerable.
 
 ## Encoding
 
@@ -59,6 +66,8 @@ JSON has no `undefined`, so an own key whose value was `undefined` is absent fro
 | `configs-topic-orders.json` | pass | admin.describeConfigs({ resources: [{ resourceType: TOPIC, resourceName: "orders" }] }) |
 | `consumer-group-describe.json` | pass | consumerGroupDescribeV0.api.async(conn, ["lag-kip848"], false) |
 | `describe-groups-classic.json` | pass | admin.describeGroups({ groups: ["lag-classic"] }) |
+| `describe-groups-classic-undecodable-assignment.json` | pass | admin.describeGroups({ groups: ["issue1520-assignment"] }) |
+| `describe-groups-classic-undecodable-subscription.json` | pass | admin.describeGroups({ groups: ["issue1520-subscription"] }) |
 | `error-consumer-group-describe-mixed.json` | fail | consumerGroupDescribeV0.api.async(conn, ["lag-kip848", "lag-classic"], false) |
 | `error-offset-out-of-range.json` | fail | consumer.fetch(orders partition 1 offset 1000) |
 | `error-unknown-topic.json` | fail | admin.metadata({ topics: ["no-such-topic"], autocreateTopics: false }) |

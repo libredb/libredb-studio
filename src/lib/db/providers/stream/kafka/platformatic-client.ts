@@ -121,11 +121,17 @@ interface LibConfigResource {
 interface LibClassicGroup {
   state: string;
   protocol: string;
-  /** A member whose metadata the library could not read carries no assignments (dist/clients/admin/admin.js). */
+  /**
+   * A member whose consumer-protocol subscription or assignment the library cannot decode is absent
+   * from the answer, and so is every member listed after it (2.13.0; platformatic/kafka#429), with
+   * `error` set on the group — the answer reads as a complete member list when it is not.
+   */
   members: Map<
     string,
     { id: string; clientId: string; clientHost: string; assignments?: Map<string, { partitions: number[] }> }
   >;
+  /** The group's own error, set when a member's subscription or assignment could not be decoded. */
+  error?: unknown;
 }
 interface LibGroupOffsets {
   groupId: string;
@@ -914,8 +920,8 @@ function mapConfigs(resources: LibConfigResource[], resourceType: number, resour
 }
 
 async function describeClassic(admin: AdminLike, listing: KafkaGroupListing): Promise<KafkaGroupDescription> {
-  // The listing already dropped every other protocol type; this pins the rule at the one call
-  // it protects, because the library decodes each member's metadata as a consumer subscription.
+  // The listing already dropped every other protocol type, by Kafka's own consumer-group rule; this
+  // pins that rule at the one call it protects.
   if (listing.protocolType !== "consumer" && listing.protocolType !== "") {
     throw new KafkaError(
       "unknown-object",
@@ -928,6 +934,15 @@ async function describeClassic(admin: AdminLike, listing: KafkaGroupListing): Pr
     throw new KafkaError(
       "protocol",
       `The broker's group description holds no entry for group ${JSON.stringify(listing.groupId)}`,
+    );
+  // Since 2.13.0 the library no longer throws on a member whose subscription or assignment it cannot
+  // decode: it answers the members before that one and sets `error`, so the list would read as complete.
+  // The upstream change that keeps every member (platformatic/kafka#460) still sets `error`, so adopting
+  // it means replacing this check, not just bumping the version.
+  if (group.error !== undefined)
+    throw new KafkaError(
+      "protocol",
+      `Consumer group ${JSON.stringify(listing.groupId)} could not be described: a member's subscription or assignment could not be decoded, so the member list would be incomplete`,
     );
   return {
     groupId: listing.groupId,
