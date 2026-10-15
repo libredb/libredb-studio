@@ -68,8 +68,8 @@ describe("parseTables and findControlTable", () => {
     expect(table?.rows).toHaveLength(PROGRAMME_CONTROL_IDS.length);
   });
 
-  test("the programme ends with the Oxia read-only client, the DuckDB extension and external-access controls, the S3 controls, the Kubernetes request allowlist, the RabbitMQ read path, the Apache Spark session and answer bounds, then the governance sealed credentials", () => {
-    expect(PROGRAMME_CONTROL_IDS.slice(-9)).toEqual([
+  test("the programme ends with the Oxia read-only client, the DuckDB extension and external-access controls, the S3 controls, the Kubernetes request allowlist, the RabbitMQ read path, the Apache Spark session and answer bounds, then the governance sealed credentials and query event capture", () => {
+    expect(PROGRAMME_CONTROL_IDS.slice(-10)).toEqual([
       "3.15",
       "3.16",
       "3.17",
@@ -79,8 +79,9 @@ describe("parseTables and findControlTable", () => {
       "3.21",
       "3.22",
       "3.23",
+      "3.24",
     ]);
-    expect(PROGRAMME_CONTROL_IDS).toHaveLength(45);
+    expect(PROGRAMME_CONTROL_IDS).toHaveLength(46);
   });
 
   test("ignores a table that is not the control table", () => {

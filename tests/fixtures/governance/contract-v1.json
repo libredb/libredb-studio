@@ -1879,6 +1879,10 @@
       {
         "code": "TRANSACTION_CREDENTIAL_CHANGED",
         "httpStatus": 409
+      },
+      {
+        "code": "AI_DISABLED",
+        "httpStatus": 403
       }
     ]
   },
