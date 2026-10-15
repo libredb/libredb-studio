@@ -406,11 +406,18 @@ describe("which database a connection would be read from", () => {
     // under the next, so the two are not two views of one answer.
     const same = connectionResolutionKey({ ...base, type: "modbus" });
     const one = JSON.stringify([{ name: "volts", unitId: 1, table: "holding_register", address: 100, type: "uint16" }]);
-    const other = JSON.stringify([{ name: "volts", unitId: 3, table: "coil", address: 5, type: "bool" }]);
+    // The same NAME over a different address is what the key has to separate, so the two documents
+    // are made the SAME LENGTH and the test MEASURES that rather than claiming it: any byte of
+    // difference moves the key on its own, because the key carries the whole document, and a case
+    // whose two maps differ in length would pass without ever reaching the address. `unit` is the
+    // padding - a unit of measure a coil can carry - chosen to bring this document to the other's
+    // eighty-six bytes.
+    const other = JSON.stringify([
+      { name: "volts", unitId: 3, table: "coil", address: 5, type: "bool", unit: "on/off" },
+    ]);
+    expect(Buffer.byteLength(other, "utf8")).toBe(Buffer.byteLength(one, "utf8"));
 
     expect(connectionResolutionKey({ ...base, type: "modbus", registerMap: one })).not.toBe(same);
-    // The same NAME over a different address is the case the key has to separate, not merely a
-    // different document: two maps of equal length naming one point each.
     expect(connectionResolutionKey({ ...base, type: "modbus", registerMap: other })).not.toBe(
       connectionResolutionKey({ ...base, type: "modbus", registerMap: one }),
     );
