@@ -642,8 +642,8 @@ Studio records one query event per executed unit:
 | `transaction` | One per statement in an interactive transaction (`transaction_outcome` `open`), plus one when it ends: `committed`, `rolled-back` or `timed-out`. All rows of one transaction share `transaction_id`. |
 | `object-edit` | One per applied object edit, with `correlation_id` set to the edit plan's id. |
 | `maintenance` | One per administrator maintenance action. |
-| `profile` | One per data profile run, which reads aggregates of user data. |
-| `key-scan` | One per page of a key scan, which reads key names. |
+| `profile` | One per data profile run (`POST /api/db/profile`), which reads aggregates of user data. Its statement is the profiled object's path as the route quotes it into its reads, such as `"public"."orders"`, or for MongoDB the JSON address of the collection, such as `{"database":"shop","collection":"items"}`; its `statement_type` is `SELECT` on every engine, and `row_count` is NULL. |
+| `key-scan` | One per page of a key scan (`POST /api/db/keys/scan`), which reads key names. Its statement is the page request, `SCAN <cursor> [MATCH <pattern>] COUNT <count>` on every engine that walks a key space, its `statement_type` is `OTHER`, and `row_count` is the number of keys the page returned. |
 
 A later version adds `agent`, `agent-handover` and `mcp` once the agent and MCP run under governance, and a control plane shows any source it does not know as it is.
 Catalog and metadata reads, schema browsing, monitoring, health checks and pool statistics are not query events.
@@ -682,6 +682,9 @@ Capture follows `queryLog.statementCapture`, which is `none` while the control p
 - `full` keeps every other secret written into a statement, such as a Redis `AUTH` argument, and an error text that quotes a statement in the driver's own words can carry one, so choose it only where the statements themselves must be kept.
 - A refused request whose connection did not resolve, such as one for a connection the caller holds no grant on, stores no statement and no error text in any mode, because the engine that would read them is unknown.
 - In every mode `statement_type` is `SELECT`, `INSERT`, `UPDATE` or `DELETE` from the keyword that operates the statement, also behind a `WITH`, `DDL` for `CREATE`, `ALTER`, `DROP` and `TRUNCATE`, and `OTHER` for any other statement, for a unit without text and for every engine whose statements are not SQL.
+  A `profile` row is `SELECT` and a `key-scan` row `OTHER` on every engine, because their statement names what was read rather than being a statement the user wrote.
+- The statement of a `profile` or `key-scan` row is captured like any statement of its engine, so under `redacted` a quoted SQL name is kept while a Redis page request keeps only `SCAN` and one `?` per argument, and no cursor or pattern value reaches the row.
+- A request the admission gate refuses records one `refused` row with its route's source, the connection's engine and access level, and `error_code` `AUDIT_UNAVAILABLE`.
 - `explain` is `plan` for a plan request that only estimates and `analyze` for one that runs the statement.
 - `error_code` is the SQLSTATE, the driver's code or the API code of a refusal, cut to 64 characters, in every mode.
 

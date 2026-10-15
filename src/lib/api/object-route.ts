@@ -30,6 +30,7 @@ import type {
   ProviderCapabilities,
 } from "@/lib/db/types";
 import type { ApiErrorCode } from "@/lib/api/error-codes";
+import type { UserPayload } from "@/lib/auth";
 
 /**
  * Shared request handling for the nine object routes under /api/db/objects (#789).
@@ -146,13 +147,13 @@ export function objectRouteErrorBody(error: ObjectRouteError): {
  * `route` is the same string the caller passed, repeated here so a route that needs it for an
  * audit event does not have to hold a second copy of its own name.
  *
- * The session is typed LOOSELY, `role: string` and an optional `username`, rather than as
- * `UserPayload`. It is a read-only view for a consumer that only ever writes these two into a log
- * line, and widening here means this interface does not move when the auth payload grows a field.
+ * The session is a read-only view of the three `UserPayload` fields a consumer reads: the role and
+ * username an audit line writes, and the identity provider subject a query event names its caller
+ * by (spec 7.9), so this interface moves only when a consumer needs another field.
  */
 export interface ObjectRequestContext {
   readonly connection: DatabaseConnection;
-  readonly session: { readonly role: string; readonly username?: string };
+  readonly session: Readonly<Pick<UserPayload, "role" | "username" | "idpSubject">>;
   readonly route: string;
 }
 

@@ -215,6 +215,22 @@ describe("buildQueryEvent", () => {
     });
   });
 
+  test("a statement type the route gives is kept whatever the text reads as, and the text is still captured", () => {
+    const mongodb = { ...ORDERS, id: "seed:catalog", engine: "mongodb" } as const;
+
+    expect(
+      build(input({ source: "profile", statement: '"public"."orders"', statementType: "SELECT" }), FULL),
+    ).toMatchObject({ statement_type: "SELECT", statement: '"public"."orders"' });
+    expect(
+      build(
+        input({ connection: mongodb, source: "profile", statement: '{"collection":"items"}', statementType: "SELECT" }),
+      ).statement_type,
+    ).toBe("SELECT");
+    expect(build(input({ source: "key-scan", statement: "SELECT 1", statementType: "OTHER" })).statement_type).toBe(
+      "OTHER",
+    );
+  });
+
   test("capture redacted stores redactStatement() with its fingerprint and no error text", () => {
     const statement = "SELECT id, total FROM orders WHERE customer_id = 42 AND note = 'gift' -- vip";
     const redacted = redactStatement(statement, "postgres");

@@ -86,6 +86,11 @@ export interface QueryEventInput {
   /** The text the user submitted, never a statement Studio built around it; null when the unit has no text. */
   readonly statement: string | null;
   readonly status: QueryEventStatus;
+  /**
+   * What the unit is when its route knows it better than its text says, such as a profile, which reads aggregates of
+   * user data though its text is the profiled object's path; absent, it is read from the text.
+   */
+  readonly statementType?: StatementType;
   /** `queryEventStart()` before the unit ran. */
   readonly started: QueryEventStart;
   /** The plan mode the request asked for, for a plan request only. */

@@ -257,7 +257,7 @@ export function buildQueryEvent(
     engine: connection.engine,
     access_level: connection.accessLevel,
     source: input.source,
-    statement_type: statementType(statement, connection.engine),
+    statement_type: input.statementType ?? statementType(statement, connection.engine),
     explain: input.explain === undefined ? null : EXPLAIN[input.explain],
     statement_capture: policy.statementCapture,
     statement: captured.statement,
