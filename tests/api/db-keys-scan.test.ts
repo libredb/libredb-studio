@@ -11,10 +11,17 @@
  * every file under `tests/api/` already uses — bun's `mock.module()` is scoped per test FILE, so
  * hoisting these into a helper breaks re-application (`tests/api/db/schema-list.test.ts`).
  */
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
 import { createMockRequest, parseResponseJSON } from "../helpers/mock-next";
 import { createMockProvider } from "../helpers/mock-provider";
+import { grantedSnapshot } from "../helpers/governance/granted-snapshot";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
+import { governanceEnabled } from "@/lib/governance/config";
+import { recordGovernanceSnapshot, resetGovernanceState } from "@/lib/governance/state";
+import { validateSettings } from "@/lib/governance/settings";
+import { buildQueryEvent, queryEventPolicy } from "@/lib/query-events/build";
+import type { QueryEventInput } from "@/lib/query-events/types";
+import type { QueryEventSinkState } from "@/lib/query-events/sink";
 import type { DatabaseProvider, KeyScanOptions, KeyScanPage } from "@/lib/db/types";
 import { ETCD_KEY_SCAN } from "@/lib/db/providers/keyvalue/etcd/key-scan";
 import { OXIA_KEY_SCAN } from "@/lib/db/providers/keyvalue/oxia/key-scan";
@@ -48,11 +55,35 @@ mock.module("@/lib/auth", () => ({
   logout: mock(async () => {}),
 }));
 
+// The query event sink, standing in for the real one: it keeps what the route records, and only under governance, as
+// the real `recordQueryEvent()` does, and reports the state a test gives it, which the admission gate reads.
+const recordedEvents: QueryEventInput[] = [];
+const IDLE_SINK: QueryEventSinkState = {
+  queued: 0,
+  dropped: 0,
+  rejected: 0,
+  lastFlushAt: null,
+  backingOff: false,
+  lastSqlstate: null,
+};
+let sinkState: QueryEventSinkState = IDLE_SINK;
+mock.module("@/lib/query-events/sink", () => ({
+  QUERY_EVENT_QUEUE_CAPACITY: 10_000,
+  QUERY_EVENT_BATCH_ROWS: 500,
+  recordQueryEvent: (input: QueryEventInput) => {
+    if (governanceEnabled()) recordedEvents.push(input);
+  },
+  queryEventSinkState: () => sinkState,
+  flushQueryEvents: async () => {},
+  resetQueryEventSink: () => {},
+}));
+
 mock.module("@/lib/seed/resolve-connection", () => {
   class SeedConnectionError extends Error {
     constructor(
       message: string,
       public statusCode: number,
+      public code?: string,
     ) {
       super(message);
       this.name = "SeedConnectionError";
@@ -907,5 +938,161 @@ describe("POST /api/db/keys/scan over the OPC UA level provider", () => {
 
     expect(status).toBe(400);
     expect(body.error).toContain("cursor");
+  });
+});
+
+describe("POST /api/db/keys/scan under governance", () => {
+  const GOVERNANCE_ENV: Readonly<Record<string, string>> = {
+    GOVERNANCE_SOURCE: "postgres",
+    GOVERNANCE_POSTGRES_URL: "postgresql://libredb_studio@db.internal:5432/libredb?sslmode=verify-full",
+    GOVERNANCE_INSTANCE_ID: "libredb-studio",
+  };
+  const SUBJECT = "8d0f6a4e-2b1c-4f3a-9e7d-5c6b4a3f2e1d";
+  /** A governed connection as `resolveConnection` hands it to the route: a seed id and the grant's level. */
+  const GOVERNED = { ...CONNECTION, id: "seed:cache", name: "Cache", grantLevel: "read" };
+  let saved: Record<string, string | undefined> = {};
+
+  /** Swaps in a snapshot whose `settings_v1` holds `values`, as a load of the governance source does. */
+  function settings(values: Record<string, unknown>): void {
+    recordGovernanceSnapshot({
+      ...grantedSnapshot([], []),
+      settings: validateSettings(
+        Object.entries(values).map(([key, value]) => ({ key, value, updated_at: new Date() })),
+        1,
+      ),
+    });
+  }
+
+  /** The rows the real builder makes of the events the route recorded, under the policy in force. */
+  const rows = () =>
+    recordedEvents.map((input) => buildQueryEvent(input, queryEventPolicy(), { studioInstance: "libredb-studio" }));
+
+  async function postGoverned<T = Record<string, unknown>>(body: Record<string, unknown>) {
+    return post<T>({ connection: GOVERNED, ...body });
+  }
+
+  beforeEach(() => {
+    saved = {};
+    for (const [name, value] of Object.entries(GOVERNANCE_ENV)) {
+      saved[name] = process.env[name];
+      process.env[name] = value;
+    }
+    recordedEvents.length = 0;
+    sinkState = IDLE_SINK;
+    mockGetSession.mockImplementation(async () => ({ role: "user", username: "alice", idpSubject: SUBJECT }));
+  });
+
+  afterEach(() => {
+    resetGovernanceState();
+    mockGetSession.mockImplementation(async () => ({ role: "admin", username: "admin" }));
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  });
+
+  test("governance: each page records one key-scan event with the number of keys returned", async () => {
+    settings({ "queryLog.statementCapture": "full" });
+    const walk = mock(async (options: KeyScanOptions) =>
+      options.cursor === "0" ? PAGE : { keys: ["app:z"], cursor: "0", total: 31, types: { "app:z": "string" } },
+    );
+    activeProvider = declaringProvider(walk);
+
+    const first = await postGoverned<KeyScanPage>({ pattern: "app:*", count: 100 });
+    const second = await postGoverned<KeyScanPage>({ cursor: "2", pattern: "app:*", count: 100 });
+
+    expect(first).toEqual({ status: 200, body: PAGE });
+    expect(second.status).toBe(200);
+    expect(rows()).toEqual([
+      expect.objectContaining({
+        source: "key-scan",
+        subject: SUBJECT,
+        session_role: "user",
+        connection_id: "cache",
+        engine: "redis",
+        access_level: "read",
+        statement_type: "OTHER",
+        statement: "SCAN 0 MATCH app:* COUNT 100",
+        row_count: 2,
+        status: "success",
+      }),
+      expect.objectContaining({ statement: "SCAN 2 MATCH app:* COUNT 100", row_count: 1, status: "success" }),
+    ]);
+  });
+
+  test("governance: a page without a pattern records no MATCH, and redacted capture keeps no cursor or pattern", async () => {
+    settings({ "queryLog.statementCapture": "redacted" });
+    activeProvider = declaringProvider(async () => PAGE);
+
+    await postGoverned({});
+    await postGoverned({ cursor: "17", pattern: "secret:customer-42:*" });
+
+    const statements = rows().map((row) => row.statement);
+    expect(statements).toEqual(["SCAN ? ? ?", "SCAN ? ? ? ? ?"]);
+    expect(JSON.stringify(rows())).not.toContain("customer-42");
+  });
+
+  test("governance: a walk that fails records status error, and a cancelled one status cancelled", async () => {
+    settings({});
+    activeProvider = declaringProvider(async () => {
+      throw new ConnectionError("Connection lost", "redis");
+    });
+    const failed = await postGoverned({});
+
+    const { QueryCancelledError } = await import("@/lib/db/errors");
+    activeProvider = declaringProvider(async () => {
+      throw new QueryCancelledError("Query was cancelled", "redis");
+    });
+    await postGoverned({});
+
+    expect(failed.status).toBe(503);
+    expect(rows()).toEqual([
+      expect.objectContaining({ status: "error", error_code: "CONNECTION_ERROR", row_count: null, statement: null }),
+      expect.objectContaining({ status: "cancelled", error_code: "QUERY_CANCELLED", row_count: null }),
+    ]);
+  });
+
+  test("governance: a page that breaks the level contract records status error", async () => {
+    settings({});
+    activeProvider = declaringProvider(async () => ({ ...PAGE, prefixes: ["app:"] }));
+
+    const { status } = await postGoverned({});
+
+    expect(status).toBe(500);
+    expect(rows()).toEqual([expect.objectContaining({ status: "error", row_count: null })]);
+  });
+
+  test("governance: refuse mode with a backing-off sink answers 503 AUDIT_UNAVAILABLE before the walk and records a refused event", async () => {
+    settings({ "queryLog.onSinkFailure": "refuse" });
+    sinkState = { ...IDLE_SINK, backingOff: true, lastSqlstate: "57P01" };
+    const walk = mock(async () => PAGE);
+    activeProvider = declaringProvider(walk);
+
+    const { status, body } = await postGoverned({});
+
+    expect(status).toBe(503);
+    expect(body.code).toBe("AUDIT_UNAVAILABLE");
+    expect(walk).not.toHaveBeenCalled();
+    expect(rows()).toEqual([
+      expect.objectContaining({
+        source: "key-scan",
+        status: "refused",
+        engine: "redis",
+        access_level: "read",
+        error_code: "AUDIT_UNAVAILABLE",
+      }),
+    ]);
+  });
+
+  test("with governance off a page records nothing and the refuse setting has no say", async () => {
+    for (const name of Object.keys(GOVERNANCE_ENV)) delete process.env[name];
+    sinkState = { ...IDLE_SINK, backingOff: true };
+    activeProvider = declaringProvider(async () => PAGE);
+
+    const { status, body } = await post<KeyScanPage>({});
+
+    expect(status).toBe(200);
+    expect(body).toEqual(PAGE);
+    expect(recordedEvents).toEqual([]);
   });
 });

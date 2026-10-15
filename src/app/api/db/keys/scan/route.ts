@@ -8,6 +8,7 @@ import {
   type KeyScanPage,
   type KeyScanShape,
 } from "@/lib/db/types";
+import { runRecorded } from "@/lib/query-events/recorded-run";
 
 export const dynamic = "force-dynamic";
 
@@ -72,7 +73,7 @@ export const dynamic = "force-dynamic";
  * than asking the server for one unbounded walk.
  */
 export async function POST(req: NextRequest) {
-  return handleObjectRequest(req, "api/db/keys/scan", async (provider, body) => {
+  return handleObjectRequest(req, "api/db/keys/scan", async (provider, body, context) => {
     const capabilities = provider.getCapabilities();
     const capability = capabilities.keyScan;
     if (capability === undefined) {
@@ -125,10 +126,33 @@ export async function POST(req: NextRequest) {
     // `level` travels only when asked, so a walk without it hands the provider exactly the four keys it
     // always did, with no `level` key at all.
     const forwarded: KeyScanOptions = { ...options, ...(level ? { level: true as const } : {}) };
-    const page = await walk.call(provider, forwarded);
-    checkAnswer(provider.type, page, forwarded, shape.separator);
-    return page;
+    // One `key-scan` event per page, which reads key names (spec 7.9), with the keys it answered as its row count.
+    return await runRecorded(
+      {
+        source: "key-scan",
+        session: context.session,
+        connection: context.connection,
+        statement: scanStatement(forwarded),
+        statementType: "OTHER",
+      },
+      async () => {
+        const page = await walk.call(provider, forwarded);
+        checkAnswer(provider.type, page, forwarded, shape.separator);
+        return page;
+      },
+      (page) => page.keys.length,
+    );
   });
+}
+
+/**
+ * The page request as a query event records it, `SCAN <cursor> [MATCH <pattern>] COUNT <count>`, whatever engine
+ * walks: the capture mode reads it as that engine's statement, so under `redacted` neither the cursor nor the pattern
+ * is kept.
+ */
+function scanStatement(options: KeyScanOptions): string {
+  const match = options.pattern === undefined ? "" : ` MATCH ${options.pattern}`;
+  return `SCAN ${options.cursor}${match} COUNT ${options.count}`;
 }
 
 /**

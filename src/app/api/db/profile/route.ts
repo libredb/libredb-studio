@@ -23,6 +23,7 @@ import {
 } from "@/lib/query-generators";
 import type { ColumnProfile } from "@/lib/export/data-profile";
 import { renderValue } from "@/lib/export/csv";
+import { type RecordedUnit, runRecorded } from "@/lib/query-events/recorded-run";
 
 /** The most columns one profile reads: each one costs the engine a scan of the table. */
 const PROFILED_COLUMN_LIMIT = 20;
@@ -213,6 +214,14 @@ export async function POST(req: NextRequest) {
     const tableName = objectSegment(path);
 
     const provider = await editorProvider(guard.session, connection, requestCatalog(body));
+    // One `profile` event per run: a profile reads aggregates of user data, so it is a SELECT whatever engine runs it.
+    const profileUnit = (statement: string): RecordedUnit => ({
+      source: "profile",
+      session: guard.session,
+      connection,
+      statement,
+      statementType: "SELECT",
+    });
 
     {
       const capabilities = provider.getCapabilities();
@@ -263,44 +272,47 @@ export async function POST(req: NextRequest) {
             { $project: Object.fromEntries(outermostFieldPaths(colList).map((c) => [c, 1])) },
           ],
         });
-        const sampleResult = await provider.query(profileQuery);
-        const totalCountResult = await provider.query(
-          JSON.stringify({
-            ...address,
-            // `count`, the operation MongoDBProvider dispatches (it calls the
-            // driver's countDocuments internally). `countDocuments` is not in its
-            // SUPPORTED_OPERATIONS, so every MongoDB profile answered 400
-            // "Unsupported operation: countDocuments" - the route's own test mock
-            // had accepted the name and hid it.
-            operation: "count",
-            filter: {},
-          }),
-        );
+        // The run is recorded with the address as the route writes it into both reads (spec 7.9).
+        return await runRecorded(profileUnit(JSON.stringify(address)), async () => {
+          const sampleResult = await provider.query(profileQuery);
+          const totalCountResult = await provider.query(
+            JSON.stringify({
+              ...address,
+              // `count`, the operation MongoDBProvider dispatches (it calls the
+              // driver's countDocuments internally). `countDocuments` is not in its
+              // SUPPORTED_OPERATIONS, so every MongoDB profile answered 400
+              // "Unsupported operation: countDocuments" - the route's own test mock
+              // had accepted the name and hid it.
+              operation: "count",
+              filter: {},
+            }),
+          );
 
-        const totalRows = totalCountResult.rows[0]?.count || sampleResult.rows.length;
-        const columnProfiles = colList.map((col) => {
-          // Absent and `null` are both empty (#1456): MongoDB has no declared nullability, so
-          // counting only the absent ones made an explicit null a value, and a distinct one.
-          // The samples keep the nulls, shown as `NULL` like the SQL branch shows them.
-          const present = sampleResult.rows.map((r) => valueAtPath(r, col)).filter((v) => v !== undefined);
-          const values = present.filter((v) => v !== null);
-          const nullCount = sampleResult.rows.length - values.length;
-          const distinctValues = new Set(values.map((v) => JSON.stringify(v)));
+          const totalRows = totalCountResult.rows[0]?.count || sampleResult.rows.length;
+          const columnProfiles = colList.map((col) => {
+            // Absent and `null` are both empty (#1456): MongoDB has no declared nullability, so
+            // counting only the absent ones made an explicit null a value, and a distinct one.
+            // The samples keep the nulls, shown as `NULL` like the SQL branch shows them.
+            const present = sampleResult.rows.map((r) => valueAtPath(r, col)).filter((v) => v !== undefined);
+            const values = present.filter((v) => v !== null);
+            const nullCount = sampleResult.rows.length - values.length;
+            const distinctValues = new Set(values.map((v) => JSON.stringify(v)));
 
-          return {
-            name: col,
-            type: values.length > 0 ? typeof values[0] : "unknown",
-            totalRows,
-            nullCount,
-            nullPercent: sampleResult.rows.length > 0 ? Math.round((nullCount / sampleResult.rows.length) * 100) : 0,
-            distinctCount: distinctValues.size,
-            // Spelled as the SQL branch spells them: a subdocument or an array as its JSON
-            // (`String` answered `[object Object]`), and a null as `NULL`.
-            sampleValues: present.slice(0, 5).map((v) => (v === null ? "NULL" : renderValue(v))),
-          };
+            return {
+              name: col,
+              type: values.length > 0 ? typeof values[0] : "unknown",
+              totalRows,
+              nullCount,
+              nullPercent: sampleResult.rows.length > 0 ? Math.round((nullCount / sampleResult.rows.length) * 100) : 0,
+              distinctCount: distinctValues.size,
+              // Spelled as the SQL branch spells them: a subdocument or an array as its JSON
+              // (`String` answered `[object Object]`), and a null as `NULL`.
+              sampleValues: present.slice(0, 5).map((v) => (v === null ? "NULL" : renderValue(v))),
+            };
+          });
+
+          return NextResponse.json({ tableName, totalRows, columns: columnProfiles });
         });
-
-        return NextResponse.json({ tableName, totalRows, columns: columnProfiles });
       }
 
       // SQL profiling
@@ -308,45 +320,48 @@ export async function POST(req: NextRequest) {
       // string: two containers may hold one label, and a name may itself contain a dot.
       const safeTable = quoteObjectPath(path, capabilities);
 
-      const countResult = await provider.query(`SELECT COUNT(*) AS total FROM ${safeTable}`);
-      const totalRows = Number(field(countResult.rows[0], "total") ?? 0);
+      // The run is recorded with the quoted path as its statement, never the reads Studio built around it (spec 7.9).
+      return await runRecorded(profileUnit(safeTable), async () => {
+        const countResult = await provider.query(`SELECT COUNT(*) AS total FROM ${safeTable}`);
+        const totalRows = Number(field(countResult.rows[0], "total") ?? 0);
 
-      const profiled = colList.slice(0, PROFILED_COLUMN_LIMIT);
-      const columnProfiles: ColumnProfile[] = [];
-      // One column at a time, on purpose: each statement scans the table, and twenty of them
-      // at once would be twenty concurrent scans of the user's database.
-      for (const col of profiled) {
-        columnProfiles.push(
-          await profileSqlColumn(provider, safeTable, col, quoteIdentifier(col, capabilities), totalRows),
-        );
-      }
-
-      // Sample values for the first five columns. The bound is the provider's own spelling,
-      // through the same limiter the editor's statements go through: `LIMIT 5` written here
-      // was a syntax error on Oracle, SQL Server and Db2.
-      const topCols = profiled.slice(0, 5);
-      const safeCols = topCols.map((c) => quoteIdentifier(c, capabilities)).join(", ");
-      try {
-        const sample = provider.prepareQuery(`SELECT ${safeCols} FROM ${safeTable}`, { limit: 5 });
-        const sampleResult = await provider.query(sample.query);
-        for (const profile of columnProfiles) {
-          if (topCols.includes(profile.name)) {
-            profile.sampleValues = sampleResult.rows
-              .map((r) => field(r, profile.name))
-              .map((v) => (v === null || v === undefined ? "NULL" : renderValue(v)))
-              .slice(0, 5);
-          }
+        const profiled = colList.slice(0, PROFILED_COLUMN_LIMIT);
+        const columnProfiles: ColumnProfile[] = [];
+        // One column at a time, on purpose: each statement scans the table, and twenty of them
+        // at once would be twenty concurrent scans of the user's database.
+        for (const col of profiled) {
+          columnProfiles.push(
+            await profileSqlColumn(provider, safeTable, col, quoteIdentifier(col, capabilities), totalRows),
+          );
         }
-      } catch {
-        /* skip sample values on error */
-      }
 
-      const omittedColumns = colList.slice(PROFILED_COLUMN_LIMIT);
-      return NextResponse.json({
-        tableName,
-        totalRows,
-        columns: columnProfiles,
-        ...(omittedColumns.length > 0 ? { omittedColumns } : {}),
+        // Sample values for the first five columns. The bound is the provider's own spelling,
+        // through the same limiter the editor's statements go through: `LIMIT 5` written here
+        // was a syntax error on Oracle, SQL Server and Db2.
+        const topCols = profiled.slice(0, 5);
+        const safeCols = topCols.map((c) => quoteIdentifier(c, capabilities)).join(", ");
+        try {
+          const sample = provider.prepareQuery(`SELECT ${safeCols} FROM ${safeTable}`, { limit: 5 });
+          const sampleResult = await provider.query(sample.query);
+          for (const profile of columnProfiles) {
+            if (topCols.includes(profile.name)) {
+              profile.sampleValues = sampleResult.rows
+                .map((r) => field(r, profile.name))
+                .map((v) => (v === null || v === undefined ? "NULL" : renderValue(v)))
+                .slice(0, 5);
+            }
+          }
+        } catch {
+          /* skip sample values on error */
+        }
+
+        const omittedColumns = colList.slice(PROFILED_COLUMN_LIMIT);
+        return NextResponse.json({
+          tableName,
+          totalRows,
+          columns: columnProfiles,
+          ...(omittedColumns.length > 0 ? { omittedColumns } : {}),
+        });
       });
     }
   } catch (error) {

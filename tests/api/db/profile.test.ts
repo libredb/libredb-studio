@@ -1,7 +1,14 @@
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
+import { grantedSnapshot } from "../../helpers/governance/granted-snapshot";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
+import { governanceEnabled } from "@/lib/governance/config";
+import { recordGovernanceSnapshot, resetGovernanceState } from "@/lib/governance/state";
+import { validateSettings } from "@/lib/governance/settings";
+import { buildQueryEvent, queryEventPolicy } from "@/lib/query-events/build";
+import type { QueryEventInput } from "@/lib/query-events/types";
+import type { QueryEventSinkState } from "@/lib/query-events/sink";
 
 // ─── Mock providers ─────────────────────────────────────────────────────────
 const mockSQLProvider = createMockProvider({
@@ -27,11 +34,34 @@ mock.module("@/lib/auth", () => ({
   logout: mock(async () => {}),
 }));
 
+// The query event sink, standing in for the real one: it keeps what a route records, and only under governance, as
+// the real `recordQueryEvent()` does, and reports the state a test gives it, which the admission gate reads.
+const recordedEvents: QueryEventInput[] = [];
+let sinkState: QueryEventSinkState = {
+  queued: 0,
+  dropped: 0,
+  rejected: 0,
+  lastFlushAt: null,
+  backingOff: false,
+  lastSqlstate: null,
+};
+mock.module("@/lib/query-events/sink", () => ({
+  QUERY_EVENT_QUEUE_CAPACITY: 10_000,
+  QUERY_EVENT_BATCH_ROWS: 500,
+  recordQueryEvent: (input: QueryEventInput) => {
+    if (governanceEnabled()) recordedEvents.push(input);
+  },
+  queryEventSinkState: () => sinkState,
+  flushQueryEvents: async () => {},
+  resetQueryEventSink: () => {},
+}));
+
 mock.module("@/lib/seed/resolve-connection", () => {
   class SeedConnectionError extends Error {
     constructor(
       message: string,
       public statusCode: number,
+      public code?: string,
     ) {
       super(message);
       this.name = "SeedConnectionError";
@@ -1073,5 +1103,182 @@ describe("POST /api/db/profile", () => {
     expect(data.error).toBe(INFLUX_ERROR_SENTENCES.fileLimit as string);
     // The first COUNT(*) failed the request: nothing was sent after it.
     expect(requests.slice(2).map((request) => sqlOf(request).q)).toEqual(['SELECT COUNT(*) AS total FROM "home"']);
+  });
+});
+
+describe("POST /api/db/profile under governance", () => {
+  const GOVERNANCE_ENV: Readonly<Record<string, string>> = {
+    GOVERNANCE_SOURCE: "postgres",
+    GOVERNANCE_POSTGRES_URL: "postgresql://libredb_studio@db.internal:5432/libredb?sslmode=verify-full",
+    GOVERNANCE_INSTANCE_ID: "libredb-studio",
+  };
+  const SUBJECT = "8d0f6a4e-2b1c-4f3a-9e7d-5c6b4a3f2e1d";
+  /** A governed connection as `resolveConnection` hands it to the route: a seed id and the grant's level. */
+  const governedConnection = { ...validConnection, id: "seed:orders", name: "Orders", grantLevel: "read" };
+  const governedMongo = { ...mongoConnection, id: "seed:catalog", name: "Catalog", grantLevel: "write" };
+  let saved: Record<string, string | undefined> = {};
+
+  /** Swaps in a snapshot whose `settings_v1` holds `values`, as a load of the governance source does. */
+  function settings(values: Record<string, unknown>): void {
+    recordGovernanceSnapshot({
+      ...grantedSnapshot([], []),
+      settings: validateSettings(
+        Object.entries(values).map(([key, value]) => ({ key, value, updated_at: new Date() })),
+        1,
+      ),
+    });
+  }
+
+  /** The row the real builder makes of the one event the route recorded, under the policy in force. */
+  function onlyRow() {
+    expect(recordedEvents).toHaveLength(1);
+    return buildQueryEvent(recordedEvents[0], queryEventPolicy(), { studioInstance: "libredb-studio" });
+  }
+
+  function sqlAnswers() {
+    const provider = createMockProvider({ capabilities: { queryLanguage: "sql" } });
+    (provider.query as ReturnType<typeof mock>).mockImplementation(async (sql: string) => {
+      if (sql.startsWith("SELECT COUNT(*) AS total FROM")) return { rows: [{ total: 2 }], fields: ["total"] };
+      if (sql.includes("non_null_count")) {
+        const row = { total_count: 2, non_null_count: 2, distinct_count: 2, min_value: 1, max_value: 2 };
+        return { rows: [row], fields: Object.keys(row) };
+      }
+      return { rows: [{ id: 1 }, { id: 2 }], fields: ["id"] };
+    });
+    return provider;
+  }
+
+  beforeEach(() => {
+    clearRateLimitState();
+    saved = {};
+    for (const [name, value] of Object.entries(GOVERNANCE_ENV)) {
+      saved[name] = process.env[name];
+      process.env[name] = value;
+    }
+    recordedEvents.length = 0;
+    sinkState = { queued: 0, dropped: 0, rejected: 0, lastFlushAt: null, backingOff: false, lastSqlstate: null };
+    mockGetOrCreateProvider.mockClear();
+    mockGetSession.mockImplementation(async () => ({ role: "user", username: "alice", idpSubject: SUBJECT }));
+  });
+
+  afterEach(() => {
+    resetGovernanceState();
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  });
+
+  test("governance: a profile run records one profile event with the object path and the grant level", async () => {
+    settings({ "queryLog.statementCapture": "full" });
+    const body = { connection: governedConnection, tablePath: ["public", "users"], columns: ["id"] };
+
+    const provider = sqlAnswers();
+    mockGetOrCreateProvider.mockResolvedValueOnce(provider);
+
+    const res = await POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never);
+
+    expect(res.status).toBe(200);
+    // The path exactly as the route quoted it into its reads.
+    const sent = (provider.query as ReturnType<typeof mock>).mock.calls.map((call) => call[0] as string);
+    expect(sent[0]).toBe("SELECT COUNT(*) AS total FROM public.users");
+    expect(onlyRow()).toMatchObject({
+      source: "profile",
+      subject: SUBJECT,
+      username: "alice",
+      session_role: "user",
+      connection_id: "orders",
+      connection_name: "Orders",
+      engine: "postgres",
+      access_level: "read",
+      statement_type: "SELECT",
+      statement: "public.users",
+      row_count: null,
+      status: "success",
+      error_code: null,
+    });
+  });
+
+  test("governance: a MongoDB profile records its address as the statement, still a SELECT", async () => {
+    settings({ "queryLog.statementCapture": "full" });
+    const mongoProvider = createMockProvider({
+      capabilities: {
+        queryLanguage: "json",
+        containerLevels: [{ id: "schema", label: "Database", labelPlural: "Databases" }],
+      },
+    });
+    (mongoProvider.query as ReturnType<typeof mock>).mockImplementation(async (query: string) =>
+      JSON.parse(query).operation === "count"
+        ? { rows: [{ count: 1 }], fields: ["count"] }
+        : { rows: [{ name: "a" }], fields: ["name"] },
+    );
+    mockGetOrCreateProvider.mockResolvedValueOnce(mongoProvider);
+    const body = { connection: governedMongo, tablePath: ["shop", "items"], columns: ["name"] };
+
+    const res = await POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never);
+
+    expect(res.status).toBe(200);
+    const row = onlyRow();
+    expect(row).toMatchObject({
+      engine: "mongodb",
+      access_level: "write",
+      statement_type: "SELECT",
+      status: "success",
+    });
+    expect(JSON.parse(row.statement as string)).toEqual({ database: "shop", collection: "items" });
+  });
+
+  test("governance: a run that fails records status error with the error's code and answers as before", async () => {
+    settings({ "queryLog.statementCapture": "redacted" });
+    const provider = createMockProvider({ capabilities: { queryLanguage: "sql" } });
+    (provider.query as ReturnType<typeof mock>).mockImplementation(async () => {
+      throw new TimeoutError("Query timed out", "postgres");
+    });
+    mockGetOrCreateProvider.mockResolvedValueOnce(provider);
+    const body = { connection: governedConnection, tablePath: ["public", "users"], columns: ["id"] };
+
+    const res = await POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never);
+
+    expect(res.status).toBe(408);
+    expect(onlyRow()).toMatchObject({
+      status: "error",
+      error_code: "TIMEOUT_ERROR",
+      statement: "public.users",
+      statement_type: "SELECT",
+    });
+  });
+
+  test("governance: refuse mode with a backing-off sink answers 503 AUDIT_UNAVAILABLE before any read and records a refused event", async () => {
+    settings({ "queryLog.onSinkFailure": "refuse" });
+    sinkState = { ...sinkState, backingOff: true, queued: 3, lastSqlstate: "57P01" };
+    const provider = sqlAnswers();
+    mockGetOrCreateProvider.mockResolvedValueOnce(provider);
+    const body = { connection: governedConnection, tablePath: ["public", "users"], columns: ["id"] };
+
+    const res = await POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never);
+    const data = await parseResponseJSON<{ code: string }>(res);
+
+    expect(res.status).toBe(503);
+    expect(data.code).toBe("AUDIT_UNAVAILABLE");
+    expect(provider.query).not.toHaveBeenCalled();
+    expect(onlyRow()).toMatchObject({
+      source: "profile",
+      status: "refused",
+      engine: "postgres",
+      access_level: "read",
+      error_code: "AUDIT_UNAVAILABLE",
+    });
+  });
+
+  test("with governance off a profile records nothing and the refuse setting has no say", async () => {
+    for (const name of Object.keys(GOVERNANCE_ENV)) delete process.env[name];
+    sinkState = { ...sinkState, backingOff: true };
+    mockGetOrCreateProvider.mockResolvedValueOnce(sqlAnswers());
+    const body = { connection: validConnection, tablePath: ["public", "users"], columns: ["id"] };
+
+    const res = await POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never);
+
+    expect(res.status).toBe(200);
+    expect(recordedEvents).toEqual([]);
   });
 });
