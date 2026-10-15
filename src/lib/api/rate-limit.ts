@@ -144,14 +144,17 @@ const BUCKETS: Record<RateLimitBucket, BucketSpec> = {
   //
   // RE-COUNTED 2026-10-07, when admin/seed-sources joined (Spec A): one more direct call site.
   //
-  // THIRTY-FOUR route files today, and there are three ways in, which is why one grep under-counts.
-  // Directly, twenty-four route files that pass bucket: "query" to guardRoute themselves
-  // (grep -rl 'bucket: "query"' src/app/api/ answers twenty-four files; grep -c on the same list
+  // RE-COUNTED 2026-10-15, when admin/governance joined: one more direct call site.
+  //
+  // THIRTY-FIVE route files today, and there are three ways in, which is why one grep under-counts.
+  // Directly, twenty-five route files that pass bucket: "query" to guardRoute themselves
+  // (grep -rl 'bucket: "query"' src/app/api/ answers twenty-five files; grep -c on the same list
   // finds one call site in each but auth/passkey and auth/totp, which have one per method, two
-  // each, so twenty-six call sites): admin/accounts, admin/accounts/[email], admin/discovery,
-  // admin/fleet-health, admin/seed-sources, auth/passkey, auth/totp, db/cancel, db/disconnect,
-  // db/health, db/maintenance, db/maintenance/preview, db/monitoring, db/multi-query, db/pool-stats,
-  // db/profile, db/provider-meta, db/query, db/test-connection, db/transaction, mcp/token, and the
+  // each, so twenty-seven call sites): admin/accounts, admin/accounts/[email], admin/discovery,
+  // admin/fleet-health, admin/governance, admin/seed-sources, auth/passkey, auth/totp, db/cancel,
+  // db/disconnect, db/health, db/maintenance, db/maintenance/preview, db/monitoring, db/multi-query,
+  // db/pool-stats, db/profile, db/provider-meta, db/query, db/test-connection, db/transaction,
+  // mcp/token, and the
   // three storage routes (storage, storage/[collection], storage/migrate). Note db/health: only its
   // POST is metered, because the GET is the container health probe and takes no connection. mcp/token
   // runs no query: its POST is metered here because the credential it mints reaches this workload,
@@ -187,6 +190,10 @@ const BUCKETS: Record<RateLimitBucket, BucketSpec> = {
   // The seed-sources status (`/api/admin/seed-sources`) reaches no database or LLM provider either: it
   // reads the operator seed sources, seed files on disk and the process environment, and shares the
   // bucket for the reason the discovery status does.
+  //
+  // The governance status (`/api/admin/governance`) reaches no database or LLM provider, nor the
+  // governance source: it reads the in-process governance state, and shares the bucket for the same
+  // reason.
   //
   // The storage family joined when AU1 moved it onto the shared 401 (2026-08-22), and that gave it
   // a limiter it never had. It belongs here rather than in a bucket of its own: under
