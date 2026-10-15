@@ -105,7 +105,6 @@ export function buildRead(
   return mbap(transactionId, unitId, pdu);
 }
 
-/** FC 43 with MEI type 14. The only other request this provider can produce. */
 /**
  * What to expect back, read from the request that is going out.
  *
@@ -127,6 +126,7 @@ export function expectationOf(adu: Buffer): Expectation {
   return base;
 }
 
+/** FC 43 with MEI type 14. The only other request this provider can produce. */
 export function buildIdentification(
   transactionId: number,
   unitId: number,
