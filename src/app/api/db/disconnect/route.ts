@@ -23,18 +23,24 @@ const SEED_NAMESPACE = "seed:";
  * the key frames the server and the credentials, so a record naming another user's connection id names entries of its
  * own. A `seed:` id removes nothing, because one provider serves every user of that seed, and the idle sweep reclaims
  * it.
+ *
+ * Answers whether it asked the factory to remove anything, so the route logs what the disconnect did.
  */
 async function removeCallersProviders(
   body: Parameters<typeof resolveConnection>[0],
   connectionId: string,
   session: UserPayload,
-): Promise<void> {
+): Promise<boolean> {
   const owner = sessionOwner(session);
-  if (owner !== undefined) return removeProvider(connectionId, { owner });
-  if (connectionId.startsWith(SEED_NAMESPACE)) return;
+  if (owner !== undefined) {
+    await removeProvider(connectionId, { owner });
+    return true;
+  }
+  if (connectionId.startsWith(SEED_NAMESPACE)) return false;
   const connection = await resolveConnection(body, session);
   const key = await editorCacheKey(connection, editorExecutionContext(session, connection));
-  return removeProvider(connection.id, { key });
+  await removeProvider(connection.id, { key });
+  return true;
 }
 
 export async function POST(req: NextRequest) {
@@ -56,9 +62,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    await removeCallersProviders(body, connectionId, guard.session);
-
-    logger.info("[DB] Provider disconnected and removed from cache", { connectionId });
+    if (await removeCallersProviders(body, connectionId, guard.session)) {
+      logger.info("[DB] Provider disconnected and removed from cache", { connectionId });
+    } else {
+      logger.info(
+        "[DB] Disconnect removed nothing: one provider serves every user of a seed connection, and the idle sweep closes it",
+        { connectionId },
+      );
+    }
 
     return NextResponse.json({ success: true });
   } catch (error) {

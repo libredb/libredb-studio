@@ -67,9 +67,12 @@ mock.module("@/lib/db", () => ({
   mapDatabaseError,
 }));
 
+// Named, so a test can read the lines the route logs about what a disconnect removed.
+const mockLoggerInfo = mock<(...args: unknown[]) => void>(() => {});
+
 mock.module("@/lib/logger", () => ({
   logger: {
-    info: mock(() => {}),
+    info: mockLoggerInfo,
     warn: mock(() => {}),
     error: mock(() => {}),
     debug: mock(() => {}),
@@ -96,6 +99,7 @@ beforeEach(() => {
   // A reset, not a clear: an implementation a test queued and never reached must not answer the next test's removal.
   mockRemoveProvider.mockReset();
   mockRemoveProvider.mockImplementation(async () => {});
+  mockLoggerInfo.mockClear();
 });
 
 /** A connection of the user's own, as the editor posts it: the record, credentials and SSH tunnel included. */
@@ -267,6 +271,23 @@ describe("POST /api/db/disconnect without governance (spec 17)", () => {
     expect(await parseResponseJSON<Record<string, unknown>>(byCopy)).toEqual({ success: true });
   });
 
+  test("without governance, the log line says whether the disconnect removed anything", async () => {
+    as(ALICE);
+
+    await disconnect({ connectionId: "seed:orders" });
+    await disconnect({ connection: CUSTOM });
+
+    // A seed id removes nothing, so its line says so rather than claiming a removal; the user's own record removes the
+    // providers its key names.
+    expect(mockLoggerInfo.mock.calls).toEqual([
+      [
+        "[DB] Disconnect removed nothing: one provider serves every user of a seed connection, and the idle sweep closes it",
+        { connectionId: "seed:orders" },
+      ],
+      ["[DB] Provider disconnected and removed from cache", { connectionId: CUSTOM.id }],
+    ]);
+  });
+
   test("without governance, the key frames the caller's own file-access posture", async () => {
     // A DuckDB handle opens under the file-access posture of the session that opened it, and its key frames that
     // posture (non-admin DuckDB file access), so an admin's disconnect names the key of the admin's own handle, which
@@ -372,6 +393,10 @@ describe("POST /api/db/disconnect under governance (spec 9.4)", () => {
     expect(providers.connected("seed:orders", "bob-subject")).toBe(false);
     // Only the connection the request names.
     expect(providers.connected("seed:billing", "bob-subject")).toBe(true);
+    // Under governance a seed id removes the caller's own providers, and the line says so.
+    expect(mockLoggerInfo.mock.calls).toEqual([
+      ["[DB] Provider disconnected and removed from cache", { connectionId: "seed:orders" }],
+    ]);
   });
 
   test("governance: an admin's disconnect is scoped to the admin's own providers too", async () => {
