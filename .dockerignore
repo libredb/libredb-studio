@@ -34,6 +34,10 @@ tests
 # The Playwright configs import e2e helpers, and next build type-checks every
 # .ts the context keeps, so a config left in would fail the image build.
 playwright*.config.ts
+# The governance vectors generator seals with the test sealer under tests/, so
+# it would fail the image build's type check the same way. It is a developer
+# tool that no image runs.
+scripts/generate-governance-vectors.ts
 playwright-report
 test-results
 data-e2e-offline
