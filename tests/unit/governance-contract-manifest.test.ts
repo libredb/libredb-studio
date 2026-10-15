@@ -177,7 +177,7 @@ const STUDIO_INSTANCE_COLUMNS: readonly ExpectedColumn[] = [
  * definition gives (PostgreSQL records no NOT NULL on a view); a view's default is only one set on the view itself,
  * since an insert through a view over a table otherwise takes the table's default.
  */
-const A3_OBJECTS: readonly ExpectedObject[] = [
+const PUBLISHED_OBJECTS: readonly ExpectedObject[] = [
   {
     name: "contract",
     kind: "view",
@@ -286,7 +286,7 @@ const A3_OBJECTS: readonly ExpectedObject[] = [
 ];
 
 /** Every column CHECK of the contract's tables, written out by hand. */
-const A3_COLUMN_CHECKS: Record<string, Record<string, string>> = {
+const TABLE_COLUMN_CHECKS: Record<string, Record<string, string>> = {
   query_event: {
     studio_instance: "char_length(studio_instance) BETWEEN 1 AND 128",
     subject: "char_length(subject) BETWEEN 1 AND 512",
@@ -325,7 +325,7 @@ const A3_COLUMN_CHECKS: Record<string, Record<string, string>> = {
 };
 
 /** The named constraints of the contract's tables, whitespace collapsed. */
-const A3_TABLE_CONSTRAINTS: Record<string, { name: string; check: string }[]> = {
+const TABLE_CONSTRAINTS: Record<string, { name: string; check: string }[]> = {
   query_event: [
     { name: "query_event_time_order", check: "finished_at >= started_at" },
     { name: "query_event_not_future", check: "started_at <= received_at + interval '5 minutes'" },
@@ -347,7 +347,7 @@ const A3_TABLE_CONSTRAINTS: Record<string, { name: string; check: string }[]> = 
  * view's columns. A governance source that keeps them never hands Studio a row its admission has to skip for shape
  * alone.
  */
-const A2_VIEW_DOMAINS: Record<string, Record<string, string>> = {
+const READ_VIEW_DOMAINS: Record<string, Record<string, string>> = {
   contract: { status: "status IN ('current','deprecated')" },
   connections_v1: {
     connection_id: "connection_id ~ '^[a-z0-9-]{1,64}$'",
@@ -463,7 +463,7 @@ describe("contract-v1.json", () => {
         platform: object.grants.libredb_platform,
       })),
     ).toEqual(
-      A3_OBJECTS.map((object) => ({
+      PUBLISHED_OBJECTS.map((object) => ({
         name: object.name,
         kind: object.kind,
         columns: object.columns?.map((column) => [...column]),
@@ -474,14 +474,14 @@ describe("contract-v1.json", () => {
   });
 
   test("the tables carry every CHECK, constraint and primary key, rendered as written out above", () => {
-    for (const [table, expected] of Object.entries(A3_COLUMN_CHECKS)) {
+    for (const [table, expected] of Object.entries(TABLE_COLUMN_CHECKS)) {
       const checks = Object.fromEntries(
         (objectNamed(table).columns ?? []).flatMap((column) =>
           column.check === null ? [] : [[column.name, column.check.sql]],
         ),
       );
       expect(checks).toEqual(expected);
-      expect(objectNamed(table).constraints).toEqual(A3_TABLE_CONSTRAINTS[table]);
+      expect(objectNamed(table).constraints).toEqual(TABLE_CONSTRAINTS[table]);
     }
     expect(objectNamed("query_event").primaryKey).toEqual(["event_id"]);
     expect(objectNamed("studio_instance").primaryKey).toEqual(["instance_id"]);
@@ -505,7 +505,7 @@ describe("contract-v1.json", () => {
   });
 
   test("the read views publish the domains their source rows keep, and the kind their change sends", () => {
-    for (const [view, expected] of Object.entries(A2_VIEW_DOMAINS)) {
+    for (const [view, expected] of Object.entries(READ_VIEW_DOMAINS)) {
       const checks = Object.fromEntries(
         (objectNamed(view).columns ?? []).flatMap((column) =>
           column.check === null ? [] : [[column.name, column.check.sql]],

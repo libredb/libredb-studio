@@ -14,7 +14,7 @@ import { SETTING_KEY_PATTERN, SETTINGS_REGISTRY, type SettingDefinition } from "
  * The table of docs/GOVERNANCE.md#runtime-settings: key, type, allowed values or bounds, and the Studio default or
  * environment counterpart.
  */
-const SPEC_7_8: Pick<
+const PUBLISHED_SETTINGS: Pick<
   SettingDefinition,
   "key" | "type" | "allowedValues" | "min" | "max" | "default" | "environment"
 >[] = [
@@ -93,7 +93,7 @@ const SPEC_7_8: Pick<
 ];
 
 /** The description each allowlist row is seeded with, written out by hand. */
-const A2_DESCRIPTIONS: Record<string, string> = {
+const ALLOWLIST_DESCRIPTIONS: Record<string, string> = {
   "ai.enabled": "AI assistance routes are available",
   "agent.enabled": "The query agent is available when its prerequisites are configured",
   "mcp.enabled": "The MCP endpoint is available when its prerequisites are configured",
@@ -116,13 +116,13 @@ describe("settings registry v1", () => {
         default: setting.default,
         environment: setting.environment,
       })),
-    ).toEqual(SPEC_7_8);
+    ).toEqual(PUBLISHED_SETTINGS);
   });
 
   test("every key is published under contract 1 with the description its allowlist row is seeded with", () => {
     for (const setting of SETTINGS_REGISTRY) {
       expect(setting.sinceContract).toBe(1);
-      expect(setting.description).toBe(A2_DESCRIPTIONS[setting.key]);
+      expect(setting.description).toBe(ALLOWLIST_DESCRIPTIONS[setting.key]);
     }
   });
 
