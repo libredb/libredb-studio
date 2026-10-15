@@ -138,6 +138,12 @@ describe("the captures carry the fact the window rule rests on", () => {
     expect(windowed.every((one) => one.next !== current.next)).toBe(true);
   });
 
+
+    const pin = /image:\s*(mtconnect\/agent:([\d.]+)@sha256:([a-f0-9]{64}))/.exec(compose);
+    expect(pin, "database-compose.yml pins no mtconnect/agent image").not.toBeNull();
+    // The CI step is the fourth place the same pin appears, and the one furthest from a reader's
+    // eye: a bump here that misses it would run CI against a different agent than the captures.
+    const ciStep = readFileSync(join(import.meta.dir, "..", "..", "..", "docker", "mtconnect", "ci-step.yml"), "utf-8");
   test("probe carries no sequence at all, so it cannot be a window source", () => {
     const probe = capture("probe");
     expect(probe).toContain("MTConnectDevices");

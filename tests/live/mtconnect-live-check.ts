@@ -38,6 +38,22 @@ const STEP_MS = Number(process.env.MTCONNECT_LIVE_STEP_MS ?? 12_000);
 
 let failures = 0;
 
+/**
+ * Where the fixture is MANDATORY, a skip is a failure.
+ *
+ * Locally an absent agent is an ordinary reason to skip. In CI it is not: the step starts the
+ * fixture itself, so nothing answering means the step is measuring nothing. MEASURED while writing
+ * `docker/mtconnect/ci-step.yml`: with the published port changed to a wrong one, every check
+ * skipped, the integration test still answered from its captures, and the step exited 0. A run that
+ * reaches no agent must not look like a run where everything passed.
+ */
+const required = process.env.MTCONNECT_LIVE_REQUIRED === "1";
+if (required && !reachable) {
+  console.log(`FAIL no agent is answering on ${ORIGIN.origin}, and MTCONNECT_LIVE_REQUIRED is set`);
+  console.log("\n0 of 0 checks passed, 1 failed, 0 skipped");
+  process.exit(1);
+}
+
 const check = async (name: string, run: () => Promise<void>): Promise<void> => {
   try {
     await run();

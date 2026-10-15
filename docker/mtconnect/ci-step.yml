@@ -1,0 +1,83 @@
+# MTConnect provider check (#1722), staged here rather than written straight into
+# .github/workflows/ci.yml: five engines are landing at once and five sessions editing one workflow
+# file is the second merge round in miniature. The coordinating session applies this block.
+#
+# Where it goes: the `e2e` job, after the functional smoke, in the same shape the RabbitMQ step has.
+# The steps run in order with no `if:`, so a red check here cannot hide the result before it.
+#
+# WHY THE FIXTURE IS TWO CONTAINERS. An MTConnect agent republishes what an adapter tells it: with
+# no adapter it answers every data item UNAVAILABLE and proves nothing. MEASURED against a second
+# agent of this image started alone: /probe answered 200 with 21 data items, 18 of them UNAVAILABLE
+# and 3 carrying a value, while the fixture answers 22 with 14 carrying a value. So CI starts both
+# and waits for both, and the trap removes both and the network between them.
+#
+# THE READY LOOP ASKS ONE QUESTION THAT COVERS BOTH. `/probe` answers before any adapter data
+# arrives, so it cannot be the question. `ConnectionStatus` is ESTABLISHED only once the agent has
+# its adapter, so one request proves the agent is serving AND that the device behind it arrived.
+# It is asked with wget: MEASURED, this image has no curl (`command -v curl` is empty) and
+# `/usr/bin/wget` is there, and the first version of the compose health check ran curl and failed
+# 478 times in a row while the agent served every request.
+#
+# The two image references are database-compose.yml's, and
+# tests/integration/db/mtconnect-provider.test.ts holds this file and that one to the same digest.
+- name: MTConnect provider check
+  run: |
+    agent="mtconnect/agent:2.8.0.4@sha256:c42f90850ab70d65ae5e73b14392b3041ed51065bd7bf287658db6f7260df641"
+    adapter="python:3.14-slim@sha256:0741d101873c12ab927e6f8653feb8862b9bd58771177acb1b885b95141f91b4"
+    trap 'docker rm -f libredb-ci-mtconnect libredb-ci-mtconnect-adapter > /dev/null 2>&1;
+          docker network rm libredb-ci-mtconnect > /dev/null 2>&1' EXIT
+    docker network create libredb-ci-mtconnect > /dev/null
+    # The alias is the name the agent's own configuration dials, so docker/mtconnect-init/agent.cfg
+    # is the same file here and under compose.
+    docker run -d --name libredb-ci-mtconnect-adapter --network libredb-ci-mtconnect \
+      --network-alias mtconnect-adapter \
+      -v "$PWD/docker/mtconnect-init:/fixture:ro" "$adapter" python /fixture/adapter.py
+    docker run -d --name libredb-ci-mtconnect --network libredb-ci-mtconnect \
+      -v "$PWD/docker/mtconnect-init:/mtconnect/config:ro" \
+      -p 127.0.0.1:17322:5000 "$agent"
+    # TWO QUESTIONS, TWO SENTENCES. A readiness check that reports one failure for two different
+    # states tells whoever reads the log the wrong thing half the time. "The agent never answered"
+    # and "the agent answered but the device behind it never arrived" are different repairs, so the
+    # loop records which of the two it last saw. Neither question asks whether a port is open: a
+    # published port accepts a connection before the server inside has spoken, so "open" measures
+    # Docker rather than the fixture.
+    ready=""
+    answered=""
+    end=$((SECONDS + 90))
+    while [ "$SECONDS" -lt "$end" ]; do
+      current="$(docker exec libredb-ci-mtconnect sh -c \
+        'wget -qO- http://127.0.0.1:5000/current' 2> /dev/null || true)"
+      if [ -n "$current" ]; then
+        answered=yes
+        case "$current" in
+          *ConnectionStatus*ESTABLISHED*) ready=yes; break ;;
+        esac
+      fi
+      sleep 2
+    done
+    if [ -z "$ready" ]; then
+      if [ -z "$answered" ]; then
+        echo "MEASURED NOTHING: the MTConnect agent never answered /current within 90 s."
+        echo "The fixture did not come up; the checks below would have measured nothing."
+      else
+        echo "MEASURED NOTHING: the agent answered, but ConnectionStatus never reached ESTABLISHED"
+        echo "within 90 s. The agent is up and the device behind it is not, so the fixture is half"
+        echo "built: every data item would read UNAVAILABLE and every check would pass on nothing."
+      fi
+      echo "--- agent ---"
+      docker logs --tail 50 libredb-ci-mtconnect
+      echo "--- adapter ---"
+      docker logs --tail 50 libredb-ci-mtconnect-adapter
+      exit 1
+    fi
+    # The live check first: it is the only layer that can see a window read at connect going stale,
+    # and it prints its own count rather than a word, so a check that was deleted or could not run
+    # does not leave the same line behind as a run where every check passed.
+    # MTCONNECT_LIVE_REQUIRED turns a skip into a failure here. MEASURED while writing this file:
+    # with the published port set to a wrong one, every check skipped, the integration test still
+    # passed from its captures, and the step exited 0 - a step that reached no agent reported
+    # success. Without this flag the canary below is green, which is how it was found.
+    MTCONNECT_LIVE_REQUIRED=1 bun tests/live/mtconnect-live-check.ts
+    # Then the same captures the integration test replays, read against the agent that produced
+    # them: a capture taken from another build fails the digest case rather than drifting quietly.
+    bun tests/run-tests.ts tests/integration/db/mtconnect-provider.test.ts
