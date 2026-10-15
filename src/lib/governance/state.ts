@@ -51,7 +51,10 @@ export interface GovernanceSnapshot {
   readonly skipped: readonly AdmissionSkip[];
   /** The effective grants by subject, then by connection id. */
   readonly grants: ReadonlyMap<string, ReadonlyMap<string, EffectiveGrant>>;
-  /** The latest `revoked_before` of each subject, in epoch milliseconds. */
+  /**
+   * The latest `revoked_before` of each subject, in epoch milliseconds: `+Infinity` revokes every session of its
+   * subject, as a row whose `revoked_before` could not be read does.
+   */
   readonly revocations: ReadonlyMap<string, number>;
   /** The valid runtime settings, and the keys the settings store ignored. */
   readonly settings: RuntimeSettings;
@@ -131,4 +134,14 @@ export function effectiveGrant(
   const grant = snapshot.grants.get(subject)?.get(connectionId);
   if (grant === undefined || (grant.expiresAt !== null && grant.expiresAt <= nowMs)) return undefined;
   return grant;
+}
+
+/**
+ * Whether `snapshot` revokes a session of `subject` issued at `issuedAtMs` (spec 5.2): the subject's latest
+ * `revoked_before` is at or after it. A revocation only ever denies, so a session that does not say when it was
+ * issued counts as issued before every revocation of its subject.
+ */
+export function sessionRevoked(snapshot: GovernanceSnapshot, subject: string, issuedAtMs: number | undefined): boolean {
+  const revokedBefore = snapshot.revocations.get(subject);
+  return revokedBefore !== undefined && (issuedAtMs === undefined || issuedAtMs <= revokedBefore);
 }

@@ -30,7 +30,9 @@ mock.module("pg", () => ({ Pool: FakePool, Client: realPg.Client, types: realPg.
 const { loadGovernanceSnapshot } = await import("@/lib/governance/snapshot");
 const { closeGovernancePool } = await import("@/lib/governance/db");
 const { governanceFreshness, governanceServable } = await import("@/lib/governance/freshness");
-const { effectiveGrant, governanceState, resetGovernanceState } = await import("@/lib/governance/state");
+const { effectiveGrant, governanceState, resetGovernanceState, sessionRevoked } = await import(
+  "@/lib/governance/state"
+);
 const { resetGovernanceKeyring } = await import("@/lib/governance/keyring");
 const { pgSslConfig } = await import("@/lib/pg-ssl");
 const { logger } = await import("@/lib/logger");
@@ -639,7 +641,6 @@ describe("effective grants", () => {
     expect(logs.warn).toHaveBeenCalledWith("Governance rows ignored", {
       route: "governance/snapshot",
       grants: 8,
-      revocations: 0,
       canaries: 0,
       settings: 0,
     });
@@ -660,8 +661,8 @@ describe("what the snapshot keeps", () => {
         { subject: "alice", revoked_before: new Date("2026-10-15T09:00:00.000Z") },
         { subject: "alice", revoked_before: new Date("2026-10-15T07:00:00.000Z") },
         { subject: "bob", revoked_before: Number.POSITIVE_INFINITY },
-        { subject: "carol", revoked_before: null },
-        { subject: "", revoked_before: new Date("2026-10-15T08:00:00.000Z") },
+        // '-infinity' is read, and ends no session.
+        { subject: "carol", revoked_before: Number.NEGATIVE_INFINITY },
       ],
       settings,
     });
@@ -671,6 +672,7 @@ describe("what the snapshot keeps", () => {
     expect([...snapshot().revocations]).toEqual([
       ["alice", new Date("2026-10-15T09:00:00.000Z").getTime()],
       ["bob", Number.POSITIVE_INFINITY],
+      ["carol", Number.NEGATIVE_INFINITY],
     ]);
     expect(snapshot().settings).toEqual({
       values: new Map([["query.timeoutMs", 30000]]),
@@ -680,16 +682,58 @@ describe("what the snapshot keeps", () => {
     expect(logs.warn).toHaveBeenCalledWith("Governance rows ignored", {
       route: "governance/snapshot",
       grants: 0,
-      revocations: 2,
       canaries: 0,
       settings: 1,
     });
+    // Every revocation row was read whole.
+    expect(logs.error).not.toHaveBeenCalled();
     // An ignored setting is logged by key and code, as the heartbeat reports it, never with its value.
     expect(logs.warn).toHaveBeenCalledWith("Governance rows skipped", {
       route: "governance/snapshot",
       skipped: [{ kind: "setting", id: "ai.enabled", code: "SETTING_INVALID" }],
     });
     expect(JSON.stringify(logs.warn.mock.calls)).not.toContain("SETTING-VALUE-CANARY");
+  });
+
+  test("a revocation row whose revoked_before cannot be read revokes every session of its subject", async () => {
+    // A revocation only ever denies, so reading a row as no revocation would fail open. pg hands over a timestamptz
+    // as a Date or as plus or minus Infinity; anything else breaks the view's NOT NULL or type.
+    serve({
+      revocations: [
+        { subject: "alice", revoked_before: new Date("2026-10-15T08:00:00.000Z") },
+        { subject: "alice", revoked_before: null },
+        { subject: "bob", revoked_before: "2026-10-15T08:00:00.000Z" },
+        { subject: "carol", revoked_before: new Date(Number.NaN) },
+        { subject: "dave", revoked_before: new Date("2026-10-15T08:00:00.000Z") },
+        // No session can match a row without a readable subject: it revokes nothing.
+        { subject: "", revoked_before: new Date("2026-10-15T08:00:00.000Z") },
+        { subject: "x".repeat(513), revoked_before: Number.POSITIVE_INFINITY },
+        { subject: null, revoked_before: null },
+      ],
+    });
+
+    await loadGovernanceSnapshot();
+
+    expect([...snapshot().revocations]).toEqual([
+      ["alice", Number.POSITIVE_INFINITY],
+      ["bob", Number.POSITIVE_INFINITY],
+      ["carol", Number.POSITIVE_INFINITY],
+      ["dave", new Date("2026-10-15T08:00:00.000Z").getTime()],
+    ]);
+    // A session issued at any time is issued at or before +Infinity.
+    expect(sessionRevoked(snapshot(), "alice", Date.parse("2099-01-01T00:00:00.000Z"))).toBe(true);
+    expect(sessionRevoked(snapshot(), "dave", Date.parse("2026-10-15T08:00:01.000Z"))).toBe(false);
+    // Neither kind fails the load, which would hold back every other revocation until the snapshot went stale.
+    expect(governanceState().failure).toBeNull();
+    expect(governanceFreshness()).toBe("ok");
+    expect(logs.error).toHaveBeenCalledTimes(1);
+    expect(logs.error).toHaveBeenCalledWith("Governance revocation rows unreadable", undefined, {
+      route: "governance/snapshot",
+      withoutRevokedBefore: 3,
+      withoutSubject: 3,
+    });
+    // The rows are counted at error level only, never also as ignored rows.
+    expect(logs.warn).not.toHaveBeenCalledWith("Governance rows ignored", expect.anything());
   });
 
   test("a load replaces the snapshot at once and clears the failure before it", async () => {
@@ -859,7 +903,6 @@ describe("seal canaries", () => {
     expect(logs.warn).toHaveBeenCalledWith("Governance rows ignored", {
       route: "governance/snapshot",
       grants: 0,
-      revocations: 0,
       canaries: 2,
       settings: 0,
     });

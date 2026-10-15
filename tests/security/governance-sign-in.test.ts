@@ -3,16 +3,21 @@
  * callback did not mint for the identity provider at OIDC_ISSUER reaches no route: getSession() refuses an env
  * password, passkey or launch session, an OIDC session whose subject is empty and one minted for another issuer, and
  * clears its cookie; the password route answers 403 without reading credentials; and an MCP token, whose owner
- * carries no identity provider subject in this version, is refused too.
+ * carries no identity provider subject in this version, is refused too. A session also ends once the governance
+ * source revokes its subject: getSession() refuses a session issued at or before the subject's `revoked_before`, while
+ * a snapshot that cannot be served refuses no session.
  *
  * Through the real session check and every real route, with nothing mocked but next/headers. The boot check that
  * refuses ADMIN_PASSWORD under governance is not run here, as if it had been bypassed: tests/setup.ts sets that
- * password, and it still signs no one in.
+ * password, and it still signs no one in. The revocation cases record the snapshot in the state holder as the loader
+ * swaps one in.
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import type { UserPayload } from "@/lib/auth";
+import { recordGovernanceSnapshot, resetGovernanceState } from "@/lib/governance/state";
+import { grantedSnapshot } from "../helpers/governance/granted-snapshot";
 import { cookieJar, deletedCookies, installNextHeadersMock, resetCookieJar } from "../helpers/next-cookie-jar";
 import { discoverRoutes } from "./helpers/discover-routes";
 
@@ -105,6 +110,9 @@ const GOVERNANCE_ENV: Record<string, string | undefined> = {
   GOVERNANCE_SOURCE: "postgres",
   NEXT_PUBLIC_AUTH_PROVIDER: "oidc",
   OIDC_ISSUER: ISSUER,
+  // The defaults: a snapshot can no longer be served once it is 120 s old.
+  GOVERNANCE_REFRESH_MS: undefined,
+  GOVERNANCE_MAX_STALENESS_MS: undefined,
   // Unset, so the OIDC login route answers oidc_config instead of asking the network for discovery.
   OIDC_CLIENT_ID: undefined,
   OIDC_CLIENT_SECRET: undefined,
@@ -160,6 +168,48 @@ describe("getSession() under governance", () => {
 
   // The control: the refusals above are the governed rule, not a session check that refuses everything.
   test("keeps a session the OIDC callback minted for OIDC_ISSUER", async () => {
+    await holdSession(GOVERNED_SESSION);
+
+    expect(await getSession()).toMatchObject(GOVERNED_SESSION);
+    expect(sessionCleared()).toBe(false);
+  });
+});
+
+/** Swaps in a snapshot loaded `ageMs` ago whose only revocations are `revocations`, as the loader does. */
+function recordRevocations(revocations: ReadonlyArray<readonly [string, number]>, ageMs = 0): void {
+  recordGovernanceSnapshot({ ...grantedSnapshot([], [], Date.now() - ageMs), revocations: new Map(revocations) });
+}
+
+describe("getSession() and the session revocations of the governance source", () => {
+  afterEach(() => {
+    resetGovernanceState();
+  });
+
+  test("refuses a session issued at or before its subject's revoked_before and clears its cookie", async () => {
+    await holdSession(GOVERNED_SESSION);
+    // The token's iat is the second it was signed in, so a revocation stamped from now on is at or after it.
+    recordRevocations([["kc-user-1", Date.now()]]);
+
+    expect(await getSession()).toBeNull();
+    expect(sessionCleared()).toBe(true);
+    expect(cookieJar.has(SESSION_COOKIE)).toBe(false);
+  });
+
+  test("keeps a session issued after its subject's revoked_before, and one whose subject no row revokes", async () => {
+    // Two seconds before the second the token is signed in, and a revocation of another subject for good.
+    recordRevocations([
+      ["kc-user-1", Date.now() - 2000],
+      ["kc-user-2", Number.POSITIVE_INFINITY],
+    ]);
+    await holdSession(GOVERNED_SESSION);
+
+    expect(await getSession()).toMatchObject(GOVERNED_SESSION);
+    expect(sessionCleared()).toBe(false);
+  });
+
+  test("a revocation in a snapshot that cannot be served refuses no session, so an outage starts no sign-in storm", async () => {
+    // GOVERNANCE_MAX_STALENESS_MS old: data routes answer 503 GOVERNANCE_UNAVAILABLE meanwhile.
+    recordRevocations([["kc-user-1", Number.POSITIVE_INFINITY]], 120_000);
     await holdSession(GOVERNED_SESSION);
 
     expect(await getSession()).toMatchObject(GOVERNED_SESSION);

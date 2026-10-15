@@ -138,6 +138,11 @@ Studio checks the session of every request against these rules:
 - A session counts only when Studio's OIDC callback minted it: it carries the ID token's `sub` as a non-empty subject and the ID token's `iss` as its issuer, and the issuer equals `OIDC_ISSUER`, the two compared as URLs with one trailing slash ignored.
 - A password, passkey or launch session carries no subject and is refused, and so is a session whose subject is empty or whose issuer is not `OIDC_ISSUER`.
   With `OIDC_ISSUER` unset or not a URL every session is refused, and a changed `OIDC_ISSUER` ends the sessions of the previous issuer.
+- A session issued at or before its subject's latest `revoked_before` in [`bridge.session_revocations_v1`](#row-semantics) is refused, typically within a second of the commit that adds the row, because its change notification reloads the snapshot.
+  A session's issue time is its token's `iat`, in whole seconds, so a session signed within the second of `revoked_before` counts as issued before it.
+  A sign-in after that second gets a session the row does not refuse, so a control plane that means to keep someone out also disables them at the identity provider.
+- Only a snapshot that data routes are served from revokes a session.
+  While none can be served, data routes answer 503 instead and no session is refused for a revocation, so an outage of the governance source sets off no wave of sign-ins.
 - A refused session's cookie is cleared, so the next page load reaches the sign-in page.
 - The OIDC callback applies the same rule to the ID token, so an ID token with an empty `sub` or with an `iss` other than `OIDC_ISSUER` signs no one in and the sign-in ends on `/login?error=oidc_config`.
 - `POST /api/auth/login` answers 403 with `{ "success": false, "message": "Password sign-in is disabled: this server signs in through the identity provider only" }` before it reads a credential, and Studio's audit trail records `login_failure` with reason `password_login_disabled`.
@@ -211,6 +216,9 @@ Four conventions need stating:
 
 `bridge.session_revocations_v1` is deny-only: a control plane can make a user sign in again with it, and never grant anything.
 Studio refuses a session issued at or before its subject's `revoked_before`.
+A row whose `revoked_before` Studio cannot read revokes every session of its subject, as `infinity` would, because reading it as no revocation would let through the sessions it was meant to end.
+A row without a readable subject can match no session and revokes nothing.
+Studio logs both at error level as `Governance revocation rows unreadable`, with the number of each, and neither fails the load, which would hold back every other revocation.
 
 `bridge.seal_canary_v1` holds the canary of each key id, described under [sealed credentials](#sealed-credentials-lsb1).
 

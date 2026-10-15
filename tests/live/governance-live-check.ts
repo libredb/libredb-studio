@@ -16,7 +16,9 @@
  *
  * The listener cases start Studio's change notification listener with its production reload and no refresher, so a
  * snapshot changes only when a notification makes it, and with a ping every half second instead of every minute.
- * The heartbeat cases send beats as `libredb_studio` and read the row back as the superuser.
+ * The heartbeat cases send beats as `libredb_studio` and read the row back as the superuser. The session revocation
+ * case runs the real `getSession()` with `next/headers` mocked by a cookie jar, on sessions signed with a throwaway
+ * `JWT_SECRET`.
  *
  * It is NOT in `bun run test`: the runner excludes `tests/live/` by name (`EXCLUDED` in `tests/runner/discover.ts`).
  * CI runs it in the "Functional Smoke (PostgreSQL, RabbitMQ)" job of .github/workflows/ci.yml, against a throwaway
@@ -32,6 +34,7 @@
 import { randomBytes } from "node:crypto";
 import { Client, type Notification } from "pg";
 import { editorExecutionContext } from "../../src/lib/api/execution-context";
+import type { UserPayload } from "../../src/lib/auth";
 import { clearProviderCache, getOrCreateProvider, getProviderCacheStats } from "../../src/lib/db/factory";
 import { pingChannel } from "../../src/lib/governance/contract";
 import { closeGovernancePool } from "../../src/lib/governance/db";
@@ -51,7 +54,12 @@ import { resolveConnection, SeedConnectionError } from "../../src/lib/seed/resol
 import { buildFixtureDdl, FIXTURE_OWNER, readFixtureManifest } from "../helpers/governance/fixture-ddl";
 import { keyringFileOf, removeKeyringFiles, type TestKey, testKey } from "../helpers/governance/keyring-file";
 import { sealSecret } from "../helpers/governance/lsb1-seal";
+import { cookieJar, deletedCookies, installNextHeadersMock, resetCookieJar } from "../helpers/next-cookie-jar";
 import packageJson from "../../package.json";
+
+// getSession() reads the session cookie through next/headers, which only a Next.js request provides.
+installNextHeadersMock();
+const { getSession, signJWT } = await import("../../src/lib/auth");
 
 const MANIFEST = readFixtureManifest();
 const SCHEMA = `"${MANIFEST.schema}"`;
@@ -61,6 +69,9 @@ const ROLES = [FIXTURE_OWNER, "libredb_platform", "libredb_studio", TARGET_ROLE]
 const INSTANCE_ID = "libredb-studio-live-check";
 /** How often the live check's listener pings itself, so the ping case waits seconds rather than minutes. */
 const PING_INTERVAL_MS = 500;
+/** The identity provider the sessions of the live check name, as `OIDC_ISSUER`. */
+const OIDC_ISSUER = "https://idp.example/realms/libredb";
+const SESSION_COOKIE = "auth-token";
 
 function superuserUrl(): string {
   const raw = process.env.LIBREDB_LIVE_POSTGRES_URL;
@@ -569,6 +580,54 @@ const CASES: readonly LiveCase[] = [
     },
   },
   {
+    name: "a revocation row makes getSession refuse the older session within 2 s",
+    run: async ({ superuser }) => {
+      // What the OIDC callback mints for Carol.
+      const carol: UserPayload = {
+        role: "user",
+        username: "carol@example.com",
+        idpSubject: "carol@example.com",
+        idpIssuer: OIDC_ISSUER,
+      };
+      const holdSession = async () => {
+        resetCookieJar();
+        cookieJar.set(SESSION_COOKIE, { value: await signJWT(carol) });
+      };
+      await holdSession();
+      same((await getSession())?.idpSubject ?? null, carol.idpSubject, "the subject of Carol's session before");
+
+      // The control plane ends Carol's sessions. Nothing here reloads the snapshot: the trigger's notification does.
+      const revokedAt = Date.now();
+      const inserted = (await superuser((client) =>
+        client.query(
+          `INSERT INTO ${SCHEMA}.session_revocations_v1_source (subject, revoked_before) VALUES ($1, now()) RETURNING revoked_before`,
+          [carol.idpSubject],
+        ),
+      )) as { rows: { revoked_before: Date }[] };
+      // oxlint-disable-next-line no-await-in-loop -- one check at a time, until the refusal or the deadline.
+      while ((await getSession()) !== null) {
+        check(
+          Date.now() - revokedAt <= 2000,
+          "getSession still accepted Carol's older session 2 s after the revocation",
+        );
+        // oxlint-disable-next-line no-await-in-loop -- the next check waits for this one's pause.
+        await sleep(10);
+      }
+      const elapsed = Date.now() - revokedAt;
+      check(elapsed <= 2000, `getSession refused the older session ${elapsed} ms after the revocation, more than 2 s`);
+      check(
+        deletedCookies.some((cookie) => cookie.name === SESSION_COOKIE),
+        "the refused session's cookie was not cleared",
+      );
+
+      // The token's iat counts whole seconds, so the first session issued after revoked_before is signed in the next.
+      const revokedBefore = inserted.rows[0].revoked_before.getTime();
+      await sleep(Math.max(0, Math.floor(revokedBefore / 1000) * 1000 + 1000 - Date.now()));
+      await holdSession();
+      same((await getSession())?.idpSubject ?? null, carol.idpSubject, "the subject of a session signed after it");
+    },
+  },
+  {
     name: "revoking SELECT on one view turns the state misconfigured, naming that view",
     run: async ({ superuser }) => {
       await superuser((client) => client.query(`REVOKE SELECT ON ${SCHEMA}.grants_v1 FROM libredb_studio`));
@@ -607,6 +666,9 @@ async function main(): Promise<void> {
     process.env.GOVERNANCE_POSTGRES_URL = urlFor(admin, database, studio);
     process.env.GOVERNANCE_INSTANCE_ID = INSTANCE_ID;
     process.env.GOVERNANCE_PRIVATE_KEYS_FILE = keyringFileOf(key);
+    // The session case signs and verifies its sessions in this process only.
+    process.env.JWT_SECRET = randomBytes(32).toString("hex");
+    process.env.OIDC_ISSUER = OIDC_ISSUER;
     // The Next.js build injects the version a heartbeat reports; this script runs outside it.
     process.env.NEXT_PUBLIC_APP_VERSION = packageJson.version;
     process.env.LOG_LEVEL ??= "error";

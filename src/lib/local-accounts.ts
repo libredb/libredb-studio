@@ -15,6 +15,8 @@ import { emitAuditEvent, type AuditReason } from "@/lib/audit";
 import type { Role, UserPayload } from "@/lib/auth";
 import { hmacHex } from "@/lib/auth-compare";
 import { governanceEnabled } from "@/lib/governance/config";
+import { governanceServable } from "@/lib/governance/freshness";
+import { governanceState, sessionRevoked } from "@/lib/governance/state";
 import { getAuthUsers, type AuthUser } from "@/lib/local-auth";
 import { logger } from "@/lib/logger";
 import { hashPassword, needsRehash, passwordMatchesHash } from "@/lib/password-hash";
@@ -437,21 +439,44 @@ export function governedIdentityAccepted(subject: unknown, issuer: unknown): boo
 }
 
 /**
+ * A session as getSession() verified it: the claims signJWT() signed, and the `iat` it set, in whole seconds. jose
+ * refuses a token whose `iat` is not a number and accepts one without, so `iat` is a number or absent.
+ */
+type VerifiedSession = UserPayload & { readonly iat?: number };
+
+/**
+ * Whether the governance source revoked the sessions of `subject` issued at `iat` (spec 5.2, 14). Only the snapshot
+ * data routes are served from revokes anything: while none has loaded, or the one kept is too old, misconfigured or
+ * incompatible, data routes answer 503 instead and no session is refused, so a database outage sends no one back to
+ * the identity provider. It reads the in-process state holder and its freshness only, and neither imports `pg`.
+ */
+function governanceRevoked(subject: string, iat: number | undefined): boolean {
+  const { snapshot } = governanceState();
+  if (snapshot === null || !governanceServable()) return false;
+  return sessionRevoked(snapshot, subject, iat === undefined ? undefined : iat * 1000);
+}
+
+/**
  * Whether a verified session still speaks for its stored account. src/lib/auth.ts getSession()
  * calls this on every request, because the token itself stays valid for 24 hours.
  *
- * Under governance the governed sign-in rule above decides alone, before any store is opened and
- * whatever NEXT_PUBLIC_AUTH_PROVIDER says. Only the OIDC callback writes `idpSubject` and
- * `idpIssuer`, so an env password, passkey or launch session never reaches a route, even when the
- * boot check was bypassed, and neither does a session minted for another issuer.
+ * Under governance the governed sign-in rule above decides, before any store is opened and
+ * whatever NEXT_PUBLIC_AUTH_PROVIDER says, together with the session revocations of the governance
+ * source. Only the OIDC callback writes `idpSubject` and `idpIssuer`, so an env password, passkey or
+ * launch session never reaches a route, even when the boot check was bypassed, and neither does a
+ * session minted for another issuer or one issued at or before its subject's `revoked_before`.
  *
  * Otherwise, OIDC and `STORAGE_PROVIDER=local` sessions have no row to consult and pass. In store mode the
  * account must exist, be enabled, hold the role the token names, and carry the token's session
  * version. A token with no version predates the registry and matches nothing: its holder signs in
  * once more.
  */
-export async function storedAccountAllows(session: UserPayload): Promise<boolean> {
-  if (governanceEnabled()) return governedIdentityAccepted(session.idpSubject, session.idpIssuer);
+export async function storedAccountAllows(session: VerifiedSession): Promise<boolean> {
+  if (governanceEnabled()) {
+    const { idpSubject, idpIssuer, iat } = session;
+    // The rule accepts a non-empty string subject only.
+    return governedIdentityAccepted(idpSubject, idpIssuer) && !governanceRevoked(idpSubject as string, iat);
+  }
   if (process.env.NEXT_PUBLIC_AUTH_PROVIDER === "oidc") return true;
   const provider = await getStorageProvider();
   if (!provider) return true;
