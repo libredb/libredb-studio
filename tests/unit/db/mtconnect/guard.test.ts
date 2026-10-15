@@ -130,7 +130,7 @@ describe("the request line", () => {
       "/Mazak/sample",
       "/assets",
       "/Mazak/assets",
-      "/asset/OLCUM.1",
+      "/asset/CUTTER.1",
     ];
     for (const line of lines) {
       const request = guardRequestLine(line, { ...OPTIONS, knownDevices: devices });
@@ -195,8 +195,8 @@ describe("the request line", () => {
 
   test("an asset id is read without a device, because the agent publishes no device scoped id route", () => {
     const devices = new Set(["Mazak"]);
-    expect(guardRequestLine("/asset/OLCUM.1", OPTIONS).params.assetIds).toBe("OLCUM.1");
-    expect(code(() => guardRequestLine("/Mazak/asset/OLCUM.1", { ...OPTIONS, knownDevices: devices }))).toBe(
+    expect(guardRequestLine("/asset/CUTTER.1", OPTIONS).params.assetIds).toBe("CUTTER.1");
+    expect(code(() => guardRequestLine("/Mazak/asset/CUTTER.1", { ...OPTIONS, knownDevices: devices }))).toBe(
       "unknown-route",
     );
     // The device scoped asset routes the agent does publish are aliases of each other, and both are out.
