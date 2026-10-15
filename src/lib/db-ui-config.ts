@@ -8,6 +8,7 @@ import {
   OracleIcon,
   MSSQLIcon,
   LibreDBIcon,
+  MtconnectIcon,
   OpcuaIcon,
   CouchbaseIcon,
   ClickHouseIcon,
@@ -1325,6 +1326,37 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
       "OPC UA connections are read-only whether or not this is ticked, and not by a setting: this " +
       "provider's client exposes Browse, BrowseNext, Read, HistoryRead and the session calls, and has no " +
       "code that can Write, Call a method, or subscribe.",
+  },
+  mtconnect: {
+    // A mark drawn for Studio, never the MTConnect Institute's logo: a baseline with three samples on it.
+    icon: MtconnectIcon,
+    // The step this hue never had, rather than a new colour. MEASURED on theme.css at 90881379: of nineteen base
+    // hues exactly two carried no `-alt` in either theme, `mist` and `slate`, and `slate`'s base is OPC UA's. The
+    // pairing says nothing about a provider family, which the palette itself shows: `trino` and `mqtt` share a hue
+    // across two families, as do `mysql` and `kubernetes`. `slate-alt` joined the identity steps with this entry and
+    // leaves both closest identity pairs exactly where they were (tests/unit/theme-accent-contrast.test.ts).
+    color: "text-hue-slate-alt",
+    label: "MTConnect",
+    // The port the reference agent listens on out of the box, and the one the demo agent answered on.
+    defaultPort: "5000",
+    // Host and Port hold the agent. A pasted `http(s)://` address is split into them by the Host box below rather
+    // than kept as a string, so there is one spelling of an address in the form.
+    showConnectionStringToggle: false,
+    hostAcceptsUri: ["http", "https"],
+    // Host, Port and the proxy's path prefix, and nothing else: the standard defines no authentication, so the
+    // form offers no credential to fill in. A proxy that asks for one answers with its own page, which the
+    // provider reports as what it is rather than as an agent's refusal.
+    connectionFields: ["host", "port", "apiPath"],
+    // `host` for RabbitMQ's reason, the dialog's default being "Host & Instance", and NO `port` label:
+    // declaring "Port" would change nothing a reader sees and would put this engine in the census of
+    // engines that declare one (tests/unit/lib/db-ui-config.test.ts), which is RabbitMQ's alone.
+    fieldLabels: {
+      host: "Host",
+      apiPath: "Path prefix",
+    },
+    // The dialog's own sentence says the mode can be turned off, which is false here.
+    readOnlyHint:
+      "MTConnect connections are read-only whether or not this is ticked: Studio sends the agent GET requests from a closed table and nothing else.",
   },
   libredb: {
     icon: LibreDBIcon,

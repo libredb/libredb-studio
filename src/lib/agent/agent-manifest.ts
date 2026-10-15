@@ -55,6 +55,7 @@ export const AGENT_STATEMENT_LANGUAGE: Readonly<Record<DatabaseType, AgentStatem
   firestore: null,
   rabbitmq: null,
   opcua: null,
+  mtconnect: null,
   libredb: null,
 } satisfies Record<DatabaseType, AgentStatementLanguageId | null>);
 

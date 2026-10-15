@@ -140,6 +140,7 @@ const SeedDatabaseType = z.enum([
   "firestore",
   "rabbitmq",
   "opcua",
+  "mtconnect",
 ]);
 
 export const SeedDefaultsSchema = z.object({

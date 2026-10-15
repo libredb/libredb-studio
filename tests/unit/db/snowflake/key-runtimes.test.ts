@@ -30,8 +30,8 @@ interface Report {
   readonly codes: Readonly<Record<string, string>>;
   /** How long each relabelled case took to read, in milliseconds. */
   readonly elapsed: Readonly<Record<string, number>>;
-  /** How long a key at each PRF's iteration ceiling took to open, in milliseconds. */
-  readonly ceilingMs: Readonly<Record<string, number>>;
+  /** The CPU time a key at each PRF's iteration ceiling took to open, in milliseconds, once per round. */
+  readonly ceilingMs: Readonly<Record<string, readonly number[]>>;
 }
 
 /** Runs where it is defined and, by its text, inside each child bundle; it names only its arguments. */
@@ -87,12 +87,22 @@ function runCases(a: typeof auth, k: typeof keys, c: Pick<typeof crypto, "create
   }
   results["scrypt N 16,384"] = outcome(k.pbes2ScryptPem(key, pass, 16_384, 8, 1), pass);
   // Each PRF at its own ceiling, timed: the ceilings are set so each costs about what SHA-256 at its ceiling does.
-  const ceilingMs: Record<string, number> = {};
-  for (const prf of ["sha1", "sha256", "sha384", "sha512"] as const) {
-    const pem = k.pbes2Pbkdf2Pem(key, pass, a.SNOWFLAKE_MAX_PBKDF2_ITERATIONS[prf], prf);
-    const started = Date.now();
-    results[`PBKDF2 ${prf} at its ceiling`] = outcome(pem, pass);
-    ceilingMs[prf] = Date.now() - started;
+  // The cost is the process's CPU time, which a pause on a busy runner does not add to as it adds to the clock. The
+  // four PRFs are read in turn, three rounds of them, and the check takes each one's least reading.
+  const cpuMs = (): number => {
+    const { user, system } = process.cpuUsage();
+    return (user + system) / 1_000;
+  };
+  const ceilingPems = (["sha1", "sha256", "sha384", "sha512"] as const).map(
+    (prf) => [prf, k.pbes2Pbkdf2Pem(key, pass, a.SNOWFLAKE_MAX_PBKDF2_ITERATIONS[prf], prf)] as const,
+  );
+  const ceilingMs: Record<string, number[]> = {};
+  for (let round = 0; round < 3; round += 1) {
+    for (const [prf, pem] of ceilingPems) {
+      const started = cpuMs();
+      results[`PBKDF2 ${prf} at its ceiling`] = outcome(pem, pass);
+      ceilingMs[prf] = [...(ceilingMs[prf] ?? []), Math.round(cpuMs() - started)];
+    }
   }
   // An EncryptedPrivateKeyInfo under an unencrypted label: Node's OpenSSL decrypts it whatever the label says.
   const relabel = (pem: string, label: string): string => pem.split("ENCRYPTED PRIVATE KEY").join(label);
@@ -140,6 +150,10 @@ const RELABELLED_REFUSAL_MAX_MS = 1_000;
  * How much more than SHA-256 at its ceiling any PRF at its own ceiling may cost on Node. Measured 2026-10-12 on Node
  * 24.14.0 and 26.10.0, 1,000,000 iterations each: SHA-1 up to about 2 times SHA-256, SHA-384 and SHA-512 4 to 5 times,
  * so one ceiling for all four let a SHA-512 key cost about five times the SHA-256 budget.
+ *
+ * Each PRF is judged by the least CPU time of three readings. Judged by one wall-clock reading of about 100 ms, the
+ * check failed twice on the macOS CI runner (three test files on three vCPUs) on 14 and 15 Oct 2026, and on 2 of 12
+ * local runs when the child was paused for 250 ms every 600 ms, against 0 of 12 without the pauses.
  */
 const CEILING_COST_RATIO_MAX = 2;
 
@@ -157,17 +171,19 @@ function expected(onBun: boolean): Readonly<Record<string, string>> {
 }
 
 function expectReport(report: Report | undefined, onBun: boolean): void {
+  // Printed before any check, so a failing run carries the readings: the runner prints a failing file's output.
+  console.log(`snowflake key runtimes: ${report?.runtime} threw ${JSON.stringify(report?.codes)}`);
+  console.log(`snowflake key runtimes: ${report?.runtime} at the ceilings took ${JSON.stringify(report?.ceilingMs)}`);
+  console.log(`snowflake key runtimes: ${report?.runtime} took ${JSON.stringify(report?.elapsed)}`);
   expect(report?.results).toEqual(expected(onBun));
   for (const [name, ms] of Object.entries(report?.elapsed ?? {})) {
     if (name !== "PBKDF2 2,048 as PRIVATE KEY") expect([name, ms <= RELABELLED_REFUSAL_MAX_MS]).toEqual([name, true]);
   }
   if (!onBun) {
-    const budget = (report?.ceilingMs.sha256 ?? 0) * CEILING_COST_RATIO_MAX;
-    for (const [prf, ms] of Object.entries(report?.ceilingMs ?? {})) expect([prf, ms <= budget]).toEqual([prf, true]);
+    const least = (prf: string): number => Math.min(...(report?.ceilingMs[prf] ?? [Number.NaN]));
+    const budget = least("sha256") * CEILING_COST_RATIO_MAX;
+    for (const prf of Object.keys(report?.ceilingMs ?? {})) expect([prf, least(prf) <= budget]).toEqual([prf, true]);
   }
-  console.log(`snowflake key runtimes: ${report?.runtime} threw ${JSON.stringify(report?.codes)}`);
-  console.log(`snowflake key runtimes: ${report?.runtime} at the ceilings took ${JSON.stringify(report?.ceilingMs)}`);
-  console.log(`snowflake key runtimes: ${report?.runtime} took ${JSON.stringify(report?.elapsed)}`);
 }
 
 /** The Node binaries NODE_TRANSPORT_NODES lists, or the node on PATH; an empty list or no node fails by name. */

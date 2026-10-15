@@ -227,9 +227,19 @@ CTE, a bare `VALUES` list and an `INSERT ... RETURNING` all took the `run()` bra
 statement and drops its rows: the editor showed "Query returned no data" with the connection's
 previous change count as `rowCount`, and the RETURNING insert landed with its row lost.
 
-A statement with no result columns answers `rowCount` from the driver's `changes`, which SQLite does
-not reset for a statement that changes no row: on node:sqlite a DDL statement or a value-setting
-`PRAGMA` reports the previous write's count (D139 in [`docs/BACKLOG.md`](../BACKLOG.md)).
+A statement with no result columns answers `rowCount` from the driver's `changes`, unless it left
+`total_changes()` where it was, in which case it changed no row and answers 0. The guard exists because
+`changes` is `sqlite3_changes()`, which a statement that changes no row leaves as the previous write
+set it: measured 2026-10-14, node:sqlite answered a `CREATE TABLE`, a value-setting `PRAGMA` and a
+`COMMIT` after a two-row `DELETE` with `rowCount: 2`, on `:memory:` and on a file alike, while
+bun:sqlite answered 0.
+
+The two drivers still count a write differently when rows change beyond the statement's own:
+bun:sqlite's `changes` is the whole `total_changes()` delta, node:sqlite's is `sqlite3_changes()`.
+Measured the same day, an `INSERT` of two rows whose trigger writes two more per row answered 6 on
+bun:sqlite and 2 on node:sqlite, and a `DROP TABLE` whose `ON DELETE CASCADE` removed three child
+rows answered 5 and 2. So a DDL statement can report changed rows, and on such a statement the two
+drivers disagree.
 
 ### 3.4 No transactions API, no pool; cancellation via the child-process worker
 

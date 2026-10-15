@@ -1467,7 +1467,7 @@ describe("DOCKERHUB.md", () => {
     expect(SHIPPED_DATABASE_TYPES).toHaveLength(EXTERNAL_DATABASE_TYPES.length + 1);
     expect(hub).toContain(`The ${ordinal(SHIPPED_DATABASE_TYPES.length)} row is the embedded LibreDB store`);
     expect(hub).toContain(
-      "Prometheus, InfluxDB, Apache Kafka, MQTT, RabbitMQ, OPC UA, Oxia, S3-compatible object storage and Kubernetes are read-only too",
+      "Prometheus, InfluxDB, Apache Kafka, MQTT, RabbitMQ, OPC UA, MTConnect, Oxia, S3-compatible object storage and Kubernetes are read-only too",
     );
     expect(hub).toContain(`of one of the ${word(EXTERNAL_DATABASE_TYPES.length)} drivers above`);
   });
@@ -1483,7 +1483,9 @@ describe("the chart and the operator name S3 where an evaluator searches", () =>
     expect(chart.keywords.slice(databend + 1, databend + 4)).toEqual(["s3", "object-storage", "minio"]);
     const readme = read("charts/libredb-studio/README.md");
     expect(readme).toContain(`supporting ${word(EXTERNAL_DATABASE_TYPES.length)} engines - `);
-    expect(readme).toContain("InfluxDB 3, Oxia, Databend, S3-compatible object storage, Kubernetes and OPC UA.");
+    expect(readme).toContain(
+      "InfluxDB 3, Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA and MTConnect.",
+    );
     expect(readme).toContain(`--version ${chart.version} \\`);
     expect(read("operator/helm-charts/libredb-studio/Chart.yaml")).toBe(read("charts/libredb-studio/Chart.yaml"));
     const csv = parseYaml(
@@ -1494,10 +1496,10 @@ describe("the chart and the operator name S3 where an evaluator searches", () =>
     };
     expect(csv.metadata.annotations.description).toContain(`for ${word(EXTERNAL_DATABASE_TYPES.length)} engines - `);
     expect(csv.metadata.annotations.description).toContain(
-      "Oxia, Databend, S3-compatible object storage, Kubernetes and OPC UA - with AI-powered query assistance.",
+      "Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA and MTConnect - with AI-powered query assistance.",
     );
     expect(flat(csv.spec.description)).toContain(
-      "Oxia, Databend, S3-compatible object storage, Kubernetes and OPC UA from the browser",
+      "Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA and MTConnect from the browser",
     );
   });
 });
@@ -1542,7 +1544,7 @@ describe("FEATURES, BRAND_MESSAGING and API_DOCS", () => {
     expect(brand).toContain(`- **Proof:** ${word(engines)} providers, each with its own reference document`);
     expect(brand).toContain(`| ${Word(engines)} database engines | One reference document per engine:`);
     expect(brand).toContain(
-      "Qdrant, Oxia, S3-compatible object storage, Kubernetes, OPC UA. One more, `libredb.md`, is the embedded provider",
+      "Qdrant, Oxia, S3-compatible object storage, Kubernetes, OPC UA, MTConnect. One more, `libredb.md`, is the embedded provider",
     );
     expect(brand).toContain(`against ${word(engines)} here.`);
     expect(brand).toContain(`"${Word(engines)} engines" beats "extensive database support".`);
@@ -1557,10 +1559,12 @@ describe("FEATURES, BRAND_MESSAGING and API_DOCS", () => {
     const api = read("docs/API_DOCS.md");
     const capabilities = provider.getCapabilities();
     const keyScan = capabilities.keyScan;
-    expect(api).toContain("Milvus, Qdrant, Oxia, Databend, S3-compatible object storage, Kubernetes and OPC UA.");
+    expect(api).toContain(
+      "Milvus, Qdrant, Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA and MTConnect.",
+    );
     expect(api).toMatch(
       new RegExp(
-        `- \\*\\*Multi-Database Support\\*\\* - ${Word(engines)} engines: .*, S3-compatible object storage, Kubernetes, OPC UA$`,
+        `- \\*\\*Multi-Database Support\\*\\* - ${Word(engines)} engines: .*, S3-compatible object storage, Kubernetes, OPC UA, MTConnect$`,
         "m",
       ),
     );
@@ -1683,7 +1687,8 @@ describe("docs/providers/README.md", () => {
     expect(lines[influxdb3 + 3].startsWith("| MQTT | `mqtt` |")).toBe(true);
     expect(lines[influxdb3 + 4].startsWith("| RabbitMQ | `rabbitmq` |")).toBe(true);
     expect(lines[influxdb3 + 5].startsWith("| OPC UA | `opcua` |")).toBe(true);
-    expect(lines[influxdb3 + 6].startsWith("| LibreDB | `libredb` |")).toBe(true);
+    expect(lines[influxdb3 + 6].startsWith("| MTConnect | `mtconnect` |")).toBe(true);
+    expect(lines[influxdb3 + 7].startsWith("| LibreDB | `libredb` |")).toBe(true);
     expect(index).toContain(
       "Qdrant, InfluxDB, Oxia, Databend, S3, Kubernetes, MQTT, Firestore, RabbitMQ and OPC UA are)",
     );
@@ -1772,7 +1777,7 @@ describe("the architecture, provider, editor and guide docs", () => {
     const nonSql = SHIPPED_DATABASE_TYPES.filter((type) => !readsSqlText(type)).length;
     const optimization = read("docs/editor/query-optimization.md");
     expect(optimization).toContain(
-      `Qdrant, Oxia, S3-compatible object storage, Kubernetes and OPC UA are the ${word(nonSql)} types whose query text is not SQL at all**`,
+      `Qdrant, Oxia, S3-compatible object storage, Kubernetes, OPC UA and MTConnect are the ${word(nonSql)} types whose query text is not SQL at all**`,
     );
     expect(optimization).toContain(`holds exactly those ${word(nonSql)},`);
     expect(provider.getCapabilities().supportsResultPagination).toBe(false);
@@ -1991,18 +1996,22 @@ describe("the complete engine lists outside the agent docs", () => {
   test("63. every list that names Databend and claims to be complete names S3 too", () => {
     const readme = read("README.md");
     expect(readme).toContain(
-      "InfluxDB 3 (SQL), Oxia, S3-compatible object storage or Kubernetes with SSL/TLS and SSH Tunnel support",
+      "InfluxDB 3 (SQL), Oxia, S3-compatible object storage, Kubernetes or MTConnect with SSL/TLS and SSH Tunnel support",
     );
-    expect(readme).toContain("InfluxDB 3 (SQL), Oxia, S3-compatible object storage, Kubernetes | Web, Mobile |");
-    expect(readme).toContain("InfluxDB 3 (SQL), Oxia, S3-compatible object storage, or Kubernetes)");
+    expect(readme).toContain(
+      "InfluxDB 3 (SQL), Oxia, S3-compatible object storage, Kubernetes, OPC UA, MTConnect | Web, Mobile |",
+    );
+    expect(readme).toContain("InfluxDB 3 (SQL), Oxia, S3-compatible object storage, Kubernetes, OPC UA, or MTConnect)");
     const zh = read("README_zh.md");
     expect(zh).toContain(
-      "InfluxDB 3 (SQL)、Oxia、S3-compatible object storage 或 Kubernetes，支持 SSL/TLS 与 SSH 隧道",
+      "InfluxDB 3 (SQL)、Oxia、S3-compatible object storage、Kubernetes、MTConnect，支持 SSL/TLS 与 SSH 隧道",
     );
-    expect(zh).toContain("InfluxDB 3 (SQL)、Oxia、S3-compatible object storage、Kubernetes | Web、移动端 |");
-    expect(zh).toContain("InfluxDB 3 (SQL)、Oxia、S3-compatible object storage 或 Kubernetes）");
+    expect(zh).toContain(
+      "InfluxDB 3 (SQL)、Oxia、S3-compatible object storage、Kubernetes、OPC UA、MTConnect | Web、移动端 |",
+    );
+    expect(zh).toContain("InfluxDB 3 (SQL)、Oxia、S3-compatible object storage、Kubernetes、OPC UA 或 MTConnect）");
     expect(read("README_ko.md")).toContain(
-      "InfluxDB 3 (SQL), Oxia, S3-compatible object storage, Kubernetes에 연결할 수 있으며",
+      "InfluxDB 3 (SQL), Oxia, S3-compatible object storage, Kubernetes, MTConnect에 연결할 수 있으며",
     );
     // The newest-engine history names Apache Spark as the newest in README.md, OPC UA one step back, Snowflake before
     // OPC UA, Firestore before RabbitMQ, MQTT before Firestore, Kubernetes before MQTT, S3 before Kubernetes and
@@ -2010,7 +2019,8 @@ describe("the complete engine lists outside the agent docs", () => {
     // straight back to MQTT. The chain is a claim about ORDER, so each link is pinned at both ends: an engine added
     // without moving the head leaves the previous head claiming a title it no longer holds, which is exactly what
     // this change did to Kubernetes until the `not` assertions below were added.
-    expect(readme).toContain("Apache Spark is the newest: SQL typed in the editor");
+    expect(readme).toContain("Apache Spark came before MTConnect: SQL typed in the editor runs");
+    expect(readme).toContain("OPC UA came before Apache Spark: one `opc.tcp` session reads");
     expect(readme).not.toContain("OPC UA is the newest");
     expect(readme).toContain("OPC UA came before Apache Spark: one `opc.tcp` session reads");
     expect(readme).not.toContain("Snowflake is the newest");
@@ -2024,7 +2034,8 @@ describe("the complete engine lists outside the agent docs", () => {
     expect(readme).toContain("Kubernetes came before MQTT: kubectl read commands");
     expect(readme).toContain("S3-compatible object storage came before Kubernetes: AWS CLI read commands");
     expect(readme).toContain("Databend came before S3-compatible object storage: ");
-    expect(zh).toContain("Apache Spark 是最新的一个：");
+    expect(zh).toContain("Apache Spark 在 MTConnect 之前：");
+    expect(zh).toContain("OPC UA 在 Apache Spark 之前：");
     expect(zh).not.toContain("OPC UA 是最新的一个");
     expect(zh).toContain("OPC UA 在 Apache Spark 之前：");
     expect(zh).not.toContain("MQTT 是最新的一个");
@@ -2037,7 +2048,7 @@ describe("the complete engine lists outside the agent docs", () => {
     expect(zh).toContain("它在 MinIO、Silo、Garage 和 RustFS 上验证过，没有在任何托管服务上验证过。");
     const ko = read("README_ko.md");
     expect(ko).toContain("MinIO, Silo, Garage, RustFS에서 검증되었으며 호스팅 서비스에서는 검증되지 않았습니다.");
-    expect(ko).toContain("가장 최근에 추가된 엔진은 Apache Spark입니다.");
+    expect(ko).toContain("MTConnect 이전에 추가된 엔진은 Apache Spark입니다.");
     expect(ko).not.toContain("가장 최근에 추가된 엔진은 OPC UA입니다.");
     expect(ko).toContain("Apache Spark 이전에 추가된 엔진은 OPC UA입니다.");
     expect(ko).not.toContain("가장 최근에 추가된 엔진은 MQTT입니다.");
@@ -2057,9 +2068,10 @@ describe("the complete engine lists outside the agent docs", () => {
         .find((line) => line.startsWith("| `connections[].type` |"));
       const listed = (row?.match(/`[a-z0-9]+`/g) ?? []).map((cell) => cell.slice(1, -1)).sort();
       expect(listed, file).toEqual([...SHIPPED_DATABASE_TYPES].sort());
-      // The tail stays in registry order, with the industrial engine between the platform and the store (#1677).
+      // The tail stays in registry order, with the two industrial engines between the platform and the store
+      // (#1677, then #1722: an agent reads the machines an address space stands in front of).
       expect(row, file).toContain(
-        `\`oxia\`${separator}\`s3\`${separator}\`kubernetes\`${separator}\`opcua\`${separator}\`libredb\``,
+        `\`oxia\`${separator}\`s3\`${separator}\`kubernetes\`${separator}\`opcua\`${separator}\`mtconnect\`${separator}\`libredb\``,
       );
     }
     expect(read("docs/BRAND_MESSAGING.md")).toContain(

@@ -133,6 +133,8 @@ const ENGINE_FENCE_TAGS: Readonly<Record<DatabaseType, true>> = Object.freeze({
   rabbitmq: true,
   // An ```opcua block holds one JSON read request, which the console runs as it is.
   opcua: true,
+  // An ```mtconnect block holds one request line in the agent's own URL grammar, which the console runs as it is.
+  mtconnect: true,
 });
 
 /**

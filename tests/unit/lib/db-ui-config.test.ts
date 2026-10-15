@@ -121,6 +121,7 @@ const ALL_TYPES: DatabaseType[] = [
   "firestore",
   "rabbitmq",
   "opcua",
+  "mtconnect",
 ];
 
 describe("db-ui-config", () => {
@@ -1008,7 +1009,7 @@ describe("declared connection-field copy (#1085)", () => {
     }
   });
 
-  test("only libsql, db2, prometheus, kafka, etcd, neo4j, milvus, qdrant, the two InfluxDB types, oxia, databend, bigquery, snowflake, spark, s3, kubernetes, mqtt, firestore, rabbitmq and opcua declare field copy, so every other engine draws every label and hint it drew before", () => {
+  test("only libsql, db2, prometheus, kafka, etcd, neo4j, milvus, qdrant, the two InfluxDB types, oxia, databend, bigquery, snowflake, spark, s3, kubernetes, mqtt, firestore, rabbitmq, opcua and mtconnect declare field copy, so every other engine draws every label and hint it drew before", () => {
     const declared = Object.entries(DB_UI_CONFIG)
       .filter(([, config]) => config.fieldLabels !== undefined || config.fieldHints !== undefined)
       .map(([type]) => type);
@@ -1035,6 +1036,7 @@ describe("declared connection-field copy (#1085)", () => {
       "rabbitmq",
       // OPC UA relabels Host as the endpoint URL and adds its own two boxes, each with a hint (#1677).
       "opcua",
+      "mtconnect",
     ]);
     // The control that the walk saw the whole table rather than nothing.
     expect(Object.keys(DB_UI_CONFIG).sort()).toEqual([...ALL_TYPES].sort());
@@ -1564,6 +1566,7 @@ describe("db-showcase", () => {
         // Last (rank 36), behind the embedded store: an industrial address space is the least recognisable
         // name on a page of databases, so no existing engine moves for it (#1677).
         "opcua",
+        "mtconnect",
       ]);
     });
   });
@@ -1588,7 +1591,7 @@ describe("db-showcase", () => {
 });
 
 describe("Host box addresses and credential warnings", () => {
-  test("only milvus, qdrant, the two InfluxDB types, databend, s3, kubernetes and rabbitmq declare hostAcceptsUri, so every other Host box takes a host alone", () => {
+  test("only milvus, qdrant, the two InfluxDB types, databend, s3, kubernetes, rabbitmq and mtconnect declare hostAcceptsUri, so every other Host box takes a host alone", () => {
     expect(ALL_TYPES.filter((type) => hostUriSchemes(type).length > 0)).toEqual([
       "milvus",
       "qdrant",
@@ -1598,6 +1601,7 @@ describe("Host box addresses and credential warnings", () => {
       "s3",
       "kubernetes",
       "rabbitmq",
+      "mtconnect",
     ]);
   });
 

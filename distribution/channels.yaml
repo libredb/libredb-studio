@@ -570,6 +570,33 @@ channels:
         app (931 and 1039) targeted it, so the pin URL and any bump PR must use `canary`. This URL
         read `main` until now, which happened to report the same version and so hid the mistake.
 
+  - id: pethost
+    name: Pethost template catalog
+    short_name: Pethost
+    status: live
+    category: paas-catalogs
+    platforms: [cloud]
+    runtime: channel_supplied
+    tier: 3
+    kind: paas-template
+    update:
+      method: upstream_pr
+      sla: on_demand
+    links:
+      catalog: https://pethost.dev/templates/libredb-studio/
+      upstream_repo: https://github.com/pethost-dev/templates
+      docs: README.md
+    pin:
+      strategy: remote_file
+      url: https://raw.githubusercontent.com/pethost-dev/templates/main/libredb-studio/compose.yaml
+      extract: 'libredb-studio:(\d+\.\d+\.\d+)'
+      note: Pethost wrote the template and committed it to pethost-dev/templates directly (c1a6ce95,
+        15 Oct 2026), so there is no first_pr. It pins an exact release because this project
+        publishes no minor-line image tag, and that repo's README takes a line tag only where one
+        exists. A bump is a pull request there that changes the tag in compose.yaml. The README
+        button opens https://console.pethost.dev/?template=libredb-studio, the same deploy link the
+        catalog page uses.
+
   - id: cosmos
     name: Cosmos servapp marketplace
     status: live

@@ -112,6 +112,9 @@ const EXPECTED: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   // A value read answers one row per node the request named, and a history read carries its own cap,
   // so neither has a second page a panel could ask for (#1677).
   opcua: false,
+  // A read is bounded by bytes and by `count`, and the next page of a stream is the reader's own
+  // next request from the sequence the last answer ended at, not a page a panel can ask for (#1722).
+  mtconnect: false,
 });
 
 const TYPES = Object.keys(EXPECTED) as DatabaseType[];

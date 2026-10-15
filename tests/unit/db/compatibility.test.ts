@@ -512,9 +512,9 @@ describe("wire-compatibility registry", () => {
     // The one place these numerals live. A new provider moves them here and nowhere else, and the derived
     // assertions around this test say how the counts relate.
     expect([SHIPPED_DATABASE_TYPES.length, EXTERNAL_DATABASE_TYPES.length, WIRE_COMPATIBLE_ENGINES.length]).toEqual([
-      37, 36, 27,
+      38, 37, 27,
     ]);
-    expect(connectableProductCount()).toBe(63);
+    expect(connectableProductCount()).toBe(64);
   });
 
   test("the Apache Spark row of each record (#1736)", () => {
@@ -528,6 +528,7 @@ describe("wire-compatibility registry", () => {
     // A pasted sc:// address is decomposed into fields; a seed gives fields, never a string.
     expect(CONNECTION_FORM_URI_MODE.spark).toBe(false);
     expect(CONNECTION_STRING_ACCEPTED.spark).toBe(false);
+    // 63 and not 62 because MTConnect joined as an external engine with no wire-compatible relative:
   });
 
   test("firestore ships as an external engine that keeps the read-only mode, is not offered to MCP and has no relatives", () => {

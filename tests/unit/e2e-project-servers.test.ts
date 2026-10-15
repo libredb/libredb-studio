@@ -13,6 +13,7 @@ import config from "../../playwright.config";
 
 const SECOND_SERVER = `http://localhost:${Number(process.env.E2E_OFFLINE_PORT ?? 3010)}`;
 const SECOND_SERVER_SPECS = [
+  "mtconnect-provider.spec.ts",
   "offline-editor.spec.ts",
   "kafka-provider.spec.ts",
   "etcd-provider.spec.ts",

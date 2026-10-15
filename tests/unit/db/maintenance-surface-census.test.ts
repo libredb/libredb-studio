@@ -115,6 +115,8 @@ const EXPECTED: Readonly<Record<DatabaseType, SurfaceRow>> = {
   rabbitmq: NONE,
   // Maintenance would be a write, and this provider has no code that can write to a server (#1677).
   opcua: NONE,
+  // The same: every route this provider sends is a GET (#1722).
+  mtconnect: NONE,
   libredb: NONE,
 };
 
@@ -128,9 +130,9 @@ describe("every shipped provider's per-row maintenance controls (R46 C3)", () =>
     expect(surfacesOf(provider.getCapabilities(), provider.getLabels())).toEqual(EXPECTED[type]);
   });
 
-  test("11 of 37 type-ids offer per-row controls on the two tabs, 10 on the row menus, one outside MaintenanceType", () => {
+  test("11 of 38 type-ids offer per-row controls on the two tabs, 10 on the row menus, one outside MaintenanceType", () => {
     const rows = Object.values(EXPECTED);
-    expect(rows.length).toBe(37);
+    expect(rows.length).toBe(38);
     expect(rows.filter((row) => row.tabs !== "").length).toBe(11);
     expect(rows.filter((row) => row.tree !== "").length).toBe(10);
     expect(rows.filter((row) => row.outsideMaintenanceType !== "").length).toBe(1);

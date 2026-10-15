@@ -456,6 +456,8 @@ const GRAMMAR_COVERAGE: Record<DatabaseType, "established" | "default"> = {
   rabbitmq: "default",
   // One JSON read request naming node ids, not SQL: no SQL grammar is established for it (#1677).
   opcua: "default",
+  // One request line in a URL grammar, not SQL: no SQL grammar is established for it (#1722).
+  mtconnect: "default",
 };
 
 /**
@@ -779,6 +781,8 @@ const SQL_TEXT_COVERAGE: Record<DatabaseType, boolean> = {
   rabbitmq: false,
   // A read request is a JSON document, not SQL text.
   opcua: false,
+  // A request line is a URL, not SQL text.
+  mtconnect: false,
 };
 
 describe("readsSqlText", () => {

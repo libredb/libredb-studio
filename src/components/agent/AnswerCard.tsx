@@ -127,6 +127,7 @@ type StatementLanguage =
   | "s3"
   | "kubectl"
   | "firestore"
+  | "mtconnect"
   | "unknown";
 
 /**
@@ -193,6 +194,12 @@ const LANGUAGE_ACCENTS: Readonly<Record<StatementLanguage, string>> = Object.fre
   s3: "border-hue-indigo-alt/40",
   kubectl: "border-hue-teal-alt/40",
   firestore: "border-hue-pink-alt/40",
+  // MTConnect takes the `-alt` step of the steel grey the `industrial/` family carries, which is its identity hue
+  // everywhere else in the product. Measured against every hue in this map and the three status hues: its nearest
+  // neighbour is kubectl's teal-alt at 0.086 in OKLab in light and Oxia's purple-alt at 0.111 in dark, both further
+  // than the 0.062 Firestore's entry was accepted at, and it is no status hue: the rail's amber, rose and emerald
+  // are the three it has to stay clear of.
+  mtconnect: "border-hue-slate-alt/40",
   unknown: "border-hairline-strong",
 });
 

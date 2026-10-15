@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S9 · 6
-- [Drivers and connections](#drivers-and-connections) — D1-D364, U17 · 262
+- [Drivers and connections](#drivers-and-connections) — D1-D364, U17 · 261
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U144 · 131
@@ -1966,17 +1966,6 @@ Found while building the etcd provider (#1089), whose connection sentences name 
 Not fixed there: the tunnel serves every engine.
 
 **Done when:** a refused forward reaches the caller as a connection error that names the bastion's refusal and the far end, on every tunnelled provider, and a test through an in-process ssh2 bastion that refuses the channel pins it.
-
-### D139. A SQLite DDL statement reports the row count of the write before it
-
-`SQLiteProvider.query` (`src/lib/db/providers/sql/sqlite.ts`) answers a statement that returns no rows with `rowCount: result.rows.length || result.changes`, and `changes` is the driver's `run()` answer, which SQLite does not reset for a statement that changes no row: a `CREATE TABLE` or `DROP TABLE` reports the count of the last `INSERT`, `UPDATE` or `DELETE` on that connection.
-Measured 2026-10-02 in the etcd branch's regression pass, the same on `origin/main` 82c729f7: after a `DELETE` of 2 rows, a `CREATE TABLE` in the editor answered "2 rows", and on a fresh connection it answered 0 (`t28/compare.md`, `t28/branch/editor.json`).
-
-Found by the etcd provider's regression pass on SQLite (#1089), which changes no SQL provider.
-Not fixed there: the SQLite provider is outside that PR.
-Since #1323 routes on the driver's result column count, a value-setting `PRAGMA` such as `PRAGMA foreign_keys = ON` reaches `run()` as well, so node:sqlite reports the previous write's count for it too, while bun:sqlite reports 0.
-
-**Done when:** a statement that changes no row reports no changed rows on both SQLite drivers, read from the statement itself rather than the connection's last count, and a test runs a `DELETE` then a `CREATE TABLE` on one connection and pins the second answer.
 
 ### D140. Neo4j calls no APOC procedure, so a measured read-only subset is unavailable
 

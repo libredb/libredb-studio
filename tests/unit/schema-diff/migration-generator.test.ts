@@ -1119,6 +1119,7 @@ describe("generateMigrationSQL: SQLite's grammar declares a foreign key only ins
     firestore: "engine-has-no-foreign-key",
     rabbitmq: "engine-has-no-foreign-key",
     opcua: "engine-has-no-foreign-key",
+    mtconnect: "engine-has-no-foreign-key",
   };
 
   for (const [dialectId, entry] of Object.entries(GRAMMAR)) {
@@ -1281,6 +1282,11 @@ const MODIFIED_COLUMN_COVERAGE: Record<
   },
   // Not a table store either (#1677): a node has ATTRIBUTES defined by its type in the server's own
   // model, and this provider has no code that can write one.
+  mtconnect: {
+    label: "MTConnect",
+    reason:
+      "An MTConnect data item's shape is declared in the agent's own device model, not in columns a client can change, and every request this provider sends is a GET, so there is no column definition to change.",
+  },
   opcua: {
     label: "OPC UA",
     reason:
@@ -1613,6 +1619,7 @@ describe("generateMigrationSQL: dialects that cannot modify a column", () => {
           "firestore",
           "rabbitmq",
           "opcua",
+          "mtconnect",
         ].includes(dialect)
       ) {
         expect(sql).toContain(`-- ${expected.label}: Cannot generate table DDL.`);
@@ -1688,7 +1695,9 @@ const TRANSACTION_WRAPPER_COVERAGE: Record<DatabaseType, "BEGIN;" | "BEGIN TRANS
   mqtt: false, // one JSON read request, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
   firestore: false, // one read-only query chain, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
   rabbitmq: false, // one JSON read request, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
-  opcua: false, // one JSON read request, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
+  opcua: false,
+  // No wrapper: every request this provider sends is a GET, so there is no statement to wrap (#1722).
+  mtconnect: false, // one JSON read request, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
 };
 
 // Both creation and modification paths must use the same wrapper policy.
@@ -1730,6 +1739,7 @@ describe("generateMigrationSQL: transaction wrapper by dialect", () => {
             "firestore",
             "rabbitmq",
             "opcua",
+            "mtconnect",
           ].includes(dialect)
         ) {
           expect(sql).toMatch(/^CREATE TABLE /m);

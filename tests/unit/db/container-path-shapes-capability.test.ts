@@ -61,6 +61,9 @@ const EXPECTED_CONTAINER_PATH_SHAPES: Readonly<
   rabbitmq: "exact",
   // One connection is one server endpoint: there is no container level to shape (#1677).
   opcua: "absent",
+  // One level, the agent's devices, and a path is the device name exactly as the probe document
+  // spells it: nothing is prefixed and nothing is derived (#1722).
+  mtconnect: "exact",
   libredb: "exact",
   duckdb: "prefixes",
   mssql: "prefixes",
@@ -168,7 +171,7 @@ describe("the declaration follows the check (#1147)", () => {
     expect(unknownTypeIds(callerFiles)).toEqual([]);
     const callers = callerFiles.map(providerTypeId).sort();
     const declaring = TYPES.filter((type) => EXPECTED_CONTAINER_PATH_SHAPES[type] !== "absent").sort();
-    expect(callers).toHaveLength(24);
+    expect(callers).toHaveLength(25);
     expect(callers).toEqual(declaring);
   });
 });

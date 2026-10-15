@@ -1191,12 +1191,11 @@ They are documented here rather than under `deploy/<provider>/` because neither 
 this repo: the Sealos template lives upstream in
 [`labring-actions/templates`](https://github.com/labring-actions/templates) and the Unraid template
 in [`libredb/unraid-templates`](https://github.com/libredb/unraid-templates), and neither has a
-`deploy/<provider>/` folder here at all. They are two of the nine catalog channels with no such
-folder - the others are TrueNAS SCALE, CasaOS, the [Dokku plugin](#dokku-plugin), the three open submissions (Umbrel, Easypanel,
-Portainer) and Google Cloud Marketplace, whose artefacts live in Google's Producer Portal. The
-catalog channels that DO keep a folder keep their notes in `deploy/<provider>/README.md` - CapRover and Railway alongside the source
+`deploy/<provider>/` folder here at all.
+Most catalog channels have no such folder; for each one, `links.docs` in [`distribution/channels.yaml`](../distribution/channels.yaml) names the page that documents it, and [`docs/CHANNELS.md`](CHANNELS.md), the full channel list, links that page in its Guide column.
+The catalog channels that DO keep a folder keep their notes in `deploy/<provider>/README.md` - CapRover and Railway alongside the source
 descriptor itself, Dokploy, Kubero and Cosmos as notes only, since those three descriptors are also
-authored upstream. The full channel list is [`docs/CHANNELS.md`](CHANNELS.md).
+authored upstream.
 
 Both templates pin an explicit **version tag**, not `latest`, so a new release reaches these users
 only when the template is bumped - `on_demand` for both in
@@ -1796,7 +1795,10 @@ descriptor here at all.** Two of them are pinned `remote_file` against the repos
 hold it — the Sealos template in `labring-actions/templates`, the Unraid CA template in
 `libredb/unraid-templates` — and both are documented under
 [App catalogs](#app-catalogs-unraid-sealos); TrueNAS SCALE is pinned the same way against
-`truenas/apps`, and CasaOS against `IceWhaleTech/CasaOS-AppStore`. The three open submissions (Umbrel, Easypanel, Portainer) have nothing to
+`truenas/apps`, CasaOS against `IceWhaleTech/CasaOS-AppStore`, YunoHost against
+`YunoHost-Apps/libredb_studio_ynh`, the [Dokku plugin](#dokku-plugin) against
+`libredb/dokku-libredb-studio`, and Pethost against `pethost-dev/templates`, where Pethost
+authors the template. The three open submissions (Umbrel, Easypanel, Portainer) have nothing to
 pin until their upstream PR merges, and each entry's note names the pin to add on that day.
 [Google Cloud Marketplace](#google-cloud-marketplace) and [Railyard](https://railyard.run/templates/libredb-studio) have nothing to pin even in principle: Google holds the artefacts in its Producer Portal and a private Artifact Registry, and Railyard keeps the template on its own side and says it builds `main` at deploy time.
 Neither Fly.io nor

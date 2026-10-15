@@ -352,9 +352,9 @@ describe("the installed editor's language ids", () => {
     // S3, whose bucket and object each declare `json`, 89 before Kubernetes, whose 37 built-in kinds each declare
     // `yaml`, 127 before Firestore, whose document kind declares `json`, 128 before RabbitMQ, whose stream, queue
     // and exchange each declare `json`, 131 before Snowflake, whose nine kinds with a source each declare `sql`,
-    // 140 before OPC UA, whose node declares `json` too, and 141 before Apache Spark, whose table and view kinds
-    // each declare `sql`.
-    expect(declared).toHaveLength(143);
+    // 140 before OPC UA, whose node declares `json` too, 141 before Apache Spark, whose table and view kinds
+    // each declare `sql`, and 143 before MTConnect, whose asset declares `xml`.
+    expect(declared).toHaveLength(144);
 
     const unregistered = declared.filter((entry) => !registered.has(entry.language));
     // Named, so a failure says which kind on which engine declared what, rather than false. This
@@ -364,15 +364,18 @@ describe("the installed editor's language ids", () => {
     // guard that had not executed.
     expect(unregistered.map((entry) => `${entry.where}: ${entry.language}`)).toEqual([]);
 
-    // Non-vacuous in CONTENT and not only in count: these are the six distinct languages the
+    // Non-vacuous in CONTENT and not only in count: these are the seven distinct languages the
     // fleet declares, so a population that reached only the SQL engines fails here rather than
-    // passing a membership loop that never saw `json` or `lua`.
+    // passing a membership loop that never saw `json` or `lua`. `xml` is the seventh and MTConnect's
+    // asset is the only kind that declares it (#1722): an asset IS an XML document, which is why the
+    // Source tab shows the agent's own bytes rather than a re-encoding of them.
     expect([...new Set(declared.map((entry) => entry.language))].sort()).toEqual([
       "json",
       "lua",
       "mysql",
       "pgsql",
       "sql",
+      "xml",
       "yaml",
     ]);
   });

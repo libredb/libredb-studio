@@ -177,6 +177,18 @@ export const QUERY_DIALECTS: Readonly<Record<QueryDialect, DialectSpec>> = Objec
     offersCodeGeneration: false,
     offersCountQuery: false,
   }),
+  // MTConnect: one request line, a route from a closed table of nine. Its grids are the agent's own observations,
+  // so no profile, model or count statement of its grammar applies - there is no statement form at all, only a URL.
+  // The SQL export formats ARE kept, as OPC UA's and MQTT's are: a read answers one row per observation with the
+  // same columns every time, so exporting those rows is as meaningful as for any other tabular answer, and an
+  // export is not a write. A request line names a device, a route and query keys, and no credential, so there is
+  // nothing for history to mask.
+  mtconnect: Object.freeze({
+    tabType: "mtconnect",
+    offersColumnProfiling: false,
+    offersCodeGeneration: false,
+    offersCountQuery: false,
+  }),
 });
 
 /**

@@ -125,6 +125,10 @@ const SHIPPED: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // A plant's address space rather than a store, read through a client seam that names eight read services, so
   // the read-only guarantee is a type rather than a setting.
   opcua: true,
+  // MTConnect (#1722): its own provider, doc and integration test, the second member of the `industrial/` family.
+  // An agent's device model and its observations rather than a store, read through a request table of nine routes
+  // that are all GET, so the read-only guarantee is a type rather than a setting.
+  mtconnect: true,
   libredb: true,
 });
 
@@ -207,6 +211,8 @@ const EXTERNAL: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   rabbitmq: true,
   // A server the plant already runs, reached over opc.tcp at one endpoint the reader types.
   opcua: true,
+  // An agent the plant already runs, reached over HTTP at one address the reader types.
+  mtconnect: true,
   // The one false entry. SQLite is a file rather than a server and is still
   // external: it is the user's file, opened from a path they give us. libredb is
   // ours, created by this app, so it is the only id that answers no here.
@@ -312,6 +318,9 @@ export const READ_ONLY_ENFORCED: Record<DatabaseType, boolean> = Object.freeze({
   // Structural rather than a mode: the client seam names eight read services and none of them writes, so there
   // is no write to enforce against (`src/lib/db/providers/industrial/opcua/client.ts`).
   opcua: true,
+  // Structural rather than a mode: the request table holds nine routes and every one of them is a GET, so there
+  // is no write to enforce against (`src/lib/db/providers/industrial/mtconnect/routes.ts`).
+  mtconnect: true,
   libredb: false,
 });
 
@@ -372,6 +381,7 @@ export const READS_FILE_ACCESS_POSTURE: Readonly<Record<DatabaseType, boolean>> 
   firestore: false,
   rabbitmq: false,
   opcua: false,
+  mtconnect: false,
   libredb: false,
 });
 
@@ -427,6 +437,7 @@ export const SINGLE_WRITER_FILE: Readonly<Record<DatabaseType, boolean>> = Objec
   firestore: false,
   rabbitmq: false,
   opcua: false,
+  mtconnect: false,
   libredb: true,
 });
 
@@ -506,6 +517,7 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // and the EU range live on nodes of their own, and this version reads neither - so an agent
   // grounded on an address space would be reasoning about figures it cannot qualify.
   opcua: false,
+  mtconnect: true,
   libredb: true,
 });
 
@@ -557,6 +569,7 @@ export const CONNECTION_FORM_URI_MODE: Readonly<Record<DatabaseType, boolean>> =
   firestore: false,
   rabbitmq: false,
   opcua: false,
+  mtconnect: false,
   libredb: false,
 });
 
@@ -615,6 +628,8 @@ export const CONNECTION_STRING_ACCEPTED: Readonly<Record<DatabaseType, boolean>>
   rabbitmq: false,
   // The endpoint URL is the whole address: host and port are read from it, so there is no second string to parse.
   opcua: false,
+  // Host and port are the address and `apiPath` is a field of its own, so there is no string form to parse.
+  mtconnect: false,
   libredb: false,
 });
 
@@ -669,6 +684,7 @@ export const OPENS_LOCAL_FILE: Readonly<Record<DatabaseType, boolean>> = Object.
   firestore: false,
   rabbitmq: false,
   opcua: false,
+  mtconnect: false,
   // The embedded store this app creates, a file on Studio's own volume.
   libredb: true,
 });
@@ -724,6 +740,7 @@ export const OPENS_SERVER_LEVEL_WITHOUT_DATABASE: Readonly<Record<DatabaseType, 
   firestore: false,
   rabbitmq: false,
   opcua: false,
+  mtconnect: false,
   libredb: false,
 });
 

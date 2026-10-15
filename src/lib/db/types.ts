@@ -969,6 +969,9 @@ export interface ProviderCapabilities {
    * `"firestore"` is the Firestore provider's: one statement of a read-only subset of the Admin SDK's query chain per
    * run, `db.collection(...)` and the rest of its chain.
    *
+   * `"mtconnect"` is the MTConnect provider's: one request line in the agent's own URL grammar per run, a route from
+   * a closed table of nine with GET implied, and no body on any of them.
+   *
    * Those arms are now records: a member added here does not compile until it has one in each of
    * `QUERY_DIALECTS` (`src/lib/db/query-dialects.ts`), `DIALECT_EDITORS` (`src/lib/editor/dialect-editors.ts`)
    * and `DIALECT_GENERATORS` (`src/lib/query-generators.ts`), and every other reader of this field and of
@@ -987,7 +990,8 @@ export interface ProviderCapabilities {
     | "firestore"
     | "rabbitmq"
     | "kubectl"
-    | "opcua";
+    | "opcua"
+    | "mtconnect";
   supportsExplain: boolean;
   /**
    * Present iff supportsExplain is true (enforced by provider tests).

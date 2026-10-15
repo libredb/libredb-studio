@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MTConnectDevices xmlns="urn:mtconnect.org:MTConnectDevices:2.0"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="urn:mtconnect.org:MTConnectDevices:2.0 http://schemas.mtconnect.org/schemas/MTConnectDevices_2.0.xsd">
+  <Header creationTime="2026-10-14T15:00:00Z" sender="LIBREDB-FIXTURE" instanceId="1722" version="2.0" assetBufferSize="1024" assetCount="0" bufferSize="131072"/>
+  <Devices>
+    <Device id="d1722" name="LIBREDB-LATHE-1722" uuid="LIBREDB-1722">
+      <Description manufacturer="LibreDB Fixture" model="S4-MTC" serialNumber="1722">Fixture for issue 1722</Description>
+      <DataItems>
+        <DataItem category="EVENT" id="d1722-avail" name="availability" type="AVAILABILITY"/>
+      </DataItems>
+      <Components>
+        <Axes id="ax1722" name="base">
+          <Components>
+            <Linear id="x1722" name="X">
+              <DataItems>
+                <DataItem category="SAMPLE" id="x1722-pos" name="Xposition" type="POSITION" subType="ACTUAL" units="MILLIMETER"/>
+              </DataItems>
+            </Linear>
+            <Rotary id="s1722" name="S">
+              <DataItems>
+                <DataItem category="SAMPLE" id="s1722-speed" name="Sspeed" type="ROTARY_VELOCITY" subType="ACTUAL" units="REVOLUTION/MINUTE"/>
+              </DataItems>
+            </Rotary>
+          </Components>
+        </Axes>
+        <Controller id="c1722" name="controller">
+          <Components>
+            <Path id="p1722" name="path1">
+              <DataItems>
+                <DataItem category="EVENT" id="p1722-exec" name="execution" type="EXECUTION"/>
+                <DataItem category="EVENT" id="p1722-prog" name="program" type="PROGRAM"/>
+                <DataItem category="CONDITION" id="p1722-sys" name="system" type="SYSTEM"/>
+              </DataItems>
+            </Path>
+          </Components>
+        </Controller>
+      </Components>
+    </Device>
+  </Devices>
+</MTConnectDevices>

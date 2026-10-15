@@ -1,6 +1,7 @@
 import type * as Monaco from "monaco-editor";
 import { format } from "sql-formatter";
 import { formatConsole } from "@/lib/db/console/format";
+import { MTC_CONSOLE_DIALECT, MTC_CONSOLE_ROUTES } from "@/lib/db/providers/industrial/mtconnect/routes";
 import { MILVUS_CONSOLE, MILVUS_ROUTES } from "@/lib/db/providers/vector/milvus/routes";
 import { QDRANT_CONSOLE, QDRANT_ROUTES } from "@/lib/db/providers/vector/qdrant/routes";
 import { type ConsoleLanguage, registerConsoleLanguage } from "@/lib/editor/console-language";
@@ -59,6 +60,17 @@ const MILVUS_CONSOLE_LANGUAGE: ConsoleLanguage = Object.freeze({ spec: MILVUS_CO
 
 /** The Qdrant console: its dialect and its route table, which register the Monaco language `qdrant` (3.5, 6.4). */
 const QDRANT_CONSOLE_LANGUAGE: ConsoleLanguage = Object.freeze({ spec: QDRANT_CONSOLE, routes: QDRANT_ROUTES });
+
+/**
+ * MTConnect's request line, drawn by the shared console over the route table the guard runs.
+ *
+ * `MTC_CONSOLE_ROUTES` is derived from that table rather than written again, so the editor cannot
+ * offer a route or a query key the provider refuses (#1722).
+ */
+const MTCONNECT_CONSOLE_LANGUAGE: ConsoleLanguage = Object.freeze({
+  spec: MTC_CONSOLE_DIALECT,
+  routes: MTC_CONSOLE_ROUTES,
+});
 
 /**
  * Every tab type's editor, as `editorLanguageForTabType` and `QueryEditor` read it. Kafka's read request renders in
@@ -120,6 +132,10 @@ export const DIALECT_EDITORS: Readonly<Record<QueryTab["type"], DialectEditor>> 
   // `json` is Kafka's language too, and the gate holds every tab type rendering in one language to one
   // formatter: a reader pressing Format in two json tabs must not get two different answers.
   opcua: Object.freeze({ monacoId: "json", format: formatJson }),
+  // An MTConnect request line renders in its own console language, which `registerDialectConsoles` registers from
+  // this record, and has NO FORMATTER: the console formatter is the HTTP grammar's, which writes a method, a route
+  // and a JSON body, and this dialect has no body at all. The SQL and JSON formatters both rewrite a URL line.
+  mtconnect: Object.freeze({ monacoId: "mtconnect", console: MTCONNECT_CONSOLE_LANGUAGE }),
 });
 
 /**

@@ -42,6 +42,7 @@ in lockstep with the code (see the tri-sync rule in [`../../CLAUDE.md`](../../CL
 | MQTT | `mqtt` | Key-Value (a broker's topic tree) | `mqtt-packet` (its parser only; the packets Studio sends are Studio's own) | None: no query console | [mqtt.md](./mqtt.md) |
 | RabbitMQ | `rabbitmq` | Stream | none: the management HTTP API over the shared `node:http(s)` transport, and Studio's own read-only AMQP 0-9-1 client | A JSON stream read request | [rabbitmq.md](./rabbitmq.md) |
 | OPC UA | `opcua` | Industrial (address space) | `node-opcua-client` (pure JavaScript, `opc.tcp`) | JSON (read request) | [opcua.md](./opcua.md) |
+| MTConnect | `mtconnect` | Industrial (agent) | none: Studio's own client over the shared `node:http(s)` transport | A request line in the agent's own URL grammar | [mtconnect.md](./mtconnect.md) |
 | LibreDB | `libredb` | Embedded (Key-Value) | `@libredb/libredb` | JSON (command grammar) | [libredb.md](./libredb.md) |
 
 ## Conventions
@@ -282,8 +283,8 @@ InfluxDB (InfluxQL) has a row per server line it reads, because each line is a s
 The Oxia row was verified against the running container on 2026-10-04, by the capture `tests/fixtures/oxia/README.md` records.
 The Databend row was verified against the running `databend-http` container (v1.2.951-nightly) on 2026-10-08: the user and password below sign in, and `system.databases` lists the seeded `libredb_demo` and `studio_demo`.
 
-Start the forty-nine always-on services with a plain `docker compose -f database-compose.yml up -d`:
-thirty-one engine containers plus the one-shot `couchbase-init`, `trino-init`, `kafka-init`, `rabbitmq-init`, `etcd-seed`, `oxia-seed`, `milvus-seed`, `qdrant-seed`, `influxdb-seed`, `databend-http-seed`, `silo-principals`, `silo-seed`, `garage-keys`, `garage-setup`, `garage-seed`, `rustfs-principals`, `rustfs-seed` and `firestore-seed` seed sidecars; the `Profile` column names
+Start the fifty-one always-on services with a plain `docker compose -f database-compose.yml up -d`:
+thirty-three engine containers plus the one-shot `couchbase-init`, `trino-init`, `kafka-init`, `rabbitmq-init`, `etcd-seed`, `oxia-seed`, `milvus-seed`, `qdrant-seed`, `influxdb-seed`, `databend-http-seed`, `silo-principals`, `silo-seed`, `garage-keys`, `garage-setup`, `garage-seed`, `rustfs-principals`, `rustfs-seed` and `firestore-seed` seed sidecars; the `Profile` column names
 the ones that need asking for. The count is derived, not written: a service in this file carries no
 `profiles:` key precisely when it backs a SHIPPED provider whose fixture lives here, so a plain
 `up -d` can reproduce that provider's integration pass.

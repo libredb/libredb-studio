@@ -3582,6 +3582,85 @@ describe.each(["bun", "node"] as const)("SQLiteProvider row-returning statements
 });
 
 // ============================================================================
+// A statement that changes no row reports none
+//
+// `run().changes` is SQLite's `sqlite3_changes()`, which only an INSERT, UPDATE or DELETE
+// resets. Measured 2026-10-14: on node:sqlite a `CREATE TABLE` after a two-row `DELETE`
+// answered `rowCount: 2`, and so did every DDL, value-setting PRAGMA and COMMIT after it,
+// on `:memory:` (the in-process handle) and on a file (the worker) alike. bun:sqlite
+// answered 0. Run on both drivers and both handles.
+
+describe.each([
+  ["bun", "memory"],
+  ["bun", "file"],
+  ["node", "memory"],
+  ["node", "file"],
+] as const)("SQLiteProvider change count of a statement that changes no row (%s driver, %s)", (driver, location) => {
+  const originalDriverEnv = process.env.LIBREDB_SQLITE_DRIVER;
+  let changesTmpDir: string;
+  let changesProvider: SQLiteProvider;
+
+  beforeEach(async () => {
+    process.env.LIBREDB_SQLITE_DRIVER = driver;
+    changesTmpDir = mkdtempSync(join(tmpdir(), "libredb-sqlite-changes-"));
+    changesProvider = new SQLiteProvider(
+      makeSQLiteConfig({
+        id: `changes-${driver}-${location}`,
+        database: location === "memory" ? ":memory:" : join(changesTmpDir, "c.db"),
+      }),
+    );
+    await changesProvider.connect();
+    await changesProvider.query("CREATE TABLE dept (id INTEGER PRIMARY KEY, name TEXT)");
+    await changesProvider.query("INSERT INTO dept VALUES (1, 'Ops'), (2, 'Eng'), (3, 'Sales')");
+  });
+
+  afterEach(async () => {
+    await changesProvider.disconnect();
+    // The node driver under Bun holds the file until its statements are collected (see
+    // the column-names suite above).
+    Bun.gc(true);
+    rmSync(changesTmpDir, { recursive: true });
+    if (originalDriverEnv === undefined) delete process.env.LIBREDB_SQLITE_DRIVER;
+    else process.env.LIBREDB_SQLITE_DRIVER = originalDriverEnv;
+  });
+
+  test("DDL, a value-setting PRAGMA and a transaction's ends after a DELETE report no changed rows", async () => {
+    expect((await changesProvider.query("DELETE FROM dept WHERE id <= 2")).rowCount).toBe(2);
+
+    for (const sql of [
+      "CREATE TABLE audit (id INTEGER)",
+      "CREATE INDEX dept_name ON dept(name)",
+      "ALTER TABLE audit ADD COLUMN note TEXT",
+      "PRAGMA user_version = 4",
+      "PRAGMA foreign_keys = ON",
+      "DROP TABLE audit",
+    ]) {
+      expect({ sql, rowCount: (await changesProvider.query(sql)).rowCount }).toEqual({ sql, rowCount: 0 });
+    }
+
+    expect((await changesProvider.query("BEGIN")).rowCount).toBe(0);
+    expect((await changesProvider.query("UPDATE dept SET name = 'x'")).rowCount).toBe(1);
+    expect((await changesProvider.query("COMMIT")).rowCount).toBe(0);
+  });
+
+  test("a parameterized write reports its own count, and a ROLLBACK after it none", async () => {
+    expect((await changesProvider.query("BEGIN")).rowCount).toBe(0);
+    expect((await changesProvider.query("INSERT INTO dept VALUES (?, ?), (?, ?)", [4, "HR", 5, "IT"])).rowCount).toBe(
+      2,
+    );
+    expect((await changesProvider.query("ROLLBACK")).rowCount).toBe(0);
+    expect((await changesProvider.query("CREATE TABLE audit (id INTEGER)")).rowCount).toBe(0);
+  });
+
+  // Passes without the guard too, since a write always resets `changes`: it pins that the
+  // guard does not swallow a write's count.
+  test("a write that matches nothing reports zero, and the next write its own count", async () => {
+    expect((await changesProvider.query("UPDATE dept SET name = 'x' WHERE id = 99")).rowCount).toBe(0);
+    expect((await changesProvider.query("UPDATE dept SET name = 'y' WHERE id >= 2")).rowCount).toBe(2);
+  });
+});
+
+// ============================================================================
 // Result column names: an unnamed or repeated column keeps its own value
 //
 // The rows were read keyed by name and `fields` was `Object.keys(rows[0])`, so

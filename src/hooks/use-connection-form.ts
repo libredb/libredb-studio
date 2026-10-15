@@ -1728,6 +1728,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     "snowflake",
     "opcua",
     "spark",
+    "mtconnect",
   ];
   const dbTypes = selectableTypes.map((t) => {
     const cfg = getDBConfig(t);

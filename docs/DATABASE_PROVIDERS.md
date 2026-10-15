@@ -262,7 +262,7 @@ QueryEditor                      /api/db/query
 
 ## Supported Databases
 
-Thirty-seven type-ids are supported by thirty-five provider modules: two pairs share one, `elasticsearch` and `opensearch` in `providers/sql/search/`, and `influxdb` and `influxdb3` in `providers/timeseries/influxdb/`.
+Thirty-eight type-ids are supported by thirty-six provider modules: two pairs share one, `elasticsearch` and `opensearch` in `providers/sql/search/`, and `influxdb` and `influxdb3` in `providers/timeseries/influxdb/`.
 The count is derived from the exhaustive `SHIPPED` record in
 [`src/lib/db/compatibility.ts`](../src/lib/db/compatibility.ts) rather than written here twice - and
 the TABLE under it has to be checked by hand, which is the lesson a review left here: the numeral was
@@ -309,6 +309,7 @@ monitoring, limitations, …) see the prime docs in **[`docs/providers/`](./prov
 | BigQuery | `bigquery` | SQL (analytics, GoogleSQL over REST) | [providers/bigquery.md](./providers/bigquery.md) |
 | MQTT | `mqtt` | Key-Value (broker topics over MQTT, read-only) | [providers/mqtt.md](./providers/mqtt.md) |
 | OPC UA | `opcua` | Industrial (an address space over `opc.tcp`, read-only) | [providers/opcua.md](./providers/opcua.md) |
+| MTConnect | `mtconnect` | Industrial (an agent over HTTP, read-only) | [providers/mtconnect.md](./providers/mtconnect.md) |
 | LibreDB | `libredb` | Embedded (key-value) | [providers/libredb.md](./providers/libredb.md) |
 
 ## Core Interface

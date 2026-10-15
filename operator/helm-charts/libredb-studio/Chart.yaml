@@ -1,8 +1,8 @@
 apiVersion: v2
 name: libredb-studio
-description: Web-based SQL IDE for cloud-native teams supporting thirty-six engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Apache Spark, Apache Cassandra, libSQL, Prometheus, Apache Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, InfluxDB, InfluxDB 3, Oxia, Databend, S3-compatible object storage, Kubernetes and OPC UA
+description: Web-based SQL IDE for cloud-native teams supporting thirty-seven engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Apache Spark, Apache Cassandra, libSQL, Prometheus, Apache Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, InfluxDB, InfluxDB 3, Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA and MTConnect
 type: application
-version: 0.1.93
+version: 0.1.94
 appVersion: "0.18.3"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
@@ -111,6 +111,9 @@ keywords:
   # One keyword, like mqtt above: `opcua` is the type-id and the protocol an evaluator looking for a
   # plant browser types; no product name to catch, because every server speaks the same standard.
   - opcua
+  # One keyword, like opcua above: `mtconnect` is the type-id and the protocol an evaluator
+  # searches for, and the agent itself is not a product name anyone would search.
+  - mtconnect
   - web-ide
 maintainers:
   - name: cevheri
@@ -272,7 +275,7 @@ annotations:
   # README; no template, value or default moves.
   # False: 0.1.92 changes chart metadata only, naming Apache Spark in the description, the keywords and the
   # README; no template, value or default moves.
-  # False: 0.1.93 adds the governance values (governance.*, the Secret keys governance-postgres-url and
+  # False: 0.1.94 adds the governance values (governance.*, the Secret keys governance-postgres-url and
   # governance-private-keys, stickySessions.enabled) and typed values for OIDC_USER_ROLES, OIDC_PROMPT,
   # OIDC_AUTO_REDIRECT, OIDC_LOGOUT_HINT, AUTH_SESSION_TTL_SECONDS and STORAGE_POSTGRES_SCHEMA. Every one
   # is off or empty by default, so an install that sets none of them renders exactly as before.

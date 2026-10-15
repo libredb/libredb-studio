@@ -375,14 +375,22 @@ Two checks run against every pull request. Both are reproducible locally, and
 reproducing them is faster than waiting for CI.
 
 **Committed secrets.** This one can fail your pull request. It scans only the
-commits your branch adds:
+commits your branch adds, and the command below works from a clone and from a
+git worktree alike:
 
 ```bash
-docker run --rm -v "$PWD:/repo:ro" -w /repo \
+# In a worktree `.git` is a file that points into the main checkout's
+# `.git/worktrees/`, so that directory has to exist inside the container too.
+# In a clone the path is just "$PWD/.git".
+GIT_COMMON_DIR="$(git rev-parse --path-format=absolute --git-common-dir)"
+docker run --rm \
+  -v "$PWD:$PWD:ro" -v "$GIT_COMMON_DIR:$GIT_COMMON_DIR:ro" -w "$PWD" \
   ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
-  git --no-banner --redact --config /repo/.gitleaks.toml \
+  git --no-banner --redact --config "$PWD/.gitleaks.toml" \
       --log-opts="--diff-merges=first-parent origin/main..HEAD"
 ```
+
+A scan that reports `0 commits scanned.` checked nothing, and is not a pass: either git could not open the repository, so a mount above is missing, or `origin/main..HEAD` holds no commits.
 
 If it reports a real credential, rotate it first — the value is already in every
 clone. If it reports a fixture or placeholder, copy the finding's own
