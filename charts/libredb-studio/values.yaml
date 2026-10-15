@@ -62,6 +62,8 @@ secrets:
     oidcClientId: oidc-client-id
     oidcClientSecret: oidc-client-secret
     storagePostgresUrl: storage-postgres-url
+    governancePostgresUrl: governance-postgres-url
+    governancePrivateKeys: governance-private-keys
   # -- JWT signing secret (min 32 chars). Required in strict mode (config.authBootstrap=off);
   # otherwise generated on first start.
   jwtSecret: ""
@@ -96,6 +98,15 @@ secrets:
   oidcClientSecret: ""
   # -- PostgreSQL connection URL for storage (required when storageProvider=postgres and postgresql.enabled=false)
   storagePostgresUrl: ""
+  # -- The governance source for Studio's own role, as a postgresql:// URL that reaches the
+  # primary (required when governance.enabled=true, unless existingSecret carries it).
+  # Rendered as GOVERNANCE_POSTGRES_URL from the Secret, never into the ConfigMap.
+  governancePostgresUrl: ""
+  # -- The keyring document that opens sealed credentials:
+  # {"version":1,"keys":["<base64url raw 32-byte X25519 private key>", ...]} (required when
+  # governance.enabled=true, unless existingSecret carries it). Mounted read-only as a file at
+  # /etc/libredb/governance/keyring.json, never an environment variable.
+  governancePrivateKeys: ""
 
 # =============================================================================
 # Config — non-sensitive values stored in a ConfigMap
@@ -192,6 +203,66 @@ config:
   oidcRoleClaim: ""
   # -- OIDC admin role values (comma-separated)
   oidcAdminRoles: "admin"
+  # -- OIDC user role values (comma-separated). Empty writes nothing, and any signed-in user
+  # without an admin role is a user. Set, a user with neither an admin nor a user role is
+  # refused. Required when governance.enabled=true, which installs use "user".
+  oidcUserRoles: ""
+  # -- The prompt sent to the identity provider on sign-in: empty writes nothing (the app's
+  # default, login), "omit" sends none so a provider session signs in silently, "consent" and
+  # "select_account" are passed through.
+  oidcPrompt: ""
+  # -- Send a signed-out visitor of /login straight to the identity provider. false (the
+  # default) writes nothing; true writes OIDC_AUTO_REDIRECT=true.
+  oidcAutoRedirect: false
+  # -- Send id_token_hint with the provider's end-session request on logout. false (the
+  # default) writes nothing; true writes OIDC_LOGOUT_HINT=true. Turn it on only after
+  # verifying it against the identity provider.
+  oidcLogoutHint: false
+  # -- Session lifetime in seconds, from 300 to 86400. null (the default) writes nothing and
+  # the app keeps 86400; governance installs use 28800.
+  sessionTtlSeconds: null
+  # -- Schema of the PostgreSQL storage tables (storageProvider=postgres). Empty writes
+  # nothing and the tables stay unqualified. Studio never creates the schema: create it
+  # first, owned by the storage role. Required when governance.enabled=true.
+  storagePostgresSchema: ""
+
+# =============================================================================
+# Governance (docs/GOVERNANCE.md)
+# =============================================================================
+# Runs Studio under a control plane: the governance source it reads in PostgreSQL
+# becomes the only catalog of connections and grants, and the identity provider the
+# only way to sign in. Until governance.enabled is true, nothing below is written.
+#
+# Enabled, the chart writes GOVERNANCE_SOURCE=postgres and the values below, takes
+# GOVERNANCE_POSTGRES_URL from secrets.governancePostgresUrl (or the existingSecret
+# key governance-postgres-url), mounts the keyring from secrets.governancePrivateKeys
+# (or the existingSecret key governance-private-keys) read-only at
+# /etc/libredb/governance/keyring.json, and moves the readiness probe to /api/ready.
+# The render fails, naming the value, for any combination Studio would refuse to
+# start with: authProvider other than oidc, an empty config.oidcRoleClaim,
+# config.oidcUserRoles or config.storagePostgresSchema, a missing URL or keyring,
+# seedConnections, mcp or agent enabled, secrets.adminPassword or userPassword set,
+# an extraEnv entry named GOVERNANCE_*, or more than one replica without
+# stickySessions.enabled.
+governance:
+  # -- Run Studio under governance (GOVERNANCE_SOURCE=postgres).
+  enabled: false
+  # -- The schema the governance source lives in.
+  postgresSchema: "bridge"
+  # -- This instance's id in its heartbeat. Empty uses the chart's fullname, which stays
+  # the same across rollouts, so a new pod updates the same heartbeat row. With more than
+  # one replica each pod reports its own name instead, and a set value fails the render.
+  instanceId: ""
+  # -- Reload interval in milliseconds without a change notification, from 1000 to 600000.
+  # null (the default) writes nothing and the app keeps 30000.
+  refreshMs: null
+  # -- How old the snapshot may grow while reloads fail before data routes answer 503, in
+  # milliseconds, from refreshMs to 3600000. null (the default) writes nothing and the app
+  # keeps 120000.
+  maxStalenessMs: null
+  # -- The engine type ids Studio admits, separated by commas. Empty (the default) writes
+  # nothing and the app keeps postgres,mysql,mssql,oracle,mongodb,redis.
+  allowedEngines: ""
 
 # =============================================================================
 # Agent Runtime
@@ -521,6 +592,14 @@ autoscaling:
   targetCPUUtilizationPercentage: 75
   # -- Target memory utilization percentage
   targetMemoryUtilizationPercentage: 80
+
+# -- Records that the operator configured cookie affinity at the ingress or load balancer,
+# so that each browser stays on one pod. Studio keeps interactive transactions, rate limits
+# and per-user providers in process memory, so under governance.enabled more than one
+# replica (or autoscaling) renders only with this set. The chart renders no affinity
+# annotation and has no cookie name value: the affinity belongs to the ingress controller.
+stickySessions:
+  enabled: false
 
 podDisruptionBudget:
   # -- Enable PodDisruptionBudget

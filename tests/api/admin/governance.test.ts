@@ -226,6 +226,7 @@ describe("GET /api/admin/governance: status", () => {
       kind: "transient",
       code: "ECONNREFUSED",
       detail: "connect ECONNREFUSED",
+      publicDetail: "ECONNREFUSED",
     });
 
     const res = await GET(request());

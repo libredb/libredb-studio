@@ -43,6 +43,7 @@ const transientAt = (at: number): LoadFailure => ({
   kind: "transient",
   code: "ECONNREFUSED",
   detail: "connect ECONNREFUSED 10.0.0.5:5432",
+  publicDetail: "ECONNREFUSED",
 });
 
 const ENV_KEYS = ["GOVERNANCE_REFRESH_MS", "GOVERNANCE_MAX_STALENESS_MS"] as const;
@@ -119,11 +120,23 @@ describe("freshness states", () => {
 
   test("misconfigured and incompatible stop serving at once, even with a fresh snapshot, until a load succeeds", () => {
     recordGovernanceSnapshot(snapshotAt(T));
-    recordGovernanceFailure({ at: T + 1, kind: "misconfigured", code: "42501", detail: "bridge.grants_v1: denied" });
+    recordGovernanceFailure({
+      at: T + 1,
+      kind: "misconfigured",
+      code: "42501",
+      detail: "bridge.grants_v1: denied",
+      publicDetail: "bridge.grants_v1: 42501",
+    });
     expect(governanceFreshness(T + 1)).toBe("misconfigured");
     expect(governanceServable(T + 1)).toBe(false);
 
-    recordGovernanceFailure({ at: T + 2, kind: "incompatible", code: null, detail: "no common contract version" });
+    recordGovernanceFailure({
+      at: T + 2,
+      kind: "incompatible",
+      code: null,
+      detail: "no common contract version",
+      publicDetail: "no common contract version",
+    });
     expect(governanceFreshness(T + 2)).toBe("incompatible");
     expect(governanceServable(T + 2)).toBe(false);
 
@@ -156,6 +169,7 @@ describe("the failure of a load", () => {
       kind: "misconfigured",
       code,
       detail: `bridge.grants_v1: ${message} (SQLSTATE ${code})`,
+      publicDetail: `bridge.grants_v1: ${code}`,
     });
   });
 
@@ -165,6 +179,7 @@ describe("the failure of a load", () => {
       kind: "transient",
       code: "57014",
       detail: "bridge.grants_v1: canceling statement due to statement timeout (SQLSTATE 57014)",
+      publicDetail: "bridge.grants_v1: 57014",
     });
   });
 
@@ -179,6 +194,7 @@ describe("the failure of a load", () => {
       kind: "transient",
       code: "EPIPE",
       detail: "bridge.grants_v1: write EPIPE",
+      publicDetail: "bridge.grants_v1: EPIPE",
     });
   });
 
@@ -190,6 +206,7 @@ describe("the failure of a load", () => {
       kind: "transient",
       code: null,
       detail: "bridge.contract: Query read timeout",
+      publicDetail: "bridge.contract",
     });
   });
 
@@ -205,6 +222,7 @@ describe("the failure of a load", () => {
       kind: "incompatible",
       code: null,
       detail: "no common contract version: Studio supports [1], the governance source publishes [2, 3]",
+      publicDetail: "no common contract version: Studio supports [1], the governance source publishes [2, 3]",
     });
   });
 
@@ -216,6 +234,7 @@ describe("the failure of a load", () => {
       kind: "misconfigured",
       code: null,
       detail: 'GOVERNANCE_PRIVATE_KEYS_FILE "/etc/libredb/keyring.json" holds no keys',
+      publicDetail: "GOVERNANCE_PRIVATE_KEYS_FILE",
     });
   });
 
@@ -227,13 +246,21 @@ describe("the failure of a load", () => {
       kind: "transient",
       code: "ECONNREFUSED",
       detail: "connect ECONNREFUSED 10.0.0.5:5432",
+      publicDetail: "ECONNREFUSED",
     });
     expect(loadFailureOf(new Error("timeout exceeded when trying to connect"), T)).toEqual({
       at: T,
       kind: "transient",
       code: null,
       detail: "timeout exceeded when trying to connect",
+      publicDetail: "load failed",
     });
-    expect(loadFailureOf("unexpected", T)).toEqual({ at: T, kind: "transient", code: null, detail: "unexpected" });
+    expect(loadFailureOf("unexpected", T)).toEqual({
+      at: T,
+      kind: "transient",
+      code: null,
+      detail: "unexpected",
+      publicDetail: "load failed",
+    });
   });
 });

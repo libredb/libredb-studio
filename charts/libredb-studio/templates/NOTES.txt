@@ -39,6 +39,18 @@ Configuration:
 {{- if .Values.postgresql.enabled }}
   PostgreSQL:       Built-in (subchart)
 {{- end }}
+
+{{- if include "libredb-studio.governanceEnabled" . }}
+
+Governance (docs/GOVERNANCE.md):
+  Source schema:    {{ get .Values.governance "postgresSchema" | default "bridge" }}
+  Instance id:      {{ if include "libredb-studio.governanceMultiReplica" . }}each pod's own name{{ else }}{{ get .Values.governance "instanceId" | default (include "libredb-studio.fullname" .) }}{{ end }}
+  Keyring:          {{ include "libredb-studio.governanceKeyringDir" . }}/keyring.json (read-only, from Secret {{ include "libredb-studio.secretName" . }})
+  Readiness:        GET /api/ready answers 503 until the first governance snapshot loads.
+{{- if .Values.secrets.existingSecret }}
+  Secret {{ .Values.secrets.existingSecret }} must hold the keys {{ include "libredb-studio.governanceSecretKey" (dict "root" . "name" "governancePostgresUrl") }} and {{ include "libredb-studio.governanceSecretKey" (dict "root" . "name" "governancePrivateKeys") }}.
+{{- end }}
+{{- end }}
 {{- if include "libredb-studio.autoscalingEnabled" . }}
   Autoscaling:      {{ .Values.autoscaling.minReplicas }}-{{ .Values.autoscaling.maxReplicas }} replicas
 {{- end }}

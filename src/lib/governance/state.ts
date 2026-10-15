@@ -65,6 +65,12 @@ export interface LoadFailure {
   readonly code: string | null;
   /** One line that names the cause: the object or privilege, or both version sets. Never a value or a credential. */
   readonly detail: string;
+  /**
+   * The cause in Studio's own words only, for the public readiness route: the contract object and its SQLSTATE, the
+   * keyring variable, or both version sets. Never a server or file system message, which can carry paths and role
+   * names; those stay in `detail`, which only the log carries.
+   */
+  readonly publicDetail: string;
 }
 
 export interface GovernanceState {

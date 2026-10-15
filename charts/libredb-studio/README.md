@@ -40,7 +40,7 @@ helm install libredb libredb/libredb-studio \
 
 ```bash
 helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
-  --version 0.1.92 \
+  --version 0.1.93 \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123
 ```
@@ -189,6 +189,45 @@ helm install libredb libredb/libredb-studio \
 ```
 
 `secrets.adminPassword` is not part of an OIDC install: the issuer authenticates every user, and the app still signs its own session cookie with `secrets.jwtSecret`. Strict mode (`config.authBootstrap=off`) therefore requires only the JWT secret here.
+
+The optional single sign-on settings have typed values, each written only when set: `config.oidcUserRoles` (`OIDC_USER_ROLES`), `config.oidcPrompt` (`OIDC_PROMPT`, such as `omit` for silent single sign-on), `config.oidcAutoRedirect` and `config.oidcLogoutHint` (`true` writes the variable), and `config.sessionTtlSeconds` (`AUTH_SESSION_TTL_SECONDS`, 300 to 86400).
+
+## Governance
+
+Governance runs Studio under a control plane: the governance source in PostgreSQL becomes the only catalog of connections and grants, and the identity provider the only way to sign in ([docs/GOVERNANCE.md](https://github.com/libredb/libredb-studio/blob/main/docs/GOVERNANCE.md)).
+Until `governance.enabled` is true the chart writes no `GOVERNANCE_*` variable.
+
+```yaml
+authProvider: oidc
+governance:
+  enabled: true
+config:
+  authBootstrap: "off"
+  oidcIssuer: https://auth.example.com/realms/libredb
+  oidcRoleClaim: libredb_roles
+  oidcUserRoles: user
+  storageProvider: postgres
+  storagePostgresSchema: studio
+secrets:
+  existingSecret: libredb-studio
+```
+
+An installer writes the Secret with the usual keys plus two for governance:
+
+- `governance-postgres-url`: the governance source URL for Studio's own role, written to `GOVERNANCE_POSTGRES_URL` through a `secretKeyRef`.
+- `governance-private-keys`: the keyring document, mounted read-only at `/etc/libredb/governance/keyring.json` with mode 0400 and never an environment variable; `GOVERNANCE_PRIVATE_KEYS_FILE` points at it.
+
+Without `secrets.existingSecret`, `secrets.governancePostgresUrl` and `secrets.governancePrivateKeys` put the same two values in the chart's own Secret.
+The pod keeps `podSecurityContext.fsGroup` 1001, because the keyring file is root-owned and uid 1001 reads it through the group.
+The readiness probe moves to `/api/ready`, which answers 503 until the first snapshot loads, and liveness stays on `/api/db/health`.
+
+The instance id that Studio reports in its heartbeat (`GOVERNANCE_INSTANCE_ID`) is `governance.instanceId`, or the chart's fullname when it is empty, so a rollout updates the same heartbeat row.
+With more than one replica every pod reports its own name instead, and a set `governance.instanceId` fails the render.
+
+The render fails, naming the value to fix, for every combination Studio would refuse to start with: `authProvider` other than `oidc`, an empty `config.oidcRoleClaim`, `config.oidcUserRoles` or `config.storagePostgresSchema`, a governance URL or keyring with neither an inline value nor `secrets.existingSecret`, `seedConnections.enabled`, `mcp.enabled` or `agent.enabled=true`, a set `secrets.adminPassword` or `secrets.userPassword`, or an `extraEnv` entry named `GOVERNANCE_*`.
+Under governance the chart also writes no `ADMIN_PASSWORD`, `USER_EMAIL` or `USER_PASSWORD` from `secrets.existingSecret`.
+More than one replica, or `autoscaling.enabled`, renders only with `stickySessions.enabled=true`, which records that cookie affinity is configured at the ingress, because Studio keeps transactions, rate limits and per-user providers in process memory.
+The chart renders no affinity annotation itself.
 
 ## Trusting a private CA
 
@@ -609,6 +648,7 @@ helm install libredb libredb/libredb-studio \
 Your external secret is referenced with these keys (customizable via `secrets.existingSecretKeys`):
 - `jwt-secret`, `admin-password` — required in strict mode (the pod waits for them); in zero-config mode missing ones are generated at first start
 - Optional: `admin-email`, `user-email`, `user-password` (the non-admin account exists only when `user-password` is set), `admin-totp-secret`, `user-totp-secret`, `llm-api-key`, `oidc-client-id`, `oidc-client-secret`, `storage-postgres-url`
+- With `governance.enabled`: `governance-postgres-url` and `governance-private-keys` (see [Governance](#governance))
 
 To ship the `ExternalSecret` with the release, so it is installed, upgraded and removed with it, list it in `extraObjects`:
 
@@ -688,6 +728,21 @@ helm uninstall libredb
 | `secrets.existingSecret` | Use existing Secret | `""` |
 | `config.bindAddress` | Container bind address (`HOSTNAME`): empty lets the image resolve one, preferring a verified dual-stack `::`; `::` forces it; `0.0.0.0` pins IPv4 | `""` |
 | `config.storageProvider` | Storage: local, sqlite, postgres | `local` |
+| `config.storagePostgresSchema` | Schema of the PostgreSQL storage tables (`STORAGE_POSTGRES_SCHEMA`); empty writes nothing. Studio never creates it. Required under governance | `""` |
+| `config.oidcUserRoles` | Role values that make a user (`OIDC_USER_ROLES`); empty writes nothing. Required under governance | `""` |
+| `config.oidcPrompt` | Prompt sent on sign-in (`OIDC_PROMPT`): `login`, `omit`, `consent` or `select_account`; empty writes nothing | `""` |
+| `config.oidcAutoRedirect` | `true` writes `OIDC_AUTO_REDIRECT=true`, sending a signed-out visitor of `/login` to the identity provider | `false` |
+| `config.oidcLogoutHint` | `true` writes `OIDC_LOGOUT_HINT=true`, sending `id_token_hint` on logout | `false` |
+| `config.sessionTtlSeconds` | Session lifetime in seconds, 300 to 86400 (`AUTH_SESSION_TTL_SECONDS`); unset keeps the app's 86400 | unset |
+| `governance.enabled` | Run Studio under governance (`GOVERNANCE_SOURCE=postgres`); see [Governance](#governance) | `false` |
+| `governance.postgresSchema` | Schema of the governance source (`GOVERNANCE_POSTGRES_SCHEMA`) | `bridge` |
+| `governance.instanceId` | Heartbeat instance id; empty uses the chart's fullname with one replica and each pod's name with more | `""` |
+| `governance.refreshMs` | `GOVERNANCE_REFRESH_MS`, 1000 to 600000; unset keeps the app's 30000 | unset |
+| `governance.maxStalenessMs` | `GOVERNANCE_MAX_STALENESS_MS`, up to 3600000; unset keeps the app's 120000 | unset |
+| `governance.allowedEngines` | `GOVERNANCE_ALLOWED_ENGINES`, comma-separated type ids; empty keeps the app's default list | `""` |
+| `secrets.governancePostgresUrl` | Governance source URL, stored in the chart's Secret under `governance-postgres-url` | `""` |
+| `secrets.governancePrivateKeys` | Keyring document, stored in the chart's Secret under `governance-private-keys` and mounted as a file | `""` |
+| `stickySessions.enabled` | Records that cookie affinity is configured at the ingress; under governance, more than one replica or autoscaling renders only with it. Renders nothing itself | `false` |
 | `config.llmProvider` | AI provider | `""` |
 | `agent.enabled` | Explicit off-switch for the agent runtime. Unset writes nothing and the app derives availability (a configured model plus a writable ledger); `false` writes `LIBREDB_AGENT_ENABLED=false`; `true` declines the off-switch but cannot conjure a model. Rendering fails when an agent could run above one replica | unset |
 | `agent.modelTuning.existingConfigMap` | A ConfigMap holding measured per-model settings to layer over the ones the image ships with. Naming a source is what enables the feature — there is no separate flag — and this one is the natural home for a document you were handed: `kubectl create configmap my-tuning --from-file=model-tuning.json`. Mounted read-only at `/app/model-tuning` and named to the app through `AGENT_MODEL_TUNING_PATH` | `""` |

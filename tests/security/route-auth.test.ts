@@ -404,8 +404,6 @@ describe("routes that reach a provider require a session", () => {
       "the bridge contract's constants and zod shapes, among them the readiness answers; data only, opens nothing",
     "@/lib/governance/freshness":
       "derives the freshness state from the in-process governance state and the GOVERNANCE_* settings; imports no pg and opens nothing",
-    "@/lib/governance/start":
-      "the governance refresher's single-flight load, which /api/ready asks for without waiting when no usable snapshot is held: it reads the governance source through the governance pool, never a user database or an LLM provider",
     "@/lib/governance/state": "the in-process governance state holder; data only, imports no pg and opens nothing",
     "@/lib/governance/status":
       "builds the admin governance status from the in-process governance state, the GOVERNANCE_* settings and the keyring file's key ids; opens nothing, the governance source included",

@@ -354,7 +354,8 @@ Under governance (`GOVERNANCE_SOURCE=postgres`) it answers the freshness state o
 | `misconfigured` | 503 | The governance source lacks an object, a column, the schema or a privilege, or the keyring is unusable; `detail` names it |
 | `incompatible` | 503 | No contract version is common to both sides; `detail` lists both version sets |
 
-In every state but `ok` and `ready` the route also starts a single-flight load of the snapshot without waiting for it.
+The route only reads the state and never starts a load; the background refresher retries while the snapshot is absent or old.
+`detail` holds Studio's own words only, the contract object with its SQLSTATE, the keyring variable or both version sets, never the server's or the keyring loader's message.
 The answer carries `Cache-Control: no-store`.
 The body's JSON Schema is `readiness.schema` in `tests/fixtures/governance/contract-v1.json`, and [GOVERNANCE.md](./GOVERNANCE.md#freshness-and-readiness) describes the states.
 
@@ -370,7 +371,7 @@ The body's JSON Schema is `readiness.schema` in `tests/fixtures/governance/contr
 {
   "status": "misconfigured",
   "contract": { "supported": [1], "active": null },
-  "detail": "bridge.grants_v1: permission denied for view grants_v1 (SQLSTATE 42501)"
+  "detail": "bridge.grants_v1: 42501"
 }
 ```
 
