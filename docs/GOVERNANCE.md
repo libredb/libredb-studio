@@ -583,7 +583,12 @@ A control plane may set these keys through `bridge.settings_v1`, and no others:
 - The last snapshot's values stay in force while a later load fails.
 - Route handlers apply runtime values, and the proxy, which runs before them on every request, never reads them.
 - Security posture is never a runtime setting: sign-in, keys, session lifetime, custom connections, samples, CSP and HSTS stay in the environment.
+- `ai.enabled` set to `false` makes `POST /api/ai/explain`, `POST /api/ai/describe-schema`, `POST /api/ai/query-safety` and every other route of the AI bucket answer a signed-in caller with 403 and the code `AI_DISABLED`, before any LLM provider is built and before the rate limit is spent.
+  A caller without a session still gets 401.
+  `true`, or no value, leaves the routes as the environment configured them: without an LLM configuration they keep answering as they do without governance.
+- `agent.enabled` feeds the agent's switch and `mcp.enabled` the MCP endpoint's, which `/api/mcp` reads again on every request; each wins over `LIBREDB_AGENT_ENABLED` or `LIBREDB_MCP_ENABLED`, and the model, the ledger and the MCP URL and token label stay prerequisites in the environment.
 - In this contract version Studio keeps the agent and MCP off in governance mode whatever `agent.enabled` and `mcp.enabled` say, so a control plane shows those two keys read-only.
+  The admin status reports each of them with `held: true` and the note `MCP and agent governance ship in v1.1`.
 - A control plane chooses the capture mode it sets.
   `redacted` keeps statements searchable by table and column without their literals.
 

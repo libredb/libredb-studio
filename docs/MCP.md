@@ -41,6 +41,9 @@ Four variables decide it, and `.env.example` documents each.
 Governance mode (`GOVERNANCE_SOURCE`, see [GOVERNANCE.md](./GOVERNANCE.md)) switches MCP off whatever these variables say, until a later Studio release runs it under governance.
 `/api/mcp` answers a valid token with `404`, as it does with MCP switched off, `GET /api/mcp/token` reports the channel off and names the hold as its one problem, and no token is minted.
 The boot check of governance mode refuses `LIBREDB_MCP_ENABLED` switched on as well, and the hold stands even where that check did not run.
+A control plane may set the runtime setting `mcp.enabled`, which `/api/mcp` reads again on every request and which wins over `LIBREDB_MCP_ENABLED` once the hold is lifted.
+`LIBREDB_MCP_URL`, `LIBREDB_MCP_TOKEN_LABEL` and `LIBREDB_MCP_TOKEN_TTL_DAYS` stay prerequisites in the environment, so `true` enables only what they configure.
+While the hold stands the setting has no effect, so a control plane shows it read-only and Studio's admin status reports it as held, with the note that MCP and agent governance ship in v1.1.
 
 ### npx
 

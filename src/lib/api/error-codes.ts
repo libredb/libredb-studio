@@ -81,6 +81,13 @@ export const ApiErrorCode = {
    */
   TRANSACTION_CREDENTIAL_CHANGED: "TRANSACTION_CREDENTIAL_CHANGED",
 
+  /**
+   * Under governance, the control plane set the runtime setting `ai.enabled` to false, and a route of the AI bucket
+   * refused the request before any LLM provider was built (403). Distinct from LLM_UNCONFIGURED, which is the
+   * environment naming no model: this refusal is the control plane's switch, and no LLM_* variable changes it.
+   */
+  AI_DISABLED: "AI_DISABLED",
+
   // Application rate limiting (distinct from LLM_RATE_LIMIT, which is the provider's limit)
   RATE_LIMITED: "RATE_LIMITED",
 

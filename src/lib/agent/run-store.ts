@@ -60,6 +60,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { logger } from "@/lib/logger";
 import { getAgentRuntimeConfig } from "./config";
+import { AGENT_RUN_ID_PATTERN } from "./run-id";
 import {
   type AgentHistoryCursor,
   type AgentHistoryEntry,
@@ -90,14 +91,6 @@ import {
 
 /** Stream-name prefix, so one world may carry ledgers next to other streams. */
 export const AGENT_LEDGER_STREAM_PREFIX = "agent-ledger-";
-
-/**
- * Ids are `[A-Za-z0-9_]` and bounded: no `-` (see the module docblock), no `.` (the
- * backend refuses it). Exported because it is a property of the LEDGER — a run id
- * becomes a stream name — so the drive token verifies against this one definition
- * rather than against a second copy that could drift from it.
- */
-export const AGENT_RUN_ID_PATTERN = /^[A-Za-z0-9_]{1,64}$/;
 
 /**
  * Which event kinds a ledger line may carry.

@@ -18,6 +18,10 @@ import {
   resolveAgentLedgerDirectory,
   SANCTIONED_WORLD_TARGETS,
 } from "@/lib/agent/config";
+import * as runtimeSettings from "@/lib/governance/settings";
+import { validateSettings } from "@/lib/governance/settings";
+import { recordGovernanceSnapshot, resetGovernanceState } from "@/lib/governance/state";
+import { grantedSnapshot } from "../../../helpers/governance/granted-snapshot";
 
 /**
  * The LLM keys are in this list because availability is DERIVED from them since
@@ -349,6 +353,75 @@ describe("the governance hold", () => {
       expect(warn).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();
+    }
+  });
+});
+
+// ─── the runtime setting agent.enabled ──────────────────────────────────────
+
+/**
+ * Under governance a control plane may set `agent.enabled` (spec 7.8). It feeds the off-switch, after the v1 hold, so
+ * in this version it has no effect; the hold-free cases below stand in for the release that lifts the hold, by answering
+ * the setting the store would answer then.
+ */
+describe("the runtime setting agent.enabled", () => {
+  afterEach(() => {
+    resetGovernanceState();
+  });
+
+  /** The settings store answering `value` for `agent.enabled` and nothing for any other key. */
+  function runtimeAgentEnabled(value: boolean) {
+    return spyOn(runtimeSettings, "runtimeSetting").mockImplementation(((key: string) =>
+      key === "agent.enabled" ? value : undefined) as typeof runtimeSettings.runtimeSetting);
+  }
+
+  test("governance: agent.enabled=true in the snapshot leaves the agent off while the v1 hold stands", async () => {
+    configureModel();
+    process.env.GOVERNANCE_SOURCE = "postgres";
+    recordGovernanceSnapshot({
+      ...grantedSnapshot([], []),
+      settings: validateSettings([{ key: "agent.enabled", value: true, updated_at: new Date() }], 1),
+    });
+
+    expect(runtimeSettings.runtimeSetting("agent.enabled")).toBe(true);
+    expect(isAgentRuntimeEnabled()).toBe(false);
+    expect(await resolveAgentAvailability()).toMatchObject({ available: false, reason: "GOVERNANCE_HOLD" });
+  });
+
+  test("without a hold, a runtime false switches the agent off although a model is configured and the flag is on", () => {
+    configureModel();
+    process.env[AGENT_ENABLED_ENV] = "true";
+    const spy = runtimeAgentEnabled(false);
+    try {
+      expect(isAgentRuntimeEnabled()).toBe(false);
+      expect(getAgentRuntimeConfig()).toEqual({ enabled: false });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("without a hold, a runtime false is reported as the operator's switch and names the setting", async () => {
+    const spy = runtimeAgentEnabled(false);
+    try {
+      expect(await resolveAgentAvailability()).toEqual({
+        available: false,
+        reason: "OPERATOR_DISABLED",
+        detail: "the runtime setting agent.enabled is false, so this server runs no agent whatever else is configured",
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("without a hold, a runtime true wins over a negative flag and still needs a configured model", () => {
+    process.env[AGENT_ENABLED_ENV] = "false";
+    const spy = runtimeAgentEnabled(true);
+    try {
+      expect(isAgentRuntimeEnabled()).toBe(false);
+      configureModel();
+      expect(isAgentRuntimeEnabled()).toBe(true);
+    } finally {
+      spy.mockRestore();
     }
   });
 });

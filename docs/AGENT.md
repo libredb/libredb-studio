@@ -156,6 +156,8 @@ above report.
 With `GOVERNANCE_SOURCE` set (see [GOVERNANCE.md](./GOVERNANCE.md)) this version runs no agent, whatever the two conditions above, `LIBREDB_AGENT_ENABLED` and the AI configuration say, until a later Studio release runs the agent under governance.
 `GET /api/agent/config` answers `{"enabled": false, "reason": "GOVERNANCE_HOLD", …}`, and every other agent route answers `404` as it does with the agent switched off.
 The boot check of governance mode refuses `LIBREDB_AGENT_ENABLED` switched on as well, and the hold stands even where that check did not run.
+A control plane may set the runtime setting `agent.enabled`, which wins over `LIBREDB_AGENT_ENABLED` once the hold is lifted: `false` switches the agent off with `OPERATOR_DISABLED`, and `true` still needs a configured model and a usable ledger, which stay in the environment.
+While the hold stands the setting has no effect, so a control plane shows it read-only and Studio's admin status reports it as held, with the note that MCP and agent governance ship in v1.1.
 
 The owner ratified this in
 [#331](https://github.com/libredb/libredb-studio/issues/331#issuecomment-5277689616), and the reason
@@ -2680,6 +2682,7 @@ src/lib/agent/
 ├── types.ts              # durable domain contracts: run, events, snapshot, artifact/evidence refs
 ├── state-guard.ts        # refuses to persist a function, a client, a credential or a result set
 ├── run-store.ts          # the append-only ledger over the durable backend
+├── run-id.ts             # the run id pattern, imported by the proxy without the ledger
 ├── history.ts            # the per-actor finished-run index: entry, fold, retention and pages
 ├── run-service.ts        # start / status / cancel / resume / stream / history, decided from the ledger
 ├── investigation.ts      # the one workflow; start and resume are the same call

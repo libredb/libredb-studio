@@ -259,8 +259,8 @@ describe("GET /api/admin/governance: status", () => {
     expect(res.status).toBe(200);
     expect(governance?.settings).toEqual([
       { key: "ai.enabled", source: "runtime" },
-      { key: "agent.enabled", source: "environment" },
-      { key: "mcp.enabled", source: "runtime" },
+      { key: "agent.enabled", source: "environment", held: true, note: "MCP and agent governance ship in v1.1" },
+      { key: "mcp.enabled", source: "runtime", held: true, note: "MCP and agent governance ship in v1.1" },
       { key: "query.timeoutMs", source: "runtime" },
       { key: "provider.poolMaxPerUser", source: "default" },
       { key: "queryLog.statementCapture", source: "default" },

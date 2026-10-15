@@ -1,6 +1,7 @@
 import { access, constants, mkdir, readFile, unlink, writeFile } from "fs/promises";
 import * as path from "path";
 import { governanceEnabled } from "@/lib/governance/config";
+import { runtimeSetting } from "@/lib/governance/settings";
 import { resolveConfig, validateConfig } from "@/lib/llm/utils/config";
 import { AGENT_MODEL_TURN_TIMEOUT_MS, AGENT_WORKFLOW_BUDGETS } from "./execution-policy";
 
@@ -268,6 +269,10 @@ const unrecognizedFlagMessage = (raw: string): string =>
 const operatorDisabledMessage = (): string =>
   `${AGENT_ENABLED_ENV} is set to a negative value, so this server runs no agent whatever else is configured`;
 
+// The runtime value answers before the variable is read, so it names the setting and not the variable.
+const runtimeDisabledMessage = (): string =>
+  "the runtime setting agent.enabled is false, so this server runs no agent whatever else is configured";
+
 // The same rule: the hold answers before the off-switch and the model are read, so it names neither.
 const governanceHoldMessage = (): string =>
   "GOVERNANCE_SOURCE is set: this version of Studio does not run the agent under governance, so this server runs no agent whatever else is configured";
@@ -311,10 +316,15 @@ export function isAgentHeldByGovernance(): boolean {
  * surface away. Landing on the default satisfies both, and the warning is what
  * makes the typo visible. `held` is off too, kept apart so the answer names the
  * hold rather than an off-switch nobody set, and it is decided before the variable
- * is read.
+ * is read. `runtime-off` is the control plane's `agent.enabled` set to false, kept
+ * apart for the same reason: the answer names the setting, not the variable.
  */
-function readAgentEnableFlag(): "held" | "off" | "auto" {
+function readAgentEnableFlag(): "held" | "runtime-off" | "off" | "auto" {
   if (isAgentHeldByGovernance()) return "held";
+  // A valid runtime value from the control plane wins over the variable (spec 7.8), and true still needs a model. Only
+  // governance sets one, and governance holds the agent above, so in this version the value has no effect.
+  const runtime = runtimeSetting("agent.enabled");
+  if (runtime !== undefined) return runtime ? "auto" : "runtime-off";
   const raw = process.env[AGENT_ENABLED_ENV];
   if (!raw) return "auto";
 
@@ -405,6 +415,9 @@ function availabilityWithoutIO(): AgentAvailability {
   const flag = readAgentEnableFlag();
   if (flag === "held") {
     return { available: false, reason: "GOVERNANCE_HOLD", detail: governanceHoldMessage() };
+  }
+  if (flag === "runtime-off") {
+    return { available: false, reason: "OPERATOR_DISABLED", detail: runtimeDisabledMessage() };
   }
   if (flag === "off") {
     return { available: false, reason: "OPERATOR_DISABLED", detail: operatorDisabledMessage() };

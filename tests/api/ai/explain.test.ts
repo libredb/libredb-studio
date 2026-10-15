@@ -1,6 +1,9 @@
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
 import { createMockRequest, readStreamResponse, parseResponseJSON } from "../../helpers/mock-next";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
+import { validateSettings } from "@/lib/governance/settings";
+import { recordGovernanceSnapshot, resetGovernanceState } from "@/lib/governance/state";
+import { grantedSnapshot } from "../../helpers/governance/granted-snapshot";
 
 // ─── Mock helpers ───────────────────────────────────────────────────────────
 
@@ -234,5 +237,88 @@ describe("POST /api/ai/explain", () => {
 
     const res = await POST(req as never);
     expect(res.status).toBe(503);
+  });
+});
+
+/**
+ * Under governance the control plane's `ai.enabled` decides whether the AI bucket answers at all (spec 7.8). `false`
+ * refuses before any provider is built; `true` adds nothing the environment did not configure, so a server without an
+ * LLM keeps answering as it does today.
+ */
+describe("POST /api/ai/explain under governance", () => {
+  let savedSource: string | undefined;
+
+  const governWith = (aiEnabled: boolean) => {
+    process.env.GOVERNANCE_SOURCE = "postgres";
+    recordGovernanceSnapshot({
+      ...grantedSnapshot([], []),
+      settings: validateSettings([{ key: "ai.enabled", value: aiEnabled, updated_at: new Date() }], 1),
+    });
+  };
+
+  beforeEach(() => {
+    savedSource = process.env.GOVERNANCE_SOURCE;
+    clearRateLimitState();
+    mockCreateLLMProvider.mockClear();
+    mockStream.mockClear();
+    mockCreateLLMProvider.mockImplementation(async () => mockProvider);
+    mockStream.mockImplementation(async () => createMockStream());
+  });
+
+  afterEach(() => {
+    resetGovernanceState();
+    if (savedSource === undefined) delete process.env.GOVERNANCE_SOURCE;
+    else process.env.GOVERNANCE_SOURCE = savedSource;
+  });
+
+  test("governance: ai.enabled=false answers 403 AI_DISABLED", async () => {
+    governWith(false);
+
+    const res = await POST(
+      createMockRequest("/api/ai/explain", { method: "POST", body: { query: "SELECT 1" } }) as never,
+    );
+
+    expect(res.status).toBe(403);
+    expect(await parseResponseJSON<Record<string, unknown>>(res)).toEqual({
+      error: "AI assistance is switched off on this server",
+      code: "AI_DISABLED",
+      statusCode: 403,
+    });
+    expect(mockCreateLLMProvider).not.toHaveBeenCalled();
+  });
+
+  test("governance: ai.enabled=false still answers 401 to a caller without a session", async () => {
+    governWith(false);
+    mockGetSession.mockImplementationOnce(async () => null);
+
+    const res = await POST(
+      createMockRequest("/api/ai/explain", { method: "POST", body: { query: "SELECT 1" } }) as never,
+    );
+
+    expect(res.status).toBe(401);
+  });
+
+  test("governance: ai.enabled=true without a configured LLM keeps today's answer", async () => {
+    governWith(true);
+    mockCreateLLMProvider.mockImplementation(async () => {
+      throw new MockLLMConfigError("LLM not configured");
+    });
+
+    const res = await POST(
+      createMockRequest("/api/ai/explain", { method: "POST", body: { query: "SELECT 1" } }) as never,
+    );
+
+    expect(res.status).toBe(503);
+  });
+
+  test("governance: ai.enabled=true with a configured LLM answers as without governance", async () => {
+    governWith(true);
+
+    const res = await POST(
+      createMockRequest("/api/ai/explain", { method: "POST", body: { query: "SELECT 1" } }) as never,
+    );
+
+    expect(res.status).toBe(200);
+    expect(await readStreamResponse(res)).toBe("mock response");
   });
 });
