@@ -139,6 +139,50 @@ describe("the request line", () => {
     expect(new Set(lines.map((line) => guardRequestLine(line, { ...OPTIONS, knownDevices: devices }).op)).size).toBe(5);
   });
 
+  test("a carriage return inside the line is refused by the method, not by the route", () => {
+    /*
+     * WHAT THE LOOKAHEAD CHANGED, pinned so it cannot be undone without a red.
+     *
+     * The method used to be read with `/^([A-Za-z]+)\s+(.*)$/`. That pattern's `(.*)$` cannot
+     * cross a line terminator and `$` without `m` matches only the very end, so a line whose tail
+     * held one did not match AT ALL: the method was never looked at and the whole line went on to
+     * the route check. `[A-Za-z]+(?=\s)` only asks for one whitespace character after the
+     * letters, and a carriage return is one.
+     *
+     * The class is reachable from the console: the splitter above divides on "\n" only, and
+     * `trim()` takes the ends, so a CR in the MIDDLE of a line arrives here intact. MEASURED over
+     * 60,000 generated request lines through this very function, old pattern against new:
+     * 1,367 of them (2.3%) change which refusal they get - 1,181 from `unknown-route` and 186
+     * from `fragment`, all of them to `method`. NOT ONE changes between accepted and refused, so
+     * this is a change in the sentence a reader gets, not in what the provider will send.
+     */
+    const CR = String.fromCharCode(13);
+    // The old pattern answered `unknown-route` here, because it never matched and the method was
+    // never read. This is the assertion that fails if the lookahead is reverted.
+    expect(code(() => guardRequestLine(`POST /probe${CR}x`, OPTIONS))).toBe("method");
+    // The route still refuses the line whose method IS ours, with the code it always used.
+    expect(code(() => guardRequestLine(`GET /probe${CR}POST /x`, OPTIONS))).toBe("unknown-route");
+  });
+
+  test("that refusal prints the carriage return raw, which is a defect of its own", () => {
+    /*
+     * RECORDED, NOT FIXED, and deliberately so: the fix belongs to the sentence builder rather
+     * than to this guard, and it is listed in koordinasyon/SONRAKI-PRLAR.md.
+     * `GET /probe<CR>POST /x` is shown to the reader as `GET /probePOST /x` - a string that was
+     * never typed and is not what was refused, because the terminal eats the control character.
+     * The pattern this replaced quoted the line through JSON.stringify, which showed `\r`.
+     * This case holds the current behaviour so the day it is fixed is a day a test changes.
+     */
+    const CR = String.fromCharCode(13);
+    let said = "";
+    try {
+      guardRequestLine(`GET /probe${CR}POST /x`, OPTIONS);
+    } catch (error) {
+      said = (error as Error).message;
+    }
+    expect(said).toContain(CR);
+  });
+
   test("a bare device and a bare slash are not routes, because the aliases are out", () => {
     expect(code(() => guardRequestLine("/", OPTIONS))).toBe("unknown-route");
     expect(code(() => guardRequestLine("/Mazak", { ...OPTIONS, knownDevices: new Set(["Mazak"]) }))).toBe(

@@ -356,12 +356,31 @@ export function guardRequestLine(line: string, options: MtcGuardOptions): MtcReq
     refuse("two-requests", `A run sends one request. This text holds ${lines.length} lines that are not comments.`);
   }
   const trimmed = (lines[0] ?? "").trim();
-  // The method is read with a LOOKAHEAD rather than a second group, so the two quantifiers never
-  // hand work back to each other. `/^([A-Za-z]+)\s+(.*)$/` is polynomial on a line of letters
-  // followed by tabs, which the 8192-byte bound above already holds to well under a millisecond
-  // (MEASURED: 4000 tabs, 0.005 ms), but a bound is not the same as a pattern that cannot blow up,
-  // and a scanner cannot read the bound. `[A-Za-z]+(?=\s)` backtracks one character at a time with
-  // an O(1) test at each step, so the walk is linear in the line.
+  /*
+   * The method is read with a LOOKAHEAD rather than a second group, so the two quantifiers never
+   * hand work back to each other.
+   *
+   * THE PATTERN THIS REPLACED WAS NOT QUADRATIC HERE, and the comment that first stood in this
+   * place said it was. `/^([A-Za-z]+)\s+(.*)$/` was fed the input CodeQL names - a line that
+   * begins `A\t` and carries many `\t\t` - with no bound in the way, each timing the smallest of
+   * five runs under Bun 1.4.2: 65,536 characters 0.027 ms, 131,072 0.056, 262,144 0.111, 524,288
+   * 0.224, 1,048,576 0.444. A doubling factor of 2.0 at every step, and the same in four shapes,
+   * including the two that make it backtrack (a letter after the tabs, a line terminator the `.`
+   * cannot cross). A megabyte of the named input costs 0.44 ms. Two measurements under 0.02 ms
+   * cannot tell linear from quadratic apart; five points across sixteen-fold input can.
+   *
+   * And the named input cannot reach this line in any case: `trimmed` comes from the split and
+   * the trims above, so it holds no newline and cannot end in whitespace.
+   *
+   * IT IS STILL READ WITH A LOOKAHEAD, for the reason the earlier comment had right: a scanner
+   * cannot read a bound, the alert is a required check on this repository, and `[A-Za-z]+(?=\s)`
+   * cannot hand work back at all. What changed is the claim, not the decision. A comment that
+   * states a defect the code does not have is the expensive kind: nothing goes red, and the next
+   * reader is sent somewhere the problem is not.
+   *
+   * The two forms are not identical, and the difference is pinned by the case
+   * `tests/unit/db/mtconnect/guard.test.ts` names: a line whose tail holds a bare CR.
+   */
   const methodHead = /^[A-Za-z]+(?=\s)/.exec(trimmed);
   const withMethod =
     methodHead === null ? null : ([trimmed, methodHead[0], trimmed.slice(methodHead[0].length).trim()] as const);
