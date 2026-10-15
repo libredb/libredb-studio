@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { ApiErrorCode } from "@/lib/api/error-codes";
+import { API_CODES } from "@/lib/governance/contract";
 
 /**
  * The groups the source declares, restated here so each one is named by a test.
@@ -33,7 +34,13 @@ const GROUPS = {
   rateLimit: ["RATE_LIMITED"],
   session: ["AUTH_REQUIRED", "WORKSPACE_OWNER_MISMATCH"],
   connectionPolicy: ["CUSTOM_CONNECTIONS_DISABLED"],
-  governance: ["AI_DISABLED", "CONNECTION_NOT_FOUND", "GOVERNANCE_UNAVAILABLE", "TRANSACTION_CREDENTIAL_CHANGED"],
+  governance: [
+    "AI_DISABLED",
+    "AUDIT_UNAVAILABLE",
+    "CONNECTION_NOT_FOUND",
+    "GOVERNANCE_UNAVAILABLE",
+    "TRANSACTION_CREDENTIAL_CHANGED",
+  ],
   generic: ["INTERNAL_ERROR", "NETWORK_ERROR"],
 } as const;
 
@@ -94,6 +101,19 @@ describe("ApiErrorCode", () => {
   test("contains the governed refusal of the AI routes while the runtime setting ai.enabled is false", () => {
     expect(ApiErrorCode.AI_DISABLED).toBe("AI_DISABLED");
     expect(ApiErrorCode.AI_DISABLED).not.toBe(ApiErrorCode.LLM_UNCONFIGURED);
+  });
+
+  test("contains the governed refusal of an execution while query events cannot be recorded", () => {
+    expect(ApiErrorCode.AUDIT_UNAVAILABLE).toBe("AUDIT_UNAVAILABLE");
+    expect(ApiErrorCode.AUDIT_UNAVAILABLE).not.toBe(ApiErrorCode.GOVERNANCE_UNAVAILABLE);
+  });
+
+  test("every API code governance contract v1 publishes is declared, in the governance group", () => {
+    const declared: readonly string[] = Object.keys(ApiErrorCode);
+    const governance: readonly string[] = GROUPS.governance;
+    const published = API_CODES.map((entry) => entry.code);
+    expect(published.length).toBeGreaterThan(0);
+    expect(published.filter((code) => !declared.includes(code) || !governance.includes(code))).toEqual([]);
   });
 
   test("contains the application rate-limit error code", () => {

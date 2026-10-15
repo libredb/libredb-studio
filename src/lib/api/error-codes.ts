@@ -67,6 +67,15 @@ export const ApiErrorCode = {
   GOVERNANCE_UNAVAILABLE: "GOVERNANCE_UNAVAILABLE",
 
   /**
+   * Under governance, with the runtime setting `queryLog.onSinkFailure` at `refuse`, Studio cannot record query events
+   * right now (503): its query event sink is backing off after a failed insert, or its queue is at least 90% full. The
+   * request was refused before any statement ran (src/lib/query-events/admission.ts). Distinct from
+   * GOVERNANCE_UNAVAILABLE, which is the snapshot of the governance source: here the snapshot serves, and only the
+   * record of what would run cannot be kept.
+   */
+  AUDIT_UNAVAILABLE: "AUDIT_UNAVAILABLE",
+
+  /**
    * Under governance, the connection a request names is not one the caller holds a grant on (404): it does not exist,
    * it is granted to someone else, its grant expired, or Studio did not admit the governance source's row. One code
    * for all of them, decided from the caller's own grants alone, so the answer never tells a caller which ids exist.
