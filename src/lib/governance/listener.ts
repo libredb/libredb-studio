@@ -168,7 +168,9 @@ async function answerWithin(client: Client, sql: string, values?: readonly unkno
 function scheduleReconnect(listener: Listener): void {
   const boundMs = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** listener.attempt);
   listener.attempt += 1;
-  listener.reconnectTimer = setTimeout(() => void connect(listener), Math.random() * boundMs);
+  // crypto rather than Math.random: the jitter is no secret, but a scanner reads Math.random as a weak generator.
+  const fraction = crypto.getRandomValues(new Uint32Array(1))[0] / 2 ** 32;
+  listener.reconnectTimer = setTimeout(() => void connect(listener), fraction * boundMs);
   listener.reconnectTimer.unref?.();
 }
 

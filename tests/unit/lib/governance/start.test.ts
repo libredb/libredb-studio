@@ -200,6 +200,28 @@ describe("the refresher", () => {
     expect(governanceFreshness()).toBe("loading");
   });
 
+  test("the retry jitter is drawn from crypto.getRandomValues, never Math.random: a draw of 0 waits 4 s, of half 5 s", async () => {
+    jest.useFakeTimers();
+    up = false;
+    // Each draw as a fraction of the Uint32 range: 0, then half, then three quarters, then half from there on.
+    const draws = [0, 0.5, 0.75];
+    const mathRandom = spyOn(Math, "random");
+    spies.push(
+      mathRandom,
+      spyOn(crypto, "getRandomValues").mockImplementation((array: ArrayBufferView | null) => {
+        if (!(array instanceof Uint32Array)) throw new Error("A jitter draws into a Uint32Array");
+        return array.fill((draws.shift() ?? 0.5) * 2 ** 32);
+      }),
+    );
+
+    startGovernance();
+    await settle();
+    await nextTimers(3);
+
+    expect(gaps()).toEqual([4000, 5000, 5500]);
+    expect(mathRandom).not.toHaveBeenCalled();
+  });
+
   test("once reloads fail past the refresh interval it retries 4 to 6 s apart, and keeps the interval again after one succeeds", async () => {
     jest.useFakeTimers();
 

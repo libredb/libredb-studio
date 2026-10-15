@@ -130,6 +130,14 @@ async function nextTimer(): Promise<void> {
   await settle();
 }
 
+/** A `crypto.getRandomValues` whose every draw is `fraction` of the Uint32 range, so each jitter is exact. */
+function drawing(fraction: number): (array: ArrayBufferView | null) => ArrayBufferView | null {
+  return (array) => {
+    if (!(array instanceof Uint32Array)) throw new Error("A jitter draws into a Uint32Array");
+    return array.fill(fraction * 2 ** 32);
+  };
+}
+
 /** Answers the listener's statements by default, and refuses every LISTEN as a hot standby does. */
 const refuseListen = (sql: string, values: readonly unknown[] | undefined, client: FakeListenerClient): Answer =>
   sql.startsWith("LISTEN ")
@@ -198,7 +206,9 @@ describe("the connection", () => {
 
   test("reconnects back off with full jitter whose bound doubles from 1 s to 30 s, and start over once a ping comes back", async () => {
     jest.useFakeTimers();
-    spies.push(spyOn(Math, "random").mockReturnValue(0.5));
+    // Every draw is the middle of the bound, drawn from crypto.getRandomValues and never from Math.random.
+    const mathRandom = spyOn(Math, "random");
+    spies.push(mathRandom, spyOn(crypto, "getRandomValues").mockImplementation(drawing(0.5)));
     const attempts: number[] = [];
     let up = false;
     fakePg.listenerConnecting = async () => {
@@ -237,6 +247,7 @@ describe("the connection", () => {
     await nextTimer();
     expect(Date.now() - droppedAt).toBe(500);
     expect(listenerState()).toBe("listening");
+    expect(mathRandom).not.toHaveBeenCalled();
   });
 
   test("a probe or ping that fails lets the connection go and reconnects", async () => {

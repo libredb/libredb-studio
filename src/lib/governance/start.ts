@@ -60,7 +60,9 @@ function nextLoadDelayMs(nowMs: number): number {
   const { snapshot } = governanceState();
   const dueInMs = snapshot === null ? 0 : snapshot.loadedAt + governanceRefreshMs() - nowMs;
   if (dueInMs > 0) return dueInMs;
-  return RETRY_MS - RETRY_JITTER_MS + Math.random() * 2 * RETRY_JITTER_MS;
+  // crypto rather than Math.random: the jitter is no secret, but a scanner reads Math.random as a weak generator.
+  const fraction = crypto.getRandomValues(new Uint32Array(1))[0] / 2 ** 32;
+  return RETRY_MS - RETRY_JITTER_MS + fraction * 2 * RETRY_JITTER_MS;
 }
 
 function scheduleNextLoad(state: Refresher): void {
