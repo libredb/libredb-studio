@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { createFakeEtcdClient, type FakeEtcdClient } from "../../../helpers/etcd-fake-client";
 import { KEY_SPACE_HEADER, keySpaceRange } from "../../../helpers/etcd-key-space";
 import { parseResponseJSON } from "../../../helpers/mock-next";
@@ -30,6 +30,18 @@ import {
   resetHarness,
   unitOfLength,
 } from "../../../helpers/object-edit-route-harness";
+import { buildQueryEvent } from "@/lib/query-events/build";
+import type { QueryEventInput } from "@/lib/query-events/types";
+
+// The query event sink and the admission gate (STU-34), replaced after the harness loaded the routes: `mock.module()`
+// rebinds the routes' imports. The recorder captures each event a route describes, and a test builds its row with the
+// real builder. The gate admits by default, which is what it does with governance off; a test makes it refuse.
+const mockRecordQueryEvent = mock((_input: QueryEventInput) => {});
+const mockAdmitQueryExecution = mock(() => {});
+const realSink = { ...(await import("@/lib/query-events/sink")) };
+mock.module("@/lib/query-events/sink", () => ({ ...realSink, recordQueryEvent: mockRecordQueryEvent }));
+mock.module("@/lib/query-events/admission", () => ({ admitQueryExecution: mockAdmitQueryExecution }));
+const { SeedConnectionError } = await import("@/lib/seed/resolve-connection");
 
 /**
  * `POST /api/db/objects/edit-apply`, the half that WRITES (#789 Phase 3, discussion #778).
@@ -502,5 +514,127 @@ describe("E6 through the edit-apply route (#1089, spec 3.6)", () => {
     expect(applied.outcome).toBe("applied");
     const [, , writer] = opened;
     expect(writer.client.calls.slice(writer.connectCalls).map((call) => call.method)).toEqual(["txn"]);
+  });
+});
+
+describe("POST /api/db/objects/edit-apply under governance", () => {
+  const SUBJECT = "8d0f6a4e-2b1c-4f3a-9e7d-5c6b4a3f2e1d";
+  /** A governed connection as `resolveConnection` hands it out: the `seed:` id and the level of its credential. */
+  const GOVERNED = { ...CONNECTION, id: "seed:orders", grantLevel: "write" } as DatabaseConnection;
+
+  beforeEach(() => {
+    resetHarness();
+    mockRecordQueryEvent.mockClear();
+    mockAdmitQueryExecution.mockReset();
+    mockGetSession.mockImplementation(async () => ({ role: "user", username: "ada", idpSubject: SUBJECT }));
+    mockResolveConnection.mockImplementation(async () => GOVERNED);
+  });
+
+  afterEach(() => {
+    // The harness's own answers, so a suite added below this one starts from them.
+    mockGetSession.mockImplementation(async () => ({ role: "user", username: "reader" }));
+    mockResolveConnection.mockImplementation(async () => CONNECTION);
+  });
+
+  const recorded = (): QueryEventInput[] => mockRecordQueryEvent.mock.calls.map(([input]) => input);
+
+  test("governance: one object-edit event with correlation_id equal to plan.planId", async () => {
+    const { plan, planToken } = await mintValidPlan();
+
+    const response = await POST(request({ connectionId: "seed:orders", plan, planToken }));
+
+    expect(response.status).toBe(200);
+    expect(mockAdmitQueryExecution).toHaveBeenCalledTimes(1);
+    expect(recorded()).toHaveLength(1);
+    const row = buildQueryEvent(
+      recorded()[0]!,
+      { statementCapture: "full", maxStatementBytes: 4096 },
+      { studioInstance: "libredb-studio" },
+    );
+    expect(row).toMatchObject({
+      source: "object-edit",
+      status: "success",
+      correlation_id: plan.planId,
+      // The unit the reader approved, which is what the engine received.
+      statement: plan.unit.medium === "statement" ? plan.unit.steps[0].text : "",
+      statement_type: "DDL",
+      subject: SUBJECT,
+      username: "ada",
+      session_role: "user",
+      connection_id: "orders",
+      engine: "postgres",
+      access_level: "write",
+      error_code: null,
+    });
+  });
+
+  test("governance: an apply that did not apply records status error, with the engine's code when it gave one", async () => {
+    const { plan, planToken } = await mintValidPlan();
+    provider.applyObjectEdit.mockResolvedValueOnce(OUTCOME_BY_AUDIT_KEY.refused);
+    expect((await POST(request({ plan, planToken }))).status).toBe(200);
+    provider.applyObjectEdit.mockRejectedValueOnce(new Error("Connection terminated unexpectedly"));
+    expect((await POST(request({ plan, planToken }))).status).toBe(200);
+
+    expect(recorded().map(({ status, errorCode, correlationId }) => [status, errorCode, correlationId])).toEqual([
+      ["error", REFUSAL.code, plan.planId],
+      ["error", undefined, plan.planId],
+    ]);
+  });
+
+  test("governance: a command unit records the command line it sends", async () => {
+    const payload = { text: "#!lua name=orders", language: "lua", segments: [{ from: "user", start: 0, end: 17 }] };
+    const { plan, planToken } = await mintValidPlan({
+      unit: {
+        medium: "command",
+        name: "FUNCTION",
+        arguments: ["LOAD", "REPLACE"],
+        payload: payload as never,
+        trailing: ["NOW"],
+      },
+    });
+
+    expect((await POST(request({ plan, planToken }))).status).toBe(200);
+    expect(recorded()[0]?.statement).toBe("FUNCTION LOAD REPLACE #!lua name=orders NOW");
+
+    const { plan: bare, planToken: bareToken } = await mintValidPlan({
+      unit: { medium: "command", name: "FUNCTION", arguments: ["LOAD"], payload: payload as never },
+    });
+    expect((await POST(request({ plan: bare, planToken: bareToken }))).status).toBe(200);
+    expect(recorded()[1]?.statement).toBe("FUNCTION LOAD #!lua name=orders");
+  });
+
+  test("governance: refuse mode answers 503 AUDIT_UNAVAILABLE before the apply and records a refused event", async () => {
+    const { plan, planToken } = await mintValidPlan();
+    mockAdmitQueryExecution.mockImplementationOnce(() => {
+      throw Object.assign(new SeedConnectionError("Query execution is unavailable", 503), {
+        code: "AUDIT_UNAVAILABLE",
+      });
+    });
+
+    const response = await POST(request({ plan, planToken }));
+
+    expect(response.status).toBe(503);
+    expect((await parseResponseJSON<{ code: string }>(response)).code).toBe("AUDIT_UNAVAILABLE");
+    expect(provider.applyObjectEdit).toHaveBeenCalledTimes(0);
+    // No decision event either: the apply was never about to happen.
+    expect(getServerAuditBuffer().getAll()).toHaveLength(0);
+    expect(recorded()).toHaveLength(1);
+    expect(recorded()[0]).toMatchObject({
+      source: "object-edit",
+      status: "refused",
+      errorCode: "AUDIT_UNAVAILABLE",
+      correlationId: plan.planId,
+      connection: { id: "seed:orders", engine: "postgres", accessLevel: "write" },
+    });
+  });
+
+  test("a plan refused before the apply is admitted records nothing", async () => {
+    const { plan, planToken } = await mintValidPlan();
+
+    const response = await POST(request({ plan: { ...plan, partId: "body" }, planToken }));
+
+    expect(response.status).toBe(400);
+    expect(mockAdmitQueryExecution).toHaveBeenCalledTimes(0);
+    expect(recorded()).toEqual([]);
   });
 });

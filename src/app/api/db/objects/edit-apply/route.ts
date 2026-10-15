@@ -19,7 +19,13 @@ import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
 import { requireEditableKind } from "@/lib/db/object-kinds";
 import { emitAuditEvent } from "@/lib/audit";
 import { logger } from "@/lib/logger";
-import type { ObjectEditOutcome, ObjectEditPlan } from "@/lib/db/types";
+import { clientAddress } from "@/lib/api/client-address";
+import type { GovernedConnection } from "@/lib/governance/visible";
+import { admitQueryExecution } from "@/lib/query-events/admission";
+import { queryEventStart } from "@/lib/query-events/build";
+import { recordQueryEvent } from "@/lib/query-events/sink";
+import type { QueryEventInput, QueryEventStatus } from "@/lib/query-events/types";
+import type { ObjectEditOutcome, ObjectEditPlan, ObjectEditUnit } from "@/lib/db/types";
 
 export const dynamic = "force-dynamic";
 
@@ -152,10 +158,23 @@ export async function POST(req: NextRequest) {
         throw new ObjectRouteError(`${provider.type} declares no edit applier for kind "${plan.kind}"`, 400);
       }
 
-      // 6. THE DECISION EVENT, NOT WRAPPED, so an unauditable apply never happens.
+      // 6. THE ADMISSION GATE (docs/GOVERNANCE.md, "Query events"), before the decision event: while a governed
+      //    Studio cannot record query events it refuses the apply with 503 AUDIT_UNAVAILABLE, and the one event it
+      //    leaves is the `refused` query event. With governance off it never refuses and nothing is recorded.
+      const eventStart = queryEventStart();
+      const recordEditEvent = (status: QueryEventStatus, errorCode?: string) =>
+        recordQueryEvent(objectEditEvent(plan, context, req, eventStart, status, errorCode));
+      try {
+        admitQueryExecution();
+      } catch (error) {
+        recordEditEvent("refused", ApiErrorCode.AUDIT_UNAVAILABLE);
+        throw error;
+      }
+
+      // 7. THE DECISION EVENT, NOT WRAPPED, so an unauditable apply never happens.
       emitAuditEvent({ ...audit, action: "PLAN", result: "success" });
 
-      // 7. THE APPLY. Everything below answers 200.
+      // 8. THE APPLY. Everything below answers 200.
       const started = Date.now();
       let outcome: ObjectEditOutcome;
       try {
@@ -172,7 +191,14 @@ export async function POST(req: NextRequest) {
         outcome = interrupted(Date.now() - started);
       }
 
-      // 8. THE OUTCOME EVENT, in its OWN try/catch.
+      // 9. THE QUERY EVENT, once the outcome is known, with the engine's code of a refusal that gave one.
+      //    `recordQueryEvent` never throws, so it needs no try/catch of its own.
+      recordEditEvent(
+        auditReadingFor(outcome).result === "success" ? "success" : "error",
+        outcome.outcome === "refused" ? outcome.refusal.code : undefined,
+      );
+
+      // 10. THE OUTCOME EVENT, in its OWN try/catch.
       try {
         const reading = auditReadingFor(outcome);
         emitAuditEvent({
@@ -244,4 +270,53 @@ function interrupted(duration: number): ObjectEditOutcome {
       "Re-read the object before trying again: a retry would be a second apply.",
     duration,
   };
+}
+
+/**
+ * The query event of one apply (docs/GOVERNANCE.md, "Query events"): source `object-edit`, `correlation_id` set to
+ * `plan.planId`, the id the two audit events carry too, and the statement `plan.unit`, the text the reader approved
+ * and the engine received. Under governance the connection is a governed record, which carries the level of its
+ * credential, and the session carries the identity provider subject its grant names.
+ */
+function objectEditEvent(
+  plan: ObjectEditPlan,
+  context: {
+    readonly connection: { id: string; name: string; type: GovernedConnection["type"] };
+    readonly session: { role: string; username?: string; idpSubject?: string };
+  },
+  req: NextRequest,
+  started: QueryEventInput["started"],
+  status: QueryEventStatus,
+  errorCode: string | undefined,
+): QueryEventInput {
+  const { connection, session } = context;
+  return {
+    source: "object-edit",
+    principal: {
+      subject: session.idpSubject ?? "",
+      username: session.username ?? "",
+      role: session.role === "admin" ? "admin" : "user",
+    },
+    connection: {
+      id: connection.id,
+      name: connection.name,
+      engine: connection.type,
+      accessLevel: (connection as Partial<GovernedConnection>).grantLevel ?? null,
+    },
+    statement: unitText(plan.unit),
+    status,
+    started,
+    errorCode,
+    correlationId: plan.planId,
+    clientIp: clientAddress(req),
+  };
+}
+
+/**
+ * The text of a unit as the engine receives it: the statements of each round trip, one per line, or the command line
+ * with its payload between the tokens before and after it.
+ */
+function unitText(unit: ObjectEditUnit): string {
+  if (unit.medium === "statement") return unit.steps.map((step) => step.text).join("\n");
+  return [unit.name, ...unit.arguments, unit.payload.text, ...(unit.trailing ?? [])].join(" ");
 }

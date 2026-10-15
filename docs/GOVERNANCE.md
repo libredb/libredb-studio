@@ -640,8 +640,8 @@ Studio records one query event per executed unit:
 | `editor` | One per editor statement; `explain` is set for a plan request. |
 | `multi-query` | One per executed unit of a multi-statement run, with `unit_index`; units that never ran leave no row. |
 | `transaction` | One per statement in an interactive transaction (`transaction_outcome` `open`), plus one when it ends: `committed`, `rolled-back` or `timed-out`. All rows of one transaction share `transaction_id`. |
-| `object-edit` | One per applied object edit, with `correlation_id` set to the edit plan's id. |
-| `maintenance` | One per administrator maintenance action. |
+| `object-edit` | One per applied object edit, with `correlation_id` set to the edit plan's id and the statement the plan sends: its statements one per line, or its command line. The status is `success` when the edit applied, and `error` for any other outcome, with the engine's code when it refused the edit; an apply refused with `AUDIT_UNAVAILABLE` records one `refused` event instead. |
+| `maintenance` | One per administrator maintenance action, with status `error` when the action threw or the engine reported it did not run. The statement is NULL, because the engine's provider builds it and Studio's route never sees its text; an action refused with `AUDIT_UNAVAILABLE` records one `refused` event instead. |
 | `profile` | One per data profile run, which reads aggregates of user data. |
 | `key-scan` | One per page of a key scan, which reads key names. |
 

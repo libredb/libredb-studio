@@ -8,6 +8,8 @@ import type { EtcdAlarm, EtcdMember, EtcdStatus } from "@/lib/db/providers/keyva
 import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
 import { readOnlySentence } from "@/lib/db/providers/keyvalue/etcd/write-policy";
 import type { DatabaseConnection } from "@/lib/types";
+import { buildQueryEvent } from "@/lib/query-events/build";
+import type { QueryEventInput } from "@/lib/query-events/types";
 import {
   QueryError,
   DatabaseError,
@@ -108,8 +110,18 @@ mock.module("@/lib/db", () => ({
   mapDatabaseError,
 }));
 
+// ─── Mock the query event sink and the admission gate (STU-34) ─────────────
+// The recorder captures each event the route describes, and a test builds its row with the real builder. The gate
+// admits by default, which is what it does with governance off; a test makes it refuse.
+const mockRecordQueryEvent = mock((_input: QueryEventInput) => {});
+const mockAdmitQueryExecution = mock(() => {});
+const realSink = { ...(await import("@/lib/query-events/sink")) };
+mock.module("@/lib/query-events/sink", () => ({ ...realSink, recordQueryEvent: mockRecordQueryEvent }));
+mock.module("@/lib/query-events/admission", () => ({ admitQueryExecution: mockAdmitQueryExecution }));
+
 // ─── Import route handler AFTER mocking ─────────────────────────────────────
 const { POST } = await import("@/app/api/db/maintenance/route");
+const { SeedConnectionError } = await import("@/lib/seed/resolve-connection");
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 const validConnection = {
@@ -192,6 +204,8 @@ describe("POST /api/db/maintenance", () => {
     mockGetSession.mockClear();
     mockGetOrCreateProvider.mockClear();
     mockAuditPush.mockClear();
+    mockRecordQueryEvent.mockClear();
+    mockAdmitQueryExecution.mockReset();
     (mockProvider.runMaintenance as ReturnType<typeof mock>).mockClear();
     (mockProvider.getCapabilities as ReturnType<typeof mock>).mockClear();
 
@@ -1017,5 +1031,97 @@ describe("POST /api/db/maintenance", () => {
     } finally {
       restore();
     }
+  });
+  describe("governance query events", () => {
+    const SUBJECT = "8d0f6a4e-2b1c-4f3a-9e7d-5c6b4a3f2e1d";
+    /** A governed connection as `resolveConnection` hands it out: the `seed:` id and the level of its credential. */
+    const governedConnection = { ...validConnection, id: "seed:orders", grantLevel: "write" };
+
+    beforeEach(() => {
+      mockGetSession.mockImplementation(
+        async () => ({ role: "admin", username: "ada", idpSubject: SUBJECT }) as { role: string; username: string },
+      );
+    });
+
+    const recorded = (): QueryEventInput[] => mockRecordQueryEvent.mock.calls.map(([input]) => input);
+    const maintenance = (body: Record<string, unknown>) =>
+      POST(
+        createMockRequest("/api/db/maintenance", {
+          method: "POST",
+          body: { connection: governedConnection, ...body },
+        }) as never,
+      );
+
+    test("governance: one maintenance event per action with its status", async () => {
+      const runMaintenance = mockProvider.runMaintenance as ReturnType<typeof mock>;
+      expect((await maintenance({ type: "vacuum", target: "orders" })).status).toBe(200);
+      // The engine's verdict, not the request's: a run the engine would not do is an error.
+      runMaintenance.mockImplementationOnce(async () => ({ success: false, executionTime: 1, message: "refused" }));
+      expect((await maintenance({ type: "analyze" })).status).toBe(200);
+      // A run that threw may have reached the engine, so it is recorded too.
+      runMaintenance.mockImplementationOnce(async () => {
+        throw new QueryError('relation "orders" does not exist', "postgres");
+      });
+      expect((await maintenance({ type: "reindex", target: "orders" })).status).toBe(400);
+
+      expect(recorded().map(({ source, status }) => [source, status])).toEqual([
+        ["maintenance", "success"],
+        ["maintenance", "error"],
+        ["maintenance", "error"],
+      ]);
+      expect(mockAdmitQueryExecution).toHaveBeenCalledTimes(3);
+
+      const row = buildQueryEvent(
+        recorded()[0]!,
+        { statementCapture: "full", maxStatementBytes: 4096 },
+        { studioInstance: "libredb-studio" },
+      );
+      expect(row).toMatchObject({
+        source: "maintenance",
+        status: "success",
+        subject: SUBJECT,
+        username: "ada",
+        session_role: "admin",
+        connection_id: "orders",
+        connection_name: "Test DB",
+        engine: "postgres",
+        access_level: "write",
+        // The provider builds the statement inside `runMaintenance`, so the route has no text to record.
+        statement: null,
+        statement_type: "OTHER",
+        error_code: null,
+      });
+    });
+
+    test("governance: refuse mode answers 503 AUDIT_UNAVAILABLE before the action runs and records a refused event", async () => {
+      mockAdmitQueryExecution.mockImplementationOnce(() => {
+        throw Object.assign(new SeedConnectionError("Query execution is unavailable", 503), {
+          code: "AUDIT_UNAVAILABLE",
+        });
+      });
+
+      const res = await maintenance({ type: "vacuum", target: "orders" });
+
+      expect(res.status).toBe(503);
+      expect((await parseResponseJSON<{ code: string }>(res)).code).toBe("AUDIT_UNAVAILABLE");
+      expect(mockProvider.runMaintenance).not.toHaveBeenCalled();
+      expect(mockAuditPush).not.toHaveBeenCalled();
+      expect(recorded()).toHaveLength(1);
+      expect(recorded()[0]).toMatchObject({
+        source: "maintenance",
+        status: "refused",
+        errorCode: "AUDIT_UNAVAILABLE",
+        statement: null,
+        connection: { id: "seed:orders", engine: "postgres", accessLevel: "write" },
+      });
+    });
+
+    test("a request refused before the action is admitted records nothing", async () => {
+      const res = await maintenance({ type: "optimize", target: "orders" });
+
+      expect(res.status).toBe(400);
+      expect(mockAdmitQueryExecution).not.toHaveBeenCalled();
+      expect(recorded()).toEqual([]);
+    });
   });
 });

@@ -149,10 +149,12 @@ export function objectRouteErrorBody(error: ObjectRouteError): {
  * The session is typed LOOSELY, `role: string` and an optional `username`, rather than as
  * `UserPayload`. It is a read-only view for a consumer that only ever writes these two into a log
  * line, and widening here means this interface does not move when the auth payload grows a field.
+ * The optional `idpSubject` is the one addition, for the query event the edit apply records under
+ * governance, which names the identity provider subject a grant is held by.
  */
 export interface ObjectRequestContext {
   readonly connection: DatabaseConnection;
-  readonly session: { readonly role: string; readonly username?: string };
+  readonly session: { readonly role: string; readonly username?: string; readonly idpSubject?: string };
   readonly route: string;
 }
 
@@ -741,7 +743,7 @@ function boundText(part: ObjectSourcePart, limit: number): ObjectSourcePart {
  * THE KIND, at `src/app/api/db/objects/edit-plan/route.ts:89`: that route calls
  * `requireEditableKind(provider.getCapabilities(), kind, ...)` before it reaches the builder, on the
  * CONNECTED provider and never on the client's copy of the declaration, and its comment there cites
- * this docblock by name as the reason. `src/app/api/db/objects/edit-apply/route.ts:142` asks the same
+ * this docblock by name as the reason. `src/app/api/db/objects/edit-apply/route.ts:148` asks the same
  * question of the plan's kind, so neither half of the write path takes a caller's word for it.
  *
  * THE BOUND, on both sides of the same constant. `edit-plan/route.ts:74` refuses a SUBMITTED text
