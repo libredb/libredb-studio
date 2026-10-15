@@ -686,4 +686,4 @@ Under governance Studio's API answers these codes in the `code` field of an erro
 | `CONNECTION_NOT_FOUND` | 404 | The connection does not exist or is not granted to the caller; the two are indistinguishable. |
 | `GOVERNANCE_UNAVAILABLE` | 503 | The snapshot is loading, too old, misconfigured or incompatible. |
 | `AUDIT_UNAVAILABLE` | 503 | `queryLog.onSinkFailure` is `refuse` and Studio cannot record query events. |
-| `TRANSACTION_CREDENTIAL_CHANGED` | 409 | The grant level or credential under an open transaction changed, and Studio rolled the transaction back. |
+| `TRANSACTION_CREDENTIAL_CHANGED` | 409 | The grant level or credential under the caller's open transaction changed, and Studio rolled the transaction back; `rolledBack` is `false` when it could not confirm the rollback. |

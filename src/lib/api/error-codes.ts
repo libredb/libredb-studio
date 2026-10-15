@@ -73,6 +73,14 @@ export const ApiErrorCode = {
    */
   CONNECTION_NOT_FOUND: "CONNECTION_NOT_FOUND",
 
+  /**
+   * Under governance, the caller's own open transaction was opened under a credential the caller no longer resolves
+   * (409): its grant level or the connection's credential changed while it was open, so the request resolves another
+   * provider. Studio rolled the transaction back and released its owner record, and the body's `rolledBack` says
+   * whether that rollback was confirmed (src/app/api/db/transaction/route.ts).
+   */
+  TRANSACTION_CREDENTIAL_CHANGED: "TRANSACTION_CREDENTIAL_CHANGED",
+
   // Application rate limiting (distinct from LLM_RATE_LIMIT, which is the provider's limit)
   RATE_LIMITED: "RATE_LIMITED",
 

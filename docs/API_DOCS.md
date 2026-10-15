@@ -2177,6 +2177,21 @@ While the governance snapshot cannot be served, every such request answers `503`
 
 A connection the request supplies is refused with `403` and the code `CUSTOM_CONNECTIONS_DISABLED` in every state, as `GET /api/connections/policy` describes.
 
+A transaction opened through `POST /api/db/transaction` runs on the caller's own provider, opened with the credential of the caller's grant level at `begin`.
+When that grant level or the connection's credential changes while the transaction is open, for example a write grant downgraded to read, the caller's next request on the connection rolls the transaction back and answers `409` whatever its `action`, `status` included.
+Nothing of the request runs, and no connection is opened with the new credential to answer it:
+
+```json
+{
+  "error": "Your access to this connection changed while your transaction was open, so the transaction was rolled back and none of its changes were saved. Begin a new transaction to continue with your current access.",
+  "code": "TRANSACTION_CREDENTIAL_CHANGED",
+  "rolledBack": true
+}
+```
+
+`rolledBack` is `false` when the rollback failed or did not finish within 5 seconds: the error then says that Studio could not confirm it, and the failure is logged.
+The transaction is released either way, so the next request runs with the new credential, and a `begin` opens a new transaction there.
+
 ---
 
 ### Admin API
@@ -2519,6 +2534,7 @@ These are the values of the `code` field emitted by `createErrorResponse` (`src/
 | `CUSTOM_CONNECTIONS_DISABLED` | `ALLOW_CUSTOM_CONNECTIONS` is off, or governance mode is on, and the request supplied a connection that is not a seed (403); see `GET /api/connections/policy`. A seed the caller's role may not open is refused with `AUTH_ERROR` (403) instead |
 | `CONNECTION_NOT_FOUND` | Governance mode only: the connection a request names does not exist or is not granted to the caller (404), and the two are indistinguishable; see [Connections under governance](#connections-under-governance) |
 | `GOVERNANCE_UNAVAILABLE` | Governance mode only: the governance snapshot is still loading, too old, misconfigured or incompatible (503), so `GET /api/connections/managed` and every database route that opens a connection answer it instead; see [Connections under governance](#connections-under-governance) |
+| `TRANSACTION_CREDENTIAL_CHANGED` | Governance mode only: the caller's grant level or the connection's credential changed while the caller's transaction was open, so `POST /api/db/transaction` rolled it back and answered this instead of the request (409), with `rolledBack` saying whether the rollback was confirmed. Answered by the route rather than `createErrorResponse`; see [Connections under governance](#connections-under-governance) |
 | `AUTH_REQUIRED` | No Studio session, or one that no longer verifies (401). Answered by the middleware and the route-level session checks rather than `createErrorResponse`; the only 401 the browser answers by sending the user to sign in |
 | `WORKSPACE_OWNER_MISMATCH` | The request's `X-LibreDB-Workspace-Owner` header names an account other than the signed-in one (409). Answered by the middleware rather than `createErrorResponse`; the browser reloads the tab for it (see [Storage API](#storage-api)) |
 | `TIMEOUT_ERROR` | Query exceeded time limit (408); `POST /api/ai/query-safety` answers it with 504 when the model does not answer in time |

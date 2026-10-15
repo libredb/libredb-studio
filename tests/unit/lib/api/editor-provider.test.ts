@@ -15,7 +15,13 @@ mock.module("@/lib/db", () => ({
   }),
 }));
 
-const { editorProvider } = await import("@/lib/api/editor-provider");
+/** The writable cache by key, as `findCachedProvider` reads it. */
+const cachedByKey = new Map<string, DatabaseProvider>();
+mock.module("@/lib/db/factory", () => ({
+  findCachedProvider: (key: string) => cachedByKey.get(key) ?? null,
+}));
+
+const { cachedEditorProvider, editorProvider } = await import("@/lib/api/editor-provider");
 
 const connection = { id: "c", name: "c", type: "postgres", host: "h", database: "" } as DatabaseConnection;
 const session = (role: string) => ({ role });
@@ -50,6 +56,22 @@ describe("editorProvider", () => {
 
     connected = providerOf({});
     await expect(editorProvider(session("user"), connection, "shop")).rejects.toThrow(DatabaseConfigError);
+  });
+});
+
+/** The provider an earlier editor request ran on, found again by the key it resolved (spec 9.4). */
+describe("cachedEditorProvider", () => {
+  test("answers the provider cached under the key, in the catalog editorProvider scoped, and opens nothing", async () => {
+    const shop = providerOf({});
+    const server = providerOf({ catalogSessions: true }, { shop });
+    cachedByKey.set("key-of-the-write-credential", server);
+    opened.length = 0;
+
+    expect(await cachedEditorProvider("key-of-the-write-credential", undefined)).toBe(server);
+    expect(await cachedEditorProvider("key-of-the-write-credential", "shop")).toBe(shop);
+    // Nothing is cached under another key: the idle sweep or a disconnect removed it, or it was never opened.
+    expect(await cachedEditorProvider("key-of-the-read-credential", undefined)).toBeNull();
+    expect(opened).toEqual([]);
   });
 });
 
