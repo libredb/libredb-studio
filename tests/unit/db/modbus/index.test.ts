@@ -405,3 +405,30 @@ describe("the sentences the product has to say out loud", () => {
     expect(MODBUS_NO_REVOCATION_SENTENCE).toContain("Bun");
   });
 });
+
+/**
+ * The overview answers from the MAP, because a Modbus device publishes none of what an overview
+ * asks for. Every number below is therefore a fact about what this provider can address, and the
+ * two that a device does not publish are said as words rather than guessed at as numbers.
+ */
+describe("the overview of a device that publishes no overview", () => {
+  test("counts the map's points, and says the rest is unknown rather than inventing it", async () => {
+    expect(await provider({ registerMap: MAP }).getOverview()).toEqual({
+      version: "Modbus TCP",
+      uptime: "unknown",
+      maxConnections: 1,
+      databaseSize: "3 points",
+      tableCount: 3,
+      indexCount: 0,
+    });
+  });
+
+  test("a connection with no map at all reports the size as unknown, not as zero", async () => {
+    const overview = await provider().getOverview();
+
+    // Absence and zero are different facts: no map means nothing is addressable yet, while `0
+    // points` would read as a map that was read and found empty.
+    expect(overview.databaseSize).toBe("unknown");
+    expect(overview.tableCount).toBe(0);
+  });
+});

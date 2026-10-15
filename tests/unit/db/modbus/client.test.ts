@@ -25,6 +25,7 @@ import {
   exchangeOnce,
   ModbusDialError,
   ModbusDialTimeout,
+  socketWire,
 } from "@/lib/db/providers/industrial/modbus/client";
 
 const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
@@ -581,5 +582,100 @@ describe("the declared timers, on the path that reads them", () => {
     expect(REQUEST_TIMEOUT_MS).toBeGreaterThan(2137);
     expect(Date.now() - started).toBeLessThan(REQUEST_TIMEOUT_MS);
     void pending.catch(() => undefined);
+  });
+});
+
+/**
+ * The three endings of one exchange that the suite reached through neither the timer nor an
+ * answer: the peer hanging up, a chunk the reader refuses at the header, and the caller letting
+ * the wire go. Each is driven with a supplied socket, so none of them races a real dial.
+ */
+describe("what ends an exchange besides an answer", () => {
+  function listeningSocket(): {
+    socket: unknown;
+    emit: (event: "close" | "error" | "data", arg?: unknown) => void;
+    destroys: number;
+  } {
+    const handlers: Record<string, ((arg: never) => void)[]> = {};
+    const state = { destroys: 0 };
+    const socket = {
+      on(event: string, listener: (arg: never) => void) {
+        (handlers[event] ??= []).push(listener);
+        return socket;
+      },
+      once(event: string, listener: (arg: never) => void) {
+        return socket.on(event, listener);
+      },
+      setTimeout() {
+        return socket;
+      },
+      write() {
+        return true;
+      },
+      destroy() {
+        state.destroys += 1;
+        return socket;
+      },
+      destroyed: false,
+    };
+    return {
+      socket,
+      emit: (event, arg) => {
+        for (const listener of handlers[event] ?? []) (listener as (a: unknown) => void)(arg);
+      },
+      get destroys() {
+        return state.destroys;
+      },
+    };
+  }
+
+  test("a device that hangs up before answering says so, rather than waiting out the timer", async () => {
+    const fake = listeningSocket();
+    const pending = exchangeOnce(fake.socket as never, request(), {
+      expect: EXPECT,
+      endpoint: { host: "h", port: 1 },
+      timeoutMs: 5000,
+    });
+
+    fake.emit("close");
+
+    const error = await pending.catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect((error as Error).message).toContain("closed the connection before answering");
+  });
+
+  test("a chunk the reader refuses at the header ends the exchange with that refusal", async () => {
+    const fake = listeningSocket();
+    const pending = exchangeOnce(fake.socket as never, request(), {
+      expect: EXPECT,
+      endpoint: { host: "h", port: 1 },
+      timeoutMs: 5000,
+    });
+
+    // An MBAP length field of 0xFFFF is out of the range a Modbus TCP frame can declare, and the
+    // reader refuses it before a byte of the body is held. That refusal has to reach the caller:
+    // the alternative is an exchange that waits out its timer over a frame already known to be
+    // unreadable.
+    const header = Buffer.alloc(7);
+    header.writeUInt16BE(1, 0);
+    header.writeUInt16BE(0, 2);
+    header.writeUInt16BE(0xffff, 4);
+    header[6] = 1;
+    fake.emit("data", header);
+
+    const error = await pending.catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect((error as Error).message).toMatch(/length/i);
+  });
+
+  test("closing the wire destroys the socket under it", () => {
+    const fake = listeningSocket();
+    const wire = socketWire(fake.socket as never, { host: "h", port: 1 });
+
+    expect(fake.destroys).toBe(0);
+    // The reason a caller gives is not carried to the socket: a TCP close has no field for one,
+    // and the session logs it on its own side.
+    wire.close("the read is over");
+    expect(fake.destroys).toBe(1);
   });
 });

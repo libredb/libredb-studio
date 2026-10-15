@@ -196,3 +196,28 @@ describe("the published transaction figure", () => {
     expect(wire.maxOutstanding).toBe(1);
   });
 });
+
+/**
+ * The transaction id, read on its own rather than through an exchange.
+ *
+ * TCP 4.4.1.3 lets a device answer a request the client has already given up on, and the only
+ * thing that tells that answer from this one is the id. The claim in the module is that an id is
+ * never reused on one connection and that the counter wraps at sixteen bits, which is a claim
+ * about a full cycle: a test that takes three ids measures the first half of the sentence and
+ * nothing of the second.
+ */
+describe("the transaction id", () => {
+  test("is handed out in order, and the cycle holds every id the protocol has, each once", () => {
+    const session = new ModbusSession(new Recorder((adu) => Promise.resolve(answerOf(adu))));
+
+    const cycle = Array.from({ length: 0xffff }, () => session.takeTransactionId());
+
+    expect(cycle.slice(0, 3)).toEqual([1, 2, 3]);
+    expect(new Set(cycle).size).toBe(0xffff);
+    expect(Math.min(...cycle)).toBe(1);
+    expect(Math.max(...cycle)).toBe(0xffff);
+    // The id after a full cycle is the first one again, and zero is never handed out: a frame
+    // carrying 0 is one this session did not send.
+    expect(session.takeTransactionId()).toBe(1);
+  });
+});
