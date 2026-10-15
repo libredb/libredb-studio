@@ -20,7 +20,7 @@
 | **Default port** | `1433` |
 | **Connection pooling** | Yes — `mssql.ConnectionPool` (`min`/`max`/`idleTimeoutMillis`) |
 | **Connection string** | UI paste only (`mssql://` / `sqlserver://` decomposed to fields — see §4.4) |
-| **Transactions** | Yes — `mssql.Transaction` (no auto-rollback timeout) |
+| **Transactions** | Yes: `mssql.Transaction` (5-minute auto-rollback on an owned provider only, see §3.6) |
 | **Query cancellation** | Yes — tracked `Request` + `request.cancel()` |
 | **Source** | [`src/lib/db/providers/sql/mssql.ts`](../../src/lib/db/providers/sql/mssql.ts) |
 | **Base** | [`src/lib/db/providers/sql/sql-base.ts`](../../src/lib/db/providers/sql/sql-base.ts) |
@@ -44,7 +44,7 @@ provider — and it has a couple of distinct gaps too:
 | Schema | 1 MATERIALIZED-CTE round-trip | **5 bulk `sys.*` queries** grouped in memory |
 | Blocked-session detection | always `false` | **real** (`blocking_session_id > 0`) |
 | Index `scans` | real (`pg_stat_user_indexes.idx_scan`) | real (`dm_db_index_usage_stats`) — both real, unlike Oracle (`0`)/MySQL (`CARDINALITY`) |
-| Transaction timeout | 5-minute auto-rollback | **none** |
+| Transaction timeout | 5-minute auto-rollback | 5-minute auto-rollback on an **owned** provider (governance), **none** otherwise |
 | `connectionString` | passed to driver | **ignored by the provider** (UI decomposes URLs to fields) |
 | Maintenance | vacuum / analyze / reindex / kill | `analyze` / `check` / `optimize` / `kill` |
 | UI labels | default SQL | **overridden** (Update Statistics / Rebuild Indexes) |
@@ -216,10 +216,14 @@ the `mssql`/Tedious driver** (it aborts the request and signals the server), not
 statement timeout like Postgres's `statement_timeout`. An overrunning query still surfaces as a
 `TimeoutError`.
 
-### 3.6 No transaction auto-rollback timeout
+### 3.6 Transaction auto-rollback timeout on an owned provider only
 
-Like Oracle (and unlike Postgres/MySQL), transactions use an `mssql.Transaction` with **no**
-5-minute auto-rollback timer (`beginTransaction()`, [`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts)).
+Transactions use an `mssql.Transaction` (`beginTransaction()`, [`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts)).
+A provider created with an `owner` in its execution context, which only governance does (`ProviderExecutionContext.owner`, spec 9.4), arms the 5-minute auto-rollback timer of Postgres and MySQL at `BEGIN`.
+When it fires, `expireTransaction()` rolls the transaction back and releases it, so its pooled connection goes back to the pool; a rollback that fails is logged, and the transaction is released all the same.
+`commitTransaction()`, `rollbackTransaction()` and `disconnect()` clear the timer.
+A provider without an owner, which is every install without governance, arms **no** timer, like Oracle without an owner, so its transaction lifetime is unchanged.
+Arming the timer in every mode is a product decision that needs an amendment of spec 9 first.
 
 ### 3.7 Named-instance support
 
@@ -536,7 +540,7 @@ Two cells read back differently, both lost by the driver before the export sees 
 ## 6. Transactions
 
 Explicit lifecycle via `mssql.Transaction` (`beginTransaction()`, [`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts)),
-**no auto-rollback timeout** ([§3.6](#36-no-transaction-auto-rollback-timeout)). Surfaced via
+with a 5-minute auto-rollback on an owned provider only ([§3.6](#36-transaction-auto-rollback-timeout-on-an-owned-provider-only)). Surfaced via
 `POST /api/db/transaction`.
 
 | Method | Behaviour |

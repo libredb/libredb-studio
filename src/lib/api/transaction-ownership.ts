@@ -45,16 +45,19 @@
  *  1. The route reconciles against the provider on every call. `PostgresProvider` and
  *     `MySQLProvider` auto-roll back after their own `TX_TIMEOUT_MS` (5 minutes from BEGIN, not
  *     refreshed by activity) with no session behind that rollback at all, so a record can outlive
- *     the transaction it names. When the provider reports no open transaction, the record is
+ *     the transaction it names. `MSSQLProvider` and `OracleProvider` do the same, but ONLY when
+ *     they are owned, that is created with the `owner` of a per-user provider, which only
+ *     governance sets (spec 9.4). When the provider reports no open transaction, the record is
  *     dropped and the connection is free.
  *  2. This lease expires after `OWNERSHIP_IDLE_MS` with no action from the owner. That is the
- *     release that matters for `MSSQLProvider` and `OracleProvider`, which have no timeout of
- *     their own: without it an abandoned transaction there would hold the connection for the life
- *     of the process. An open transaction with no live record is treated as unowned and any
- *     session may commit or roll it back, which is the escape hatch that makes the refusal safe.
+ *     release that matters for `MSSQLProvider` and `OracleProvider` without an owner, every
+ *     install without governance, where they have no timeout of their own: without it an abandoned
+ *     transaction there would hold the connection for the life of the process. An open
+ *     transaction with no live record is treated as unowned and any session may commit or roll it
+ *     back, which is the escape hatch that makes the refusal safe.
  *
- * Measured against the provider timeouts rather than chosen: 5 minutes is `TX_TIMEOUT_MS` in both
- * providers that have one. It is measured from the owner's LAST action here, not from BEGIN,
+ * Measured against the provider timeouts rather than chosen: 5 minutes is `TX_TIMEOUT_MS` in every
+ * provider that has one. It is measured from the owner's LAST action here, not from BEGIN,
  * because the question this lease answers is whether the owner has gone away, and activity is the
  * evidence for that.
  *

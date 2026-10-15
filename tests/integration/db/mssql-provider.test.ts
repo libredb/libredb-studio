@@ -1566,6 +1566,109 @@ describe("MSSQLProvider", () => {
 
       await provider.rollbackTransaction();
     });
+
+    // Spec 9.4: the five-minute timeout of PostgreSQL and MySQL, armed only on a provider created
+    // with an owner. TX_TIMEOUT_MS is a compile-time-private static read when beginTransaction()
+    // arms the timer, so these tests shrink it at runtime the way the MySQL suite does.
+    describe("the owned-provider transaction timeout", () => {
+      const providerStatics = MSSQLProvider as unknown as { TX_TIMEOUT_MS: number };
+      const timerOf = (target: MSSQLProvider) => (target as unknown as { txTimeout: unknown }).txTimeout;
+      let originalTimeout: number;
+      let rollbacks: number;
+
+      beforeEach(() => {
+        originalTimeout = providerStatics.TX_TIMEOUT_MS;
+        rollbacks = 0;
+        mockTransactionHooks = { begin() {}, commit() {}, rollback: () => void rollbacks++ };
+      });
+
+      afterEach(() => {
+        providerStatics.TX_TIMEOUT_MS = originalTimeout;
+        mockTransactionHooks = { begin() {}, commit() {}, rollback() {} };
+      });
+
+      test("the timeout is five minutes from BEGIN", () => {
+        expect(originalTimeout).toBe(5 * 60 * 1000);
+      });
+
+      test("transaction auto-rolls back when the timeout timer fires on an owned provider", async () => {
+        providerStatics.TX_TIMEOUT_MS = 5;
+        provider = new MSSQLProvider(baseConfig, {}, { owner: "subject-a", ownerPoolMax: 3 });
+        await provider.connect();
+        await provider.beginTransaction();
+        expect(provider.isInTransaction()).toBe(true);
+
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(provider.isInTransaction()).toBe(false);
+        expect(rollbacks).toBe(1);
+        expect(timerOf(provider)).toBeNull();
+        await expect(provider.commitTransaction()).rejects.toThrow("No active transaction");
+      });
+
+      test("a provider without an owner keeps today's transaction lifetime", async () => {
+        providerStatics.TX_TIMEOUT_MS = 5;
+        await provider.connect();
+        await provider.beginTransaction();
+
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(provider.isInTransaction()).toBe(true);
+        expect(rollbacks).toBe(0);
+        expect(timerOf(provider)).toBeNull();
+        await provider.rollbackTransaction();
+        expect(rollbacks).toBe(1);
+      });
+
+      test("commit, rollback and disconnect clear the timer of an owned provider", async () => {
+        provider = new MSSQLProvider(baseConfig, {}, { owner: "subject-a", ownerPoolMax: 3 });
+        await provider.connect();
+
+        await provider.beginTransaction();
+        expect(timerOf(provider)).not.toBeNull();
+        await provider.commitTransaction();
+        expect(timerOf(provider)).toBeNull();
+
+        await provider.beginTransaction();
+        expect(timerOf(provider)).not.toBeNull();
+        await provider.rollbackTransaction();
+        expect(timerOf(provider)).toBeNull();
+
+        await provider.beginTransaction();
+        expect(timerOf(provider)).not.toBeNull();
+        await provider.disconnect();
+        expect(timerOf(provider)).toBeNull();
+      });
+
+      test("a failed auto-rollback still releases the transaction and says why", async () => {
+        const warn = spyOn(console, "warn").mockImplementation(() => {});
+        mockTransactionHooks = {
+          begin() {},
+          commit() {},
+          rollback() {
+            throw new Error("Transaction has been aborted.");
+          },
+        };
+        try {
+          provider = new MSSQLProvider(baseConfig, {}, { owner: "subject-a", ownerPoolMax: 3 });
+          await provider.connect();
+          await provider.beginTransaction();
+
+          await provider.expireTransaction();
+          expect(provider.isInTransaction()).toBe(false);
+          expect(timerOf(provider)).toBeNull();
+          expect(warn.mock.calls.map((call) => String(call[0])).join("\n")).toContain("Transaction has been aborted.");
+        } finally {
+          warn.mockRestore();
+        }
+      });
+
+      test("expireTransaction is a no-op without an active transaction", async () => {
+        provider = new MSSQLProvider(baseConfig, {}, { owner: "subject-a", ownerPoolMax: 3 });
+        await provider.connect();
+        await provider.expireTransaction();
+        expect(provider.isInTransaction()).toBe(false);
+        expect(rollbacks).toBe(0);
+      });
+    });
   });
 
   // =========================================================================
