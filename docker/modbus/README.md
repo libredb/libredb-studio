@@ -1,13 +1,21 @@
 # The Modbus TCP fixture
 
 `modbus_server.json` configures the `modbus` service of `database-compose.yml`, which runs
-`oitc/modbus-server` pinned by digest. The image wraps **pymodbus 3.12.x**, so the framing, the
-function-code decoding and the exception responses are all third-party: the only thing this file
-decides is the values.
+`oitc/modbus-server` pinned by digest:
+
+    oitc/modbus-server@sha256:32bfe144512e1f070cf7e7e2513cdcb774d74db142ee5dbad45b21d6d705ab97
+
+The image wraps **pymodbus 3.12.x**, so the framing, the function-code decoding and the exception
+responses are all third-party: the only thing this file decides is the values.
 
 That is the point of it. Until this fixture existed the Modbus provider was measured against a
 server written in this repository, which left one question open on every read: the side that wrote
 the device and the side that read it were the same side.
+
+The digest is written in three places and `tests/unit/db/modbus/live-environment.test.ts` holds
+them to one: here, in `compose-service.yml` and in `ci-step.yml`. The last two are delivery files
+rather than the shared ones, because `database-compose.yml` and `.github/workflows/ci.yml` are
+landed by one hand.
 
 ## The values, and why they look like that
 
