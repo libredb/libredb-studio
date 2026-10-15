@@ -103,6 +103,25 @@ function StatusBody({ status }: { status: GovernanceStatus }) {
         value={status.listener?.lastNotificationAt ?? NOT_LOADED}
         testId="governance-last-notification"
       />
+      <div className="space-y-1">
+        <span className="text-xs text-fg-muted">Runtime settings</span>
+        <ul className="space-y-1">
+          {status.settings.map(({ key, source }) => (
+            <li key={key} data-testid="governance-setting" className="text-xs text-fg-secondary break-words">
+              {`${key}: ${source}`}
+            </li>
+          ))}
+          {status.ignoredSettings.map(({ key, code }) => (
+            <li
+              key={`ignored:${key}`}
+              data-testid="governance-ignored-setting"
+              className="text-xs text-warning break-words"
+            >
+              {`${key}: ignored, ${code}`}
+            </li>
+          ))}
+        </ul>
+      </div>
       {status.skipped.length > 0 && (
         <div className="space-y-1">
           <span className="text-xs text-fg-muted">{`Skipped (${status.skipped.length})`}</span>
@@ -127,9 +146,10 @@ function StatusBody({ status }: { status: GovernanceStatus }) {
 /**
  * The governance status (GET /api/admin/governance, spec 9.3): the freshness state, the contract versions, the
  * snapshot's age, the latest load failure with its full message, the admitted and skipped rows, the keyring's key ids,
- * the seal canary of each key id, and the change notification listener's state, how long it has held and the last
- * notification, so an admin sees why a governed connection is missing, or why a change arrives late, without the
- * server logs. Mounted on the Overview page beside SeedSourcesCard. Renders nothing with governance off and on a
+ * the seal canary of each key id, the change notification listener's state, how long it has held and the last
+ * notification, and where each runtime setting comes from with the setting keys that were ignored, so an admin sees
+ * why a governed connection is missing, why a change arrives late, or why a setting has no effect, without the server
+ * logs. Mounted on the Overview page beside SeedSourcesCard. Renders nothing with governance off and on a
  * failed read.
  */
 export function GovernanceStatusCard() {

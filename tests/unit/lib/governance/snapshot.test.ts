@@ -640,13 +640,19 @@ describe("effective grants", () => {
       grants: 8,
       revocations: 0,
       canaries: 0,
+      settings: 0,
     });
   });
 });
 
 describe("what the snapshot keeps", () => {
-  test("revocations keep the latest revoked_before per subject, and settings rows are kept as read", async () => {
-    const settings = [{ key: "query.timeoutMs", value: 30000, updated_at: new Date("2026-10-14T12:00:00.000Z") }];
+  test("revocations keep the latest revoked_before per subject, and settings rows go through the settings store", async () => {
+    const updatedAt = new Date("2026-10-14T12:00:00.000Z");
+    const settings = [
+      { key: "query.timeoutMs", value: 30000, updated_at: updatedAt },
+      { key: "ai.enabled", value: "SETTING-VALUE-CANARY", updated_at: updatedAt },
+      { key: "Not A Key", value: true, updated_at: updatedAt },
+    ];
     serve({
       revocations: [
         { subject: "alice", revoked_before: new Date("2026-10-15T08:00:00.000Z") },
@@ -665,13 +671,24 @@ describe("what the snapshot keeps", () => {
       ["alice", new Date("2026-10-15T09:00:00.000Z").getTime()],
       ["bob", Number.POSITIVE_INFINITY],
     ]);
-    expect(snapshot().settings).toEqual(settings);
+    expect(snapshot().settings).toEqual({
+      values: new Map([["query.timeoutMs", 30000]]),
+      ignored: [{ kind: "setting", id: "ai.enabled", code: "SETTING_INVALID" }],
+      malformed: 1,
+    });
     expect(logs.warn).toHaveBeenCalledWith("Governance rows ignored", {
       route: "governance/snapshot",
       grants: 0,
       revocations: 2,
       canaries: 0,
+      settings: 1,
     });
+    // An ignored setting is logged by key and code, as the heartbeat reports it, never with its value.
+    expect(logs.warn).toHaveBeenCalledWith("Governance rows skipped", {
+      route: "governance/snapshot",
+      skipped: [{ kind: "setting", id: "ai.enabled", code: "SETTING_INVALID" }],
+    });
+    expect(JSON.stringify(logs.warn.mock.calls)).not.toContain("SETTING-VALUE-CANARY");
   });
 
   test("a load replaces the snapshot at once and clears the failure before it", async () => {
@@ -748,6 +765,7 @@ describe("seal canaries", () => {
       grants: 0,
       revocations: 0,
       canaries: 2,
+      settings: 0,
     });
   });
 });

@@ -6,7 +6,8 @@
  * contract versions on both sides, the freshness state, the age and load time of the snapshot, why the latest load
  * failed, how many connections were admitted, the rows admission skipped, the key ids of the keyring, the result of
  * each key id's seal canary, and the listener's state, how long it has held and when the last change notification
- * arrived. The settings and sink slices add their sections here.
+ * arrived, and where each runtime setting's value comes from with the setting keys the settings store ignored. The
+ * sink slice adds its section here.
  *
  * Like the heartbeat, it carries ids, levels, paths and codes only: never a definition value, an envelope, a
  * credential or a statement. The one exception is the full message of the latest load failure, which only an
@@ -20,6 +21,8 @@ import { type FreshnessState, governanceFreshness } from "./freshness";
 import type { EnvelopeCode } from "./hpke";
 import { governanceKeyring } from "./keyring";
 import { governanceListenerStatus, type ListenerState } from "./listener";
+import { type SettingSource, settingSource } from "./settings";
+import { SETTINGS_REGISTRY } from "./settings-registry";
 import { type CanaryResult, governanceState, type LoadFailure } from "./state";
 
 /** A row, or a row's write level, that admission left out, with the envelope code the heartbeat item has no field for. */
@@ -60,6 +63,10 @@ export interface GovernanceStatus {
   readonly keyringKids: readonly string[];
   /** For each key id with a seal canary, `ok` or the code its envelope failed with; null before a successful load. */
   readonly canary: Readonly<Record<string, CanaryResult>> | null;
+  /** Each key of the settings registry, in registry order, and where its value comes from at the moment. */
+  readonly settings: readonly { readonly key: string; readonly source: SettingSource }[];
+  /** The setting keys the last successful load ignored, with their code; never their values. */
+  readonly ignoredSettings: readonly { readonly key: string; readonly code: SkippedItem["code"] }[];
   /** The change notification listener of this process, or null when none runs. */
   readonly listener: {
     readonly state: ListenerState;
@@ -114,6 +121,8 @@ export function governanceStatus(nowMs = Date.now()): GovernanceStatus {
     skipped: (snapshot?.skipped ?? []).map(skipOf),
     keyringKids: [...governanceKeyring().keys()],
     canary: snapshot?.canary ?? null,
+    settings: SETTINGS_REGISTRY.map((definition) => ({ key: definition.key, source: settingSource(definition) })),
+    ignoredSettings: (snapshot?.settings.ignored ?? []).map(({ id, code }) => ({ key: id, code })),
     listener: listenerAt(nowMs),
   };
 }

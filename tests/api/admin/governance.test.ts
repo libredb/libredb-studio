@@ -13,6 +13,7 @@ import type { GovernanceStatusResponse } from "@/app/api/admin/governance/route"
 import type { AdmittedConnection } from "@/lib/governance/admission";
 import { NOTIFY_CHANNEL } from "@/lib/governance/contract";
 import { resetGovernanceKeyring } from "@/lib/governance/keyring";
+import { validateSettings } from "@/lib/governance/settings";
 import {
   type GovernanceSnapshot,
   recordGovernanceFailure,
@@ -63,7 +64,14 @@ const CONNECTION: AdmittedConnection = {
   },
 };
 
-function snapshot(loadedAt: number): GovernanceSnapshot {
+/** The rows of `settings_v1` a snapshot was loaded from, as the settings store checks them. */
+type SettingRows = Parameters<typeof validateSettings>[0];
+
+function snapshot(
+  loadedAt: number,
+  // A row for a key the registry does not have: the status must not echo its value.
+  settingRows: SettingRows = [{ key: "statement.capture", value: PASSWORD, updated_at: new Date(0) }],
+): GovernanceSnapshot {
   return {
     loadedAt,
     contractVersion: 1,
@@ -77,8 +85,7 @@ function snapshot(loadedAt: number): GovernanceSnapshot {
     ],
     grants: new Map(),
     revocations: new Map(),
-    // The raw rows the settings store reads: the status must not echo them.
-    settings: [{ key: "statement.capture", value: PASSWORD, updated_at: new Date(0) }],
+    settings: validateSettings(settingRows, 1),
     canary: { [KEY.kid]: "ok", "0123456789abcdef": "UNKNOWN_KID" },
   };
 }
@@ -231,6 +238,40 @@ describe("GET /api/admin/governance: status", () => {
     for (const value of [PASSWORD, HOST, ENVELOPE, "reader", "seed:warehouse", KEY.text]) {
       expect(text).not.toContain(value);
     }
+  });
+
+  test("the status names each setting's source and the ignored keys with their code", async () => {
+    const updatedAt = new Date(0);
+    recordGovernanceSnapshot(
+      snapshot(Date.now(), [
+        { key: "ai.enabled", value: false, updated_at: updatedAt },
+        { key: "mcp.enabled", value: true, updated_at: updatedAt },
+        { key: "query.timeoutMs", value: 30_000, updated_at: updatedAt },
+        { key: "queryLog.statementCapture", value: PASSWORD, updated_at: updatedAt },
+        { key: "statement.capture", value: PASSWORD, updated_at: updatedAt },
+      ]),
+    );
+
+    const res = await GET(request());
+    const text = await res.text();
+    const { governance } = JSON.parse(text) as GovernanceStatusResponse;
+
+    expect(res.status).toBe(200);
+    expect(governance?.settings).toEqual([
+      { key: "ai.enabled", source: "runtime" },
+      { key: "agent.enabled", source: "environment" },
+      { key: "mcp.enabled", source: "runtime" },
+      { key: "query.timeoutMs", source: "runtime" },
+      { key: "provider.poolMaxPerUser", source: "default" },
+      { key: "queryLog.statementCapture", source: "default" },
+      { key: "queryLog.maxStatementBytes", source: "default" },
+      { key: "queryLog.onSinkFailure", source: "default" },
+    ]);
+    expect(governance?.ignoredSettings).toEqual([
+      { key: "queryLog.statementCapture", code: "SETTING_INVALID" },
+      { key: "statement.capture", code: "SETTING_INVALID" },
+    ]);
+    expect(text).not.toContain(PASSWORD);
   });
 
   test("an unavailable governance source reports the failure's code next to the last snapshot", async () => {

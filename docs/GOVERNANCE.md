@@ -390,6 +390,8 @@ It names ids, levels, paths and codes only, never a definition value, an envelop
     "skipped": [{ "kind": "connection", "id": "billing", "level": "read", "code": "READ_SECRET_UNOPENABLE", "envelopeCode": "UNKNOWN_KID" }],
     "keyringKids": ["<kid>"],
     "canary": { "<kid>": "ok" },
+    "settings": [{ "key": "ai.enabled", "source": "runtime" }, { "key": "agent.enabled", "source": "environment" }, { "key": "query.timeoutMs", "source": "default" }],
+    "ignoredSettings": [{ "key": "queryLog.statementCapture", "code": "SETTING_INVALID" }],
     "listener": { "state": "listening", "since": "2026-10-15T07:30:00.000Z", "heldMs": 1845000, "lastNotificationAt": "2026-10-15T08:00:12.000Z" }
   }
 }
@@ -403,6 +405,8 @@ It names ids, levels, paths and codes only, never a definition value, an envelop
 - `skipped` lists each row, or write level of a row, that [row admission](#row-admission-and-skip-codes) left out, as the heartbeat reports it, plus the envelope code for an envelope that did not open.
 - `keyringKids` are the key ids of the keyring the instance opens envelopes with.
 - `canary` maps each key id with a [seal canary](#sealed-credentials-lsb1) to `ok` or the envelope code its canary failed with, as the heartbeat reports it, or is null before the first successful load.
+- `settings` lists every key of the [runtime settings](#runtime-settings) registry with the `source` of its value at the moment: `runtime` for a valid value the control plane set, `environment` for a key whose environment variable decides otherwise, and `default` for a key that falls back to Studio's default.
+- `ignoredSettings` lists each key whose row the last successful load ignored, with its code, as the heartbeat reports it, and never with its value.
 - `listener` is the [change notification](#change-notification) listener: its state, `since` when that state has held and `heldMs` for how long at the moment of the request, and `lastNotificationAt`, when the last `libredb_bridge` notification arrived, or null before the first.
   It is null only in a process where no listener runs.
 - With governance off the route answers `{ "governance": null }`, and a user who is not an administrator gets 403.
@@ -553,7 +557,15 @@ A control plane may set these keys through `bridge.settings_v1`, and no others:
 
 - A valid runtime value wins over its environment counterpart.
   Prerequisites such as URLs, keys and the AI model stay in the environment, so `true` enables only what the environment configured.
+- Studio checks every row of `bridge.settings_v1` against the registry on each load of the snapshot.
+  A value is valid when its key is published by the contract version in use and the value has the key's type and lies inside its allowed values or bounds; a JSON string `"true"` is not a boolean and `1500.5` is not an integer.
 - An invalid value is ignored and reported in the heartbeat and on Studio's admin status as a `SETTING_INVALID` skip, and the environment value or the default applies.
+  The report names the key and the code, never the value.
+  A key the registry does not publish, and a key with more than one row, are ignored and reported the same way.
+- A key that is absent, or ignored, leaves the environment value or the default in force, exactly as without governance.
+  With governance off Studio reads no runtime value at all.
+- The last snapshot's values stay in force while a later load fails.
+- Route handlers apply runtime values, and the proxy, which runs before them on every request, never reads them.
 - Security posture is never a runtime setting: sign-in, keys, session lifetime, custom connections, samples, CSP and HSTS stay in the environment.
 - In this contract version Studio keeps the agent and MCP off in governance mode whatever `agent.enabled` and `mcp.enabled` say, so a control plane shows those two keys read-only.
 - A control plane chooses the capture mode it sets.

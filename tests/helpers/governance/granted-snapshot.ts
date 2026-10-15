@@ -72,7 +72,7 @@ export function grantedSnapshot(
     skipped: [],
     grants: bySubject,
     revocations: new Map(),
-    settings: [],
+    settings: { values: new Map(), ignored: [], malformed: 0 },
     canary: {},
   };
 }

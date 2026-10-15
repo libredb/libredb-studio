@@ -23,6 +23,12 @@ function status(overrides: Partial<GovernanceStatus> = {}): GovernanceStatus {
     skipped: [],
     keyringKids: [KID],
     canary: { [KID]: "ok" },
+    settings: [
+      { key: "ai.enabled", source: "runtime" },
+      { key: "agent.enabled", source: "environment" },
+      { key: "query.timeoutMs", source: "default" },
+    ],
+    ignoredSettings: [],
     listener: {
       state: "listening",
       since: "2026-10-15T07:30:00.000Z",
@@ -261,6 +267,24 @@ describe("GovernanceStatusCard", () => {
       "billing [write]: WRITE_SECRET_UNOPENABLE (AUTH_FAILED)",
       "crm [password]: DEFINITION_HAS_SECRET",
       "files: ENGINE_UNSUPPORTED",
+    ]);
+  });
+
+  test("lists each runtime setting with its source, and each ignored key with its code", async () => {
+    mockGlobalFetch({
+      "/api/admin/governance": answer(
+        status({ ignoredSettings: [{ key: "queryLog.statementCapture", code: "SETTING_INVALID" }] }),
+      ),
+    });
+    const { findAllByTestId, getAllByTestId } = await renderCard();
+
+    expect((await findAllByTestId("governance-setting")).map((item) => item.textContent)).toEqual([
+      "ai.enabled: runtime",
+      "agent.enabled: environment",
+      "query.timeoutMs: default",
+    ]);
+    expect(getAllByTestId("governance-ignored-setting").map((item) => item.textContent)).toEqual([
+      "queryLog.statementCapture: ignored, SETTING_INVALID",
     ]);
   });
 
