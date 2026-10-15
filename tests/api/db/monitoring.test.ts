@@ -1,4 +1,4 @@
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
@@ -27,6 +27,8 @@ const mockGetSession = mock(
   async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
 );
 
+const mockResolveConnection = mock(async (_body: Record<string, unknown>): Promise<unknown> => undefined);
+
 // ─── Mock auth + seed resolution BEFORE importing route ─────────────────────
 mock.module("@/lib/auth", () => ({
   getSession: mockGetSession,
@@ -47,7 +49,7 @@ mock.module("@/lib/seed/resolve-connection", () => {
     }
   }
   return {
-    resolveConnection: mock(async (body: Record<string, unknown>) => {
+    resolveConnection: mockResolveConnection.mockImplementation(async (body: Record<string, unknown>) => {
       if (!body.connection && !body.connectionId) {
         throw new SeedConnectionError("Either connection or connectionId is required", 400);
       }
@@ -56,6 +58,12 @@ mock.module("@/lib/seed/resolve-connection", () => {
     SeedConnectionError,
   };
 });
+
+// The role denial is recorded through the audit boundary, so the test reads what reaches it.
+const mockEmitAuditEvent = mock((_event: Record<string, unknown>) => {});
+mock.module("@/lib/audit", () => ({
+  emitAuditEvent: mockEmitAuditEvent,
+}));
 
 // ─── Mock dependencies BEFORE importing route ───────────────────────────────
 mock.module("@/lib/db", () => ({
@@ -334,5 +342,85 @@ describe("POST /api/db/monitoring", () => {
     expect(data.error).toContain("Internal error");
     expect(data.code).toBe("DATABASE_ERROR");
     expect(data.statusCode).toBe(500);
+  });
+
+  // Spec 9.3: under governance, users who share a read principal would see each other's statements in
+  // pg_stat_activity, so monitoring is an admin page there. The refusal comes before the connection is
+  // resolved, so nothing is opened for it, and it is audited as the maintenance route's is.
+  describe("governance", () => {
+    const savedSource = process.env.GOVERNANCE_SOURCE;
+
+    beforeEach(() => {
+      process.env.GOVERNANCE_SOURCE = "postgres";
+      mockResolveConnection.mockClear();
+      mockEmitAuditEvent.mockClear();
+    });
+
+    afterEach(() => {
+      if (savedSource === undefined) delete process.env.GOVERNANCE_SOURCE;
+      else process.env.GOVERNANCE_SOURCE = savedSource;
+    });
+
+    test("governance: a user session gets 403 and no provider is created", async () => {
+      mockGetSession.mockImplementation(
+        async (): Promise<{ role: string; username: string } | null> => ({ role: "user", username: "bob" }),
+      );
+
+      const res = await POST(
+        createMockRequest("/api/db/monitoring", { method: "POST", body: { connection: validConnection } }) as never,
+      );
+      const data = await parseResponseJSON<{ error: string }>(res);
+
+      expect(res.status).toBe(403);
+      expect(data.error).toBe("Unauthorized. Admin access required.");
+      expect(mockResolveConnection).not.toHaveBeenCalled();
+      expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+      expect(mockEmitAuditEvent).toHaveBeenCalledTimes(1);
+      expect(mockEmitAuditEvent.mock.calls[0][0]).toMatchObject({
+        type: "permission_denied",
+        action: "denied",
+        target: "POST /api/db/monitoring",
+        user: "bob",
+        result: "failure",
+        reason: "insufficient_role",
+      });
+    });
+
+    test("governance: an admin with a grant gets monitoring data", async () => {
+      const res = await POST(
+        createMockRequest("/api/db/monitoring", {
+          method: "POST",
+          body: { connectionId: "granted-1", connection: validConnection },
+        }) as never,
+      );
+      const data = await parseResponseJSON<{ overview: { version: string } }>(res);
+
+      expect(res.status).toBe(200);
+      expect(data.overview.version).toBe("PostgreSQL 16.1");
+      expect(mockResolveConnection).toHaveBeenCalledTimes(1);
+      expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(1);
+      expect(mockEmitAuditEvent).not.toHaveBeenCalled();
+    });
+  });
+
+  test("without governance a user session keeps its monitoring access", async () => {
+    const savedSource = process.env.GOVERNANCE_SOURCE;
+    delete process.env.GOVERNANCE_SOURCE;
+    mockGetSession.mockImplementation(
+      async (): Promise<{ role: string; username: string } | null> => ({ role: "user", username: "bob" }),
+    );
+
+    try {
+      const res = await POST(
+        createMockRequest("/api/db/monitoring", { method: "POST", body: { connection: validConnection } }) as never,
+      );
+      const data = await parseResponseJSON<{ overview: { version: string } }>(res);
+
+      expect(res.status).toBe(200);
+      expect(data.overview.version).toBe("PostgreSQL 16.1");
+      expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(1);
+    } finally {
+      if (savedSource !== undefined) process.env.GOVERNANCE_SOURCE = savedSource;
+    }
   });
 });

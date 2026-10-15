@@ -3,9 +3,10 @@ import { getOrCreateProvider } from "@/lib/db";
 import type { MonitoringOptions } from "@/lib/db/types";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
-import { guardRoute } from "@/lib/api/require-session";
+import { auditRoleDenial, guardRoute } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
 import { editorProvider } from "@/lib/api/editor-provider";
+import { governanceEnabled } from "@/lib/governance/config";
 
 /**
  * POST /api/db/monitoring
@@ -17,6 +18,15 @@ export async function POST(req: NextRequest) {
   // denial audit instead of a 400 that never reached the guard.
   const guard = await guardRoute({ route: "POST /api/db/monitoring", bucket: "query", request: req });
   if ("response" in guard) return guard.response;
+
+  // Under governance (spec 9.3) users who share a read principal would see each other's statements in
+  // `pg_stat_activity`, so monitoring is admin-only there. The refusal comes before the body is read
+  // and before a connection is resolved, and is audited as the maintenance route's is. Without
+  // governance every session keeps the access it always had.
+  if (governanceEnabled() && guard.session.role !== "admin") {
+    auditRoleDenial({ route: "POST /api/db/monitoring", user: guard.session.username, request: req });
+    return NextResponse.json({ error: "Unauthorized. Admin access required." }, { status: 403 });
+  }
 
   try {
     // Handle empty or aborted requests

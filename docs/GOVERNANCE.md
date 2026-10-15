@@ -231,6 +231,9 @@ Grants decide what each person sees and which credential Studio uses for them:
 - A connection is visible to a person only while their identity provider subject holds an effective grant on it in `bridge.grants_v1`.
   Studio compares `expires_at` with its own clock at every decision, so an expired grant hides the connection without a notification.
 - The role decides nothing about visibility: an admin sees only the connections granted to them, because the admin role opens the admin pages and maintenance only.
+- Monitoring is admin-only under governance: `POST /api/db/monitoring` answers 403 to a session whose role is not `admin` before it resolves a connection, and records the denial as `permission_denied` with reason `insufficient_role`.
+  Users who share a read principal would otherwise see each other's statements in `pg_stat_activity`.
+  The `/monitoring` page shows the refusal as its connection error, and without governance every session keeps its monitoring access.
 - The editor uses the credential of the grant's level: a `read` grant uses the read credential, and a `write` grant uses the write credential.
   The agent, MCP, classification and handover paths always use the read credential, whatever the grant.
 - A connection that does not exist and one that is not granted to the caller answer the same 404 `CONNECTION_NOT_FOUND`, so a caller cannot learn which ids exist.
