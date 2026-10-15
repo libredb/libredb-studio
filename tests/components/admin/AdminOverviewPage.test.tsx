@@ -83,6 +83,7 @@ const GOVERNANCE = {
         heldMs: 64_000,
         lastNotificationAt: null,
       },
+      sink: { queued: 0, dropped: 0, rejected: 0, lastFlushAt: null, backingOff: false, lastSqlstate: null },
     },
   },
 };

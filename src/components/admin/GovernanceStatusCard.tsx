@@ -44,6 +44,16 @@ function canaryText(canary: GovernanceStatus["canary"]): string {
   return results.map(([kid, result]) => `${kid}: ${result}`).join(", ");
 }
 
+function sinkText(sink: GovernanceStatus["sink"]): string {
+  const parts = [
+    `${sink.queued} queued, ${sink.dropped} dropped, ${sink.rejected} rejected`,
+    `last flush ${sink.lastFlushAt ?? NOT_LOADED}`,
+  ];
+  if (sink.backingOff) parts.push("backing off");
+  if (sink.lastSqlstate !== null) parts.push(`last SQLSTATE ${sink.lastSqlstate}`);
+  return parts.join("; ");
+}
+
 function skipText(skip: GovernanceStatusSkip): string {
   const where = [skip.level, skip.path].filter((part) => part !== undefined).join(", ");
   const codes = skip.envelopeCode === undefined ? skip.code : `${skip.code} (${skip.envelopeCode})`;
@@ -103,6 +113,7 @@ function StatusBody({ status }: { status: GovernanceStatus }) {
         value={status.listener?.lastNotificationAt ?? NOT_LOADED}
         testId="governance-last-notification"
       />
+      <Row label="Query events" value={sinkText(status.sink)} testId="governance-sink" />
       <div className="space-y-1">
         <span className="text-xs text-fg-muted">Runtime settings</span>
         <ul className="space-y-1">
@@ -149,9 +160,10 @@ function StatusBody({ status }: { status: GovernanceStatus }) {
  * The governance status (GET /api/admin/governance, spec 9.3): the freshness state, the contract versions, the
  * snapshot's age, the latest load failure with its full message, the admitted and skipped rows, the keyring's key ids,
  * the seal canary of each key id, the change notification listener's state, how long it has held and the last
- * notification, and where each runtime setting comes from with the setting keys that were ignored, so an admin sees
- * why a governed connection is missing, why a change arrives late, or why a setting has no effect, without the server
- * logs. Mounted on the Overview page beside SeedSourcesCard. Renders nothing with governance off and on a
+ * notification, where each runtime setting comes from with the setting keys that were ignored, and the query event
+ * sink's queue, drops, rejections, last flush and backoff, so an admin sees why a governed connection is missing, why
+ * a change arrives late, why a setting has no effect, or whether query events reach the governance source, without
+ * the server logs. Mounted on the Overview page beside SeedSourcesCard. Renders nothing with governance off and on a
  * failed read.
  */
 export function GovernanceStatusCard() {
