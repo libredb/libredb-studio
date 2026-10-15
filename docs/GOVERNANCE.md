@@ -13,6 +13,7 @@ Studio publishes the contract before it implements all of it: until a release's 
 - [Conformance files](#conformance-files)
 - [Schema and roles](#schema-and-roles)
 - [Studio configuration](#studio-configuration)
+- [Sign-in](#sign-in)
 - [Objects](#objects)
 - [Row semantics](#row-semantics)
 - [Snapshot protocol](#snapshot-protocol)
@@ -107,10 +108,33 @@ It prints one banner that names every variable to fix and never prints a secret,
 
 ### What governance mode switches off
 
-- Sign-in with a password, a passkey or a launch token: the identity provider is the only way in, for an account that holds the admin or the user role.
+- Sign-in with a password, a passkey or a launch token: the identity provider is the only way in, for an account that holds the admin or the user role, as [sign-in](#sign-in) describes.
 - Custom connections, the embedded samples, seed files and discovery: the governance source is the only catalog of connections.
 - The server's own Google identity for BigQuery and Firestore connections.
 - MCP and the agent, until a later Studio release runs them under governance.
+
+## Sign-in
+
+Under governance the identity provider at `OIDC_ISSUER` is the only way into Studio, and the `subject` of a grant is that provider's `sub` for the user.
+Studio checks the session of every request against these rules:
+
+- A session counts only when Studio's OIDC callback minted it: it carries the ID token's `sub` as a non-empty subject and the ID token's `iss` as its issuer, and the issuer equals `OIDC_ISSUER`, the two compared as URLs with one trailing slash ignored.
+- A password, passkey or launch session carries no subject and is refused, and so is a session whose subject is empty or whose issuer is not `OIDC_ISSUER`.
+  With `OIDC_ISSUER` unset or not a URL every session is refused, and a changed `OIDC_ISSUER` ends the sessions of the previous issuer.
+- A refused session's cookie is cleared, so the next page load reaches the sign-in page.
+- The OIDC callback applies the same rule to the ID token, so an ID token with an empty `sub` or with an `iss` other than `OIDC_ISSUER` signs no one in and the sign-in ends on `/login?error=oidc_config`.
+- `POST /api/auth/login` answers 403 with `{ "success": false, "message": "Password sign-in is disabled: this server signs in through the identity provider only" }` before it reads a credential, and Studio's audit trail records `login_failure` with reason `password_login_disabled`.
+- An account whose role claim holds neither the admin nor the user role gets no session.
+
+The identity provider needs:
+
+- `OIDC_ISSUER` set to the issuer the provider writes in its ID tokens, for Microsoft Entra ID the tenant's own issuer rather than the `common` or `organizations` endpoint.
+- A confidential client for Studio that uses the authorization code flow with PKCE.
+- The roles `admin` and `user` in a flat ID-token claim: an array of strings at the top level of the ID token, named by `OIDC_ROLE_CLAIM`, with `OIDC_ADMIN_ROLES=admin` and `OIDC_USER_ROLES=user`.
+- No pairwise subject mapper on Studio's client or on the control plane's.
+  The control plane writes a grant under the `sub` it sees and Studio matches it against the `sub` of the session, so both clients must see the same `sub` for a user.
+
+`docs/OIDC.md` describes the session claims and a Keycloak realm set up this way.
 
 ## Objects
 

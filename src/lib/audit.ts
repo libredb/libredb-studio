@@ -112,6 +112,11 @@ export type AuditReason =
    * which the provider vouched for, so an operator can tell whose role assignment is missing.
    */
   | "oidc_no_role"
+  /**
+   * A `POST /api/auth/login` under governance (docs/GOVERNANCE.md), where the identity provider is the only way in.
+   * Refused before the body is read, so the record names no submitted account and the actor is anonymous.
+   */
+  | "password_login_disabled"
   // Passkey sign-in and management (#785). Each code has one meaning, so an operator can tell a
   // cloned authenticator from a replay or a stale cookie without the export.
   /**

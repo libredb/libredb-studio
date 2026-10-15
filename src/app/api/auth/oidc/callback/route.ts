@@ -15,8 +15,14 @@ import { logger } from "@/lib/logger";
 import { clientAddress } from "@/lib/api/client-address";
 import { emitAuditEvent, type AuditReason } from "@/lib/audit";
 import { AuthConfigError } from "@/lib/auth-errors";
+import { governanceEnabled } from "@/lib/governance/config";
+import { governedIdentityAccepted } from "@/lib/local-accounts";
 
 const ROUTE = "GET /api/auth/oidc/callback";
+
+// Single-line, module-scoped: bun's line coverage under-counts the continuation lines of a wrapped string.
+const GOVERNED_IDENTITY_REFUSED_MESSAGE =
+  "OIDC callback: governance needs an ID token with a non-empty sub, issued by the identity provider at OIDC_ISSUER";
 
 /**
  * One event type with a reason enum, not five event types. The reasons reuse the redirect codes
@@ -89,6 +95,17 @@ export async function GET(request: Request) {
       return NextResponse.redirect(`${origin}${withBasePath("/login")}?error=oidc_no_claims`);
     }
     const { claims, idToken } = exchange;
+
+    // Under governance every request refuses a session without a subject or from an issuer other than OIDC_ISSUER
+    // (docs/GOVERNANCE.md), so none is minted here: OIDC_AUTO_REDIRECT would answer each refusal with the next sign-in,
+    // in a loop. The provider's answer is a configuration problem, and the login page says so.
+    if (governanceEnabled() && !governedIdentityAccepted(claims.sub, claims.iss)) {
+      logger.warn(GOVERNED_IDENTITY_REFUSED_MESSAGE, { route: "oidc/callback" });
+      // The exchange consumed the state, so its cookie is deleted as after a sign-in.
+      cookieStore.delete({ name: "oidc-state", path: getBasePath() || "/" });
+      auditFailure("oidc_config", ip);
+      return NextResponse.redirect(`${origin}${withBasePath("/login")}?error=oidc_config`);
+    }
 
     // Map role from claims
     const role = mapOIDCRole(
