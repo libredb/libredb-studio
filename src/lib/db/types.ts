@@ -3854,10 +3854,10 @@ export type ObjectEditOutcome =
    *
    * There is NO `retryable` field on this type and no retry advice in it. MEASURED on the general
    * query path (`POST /api/db/query`), which routes through `mapDatabaseError`: since #1145 a
-   * PostgreSQL statement timeout answers HTTP 408 `TIMEOUT_ERROR` `retryable: true`, the same as
+   * PostgreSQL statement timeout answers HTTP 504 `TIMEOUT_ERROR` `retryable: true`, the same as
    * Trino, which mints a `TimeoutError` directly (`TrinoProvider.mapTrinoError()` in
    * `src/lib/db/providers/sql/trino/index.ts`). The apply route
-   * (`edit-apply/route.ts`) deliberately does NOT inherit that 408: it always answers 200 and never
+   * (`edit-apply/route.ts`) deliberately does NOT inherit that 504: it always answers 200 and never
    * carries a `retryable` flag, because a client that retries an apply whose disposition is unknown
    * applies twice. A PostgreSQL apply-time timeout does not even reach this `interrupted` arm —
    * `classifyApplyFailure` reads its SQLSTATE `57014`, which is not in `APPLY_VERDICT_BY_SQLSTATE`,

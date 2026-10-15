@@ -4705,14 +4705,14 @@ describe("Trino object edit: the apply", () => {
 
   test("a timeout is INTERRUPTED and never a TimeoutError", async () => {
     // `trino/index.ts:680` mints a TimeoutError directly, and `src/lib/api/errors.ts:108-120`
-    // answers that 408 `retryable: true`. A client that retries an apply whose disposition is
+    // answers that 504 `retryable: true`. A client that retries an apply whose disposition is
     // unknown applies twice.
     const outcome = await applyWithTrinoError(new TimeoutError("Query timed out"));
     if (outcome.outcome !== "interrupted") throw new Error("narrowing");
     expect(outcome.committed).toBe("unknown");
   });
 
-  test("the engine's OWN timeout fault is interrupted too, which is the arm the mapper would 408", async () => {
+  test("the engine's OWN timeout fault is interrupted too, which is the arm the mapper would 504", async () => {
     // The wire shape a real deadline produces: EXCEEDED_TIME_LIMIT is the fault name the transport
     // categorises `timeout`, and that category is what `mapTrinoError` turns into a TimeoutError.
     const outcome = await applyWithTrinoError({

@@ -652,12 +652,19 @@ Three refusals, each a 400 that runs nothing:
 }
 ```
 
-**Response (408 Request Timeout):**
+**Response (504 Gateway Timeout):**
 ```json
 {
-  "error": "Query timed out. Please try a simpler query or increase timeout."
+  "error": "Query timed out. Please try a simpler query or increase timeout.",
+  "code": "TIMEOUT_ERROR",
+  "statusCode": 504,
+  "retryable": true
 }
 ```
+
+A statement that reaches its query timeout is answered with HTTP 504, never 408.
+Chromium sends a POST answered 408 on a reused keep-alive connection again without telling the page, so a 408 ran one editor run of a statement that timed out up to six times on the database.
+`retryable` is a hint for the person reading the error: no Studio client sends the request again on it.
 
 A deadline met while Studio opens the connection, before any statement is sent, is not a query timeout: it is answered with HTTP 503, code `CONNECTION_ERROR`, and "The connection got no answer after [seconds] seconds: check the address, the port, the network path and that the server is running."
 
@@ -2534,13 +2541,13 @@ interface ActiveSession {
 | `400` | Bad Request - Invalid parameters or query syntax |
 | `401` | Unauthorized - Missing or invalid authentication |
 | `403` | Forbidden - Insufficient permissions, or the request's Origin does not match this deployment (`ORIGIN_MISMATCH`) |
-| `408` | Request Timeout - Query exceeded time limit |
 | `413` | Payload Too Large - the request body, or one part's text, is above the object edit routes' own bound, or a statement is above the console text bound its connection type declares (`POST /api/db/query`) |
 | `429` | Too Many Requests - Rate limit exceeded. Applies to `POST /api/auth/login` and every session-guarded route (see "Rate Limiting" below), not only the AI endpoints |
 | `499` | Client Closed Request - Query cancelled by the client |
 | `500` | Internal Server Error |
 | `502` | Bad Gateway - LLM streaming failure |
 | `503` | Service Unavailable - Database connection failed or LLM misconfigured |
+| `504` | Gateway Timeout - Query exceeded its time limit (`TIMEOUT_ERROR`), or the AI safety analysis did not finish in time |
 
 ### Error Response Format
 
@@ -2571,7 +2578,7 @@ These are the values of the `code` field emitted by `createErrorResponse` (`src/
 | `AI_DISABLED` | Governance mode only: the control plane set the runtime setting `ai.enabled` to `false`, so a route of the AI bucket refused a signed-in caller before any LLM provider was built (403). Answered by the route guard rather than `createErrorResponse`; see [AI API](#ai-api) |
 | `AUTH_REQUIRED` | No Studio session, or one that no longer verifies (401). Answered by the middleware and the route-level session checks rather than `createErrorResponse`; the only 401 the browser answers by sending the user to sign in |
 | `WORKSPACE_OWNER_MISMATCH` | The request's `X-LibreDB-Workspace-Owner` header names an account other than the signed-in one (409). Answered by the middleware rather than `createErrorResponse`; the browser reloads the tab for it (see [Storage API](#storage-api)) |
-| `TIMEOUT_ERROR` | Query exceeded time limit (408); `POST /api/ai/query-safety` answers it with 504 when the model does not answer in time |
+| `TIMEOUT_ERROR` | Query exceeded time limit (504, never 408, which a browser sends again); `POST /api/ai/query-safety` answers it with 504 when the model does not answer in time |
 | `CONNECTION_ERROR` | Database connection failed (503) |
 | `POOL_EXHAUSTED` | Connection pool exhausted (503) |
 | `DATABASE_ERROR` | Generic database error (500) |

@@ -1406,7 +1406,7 @@ the engine never named.
 #### A timeout is `interrupted` and never a `TimeoutError`
 
 `mapTrinoError` mints a `TimeoutError` for the `timeout` category and
-[`src/lib/api/errors.ts`](../../src/lib/api/errors.ts) answers that HTTP 408 with `retryable: true`.
+[`src/lib/api/errors.ts`](../../src/lib/api/errors.ts) answers that HTTP 504 with `retryable: true`.
 A client that retried an apply whose disposition is unknown would apply twice, so a timeout, a
 cancellation and an unreachable coordinator are all `interrupted` with `committed: "unknown"`.
 

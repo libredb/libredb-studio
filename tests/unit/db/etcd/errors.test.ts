@@ -823,14 +823,14 @@ describe("toProviderError: no address from a runtime or grpc-js text, directly o
 });
 
 describe("toProviderError: a read's deadline, a cancel, authentication", () => {
-  test("a read's deadline is a TimeoutError carrying the deadline, answered 408 and retryable", async () => {
+  test("a read's deadline is a TimeoutError carrying the deadline, answered 504 and retryable", async () => {
     const controller = new AbortController();
     controller.abort(new DOMException("timed out", "TimeoutError"));
     const mapped = toProviderError(toEtcdError(grpc(1, "Cancelled on client"), controller.signal), read("get"));
     expect(mapped).toBeInstanceOf(TimeoutError);
     expect(mapped.message).toBe("The get reached its deadline of 60,000 ms. (Cancelled on client)");
     expect((mapped as TimeoutError).timeout).toBe(60_000);
-    expect(await respond(mapped)).toMatchObject({ status: 408, body: { retryable: true } });
+    expect(await respond(mapped)).toMatchObject({ status: 504, body: { retryable: true } });
   });
 
   test("a read ended by cancelQuery is a QueryCancelledError, answered 499", async () => {
@@ -847,7 +847,7 @@ describe("toProviderError: a read's deadline, a cancel, authentication", () => {
       const mapped = toProviderError(toEtcdError(grpc(4, details)), read("get"));
       expect(mapped).toBeInstanceOf(TimeoutError);
       expect(mapped.message).toBe(`The get reached its deadline of 60,000 ms. (${details})`);
-      expect(await respond(mapped)).toMatchObject({ status: 408, body: { retryable: true } });
+      expect(await respond(mapped)).toMatchObject({ status: 504, body: { retryable: true } });
     });
   }
 
@@ -1145,7 +1145,7 @@ describe("watchWindowError: a watch whose window closed (spec 5.3, plan Review F
       "etcd did not answer the watch's create within its window of 800 ms: nothing was watched. (Cancelled on client)",
     );
     expect((mapped as TimeoutError).timeout).toBe(800);
-    expect(await respond(mapped)).toMatchObject({ status: 408, body: { retryable: true } });
+    expect(await respond(mapped)).toMatchObject({ status: 504, body: { retryable: true } });
   });
 
   test("any other failure is the table's own, a stream that never had a transport among them", () => {

@@ -758,7 +758,7 @@ describe("our cancel and our deadline (X02, X07)", () => {
   });
 
   // A `ConnectionError`, so Studio's routes answer it with HTTP 503 and the sentence itself, where a `TimeoutError` is
-  // answered with HTTP 408 and the route's own sentence (GAP-CL-1).
+  // answered with HTTP 504 and the route's own sentence (GAP-CL-1).
   test("with Warehouse set a probe or surface timeout is the resuming outcome, a ConnectionError", () => {
     const ctx = context({ origin: "provider", warehouse: "wh", timeoutMs: 10_000 });
     expectRow(stopError("deadline", unanswered, ctx), "unavailable", ConnectionError, S.resuming("wh", "10"), ctx);

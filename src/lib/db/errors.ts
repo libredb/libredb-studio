@@ -266,7 +266,7 @@ export function waitedSeconds(ms: number): string {
  * Runs a provider's connect(), timing it. A deadline met there ran no statement: the server was never reached, or
  * was reached and did not answer the connect, and a driver cannot always tell which. So a TimeoutError from the
  * connect is a ConnectionError naming the wait it made, on every route that connects, never the query sentence and
- * never the 408 a browser sends again. The deadline is kept as its cause; every other failure passes as raised.
+ * never the query timeout answer. The deadline is kept as its cause; every other failure passes as raised.
  */
 export async function connectPhase(connect: () => Promise<void>): Promise<void> {
   const started = Date.now();

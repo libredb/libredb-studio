@@ -851,7 +851,7 @@ function OutcomeRegion({
   } else if (outcome.outcome === "interrupted") {
     /*
      * No retry on this arm at any status, and that is the point of the arm: MEASURED, a PostgreSQL
-     * DDL timeout answers HTTP 499 and a Trino one answers 408 with `retryable: true`, and a client
+     * DDL timeout answers HTTP 499 and a Trino one answers 504 with `retryable: true`, and a client
      * that retries an apply whose disposition is unknown applies twice.
      *
      * The two `committed` values get DIFFERENT first lines, and X20 is why. `rolled-back` may be

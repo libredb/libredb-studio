@@ -1706,7 +1706,7 @@ export class TrinoProvider extends SQLBaseProvider {
    * A VERDICT THE ENGINE REACHED IS RETURNED AND NEVER THROWN, which is what keeps a deliberate
    * refusal off the 500 path the shipped error mapper would otherwise put it on. That mapper is
    * also why a timeout is `interrupted` here: `mapTrinoError` mints a `TimeoutError` for the
-   * `timeout` category and `src/lib/api/errors.ts` answers that 408 `retryable: true`, and a
+   * `timeout` category and `src/lib/api/errors.ts` answers that 504 `retryable: true`, and a
    * client that retries an apply whose disposition is unknown applies twice.
    */
   public async applyObjectEdit(plan: ObjectEditPlan): Promise<ObjectEditOutcome> {

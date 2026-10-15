@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D363, U17 · 262
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U144 · 132
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U144 · 131
 - [Dependencies](#dependencies) — P1-P9 · 7
 - [Documentation](#documentation) — DOC3-DOC33 · 29
 - [Release pipeline](#release-pipeline) — REL1-REL8 · 8
@@ -4167,20 +4167,6 @@ Db2 declares `kinds` for the same reason: RUNSTATS and REORG are refused on a vi
 Found by the acceptance pass of the vector-family work; the menu entries predate it.
 
 **Done when:** PostgreSQL and SQLite declare `kinds` on the operations their row menus offer, naming the kinds each engine runs them on, measured on a PostgreSQL materialized view and on SQLite's `ANALYZE` of a view, and a test asserts that a view's row menu offers no maintenance entry its engine would not run.
-
-### X27. A query that reaches its deadline is answered HTTP 408, which Chromium resends, so the statement runs up to three times
-
-`createErrorResponse` in `src/lib/api/errors.ts` answers a `TimeoutError` with HTTP 408 and `retryable: true`.
-Chromium reads a 408 on a reused keep-alive connection as a server closing an idle socket and sends the POST again, up to twice, without telling the page.
-So one Run of a statement that reaches its query timeout reaches the database up to three times, and the editor shows "Query timed out" only after the last.
-Measured 2026-10-08 on the CI image of #1593 with a Databend connection whose query timeout was 3 seconds: the page sent one `POST /api/db/query`, Databend received the statement three times about 3 seconds apart, each with its own kill, and the server logged three "Query timeout" lines; a first Databend Cloud connect that met a resuming warehouse was answered 408 twice before its third attempt passed.
-Since #1593, Databend's resuming-warehouse case, Studio's own read that outlasts its deadline on a named warehouse, is answered with HTTP 503, which Chromium does not resend.
-Not measured with a write: a statement that a provider does not stop on the server, or one that commits before the deadline is noticed, would take effect once per attempt.
-The route has answered 408 since f59b44d5c (2026-03-12), for every engine.
-
-Found 2026-10-08 by the browser pass of the Databend provider (#1593); pre-existing.
-
-**Done when:** a statement deadline is answered with a status no browser resends (for example 504), `docs/API_DOCS.md` names it, and an e2e test that lets one statement reach its deadline shows the database received it once.
 
 ---
 

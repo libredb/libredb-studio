@@ -634,7 +634,7 @@ For a user statement, after the first answer, a kill that Databend did not ackno
 > The statement did not finish within [seconds] seconds, and Databend did not acknowledge Studio's request to stop it, so it may still finish: check before running it again.
 
 With no first answer by then the cause reads "no first answer within [seconds] seconds".
-The first of these sentences reaches a caller of the provider itself, such as an embedded host's route; Studio's statement routes answer it with HTTP 408 and their own sentence, "Query timed out. Please try a simpler query or increase timeout.", and Chromium sends a POST answered 408 on a kept-alive connection again, so in the browser a statement that reaches its deadline can run up to three times, each with its kill ([X27](../BACKLOG.md)).
+The first of these sentences reaches a caller of the provider itself, such as an embedded host's route; Studio's statement routes answer it with HTTP 504 and their own sentence, "Query timed out. Please try a simpler query or increase timeout.", a status no browser sends again, so the statement runs once.
 A statement that waits for a statement slot longer than its deadline sends nothing:
 
 > Studio's Databend statement slots stayed busy for [seconds] seconds, so nothing was sent. Try again when a running statement finishes.
@@ -973,7 +973,6 @@ A seed takes the same fields, as [SEED_CONNECTIONS.md](../SEED_CONNECTIONS.md) s
 - Every budget was verified locally; through Databend Cloud's gateway, on one warehouse, only the 100,000-row read and the 16 MiB budget of answer text ran, and multi-node paging is not run yet.
 - A first statement or Test Connection on a suspended Databend Cloud warehouse fails with the resuming sentence while the resume outlasts the 10-second connect budget, and passes once the warehouse runs (section 4.4).
 - One Studio process runs at most two Databend statements at a time, across every Databend connection and user, the tree, monitoring and connect reads included; a third waits for a slot up to its deadline, and a tree read that waited 10 seconds says the slots stayed busy (section 3.10).
-- In the browser a statement that reaches its deadline can run up to three times: the query route answers a run that timed out with HTTP 408, which Chromium sends again on a kept-alive connection ([X27](../BACKLOG.md)).
 - A seed edited to add a Warehouse while it is open keeps its pulse until the page is reloaded ([U97](../BACKLOG.md)).
 - The sign-in latch is one Studio process's: several replicas each send a refused password once per 15 minutes, so five or more can still lock a user under a password policy ([D252](../BACKLOG.md)).
 - Driver-based SQL providers hold a whole result with no cell or byte budget, which Databend's provider has ([D247](../BACKLOG.md)), and the pulse of other engines resends a refused password, which the latch prevents here within one Studio process ([D248](../BACKLOG.md)).

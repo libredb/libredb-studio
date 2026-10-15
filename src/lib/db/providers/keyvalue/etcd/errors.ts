@@ -11,7 +11,7 @@
  * The rule that decides most rows is whether a write could have been applied: a failure before
  * the request left the client is a connection failure, an answer on the closed list of spec 4.5
  * was refused before apply, and every other answer to a write carries the sentence that it may
- * have been applied, and is never a `ConnectionError` or a `TimeoutError`, whose 503 and 408 both
+ * have been applied, and is never a `ConnectionError` or a `TimeoutError`, whose 503 and 504 both
  * say `retryable: true`.
  *
  * This file imports only the seam and the repository's error classes (plan Task 11): a token, a

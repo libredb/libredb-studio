@@ -512,7 +512,7 @@ describe("POST /api/db/query", () => {
     );
   });
 
-  test("returns 408 for TimeoutError", async () => {
+  test("returns 504 for TimeoutError", async () => {
     (mockProvider.query as ReturnType<typeof mock>).mockRejectedValueOnce(
       new TimeoutError("Query timed out after 30000ms"),
     );
@@ -525,12 +525,12 @@ describe("POST /api/db/query", () => {
     const res = await POST(req as never);
     const data = await parseResponseJSON<{ error: string }>(res);
 
-    expect(res.status).toBe(408);
+    expect(res.status).toBe(504);
     expect(data.error).toContain("timed out");
   });
 
-  test("a Snowflake statement past its deadline answers 400 QUERY_ERROR, not 408, so the client sends nothing again", async () => {
-    // A 408 is retryable, and a resend would start the statement on the warehouse a second time; the Snowflake
+  test("a Snowflake statement past its deadline answers 400 QUERY_ERROR, not a retryable timeout, so the person is not invited to run it again", async () => {
+    // A TimeoutError is retryable, and a second run would start the statement on the warehouse a second time; the Snowflake
     // provider cancels the statement at its deadline and throws a QueryError naming the timeout instead.
     const sql = "SELECT SYSTEM$WAIT(700000)";
     (mockProvider.query as ReturnType<typeof mock>).mockRejectedValueOnce(
@@ -546,7 +546,7 @@ describe("POST /api/db/query", () => {
     const data = await parseResponseJSON<{ error: string; code: string }>(res);
 
     expect(res.status).toBe(400);
-    expect(res.status).not.toBe(408);
+    expect(res.status).not.toBe(504);
     expect(data.code).toBe("QUERY_ERROR");
     expect(data.error).toBe(SNOWFLAKE_ERROR_SENTENCES.deadline(604_800));
   });
@@ -586,9 +586,9 @@ describe("POST /api/db/query", () => {
     expect(data.error).toContain("cancelled");
   });
 
-  test("a PostgreSQL statement timeout answers 408 TIMEOUT_ERROR, not 499 (#1145)", async () => {
+  test("a PostgreSQL statement timeout answers 504 TIMEOUT_ERROR, not 499 (#1145)", async () => {
     // The end-to-end shape of the bug: the provider throws the mapped error a real
-    // `statement_timeout` produces, and the route must answer a retryable 408 timeout
+    // `statement_timeout` produces, and the route must answer a retryable 504 timeout
     // rather than the 499 QUERY_CANCELLED that kept the previous rows on screen and
     // never told the user the statement timed out.
     (mockProvider.query as ReturnType<typeof mock>).mockRejectedValueOnce(
@@ -603,7 +603,7 @@ describe("POST /api/db/query", () => {
     const res = await POST(req as never);
     const data = await parseResponseJSON<{ error: string; code: string; retryable?: boolean }>(res);
 
-    expect(res.status).toBe(408);
+    expect(res.status).toBe(504);
     expect(data.code).toBe("TIMEOUT_ERROR");
     expect(res.status).not.toBe(499);
   });
