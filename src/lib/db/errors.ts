@@ -16,6 +16,13 @@ const QUERY_PREVIEW_MAX_LENGTH = 100;
  * Base error class for all database-related errors
  */
 export class DatabaseError extends Error {
+  /**
+   * The five-character SQLSTATE the driver reported for the error this one was mapped from, when it reported one
+   * (`mapDatabaseError`). The query event of the failed statement records it (docs/GOVERNANCE.md, "Query events");
+   * no response carries it.
+   */
+  declare sqlstate?: string;
+
   constructor(
     message: string,
     public readonly provider?: DatabaseType,
@@ -542,8 +549,19 @@ function isStatementFault(error: Error): boolean {
   return false;
 }
 
+/** A SQLSTATE: five digits or uppercase letters, with a digit, so a system code such as `EPIPE` is not read as one. */
+const SQLSTATE = /^(?=[A-Z]*\d)[0-9A-Z]{5}$/;
+
+/** The SQLSTATE in a driver error's own code fields, read the way `isStatementFault` reads them, or undefined. */
+function driverSqlstate(error: Error): string | undefined {
+  const fields = error as Error & { code?: unknown; sqlState?: unknown; sqlstate?: unknown };
+  return [fields.code, fields.sqlState, fields.sqlstate].find(
+    (state): state is string => typeof state === "string" && SQLSTATE.test(state),
+  );
+}
+
 /**
- * Map native database errors to our error types
+ * Map native database errors to our error types, keeping the driver's SQLSTATE on the mapped error.
  */
 export function mapDatabaseError(error: unknown, provider: DatabaseType, query?: string): DatabaseError {
   if (isDatabaseError(error)) {
@@ -554,6 +572,13 @@ export function mapDatabaseError(error: unknown, provider: DatabaseType, query?:
     return new DatabaseError(String(error), provider);
   }
 
+  const mapped = mapNativeError(error, provider, query);
+  const sqlstate = driverSqlstate(error);
+  if (sqlstate !== undefined) mapped.sqlstate = sqlstate;
+  return mapped;
+}
+
+function mapNativeError(error: Error, provider: DatabaseType, query?: string): DatabaseError {
   const message = error.message.toLowerCase();
 
   // Connection errors

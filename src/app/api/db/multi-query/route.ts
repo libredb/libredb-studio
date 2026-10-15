@@ -7,7 +7,7 @@ import { createErrorResponse } from "@/lib/api/errors";
 import { bridgeAbortToCancel } from "@/lib/api/abort-cancel";
 import { supportsQueryCancel } from "@/lib/db/query-cancel";
 import { QueryCancelledError } from "@/lib/db/errors";
-import { resolveConnection } from "@/lib/seed/resolve-connection";
+import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
 import { editorProvider } from "@/lib/api/editor-provider";
@@ -16,6 +16,17 @@ import type { DatabaseType, QueryResult, QueryWarning } from "@/lib/types";
 import { endsOpenQueryTransactions, newQueryCallScope } from "@/lib/db/types";
 import type { DatabaseProvider, OpenQueryTransactionOutcome } from "@/lib/db/types";
 import { rowsWithNonFiniteWords } from "@/lib/non-finite";
+import type { DatabaseConnection } from "@/lib/types";
+import { admitQueryExecution } from "@/lib/query-events/admission";
+import { queryEventStart } from "@/lib/query-events/build";
+import {
+  type QueryEventRequest,
+  queryEventRequest,
+  recordExecutedUnit,
+  recordRefusedRequest,
+  requestedConnectionId,
+} from "@/lib/query-events/route-events";
+import { uuidv7 } from "@/lib/query-events/uuidv7";
 
 export interface StatementResult {
   index: number;
@@ -107,6 +118,16 @@ function shownSet(result: QueryResult, unit: ExecutionUnit) {
   return { rows: set.rows, fields: set.fields, rowCount: set.rows.length, columnTypes: set.columnTypes };
 }
 
+/**
+ * Where a script's units record their query events (spec 7.9): one `multi-query` event per unit that ran, with its
+ * index and the correlation id every unit of the request shares.
+ */
+interface UnitEvents {
+  readonly request: QueryEventRequest;
+  readonly connection: DatabaseConnection;
+  readonly correlationId: string;
+}
+
 async function runStatement(
   provider: DatabaseProvider,
   stmt: ExecutionUnit,
@@ -116,8 +137,18 @@ async function runStatement(
   options: Record<string, unknown>,
   scope: string,
   queryId: string | undefined,
+  events: UnitEvents,
 ): Promise<StatementResult> {
   const startTime = performance.now();
+  const started = queryEventStart();
+  // The unit as the user wrote it, never with the bound added to the last one.
+  const unit = {
+    connection: events.connection,
+    statement: stmt.sql,
+    started,
+    unitIndex: index,
+    correlationId: events.correlationId,
+  };
   const identity = { index, sql: stmt.sql, startLine: stmt.startLine };
   let sent = stmt.sql;
 
@@ -141,6 +172,7 @@ async function runStatement(
     // registered under it at a time.
     const result = await provider.query(query, undefined, queryId, scope);
     const { columnTypes, ...shown } = shownSet(result, stmt);
+    recordExecutedUnit(events.request, { ...unit, ended: { rowCount: shown.rowCount } });
 
     return {
       ...identity,
@@ -155,6 +187,7 @@ async function runStatement(
   } catch (error) {
     // The last statement's bound, when an error names it, is said to be Studio's (`noteAppendedBound`).
     noteAppendedBound(error, stmt.sql, sent);
+    recordExecutedUnit(events.request, { ...unit, ended: { error } });
     return {
       ...identity,
       status: "error",
@@ -180,11 +213,23 @@ export async function POST(req: NextRequest) {
   const guard = await guardRoute({ route: "POST /api/db/multi-query", bucket: "query", request: req });
   if ("response" in guard) return guard.response;
 
+  // A request refused before any unit ran records one `refused` event (spec 7.9): before its connection resolved, or
+  // at the admission gate. What that event names is held out here for the `catch` below.
+  const started = queryEventStart();
+  const events = queryEventRequest("multi-query", guard.session, req);
+  let requestedId: string | undefined;
+  let resolved: DatabaseConnection | undefined;
+  let submitted: string | null = null;
+  let admitting = false;
+
   try {
     const body = await req.json();
     const { sql, options = {}, queryId } = body;
+    requestedId = requestedConnectionId(body);
+    submitted = typeof sql === "string" ? sql : null;
 
     const connection = await resolveConnection(body, guard.session);
+    resolved = connection;
 
     if (!sql) {
       return NextResponse.json({ error: "Connection and query are required" }, { status: 400 });
@@ -220,6 +265,12 @@ export async function POST(req: NextRequest) {
     if (statements.length === 0) {
       return NextResponse.json({ error: "No valid SQL statements found" }, { status: 400 });
     }
+
+    // Before the provider: a request the gate refuses opens nothing and runs nothing.
+    admitting = true;
+    admitQueryExecution();
+    admitting = false;
+    const unitEvents: UnitEvents = { request: events, connection, correlationId: uuidv7() };
 
     const provider = await editorProvider(guard.session, connection, requestCatalog(body));
     // A request already gone, before or while the provider was acquired, starts nothing.
@@ -274,6 +325,7 @@ export async function POST(req: NextRequest) {
           options,
           scope,
           bound,
+          unitEvents,
         );
         totalExecutionTime += outcome.executionTime;
         results.push(outcome);
@@ -316,6 +368,9 @@ export async function POST(req: NextRequest) {
       statements: results,
     });
   } catch (error) {
+    if (admitting || (resolved === undefined && error instanceof SeedConnectionError)) {
+      recordRefusedRequest(events, { requestedId, connection: resolved, statement: submitted, started, error });
+    }
     return createErrorResponse(error, { route: "api/db/multi-query" });
   }
 }

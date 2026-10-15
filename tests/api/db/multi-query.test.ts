@@ -20,6 +20,8 @@ import {
   isRetryableError,
   mapDatabaseError,
 } from "@/lib/db/errors";
+import type { QueryEventRow } from "@/lib/query-events/types";
+import type { QueryEventBatchWrite, QueryEventWriteFailure } from "@/lib/query-events/postgres-sink";
 
 // ─── Create mock objects ────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
@@ -38,11 +40,15 @@ mock.module("@/lib/auth", () => ({
   logout: mock(async () => {}),
 }));
 
+/** What `resolveConnection` answers instead of the default below, for the governance tests at the end of this file. */
+let resolveConnectionOverride: ((body: Record<string, unknown>) => Promise<unknown>) | undefined;
+
 mock.module("@/lib/seed/resolve-connection", () => {
   class SeedConnectionError extends Error {
     constructor(
       message: string,
       public statusCode: number,
+      public code?: string,
     ) {
       super(message);
       this.name = "SeedConnectionError";
@@ -50,6 +56,7 @@ mock.module("@/lib/seed/resolve-connection", () => {
   }
   return {
     resolveConnection: mock(async (body: Record<string, unknown>) => {
+      if (resolveConnectionOverride !== undefined) return resolveConnectionOverride(body);
       if (!body.connection && !body.connectionId) {
         throw new SeedConnectionError("Either connection or connectionId is required", 400);
       }
@@ -81,6 +88,21 @@ mock.module("@/lib/db", () => ({
   isAuthenticationError,
   isRetryableError,
   mapDatabaseError,
+}));
+
+// ─── The query event insert, faked: the sink, the builder and the admission gate stay real ──────
+const realPostgresSink = await import("@/lib/query-events/postgres-sink");
+/** Every row the sink handed to an insert that took it. */
+const insertedEvents: QueryEventRow[] = [];
+/** When set, every insert fails this way and keeps its batch queued, so the sink backs off. */
+let insertFailure: QueryEventWriteFailure | null = null;
+mock.module("@/lib/query-events/postgres-sink", () => ({
+  ...realPostgresSink,
+  writeQueryEventBatch: mock(async (rows: readonly QueryEventRow[]): Promise<QueryEventBatchWrite> => {
+    if (insertFailure !== null) return { settled: 0, rejections: [], failure: insertFailure };
+    insertedEvents.push(...rows);
+    return { settled: rows.length, rejections: [], failure: null };
+  }),
 }));
 
 // ─── Import route handler AFTER mocking ─────────────────────────────────────
@@ -1180,5 +1202,247 @@ describe("POST /api/db/multi-query: the request's abort", () => {
     } finally {
       warn.mockRestore();
     }
+  });
+});
+
+const { recordGovernanceSnapshot, resetGovernanceState } = await import("@/lib/governance/state");
+const { validateSettings } = await import("@/lib/governance/settings");
+const { grantedSnapshot } = await import("../../helpers/governance/granted-snapshot");
+const { queryEventInput } = await import("../../helpers/governance/query-event-input");
+const { flushQueryEvents, queryEventSinkState, recordQueryEvent, resetQueryEventSink } = await import(
+  "@/lib/query-events/sink"
+);
+const { SeedConnectionError: MockedSeedConnectionError } = (await import(
+  "@/lib/seed/resolve-connection"
+)) as unknown as {
+  SeedConnectionError: new (message: string, statusCode: number, code?: string) => Error;
+};
+const { logger } = await import("@/lib/logger");
+
+/**
+ * The query events of a script (spec 7.9): under governance one `multi-query` event per unit that ran, with its index
+ * and one correlation id for the whole request, no row for a unit that never ran, and one `refused` event for a request
+ * turned away before any unit ran. The sink, the builder and the admission gate are the real ones; only the insert is
+ * faked, and every test reads the rows the sink handed to it.
+ */
+describe("POST /api/db/multi-query: query events under governance", () => {
+  const SUBJECT = "8d0f6a4e-2b1c-4f3a-9e7d-5c6b4a3f2e1d";
+  const governedSession = { role: "user", username: "alice@example.com", idpSubject: SUBJECT };
+  /** A governed record as `resolveConnection` hands it out under a read grant. */
+  const governedConnection = {
+    id: "seed:orders",
+    name: "Orders",
+    type: "postgres",
+    host: "orders.db.example.internal",
+    port: 5432,
+    database: "orders",
+    user: "reader",
+    password: "example-only-read-password",
+    managed: true,
+    literal: true,
+    grantLevel: "read",
+  };
+  const ENV: Readonly<Record<string, string>> = {
+    GOVERNANCE_SOURCE: "postgres",
+    GOVERNANCE_POSTGRES_URL: "postgresql://libredb_studio@db.internal:5432/libredb?sslmode=verify-full",
+    GOVERNANCE_INSTANCE_ID: "libredb-studio",
+  };
+  let saved: Record<string, string | undefined> = {};
+
+  function settings(...rows: { readonly key: string; readonly value: unknown }[]): void {
+    recordGovernanceSnapshot({
+      ...grantedSnapshot([], []),
+      settings: validateSettings(
+        rows.map(({ key, value }) => ({ key, value, updated_at: new Date() })),
+        1,
+      ),
+    });
+  }
+
+  /** Every event the sink holds, inserted at once, as the shutdown flush inserts them. */
+  async function recordedEvents(): Promise<QueryEventRow[]> {
+    await flushQueryEvents();
+    return insertedEvents;
+  }
+
+  function run(body: Record<string, unknown>) {
+    return POST(createMockRequest("/api/db/multi-query", { method: "POST", body }) as never);
+  }
+
+  beforeEach(() => {
+    saved = {};
+    for (const [name, value] of Object.entries(ENV)) {
+      saved[name] = process.env[name];
+      process.env[name] = value;
+    }
+    clearRateLimitState();
+    insertedEvents.length = 0;
+    insertFailure = null;
+    settings({ key: "queryLog.statementCapture", value: "full" });
+    resolveConnectionOverride = async () => governedConnection;
+    mockGetSession.mockImplementation(async () => governedSession);
+    mockGetOrCreateProvider.mockClear();
+    mockGetOrCreateProvider.mockImplementation(async () => mockProvider as never);
+    (mockProvider.query as ReturnType<typeof mock>).mockClear();
+    (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async (sql: string) => {
+      if (sql.includes("missing")) {
+        throw mapDatabaseError(
+          Object.assign(new Error('relation "missing" does not exist'), { code: "42P01" }),
+          "postgres",
+          sql,
+        );
+      }
+      return { rows: [{ id: 1 }, { id: 2 }, { id: 3 }], fields: ["id"], rowCount: 3, executionTime: 2 };
+    });
+    (mockProvider.prepareQuery as ReturnType<typeof mock>).mockImplementation((query: string) => ({
+      query: `${query} LIMIT 50`,
+      wasLimited: true,
+      limit: 50,
+      offset: 0,
+    }));
+  });
+
+  afterEach(() => {
+    resetQueryEventSink();
+    resetGovernanceState();
+    resolveConnectionOverride = undefined;
+    insertFailure = null;
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    mockGetSession.mockImplementation(async () => ({ role: "admin", username: "admin" }));
+  });
+
+  test("governance: one event per executed unit and none after the first error", async () => {
+    const res = await run({
+      connectionId: "seed:orders",
+      sql: "SELECT id FROM orders; SELECT * FROM missing; SELECT id FROM customers",
+    });
+
+    expect(res.status).toBe(200);
+    const events = await recordedEvents();
+    expect(events.map((event) => [event.unit_index, event.status])).toEqual([
+      [0, "success"],
+      [1, "error"],
+    ]);
+    expect(events[0]).toMatchObject({
+      source: "multi-query",
+      subject: SUBJECT,
+      connection_id: "orders",
+      engine: "postgres",
+      access_level: "read",
+      statement: "SELECT id FROM orders",
+      row_count: 3,
+    });
+    expect(events[1]).toMatchObject({ statement: "SELECT * FROM missing", error_code: "42P01", row_count: null });
+    const correlationId = events[0].correlation_id;
+    expect(correlationId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(events[1].correlation_id).toBe(correlationId);
+  });
+
+  test("governance: the last unit keeps the text the user wrote, not the bound added to it", async () => {
+    await run({ connectionId: "seed:orders", sql: "SELECT id FROM orders" });
+
+    const events = await recordedEvents();
+    expect(mockProvider.query).toHaveBeenCalledWith(
+      "SELECT id FROM orders LIMIT 50",
+      undefined,
+      undefined,
+      expect.any(String),
+    );
+    expect(events.map((event) => event.statement)).toEqual(["SELECT id FROM orders"]);
+  });
+
+  test("governance: each request has a correlation id of its own", async () => {
+    await run({ connectionId: "seed:orders", sql: "SELECT 1" });
+    await run({ connectionId: "seed:orders", sql: "SELECT 2" });
+
+    const events = await recordedEvents();
+    expect(events).toHaveLength(2);
+    expect(events[0].correlation_id).not.toBe(events[1].correlation_id);
+  });
+
+  test("governance: a cancelled unit records status cancelled", async () => {
+    (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => {
+      throw new QueryCancelledError("The query was cancelled.");
+    });
+
+    await run({ connectionId: "seed:orders", sql: "SELECT pg_sleep(60); SELECT 2" });
+
+    const events = await recordedEvents();
+    expect(events.map((event) => [event.unit_index, event.status])).toEqual([[0, "cancelled"]]);
+  });
+
+  test("governance: refuse mode with a backing-off sink answers 503 AUDIT_UNAVAILABLE and records one refused event", async () => {
+    settings({ key: "queryLog.onSinkFailure", value: "refuse" });
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      insertFailure = { sqlstate: "08006", reason: "08006" };
+      recordQueryEvent(queryEventInput());
+      await flushQueryEvents();
+
+      const res = await run({ connectionId: "seed:orders", sql: "SELECT 1; SELECT 2" });
+
+      expect(res.status).toBe(503);
+      expect(((await res.json()) as { code: string }).code).toBe("AUDIT_UNAVAILABLE");
+      expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+      expect(mockProvider.query).not.toHaveBeenCalled();
+
+      insertFailure = null;
+      const refused = (await recordedEvents()).filter((event) => event.source === "multi-query");
+      expect(refused).toHaveLength(1);
+      expect(refused[0]).toMatchObject({
+        status: "refused",
+        engine: "postgres",
+        access_level: "read",
+        unit_index: null,
+        error_code: "AUDIT_UNAVAILABLE",
+      });
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("governance: a non-granted id records a refused event with null engine and access level", async () => {
+    resolveConnectionOverride = async () => {
+      throw new MockedSeedConnectionError(
+        "Connection not found: it does not exist or is not granted to you",
+        404,
+        "CONNECTION_NOT_FOUND",
+      );
+    };
+
+    const res = await run({ connectionId: "seed:payroll", sql: "SELECT 1; SELECT 2" });
+
+    expect(res.status).toBe(404);
+    const events = await recordedEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      source: "multi-query",
+      status: "refused",
+      connection_id: "payroll",
+      engine: null,
+      access_level: null,
+      statement: null,
+      error_code: "CONNECTION_NOT_FOUND",
+    });
+  });
+
+  test("governance: a request refused as malformed records nothing", async () => {
+    const res = await run({ connectionId: "seed:orders", sql: "   " });
+
+    expect(res.status).toBe(400);
+    expect(await recordedEvents()).toEqual([]);
+  });
+
+  test("with governance off the route records nothing", async () => {
+    process.env.GOVERNANCE_SOURCE = "";
+
+    const res = await run({ connectionId: "seed:orders", sql: "SELECT 1; SELECT * FROM missing" });
+
+    expect(res.status).toBe(200);
+    expect(queryEventSinkState().queued).toBe(0);
+    expect(await recordedEvents()).toEqual([]);
   });
 });
