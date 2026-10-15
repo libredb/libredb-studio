@@ -19,6 +19,7 @@ import { createPrivateKey, X509Certificate } from "node:crypto";
 import { createServer as createHttpServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import {
   createServer as createHttpsServer,
+  globalAgent,
   type Server as HttpsServer,
   type ServerOptions as HttpsServerOptions,
 } from "node:https";
@@ -60,10 +61,25 @@ function stop(server: Server | HttpsServer): Promise<void> {
   });
 }
 
-afterEach(async () => {
+/**
+ * Ends a test: restores fetch, stops every server the test started, and destroys every socket node:https's global
+ * agent still holds, so no connection to a stopped server is left for a later server on the same port (the describe
+ * "TLS through node:https: no connection outlives its test" says why that happens).
+ */
+async function endTest(): Promise<void> {
   globalThis.fetch = originalFetch;
   await Promise.all(running.splice(0).map(stop));
-});
+  globalAgent.destroy();
+}
+
+afterEach(endTest);
+
+/** The sockets node:https's global agent holds, in use or idle, that are not destroyed. */
+function liveAgentSockets(): number {
+  return [globalAgent.sockets, globalAgent.freeSockets]
+    .flatMap((pool) => Object.values(pool).flatMap((sockets) => sockets ?? []))
+    .filter((socket) => !socket.destroyed).length;
+}
 
 /** Listens on an ephemeral port of `host` and answers with the port. */
 async function listening(server: NetServer, host: string): Promise<number> {
@@ -676,6 +692,25 @@ describe("TLS through node:https (#1085 S8)", () => {
     // The control for the count: a request with a header node:https accepts is received.
     expect((await createSendRequest(VERIFYING)(outbound(served.origin))).body).toBe("verified");
     expect(served.received).toHaveLength(1);
+  });
+});
+
+describe("TLS through node:https: no connection outlives its test", () => {
+  // The TLS path sends through node:https's global agent, which keeps an answered connection for reuse under the
+  // server's host and port. A stopped server's connection stays in that pool until its close is read, a turn of the
+  // event loop later, and the next test's server can be given the port the last one freed: its first request then
+  // went out on the dead connection and failed as "socket hang up" (ECONNRESET), in whichever test came next.
+  // Measured on 2026-10-15 with eight copies of this file running at a time: 9 of 300 runs failed so, and a trace of
+  // the agent showed a reused socket under every such failure.
+  test("the end of a test leaves the global agent no live socket to hand the next test's server", async () => {
+    const served = await serve("https", (response) => response.end("pooled"));
+    await createSendRequest(VERIFYING)(outbound(served.origin));
+    // The control: the agent kept the answered connection for reuse.
+    expect(liveAgentSockets()).toBe(1);
+
+    await endTest();
+
+    expect(liveAgentSockets()).toBe(0);
   });
 });
 
