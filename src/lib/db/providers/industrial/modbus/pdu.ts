@@ -26,6 +26,7 @@ import {
   UNIT_ID_MAX,
   UNIT_ID_MIN,
 } from "./constants";
+import type { Expectation } from "./framing";
 
 export type BitTable = "coil" | "discrete_input";
 export type RegisterTable = "holding_register" | "input_register";
@@ -111,13 +112,7 @@ export function buildRead(
  * DERIVED rather than passed alongside: an expectation carried separately can disagree with the
  * bytes actually sent, and then a wrong answer matches. These are the same bytes, so they cannot.
  */
-export function expectationOf(adu: Buffer): {
-  readonly transactionId: number;
-  readonly unitId: number;
-  readonly functionCode: number;
-  readonly quantity?: number;
-  readonly isBits?: boolean;
-} {
+export function expectationOf(adu: Buffer): Expectation {
   const functionCode = adu[MBAP_HEADER_BYTES] ?? 0;
   const base = {
     transactionId: adu.readUInt16BE(0),
