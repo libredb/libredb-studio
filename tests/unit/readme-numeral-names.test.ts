@@ -107,13 +107,16 @@ describe("each README's numeral and its own engine list agree", () => {
     }
   });
 
-  test.each(READMES.map((entry) => [entry.file, entry] as const))("%s carries today's numeral and not the last one", (_, entry) => {
-    const text = read(entry.file);
-    expect({ file: entry.file, says: text.includes(entry.now) }).toEqual({ file: entry.file, says: true });
-    // The half-done move, which is the defect this file was written for: the numeral moved in one
-    // file and the others kept the previous word while matching each other's lists.
-    expect({ file: entry.file, stale: text.includes(entry.before) }).toEqual({ file: entry.file, stale: false });
-  });
+  test.each(READMES.map((entry) => [entry.file, entry] as const))(
+    "%s carries today's numeral and not the last one",
+    (_, entry) => {
+      const text = read(entry.file);
+      expect({ file: entry.file, says: text.includes(entry.now) }).toEqual({ file: entry.file, says: true });
+      // The half-done move, which is the defect this file was written for: the numeral moved in one
+      // file and the others kept the previous word while matching each other's lists.
+      expect({ file: entry.file, stale: text.includes(entry.before) }).toEqual({ file: entry.file, stale: false });
+    },
+  );
 
   test("the numeral table is not vacuously satisfiable: today's word differs from the last one", () => {
     for (const entry of READMES) {
