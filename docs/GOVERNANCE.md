@@ -17,6 +17,7 @@ Studio publishes the contract before it implements all of it: until a release's 
 - [Objects](#objects)
 - [Row semantics](#row-semantics)
 - [Grants and the connection list](#grants-and-the-connection-list)
+- [Per-user providers](#per-user-providers)
 - [Snapshot protocol](#snapshot-protocol)
 - [Change notification](#change-notification)
 - [Freshness and readiness](#freshness-and-readiness)
@@ -247,6 +248,21 @@ What a person sees in the connection list:
 - While Studio cannot serve its snapshot, `GET /api/connections/managed` answers 503 `GOVERNANCE_UNAVAILABLE`, never an empty list.
   The connection list then shows a banner that connection access is temporarily unavailable, keeps the connections it already listed, and never shows the no-grants message.
   The list keeps reading the route on its refresh interval and when the window regains focus, and the banner goes away with the first read that answers.
+
+## Per-user providers
+
+Studio opens a governed connection for each person separately, even when two people hold the same grant and Studio opens the connection with the same credential for both:
+
+- Each person's requests run on a provider of their own, named by their identity provider subject, with its own pool of database sessions.
+  A `SET` value, a temporary table or any other session state one person leaves behind never reaches another person's statements.
+- A person's pool opens a database session only when that person runs something, and holds at most 3, the default of `provider.poolMaxPerUser`.
+  So each person who uses a connection can hold up to 3 of its database sessions per Studio instance, and the database's connection limit needs room for that.
+- An interactive transaction belongs to the person who began it: another person neither sees it in the transaction status nor runs a statement inside it, and can begin their own beside it.
+- A cancel reaches only the statements of the person who sends it, so naming another person's query id stops nothing.
+- A disconnect request (`POST /api/db/disconnect`) closes only the providers of the person who sends it, never another person's sessions or transactions on the same connection.
+- A session that carries no identity provider subject is refused instead of being given a provider that every person shares.
+
+Without governance every person who opens a connection with the same credential shares one provider, as before.
 
 ## Snapshot protocol
 

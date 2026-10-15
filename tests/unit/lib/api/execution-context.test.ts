@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { editorExecutionContext } from "@/lib/api/execution-context";
+import { editorExecutionContext, sessionOwner } from "@/lib/api/execution-context";
 import { SETTINGS_REGISTRY } from "@/lib/governance/settings-registry";
 import type { DatabaseConnection } from "@/lib/types";
 
@@ -149,5 +149,17 @@ describe("editorExecutionContext names the owner under governance (spec 9.4)", (
     expect(() => editorExecutionContext({ role: "user" }, INLINE)).toThrow(SUBJECT_MISSING);
     // openid-client accepts `sub: ""`, so an empty subject counts as missing.
     expect(() => editorExecutionContext({ role: "admin", idpSubject: "" }, INLINE)).toThrow(SUBJECT_MISSING);
+  });
+
+  test("sessionOwner is the owner the context names: the subject under governance, and none without it", () => {
+    // `POST /api/db/disconnect` removes the providers of this owner, so it must be the one their keys frame.
+    expect(sessionOwner(ALICE)).toBeUndefined();
+    expect(sessionOwner({})).toBeUndefined();
+
+    process.env.GOVERNANCE_SOURCE = "postgres";
+    expect(sessionOwner(ALICE)).toBe("f:ldap-1:alice");
+    expect(sessionOwner(ALICE)).toBe(editorExecutionContext(ALICE, INLINE).owner);
+    expect(() => sessionOwner({})).toThrow(SUBJECT_MISSING);
+    expect(() => sessionOwner({ idpSubject: "" })).toThrow(SUBJECT_MISSING);
   });
 });

@@ -1336,13 +1336,30 @@ export async function acquireExecutionProfileProvider(
  * Remove a provider from cache and disconnect. Also removes the connection's
  * execution-profile providers: a deleted or re-credentialed connection must
  * not leave a stale agent pool running under the old configuration.
+ *
+ * With `scope`, only the entries opened for `scope.owner` go, from both caches (spec 9.4): under governance every
+ * user's providers are their own, so one user's disconnect must not tear down another user's pool, session state or
+ * transaction. An engine that keeps one handle per file records no owner on it (`providerOwner`), so its one handle,
+ * which every owner shares, is left to the removal without a scope. The SSH tunnel serves every entry of the
+ * connection, so a scoped removal closes it only once no entry of either cache still serves the connection, as the idle
+ * sweep does. A scope whose owner is not a string is refused before anything is removed: matching on a missing owner
+ * would remove the entries every caller shares. Without a scope every entry of the connection goes and its tunnel is
+ * closed, as before owners existed.
  */
-export async function removeProvider(connectionId: string): Promise<void> {
+export async function removeProvider(connectionId: string, scope?: { owner: string }): Promise<void> {
+  if (scope !== undefined && typeof scope.owner !== "string") {
+    throw new DatabaseConfigError(
+      "removeProvider takes a scope only with the owner whose providers it removes, as a string.",
+    );
+  }
+  const removes = (entry: CachedProvider): boolean =>
+    entry.connectionId === connectionId && (scope === undefined || entry.owner === scope.owner);
+
   // A connection can hold more than one entry now - one per distinct server-and-credentials
   // it was opened with - so this removes every entry serving it, the way the profiled loop
   // below always has.
   for (const [key, entry] of providerCache) {
-    if (entry.connectionId !== connectionId) continue;
+    if (!removes(entry)) continue;
     try {
       await entry.provider.disconnect();
     } catch (error) {
@@ -1352,7 +1369,7 @@ export async function removeProvider(connectionId: string): Promise<void> {
   }
 
   for (const [key, entry] of profiledProviderCache) {
-    if (entry.connectionId !== connectionId) continue;
+    if (!removes(entry)) continue;
     try {
       await entry.provider.disconnect();
     } catch (error) {
@@ -1363,6 +1380,9 @@ export async function removeProvider(connectionId: string): Promise<void> {
     }
     profiledProviderCache.delete(key);
   }
+
+  // Another owner's entries keep the tunnel they reach the connection through.
+  if (scope !== undefined && connectionStillServed(connectionId)) return;
 
   // Close SSH tunnel if exists
   try {

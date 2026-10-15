@@ -1601,6 +1601,115 @@ describe("removeProvider", () => {
   });
 });
 
+// ─── removeProvider with an owner scope (spec 9.4) ───────────────────────────
+//
+// Under governance one user's disconnect must not tear down another user's providers, so the disconnect route names
+// the caller as the owner and only that owner's entries go. The SSH tunnel is shared by every entry of a connection,
+// so a scoped removal closes it only once nothing serves the connection, as the idle sweep does. The unscoped removal
+// above is what every install without governance calls, and it is unchanged.
+
+describe("removeProvider with an owner scope (spec 9.4)", () => {
+  const owned = (owner: string): EditorExecutionContext => ({ owner, ownerPoolMax: 3 });
+  const TUNNEL: SSHTunnelConfig = {
+    enabled: true,
+    host: "bastion.example.com",
+    port: 22,
+    username: "tunnel",
+    authMethod: "password",
+    password: "example-only-tunnel-password",
+  };
+
+  test("removeProvider with an owner scope removes only that owner's entries", async () => {
+    const conn = makeConnection("postgres", { id: "seed:orders", sshTunnel: TUNNEL });
+    const alice = await getOrCreateProvider(conn, {}, owned("alice-subject"));
+    const aliceAgent = await acquireExecutionProfileProvider(conn, "agent-read-only", {}, owned("alice-subject"));
+    const bob = await getOrCreateProvider(conn, {}, owned("bob-subject"));
+    const bobAgent = await acquireExecutionProfileProvider(conn, "agent-read-only", {}, owned("bob-subject"));
+    const shared = await getOrCreateProvider(conn);
+    const bobBilling = await getOrCreateProvider(
+      makeConnection("postgres", { id: "seed:billing" }),
+      {},
+      owned("bob-subject"),
+    );
+
+    await removeProvider("seed:orders", { owner: "bob-subject" });
+
+    // Bob's providers of the connection are gone, his editor provider and his profiled one alike.
+    expect([bob.isConnected(), bobAgent.isConnected()]).toEqual([false, false]);
+    // Alice's, the one every caller without an owner shares, and Bob's provider of another connection stay open.
+    expect([alice.isConnected(), aliceAgent.isConnected(), shared.isConnected(), bobBilling.isConnected()]).toEqual([
+      true,
+      true,
+      true,
+      true,
+    ]);
+    expect(getProviderCacheStats().connections.sort()).toEqual(["seed:billing", "seed:orders", "seed:orders"]);
+    expect(getExecutionProfileCacheStats()).toEqual({ size: 1, connections: ["seed:orders"] });
+    // Alice is served her own provider again rather than a new one, so nothing of hers was reopened.
+    expect(await getOrCreateProvider(conn, {}, owned("alice-subject"))).toBe(alice);
+    // The tunnel still serves Alice and the shared entry.
+    expect(mockCloseSSHTunnel).not.toHaveBeenCalled();
+  });
+
+  test("an owner scope closes the connection's SSH tunnel only once no entry serves the connection", async () => {
+    const conn = makeConnection("postgres", { id: "seed:orders", sshTunnel: TUNNEL });
+    await getOrCreateProvider(conn, {}, owned("alice-subject"));
+    await acquireExecutionProfileProvider(conn, "agent-read-only", {}, owned("bob-subject"));
+
+    // Bob's profiled entry still reaches the connection through the tunnel.
+    await removeProvider("seed:orders", { owner: "alice-subject" });
+    expect(mockCloseSSHTunnel).not.toHaveBeenCalled();
+
+    // Bob's removal takes the last entry, so the tunnel goes with it, and a failing close is logged, not thrown.
+    mockCloseSSHTunnel.mockImplementationOnce(async () => {
+      throw new Error("tunnel close failed");
+    });
+    await removeProvider("seed:orders", { owner: "bob-subject" });
+    expect(mockCloseSSHTunnel).toHaveBeenCalledTimes(1);
+    expect(mockCloseSSHTunnel).toHaveBeenCalledWith("seed:orders");
+    expect(getProviderCacheStats().size).toBe(0);
+    expect(getExecutionProfileCacheStats().size).toBe(0);
+  });
+
+  test("an owner scope leaves the one handle of a single-writer file, which every owner shares", async () => {
+    // A provider per user on such an engine would be a second handle on one file, so the factory opens one handle for
+    // every owner and records no owner on it (`providerOwner`): one user's disconnect must not close it under the rest.
+    const dir = mkdtempSync(join(tmpdir(), "libredb-factory-owner-scope-"));
+    try {
+      const conn = makeConnection("libredb", { id: "seed:local", database: join(dir, "shared.libredb") });
+      const handle = await getOrCreateProvider(conn, {}, owned("alice-subject"));
+
+      await removeProvider("seed:local", { owner: "alice-subject" });
+
+      expect(handle.isConnected()).toBe(true);
+      expect(await getOrCreateProvider(conn, {}, owned("bob-subject"))).toBe(handle);
+    } finally {
+      await clearProviderCache();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test.each([
+    ["{}", {}],
+    ["{ owner: undefined }", { owner: undefined }],
+    ["{ owner: 7 }", { owner: 7 }],
+  ])("a scope without an owner string, %s, is refused before anything is removed", async (_label, scope) => {
+    // Matching on a missing owner would remove the entries every caller shares, which is not what a scope promises.
+    const conn = makeConnection("postgres", { id: "seed:orders" });
+    const alice = await getOrCreateProvider(conn, {}, owned("alice-subject"));
+    const shared = await getOrCreateProvider(conn);
+
+    const refusal: unknown = await removeProvider("seed:orders", scope as { owner: string }).catch(
+      (error: unknown) => error,
+    );
+
+    expect(refusal).toBeInstanceOf(DatabaseConfigError);
+    expect((refusal as Error).message).toContain("owner");
+    expect([alice.isConnected(), shared.isConnected()]).toEqual([true, true]);
+    expect(mockCloseSSHTunnel).not.toHaveBeenCalled();
+  });
+});
+
 // ─── clearProviderCache ────────────────────────────────────────────────────
 
 describe("clearProviderCache", () => {
