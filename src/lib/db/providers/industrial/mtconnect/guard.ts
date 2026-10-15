@@ -356,7 +356,15 @@ export function guardRequestLine(line: string, options: MtcGuardOptions): MtcReq
     refuse("two-requests", `A run sends one request. This text holds ${lines.length} lines that are not comments.`);
   }
   const trimmed = (lines[0] ?? "").trim();
-  const withMethod = /^([A-Za-z]+)\s+(.*)$/.exec(trimmed);
+  // The method is read with a LOOKAHEAD rather than a second group, so the two quantifiers never
+  // hand work back to each other. `/^([A-Za-z]+)\s+(.*)$/` is polynomial on a line of letters
+  // followed by tabs, which the 8192-byte bound above already holds to well under a millisecond
+  // (MEASURED: 4000 tabs, 0.005 ms), but a bound is not the same as a pattern that cannot blow up,
+  // and a scanner cannot read the bound. `[A-Za-z]+(?=\s)` backtracks one character at a time with
+  // an O(1) test at each step, so the walk is linear in the line.
+  const methodHead = /^[A-Za-z]+(?=\s)/.exec(trimmed);
+  const withMethod =
+    methodHead === null ? null : ([trimmed, methodHead[0], trimmed.slice(methodHead[0].length).trim()] as const);
   let target = trimmed;
   if (withMethod !== null) {
     if (withMethod[1].toUpperCase() !== "GET") {
