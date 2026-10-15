@@ -212,7 +212,7 @@ export async function createDatabaseProvider(
 
     case "oracle": {
       const { OracleProvider } = await import("./providers/sql/oracle");
-      return new OracleProvider(connection, options);
+      return new OracleProvider(connection, options, execution);
     }
 
     case "db2": {

@@ -38,6 +38,7 @@ import {
   type ColumnSchema,
   type IndexSchema,
   type ForeignKeySchema,
+  type ProviderExecutionContext,
 } from "../../types";
 import {
   applySourceBound,
@@ -1580,6 +1581,16 @@ export class OracleProvider extends SQLBaseProvider {
   // Transaction support: dedicated connection held outside pool
   private txConn: oracledb.Connection | null = null;
   private txActive = false;
+  // Armed only on an owned provider (spec 9.4), see `beginTransaction()`.
+  private txTimeout: ReturnType<typeof setTimeout> | null = null;
+  private static readonly TX_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes from BEGIN
+
+  /**
+   * True when this provider was created for one user (`ProviderExecutionContext.owner`, spec 9.4),
+   * which only governance does. Only then does an interactive transaction time out, so an install
+   * without governance keeps the transaction lifetime it always had.
+   */
+  private readonly owned: boolean;
 
   // Track running connections for cancellation
   private runningConns = new Map<string, oracledb.Connection>();
@@ -1588,8 +1599,11 @@ export class OracleProvider extends SQLBaseProvider {
   // See `readColumns()`.
   private vectorInfo = true;
 
-  constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
+  constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderExecutionContext = {}) {
     super(config, options);
+    // Server-injected only (see ProviderExecutionContext). Oracle reads the owner alone, for the
+    // transaction timeout; the factory has already sized the pool of an owned provider.
+    this.owned = execution.owner !== undefined;
     // Thin mode (pure JS, no Oracle Instant Client) is the unconditional default.
     // Thick mode is an explicit opt-in for servers older than Oracle Database 12.1,
     // which Thin mode cannot connect to (node-oracledb NJS-138).
@@ -1889,6 +1903,7 @@ export class OracleProvider extends SQLBaseProvider {
   }
 
   public async disconnect(): Promise<void> {
+    this.clearTxTimeout();
     if (this.pool) {
       try {
         await this.pool.close(0);
@@ -2044,16 +2059,59 @@ export class OracleProvider extends SQLBaseProvider {
   // Transaction Support
   // ============================================================================
 
+  private clearTxTimeout(): void {
+    if (this.txTimeout) {
+      clearTimeout(this.txTimeout);
+      this.txTimeout = null;
+    }
+  }
+
+  /**
+   * Force-expire an active transaction (auto-rollback) and release its held connection to the
+   * pool. Called by the timeout timer of an owned provider, but also available for testing. The
+   * transaction is released before the rollback is awaited, so a commit racing the timer is
+   * refused rather than sent on a connection being rolled back. A rollback or a close that fails
+   * is reported, not thrown: the timer has no caller to throw to, and the connection is closed
+   * after a failed rollback all the same, which on a pooled connection rolls back what is left.
+   */
+  public async expireTransaction(): Promise<void> {
+    if (!this.txActive || !this.txConn) return;
+    const conn = this.txConn;
+    this.txConn = null;
+    this.txActive = false;
+    this.clearTxTimeout();
+    console.warn("[Oracle] Transaction timed out, auto-rolling back");
+    try {
+      await conn.rollback();
+    } catch (error) {
+      console.warn(
+        `[Oracle] The auto-rollback of a timed-out transaction failed: ${error instanceof Error ? error.message : error}`,
+      );
+    }
+    try {
+      await conn.close();
+    } catch (error) {
+      console.warn(
+        `[Oracle] Releasing a timed-out transaction's connection failed: ${error instanceof Error ? error.message : error}`,
+      );
+    }
+  }
+
   public async beginTransaction(): Promise<void> {
     this.ensureConnected();
     if (this.txActive) throw new QueryError("Transaction already active", "oracle");
     this.txConn = await this.pool!.getConnection();
     // Oracle auto-starts a transaction; we just hold the connection
     this.txActive = true;
+
+    // Auto-rollback after timeout to prevent leaked locks, on an owned provider only (spec 9.4).
+    // Single-line callback on purpose: bun lcov attributes a multi-line arrow's opening line as 0-hit.
+    if (this.owned) this.txTimeout = setTimeout(() => void this.expireTransaction(), OracleProvider.TX_TIMEOUT_MS);
   }
 
   public async commitTransaction(): Promise<void> {
     if (!this.txConn || !this.txActive) throw new QueryError("No active transaction", "oracle");
+    this.clearTxTimeout();
     try {
       await this.txConn.commit();
     } finally {
@@ -2065,6 +2123,7 @@ export class OracleProvider extends SQLBaseProvider {
 
   public async rollbackTransaction(): Promise<void> {
     if (!this.txConn || !this.txActive) throw new QueryError("No active transaction", "oracle");
+    this.clearTxTimeout();
     try {
       await this.txConn.rollback();
     } finally {

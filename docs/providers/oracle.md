@@ -17,7 +17,7 @@
 | **Default port** | `1521` |
 | **Connection pooling** | Yes — `oracledb` pool (`poolMin`/`poolMax`/`poolTimeout`) |
 | **Connection string** | Supported — EZConnect `host:port/service` or a TNS string (passed straight to the driver's `connectString`) |
-| **Transactions** | Yes — explicit begin/commit/rollback (**no** auto-rollback timeout) |
+| **Transactions** | Yes: explicit begin/commit/rollback (5-minute auto-rollback on an owned provider only, see §3.4) |
 | **Query cancellation** | Yes — tracked connection + `connection.break()` |
 | **SSL** | Yes — `connection.ssl` selects TCPS, the DN match and the wallet ([§4.3](#43-ssl--tls)) |
 | **Source** | [`src/lib/db/providers/sql/oracle.ts`](../../src/lib/db/providers/sql/oracle.ts) |
@@ -39,7 +39,7 @@ providers, with several Oracle-isms that are worth knowing before reading the co
 | Schema scope | all non-system schemas | every owner in `ALL_USERS` ([§7](#the-object-surface-789-and-the-confinement-it-lifts-765)); the deleted flat reading saw only the connecting user's |
 | Schema queries | 1 `MATERIALIZED`-CTE round-trip | **5 bulk** `ALL_*` queries grouped in memory |
 | Maintenance | vacuum / analyze / reindex / kill | `analyze` (DBMS_STATS) / `optimize` (rebuild one table's indexes, or the schema's) / `kill` |
-| Transaction timeout | 5-minute auto-rollback | **none** |
+| Transaction timeout | 5-minute auto-rollback | 5-minute auto-rollback on an **owned** provider (governance), **none** otherwise |
 | Cancellation | `pg_cancel_backend(pid)` | `connection.break()` (tracked connection) |
 | SSL | `buildSSLConfig()` + cloud auto-detect | `tcps://` + `sslServerDNMatch` + `walletContent` (no cloud auto-detect) |
 | Monitoring source | `pg_stat_*` | `V$` views (privilege-gated, each guarded) |
@@ -197,13 +197,15 @@ ran five bulk queries over the `ALL_*` data-dictionary views, all filtered by
 exactly one schema on Oracle with no way to reach another. It is deleted (#765). Row counts still come
 from `NUM_ROWS`, an optimizer estimate that can be stale or `NULL`.
 
-### 3.4 No transaction auto-rollback timeout
+### 3.4 Transaction auto-rollback timeout on an owned provider only
 
-Unlike the Postgres and MySQL providers (which arm a 5-minute auto-rollback timer),
-`beginTransaction()` ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)) simply checks out a
-connection and marks the transaction active — **there is no timeout**. An abandoned transaction
-holds its connection (and locks) until explicitly committed/rolled back or the connection is
-reclaimed by the pool.
+`beginTransaction()` ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)) checks out a connection and marks the transaction active.
+A provider created with an `owner` in its execution context, which only governance does (`ProviderExecutionContext.owner`, spec 9.4), also arms the 5-minute auto-rollback timer of the Postgres and MySQL providers there.
+`createDatabaseProvider` hands the execution context to `OracleProvider` for this.
+When the timer fires, `expireTransaction()` rolls the transaction back and closes the held connection, which releases it to the pool; a rollback or a close that fails is logged, and the transaction is released all the same.
+`commitTransaction()`, `rollbackTransaction()` and `disconnect()` clear the timer.
+A provider without an owner, which is every install without governance, arms **no** timer: an abandoned transaction holds its connection (and locks) until explicitly committed or rolled back, or the connection is reclaimed by the pool.
+Arming the timer in every mode is a product decision that needs an amendment of spec 9 first.
 
 ### 3.5 SSL through the connect string, not a `buildSSLConfig()`
 
@@ -1036,8 +1038,8 @@ survive an export, because it did not survive the driver.**
 
 Explicit lifecycle on a dedicated connection checked out from the pool (`beginTransaction()`,
 [`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)). Oracle starts a transaction implicitly on
-the first DML, so `beginTransaction()` just holds the connection. **No auto-rollback timeout** (see
-[§3.4](#34-no-transaction-auto-rollback-timeout)).
+the first DML, so `beginTransaction()` just holds the connection. A 5-minute auto-rollback on an owned provider only (see
+[§3.4](#34-transaction-auto-rollback-timeout-on-an-owned-provider-only)).
 Surfaced via `POST /api/db/transaction`.
 
 | Method | Behaviour |
@@ -2511,8 +2513,8 @@ the object tree's own routes under `POST /api/db/objects/*`
   ([§4.3](#43-ssl--tls)). A `connectionString` is passed through verbatim, so the protocol it names
   is the one used. *Future:* surface the mismatch in the dialog rather than leaving the connect
   string to decide silently.
-- **No transaction auto-rollback timeout** (unlike Postgres/MySQL) — an abandoned transaction holds
-  its connection/locks until committed, rolled back, or pool-reclaimed.
+- **No transaction auto-rollback timeout without an owner** (unlike Postgres/MySQL): outside governance an abandoned transaction holds
+  its connection/locks until committed, rolled back, or pool-reclaimed ([§3.4](#34-transaction-auto-rollback-timeout-on-an-owned-provider-only)).
 - **`getIndexStats().scans` is always `0`** and `isPrimary` always `false` — Oracle index usage
   counters aren't read here.
 - **Row counts (`NUM_ROWS`) are optimizer estimates** populated by `DBMS_STATS`; they can be stale

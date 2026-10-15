@@ -100,12 +100,14 @@ const NAMED_CITATIONS = [
       "validate",
       "buildConfig",
       "connect",
+      "disconnect",
       "query",
       // The agent read-only execution profile (#328). The doc's §12 is the only prose in the fleet
       // describing a boundary whose first layer is the PRINCIPAL, so a rename here would strand it.
       "queryReadOnly",
       "cancelQuery",
       "prepareQuery",
+      "expireTransaction",
       "beginTransaction",
       "commitTransaction",
       "rollbackTransaction",
@@ -207,6 +209,7 @@ const NAMED_CITATIONS = [
       "query",
       "cancelQuery",
       "prepareQuery",
+      "expireTransaction",
       "beginTransaction",
       "commitTransaction",
       "rollbackTransaction",

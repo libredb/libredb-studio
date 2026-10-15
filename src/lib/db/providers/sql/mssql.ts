@@ -1634,6 +1634,16 @@ export class MSSQLProvider extends SQLBaseProvider {
   // Transaction support
   private txTransaction: mssql.Transaction | null = null;
   private txActive = false;
+  // Armed only on an owned provider (spec 9.4), see `beginTransaction()`.
+  private txTimeout: ReturnType<typeof setTimeout> | null = null;
+  private static readonly TX_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes from BEGIN
+
+  /**
+   * True when this provider was created for one user (`ProviderExecutionContext.owner`, spec 9.4),
+   * which only governance does. Only then does an interactive transaction time out, so an install
+   * without governance keeps the transaction lifetime it always had.
+   */
+  private readonly owned: boolean;
 
   // Track running requests for cancellation
   private runningRequests = new Map<string, mssql.Request>();
@@ -1647,6 +1657,7 @@ export class MSSQLProvider extends SQLBaseProvider {
     // providers from caller-supplied ProviderOptions, which has no route to this
     // flag in either direction.
     this.readOnlyProfile = execution.readOnly === true;
+    this.owned = execution.owner !== undefined;
     this.validate();
   }
 
@@ -1932,6 +1943,7 @@ export class MSSQLProvider extends SQLBaseProvider {
   }
 
   public async disconnect(): Promise<void> {
+    this.clearTxTimeout();
     if (this.pool) {
       try {
         await this.pool.close();
@@ -2714,16 +2726,52 @@ export class MSSQLProvider extends SQLBaseProvider {
   // Transaction Support
   // ============================================================================
 
+  private clearTxTimeout(): void {
+    if (this.txTimeout) {
+      clearTimeout(this.txTimeout);
+      this.txTimeout = null;
+    }
+  }
+
+  /**
+   * Force-expire an active transaction (auto-rollback) and let go of it, so the held pool
+   * connection goes back to the pool. Called by the timeout timer of an owned provider, but
+   * also available for testing. The transaction is released before the rollback is awaited,
+   * so a commit racing the timer is refused rather than sent on a transaction being rolled back.
+   * A rollback that fails is reported, not thrown: the timer has no caller to throw to, and
+   * `mssql` returns the connection to the pool either way.
+   */
+  public async expireTransaction(): Promise<void> {
+    if (!this.txActive || !this.txTransaction) return;
+    const transaction = this.txTransaction;
+    this.txTransaction = null;
+    this.txActive = false;
+    this.clearTxTimeout();
+    console.warn("[MSSQL] Transaction timed out, auto-rolling back");
+    try {
+      await transaction.rollback();
+    } catch (error) {
+      console.warn(
+        `[MSSQL] The auto-rollback of a timed-out transaction failed: ${error instanceof Error ? error.message : error}`,
+      );
+    }
+  }
+
   public async beginTransaction(): Promise<void> {
     this.ensureConnected();
     if (this.txActive) throw new QueryError("Transaction already active", "mssql");
     this.txTransaction = new mssql.Transaction(this.pool!);
     await this.txTransaction.begin();
     this.txActive = true;
+
+    // Auto-rollback after timeout to prevent leaked locks, on an owned provider only (spec 9.4).
+    // Single-line callback on purpose: bun lcov attributes a multi-line arrow's opening line as 0-hit.
+    if (this.owned) this.txTimeout = setTimeout(() => void this.expireTransaction(), MSSQLProvider.TX_TIMEOUT_MS);
   }
 
   public async commitTransaction(): Promise<void> {
     if (!this.txTransaction || !this.txActive) throw new QueryError("No active transaction", "mssql");
+    this.clearTxTimeout();
     try {
       await this.txTransaction.commit();
     } finally {
@@ -2734,6 +2782,7 @@ export class MSSQLProvider extends SQLBaseProvider {
 
   public async rollbackTransaction(): Promise<void> {
     if (!this.txTransaction || !this.txActive) throw new QueryError("No active transaction", "mssql");
+    this.clearTxTimeout();
     try {
       await this.txTransaction.rollback();
     } finally {

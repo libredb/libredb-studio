@@ -509,6 +509,24 @@ describe("createDatabaseProvider", () => {
     expect(provider.type).toBe("oracle");
   });
 
+  // Spec 9.4: the owner reaches OracleProvider and MSSQLProvider, which arm their transaction timeout only when owned.
+  test("hands the execution context's owner to the oracle and mssql providers", async () => {
+    const oracle = makeConnection("oracle", { serviceName: "ORCL" } as Partial<DatabaseConnection>);
+    const mssql = makeConnection("mssql");
+    const owner = { owner: "subject-a", ownerPoolMax: 3 };
+    const [ownedOracle, sharedOracle, ownedMssql, sharedMssql] = await Promise.all([
+      createDatabaseProvider(oracle, {}, owner),
+      createDatabaseProvider(oracle),
+      createDatabaseProvider(mssql, {}, owner),
+      createDatabaseProvider(mssql),
+    ]);
+    const ownedOf = (provider: unknown) => (provider as { owned: boolean }).owned;
+    expect(ownedOf(ownedOracle)).toBe(true);
+    expect(ownedOf(sharedOracle)).toBe(false);
+    expect(ownedOf(ownedMssql)).toBe(true);
+    expect(ownedOf(sharedMssql)).toBe(false);
+  });
+
   test('creates provider for type "db2"', async () => {
     const conn = makeConnection("db2");
     const provider = await createDatabaseProvider(conn);
