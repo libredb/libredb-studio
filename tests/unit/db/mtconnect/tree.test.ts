@@ -18,6 +18,7 @@
  * items and no condition, `LIBREDB-LATHE-1722` carries eight and one.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { isSourcePartUnavailable } from "@/lib/db/object-kinds";
 import { readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { join } from "node:path";
@@ -191,6 +192,11 @@ describe("an asset is a document, and nothing else is", () => {
     const document = await provider.readObjectSource([LATHE, "TOOL-1722"], "asset");
     const [part] = document.parts;
     expect(part?.id).toBe("asset");
+    // The readable arm is reached the way every reader reaches it: `isSourcePartUnavailable` asks
+    // `"unavailable" in part`, so negating it is what narrows the union. Asserted rather than cast,
+    // because a part that came back unavailable would make every expectation below vacuous.
+    expect(part && !isSourcePartUnavailable(part)).toBe(true);
+    if (!part || isSourcePartUnavailable(part)) return;
     expect(part?.language).toBe("xml");
     expect(part?.form).toBe("complete");
     // `stored`, because the text is the agent's own bytes rather than a re-render of the tree.

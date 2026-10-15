@@ -239,9 +239,9 @@ describe("the generated request line against a hostile name", () => {
   test("an empty device name asks the agent's own current, with the gap said out loud", () => {
     expect(generateTableQuery([""], capabilities)).toBe("# A request names a device from the tree.\nGET /current");
     // And it is a line the guard accepts, which is the point of not writing `GET //current`.
-    expect(guardRequestLine(generateTableQuery([""], capabilities), { rowCap: 10_000, knownDevices: new Set() }).op).toBe(
-      "current",
-    );
+    expect(
+      guardRequestLine(generateTableQuery([""], capabilities), { rowCap: 10_000, knownDevices: new Set() }).op,
+    ).toBe("current");
     // The empty address is refused one layer up, before any dialect is asked.
     expect(() => generateTableQuery([], capabilities)).toThrow(/no segments/);
   });

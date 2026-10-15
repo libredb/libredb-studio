@@ -9,6 +9,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import type { MtcElement } from "@/lib/db/providers/industrial/mtconnect/xml";
 import { join } from "node:path";
 import { indexMtconnectModel, modelIsCurrent, displayName } from "@/lib/db/providers/industrial/mtconnect/model";
 import {
@@ -400,13 +401,13 @@ describe("a DataSet entry the captures do not hold", () => {
    * which would make these real answers. It also re-dates every capture, so it is a change to
    * propose rather than to slip in beside a coverage fix.
    */
-  const observation = (children: readonly { name: string; attributes: Record<string, string>; children: readonly never[]; text: string }[]) => ({
+  const observation = (children: readonly MtcElement[]) => ({
     element: "VariableDataSet",
     attributes: { dataItemId: "Lp1CommonVariable", timestamp: "2026-10-05T13:27:22.837012Z", sequence: "104" },
     text: "",
     children,
   });
-  const entry = (attributes: Record<string, string>, text = "", children: readonly never[] = []) => ({
+  const entry = (attributes: Record<string, string>, text = "", children: readonly MtcElement[] = []) => ({
     name: "Entry",
     attributes,
     children,
@@ -423,7 +424,12 @@ describe("a DataSet entry the captures do not hold", () => {
     const cell = (key: string, text: string) => ({ name: "Cell", attributes: { key }, children: [], text });
     const row = buildRow(
       observation([
-        { name: "Entry", attributes: { key: "T1" }, children: [cell("LENGTH", "120"), cell("DIAMETER", "12")], text: "" },
+        {
+          name: "Entry",
+          attributes: { key: "T1" },
+          children: [cell("LENGTH", "120"), cell("DIAMETER", "12")],
+          text: "",
+        },
         entry({ key: "T2" }, "plain"),
       ]),
       model(),
