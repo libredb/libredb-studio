@@ -190,7 +190,7 @@ export type DatabaseType =
   // (`src/lib/db/providers/industrial/mtconnect/`), the second member of the `industrial/` family. One connection is
   // session for the tree and the panels that never runs user text. The connection's Password is the server's
   // spark.connect.authenticate.token, Database the catalog and Schema the namespace.
-  | "spark";
+  | "spark"
   // MTConnect (#1722). One agent read only over HTTP: the probe document's device model, its current and sample
   // MTConnect (#1722). One agent read only over HTTP: the probe document's device model, its current and sample
   // observations, and its asset documents, by a client of this repository's own on the shared node transport

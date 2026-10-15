@@ -36,7 +36,22 @@ const ORIGIN = new URL(process.env.MTCONNECT_LIVE_ORIGIN ?? "http://127.0.0.1:17
 /** The adapter sends a position every ten seconds, so this is one step of the buffer plus slack. */
 const STEP_MS = Number(process.env.MTCONNECT_LIVE_STEP_MS ?? 12_000);
 
+let passed = 0;
 let failures = 0;
+let skipped = 0;
+let total = 0;
+
+/** Whether the agent answers at all, read once: a check that cannot run is not a check that passed. */
+const agentAnswers = async (): Promise<boolean> => {
+  try {
+    const answer = await fetch(new URL("/probe", ORIGIN), { signal: AbortSignal.timeout(3_000) });
+    return answer.ok;
+  } catch {
+    return false;
+  }
+};
+
+const reachable = await agentAnswers();
 
 /**
  * Where the fixture is MANDATORY, a skip is a failure.
@@ -55,8 +70,16 @@ if (required && !reachable) {
 }
 
 const check = async (name: string, run: () => Promise<void>): Promise<void> => {
+  total += 1;
+  if (!reachable) {
+    skipped += 1;
+    console.log(`SKIP ${name}`);
+    console.log(`     no agent is answering on ${ORIGIN.origin}`);
+    return;
+  }
   try {
     await run();
+    passed += 1;
     console.log(`PASS ${name}`);
   } catch (error) {
     failures += 1;
@@ -175,5 +198,8 @@ await check("a sequence the buffer reached AFTER connect is still read", async (
   }
 });
 
-console.log(failures === 0 ? "\nall checks passed" : `\n${failures} check(s) failed`);
+// The summary carries the numbers rather than a word: a check that was deleted, or one that could
+// not run, must not leave the same line behind as a run where every check passed. A skip is its own
+// column for the same reason.
+console.log(`\n${passed} of ${total} checks passed, ${failures} failed, ${skipped} skipped`);
 process.exit(failures === 0 ? 0 : 1);

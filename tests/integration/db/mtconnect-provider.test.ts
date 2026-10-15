@@ -138,12 +138,29 @@ describe("the captures carry the fact the window rule rests on", () => {
     expect(windowed.every((one) => one.next !== current.next)).toBe(true);
   });
 
-
+  test("the captures, the README and the compose pin name one agent", () => {
+    // Three links, so a capture taken from another agent cannot arrive unnoticed: the image
+    // `database-compose.yml` pins, the version the captures' own Header reports, and the README
+    // that records where they came from. A capture from a different build breaks the middle link;
+    // a compose bump without a re-capture breaks the outer two.
+    const compose = readFileSync(join(import.meta.dir, "..", "..", "..", "database-compose.yml"), "utf-8");
     const pin = /image:\s*(mtconnect\/agent:([\d.]+)@sha256:([a-f0-9]{64}))/.exec(compose);
     expect(pin, "database-compose.yml pins no mtconnect/agent image").not.toBeNull();
+    const [, image, version] = pin as RegExpExecArray;
+    const readme = readFileSync(join(FIXTURES, "README.md"), "utf-8");
+    expect(readme).toContain(image);
     // The CI step is the fourth place the same pin appears, and the one furthest from a reader's
     // eye: a bump here that misses it would run CI against a different agent than the captures.
     const ciStep = readFileSync(join(import.meta.dir, "..", "..", "..", "docker", "mtconnect", "ci-step.yml"), "utf-8");
+    expect(ciStep).toContain(image);
+    expect(readme).toContain(`version`);
+    for (const name of ["probe", "current", "assets"]) {
+      const header = /<Header[^>]*\sversion="([\d.]+)"/.exec(capture(name));
+      expect(header, `${name}.xml carries no Header version`).not.toBeNull();
+      expect((header as RegExpExecArray)[1], name).toBe(version);
+    }
+  });
+
   test("probe carries no sequence at all, so it cannot be a window source", () => {
     const probe = capture("probe");
     expect(probe).toContain("MTConnectDevices");

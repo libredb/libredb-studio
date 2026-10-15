@@ -882,19 +882,12 @@ export const OpcuaIcon: React.FC<IconProps> = ({ className, ...props }) => (
 );
 
 /**
- * A mark drawn for Studio, never the MTConnect Institute's logo or any vendor's asset.
+ * A mark drawn for Studio, never the Apache Spark logo or any vendor's asset.
  *
  * A job runs as a DAG of stages, so the mark is a fork-join diamond: one stage, two parallel stages, one stage,
  * four rounded boxes joined by four straight strokes.
  */
 export const SparkIcon: React.FC<IconProps> = ({ className, ...props }) => (
- * A mark drawn for Studio, never the MTConnect Institute's logo or any vendor's asset.
- *
- * An agent answers with a sampled value per item per timestamp, so the mark is a baseline with
- * three samples standing on it at three heights: what a Sample document holds, rather than a
- * protocol badge.
- */
-export const MtconnectIcon: React.FC<IconProps> = ({ className, ...props }) => (
   <svg
     viewBox="0 0 24 24"
     fill="none"
@@ -913,5 +906,33 @@ export const MtconnectIcon: React.FC<IconProps> = ({ className, ...props }) => (
     <path d="M6 13.87 9.87 17.5" />
     <path d="M14.13 6.5 18 10.13" />
     <path d="M14.13 17.5 18 13.87" />
+  </svg>
+);
+
+/**
+ * A mark drawn for Studio, never the MTConnect Institute's logo or any vendor's asset.
+ *
+ * An agent answers with a sampled value per item per timestamp, so the mark is a baseline with
+ * three samples standing on it at three heights: what a Sample document holds, rather than a
+ * protocol badge.
+ */
+export const MtconnectIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <path d="M3 19 H21" />
+    <path d="M7 19 V13" />
+    <path d="M12 19 V6" />
+    <path d="M17 19 V10" />
+    <circle cx="7" cy="11" r="1.4" />
+    <circle cx="12" cy="4" r="1.4" />
+    <circle cx="17" cy="8" r="1.4" />
   </svg>
 );

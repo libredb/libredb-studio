@@ -13,11 +13,26 @@
  * The request that produced each capture is listed in `tests/fixtures/mtconnect/README.md`, which
  * this script writes too.
  */
+import { readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 const ORIGIN = process.env.MTCONNECT_ORIGIN ?? "http://127.0.0.1:17322";
 const OUT = join(import.meta.dir, "..", "fixtures", "mtconnect");
+const ROOT = join(import.meta.dir, "..", "..");
+
+/**
+ * The image the fixture pins, read from `database-compose.yml` rather than typed here, so the
+ * README these captures carry their provenance in cannot drift from the service that produced them.
+ * `tests/integration/db/mtconnect-provider.test.ts` holds all three together: this pin, the agent
+ * version the captures' own Header reports, and the README below.
+ */
+const pinnedImage = (): string => {
+  const compose = readFileSync(join(ROOT, "database-compose.yml"), "utf-8");
+  const found = /image:\s*(mtconnect\/agent:[\d.]+@sha256:[a-f0-9]{64})/.exec(compose);
+  if (found === null) throw new Error("database-compose.yml pins no mtconnect/agent image");
+  return found[1] as string;
+};
 
 const sequenceOf = (xml: string, key: string): number => {
   const found = new RegExp(`${key}="(\\d+)"`).exec(xml);
@@ -75,6 +90,11 @@ await writeFile(
     "Taken by `tests/live/mtconnect-evidence.ts` from the compose fixture (`mtconnect` and",
     "`mtconnect-adapter` in `database-compose.yml`). Each file is the agent's answer verbatim: this",
     "provider refuses an XML comment, so nothing may be written into the documents themselves.",
+    "",
+    `Taken from \`${pinnedImage()}\`, whose Header reports version`,
+    // From the Header element, not from the document: the XML declaration carries a `version="1.0"`
+    // that a looser pattern reads first, which is what the first draft of this line did.
+    `\`${/<Header[^>]*\sversion="([\d.]+)"/.exec(current)?.[1] ?? "unknown"}\`.`,
     "",
     `The buffer at capture time: firstSequence ${first}, lastSequence ${last}, nextSequence ${next}.`,
     "",
