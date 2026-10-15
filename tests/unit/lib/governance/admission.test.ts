@@ -454,6 +454,21 @@ describe("admitConnectionRows", () => {
     expect(opened).toEqual([]);
   });
 
+  test("of two keys outside the allowlist the one first in code unit order is the fault, whatever order or locale says", () => {
+    // Code units put every upper-case letter before every lower-case one and é (U+00E9) after z. The stored order and
+    // a locale's order both name the other key: readOnly before Timeout, émulation before zone, alpha before Zeta.
+    const cases: readonly (readonly [string, Readonly<Record<string, unknown>>])[] = [
+      ["Timeout", { ...DEFINITION, readOnly: true, Timeout: 5 }],
+      ["zone", { ...DEFINITION, émulation: 1, zone: "eu" }],
+      ["ssl.Zeta", { ...DEFINITION, ssl: { mode: "verify-full", alpha: 1, Zeta: 2 } }],
+    ];
+    for (const [path, definition] of cases) {
+      const result = admit([connectionRow({ definition, columns: { read_secret: UNOPENED } })]);
+      expect([path, itemsOf(result)]).toEqual([path, [skipItem(ID, "DEFINITION_INVALID", { path })]]);
+    }
+    expect(opened).toEqual([]);
+  });
+
   test("a malformed id is DEFINITION_INVALID, and every row of a duplicated id is skipped at path connection_id", () => {
     const longest = "a".repeat(64);
     const rows = [

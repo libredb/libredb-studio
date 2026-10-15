@@ -41,6 +41,7 @@ import { type ManagedConnection, SeedConnectionSchema } from "@/lib/seed/types";
 import type { DatabaseType } from "@/lib/types";
 import { DEFINITION_ALLOWLIST, PLAINTEXT_KEYS, type SkippedItemSchema, type SNAPSHOT_READS } from "./contract";
 import type { EnvelopeCode } from "./hpke";
+import { byCodeUnits } from "./jcs";
 import { type OpenedSecret, SealedSecretError, type SecretBinding } from "./lsb1";
 
 /** The columns the snapshot reads from `connections_v1` (docs/GOVERNANCE.md#snapshot-protocol). */
@@ -182,7 +183,7 @@ interface Leaf {
  */
 function leavesOf(object: Readonly<Record<string, unknown>>, parent: readonly string[]): Leaf[] {
   return Object.keys(object)
-    .sort()
+    .sort(byCodeUnits)
     .flatMap((key) => {
       const segments = [...parent, key];
       const value = object[key];

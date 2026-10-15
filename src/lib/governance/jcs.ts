@@ -30,7 +30,7 @@ function isPlainObject(value: unknown): value is Readonly<Record<string, unknown
 }
 
 /** Orders strings by their UTF-16 code units, as RFC 8785 section 3.2.3 sorts object keys; not by locale. */
-function byCodeUnits(left: string, right: string): number {
+export function byCodeUnits(left: string, right: string): number {
   if (left === right) return 0;
   return left < right ? -1 : 1;
 }
