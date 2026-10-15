@@ -140,7 +140,7 @@ export const PROVIDER_ROUTES_WITHOUT_A_CONNECTION_BODY: Readonly<Record<string, 
   "ai/explain": "reaches only an LLM: the statement and the plan arrive as text, and no connection is resolved",
   "ai/query-safety": "reaches only an LLM: the statement arrives as text, and no connection is resolved",
   "db/disconnect":
-    "reads no connection body: it removes the cached providers of the connectionId it names and builds none (tests/api/db/disconnect.test.ts)",
+    "builds none, and under governance resolves no connection: it removes only the caller's own cached providers of the connection id it names, which needs no grant; without governance it resolves a connection of the user's own only to name the one cache entry it removes (tests/api/db/disconnect.test.ts)",
   "mcp/token":
     "mints an MCP token for the session's own user and takes no connection; under governance MCP is held off, so it mints none (tests/unit/mcp/config.test.ts)",
 };
