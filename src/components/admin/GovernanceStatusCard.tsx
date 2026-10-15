@@ -31,6 +31,11 @@ function ageText(ageMs: number): string {
   return `${Math.floor(ageMs / 1000)} s`;
 }
 
+function listenerText(listener: GovernanceStatus["listener"]): string {
+  if (listener === null) return "not started";
+  return `${listener.state} for ${ageText(listener.heldMs)} (since ${listener.since})`;
+}
+
 function skipText(skip: GovernanceStatusSkip): string {
   const where = [skip.level, skip.path].filter((part) => part !== undefined).join(", ");
   const codes = skip.envelopeCode === undefined ? skip.code : `${skip.code} (${skip.envelopeCode})`;
@@ -83,6 +88,12 @@ function StatusBody({ status }: { status: GovernanceStatus }) {
         testId="governance-admitted"
       />
       <Row label="Key ids" value={status.keyringKids.join(", ")} testId="governance-kids" />
+      <Row label="Listener" value={listenerText(status.listener)} testId="governance-listener" />
+      <Row
+        label="Last notification"
+        value={status.listener?.lastNotificationAt ?? NOT_LOADED}
+        testId="governance-last-notification"
+      />
       {status.skipped.length > 0 && (
         <div className="space-y-1">
           <span className="text-xs text-fg-muted">{`Skipped (${status.skipped.length})`}</span>
@@ -106,9 +117,10 @@ function StatusBody({ status }: { status: GovernanceStatus }) {
 
 /**
  * The governance status (GET /api/admin/governance, spec 9.3): the freshness state, the contract versions, the
- * snapshot's age, the latest load failure, the admitted and skipped rows and the keyring's key ids, so an admin sees
- * why a governed connection is missing without the server logs. Mounted on the Overview page beside SeedSourcesCard.
- * Renders nothing with governance off and on a failed read.
+ * snapshot's age, the latest load failure, the admitted and skipped rows, the keyring's key ids, and the change
+ * notification listener's state, how long it has held and the last notification, so an admin sees why a governed
+ * connection is missing, or why a change arrives late, without the server logs. Mounted on the Overview page beside
+ * SeedSourcesCard. Renders nothing with governance off and on a failed read.
  */
 export function GovernanceStatusCard() {
   const [status, setStatus] = useState<GovernanceStatus | null>(null);

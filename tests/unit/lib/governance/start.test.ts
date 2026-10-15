@@ -5,13 +5,16 @@
  * the refresher under governance without waiting for its first load.
  *
  * `pg` is the fake of tests/helpers/governance/pg-fake.ts, and the timers are bun's fake timers, which move
- * `Date.now()` with them, so every interval is checked in virtual time.
+ * `Date.now()` with them, so every interval is checked in virtual time. The change notification listener that
+ * `startGovernance()` also starts never connects here unless a case lets it, so the other cases count the refresher's
+ * loads alone; tests/unit/lib/governance/listener.test.ts drives the listener itself.
  */
 import { afterAll, afterEach, beforeEach, describe, expect, jest, mock, spyOn, test } from "bun:test";
 import { keyringFileOf, removeKeyringFiles, testKey } from "../../../helpers/governance/keyring-file";
 import {
   answerSnapshot,
   EMPTY_SOURCE,
+  FakeListenerClient,
   FakePool,
   fakePg,
   nodeError,
@@ -20,12 +23,16 @@ import {
 } from "../../../helpers/governance/pg-fake";
 
 const realPg = await import("pg");
-mock.module("pg", () => ({ Pool: FakePool, Client: realPg.Client, types: realPg.types }));
+mock.module("pg", () => ({ Pool: FakePool, Client: FakeListenerClient, types: realPg.types }));
 
-const { requestGovernanceLoad, startGovernance, stopGovernance } = await import("@/lib/governance/start");
+const { requestFreshGovernanceLoad, requestGovernanceLoad, startGovernance, stopGovernance } = await import(
+  "@/lib/governance/start"
+);
 const { governanceFreshness } = await import("@/lib/governance/freshness");
+const { governanceListenerStatus } = await import("@/lib/governance/listener");
 const { governanceState, resetGovernanceState } = await import("@/lib/governance/state");
 const { resetGovernanceKeyring } = await import("@/lib/governance/keyring");
+const { resetShutdownHooks, runShutdownHooks } = await import("@/lib/shutdown");
 const { register } = await import("@/instrumentation");
 const { logger } = await import("@/lib/logger");
 
@@ -81,6 +88,8 @@ beforeEach(() => {
     attempts.push(Date.now());
     if (!up) throw nodeError("ECONNREFUSED", "connect ECONNREFUSED 10.0.0.5:5432");
   };
+  // The listener's connection stays opening: it asks for no load and holds no timer.
+  fakePg.listenerConnecting = () => new Promise(() => {});
   spies = (["error", "warn", "info", "debug"] as const).map((level) =>
     spyOn(logger, level).mockImplementation(() => {}),
   );
@@ -91,6 +100,7 @@ afterEach(async () => {
   jest.useRealTimers();
   resetGovernanceState();
   resetGovernanceKeyring();
+  resetShutdownHooks();
   for (const [name, value] of Object.entries(saved)) setEnv(name, value);
   for (const spy of spies) spy.mockRestore();
 });
@@ -291,6 +301,81 @@ describe("the refresher", () => {
   });
 });
 
+describe("loads that must start after a change", () => {
+  test("a fresh load waits for the load under way and starts the next one, which a second caller joins", async () => {
+    let connect: () => void = () => {};
+    fakePg.connecting = () =>
+      new Promise((resolve) => {
+        attempts.push(Date.now());
+        connect = resolve;
+      });
+
+    const underWay = requestGovernanceLoad();
+    const fresh = requestFreshGovernanceLoad();
+    const joining = requestFreshGovernanceLoad();
+    await settle();
+    expect(attempts).toHaveLength(1);
+
+    connect();
+    await underWay;
+    await settle();
+    expect(attempts).toHaveLength(2);
+    expect(governanceFreshness()).toBe("ok");
+
+    connect();
+    await Promise.all([fresh, joining]);
+    expect(attempts).toHaveLength(2);
+  });
+
+  test("with no load under way a fresh load starts at once", async () => {
+    await requestFreshGovernanceLoad();
+
+    expect(attempts).toHaveLength(1);
+    expect(governanceFreshness()).toBe("ok");
+  });
+});
+
+describe("the listener", () => {
+  test("startGovernance() starts the listener, whose LISTEN is followed by a load that starts after it", async () => {
+    let connect: () => void = () => {};
+    fakePg.connecting = () =>
+      new Promise((resolve) => {
+        attempts.push(Date.now());
+        connect = resolve;
+      });
+    fakePg.listenerConnecting = async () => {};
+
+    startGovernance();
+    await settle();
+    // The first load is under way, and the listener has issued LISTEN: its load waits for the first one to end.
+    expect(governanceListenerStatus()?.state).toBe("listening");
+    expect(attempts).toHaveLength(1);
+
+    connect();
+    await settle();
+    expect(attempts).toHaveLength(2);
+    connect();
+    await settle();
+    expect(governanceFreshness()).toBe("ok");
+  });
+
+  test("startGovernance() registers the shutdown hook that stops the refresher, the listener and the pool", async () => {
+    jest.useFakeTimers();
+    fakePg.listenerConnecting = async () => {};
+    startGovernance();
+    await settle();
+    const [pool] = FakePool.made;
+    const [listening] = FakeListenerClient.made;
+
+    await runShutdownHooks();
+
+    expect(governanceListenerStatus()).toBeNull();
+    expect(listening.ends).toBe(1);
+    expect(pool.ended).toBe(true);
+    expect(jest.getTimerCount()).toBe(0);
+  });
+});
+
 describe("register()", () => {
   test("register() starts the refresher under governance without waiting for its first load", async () => {
     process.env.NEXT_RUNTIME = "nodejs";
@@ -326,6 +411,7 @@ describe("register()", () => {
     await settle();
 
     expect(FakePool.made).toEqual([]);
+    expect(FakeListenerClient.made).toEqual([]);
     expect(attempts).toEqual([]);
     expect(governanceFreshness()).toBe("loading");
   });

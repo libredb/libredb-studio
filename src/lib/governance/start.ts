@@ -8,12 +8,18 @@
  * becomes ready on its own, with no request to wake it, and the process never exits on a database outage: a load
  * records its failure and never throws.
  *
+ * It also starts the change notification listener (`listener.ts`, spec 7.3), which asks for a load after every
+ * LISTEN and for every window of notifications, and registers `stopGovernance()` as the shutdown hook `governance`
+ * (src/lib/shutdown.ts), so a SIGTERM closes the listener's connection and the pool before the process exits.
+ *
  * Loads are single-flight: `requestGovernanceLoad()` joins the load under way, if there is one, so the refresher, a
  * readiness probe and a change notification never run two loads at once. Each load that ends sets the next timer from
  * the state it left, so a load another caller asked for also moves the next reload.
  */
+import { onShutdown } from "@/lib/shutdown";
 import { governanceRefreshMs } from "./config";
 import { closeGovernancePool } from "./db";
+import { startGovernanceListener, stopGovernanceListener } from "./listener";
 import { loadGovernanceSnapshot } from "./snapshot";
 import { governanceState } from "./state";
 
@@ -76,22 +82,39 @@ export function requestGovernanceLoad(): Promise<void> {
   return load;
 }
 
-/** Starts the refresher of this process, once: the first load runs at once and is not awaited. */
+/**
+ * Loads the snapshot with a load that starts after this call, and settles when that load has recorded its outcome.
+ * A load under way may have read the governance source before the change that prompted the call, so this waits for
+ * it to end and then starts the next load, or joins one that another caller started after it. It never rejects.
+ */
+export async function requestFreshGovernanceLoad(): Promise<void> {
+  const { inFlight } = refresher();
+  if (inFlight !== undefined) await inFlight;
+  await requestGovernanceLoad();
+}
+
+/**
+ * Starts the refresher and the change notification listener of this process, once, and registers their stop as a
+ * shutdown hook. The first load runs at once and is not awaited.
+ */
 export function startGovernance(): void {
   const state = refresher();
   if (state.started) return;
   state.started = true;
   void requestGovernanceLoad();
+  startGovernanceListener(requestFreshGovernanceLoad);
+  onShutdown("governance", stopGovernance);
 }
 
 /**
- * Stops the refresher and closes the governance pool. A load under way records its outcome when it ends, and
- * schedules nothing after it.
+ * Stops the refresher and the listener and closes the governance pool. A load under way records its outcome when it
+ * ends, and schedules nothing after it.
  */
 export async function stopGovernance(): Promise<void> {
   const state = refresher();
   state.started = false;
   clearTimeout(state.timer);
   state.timer = undefined;
+  await stopGovernanceListener();
   await closeGovernancePool();
 }
