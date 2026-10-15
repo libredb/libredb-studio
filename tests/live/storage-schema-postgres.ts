@@ -14,6 +14,9 @@
  * `public`. It prints one line per table and exits non-zero on the first failure, and it drops the
  * database and the role again either way. A schema that does not exist must fail initialize() with
  * the CREATE SCHEMA hint, which the script checks first.
+ * Last, it holds an account row as the superuser so a storage transaction waits on it, ends that
+ * transaction's backend with pg_terminate_backend, as a PostgreSQL restart or failover does, and checks
+ * that the transaction rejects with 57P01 and the provider keeps serving.
  *
  * It is NOT in `bun run test`: the runner excludes `tests/live/` by name (`EXCLUDED` in
  * `tests/runner/discover.ts`). CI runs it in the "Functional Smoke (PostgreSQL, RabbitMQ)" job of
@@ -178,9 +181,86 @@ async function exerciseTables(url: string, superuser: string): Promise<void> {
       check(reads[table], `${table} in schema ${SCHEMA} did not return what was written`);
       console.log(`ok   ${SCHEMA}.${table} created, written and read`);
     }
+
+    await terminateOpenTransaction(provider, url, superuser, email);
   } finally {
     await provider.close();
   }
+}
+
+/**
+ * A backend that ends during a storage transaction, as a PostgreSQL restart or failover ends it (57P01), must reject
+ * that transaction with its own error and leave the process serving. pg-pool stops listening for `error` on a client
+ * while it is checked out, so an unlistened event here ends this script, which is the failure this checks.
+ */
+async function terminateOpenTransaction(
+  provider: PostgresStorageProvider,
+  url: string,
+  superuser: string,
+  email: string,
+): Promise<void> {
+  const role = decodeURIComponent(new URL(url).username);
+  const holder = new Client({ connectionString: superuser });
+  await holder.connect();
+  let pending: Promise<unknown> | undefined;
+  try {
+    // The superuser holds the account row, so the storage transaction stays open on its FOR UPDATE.
+    await holder.query("BEGIN");
+    await holder.query(`SELECT 1 FROM ${SCHEMA}.accounts WHERE email = $1 FOR UPDATE`, [email]);
+    const now = new Date().toISOString();
+    pending = provider
+      .insertPasskey({
+        passkey: {
+          id: "33333333-3333-4333-8333-333333333333",
+          credentialId: "schema-check-terminated",
+          accountEmail: email,
+          publicKey: "pk",
+          signCount: 0,
+          transports: ["internal"],
+          backupEligible: false,
+          backupState: false,
+          rpId: "studio.example.com",
+          name: "Terminated",
+          createdAt: now,
+          lastUsedAt: null,
+        },
+        userHandle: "schema-check-handle",
+        expectedSessionVersion: 0,
+        maxPasskeys: 20,
+        challenge: { hash: "cd".repeat(32), expiresAt: new Date(Date.now() + 600_000).toISOString() },
+        purgeSpentBefore: now,
+      })
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+    let pid: number | undefined;
+    for (let attempt = 0; attempt < 100 && pid === undefined; attempt++) {
+      // oxlint-disable-next-line no-await-in-loop -- polls until the storage transaction waits on the lock.
+      const { rows } = await holder.query(
+        "SELECT pid FROM pg_stat_activity WHERE usename = $1 AND wait_event_type = 'Lock'",
+        [role],
+      );
+      pid = (rows as { pid: number }[])[0]?.pid;
+      // oxlint-disable-next-line no-await-in-loop -- the next poll waits a moment.
+      if (pid === undefined) await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    check(pid !== undefined, "the storage transaction never waited on the held account row");
+    await holder.query("SELECT pg_terminate_backend($1)", [pid]);
+    await holder.query("ROLLBACK");
+  } finally {
+    await holder.end();
+  }
+  const failure = (await pending) as { code?: string; message?: string } | null;
+  check(
+    failure?.code === "57P01",
+    `the terminated transaction should reject with 57P01, got: ${failure?.code ?? "no code"} ${failure?.message ?? "no error"}`,
+  );
+  // The socket's end reaches the client after the statement fails; give it the time to arrive.
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  await provider.mergeData(email, { connections: [] });
+  check((await provider.getAccount(email))?.email === email, "the provider stopped serving after the termination");
+  console.log("ok   pg_terminate_backend on the backend of an open storage transaction rejects the transaction and the process keeps serving");
 }
 
 async function main(): Promise<void> {

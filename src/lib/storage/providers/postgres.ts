@@ -49,6 +49,14 @@ const PASSKEY_INDEXES: Record<string, { table: string; column: string }> = {
 // PostgreSQL SQLSTATE insufficient_privilege.
 const INSUFFICIENT_PRIVILEGE = "42501";
 
+function logCheckedOutError(error: Error): void {
+  logger.warn("PostgreSQL storage connection error during a transaction", {
+    provider: "postgres",
+    error: error.message,
+    code: (error as { code?: string }).code,
+  });
+}
+
 export class PostgresStorageProvider implements ServerStorageProvider {
   private pool: InstanceType<typeof import("pg").Pool> | null = null;
   private connectionString: string;
@@ -534,19 +542,39 @@ export class PostgresStorageProvider implements ServerStorageProvider {
     return (spent.rowCount ?? 0) > 0;
   }
 
-  /** Run in one transaction on one pool client: commit and return the run's value, or roll back and rethrow. */
+  /**
+   * Run in one transaction on one pool client: commit and return the run's value, or roll back and rethrow.
+   *
+   * pg-pool listens for `error` only on idle clients. A backend that ends while this client is checked out (57P01 on
+   * a PostgreSQL restart or failover) emits `error` on it, which without a listener ends the process; the statement in
+   * flight or the next one then fails, so the transaction rejects through its own path. A ROLLBACK that fails on such
+   * a client must not replace the error that failed the transaction, and the client goes back with that error so the
+   * pool discards it instead of handing the dead connection to the next caller.
+   */
   private async transaction<T>(run: (client: PoolClient) => Promise<T>): Promise<T> {
     const client = await this.pool!.connect();
+    client.on("error", logCheckedOutError);
+    let discard: Error | undefined;
     try {
       await client.query("BEGIN");
       const result = await run(client);
       await client.query("COMMIT");
       return result;
     } catch (err) {
-      await client.query("ROLLBACK");
+      try {
+        await client.query("ROLLBACK");
+      } catch (rollbackError) {
+        logger.warn("PostgreSQL storage ROLLBACK failed; discarding the connection", {
+          provider: "postgres",
+          error: (rollbackError as Error).message,
+        });
+        discard = err as Error;
+      }
       throw err;
     } finally {
-      client.release();
+      client.release(discard);
+      // pg-pool listens again from the release on, so the client is never without a listener.
+      client.removeListener("error", logCheckedOutError);
     }
   }
 
