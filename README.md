@@ -710,7 +710,7 @@ Deploy your own instance of LibreDB Studio with a single click on DigitalOcean, 
  [![Deploy on Fly.io](https://img.shields.io/badge/Deploy%20on-Fly.io-24175B?style=for-the-badge&logo=flydotio&logoColor=white)](docs/FLY.md)  
  [![Deploy on Dokploy](https://img.shields.io/badge/Deploy%20on-Dokploy-1F2937?style=for-the-badge&logo=docker&logoColor=white)](https://templates.dokploy.com)  
  [![Deploy on ZopDay](https://zop.dev/deploytozopday-inkhard.svg)](https://zop.dev/zopday/app/deploy?image=ghcr.io/libredb/libredb-studio:latest&port=3000)  
- [![Deploy on Pethost](https://pethost.dev/button.svg)](https://pethost.dev/templates/libredb-studio/)  
+ [![Deploy on Pethost](https://pethost.dev/button.svg)](https://console.pethost.dev/?template=libredb-studio)  
 
 > **DigitalOcean:** the [Marketplace listing](https://marketplace.digitalocean.com/apps/libredb-studio) creates a preconfigured Droplet. Unique admin credentials are generated on first boot; the welcome message (MOTD) tells you where to find them.
 >
@@ -726,7 +726,7 @@ Deploy your own instance of LibreDB Studio with a single click on DigitalOcean, 
 >
 > **ZopDay:** the button opens a deploy screen preloaded with the `ghcr.io/libredb/libredb-studio:latest` image on port 3000. Nothing is prefilled, so set `JWT_SECRET` (at least 32 characters — `openssl rand -base64 32`) before launching, or the app stops at boot and says why. Deploy to ZopCloud to have it run managed, or connect an AWS or GCP account you already own so the instance and its connection metadata stay on your own billing and inside your own IAM and VPC rules; Azure (AKS) is in preview. As with Koyeb, the default storage keeps connection metadata in the browser — set `STORAGE_PROVIDER=postgres` and `STORAGE_POSTGRES_URL` for connections that survive redeploys.
 >
-> **Pethost:** the [template](https://pethost.dev/templates/libredb-studio/) runs `libredb/libredb-studio:0.18.3` with `STORAGE_PROVIDER=sqlite` on a volume, so connections and saved queries survive redeploys. It asks for `ADMIN_EMAIL` and `ADMIN_PASSWORD` and generates `JWT_SECRET`.
+> **Pethost:** the button opens the Pethost console with the [LibreDB Studio template](https://pethost.dev/templates/libredb-studio/) selected, and deploys it on a Pethost machine of your own. It runs with `STORAGE_PROVIDER=sqlite` on a volume, so connections and saved queries survive redeploys. It asks for `ADMIN_EMAIL` and `ADMIN_PASSWORD` and generates `JWT_SECRET`. The template pins a release, so a new version reaches it when the template in [`pethost-dev/templates`](https://github.com/pethost-dev/templates/tree/main/libredb-studio) is bumped.
 
 
 ### Environment Variables

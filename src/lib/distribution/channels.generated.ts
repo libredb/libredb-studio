@@ -35,6 +35,7 @@ export const LIVE_CHANNELS: readonly ShowcaseChannel[] = [
   { id: "caprover-official", label: "CapRover official", group: "paas" },
   { id: "caprover-autoconnect", label: "CapRover auto-connect", group: "paas" },
   { id: "dokploy", label: "Dokploy template catalog", group: "paas" },
+  { id: "pethost", label: "Pethost", group: "paas" },
   { id: "cosmos", label: "Cosmos servapp marketplace", group: "paas" },
   { id: "kubero", label: "Kubero template catalog", group: "paas" },
   { id: "sealos", label: "Sealos App Store template", group: "paas" },
