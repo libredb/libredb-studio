@@ -1378,6 +1378,8 @@ export default function Studio() {
                 onReorderConnections={handleReorderConnections}
                 {...connectionGroupProps}
                 onAddConnection={addConnectionAction}
+                governed={conn.governance}
+                connectionAccessUnavailable={conn.connectionAccessUnavailable}
                 onObjectClick={onObjectClick}
                 onOpenKey={onOpenKey}
                 objectActions={objectActions}
@@ -1504,6 +1506,8 @@ export default function Studio() {
                     onReorderConnections={handleReorderConnections}
                     {...connectionGroupProps}
                     onAddConnection={addConnectionAction}
+                    governed={conn.governance}
+                    accessUnavailable={conn.connectionAccessUnavailable}
                   />
                 </div>
               )}

@@ -12,15 +12,19 @@ mock.module("@/lib/auth", () => ({ ...realAuth, getSession: mockGetSession }));
 const { GET } = await import("@/app/api/connections/policy/route");
 
 const original = process.env.ALLOW_CUSTOM_CONNECTIONS;
+const originalGovernance = process.env.GOVERNANCE_SOURCE;
 
 beforeEach(() => {
   mockGetSession.mockResolvedValue({ role: "user", username: "ada" });
   delete process.env.ALLOW_CUSTOM_CONNECTIONS;
+  delete process.env.GOVERNANCE_SOURCE;
 });
 
 afterEach(() => {
   if (original === undefined) delete process.env.ALLOW_CUSTOM_CONNECTIONS;
   else process.env.ALLOW_CUSTOM_CONNECTIONS = original;
+  if (originalGovernance === undefined) delete process.env.GOVERNANCE_SOURCE;
+  else process.env.GOVERNANCE_SOURCE = originalGovernance;
 });
 
 describe("GET /api/connections/policy", () => {
@@ -52,5 +56,16 @@ describe("GET /api/connections/policy", () => {
     expect(await asUser.json()).toEqual({ customConnections: false });
     expect(asAdmin.status).toBe(200);
     expect(await asAdmin.json()).toEqual({ customConnections: false });
+  });
+
+  test("governance reports governance true and custom connections off", async () => {
+    process.env.GOVERNANCE_SOURCE = "postgres";
+    // The variable says on; governance serves the governance source's connections only, whatever it says.
+    process.env.ALLOW_CUSTOM_CONNECTIONS = "true";
+
+    const res = await GET();
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ customConnections: false, governance: true });
   });
 });
