@@ -323,10 +323,10 @@ describe("the error event reaches the boundary too", () => {
     socket: unknown;
     fail: (error: Error) => void;
     feed: (chunk: Buffer) => void;
-    yazilanlar: Buffer[];
+    written: Buffer[];
   } {
     const handlers: Record<string, ((arg: never) => void)[]> = {};
-    const yazilanlar: Buffer[] = [];
+    const written: Buffer[] = [];
     const socket = {
       on(event: string, listener: (arg: never) => void) {
         (handlers[event] ??= []).push(listener);
@@ -339,7 +339,7 @@ describe("the error event reaches the boundary too", () => {
         return socket;
       },
       write(chunk: Buffer) {
-        yazilanlar.push(chunk);
+        written.push(chunk);
         return true;
       },
       destroy() {
@@ -349,7 +349,7 @@ describe("the error event reaches the boundary too", () => {
     };
     return {
       socket,
-      yazilanlar,
+      written,
       fail: (error: Error) => {
         for (const listener of handlers.error ?? []) (listener as (e: Error) => void)(error);
       },
@@ -425,14 +425,14 @@ describe("the error event reaches the boundary too", () => {
     expect(() => exchangeOnce(fake.socket as never, write, { expect: EXPECT, timeoutMs: 5000 })).toThrow(
       ModbusValveDefect,
     );
-    expect(fake.yazilanlar).toHaveLength(0);
+    expect(fake.written).toHaveLength(0);
   });
 
   test("the control: an allowed read DOES reach the socket, so the test above is not vacuous", () => {
     const fake = emitterSocket();
     void exchangeOnce(fake.socket as never, request(), { expect: EXPECT, timeoutMs: 5000 }).catch(() => undefined);
-    expect(fake.yazilanlar).toHaveLength(1);
-    expect(fake.yazilanlar[0]?.[7]).toBe(3);
+    expect(fake.written).toHaveLength(1);
+    expect(fake.written[0]?.[7]).toBe(3);
   });
 
   test("an unreadable frame is a ConnectionError naming the endpoint, not a bare Error", () => {
