@@ -283,7 +283,7 @@ The first is a file that must load a module before anything else does:
   files in the order they are listed.
 - It used to hold by accident: nothing else under `tests/unit` imported the factory.
   `tests/isolated/exports-shim.test.ts` had already been moved out for the same reason. #789 added
-  two `tests/unit` files that construct all seventeen providers through the real factory, and a
+  two `tests/unit` files that construct every provider through the real factory, and a
   fleet census cannot do its job without importing it, so the accident ran out.
 
 The second is the mirror image: a file that must read a module the rest of a layer replaces.
