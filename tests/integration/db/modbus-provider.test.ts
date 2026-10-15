@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { createServer, type Server, type Socket } from "node:net";
+import { createServer, Socket, type Server } from "node:net";
 import { ModbusProvider } from "@/lib/db/providers/industrial/modbus/index";
 import { MODBUS_OBJECT_KINDS } from "@/lib/db/providers/industrial/modbus/objects";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
@@ -170,7 +170,7 @@ async function arrives(what: () => boolean, budgetMs = 1000): Promise<void> {
 function hmiRead(port: number, budgetMs: number): Promise<{ answeredInMs: number } | "unanswered"> {
   return new Promise((resolve) => {
     const started = Date.now();
-    const socket = new (require("node:net").Socket)() as Socket;
+    const socket = new Socket();
     const give = (outcome: { answeredInMs: number } | "unanswered") => {
       socket.destroy();
       resolve(outcome);
@@ -316,7 +316,7 @@ describe("nothing is held open between reads, which is what a single-client devi
     // That client is still open, so a second one must wait. `hmiRead` opens its own socket and
     // never closes the first.
     const blocked = await new Promise<"unanswered" | { answeredInMs: number }>((resolve) => {
-      const first = new (require("node:net").Socket)() as Socket;
+      const first = new Socket();
       first.connect(dev.port, "127.0.0.1", () => {
         void hmiRead(dev.port, 400).then((outcome) => {
           first.destroy();
