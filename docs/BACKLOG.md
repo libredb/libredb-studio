@@ -1837,7 +1837,7 @@ Not fixed there: the change is to the adapter's log-dir read, whose error table 
 
 ### D126. Concurrent first acquisitions of one connection and profile each open a provider
 
-`acquireExecutionProfileProvider` (`src/lib/db/factory.ts:1086-1197`) checks the profiled cache, and on a miss constructs and connects a provider, then stores it (`:1193`).
+`acquireExecutionProfileProvider` in `src/lib/db/factory.ts` checks the profiled cache (`profiledProviderCache`), and on a miss constructs and connects a provider, then stores it there.
 Two callers that miss at the same time each construct one, and the later store overwrites the earlier entry, so the earlier provider stays connected with nothing left to close it.
 The editor and agent paths reach this function the same way.
 `/api/mcp` avoids it on its own side, with an in-flight map keyed on the exported `profiledCacheKey` (`src/lib/mcp/context.ts`).
@@ -5900,8 +5900,8 @@ Reading CockroachDB sessions from `crdb_internal.cluster_sessions` instead of an
 
 ### DOC12. The FerretDB compatibility entry omits Check Collection, views and Compact, and a maintenance request has no deadline
 
-`src/lib/db/compatibility.ts:752-762` lists FerretDB as `tier: "full"` with three caveats, all about sign-in, version and deployment.
-Measured on FerretDB 2.7.0 (`ghcr.io/ferretdb/ferretdb:latest` over `postgres-documentdb`): Operations > Check Collection answers HTTP 500 `no such command: 'dbCheck'`; a view created in mongosh is listed and counted as an empty collection (count 0); and Run Compact never returns, a self-deadlock in FerretDB itself, so the button stays disabled because `/api/db/maintenance` (`src/app/api/db/maintenance/route.ts`, called from `src/hooks/use-monitoring-data.ts:222` and `:259`) sets no deadline on the operation.
+The FerretDB entry of `WIRE_COMPATIBLE_ENGINES` in `src/lib/db/compatibility.ts` lists it as `tier: "full"` with three caveats, all about sign-in, version and deployment.
+Measured on FerretDB 2.7.0 (`ghcr.io/ferretdb/ferretdb:latest` over `postgres-documentdb`): Operations > Check Collection answers HTTP 500 `no such command: 'dbCheck'`; a view created in mongosh is listed and counted as an empty collection (count 0); and Run Compact never returns, a self-deadlock in FerretDB itself, so the button stays disabled because `/api/db/maintenance` (`src/app/api/db/maintenance/route.ts`, called from `killSession` and `runMaintenanceOutcome` in `src/hooks/use-monitoring-data.ts`) sets no deadline on the operation.
 
 Found by the end-to-end test pass of 2026-10-03 and 2026-10-04.
 

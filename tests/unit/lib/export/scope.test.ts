@@ -163,7 +163,8 @@ describe("describeExportScope", () => {
 
   /**
    * A result that fit inside the route's bound has carried `wasLimited: false` since
-   * `src/app/api/db/query/route.ts:319` set it from the probe.
+   * `POST /api/db/query` (`src/app/api/db/query/route.ts`) set it from the probe row, which
+   * `pageOfProbe` reads.
    */
   test("a limit the result fit inside is not a shortfall", () => {
     const scope = describeExportScope(
