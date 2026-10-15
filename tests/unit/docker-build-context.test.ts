@@ -9,7 +9,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join, normalize, relative } from "node:path";
+import nodePath, { join, posix, win32 } from "node:path";
 
 const ROOT = join(import.meta.dir, "..", "..");
 
@@ -41,10 +41,18 @@ const tsconfig = JSON.parse(readFileSync(join(ROOT, "tsconfig.json"), "utf8")) a
 const includes = tsconfig.include.map((pattern) => new Bun.Glob(pattern));
 const excludes = tsconfig.exclude.map((pattern) => new Bun.Glob(pattern));
 
+/**
+ * The path of `file` relative to `root` with "/" on every platform, as .dockerignore, tsconfig.json and the cases below
+ * spell paths: `path.relative` joins with "\" on Windows, which `ignored` does not split on and no "/" literal equals.
+ */
+function contextPath(root: string, file: string, paths: typeof posix = nodePath): string {
+  return paths.relative(root, file).split(paths.sep).join("/");
+}
+
 /** The files of the Docker build context that tsconfig.json includes, so the ones `next build` type-checks. */
 function typeCheckedContextFiles(dir = ROOT, found: string[] = []): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const path = relative(ROOT, join(dir, entry.name));
+    const path = contextPath(ROOT, join(dir, entry.name));
     if (entry.name === ".git" || ignored(path) || excludes.some((glob) => glob.match(path))) continue;
     if (entry.isDirectory()) typeCheckedContextFiles(join(dir, entry.name), found);
     else if (includes.some((glob) => glob.match(path))) found.push(path);
@@ -54,11 +62,14 @@ function typeCheckedContextFiles(dir = ROOT, found: string[] = []): string[] {
 
 const EXTENSIONS = ["", ".ts", ".tsx", ".mts", ".d.ts", ".js", ".mjs", ".json", "/index.ts", "/index.tsx"];
 
-/** The repository path an import specifier names, or undefined for a package import. */
+/**
+ * The repository path an import specifier names, or undefined for a package import. `file` and the specifier both
+ * use "/", so the target is resolved with `path.posix` and keeps "/" on every platform.
+ */
 function importTarget(file: string, specifier: string): string | undefined {
   let base: string;
-  if (specifier.startsWith("@/")) base = join("src", specifier.slice(2));
-  else if (specifier.startsWith(".")) base = normalize(join(file, "..", specifier));
+  if (specifier.startsWith("@/")) base = posix.join("src", specifier.slice(2));
+  else if (specifier.startsWith(".")) base = posix.join(file, "..", specifier);
   else return undefined;
   const existing = EXTENSIONS.map((extension) => base + extension).find((candidate) => {
     const path = join(ROOT, candidate);
@@ -78,6 +89,14 @@ describe(".dockerignore keeps every file next build type-checks resolvable", () 
     expect(files).toContain("next.config.ts");
     expect(files).toContain("scripts/generate-governance-manifest.ts");
     expect(files.some((file) => file.startsWith("tests/"))).toBe(false);
+  });
+
+  test("a path the walk takes on Windows compares as the / path the patterns and these cases spell", () => {
+    const root = "D:\\a\\libredb-studio\\libredb-studio";
+    const onWindows = (...segments: string[]) => contextPath(root, win32.join(root, ...segments), win32);
+    expect(onWindows("src", "proxy.ts")).toBe("src/proxy.ts");
+    expect(onWindows("src", "app", "admin", "audit", "page.tsx")).toBe("src/app/admin/audit/page.tsx");
+    expect(ignored(onWindows("tests", "helpers", "governance", "lsb1-seal.ts"))).toBe(true);
   });
 
   test("a file the context drops is reported through its parent directory or its own pattern", () => {
