@@ -12,13 +12,14 @@
 import type { AdmissionSkip, AdmittedConnection } from "./admission";
 import type { SNAPSHOT_READS } from "./contract";
 import type { EnvelopeCode } from "./hpke";
+import type { RuntimeSettings } from "./settings";
 
 /** A row of one snapshot read, as the governance source returned it: every column Studio reads, none trusted yet. */
 type RowOf<Name extends (typeof SNAPSHOT_READS)[number]["object"]> = Readonly<
   Record<Extract<(typeof SNAPSHOT_READS)[number], { readonly object: Name }>["columns"][number], unknown>
 >;
 
-/** A row of `settings_v1`, kept as read: the settings store validates it against the registry. */
+/** A row of `settings_v1`, as read: the settings store validates it against the registry. */
 export type SettingRow = RowOf<"settings_v1">;
 
 /** A row of `seal_canary_v1`, as read: the loader opens its envelope. */
@@ -52,7 +53,8 @@ export interface GovernanceSnapshot {
   readonly grants: ReadonlyMap<string, ReadonlyMap<string, EffectiveGrant>>;
   /** The latest `revoked_before` of each subject, in epoch milliseconds. */
   readonly revocations: ReadonlyMap<string, number>;
-  readonly settings: readonly SettingRow[];
+  /** The valid runtime settings, and the keys the settings store ignored. */
+  readonly settings: RuntimeSettings;
   /** The result of the canary of each key id with one, as the heartbeat and the admin status report it. */
   readonly canary: Readonly<Record<string, CanaryResult>>;
 }

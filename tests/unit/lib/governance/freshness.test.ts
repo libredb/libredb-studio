@@ -34,7 +34,7 @@ const snapshotAt = (loadedAt: number): GovernanceSnapshot => ({
   skipped: [],
   grants: new Map(),
   revocations: new Map(),
-  settings: [],
+  settings: { values: new Map(), ignored: [], malformed: 0 },
   canary: {},
 });
 

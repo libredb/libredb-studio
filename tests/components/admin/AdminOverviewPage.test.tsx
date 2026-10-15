@@ -75,6 +75,8 @@ const GOVERNANCE = {
       skipped: [],
       keyringKids: ["kid-0123456789abcdef"],
       canary: { "kid-0123456789abcdef": "ok" },
+      settings: [{ key: "ai.enabled", source: "default" }],
+      ignoredSettings: [],
       listener: {
         state: "listening",
         since: "2026-10-15T07:59:00.000Z",

@@ -10,6 +10,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } 
 import type { AdmittedConnection } from "@/lib/governance/admission";
 import { resetGovernanceKeyring } from "@/lib/governance/keyring";
 import type { GovernanceListenerStatus } from "@/lib/governance/listener";
+import type { GovernanceStatus } from "@/lib/governance/status";
 import {
   type GovernanceSnapshot,
   recordGovernanceFailure,
@@ -62,7 +63,7 @@ const snapshotAt = (loadedAt: number): GovernanceSnapshot => ({
   ],
   grants: new Map(),
   revocations: new Map(),
-  settings: [],
+  settings: { values: new Map(), ignored: [], malformed: 0 },
   canary: { [KEY_A.kid]: "ok", [KEY_B.kid]: "AUTH_FAILED" },
 });
 
@@ -104,6 +105,18 @@ afterAll(() => {
   removeKeyringFiles();
 });
 
+/** Where each key's value comes from while the control plane set none: its environment variable or Studio's default. */
+const NO_RUNTIME_VALUES: GovernanceStatus["settings"] = [
+  { key: "ai.enabled", source: "default" },
+  { key: "agent.enabled", source: "environment" },
+  { key: "mcp.enabled", source: "environment" },
+  { key: "query.timeoutMs", source: "default" },
+  { key: "provider.poolMaxPerUser", source: "default" },
+  { key: "queryLog.statementCapture", source: "default" },
+  { key: "queryLog.maxStatementBytes", source: "default" },
+  { key: "queryLog.onSinkFailure", source: "default" },
+];
+
 describe("governanceStatus", () => {
   test("before any load it reports loading, the supported versions and the keyring kids, and nothing else", () => {
     expect(governanceStatus(T)).toEqual({
@@ -117,6 +130,8 @@ describe("governanceStatus", () => {
       skipped: [],
       keyringKids: [KEY_A.kid, KEY_B.kid],
       canary: null,
+      settings: NO_RUNTIME_VALUES,
+      ignoredSettings: [],
       listener: null,
     });
   });
@@ -145,6 +160,8 @@ describe("governanceStatus", () => {
       ],
       keyringKids: [KEY_A.kid, KEY_B.kid],
       canary: { [KEY_A.kid]: "ok", [KEY_B.kid]: "AUTH_FAILED" },
+      settings: NO_RUNTIME_VALUES,
+      ignoredSettings: [],
       listener: null,
     });
   });

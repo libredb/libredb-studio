@@ -11,7 +11,8 @@
  * process's keyring. Each grant row on an admitted connection becomes the effective grant of its subject: `write` only
  * where the row says write and this instance opened the write envelope, and `read` otherwise, with its `expires_at`
  * kept for a check at every decision (`effectiveGrant()` in `state.ts`). Revocations are kept as the latest
- * `revoked_before` of each subject, and the settings rows as read, for the store that checks them.
+ * `revoked_before` of each subject, and the settings rows go through the settings store (`settings.ts`), which keeps
+ * the valid values and reports the keys it ignored as SETTING_INVALID skips.
  *
  * Every load also opens the seal canary of each key id (spec 8.4): the envelope of `{"user":"libredb-canary"}` that the
  * control plane sealed for connection `canary`, level `read`, engine `canary` and definition `{}`. The snapshot keeps
@@ -35,6 +36,7 @@ import { IncompatibleContractError, KeyringUnavailableError, loadFailureOf, Snap
 import { governanceKeyring } from "./keyring";
 import { SealedSecretError, type SecretBinding } from "./lsb1";
 import { openGovernedSecret } from "./secrets";
+import { validateSettings } from "./settings";
 import {
   type CanaryResult,
   type CanaryRow,
@@ -245,12 +247,14 @@ function buildSnapshot(rows: SourceRows, loadedAt: number): GovernanceSnapshot {
   const grants = effectiveGrants(rows.grants, connections);
   const revocations = latestRevocations(rows.revocations);
   const canary = canaryResults(rows.canaries);
-  if (grants.ignored > 0 || revocations.ignored > 0 || canary.ignored > 0) {
+  const settings = validateSettings(rows.settings, rows.contractVersion);
+  if (grants.ignored > 0 || revocations.ignored > 0 || canary.ignored > 0 || settings.malformed > 0) {
     logger.warn("Governance rows ignored", {
       route: ROUTE,
       grants: grants.ignored,
       revocations: revocations.ignored,
       canaries: canary.ignored,
+      settings: settings.malformed,
     });
   }
   return {
@@ -261,7 +265,7 @@ function buildSnapshot(rows: SourceRows, loadedAt: number): GovernanceSnapshot {
     skipped,
     grants: grants.bySubject,
     revocations: revocations.bySubject,
-    settings: rows.settings,
+    settings,
     canary: canary.bySubject,
   };
 }
@@ -305,8 +309,8 @@ function logLoaded(snapshot: GovernanceSnapshot, previous: GovernanceState): voi
   // The first load, and the first after a failure, are news; a routine reload every GOVERNANCE_REFRESH_MS is not.
   if (previous.snapshot === null || previous.failure !== null) logger.info("Governance snapshot loaded", context);
   else logger.debug("Governance snapshot reloaded", context);
-  const skipped = snapshot.skipped.map(skipLine);
-  const before = (previous.snapshot?.skipped ?? []).map(skipLine);
+  const skipped = [...snapshot.skipped.map(skipLine), ...snapshot.settings.ignored];
+  const before = [...(previous.snapshot?.skipped ?? []).map(skipLine), ...(previous.snapshot?.settings.ignored ?? [])];
   if (skipped.length > 0 && JSON.stringify(skipped) !== JSON.stringify(before)) {
     logger.warn("Governance rows skipped", { route: ROUTE, skipped });
   }

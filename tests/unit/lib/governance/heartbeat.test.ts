@@ -30,6 +30,7 @@ const { closeGovernancePool } = await import("@/lib/governance/db");
 const { governanceFreshness } = await import("@/lib/governance/freshness");
 const { recordGovernanceSnapshot, resetGovernanceState } = await import("@/lib/governance/state");
 const { resetGovernanceKeyring } = await import("@/lib/governance/keyring");
+const { validateSettings } = await import("@/lib/governance/settings");
 const { logger } = await import("@/lib/logger");
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
@@ -116,7 +117,7 @@ function snapshot(overrides: Partial<GovernanceSnapshot> = {}): GovernanceSnapsh
     skipped: [skip("billing", "UNKNOWN_KID"), skip("crm")],
     grants: new Map(),
     revocations: new Map(),
-    settings: [],
+    settings: { values: new Map(), ignored: [], malformed: 0 },
     canary: { [KEY_A.kid]: "ok", [KEY_B.kid]: "UNKNOWN_KID" },
     ...overrides,
   };
@@ -207,6 +208,29 @@ describe("one beat", () => {
     expect(validatorFor("skipped")(JSON.parse(beat.skipped as string))).toBe(true);
     expect(validatorFor("sink")(JSON.parse(beat.sink as string))).toBe(true);
     expect(validatorFor("canary")(JSON.parse(beat.canary as string))).toBe(true);
+  });
+
+  test("a SETTING_INVALID entry is a setting skip that validates against the manifest's skipped shape and carries no value", async () => {
+    const value = "SETTING-VALUE-CANARY-7f3e";
+    const settings = validateSettings(
+      [
+        { key: "query.timeoutMs", value, updated_at: new Date(T) },
+        { key: "queryLog.onSinkFailure", value: "refuse", updated_at: new Date(T) },
+      ],
+      1,
+    );
+    recordGovernanceSnapshot(snapshot({ settings }));
+
+    await sendGovernanceHeartbeat();
+
+    const sent = JSON.parse(beats()[0].skipped as string) as unknown[];
+    expect(sent).toEqual([
+      { kind: "connection", id: "billing", level: "read", code: "READ_SECRET_UNOPENABLE" },
+      { kind: "connection", id: "crm", path: "password", code: "DEFINITION_HAS_SECRET" },
+      { kind: "setting", id: "query.timeoutMs", code: "SETTING_INVALID" },
+    ]);
+    expect(validatorFor("skipped")(sent)).toBe(true);
+    expect(beats()[0].skipped as string).not.toContain(value);
   });
 
   test("more than 500 skipped rows are cut to 500", async () => {

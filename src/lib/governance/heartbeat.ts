@@ -5,14 +5,16 @@
  *
  * A beat reports the instance id (`GOVERNANCE_INSTANCE_ID`), the Studio version, the contract versions Studio supports
  * and the one in use (0 while none is negotiated), the key ids of the keyring, the listener's state and its last
- * change notification, the snapshot's load time, the rows admission skipped, the query event sink's state and the
- * result of each key id's seal canary. Every beat sends the process start time as `started_at`, which only the first
- * insert writes; the update of every later beat sets each reported column and `last_seen_at = now()`, so a restart
- * with the same instance id updates the same row and a control plane reads liveness from `last_seen_at`.
+ * change notification, the snapshot's load time, the rows admission skipped and the setting keys the settings store
+ * ignored, the query event sink's state and the result of each key id's seal canary. Every beat sends the process
+ * start time as `started_at`, which only the first insert writes; the update of every later beat sets each reported
+ * column and `last_seen_at = now()`, so a restart with the same instance id updates the same row and a control plane
+ * reads liveness from `last_seen_at`.
  *
  * Like the admin status, a beat carries ids, levels, paths and codes only: a skipped row goes out as the item
  * admission built, without the envelope code beside it, and never with a definition value, an envelope or a
- * credential.
+ * credential. An ignored setting goes out as `{kind: "setting", id: <key>, code: "SETTING_INVALID"}`, never with its
+ * value.
  *
  * `startGovernance()` starts the beats. A failed beat is logged at most once a minute and touches nothing else: the
  * freshness of the snapshot depends on the loads alone, so a heartbeat refused by the database never stops data routes.
@@ -79,7 +81,12 @@ function heartbeatParameters(): unknown[] {
     last_notification_at: listener.lastNotificationAt === null ? null : new Date(listener.lastNotificationAt),
     snapshot_loaded_at: snapshot === null ? null : new Date(snapshot.loadedAt),
     // `pg` would send an array as a PostgreSQL array, so the JSON columns go out as their JSON text.
-    skipped: JSON.stringify((snapshot?.skipped ?? []).slice(0, SKIPPED_MAX).map(({ item }) => item)),
+    skipped: JSON.stringify(
+      [...(snapshot?.skipped ?? []).map(({ item }) => item), ...(snapshot?.settings.ignored ?? [])].slice(
+        0,
+        SKIPPED_MAX,
+      ),
+    ),
     sink: JSON.stringify(IDLE_SINK),
     canary: JSON.stringify(snapshot?.canary ?? {}),
     started_at: PROCESS_STARTED_AT,
