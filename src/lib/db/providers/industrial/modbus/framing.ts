@@ -39,13 +39,16 @@ export interface InboundFrame {
  * Pulls complete frames out of a growing buffer. Refuses at the header: a frame whose length field
  * is out of range is a defect in the peer, and nothing after that header is read.
  */
-export class FrameReader {
-  private buffer: Buffer = Buffer.alloc(0);
+export interface FrameReader {
+  /** How many bytes are held. A caller asserts this does not grow with what a peer sends. */
+  readonly buffered: number;
+  push(chunk: Buffer): InboundFrame[];
+}
+
+export function createFrameReader(): FrameReader {
+  let buffer: Buffer = Buffer.alloc(0);
 
   /** How many bytes are held. A caller asserts this does not grow with what a peer sends. */
-  get buffered(): number {
-    return this.buffer.length;
-  }
 
   /**
    * Takes a chunk and returns the complete frames in it.
@@ -61,48 +64,48 @@ export class FrameReader {
    * A peer that sends more than one frame in a write is served from the same chunk without copying
    * it: the loop walks an offset instead.
    */
-  push(chunk: Buffer): InboundFrame[] {
+  const push = (chunk: Buffer): InboundFrame[] => {
     const frames: InboundFrame[] = [];
     let offset = 0;
     for (;;) {
       // Fill the header first, taking only the bytes still missing from it.
-      if (this.buffer.length < MBAP_HEADER_BYTES) {
-        const need = MBAP_HEADER_BYTES - this.buffer.length;
+      if (buffer.length < MBAP_HEADER_BYTES) {
+        const need = MBAP_HEADER_BYTES - buffer.length;
         const take = Math.min(need, chunk.length - offset);
         if (take <= 0) return frames;
-        this.buffer = Buffer.concat([this.buffer, chunk.subarray(offset, offset + take)]);
+        buffer = Buffer.concat([buffer, chunk.subarray(offset, offset + take)]);
         offset += take;
-        if (this.buffer.length < MBAP_HEADER_BYTES) return frames;
+        if (buffer.length < MBAP_HEADER_BYTES) return frames;
       }
 
-      const protocolId = this.buffer.readUInt16BE(2);
+      const protocolId = buffer.readUInt16BE(2);
       if (protocolId !== PROTOCOL_ID) {
-        this.buffer = Buffer.alloc(0);
+        buffer = Buffer.alloc(0);
         throw new ModbusFramingError(`The device sent protocol id ${protocolId}, and Modbus TCP defines only 0.`);
       }
 
-      const length = this.buffer.readUInt16BE(4);
+      const length = buffer.readUInt16BE(4);
       if (length < MBAP_LENGTH_MIN || length > MBAP_LENGTH_MAX) {
         // Dropped rather than kept: the frame is unreadable, so holding its bytes serves nothing
         // and holding them is the fault this comment describes.
-        this.buffer = Buffer.alloc(0);
+        buffer = Buffer.alloc(0);
         throw new ModbusFramingError(
           `The device sent an MBAP length of ${length}, outside the ${MBAP_LENGTH_MIN} to ${MBAP_LENGTH_MAX} a Modbus TCP frame allows. Nothing after the header was read.`,
         );
       }
 
       const total = MBAP_HEADER_BYTES + length - 1;
-      if (this.buffer.length < total) {
-        const need = total - this.buffer.length;
+      if (buffer.length < total) {
+        const need = total - buffer.length;
         const take = Math.min(need, chunk.length - offset);
         if (take <= 0) return frames;
-        this.buffer = Buffer.concat([this.buffer, chunk.subarray(offset, offset + take)]);
+        buffer = Buffer.concat([buffer, chunk.subarray(offset, offset + take)]);
         offset += take;
-        if (this.buffer.length < total) return frames;
+        if (buffer.length < total) return frames;
       }
 
-      const frame = this.buffer.subarray(0, total);
-      this.buffer = Buffer.alloc(0);
+      const frame = buffer.subarray(0, total);
+      buffer = Buffer.alloc(0);
 
       const functionCode = frame[MBAP_HEADER_BYTES] ?? 0;
       const isException = (functionCode & 0x80) !== 0;
@@ -115,7 +118,13 @@ export class FrameReader {
         exceptionCode: isException ? frame[MBAP_HEADER_BYTES + 1] : undefined,
       });
     }
-  }
+  };
+  return {
+    get buffered() {
+      return buffer.length;
+    },
+    push,
+  };
 }
 
 export interface Expectation {

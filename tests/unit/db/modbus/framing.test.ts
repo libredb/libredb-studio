@@ -9,7 +9,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import {
-  FrameReader,
+  createFrameReader,
   MAX_ADU_BYTES,
   matchToRequest,
   ModbusFramingError,
@@ -32,7 +32,7 @@ const expect3 = { transactionId: 1, unitId: 1, functionCode: 3, quantity: 2 };
 describe("the bound is applied at the header", () => {
   for (const length of [0, 1, 2, 255, 0x1000, 0xffff]) {
     test(`an MBAP length of ${length} is refused and nothing is held`, () => {
-      const reader = new FrameReader();
+      const reader = createFrameReader();
       const head = Buffer.alloc(7);
       head.writeUInt16BE(1, 0);
       head.writeUInt16BE(0, 2);
@@ -47,7 +47,7 @@ describe("the bound is applied at the header", () => {
   }
 
   test("a well formed answer after a refused header is still read", () => {
-    const reader = new FrameReader();
+    const reader = createFrameReader();
     const head = Buffer.alloc(7);
     head.writeUInt16BE(1, 0);
     head.writeUInt16BE(0, 2);
@@ -69,7 +69,7 @@ describe("the bound is applied at the header", () => {
   });
 
   test("memory does not grow with what a peer sends under a huge length", () => {
-    const reader = new FrameReader();
+    const reader = createFrameReader();
     const head = Buffer.alloc(7);
     head.writeUInt16BE(1, 0);
     head.writeUInt16BE(0, 2);
@@ -80,7 +80,7 @@ describe("the bound is applied at the header", () => {
   });
 
   test("a protocol id other than zero is refused", () => {
-    const reader = new FrameReader();
+    const reader = createFrameReader();
     const f = readOf(2);
     f.writeUInt16BE(1, 2);
     expect(() => reader.push(f)).toThrow(/protocol id/);
@@ -89,7 +89,7 @@ describe("the bound is applied at the header", () => {
   });
 
   test("a partial header is held and nothing is produced", () => {
-    const reader = new FrameReader();
+    const reader = createFrameReader();
     expect(reader.push(Buffer.alloc(6))).toEqual([]);
     expect(reader.buffered).toBe(6);
   });
@@ -97,7 +97,7 @@ describe("the bound is applied at the header", () => {
 
 describe("reassembly", () => {
   test("one answer split over two writes produces one frame", () => {
-    const reader = new FrameReader();
+    const reader = createFrameReader();
     const f = readOf(2);
     expect(reader.push(f.subarray(0, 5))).toEqual([]);
     const frames = reader.push(f.subarray(5));
@@ -106,14 +106,14 @@ describe("reassembly", () => {
   });
 
   test("two answers in one write produce two frames and leave nothing held", () => {
-    const reader = new FrameReader();
+    const reader = createFrameReader();
     const frames = reader.push(Buffer.concat([readOf(1), readOf(1)]));
     expect(frames).toHaveLength(2);
     expect(reader.buffered).toBe(0);
   });
 
   test("an exception answer is recognised and its code read", () => {
-    const reader = new FrameReader();
+    const reader = createFrameReader();
     const frames = reader.push(answer(1, 1, 0x83, Buffer.from([0x02])));
     expect(frames[0]?.isException).toBe(true);
     expect(frames[0]?.functionCode).toBe(3);
@@ -140,7 +140,7 @@ describe("a payload that looks like a header is still payload", () => {
     // searching reader would lock onto.
     const payload = Buffer.from([0x00, 0x01, 0x00, 0x00, 0x00, 0x06, 0x01, 0x03]);
     const frame = answer(7, 1, 3, Buffer.concat([Buffer.from([payload.length]), payload]));
-    const reader = new FrameReader();
+    const reader = createFrameReader();
     const frames = reader.push(frame);
     expect(frames).toHaveLength(1);
     expect(frames[0]?.transactionId).toBe(7);
@@ -152,7 +152,7 @@ describe("a payload that looks like a header is still payload", () => {
     const second = answer(2, 1, 3, Buffer.from([2, 0x12, 0x34]));
     // The first frame's payload CONTAINS the second frame's header bytes, verbatim.
     const first = answer(1, 1, 3, Buffer.concat([Buffer.from([second.length]), second]));
-    const reader = new FrameReader();
+    const reader = createFrameReader();
     const frames = reader.push(Buffer.concat([first, second]));
     expect(frames.map((f) => f.transactionId)).toEqual([1, 2]);
     expect(reader.buffered).toBe(0);
@@ -162,7 +162,7 @@ describe("a payload that looks like a header is still payload", () => {
     const second = answer(2, 1, 3, Buffer.from([2, 0x12, 0x34]));
     const first = answer(1, 1, 3, Buffer.concat([Buffer.from([second.length]), second]));
     const both = Buffer.concat([first, second]);
-    const reader = new FrameReader();
+    const reader = createFrameReader();
     const seen: number[] = [];
     for (const byte of both) seen.push(...reader.push(Buffer.from([byte])).map((f) => f.transactionId));
     expect(seen).toEqual([1, 2]);
@@ -171,7 +171,7 @@ describe("a payload that looks like a header is still payload", () => {
 });
 
 describe("a frame is checked against the request", () => {
-  const one = (buf: Buffer): InboundFrame => new FrameReader().push(buf)[0] as InboundFrame;
+  const one = (buf: Buffer): InboundFrame => createFrameReader().push(buf)[0] as InboundFrame;
 
   test("a stray transaction id is DISCARDED, not failed", () => {
     const match = matchToRequest(one(answer(999, 1, 3, Buffer.from([4, 0, 0, 0, 0]))), expect3);
@@ -179,7 +179,7 @@ describe("a frame is checked against the request", () => {
   });
 
   test("the real answer after a stray one is still matched", () => {
-    const reader = new FrameReader();
+    const reader = createFrameReader();
     const frames = reader.push(Buffer.concat([answer(999, 1, 3, Buffer.from([2, 0, 0])), readOf(2)]));
     expect(matchToRequest(frames[0] as InboundFrame, expect3).kind).toBe("discard");
     expect(matchToRequest(frames[1] as InboundFrame, expect3).kind).toBe("answer");
@@ -257,7 +257,7 @@ function regAnswer(tid: number, regs: number): Buffer {
 
 describe("fragmentation and the growing bound", () => {
   test("byte at a time: no frame is lost and nothing is left held", () => {
-    const r = new FrameReader();
+    const r = createFrameReader();
     const wire = Buffer.concat([regAnswer(1, 10), regAnswer(2, 10), regAnswer(3, 10)]);
     const got: InboundFrame[] = [];
     for (const byte of wire) got.push(...r.push(Buffer.from([byte])));
@@ -267,7 +267,7 @@ describe("fragmentation and the growing bound", () => {
 
   test("split at every point inside the seven byte header", () => {
     for (let cut = 1; cut <= 7; cut++) {
-      const r = new FrameReader();
+      const r = createFrameReader();
       const w = regAnswer(9, 5);
       const a = r.push(w.subarray(0, cut));
       const b = r.push(w.subarray(cut));
@@ -276,7 +276,7 @@ describe("fragmentation and the growing bound", () => {
   });
 
   test("one frame plus the first byte of the next", () => {
-    const r = new FrameReader();
+    const r = createFrameReader();
     const w = Buffer.concat([regAnswer(1, 4), regAnswer(2, 4)]);
     const first = regAnswer(1, 4).length;
     const a = r.push(w.subarray(0, first + 1));
@@ -289,7 +289,7 @@ describe("fragmentation and the growing bound", () => {
 
   test("chunk sizes that do not align with frame boundaries", () => {
     for (const size of [1, 3, 7, 13, 64, 100, 127, 128, 129, 255, 256, 257]) {
-      const r = new FrameReader();
+      const r = createFrameReader();
       const wire = Buffer.concat(Array.from({ length: 6 }, (_, i) => regAnswer(i + 1, 20)));
       const got: InboundFrame[] = [];
       for (let o = 0; o < wire.length; o += size) got.push(...r.push(wire.subarray(o, o + size)));
@@ -299,7 +299,7 @@ describe("fragmentation and the growing bound", () => {
   });
 
   test("the bound holds while the buffer GROWS, not only at the end", () => {
-    const r = new FrameReader();
+    const r = createFrameReader();
     const head = Buffer.alloc(7);
     head.writeUInt16BE(1, 0);
     head.writeUInt16BE(0, 2);
@@ -310,7 +310,7 @@ describe("fragmentation and the growing bound", () => {
   });
 
   test("a stream with no valid header does not grow the buffer without limit", () => {
-    const r = new FrameReader();
+    const r = createFrameReader();
     let threw = false;
     try {
       for (let i = 0; i < 200; i++) r.push(Buffer.alloc(1024, 0xaa));

@@ -33,7 +33,7 @@ import { expectationOf } from "./pdu";
 import type { Wire } from "./session";
 import { assertOutboundAllowed } from "./valve";
 import {
-  FrameReader,
+  createFrameReader,
   matchToRequest,
   ModbusFramingError,
   type Exchange,
@@ -239,7 +239,7 @@ export function exchangeOnce(
   const where = options.endpoint ?? { host: "the device", port: 0 };
   const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
   return new Promise<Exchange>((resolve, reject) => {
-    const reader = new FrameReader();
+    const reader = createFrameReader();
     let settled = false;
     const done = (fn: () => void) => {
       if (settled) return;

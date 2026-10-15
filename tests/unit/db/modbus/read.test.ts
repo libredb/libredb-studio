@@ -22,7 +22,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { MAX_IDENTIFICATION_ROUNDS } from "@/lib/db/providers/industrial/modbus/constants";
-import { FrameReader, type Exchange } from "@/lib/db/providers/industrial/modbus/framing";
+import { createFrameReader, type Exchange } from "@/lib/db/providers/industrial/modbus/framing";
 import type { ParsedMap } from "@/lib/db/providers/industrial/modbus/register-map";
 import { runRead, type Exchanger } from "@/lib/db/providers/industrial/modbus/read";
 import { QueryError } from "@/lib/db/errors";
@@ -36,7 +36,7 @@ function answer(pdu: Buffer, unitId = 1): Exchange {
   header.writeUInt16BE(0, 2);
   header.writeUInt16BE(pdu.length + 1, 4);
   header[6] = unitId;
-  const frames = new FrameReader().push(Buffer.concat([header, pdu]));
+  const frames = createFrameReader().push(Buffer.concat([header, pdu]));
   const frame = frames[0];
   if (frame === undefined) throw new Error("the test built a frame the reader could not read");
   return { kind: "answer", frame };
