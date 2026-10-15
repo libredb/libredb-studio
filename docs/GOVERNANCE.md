@@ -375,7 +375,7 @@ How an instance connects to the governance source:
 ## Admin status
 
 `GET /api/admin/governance` answers an administrator of Studio with the governance status of the instance, and the admin Overview page shows it.
-It names ids, levels, paths and codes only, never a definition value, an envelope, a credential or a statement:
+It names ids, levels, paths and codes only, never a definition value, an envelope, a credential or a statement, with one exception: the full message of the latest load failure, which only an administrator reads here.
 
 ```json
 {
@@ -385,10 +385,11 @@ It names ids, levels, paths and codes only, never a definition value, an envelop
     "contract": { "supported": [1], "published": [1], "active": 1 },
     "freshness": "degraded",
     "snapshot": { "loadedAt": "2026-10-15T08:00:00.000Z", "ageMs": 45000 },
-    "lastError": { "at": "2026-10-15T08:00:40.000Z", "kind": "transient", "code": "ECONNREFUSED" },
+    "lastError": { "at": "2026-10-15T08:00:40.000Z", "kind": "transient", "code": "ECONNREFUSED", "message": "connect ECONNREFUSED 10.0.0.5:5432" },
     "admittedConnections": 4,
     "skipped": [{ "kind": "connection", "id": "billing", "level": "read", "code": "READ_SECRET_UNOPENABLE", "envelopeCode": "UNKNOWN_KID" }],
     "keyringKids": ["<kid>"],
+    "canary": { "<kid>": "ok" },
     "listener": { "state": "listening", "since": "2026-10-15T07:30:00.000Z", "heldMs": 1845000, "lastNotificationAt": "2026-10-15T08:00:12.000Z" }
   }
 }
@@ -396,16 +397,19 @@ It names ids, levels, paths and codes only, never a definition value, an envelop
 
 - `freshness` is the state of [Freshness and readiness](#freshness-and-readiness), and `snapshot` is the snapshot in use with its age at the moment of the request, or null before the first successful load.
 - `contract.published` and `contract.active` come from the last successful load, and are null before one.
-- `lastError` is why the latest load failed, by its kind and its SQLSTATE or driver code, or null when it succeeded; the log line of that failure carries its full detail.
+- `lastError` is why the latest load failed, by its kind, its SQLSTATE or driver code and its full `message`, or null when it succeeded.
+  The message is the one the log line of that failure carries, the server's own words included, such as the role and the object a privilege is missing on.
+  The public `GET /api/ready` names the cause in Studio's own words only and never shows this message.
 - `skipped` lists each row, or write level of a row, that [row admission](#row-admission-and-skip-codes) left out, as the heartbeat reports it, plus the envelope code for an envelope that did not open.
 - `keyringKids` are the key ids of the keyring the instance opens envelopes with.
+- `canary` maps each key id with a [seal canary](#sealed-credentials-lsb1) to `ok` or the envelope code its canary failed with, as the heartbeat reports it, or is null before the first successful load.
 - `listener` is the [change notification](#change-notification) listener: its state, `since` when that state has held and `heldMs` for how long at the moment of the request, and `lastNotificationAt`, when the last `libredb_bridge` notification arrived, or null before the first.
   It is null only in a process where no listener runs.
 - With governance off the route answers `{ "governance": null }`, and a user who is not an administrator gets 403.
 
 ## Heartbeat
 
-Every 30 seconds each instance upserts its row of `bridge.studio_instances_v1`:
+Every 30 seconds each instance upserts its row of `bridge.studio_instances_v1`, the first time as soon as governance starts:
 
 ```sql
 INSERT INTO "bridge".studio_instances_v1 (instance_id, studio_version, supported_contracts, contract_version,
@@ -418,15 +422,18 @@ ON CONFLICT (instance_id) DO UPDATE SET studio_version = EXCLUDED.studio_version
        skipped = EXCLUDED.skipped, sink = EXCLUDED.sink, canary = EXCLUDED.canary, last_seen_at = now()
 ```
 
+- The parameters are bound in the order of the column list, `$1` to `$12`.
 - `instance_id` is `GOVERNANCE_INSTANCE_ID`, which matches `^[A-Za-z0-9._:-]{1,128}$` and stays the same across restarts, so a recreated container or pod updates the same row.
   An installer of a one-replica install sets it to `libredb-studio`, as the manifest's samples do.
 - The first beat writes `started_at`, the process start time.
   Every later beat sets each reported column and `last_seen_at = now()` and never changes `started_at`, so read liveness from `last_seen_at`.
+- `studio_version` is the version of the Studio build, and `supported_contracts` the contract versions it reads, `{1}` in this release.
 - `contract_version` is the negotiated version, or 0 while none is.
 - `keyring_kids` lists the key ids of Studio's keyring, at most 16.
 - `listener_state` is one of the listener states of [change notification](#change-notification).
 - `last_notification_at` changes only when a `libredb_bridge` notification arrives, never on the listener's own ping, so it proves delivery.
-- `snapshot_loaded_at` is the time of the last successful load.
+- `snapshot_loaded_at` is the time of the last successful load, or null before one.
+- A beat that fails, because the database is down or refuses the statement, is logged by the instance at most once a minute and changes nothing else: the freshness of the snapshot, and so whether data routes are served, depends on the loads alone.
 
 The three JSON columns have published shapes, which the manifest gives as JSON Schema with an example each.
 
@@ -442,16 +449,33 @@ An item is `{kind, id, level?, path?, code}`: `kind` is `connection` or `setting
 ```
 
 `sink` is the state of Studio's query event queue: events waiting, events dropped because the queue was full, events the database refused, the last successful flush, whether Studio is backing off, and the last SQLSTATE it saw.
+A Studio that sends no query events yet reports zero counters, a null `lastFlushAt` and `lastSqlstate`, and `backingOff` false.
 
 ```json
 { "queued": 12, "dropped": 0, "rejected": 1, "lastFlushAt": "2026-10-14T12:00:04.000Z", "backingOff": false, "lastSqlstate": "23514" }
 ```
 
 `canary` maps each key id with a canary to `ok` or the [envelope code](#sealed-credentials-lsb1) its canary failed with.
+It is `ok` only when the envelope opens to exactly `{"user":"libredb-canary"}`, and PLAINTEXT_INVALID when it opens to anything else.
+It is empty before the first successful load and while the governance source publishes no canary.
 
 ```json
 { "0123456789abcdef": "ok", "fedcba9876543210": "UNKNOWN_KID" }
 ```
+
+### Fleet view
+
+A control plane reads `bridge.studio_instance` to show its Studio instances:
+
+- An instance is live while `last_seen_at` is recent; one not seen for 2 minutes, four missed beats, is down.
+  Compare `last_seen_at` with the database's own `now()`, never with the control plane's clock.
+- `now() - started_at` is the instance's uptime, and a `started_at` that moves forward is a restart.
+- `now() - snapshot_loaded_at` is the age of the snapshot the instance serves; one older than twice `GOVERNANCE_REFRESH_MS` means its loads fail, and the instance's admin status names why.
+- `contract_version` 0 means the instance has not negotiated a version: it is still loading, or the governance source is misconfigured or incompatible.
+- `listener_state` other than `listening` means changes reach the instance only through its periodic reload.
+- A `canary` value other than `ok` means the control plane seals to a key this instance cannot use, so credentials sealed under that key id will not open there.
+- `skipped` lists the connections and settings the instance left out, with their codes.
+- A row of a retired instance stays until the control plane deletes it.
 
 ## Versioning and upgrade order
 

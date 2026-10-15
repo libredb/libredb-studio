@@ -7,7 +7,9 @@
  * `pg` is the fake of tests/helpers/governance/pg-fake.ts, and the timers are bun's fake timers, which move
  * `Date.now()` with them, so every interval is checked in virtual time. The change notification listener that
  * `startGovernance()` also starts never connects here unless a case lets it, so the other cases count the refresher's
- * loads alone; tests/unit/lib/governance/listener.test.ts drives the listener itself.
+ * loads alone; tests/unit/lib/governance/listener.test.ts drives the listener itself. The heartbeat it starts is
+ * replaced by counters here, because its beats would share the pool whose connections these cases count;
+ * tests/unit/lib/governance/heartbeat.test.ts drives the heartbeat itself.
  */
 import { afterAll, afterEach, beforeEach, describe, expect, jest, mock, spyOn, test } from "bun:test";
 import { keyringFileOf, removeKeyringFiles, testKey } from "../../../helpers/governance/keyring-file";
@@ -24,6 +26,16 @@ import {
 
 const realPg = await import("pg");
 mock.module("pg", () => ({ Pool: FakePool, Client: FakeListenerClient, types: realPg.types }));
+/** How many times the heartbeat was started and stopped. */
+const heartbeat = { starts: 0, stops: 0 };
+mock.module("@/lib/governance/heartbeat", () => ({
+  startGovernanceHeartbeat: () => {
+    heartbeat.starts += 1;
+  },
+  stopGovernanceHeartbeat: () => {
+    heartbeat.stops += 1;
+  },
+}));
 
 const { requestFreshGovernanceLoad, requestGovernanceLoad, startGovernance, stopGovernance } = await import(
   "@/lib/governance/start"
@@ -84,6 +96,8 @@ beforeEach(() => {
   fakePg.reset();
   attempts = [];
   up = true;
+  heartbeat.starts = 0;
+  heartbeat.stops = 0;
   fakePg.connecting = async () => {
     attempts.push(Date.now());
     if (!up) throw nodeError("ECONNREFUSED", "connect ECONNREFUSED 10.0.0.5:5432");
@@ -373,6 +387,16 @@ describe("the listener", () => {
     expect(listening.ends).toBe(1);
     expect(pool.ended).toBe(true);
     expect(jest.getTimerCount()).toBe(0);
+  });
+
+  test("startGovernance() starts the heartbeat once, and stopping governance stops it", async () => {
+    startGovernance();
+    startGovernance();
+    expect(heartbeat).toEqual({ starts: 1, stops: 0 });
+
+    await stopGovernance();
+
+    expect(heartbeat).toEqual({ starts: 1, stops: 1 });
   });
 });
 

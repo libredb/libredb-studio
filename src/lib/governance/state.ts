@@ -11,6 +11,7 @@
  */
 import type { AdmissionSkip, AdmittedConnection } from "./admission";
 import type { SNAPSHOT_READS } from "./contract";
+import type { EnvelopeCode } from "./hpke";
 
 /** A row of one snapshot read, as the governance source returned it: every column Studio reads, none trusted yet. */
 type RowOf<Name extends (typeof SNAPSHOT_READS)[number]["object"]> = Readonly<
@@ -20,8 +21,11 @@ type RowOf<Name extends (typeof SNAPSHOT_READS)[number]["object"]> = Readonly<
 /** A row of `settings_v1`, kept as read: the settings store validates it against the registry. */
 export type SettingRow = RowOf<"settings_v1">;
 
-/** A row of `seal_canary_v1`, kept as read: the canary check opens its envelope. */
+/** A row of `seal_canary_v1`, as read: the loader opens its envelope. */
 export type CanaryRow = RowOf<"seal_canary_v1">;
+
+/** What the canary of one key id gave: `ok`, or the code its envelope failed with (spec 8.4). */
+export type CanaryResult = "ok" | EnvelopeCode;
 
 /** What one subject may do on one admitted connection. */
 export interface EffectiveGrant {
@@ -49,7 +53,8 @@ export interface GovernanceSnapshot {
   /** The latest `revoked_before` of each subject, in epoch milliseconds. */
   readonly revocations: ReadonlyMap<string, number>;
   readonly settings: readonly SettingRow[];
-  readonly canaries: readonly CanaryRow[];
+  /** The result of the canary of each key id with one, as the heartbeat and the admin status report it. */
+  readonly canary: Readonly<Record<string, CanaryResult>>;
 }
 
 /** Why a load failed, as freshness, the log and the admin status report it. */

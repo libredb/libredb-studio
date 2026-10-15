@@ -22,6 +22,8 @@ export type Answer = Promise<{ rows: readonly unknown[] }>;
 export class FakeClient extends EventEmitter {
   /** Every statement this client was given, in order. */
   readonly statements: string[] = [];
+  /** The parameters of each statement, in the same order: undefined for a statement without any. */
+  readonly parameters: (readonly unknown[] | undefined)[] = [];
   /** How many times `release` was called. */
   releases = 0;
   /** What the first release passed: undefined for a normal release, the error otherwise. */
@@ -31,8 +33,9 @@ export class FakeClient extends EventEmitter {
     super();
   }
 
-  query(sql: string): Answer {
+  query(sql: string, values?: readonly unknown[]): Answer {
     this.statements.push(sql);
+    this.parameters.push(values);
     return fakePg.respond(sql, this);
   }
 

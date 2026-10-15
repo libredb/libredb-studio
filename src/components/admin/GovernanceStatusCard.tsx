@@ -10,6 +10,7 @@ import type { GovernanceStatus, GovernanceStatusSkip } from "@/lib/governance/st
 
 const CARD_TITLE = "Governance";
 const NOT_LOADED = "none yet";
+const NO_CANARY = "none published";
 const REFRESH_INTERVAL_MS = 30_000;
 
 const NEUTRAL = "bg-fill text-fg-muted border border-hairline text-xs";
@@ -34,6 +35,13 @@ function ageText(ageMs: number): string {
 function listenerText(listener: GovernanceStatus["listener"]): string {
   if (listener === null) return "not started";
   return `${listener.state} for ${ageText(listener.heldMs)} (since ${listener.since})`;
+}
+
+function canaryText(canary: GovernanceStatus["canary"]): string {
+  if (canary === null) return NOT_LOADED;
+  const results = Object.entries(canary);
+  if (results.length === 0) return NO_CANARY;
+  return results.map(([kid, result]) => `${kid}: ${result}`).join(", ");
 }
 
 function skipText(skip: GovernanceStatusSkip): string {
@@ -78,7 +86,7 @@ function StatusBody({ status }: { status: GovernanceStatus }) {
       {lastError !== null && (
         <Row
           label="Last error"
-          value={`${lastError.kind}${lastError.code === null ? "" : ` ${lastError.code}`} at ${lastError.at}`}
+          value={`${lastError.kind}${lastError.code === null ? "" : ` ${lastError.code}`} at ${lastError.at}: ${lastError.message}`}
           testId="governance-last-error"
         />
       )}
@@ -88,6 +96,7 @@ function StatusBody({ status }: { status: GovernanceStatus }) {
         testId="governance-admitted"
       />
       <Row label="Key ids" value={status.keyringKids.join(", ")} testId="governance-kids" />
+      <Row label="Seal canary" value={canaryText(status.canary)} testId="governance-canary" />
       <Row label="Listener" value={listenerText(status.listener)} testId="governance-listener" />
       <Row
         label="Last notification"
@@ -117,10 +126,11 @@ function StatusBody({ status }: { status: GovernanceStatus }) {
 
 /**
  * The governance status (GET /api/admin/governance, spec 9.3): the freshness state, the contract versions, the
- * snapshot's age, the latest load failure, the admitted and skipped rows, the keyring's key ids, and the change
- * notification listener's state, how long it has held and the last notification, so an admin sees why a governed
- * connection is missing, or why a change arrives late, without the server logs. Mounted on the Overview page beside
- * SeedSourcesCard. Renders nothing with governance off and on a failed read.
+ * snapshot's age, the latest load failure with its full message, the admitted and skipped rows, the keyring's key ids,
+ * the seal canary of each key id, and the change notification listener's state, how long it has held and the last
+ * notification, so an admin sees why a governed connection is missing, or why a change arrives late, without the
+ * server logs. Mounted on the Overview page beside SeedSourcesCard. Renders nothing with governance off and on a
+ * failed read.
  */
 export function GovernanceStatusCard() {
   const [status, setStatus] = useState<GovernanceStatus | null>(null);

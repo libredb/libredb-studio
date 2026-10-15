@@ -31,6 +31,7 @@ const realPg = await import("pg");
 mock.module("pg", () => ({ Pool: FakePool, Client: FakeListenerClient, types: realPg.types }));
 
 const { GET } = await import("@/app/api/admin/governance/route");
+const { GET: GET_READY } = await import("@/app/api/ready/route");
 const { startGovernanceListener, stopGovernanceListener } = await import("@/lib/governance/listener");
 const { logger } = await import("@/lib/logger");
 
@@ -76,9 +77,9 @@ function snapshot(loadedAt: number): GovernanceSnapshot {
     ],
     grants: new Map(),
     revocations: new Map(),
-    // The raw rows the stores read: the status must not echo them.
+    // The raw rows the settings store reads: the status must not echo them.
     settings: [{ key: "statement.capture", value: PASSWORD, updated_at: new Date(0) }],
-    canaries: [{ kid: KEY.kid, envelope: ENVELOPE }],
+    canary: { [KEY.kid]: "ok", "0123456789abcdef": "UNKNOWN_KID" },
   };
 }
 
@@ -222,6 +223,7 @@ describe("GET /api/admin/governance: status", () => {
         },
       ],
       keyringKids: [KEY.kid],
+      canary: { [KEY.kid]: "ok", "0123456789abcdef": "UNKNOWN_KID" },
       listener: null,
     });
     expect(governance!.snapshot!.ageMs).toBeGreaterThanOrEqual(5000);
@@ -247,6 +249,31 @@ describe("GET /api/admin/governance: status", () => {
     expect(res.status).toBe(200);
     expect(governance?.freshness).toBe("unavailable");
     expect(governance?.lastError).toMatchObject({ kind: "transient", code: "ECONNREFUSED" });
+  });
+
+  test("an admin sees the full message of the last load failure, which /api/ready never shows", async () => {
+    // The server's own message names a role and a host, which the public readiness route must not repeat.
+    const detail =
+      'bridge.grants_v1: permission denied for view grants_v1 of role "libredb_studio" on db.internal (SQLSTATE 42501)';
+    recordGovernanceFailure({
+      at: Date.now(),
+      kind: "misconfigured",
+      code: "42501",
+      detail,
+      publicDetail: "bridge.grants_v1: 42501",
+    });
+
+    const res = await GET(request());
+    const { governance } = await parseResponseJSON<GovernanceStatusResponse>(res);
+    const ready = await GET_READY();
+    const readyText = await ready.text();
+
+    expect(res.status).toBe(200);
+    expect(governance?.lastError).toMatchObject({ kind: "misconfigured", code: "42501", message: detail });
+    expect(ready.status).toBe(503);
+    expect(JSON.parse(readyText)).toMatchObject({ status: "misconfigured", detail: "bridge.grants_v1: 42501" });
+    expect(readyText).not.toContain("permission denied");
+    expect(readyText).not.toContain("db.internal");
   });
 
   test("an admin gets the listener's state, how long it has held and when the last change notification arrived", async () => {
