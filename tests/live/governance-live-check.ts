@@ -14,6 +14,9 @@
  * any case failed, and drops the database and the fixture's roles again either way. Later slices add their cases to
  * `CASES`, in the order they run: a case may rely on the state the cases before it left.
  *
+ * The listener cases start Studio's change notification listener with its production reload and no refresher, so a
+ * snapshot changes only when a notification makes it, and with a ping every half second instead of every minute.
+ *
  * It is NOT in `bun run test`: the runner excludes `tests/live/` by name (`EXCLUDED` in `tests/runner/discover.ts`).
  * CI runs it in the "Functional Smoke (PostgreSQL, RabbitMQ)" job of .github/workflows/ci.yml, against a throwaway
  * postgres:17.
@@ -25,11 +28,18 @@
  * `libredb_platform` and `libredb_fixture_owner`.
  */
 import { randomBytes } from "node:crypto";
-import { Client } from "pg";
+import { Client, type Notification } from "pg";
+import { pingChannel } from "../../src/lib/governance/contract";
 import { closeGovernancePool } from "../../src/lib/governance/db";
 import { governanceFreshness } from "../../src/lib/governance/freshness";
 import { resetGovernanceKeyring } from "../../src/lib/governance/keyring";
+import {
+  governanceListenerStatus,
+  startGovernanceListener,
+  stopGovernanceListener,
+} from "../../src/lib/governance/listener";
 import { loadGovernanceSnapshot } from "../../src/lib/governance/snapshot";
+import { requestFreshGovernanceLoad } from "../../src/lib/governance/start";
 import { effectiveGrant, governanceState, resetGovernanceState } from "../../src/lib/governance/state";
 import { resolveConnection, SeedConnectionError } from "../../src/lib/seed/resolve-connection";
 import { buildFixtureDdl, FIXTURE_OWNER, readFixtureManifest } from "../helpers/governance/fixture-ddl";
@@ -39,6 +49,9 @@ import { sealSecret } from "../helpers/governance/lsb1-seal";
 const MANIFEST = readFixtureManifest();
 const SCHEMA = `"${MANIFEST.schema}"`;
 const ROLES = [FIXTURE_OWNER, "libredb_platform", "libredb_studio"];
+const INSTANCE_ID = "libredb-studio-live-check";
+/** How often the live check's listener pings itself, so the ping case waits seconds rather than minutes. */
+const PING_INTERVAL_MS = 500;
 
 function superuserUrl(): string {
   const raw = process.env.LIBREDB_LIVE_POSTGRES_URL;
@@ -171,6 +184,29 @@ async function capturingStdout<T>(run: () => Promise<T>): Promise<{ readonly res
   }
 }
 
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Waits until `condition` holds, polling every 10 ms, and fails when it does not within `withinMs`. */
+async function until(condition: () => boolean, withinMs: number, what: string): Promise<void> {
+  const started = Date.now();
+  while (!condition()) {
+    check(Date.now() - started <= withinMs, `${what} did not happen within ${withinMs} ms`);
+    // oxlint-disable-next-line no-await-in-loop -- the condition is polled in order, one wait at a time.
+    await sleep(10);
+  }
+}
+
+/** The payload of the first notification `client` hears, or a failure when none arrives within `withinMs`. */
+function nextNotification(client: Client, withinMs: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`no notification arrived within ${withinMs} ms`)), withinMs);
+    client.once("notification", (message: Notification) => {
+      clearTimeout(timer);
+      resolve(message.payload ?? "");
+    });
+  });
+}
+
 function loadedSnapshot() {
   const { snapshot, failure } = governanceState();
   check(failure === null, `the load failed: ${failure?.detail ?? ""}`);
@@ -285,6 +321,79 @@ const CASES: readonly LiveCase[] = [
     },
   },
   {
+    name: "a NOTIFY round trip arrives",
+    run: async ({ superuser }) => {
+      startGovernanceListener(requestFreshGovernanceLoad, { pingIntervalMs: PING_INTERVAL_MS });
+      await until(() => governanceListenerStatus()?.state === "listening", 10_000, "the listener's LISTEN");
+      same(governanceListenerStatus()?.lastNotificationAt ?? null, null, "the last notification before any was sent");
+
+      const sentAt = Date.now();
+      await superuser((client) =>
+        client.query("SELECT pg_notify($1, $2)", [
+          MANIFEST.notification.channel,
+          JSON.stringify({ v: MANIFEST.notification.payloadVersion, kind: "settings" }),
+        ]),
+      );
+      await until(
+        () => (governanceListenerStatus()?.lastNotificationAt ?? 0) >= sentAt,
+        2000,
+        "the notification's arrival at the listener",
+      );
+    },
+  },
+  {
+    name: "the ping arrives on the instance channel",
+    run: async ({ superuser }) => {
+      const heardBefore = governanceListenerStatus()?.lastNotificationAt ?? null;
+      // A second session that listens on the instance's ping channel hears the listener's own ping there.
+      const nonce = await superuser(async (client) => {
+        await client.query(`LISTEN ${pingChannel(INSTANCE_ID)}`);
+        return nextNotification(client, PING_INTERVAL_MS * 4);
+      });
+      check(/^[0-9a-f]{16}$/.test(String(nonce)), `a ping should carry a 16 hex digit nonce, got ${String(nonce)}`);
+      // Two missed pings would make the listener deaf, so still listening after three intervals means they came back.
+      await sleep(PING_INTERVAL_MS * 3);
+      same(governanceListenerStatus()?.state, "listening", "the listener's state after three ping intervals");
+      same(governanceListenerStatus()?.lastNotificationAt ?? null, heardBefore, "the last notification after pings");
+    },
+  },
+  {
+    name: "deleting a grant makes resolveConnection answer 404 within 1 s with no explicit reload",
+    run: async ({ superuser }) => {
+      const alice = { role: "user", username: "alice@example.com", idpSubject: "alice@example.com" };
+      await resolveConnection({ connectionId: "seed:live-both" }, alice);
+
+      const deletedAt = Date.now();
+      await superuser((client) =>
+        client.query(`DELETE FROM ${SCHEMA}.grants_v1_source WHERE subject = $1 AND connection_id = $2`, [
+          alice.idpSubject,
+          "live-both",
+        ]),
+      );
+      // Nothing here loads the snapshot: the trigger's notification makes the listener reload it.
+      const { result: refusal } = await capturingStdout(async () => {
+        for (;;) {
+          // oxlint-disable-next-line no-await-in-loop -- one attempt at a time, until the refusal or the deadline.
+          const outcome = await resolveConnection({ connectionId: "seed:live-both" }, alice).then(
+            () => undefined,
+            (error: unknown) => error,
+          );
+          if (outcome !== undefined || Date.now() - deletedAt > 1000) return outcome;
+          // oxlint-disable-next-line no-await-in-loop -- the next attempt waits for this one's pause.
+          await sleep(10);
+        }
+      });
+      const elapsed = Date.now() - deletedAt;
+      check(
+        refusal instanceof SeedConnectionError,
+        `expected a SeedConnectionError within 1 s, got ${String(refusal)}`,
+      );
+      const { statusCode, code } = refusal as SeedConnectionError;
+      same([statusCode, code], [404, "CONNECTION_NOT_FOUND"], "the refusal");
+      check(elapsed <= 1000, `the refusal took ${elapsed} ms, more than 1 s`);
+    },
+  },
+  {
     name: "revoking SELECT on one view turns the state misconfigured, naming that view",
     run: async ({ superuser }) => {
       await superuser((client) => client.query(`REVOKE SELECT ON ${SCHEMA}.grants_v1 FROM libredb_studio`));
@@ -321,6 +430,7 @@ async function main(): Promise<void> {
     });
     process.env.GOVERNANCE_SOURCE = "postgres";
     process.env.GOVERNANCE_POSTGRES_URL = urlFor(admin, database, studio);
+    process.env.GOVERNANCE_INSTANCE_ID = INSTANCE_ID;
     process.env.GOVERNANCE_PRIVATE_KEYS_FILE = keyringFileOf(key);
     process.env.LOG_LEVEL ??= "error";
     const context: LiveContext = { superuser: (run) => asSuperuser(fixture, run), key };
@@ -340,6 +450,7 @@ async function main(): Promise<void> {
     console.error("FAIL building the governance fixture");
     console.error(error);
   } finally {
+    await stopGovernanceListener();
     await closeGovernancePool();
     resetGovernanceState();
     resetGovernanceKeyring();

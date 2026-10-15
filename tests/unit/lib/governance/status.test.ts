@@ -1,18 +1,26 @@
 /**
- * The governance status an administrator reads (spec 9.3, 12.2): built from the state holder at the moment of the
- * request, with ids, levels, paths and codes only, never a value, an envelope or a driver message.
+ * The governance status an administrator reads (spec 9.3, 12.2): built from the state holder and the listener at the
+ * moment of the request, with ids, levels, paths and codes only, never a value, an envelope or a driver message.
+ *
+ * The listener is replaced by a status this file sets, so each case reports the listener it names;
+ * tests/api/admin/governance.test.ts reports a real one.
  */
-import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import type { AdmittedConnection } from "@/lib/governance/admission";
 import { resetGovernanceKeyring } from "@/lib/governance/keyring";
+import type { GovernanceListenerStatus } from "@/lib/governance/listener";
 import {
   type GovernanceSnapshot,
   recordGovernanceFailure,
   recordGovernanceSnapshot,
   resetGovernanceState,
 } from "@/lib/governance/state";
-import { governanceStatus } from "@/lib/governance/status";
 import { keyringFileOf, removeKeyringFiles, testKey } from "../../../helpers/governance/keyring-file";
+
+let listenerStatus: GovernanceListenerStatus | null = null;
+mock.module("@/lib/governance/listener", () => ({ governanceListenerStatus: () => listenerStatus }));
+
+const { governanceStatus } = await import("@/lib/governance/status");
 
 const T = Date.parse("2026-10-15T08:00:00.000Z");
 const PASSWORD = "STATUS-UNIT-CANARY-4b1e";
@@ -82,6 +90,7 @@ beforeEach(() => {
 
 afterEach(() => {
   infoSpy.mockRestore();
+  listenerStatus = null;
   resetGovernanceState();
   resetGovernanceKeyring();
   for (const key of ENV_KEYS) {
@@ -106,6 +115,7 @@ describe("governanceStatus", () => {
       admittedConnections: null,
       skipped: [],
       keyringKids: [KEY_A.kid, KEY_B.kid],
+      listener: null,
     });
   });
 
@@ -132,6 +142,29 @@ describe("governanceStatus", () => {
         { kind: "connection", id: "crm", path: "password", code: "DEFINITION_HAS_SECRET" },
       ],
       keyringKids: [KEY_A.kid, KEY_B.kid],
+      listener: null,
+    });
+  });
+
+  test("the listener reports its state, since when and how long it has held, and the last change notification", () => {
+    listenerStatus = { state: "listening", since: T - 90_000, lastNotificationAt: T - 2500 };
+
+    expect(governanceStatus(T).listener).toEqual({
+      state: "listening",
+      since: "2026-10-15T07:58:30.000Z",
+      heldMs: 90_000,
+      lastNotificationAt: "2026-10-15T07:59:57.500Z",
+    });
+  });
+
+  test("a listener that has heard no change notification reports none", () => {
+    listenerStatus = { state: "polling", since: T, lastNotificationAt: null };
+
+    expect(governanceStatus(T + 1000).listener).toEqual({
+      state: "polling",
+      since: "2026-10-15T08:00:00.000Z",
+      heldMs: 1000,
+      lastNotificationAt: null,
     });
   });
 

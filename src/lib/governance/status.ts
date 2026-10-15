@@ -2,10 +2,11 @@
  * The governance status an administrator reads (spec 9.3, 12.2): what `GET /api/admin/governance` answers and the
  * admin Overview card shows.
  *
- * It is built from the state holder at the moment of the request: the source and schema, the contract versions on
- * both sides, the freshness state, the age and load time of the snapshot, why the latest load failed, how many
- * connections were admitted, the rows admission skipped and the key ids of the keyring. The listener, canary,
- * settings and sink slices add their sections here.
+ * It is built from the state holder and the listener at the moment of the request: the source and schema, the
+ * contract versions on both sides, the freshness state, the age and load time of the snapshot, why the latest load
+ * failed, how many connections were admitted, the rows admission skipped, the key ids of the keyring, and the
+ * listener's state, how long it has held and when the last change notification arrived. The canary, settings and sink
+ * slices add their sections here.
  *
  * Like the heartbeat, it carries ids, levels, paths and codes only: never a definition value, an envelope, a
  * credential or a statement. A load failure is reported by its kind and code, without the driver's message.
@@ -16,6 +17,7 @@ import { SUPPORTED_CONTRACT_VERSIONS } from "./contract";
 import { type FreshnessState, governanceFreshness } from "./freshness";
 import type { EnvelopeCode } from "./hpke";
 import { governanceKeyring } from "./keyring";
+import { governanceListenerStatus, type ListenerState } from "./listener";
 import { governanceState, type LoadFailure } from "./state";
 
 /** A row, or a row's write level, that admission left out, with the envelope code the heartbeat item has no field for. */
@@ -52,10 +54,32 @@ export interface GovernanceStatus {
   readonly skipped: readonly GovernanceStatusSkip[];
   /** The key ids of the keyring this process opens envelopes with, in the order the file lists them. */
   readonly keyringKids: readonly string[];
+  /** The change notification listener of this process, or null when none runs. */
+  readonly listener: {
+    readonly state: ListenerState;
+    /** Since when the state has held, as an ISO 8601 instant. */
+    readonly since: string;
+    /** How long the state has held at the moment of the request, in milliseconds. */
+    readonly heldMs: number;
+    /** When the last change notification arrived, as an ISO 8601 instant, or null before the first. */
+    readonly lastNotificationAt: string | null;
+  } | null;
 }
 
 const skipOf = ({ item, envelopeCode }: AdmissionSkip): GovernanceStatusSkip =>
   envelopeCode === undefined ? item : { ...item, envelopeCode };
+
+function listenerAt(nowMs: number): GovernanceStatus["listener"] {
+  const listener = governanceListenerStatus();
+  if (listener === null) return null;
+  const { state, since, lastNotificationAt } = listener;
+  return {
+    state,
+    since: new Date(since).toISOString(),
+    heldMs: nowMs - since,
+    lastNotificationAt: lastNotificationAt === null ? null : new Date(lastNotificationAt).toISOString(),
+  };
+}
 
 /**
  * The governance status of this process at `nowMs`. Call it under governance only. It throws when the keyring does
@@ -81,5 +105,6 @@ export function governanceStatus(nowMs = Date.now()): GovernanceStatus {
     admittedConnections: snapshot?.connections.size ?? null,
     skipped: (snapshot?.skipped ?? []).map(skipOf),
     keyringKids: [...governanceKeyring().keys()],
+    listener: listenerAt(nowMs),
   };
 }

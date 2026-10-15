@@ -74,6 +74,12 @@ const GOVERNANCE = {
       admittedConnections: 2,
       skipped: [],
       keyringKids: ["kid-0123456789abcdef"],
+      listener: {
+        state: "listening",
+        since: "2026-10-15T07:59:00.000Z",
+        heldMs: 64_000,
+        lastNotificationAt: null,
+      },
     },
   },
 };

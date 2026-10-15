@@ -1,15 +1,17 @@
 /**
  * GET /api/admin/governance: the governance status for the admin Overview card (spec 9.3, 12.2).
  *
- * The state holder and the keyring are the real ones: each case records a snapshot or a failure the way the loader
- * does and points GOVERNANCE_PRIVATE_KEYS_FILE at a fresh keyring file. Only getSession is replaced, spread over the
- * real @/lib/auth (pattern: tests/api/admin/seed-sources.test.ts).
+ * The state holder, the keyring and the listener are the real ones: each case records a snapshot or a failure the
+ * way the loader does and points GOVERNANCE_PRIVATE_KEYS_FILE at a fresh keyring file, and the listener runs on the
+ * fake `pg` of tests/helpers/governance/pg-fake.ts. Only getSession is replaced, spread over the real @/lib/auth
+ * (pattern: tests/api/admin/seed-sources.test.ts).
  */
-import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, setSystemTime, spyOn, test } from "bun:test";
 import * as realAuth from "@/lib/auth";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import type { GovernanceStatusResponse } from "@/app/api/admin/governance/route";
 import type { AdmittedConnection } from "@/lib/governance/admission";
+import { NOTIFY_CHANNEL } from "@/lib/governance/contract";
 import { resetGovernanceKeyring } from "@/lib/governance/keyring";
 import {
   type GovernanceSnapshot,
@@ -18,14 +20,19 @@ import {
   resetGovernanceState,
 } from "@/lib/governance/state";
 import { keyringFileOf, removeKeyringFiles, testKey } from "../../helpers/governance/keyring-file";
+import { FakeListenerClient, FakePool, fakePg, settle } from "../../helpers/governance/pg-fake";
 import { parseResponseJSON } from "../../helpers/mock-next";
 
 const ADMIN: realAuth.UserPayload = { role: "admin", username: "admin" };
 const mockGetSession = mock(async (): Promise<realAuth.UserPayload | null> => ADMIN);
 
 mock.module("@/lib/auth", () => ({ ...realAuth, getSession: mockGetSession }));
+const realPg = await import("pg");
+mock.module("pg", () => ({ Pool: FakePool, Client: FakeListenerClient, types: realPg.types }));
 
 const { GET } = await import("@/app/api/admin/governance/route");
+const { startGovernanceListener, stopGovernanceListener } = await import("@/lib/governance/listener");
+const { logger } = await import("@/lib/logger");
 
 const ROUTE = "GET /api/admin/governance";
 
@@ -81,6 +88,8 @@ const ENV_KEYS = [
   "GOVERNANCE_PRIVATE_KEYS_FILE",
   "GOVERNANCE_REFRESH_MS",
   "GOVERNANCE_MAX_STALENESS_MS",
+  "GOVERNANCE_POSTGRES_URL",
+  "GOVERNANCE_INSTANCE_ID",
   "TRUST_PROXY_HEADERS",
 ] as const;
 const savedEnv: Record<string, string | undefined> = {};
@@ -111,7 +120,9 @@ beforeEach(() => {
   infoSpy = spyOn(console, "info").mockImplementation(() => {});
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await stopGovernanceListener();
+  setSystemTime();
   infoSpy.mockRestore();
   resetGovernanceKeyring();
   resetGovernanceState();
@@ -211,6 +222,7 @@ describe("GET /api/admin/governance: status", () => {
         },
       ],
       keyringKids: [KEY.kid],
+      listener: null,
     });
     expect(governance!.snapshot!.ageMs).toBeGreaterThanOrEqual(5000);
     expect(governance!.snapshot!.ageMs).toBeLessThan(60_000);
@@ -235,6 +247,36 @@ describe("GET /api/admin/governance: status", () => {
     expect(res.status).toBe(200);
     expect(governance?.freshness).toBe("unavailable");
     expect(governance?.lastError).toMatchObject({ kind: "transient", code: "ECONNREFUSED" });
+  });
+
+  test("an admin gets the listener's state, how long it has held and when the last change notification arrived", async () => {
+    process.env.GOVERNANCE_POSTGRES_URL = "postgresql://libredb_studio@db.internal:5432/libredb?sslmode=verify-full";
+    process.env.GOVERNANCE_INSTANCE_ID = "libredb-studio";
+    fakePg.reset();
+    const quiet = (["info", "debug"] as const).map((level) => spyOn(logger, level).mockImplementation(() => {}));
+    const startedAt = Date.parse("2026-10-15T08:00:00.000Z");
+    setSystemTime(new Date(startedAt));
+
+    try {
+      startGovernanceListener(async () => {});
+      await settle();
+      setSystemTime(new Date(startedAt + 1500));
+      FakeListenerClient.made[0].notify(NOTIFY_CHANNEL, JSON.stringify({ v: 1, kind: "grants" }));
+      setSystemTime(new Date(startedAt + 4000));
+
+      const res = await GET(request());
+      const { governance } = await parseResponseJSON<GovernanceStatusResponse>(res);
+
+      expect(res.status).toBe(200);
+      expect(governance?.listener).toEqual({
+        state: "listening",
+        since: "2026-10-15T08:00:00.000Z",
+        heldMs: 4000,
+        lastNotificationAt: "2026-10-15T08:00:01.500Z",
+      });
+    } finally {
+      for (const spy of quiet) spy.mockRestore();
+    }
   });
 
   test("answers 500 when the status cannot be built", async () => {

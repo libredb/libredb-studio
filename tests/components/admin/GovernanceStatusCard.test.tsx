@@ -22,6 +22,12 @@ function status(overrides: Partial<GovernanceStatus> = {}): GovernanceStatus {
     admittedConnections: 3,
     skipped: [],
     keyringKids: [KID],
+    listener: {
+      state: "listening",
+      since: "2026-10-15T07:30:00.000Z",
+      heldMs: 1_804_900,
+      lastNotificationAt: "2026-10-15T07:59:12.000Z",
+    },
     ...overrides,
   };
 }
@@ -134,8 +140,40 @@ describe("GovernanceStatusCard", () => {
     expect(getByTestId("governance-contract").textContent).toBe("active 1; supported 1; published 1");
     expect(getByTestId("governance-admitted").textContent).toBe("3");
     expect(getByTestId("governance-kids").textContent).toBe(KID);
+    expect(getByTestId("governance-listener").textContent).toBe(
+      "listening for 1804 s (since 2026-10-15T07:30:00.000Z)",
+    );
+    expect(getByTestId("governance-last-notification").textContent).toBe("2026-10-15T07:59:12.000Z");
     expect(queryByTestId("governance-last-error")).toBeNull();
     expect(queryByTestId("governance-skip")).toBeNull();
+  });
+
+  test("a listener that has heard no change shows none yet, and a process without a listener says so", async () => {
+    const answers = [
+      answer(
+        status({
+          listener: { state: "polling", since: "2026-10-15T08:00:00.000Z", heldMs: 61_000, lastNotificationAt: null },
+        }),
+      ),
+      answer(status({ listener: null })),
+    ];
+    let calls = 0;
+    mockGlobalFetch({ "/api/admin/governance": () => answers[Math.min(calls++, answers.length - 1)] });
+    const { captured, restore } = captureAutoRefresh();
+
+    try {
+      const { findByText, getByTestId } = await renderCard();
+      await findByText("polling for 61 s (since 2026-10-15T08:00:00.000Z)");
+      expect(getByTestId("governance-last-notification").textContent).toBe("none yet");
+
+      await act(async () => {
+        captured.fire!();
+      });
+      await findByText("not started");
+      expect(getByTestId("governance-last-notification").textContent).toBe("none yet");
+    } finally {
+      restore();
+    }
   });
 
   test("before the first load it shows loading with no snapshot, and a failure without a code by its kind", async () => {

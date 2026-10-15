@@ -19,6 +19,7 @@ import { providerCacheKey, providerOwner } from "./provider-cache-key";
 import { READ_ONLY_ENFORCED, READS_FILE_ACCESS_POSTURE } from "./compatibility";
 import { TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
 import { logger } from "@/lib/logger";
+import { runShutdownHooks } from "@/lib/shutdown";
 import * as path from "path";
 
 // ============================================================================
@@ -1437,6 +1438,8 @@ let shutdownRegistered = false;
 /**
  * Register process signal handlers for graceful shutdown.
  * Safe to call multiple times — handlers are only registered once.
+ * The hooks other modules registered with `onShutdown()` (src/lib/shutdown.ts), such as the governance
+ * listener's close, run first, cut at their 5 s deadline, and the providers are closed after them.
  */
 export function registerShutdownHandlers(): void {
   if (shutdownRegistered) return;
@@ -1444,6 +1447,7 @@ export function registerShutdownHandlers(): void {
 
   const shutdown = async (signal: string) => {
     logger.info(`[DB] Received ${signal}, closing all database connections...`);
+    await runShutdownHooks();
     try {
       await clearProviderCache();
       logger.info("[DB] All database connections closed gracefully");

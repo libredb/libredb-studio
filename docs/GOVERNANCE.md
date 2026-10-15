@@ -56,6 +56,7 @@ An installer pairs a control plane only with the Studio release whose files that
 Studio holds itself to the same manifest.
 Its live check, `tests/live/governance-live-check.ts`, builds a governance source in a throwaway PostgreSQL 17 database from the manifest alone, with `tests/helpers/governance/fixture-ddl.ts`: the roles, one source table per read view with exactly the published columns and CHECKs, the views with the published options, the grants, and a statement-level trigger on each source table that sends the view's notification kind.
 It seeds connections sealed to a fresh key and runs Studio's own snapshot loader as `libredb_studio`, so a view shape, a grant or a statement that drifts from the manifest fails Studio's CI before a control plane meets it.
+It also runs Studio's change notification listener against that database, and checks that a deleted grant refuses its connection within a second through the trigger's notification alone.
 Run it against a disposable server as a superuser, because it creates and drops a database and the roles:
 
 ```sh
@@ -284,21 +285,26 @@ The channel is also published as `notify_channel` in `bridge.contract`.
   PostgreSQL delivers it only after commit, folds duplicates within a transaction and sends nothing on rollback.
 - Any role that can connect can notify this channel, so the payload is only a hint.
   Studio parses it, never reads data from it, folds notifications into one reload per 250 milliseconds and always reloads the whole snapshot.
+- The first notification opens a window of 250 milliseconds, and when it closes one reload runs for every notification that arrived in it.
+  That reload starts after any load already under way has ended, so a change that commits while a load runs is in the next snapshot.
 - Studio also reloads every `GOVERNANCE_REFRESH_MS`, 30 seconds by default, which covers a lost notification.
 
-Studio's listener is one dedicated connection with TCP keepalive:
+Studio's listener is one dedicated connection with TCP keepalive, outside the pool that loads the snapshot, named `libredb-studio-governance-listener` in `application_name`:
 
 - After every connect it issues `LISTEN libredb_bridge` and `LISTEN` on its own ping channel, `libredb_bridge_ping_` followed by the first 16 hex digits of the SHA-256 of its instance id, and only then loads.
-- Every 60 seconds it pings itself with `SELECT pg_notify($1, $2)`.
-  Two missed pings mark it deaf and force a reconnect.
-- Its liveness query, `SELECT 1`, races a 5 second timer, and on timeout the socket is destroyed, because a half-open TCP connection never errors on its own.
+- Every 60 seconds it checks the connection with its liveness query, `SELECT 1`, and then pings itself with `SELECT pg_notify($1, $2)`, the ping channel and a random 16 hex digit nonce.
+  A ping that has not come back by the next check is missed, and the second missed ping in a row marks the listener deaf and forces a reconnect.
+- Its liveness query races a 5 second timer, and on timeout the socket is destroyed, because a half-open TCP connection never errors on its own.
+  Every other statement of the listener races the same timer.
+- It reconnects after a random delay below a bound that starts at 1 second and doubles with each attempt up to 30 seconds, and the bound starts over once a ping comes back.
+- A ping never changes the time of the last notification, so `last_notification_at` proves that the governance source's own notifications arrive.
 
 | Listener state | Meaning |
 | --- | --- |
 | `listening` | Notifications arrive and the pings come back. |
-| `reconnecting` | The connection dropped, and Studio reconnects with a backoff from 1 to 30 seconds. |
-| `polling` | The server refused `LISTEN`, as a hot standby or a transaction pooler does, so only the periodic reload keeps the snapshot current. |
-| `deaf` | Two pings did not come back, and Studio reconnects. |
+| `reconnecting` | No connection listens yet, a connect failed or the connection dropped, and Studio reconnects with the backoff from 1 to 30 seconds. |
+| `polling` | The server refused `LISTEN`, as a hot standby or a transaction pooler does, so only the periodic reload keeps the snapshot current, and Studio tries `LISTEN` again with the same backoff. |
+| `deaf` | Two pings in a row did not come back, and Studio reconnects. |
 
 The connection behind `GOVERNANCE_POSTGRES_URL` must therefore reach the primary, directly or through a session-mode pooler.
 
@@ -358,9 +364,10 @@ How an instance connects to the governance source:
   Studio's PostgreSQL driver treats `sslmode=require` as `verify-full` too, so a trusted certificate authority is needed either way.
 - Always set `sslmode`: a URL without it gets the same TLS setting `STORAGE_POSTGRES_URL` gets, which encrypts a connection to a remote host without verifying the server, and leaves a connection to a local one unencrypted.
 - Budget 5 connections of the governance source's database per Studio instance, besides its storage pool: at most 4 pooled connections for loads and 1 dedicated connection for the listener.
-- Each pooled connection names itself `libredb-studio-governance` in `application_name`, so it shows up as such in `pg_stat_activity`.
+- Each pooled connection names itself `libredb-studio-governance` in `application_name`, and the listener's connection `libredb-studio-governance-listener`, so they show up as such in `pg_stat_activity`.
 - A load waits at most 5 seconds for a connection, each statement runs under a `statement_timeout` of 10 seconds and is abandoned by Studio after 15, and the whole load gives up after 20 seconds, so a governance source that hangs never holds a load for long.
   Studio closes the connection of a load that gave up, and a statement still running on it keeps its server process busy until it ends, at most the 10 seconds of `statement_timeout`, because PostgreSQL notices a closed connection only when it next reads from it.
+- On SIGTERM or SIGINT Studio first closes the listener's connection and the governance pool, waiting at most 5 seconds for them, and then closes its connections to the users' databases and exits.
 
 ## Admin status
 
@@ -378,7 +385,8 @@ It names ids, levels, paths and codes only, never a definition value, an envelop
     "lastError": { "at": "2026-10-15T08:00:40.000Z", "kind": "transient", "code": "ECONNREFUSED" },
     "admittedConnections": 4,
     "skipped": [{ "kind": "connection", "id": "billing", "level": "read", "code": "READ_SECRET_UNOPENABLE", "envelopeCode": "UNKNOWN_KID" }],
-    "keyringKids": ["<kid>"]
+    "keyringKids": ["<kid>"],
+    "listener": { "state": "listening", "since": "2026-10-15T07:30:00.000Z", "heldMs": 1845000, "lastNotificationAt": "2026-10-15T08:00:12.000Z" }
   }
 }
 ```
@@ -388,6 +396,8 @@ It names ids, levels, paths and codes only, never a definition value, an envelop
 - `lastError` is why the latest load failed, by its kind and its SQLSTATE or driver code, or null when it succeeded; the log line of that failure carries its full detail.
 - `skipped` lists each row, or write level of a row, that [row admission](#row-admission-and-skip-codes) left out, as the heartbeat reports it, plus the envelope code for an envelope that did not open.
 - `keyringKids` are the key ids of the keyring the instance opens envelopes with.
+- `listener` is the [change notification](#change-notification) listener: its state, `since` when that state has held and `heldMs` for how long at the moment of the request, and `lastNotificationAt`, when the last `libredb_bridge` notification arrived, or null before the first.
+  It is null only in a process where no listener runs.
 - With governance off the route answers `{ "governance": null }`, and a user who is not an administrator gets 403.
 
 ## Heartbeat
