@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S9 · 6
-- [Drivers and connections](#drivers-and-connections) — D1-D364, U17 · 261
+- [Drivers and connections](#drivers-and-connections) — D1-D365, U17 · 262
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U144 · 131
@@ -3710,6 +3710,15 @@ Redis is one of the six engines governance admits by default (`GOVERNANCE_ALLOWE
 Found 2026-10-15 while separating the two refusals in `mapDatabaseError`; each provider's own mapper was left as it was, because each is a decision with measurements of its own.
 
 **Done when:** each provider above answers its authorization refusal with `PermissionDeniedError` and keeps its credential refusal an `AuthenticationError`, its provider doc names the code it reads, and its `tests/integration/db/<type-id>-provider.test.ts` pins both, each refusal measured on its engine.
+
+### D365. A test that dials a port it closed, expecting a refusal, can reach another process's listener
+
+Several test files take a port that nothing listens on by listening on an ephemeral port and closing it again, then dial that port and expect a refusal: `refusingOrigin` in `tests/unit/db/prometheus/request.test.ts`, `closedPort` in `tests/helpers/rabbitmq-fake-peer.ts`, and the copies and users in the gRPC, etcd, Kafka, Milvus, RabbitMQ, SSH tunnel and seed discovery tests (thirteen files under `tests/` name `closedPort` or `refusingOrigin`).
+The runner runs one file per CPU, and a port just freed is soon handed out again, so by the time a test dials it another file's server can be listening there.
+Measured 2026-10-16 with eight copies of the Prometheus request test at a time, after the TLS failures of that file were fixed: 5 of 300 runs failed this way, with a "refused" request answered by another copy's redirect server or reset, or with a redirect test's server receiving a request it never sent.
+The other side of the same race may be behind a failure seen once in a full run on a loaded machine, where `tests/unit/db/http/node-transport-runtimes.test.ts` counted 6 connections on its keep-alive listener for the 2 its child opened, in both children; 100 runs under load never repeated it.
+
+**Done when:** one helper in `tests/helpers/` reserves a refusing port for the life of a test by holding a connected socket, whose own local port nothing listens on (measured 2026-10-16: a connection to it is refused, and a listen on it fails with `EADDRINUSE` under Bun and under Node), every closed-port helper uses it, and eight copies of the Prometheus file at a time fail none of 300 runs.
 
 ## Value interpolation
 
