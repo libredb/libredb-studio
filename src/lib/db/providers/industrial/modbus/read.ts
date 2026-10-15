@@ -208,7 +208,12 @@ async function readIdentification(
       }
       throw refusal(answer.code);
     }
-    const parsed = parseIdentificationResponse(answer.frame.body.subarray(1));
+    // The whole body, not the body past its first byte. `InboundFrame.body` is already the PDU
+    // after the function code, so it starts at the MEI type, which is where the six-byte head MB
+    // 6.21 defines starts and where `parseIdentificationResponse` reads from. Taking a byte off it
+    // shifted every field one along: the conformity level was read from More Follows, More Follows
+    // from the next object id, and the object count from the first object's id.
+    const parsed = parseIdentificationResponse(answer.frame.body);
     seen.push(...parsed.objects);
     if (!parsed.moreFollows) break;
     if (parsed.nextObjectId <= at) {
