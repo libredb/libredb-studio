@@ -15,7 +15,7 @@
 - name: OPC UA read-only check
   run: |
     set -euo pipefail
-    image="mcr.microsoft.com/iotedge/opc-plc@sha256:28bbdaa2e8781fe3b8bda1bbd2d4ebe0ad5bcb1fbb83f69c74b8a92efa7fe75c"
+    image="mcr.microsoft.com/iotedge/opc-plc:2.15.10@sha256:28bbdaa2e8781fe3b8bda1bbd2d4ebe0ad5bcb1fbb83f69c74b8a92efa7fe75c"
     # The digest reaches the suite, so the image this step runs and the image the fixture documents
     # cannot drift apart: `tests/unit/db/opcua/live-environment.test.ts` compares them.
     export OPCUA_LIVE_DIGEST="${image#*@}"

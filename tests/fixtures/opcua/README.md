@@ -9,12 +9,12 @@ bridge against the fixture below and writes what came back.
 **The fixture.** Microsoft OPC PLC 2.15.10, pinned by digest:
 
 ```
-mcr.microsoft.com/iotedge/opc-plc@sha256:28bbdaa2e8781fe3b8bda1bbd2d4ebe0ad5bcb1fbb83f69c74b8a92efa7fe75c
+mcr.microsoft.com/iotedge/opc-plc:2.15.10@sha256:28bbdaa2e8781fe3b8bda1bbd2d4ebe0ad5bcb1fbb83f69c74b8a92efa7fe75c
 ```
 
 ```bash
 docker run -d --name opcua-evidence -p 127.0.0.1:54840:50000 \
-  mcr.microsoft.com/iotedge/opc-plc@sha256:28bbdaa2e8781fe3b8bda1bbd2d4ebe0ad5bcb1fbb83f69c74b8a92efa7fe75c \
+  mcr.microsoft.com/iotedge/opc-plc:2.15.10@sha256:28bbdaa2e8781fe3b8bda1bbd2d4ebe0ad5bcb1fbb83f69c74b8a92efa7fe75c \
   --pn=50000 --autoaccept --unsecuretransport --ut --sph --hn --slownodes=3 --fastnodes=3
 bun tests/live/opcua-evidence.ts
 ```
