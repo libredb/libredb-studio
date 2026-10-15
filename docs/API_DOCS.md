@@ -2144,6 +2144,16 @@ It names apps and engine types only, never a host name or an environment value.
 `cookieSecureOff` is true when `AUTH_COOKIE_SECURE` is `false`, `off` or `0`, in any letter case.
 Both flags drive a display warning and never a security decision.
 
+#### GET /api/admin/governance
+
+The governance status of this instance ([GOVERNANCE.md](./GOVERNANCE.md#admin-status)), read by the admin Overview page.
+It goes through the shared route guard: `401` with no session, `403` for a non-admin, and that refusal is audited as `permission_denied` with reason `insufficient_role`.
+With governance off (`GOVERNANCE_SOURCE` unset) it answers `{ "governance": null }`.
+Otherwise it answers `{ "governance": { "source", "schema", "contract": { "supported", "published", "active" }, "freshness", "snapshot": { "loadedAt", "ageMs" } | null, "lastError": { "at", "kind", "code" } | null, "admittedConnections", "skipped": [{ "kind", "id", "level"?, "path"?, "code", "envelopeCode"? }], "keyringKids" } }`.
+`freshness` is `loading`, `ok`, `degraded`, `unavailable`, `misconfigured` or `incompatible`, and `published`, `active`, `snapshot` and `admittedConnections` are null before the first successful load.
+It names ids, levels, paths and codes only, never a definition value, an envelope, a credential or a statement.
+It answers `500` only when building the status throws, such as when the keyring file does not load.
+
 #### GET /api/admin/seed-sources
 
 The status of the operator seed sources ([SEED_CONNECTIONS.md](./SEED_CONNECTIONS.md#diagnostics)), read by the admin Overview page.

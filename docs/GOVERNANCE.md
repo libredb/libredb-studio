@@ -20,6 +20,7 @@ Studio publishes the contract before it implements all of it: until a release's 
 - [Change notification](#change-notification)
 - [Freshness and readiness](#freshness-and-readiness)
 - [Operating notes](#operating-notes)
+- [Admin status](#admin-status)
 - [Heartbeat](#heartbeat)
 - [Versioning and upgrade order](#versioning-and-upgrade-order)
 - [Row admission and skip codes](#row-admission-and-skip-codes)
@@ -333,6 +334,34 @@ How an instance connects to the governance source:
 - A load waits at most 5 seconds for a connection, each statement runs under a `statement_timeout` of 10 seconds and is abandoned by Studio after 15, and the whole load gives up after 20 seconds, so a governance source that hangs never holds a load for long.
   Studio closes the connection of a load that gave up, and a statement still running on it keeps its server process busy until it ends, at most the 10 seconds of `statement_timeout`, because PostgreSQL notices a closed connection only when it next reads from it.
 
+## Admin status
+
+`GET /api/admin/governance` answers an administrator of Studio with the governance status of the instance, and the admin Overview page shows it.
+It names ids, levels, paths and codes only, never a definition value, an envelope, a credential or a statement:
+
+```json
+{
+  "governance": {
+    "source": "postgres",
+    "schema": "bridge",
+    "contract": { "supported": [1], "published": [1], "active": 1 },
+    "freshness": "degraded",
+    "snapshot": { "loadedAt": "2026-10-15T08:00:00.000Z", "ageMs": 45000 },
+    "lastError": { "at": "2026-10-15T08:00:40.000Z", "kind": "transient", "code": "ECONNREFUSED" },
+    "admittedConnections": 4,
+    "skipped": [{ "kind": "connection", "id": "billing", "level": "read", "code": "READ_SECRET_UNOPENABLE", "envelopeCode": "UNKNOWN_KID" }],
+    "keyringKids": ["<kid>"]
+  }
+}
+```
+
+- `freshness` is the state of [Freshness and readiness](#freshness-and-readiness), and `snapshot` is the snapshot in use with its age at the moment of the request, or null before the first successful load.
+- `contract.published` and `contract.active` come from the last successful load, and are null before one.
+- `lastError` is why the latest load failed, by its kind and its SQLSTATE or driver code, or null when it succeeded; the log line of that failure carries its full detail.
+- `skipped` lists each row, or write level of a row, that [row admission](#row-admission-and-skip-codes) left out, as the heartbeat reports it, plus the envelope code for an envelope that did not open.
+- `keyringKids` are the key ids of the keyring the instance opens envelopes with.
+- With governance off the route answers `{ "governance": null }`, and a user who is not an administrator gets 403.
+
 ## Heartbeat
 
 Every 30 seconds each instance upserts its row of `bridge.studio_instances_v1`:
@@ -406,6 +435,10 @@ Studio checks each `bridge.connections_v1` row in order and skips a row with a c
    Values from the governance source are used as written: a `${NAME}` or Vault reference in them is never resolved.
 6. The read envelope opens.
    A write envelope that does not open keeps the row with read access only.
+
+A row reports only its first fault, checked in this order: the id, the engine, the definition, the read envelope with the record merged from it, then the write envelope with its record.
+Within the definition, a credential key is reported as `DEFINITION_HAS_SECRET` before any other key is checked.
+A skip at the write level, one that carries `"level": "write"`, is the only one whose row stays admitted, with read access only; every other skip leaves the row out.
 
 | Code | Meaning |
 | --- | --- |
