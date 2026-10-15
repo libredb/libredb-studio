@@ -443,6 +443,18 @@
   "selectQuery": "# Order\"Items: one row of this answer\nGET /c0/current",
   "countQuery": null
  },
+ "modbus": {
+  "queryLanguage": "json",
+  "queryDialect": "modbus",
+  "tabType": "modbus",
+  "monacoLanguage": "json",
+  "offersColumnProfiling": false,
+  "offersCodeGeneration": false,
+  "offersCountQuery": false,
+  "tableQuery": "{\n  \"read\": [\n    \"Order\\\"Items\"\n  ]\n}",
+  "selectQuery": "{\n  \"read\": [\n    \"Order\\\"Items\"\n  ]\n}",
+  "countQuery": null
+ },
  "libredb": {
   "queryLanguage": "json",
   "queryDialect": "libredb",
