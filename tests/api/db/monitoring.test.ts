@@ -387,6 +387,15 @@ describe("POST /api/db/monitoring", () => {
     });
 
     test("governance: an admin with a grant gets monitoring data", async () => {
+      // A governed session always carries its identity provider subject, which names the owner of
+      // the provider the request runs on (STU-20).
+      mockGetSession.mockImplementation(
+        async (): Promise<{ role: string; username: string; idpSubject?: string } | null> => ({
+          role: "admin",
+          username: "admin",
+          idpSubject: "sub-admin",
+        }),
+      );
       const res = await POST(
         createMockRequest("/api/db/monitoring", {
           method: "POST",
