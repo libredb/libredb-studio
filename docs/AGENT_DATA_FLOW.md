@@ -362,7 +362,7 @@ The inventory's foreign keys, rendered as a relation list and fenced beside the 
 It carries table names, column names, and at the deepest detail level a table's primary-key and
 leading-index column names (`keyColumns`, `er-diagram.ts:145-157`). **Never a row value.**
 
-On the thirty engines that declare no foreign keys at all (MongoDB, Redis, LibreDB, Druid, ClickHouse, Couchbase, Firestore, Trino, Snowflake, Apache Spark, Cassandra, Elasticsearch, OpenSearch, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), BigQuery, Apache Kafka, MQTT, RabbitMQ, OPC UA, etcd, Neo4j, Milvus, Qdrant, Oxia, Databend, S3-compatible object storage and Kubernetes) this block carries no relations and says why: the engine has no such constraint to
+On the thirty engines that declare no foreign keys at all (MongoDB, Redis, LibreDB, Druid, ClickHouse, Couchbase, Firestore, Trino, Snowflake, Apache Spark, Cassandra, Elasticsearch, OpenSearch, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), BigQuery, Apache Kafka, MQTT, RabbitMQ, OPC UA, MTConnect, etcd, Neo4j, Milvus, Qdrant, Oxia, Databend, S3-compatible object storage and Kubernetes) this block carries no relations and says why: the engine has no such constraint to
 declare, so there is nothing here a reading could have missed (#414, driven from
 `ProviderCapabilities.declaresForeignKeys` rather than from the connection's type). It is one server
 sentence and no database content, which makes it the one form of this block that discloses nothing.
