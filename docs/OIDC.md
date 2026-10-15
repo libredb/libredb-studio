@@ -440,6 +440,7 @@ The identity provider is then the only way into Studio, and Studio applies these
 - A refused session's `auth-token` cookie is cleared, so the next page load reaches the sign-in page.
   A changed `OIDC_ISSUER` therefore ends every session of the previous issuer at its next request, and with `OIDC_ISSUER` unset or not a URL no session counts.
 - The callback applies the same rule to the ID token before it mints a session: a token with an empty `sub`, or whose `iss` is not `OIDC_ISSUER`, signs no one in and lands on `/login?error=oidc_config`, so `OIDC_AUTO_REDIRECT` never repeats a sign-in that every request would refuse.
+- A session issued at or before its subject's `revoked_before` in the control plane's session revocations is refused too, while Studio serves a snapshot of the governance source ([GOVERNANCE.md](./GOVERNANCE.md#sign-in)).
 - `POST /api/auth/login` answers 403 with `Password sign-in is disabled: this server signs in through the identity provider only` before it reads a credential, and the audit trail records `login_failure` with reason `password_login_disabled`.
 
 The identity provider needs:

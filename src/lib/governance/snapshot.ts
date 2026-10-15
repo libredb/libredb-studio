@@ -19,9 +19,12 @@
  * `ok` or the envelope's code for each kid, which the heartbeat and the admin status report, so a control plane that
  * seals to a wrong public key shows up before its first real connection.
  *
- * A grant or revocation row that breaks a rule the contract publishes for its view grants or revokes nothing and is
- * counted in a log line, as a governance source that breaks a CHECK hands Studio a row it skips. Two rows for one
- * subject and connection grant nothing either, because Studio cannot tell which one the control plane meant.
+ * A grant row that breaks a rule the contract publishes for its view grants nothing and is counted in a log line, as a
+ * governance source that breaks a CHECK hands Studio a row it skips. Two rows for one subject and connection grant
+ * nothing either, because Studio cannot tell which one the control plane meant. A revocation only ever denies, so a
+ * revocation row whose `revoked_before` cannot be read revokes every session of its subject instead, and one without a
+ * readable subject, which no session can match, is counted; both are logged at error level, and neither fails the
+ * load.
  *
  * Once a new snapshot is in place, the loader tears down the providers of every subject and connection whose access it
  * took away or changed (`grant-diff.ts`, spec 7.4, 9.4): it asks every copy of the provider factory to remove that
@@ -200,19 +203,34 @@ function effectiveGrants(
   return { bySubject, ignored };
 }
 
-/** The latest `revoked_before` of each subject: a revocation only ever denies, so the latest one is the one in force. */
-function latestRevocations(rows: readonly Row[]): Tally<Map<string, number>> {
+interface RevocationTally extends Tally<Map<string, number>> {
+  /** The rows of a readable subject whose `revoked_before` could not be read. */
+  readonly withoutRevokedBefore: number;
+}
+
+/**
+ * The latest `revoked_before` of each subject: a revocation only ever denies, so the latest one is the one in force,
+ * and a row whose `revoked_before` cannot be read counts as `+Infinity` and revokes every session of its subject,
+ * because reading it as no revocation would fail open. A row without a readable subject can match no session and is
+ * only counted. Neither fails the load, which would hold back every other revocation until the snapshot goes stale.
+ */
+function latestRevocations(rows: readonly Row[]): RevocationTally {
   const bySubject = new Map<string, number>();
   let ignored = 0;
+  let withoutRevokedBefore = 0;
   for (const { subject, revoked_before: revokedBefore } of rows) {
-    const at = instantMs(revokedBefore);
-    if (!isSubject(subject) || Number.isNaN(at)) {
+    if (!isSubject(subject)) {
       ignored += 1;
       continue;
     }
+    let at = instantMs(revokedBefore);
+    if (Number.isNaN(at)) {
+      withoutRevokedBefore += 1;
+      at = Number.POSITIVE_INFINITY;
+    }
     bySubject.set(subject, Math.max(at, bySubject.get(subject) ?? Number.NEGATIVE_INFINITY));
   }
-  return { bySubject, ignored };
+  return { bySubject, ignored, withoutRevokedBefore };
 }
 
 /**
@@ -256,13 +274,20 @@ function buildSnapshot(rows: SourceRows, loadedAt: number): GovernanceSnapshot {
   const revocations = latestRevocations(rows.revocations);
   const canary = canaryResults(rows.canaries);
   const settings = validateSettings(rows.settings, rows.contractVersion);
-  if (grants.ignored > 0 || revocations.ignored > 0 || canary.ignored > 0 || settings.malformed > 0) {
+  if (grants.ignored > 0 || canary.ignored > 0 || settings.malformed > 0) {
     logger.warn("Governance rows ignored", {
       route: ROUTE,
       grants: grants.ignored,
-      revocations: revocations.ignored,
       canaries: canary.ignored,
       settings: settings.malformed,
+    });
+  }
+  // A revocation Studio cannot read whole ends more sessions than the control plane meant, or none of them.
+  if (revocations.withoutRevokedBefore > 0 || revocations.ignored > 0) {
+    logger.error("Governance revocation rows unreadable", undefined, {
+      route: ROUTE,
+      withoutRevokedBefore: revocations.withoutRevokedBefore,
+      withoutSubject: revocations.ignored,
     });
   }
   return {
