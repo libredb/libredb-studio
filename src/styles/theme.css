@@ -216,8 +216,13 @@
      palette gains one, and a steel grey is the one colour a plant's address space can carry
      without borrowing another engine's. */
   --studio-hue-slate: #1d293d;
-  --studio-hue-taupe: #473c39;
   /* MTConnect (#1722) takes the step this hue never had. MEASURED against this file at 90881379:
+     of nineteen base hues, exactly two carried no `-alt` in either theme, `mist` and `slate`, so
+     this is one of the two steps the palette was still missing rather than a new colour. A base
+     and its `-alt` step say nothing about a provider family: `trino` is an SQL engine and `mqtt`
+     an industrial one on one hue, and `mysql` and `kubernetes` share another. */
+  --studio-hue-slate-alt: #0f172b;
+  --studio-hue-taupe: #473c39;
 }
 
 .dark {
@@ -345,6 +350,7 @@
   --studio-hue-lime-alt: #bbf451;
   --studio-hue-mist: #9ca8ab;
   --studio-hue-slate: #90a1b9;
+  --studio-hue-slate-alt: #cad5e2;
   --studio-hue-taupe: #aba09c;
 }
 
@@ -456,6 +462,7 @@
   --color-hue-lime-alt: var(--studio-hue-lime-alt);
   --color-hue-mist: var(--studio-hue-mist);
   --color-hue-slate: var(--studio-hue-slate);
+  --color-hue-slate-alt: var(--studio-hue-slate-alt);
   --color-hue-taupe: var(--studio-hue-taupe);
   --color-hue-teal-solid: var(--studio-hue-teal-solid);
   --color-hue-teal-solid-hover: var(--studio-hue-teal-solid-hover);

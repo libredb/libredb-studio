@@ -78,7 +78,7 @@ An mssql seed that carried only a `connectionString`, for example, loaded and op
 The types whose provider reads it are postgres, mysql, sqlite, libsql, oracle, db2, clickhouse, mongodb and couchbase.
 sqlite reads it as the database file path, with a `file:` prefix removed, although its provider's capability flag says it does not ([docs/providers/sqlite.md](./providers/sqlite.md)).
 mssql does not read it, although its provider's capability flag says it does: the flag covers the connection form, which splits a pasted URI into fields, and the provider builds from those fields only ([docs/providers/mssql.md](./providers/mssql.md#44-connection-string-nuance)).
-The 28 that refuse it are bigquery, snowflake, duckdb, mssql, druid, trino, cassandra, elasticsearch, opensearch, redis, prometheus, kafka, etcd, neo4j, milvus, qdrant, influxdb, influxdb3, oxia, databend, s3, kubernetes, mqtt, firestore, rabbitmq, opcua, mtconnect and libredb.
+The 29 that refuse it are bigquery, snowflake, spark, duckdb, mssql, druid, trino, cassandra, elasticsearch, opensearch, redis, prometheus, kafka, etcd, neo4j, milvus, qdrant, influxdb, influxdb3, oxia, databend, s3, kubernetes, mqtt, firestore, rabbitmq, opcua, mtconnect and libredb.
 To fix a refused file, move the value into `host`, `port`, `user`, `password` and `database`, and remove `connectionString`.
 
 ### A Firestore connection

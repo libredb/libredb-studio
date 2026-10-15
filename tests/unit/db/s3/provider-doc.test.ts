@@ -2019,7 +2019,8 @@ describe("the complete engine lists outside the agent docs", () => {
     // straight back to MQTT. The chain is a claim about ORDER, so each link is pinned at both ends: an engine added
     // without moving the head leaves the previous head claiming a title it no longer holds, which is exactly what
     // this change did to Kubernetes until the `not` assertions below were added.
-    expect(readme).toContain("OPC UA came before MTConnect: one `opc.tcp` session reads");
+    expect(readme).toContain("Apache Spark came before MTConnect: SQL typed in the editor runs");
+    expect(readme).toContain("OPC UA came before Apache Spark: one `opc.tcp` session reads");
     expect(readme).not.toContain("OPC UA is the newest");
     expect(readme).toContain("OPC UA came before Apache Spark: one `opc.tcp` session reads");
     expect(readme).not.toContain("Snowflake is the newest");
@@ -2033,7 +2034,8 @@ describe("the complete engine lists outside the agent docs", () => {
     expect(readme).toContain("Kubernetes came before MQTT: kubectl read commands");
     expect(readme).toContain("S3-compatible object storage came before Kubernetes: AWS CLI read commands");
     expect(readme).toContain("Databend came before S3-compatible object storage: ");
-    expect(zh).toContain("OPC UA 在 MTConnect 之前加入：");
+    expect(zh).toContain("Apache Spark 在 MTConnect 之前：");
+    expect(zh).toContain("OPC UA 在 Apache Spark 之前：");
     expect(zh).not.toContain("OPC UA 是最新的一个");
     expect(zh).toContain("OPC UA 在 Apache Spark 之前：");
     expect(zh).not.toContain("MQTT 是最新的一个");
@@ -2046,7 +2048,7 @@ describe("the complete engine lists outside the agent docs", () => {
     expect(zh).toContain("它在 MinIO、Silo、Garage 和 RustFS 上验证过，没有在任何托管服务上验证过。");
     const ko = read("README_ko.md");
     expect(ko).toContain("MinIO, Silo, Garage, RustFS에서 검증되었으며 호스팅 서비스에서는 검증되지 않았습니다.");
-    expect(ko).toContain("MTConnect 이전에 추가된 엔진은 OPC UA입니다.");
+    expect(ko).toContain("MTConnect 이전에 추가된 엔진은 Apache Spark입니다.");
     expect(ko).not.toContain("가장 최근에 추가된 엔진은 OPC UA입니다.");
     expect(ko).toContain("Apache Spark 이전에 추가된 엔진은 OPC UA입니다.");
     expect(ko).not.toContain("가장 최근에 추가된 엔진은 MQTT입니다.");
