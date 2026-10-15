@@ -9,12 +9,20 @@
 # declares, and `tests/unit/db/modbus/live-environment.test.ts` holds the two equal, so CI and a
 # developer's machine run the same device.
 #
-# WHAT THE TWO READINESS CHECKS ARE FOR. The first asks whether the port accepts a connection.
-# That is not enough on its own and the gap was measured: a listener that accepts TCP and answers
-# nothing passes it, so a fixture with no tables behind it would be called ready and the live
-# check that followed would fail for a reason that reads like a product defect. The second asks
-# whether a known register answers the value the fixture is configured with, over a frame built by
-# hand rather than through the provider being measured.
+# WHAT THE TWO READINESS CHECKS ARE FOR. The first asks whether anything there speaks Modbus: a
+# reply whose MBAP header echoes what was sent. The second asks whether a known register answers
+# the value the fixture is configured with. Both build their frames by hand rather than going
+# through the provider being measured, because a readiness check that runs through the thing under
+# test cannot tell a broken fixture from a broken provider and would name the wrong one.
+#
+# The second plainly implies the first, and they are still asked separately: it is what lets the
+# step say WHICH of the two failed. Nothing speaking Modbus and a server serving another table's
+# values are different things to go and fix.
+#
+# NOT `/dev/tcp`. The first question used to be whether the port accepted a connection, and
+# MEASURED, against a published container port that is answered by Docker itself: 5 ms for the
+# accept against 332 ms for the server behind it. A published port accepts while nothing inside
+# the container is listening, so "the port is open" is not a readiness fact.
 #
 # AND WHAT THE RED SAYS. A fixture that never became ready exits before the live check runs and
 # says NOT MEASURED, because nothing about the product was measured. A live check that ran and
@@ -36,16 +44,23 @@
           ready=""
           end=$((SECONDS + 60))
           while [ "$SECONDS" -lt "$end" ]; do
-            # Two independent questions: the socket, then the data. Either alone is answered by a
-            # fixture that is not serving this repository's tables.
-            if (exec 3<>/dev/tcp/127.0.0.1/1502) 2>/dev/null && bun tests/live/modbus-ready-probe.ts; then
+            # Two questions, and the second plainly implies the first. They are asked separately
+            # so the two failures can be told apart below, not for coverage.
+            if bun tests/live/modbus-ready-probe.ts --speaks && bun tests/live/modbus-ready-probe.ts --tables; then
               ready=yes
               break
             fi
             sleep 1
           done
           if [ -z "$ready" ]; then
-            echo "NOT MEASURED: the Modbus fixture did not answer within 60 s, so the live check never ran."
+            # Which of the two it was, in its own sentence. Both are NOT MEASURED, because in
+            # neither case did anything about this repository's code get measured, but a reader
+            # who has to fix one of them needs to know which one.
+            if bun tests/live/modbus-ready-probe.ts --speaks; then
+              echo "NOT MEASURED: a Modbus server answered on 1502 but its tables are not this fixture's, so the live check never ran."
+            else
+              echo "NOT MEASURED: nothing speaking Modbus answered on 1502 within 60 s, so the live check never ran."
+            fi
             docker logs --tail 50 libredb-ci-modbus
             exit 1
           fi

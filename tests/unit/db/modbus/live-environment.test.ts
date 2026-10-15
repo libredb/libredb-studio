@@ -106,10 +106,25 @@ describe("the CI step tells a fixture that never answered from a check that fail
     expect(CI_STEP).toContain("the live check never ran");
   });
 
-  test("readiness asks two independent questions, and the second one is the data", () => {
-    // A listener that accepts TCP and answers nothing passes the first on its own: MEASURED.
-    expect(CI_STEP).toContain("/dev/tcp/127.0.0.1/1502");
-    expect(CI_STEP).toContain("tests/live/modbus-ready-probe.ts");
+  test("readiness asks two questions, and says which one failed", () => {
+    /*
+     * Both go through the probe, and NOT through `/dev/tcp`: a published container port is
+     * accepted by Docker itself, 5 ms against the 332 ms the server behind it took, so "the port
+     * is open" is answered while nothing inside the container is listening.
+     *
+     * They are asked separately for the sentence rather than for coverage, which is why both
+     * sentences are held here: a reader who has to fix one of them needs to know which it was.
+     */
+    // The comments explain why `/dev/tcp` is not used, so the rule reads the runnable lines only:
+    // a rule that forbids a word everywhere also forbids writing down why it was dropped.
+    const runnable = CI_STEP.split("\n")
+      .filter((line) => !line.trimStart().startsWith("#"))
+      .join("\n");
+    expect(runnable).not.toContain("/dev/tcp");
+    expect(CI_STEP).toContain("modbus-ready-probe.ts --speaks");
+    expect(CI_STEP).toContain("modbus-ready-probe.ts --tables");
+    expect(CI_STEP).toContain("nothing speaking Modbus answered");
+    expect(CI_STEP).toContain("its tables are not this fixture's");
   });
 
   test("the fixture is removed however the step ends", () => {
