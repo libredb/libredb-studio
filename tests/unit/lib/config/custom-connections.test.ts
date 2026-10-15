@@ -7,15 +7,19 @@ import {
 import { logger } from "@/lib/logger";
 
 const original = process.env.ALLOW_CUSTOM_CONNECTIONS;
+const originalGovernanceSource = process.env.GOVERNANCE_SOURCE;
 
 beforeEach(() => {
   delete process.env.ALLOW_CUSTOM_CONNECTIONS;
+  delete process.env.GOVERNANCE_SOURCE;
   resetCustomConnectionsWarning();
 });
 
 afterEach(() => {
   if (original === undefined) delete process.env.ALLOW_CUSTOM_CONNECTIONS;
   else process.env.ALLOW_CUSTOM_CONNECTIONS = original;
+  if (originalGovernanceSource === undefined) delete process.env.GOVERNANCE_SOURCE;
+  else process.env.GOVERNANCE_SOURCE = originalGovernanceSource;
   resetCustomConnectionsWarning();
 });
 
@@ -112,5 +116,46 @@ describe("customConnectionsAllowed", () => {
 
   test("names the refusal in the sentence the API contract fixes", () => {
     expect(CUSTOM_CONNECTIONS_DISABLED_MESSAGE).toBe("Custom connections are disabled on this server");
+  });
+});
+
+/*
+  Governance mode serves the connections of the governance source only (docs/GOVERNANCE.md). The boot check refuses
+  an ALLOW_CUSTOM_CONNECTIONS that keeps custom connections on, and the switch answers off under governance whatever
+  the variable says, so a server whose boot check was bypassed still refuses every connection a request supplies.
+*/
+describe("customConnectionsAllowed under governance", () => {
+  test("governance switches custom connections off when ALLOW_CUSTOM_CONNECTIONS is unset", () => {
+    // Control: unset keeps them on without governance.
+    expect(customConnectionsAllowed()).toBe(true);
+
+    process.env.GOVERNANCE_SOURCE = "postgres";
+
+    expect(customConnectionsAllowed()).toBe(false);
+  });
+
+  test.each(["true", "1", "on", " Yes ", `"true"`])(
+    "governance keeps them off when ALLOW_CUSTOM_CONNECTIONS is %p, without logging",
+    (value) => {
+      const error = spyOn(logger, "error").mockImplementation(() => {});
+      try {
+        process.env.ALLOW_CUSTOM_CONNECTIONS = value;
+        // Control: the value keeps them on without governance.
+        expect(customConnectionsAllowed()).toBe(true);
+
+        process.env.GOVERNANCE_SOURCE = "postgres";
+
+        expect(customConnectionsAllowed()).toBe(false);
+        expect(error).not.toHaveBeenCalled();
+      } finally {
+        error.mockRestore();
+      }
+    },
+  );
+
+  test("an invalid GOVERNANCE_SOURCE counts as on and switches them off, failing closed", () => {
+    process.env.GOVERNANCE_SOURCE = "postgress";
+
+    expect(customConnectionsAllowed()).toBe(false);
   });
 });

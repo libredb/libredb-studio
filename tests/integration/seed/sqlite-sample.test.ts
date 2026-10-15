@@ -39,6 +39,7 @@ afterEach(() => {
   delete process.env.SQLITE_EMBEDDED_SAMPLE;
   delete process.env.SQLITE_EMBEDDED_SAMPLE_PATH;
   delete process.env.SQLITE_EMBEDDED_SAMPLE_TEMPLATE;
+  delete process.env.GOVERNANCE_SOURCE;
   setSqliteSampleSeedState("idle");
 });
 
@@ -49,6 +50,17 @@ describe("sqlite-sample", () => {
     expect(isSqliteSampleEnabled()).toBe(false);
     process.env.SQLITE_EMBEDDED_SAMPLE = "true";
     expect(isSqliteSampleEnabled()).toBe(true);
+  });
+
+  // Governance mode offers no sample (docs/GOVERNANCE.md): the boot check refuses a sample switched on, and the
+  // switch answers off under governance whatever the variable says, so a bypassed check seeds and lists no sample.
+  test("under governance isSqliteSampleEnabled() is false although SQLITE_EMBEDDED_SAMPLE is true", () => {
+    process.env.SQLITE_EMBEDDED_SAMPLE = "true";
+    process.env.GOVERNANCE_SOURCE = "postgres";
+    expect(isSqliteSampleEnabled()).toBe(false);
+    // Unset is on by default, and still off under governance.
+    delete process.env.SQLITE_EMBEDDED_SAMPLE;
+    expect(isSqliteSampleEnabled()).toBe(false);
   });
 
   test("resolveSqliteSamplePath: override wins; else derives from data dir", () => {

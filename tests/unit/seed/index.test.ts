@@ -1,11 +1,21 @@
 import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
+import * as fs from "fs";
+import * as fsPromises from "fs/promises";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "path";
-import { getManagedConnections, getSeedConnectionById, getSeedConnectionByIdUnfiltered, resetCache } from "@/lib/seed";
+import {
+  getManagedConnections,
+  getPendingSeeds,
+  getSeedConnectionById,
+  getSeedConnectionByIdUnfiltered,
+  resetCache,
+} from "@/lib/seed";
 import { resetLiteralModeNotices, resetPlaintextWarnings } from "@/lib/seed/credential-resolver";
 import { getDiscoveredConnections, resetDiscoveryCache } from "@/lib/seed/discovery-loader";
-import { SQLITE_SAMPLE_SEED_ID } from "@/lib/seed/sqlite-sample";
+import { SAMPLE_SEED_ID } from "@/lib/seed/libredb-sample";
+import { DEFAULT_SEED_CONFIG_PATH } from "@/lib/seed/sources/file";
+import { SQLITE_SAMPLE_SEED_ID, setSqliteSampleSeedState } from "@/lib/seed/sqlite-sample";
 import { logger } from "@/lib/logger";
 import { postgresService, writeDiscoveryExport, type DiscoveryExportFixture } from "../../helpers/discovery-fixture";
 
@@ -309,5 +319,151 @@ describe("seed/index with discovered connections", () => {
 
     const seedIds = (await getManagedConnections(["admin"])).map((c) => c.seedId);
     expect(seedIds).toEqual(["admin-only", "everyone", "admin-and-user", SQLITE_SAMPLE_SEED_ID]);
+  });
+});
+
+/*
+  Governance mode (docs/GOVERNANCE.md) makes the governance source Studio's only catalog of connections, so the seed
+  lookups read no source at all, whatever the environment says. That includes the seed file at its default path,
+  which Studio reads when SEED_CONFIG_PATH is unset, as a governance install leaves it. The boot check refuses an
+  environment that names a seed file, an export or a sample, and these cases hold where it was bypassed.
+*/
+describe("seed/index under governance", () => {
+  /** A seed file at the default path, which a test cannot write: the readFile spy serves it from memory. */
+  const DEFAULT_PATH_SEED = [
+    'version: "1"',
+    "connections:",
+    '  - id: "default-path"',
+    '    name: "Default path"',
+    "    type: postgres",
+    '    host: "db.internal"',
+    '    roles: ["*"]',
+    "",
+  ].join("\n");
+  const ENV_KEYS = [
+    "GOVERNANCE_SOURCE",
+    "SEED_CONFIG_PATH",
+    "SEED_DISCOVERY_PATH",
+    "SQLITE_EMBEDDED_SAMPLE_PATH",
+    "LIBREDB_EMBEDDED_SAMPLE_PATH",
+  ] as const;
+  const savedEnv: Record<string, string | undefined> = {};
+  const realReadFile = fsPromises.readFile;
+  let scratch: string;
+
+  beforeEach(() => {
+    for (const key of ENV_KEYS) {
+      savedEnv[key] = process.env[key];
+      delete process.env[key];
+    }
+    resetCache();
+    resetDiscoveryCache();
+    setSqliteSampleSeedState("idle");
+    scratch = mkdtempSync(path.join(tmpdir(), "libredb-seed-index-governance-"));
+  });
+
+  afterEach(() => {
+    for (const key of ENV_KEYS) {
+      const value = savedEnv[key];
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    resetCache();
+    resetDiscoveryCache();
+    setSqliteSampleSeedState("idle");
+    rmSync(scratch, { recursive: true, force: true });
+  });
+
+  it("under governance a seed file at the default path is never read", async () => {
+    const readFile = spyOn(fsPromises, "readFile").mockImplementation(((file: unknown, ...rest: unknown[]) =>
+      file === DEFAULT_SEED_CONFIG_PATH
+        ? Promise.resolve(DEFAULT_PATH_SEED)
+        : Reflect.apply(realReadFile, fsPromises, [file, ...rest])) as typeof fsPromises.readFile);
+
+    try {
+      // Control: without governance the seed file at the default path is read, and its connection listed.
+      expect((await getManagedConnections(["admin"])).map((c) => c.seedId)).toEqual(["default-path"]);
+      expect(readFile.mock.calls.map((call) => call[0])).toEqual([DEFAULT_SEED_CONFIG_PATH]);
+      resetCache();
+      readFile.mockClear();
+
+      process.env.GOVERNANCE_SOURCE = "postgres";
+
+      expect(await getManagedConnections(["admin"])).toEqual([]);
+      expect(await getManagedConnections(["user"])).toEqual([]);
+      expect(await getSeedConnectionById("default-path", ["admin"])).toBeNull();
+      expect(await getSeedConnectionByIdUnfiltered("default-path")).toBeNull();
+      expect(readFile).not.toHaveBeenCalled();
+    } finally {
+      readFile.mockRestore();
+    }
+  });
+
+  it("under governance neither the discovery export nor a sample is consulted, and no seed is pending", async () => {
+    process.env.SEED_CONFIG_PATH = path.join(scratch, "no-seed-file.yaml");
+    // Both samples are listed once their file exists; their content is never read here.
+    const sqliteSample = path.join(scratch, "sample-employees.db");
+    const libredbSample = path.join(scratch, "sample.libredb");
+    writeFileSync(sqliteSample, "");
+    writeFileSync(libredbSample, "");
+    process.env.SQLITE_EMBEDDED_SAMPLE_PATH = sqliteSample;
+    process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = libredbSample;
+    const discovery = writeDiscoveryExport([postgresService("pg", "discovered-secret")]);
+    process.env.SEED_DISCOVERY_PATH = discovery.path;
+    setSqliteSampleSeedState("seeding");
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    const open = spyOn(fsPromises, "open");
+    const existsSync = spyOn(fs, "existsSync");
+
+    try {
+      // Control: without governance the export and both samples are read and listed, and the SQLite sample pends.
+      expect((await getManagedConnections(["admin"])).map((c) => c.seedId)).toEqual([
+        "caprover-pg",
+        SQLITE_SAMPLE_SEED_ID,
+        SAMPLE_SEED_ID,
+      ]);
+      expect(open.mock.calls.map((call) => call[0])).toEqual([discovery.path]);
+      expect(existsSync.mock.calls.map((call) => call[0])).toEqual([sqliteSample, libredbSample]);
+      expect(getPendingSeeds()).toEqual([SQLITE_SAMPLE_SEED_ID]);
+      resetCache();
+      resetDiscoveryCache();
+      open.mockClear();
+      existsSync.mockClear();
+
+      process.env.GOVERNANCE_SOURCE = "postgres";
+
+      expect(await getManagedConnections(["admin"])).toEqual([]);
+      expect(await getSeedConnectionById("caprover-pg", ["admin"])).toBeNull();
+      expect(await getSeedConnectionById(SQLITE_SAMPLE_SEED_ID, ["admin"])).toBeNull();
+      expect(await getSeedConnectionById(SAMPLE_SEED_ID, ["user"])).toBeNull();
+      expect(getPendingSeeds()).toEqual([]);
+      expect(open).not.toHaveBeenCalled();
+      expect(existsSync).not.toHaveBeenCalled();
+    } finally {
+      existsSync.mockRestore();
+      open.mockRestore();
+      warn.mockRestore();
+      discovery.remove();
+    }
+  });
+
+  it("counts an invalid GOVERNANCE_SOURCE as on, so a typo reads no source either", async () => {
+    const seedFile = path.join(scratch, "seed-connections.json");
+    writeFileSync(
+      seedFile,
+      JSON.stringify({
+        version: "1",
+        connections: [{ id: "reporting", name: "Reporting", type: "postgres", host: "db.internal", roles: ["*"] }],
+      }),
+    );
+    process.env.SEED_CONFIG_PATH = seedFile;
+    // Control: without governance the file's connection is found.
+    expect((await getSeedConnectionByIdUnfiltered("reporting"))?.seedId).toBe("reporting");
+    resetCache();
+
+    process.env.GOVERNANCE_SOURCE = "Postgres";
+
+    expect(await getManagedConnections(["admin"])).toEqual([]);
+    expect(await getSeedConnectionByIdUnfiltered("reporting")).toBeNull();
   });
 });

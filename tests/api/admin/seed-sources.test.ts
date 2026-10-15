@@ -46,6 +46,7 @@ const ENV_KEYS = [
   "SEED_SOURCES_UNSET_PASSWORD",
   "TRUST_PROXY_HEADERS",
   "RATE_LIMIT_QUERY_MAX",
+  "GOVERNANCE_SOURCE",
 ] as const;
 const savedEnv: Record<string, string | undefined> = {};
 
@@ -427,6 +428,73 @@ describe("GET /api/admin/seed-sources: reports", () => {
       expect(error).toHaveBeenCalled();
     } finally {
       error.mockRestore();
+    }
+  });
+});
+
+// Governance mode reads no operator source (docs/SEED_CONNECTIONS.md#governance-mode), so there is no source to
+// report, and the status is never read: the card hides itself on an empty list.
+describe("GET /api/admin/seed-sources: governance", () => {
+  test("governance answers an empty source list", async () => {
+    // The boot check refuses SEED_CONFIG_PATH under governance, and the route holds where it was bypassed.
+    process.env.SEED_CONFIG_PATH = seedPath;
+    writeFileSync(
+      seedPath,
+      [
+        'version: "1"',
+        "connections:",
+        '  - id: "reporting"',
+        '    name: "Reporting"',
+        "    type: postgres",
+        '    host: "db.internal"',
+        '    roles: ["admin"]',
+        "",
+      ].join("\n"),
+    );
+    const info = spyOn(logger, "info").mockImplementation(() => {});
+
+    try {
+      // Control: without governance the seed file is read and reported.
+      expect((await answer()).body.sources.map((report) => report.state)).toEqual(["ok"]);
+      statusCalls = 0;
+
+      process.env.GOVERNANCE_SOURCE = "postgres";
+      const { status, body } = await answer();
+
+      expect(status).toBe(200);
+      expect(body).toEqual({ sources: [] });
+      expect(statusCalls).toBe(0);
+    } finally {
+      info.mockRestore();
+    }
+  });
+
+  test("governance answers an empty source list for the default path too, without reading the status", async () => {
+    delete process.env.SEED_CONFIG_PATH;
+    process.env.GOVERNANCE_SOURCE = "postgres";
+
+    const { status, body } = await answer();
+
+    expect(status).toBe(200);
+    expect(body).toEqual({ sources: [] });
+    expect(statusCalls).toBe(0);
+  });
+
+  test("governance keeps the admin check: a standard user gets the shared 403", async () => {
+    process.env.GOVERNANCE_SOURCE = "postgres";
+    mockGetSession.mockResolvedValueOnce({ role: "user", username: "user" });
+    const sink = spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      const res = await GET(request());
+
+      expect(res.status).toBe(403);
+      expect(await parseResponseJSON<{ error: string }>(res)).toEqual({
+        error: "Unauthorized. Admin access required.",
+      });
+      expect(statusCalls).toBe(0);
+    } finally {
+      sink.mockRestore();
     }
   });
 });

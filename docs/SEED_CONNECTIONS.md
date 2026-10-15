@@ -49,10 +49,20 @@ Two connections with one id inside the seed file fail it as an invalid config, a
 Two operator sources that declare one id stop the whole list, naming the id and where each one was declared, because neither may shadow the other.
 A discovered connection whose id an operator source declares is dropped and reported as skipped, with the reason "id taken by the seed file".
 
+### Governance mode
+
+With `GOVERNANCE_SOURCE` set, Studio runs in governance mode, and the governance source replaces seed files, platform discovery and the built-in samples as the catalog of connections ([`docs/GOVERNANCE.md`](./GOVERNANCE.md)).
+Studio then reads none of the sources on this page, whatever their variables say: no seed file, not even one at the default path `/app/config/seed-connections.yaml`, no discovery export and no sample.
+It creates no sample file at startup either.
+Custom connections are off as well, whatever `ALLOW_CUSTOM_CONNECTIONS` says, so a connection a request supplies is refused with `403` and the code `CUSTOM_CONNECTIONS_DISABLED`, as described under [Custom Connections](#custom-connections).
+The [boot checks](./GOVERNANCE.md#boot-checks) refuse an environment that switches any of these on, and all of them stay off on a server where those checks were bypassed.
+`GET /api/admin/seed-sources` answers `{ "sources": [] }` and `GET /api/admin/discovery` answers `{ "discovery": null }`, so the admin Overview shows neither the Seed sources card nor the Platform Discovery (CapRover) card.
+
 ### The seed file
 
 `SEED_CONFIG_PATH` names a YAML or JSON file, and `/app/config/seed-connections.yaml` when it is unset or empty.
 No file at the default path means no seed connections and no error.
+In [governance mode](#governance-mode) no seed file is read, not even at the default path.
 A file named explicitly in `SEED_CONFIG_PATH` that does not exist also leaves Studio running without seed connections, and the [Seed sources card](#diagnostics) reports it as "Not found" with the path.
 Any other read error, a parse error or a schema error fails the whole list (see [Error Handling](#error-handling)).
 
@@ -722,6 +732,7 @@ It is on when unset.
 `false`, `0`, `off` or `no`, trimmed and in any letter case, switch it off; `true`, `1`, `on` and `yes` keep it on.
 One pair of matching surrounding quotes, single or double, is stripped first, since an env file can keep them, so `"false"` switches it off.
 Any other value fails closed: it switches custom connections off and logs one error naming the value and the accepted values, so a typo never leaves them open.
+In [governance mode](#governance-mode) custom connections are off whatever the variable says.
 
 Switch it off where Studio shares a network with services its users must not reach, such as a platform's overlay network or a cluster namespace: with custom connections on, any account that can sign in can connect to any host and port that network reaches.
 The switch limits the connections Studio itself opens, not what a seeded engine can reach on its own, for example through Postgres `dblink` or `postgres_fdw`, ClickHouse `remote()` or `url()`, MySQL `FEDERATED` tables or the brokers a Kafka cluster advertises, so grant a seed's account only what its users may reach from that engine.
@@ -887,7 +898,7 @@ extraEnvFrom:
 
 Studio can connect itself to the databases a CapRover server runs, with no seed file and no typed password.
 A companion process, the exporter, reads the Docker socket and writes a file, and Studio turns every database it recognises in that file into a managed connection for the admin role.
-It is off unless `SEED_DISCOVERY_PATH` is set.
+It is off unless `SEED_DISCOVERY_PATH` is set, and always off in [governance mode](#governance-mode).
 The CapRover template that sets it up is `deploy/caprover/libredb-studio-autoconnect.yml`, needs Studio 0.18.0 or later, and is described in [`deploy/caprover/README.md`](../deploy/caprover/README.md#auto-connect-variant), which also covers adding discovery to an existing install.
 What the Docker socket costs is recorded in [`docs/SECURITY.md`](./SECURITY.md#known-limits).
 
@@ -1187,6 +1198,7 @@ Standalone deployments also get automatic, code-defined seed connections (none o
 
 `getManagedConnections()` appends each sample to the managed-connections list once its file exists (`managed: false`). LibreDB is offered to all roles (`roles: ["*"]`); SQLite is offered only to administrators (`roles: ["admin"]`) because its adapters cannot confine statement-level file access. Both behave like other unmanaged seeds: editable, and if deleted they go to the dismissed list rather than reappearing.
 Neither sample is ever visible to an MCP client, because neither carries `mcp: true`.
+In [governance mode](#governance-mode) neither sample is created or listed, whatever `LIBREDB_EMBEDDED_SAMPLE` and `SQLITE_EMBEDDED_SAMPLE` say.
 
 This is separate from the `SEED_CONFIG_PATH` file and needs no config of its own:
 

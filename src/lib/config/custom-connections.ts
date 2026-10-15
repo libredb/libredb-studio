@@ -1,3 +1,4 @@
+import { governanceEnabled } from "@/lib/governance/config";
 import { logger } from "@/lib/logger";
 
 /**
@@ -18,6 +19,11 @@ import { logger } from "@/lib/logger";
  * stripped first, because an env file can keep them. Anything else FAILS CLOSED: it switches
  * custom connections off and logs an error once per process naming the accepted values, so an
  * operator who meant to switch them off never leaves them open by a typo or a stray quote.
+ *
+ * Governance mode (`GOVERNANCE_SOURCE`, docs/GOVERNANCE.md) serves the connections of the
+ * governance source only, so custom connections are off under it whatever the variable says. The
+ * boot preflight refuses a value that keeps them on; answering off here as well holds the refusal
+ * on a server whose preflight was bypassed.
  *
  * The rule is enforced in `resolveConnection` (`src/lib/seed/resolve-connection.ts`), the one
  * place an inline connection becomes a provider's input; `GET /api/connections/policy` reports it
@@ -52,6 +58,7 @@ function unquote(raw: string): string {
 }
 
 export function customConnectionsAllowed(): boolean {
+  if (governanceEnabled()) return false;
   const raw = process.env.ALLOW_CUSTOM_CONNECTIONS ?? "";
   const normalized = unquote(raw);
   if (normalized === "" || ENABLED_VALUES.has(normalized)) return true;

@@ -30,6 +30,7 @@ afterEach(() => {
   tmpDirs.length = 0;
   delete process.env.LIBREDB_EMBEDDED_SAMPLE;
   delete process.env.LIBREDB_EMBEDDED_SAMPLE_PATH;
+  delete process.env.GOVERNANCE_SOURCE;
 });
 
 describe("libredb-sample", () => {
@@ -39,6 +40,17 @@ describe("libredb-sample", () => {
     expect(isSampleEnabled()).toBe(false);
     process.env.LIBREDB_EMBEDDED_SAMPLE = "true";
     expect(isSampleEnabled()).toBe(true);
+  });
+
+  // Governance mode offers no sample (docs/GOVERNANCE.md): the boot check refuses a sample switched on, and the
+  // switch answers off under governance whatever the variable says, so a bypassed check seeds and lists no sample.
+  test("under governance isSampleEnabled() is false although LIBREDB_EMBEDDED_SAMPLE is true", () => {
+    process.env.LIBREDB_EMBEDDED_SAMPLE = "true";
+    process.env.GOVERNANCE_SOURCE = "postgres";
+    expect(isSampleEnabled()).toBe(false);
+    // Unset is on by default, and still off under governance.
+    delete process.env.LIBREDB_EMBEDDED_SAMPLE;
+    expect(isSampleEnabled()).toBe(false);
   });
 
   test("resolveSamplePath: override wins; else derives from data dir", () => {

@@ -3,6 +3,7 @@ import { createErrorResponse } from "@/lib/api/errors";
 import { isPlainHttpRequest } from "@/lib/api/request-scheme";
 import { auditRoleDenial, guardRoute } from "@/lib/api/require-session";
 import { readCookieSecureOverride } from "@/lib/auth";
+import { governanceEnabled } from "@/lib/governance/config";
 import { getDiscoveryStatus, type DiscoveryStatus } from "@/lib/seed/discovery-loader";
 
 const GET_ROUTE = "GET /api/admin/discovery";
@@ -24,13 +25,15 @@ async function requireAdmin(request: Request, route: string) {
 
 /**
  * The CapRover discovery source's status for the admin Overview card: null when SEED_DISCOVERY_PATH
- * is unset. transport drives a display warning only and never a security decision.
+ * is unset, and under governance, which switches discovery off whatever that variable says, without
+ * asking the loader (docs/SEED_CONNECTIONS.md, governance mode). transport drives a display warning
+ * only and never a security decision.
  */
 export async function GET(request: Request) {
   const guard = await requireAdmin(request, GET_ROUTE);
   if ("response" in guard) return guard.response;
   try {
-    const discovery = await getDiscoveryStatus();
+    const discovery = governanceEnabled() ? null : await getDiscoveryStatus();
     const body: DiscoveryResponse =
       discovery === null
         ? { discovery: null }
