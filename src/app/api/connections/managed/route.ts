@@ -1,21 +1,38 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { sessionRequiredBody } from "@/lib/api/session-ended";
-import { getManagedConnections, getPendingSeeds, type ManagedConnection } from "@/lib/seed";
+import { getPendingSeeds, type ManagedConnection } from "@/lib/seed";
 import { logger } from "@/lib/logger";
 import { withoutSecretFields } from "@/lib/storage/connection-secrets";
 import { SEED_CONFIG_UNREADABLE_REASON } from "@/hooks/use-connection-payload";
+import { governanceEnabled } from "@/lib/governance/config";
+import { GovernanceUnavailableError, visibleConnections } from "@/lib/governance/visible";
 
 export const dynamic = "force-dynamic";
 
 /**
- * The literal marker (src/lib/seed/types.ts) tells the server how to resolve a connection's values and is not part
- * of this response's shape, so it is removed before anything reaches the browser.
+ * How often a browser asks again under governance (docs/GOVERNANCE.md): a grant made or revoked in the control plane
+ * reaches the list within seconds, while the snapshot it is read from is in process memory and costs nothing to ask.
  */
-function withoutLiteralMarker(conn: ManagedConnection): ManagedConnection {
-  const copy = { ...conn };
+const GOVERNED_CACHE_HINT_MS = 10_000;
+
+/**
+ * The server-only markers are not part of this response's shape, so they are removed before anything reaches the
+ * browser: the literal marker (src/lib/seed/types.ts) tells the server how to resolve a connection's values, and the
+ * grant level (src/lib/governance/visible.ts) which credential a governed record carries.
+ */
+function withoutServerMarkers(conn: ManagedConnection): ManagedConnection {
+  const copy: ManagedConnection & { grantLevel?: unknown } = { ...conn };
   delete copy.literal;
+  delete copy.grantLevel;
   return copy;
+}
+
+/** How long the browser may keep the list, in ms: `SEED_CACHE_TTL_MS`, 60000 by default, and 10000 under governance. */
+function cacheHintMs(): number {
+  if (governanceEnabled()) return GOVERNED_CACHE_HINT_MS;
+  const rawTTL = Number(process.env.SEED_CACHE_TTL_MS);
+  return Number.isFinite(rawTTL) ? rawTTL : 60_000;
 }
 
 export async function GET() {
@@ -32,8 +49,14 @@ export async function GET() {
     // itself. The outer catch keeps its unattributed 500 for everything else.
     let connections;
     try {
-      connections = await getManagedConnections([session.role]);
+      connections = await visibleConnections(session);
     } catch (error) {
+      // Under governance a snapshot that cannot be served is answered as such, never as an empty list a browser
+      // would read as "nothing granted", and no seed configuration is read, so no other failure here is one.
+      if (error instanceof GovernanceUnavailableError) {
+        return NextResponse.json({ error: error.message, code: error.code }, { status: error.statusCode });
+      }
+      if (governanceEnabled()) throw error;
       logger.error("Failed to load the seed configuration", error, {
         route: "GET /api/connections/managed",
       });
@@ -46,18 +69,17 @@ export async function GET() {
     // A managed connection is opened by id (`buildConnectionPayload` sends `seed:<id>`), so the
     // browser needs none of its credentials: every field the storage layer classifies as secret
     // stays here, the API key pair and the TLS client key as well as the password. An editable
-    // one is copied into the browser to be edited, so it keeps them.
+    // one is copied into the browser to be edited, so it keeps them. Every governed connection is
+    // managed, so it never leaves with a credential.
     const sanitized = connections
-      .map(withoutLiteralMarker)
+      .map(withoutServerMarkers)
       .map((conn) => (conn.managed ? withoutSecretFields(conn) : conn));
-
-    const rawTTL = Number(process.env.SEED_CACHE_TTL_MS);
-    const cacheTTL = Number.isFinite(rawTTL) ? rawTTL : 60_000;
 
     // Seed ids still being seeded asynchronously (e.g. the SQLite sample file
     // copy at boot) — clients poll while non-empty so the sample appears
-    // without a page refresh. Always [] when embedded in platform.
-    return NextResponse.json({ connections: sanitized, cacheHint: cacheTTL, pendingSeeds: getPendingSeeds() });
+    // without a page refresh. Always [] when embedded in platform, and under
+    // governance, where no sample is seeded.
+    return NextResponse.json({ connections: sanitized, cacheHint: cacheHintMs(), pendingSeeds: getPendingSeeds() });
   } catch (error) {
     logger.error("Failed to load managed connections", error, {
       route: "GET /api/connections/managed",

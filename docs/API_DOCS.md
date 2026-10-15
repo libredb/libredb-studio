@@ -2122,6 +2122,18 @@ that file. The browser holds the second as an unread seed list rather than an em
 what stops the agent rail reporting a connection's settings as browser-local when the server's own
 configuration is what failed.
 
+In governance mode (`GOVERNANCE_SOURCE` set, [`docs/GOVERNANCE.md`](GOVERNANCE.md)) it lists the connections the session's identity provider subject holds an unexpired grant on, by name, for an admin as for a user, and nothing for a session without a subject.
+Each is a `managed: true` record of the credential of the grant's level, with every secret-classified field stripped and `queryTimeout: 60000`, and no server-only field.
+`cacheHint` is `10000`, so a grant made or revoked in the control plane reaches the list within seconds, and `pendingSeeds` is `[]`.
+While the governance snapshot cannot be served (still loading, older than `GOVERNANCE_MAX_STALENESS_MS`, misconfigured or incompatible) it answers `503` instead of an empty list:
+
+```json
+{
+  "error": "Connection access is unavailable while this server cannot read its governance source",
+  "code": "GOVERNANCE_UNAVAILABLE"
+}
+```
+
 #### GET /api/connections/policy
 
 Auth required; without a session it answers `401 { "error": "Authentication required", "code": "AUTH_REQUIRED" }`.
@@ -2137,6 +2149,32 @@ Every database route then refuses a connection supplied in the request body, as 
 A seed named by `connectionId`, or by an inline record whose `id` is `seed:<id>`, is unaffected.
 `POST /api/admin/fleet-health` reports such an item as `{ "status": "error", "error": "Custom connections are disabled on this server" }` beside the others.
 See [`docs/SEED_CONNECTIONS.md`](SEED_CONNECTIONS.md#custom-connections).
+
+#### Connections under governance
+
+In governance mode every database route that opens a connection, and each item of `POST /api/admin/fleet-health`, resolves a `connectionId` of the form `seed:<id>`, or an inline record whose `id` is one, from the caller's grants alone ([`docs/GOVERNANCE.md`](GOVERNANCE.md)).
+It opens the connection with the credential of the grant's level, and an admin holds only its own grants.
+A connection that does not exist, one granted to someone else, an expired grant and a row Studio did not admit all answer the same `404`, and the refusal is audited as `permission_denied` with reason `connection_not_granted`:
+
+```json
+{
+  "error": "Connection not found: it does not exist or is not granted to you",
+  "code": "CONNECTION_NOT_FOUND",
+  "statusCode": 404
+}
+```
+
+While the governance snapshot cannot be served, every such request answers `503`, whatever the id:
+
+```json
+{
+  "error": "Connection access is unavailable while this server cannot read its governance source",
+  "code": "GOVERNANCE_UNAVAILABLE",
+  "statusCode": 503
+}
+```
+
+A connection the request supplies is refused with `403` and the code `CUSTOM_CONNECTIONS_DISABLED` in every state, as `GET /api/connections/policy` describes.
 
 ---
 
@@ -2475,6 +2513,8 @@ These are the values of the `code` field emitted by `createErrorResponse` (`src/
 | `CONFIG_ERROR` | Invalid database configuration (400) |
 | `AUTH_ERROR` | Authentication failed (401) |
 | `CUSTOM_CONNECTIONS_DISABLED` | `ALLOW_CUSTOM_CONNECTIONS` is off, or governance mode is on, and the request supplied a connection that is not a seed (403); see `GET /api/connections/policy`. A seed the caller's role may not open is refused with `AUTH_ERROR` (403) instead |
+| `CONNECTION_NOT_FOUND` | Governance mode only: the connection a request names does not exist or is not granted to the caller (404), and the two are indistinguishable; see [Connections under governance](#connections-under-governance) |
+| `GOVERNANCE_UNAVAILABLE` | Governance mode only: the governance snapshot is still loading, too old, misconfigured or incompatible (503), so `GET /api/connections/managed` and every database route that opens a connection answer it instead; see [Connections under governance](#connections-under-governance) |
 | `AUTH_REQUIRED` | No Studio session, or one that no longer verifies (401). Answered by the middleware and the route-level session checks rather than `createErrorResponse`; the only 401 the browser answers by sending the user to sign in |
 | `WORKSPACE_OWNER_MISMATCH` | The request's `X-LibreDB-Workspace-Owner` header names an account other than the signed-in one (409). Answered by the middleware rather than `createErrorResponse`; the browser reloads the tab for it (see [Storage API](#storage-api)) |
 | `TIMEOUT_ERROR` | Query exceeded time limit (408); `POST /api/ai/query-safety` answers it with 504 when the model does not answer in time |

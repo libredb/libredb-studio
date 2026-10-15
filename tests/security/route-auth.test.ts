@@ -409,6 +409,8 @@ describe("routes that reach a provider require a session", () => {
     "@/lib/governance/state": "the in-process governance state holder; data only, imports no pg and opens nothing",
     "@/lib/governance/status":
       "builds the admin governance status from the in-process governance state, the GOVERNANCE_* settings and the keyring file's key ids; opens nothing, the governance source included",
+    "@/lib/governance/visible":
+      "lists the connections a session may see: without governance through @/lib/seed, and under governance from the in-process governance snapshot by the session's grants; opens nothing, the governance source included",
     "@/lib/is-record": "a plain-object type guard; data only",
     "@/lib/launch/config": "reads the three LAUNCH_TOKEN_* variables; opens nothing",
     "@/lib/launch/verify":

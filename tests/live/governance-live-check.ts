@@ -31,6 +31,7 @@ import { governanceFreshness } from "../../src/lib/governance/freshness";
 import { resetGovernanceKeyring } from "../../src/lib/governance/keyring";
 import { loadGovernanceSnapshot } from "../../src/lib/governance/snapshot";
 import { effectiveGrant, governanceState, resetGovernanceState } from "../../src/lib/governance/state";
+import { resolveConnection, SeedConnectionError } from "../../src/lib/seed/resolve-connection";
 import { buildFixtureDdl, FIXTURE_OWNER, readFixtureManifest } from "../helpers/governance/fixture-ddl";
 import { keyringFileOf, removeKeyringFiles, type TestKey, testKey } from "../helpers/governance/keyring-file";
 import { sealSecret } from "../helpers/governance/lsb1-seal";
@@ -156,6 +157,20 @@ interface LiveCase {
   readonly run: (context: LiveContext) => Promise<void>;
 }
 
+/** Runs `run` while holding back what it writes to stdout, such as an audit line, so the script prints only its own. */
+async function capturingStdout<T>(run: () => Promise<T>): Promise<{ readonly result: T; readonly lines: string[] }> {
+  const lines: string[] = [];
+  const log = console.log;
+  console.log = (...values: unknown[]) => {
+    lines.push(values.map(String).join(" "));
+  };
+  try {
+    return { result: await run(), lines };
+  } finally {
+    console.log = log;
+  }
+}
+
 function loadedSnapshot() {
   const { snapshot, failure } = governanceState();
   check(failure === null, `the load failed: ${failure?.detail ?? ""}`);
@@ -233,6 +248,39 @@ const CASES: readonly LiveCase[] = [
           ["bob@example.com", [["live-both", "read", LATER.getTime()]]],
         ],
         "effective grants",
+      );
+    },
+  },
+  {
+    name: "deleting a grant row makes resolveConnection answer 404 after the next load",
+    run: async ({ superuser }) => {
+      const bob = { role: "user", username: "bob@example.com", idpSubject: "bob@example.com" };
+      const opened = await resolveConnection({ connectionId: "seed:live-both" }, bob);
+      same([opened.user, opened.password], [READ.user, READ.password], "the credential Bob's read grant opens");
+
+      await superuser((client) =>
+        client.query(`DELETE FROM ${SCHEMA}.grants_v1_source WHERE subject = $1 AND connection_id = $2`, [
+          bob.idpSubject,
+          "live-both",
+        ]),
+      );
+      await loadGovernanceSnapshot();
+      loadedSnapshot();
+
+      const { result: refusal, lines } = await capturingStdout(() =>
+        resolveConnection({ connectionId: "seed:live-both" }, bob).then(
+          () => undefined,
+          (error: unknown) => error,
+        ),
+      );
+      check(refusal instanceof SeedConnectionError, `expected a SeedConnectionError, got ${String(refusal)}`);
+      const { statusCode, code } = refusal as SeedConnectionError;
+      same([statusCode, code], [404, "CONNECTION_NOT_FOUND"], "the refusal");
+      const audit = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+      same(
+        audit.map(({ event, reason, actor, connection }) => [event, reason, actor, connection]),
+        [["permission_denied", "connection_not_granted", bob.username, "live-both"]],
+        "the audit line of the miss",
       );
     },
   },

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, mock, setSystemTime } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "path";
@@ -23,6 +23,8 @@ import { getSession } from "@/lib/auth";
 import { setSqliteSampleSeedState, SQLITE_SAMPLE_SEED_ID } from "@/lib/seed/sqlite-sample";
 import { SEED_CONFIG_UNREADABLE_REASON } from "@/hooks/use-connection-payload";
 import { postgresService, writeDiscoveryExport, type DiscoveryExportFixture } from "../../helpers/discovery-fixture";
+import { recordGovernanceSnapshot, resetGovernanceState } from "@/lib/governance/state";
+import { admittedConnection, grantedSnapshot, WRITE_CREDENTIAL } from "../../helpers/governance/granted-snapshot";
 
 describe("GET /api/connections/managed", () => {
   beforeEach(() => {
@@ -432,5 +434,142 @@ describe("GET /api/connections/managed", () => {
       delete process.env.SEED_LITERAL_VALUES;
       resetCache();
     }
+  });
+});
+
+/*
+  Governance mode (docs/GOVERNANCE.md): the list is the session's grants in the governance snapshot, for its identity
+  provider subject and whatever its role, each record carrying the credential of its grant level on the server only.
+  The browser gets no credential and neither server-only marker, and asks again every 10 seconds, so a grant made or
+  revoked reaches the list quickly. While the snapshot cannot be served the route answers 503, never an empty list a
+  browser would read as "nothing granted".
+*/
+describe("GET /api/connections/managed under governance", () => {
+  const T = Date.parse("2026-10-15T08:00:00.000Z");
+  const TLS_KEY = "CANARY-GOVERNED-TLS-CLIENT-KEY";
+  const URI = "postgresql://writer:CANARY-GOVERNED-URI-PASSWORD@orders.db.example.internal/orders";
+  const ORDERS = admittedConnection("orders", {
+    name: "Orders",
+    write: true,
+    extra: {
+      connectionString: URI,
+      ssl: { mode: "verify-full", caCert: "CA-PEM", clientCert: "CERT-PEM", clientKey: TLS_KEY },
+    },
+  });
+  const BILLING = admittedConnection("billing", { name: "Billing" });
+  const CRM = admittedConnection("crm", { name: "CRM" });
+  const SESSION = { role: "admin", username: "admin@test.com", idpSubject: "admin-subject" };
+
+  beforeEach(() => {
+    process.env.GOVERNANCE_SOURCE = "postgres";
+    setSystemTime(new Date(T));
+    resetGovernanceState();
+    (getSession as ReturnType<typeof mock>).mockImplementation(() => SESSION);
+  });
+
+  afterEach(() => {
+    delete process.env.GOVERNANCE_SOURCE;
+    setSystemTime();
+    resetGovernanceState();
+  });
+
+  it("governance lists only the subject's grants with no secret, literal or grantLevel field and cacheHint 10000", async () => {
+    process.env.SEED_CACHE_TTL_MS = "60000";
+    recordGovernanceSnapshot(
+      grantedSnapshot(
+        [ORDERS, BILLING, CRM],
+        [
+          { subject: SESSION.idpSubject, connection: ORDERS, level: "write" },
+          { subject: SESSION.idpSubject, connection: BILLING, level: "read" },
+          { subject: "another-subject", connection: CRM, level: "write" },
+        ],
+      ),
+    );
+
+    try {
+      const res = await GET();
+      expect(res.status).toBe(200);
+      const data = await res.json();
+
+      expect(Object.keys(data).sort()).toEqual(["cacheHint", "connections", "pendingSeeds"]);
+      expect(data.cacheHint).toBe(10000);
+      expect(data.pendingSeeds).toEqual([]);
+      // By name, the admin's own two and not the connection granted to another subject.
+      expect(data.connections.map((c: { id: string }) => c.id)).toEqual(["seed:billing", "seed:orders"]);
+      expect(data.connections[1]).toEqual({
+        id: "seed:orders",
+        seedId: "orders",
+        name: "Orders",
+        type: "postgres",
+        host: "orders.db.example.internal",
+        port: 5432,
+        database: "orders",
+        environment: "production",
+        user: WRITE_CREDENTIAL.user,
+        ssl: { mode: "verify-full", caCert: "CA-PEM", clientCert: "CERT-PEM" },
+        queryTimeout: 60000,
+        managed: true,
+        roles: ["*"],
+        createdAt: "2026-10-15T08:00:00.000Z",
+      });
+      for (const connection of data.connections) {
+        for (const field of ["password", "connectionString", "literal", "grantLevel"]) {
+          expect(field in connection).toBe(false);
+        }
+      }
+      const body = JSON.stringify(data);
+      for (const canary of [TLS_KEY, "CANARY-GOVERNED-URI-PASSWORD", WRITE_CREDENTIAL.password, "crm"]) {
+        expect(body).not.toContain(canary);
+      }
+    } finally {
+      delete process.env.SEED_CACHE_TTL_MS;
+    }
+  });
+
+  it("governance answers 503 GOVERNANCE_UNAVAILABLE while the snapshot is unavailable", async () => {
+    // Older than GOVERNANCE_MAX_STALENESS_MS, 120000 by default.
+    recordGovernanceSnapshot(
+      grantedSnapshot([BILLING], [{ subject: SESSION.idpSubject, connection: BILLING, level: "read" }], T - 120_000),
+    );
+
+    const res = await GET();
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({
+      error: "Connection access is unavailable while this server cannot read its governance source",
+      code: "GOVERNANCE_UNAVAILABLE",
+    });
+  });
+
+  it("governance answers 503 before the first load as well", async () => {
+    const res = await GET();
+
+    expect(res.status).toBe(503);
+    expect((await res.json()).code).toBe("GOVERNANCE_UNAVAILABLE");
+  });
+
+  it("governance lists nothing for a session without an identity provider subject, whatever its role", async () => {
+    recordGovernanceSnapshot(
+      grantedSnapshot([BILLING], [{ subject: SESSION.idpSubject, connection: BILLING, level: "read" }]),
+    );
+    (getSession as ReturnType<typeof mock>).mockImplementation(() => ({ role: "admin", username: "admin@test.com" }));
+
+    const res = await GET();
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).connections).toEqual([]);
+  });
+
+  // Under governance no seed configuration is read, so no failure here may be reported as one (B37).
+  it("governance does not blame the seed configuration for a broken snapshot", async () => {
+    // A write grant on a connection without a write credential: only a broken snapshot holds one.
+    recordGovernanceSnapshot(
+      grantedSnapshot([BILLING], [{ subject: SESSION.idpSubject, connection: BILLING, level: "write" }]),
+    );
+
+    const res = await GET();
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "Failed to load managed connections" });
   });
 });

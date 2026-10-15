@@ -66,6 +66,13 @@ export const ApiErrorCode = {
    */
   GOVERNANCE_UNAVAILABLE: "GOVERNANCE_UNAVAILABLE",
 
+  /**
+   * Under governance, the connection a request names is not one the caller holds a grant on (404): it does not exist,
+   * it is granted to someone else, its grant expired, or Studio did not admit the governance source's row. One code
+   * for all of them, decided from the caller's own grants alone, so the answer never tells a caller which ids exist.
+   */
+  CONNECTION_NOT_FOUND: "CONNECTION_NOT_FOUND",
+
   // Application rate limiting (distinct from LLM_RATE_LIMIT, which is the provider's limit)
   RATE_LIMITED: "RATE_LIMITED",
 
