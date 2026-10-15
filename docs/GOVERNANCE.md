@@ -6,7 +6,7 @@ The control plane publishes a governance source, a set of PostgreSQL views and t
 This document is that contract, version 1, for anyone who builds or operates a control plane.
 
 Governance is off unless an operator sets `GOVERNANCE_SOURCE=postgres`, and a Studio without that variable behaves exactly as it would without this document.
-Studio publishes the contract before it implements all of it: until a release's notes announce governance mode, a release publishes the files below and reads no governance source.
+With it set, Studio runs in governance mode, and the governance source is its only catalog of connections and grants, as the rest of this document describes.
 
 ## Contents
 
