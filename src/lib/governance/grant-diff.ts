@@ -15,8 +15,9 @@
  * A grant that only appeared, or a connection whose change opens nothing differently, such as a new name, lists
  * nothing, so a reload never closes a session it has no reason to close. `changedGrants` reads the two snapshots only.
  *
- * The teardown rolls back the open transactions of each pair it lists, so `endRevokedTransactions` looks up their
- * ownership records and records each one's terminal `rolled-back` query event (spec 7.9).
+ * A removal that succeeds rolls back the open transactions of its pair, so for each pair whose removal succeeded
+ * `endRevokedTransactions` looks up their ownership records and records each one's terminal `rolled-back` query event
+ * (spec 7.9). A pair whose removal failed is not passed to it: its transaction may still be open.
  */
 import { endOwnerTransactions } from "@/lib/api/transaction-ownership";
 import { type EffectiveGrant, effectiveGrant, type GovernanceSnapshot } from "./state";
@@ -53,8 +54,9 @@ export function changedGrants(previous: GovernanceSnapshot, next: GovernanceSnap
 }
 
 /**
- * Records `rolled-back` for every open transaction of each pair in `changed`, whose providers the loader tears down with
+ * Records `rolled-back` for every open transaction of each pair in `changed`, whose providers the loader removed with
  * their transactions rolled back: a route resolves a governed connection under `seed:<id>`, and its subject owns them.
+ * The loader passes only the pairs whose removal succeeded.
  * A transaction whose end was recorded already records nothing more.
  */
 export function endRevokedTransactions(changed: readonly ChangedGrant[]): void {

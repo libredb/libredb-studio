@@ -353,24 +353,36 @@ function logLoaded(snapshot: GovernanceSnapshot, previous: GovernanceState): voi
  * Asks every copy of the provider factory to remove the providers of each subject and connection whose access `next`
  * took away or changed since `previous` (spec 7.4, 9.4). A route resolves a governed connection under the id
  * `seed:<id>`, which its providers are cached under, and the subject owns them. Settles once every removal has ended,
- * and never rejects: a removal that fails is logged with the connection it was for.
+ * and never rejects: a removal that fails is logged with the connection it was for, and with the outcome of its open
+ * transactions unknown.
  */
 async function tearDownChangedGrants(previous: GovernanceSnapshot, next: GovernanceSnapshot): Promise<void> {
   const changed = changedGrants(previous, next, Date.now());
   if (changed.length === 0) return;
   const connections = [...new Set(changed.map(({ connectionId }) => connectionId))];
   logger.info("Governance access changed, closing the providers it opened", { route: ROUTE, connections });
-  const removeOne = async ({ subject, connectionId }: ChangedGrant): Promise<void> => {
+  const removeOne = async (grant: ChangedGrant): Promise<ChangedGrant[]> => {
+    const { subject, connectionId } = grant;
     try {
       await removeOwnerProviders(`seed:${connectionId}`, subject);
+      return [grant];
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      logger.warn("Governance teardown failed", { route: ROUTE, connectionId, error: message });
+      logger.warn("Governance teardown failed", {
+        route: ROUTE,
+        connectionId,
+        error: message,
+        transactionOutcome: "unknown",
+      });
+      return [];
     }
   };
-  await Promise.all(changed.map(removeOne));
-  // The teardown rolled back their open transactions, which ends each one's query events.
-  endRevokedTransactions(changed);
+  const removed = (await Promise.all(changed.map(removeOne))).flat();
+  // A removal that succeeded rolled back its open transactions, which ends each one's query events. One that failed
+  // may have left its transaction open, so its record stays without a terminal event, for the path that later sees the
+  // transaction end to record it: the owner's next request on another credential (src/app/api/db/transaction/route.ts)
+  // or the lapsed lease (src/lib/api/transaction-ownership.ts).
+  endRevokedTransactions(removed);
 }
 
 /**
