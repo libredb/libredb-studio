@@ -1,6 +1,7 @@
 "use client";
 
 import { appFetch, SESSION_REQUIRED_CODE } from "@/lib/config/base-path";
+import { ApiErrorCode } from "@/lib/api/error-codes";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import type { DatabaseConnection } from "@/lib/types";
 import { detailedObjects, schemaContextOf, type DetailedObject } from "@/lib/db/detailed-object";
@@ -185,6 +186,12 @@ export function useConnectionManager(storageReady = false) {
    * the user's storage, so they come back if the operator switches custom connections on again.
    */
   const [policy, setPolicy] = useState<ConnectionPolicy>(CUSTOM_CONNECTIONS_ALLOWED);
+  /**
+   * Whether the managed route last answered 503 GOVERNANCE_UNAVAILABLE: under governance the server
+   * could not serve the connections an administrator granted, which is an outage and never an empty
+   * list. The next managed read that answers clears it. Never set without governance.
+   */
+  const [connectionAccessUnavailable, setConnectionAccessUnavailable] = useState(false);
   const visibleConnections = useMemo(() => connectionsUnderPolicy(connections, policy), [connections, policy]);
   /** Null rather than a connection the server refuses, whichever path made it active. */
   const visibleActive =
@@ -616,6 +623,7 @@ export function useConnectionManager(storageReady = false) {
       failed: boolean;
       cacheHint: number | null;
       sessionEnded: boolean;
+      unavailable: boolean;
     }> => {
       const managedRes = await appFetch("/api/connections/managed");
       // A non-OK response is a transient failure, NOT "nothing pending" — the
@@ -637,7 +645,11 @@ export function useConnectionManager(storageReady = false) {
         // The session-required answer, which appFetch has already handed to the page's session-ended
         // handler: the first load then leaves a `?connection=` link for the page sign-in returns to.
         const sessionEnded = managedRes.status === 401 && body.code === SESSION_REQUIRED_CODE;
-        return { merged: null, pendingSeeds: [], failed: true, cacheHint: null, sessionEnded };
+        // Governance could not serve the granted connections (docs/GOVERNANCE.md): an outage the
+        // list reports, never "nothing granted". Quiet or not, the refresh keeps reading until it ends.
+        const unavailable = managedRes.status === 503 && body.code === ApiErrorCode.GOVERNANCE_UNAVAILABLE;
+        if (unavailable && !cancelled) setConnectionAccessUnavailable(true);
+        return { merged: null, pendingSeeds: [], failed: true, cacheHint: null, sessionEnded, unavailable };
       }
       const {
         connections: managedConns,
@@ -648,7 +660,10 @@ export function useConnectionManager(storageReady = false) {
         pendingSeeds?: string[];
         cacheHint?: unknown;
       };
-      if (!cancelled) setServedSeeds({ loaded: true, seeds: managedConns ?? [] });
+      if (!cancelled) {
+        setServedSeeds({ loaded: true, seeds: managedConns ?? [] });
+        setConnectionAccessUnavailable(false);
+      }
       return {
         merged: managedConns && managedConns.length > 0 ? mergeManagedConnections(managedConns) : null,
         pendingSeeds: pendingSeeds ?? [],
@@ -657,6 +672,7 @@ export function useConnectionManager(storageReady = false) {
         // between the floor and the one-minute cap (managedRefreshIntervalMs).
         cacheHint: typeof cacheHint === "number" && Number.isFinite(cacheHint) ? cacheHint : null,
         sessionEnded: false,
+        unavailable: false,
       };
     };
 
@@ -874,10 +890,13 @@ export function useConnectionManager(storageReady = false) {
       let managedAnswered = false;
       let managedCacheHint: number | null = null;
       let managedSessionEnded = false;
+      // An outage under governance starts the refresh too, so the list comes back without a reload.
+      let managedUnavailable = false;
       try {
-        const { merged, pendingSeeds, failed, cacheHint, sessionEnded } = await fetchManaged();
+        const { merged, pendingSeeds, failed, cacheHint, sessionEnded, unavailable } = await fetchManaged();
         if (cancelled) return;
         managedAnswered = !failed;
+        managedUnavailable = unavailable;
         managedCacheHint = cacheHint;
         managedSessionEnded = sessionEnded;
         firstLoadAnsweredAt = Date.now();
@@ -908,7 +927,7 @@ export function useConnectionManager(storageReady = false) {
         selectInitialConnection(loadedConnections, { answered: managedAnswered, sessionEnded: managedSessionEnded });
       }
 
-      if (managedAnswered) startManagedRefresh(managedCacheHint);
+      if (managedAnswered || managedUnavailable) startManagedRefresh(managedCacheHint);
     };
 
     initializeConnections().catch((err) => {
@@ -971,5 +990,9 @@ export function useConnectionManager(storageReady = false) {
      * withholds every control that would make one while it is false.
      */
     customConnections: policy.customConnections,
+    /** Whether the server runs under governance, where the list holds the connections granted to this user. */
+    governance: policy.governance === true,
+    /** Whether governance could not serve the granted connections at the last read; the refresh keeps trying. */
+    connectionAccessUnavailable,
   };
 }

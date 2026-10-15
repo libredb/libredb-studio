@@ -42,7 +42,20 @@ interface ConnectionsListProps {
   onMoveConnectionToGroup?: (connectionId: string, groupId: string | null) => void;
   /** Absent means the shell offers no new connection, and the empty list draws no Add Connection button. */
   onAddConnection?: () => void;
+  /**
+   * The server runs under governance (docs/GOVERNANCE.md): the list holds the connections an
+   * administrator granted, so an empty one says no access has been granted yet.
+   */
+  governed?: boolean;
+  /** Governance could not serve the granted connections at the last read: a banner says so. */
+  accessUnavailable?: boolean;
 }
+
+/** The empty governed list (spec 9.3): the user has no grants, and an administrator gives them. */
+const NO_GRANTS_MESSAGE = "No databases have been granted to you yet. Ask an administrator for access.";
+
+const ACCESS_UNAVAILABLE_MESSAGE =
+  "Connection access is temporarily unavailable. The list updates by itself once it is back.";
 
 type NameDialog = { mode: "create"; moveConnectionId?: string } | { mode: "rename"; groupId: string; name: string };
 
@@ -112,6 +125,8 @@ export const ConnectionsList = React.memo(function ConnectionsList({
   onToggleGroupCollapsed,
   onMoveConnectionToGroup,
   onAddConnection,
+  governed,
+  accessUnavailable,
 }: ConnectionsListProps) {
   const ordered = applyConnectionOrder(connections, connectionOrder ?? []);
   const reorderable = onReorderConnections !== undefined;
@@ -226,8 +241,20 @@ export const ConnectionsList = React.memo(function ConnectionsList({
     </>
   );
 
+  // An outage says nothing about what was granted, so its empty list draws no empty state: the banner says why.
+  const emptyMessage = accessUnavailable
+    ? null
+    : governed
+      ? NO_GRANTS_MESSAGE
+      : "No database connections established yet.";
+
   return (
     <>
+      {accessUnavailable && (
+        <output className="mx-2 mb-4 block rounded-lg border border-border/50 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+          {ACCESS_UNAVAILABLE_MESSAGE}
+        </output>
+      )}
       {sections.map((section) => (
         <section key={section.key} className="mb-4 last:mb-0">
           <SectionHeader
@@ -244,20 +271,18 @@ export const ConnectionsList = React.memo(function ConnectionsList({
 
           {!(section.kind === "group" && section.collapsed) && (
             <div className="space-y-0.5">
-              {section.kind === "connections" && connections.length === 0 ? (
-                <div className="px-3 py-6 text-center border border-dashed border-border/50 rounded-lg mx-2">
-                  <p className="text-xs text-muted-foreground mb-3 leading-relaxed">
-                    No database connections established yet.
-                  </p>
-                  {onAddConnection && (
-                    <Button variant="outline" size="sm" className="h-7 text-xs" onClick={onAddConnection}>
-                      Add Connection
-                    </Button>
-                  )}
-                </div>
-              ) : (
-                section.connections.map((conn) => renderItem(conn, section))
-              )}
+              {section.kind === "connections" && connections.length === 0
+                ? emptyMessage !== null && (
+                    <div className="px-3 py-6 text-center border border-dashed border-border/50 rounded-lg mx-2">
+                      <p className="text-xs text-muted-foreground mb-3 leading-relaxed">{emptyMessage}</p>
+                      {onAddConnection && (
+                        <Button variant="outline" size="sm" className="h-7 text-xs" onClick={onAddConnection}>
+                          Add Connection
+                        </Button>
+                      )}
+                    </div>
+                  )
+                : section.connections.map((conn) => renderItem(conn, section))}
             </div>
           )}
         </section>

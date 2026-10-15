@@ -492,6 +492,17 @@ describe("Sidebar", () => {
     expect(capturedReorderHandler).toBe(onReorderConnections);
   });
 
+  test("passes the governance state through to ConnectionsList", () => {
+    render(<Sidebar {...createDefaultProps({ governed: true, connectionAccessUnavailable: true })} />);
+    expect(capturedGroupProps.governed).toBe(true);
+    expect(capturedGroupProps.accessUnavailable).toBe(true);
+
+    cleanup();
+    render(<Sidebar {...createDefaultProps()} />);
+    expect(capturedGroupProps.governed).toBeUndefined();
+    expect(capturedGroupProps.accessUnavailable).toBeUndefined();
+  });
+
   test("passes the connection groups and every group callback through to ConnectionsList (#1170)", () => {
     const groupProps = {
       connectionGroups: [{ id: "g1", name: "Prod", collapsed: false, connectionIds: [] }],

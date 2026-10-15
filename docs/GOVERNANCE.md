@@ -16,6 +16,7 @@ Studio publishes the contract before it implements all of it: until a release's 
 - [Sign-in](#sign-in)
 - [Objects](#objects)
 - [Row semantics](#row-semantics)
+- [Grants and the connection list](#grants-and-the-connection-list)
 - [Snapshot protocol](#snapshot-protocol)
 - [Change notification](#change-notification)
 - [Freshness and readiness](#freshness-and-readiness)
@@ -222,6 +223,26 @@ Studio refuses a session issued at or before its subject's `revoked_before`.
 - An event dated more than 5 minutes ahead of the database's clock is refused, so the hosts need synchronised clocks.
 
 `bridge.studio_instances_v1` is described under [heartbeat](#heartbeat).
+
+## Grants and the connection list
+
+Grants decide what each person sees and which credential Studio uses for them:
+
+- A connection is visible to a person only while their identity provider subject holds an effective grant on it in `bridge.grants_v1`.
+  Studio compares `expires_at` with its own clock at every decision, so an expired grant hides the connection without a notification.
+- The role decides nothing about visibility: an admin sees only the connections granted to them, because the admin role opens the admin pages and maintenance only.
+- The editor uses the credential of the grant's level: a `read` grant uses the read credential, and a `write` grant uses the write credential.
+  The agent, MCP, classification and handover paths always use the read credential, whatever the grant.
+- A connection that does not exist and one that is not granted to the caller answer the same 404 `CONNECTION_NOT_FOUND`, so a caller cannot learn which ids exist.
+
+What a person sees in the connection list:
+
+- `GET /api/connections/policy` answers `{"customConnections": false, "governance": true}`, so the editor offers no connection of the person's own.
+  Without governance the answer has no `governance` field, as before.
+- A person with no grants sees "No databases have been granted to you yet. Ask an administrator for access." instead of the list.
+- While Studio cannot serve its snapshot, `GET /api/connections/managed` answers 503 `GOVERNANCE_UNAVAILABLE`, never an empty list.
+  The connection list then shows a banner that connection access is temporarily unavailable, keeps the connections it already listed, and never shows the no-grants message.
+  The list keeps reading the route on its refresh interval and when the window regains focus, and the banner goes away with the first read that answers.
 
 ## Snapshot protocol
 
@@ -438,10 +459,11 @@ Studio checks each `bridge.connections_v1` row in order and skips a row with a c
 2. The engine is in `GOVERNANCE_ALLOWED_ENGINES` (by default `postgres,mysql,mssql,oracle,mongodb,redis`) and opens no local file: `sqlite`, `duckdb` and `libredb` are never governed.
 3. A PostgreSQL definition without a `database` is skipped, because a server-level connection opens sessions to every database the credential can reach.
 4. The definition holds only keys of the allowlist below, each with a value in its domain.
-5. A NULL `environment`, `group_name` or `color` becomes absent, and the merged record must pass Studio's own connection validation.
+5. The read envelope opens, and the record merged from the row and the read credential passes Studio's own connection validation.
+   A NULL `environment`, `group_name` or `color` becomes absent in that record.
    Values from the governance source are used as written: a `${NAME}` or Vault reference in them is never resolved.
-6. The read envelope opens.
-   A write envelope that does not open keeps the row with read access only.
+6. A write envelope, when the row has one, opens and its merged record passes the same validation.
+   A write envelope that does not open, or whose record fails, keeps the row with read access only.
 
 A row reports only its first fault, checked in this order: the id, the engine, the definition, the read envelope with the record merged from it, then the write envelope with its record.
 Within the definition, a credential key is reported as `DEFINITION_HAS_SECRET` before any other key is checked.

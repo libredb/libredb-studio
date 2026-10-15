@@ -3024,6 +3024,123 @@ describe("the custom connections policy", () => {
   });
 });
 
+// The managed route under governance (docs/GOVERNANCE.md): an outage answers 503
+// GOVERNANCE_UNAVAILABLE, which the hook reports as a state of its own rather than as an empty list.
+describe("connection access under governance", () => {
+  const governedSeed = {
+    id: "seed:orders",
+    seedId: "orders",
+    name: "Orders",
+    type: "postgres",
+    host: "orders-db",
+    createdAt: "2026-10-01T00:00:00.000Z",
+    managed: true,
+  };
+  const unavailable = {
+    status: 503,
+    json: { error: "Connection access is temporarily unavailable", code: "GOVERNANCE_UNAVAILABLE" },
+  };
+  const governedPolicy = { json: { customConnections: false, governance: true } };
+  const focus = () => {
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+  };
+  const managedCalls = (fetchMock: ReturnType<typeof mockGlobalFetch>) =>
+    fetchMock.mock.calls.filter((c) => String(c[0]).includes("/api/connections/managed")).length;
+
+  beforeEach(() => {
+    localStorage.clear();
+    process.env.NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS = "60000";
+  });
+
+  afterEach(() => {
+    restoreGlobalFetch();
+    delete process.env.NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS;
+  });
+
+  test("a 503 GOVERNANCE_UNAVAILABLE from the managed route sets the unavailable state", async () => {
+    let calls = 0;
+    const fetchMock = mockGlobalFetch({
+      "/api/connections/policy": governedPolicy,
+      "/api/connections/managed": () => {
+        calls += 1;
+        return calls === 1 ? unavailable : { json: { connections: [governedSeed] } };
+      },
+      "/api/db/health": { json: { status: "healthy" } },
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await waitFor(() => {
+      expect(result.current.connectionAccessUnavailable).toBe(true);
+    });
+    expect(result.current.governance).toBe(true);
+    expect(result.current.connections).toEqual([]);
+    expect(result.current.activeConnection).toBeNull();
+
+    // The outage keeps the refresh listening, so the list comes back without a reload.
+    focus();
+    await waitFor(() => {
+      expect(result.current.connections.map((c) => c.id)).toEqual(["seed:orders"]);
+    });
+    expect(result.current.connectionAccessUnavailable).toBe(false);
+    expect(result.current.activeConnection?.id).toBe("seed:orders");
+    expect(managedCalls(fetchMock)).toBe(2);
+  });
+
+  test("an outage during a refresh keeps the list and sets the unavailable state", async () => {
+    let calls = 0;
+    const fetchMock = mockGlobalFetch({
+      "/api/connections/policy": governedPolicy,
+      "/api/connections/managed": () => {
+        calls += 1;
+        return calls === 1 ? { json: { connections: [governedSeed] } } : unavailable;
+      },
+      "/api/db/health": { json: { status: "healthy" } },
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+    await waitFor(() => {
+      expect(result.current.connections.map((c) => c.id)).toEqual(["seed:orders"]);
+    });
+    expect(result.current.connectionAccessUnavailable).toBe(false);
+    const before = result.current.connections;
+
+    focus();
+    await waitFor(() => {
+      expect(result.current.connectionAccessUnavailable).toBe(true);
+    });
+    expect(managedCalls(fetchMock)).toBe(2);
+    expect(result.current.connections).toBe(before);
+  });
+
+  test("without governance a 503 is an unanswered list, as before, and no unavailable state", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/connections/policy": { json: { customConnections: true } },
+      "/api/connections/managed": { status: 503, json: { error: "Service unavailable" } },
+      "/api/db/health": { json: { status: "healthy" } },
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+    await waitFor(() => {
+      expect(managedCalls(fetchMock)).toBe(1);
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    expect(result.current.governance).toBe(false);
+    expect(result.current.connectionAccessUnavailable).toBe(false);
+    // An unanswered first load starts no refresh, as before.
+    focus();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(managedCalls(fetchMock)).toBe(1);
+  });
+});
+
 // =============================================================================
 // A server-level connection reads one database (#1530)
 // =============================================================================

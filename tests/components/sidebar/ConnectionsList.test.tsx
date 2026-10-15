@@ -150,6 +150,71 @@ describe("ConnectionsList", () => {
     expect(queryByText("Add Connection")).toBeNull();
   });
 
+  test("an empty governed list shows the no-grants message", () => {
+    const { queryByText } = render(
+      <ConnectionsList
+        connections={[]}
+        activeConnection={null}
+        onSelectConnection={defaultOnSelect}
+        onDeleteConnection={defaultOnDelete}
+        governed
+      />,
+    );
+
+    expect(queryByText("No databases have been granted to you yet. Ask an administrator for access.")).not.toBeNull();
+    expect(queryByText("No database connections established yet.")).toBeNull();
+    expect(queryByText("Add Connection")).toBeNull();
+  });
+
+  test("the unavailable state shows the temporary unavailability banner", () => {
+    const { queryByRole, queryByText } = render(
+      <ConnectionsList
+        connections={[]}
+        activeConnection={null}
+        onSelectConnection={defaultOnSelect}
+        onDeleteConnection={defaultOnDelete}
+        governed
+        accessUnavailable
+      />,
+    );
+
+    expect(queryByRole("status")?.textContent).toBe(
+      "Connection access is temporarily unavailable. The list updates by itself once it is back.",
+    );
+    // An outage says nothing about the grants, so the no-grants message stays away.
+    expect(queryByText("No databases have been granted to you yet. Ask an administrator for access.")).toBeNull();
+    expect(queryByText("No database connections established yet.")).toBeNull();
+  });
+
+  test("the banner sits above a list the outage kept", () => {
+    const { queryByRole, queryByText } = render(
+      <ConnectionsList
+        connections={[mockPostgresConnection]}
+        activeConnection={null}
+        onSelectConnection={defaultOnSelect}
+        onDeleteConnection={defaultOnDelete}
+        governed
+        accessUnavailable
+      />,
+    );
+
+    expect(queryByRole("status")).not.toBeNull();
+    expect(queryByText(mockPostgresConnection.name)).not.toBeNull();
+  });
+
+  test("without governance there is no banner", () => {
+    const { queryByRole } = render(
+      <ConnectionsList
+        connections={[]}
+        activeConnection={null}
+        onSelectConnection={defaultOnSelect}
+        onDeleteConnection={defaultOnDelete}
+      />,
+    );
+
+    expect(queryByRole("status")).toBeNull();
+  });
+
   test("renders ConnectionItem for each connection", () => {
     const connections = [mockPostgresConnection, mockMySQLConnection];
 

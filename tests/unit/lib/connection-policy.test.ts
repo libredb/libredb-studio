@@ -103,6 +103,15 @@ describe("readConnectionPolicy", () => {
     expect(await readConnectionPolicy()).toEqual({ customConnections: true });
   });
 
+  test("reads governance only from an explicit true, and leaves it absent otherwise", async () => {
+    mockGlobalFetch({ "/api/connections/policy": { json: { customConnections: false, governance: true } } });
+    expect(await readConnectionPolicy()).toStrictEqual({ customConnections: false, governance: true });
+    restoreGlobalFetch();
+
+    mockGlobalFetch({ "/api/connections/policy": { json: { customConnections: false, governance: "true" } } });
+    expect(await readConnectionPolicy()).toStrictEqual({ customConnections: false });
+  });
+
   test("only an explicit false withholds anything", async () => {
     mockGlobalFetch({ "/api/connections/policy": { json: { customConnections: "false" } } });
     expect(await readConnectionPolicy()).toEqual(CUSTOM_CONNECTIONS_ALLOWED);

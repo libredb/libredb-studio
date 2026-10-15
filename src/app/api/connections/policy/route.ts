@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { sessionRequiredBody } from "@/lib/api/session-ended";
 import { customConnectionsAllowed } from "@/lib/config/custom-connections";
+import { governanceEnabled } from "@/lib/governance/config";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +18,10 @@ export const dynamic = "force-dynamic";
  * `query` bucket would spend a user's statement budget on drawing a sidebar. Its 401 carries the
  * AUTH_REQUIRED code, which `appFetch` answers by sending the tab to sign in.
  *
+ * Under governance (`GOVERNANCE_SOURCE`, docs/GOVERNANCE.md) the answer adds `governance: true`, so
+ * the connection list can tell a user with no grants that an administrator grants access. Without
+ * governance the field is absent and the answer is the one it always was.
+ *
  * The answer only decides what the editor offers. The rule itself is enforced in
  * `resolveConnection`, on every route that builds a provider, whatever a client believes.
  */
@@ -25,5 +30,6 @@ export async function GET() {
   if (!session) {
     return NextResponse.json(sessionRequiredBody("Authentication required"), { status: 401 });
   }
-  return NextResponse.json({ customConnections: customConnectionsAllowed() });
+  const customConnections = customConnectionsAllowed();
+  return NextResponse.json(governanceEnabled() ? { customConnections, governance: true } : { customConnections });
 }

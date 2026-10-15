@@ -13,6 +13,11 @@ import type { DatabaseConnection } from "@/lib/types";
  */
 export interface ConnectionPolicy {
   readonly customConnections: boolean;
+  /**
+   * True when the server runs under governance (docs/GOVERNANCE.md): its connections are the ones
+   * an administrator granted, so an empty list means no grants yet. Absent without governance.
+   */
+  readonly governance?: boolean;
 }
 
 /** Today's behaviour, and what a policy that could not be read leaves in place. */
@@ -65,7 +70,8 @@ export function mergeVisibleOrder(previous: string[], reorderedVisible: string[]
 }
 
 /**
- * Reads the policy. Only an explicit `customConnections: false` withholds anything.
+ * Reads the policy. Only an explicit `customConnections: false` withholds anything, and only an
+ * explicit `governance: true` reports governance.
  *
  * A read that fails, or answers another shape, keeps the editor as it was before the switch
  * existed, and every failure but a missing route says so in the console. That is not a security
@@ -83,8 +89,9 @@ export async function readConnectionPolicy(): Promise<ConnectionPolicy> {
       logger.warn(POLICY_UNREAD, { route: "connection-policy", status: res.status });
       return CUSTOM_CONNECTIONS_ALLOWED;
     }
-    const body = (await res.json()) as { customConnections?: unknown };
-    return body.customConnections === false ? CUSTOM_CONNECTIONS_REFUSED : CUSTOM_CONNECTIONS_ALLOWED;
+    const body = (await res.json()) as { customConnections?: unknown; governance?: unknown };
+    const policy = body.customConnections === false ? CUSTOM_CONNECTIONS_REFUSED : CUSTOM_CONNECTIONS_ALLOWED;
+    return body.governance === true ? { ...policy, governance: true } : policy;
   } catch (error) {
     logger.warn(POLICY_UNREAD, {
       route: "connection-policy",

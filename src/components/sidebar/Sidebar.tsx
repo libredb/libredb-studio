@@ -88,6 +88,10 @@ interface SidebarProps {
    * withholds it while the server refuses custom connections (`ALLOW_CUSTOM_CONNECTIONS`).
    */
   onAddConnection?: () => void;
+  /** Under governance: the list holds the granted connections, and an empty one says none are granted yet. */
+  governed?: boolean;
+  /** Under governance: the granted connections could not be served at the last read. */
+  connectionAccessUnavailable?: boolean;
   /** A row the reader activated, handed over whole: path, kind and the fields the tree loaded. */
   onObjectClick?: (object: DatabaseObject) => void;
   onShowDiagram?: () => void;
@@ -189,6 +193,8 @@ export const Sidebar = React.memo(function Sidebar({
   onToggleGroupCollapsed,
   onMoveConnectionToGroup,
   onAddConnection,
+  governed,
+  connectionAccessUnavailable,
   onObjectClick,
   onShowDiagram,
   metadata,
@@ -437,6 +443,8 @@ export const Sidebar = React.memo(function Sidebar({
           onToggleGroupCollapsed={onToggleGroupCollapsed}
           onMoveConnectionToGroup={onMoveConnectionToGroup}
           onAddConnection={onAddConnection}
+          governed={governed}
+          accessUnavailable={connectionAccessUnavailable}
         />
       </ScrollArea>
 
