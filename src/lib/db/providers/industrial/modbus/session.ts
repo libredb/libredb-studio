@@ -88,10 +88,6 @@ export class ModbusSession {
     return id;
   }
 
-  get transactionsInFlight(): number {
-    return this.inFlight;
-  }
-
   /**
    * Runs one exchange. Resolves with the answer, or rejects. A rejection always closes the
    * connection first: after a timeout, a malformed frame or an answer for another unit there is no
