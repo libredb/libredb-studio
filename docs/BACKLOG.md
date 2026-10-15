@@ -44,7 +44,7 @@ None of it is a GitHub issue.
 - [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B116 · 50
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP3 · 3
-- [Governance follow-ups](#governance-follow-ups) — GOV1-GOV20 · 20
+- [Governance follow-ups](#governance-follow-ups) — GOV1-GOV23 · 23
 
 ---
 
@@ -7647,7 +7647,7 @@ Found 2026-10-12 while designing the RabbitMQ provider.
 ## Governance follow-ups
 
 Defects and open questions found while designing and building the governance mode (`GOVERNANCE_SOURCE=postgres`), in that mode and in the modes it does not cover.
-GOV1 to GOV4 were re-verified against the code on 2026-10-15, and GOV5 to GOV20 on 2026-10-16.
+GOV1 to GOV4 were re-verified against the code on 2026-10-15, and GOV5 to GOV23 on 2026-10-16.
 
 ### GOV1. Resolving a seed id answers 403 for an existing id and 404 for an unknown one
 
@@ -7849,3 +7849,32 @@ The agent runs route also opens the writable editor provider to check a run's ca
 Lifted as it is, the paths without a subject would fail closed, but that check would open a provider with the write credential of any user who holds a write grant.
 
 **Done when:** MCP tokens and `AgentRunActor` keep the subject, every MCP, agent runtime, handover, runs and classify call resolves its connection with the subject and `{ credential: "read" }` and acquires its provider for that subject, the runs route no longer opens the writable provider, their query event sources and the admission gate are wired, and a governance test checks the read credential and the per-subject owner on each path before the hold predicates answer false.
+
+### GOV21. While the snapshot cannot be served, the revocations it already holds stop refusing sessions
+
+`governanceRevoked` in `src/lib/local-accounts.ts` answers false whenever `governanceServable()` is false, so `storedAccountAllows()` stops applying every revocation of the last snapshot once that snapshot is older than `GOVERNANCE_MAX_STALENESS_MS`, misconfigured or incompatible.
+Data routes answer 503 then, but routes that resolve no governed connection, such as `/api/storage`, `/api/auth/me`, the `/api/ai/*` routes and the admin routes, accept a revoked session again for the rest of its lifetime, `AUTH_SESSION_TTL_SECONDS`, which the installer sets to 28800.
+Measured on 2026-10-15 with one session: refused while the snapshot was `ok`, accepted once it was `unavailable`.
+`docs/GOVERNANCE.md#sign-in` states the behaviour on purpose, so an outage sends no wave of sign-ins, but a revocation only ever denies, so keeping the last snapshot's revocations would send back only sessions that were already revoked.
+
+**Done when:** the revocations of the last loaded snapshot keep refusing their sessions while the snapshot is not served, or the owner records the decision to keep today's behaviour; `docs/GOVERNANCE.md#sign-in` says which; and `tests/unit/lib/local-accounts-governance.test.ts` pins a revoked session refused under `unavailable` and `misconfigured`, with a session that was never revoked still accepted, so the outage still sends no one to sign in.
+
+### GOV22. One query event the database refuses outside SQLSTATE classes 22 and 23 holds every later event back
+
+`insertBatch` in `src/lib/query-events/postgres-sink.ts` splits a refused batch into single rows only when the SQLSTATE is in `PERMANENT_CLASSES`, classes 22 and 23.
+Any other refusal is thrown, so the sink backs off and sends the same head batch again, for ever, as `docs/GOVERNANCE.md#query-events` describes for a missing privilege (42501).
+When only one row is refused, for example by a trigger the control plane adds to `bridge.query_event` that raises P0001, or by 54000, the rows behind it never land: with `queryLog.onSinkFailure` set to `refuse` every execution answers 503 `AUDIT_UNAVAILABLE` until someone removes the cause, and with `continue` the queue fills to 10000 events and every newer one is dropped.
+Measured on 2026-10-15 with a fake governance database that refused one row of six with P0001: after 8.5 s the sink held all 6, backing off, with `lastSqlstate` P0001.
+Platform's v1 schema has no trigger, rule or row-level security on `bridge.query_event`, so nothing produces such a refusal today, and nothing in the contract forbids one either.
+
+**Done when:** a batch refused with a SQLSTATE outside classes 22 and 23 is retried row by row once, so rows the database accepts land and only the rows it refuses again hold the queue, while a refusal of every row, such as 42501, keeps today's backoff; `docs/GOVERNANCE.md#query-events` describes the rule, or the objects section forbids triggers and rules on `bridge.query_event` that refuse an insert; and a sink test with one P0001 row among six shows the five land.
+
+### GOV23. A timed-out MSSQL transaction with a statement still running keeps its connection and its locks
+
+`expireTransaction` in `src/lib/db/providers/sql/mssql.ts` clears `txTransaction` and `txActive` and then calls `rollback()`, and its docblock says `mssql` returns the connection to the pool either way.
+While a request of the transaction is still running, `Transaction.rollback` in `mssql` 12.7.4 (`lib/base/transaction.js`) answers `EREQINPROG` ("Can't rollback transaction. There is a request in progress.") before it releases anything.
+The provider then reports no transaction, the server keeps the transaction open with its locks, and the connection stays held by the dropped `Transaction` object until the provider is torn down, which costs the user one of the sessions of their governed pool, three by default.
+Measured on 2026-10-15 against the installed `mssql`: after the timer fired during a running request, the provider was out of transaction and the pool had released nothing.
+The timer is armed only on owned providers, so this is governance mode only; GOV3 is the question of arming it in every mode.
+
+**Done when:** `expireTransaction` cancels or waits for the running request before it rolls back, so the rollback runs and the connection always returns to the pool; the docblock states what happens; and a unit test with a fake `Transaction` that answers `EREQINPROG` while a request runs shows the rollback sent once the request settles and the connection released.
