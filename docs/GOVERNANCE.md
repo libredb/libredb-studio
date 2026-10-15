@@ -646,6 +646,16 @@ Studio records one query event per executed unit:
 | `key-scan` | One per page of a key scan, which reads key names. |
 
 A later version adds `agent`, `agent-handover` and `mcp` once the agent and MCP run under governance, and a control plane shows any source it does not know as it is.
+
+How the editor and a multi-statement run record:
+
+- An `editor` event has `status` `success`, `error` or `cancelled`, `row_count` when the engine reported a count, and `access_level`, the level of the grant the statement ran with.
+- The `multi-query` events of one request share one `correlation_id`, a UUIDv7, and `unit_index` counts its units from 0.
+  A run stops at its first failing unit, so the units after it leave no row.
+- A request for a well-formed `seed:` id that Studio refuses before anything runs records one `refused` event with the refusal's API code in `error_code`.
+  For a connection the caller holds no grant on, or while the snapshot cannot be served, `engine` and `access_level` are NULL; for a refusal of the admission gate (`AUDIT_UNAVAILABLE`) they are set.
+- A request Studio rejects as malformed, such as one without a statement or a plan request for a statement the engine cannot explain, leaves no row, because nothing ran.
+- `error_code` of a failed statement is the SQLSTATE the driver reported, else Studio's API code for the error, such as `QUERY_ERROR`.
 Catalog and metadata reads, schema browsing, monitoring, health checks and pool statistics are not query events.
 
 Delivery:

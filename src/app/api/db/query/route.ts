@@ -5,7 +5,7 @@ import { createDatabaseProvider, getOrCreateProvider } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
 import { bridgeAbortToCancel } from "@/lib/api/abort-cancel";
 import { QueryCancelledError } from "@/lib/db/errors";
-import { resolveConnection } from "@/lib/seed/resolve-connection";
+import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
 import { editorProvider } from "@/lib/api/editor-provider";
@@ -22,6 +22,15 @@ import { supportsQueryCancel } from "@/lib/db/query-cancel";
 import type { ExplainFormat, OpenQueryTransactionOutcome } from "@/lib/db/types";
 import { rowsWithNonFiniteWords } from "@/lib/non-finite";
 import { noteAppendedBound } from "@/lib/db/utils/query-limiter";
+import type { DatabaseConnection } from "@/lib/types";
+import { admitQueryExecution } from "@/lib/query-events/admission";
+import { queryEventStart } from "@/lib/query-events/build";
+import {
+  queryEventRequest,
+  recordExecutedUnit,
+  recordRefusedRequest,
+  requestedConnectionId,
+} from "@/lib/query-events/route-events";
 
 /**
  * The error an unreadable `explain` field gets. It names the whole allowed shape
@@ -62,11 +71,24 @@ export async function POST(req: NextRequest) {
   const guard = await guardRoute({ route: "POST /api/db/query", bucket: "query", request: req });
   if ("response" in guard) return guard.response;
 
+  // THE QUERY EVENT OF THIS REQUEST (spec 7.9). What it names is held out here, so the `catch` below can record a
+  // request that failed at any step: refused before its connection resolved, refused by the admission gate, or run.
+  // `stage` says which, and the statement is the text the user submitted, never the EXPLAIN or the bound built from it.
+  const started = queryEventStart();
+  const events = queryEventRequest("editor", guard.session, req);
+  let requestedId: string | undefined;
+  let connection: DatabaseConnection | undefined;
+  let submitted: string | null = null;
+  let explainMode: ExplainMode | undefined;
+  let stage: "request" | "admission" | "execution" = "request";
+
   try {
     const body = await req.json();
     const { sql, options = {}, queryId } = body;
+    requestedId = requestedConnectionId(body);
+    submitted = typeof sql === "string" ? sql : null;
 
-    let connection = await resolveConnection(body, guard.session);
+    connection = await resolveConnection(body, guard.session);
 
     if (!sql) {
       return NextResponse.json({ error: "Connection and query are required" }, { status: 400 });
@@ -109,6 +131,7 @@ export async function POST(req: NextRequest) {
     if (!explain.valid) {
       return NextResponse.json({ error: explain.message }, { status: 400 });
     }
+    explainMode = explain.explain?.mode;
 
     // AN EXPLAIN PREFIXES ONE STATEMENT (#1311). Handed `SELECT 1 AS a; INSERT ...` it
     // explained the SELECT and the simple-query protocol then RAN the INSERT as a
@@ -205,6 +228,11 @@ export async function POST(req: NextRequest) {
       }
       connection = { ...connection, database: String(database) };
     }
+
+    // Before the provider: a request the gate refuses opens nothing and runs nothing.
+    stage = "admission";
+    admitQueryExecution();
+    stage = "execution";
 
     // The DuckDB editor file-access posture rides on the server-derived execution context: an
     // admin keeps the full editor reach, every other role opens with external access off, and so
@@ -308,8 +336,16 @@ export async function POST(req: NextRequest) {
     // The probe row is the proof (#1440): more than `prepared.limit` rows came back, so a next
     // page exists, and the page itself is cut back to the limit asked for.
     const { hasMore, rows: pageRows } = pageOfProbe(prepared, result.rows);
+    const answered = firstResultSet(result);
+    recordExecutedUnit(events, {
+      connection,
+      statement: submitted,
+      started,
+      explain: explainMode,
+      ended: { rowCount: hasMore ? pageRows.length : answered.rowCount },
+    });
     return NextResponse.json({
-      ...firstResultSet(result),
+      ...answered,
       // The probe row is not part of the answer, so the count that names the rows is the page's.
       ...(hasMore && { rowCount: pageRows.length }),
       // NaN and the infinities as words: `JSON.stringify` would write each as null, which
@@ -338,6 +374,17 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (error) {
+    if (stage === "execution") {
+      recordExecutedUnit(events, {
+        connection: connection as DatabaseConnection,
+        statement: submitted,
+        started,
+        explain: explainMode,
+        ended: { error },
+      });
+    } else if (stage === "admission" || (connection === undefined && error instanceof SeedConnectionError)) {
+      recordRefusedRequest(events, { requestedId, connection, statement: submitted, started, error });
+    }
     return createErrorResponse(error, { route: "api/db/query" });
   }
 }
