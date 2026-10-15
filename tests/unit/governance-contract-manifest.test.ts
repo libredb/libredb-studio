@@ -575,7 +575,7 @@ describe("contract-v1.json", () => {
     expect(manifest.settings).toEqual(JSON.parse(JSON.stringify(SETTINGS_REGISTRY)));
   });
 
-  test("contract-v1.json lists the skip codes of spec 7.7, the envelope codes of spec 8.5 and the API codes CONNECTION_NOT_FOUND, GOVERNANCE_UNAVAILABLE, AUDIT_UNAVAILABLE and TRANSACTION_CREDENTIAL_CHANGED", () => {
+  test("contract-v1.json lists the skip codes of spec 7.7, the envelope codes of spec 8.5 and the API codes CONNECTION_NOT_FOUND, GOVERNANCE_UNAVAILABLE, AUDIT_UNAVAILABLE, TRANSACTION_CREDENTIAL_CHANGED and AI_DISABLED", () => {
     expect(manifest.codes.skip).toEqual([
       "READ_SECRET_UNOPENABLE",
       "WRITE_SECRET_UNOPENABLE",
@@ -598,6 +598,7 @@ describe("contract-v1.json", () => {
       { code: "GOVERNANCE_UNAVAILABLE", httpStatus: 503 },
       { code: "AUDIT_UNAVAILABLE", httpStatus: 503 },
       { code: "TRANSACTION_CREDENTIAL_CHANGED", httpStatus: 409 },
+      { code: "AI_DISABLED", httpStatus: 403 },
     ]);
     expect(manifest.listenerStates).toEqual(["listening", "reconnecting", "polling", "deaf"]);
   });

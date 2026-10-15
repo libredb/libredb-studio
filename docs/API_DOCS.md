@@ -1641,6 +1641,16 @@ one that had started ends there. A caller that disconnects aborts the provider r
 fixed, not configurable: the Query Safety dialog, the only caller in this repo, stops waiting after 15 seconds
 (`QUERY_SAFETY_ANALYSIS_TIMEOUT_MS`), aborts its request and lets the statement run without the analysis.
 
+Under governance (`GOVERNANCE_SOURCE=postgres`) the control plane can switch the three off with the runtime setting `ai.enabled` ([`docs/GOVERNANCE.md`](GOVERNANCE.md#runtime-settings)).
+While it is `false`, each of them answers a signed-in caller before any LLM provider is built and before the rate limit is spent:
+
+```json
+// 403 Forbidden
+{ "error": "AI assistance is switched off on this server", "code": "AI_DISABLED", "statusCode": 403 }
+```
+
+A caller without a session still gets `401`, and without governance, or while `ai.enabled` is `true` or unset, the endpoints answer as the environment configured them.
+
 **Provider-surfaced errors**
 
 These come from the configured **LLM provider** (bad API key, quota, safety filter), not from session
@@ -2543,6 +2553,7 @@ These are the values of the `code` field emitted by `createErrorResponse` (`src/
 | `CONNECTION_NOT_FOUND` | Governance mode only: the connection a request names does not exist or is not granted to the caller (404), and the two are indistinguishable; see [Connections under governance](#connections-under-governance) |
 | `GOVERNANCE_UNAVAILABLE` | Governance mode only: the governance snapshot is still loading, too old, misconfigured or incompatible (503), so `GET /api/connections/managed` and every database route that opens a connection answer it instead; see [Connections under governance](#connections-under-governance) |
 | `TRANSACTION_CREDENTIAL_CHANGED` | Governance mode only: the caller's grant level or the connection's credential changed while the caller's transaction was open, so `POST /api/db/transaction` rolled it back and answered this instead of the request (409), with `rolledBack` saying whether the rollback was confirmed. Answered by the route rather than `createErrorResponse`; see [Connections under governance](#connections-under-governance) |
+| `AI_DISABLED` | Governance mode only: the control plane set the runtime setting `ai.enabled` to `false`, so a route of the AI bucket refused a signed-in caller before any LLM provider was built (403). Answered by the route guard rather than `createErrorResponse`; see [AI API](#ai-api) |
 | `AUTH_REQUIRED` | No Studio session, or one that no longer verifies (401). Answered by the middleware and the route-level session checks rather than `createErrorResponse`; the only 401 the browser answers by sending the user to sign in |
 | `WORKSPACE_OWNER_MISMATCH` | The request's `X-LibreDB-Workspace-Owner` header names an account other than the signed-in one (409). Answered by the middleware rather than `createErrorResponse`; the browser reloads the tab for it (see [Storage API](#storage-api)) |
 | `TIMEOUT_ERROR` | Query exceeded time limit (408); `POST /api/ai/query-safety` answers it with 504 when the model does not answer in time |

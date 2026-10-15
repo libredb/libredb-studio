@@ -1,6 +1,7 @@
 import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
 import { createMockRequest, readStreamResponse, parseResponseJSON } from "../../helpers/mock-next";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
+import { API_CODES } from "@/lib/governance/contract";
 import { validateSettings } from "@/lib/governance/settings";
 import { recordGovernanceSnapshot, resetGovernanceState } from "@/lib/governance/state";
 import { grantedSnapshot } from "../../helpers/governance/granted-snapshot";
@@ -284,6 +285,9 @@ describe("POST /api/ai/explain under governance", () => {
       code: "AI_DISABLED",
       statusCode: 403,
     });
+    // The status and the code are the ones governance contract v1 publishes for this refusal (spec 7.10).
+    const published: readonly { code: string; httpStatus: number }[] = API_CODES;
+    expect(published).toContainEqual({ code: "AI_DISABLED", httpStatus: res.status });
     expect(mockCreateLLMProvider).not.toHaveBeenCalled();
   });
 

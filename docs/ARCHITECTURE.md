@@ -322,11 +322,13 @@ Its three tools reach only seed connections opted in with `mcp: true`, through `
 It is standalone-only: nothing under `src/lib/mcp/` or `src/app/` is reachable from the package's entry points, which a package-boundary test asserts.
 Full behaviour, client configuration and limits: [`docs/MCP.md`](MCP.md).
 
-### 4.11. Governance Contract (`src/lib/governance/`, off by default)
+### 4.11. Governance (`src/lib/governance/`, `src/lib/query-events/`, off by default)
 
 Studio can run under a control plane that decides which databases each person may open.
 The two never call each other: the control plane publishes a governance source, PostgreSQL views and tables in one schema, and Studio reads it with a role of its own and writes its heartbeat and query events back into it.
 `src/lib/governance/contract.ts` holds that contract as data together with every statement Studio issues against it, `src/lib/governance/settings-registry.ts` holds the runtime settings a control plane may set, and `scripts/generate-governance-manifest.ts` publishes both as `tests/fixtures/governance/contract-v1.json`, which a control plane vendors from a release.
+The runtime beside them opens sealed credentials with the keyring (`keyring.ts`, `secrets.ts`), admits the governance source's connection rows (`admission.ts`), reads the source through a pool of its own (`db.ts`) into one snapshot at a time (`snapshot.ts`, `state.ts`), decides from the snapshot's age whether data routes may be served (`freshness.ts`), and keeps it current with a refresher and a change listener (`start.ts`, `listener.ts`).
+`src/lib/query-events/` turns each executed unit into a row of `query_events_v1` (`build.ts`), keeping of the statement only what the runtime setting `queryLog.statementCapture` allows (`redact.ts`).
 Governance is off unless `GOVERNANCE_SOURCE=postgres` is set.
 The contract, its conformance files and its semantics: [`docs/GOVERNANCE.md`](GOVERNANCE.md).
 
@@ -406,7 +408,9 @@ src/
     │   └── types.ts         # Database types
     ├── agent/               # Agent runtime: run ledger, workflow, tools, policy (docs/AGENT.md)
     ├── mcp/                 # MCP server: SDK handler, token, pre-processing, tools (docs/MCP.md)
-    ├── governance/          # Governance contract v1: objects, statements and the settings registry (docs/GOVERNANCE.md)
+    ├── governance/          # Governance (docs/GOVERNANCE.md): contract v1, the settings registry and the runtime that
+    │                        #   reads the source: keyring, admission, pool, snapshot, freshness, refresher, listener
+    ├── query-events/        # Query event rows under governance: the builder, statement redaction, UUIDv7 event ids
     ├── passkey/             # Passkey sign-in (docs/PASSKEYS.md): config (PASSKEY_ORIGIN reader), policy, ceremony
     │                        #   cookie, WebAuthn wrapper, management and sign-in services, browser client
     ├── launch/              # Launch-token sign-in (docs/LAUNCH.md): config (LAUNCH_TOKEN_* reader), the token

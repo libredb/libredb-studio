@@ -641,15 +641,27 @@ Delivery:
 - With `queryLog.onSinkFailure` set to `refuse`, Studio refuses new executions with 503 `AUDIT_UNAVAILABLE` while it is backing off or its queue is at least 90% full.
   A refused row never trips this.
 
-Capture follows `queryLog.statementCapture`:
+Capture follows `queryLog.statementCapture`, which is `none` while the control plane sets no valid value:
 
 | Mode | `statement` | `statement_fingerprint` | `error_message` |
 | --- | --- | --- | --- |
-| `none` | none | none | none |
-| `redacted` | literals, numbers and comments replaced with `?`, whitespace collapsed | SHA-256 of the redacted text | none |
-| `full` | the statement cut to `queryLog.maxStatementBytes` (`statement_truncated` says when it was), with password literals and URI user information masked | none | the error text, cut to 1000 characters |
+| `none` | NULL | NULL | NULL |
+| `redacted` | the statement with every string, number and comment replaced by `?` and white space collapsed, cut to `queryLog.maxStatementBytes` | the lowercase hex SHA-256 of the whole redacted text | NULL |
+| `full` | the statement as submitted, with the value after `PASSWORD` or `IDENTIFIED BY` and the user information of every URI replaced by `[REDACTED]`, cut to `queryLog.maxStatementBytes` | NULL | the error text, masked the same way and cut to 1000 characters |
 
-Bind parameter values, result rows and credentials are never recorded.
+- The statement is the text the user submitted, never one Studio built around it, such as an `EXPLAIN` or an added row limit.
+- A statement is cut at `queryLog.maxStatementBytes` UTF-8 bytes on a character boundary, and `statement_truncated` is true when it was.
+  The fingerprint is taken before the cut, so every run of one long statement shape shares it.
+- `redacted` reads a statement the way its engine reads it: SQL under the engine's own rules for literals and comments, a MongoDB command with its keys, operation, collection and database kept, and a Redis command with only its name kept.
+  A password written as a bare word after `IDENTIFIED BY` is replaced as well, and the statement of an engine Studio has no reader for is stored as a single `?`.
+- `full` keeps every other secret written into a statement, such as a Redis `AUTH` argument, and an error text that quotes a statement in the driver's own words can carry one, so choose it only where the statements themselves must be kept.
+- A refused request whose connection did not resolve, such as one for a connection the caller holds no grant on, stores no statement and no error text in any mode, because the engine that would read them is unknown.
+- In every mode `statement_type` is `SELECT`, `INSERT`, `UPDATE` or `DELETE` from the keyword that operates the statement, also behind a `WITH`, `DDL` for `CREATE`, `ALTER`, `DROP` and `TRUNCATE`, and `OTHER` for any other statement, for a unit without text and for every engine whose statements are not SQL.
+- `explain` is `plan` for a plan request that only estimates and `analyze` for one that runs the statement.
+- `error_code` is the SQLSTATE, the driver's code or the API code of a refusal, cut to 64 characters, in every mode.
+
+Bind parameter values, result rows and credentials are never recorded: a row has no column for them.
+Studio stores text so that a row is never refused for its shape: `username` is cut to 320 characters, `connection_name`, `correlation_id` and `transaction_id` to 128, a NUL character becomes U+FFFD, and `client_ip` is set only when the client address is an IP address.
 A row takes about 950 bytes with a redacted statement of 170 characters and about 660 bytes with capture `none`.
 
 ## Sealed credentials: lsb1
@@ -767,3 +779,4 @@ Under governance Studio's API answers these codes in the `code` field of an erro
 | `GOVERNANCE_UNAVAILABLE` | 503 | The snapshot is loading, too old, misconfigured or incompatible. |
 | `AUDIT_UNAVAILABLE` | 503 | `queryLog.onSinkFailure` is `refuse` and Studio cannot record query events. |
 | `TRANSACTION_CREDENTIAL_CHANGED` | 409 | The grant level or credential under the caller's open transaction changed, and Studio rolled the transaction back; `rolledBack` is `false` when it could not confirm the rollback. |
+| `AI_DISABLED` | 403 | `ai.enabled` is `false`, and a route of the AI bucket refused a signed-in caller before any LLM provider was built. |

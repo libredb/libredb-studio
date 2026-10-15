@@ -65,6 +65,7 @@ export const API_CODES = [
   { code: "GOVERNANCE_UNAVAILABLE", httpStatus: 503 },
   { code: "AUDIT_UNAVAILABLE", httpStatus: 503 },
   { code: "TRANSACTION_CREDENTIAL_CHANGED", httpStatus: 409 },
+  { code: "AI_DISABLED", httpStatus: 403 },
 ] as const;
 
 /** The states of Studio's notification listener, reported in the heartbeat (spec 7.2, 7.3). */
