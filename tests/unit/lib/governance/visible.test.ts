@@ -186,6 +186,24 @@ describe("under governance", () => {
     expect((await visibleConnectionById(ALICE, "billing"))?.queryTimeout).toBe(setting?.default as number);
   });
 
+  test("query.timeoutMs reaches the projected queryTimeout", async () => {
+    const snapshot = grantedSnapshot(
+      [ORDERS, BILLING],
+      [
+        { subject: ALICE.idpSubject, connection: ORDERS, level: "write" },
+        { subject: ALICE.idpSubject, connection: BILLING, level: "read" },
+      ],
+    );
+    recordGovernanceSnapshot({
+      ...snapshot,
+      settings: { values: new Map([["query.timeoutMs", 120_000]]), ignored: [], malformed: 0 },
+    });
+
+    expect((await visibleConnectionById(ALICE, "orders"))?.queryTimeout).toBe(120_000);
+    expect((await visibleConnectionById(ALICE, "billing", { credential: "read" }))?.queryTimeout).toBe(120_000);
+    expect((await visibleConnections(ALICE)).map((connection) => connection.queryTimeout)).toEqual([120_000, 120_000]);
+  });
+
   test("a grant whose expires_at has passed by Studio's clock is neither listed nor found, with no reload", async () => {
     recordGovernanceSnapshot(
       grantedSnapshot(

@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { editorExecutionContext, sessionOwner } from "@/lib/api/execution-context";
 import { SETTINGS_REGISTRY } from "@/lib/governance/settings-registry";
+import { recordGovernanceSnapshot, resetGovernanceState } from "@/lib/governance/state";
 import type { DatabaseConnection } from "@/lib/types";
+import { grantedSnapshot } from "../../../helpers/governance/granted-snapshot";
 
 /**
  * The one place the DuckDB editor file-access posture is decided (non-admin DuckDB file access).
@@ -107,6 +109,7 @@ describe("editorExecutionContext names the owner under governance (spec 9.4)", (
   });
 
   afterEach(() => {
+    resetGovernanceState();
     if (savedSource === undefined) delete process.env.GOVERNANCE_SOURCE;
     else process.env.GOVERNANCE_SOURCE = savedSource;
   });
@@ -141,6 +144,33 @@ describe("editorExecutionContext names the owner under governance (spec 9.4)", (
 
     expect(setting?.default).toBe(3);
     expect(editorExecutionContext(ALICE, INLINE).ownerPoolMax).toBe(setting?.default as number);
+  });
+
+  test("provider.poolMaxPerUser=5 gives ownerPoolMax 5", () => {
+    process.env.GOVERNANCE_SOURCE = "postgres";
+    recordGovernanceSnapshot({
+      ...grantedSnapshot([], []),
+      settings: { values: new Map([["provider.poolMaxPerUser", 5]]), ignored: [], malformed: 0 },
+    });
+
+    expect(editorExecutionContext(ALICE, INLINE)).toStrictEqual({
+      allowExternalFileAccess: false,
+      owner: "f:ldap-1:alice",
+      ownerPoolMax: 5,
+    });
+
+    // A snapshot that set no value hands the next provider the default again.
+    recordGovernanceSnapshot(grantedSnapshot([], []));
+    expect(editorExecutionContext(ALICE, INLINE).ownerPoolMax).toBe(3);
+  });
+
+  test("with governance off a recorded poolMaxPerUser changes nothing", () => {
+    recordGovernanceSnapshot({
+      ...grantedSnapshot([], []),
+      settings: { values: new Map([["provider.poolMaxPerUser", 5]]), ignored: [], malformed: 0 },
+    });
+
+    expect(editorExecutionContext(ALICE, INLINE)).toStrictEqual({ allowExternalFileAccess: false });
   });
 
   test("under governance a session without an identity provider subject is refused, never handed a shared provider", () => {

@@ -3,6 +3,10 @@ import { getSession } from "@/lib/auth";
 import { sessionRequiredBody } from "@/lib/api/session-ended";
 import { customConnectionsAllowed } from "@/lib/config/custom-connections";
 import { governanceEnabled } from "@/lib/governance/config";
+import { runtimeSetting } from "@/lib/governance/settings";
+
+/** What Studio captures when the control plane set no valid `queryLog.statementCapture`: the default of spec 7.8. */
+const DEFAULT_STATEMENT_CAPTURE = "none";
 
 export const dynamic = "force-dynamic";
 
@@ -19,8 +23,10 @@ export const dynamic = "force-dynamic";
  * AUTH_REQUIRED code, which `appFetch` answers by sending the tab to sign in.
  *
  * Under governance (`GOVERNANCE_SOURCE`, docs/GOVERNANCE.md) the answer adds `governance: true`, so
- * the connection list can tell a user with no grants that an administrator grants access. Without
- * governance the field is absent and the answer is the one it always was.
+ * the connection list can tell a user with no grants that an administrator grants access, and
+ * `statementCapture`, the active `queryLog.statementCapture` (spec 9.3), so the editor can tell a
+ * user that statements are recorded in full. Without governance both fields are absent and the
+ * answer is the one it always was.
  *
  * The answer only decides what the editor offers. The rule itself is enforced in
  * `resolveConnection`, on every route that builds a provider, whatever a client believes.
@@ -31,5 +37,7 @@ export async function GET() {
     return NextResponse.json(sessionRequiredBody("Authentication required"), { status: 401 });
   }
   const customConnections = customConnectionsAllowed();
-  return NextResponse.json(governanceEnabled() ? { customConnections, governance: true } : { customConnections });
+  if (!governanceEnabled()) return NextResponse.json({ customConnections });
+  const statementCapture = runtimeSetting("queryLog.statementCapture") ?? DEFAULT_STATEMENT_CAPTURE;
+  return NextResponse.json({ customConnections, governance: true, statementCapture });
 }

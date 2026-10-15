@@ -557,6 +557,9 @@ import type { TreeRowActionHandlers } from "@/components/object-tree/row-actions
 // Test data
 // =============================================================================
 
+/** The one line the editor shows while the query log records statements in full (spec 9.3). */
+const CAPTURE_NOTICE = "Statements you run are recorded in full in this server's query log.";
+
 const pgConn = {
   id: "c1",
   type: "postgres" as const,
@@ -822,6 +825,25 @@ describe("Studio", () => {
     act(() => (capturedMobileNavProps.onTabChange as (tab: string) => void)("schema"));
     await waitFor(() => expect(capturedSchemaExplorerProps.onOpenMaintenance).toBeDefined());
   }
+
+  test("statementCapture full shows the capture notice", () => {
+    connMgrOverride = { governance: true, statementCapture: "full" };
+    const { getByText } = render(<Studio />);
+    expect(getByText(CAPTURE_NOTICE).getAttribute("role")).toBe("note");
+  });
+
+  test("any other statementCapture, and no governance, shows no capture notice", () => {
+    for (const override of [
+      {},
+      { governance: true, statementCapture: "none" },
+      { governance: true, statementCapture: "redacted" },
+    ]) {
+      connMgrOverride = override;
+      const { queryByText, unmount } = render(<Studio />);
+      expect(queryByText(CAPTURE_NOTICE)).toBeNull();
+      unmount();
+    }
+  });
 
   test("openMaintenance navigates to admin operations when admin", async () => {
     connMgrOverride = { activeConnection: pgConn };

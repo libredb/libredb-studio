@@ -106,6 +106,9 @@ const SchemaExplorer = React.lazy(
   lazyRetry(() => import("@/components/schema-explorer").then((m) => ({ default: m.SchemaExplorer }))),
 );
 
+/** The line the editor shows while the server's query log records statements in full (`queryLog.statementCapture`). */
+const STATEMENT_CAPTURE_NOTICE = "Statements you run are recorded in full in this server's query log.";
+
 export default function Studio() {
   const queryEditorRef = useRef<QueryEditorRef>(null);
   const shortcutsDialogRef = useRef<ShortcutsDialogRef>(null);
@@ -1451,6 +1454,13 @@ export default function Studio() {
               onCloseTab={closeTabAndCancel}
               onAddTab={handleAddTab}
             />
+
+            {conn.statementCapture === "full" && (
+              // One line, never a dialog: the server's query log records every statement in full (spec 9.3).
+              <p role="note" className="px-3 py-1 text-xs text-fg-secondary border-b border-hairline bg-sunken">
+                {STATEMENT_CAPTURE_NOTICE}
+              </p>
+            )}
 
             <main className="flex-1 overflow-hidden relative">
               {showDiagram && (

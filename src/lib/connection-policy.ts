@@ -18,7 +18,18 @@ export interface ConnectionPolicy {
    * an administrator granted, so an empty list means no grants yet. Absent without governance.
    */
   readonly governance?: boolean;
+  /**
+   * What the server's query log records of each statement under governance, the runtime setting
+   * `queryLog.statementCapture`: the editor tells the user when it is `full`. Absent without governance.
+   */
+  readonly statementCapture?: StatementCapture;
 }
+
+/** The capture modes of `queryLog.statementCapture` (docs/GOVERNANCE.md). */
+export type StatementCapture = "none" | "redacted" | "full";
+
+const isStatementCapture = (value: unknown): value is StatementCapture =>
+  value === "none" || value === "redacted" || value === "full";
 
 /** Today's behaviour, and what a policy that could not be read leaves in place. */
 export const CUSTOM_CONNECTIONS_ALLOWED: ConnectionPolicy = { customConnections: true };
@@ -70,8 +81,9 @@ export function mergeVisibleOrder(previous: string[], reorderedVisible: string[]
 }
 
 /**
- * Reads the policy. Only an explicit `customConnections: false` withholds anything, and only an
- * explicit `governance: true` reports governance.
+ * Reads the policy. Only an explicit `customConnections: false` withholds anything, only an
+ * explicit `governance: true` reports governance, and only governance carries a `statementCapture`
+ * that names one of its modes.
  *
  * A read that fails, or answers another shape, keeps the editor as it was before the switch
  * existed, and every failure but a missing route says so in the console. That is not a security
@@ -89,9 +101,17 @@ export async function readConnectionPolicy(): Promise<ConnectionPolicy> {
       logger.warn(POLICY_UNREAD, { route: "connection-policy", status: res.status });
       return CUSTOM_CONNECTIONS_ALLOWED;
     }
-    const body = (await res.json()) as { customConnections?: unknown; governance?: unknown };
+    const body = (await res.json()) as {
+      customConnections?: unknown;
+      governance?: unknown;
+      statementCapture?: unknown;
+    };
     const policy = body.customConnections === false ? CUSTOM_CONNECTIONS_REFUSED : CUSTOM_CONNECTIONS_ALLOWED;
-    return body.governance === true ? { ...policy, governance: true } : policy;
+    if (body.governance !== true) return policy;
+    const { statementCapture } = body;
+    return isStatementCapture(statementCapture)
+      ? { ...policy, governance: true, statementCapture }
+      : { ...policy, governance: true };
   } catch (error) {
     logger.warn(POLICY_UNREAD, {
       route: "connection-policy",

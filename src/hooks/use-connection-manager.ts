@@ -992,6 +992,8 @@ export function useConnectionManager(storageReady = false) {
     customConnections: policy.customConnections,
     /** Whether the server runs under governance, where the list holds the connections granted to this user. */
     governance: policy.governance === true,
+    /** What the query log records of each statement under governance; the editor says so when it is `full`. */
+    statementCapture: policy.statementCapture,
     /** Whether governance could not serve the granted connections at the last read; the refresh keeps trying. */
     connectionAccessUnavailable,
   };

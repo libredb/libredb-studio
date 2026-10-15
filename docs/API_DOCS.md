@@ -2146,6 +2146,7 @@ It answers what this server lets a session do with connections of its own:
 
 `customConnections` is `false` when `ALLOW_CUSTOM_CONNECTIONS` is `false`, `0`, `off` or `no`, or any value that is not one of those or `true`, `1`, `on` or `yes` (the switch fails closed; one pair of surrounding quotes is stripped first).
 It is also `false` in governance mode (`GOVERNANCE_SOURCE` set), whatever `ALLOW_CUSTOM_CONNECTIONS` says ([`docs/SEED_CONNECTIONS.md`](SEED_CONNECTIONS.md#governance-mode)).
+In governance mode the answer also carries `"governance": true` and `statementCapture`, the active `queryLog.statementCapture` runtime setting (`none`, `redacted` or `full`, `none` when the control plane set no valid value), and the editor shows a one-line notice while it is `full` ([`docs/GOVERNANCE.md`](GOVERNANCE.md#runtime-settings)).
 Every database route then refuses a connection supplied in the request body, as `connection` or as the whole body, with `403 { "error": "Custom connections are disabled on this server", "code": "CUSTOM_CONNECTIONS_DISABLED", "statusCode": 403 }`, before any provider is built.
 A seed named by `connectionId`, or by an inline record whose `id` is `seed:<id>`, is unaffected.
 `POST /api/admin/fleet-health` reports such an item as `{ "status": "error", "error": "Custom connections are disabled on this server" }` beside the others.
