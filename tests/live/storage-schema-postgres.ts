@@ -260,7 +260,9 @@ async function terminateOpenTransaction(
   await new Promise((resolve) => setTimeout(resolve, 200));
   await provider.mergeData(email, { connections: [] });
   check((await provider.getAccount(email))?.email === email, "the provider stopped serving after the termination");
-  console.log("ok   pg_terminate_backend on the backend of an open storage transaction rejects the transaction and the process keeps serving");
+  console.log(
+    "ok   pg_terminate_backend on the backend of an open storage transaction rejects the transaction and the process keeps serving",
+  );
 }
 
 async function main(): Promise<void> {
