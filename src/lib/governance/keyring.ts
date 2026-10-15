@@ -1,6 +1,6 @@
 /**
- * Studio's keyring under governance (spec 8.4): the X25519 private keys that open the `lsb1` envelopes a control plane
- * seals each connection's credentials into.
+ * Studio's keyring under governance (docs/GOVERNANCE.md#keyring): the X25519 private keys that open the `lsb1`
+ * envelopes a control plane seals each connection's credentials into.
  *
  * The keys live in a file, never in the environment: `GOVERNANCE_PRIVATE_KEYS_FILE` names it, and it holds
  * `{"version":1,"keys":["<unpadded base64url raw 32-byte X25519 private key>", ...]}`, mounted so that only the user

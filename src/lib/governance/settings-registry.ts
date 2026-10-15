@@ -1,5 +1,5 @@
 /**
- * The runtime settings registry of governance contract v1 (spec 7.8).
+ * The runtime settings registry of governance contract v1 (docs/GOVERNANCE.md#runtime-settings).
  *
  * These are the only keys a control plane may set for Studio at runtime. The registry is Studio's: a control plane
  * seeds its allowlist from the published manifest (`tests/fixtures/governance/contract-v1.json`), which is generated
@@ -7,8 +7,8 @@
  * CSP, HSTS) is never a runtime setting and stays in the environment.
  *
  * Pure data with no import, so the settings store, the admin status and the manifest generator can all read it
- * without loading a database driver. A later key is appended here under the same contract version, as spec 7.6
- * allows, and the manifest is regenerated in the same commit.
+ * without loading a database driver. A later key is appended here under the same contract version, as
+ * docs/GOVERNANCE.md#versioning-and-upgrade-order allows, and the manifest is regenerated in the same commit.
  */
 
 /** A runtime setting key as the allowlist's CHECK accepts it: dotted segments, each starting with a lowercase letter. */
@@ -31,7 +31,10 @@ export interface SettingDefinition {
   readonly consumer: string;
   /** The first contract version that publishes the key; `settings_v1` exposes keys up to its own version. */
   readonly sinceContract: number;
-  /** The description a control plane shows next to the key, as appendix A.2 seeds it. */
+  /**
+   * The description a control plane shows next to the key, which the manifest publishes
+   * (docs/GOVERNANCE.md#runtime-settings).
+   */
   readonly description: string;
 }
 

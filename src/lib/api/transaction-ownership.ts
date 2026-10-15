@@ -12,28 +12,27 @@
  * `rollback` with HTTP 200. The engine had zero rows afterwards and `user`'s own `commit` came
  * back "No active transaction". A second Studio user destroyed the first one's uncommitted work.
  *
- * UNDER GOVERNANCE EVERY USER HAS A PROVIDER OF THEIR OWN (spec 9.4), and so a transaction of their
- * own: the provider's cache key frames the owner the execution context names, the session's
- * identity provider subject, and `transactionKey` frames the same owner, so one user neither sees
- * nor joins another user's transaction, and every record under such a key is that user's. Both keys
- * gain the owner together (spec 3.2 D7): a record shared across users' own providers would let a
- * user whose provider holds no transaction drop another user's record on the reconcile below.
+ * UNDER GOVERNANCE EVERY USER HAS A PROVIDER OF THEIR OWN (docs/GOVERNANCE.md#per-user-providers), and so a transaction
+ * of their own: the provider's cache key frames the owner the execution context names, the session's identity provider
+ * subject, and `transactionKey` frames the same owner, so one user neither sees nor joins another user's transaction,
+ * and every record under such a key is that user's. Both keys gain the owner together
+ * (docs/GOVERNANCE.md#per-user-providers): a record shared across users' own providers would let a user whose provider
+ * holds no transaction drop another user's record on the reconcile below.
  *
- * A CREDENTIAL THAT CHANGES UNDER AN OPEN TRANSACTION, under governance (spec 9.4). A governed request
- * opens the connection with the credential of the caller's grant level, and the provider's cache key
- * frames that credential, so a grant downgraded from write to read, or a credential the control plane
- * sealed again, resolves a provider other than the one the transaction was opened on. So the record
- * keeps the provider cache key its begin resolved, and a request that resolves another key has the
- * record released by `releaseIfProviderChanged`: the route rolls the transaction back on the provider
- * that holds it and answers 409 TRANSACTION_CREDENTIAL_CHANGED. Without that, the reconcile below would
- * drop the record because the NEW provider holds no transaction, and the old one would stay open under a
- * credential its owner no longer holds, on a provider their requests no longer reach.
+ * A CREDENTIAL THAT CHANGES UNDER AN OPEN TRANSACTION, under governance (docs/GOVERNANCE.md#per-user-providers). A
+ * governed request opens the connection with the credential of the caller's grant level, and the provider's cache key
+ * frames that credential, so a grant downgraded from write to read, or a credential the control plane sealed again,
+ * resolves a provider other than the one the transaction was opened on. So the record keeps the provider cache key its
+ * begin resolved, and a request that resolves another key has the record released by `releaseIfProviderChanged`: the
+ * route rolls the transaction back on the provider that holds it and answers 409 TRANSACTION_CREDENTIAL_CHANGED.
+ * Without that, the reconcile below would drop the record because the NEW provider holds no transaction, and the old
+ * one would stay open under a credential its owner no longer holds, on a provider their requests no longer reach.
  *
  * SESSION means the authenticated account, `UserPayload.username` from the JWT the route already
  * has through `guardRoute`. That is the only stable identity field in the payload - the comment in
  * `require-session.ts` says so, and the rate limiter is keyed on it for the same reason. Under
  * governance it is the identity provider subject instead, which the record keeps beside the
- * username, because there the username is a display label that can change (spec 3.2 D2). There is
+ * username, because there the username is a display label that can change (docs/GOVERNANCE.md#row-semantics). There is
  * no per-tab or per-browser identifier anywhere in the token or the cookie, so two tabs of ONE
  * account share a transaction, deliberately: that is the same person, and the alternative would be
  * inventing an id the product does not have.
@@ -47,8 +46,8 @@
  *     refreshed by activity) with no session behind that rollback at all, so a record can outlive
  *     the transaction it names. `MSSQLProvider` and `OracleProvider` do the same, but ONLY when
  *     they are owned, that is created with the `owner` of a per-user provider, which only
- *     governance sets (spec 9.4). When the provider reports no open transaction, the record is
- *     dropped and the connection is free.
+ *     governance sets (docs/GOVERNANCE.md#per-user-providers). When the provider reports no open transaction, the
+ *     record is dropped and the connection is free.
  *  2. This lease expires after `OWNERSHIP_IDLE_MS` with no action from the owner. That is the
  *     release that matters for `MSSQLProvider` and `OracleProvider` without an owner, every
  *     install without governance, where they have no timeout of their own: without it an abandoned
@@ -66,7 +65,7 @@
  * symbol, one map per process, because the governance loader that tears down a revoked user's
  * providers runs in another bundle than the route that claims them (src/lib/db/owner-removal.ts).
  *
- * TRANSACTION EVENTS, under governance (spec 7.9). Every record carries a `transactionId` from
+ * TRANSACTION EVENTS, under governance (docs/GOVERNANCE.md#query-events). Every record carries a `transactionId` from
  * `randomUUID()`, and under governance the scope its query events need: who opened it, and the
  * connection and grant level it runs on. The route records one `open` event per statement run in it,
  * and exactly one terminal event ends it, through `endTransactionEvent`, which marks the record so a
@@ -86,7 +85,9 @@ import type {
   TransactionOutcome,
 } from "@/lib/query-events/types";
 
-/** What every query event of a governed transaction says about who ran it and where (spec 7.9). */
+/**
+ * What every query event of a governed transaction says about who ran it and where (docs/GOVERNANCE.md#query-events).
+ */
 export interface TransactionEventScope {
   readonly principal: QueryEventPrincipal;
   readonly connection: QueryEventConnection;
@@ -252,7 +253,8 @@ export function watchTransactionTimeout(connectionId: string, owner: Transaction
 /**
  * Records `rolled-back` for every open transaction `subject` holds on the connection Studio names `connectionId`, in any
  * of its databases: the governance loader calls it for each pair whose providers it tears down, because the teardown
- * rolls those transactions back (spec 9.4). The records stay, so the owner's next request still learns what happened.
+ * rolls those transactions back (docs/GOVERNANCE.md#per-user-providers). The records stay, so the owner's next request
+ * still learns what happened.
  */
 export function endOwnerTransactions(connectionId: string, subject: string): void {
   for (const owner of owners().values()) {
@@ -294,8 +296,8 @@ export function releaseTransaction(connectionId: string): void {
 
 /**
  * A transaction's owner key: per database on a server-level connection, whose databases each hold one (#1530), and
- * under governance per owner, the identity provider subject whose own provider holds it (spec 9.4). Without an owner
- * the key is byte-identical to the key before owners existed.
+ * under governance per owner, the identity provider subject whose own provider holds it
+ * (docs/GOVERNANCE.md#per-user-providers). Without an owner the key is byte-identical to the key before owners existed.
  */
 export function transactionKey(connectionId: string, catalog?: string, owner?: string): string {
   if (owner !== undefined) return JSON.stringify([connectionId, catalog ?? null, owner]);

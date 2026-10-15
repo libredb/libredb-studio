@@ -380,11 +380,11 @@ export const READS_FILE_ACCESS_POSTURE: Readonly<Record<DatabaseType, boolean>> 
  * `ProviderCapabilities.singleWriterFile` gives once a provider is built.
  *
  * Static because `providerCacheKey` decides before a provider exists: under governance every user of a
- * connection gets a provider of their own (spec 9.4), and the key frames the user as its owner, except on
- * these engines, where a provider per user would be a second handle on one file. DuckDB keeps its own copy
- * of the catalog in a second read-write handle and checkpoints it over the file when it closes, and LibreDB
- * refuses the second open outright, so every user of such a connection is served the one open handle.
- * Reading `connection.type` there was the alternative and is forbidden by `CLAUDE.md`.
+ * connection gets a provider of their own (docs/GOVERNANCE.md#per-user-providers), and the key frames the user as its
+ * owner, except on these engines, where a provider per user would be a second handle on one file. DuckDB keeps its own
+ * copy of the catalog in a second read-write handle and checkpoints it over the file when it closes, and LibreDB
+ * refuses the second open outright, so every user of such a connection is served the one open handle. Reading
+ * `connection.type` there was the alternative and is forbidden by `CLAUDE.md`.
  *
  * An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join without someone
  * answering, and `tests/unit/db/compatibility.test.ts` holds every entry equal to what that engine's
@@ -620,9 +620,10 @@ export const CONNECTION_STRING_ACCEPTED: Readonly<Record<DatabaseType, boolean>>
 
 /**
  * Which shipped engines open a file on Studio's own host rather than reach a server: the connection is a path, and
- * the provider opens it inside Studio's process. A governance source can never grant one (spec 7.7): row admission in
- * `src/lib/governance/admission.ts` skips it as ENGINE_UNSUPPORTED whatever `GOVERNANCE_ALLOWED_ENGINES` says,
- * because a grant would hand its users a file of the host Studio runs on.
+ * the provider opens it inside Studio's process. A governance source can never grant one
+ * (docs/GOVERNANCE.md#row-admission-and-skip-codes): row admission in `src/lib/governance/admission.ts` skips it as
+ * ENGINE_UNSUPPORTED whatever `GOVERNANCE_ALLOWED_ENGINES` says, because a grant would hand its users a file of the
+ * host Studio runs on.
  *
  * Static because admission decides from a row before any provider exists, and reads this record rather than a type
  * id. Kept here because the governance layer must not load `src/lib/db-ui-config.ts`, which value-imports the React
@@ -677,7 +678,7 @@ export const OPENS_LOCAL_FILE: Readonly<Record<DatabaseType, boolean>> = Object.
  * declares `catalogSessions` and opens a session of its own to each database the caller picks, so one credential
  * reaches every database it can sign in to. A governance source grants one database per connection, so row admission
  * in `src/lib/governance/admission.ts` skips such an engine's definition without a database as
- * SERVER_LEVEL_NOT_ALLOWED (spec 7.7).
+ * SERVER_LEVEL_NOT_ALLOWED (docs/GOVERNANCE.md#row-admission-and-skip-codes).
  *
  * Static for the reason `OPENS_LOCAL_FILE` is. `tests/unit/db/compatibility.test.ts` builds every shipped provider
  * with no database and no connection string, nothing connecting, and holds this record equal to the engines whose

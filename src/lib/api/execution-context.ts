@@ -11,9 +11,9 @@ import type { DatabaseConnection } from "@/lib/types";
 const SEED_NAMESPACE = "seed:";
 
 /**
- * The pool size of each user's provider under governance (spec 9.4) when the control plane set no valid
- * `provider.poolMaxPerUser`: the default of that runtime setting (spec 7.8), which
- * `tests/unit/lib/api/execution-context.test.ts` holds equal to the registry's.
+ * The pool size of each user's provider under governance (docs/GOVERNANCE.md#per-user-providers) when the control plane
+ * set no valid `provider.poolMaxPerUser`: the default of that runtime setting (docs/GOVERNANCE.md#runtime-settings),
+ * which `tests/unit/lib/api/execution-context.test.ts` holds equal to the registry's.
  */
 const OWNER_POOL_MAX = 3;
 
@@ -37,8 +37,8 @@ function openToNonAdminRoles(connection: DatabaseConnection): boolean {
 }
 
 /**
- * The owner of a governed session's providers (spec 9.4): its identity provider subject, the key grants name a user
- * by, never the username, which is a display label (spec 3.2 D2).
+ * The owner of a governed session's providers (docs/GOVERNANCE.md#per-user-providers): its identity provider subject,
+ * the key grants name a user by, never the username, which is a display label (docs/GOVERNANCE.md#row-semantics).
  */
 function governedOwner(session: { idpSubject?: string }): string {
   const subject = session.idpSubject;
@@ -49,10 +49,11 @@ function governedOwner(session: { idpSubject?: string }): string {
 }
 
 /**
- * The owner of the providers a session's requests run on (spec 9.4): under governance the session's identity provider
- * subject, and without governance none, because every caller of a connection shares its provider. The one place it is
- * decided: `editorExecutionContext` names it for the providers a request opens, and `POST /api/db/disconnect` removes
- * only this owner's providers, so the two can never disagree about whose providers they are.
+ * The owner of the providers a session's requests run on (docs/GOVERNANCE.md#per-user-providers): under governance the
+ * session's identity provider subject, and without governance none, because every caller of a connection shares its
+ * provider. The one place it is decided: `editorExecutionContext` names it for the providers a request opens, and
+ * `POST /api/db/disconnect` removes only this owner's providers, so the two can never disagree about whose providers
+ * they are.
  */
 export function sessionOwner(session: { idpSubject?: string }): string | undefined {
   return governanceEnabled() ? governedOwner(session) : undefined;
@@ -87,11 +88,11 @@ export function sessionOwner(session: { idpSubject?: string }): string | undefin
  * database read-only, which is the owner-scoped change.
  *
  * Under governance (`GOVERNANCE_SOURCE`, docs/GOVERNANCE.md) it also names the owner of a per-user provider
- * (spec 9.4): `owner`, the session's identity provider subject, and `ownerPoolMax`, the pool size of that user's
- * provider, the runtime setting `provider.poolMaxPerUser`. The size applies only when the factory creates a provider:
- * the cache key does not frame it, so a provider already open keeps its pool until it is torn down. The factory keys,
- * opens and records a provider per owner, so two users of one connection never share a pool, a database session state
- * or an interactive transaction. Without governance neither field is set, and every
+ * (docs/GOVERNANCE.md#per-user-providers): `owner`, the session's identity provider subject, and `ownerPoolMax`, the
+ * pool size of that user's provider, the runtime setting `provider.poolMaxPerUser`. The size applies only when the
+ * factory creates a provider: the cache key does not frame it, so a provider already open keeps its pool until it is
+ * torn down. The factory keys, opens and records a provider per owner, so two users of one connection never share a
+ * pool, a database session state or an interactive transaction. Without governance neither field is set, and every
  * caller of a connection shares its provider exactly as before.
  */
 export function editorExecutionContext(

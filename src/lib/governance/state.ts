@@ -1,6 +1,6 @@
 /**
- * The governance state of this process (spec 7.4, 7.5): the snapshot of the last successful load of the governance
- * source, and why the latest load failed when it did.
+ * The governance state of this process (docs/GOVERNANCE.md#freshness-and-readiness): the snapshot of the last
+ * successful load of the governance source, and why the latest load failed when it did.
  *
  * `snapshot.ts` loads the source and swaps each new snapshot in here at once, as one new state object, so a reader
  * sees the old snapshot or the new one and never a mix. `freshness.ts` derives from this state whether data routes
@@ -25,7 +25,10 @@ export type SettingRow = RowOf<"settings_v1">;
 /** A row of `seal_canary_v1`, as read: the loader opens its envelope. */
 export type CanaryRow = RowOf<"seal_canary_v1">;
 
-/** What the canary of one key id gave: `ok`, or the code its envelope failed with (spec 8.4). */
+/**
+ * What the canary of one key id gave: `ok`, or the code its envelope failed with
+ * (docs/GOVERNANCE.md#sealed-credentials-lsb1).
+ */
 export type CanaryResult = "ok" | EnvelopeCode;
 
 /** What one subject may do on one admitted connection. */
@@ -137,8 +140,8 @@ export function effectiveGrant(
 }
 
 /**
- * Whether `snapshot` revokes a session of `subject` issued at `issuedAtMs` (spec 5.2): the subject's latest
- * `revoked_before` is at or after it. A revocation only ever denies, so a session that does not say when it was
+ * Whether `snapshot` revokes a session of `subject` issued at `issuedAtMs` (docs/GOVERNANCE.md#sign-in): the subject's
+ * latest `revoked_before` is at or after it. A revocation only ever denies, so a session that does not say when it was
  * issued counts as issued before every revocation of its subject.
  */
 export function sessionRevoked(snapshot: GovernanceSnapshot, subject: string, issuedAtMs: number | undefined): boolean {

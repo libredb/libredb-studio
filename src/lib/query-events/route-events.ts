@@ -1,6 +1,7 @@
 /**
- * The query events of the routes that run statements (spec 7.9): what a route knows about a request and a unit,
- * turned into the `QueryEventInput` that `recordQueryEvent()` records under governance and ignores without it.
+ * The query events of the routes that run statements (docs/GOVERNANCE.md#query-events): what a route knows about a
+ * request and a unit, turned into the `QueryEventInput` that `recordQueryEvent()` records under governance and ignores
+ * without it.
  *
  * A route makes one `QueryEventRequest` per request, then records each unit that ran with `recordExecutedUnit()`, or
  * the request Studio turned away before anything ran with `recordRefusedRequest()`. Every function here only reads

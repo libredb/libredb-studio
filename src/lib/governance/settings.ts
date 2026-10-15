@@ -1,6 +1,6 @@
 /**
- * The runtime settings store (spec 7.8, 9.5): the values a control plane set in `settings_v1`, checked against the
- * registry Studio owns (`settings-registry.ts`).
+ * The runtime settings store (docs/GOVERNANCE.md#runtime-settings): the values a control plane set in `settings_v1`,
+ * checked against the registry Studio owns (`settings-registry.ts`).
  *
  * Every load of the snapshot passes the rows it read through `validateSettings()`, which keeps the value of each row
  * whose key the registry publishes for the contract in use and whose value is inside that key's domain. Any other row
@@ -14,8 +14,9 @@
  * environment.
  *
  * The store is pure: it imports no `pg` and no Node built-in, only the registry, the switch and the state holder, so a
- * route handler can read it without pulling the governance pool into its graph. The proxy never reads it (spec 7.8):
- * runtime values are applied by route handlers, which tests/unit/governance-proxy-boundary.test.ts pins.
+ * route handler can read it without pulling the governance pool into its graph. The proxy never reads it
+ * (docs/GOVERNANCE.md#runtime-settings): runtime values are applied by route handlers, which
+ * tests/unit/governance-proxy-boundary.test.ts pins.
  */
 import type { SkippedItem } from "./admission";
 import { governanceEnabled } from "./config";

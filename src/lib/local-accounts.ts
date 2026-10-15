@@ -424,7 +424,7 @@ function comparableIssuer(value: string): string | null {
 }
 
 /**
- * The governed sign-in rule (spec 5.2, docs/GOVERNANCE.md): whether an identity provider's subject and issuer may
+ * The governed sign-in rule (docs/GOVERNANCE.md#sign-in): whether an identity provider's subject and issuer may
  * speak for someone under governance. The subject must be a non-empty string, because openid-client accepts
  * `sub: ""`, and the issuer must be the identity provider at `OIDC_ISSUER`, because openid-client accepts another
  * `iss` for Microsoft Entra ID and Azure AD B2C. With `OIDC_ISSUER` unset or not a URL no issuer matches it.
@@ -445,10 +445,11 @@ export function governedIdentityAccepted(subject: unknown, issuer: unknown): boo
 type VerifiedSession = UserPayload & { readonly iat?: number };
 
 /**
- * Whether the governance source revoked the sessions of `subject` issued at `iat` (spec 5.2, 14). Only the snapshot
- * data routes are served from revokes anything: while none has loaded, or the one kept is too old, misconfigured or
- * incompatible, data routes answer 503 instead and no session is refused, so a database outage sends no one back to
- * the identity provider. It reads the in-process state holder and its freshness only, and neither imports `pg`.
+ * Whether the governance source revoked the sessions of `subject` issued at `iat` (docs/GOVERNANCE.md#sign-in). Only
+ * the snapshot data routes are served from revokes anything: while none has loaded, or the one kept is too old,
+ * misconfigured or incompatible, data routes answer 503 instead and no session is refused, so a database outage sends
+ * no one back to the identity provider. It reads the in-process state holder and its freshness only, and neither
+ * imports `pg`.
  */
 function governanceRevoked(subject: string, iat: number | undefined): boolean {
   const { snapshot } = governanceState();

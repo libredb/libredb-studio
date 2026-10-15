@@ -54,12 +54,11 @@ import type { DatabaseConnection, WithTunnelFarEnd } from "@/lib/types";
  *   lives on `ProviderExecutionContext`, server-derived from the session role and the resolved
  *   connection's audience, never on the
  *   connection, so a request body cannot move a handle between the two pools.
- * - The owner, under governance (spec 9.4): `ProviderExecutionContext.owner`, the identity provider
- *   subject of the session the provider is opened for, so every user of a connection gets a provider,
- *   a pool and a database session state of their own. It is appended last, as `owner:<subject>`, and
- *   only when an owner is given, so a key without one stays byte-identical to the key before owners
- *   existed. An engine that keeps one handle per file (`SINGLE_WRITER_FILE`) leaves it out, see
- *   {@link providerOwner}.
+ * - The owner, under governance (docs/GOVERNANCE.md#per-user-providers): `ProviderExecutionContext.owner`, the identity
+ *   provider subject of the session the provider is opened for, so every user of a connection gets a provider, a pool
+ *   and a database session state of their own. It is appended last, as `owner:<subject>`, and only when an owner is
+ *   given, so a key without one stays byte-identical to the key before owners existed. An engine that keeps one handle
+ *   per file (`SINGLE_WRITER_FILE`) leaves it out, see {@link providerOwner}.
  *
  * WHY THE ID IS SAFE IN THE KEY. Reaching a cached entry now costs the victim's id AND their
  * server AND their credentials. The first is guessable and the second is often public; the third
@@ -109,8 +108,9 @@ export async function providerCacheKey(
 }
 
 /**
- * The owner a provider of `connection` is kept apart for (spec 9.4): `owner` as given, or undefined when every
- * caller shares the provider, because none was given or because the engine keeps one handle per file.
+ * The owner a provider of `connection` is kept apart for (docs/GOVERNANCE.md#per-user-providers): `owner` as given, or
+ * undefined when every caller shares the provider, because none was given or because the engine keeps one handle per
+ * file.
  *
  * A provider per user on such an engine would be a second handle on one file, which DuckDB lets checkpoint over
  * the first one's committed rows and LibreDB refuses, so `SINGLE_WRITER_FILE` decides it before any provider

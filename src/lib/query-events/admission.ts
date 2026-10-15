@@ -1,6 +1,6 @@
 /**
- * The admission gate of query execution (spec 7.8, 7.9): whether a statement may run while Studio cannot record the
- * query event it would leave.
+ * The admission gate of query execution (docs/GOVERNANCE.md#query-events): whether a statement may run while Studio
+ * cannot record the query event it would leave.
  *
  * A route calls `admitQueryExecution()` before a statement reaches the database. With the runtime setting
  * `queryLog.onSinkFailure` at `refuse`, it throws a `SeedConnectionError` with 503 AUDIT_UNAVAILABLE while the query
@@ -21,8 +21,8 @@ import { SeedConnectionError } from "@/lib/seed/resolve-connection";
 import { QUERY_EVENT_QUEUE_CAPACITY, queryEventSinkState } from "./sink";
 
 /**
- * The queue length from which `refuse` refuses: 90% of the queue's capacity (spec 7.9), so the events of executions
- * admitted before the gate closed still find room.
+ * The queue length from which `refuse` refuses: 90% of the queue's capacity (docs/GOVERNANCE.md#query-events), so the
+ * events of executions admitted before the gate closed still find room.
  */
 const REFUSE_FROM_QUEUED = (QUERY_EVENT_QUEUE_CAPACITY * 9) / 10;
 

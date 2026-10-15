@@ -1,6 +1,6 @@
 /**
- * HPKE (RFC 9180) as `lsb1` envelopes use it (spec 8.1): base mode with DHKEM(X25519, HKDF-SHA256) `0x0020`,
- * HKDF-SHA256 `0x0001` and AES-256-GCM `0x0002`, single shot and without a PSK.
+ * HPKE (RFC 9180) as `lsb1` envelopes use it (docs/GOVERNANCE.md#sealed-credentials-lsb1): base mode with
+ * DHKEM(X25519, HKDF-SHA256) `0x0020`, HKDF-SHA256 `0x0001` and AES-256-GCM `0x0002`, single shot and without a PSK.
  *
  * It uses `node:crypto` alone (X25519 `diffieHellman`, HMAC-SHA256 for HKDF and the AES-256-GCM decipher), so it runs
  * the same on Node, which serves Studio's image, and on Bun, which runs its tests; Bun has no ChaCha20-Poly1305, which
@@ -21,7 +21,7 @@ import {
 } from "node:crypto";
 import type { ENVELOPE_CODES } from "./contract";
 
-/** Why a sealed secret did not open (spec 8.5). */
+/** Why a sealed secret did not open (docs/GOVERNANCE.md#sealed-credentials-lsb1). */
 export type EnvelopeCode = (typeof ENVELOPE_CODES)[number];
 
 /**
@@ -70,7 +70,7 @@ const HPKE_SUITE_ID = Buffer.concat([
 const PKCS8_PREFIX = Buffer.from("302e020100300506032b656e04220420", "hex");
 const SPKI_PREFIX = Buffer.from("302a300506032b656e032100", "hex");
 
-/** An X25519 private key from its raw 32 bytes, the form a keyring file holds (spec 8.4). */
+/** An X25519 private key from its raw 32 bytes, the form a keyring file holds (docs/GOVERNANCE.md#keyring). */
 export function x25519PrivateKey(raw: Uint8Array): KeyObject {
   if (raw.length !== X25519_BYTES) {
     throw new RangeError(`An X25519 private key is ${X25519_BYTES} bytes, not ${raw.length}`);

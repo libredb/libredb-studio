@@ -1,6 +1,7 @@
 /**
- * Removing one owner's providers of a connection in every copy of the provider factory this process loaded (spec 9.4),
- * for the governance loader, which tears down the providers of a grant a reload took away or changed.
+ * Removing one owner's providers of a connection in every copy of the provider factory this process loaded
+ * (docs/GOVERNANCE.md#per-user-providers), for the governance loader, which tears down the providers of a grant a
+ * reload took away or changed.
  *
  * Next.js bundles instrumentation, which runs the governance loads, apart from the route handlers that open providers,
  * and each bundle that loads `factory.ts` keeps provider caches of its own: measured on a production build of this

@@ -1,13 +1,13 @@
 /**
- * Governance contract v1: what Studio and a governance source share (spec 7, appendix A.3).
+ * Governance contract v1: what Studio and a governance source share (docs/GOVERNANCE.md).
  *
  * A governance source is a PostgreSQL schema, `bridge` unless `GOVERNANCE_POSTGRES_SCHEMA` names another, that a
  * control plane publishes and Studio reads with its own least-privilege role: views that list connections, grants,
  * runtime settings, session revocations and seal canaries, a view Studio inserts query events into, and a view it
  * upserts its heartbeat into. The two never call each other; this module is the whole of what they agree on.
  *
- * It holds the contract as data, transcribed from appendix A.3 of the design, and builds every statement Studio
- * issues against a governance source. `scripts/generate-governance-manifest.ts` turns both into
+ * It holds the contract as data, the objects, columns and CHECKs docs/GOVERNANCE.md#objects describes, and builds every
+ * statement Studio issues against a governance source. `scripts/generate-governance-manifest.ts` turns both into
  * `tests/fixtures/governance/contract-v1.json`, which a control plane vendors from a Studio release and tests its
  * schema against, and `docs/GOVERNANCE.md` explains them. A change here regenerates the manifest in the same commit,
  * which `tests/unit/governance-contract-manifest.test.ts` enforces byte for byte.
@@ -26,14 +26,19 @@ export const SUPPORTED_CONTRACT_VERSIONS: readonly number[] = [1];
 /** The schema a governance source publishes the contract in when `GOVERNANCE_POSTGRES_SCHEMA` is unset. */
 export const DEFAULT_GOVERNANCE_SCHEMA = "bridge";
 
-/** The files a control plane pins from a Studio release, each with a `.sha256` (spec 7.10). */
+/**
+ * The files a control plane pins from a Studio release, each with a `.sha256` (docs/GOVERNANCE.md#conformance-files).
+ */
 export const CONFORMANCE_FILES = [
   "docs/GOVERNANCE.md",
   "tests/fixtures/governance/contract-v1.json",
   "tests/fixtures/governance/lsb1-vectors.json",
 ] as const;
 
-/** The channel the governance source notifies after a change commits; its payload is only a hint (spec 7.3). */
+/**
+ * The channel the governance source notifies after a change commits; its payload is only a hint
+ * (docs/GOVERNANCE.md#change-notification).
+ */
 export const NOTIFY_CHANNEL = "libredb_bridge";
 /** The `v` of a notification payload `{"v":1,"kind":"<kind>"}`. */
 export const NOTIFY_PAYLOAD_VERSION = 1;
@@ -44,7 +49,10 @@ export type NotifyKind = (typeof NOTIFY_KINDS)[number];
 /** Each instance pings itself on this prefix plus the first 16 hex digits of the SHA-256 of its instance id. */
 export const PING_CHANNEL_PREFIX = "libredb_bridge_ping_";
 
-/** Why Studio left a row out of its snapshot (spec 7.7). A skip carries ids, levels, paths and codes, never values. */
+/**
+ * Why Studio left a row out of its snapshot (docs/GOVERNANCE.md#row-admission-and-skip-codes). A skip carries ids,
+ * levels, paths and codes, never values.
+ */
 export const SKIP_CODES = [
   "READ_SECRET_UNOPENABLE",
   "WRITE_SECRET_UNOPENABLE",
@@ -56,7 +64,7 @@ export const SKIP_CODES = [
   "SETTING_INVALID",
 ] as const;
 
-/** Why a sealed `lsb1` envelope did not open (spec 8.5). */
+/** Why a sealed `lsb1` envelope did not open (docs/GOVERNANCE.md#sealed-credentials-lsb1). */
 export const ENVELOPE_CODES = ["FORMAT", "UNKNOWN_KID", "AUTH_FAILED", "LOW_ORDER_POINT", "PLAINTEXT_INVALID"] as const;
 
 /** The error codes Studio's API answers under governance, with their HTTP status. */
@@ -68,10 +76,10 @@ export const API_CODES = [
   { code: "AI_DISABLED", httpStatus: 403 },
 ] as const;
 
-/** The states of Studio's notification listener, reported in the heartbeat (spec 7.2, 7.3). */
+/** The states of Studio's notification listener, reported in the heartbeat (docs/GOVERNANCE.md#change-notification). */
 export const LISTENER_STATES = ["listening", "reconnecting", "polling", "deaf"] as const;
 
-/** How fresh Studio's snapshot of the governance source is (spec 7.5). */
+/** How fresh Studio's snapshot of the governance source is (docs/GOVERNANCE.md#freshness-and-readiness). */
 export const FRESHNESS_STATES = ["loading", "ok", "degraded", "unavailable", "misconfigured", "incompatible"] as const;
 type FreshnessState = (typeof FRESHNESS_STATES)[number];
 
@@ -101,8 +109,8 @@ export const READINESS_BY_FRESHNESS: Readonly<Record<FreshnessState, ReadinessAn
 export const READINESS_WITHOUT_GOVERNANCE: ReadinessAnswer = { status: "ready", httpStatus: 200 };
 
 /**
- * The keys a sealed credential's plaintext may carry, all strings (spec 8.3). Each level's envelope is a complete
- * credential set, so none of them ever appears in a connection's definition.
+ * The keys a sealed credential's plaintext may carry, all strings (docs/GOVERNANCE.md#sealed-credentials-lsb1). Each
+ * level's envelope is a complete credential set, so none of them ever appears in a connection's definition.
  */
 export const PLAINTEXT_KEYS = [
   "user",
@@ -127,7 +135,8 @@ type DefinitionDomain =
 
 /**
  * The closed allowlist of keys a connection definition may carry, with the values `SeedConnectionSchema` accepts for
- * each (spec 7.7). A dotted path is a key of a nested object. Any other key, credential or not, is a skip.
+ * each (docs/GOVERNANCE.md#row-admission-and-skip-codes). A dotted path is a key of a nested object. Any other key,
+ * credential or not, is a skip.
  */
 export const DEFINITION_ALLOWLIST: readonly { readonly path: string; readonly domain: DefinitionDomain }[] = [
   { path: "host", domain: { type: "string" } },
@@ -153,9 +162,10 @@ type Privilege = "USAGE" | "SELECT" | "INSERT" | "UPDATE" | "DELETE" | "EXECUTE"
 export type ContractGrants = Readonly<Record<ContractRole, readonly Privilege[]>>;
 
 /**
- * A rule every value of a column keeps. On a table it is the CHECK constraint appendix A.3 declares; on a view over
- * a control plane's own tables it is the rule appendix A.2 gives those tables, which the governance source must keep
- * so that Studio is never handed a row it has to refuse for its shape. NULL always passes, as it does in a CHECK.
+ * A rule every value of a column keeps. On a table it is a CHECK constraint the table declares; on a view over a
+ * control plane's own tables it is a rule the governance source must keep for the rows behind the view
+ * (docs/GOVERNANCE.md#objects), so that Studio is never handed a row it has to refuse for its shape. NULL always
+ * passes, as it does in a CHECK.
  */
 export type ColumnCheck =
   | { readonly kind: "values"; readonly values: readonly string[] }
@@ -227,7 +237,10 @@ const ENVIRONMENTS = ["production", "staging", "development", "local", "other"] 
 const CONNECTION_ID_PATTERN = "^[a-z0-9-]{1,64}$";
 const ENGINE_PATTERN = "^[a-z][a-z0-9]{0,31}$";
 const KID_PATTERN = "^[0-9a-f]{16}$";
-/** An envelope's format and key id; the rest of the envelope is the reader's to check (spec 8.1). */
+/**
+ * An envelope's format and key id; the rest of the envelope is the reader's to check
+ * (docs/GOVERNANCE.md#sealed-credentials-lsb1).
+ */
 const ENVELOPE_PREFIX_PATTERN = "^lsb[1-9][0-9]*\\.[0-9a-f]{16}\\.";
 /** `source` and `transaction_outcome` are open vocabularies, checked by format only, so a newer Studio fits. */
 const OPEN_VOCABULARY_PATTERN = "^[a-z][a-z-]{0,31}$";
@@ -488,7 +501,9 @@ const TRIM_QUERY_EVENTS: ContractFunction = {
   grants: { libredb_studio: [], libredb_platform: ["EXECUTE"] },
 };
 
-/** Every object of contract v1 in the order the design lists them, each table before the view over it. */
+/**
+ * Every object of contract v1 in the order docs/GOVERNANCE.md#objects lists them, each table before the view over it.
+ */
 export const CONTRACT_OBJECTS: readonly ContractObject[] = [
   CONTRACT_VIEW,
   CONNECTIONS_V1,
@@ -518,8 +533,9 @@ export function quoteSchemaName(schema: string): string {
 }
 
 /**
- * The reads of a snapshot, in the order the protocol runs them (spec 7.4). Each names its columns, because a view
- * may gain appended columns within version 1 and Studio reads only the columns of the version it supports.
+ * The reads of a snapshot, in the order the protocol runs them (docs/GOVERNANCE.md#snapshot-protocol). Each names its
+ * columns, because a view may gain appended columns within version 1 and Studio reads only the columns of the version
+ * it supports.
  */
 export const SNAPSHOT_READS = [
   { object: "contract", columns: ["version", "status", "sunset_after", "notify_channel"] },
@@ -545,7 +561,10 @@ export const SNAPSHOT_READS = [
   { object: "seal_canary_v1", columns: ["kid", "envelope"] },
 ] as const;
 
-/** One snapshot: a read-only repeatable-read transaction that reads `contract` first (spec 7.4). */
+/**
+ * One snapshot: a read-only repeatable-read transaction that reads `contract` first
+ * (docs/GOVERNANCE.md#snapshot-protocol).
+ */
 interface SnapshotStatements {
   readonly begin: string;
   readonly contract: string;
@@ -580,8 +599,9 @@ export function buildListenStatement(): string {
 }
 
 /**
- * The channel one instance pings itself on to prove its listener still hears (spec 7.3): the prefix and the first
- * 16 hex digits of the SHA-256 of the instance id, 36 characters, within PostgreSQL's 63-byte identifier limit.
+ * The channel one instance pings itself on to prove its listener still hears (docs/GOVERNANCE.md#change-notification):
+ * the prefix and the first 16 hex digits of the SHA-256 of the instance id, 36 characters, within PostgreSQL's 63-byte
+ * identifier limit.
  */
 export function pingChannel(instanceId: string): string {
   return `${PING_CHANNEL_PREFIX}${createHash("sha256").update(instanceId, "utf8").digest("hex").slice(0, 16)}`;
@@ -619,9 +639,9 @@ export const HEARTBEAT_COLUMNS = [
 ] as const;
 
 /**
- * The heartbeat upsert (spec 7.2). The first beat inserts `started_at` as the process start time; every later beat
- * of the same instance id updates each reported column and stamps `last_seen_at = now()`, and never touches
- * `started_at`, so a control plane reads liveness from `last_seen_at` and uptime from `started_at`.
+ * The heartbeat upsert (docs/GOVERNANCE.md#heartbeat). The first beat inserts `started_at` as the process start time;
+ * every later beat of the same instance id updates each reported column and stamps `last_seen_at = now()`, and never
+ * touches `started_at`, so a control plane reads liveness from `last_seen_at` and uptime from `started_at`.
  */
 export function buildHeartbeatUpsert(schema: string): string {
   const qualified = quoteSchemaName(schema);
@@ -637,9 +657,9 @@ export const QUERY_EVENT_COLUMNS: readonly string[] = QUERY_EVENTS_V1.columns.ma
 export const QUERY_EVENT_INSERT_MAX_ROWS = Math.floor(65535 / QUERY_EVENT_COLUMNS.length);
 
 /**
- * One multi-row insert of `rows` query events (spec 7.9). Studio generates each `event_id` before the first attempt
- * and keeps it across retries, so `ON CONFLICT DO NOTHING` makes a retried batch idempotent for a role that may only
- * insert.
+ * One multi-row insert of `rows` query events (docs/GOVERNANCE.md#query-events). Studio generates each `event_id`
+ * before the first attempt and keeps it across retries, so `ON CONFLICT DO NOTHING` makes a retried batch idempotent
+ * for a role that may only insert.
  */
 export function buildQueryEventInsert(schema: string, rows: number): string {
   const qualified = quoteSchemaName(schema);
@@ -689,7 +709,7 @@ export const CanaryResultsSchema = z.record(
   z.enum(["ok", ...ENVELOPE_CODES] as const),
 );
 
-/** The body of `GET /api/ready` in every state (spec 7.5). */
+/** The body of `GET /api/ready` in every state (docs/GOVERNANCE.md#freshness-and-readiness). */
 export const ReadinessBodySchema = z.strictObject({
   status: z.enum(READINESS_STATUSES),
   contract: z.strictObject({

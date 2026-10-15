@@ -1,6 +1,6 @@
 /**
- * The PostgreSQL side of the query event sink (spec 7.9): one batch of query event rows into the governance source's
- * `query_events_v1`, and what became of each row.
+ * The PostgreSQL side of the query event sink (docs/GOVERNANCE.md#query-events): one batch of query event rows into the
+ * governance source's `query_events_v1`, and what became of each row.
  *
  * `writeQueryEventBatch()` sends the batch as the manifest's multi-row `INSERT ... ON CONFLICT DO NOTHING`
  * (`buildQueryEventInsert()`) through the governance pool (`src/lib/governance/db.ts`), as Studio's own role, which
@@ -28,7 +28,10 @@ import { buildQueryEventInsert, QUERY_EVENT_COLUMNS } from "@/lib/governance/con
 import { withGovernanceClient } from "@/lib/governance/db";
 import type { QueryEventRow } from "./types";
 
-/** The wait after the first failed insert, doubled after each further one, up to the longest (spec 7.9). */
+/**
+ * The wait after the first failed insert, doubled after each further one, up to the longest
+ * (docs/GOVERNANCE.md#query-events).
+ */
 const BACKOFF_FIRST_MS = 1000;
 const BACKOFF_MAX_MS = 30_000;
 

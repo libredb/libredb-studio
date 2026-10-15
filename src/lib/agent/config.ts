@@ -321,8 +321,9 @@ export function isAgentHeldByGovernance(): boolean {
  */
 function readAgentEnableFlag(): "held" | "runtime-off" | "off" | "auto" {
   if (isAgentHeldByGovernance()) return "held";
-  // A valid runtime value from the control plane wins over the variable (spec 7.8), and true still needs a model. Only
-  // governance sets one, and governance holds the agent above, so in this version the value has no effect.
+  // A valid runtime value from the control plane wins over the variable (docs/GOVERNANCE.md#runtime-settings), and true
+  // still needs a model. Only governance sets one, and governance holds the agent above, so in this version the value
+  // has no effect.
   const runtime = runtimeSetting("agent.enabled");
   if (runtime !== undefined) return runtime ? "auto" : "runtime-off";
   const raw = process.env[AGENT_ENABLED_ENV];

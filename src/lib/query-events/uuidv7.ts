@@ -1,6 +1,7 @@
 /**
- * Query event ids (spec 7.2): UUIDv7 as RFC 9562 section 5.7 lays it out, a 48-bit Unix millisecond timestamp, the
- * version 7, a 12-bit counter in `rand_a`, the variant bits 10 and 62 random bits in `rand_b`.
+ * Query event ids (docs/GOVERNANCE.md#row-semantics): UUIDv7 as RFC 9562 section 5.7 lays it out, a 48-bit Unix
+ * millisecond timestamp, the version 7, a 12-bit counter in `rand_a`, the variant bits 10 and 62 random bits in
+ * `rand_b`.
  *
  * Studio generates each `event_id` before the first insert attempt and keeps it across retries, so
  * `ON CONFLICT DO NOTHING` makes a retried batch idempotent, and an id created later sorts later, so the primary

@@ -1,5 +1,6 @@
 /**
- * The query event builder (spec 7.2, 7.9): one executed unit, or one refused request, as a row of `query_events_v1`.
+ * The query event builder (docs/GOVERNANCE.md#query-events): one executed unit, or one refused request, as a row of
+ * `query_events_v1`.
  *
  * `buildQueryEvent()` is the only maker of query event rows. It copies the fields `QueryEventInput` names and nothing
  * else, so a bind parameter value, a result row or a credential has no field to land in, and it keeps of the
@@ -49,7 +50,7 @@ const DEFAULT_MAX_STATEMENT_BYTES = 4096;
 
 /** Studio's namespace for the connections its routes resolve: `seed:<connection id>`. */
 const SEED_PREFIX = "seed:";
-/** The format of a `connections_v1` id, as the contract publishes it (spec 7.2). */
+/** The format of a `connections_v1` id, as the contract publishes it (docs/GOVERNANCE.md#row-semantics). */
 const CONNECTION_ID = /^[a-z0-9-]{1,64}$/;
 
 /** The CHECK on `statement`, in every capture mode: at most this many UTF-8 bytes. */
@@ -102,9 +103,9 @@ export function queryEventPolicy(): QueryEventPolicy {
 
 /**
  * The `connections_v1` id of the connection Studio names `id`, which `query_events_v1.connection_id` holds so every
- * row joins the control plane's connections (spec 7.2), or null when `id` names none: outside the `seed:` namespace
- * every route resolves a governed connection in, or with an id the contract's format does not admit. A route records
- * a refused request only for an id this answers, because a row cannot be made without one.
+ * row joins the control plane's connections (docs/GOVERNANCE.md#row-semantics), or null when `id` names none: outside
+ * the `seed:` namespace every route resolves a governed connection in, or with an id the contract's format does not
+ * admit. A route records a refused request only for an id this answers, because a row cannot be made without one.
  */
 export function contractConnectionId(id: string): string | null {
   if (!id.startsWith(SEED_PREFIX)) return null;

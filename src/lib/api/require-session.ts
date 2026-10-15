@@ -63,10 +63,11 @@ export async function guardRoute(opts: {
     return { response: NextResponse.json(sessionRequiredBody("Authentication required"), { status: 401 }) };
   }
 
-  // Under governance the control plane's ai.enabled switches the whole AI bucket off (spec 7.8). It is read after the
-  // session, so an anonymous caller learns nothing about it, and before the rate limit, so a refusal spends no budget.
-  // Without governance runtimeSetting answers undefined and nothing changes; true adds nothing either, because the LLM
-  // configuration stays in the environment and the route answers as it does without governance.
+  // Under governance the control plane's ai.enabled switches the whole AI bucket off
+  // (docs/GOVERNANCE.md#runtime-settings). It is read after the session, so an anonymous caller learns nothing about
+  // it, and before the rate limit, so a refusal spends no budget. Without governance runtimeSetting answers undefined
+  // and nothing changes; true adds nothing either, because the LLM configuration stays in the environment and the route
+  // answers as it does without governance.
   if (opts.bucket === "ai" && runtimeSetting("ai.enabled") === false) {
     return {
       response: NextResponse.json(

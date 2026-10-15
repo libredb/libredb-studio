@@ -149,7 +149,7 @@ export function objectRouteErrorBody(error: ObjectRouteError): {
  *
  * The session is a read-only view of the three `UserPayload` fields a consumer reads: the role and
  * username an audit line writes, and the identity provider subject a query event names its caller
- * by (spec 7.9), so this interface moves only when a consumer needs another field.
+ * by (docs/GOVERNANCE.md#query-events), so this interface moves only when a consumer needs another field.
  */
 export interface ObjectRequestContext {
   readonly connection: DatabaseConnection;

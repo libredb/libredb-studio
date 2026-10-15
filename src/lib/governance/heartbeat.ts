@@ -1,7 +1,7 @@
 /**
- * The governance heartbeat (spec 7.2, 12.2): every 30 s this instance upserts its row of `studio_instances_v1` with
- * the statement `buildHeartbeatUpsert()` builds, so a control plane's fleet view sees each instance, its health and
- * whether the seal works.
+ * The governance heartbeat (docs/GOVERNANCE.md#heartbeat): every 30 s this instance upserts its row of
+ * `studio_instances_v1` with the statement `buildHeartbeatUpsert()` builds, so a control plane's fleet view sees each
+ * instance, its health and whether the seal works.
  *
  * A beat reports the instance id (`GOVERNANCE_INSTANCE_ID`), the Studio version, the contract versions Studio supports
  * and the one in use (0 while none is negotiated), the key ids of the keyring, the listener's state and its last
@@ -30,7 +30,7 @@ import { governanceKeyring } from "./keyring";
 import { governanceListenerStatus } from "./listener";
 import { governanceState } from "./state";
 
-/** How often an instance beats (spec 7.2). */
+/** How often an instance beats (docs/GOVERNANCE.md#heartbeat). */
 const HEARTBEAT_INTERVAL_MS = 30_000;
 /** The deadline of one beat, from asking the pool for a connection to the answer. */
 const BEAT_DEADLINE_MS = 10_000;

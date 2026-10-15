@@ -1,6 +1,7 @@
 /**
- * Which connections a caller may see and open (spec 4.2, 5.2, 9.3): the one dispatcher `GET /api/connections/managed`
- * and `resolveConnection` ask, so the list a browser shows and the connection a route opens can never disagree.
+ * Which connections a caller may see and open (docs/GOVERNANCE.md#grants-and-the-connection-list): the one dispatcher
+ * `GET /api/connections/managed` and `resolveConnection` ask, so the list a browser shows and the connection a route
+ * opens can never disagree.
  *
  * Without governance it answers exactly what Studio always answered: the seed connections the caller's role may see,
  * through `getManagedConnections` and `getSeedConnectionById`, and the options change nothing.
@@ -19,8 +20,9 @@
  *   the credential it carries. The managed route removes both before anything reaches the browser.
  * - A connection that does not exist and one granted to another subject are the same miss: only the caller's own
  *   grants are read, so nothing here can tell a caller which ids exist.
- * - While the snapshot cannot be served (spec 7.5), every call throws `GovernanceUnavailableError`, which the routes
- *   answer with 503 GOVERNANCE_UNAVAILABLE, never with an empty list a browser would read as "nothing granted".
+ * - While the snapshot cannot be served (docs/GOVERNANCE.md#freshness-and-readiness), every call throws
+ *   `GovernanceUnavailableError`, which the routes answer with 503 GOVERNANCE_UNAVAILABLE, never with an empty list a
+ *   browser would read as "nothing granted".
  *
  * Like `state.ts` and `freshness.ts`, this module imports no `pg`: it reads the snapshot the loader swapped in.
  */
@@ -73,8 +75,8 @@ export class GovernanceUnavailableError extends Error {
 
 /**
  * The statement timeout of a governed connection when the control plane set no valid `query.timeoutMs`: the default of
- * that runtime setting (spec 7.8). A definition may not set `queryTimeout` (row admission), so a control plane sets it
- * for every governed connection at once and never per connection.
+ * that runtime setting (docs/GOVERNANCE.md#runtime-settings). A definition may not set `queryTimeout` (row admission),
+ * so a control plane sets it for every governed connection at once and never per connection.
  */
 const GOVERNED_QUERY_TIMEOUT_MS = 60_000;
 

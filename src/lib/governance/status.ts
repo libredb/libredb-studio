@@ -1,6 +1,6 @@
 /**
- * The governance status an administrator reads (spec 9.3, 12.2): what `GET /api/admin/governance` answers and the
- * admin Overview card shows.
+ * The governance status an administrator reads (docs/GOVERNANCE.md#admin-status): what `GET /api/admin/governance`
+ * answers and the admin Overview card shows.
  *
  * It is built from the state holder and the listener at the moment of the request: the source and schema, the
  * contract versions on both sides, the freshness state, the age and load time of the snapshot, why the latest load
@@ -8,7 +8,7 @@
  * each key id's seal canary, and the listener's state, how long it has held and when the last change notification
  * arrived, where each runtime setting's value comes from with the setting keys the settings store ignored, and the
  * state of the query event sink, as the heartbeat reports it. A key whose consumer this version holds off under
- * governance is marked held with a note, as a control plane shows it read-only (spec 7.8).
+ * governance is marked held with a note, as a control plane shows it read-only (docs/GOVERNANCE.md#runtime-settings).
  *
  * Like the heartbeat, it carries ids, levels, paths and codes only: never a definition value, an envelope, a
  * credential or a statement. The one exception is the full message of the latest load failure, which only an

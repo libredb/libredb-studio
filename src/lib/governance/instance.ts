@@ -1,5 +1,5 @@
 /**
- * This Studio instance's id under governance: `GOVERNANCE_INSTANCE_ID` (spec 7.2, appendix B.1).
+ * This Studio instance's id under governance: `GOVERNANCE_INSTANCE_ID` (docs/GOVERNANCE.md#instance-id).
  *
  * The id keys the instance's heartbeat row and names its listener's ping channel, so it must stay the same across
  * restarts: a recreated container or pod has to update the row it left, not add another. That is why nothing stands

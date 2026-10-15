@@ -1,5 +1,6 @@
 /**
- * Freshness of the governance snapshot (spec 7.5): which state Studio is in, and whether data routes may be served.
+ * Freshness of the governance snapshot (docs/GOVERNANCE.md#freshness-and-readiness): which state Studio is in, and
+ * whether data routes may be served.
  *
  * The state follows from the last successful load, the failure of the latest load when it failed,
  * `GOVERNANCE_REFRESH_MS` and `GOVERNANCE_MAX_STALENESS_MS`:

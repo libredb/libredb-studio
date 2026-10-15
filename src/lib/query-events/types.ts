@@ -1,6 +1,6 @@
 /**
- * The query event model of governance contract v1 (spec 7.2, 7.9): what Studio records of each unit it runs under
- * governance, and the row of `query_events_v1` that `buildQueryEvent()` in `build.ts` makes of it.
+ * The query event model of governance contract v1 (docs/GOVERNANCE.md#query-events): what Studio records of each unit
+ * it runs under governance, and the row of `query_events_v1` that `buildQueryEvent()` in `build.ts` makes of it.
  *
  * A route describes an executed unit with a `QueryEventInput`: who ran it, on which connection, the statement as the
  * user submitted it, how it ended and when it started. The input has no field for a bind parameter value, a result
@@ -57,7 +57,7 @@ export interface QueryEventStart {
 
 /** Who ran the unit. */
 export interface QueryEventPrincipal {
-  /** The session's identity provider subject, the key grants name (spec 3.2 D2). */
+  /** The session's identity provider subject, the key grants name (docs/GOVERNANCE.md#row-semantics). */
   readonly subject: string;
   /** The session's username, a display label only. */
   readonly username: string;

@@ -1,6 +1,6 @@
 /**
- * Row admission under governance (spec 7.7): which rows of the governance source's `connections_v1` become
- * connections Studio serves.
+ * Row admission under governance (docs/GOVERNANCE.md#row-admission-and-skip-codes): which rows of the governance
+ * source's `connections_v1` become connections Studio serves.
  *
  * A control plane publishes each connection as a row of non-secret columns and sealed credentials. Studio checks every
  * row, in order, and leaves out with a skip code each row it cannot serve as written, instead of failing the whole
@@ -15,8 +15,9 @@
  * 4. The definition holds only keys of the contract's allowlist, each with a value in its domain: `DEFINITION_ALLOWLIST`,
  *    which the manifest publishes, so a control plane that builds its connection form from it never writes a row
  *    Studio skips. A credential in the definition is told apart from any other key, because it belongs in an envelope.
- * 5. The read envelope opens, and the record merged from the row and its credentials (spec 8.3) passes
- *    `SeedConnectionSchema.strict()`, Studio's own validation of a configured connection.
+ * 5. The read envelope opens, and the record merged from the row and its credentials
+ *    (docs/GOVERNANCE.md#sealed-credentials-lsb1) passes `SeedConnectionSchema.strict()`, Studio's own validation of a
+ *    configured connection.
  * 6. A write envelope, when the row has one, opens and merges the same way; when it does not, the row is kept with read
  *    access only.
  *
@@ -42,7 +43,7 @@ import { DEFINITION_ALLOWLIST, PLAINTEXT_KEYS, type SkippedItemSchema, type SNAP
 import type { EnvelopeCode } from "./hpke";
 import { type OpenedSecret, SealedSecretError, type SecretBinding } from "./lsb1";
 
-/** The columns the snapshot reads from `connections_v1` (spec 7.4). */
+/** The columns the snapshot reads from `connections_v1` (docs/GOVERNANCE.md#snapshot-protocol). */
 type ConnectionColumn = Extract<
   (typeof SNAPSHOT_READS)[number],
   { readonly object: "connections_v1" }
@@ -78,9 +79,10 @@ export interface AdmittedConnection {
   readonly write?: ManagedConnection;
   /**
    * The envelope each record was opened from, as the governance source returned it. A reload that reads another one
-   * for a level knows that the control plane sealed that credential again (spec 7.4), as it must when the credential
-   * or the definition changes (spec 8.4), and tears down the providers opened with the old one (`grant-diff.ts`).
-   * Sealed, so it reveals nothing, and like the records it is never logged or reported.
+   * for a level knows that the control plane sealed that credential again (docs/GOVERNANCE.md#snapshot-protocol), as it
+   * must when the credential or the definition changes (docs/GOVERNANCE.md#sealed-credentials-lsb1), and tears down the
+   * providers opened with the old one (`grant-diff.ts`). Sealed, so it reveals nothing, and like the records it is
+   * never logged or reported.
    */
   readonly envelopes: { readonly read: string; readonly write?: string };
 }
@@ -103,7 +105,7 @@ export interface AdmissionResult {
   readonly skipped: readonly AdmissionSkip[];
 }
 
-/** The format of `connection_id`, the rule the contract publishes for the column (spec 7.2). */
+/** The format of `connection_id`, the rule the contract publishes for the column (docs/GOVERNANCE.md#row-semantics). */
 const CONNECTION_ID = /^[a-z0-9-]{1,64}$/;
 
 const KNOWN_ENGINES: ReadonlySet<string> = new Set(SHIPPED_DATABASE_TYPES);
@@ -132,9 +134,9 @@ const NESTED: ReadonlySet<string> = new Set(
 );
 
 /**
- * The definition paths that hold a credential: the plaintext keys of spec 8.3, the agent's credential pair, an SSH
- * tunnel and a TLS client key. A credential belongs in an envelope, so one in a definition is DEFINITION_HAS_SECRET,
- * which tells the operator more than an unknown key would.
+ * The definition paths that hold a credential: the plaintext keys of docs/GOVERNANCE.md#sealed-credentials-lsb1, the
+ * agent's credential pair, an SSH tunnel and a TLS client key. A credential belongs in an envelope, so one in a
+ * definition is DEFINITION_HAS_SECRET, which tells the operator more than an unknown key would.
  */
 const SECRET_PATHS: ReadonlySet<string> = new Set(
   [...PLAINTEXT_KEYS, "agentUser", "agentPassword", "sshTunnel", "ssl.clientKey"].map((path) =>
@@ -218,8 +220,8 @@ const present = (key: string, value: unknown): Readonly<Record<string, unknown>>
   value === null || value === undefined ? {} : { [key]: value };
 
 /**
- * The record spec 8.3 merges from a row and one credential set: the row's columns, the definition and the credential,
- * whose TLS client key and certificate join the definition's `ssl` object.
+ * The record merged from a row and one credential set (docs/GOVERNANCE.md#sealed-credentials-lsb1): the row's columns,
+ * the definition and the credential, whose TLS client key and certificate join the definition's `ssl` object.
  */
 function mergedRecord({ row, id, engine, definition }: RowContext, secret: OpenedSecret): Record<string, unknown> {
   const { sslClientKey, sslClientCert, ...credential } = secret;
@@ -338,8 +340,8 @@ function admitRow(row: ConnectionRow, repeated: ReadonlySet<unknown>, options: A
 }
 
 /**
- * Admits the rows of `connections_v1` by spec 7.7, in order, and returns the connections Studio serves together with
- * a skip for every row, or write level of a row, it left out.
+ * Admits the rows of `connections_v1` by the rules of docs/GOVERNANCE.md#row-admission-and-skip-codes, in order, and
+ * returns the connections Studio serves together with a skip for every row, or write level of a row, it left out.
  *
  * It throws only what `options.openSecret` throws other than a SealedSecretError: a fault of the process, not of a row.
  */

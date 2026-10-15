@@ -1,5 +1,5 @@
 /**
- * Opening the sealed credentials of governed connections (spec 7.4, 8).
+ * Opening the sealed credentials of governed connections (docs/GOVERNANCE.md#sealed-credentials-lsb1).
  *
  * A control plane stores each connection's read and write credentials as `lsb1` envelopes sealed to Studio's public
  * key. `openGovernedSecret` opens one with the keyring of this process (`keyring.ts`) through `openSealedSecret`
@@ -52,7 +52,8 @@ function cacheKey(envelope: string, binding: SecretBinding): string {
  *
  * It throws the SealedSecretError of `openSealedSecret` when the envelope does not open, the error of
  * `governanceKeyring()` when there is no keyring, and the CanonicalJsonError of `bindingAad` for a definition outside
- * spec 8.2, which admission refuses before any envelope is opened (spec 7.7).
+ * the values docs/GOVERNANCE.md#sealed-credentials-lsb1 admits, which admission refuses before any envelope is opened
+ * (docs/GOVERNANCE.md#row-admission-and-skip-codes).
  */
 export function openGovernedSecret(envelope: string, binding: SecretBinding): OpenedSecret {
   const keyring = governanceKeyring();

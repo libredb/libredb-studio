@@ -1581,14 +1581,14 @@ export class OracleProvider extends SQLBaseProvider {
   // Transaction support: dedicated connection held outside pool
   private txConn: oracledb.Connection | null = null;
   private txActive = false;
-  // Armed only on an owned provider (spec 9.4), see `beginTransaction()`.
+  // Armed only on an owned provider (docs/providers/oracle.md section 3.4), see `beginTransaction()`.
   private txTimeout: ReturnType<typeof setTimeout> | null = null;
   private static readonly TX_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes from BEGIN
 
   /**
-   * True when this provider was created for one user (`ProviderExecutionContext.owner`, spec 9.4),
-   * which only governance does. Only then does an interactive transaction time out, so an install
-   * without governance keeps the transaction lifetime it always had.
+   * True when this provider was created for one user (`ProviderExecutionContext.owner`,
+   * docs/GOVERNANCE.md#per-user-providers), which only governance does. Only then does an interactive transaction time
+   * out, so an install without governance keeps the transaction lifetime it always had.
    */
   private readonly owned: boolean;
 
@@ -2104,7 +2104,8 @@ export class OracleProvider extends SQLBaseProvider {
     // Oracle auto-starts a transaction; we just hold the connection
     this.txActive = true;
 
-    // Auto-rollback after timeout to prevent leaked locks, on an owned provider only (spec 9.4).
+    // Auto-rollback after timeout to prevent leaked locks, on an owned provider only
+    // (docs/providers/oracle.md section 3.4).
     // Single-line callback on purpose: bun lcov attributes a multi-line arrow's opening line as 0-hit.
     if (this.owned) this.txTimeout = setTimeout(() => void this.expireTransaction(), OracleProvider.TX_TIMEOUT_MS);
   }

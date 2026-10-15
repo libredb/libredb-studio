@@ -2473,8 +2473,8 @@ export interface ProviderExecutionContext {
    */
   allowExternalFileAccess?: boolean;
   /**
-   * The user this provider is opened for (spec 9.4): in Studio, the identity provider subject of
-   * the session, which `editorExecutionContext` sets under governance only.
+   * The user this provider is opened for (docs/GOVERNANCE.md#per-user-providers): in Studio, the identity provider
+   * subject of the session, which `editorExecutionContext` sets under governance only.
    *
    * Server-derived like the posture above. A provider with an owner is that user's own: the
    * cache keys frame the owner, so two users of one connection never share a pool, a database
@@ -2497,9 +2497,10 @@ export interface ProviderExecutionContext {
 /**
  * What `editorExecutionContext` derives from the verified session and the resolved connection: the DuckDB editor
  * file-access posture (non-admin DuckDB file access), and under governance the owner of a per-user provider
- * (spec 9.4). It is what `getOrCreateProvider` takes, and what an execution-profile acquisition is told about the
- * requester it serves, so it borrows only a handle opened under that requester's own posture and keeps a provider
- * per owner. An absent posture means deny, and an absent owner means the provider every caller shares.
+ * (docs/GOVERNANCE.md#per-user-providers). It is what `getOrCreateProvider` takes, and what an execution-profile
+ * acquisition is told about the requester it serves, so it borrows only a handle opened under that requester's own
+ * posture and keeps a provider per owner. An absent posture means deny, and an absent owner means the provider every
+ * caller shares.
  */
 export type EditorExecutionContext = Pick<
   ProviderExecutionContext,

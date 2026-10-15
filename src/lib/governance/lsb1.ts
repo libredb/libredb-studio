@@ -1,11 +1,12 @@
 /**
- * `lsb1` sealed secrets (spec 8): how Studio opens a credential that a control plane sealed to its public key.
+ * `lsb1` sealed secrets (docs/GOVERNANCE.md#sealed-credentials-lsb1): how Studio opens a credential that a control
+ * plane sealed to its public key.
  *
  * An envelope is `lsb1.<kid>.<base64url(enc)>.<base64url(ciphertext || tag)>`. Studio opens it with HPKE (./hpke.ts)
  * under the private key of the kid it names, the `info` string `libredb/bridge/secret/v1`, and additional
- * authenticated data that binds it to one connection id, level, engine, key id and canonical definition (spec 8.2).
- * Moved to another row, or opened under a changed definition, it fails with AUTH_FAILED, so a database writer cannot
- * point a stored credential at another host or downgrade its TLS.
+ * authenticated data that binds it to one connection id, level, engine, key id and canonical definition
+ * (docs/GOVERNANCE.md#sealed-credentials-lsb1). Moved to another row, or opened under a changed definition, it fails
+ * with AUTH_FAILED, so a database writer cannot point a stored credential at another host or downgrade its TLS.
  *
  * Studio opens and never seals: nothing here encrypts, and the only sealer is the test one in
  * tests/helpers/governance/lsb1-seal.ts. Every failure to open is a SealedSecretError that carries its code alone.
@@ -21,12 +22,15 @@ export { SealedSecretError };
 const FORMAT_ID = "lsb1";
 /** The HPKE `info` of every `lsb1` envelope. */
 const SECRET_INFO = Buffer.from("libredb/bridge/secret/v1", "utf8");
-/** Spec 8.1: a 16-digit kid, the 32 bytes of enc in 43 characters, and at least the 16 bytes of the tag. */
+/**
+ * The envelope form of docs/GOVERNANCE.md#sealed-credentials-lsb1: a 16-digit kid, the 32 bytes of enc in 43
+ * characters, and at least the 16 bytes of the tag.
+ */
 const ENVELOPE_PATTERN = /^lsb1\.([0-9a-f]{16})\.([A-Za-z0-9_-]{43})\.([A-Za-z0-9_-]{22,})$/;
 const PUBLIC_KEY_BYTES = 32;
 const KID_BYTES = 8;
 
-/** The row an envelope is sealed for (spec 8.2). */
+/** The row an envelope is sealed for (docs/GOVERNANCE.md#sealed-credentials-lsb1). */
 export interface SecretBinding {
   readonly connectionId: string;
   readonly level: "read" | "write";
@@ -40,7 +44,10 @@ export type Keyring = ReadonlyMap<string, KeyObject>;
 
 type PlaintextKey = (typeof PLAINTEXT_KEYS)[number];
 
-/** An opened credential set: some of the plaintext keys of spec 8.3, each with a string value. */
+/**
+ * An opened credential set: some of the plaintext keys of docs/GOVERNANCE.md#sealed-credentials-lsb1, each with a
+ * string value.
+ */
 export type OpenedSecret = Readonly<Partial<Record<PlaintextKey, string>>>;
 
 const PLAINTEXT_KEY_SET: ReadonlySet<string> = new Set(PLAINTEXT_KEYS);
@@ -56,9 +63,10 @@ export function kidOf(publicKey: Uint8Array): string {
 }
 
 /**
- * The additional authenticated data of an envelope sealed with `kid` for `binding` (spec 8.2): the UTF-8 of the JCS
- * object `{c, d, e, k, l, s}`, whose `d` is the base64url SHA-256 of the UTF-8 of the canonical definition.
- * A definition outside the values spec 8.2 admits throws the CanonicalJsonError of `assertDefinitionValues`.
+ * The additional authenticated data of an envelope sealed with `kid` for `binding`
+ * (docs/GOVERNANCE.md#sealed-credentials-lsb1): the UTF-8 of the JCS object `{c, d, e, k, l, s}`, whose `d` is the
+ * base64url SHA-256 of the UTF-8 of the canonical definition. A definition outside the values that section admits
+ * throws the CanonicalJsonError of `assertDefinitionValues`.
  */
 export function bindingAad(binding: SecretBinding, kid: string): Buffer {
   assertDefinitionValues(binding.definition);
@@ -74,7 +82,10 @@ function canonicalBase64url(text: string): Buffer {
   return bytes;
 }
 
-/** The credential set of spec 8.3 in an opened plaintext, refused as PLAINTEXT_INVALID unless it is exactly that. */
+/**
+ * The credential set of docs/GOVERNANCE.md#sealed-credentials-lsb1 in an opened plaintext, refused as PLAINTEXT_INVALID
+ * unless it is exactly that.
+ */
 function parsePlaintext(plaintext: Buffer): OpenedSecret {
   if (plaintext.length > PLAINTEXT_MAX_BYTES) throw new SealedSecretError("PLAINTEXT_INVALID");
   let parsed: unknown;
@@ -98,9 +109,11 @@ function parsePlaintext(plaintext: Buffer): OpenedSecret {
  * It fails with a SealedSecretError: FORMAT when the envelope does not have the `lsb1` form, UNKNOWN_KID when the
  * keyring has no key with its kid, LOW_ORDER_POINT when its enc gives no Diffie-Hellman result, AUTH_FAILED when it
  * was sealed to another key or for another binding or was altered, and PLAINTEXT_INVALID when it does not carry a JSON
- * object of at most 65536 bytes whose keys are plaintext keys of spec 8.3 and whose values are strings.
- * The binding's definition is admitted before its envelopes are opened (spec 7.7), so one outside spec 8.2 is a fault
- * of the caller and throws the CanonicalJsonError of `bindingAad` instead.
+ * object of at most 65536 bytes whose keys are plaintext keys of docs/GOVERNANCE.md#sealed-credentials-lsb1 and whose
+ * values are strings. The binding's definition is admitted before its envelopes are opened
+ * (docs/GOVERNANCE.md#row-admission-and-skip-codes), so one outside the values
+ * docs/GOVERNANCE.md#sealed-credentials-lsb1 admits is a fault of the caller and throws the CanonicalJsonError of
+ * `bindingAad` instead.
  */
 export function openSealedSecret(keyring: Keyring, envelope: string, binding: SecretBinding): OpenedSecret {
   const match = ENVELOPE_PATTERN.exec(envelope);

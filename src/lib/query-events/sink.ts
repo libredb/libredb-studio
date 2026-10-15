@@ -1,6 +1,6 @@
 /**
- * The query event sink (spec 7.9, 9.5): where the query events of this process wait until the governance source holds
- * them.
+ * The query event sink (docs/GOVERNANCE.md#query-events): where the query events of this process wait until the
+ * governance source holds them.
  *
  * A route calls `recordQueryEvent()` once a unit has ended. Under governance it builds the row with
  * `buildQueryEvent()` under the capture policy in force and queues it; outside governance it does nothing at all, so
@@ -33,9 +33,9 @@ import { buildQueryEvent, queryEventPolicy } from "./build";
 import { type QueryEventBatchWrite, queryEventBackoffMs, writeQueryEventBatch } from "./postgres-sink";
 import type { QueryEventInput, QueryEventRow } from "./types";
 
-/** The most events the queue holds (spec 7.9). */
+/** The most events the queue holds (docs/GOVERNANCE.md#query-events). */
 export const QUERY_EVENT_QUEUE_CAPACITY = 10_000;
-/** The most events one insert carries, and the queue length that flushes at once (spec 7.9). */
+/** The most events one insert carries, and the queue length that flushes at once (docs/GOVERNANCE.md#query-events). */
 export const QUERY_EVENT_BATCH_ROWS = 500;
 /** The longest an event waits for its insert while the sink does not back off. */
 const FLUSH_INTERVAL_MS = 1000;

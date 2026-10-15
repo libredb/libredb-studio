@@ -1,6 +1,6 @@
 /**
- * The governance listener (spec 7.3): one dedicated connection to the governance source that hears its change
- * notifications, so a change reaches the snapshot within moments instead of at the next refresh.
+ * The governance listener (docs/GOVERNANCE.md#change-notification): one dedicated connection to the governance source
+ * that hears its change notifications, so a change reaches the snapshot within moments instead of at the next refresh.
  *
  * The connection is a `pg` Client of its own, outside the governance pool, with TCP keepalive, named
  * `libredb-studio-governance-listener` in `pg_stat_activity`. After every connect it issues `LISTEN libredb_bridge`

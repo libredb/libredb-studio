@@ -1,5 +1,5 @@
 /**
- * What a query event keeps of the statement it records (spec 7.9, `queryLog.statementCapture`).
+ * What a query event keeps of the statement it records (docs/GOVERNANCE.md#query-events, `queryLog.statementCapture`).
  *
  * Under `redacted` an event stores `redactStatement()`: the statement with every value it carries replaced by `?`,
  * which still says which tables and columns it touched, the reason governance installs default to this mode (P3),

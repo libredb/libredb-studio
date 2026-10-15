@@ -1,5 +1,5 @@
 /**
- * The governance switch and the settings Studio reads with it (spec 9.2, appendix B.1).
+ * The governance switch and the settings Studio reads with it (docs/GOVERNANCE.md#studio-configuration).
  *
  * `GOVERNANCE_SOURCE=postgres` switches governance mode on: the governance source a control plane publishes becomes
  * Studio's only catalog of connections and grants (docs/GOVERNANCE.md). Unset or empty leaves it off, and Studio

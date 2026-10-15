@@ -1,5 +1,5 @@
 /**
- * Boot-time governance preflight (spec 9.2).
+ * Boot-time governance preflight (docs/GOVERNANCE.md#boot-checks).
  *
  * Governance mode makes the identity provider the only way to sign in and the governance source the only catalog of
  * connections. An environment that also sets a password, a launch secret, a seed file, a sample, custom connections,

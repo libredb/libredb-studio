@@ -1,5 +1,6 @@
 /**
- * One unit a route runs under the query event record (spec 7.9): the admission gate before it, and one event after.
+ * One unit a route runs under the query event record (docs/GOVERNANCE.md#query-events): the admission gate before it,
+ * and one event after.
  *
  * `runRecorded()` asks `admitQueryExecution()` before the unit runs, so with `queryLog.onSinkFailure` at `refuse` a
  * sink that cannot record turns the request away before anything reaches the database, and records that refusal as

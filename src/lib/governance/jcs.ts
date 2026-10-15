@@ -1,5 +1,5 @@
 /**
- * RFC 8785 canonical JSON (JCS) for what an `lsb1` envelope binds (spec 8.2).
+ * RFC 8785 canonical JSON (JCS) for what an `lsb1` envelope binds (docs/GOVERNANCE.md#sealed-credentials-lsb1).
  *
  * A control plane and Studio each hash the canonical form of a connection definition into the additional
  * authenticated data of every envelope, so both must turn the same value into the same bytes whatever order its keys
@@ -79,8 +79,9 @@ function checkDefinitionValue(value: unknown, path: string): void {
 }
 
 /**
- * Refuses a definition outside the values spec 8.2 admits: it must be a JSON object whose values are strings,
- * booleans, null, integers whose magnitude is below 2^53 (`Number.isSafeInteger`), and objects and arrays of these.
+ * Refuses a definition outside the values docs/GOVERNANCE.md#sealed-credentials-lsb1 admits: it must be a JSON object
+ * whose values are strings, booleans, null, integers whose magnitude is below 2^53 (`Number.isSafeInteger`), and
+ * objects and arrays of these.
  */
 export function assertDefinitionValues(definition: unknown): void {
   if (!isPlainObject(definition)) throw new CanonicalJsonError("$", "A definition must be a JSON object");

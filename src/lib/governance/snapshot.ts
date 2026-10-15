@@ -1,6 +1,6 @@
 /**
- * The governance snapshot loader (spec 7.4): one consistent read of the governance source, swapped into the state
- * holder at once.
+ * The governance snapshot loader (docs/GOVERNANCE.md#snapshot-protocol): one consistent read of the governance source,
+ * swapped into the state holder at once.
  *
  * A load runs the statements `buildSnapshotStatements()` builds, in one `REPEATABLE READ, READ ONLY` transaction on
  * one client of the governance pool, under a deadline of 20 s for the whole load. It reads `contract` first and stops
@@ -14,10 +14,10 @@
  * `revoked_before` of each subject, and the settings rows go through the settings store (`settings.ts`), which keeps
  * the valid values and reports the keys it ignored as SETTING_INVALID skips.
  *
- * Every load also opens the seal canary of each key id (spec 8.4): the envelope of `{"user":"libredb-canary"}` that the
- * control plane sealed for connection `canary`, level `read`, engine `canary` and definition `{}`. The snapshot keeps
- * `ok` or the envelope's code for each kid, which the heartbeat and the admin status report, so a control plane that
- * seals to a wrong public key shows up before its first real connection.
+ * Every load also opens the seal canary of each key id (docs/GOVERNANCE.md#sealed-credentials-lsb1): the envelope of
+ * `{"user":"libredb-canary"}` that the control plane sealed for connection `canary`, level `read`, engine `canary` and
+ * definition `{}`. The snapshot keeps `ok` or the envelope's code for each kid, which the heartbeat and the admin
+ * status report, so a control plane that seals to a wrong public key shows up before its first real connection.
  *
  * A grant row that breaks a rule the contract publishes for its view grants nothing and is counted in a log line, as a
  * governance source that breaks a CHECK hands Studio a row it skips. Two rows for one subject and connection grant
@@ -27,10 +27,10 @@
  * load.
  *
  * Once a new snapshot is in place, the loader tears down the providers of every subject and connection whose access it
- * took away or changed (`grant-diff.ts`, spec 7.4, 9.4): it asks every copy of the provider factory to remove that
- * subject's providers of the connection, which rolls back an open transaction and closes the provider's sessions. The
- * load does not wait for it, so a user's database that hangs never holds the next load, and a removal that fails is
- * logged.
+ * took away or changed (`grant-diff.ts`, docs/GOVERNANCE.md#snapshot-protocol): it asks every copy of the provider
+ * factory to remove that subject's providers of the connection, which rolls back an open transaction and closes the
+ * provider's sessions. The load does not wait for it, so a user's database that hangs never holds the next load, and a
+ * removal that fails is logged.
  *
  * A load never throws: it records the new snapshot, or why it failed (`freshness.ts`), and the process keeps running
  * through any outage. Nothing it logs carries a value, a credential or an envelope.
@@ -60,7 +60,10 @@ import {
   type SettingRow,
 } from "./state";
 
-/** The deadline of one whole load, from asking the pool for a connection to COMMIT (spec 7.4). */
+/**
+ * The deadline of one whole load, from asking the pool for a connection to COMMIT
+ * (docs/GOVERNANCE.md#snapshot-protocol).
+ */
 const LOAD_DEADLINE_MS = 20_000;
 
 /** The longest subject the contract admits: the CHECK on `subject` in `grants_v1` and `session_revocations_v1`. */
@@ -68,11 +71,11 @@ const SUBJECT_MAX_LENGTH = 512;
 
 const ROUTE = "governance/snapshot";
 
-/** The binding every canary is sealed for (spec 8.4). */
+/** The binding every canary is sealed for (docs/GOVERNANCE.md#sealed-credentials-lsb1). */
 const CANARY_BINDING: SecretBinding = { connectionId: "canary", level: "read", engine: "canary", definition: {} };
 /** The user a canary carries, and nothing else. */
 const CANARY_USER = "libredb-canary";
-/** The CHECK on `kid` in `seal_canary_v1`, the form of a key id (spec 8.1). */
+/** The CHECK on `kid` in `seal_canary_v1`, the form of a key id (docs/GOVERNANCE.md#sealed-credentials-lsb1). */
 const KID = /^[0-9a-f]{16}$/;
 
 type Row = Readonly<Record<string, unknown>>;
@@ -351,10 +354,10 @@ function logLoaded(snapshot: GovernanceSnapshot, previous: GovernanceState): voi
 
 /**
  * Asks every copy of the provider factory to remove the providers of each subject and connection whose access `next`
- * took away or changed since `previous` (spec 7.4, 9.4). A route resolves a governed connection under the id
- * `seed:<id>`, which its providers are cached under, and the subject owns them. Settles once every removal has ended,
- * and never rejects: a removal that fails is logged with the connection it was for, and with the outcome of its open
- * transactions unknown.
+ * took away or changed since `previous` (docs/GOVERNANCE.md#snapshot-protocol). A route resolves a governed connection
+ * under the id `seed:<id>`, which its providers are cached under, and the subject owns them. Settles once every removal
+ * has ended, and never rejects: a removal that fails is logged with the connection it was for, and with the outcome of
+ * its open transactions unknown.
  */
 async function tearDownChangedGrants(previous: GovernanceSnapshot, next: GovernanceSnapshot): Promise<void> {
   const changed = changedGrants(previous, next, Date.now());

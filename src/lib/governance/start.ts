@@ -1,5 +1,6 @@
 /**
- * The governance refresher (spec 7.5): keeps the snapshot of the governance source current, independent of traffic.
+ * The governance refresher (docs/GOVERNANCE.md#operating-notes): keeps the snapshot of the governance source current,
+ * independent of traffic.
  *
  * `startGovernance()` runs from `register()` in `src/instrumentation.ts`, under governance only and without being
  * awaited, so the server starts serving at once and data routes answer 503 until the first load succeeds. It loads
@@ -8,10 +9,11 @@
  * becomes ready on its own, with no request to wake it, and the process never exits on a database outage: a load
  * records its failure and never throws.
  *
- * It also starts the change notification listener (`listener.ts`, spec 7.3), which asks for a load after every
- * LISTEN and for every window of notifications, and the heartbeat (`heartbeat.ts`, spec 7.2), and registers
- * `stopGovernance()` as the shutdown hook `governance` (src/lib/shutdown.ts), so a SIGTERM stops the beats and closes
- * the listener's connection and the pool before the process exits.
+ * It also starts the change notification listener (`listener.ts`, docs/GOVERNANCE.md#change-notification), which asks
+ * for a load after every LISTEN and for every window of notifications, and the heartbeat (`heartbeat.ts`,
+ * docs/GOVERNANCE.md#heartbeat), and registers `stopGovernance()` as the shutdown hook `governance`
+ * (src/lib/shutdown.ts), so a SIGTERM stops the beats and closes the listener's connection and the pool before the
+ * process exits.
  *
  * Loads are single-flight: `requestGovernanceLoad()` joins the load under way, if there is one, so the refresher, a
  * readiness probe and a change notification never run two loads at once. Each load that ends sets the next timer from

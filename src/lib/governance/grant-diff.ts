@@ -1,6 +1,6 @@
 /**
- * Which access a reload of the governance snapshot took away or changed (spec 4.3, 7.4, 14): the subject and connection
- * pairs whose providers Studio tears down once the new snapshot is in place.
+ * Which access a reload of the governance snapshot took away or changed (docs/GOVERNANCE.md#per-user-providers): the
+ * subject and connection pairs whose providers Studio tears down once the new snapshot is in place.
  *
  * A pair is listed when its subject held an effective grant on the connection in the previous snapshot, judged at the
  * time that snapshot was loaded, and the next snapshot, judged at the caller's clock:
@@ -10,14 +10,15 @@
  * - grants another level, in either direction, because the editor then opens the connection with another credential;
  * - opens the connection with a credential that was sealed again: the read envelope, which every grant opens, or the
  *   write envelope of a write grant. The control plane seals a credential again whenever it or the connection's
- *   definition changes (spec 8.4).
+ *   definition changes (docs/GOVERNANCE.md#sealed-credentials-lsb1).
  *
  * A grant that only appeared, or a connection whose change opens nothing differently, such as a new name, lists
  * nothing, so a reload never closes a session it has no reason to close. `changedGrants` reads the two snapshots only.
  *
  * A removal that succeeds rolls back the open transactions of its pair, so for each pair whose removal succeeded
  * `endRevokedTransactions` looks up their ownership records and records each one's terminal `rolled-back` query event
- * (spec 7.9). A pair whose removal failed is not passed to it: its transaction may still be open.
+ * (docs/GOVERNANCE.md#query-events). A pair whose removal failed is not passed to it: its transaction may still be
+ * open.
  */
 import { endOwnerTransactions } from "@/lib/api/transaction-ownership";
 import { type EffectiveGrant, effectiveGrant, type GovernanceSnapshot } from "./state";

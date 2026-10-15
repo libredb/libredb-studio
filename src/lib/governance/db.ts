@@ -1,5 +1,6 @@
 /**
- * The governance pool (spec 6.2, 7.4): Studio's connections to the governance source, for the snapshot loads.
+ * The governance pool (docs/GOVERNANCE.md#operating-notes): Studio's connections to the governance source, for the
+ * snapshot loads.
  *
  * One `pg` Pool per process, built on first use from `GOVERNANCE_POSTGRES_URL` with the TLS setting the storage pool
  * gets for the same URL (`src/lib/pg-ssl.ts`), and bounded so that a governance source that hangs never holds a load
@@ -18,7 +19,7 @@ import { logger } from "@/lib/logger";
 import { pgSslConfig } from "@/lib/pg-ssl";
 import { governancePostgresUrl } from "./config";
 
-/** The pool options of spec 7.4, beside the URL and its TLS setting. */
+/** The pool options docs/GOVERNANCE.md#snapshot-protocol states, beside the URL and its TLS setting. */
 const POOL_OPTIONS = {
   max: 4,
   connectionTimeoutMillis: 5000,
