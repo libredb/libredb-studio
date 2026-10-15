@@ -124,7 +124,7 @@ interface LibClassicGroup {
   /**
    * A member whose consumer-protocol subscription or assignment the library cannot decode is absent
    * from the answer, and so is every member listed after it (2.13.0; platformatic/kafka#429), with
-   * `error` set on the group — the answer reads as a complete member list when it is not.
+   * `error` set on the group, so the answer reads as a complete member list when it is not.
    */
   members: Map<
     string,

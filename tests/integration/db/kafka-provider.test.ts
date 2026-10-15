@@ -1163,7 +1163,7 @@ describe("the object surface", () => {
 
   // #1520: @platformatic/kafka 2.13.0 no longer throws when a classic group member's consumer-protocol
   // subscription or assignment cannot be decoded. It answers the group with `error` set, the members
-  // before the bad one kept, and the bad one and every later one dropped — which the source would read
+  // before the bad one kept, and the bad one and every later one dropped, which the source would read
   // as a complete member list. The two captures are 2.13.0 answers, not 2.11.0 ones; their provenance
   // is in tests/fixtures/kafka/README.md.
   const UNDECODABLE_MEMBER = [
