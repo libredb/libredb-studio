@@ -34,7 +34,7 @@ None of it is a GitHub issue.
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U144 · 131
 - [Dependencies](#dependencies) — P1-P9 · 7
 - [Documentation](#documentation) — DOC3-DOC33 · 29
-- [Release pipeline](#release-pipeline) — REL1-REL8 · 8
+- [Release pipeline](#release-pipeline) — REL1-REL9 · 9
 - [Chart configuration surface](#chart-configuration-surface) — N1 · 1
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H14 · 4
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 6
@@ -6282,6 +6282,18 @@ Found 2026-10-04 while planning the platform integration in a checkout that hold
 Not fixed there: neither config is part of that work.
 
 **Done when:** `tsc --noEmit`, `next build` and `eslint .` leave the git-ignored draft directories alone, for example through an `exclude` in `tsconfig.json` and `files` on the rules object that names the React rules, and a working tree holding a `.ts` and a `.cjs` draft under `docs/superpowers/` passes all three as a clean checkout does.
+
+### REL9. The passkey E2E that ends another session can land on `/login` without its return path
+
+The test "a removed passkey is refused and ends the account's other sessions" in `e2e/passkey.spec.ts` signs a second browser context in with the password, removes the passkey in the first, and then expects the second, sent to `/`, to arrive at `/login?next=%2F`.
+That address comes only from the client: the proxy checks the cookie's signature alone and lets `/` through, the editor's `GET /api/auth/me` is refused, and `useAuth` in `src/hooks/use-auth.ts` sends the tab to `signInPath("/")`.
+But `getSession` in `src/lib/auth.ts` clears the cookie on the response that refuses a session.
+So if any request of the second context reaches the server after the removal and before the test's navigation, that navigation carries no cookie, and `signInRequired` in `src/proxy.ts` sends the bare root to `/login`, with no `next` by design.
+The test does not wait for the second context's editor to settle after its sign-in, so that editor's first requests (the managed connection list, the storage pull, the signed-in user), or a later poll, can land in that window.
+Seen once, on 2026-10-16, in a local run of the E2E Tests job's suite in CI mode on the governance branch (#1785): the first attempt read `http://localhost:3011/login`, and the first retry passed.
+The cause above is a reading of the code, not a measurement: the run kept no trace of the second context's requests.
+
+**Done when:** the second context makes no request between the removal and its own navigation, for example because it waits for its editor to settle and then stays on `about:blank` until the check, or the check accepts either redirect and asserts what both prove, that the session is refused; and the test passes 20 of 20 runs with `--repeat-each=20`.
 
 ## Chart configuration surface
 
