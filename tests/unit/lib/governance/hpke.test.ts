@@ -1,5 +1,6 @@
 /**
- * HPKE as `lsb1` envelopes use it (spec 8.1), checked against the CFRG test vector of its suite.
+ * HPKE as `lsb1` envelopes use it (docs/GOVERNANCE.md#sealed-credentials-lsb1), checked against the CFRG test vector of
+ * its suite.
  *
  * tests/fixtures/governance/hpke-cfrg-x25519-sha256-aes256gcm.json is the one entry of the CFRG file for base mode,
  * DHKEM(X25519, HKDF-SHA256), HKDF-SHA256 and AES-256-GCM, checked in with its source and the upstream file's SHA-256

@@ -1,5 +1,5 @@
 /**
- * The governance boot preflight (spec 9.2).
+ * The governance boot preflight (docs/GOVERNANCE.md#boot-checks).
  *
  * With `GOVERNANCE_SOURCE` set, an environment that also configures another way to sign in or another source of
  * connections contradicts governance mode, and so does a governance setting that is missing or invalid. The
@@ -25,7 +25,10 @@ const URL_SECRET = "example-only-url-password";
 const KEYRING_KEYS = [testKey(), testKey()];
 const KEYRING_FILE = keyringFileOf(...KEYRING_KEYS);
 
-/** A governance install as appendix B.1 describes it: everything the preflight requires, nothing it refuses. */
+/**
+ * A governance install as docs/GOVERNANCE.md#studio-configuration describes it: everything the preflight requires,
+ * nothing it refuses.
+ */
 const GOVERNED: Readonly<Record<string, string>> = {
   GOVERNANCE_SOURCE: "postgres",
   GOVERNANCE_POSTGRES_URL: `postgresql://libredb_studio:${URL_SECRET}@db.internal:5432/libredb?sslmode=verify-full`,
@@ -124,7 +127,7 @@ function runPreflight(): Run {
   }
 }
 
-/** One refused value per condition of spec 9.2, and per kind of invalid GOVERNANCE_* value. */
+/** One refused value per condition of docs/GOVERNANCE.md#boot-checks, and per kind of invalid GOVERNANCE_* value. */
 const REFUSED: readonly { readonly variable: string; readonly value: string | undefined }[] = [
   { variable: "NEXT_PUBLIC_AUTH_PROVIDER", value: "local" },
   { variable: "NEXT_PUBLIC_AUTH_PROVIDER", value: undefined },
@@ -166,7 +169,7 @@ const REFUSED: readonly { readonly variable: string; readonly value: string | un
 ];
 
 describe("governance/preflight verifyGovernanceEnvAtBoot", () => {
-  test("a governance install as appendix B.1 describes it passes, silently", () => {
+  test("a governance install as docs/GOVERNANCE.md configures it passes, silently", () => {
     const run = runPreflight();
     expect(run.passed).toBe(true);
     expect(run.exitCalls).toEqual([]);
@@ -190,7 +193,8 @@ describe("governance/preflight verifyGovernanceEnvAtBoot", () => {
   });
 
   test("each refused variable stops the boot with a banner that names it, one case per condition", () => {
-    // Every variable of spec 9.2, and every GOVERNANCE_* setting but the switch, which the next test covers.
+    // Every variable of docs/GOVERNANCE.md#boot-checks, and every GOVERNANCE_* setting but the switch, which the next
+    // test covers.
     expect(new Set(REFUSED.map((refused) => refused.variable)).size).toBe(23);
     for (const { variable, value } of REFUSED) {
       setEnv(variable, value);

@@ -1,5 +1,5 @@
 /**
- * The proxy's governance boundary (spec 7.8).
+ * The proxy's governance boundary (docs/GOVERNANCE.md#runtime-settings).
  *
  * Route handlers apply runtime settings and the proxy never does, so the module graph of `src/proxy.ts` must not reach
  * the settings store, the governance pool, the snapshot loader or `pg`. The proxy may read the governance switch

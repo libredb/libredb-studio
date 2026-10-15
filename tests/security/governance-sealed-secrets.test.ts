@@ -4,10 +4,11 @@
  * connection. Studio would then hand the credential to a server the writer controls, or use it where no grant allows.
  *
  * Every credential arrives as an `lsb1` envelope sealed to Studio's public key, with additional authenticated data
- * that binds it to its connection id, level, engine, key id and canonical definition (spec 8.2). Studio opens it only
- * with the keyring file `GOVERNANCE_PRIVATE_KEYS_FILE` names, through the cache of `openGovernedSecret`, which is the
- * path a governed connection takes. The assertions are about that path: an envelope opened once under its own row and
- * then moved still fails, so a cache hit can never stand in for the binding check.
+ * that binds it to its connection id, level, engine, key id and canonical definition
+ * (docs/GOVERNANCE.md#sealed-credentials-lsb1). Studio opens it only with the keyring file
+ * `GOVERNANCE_PRIVATE_KEYS_FILE` names, through the cache of `openGovernedSecret`, which is the path a governed
+ * connection takes. The assertions are about that path: an envelope opened once under its own row and then moved still
+ * fails, so a cache hit can never stand in for the binding check.
  *
  * Neither a refused keyring nor a refused envelope may put key material or a credential into a message or a log line.
  */

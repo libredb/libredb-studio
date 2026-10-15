@@ -1,6 +1,6 @@
 /**
- * Which access a reload of the governance snapshot took away or changed (spec 7.4, 9.4, 14): the subject and connection
- * pairs whose providers Studio tears down once the new snapshot is in place.
+ * Which access a reload of the governance snapshot took away or changed (docs/GOVERNANCE.md#per-user-providers): the
+ * subject and connection pairs whose providers Studio tears down once the new snapshot is in place.
  *
  * The snapshots are built directly, as tests/helpers/governance/granted-snapshot.ts builds them, so each case states
  * exactly which grant a subject held before the reload and after it. A record's envelopes stand for the sealed
@@ -11,7 +11,8 @@ import type { AdmittedConnection } from "@/lib/governance/admission";
 import type { QueryEventInput } from "@/lib/query-events/types";
 import { admittedConnection, type GrantSpec, grantedSnapshot } from "../../../helpers/governance/granted-snapshot";
 
-// The sink is replaced, so a recorded event is read here instead of being queued for the governance pool (STU-30).
+// The sink is replaced, so a recorded event is read here instead of being queued for the governance pool
+// (`src/lib/query-events/sink.ts`).
 const recorded: QueryEventInput[] = [];
 mock.module("@/lib/query-events/sink", () => ({
   recordQueryEvent: (input: QueryEventInput) => {
@@ -119,7 +120,8 @@ describe("changedGrants", () => {
   });
 });
 
-describe("endRevokedTransactions (spec 7.9, 9.4)", () => {
+// The rolled-back event of a transaction a reload tears down (docs/GOVERNANCE.md#query-events).
+describe("endRevokedTransactions", () => {
   test("tearing down a revoked pair with an open transaction records rolled-back", () => {
     // Alice opened a transaction on orders under her write grant; Bob holds one on billing, which keeps its grant.
     const scope = (subject: string, connectionId: string) => ({

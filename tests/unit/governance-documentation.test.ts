@@ -1,5 +1,6 @@
 /**
- * Drift guards for `docs/GOVERNANCE.md`, the public half of governance contract v1 (spec 7.10).
+ * Drift guards for `docs/GOVERNANCE.md`, the public half of governance contract v1
+ * (docs/GOVERNANCE.md#conformance-files).
  *
  * The manifest is what a control plane's tests read; the document is what its engineers read. A name the manifest
  * publishes and the document never mentions is a part of the contract nobody explained, so every object, setting

@@ -51,11 +51,11 @@ describe("the DuckDB file-access opt-in a package consumer can name (non-admin D
 });
 
 /**
- * Per-user providers (spec 9.4). Studio names the owner only under governance, and an embedder that keeps a provider
- * per user names it the same way: `owner` and `ownerPoolMax` are optional fields of both published context types, and
- * the assignments below are checked by `bun run typecheck`.
+ * Per-user providers (docs/GOVERNANCE.md#per-user-providers). Studio names the owner only under governance, and an
+ * embedder that keeps a provider per user names it the same way: `owner` and `ownerPoolMax` are optional fields of both
+ * published context types, and the assignments below are checked by `bun run typecheck`.
  */
-describe("the owner of a per-user provider a package consumer can name (spec 9.4)", () => {
+describe("the owner of a per-user provider a package consumer can name", () => {
   test("EditorExecutionContext publishes owner and ownerPoolMax as optional fields", async () => {
     const alice: EditorExecutionContext = { allowExternalFileAccess: true, owner: "alice-subject", ownerPoolMax: 3 };
     const bob: EditorExecutionContext = { allowExternalFileAccess: true, owner: "bob-subject", ownerPoolMax: 3 };

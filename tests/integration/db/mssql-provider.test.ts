@@ -1567,9 +1567,9 @@ describe("MSSQLProvider", () => {
       await provider.rollbackTransaction();
     });
 
-    // Spec 9.4: the five-minute timeout of PostgreSQL and MySQL, armed only on a provider created
-    // with an owner. TX_TIMEOUT_MS is a compile-time-private static read when beginTransaction()
-    // arms the timer, so these tests shrink it at runtime the way the MySQL suite does.
+    // The five-minute timeout of PostgreSQL and MySQL, armed only on a provider created with an owner
+    // (docs/providers/mssql.md section 3.6). TX_TIMEOUT_MS is a compile-time-private static read when
+    // beginTransaction() arms the timer, so these tests shrink it at runtime the way the MySQL suite does.
     describe("the owned-provider transaction timeout", () => {
       const providerStatics = MSSQLProvider as unknown as { TX_TIMEOUT_MS: number };
       const timerOf = (target: MSSQLProvider) => (target as unknown as { txTimeout: unknown }).txTimeout;

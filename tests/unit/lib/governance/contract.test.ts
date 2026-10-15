@@ -1,5 +1,5 @@
 /**
- * The statements and vocabularies of governance contract v1 (spec 7.1 to 7.5, 7.7, 8.3, 8.5).
+ * The statements and vocabularies of governance contract v1 (docs/GOVERNANCE.md).
  *
  * Every statement Studio issues against a governance source comes from `src/lib/governance/contract.ts`, and the
  * manifest a control plane runs them from is generated from the same builders. These tests pin the properties a
@@ -133,7 +133,7 @@ describe("contract statements", () => {
     );
   });
 
-  test("the snapshot is the transaction of spec 7.4, with the schema quoted", () => {
+  test("the snapshot is the transaction of the snapshot protocol, with the schema quoted", () => {
     const statements = buildSnapshotStatements("bridge");
     expect(Object.keys(statements)).toEqual([
       "begin",
@@ -236,7 +236,7 @@ describe("contract vocabularies", () => {
     expect(checkValuesOf("studio_instance", "listener_state")).toEqual([...LISTENER_STATES]);
   });
 
-  test("every freshness state maps to the readiness status and HTTP status of spec 7.5", () => {
+  test("every freshness state maps to the readiness status and HTTP status the freshness table gives it", () => {
     expect([...FRESHNESS_STATES]).toEqual([
       "loading",
       "ok",

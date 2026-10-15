@@ -166,7 +166,7 @@ describe("POST /api/db/disconnect", () => {
   });
 });
 
-// ─── Caller-scoped disconnect without governance (spec 17) ──────────────────
+// ─── Caller-scoped disconnect without governance (docs/SECURITY.md, note 0.9) ───
 //
 // Without governance every caller of a connection shares its provider, so the route cannot scope a disconnect by owner.
 // It resolves the caller's own record through resolveConnection, as every route does, and removes only the cache entries
@@ -174,7 +174,7 @@ describe("POST /api/db/disconnect", () => {
 // a request that names another user's connection id closes nothing of theirs, neither their provider nor the SSH
 // tunnel it reaches the connection through. A seed id removes nothing: one provider serves every user of that seed,
 // and the idle sweep reclaims it.
-describe("POST /api/db/disconnect without governance (spec 17)", () => {
+describe("POST /api/db/disconnect without governance", () => {
   const ALICE: MockSession = { role: "user", username: "alice@example.com" };
   const BOB: MockSession = { role: "user", username: "bob@example.com" };
   const ADMIN: MockSession = { role: "admin", username: "admin@example.com" };
@@ -328,12 +328,12 @@ describe("POST /api/db/disconnect without governance (spec 17)", () => {
   });
 });
 
-// ─── Per-user providers under governance (spec 9.4) ─────────────────────────
+// ─── Per-user providers under governance (docs/GOVERNANCE.md#per-user-providers) ───
 //
 // Under governance every user of a connection has providers of their own, so a disconnect removes only the caller's:
 // the route names the session's identity provider subject as the owner. Without the scope, any signed-in user could
-// tear down every other user's providers of a connection by naming its id (spec 17).
-describe("POST /api/db/disconnect under governance (spec 9.4)", () => {
+// tear down every other user's providers of a connection by naming its id (docs/SECURITY.md, note 0.9).
+describe("POST /api/db/disconnect under governance", () => {
   let savedSource: string | undefined;
 
   beforeEach(() => {
@@ -400,7 +400,8 @@ describe("POST /api/db/disconnect under governance (spec 9.4)", () => {
   });
 
   test("governance: an admin's disconnect is scoped to the admin's own providers too", async () => {
-    // The admin role opens the admin pages and maintenance only (spec 9.3), never another user's providers.
+    // The admin role opens the admin pages and maintenance only (docs/GOVERNANCE.md#grants-and-the-connection-list),
+    // never another user's providers.
     const providers = providerPerOwner([
       { connectionId: "seed:orders", owner: "alice-subject" },
       { connectionId: "seed:orders", owner: "admin-subject" },

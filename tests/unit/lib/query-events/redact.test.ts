@@ -7,8 +7,8 @@ import { maskCredentials, redactStatement } from "@/lib/query-events/redact";
 import type { DatabaseType } from "@/lib/types";
 
 /**
- * What a query event keeps of a statement (spec 7.9): `redacted` capture stores `redactStatement()`, and `full`
- * capture stores the statement through `maskCredentials()`.
+ * What a query event keeps of a statement (docs/GOVERNANCE.md#query-events): `redacted` capture stores
+ * `redactStatement()`, and `full` capture stores the statement through `maskCredentials()`.
  *
  * The vectors in `tests/fixtures/governance/redaction-vectors.json` are the contract for `redacted`: each pins an
  * input, its engine, the stored statement and its fingerprint, and the expected statements were written by hand
@@ -30,7 +30,10 @@ const VECTORS: readonly RedactionVector[] = (
   ) as { vectors: RedactionVector[] }
 ).vectors;
 
-/** Every literal and comment form spec 7.9 masks, each of which the vectors exercise on every SQL engine of v1. */
+/**
+ * Every literal and comment form docs/GOVERNANCE.md#query-events masks, each of which the vectors exercise on every SQL
+ * engine of v1.
+ */
 const LITERAL_FORMS = [
   "single-quoted",
   "e-string",

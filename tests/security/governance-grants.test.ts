@@ -1,5 +1,5 @@
 /**
- * Threat: a signed-in account opening a governed connection it holds no grant for (spec 9.3, R4, R8).
+ * Threat: a signed-in account opening a governed connection it holds no grant for (docs/SECURITY.md, control 0.8).
  *
  * Under governance the governance source is Studio's only catalog of connections, and a grant to the session's
  * identity provider subject is the only way to one. This file proves it on the routes themselves: every route that

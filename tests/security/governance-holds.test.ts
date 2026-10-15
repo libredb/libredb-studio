@@ -1,8 +1,9 @@
 /**
  * Governance mode holds MCP and the agent off (docs/GOVERNANCE.md): this version runs neither under governance, so
  * both stay off whatever LIBREDB_MCP_ENABLED, LIBREDB_AGENT_ENABLED and the AI configuration say. The boot preflight
- * refuses an environment that switches either on. This file proves the refusal R8 asks for when that check is
- * bypassed: GOVERNANCE_SOURCE, both switches and a configured model are all set after boot.
+ * refuses an environment that switches either on. This file proves that both stay off when that check is
+ * bypassed (docs/GOVERNANCE.md#what-governance-mode-switches-off): GOVERNANCE_SOURCE, both switches and a configured
+ * model are all set after boot.
  *
  * Every route under src/app/api/agent/ is found on disk, so a route added later is held here without editing this
  * file. A provider is counted where it is built: a database provider by the connect of the SQLite provider the seed

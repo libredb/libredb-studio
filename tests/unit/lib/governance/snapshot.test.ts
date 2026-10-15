@@ -1,6 +1,7 @@
 /**
- * The governance snapshot loader (spec 7.4, 7.5): one read-only repeatable-read transaction over the governance source,
- * admission of its connection rows, and the effective grant of each subject and admitted connection.
+ * The governance snapshot loader (docs/GOVERNANCE.md#snapshot-protocol): one read-only repeatable-read transaction over
+ * the governance source, admission of its connection rows, and the effective grant of each subject and admitted
+ * connection.
  *
  * `pg` is the fake of tests/helpers/governance/pg-fake.ts, so every statement the loader issues is seen, and each case
  * answers it with rows, an error or nothing at all. Envelopes are sealed with the test sealer to a keyring file of a
@@ -28,7 +29,8 @@ import {
 const realPg = await import("pg");
 mock.module("pg", () => ({ Pool: FakePool, Client: realPg.Client, types: realPg.types }));
 
-// The sink is replaced, so a recorded event is read here instead of being queued for the governance pool (STU-30).
+// The sink is replaced, so a recorded event is read here instead of being queued for the governance pool
+// (`src/lib/query-events/sink.ts`).
 const realSink = { ...(await import("@/lib/query-events/sink")) };
 const recordedEvents: QueryEventInput[] = [];
 mock.module("@/lib/query-events/sink", () => ({
@@ -289,7 +291,7 @@ describe("one load", () => {
 });
 
 describe("the governance pool", () => {
-  test("the pool reads GOVERNANCE_POSTGRES_URL with the storage pool's TLS handling and the limits of spec 7.4", async () => {
+  test("the pool reads GOVERNANCE_POSTGRES_URL with the storage pool's TLS handling and the published limits", async () => {
     await loadGovernanceSnapshot();
 
     expect(onlyPool().config).toEqual({
@@ -766,7 +768,7 @@ describe("what the snapshot keeps", () => {
   });
 });
 
-// ─── Teardown after a reload (spec 4.3, 7.4, 9.4) ────────────────────────────
+// ─── Teardown after a reload (docs/GOVERNANCE.md#snapshot-protocol) ──────────
 //
 // Once a reload swaps its snapshot in, the loader asks every copy of the provider factory to remove the providers of
 // each subject and connection whose access the reload took away or changed (src/lib/db/owner-removal.ts). No factory
@@ -911,7 +913,10 @@ describe("teardown after a reload", () => {
   });
 });
 
-/** The canary binding of spec 8.4: connection `canary`, level `read`, engine `canary`, definition `{}`. */
+/**
+ * The canary binding of docs/GOVERNANCE.md#sealed-credentials-lsb1: connection `canary`, level `read`, engine `canary`,
+ * definition `{}`.
+ */
 const CANARY_BINDING = { connectionId: "canary", level: "read", engine: "canary", definition: {} } as const;
 const CANARY_PLAINTEXT = { user: "libredb-canary" };
 

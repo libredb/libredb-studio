@@ -1,6 +1,6 @@
 /**
- * Which connections a caller may see and open (spec 4.2, 5.2, 9.3): the dispatcher behind the managed route and
- * `resolveConnection`.
+ * Which connections a caller may see and open (docs/GOVERNANCE.md#grants-and-the-connection-list): the dispatcher
+ * behind the managed route and `resolveConnection`.
  *
  * Without governance it answers what the seed connections always answered for the caller's role. Under governance
  * it answers from the snapshot alone, for the caller's identity provider subject, whatever the role, and only while

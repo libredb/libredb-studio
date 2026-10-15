@@ -1,7 +1,8 @@
 /**
  * The governance source of Studio's live checks, built from the published manifest
- * `tests/fixtures/governance/contract-v1.json` (spec 7.10): Studio's own live tests build their fixture views from the
- * same file a control plane vendors, so the loader is proven against views of exactly the published shape.
+ * `tests/fixtures/governance/contract-v1.json` (docs/GOVERNANCE.md#conformance-files): Studio's own live tests build
+ * their fixture views from the same file a control plane vendors, so the loader is proven against views of exactly the
+ * published shape.
  *
  * `buildFixtureDdl()` returns SQL for a disposable database, run as a superuser:
  *
@@ -13,9 +14,9 @@
  *   defaults, the retention function, the manifest's grants, and a statement-level trigger on each source table that
  *   sends `{"v":1,"kind":...}` on `libredb_bridge` with the view's notification kind.
  *
- * The source tables stand in for a control plane's private tables (spec appendix A.2); the live checks write the
- * rows Studio reads into them directly. The contract row of `bridge.contract` is data, not DDL, and is the checks'
- * to seed.
+ * The source tables stand in for a control plane's own tables, which each control plane designs for itself; the live
+ * checks write the rows Studio reads into them directly. The contract row of `bridge.contract` is data, not DDL, and is
+ * the checks' to seed.
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -89,7 +90,7 @@ export const FIXTURE_NOTIFY_FUNCTION = '"bridge".fixture_notify';
 
 /**
  * The bodies of the contract's functions. The manifest publishes a function's signature and grants but not its body,
- * so the fixture carries the body appendix A.3 gives.
+ * so the fixture carries a body of its own that does what docs/GOVERNANCE.md#objects says the function does.
  */
 const FUNCTION_BODIES: Readonly<Record<string, string>> = {
   trim_query_events: `DECLARE

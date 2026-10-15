@@ -1,7 +1,8 @@
 /**
- * The governance heartbeat (spec 7.2, 12.2): every 30 s each instance upserts its row of `studio_instances_v1` with
- * the statement the manifest publishes, carrying its id, version, contract versions, key ids, listener state, the
- * snapshot's load time, the skipped rows by ids and codes only, the sink state and the canary results.
+ * The governance heartbeat (docs/GOVERNANCE.md#heartbeat): every 30 s each instance upserts its row of
+ * `studio_instances_v1` with the statement the manifest publishes, carrying its id, version, contract versions, key
+ * ids, listener state, the snapshot's load time, the skipped rows by ids and codes only, the sink state and the canary
+ * results.
  *
  * `pg` is the fake of tests/helpers/governance/pg-fake.ts, so each beat's statement and parameters are seen. The
  * listener is replaced by a status this file sets, as in status.test.ts, and the shapes of the JSON columns are checked

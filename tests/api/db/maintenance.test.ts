@@ -110,7 +110,7 @@ mock.module("@/lib/db", () => ({
   mapDatabaseError,
 }));
 
-// ─── Mock the query event sink and the admission gate (STU-34) ─────────────
+// ─── Mock the query event sink and the admission gate (docs/GOVERNANCE.md#query-events) ───
 // The recorder captures each event the route describes, and a test builds its row with the real builder. The gate
 // admits by default, which is what it does with governance off; a test makes it refuse.
 const mockRecordQueryEvent = mock((_input: QueryEventInput) => {});

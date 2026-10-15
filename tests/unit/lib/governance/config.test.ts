@@ -1,5 +1,5 @@
 /**
- * The governance switch and the settings read with it (spec 9.2, appendix B.1).
+ * The governance switch and the settings read with it (docs/GOVERNANCE.md#studio-configuration).
  *
  * `src/lib/governance/config.ts` is the one place Studio reads `GOVERNANCE_SOURCE` and the `GOVERNANCE_*` settings.
  * Unset, governance is off and Studio behaves as it always has; any value other than `postgres` still counts as on,

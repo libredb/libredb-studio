@@ -222,9 +222,10 @@ describe("useTransactionControl", () => {
 
   test("a 409 TRANSACTION_CREDENTIAL_CHANGED and a provider rollback answer both end the editor transaction", async () => {
     // The server no longer holds the transaction in either answer: Studio rolled it back after the caller's grant level
-    // or credential changed (spec 9.4), or the provider rolled it back on its own five-minute timer, after which the
-    // provider answers every statement and ROLLBACK "No active transaction". The editor leaves transaction mode, so the
-    // next statement runs outside a transaction instead of being refused until the user switches connection.
+    // or credential changed (docs/GOVERNANCE.md#per-user-providers), or the provider rolled it back on its own
+    // five-minute timer, after which the provider answers every statement and ROLLBACK "No active transaction". The
+    // editor leaves transaction mode, so the next statement runs outside a transaction instead of being refused until
+    // the user switches connection.
     const connection = makeConnection();
     const answers = [
       {

@@ -1,10 +1,12 @@
 /**
- * The test sealer for `lsb1` envelopes (spec 8.1): the control plane's half, which Studio's own code never carries.
+ * The test sealer for `lsb1` envelopes (docs/GOVERNANCE.md#sealed-credentials-lsb1): the control plane's half, which
+ * Studio's own code never carries.
  *
  * Studio opens envelopes and never seals one, so the sealing side lives only here. It runs Encap of
  * DHKEM(X25519, HKDF-SHA256) and a single-shot AES-256-GCM seal at sequence 0 on the key schedule of
  * src/lib/governance/hpke.ts, with the additional authenticated data of src/lib/governance/lsb1.ts, so an envelope
- * it makes is the one a control plane implementing spec 8 makes for the same inputs.
+ * it makes is the one a control plane implementing docs/GOVERNANCE.md#sealed-credentials-lsb1 makes for the same
+ * inputs.
  *
  * Without `ephemeralPrivateKey` every seal draws a fresh ephemeral key, as a control plane does. With one, the
  * envelope is deterministic, which is what lets a vector record it byte for byte.

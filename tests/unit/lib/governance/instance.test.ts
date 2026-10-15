@@ -1,5 +1,5 @@
 /**
- * This instance's id under governance (spec 7.2, appendix B.1).
+ * This instance's id under governance (docs/GOVERNANCE.md#instance-id).
  *
  * The id keys the heartbeat row and names the listener's ping channel, so it must survive a restart. A container's
  * host name is its id and changes on every recreate, which would leave a dead heartbeat row each time, so

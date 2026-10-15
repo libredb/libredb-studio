@@ -1,6 +1,6 @@
 /**
  * Keyring files for tests: Studio's private keys as the file `GOVERNANCE_PRIVATE_KEYS_FILE` names holds them
- * (spec 8.4), `{"version":1,"keys":["<unpadded base64url raw 32-byte X25519 private key>", ...]}`.
+ * (docs/GOVERNANCE.md#keyring), `{"version":1,"keys":["<unpadded base64url raw 32-byte X25519 private key>", ...]}`.
  *
  * Every key is drawn fresh, so no key text is ever checked in. Each file lands in a directory of its own under the
  * system temp directory, and `removeKeyringFiles()` deletes every one this process wrote.

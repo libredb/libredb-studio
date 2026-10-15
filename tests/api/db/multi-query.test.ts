@@ -1220,10 +1220,10 @@ const { SeedConnectionError: MockedSeedConnectionError } = (await import(
 const { logger } = await import("@/lib/logger");
 
 /**
- * The query events of a script (spec 7.9): under governance one `multi-query` event per unit that ran, with its index
- * and one correlation id for the whole request, no row for a unit that never ran, and one `refused` event for a request
- * turned away before any unit ran. The sink, the builder and the admission gate are the real ones; only the insert is
- * faked, and every test reads the rows the sink handed to it.
+ * The query events of a script (docs/GOVERNANCE.md#query-events): under governance one `multi-query` event per unit
+ * that ran, with its index and one correlation id for the whole request, no row for a unit that never ran, and one
+ * `refused` event for a request turned away before any unit ran. The sink, the builder and the admission gate are the
+ * real ones; only the insert is faked, and every test reads the rows the sink handed to it.
  */
 describe("POST /api/db/multi-query: query events under governance", () => {
   const SUBJECT = "8d0f6a4e-2b1c-4f3a-9e7d-5c6b4a3f2e1d";

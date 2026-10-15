@@ -148,8 +148,8 @@ describe("GET /api/auth/oidc/callback", () => {
     expect(res.headers.get("location")).toContain("/admin");
   });
 
-  // Spec 5.2: the provider's subject joins a session to its grants, and the issuer says which provider it belongs to.
-  // `username` keeps its display meaning, so the subject travels in a claim of its own.
+  // The provider's subject joins a session to its grants (docs/GOVERNANCE.md#sign-in), and the issuer says which
+  // provider it belongs to. `username` keeps its display meaning, so the subject travels in a claim of its own.
   test("the session minted by the callback carries idpSubject and idpIssuer from the ID token", async () => {
     const res = await GET(new Request("http://localhost:3000/api/auth/oidc/callback?code=auth-code&state=test-state"));
 
@@ -488,9 +488,9 @@ describe("GET /api/auth/oidc/callback", () => {
     });
   });
 
-  // Spec 5.2: under governance a session counts only with a subject and only for the identity provider at
-  // OIDC_ISSUER. The callback mints no session that every request would refuse, because OIDC_AUTO_REDIRECT would
-  // answer each refusal with the next sign-in, in a loop.
+  // Under governance a session counts only with a subject (docs/GOVERNANCE.md#sign-in) and only for the identity
+  // provider at OIDC_ISSUER. The callback mints no session that every request would refuse, because OIDC_AUTO_REDIRECT
+  // would answer each refusal with the next sign-in, in a loop.
   describe("under governance", () => {
     const KEYS = ["GOVERNANCE_SOURCE", "OIDC_ISSUER"] as const;
     const saved: Record<string, string | undefined> = {};

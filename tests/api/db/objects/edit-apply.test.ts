@@ -33,9 +33,10 @@ import {
 import { buildQueryEvent } from "@/lib/query-events/build";
 import type { QueryEventInput } from "@/lib/query-events/types";
 
-// The query event sink and the admission gate (STU-34), replaced after the harness loaded the routes: `mock.module()`
-// rebinds the routes' imports. The recorder captures each event a route describes, and a test builds its row with the
-// real builder. The gate admits by default, which is what it does with governance off; a test makes it refuse.
+// The query event sink and the admission gate (docs/GOVERNANCE.md#query-events), replaced after the harness loaded the
+// routes: `mock.module()` rebinds the routes' imports. The recorder captures each event a route describes, and a test
+// builds its row with the real builder. The gate admits by default, which is what it does with governance off; a test
+// makes it refuse.
 const mockRecordQueryEvent = mock((_input: QueryEventInput) => {});
 const mockAdmitQueryExecution = mock(() => {});
 const realSink = { ...(await import("@/lib/query-events/sink")) };

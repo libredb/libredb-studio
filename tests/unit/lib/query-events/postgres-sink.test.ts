@@ -1,7 +1,7 @@
 /**
- * The PostgreSQL side of the query event sink (spec 7.9): a batch goes in as the manifest's multi-row
- * `INSERT ... ON CONFLICT DO NOTHING` through the governance pool; a row the governance source refuses for good,
- * SQLSTATE class 22 or 23, is dropped alone and logged as one stdout line without statement text; and any other
+ * The PostgreSQL side of the query event sink (docs/GOVERNANCE.md#query-events): a batch goes in as the manifest's
+ * multi-row `INSERT ... ON CONFLICT DO NOTHING` through the governance pool; a row the governance source refuses for
+ * good, SQLSTATE class 22 or 23, is dropped alone and logged as one stdout line without statement text; and any other
  * failure keeps the batch, with its event ids, for a retry after a wait that doubles from 1 s to 30 s.
  *
  * `pg` is the fake of tests/helpers/governance/pg-fake.ts, so each statement and its parameters are seen, and the

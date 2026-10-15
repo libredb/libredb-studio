@@ -264,13 +264,13 @@ describe("providerCacheKey frames every public field that decides who a connecti
 });
 
 /**
- * The owner of a per-user provider (spec 9.4). Under governance every user of a connection gets a provider of their
- * own, so the key frames the user's identity provider subject as one more length-framed part. Without an owner the
- * key is today's, byte for byte, which is what keeps an install without governance exactly as it was. An engine that
- * keeps one handle per file (`SINGLE_WRITER_FILE`) leaves the owner out, because a provider per user would be a
- * second handle on the file.
+ * The owner of a per-user provider (docs/GOVERNANCE.md#per-user-providers). Under governance every user of a connection
+ * gets a provider of their own, so the key frames the user's identity provider subject as one more length-framed part.
+ * Without an owner the key is today's, byte for byte, which is what keeps an install without governance exactly as it
+ * was. An engine that keeps one handle per file (`SINGLE_WRITER_FILE`) leaves the owner out, because a provider per
+ * user would be a second handle on the file.
  */
-describe("providerCacheKey frames the owner of a per-user provider (spec 9.4)", () => {
+describe("providerCacheKey frames the owner of a per-user provider", () => {
   const libredb: DatabaseConnection = {
     id: "store",
     name: "Store",

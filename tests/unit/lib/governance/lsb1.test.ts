@@ -1,5 +1,5 @@
 /**
- * Opening `lsb1` envelopes (spec 8.1 to 8.3).
+ * Opening `lsb1` envelopes (docs/GOVERNANCE.md#sealed-credentials-lsb1).
  *
  * An envelope binds its credential to one connection id, level, engine, key id and canonical definition, so a
  * database writer cannot point a stored credential at another host, engine or level. The envelopes here come from
@@ -240,7 +240,7 @@ describe("kidOf", () => {
 
 describe("bindingAad", () => {
   test("is the UTF-8 of the JCS object {c, d, e, k, l, s}, with d the base64url SHA-256 of the canonical definition", () => {
-    // The canary binding of spec 8.4: d is base64url(SHA-256("{}")).
+    // The canary binding of docs/GOVERNANCE.md#sealed-credentials-lsb1: d is base64url(SHA-256("{}")).
     const canary: SecretBinding = { connectionId: "canary", level: "read", engine: "canary", definition: {} };
     expect(bindingAad(canary, "0123456789abcdef").toString("utf8")).toBe(
       '{"c":"canary","d":"RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o","e":"canary","k":"0123456789abcdef","l":"read","s":"lsb1"}',
@@ -251,8 +251,9 @@ describe("bindingAad", () => {
     );
   });
 
-  test("a definition outside the values of spec 8.2 is the caller's error, not the envelope's", () => {
-    // Rows are admitted before their envelopes are opened (spec 7.7), so this is a fault in Studio and stays loud.
+  test("a definition no lsb1 binding admits is the caller's error, not the envelope's", () => {
+    // Rows are admitted before their envelopes are opened (docs/GOVERNANCE.md#row-admission-and-skip-codes), so this is
+    // a fault in Studio and stays loud.
     const { publicKey, keyring } = recipientKey();
     const envelope = sealSecret(publicKey, BINDING, CREDENTIAL);
     const fractional: SecretBinding = { ...BINDING, definition: { ...BINDING.definition, port: 1.5 } };

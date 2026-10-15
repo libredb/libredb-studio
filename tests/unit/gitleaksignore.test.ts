@@ -58,23 +58,22 @@ describe(".gitleaksignore", () => {
     // them, went when its squash f447c9b7 landed: no ref reaches that merge any
     // more, and the squash commit does not touch the capture sets.
     //
-    // The 5 after them are the CFRG HPKE test vector of the lsb1 suite (STU-02),
+    // The 5 after them are the CFRG HPKE test vector of the lsb1 suite (425df499),
     // checked in unchanged: its shared secret, key schedule context, secret,
     // key and exporter secret are published test values. They name the commit
     // that added the fixture and move onto a squash commit if one lands it.
-    // The 5 after THOSE are the same values as the merge commit of STU-02,
-    // df6a913a, re-presents them: the merge adds the file to its first parent,
+    // The 5 after THOSE are the same values as the merge commit df6a913a
+    // re-presents them: the merge adds the file to its first parent,
     // so the scanner reports it under fingerprints naming the merge.
     //
     // The 21 after them are the fixed ephemeral private keys of the lsb1 test
-    // vectors (STU-03), one per vector: each is the SHA-256 of a published label
+    // vectors (ffc981de), one per vector: each is the SHA-256 of a published label
     // marked test only, so anyone can derive it. They name the commit that added
     // the vectors and move onto a squash commit if one lands it. The 21 after
-    // THOSE are the same keys as the merge commit of STU-03, 5dc202d4,
-    // re-presents them.
+    // THOSE are the same keys as the merge commit 5dc202d4 re-presents them.
     //
-    // The last 2 are the placeholder password of the fixture DDL's unit test
-    // (STU-16), a sequential hex filler the test only compares DDL text with:
+    // The last 2 are the placeholder password of the fixture DDL's unit test,
+    // a sequential hex filler the test only compares DDL text with:
     // once as its commit 86379702 adds it and once as its merge 642655a8
     // re-presents it.
     //

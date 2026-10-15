@@ -1,5 +1,5 @@
 /**
- * RFC 8785 canonical JSON for what `lsb1` envelopes bind (spec 8.2).
+ * RFC 8785 canonical JSON for what `lsb1` envelopes bind (docs/GOVERNANCE.md#sealed-credentials-lsb1).
  *
  * A control plane and Studio each hash the canonical form of a connection definition into the additional
  * authenticated data of every envelope, so the two implementations must agree byte for byte. The samples below are

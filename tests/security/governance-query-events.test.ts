@@ -3,11 +3,11 @@
  * row is read by the control plane's administrators and kept for 90 days, so a bind parameter value, a row a statement
  * returned, a connection credential or a password typed into a statement must never land in one.
  *
- * `buildQueryEvent()` is the only maker of rows (spec 7.9). It copies the fields its input names and nothing else, so
- * a caller that hands it the request body, the result or the resolved connection with its credentials still produces
- * a row without them; and it keeps of the statement only what the capture mode allows: nothing under `none`, the
- * statement with every literal replaced by `?` under `redacted`, and under `full` the statement and the error text
- * with the value after PASSWORD or IDENTIFIED BY and the userinfo of every URI masked.
+ * `buildQueryEvent()` is the only maker of rows (docs/GOVERNANCE.md#query-events). It copies the fields its input names
+ * and nothing else, so a caller that hands it the request body, the result or the resolved connection with its
+ * credentials still produces a row without them; and it keeps of the statement only what the capture mode allows:
+ * nothing under `none`, the statement with every literal replaced by `?` under `redacted`, and under `full` the
+ * statement and the error text with the value after PASSWORD or IDENTIFIED BY and the userinfo of every URI masked.
  */
 import { describe, expect, test } from "bun:test";
 import { QUERY_EVENT_COLUMNS } from "@/lib/governance/contract";

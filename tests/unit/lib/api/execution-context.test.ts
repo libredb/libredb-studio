@@ -91,12 +91,12 @@ describe("editorExecutionContext on a seed a non-admin role can use", () => {
 });
 
 /**
- * The owner of a per-user provider (spec 9.4). Under governance every user of a connection gets a provider of their
- * own: the context names the session's identity provider subject as `owner`, which the provider cache key and the
- * transaction key frame, and `ownerPoolMax`, the pool size of that user's provider. Without governance neither field
- * is set, so the factory keys, pools and shares providers exactly as before.
+ * The owner of a per-user provider (docs/GOVERNANCE.md#per-user-providers). Under governance every user of a connection
+ * gets a provider of their own: the context names the session's identity provider subject as `owner`, which the
+ * provider cache key and the transaction key frame, and `ownerPoolMax`, the pool size of that user's provider. Without
+ * governance neither field is set, so the factory keys, pools and shares providers exactly as before.
  */
-describe("editorExecutionContext names the owner under governance (spec 9.4)", () => {
+describe("editorExecutionContext names the owner under governance", () => {
   const SUBJECT_MISSING = "Under governance every provider belongs to one user";
   /** An OIDC session: the username for display, the subject for identity. The subject of an LDAP-federated user. */
   const ALICE = { role: "user", username: "alice@example.com", idpSubject: "f:ldap-1:alice" };

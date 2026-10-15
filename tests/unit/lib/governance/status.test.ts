@@ -1,7 +1,7 @@
 /**
- * The governance status an administrator reads (spec 9.3, 12.2): built from the state holder and the listener at the
- * moment of the request, with ids, levels, paths and codes only, never a value or an envelope, and the full message of
- * the latest load failure, which only an administrator reads.
+ * The governance status an administrator reads (docs/GOVERNANCE.md#admin-status): built from the state holder and the
+ * listener at the moment of the request, with ids, levels, paths and codes only, never a value or an envelope, and the
+ * full message of the latest load failure, which only an administrator reads.
  *
  * The listener and the query event sink are replaced by states this file sets, so each case reports the listener and
  * the sink it names; tests/api/admin/governance.test.ts reports a real listener, and

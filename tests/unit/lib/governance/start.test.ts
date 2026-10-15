@@ -1,8 +1,8 @@
 /**
- * The governance refresher (spec 7.5): `startGovernance()` loads the snapshot at once and keeps reloading it every
- * `GOVERNANCE_REFRESH_MS`, and every 5 s with jitter while the snapshot is absent or older than the refresh interval,
- * whether or not any request arrives. Loads are single-flight, a failed load never rejects, and `register()` starts
- * the refresher under governance without waiting for its first load.
+ * The governance refresher (docs/GOVERNANCE.md#operating-notes): `startGovernance()` loads the snapshot at once and
+ * keeps reloading it every `GOVERNANCE_REFRESH_MS`, and every 5 s with jitter while the snapshot is absent or older
+ * than the refresh interval, whether or not any request arrives. Loads are single-flight, a failed load never rejects,
+ * and `register()` starts the refresher under governance without waiting for its first load.
  *
  * `pg` is the fake of tests/helpers/governance/pg-fake.ts, and the timers are bun's fake timers, which move
  * `Date.now()` with them, so every interval is checked in virtual time. The change notification listener that
@@ -50,7 +50,7 @@ const { logger } = await import("@/lib/logger");
 
 const KEYRING_FILE = keyringFileOf(testKey());
 
-/** A governance install that passes the boot preflight, as appendix B.1 describes it. */
+/** A governance install that passes the boot preflight, as docs/GOVERNANCE.md#studio-configuration describes it. */
 const GOVERNED: Readonly<Record<string, string | undefined>> = {
   GOVERNANCE_SOURCE: "postgres",
   GOVERNANCE_POSTGRES_URL: "postgresql://libredb_studio@db.internal:5432/libredb?sslmode=verify-full",

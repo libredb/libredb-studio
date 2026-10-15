@@ -1,5 +1,6 @@
 /**
- * Row admission under governance (spec 7.7): which rows of `connections_v1` Studio serves, and why it skips the rest.
+ * Row admission under governance (docs/GOVERNANCE.md#row-admission-and-skip-codes): which rows of `connections_v1`
+ * Studio serves, and why it skips the rest.
  *
  * Every case seals real `lsb1` envelopes with the test sealer and opens them with Studio's own opener, so an admitted
  * row also proves that admission bound each envelope to its own row: connection id, level, engine and the definition
@@ -180,7 +181,7 @@ describe("admitConnectionRows", () => {
     expect(opened).toEqual([]);
   });
 
-  test("every credential key of spec 8.3, agentUser, agentPassword, sshTunnel and ssl.clientKey is DEFINITION_HAS_SECRET", () => {
+  test("every lsb1 plaintext key, agentUser, agentPassword, sshTunnel and ssl.clientKey is DEFINITION_HAS_SECRET", () => {
     const secrets: readonly (readonly [string, Readonly<Record<string, unknown>>])[] = [
       ...PLAINTEXT_KEYS.map((key) => [key, { [key]: "example-only-secret-value" }] as const),
       ["agentUser", { agentUser: "agent" }],
@@ -537,7 +538,8 @@ describe("admitConnectionRows", () => {
       ]);
     }
 
-    // A credential key outside spec 8.3, which only an opener that broke its own contract could hand over, is named.
+    // A credential key outside the lsb1 plaintext keys (docs/GOVERNANCE.md#sealed-credentials-lsb1), which only an
+    // opener that broke its own contract could hand over, is named.
     const loose = admit([connectionRow()], { openSecret: () => ({ ...READ, sessionToken: "x" }) as OpenedSecret });
     expect(itemsOf(loose)).toEqual([skipItem(ID, "DEFINITION_INVALID", { level: "read", path: "sessionToken" })]);
   });
@@ -627,7 +629,8 @@ describe("admitConnectionRows", () => {
     expect(result.admitted.map((connection) => connection.id)).toEqual(["moved", "kept"]);
     expect(SKIPPED_SHAPE.safeParse(items).success).toBe(true);
     for (const item of items) expect(SkippedItemSchema.safeParse(item).success).toBe(true);
-    // Every skip code of spec 7.7 but SETTING_INVALID, which settings produce, comes out of a connection row.
+    // Every skip code of docs/GOVERNANCE.md#row-admission-and-skip-codes but SETTING_INVALID, which settings produce,
+    // comes out of a connection row.
     expect([...new Set(items.map((item) => item.code))].sort()).toEqual(
       SKIP_CODES.filter((code) => code !== "SETTING_INVALID").sort(),
     );

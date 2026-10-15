@@ -1,5 +1,5 @@
 /**
- * Studio's keyring (spec 8.4): the private keys that open sealed credentials, read from the file
+ * Studio's keyring (docs/GOVERNANCE.md#keyring): the private keys that open sealed credentials, read from the file
  * `GOVERNANCE_PRIVATE_KEYS_FILE` names.
  *
  * The file is `{"version":1,"keys":[...]}` with 1 to 16 unpadded base64url keys of 32 bytes, one per key id. Anything

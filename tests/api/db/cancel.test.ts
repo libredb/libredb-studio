@@ -245,13 +245,13 @@ describe("POST /api/db/cancel", () => {
   });
 });
 
-// ─── Per-user providers under governance (spec 9.4) ─────────────────────────
+// ─── Per-user providers under governance (docs/GOVERNANCE.md#per-user-providers) ───
 //
 // A statement is cancelled through the provider that runs it, and under governance every user's statements run on
 // that user's own provider: the execution context names the session's identity provider subject as the owner, for the
 // editor request that starts a statement and for the cancel alike. So a query id another user's provider runs is
 // unknown to the caller's own provider, whoever names it.
-describe("POST /api/db/cancel under governance (spec 9.4)", () => {
+describe("POST /api/db/cancel under governance", () => {
   const ALICE: MockSession = { role: "user", username: "alice@example.com", idpSubject: "alice-subject" };
   const BOB: MockSession = { role: "user", username: "bob@example.com", idpSubject: "bob-subject" };
   const ORDERS = { ...validConnection, id: "seed:orders" };

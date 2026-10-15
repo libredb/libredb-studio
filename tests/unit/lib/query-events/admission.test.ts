@@ -1,5 +1,5 @@
 /**
- * The admission gate of query execution (spec 7.8, 7.9): with `queryLog.onSinkFailure` at `refuse`,
+ * The admission gate of query execution (docs/GOVERNANCE.md#query-events): with `queryLog.onSinkFailure` at `refuse`,
  * `admitQueryExecution()` refuses with 503 AUDIT_UNAVAILABLE while the query event sink backs off or its queue holds
  * at least 90% of its capacity; a row the governance source refused for good never trips it; and with `continue`, the
  * default, or with governance off, it never refuses.

@@ -360,9 +360,9 @@ describe("the governance hold", () => {
 // ─── the runtime setting agent.enabled ──────────────────────────────────────
 
 /**
- * Under governance a control plane may set `agent.enabled` (spec 7.8). It feeds the off-switch, after the v1 hold, so
- * in this version it has no effect; the hold-free cases below stand in for the release that lifts the hold, by answering
- * the setting the store would answer then.
+ * Under governance a control plane may set `agent.enabled` (docs/GOVERNANCE.md#runtime-settings). It feeds the
+ * off-switch, after the v1 hold, so in this version it has no effect; the hold-free cases below stand in for the
+ * release that lifts the hold, by answering the setting the store would answer then.
  */
 describe("the runtime setting agent.enabled", () => {
   afterEach(() => {

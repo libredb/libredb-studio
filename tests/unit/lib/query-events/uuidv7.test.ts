@@ -1,7 +1,7 @@
 /**
- * Query event ids (spec 7.2): Studio generates each `event_id` before the first insert attempt, as a UUIDv7 (RFC 9562
- * section 5.7), so a retried batch keeps its ids and `ON CONFLICT DO NOTHING` makes the retry idempotent, and an id
- * created later sorts later, so the primary key's index grows at its end.
+ * Query event ids (docs/GOVERNANCE.md#row-semantics): Studio generates each `event_id` before the first insert attempt,
+ * as a UUIDv7 (RFC 9562 section 5.7), so a retried batch keeps its ids and `ON CONFLICT DO NOTHING` makes the retry
+ * idempotent, and an id created later sorts later, so the primary key's index grows at its end.
  *
  * The generator keeps its state per process, so each case freezes the clock later than every case before it.
  */

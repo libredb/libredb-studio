@@ -344,9 +344,9 @@ describe("POST /api/db/monitoring", () => {
     expect(data.statusCode).toBe(500);
   });
 
-  // Spec 9.3: under governance, users who share a read principal would see each other's statements in
-  // pg_stat_activity, so monitoring is an admin page there. The refusal comes before the connection is
-  // resolved, so nothing is opened for it, and it is audited as the maintenance route's is.
+  // Under governance (docs/GOVERNANCE.md#grants-and-the-connection-list), users who share a read principal would see
+  // each other's statements in pg_stat_activity, so monitoring is an admin page there. The refusal comes before the
+  // connection is resolved, so nothing is opened for it, and it is audited as the maintenance route's is.
   describe("governance", () => {
     const savedSource = process.env.GOVERNANCE_SOURCE;
 
@@ -388,7 +388,7 @@ describe("POST /api/db/monitoring", () => {
 
     test("governance: an admin with a grant gets monitoring data", async () => {
       // A governed session always carries its identity provider subject, which names the owner of
-      // the provider the request runs on (STU-20).
+      // the provider the request runs on (docs/GOVERNANCE.md#per-user-providers).
       mockGetSession.mockImplementation(
         async (): Promise<{ role: string; username: string; idpSubject?: string } | null> => ({
           role: "admin",

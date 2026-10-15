@@ -1,15 +1,19 @@
 /**
- * The runtime settings registry of governance contract v1 (spec 7.8, appendix A.2).
+ * The runtime settings registry of governance contract v1 (docs/GOVERNANCE.md#runtime-settings).
  *
  * The registry is the one place Studio names the keys a control plane may set at runtime. A control plane seeds
  * its allowlist from the published manifest, so a key, type, bound or description that drifts here reaches every
- * governed install. The expected values below are transcribed from spec 7.8 and appendix A.2 by hand, on purpose:
- * a test that derived them from the registry would certify whatever the registry says.
+ * governed install. The expected values below are written out by hand, the keys, types and bounds as
+ * docs/GOVERNANCE.md#runtime-settings publishes them, on purpose: a test that derived them from the registry would
+ * certify whatever the registry says.
  */
 import { describe, expect, test } from "bun:test";
 import { SETTING_KEY_PATTERN, SETTINGS_REGISTRY, type SettingDefinition } from "@/lib/governance/settings-registry";
 
-/** Spec 7.8: key, type, allowed values or bounds, and the Studio default or environment counterpart. */
+/**
+ * The table of docs/GOVERNANCE.md#runtime-settings: key, type, allowed values or bounds, and the Studio default or
+ * environment counterpart.
+ */
 const SPEC_7_8: Pick<
   SettingDefinition,
   "key" | "type" | "allowedValues" | "min" | "max" | "default" | "environment"
@@ -88,7 +92,7 @@ const SPEC_7_8: Pick<
   },
 ];
 
-/** Appendix A.2: the description each allowlist row is seeded with. */
+/** The description each allowlist row is seeded with, written out by hand. */
 const A2_DESCRIPTIONS: Record<string, string> = {
   "ai.enabled": "AI assistance routes are available",
   "agent.enabled": "The query agent is available when its prerequisites are configured",
@@ -101,7 +105,7 @@ const A2_DESCRIPTIONS: Record<string, string> = {
 };
 
 describe("settings registry v1", () => {
-  test("the registry holds exactly the eight v1 keys with the types, bounds and defaults of spec 7.8", () => {
+  test("the registry holds exactly the eight v1 keys with the published types, bounds and defaults", () => {
     expect(
       SETTINGS_REGISTRY.map((setting) => ({
         key: setting.key,
@@ -115,14 +119,14 @@ describe("settings registry v1", () => {
     ).toEqual(SPEC_7_8);
   });
 
-  test("every key is published under contract 1 with the description appendix A.2 seeds", () => {
+  test("every key is published under contract 1 with the description its allowlist row is seeded with", () => {
     for (const setting of SETTINGS_REGISTRY) {
       expect(setting.sinceContract).toBe(1);
       expect(setting.description).toBe(A2_DESCRIPTIONS[setting.key]);
     }
   });
 
-  test("every key matches the allowlist key format of appendix A.2 and appears once", () => {
+  test("every key matches the allowlist key format and appears once", () => {
     expect(SETTING_KEY_PATTERN).toBe("^[a-z][A-Za-z0-9]*(\\.[a-z][A-Za-z0-9]*)+$");
     const format = new RegExp(SETTING_KEY_PATTERN);
     for (const setting of SETTINGS_REGISTRY) expect(setting.key).toMatch(format);

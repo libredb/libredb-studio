@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, jest, mock, test } from "bun:test";
 import type { QueryEventInput } from "@/lib/query-events/types";
 
-// The sink is replaced, so a recorded event is read here instead of being queued for the governance pool (STU-30).
+// The sink is replaced, so a recorded event is read here instead of being queued for the governance pool
+// (`src/lib/query-events/sink.ts`).
 const recorded: QueryEventInput[] = [];
 mock.module("@/lib/query-events/sink", () => ({
   recordQueryEvent: (input: QueryEventInput) => {
@@ -29,9 +30,9 @@ const SCOPE = {
 };
 
 // Under governance a transaction runs on the provider its owner's begin resolved, and that provider's cache key frames
-// the credential of the owner's grant level (spec 9.4). The record keeps that key, so a later request that resolves
-// another key, because the grant level or the credential changed, is told the transaction no longer belongs to the
-// provider it is answered on.
+// the credential of the owner's grant level (docs/GOVERNANCE.md#per-user-providers). The record keeps that key, so a
+// later request that resolves another key, because the grant level or the credential changed, is told the transaction
+// no longer belongs to the provider it is answered on.
 const GOVERNED = transactionKey("seed:orders", undefined, "alice-subject");
 const SHARED = transactionKey("orders");
 
@@ -41,7 +42,7 @@ afterEach(() => {
   recorded.length = 0;
 });
 
-describe("transaction ownership records (spec 9.4)", () => {
+describe("transaction ownership records", () => {
   test("the record keeps the provider cache key its begin resolved", () => {
     claimTransaction(GOVERNED, "alice@example.com", "alice-subject", "provider-key-of-the-write-credential");
 
@@ -83,7 +84,8 @@ describe("transaction ownership records (spec 9.4)", () => {
   });
 });
 
-describe("transaction events (spec 7.9)", () => {
+// The query events of a governed transaction (docs/GOVERNANCE.md#query-events).
+describe("transaction events", () => {
   test("a provider that rolled back on its own timer yields exactly one timed-out event", () => {
     jest.useFakeTimers();
     try {

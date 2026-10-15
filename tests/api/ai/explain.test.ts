@@ -242,9 +242,9 @@ describe("POST /api/ai/explain", () => {
 });
 
 /**
- * Under governance the control plane's `ai.enabled` decides whether the AI bucket answers at all (spec 7.8). `false`
- * refuses before any provider is built; `true` adds nothing the environment did not configure, so a server without an
- * LLM keeps answering as it does today.
+ * Under governance the control plane's `ai.enabled` decides whether the AI bucket answers at all
+ * (docs/GOVERNANCE.md#runtime-settings). `false` refuses before any provider is built; `true` adds nothing the
+ * environment did not configure, so a server without an LLM keeps answering as it does today.
  */
 describe("POST /api/ai/explain under governance", () => {
   let savedSource: string | undefined;
@@ -285,7 +285,8 @@ describe("POST /api/ai/explain under governance", () => {
       code: "AI_DISABLED",
       statusCode: 403,
     });
-    // The status and the code are the ones governance contract v1 publishes for this refusal (spec 7.10).
+    // The status and the code are the ones governance contract v1 publishes for this refusal
+    // (docs/GOVERNANCE.md#api-codes).
     const published: readonly { code: string; httpStatus: number }[] = API_CODES;
     expect(published).toContainEqual({ code: "AI_DISABLED", httpStatus: res.status });
     expect(mockCreateLLMProvider).not.toHaveBeenCalled();

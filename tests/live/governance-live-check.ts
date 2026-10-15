@@ -169,7 +169,7 @@ const GRANTS = [
   { subject: "bob@example.com", connection: "live-both", level: "read", expires: LATER },
 ] as const;
 
-/** The binding every canary is sealed for (spec 8.4). */
+/** The binding every canary is sealed for (docs/GOVERNANCE.md#sealed-credentials-lsb1). */
 const CANARY_BINDING = { connectionId: "canary", level: "read", engine: "canary", definition: {} } as const;
 
 async function seed(client: Client, key: TestKey): Promise<void> {
@@ -195,7 +195,7 @@ async function seed(client: Client, key: TestKey): Promise<void> {
      FROM jsonb_to_recordset($1::jsonb) AS r(id text, name text, engine text, definition jsonb, read text, write text)`,
     [JSON.stringify(connections)],
   );
-  // The control plane's canary for the key Studio holds (spec 8.4).
+  // The control plane's canary for the key Studio holds (docs/GOVERNANCE.md#sealed-credentials-lsb1).
   await client.query(`INSERT INTO ${SCHEMA}.seal_canary_v1_source (kid, envelope, created_at) VALUES ($1, $2, now())`, [
     key.kid,
     sealSecret(key.publicKey, CANARY_BINDING, { user: "libredb-canary" }),

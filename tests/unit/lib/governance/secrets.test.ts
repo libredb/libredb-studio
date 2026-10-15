@@ -1,5 +1,5 @@
 /**
- * Opening governed credentials with the loaded keyring (spec 7.4, 8.2).
+ * Opening governed credentials with the loaded keyring (docs/GOVERNANCE.md#sealed-credentials-lsb1).
  *
  * `openGovernedSecret` opens an `lsb1` envelope with the keyring `GOVERNANCE_PRIVATE_KEYS_FILE` loaded and caches what
  * it opened under the SHA-256 of the envelope together with the additional authenticated data it opened under. So a
@@ -116,7 +116,7 @@ describe("openGovernedSecret", () => {
     expect(openGovernedSecret(envelope, BINDING)).toEqual(CREDENTIAL);
   });
 
-  test("a malformed envelope fails with FORMAT and a definition outside spec 8.2 is the caller's error", () => {
+  test("a malformed envelope fails with FORMAT and a definition no lsb1 binding admits is the caller's error", () => {
     expect(codeOf(() => openGovernedSecret("lsb1.not-an-envelope", BINDING))).toBe("FORMAT");
     expect(codeOf(() => openGovernedSecret("", BINDING))).toBe("FORMAT");
     const envelope = sealSecret(key.publicKey, BINDING, CREDENTIAL);

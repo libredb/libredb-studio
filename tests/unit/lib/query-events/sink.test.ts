@@ -1,8 +1,8 @@
 /**
- * The query event sink (spec 7.9, 9.5): `recordQueryEvent()` is a synchronous enqueue that never throws and does
- * nothing outside governance, where no pool is opened; the queue holds at most 10000 events and drops the newest
- * beyond that; it flushes every second, or at once at 500 events, and once more at shutdown within the hook's
- * deadline; and its state is what the heartbeat reports, in the manifest's `sink` shape.
+ * The query event sink (docs/GOVERNANCE.md#query-events): `recordQueryEvent()` is a synchronous enqueue that never
+ * throws and does nothing outside governance, where no pool is opened; the queue holds at most 10000 events and drops
+ * the newest beyond that; it flushes every second, or at once at 500 events, and once more at shutdown within the
+ * hook's deadline; and its state is what the heartbeat reports, in the manifest's `sink` shape.
  *
  * `pg` is the fake of tests/helpers/governance/pg-fake.ts, so every insert and heartbeat is seen. The listener is
  * replaced by a status this file sets, as in heartbeat.test.ts, so a beat can be sent without one running.

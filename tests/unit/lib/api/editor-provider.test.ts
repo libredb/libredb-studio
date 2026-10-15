@@ -59,7 +59,10 @@ describe("editorProvider", () => {
   });
 });
 
-/** The provider an earlier editor request ran on, found again by the key it resolved (spec 9.4). */
+/**
+ * The provider an earlier editor request ran on, found again by the key it resolved
+ * (docs/GOVERNANCE.md#per-user-providers).
+ */
 describe("cachedEditorProvider", () => {
   test("answers the provider cached under the key, in the catalog editorProvider scoped, and opens nothing", async () => {
     const shop = providerOf({});

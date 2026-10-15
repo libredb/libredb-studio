@@ -557,7 +557,10 @@ import type { TreeRowActionHandlers } from "@/components/object-tree/row-actions
 // Test data
 // =============================================================================
 
-/** The one line the editor shows while the query log records statements in full (spec 9.3). */
+/**
+ * The one line the editor shows while the query log records statements in full
+ * (docs/GOVERNANCE.md#grants-and-the-connection-list).
+ */
 const CAPTURE_NOTICE = "Statements you run are recorded in full in this server's query log.";
 
 const pgConn = {

@@ -196,7 +196,7 @@ describe("auth", () => {
       expect(payload!.role).toBe("user");
     });
 
-    // Spec 5.2: only the OIDC callback passes an identity, so password, passkey and launch
+    // Only the OIDC callback passes an identity (docs/GOVERNANCE.md#sign-in), so password, passkey and launch
     // sessions keep signing exactly the claims they signed before.
     test("login without an identity signs exactly role, username and sessionVersion", async () => {
       await login("user", "member@example.com", 4);

@@ -668,13 +668,13 @@ describe("MCP_EXPOSABLE (#1089)", () => {
 });
 
 /**
- * `OPENS_LOCAL_FILE` (governance row admission, spec 7.7): the engines whose connection is a file on Studio's own
- * host. Admission never governs one, whatever `GOVERNANCE_ALLOWED_ENGINES` says, and reads this record rather than a
- * type id. The governance layer must not load `src/lib/db-ui-config.ts`, which value-imports the React icon
- * components, so the record is held equal here to that file's own answer: `isFileBased()`, the connection form's
- * file path in place of a server address.
+ * `OPENS_LOCAL_FILE` (governance row admission, docs/GOVERNANCE.md#row-admission-and-skip-codes): the engines whose
+ * connection is a file on Studio's own host. Admission never governs one, whatever `GOVERNANCE_ALLOWED_ENGINES` says,
+ * and reads this record rather than a type id. The governance layer must not load `src/lib/db-ui-config.ts`, which
+ * value-imports the React icon components, so the record is held equal here to that file's own answer: `isFileBased()`,
+ * the connection form's file path in place of a server address.
  */
-describe("OPENS_LOCAL_FILE (spec 7.7)", () => {
+describe("OPENS_LOCAL_FILE", () => {
   test("answers for every shipped type-id and for nothing else", () => {
     expect(Object.keys(OPENS_LOCAL_FILE).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
   });
@@ -715,11 +715,12 @@ async function reportsCatalogSessionsWithoutDatabase(type: DatabaseType): Promis
 }
 
 /**
- * `OPENS_SERVER_LEVEL_WITHOUT_DATABASE` (governance row admission, spec 7.7): the engines whose provider reaches the
- * whole server when a connection names no database. Admission skips such a definition as SERVER_LEVEL_NOT_ALLOWED and
- * reads this record rather than a type id, so it is held equal to what every shipped provider declares.
+ * `OPENS_SERVER_LEVEL_WITHOUT_DATABASE` (governance row admission, docs/GOVERNANCE.md#row-admission-and-skip-codes):
+ * the engines whose provider reaches the whole server when a connection names no database. Admission skips such a
+ * definition as SERVER_LEVEL_NOT_ALLOWED and reads this record rather than a type id, so it is held equal to what every
+ * shipped provider declares.
  */
-describe("OPENS_SERVER_LEVEL_WITHOUT_DATABASE (spec 7.7)", () => {
+describe("OPENS_SERVER_LEVEL_WITHOUT_DATABASE", () => {
   test("answers for every shipped type-id and for nothing else", () => {
     expect(Object.keys(OPENS_SERVER_LEVEL_WITHOUT_DATABASE).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
   });
@@ -748,12 +749,13 @@ describe("OPENS_SERVER_LEVEL_WITHOUT_DATABASE (spec 7.7)", () => {
 });
 
 /**
- * `SINGLE_WRITER_FILE` (per-user providers, spec 9.4): the engines whose provider keeps one handle per file in this
- * process. The provider cache key leaves the owner out for them, because a provider per user would be a second handle
- * on one file, and it decides before any provider exists, so it reads this record rather than a type id. Held equal
- * here to what every shipped provider declares, built from the census connection with nothing connecting.
+ * `SINGLE_WRITER_FILE` (per-user providers, docs/GOVERNANCE.md#per-user-providers): the engines whose provider keeps
+ * one handle per file in this process. The provider cache key leaves the owner out for them, because a provider per
+ * user would be a second handle on one file, and it decides before any provider exists, so it reads this record rather
+ * than a type id. Held equal here to what every shipped provider declares, built from the census connection with
+ * nothing connecting.
  */
-describe("SINGLE_WRITER_FILE (spec 9.4)", () => {
+describe("SINGLE_WRITER_FILE", () => {
   test("answers for every shipped type-id and for nothing else", () => {
     expect(Object.keys(SINGLE_WRITER_FILE).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
   });

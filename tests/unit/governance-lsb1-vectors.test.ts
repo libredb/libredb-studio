@@ -1,5 +1,6 @@
 /**
- * The `lsb1` test vectors a control plane reproduces: `tests/fixtures/governance/lsb1-vectors.json` (spec 8.5).
+ * The `lsb1` test vectors a control plane reproduces: `tests/fixtures/governance/lsb1-vectors.json`
+ * (docs/GOVERNANCE.md#sealed-credentials-lsb1).
  *
  * A control plane vendors this file from a Studio release and never edits it. Its sealer reproduces every envelope
  * byte for byte from what the vector records (the recipient's public key, the binding, the plaintext and a fixed
@@ -66,7 +67,7 @@ const RECIPIENT_KID = "caea4ffac78f6e7c";
 const OTHER_RECIPIENT_PUBLIC = "XrLcFALBce5LaQouZGfCyBsAhbzp_e32BBe8E_sHG2o";
 const OTHER_RECIPIENT_KID = "33398f0a81a35c91";
 
-/** Studio's keyring, read from the file's keyring the way a keyring file is read (spec 8.4). */
+/** Studio's keyring, read from the file's keyring the way a keyring file is read (docs/GOVERNANCE.md#keyring). */
 const keyring: Keyring = new Map(
   FILE.keyring.keys.map((encoded) => {
     const privateKey = x25519PrivateKey(Buffer.from(encoded, "base64url"));

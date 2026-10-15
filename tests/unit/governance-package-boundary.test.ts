@@ -1,9 +1,9 @@
 /**
- * The published package's governance boundary (spec 9.4, 9.5).
+ * The published package's governance boundary.
  *
  * Governance runs only in the standalone server: `src/instrumentation.ts` starts it, and nothing in
  * `@libredb/studio` may reach its runtime, which opens a `pg` pool of its own, reads a keyring file and holds the
- * snapshot of a governance source, nor `src/lib/query-events`, which a later slice turns into a sink on the same
+ * snapshot of a governance source, nor `src/lib/query-events`, whose sink writes to the same
  * source. The one governance module a package module may reach is `src/lib/governance/config.ts`, the reader of the
  * governance switch and its environment, which imports nothing but the environment.
  *

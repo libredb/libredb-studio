@@ -143,8 +143,8 @@ describe("useMonitoringData", () => {
     expect(result.current.loading).toBe(false);
   });
 
-  // Spec 9.3: under governance the route refuses a user session with 403. The page shows that
-  // refusal through the same error path as any other failed read, with the route's own sentence.
+  // Under governance the route refuses a user session with 403 (docs/GOVERNANCE.md#grants-and-the-connection-list). The
+  // page shows that refusal through the same error path as any other failed read, with the route's own sentence.
   test("a governance refusal (403) is the page's error, in the route's sentence", async () => {
     mockGlobalFetch({
       "/api/db/monitoring": { ok: false, status: 403, json: { error: "Unauthorized. Admin access required." } },

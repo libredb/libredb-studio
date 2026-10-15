@@ -1,7 +1,8 @@
 /**
- * The process-wide registry of owner-scoped removals (src/lib/db/owner-removal.ts, spec 9.4): each copy of the provider
- * factory registers its `removeProvider`, because Next.js runs the governance loader in another bundle than the route
- * handlers that fill the caches, and the loader asks every copy to remove one subject's providers of a connection.
+ * The process-wide registry of owner-scoped removals (src/lib/db/owner-removal.ts,
+ * docs/GOVERNANCE.md#per-user-providers): each copy of the provider factory registers its `removeProvider`, because
+ * Next.js runs the governance loader in another bundle than the route handlers that fill the caches, and the loader
+ * asks every copy to remove one subject's providers of a connection.
  *
  * No factory is loaded in this process, so every copy here is a double that records what it was asked.
  */

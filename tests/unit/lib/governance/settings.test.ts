@@ -1,7 +1,7 @@
 /**
- * The runtime settings store (spec 7.8, 9.5): every row of `settings_v1` is checked against the registry on each
- * load, a valid value is kept for `runtimeSetting()`, and an invalid one is ignored and reported as a SETTING_INVALID
- * skip by key and code, never by value.
+ * The runtime settings store (docs/GOVERNANCE.md#runtime-settings): every row of `settings_v1` is checked against the
+ * registry on each load, a valid value is kept for `runtimeSetting()`, and an invalid one is ignored and reported as a
+ * SETTING_INVALID skip by key and code, never by value.
  *
  * The state holder is the real one: each case records a snapshot the way the loader does, with the settings the store
  * made of its rows.

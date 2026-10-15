@@ -1910,10 +1910,10 @@ const { SeedConnectionError: MockedSeedConnectionError } = (await import(
 const { logger } = await import("@/lib/logger");
 
 /**
- * The editor's query events (spec 7.9): under governance one `editor` event per request that ran, with its status, its
- * rows and the level of the grant it ran with, and one `refused` event per request turned away before it ran. The
- * sink, the builder and the admission gate are the real ones; only the insert is faked, and every test reads the rows
- * the sink handed to it.
+ * The editor's query events (docs/GOVERNANCE.md#query-events): under governance one `editor` event per request that
+ * ran, with its status, its rows and the level of the grant it ran with, and one `refused` event per request turned
+ * away before it ran. The sink, the builder and the admission gate are the real ones; only the insert is faked, and
+ * every test reads the rows the sink handed to it.
  */
 describe("POST /api/db/query: query events under governance", () => {
   const SUBJECT = "8d0f6a4e-2b1c-4f3a-9e7d-5c6b4a3f2e1d";

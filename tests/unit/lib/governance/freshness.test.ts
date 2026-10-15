@@ -1,7 +1,7 @@
 /**
- * Freshness of the governance snapshot (spec 7.5): the state Studio is in follows from its last successful load, the
- * failure of its latest load when there is one, `GOVERNANCE_REFRESH_MS` and `GOVERNANCE_MAX_STALENESS_MS`, and only
- * `ok` and `degraded` serve data routes.
+ * Freshness of the governance snapshot (docs/GOVERNANCE.md#freshness-and-readiness): the state Studio is in follows
+ * from its last successful load, the failure of its latest load when there is one, `GOVERNANCE_REFRESH_MS` and
+ * `GOVERNANCE_MAX_STALENESS_MS`, and only `ok` and `degraded` serve data routes.
  *
  * Each case records loads in the state holder the way the loader does and reads the state at a chosen time, so every
  * boundary is checked to the millisecond.

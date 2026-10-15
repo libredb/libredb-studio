@@ -1,6 +1,6 @@
 // @requires helm
 /**
- * The chart's `governance` block (spec 7.2, 8.4, 9.5, 12.1, appendix B.1).
+ * The chart's `governance` block (docs/HELM_CHART.md#11-governance).
  *
  * Off by default, so a default render writes no GOVERNANCE_* variable, mounts no keyring and keeps the readiness
  * probe on /api/db/health: an install that never mentions governance renders exactly as before. Enabled, the

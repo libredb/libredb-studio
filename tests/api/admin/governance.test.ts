@@ -1,5 +1,5 @@
 /**
- * GET /api/admin/governance: the governance status for the admin Overview card (spec 9.3, 12.2).
+ * GET /api/admin/governance: the governance status for the admin Overview card (docs/GOVERNANCE.md#admin-status).
  *
  * The state holder, the keyring and the listener are the real ones: each case records a snapshot or a failure the
  * way the loader does and points GOVERNANCE_PRIVATE_KEYS_FILE at a fresh keyring file, and the listener runs on the

@@ -98,8 +98,8 @@ describe("proxy", () => {
       expect(isRedirect(await proxy(createNextRequest("/api/health")))).toBe(false);
     });
 
-    // The readiness probe (spec 7.5, 12.1) carries no session either, and a 401 or a redirect would read as not ready
-    // or, worse, as ready.
+    // The readiness probe (docs/GOVERNANCE.md#freshness-and-readiness) carries no session either, and a 401 or a
+    // redirect would read as not ready or, worse, as ready.
     test("/api/ready passes without a session", async () => {
       const res = await proxy(createNextRequest("/api/ready"));
 

@@ -106,7 +106,7 @@ mock.module("@/lib/db", () => ({
   mapDatabaseError,
 }));
 
-// ─── The factory's writable cache as the route reads it under governance (spec 9.4) ─────────
+// ─── The factory's writable cache as the route reads it under governance (docs/GOVERNANCE.md#per-user-providers) ───
 //
 // `editorCacheKey` frames what the factory's key frames for these tests: the connection, the credential it opens with,
 // and the owner. `findCachedProvider` answers nothing until a test registers its providers.
@@ -120,10 +120,11 @@ mock.module("@/lib/db/factory", () => ({
   findCachedProvider: mockFindCachedProvider,
 }));
 
-// ─── Query events (spec 7.9) ────────────────────────────────────────────────
+// ─── Query events (docs/GOVERNANCE.md#query-events) ─────────────────────────
 //
-// The sink is replaced, so a recorded event is read here instead of being queued for the governance pool (STU-30), and
-// the admission gate is a double a test can close; tests/unit/lib/query-events/admission.test.ts pins the real gate.
+// The sink is replaced, so a recorded event is read here instead of being queued for the governance pool
+// (`src/lib/query-events/sink.ts`), and the admission gate is a double a test can close;
+// tests/unit/lib/query-events/admission.test.ts pins the real gate.
 const realSink = { ...(await import("@/lib/query-events/sink")) };
 const recordedEvents: QueryEventInput[] = [];
 mock.module("@/lib/query-events/sink", () => ({
@@ -892,8 +893,9 @@ describe("POST /api/db/transaction", () => {
   });
 
   test("without governance no provider key is computed or compared, so another credential is answered as before", async () => {
-    // The credential-change refusal is governance's (spec 9.4): without it the record names no provider key, and a
-    // request that opens the connection with another credential reaches the shared provider exactly as it always did.
+    // The credential-change refusal is governance's (docs/GOVERNANCE.md#per-user-providers): without it the record
+    // names no provider key, and a request that opens the connection with another credential reaches the shared
+    // provider exactly as it always did.
     openableProvider();
     mockEditorCacheKey.mockClear();
     mockFindCachedProvider.mockClear();
@@ -1122,14 +1124,14 @@ describe("POST /api/db/transaction on a server-level connection (#1530)", () => 
   });
 });
 
-// ─── Per-user transactions under governance (spec 3.2 D7, 9.4) ──────────────
+// ─── Per-user transactions under governance (docs/GOVERNANCE.md#per-user-providers) ───
 //
 // Under governance every user of a connection has a provider of their own, so a transaction is one
 // user's: the factory keys the provider by the owner the execution context names, the session's
 // identity provider subject, and the ownership record is keyed and owned by that subject too. Without
 // it, a user whose own provider holds no transaction would drop another user's record on reconcile, and
 // that user's transaction would become anyone's to end.
-describe("POST /api/db/transaction under governance (spec 9.4)", () => {
+describe("POST /api/db/transaction under governance", () => {
   let savedSource: string | undefined;
 
   beforeEach(() => {
@@ -1204,8 +1206,9 @@ describe("POST /api/db/transaction under governance (spec 9.4)", () => {
       of: (user: string, owner: string) => providers.get(keyOf(user, owner)),
       evict: (user: string, owner: string) => providers.delete(keyOf(user, owner)),
       /**
-       * The owner-scoped removal of the factory (spec 9.4): every provider of `owner` on `connectionId` leaves the
-       * cache, and an open transaction on it is rolled back, as `teardownProvider` in src/lib/db/factory.ts does.
+       * The owner-scoped removal of the factory (docs/GOVERNANCE.md#per-user-providers): every provider of `owner` on
+       * `connectionId` leaves the cache, and an open transaction on it is rolled back, as `teardownProvider` in
+       * src/lib/db/factory.ts does.
        */
       removeOwner: async (connectionId: string, owner: string) => {
         for (const [key, provider] of [...providers]) {
@@ -1282,8 +1285,9 @@ describe("POST /api/db/transaction under governance (spec 9.4)", () => {
   });
 
   test("governance: the transaction belongs to the subject, so a session whose username changed keeps it", async () => {
-    // Under governance the subject names the user and the username is a display label (spec 3.2 D2): an email
-    // changed in the identity provider must not lock its owner out of the transaction it opened.
+    // Under governance the subject names the user and the username is a display label
+    // (docs/GOVERNANCE.md#row-semantics): an email changed in the identity provider must not lock its owner out of the
+    // transaction it opened.
     const providers = providerPerOwner();
 
     as("alice@example.com", "alice-subject");
@@ -1299,7 +1303,7 @@ describe("POST /api/db/transaction under governance (spec 9.4)", () => {
     expect(providers.of("alice-subject")?.rollbackTransaction).toHaveBeenCalledTimes(1);
   });
 
-  // ─── A credential that changes under an open transaction (spec 9.4) ───────
+  // ─── A credential that changes under an open transaction (docs/GOVERNANCE.md#per-user-providers) ───
   //
   // The connection a governed request resolves carries the credential of the caller's grant level, and the provider's
   // cache key frames that credential, so a grant downgraded from write to read, or a credential sealed again, resolves
@@ -1322,7 +1326,8 @@ describe("POST /api/db/transaction under governance (spec 9.4)", () => {
 
     expect(res.status).toBe(409);
     expect(data.code).toBe("TRANSACTION_CREDENTIAL_CHANGED");
-    // The status and the code are the ones governance contract v1 publishes for this refusal (spec 7.10).
+    // The status and the code are the ones governance contract v1 publishes for this refusal
+    // (docs/GOVERNANCE.md#api-codes).
     const published: readonly { code: string; httpStatus: number }[] = API_CODES;
     expect(published).toContainEqual({ code: data.code, httpStatus: res.status });
     expect(data.rolledBack).toBe(true);
@@ -1447,7 +1452,7 @@ describe("POST /api/db/transaction under governance (spec 9.4)", () => {
     }
   });
 
-  // ─── A grant a reload takes away or changes (spec 4.3, 7.4, 9.4) ──────────
+  // ─── A grant a reload takes away or changes (docs/GOVERNANCE.md#per-user-providers) ───
   //
   // The reload that reads a downgrade does not wait for the owner's next request: once it swaps the new snapshot in, it
   // asks every copy of the factory to tear down the owner's providers of that connection, and the teardown rolls back
@@ -1500,7 +1505,7 @@ describe("POST /api/db/transaction under governance (spec 9.4)", () => {
     }
   });
 
-  // ─── Transaction events (spec 7.9) ────────────────────────────────────────
+  // ─── Transaction events (docs/GOVERNANCE.md#query-events) ─────────────────
 
   /** The events recorded so far, reduced to what a test compares. */
   const outcomes = () =>
@@ -1736,7 +1741,8 @@ describe("POST /api/db/transaction under governance (spec 9.4)", () => {
   });
 });
 
-describe("transactionKey (spec 9.4)", () => {
+// The key of a transaction, per owner under governance (docs/GOVERNANCE.md#per-user-providers).
+describe("transactionKey", () => {
   test("without an owner the key is byte-identical, and an owner is framed into it", () => {
     expect(transactionKey("seed:orders")).toBe("seed:orders");
     expect(transactionKey("seed:orders", "shop")).toBe('["seed:orders","shop"]');

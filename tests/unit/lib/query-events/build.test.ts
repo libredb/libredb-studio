@@ -1,7 +1,7 @@
 /**
- * The query event builder (spec 7.2, 7.9): `buildQueryEvent()` maps one executed unit, or one refused request, to a
- * row of `query_events_v1` with exactly the manifest's columns, keeping of the statement what the capture policy
- * allows.
+ * The query event builder (docs/GOVERNANCE.md#query-events): `buildQueryEvent()` maps one executed unit, or one refused
+ * request, to a row of `query_events_v1` with exactly the manifest's columns, keeping of the statement what the capture
+ * policy allows.
  *
  * Every row built here is also checked against the published manifest (`tests/fixtures/governance/contract-v1.json`):
  * each value against its column's type, nullability and CHECK, and the row against the table's constraints, so a row

@@ -1,7 +1,7 @@
 /**
  * The fixture DDL of tests/helpers/governance/fixture-ddl.ts: the governance source Studio's live checks build from
- * the published manifest (spec 7.10), so that the live loader reads views of exactly the shape a control plane
- * must publish.
+ * the published manifest (docs/GOVERNANCE.md#conformance-files), so that the live loader reads views of exactly the
+ * shape a control plane must publish.
  *
  * The expected texts below are built from the manifest JSON in this file, not from the helper, so a slip in the
  * helper cannot certify itself: every object is declared with its columns, defaults, CHECKs and grants, and every

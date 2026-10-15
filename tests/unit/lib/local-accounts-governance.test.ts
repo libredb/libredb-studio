@@ -1,15 +1,15 @@
 /**
- * The governed sign-in rule (spec 5.2, docs/GOVERNANCE.md): under governance a session speaks for someone only when the
+ * The governed sign-in rule (docs/GOVERNANCE.md#sign-in): under governance a session speaks for someone only when the
  * OIDC callback minted it for the identity provider at OIDC_ISSUER. That callback is the only sign-in that writes
  * idpSubject and idpIssuer, so an env password, passkey or launch session, an OIDC session whose subject is empty and
  * one minted for another issuer are refused, and getSession() then clears the cookie.
  *
- * The governance source can also end the sessions of a subject (spec 5.2, 14): a session issued at or before the
- * subject's `revoked_before` in the snapshot in use is refused, the token's `iat`, in whole seconds, compared in epoch
- * milliseconds. Only a snapshot that data routes are served from revokes anything: while none is loaded, or the one
- * kept is unavailable, misconfigured or incompatible, data routes answer 503 instead and no session is refused for a
- * revocation, so an outage sends no one back to the identity provider. These cases record each snapshot in the state
- * holder as the loader swaps one in.
+ * The governance source can also end the sessions of a subject (docs/GOVERNANCE.md#sign-in): a session issued at or
+ * before the subject's `revoked_before` in the snapshot in use is refused, the token's `iat`, in whole seconds,
+ * compared in epoch milliseconds. Only a snapshot that data routes are served from revokes anything: while none is
+ * loaded, or the one kept is unavailable, misconfigured or incompatible, data routes answer 503 instead and no session
+ * is refused for a revocation, so an outage sends no one back to the identity provider. These cases record each
+ * snapshot in the state holder as the loader swaps one in.
  *
  * `storedAccountAllows()` is the check getSession() and the MCP token check consult on every request, so it carries
  * the rule, and `governedIdentityAccepted()` is the rule itself, which the OIDC callback applies to the ID token. Without

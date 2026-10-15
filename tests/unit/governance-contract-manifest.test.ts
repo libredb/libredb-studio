@@ -1,11 +1,12 @@
 /**
- * The published manifest of governance contract v1: `tests/fixtures/governance/contract-v1.json` (spec 7.10).
+ * The published manifest of governance contract v1: `tests/fixtures/governance/contract-v1.json`
+ * (docs/GOVERNANCE.md#conformance-files).
  *
  * A control plane vendors this file from a pinned Studio release and never edits it: its database tests compare
  * its views with the objects listed here and run every statement listed here as `libredb_studio`, and its settings
  * allowlist and connection form are generated from it. So the file has to be exactly what the code builds, and
- * what the code builds has to be exactly the contract. The expected objects below are transcribed from appendix
- * A.3 of the design by hand, and the CHECK texts are A.3's own, so a slip in `contract.ts` cannot certify itself.
+ * what the code builds has to be exactly the contract. The expected objects below, the CHECK texts included, are
+ * written out by hand from the contract rather than read from `contract.ts`, so a slip there cannot certify itself.
  */
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -120,7 +121,7 @@ interface ExpectedObject {
 const NOT_NULL = false;
 const NULL = true;
 
-/** Appendix A.3, bridge.query_event, in column order. */
+/** The columns of bridge.query_event, in column order. */
 const QUERY_EVENT_COLUMNS: readonly ExpectedColumn[] = [
   ["event_id", "uuid", NOT_NULL, null],
   ["started_at", "timestamptz", NOT_NULL, null],
@@ -154,7 +155,7 @@ const QUERY_EVENT_COLUMNS: readonly ExpectedColumn[] = [
   ["client_ip", "inet", NULL, null],
 ];
 
-/** Appendix A.3, bridge.studio_instance, in column order. */
+/** The columns of bridge.studio_instance, in column order. */
 const STUDIO_INSTANCE_COLUMNS: readonly ExpectedColumn[] = [
   ["instance_id", "text", NOT_NULL, null],
   ["studio_version", "text", NOT_NULL, null],
@@ -172,9 +173,9 @@ const STUDIO_INSTANCE_COLUMNS: readonly ExpectedColumn[] = [
 ];
 
 /**
- * Appendix A.3 and spec 7.1. A view column's nullability is the guarantee its definition gives (PostgreSQL records
- * no NOT NULL on a view); a view's default is only the one A.3 sets on the view itself, since an insert through a
- * view over a table otherwise takes the table's default.
+ * Every object of the contract (docs/GOVERNANCE.md#objects). A view column's nullability is the guarantee its
+ * definition gives (PostgreSQL records no NOT NULL on a view); a view's default is only one set on the view itself,
+ * since an insert through a view over a table otherwise takes the table's default.
  */
 const A3_OBJECTS: readonly ExpectedObject[] = [
   {
@@ -284,7 +285,7 @@ const A3_OBJECTS: readonly ExpectedObject[] = [
   { name: "trim_query_events", kind: "function", studio: [], platform: ["EXECUTE"] },
 ];
 
-/** Every column CHECK of appendix A.3, as A.3 writes it. */
+/** Every column CHECK of the contract's tables, written out by hand. */
 const A3_COLUMN_CHECKS: Record<string, Record<string, string>> = {
   query_event: {
     studio_instance: "char_length(studio_instance) BETWEEN 1 AND 128",
@@ -323,7 +324,7 @@ const A3_COLUMN_CHECKS: Record<string, Record<string, string>> = {
   },
 };
 
-/** The named table constraints of appendix A.3, whitespace collapsed. */
+/** The named constraints of the contract's tables, whitespace collapsed. */
 const A3_TABLE_CONSTRAINTS: Record<string, { name: string; check: string }[]> = {
   query_event: [
     { name: "query_event_time_order", check: "finished_at >= started_at" },
@@ -342,8 +343,9 @@ const A3_TABLE_CONSTRAINTS: Record<string, { name: string; check: string }[]> = 
 };
 
 /**
- * The rules appendix A.2 states for the rows behind each read view, renamed to the view's columns. A governance
- * source that keeps them never hands Studio a row its admission has to skip for shape alone.
+ * The rules a governance source keeps for the rows behind each read view (docs/GOVERNANCE.md#objects), named by the
+ * view's columns. A governance source that keeps them never hands Studio a row its admission has to skip for shape
+ * alone.
  */
 const A2_VIEW_DOMAINS: Record<string, Record<string, string>> = {
   contract: { status: "status IN ('current','deprecated')" },
@@ -451,7 +453,7 @@ describe("contract-v1.json", () => {
     ]);
   });
 
-  test("every object of spec 7.1 appears with its kind, ordered columns, types, defaults and required grants", () => {
+  test("every contract object appears with its kind, ordered columns, types, defaults and required grants", () => {
     expect(
       manifest.objects.map((object) => ({
         name: object.name,
@@ -471,7 +473,7 @@ describe("contract-v1.json", () => {
     );
   });
 
-  test("the tables carry every CHECK, constraint and primary key of appendix A.3, rendered as A.3 writes them", () => {
+  test("the tables carry every CHECK, constraint and primary key, rendered as written out above", () => {
     for (const [table, expected] of Object.entries(A3_COLUMN_CHECKS)) {
       const checks = Object.fromEntries(
         (objectNamed(table).columns ?? []).flatMap((column) =>
@@ -502,7 +504,7 @@ describe("contract-v1.json", () => {
     expect(objectNamed("studio_instances_v1").checkOption).toBeNull();
   });
 
-  test("the read views publish the domains appendix A.2 gives their source rows, and the kind their change sends", () => {
+  test("the read views publish the domains their source rows keep, and the kind their change sends", () => {
     for (const [view, expected] of Object.entries(A2_VIEW_DOMAINS)) {
       const checks = Object.fromEntries(
         (objectNamed(view).columns ?? []).flatMap((column) =>
@@ -575,7 +577,7 @@ describe("contract-v1.json", () => {
     expect(manifest.settings).toEqual(JSON.parse(JSON.stringify(SETTINGS_REGISTRY)));
   });
 
-  test("contract-v1.json lists the skip codes of spec 7.7, the envelope codes of spec 8.5 and the API codes CONNECTION_NOT_FOUND, GOVERNANCE_UNAVAILABLE, AUDIT_UNAVAILABLE, TRANSACTION_CREDENTIAL_CHANGED and AI_DISABLED", () => {
+  test("contract-v1.json lists the skip codes, the envelope codes and the API codes CONNECTION_NOT_FOUND, GOVERNANCE_UNAVAILABLE, AUDIT_UNAVAILABLE, TRANSACTION_CREDENTIAL_CHANGED and AI_DISABLED", () => {
     expect(manifest.codes.skip).toEqual([
       "READ_SECRET_UNOPENABLE",
       "WRITE_SECRET_UNOPENABLE",
@@ -603,7 +605,7 @@ describe("contract-v1.json", () => {
     expect(manifest.listenerStates).toEqual(["listening", "reconnecting", "polling", "deaf"]);
   });
 
-  test("contract-v1.json lists the plaintext keys of spec 8.3, none of which a definition may carry", () => {
+  test("contract-v1.json lists the lsb1 plaintext keys, none of which a definition may carry", () => {
     expect(manifest.plaintext).toEqual({
       keys: [
         "user",

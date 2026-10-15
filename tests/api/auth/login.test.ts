@@ -377,8 +377,9 @@ describe("POST /api/auth/login", () => {
     expect(data.message).toBe("Invalid email or password");
   });
 
-  // Spec 5.2: under governance the identity provider is the only way in, so the password route refuses every caller
-  // before it reads a credential, even when the boot check that refuses ADMIN_PASSWORD was bypassed, as here.
+  // Under governance the identity provider is the only way in (docs/GOVERNANCE.md#sign-in), so the password route
+  // refuses every caller before it reads a credential, even when the boot check that refuses ADMIN_PASSWORD was
+  // bypassed, as here.
   describe("under governance", () => {
     const DISABLED_MESSAGE = "Password sign-in is disabled: this server signs in through the identity provider only";
     type DisabledBody = { success: boolean; message: string };

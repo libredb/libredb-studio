@@ -1,5 +1,5 @@
 /**
- * GET /api/ready: readiness (spec 7.5, 12.1, docs/GOVERNANCE.md).
+ * GET /api/ready: readiness (docs/GOVERNANCE.md#freshness-and-readiness).
  *
  * The loader, the single flight and the state holder are the real ones; `pg` is the fake of
  * tests/helpers/governance/pg-fake.ts, so each case drives the governance source into the state it names, and every

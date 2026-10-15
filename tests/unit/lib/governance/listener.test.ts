@@ -1,9 +1,9 @@
 /**
- * The governance listener (spec 7.3): one dedicated connection to the governance source, outside the pool, that
- * LISTENs for change notifications and folds them into one reload per 250 ms, pings itself every 60 s on its
- * instance's channel and reconnects when two pings did not come back, destroys a connection whose liveness query does
- * not answer within 5 s, reconnects with full jitter, and leaves the snapshot to the periodic refresh when the server
- * refuses LISTEN.
+ * The governance listener (docs/GOVERNANCE.md#change-notification): one dedicated connection to the governance source,
+ * outside the pool, that LISTENs for change notifications and folds them into one reload per 250 ms, pings itself every
+ * 60 s on its instance's channel and reconnects when two pings did not come back, destroys a connection whose liveness
+ * query does not answer within 5 s, reconnects with full jitter, and leaves the snapshot to the periodic refresh when
+ * the server refuses LISTEN.
  *
  * `pg` is the fake of tests/helpers/governance/pg-fake.ts: the listener's Client is a FakeListenerClient, which
  * delivers a notification only on a channel it LISTENs on, as PostgreSQL does, and the snapshot loads go to a

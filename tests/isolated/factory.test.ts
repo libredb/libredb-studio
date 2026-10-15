@@ -136,7 +136,8 @@ const mockPgPool = {
 
 /**
  * The configuration of every pg Pool a PostgreSQL provider built, oldest first, so the pool an owned
- * provider opens (spec 9.4) is read where the driver receives it. A test that reads it empties it first.
+ * provider opens (docs/GOVERNANCE.md#per-user-providers) is read where the driver receives it. A test that reads it
+ * empties it first.
  */
 const pgPoolConfigs: { min?: number; max?: number; idleTimeoutMillis?: number }[] = [];
 
@@ -511,7 +512,8 @@ describe("createDatabaseProvider", () => {
     expect(provider.type).toBe("oracle");
   });
 
-  // Spec 9.4: the owner reaches OracleProvider and MSSQLProvider, which arm their transaction timeout only when owned.
+  // The owner (docs/GOVERNANCE.md#per-user-providers) reaches OracleProvider and MSSQLProvider, which arm their
+  // transaction timeout only when owned.
   test("hands the execution context's owner to the oracle and mssql providers", async () => {
     const oracle = makeConnection("oracle", { serviceName: "ORCL" } as Partial<DatabaseConnection>);
     const mssql = makeConnection("mssql");
@@ -1479,14 +1481,14 @@ describe("getOrCreateProvider cache isolation", () => {
   });
 });
 
-// ─── Per-user providers (spec 9.4) ───────────────────────────────────────────
+// ─── Per-user providers (docs/GOVERNANCE.md#per-user-providers) ──────────────
 //
 // Under governance every user of a connection gets a provider of their own: the execution context
 // names the session's identity provider subject as `owner`, the cache key frames it, and the provider
 // opens a pool of the user's own share, `ownerPoolMax`. A context without an owner is what every
 // install without governance passes, and the tests above pin that nothing about it changed.
 
-describe("per-user providers (spec 9.4)", () => {
+describe("per-user providers", () => {
   const owned = (owner: string, ownerPoolMax = 3): EditorExecutionContext => ({ owner, ownerPoolMax });
 
   test("two owners resolving one connection get two provider instances", async () => {
@@ -1578,9 +1580,9 @@ describe("per-user providers (spec 9.4)", () => {
   );
 });
 
-// ─── The writable cache's key and lookup, for the transaction route (spec 9.4) ──
+// ─── The writable cache's key and lookup, for the transaction route (docs/GOVERNANCE.md#per-user-providers) ───
 
-describe("editorCacheKey and findCachedProvider (spec 9.4)", () => {
+describe("editorCacheKey and findCachedProvider", () => {
   const owned = (owner: string): EditorExecutionContext => ({ owner, ownerPoolMax: 3 });
 
   test("editorCacheKey is the key getOrCreateProvider caches under, and findCachedProvider answers what is cached there", async () => {
@@ -1655,14 +1657,14 @@ describe("removeProvider", () => {
   });
 });
 
-// ─── removeProvider with an owner scope (spec 9.4) ───────────────────────────
+// ─── removeProvider with an owner scope (docs/GOVERNANCE.md#per-user-providers) ───
 //
 // Under governance one user's disconnect must not tear down another user's providers, so the disconnect route names
 // the caller as the owner and only that owner's entries go. The SSH tunnel is shared by every entry of a connection,
 // so a scoped removal closes it only once nothing serves the connection, as the idle sweep does. The unscoped removal
 // above is what every install without governance calls, and it is unchanged.
 
-describe("removeProvider with an owner scope (spec 9.4)", () => {
+describe("removeProvider with an owner scope", () => {
   const owned = (owner: string): EditorExecutionContext => ({ owner, ownerPoolMax: 3 });
   const TUNNEL: SSHTunnelConfig = {
     enabled: true,
@@ -1764,7 +1766,7 @@ describe("removeProvider with an owner scope (spec 9.4)", () => {
   });
 });
 
-// ─── removeProvider with a key scope (spec 17) ───────────────────────────────
+// ─── removeProvider with a key scope (docs/SECURITY.md, note 0.9) ────────────
 //
 // Without governance every caller of a connection shares its provider, so a disconnect cannot be scoped by owner. The
 // disconnect route resolves the caller's own record instead and removes only the entries that record's key names
@@ -1772,7 +1774,7 @@ describe("removeProvider with an owner scope (spec 9.4)", () => {
 // profile framed onto it. The key frames the server and the credentials, so naming another user's connection id closes
 // nothing of theirs. The SSH tunnel serves every entry of the connection, so it closes only once nothing serves it.
 
-describe("removeProvider with a key scope (spec 17)", () => {
+describe("removeProvider with a key scope", () => {
   const TUNNEL: SSHTunnelConfig = {
     enabled: true,
     host: "bastion.example.com",
@@ -1870,7 +1872,7 @@ describe("removeProvider with a key scope (spec 17)", () => {
   );
 });
 
-// ─── Teardown of an owned provider (spec 9.4) ────────────────────────────────
+// ─── Teardown of an owned provider (docs/GOVERNANCE.md#per-user-providers) ───
 //
 // When a reload of the governance snapshot takes a grant away or changes it, the loader removes that subject's
 // providers of the connection (src/lib/governance/snapshot.ts), and an owned provider is torn down rather than only
@@ -1879,7 +1881,7 @@ describe("removeProvider with a key scope (spec 17)", () => {
 // pg's `end()` waits for every checked-out client and a client stuck in a statement never comes back. A provider every
 // caller shares keeps the path the tests above pin.
 
-describe("teardown of an owned provider (spec 9.4)", () => {
+describe("teardown of an owned provider", () => {
   const owned = (owner: string): EditorExecutionContext => ({ owner, ownerPoolMax: 3 });
   /** Lets every pending promise settle: bun's fake timers leave setImmediate real. */
   const settle = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
@@ -3303,9 +3305,9 @@ describe("single-writer file reuse", () => {
   });
 
   test("a single-writer file keeps one handle for every owner, because a provider per user would be a second handle", async () => {
-    // Per-user providers stop at the engines that keep one handle per file (spec 9.4): a second owner's provider
-    // would be a second handle on the file, which this engine refuses (the first test of this group) and DuckDB
-    // corrupts. So the owner is left out of the key, and every owner is served the one open handle.
+    // Per-user providers stop at the engines that keep one handle per file (docs/GOVERNANCE.md#per-user-providers): a
+    // second owner's provider would be a second handle on the file, which this engine refuses (the first test of this
+    // group) and DuckDB corrupts. So the owner is left out of the key, and every owner is served the one open handle.
     const conn = libredbConn();
     const alice = await getOrCreateProvider(conn, {}, { owner: "alice-subject", ownerPoolMax: 3 });
 
