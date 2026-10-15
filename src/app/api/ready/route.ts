@@ -7,7 +7,6 @@ import {
   SUPPORTED_CONTRACT_VERSIONS,
 } from "@/lib/governance/contract";
 import { governanceFreshness } from "@/lib/governance/freshness";
-import { requestGovernanceLoad } from "@/lib/governance/start";
 import { governanceState } from "@/lib/governance/state";
 import type { z } from "zod";
 
@@ -29,9 +28,10 @@ const NO_STORE = { "Cache-Control": "no-store" } as const;
  * reach the status page, and 503 `loading`, `misconfigured` or `incompatible`, the last two with a `detail` that names
  * the object or privilege, or both version sets.
  *
- * In every state but `ok` it also asks for a single-flight load and does not wait for it, so an instance that has no
- * usable snapshot recovers as soon as the governance source answers. It starts none while the snapshot is fresh, so
- * an anonymous caller cannot make Studio reload the governance source on every request.
+ * It only reads the state and never starts a load, so an anonymous caller cannot keep loads running back to back
+ * during an outage: the refresher of `startGovernance()` already retries while the snapshot is absent or old. The
+ * `detail` holds Studio's own words only (the contract object with its SQLSTATE, the keyring variable, or both version
+ * sets); the server's or the keyring loader's message stays in the log.
  */
 export function GET() {
   if (!governanceEnabled()) {
@@ -42,7 +42,6 @@ export function GET() {
     return NextResponse.json(body, { status: READINESS_WITHOUT_GOVERNANCE.httpStatus, headers: NO_STORE });
   }
   const freshness = governanceFreshness();
-  if (freshness !== "ok") void requestGovernanceLoad();
   const { snapshot, failure } = governanceState();
   const answer = READINESS_BY_FRESHNESS[freshness];
   // A version is active only while the snapshot that negotiated it is served: never while loading, and never while
@@ -56,6 +55,6 @@ export function GET() {
     },
   };
   // Only these two states stop serving for a cause an operator must fix, and their failure names it.
-  if (freshness === "misconfigured" || freshness === "incompatible") body.detail = failure?.detail;
+  if (freshness === "misconfigured" || freshness === "incompatible") body.detail = failure?.publicDetail;
   return NextResponse.json(body, { status: answer.httpStatus, headers: NO_STORE });
 }

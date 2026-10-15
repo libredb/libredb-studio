@@ -301,13 +301,14 @@ The connection behind `GOVERNANCE_POSTGRES_URL` must therefore reach the primary
 - `status` is `ready` only when governance is off.
   In governance mode it is `ok`, `degraded`, `loading`, `misconfigured` or `incompatible`.
 - `contract.supported` lists the versions Studio supports, and `contract.active` is the version it negotiated, or null.
-- `detail` is present when there is something to name: the missing object or privilege, or both version sets.
+- `detail` is present when there is something to name, in Studio's own words only: the contract object with its SQLSTATE, such as `bridge.connections_v1: 42501`, the variable `GOVERNANCE_PRIVATE_KEYS_FILE` for a keyring that does not load, or both version sets.
+  The route is public, so the server's or the keyring loader's message, which can carry file paths and role names, stays in the log.
 - `contract.active` is null whenever no snapshot is served: while loading, misconfigured or incompatible, even when an older snapshot is kept for the admin status.
 
 `GET /api/ready` is the readiness probe, and liveness stays on `GET /api/db/health`, which depends on nothing.
 The route reads the in-process state only and never opens a user database.
-In every state but `ok` it also asks for a single-flight load of the snapshot and answers without waiting for it, so a probe joins the refresher's load instead of starting a second one.
-While the snapshot is fresh it starts no load, so an anonymous caller cannot make Studio reload the governance source at will.
+It only reads the state and never starts a load, so an anonymous caller cannot keep loads running during an outage.
+The background refresher already retries every 4 to 6 seconds while the snapshot is absent or old.
 
 The manifest publishes the body as JSON Schema with an example for each status.
 A background refresher retries every 5 seconds with jitter while the snapshot is absent or expired, so an instance that started before PostgreSQL becomes ready on its own, and the process never exits because the database is down.

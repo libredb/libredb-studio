@@ -194,7 +194,7 @@ const READINESS_EXAMPLES = [
   {
     status: "misconfigured",
     contract: { supported: [1], active: null },
-    detail: "permission denied for view bridge.grants_v1 (SQLSTATE 42501)",
+    detail: "bridge.grants_v1: 42501",
   },
   {
     status: "incompatible",

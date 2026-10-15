@@ -142,6 +142,7 @@ describe("governanceStatus", () => {
       kind: "transient",
       code: "ECONNREFUSED",
       detail: "connect ECONNREFUSED 10.0.0.5:5432",
+      publicDetail: "ECONNREFUSED",
     });
 
     const status = governanceStatus(T + 150_000);

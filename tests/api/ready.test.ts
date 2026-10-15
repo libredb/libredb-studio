@@ -9,7 +9,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, mock, setSystemTime,
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
-import { keyringFileOf, removeKeyringFiles, testKey } from "../helpers/governance/keyring-file";
+import { keyringFileOf, removeKeyringFiles, testKey, writeKeyringFile } from "../helpers/governance/keyring-file";
 import {
   answerSnapshot,
   contractRow,
@@ -122,30 +122,79 @@ describe("GET /api/ready", () => {
     expect(connections).toBe(1);
   });
 
-  test("governance on with no successful load answers 503 loading and starts one load", async () => {
-    let open = (): void => {};
-    const held = new Promise<void>((resolve) => {
-      open = resolve;
-    });
-    fakePg.connecting = async () => {
-      connections += 1;
-      await held;
-    };
-
+  test("governance on with no successful load answers 503 loading", async () => {
     const first = await ready();
-    // The route answered while the load it started still waits for the governance source.
     expect(first.status).toBe(503);
     expect(first.body).toEqual({ status: "loading", contract: { supported: [1], active: null } });
-    expect(connections).toBe(1);
 
-    // A second probe joins the load under way instead of starting another.
-    expect((await ready()).body.status).toBe("loading");
-    expect(connections).toBe(1);
-
-    open();
     await requestGovernanceLoad();
-    expect(connections).toBe(1);
     expect((await ready()).body).toEqual({ status: "ok", contract: { supported: [1], active: 1 } });
+  });
+
+  test("a request in every state other than ok starts no governance load", async () => {
+    /** Answers once and lets every promise the answer could have started settle, then counts the connections. */
+    const loadsStartedBy = async (expected: ReadinessBody["status"]): Promise<number> => {
+      const before = connections;
+      expect((await ready()).body.status).toBe(expected);
+      await settle();
+      return connections - before;
+    };
+
+    // loading: nothing has loaded yet.
+    expect(await loadsStartedBy("loading")).toBe(0);
+    // degraded, then unavailable, which answers as degraded.
+    await requestGovernanceLoad();
+    up = false;
+    age(31_000);
+    await requestGovernanceLoad();
+    expect(await loadsStartedBy("degraded")).toBe(0);
+    age(90_000);
+    expect(await loadsStartedBy("degraded")).toBe(0);
+    // misconfigured.
+    up = true;
+    fakePg.respond = async (sql) => {
+      if (sql.includes("grants_v1")) throw pgError("42501", "permission denied for view grants_v1");
+      return answerSnapshot(EMPTY_SOURCE)(sql);
+    };
+    await requestGovernanceLoad();
+    expect(await loadsStartedBy("misconfigured")).toBe(0);
+    // incompatible.
+    fakePg.respond = answerSnapshot({ ...EMPTY_SOURCE, contract: [contractRow(2)] });
+    await requestGovernanceLoad();
+    expect(await loadsStartedBy("incompatible")).toBe(0);
+  });
+
+  test("the detail of a misconfigured state names the object and SQLSTATE and never the server or keyring message", async () => {
+    fakePg.respond = async (sql) => {
+      if (sql.includes("connections_v1")) {
+        throw pgError("42501", "permission denied for view connections_v1 as role libredb_studio_admin");
+      }
+      return answerSnapshot(EMPTY_SOURCE)(sql);
+    };
+    await requestGovernanceLoad();
+
+    const denied = await ready();
+    expect(denied.status).toBe(503);
+    expect(denied.body).toEqual({
+      status: "misconfigured",
+      contract: { supported: [1], active: null },
+      detail: "bridge.connections_v1: 42501",
+    });
+
+    // A keyring that does not load is named by its variable, never by the loader's message and its file path.
+    const emptyKeyring = writeKeyringFile({ version: 1, keys: [] });
+    process.env.GOVERNANCE_PRIVATE_KEYS_FILE = emptyKeyring;
+    resetGovernanceKeyring();
+    await requestGovernanceLoad();
+
+    const keyring = await ready();
+    expect(keyring.status).toBe(503);
+    expect(keyring.body).toEqual({
+      status: "misconfigured",
+      contract: { supported: [1], active: null },
+      detail: "GOVERNANCE_PRIVATE_KEYS_FILE",
+    });
+    expect(JSON.stringify(keyring.body)).not.toContain(emptyKeyring);
   });
 
   test("after one successful load a database outage answers 200 degraded", async () => {
@@ -157,9 +206,9 @@ describe("GET /api/ready", () => {
     const degraded = await ready();
     expect(degraded.status).toBe(200);
     expect(degraded.body).toEqual({ status: "degraded", contract: { supported: [1], active: 1 } });
-    // The route asked for another load, which failed again without changing the answer.
+    // The route only reads the state: the refresher, not the probe, retries the load.
     await settle();
-    expect(connections).toBe(3);
+    expect(connections).toBe(2);
 
     // Past GOVERNANCE_MAX_STALENESS_MS the snapshot is unavailable, still answered as degraded with 200, so an
     // administrator can reach the status page.
@@ -182,7 +231,7 @@ describe("GET /api/ready", () => {
     expect(answer.body).toEqual({
       status: "misconfigured",
       contract: { supported: [1], active: null },
-      detail: "bridge.grants_v1: permission denied for view grants_v1 (SQLSTATE 42501)",
+      detail: "bridge.grants_v1: 42501",
     });
   });
 
