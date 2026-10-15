@@ -222,4 +222,27 @@ describe("the generated request line against a hostile name", () => {
     expect(run('has"quote')).toBe("accepted:current");
     expect(run("has#hash")).toBe("accepted:current");
   });
+
+  /**
+   * The path whose device name is empty.
+   *
+   * MEASURED while covering this branch, and the first attempt at this test was wrong: an EMPTY
+   * path never arrives here at all. `generateTableQuery` reads the last segment through
+   * `objectSegment` before it reaches any dialect, and that throws on `[]`, so the only address
+   * that reaches the generator with no device is one whose segment is the empty string. The branch
+   * is therefore reachable, and reachable by exactly one shape.
+   *
+   * It answers the agent-wide `/current` with a comment saying what is missing, rather than
+   * building `GET //current`: that is a line the guard refuses as an absolute URL, which would name
+   * the wrong mistake to whoever clicked.
+   */
+  test("an empty device name asks the agent's own current, with the gap said out loud", () => {
+    expect(generateTableQuery([""], capabilities)).toBe("# A request names a device from the tree.\nGET /current");
+    // And it is a line the guard accepts, which is the point of not writing `GET //current`.
+    expect(guardRequestLine(generateTableQuery([""], capabilities), { rowCap: 10_000, knownDevices: new Set() }).op).toBe(
+      "current",
+    );
+    // The empty address is refused one layer up, before any dialect is asked.
+    expect(() => generateTableQuery([], capabilities)).toThrow(/no segments/);
+  });
 });

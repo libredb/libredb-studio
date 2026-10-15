@@ -385,3 +385,68 @@ describe("sorting across a digit boundary", () => {
     ]);
   });
 });
+
+describe("a DataSet entry the captures do not hold", () => {
+  /**
+   * CONSTRUCTED, and said so: no capture in `tests/fixtures/mtconnect/` holds either shape. The
+   * pinned agent's demo publishes DataSets (`VariableDataSet`, `AssetCountDataSet`, whose plain
+   * `<Entry key=...>text</Entry>` IS covered by `current.xml`) but it publishes no entry marked
+   * removed and no TABLE representation at all: measured, `<Cell` appears in zero of the twenty-two
+   * captures. So the input here is an `MtcObservation` built by hand rather than a document claimed
+   * to have come off an agent, which is the honest way round: the type is this module's own, and
+   * the two shapes are the ones MTConnect Part 3 defines for a removed entry and for a table cell.
+   *
+   * The alternative is to teach `docker/mtconnect-init/adapter.py` to emit both and re-capture,
+   * which would make these real answers. It also re-dates every capture, so it is a change to
+   * propose rather than to slip in beside a coverage fix.
+   */
+  const observation = (children: readonly { name: string; attributes: Record<string, string>; children: readonly never[]; text: string }[]) => ({
+    element: "VariableDataSet",
+    attributes: { dataItemId: "Lp1CommonVariable", timestamp: "2026-10-05T13:27:22.837012Z", sequence: "104" },
+    text: "",
+    children,
+  });
+  const entry = (attributes: Record<string, string>, text = "", children: readonly never[] = []) => ({
+    name: "Entry",
+    attributes,
+    children,
+    text,
+  });
+
+  test("an entry marked removed reads as null rather than as an empty value", () => {
+    const row = buildRow(observation([entry({ key: "100", removed: "true" }), entry({ key: "101" }, "7")]), model());
+    // null, not "": the agent is saying the key is gone, which is not the same as holding no text.
+    expect(JSON.parse(row?.value ?? "{}")).toEqual({ "100": null, "101": "7" });
+  });
+
+  test("an entry holding cells reads as a row of its cells, keyed by cell", () => {
+    const cell = (key: string, text: string) => ({ name: "Cell", attributes: { key }, children: [], text });
+    const row = buildRow(
+      observation([
+        { name: "Entry", attributes: { key: "T1" }, children: [cell("LENGTH", "120"), cell("DIAMETER", "12")], text: "" },
+        entry({ key: "T2" }, "plain"),
+      ]),
+      model(),
+    );
+    // A cell with no key is dropped rather than keyed by position: position is not a name.
+    expect(JSON.parse(row?.value ?? "{}")).toEqual({ T1: { LENGTH: "120", DIAMETER: "12" }, T2: "plain" });
+  });
+
+  test("a cell with no key of its own is left out", () => {
+    const row = buildRow(
+      observation([
+        {
+          name: "Entry",
+          attributes: { key: "T1" },
+          children: [
+            { name: "Cell", attributes: { key: "LENGTH" }, children: [], text: "120" },
+            { name: "Cell", attributes: {}, children: [], text: "orphan" },
+          ],
+          text: "",
+        },
+      ]),
+      model(),
+    );
+    expect(JSON.parse(row?.value ?? "{}")).toEqual({ T1: { LENGTH: "120" } });
+  });
+});
