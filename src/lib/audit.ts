@@ -117,6 +117,12 @@ export type AuditReason =
    * Refused before the body is read, so the record names no submitted account and the actor is anonymous.
    */
   | "password_login_disabled"
+  /**
+   * Under governance (docs/GOVERNANCE.md), a request named a connection the session's identity provider subject holds
+   * no grant on: one that does not exist, one granted to someone else, an expired grant or a row Studio did not admit,
+   * which the 404 CONNECTION_NOT_FOUND it answers leaves indistinguishable. The record names the id that was asked for.
+   */
+  | "connection_not_granted"
   // Passkey sign-in and management (#785). Each code has one meaning, so an operator can tell a
   // cloned authenticator from a replay or a stale cookie without the export.
   /**

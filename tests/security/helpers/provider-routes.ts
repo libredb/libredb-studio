@@ -1,6 +1,7 @@
 /**
  * The route inventory of the security tests: every route handler under `src/app/api/`, the routes that reach no
- * database or LLM provider with the reason for each, and the provider-reaching rest.
+ * database or LLM provider with the reason for each, and the provider-reaching rest, split into the routes that turn a
+ * request body into a connection and the others, each with its reason.
  *
  * Moved unchanged out of tests/security/route-auth.test.ts, which proves every provider route requires a session, so
  * the governance security tests share the same inventory instead of keeping a second one that could drift from it.
@@ -74,7 +75,7 @@ export const ROUTES_WITHOUT_A_PROVIDER: Record<string, string> = {
   "auth/oidc/callback": "completes the OIDC exchange that CREATES the session (GET, no POST export)",
   "auth/oidc/login": "starts the OIDC redirect before a session exists (GET, no POST export)",
   "connections/managed":
-    "reads seed config metadata and the CapRover discovery export; never opens a database connection, and its only network use is a bare node:net reachability probe for built-image candidates when SEED_DISCOVERY_PATH is set (GET, no POST export)",
+    "reads seed config metadata and the CapRover discovery export, or under governance the in-process governance snapshot; never opens a database connection, and its only network use is a bare node:net reachability probe for built-image candidates when SEED_DISCOVERY_PATH is set (GET, no POST export)",
   "connections/policy":
     "answers whether custom connections are allowed, from process.env alone (ALLOW_CUSTOM_CONNECTIONS); no database or LLM provider (GET, no POST export). It requires a session, a bare getSession() answering the session-required 401 like connections/managed, and tests/api/seed/policy-route.test.ts proves an unauthenticated caller learns nothing about the policy",
   health:
@@ -87,3 +88,57 @@ export const ROUTES_WITHOUT_A_PROVIDER: Record<string, string> = {
 };
 
 export const PROVIDER_ROUTES = ALL_ROUTES.filter(([key]) => !(key in ROUTES_WITHOUT_A_PROVIDER));
+
+/**
+ * The provider routes that pass the request body to `resolveConnection`, directly or through `handleObjectRequest` in
+ * src/lib/api/object-route.ts, each with a minimal well-formed body: the fields the route reads beside the
+ * connection. A test adds a `connectionId` or an inline `connection` to it, so every route that turns a request into
+ * a connection is sent both, and the inventory test in tests/security/governance-grants.test.ts fails until a new
+ * provider route is classified here or in `PROVIDER_ROUTES_WITHOUT_A_CONNECTION_BODY`.
+ */
+export const CONNECTION_ROUTES: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
+  "db/cancel": { queryId: "governance-probe" },
+  "db/health": {},
+  "db/keys/scan": { cursor: "0" },
+  "db/maintenance": { type: "analyze", target: "orders" },
+  "db/maintenance/preview": { type: "analyze", target: "orders" },
+  "db/monitoring": {},
+  "db/multi-query": { sql: "SELECT 1; SELECT 2" },
+  "db/objects/containers": {},
+  "db/objects/counts": { container: ["public"] },
+  "db/objects/describe": { path: ["public", "orders"], kind: "table" },
+  "db/objects/edit-apply": { plan: { kind: "view" }, planToken: "governance-probe" },
+  "db/objects/edit-plan": { path: ["public", "orders_view"], kind: "view", partId: "definition", text: "SELECT 1" },
+  "db/objects/inventory": {},
+  "db/objects/list": { container: ["public"], kind: "table" },
+  "db/objects/search": { term: "orders" },
+  "db/objects/source": { path: ["public", "orders_view"], kind: "view" },
+  "db/pool-stats": {},
+  "db/profile": { tablePath: ["public", "orders"], columns: ["id"] },
+  "db/provider-meta": {},
+  "db/query": { sql: "SELECT 1" },
+  "db/test-connection": {},
+  "db/transaction": { action: "begin" },
+};
+
+/**
+ * Every other provider route, with the reason it passes no request body to `resolveConnection`. An entry needs a
+ * reason, as `ROUTES_WITHOUT_A_PROVIDER` does, and the inventory test fails when an entry names no provider route.
+ */
+export const PROVIDER_ROUTES_WITHOUT_A_CONNECTION_BODY: Readonly<Record<string, string>> = {
+  "admin/fleet-health":
+    "resolves each item of its `connections` list through resolveConnection on its own and reports a refusal as that item's error, so it never answers one connection's refusal for the whole request (tests/api/admin/fleet-health.test.ts)",
+  "agent/classify":
+    "takes only a connectionId, which it resolves as a seed id, never an inline connection; under governance it answers as with the agent switched off (tests/security/governance-holds.test.ts)",
+  "agent/runs":
+    "takes only a connectionId, which it resolves as a seed id, never an inline connection; under governance it answers as with the agent switched off (tests/security/governance-holds.test.ts)",
+  "agent/runs/[runId]/handover":
+    "resolves only the connectionId the run recorded, under the run's own actor, and reads no connection from the request; under governance it answers as with the agent switched off (tests/security/governance-holds.test.ts)",
+  "ai/describe-schema": "reaches only an LLM: the schema it describes arrives as text, and no connection is resolved",
+  "ai/explain": "reaches only an LLM: the statement and the plan arrive as text, and no connection is resolved",
+  "ai/query-safety": "reaches only an LLM: the statement arrives as text, and no connection is resolved",
+  "db/disconnect":
+    "reads no connection body: it removes the cached providers of the connectionId it names and builds none (tests/api/db/disconnect.test.ts)",
+  "mcp/token":
+    "mints an MCP token for the session's own user and takes no connection; under governance MCP is held off, so it mints none (tests/unit/mcp/config.test.ts)",
+};

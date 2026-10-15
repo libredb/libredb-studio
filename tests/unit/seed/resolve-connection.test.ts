@@ -1,10 +1,16 @@
-import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, setSystemTime, spyOn } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "path";
 import type { DatabaseConnection } from "@/lib/types";
 import type { ManagedConnection } from "@/lib/seed/types";
 import { postgresService, writeDiscoveryExport, type DiscoveryExportFixture } from "../../helpers/discovery-fixture";
+import {
+  admittedConnection,
+  grantedSnapshot,
+  READ_CREDENTIAL,
+  WRITE_CREDENTIAL,
+} from "../../helpers/governance/granted-snapshot";
 
 const FIXTURES = path.resolve(__dirname, "../../fixtures/seed-connections");
 process.env.SEED_CONFIG_PATH = path.join(FIXTURES, "multi-role-config.yaml");
@@ -13,12 +19,15 @@ process.env.USER_MYSQL_PASS = "user-secret";
 process.env.SHARED_PG_PASS = "shared-secret";
 process.env.BOTH_PG_PASS = "both-secret";
 
+import * as seedIndex from "@/lib/seed";
 import { getManagedConnections, resetCache } from "@/lib/seed";
 import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
 import { resetDiscoveryCache } from "@/lib/seed/discovery-loader";
 import * as vaultClient from "@/lib/seed/vault-client";
 import { logger } from "@/lib/logger";
 import { resetLiteralModeNotices, resetPlaintextWarnings } from "@/lib/seed/credential-resolver";
+import { clearRateLimitState } from "@/lib/api/rate-limit";
+import { recordGovernanceFailure, recordGovernanceSnapshot, resetGovernanceState } from "@/lib/governance/state";
 
 describe("resolve-connection", () => {
   beforeEach(() => {
@@ -418,5 +427,237 @@ describe("resolve-connection with SEED_LITERAL_VALUES toggled on a warm operator
     expect((await resolveConnection({ connectionId: "seed:vault-ref" }, ADMIN)).password).toBe(VAULT_REFERENCE);
     expect(readVaultSecret).toHaveBeenCalledTimes(1);
     expect(plaintextWarnings()).toHaveLength(1);
+  });
+});
+
+/*
+  Governance mode (docs/GOVERNANCE.md): a `seed:` id names a connection of the governance source, and it resolves only
+  through a grant the session's identity provider subject holds in the snapshot, checked against expiry with Studio's
+  own clock. A connection that does not exist and one granted to someone else answer the same 404, decided from the
+  caller's own grants alone, so nothing tells a caller which ids exist. The snapshot is built directly
+  (tests/helpers/governance/granted-snapshot.ts) and the clock is frozen, so each case states its grants and its time.
+*/
+describe("resolve-connection under governance", () => {
+  const T = Date.parse("2026-10-15T08:00:00.000Z");
+  const ORDERS = admittedConnection("orders", { write: true });
+  const BILLING = admittedConnection("billing");
+  const ALICE = { role: "user", username: "alice@example.com", idpSubject: "alice-subject" };
+  const BOB = { role: "admin", username: "bob@example.com", idpSubject: "bob-subject" };
+  const NOT_FOUND = {
+    name: "SeedConnectionError",
+    message: "Connection not found: it does not exist or is not granted to you",
+    statusCode: 404,
+    code: "CONNECTION_NOT_FOUND",
+  };
+  let unfiltered: ReturnType<typeof spyOn>;
+  let readVaultSecret: ReturnType<typeof spyOn>;
+  let log: ReturnType<typeof spyOn>;
+  let warn: ReturnType<typeof spyOn>;
+
+  /** The audit lines written to stdout so far, parsed. */
+  const auditLines = () =>
+    (log.mock.calls as unknown[][]).map((call) => JSON.parse(String(call[0])) as Record<string, unknown>);
+
+  const failureOf = (attempt: Promise<unknown>) => attempt.catch((thrown: unknown) => thrown);
+
+  beforeEach(() => {
+    process.env.GOVERNANCE_SOURCE = "postgres";
+    delete process.env.ALLOW_CUSTOM_CONNECTIONS;
+    setSystemTime(new Date(T));
+    resetCache();
+    resetGovernanceState();
+    clearRateLimitState();
+    recordGovernanceSnapshot(
+      grantedSnapshot(
+        [ORDERS, BILLING],
+        [
+          { subject: ALICE.idpSubject, connection: ORDERS, level: "write", expiresAt: T + 60_000 },
+          { subject: ALICE.idpSubject, connection: BILLING, level: "read" },
+          { subject: BOB.idpSubject, connection: BILLING, level: "read" },
+        ],
+      ),
+    );
+    unfiltered = spyOn(seedIndex, "getSeedConnectionByIdUnfiltered");
+    readVaultSecret = spyOn(vaultClient, "readVaultSecret").mockResolvedValue("vault-resolved-secret");
+    log = spyOn(console, "log").mockImplementation(() => {});
+    warn = spyOn(logger, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    unfiltered.mockRestore();
+    readVaultSecret.mockRestore();
+    log.mockRestore();
+    warn.mockRestore();
+    setSystemTime();
+    resetGovernanceState();
+    clearRateLimitState();
+    delete process.env.GOVERNANCE_SOURCE;
+  });
+
+  it("governance: an unknown id and a non-granted id answer the same 404 CONNECTION_NOT_FOUND and getSeedConnectionByIdUnfiltered is never called", async () => {
+    // Bob holds no grant on orders, which exists; no connection has the id no-such-connection.
+    const notGranted = await failureOf(resolveConnection({ connectionId: "seed:orders" }, BOB));
+    const unknown = await failureOf(resolveConnection({ connectionId: "seed:no-such-connection" }, BOB));
+    // The same answer for an inline record that claims the id, which resolves as the id.
+    const claimed = await failureOf(
+      resolveConnection(
+        { connection: { id: "seed:orders", name: "Copy", type: "postgres", createdAt: new Date(T) } },
+        BOB,
+      ),
+    );
+
+    for (const error of [notGranted, unknown, claimed]) {
+      expect(error).toBeInstanceOf(SeedConnectionError);
+      expect(error).toMatchObject(NOT_FOUND);
+    }
+    expect(unfiltered).not.toHaveBeenCalled();
+  });
+
+  it("governance: a read grant gets the read credential, a write grant the write credential, and credential read always the read credential", async () => {
+    const credential = (connection: unknown) => {
+      const { id, user, password, grantLevel } = connection as Record<string, unknown>;
+      return { id, user, password, grantLevel };
+    };
+
+    expect(credential(await resolveConnection({ connectionId: "seed:billing" }, ALICE))).toEqual({
+      id: "seed:billing",
+      ...READ_CREDENTIAL,
+      grantLevel: "read",
+    });
+    expect(credential(await resolveConnection({ connectionId: "seed:orders" }, ALICE))).toEqual({
+      id: "seed:orders",
+      ...WRITE_CREDENTIAL,
+      grantLevel: "write",
+    });
+    expect(credential(await resolveConnection({ connectionId: "seed:orders" }, ALICE, { credential: "read" }))).toEqual(
+      { id: "seed:orders", ...READ_CREDENTIAL, grantLevel: "read" },
+    );
+    expect(
+      credential(await resolveConnection({ connectionId: "seed:orders" }, ALICE, { credential: "grant" })),
+    ).toEqual({ id: "seed:orders", ...WRITE_CREDENTIAL, grantLevel: "write" });
+    expect(unfiltered).not.toHaveBeenCalled();
+  });
+
+  it("governance: an expired grant answers 404 without a reload", async () => {
+    expect((await resolveConnection({ connectionId: "seed:orders" }, ALICE)).user).toBe(WRITE_CREDENTIAL.user);
+
+    // The same snapshot object, a minute later: expiry fires no notification, so the clock alone decides.
+    setSystemTime(new Date(T + 60_000));
+
+    expect(await failureOf(resolveConnection({ connectionId: "seed:orders" }, ALICE))).toMatchObject(NOT_FOUND);
+    expect((await resolveConnection({ connectionId: "seed:billing" }, ALICE)).user).toBe(READ_CREDENTIAL.user);
+  });
+
+  it("governance: a miss is audited as permission_denied with reason connection_not_granted, metered on the anon bucket", async () => {
+    // RATE_LIMIT_ANON_MAX is 5 by default: five lines, one more for the request that trips the bucket, then none.
+    for (let attempt = 0; attempt < 7; attempt += 1) {
+      // oxlint-disable-next-line no-await-in-loop -- each miss spends the bucket in turn.
+      expect(await failureOf(resolveConnection({ connectionId: "seed:orders" }, BOB))).toMatchObject(NOT_FOUND);
+    }
+
+    const lines = auditLines();
+    expect(lines).toHaveLength(6);
+    for (const line of lines) {
+      expect(line).toMatchObject({
+        schema: "libredb.audit.v1",
+        event: "permission_denied",
+        action: "denied",
+        outcome: "failure",
+        actor: "bob@example.com",
+        route: "governance/connection",
+        reason: "connection_not_granted",
+        connection: "orders",
+      });
+    }
+    // The bucket is keyed on the account: another account's misses are audited from its own budget.
+    expect(await failureOf(resolveConnection({ connectionId: "seed:crm" }, ALICE))).toMatchObject(NOT_FOUND);
+    expect(auditLines()).toHaveLength(7);
+    expect(auditLines()[6]).toMatchObject({ actor: "alice@example.com", connection: "crm" });
+  });
+
+  it("governance: a broken audit sink still answers the 404", async () => {
+    log.mockImplementation(() => {
+      throw new Error("audit sink unavailable");
+    });
+    const error = spyOn(logger, "error").mockImplementation(() => {});
+    try {
+      expect(await failureOf(resolveConnection({ connectionId: "seed:orders" }, BOB))).toMatchObject(NOT_FOUND);
+      expect(error).toHaveBeenCalledWith("Failed to record permission_denied audit event", expect.any(Error), {
+        route: "seed/resolve-connection",
+      });
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it("governance: a found connection is not audited", async () => {
+    await resolveConnection({ connectionId: "seed:billing" }, BOB);
+    expect(auditLines()).toEqual([]);
+  });
+
+  it("governance: a snapshot that cannot be served answers 503 GOVERNANCE_UNAVAILABLE for every seed id, audited as no miss", async () => {
+    recordGovernanceFailure({ at: T, kind: "misconfigured", code: "42501", detail: "bridge.grants_v1: denied" });
+
+    for (const connectionId of ["seed:billing", "seed:orders", "seed:no-such-connection"]) {
+      // oxlint-disable-next-line no-await-in-loop -- one request at a time, as a browser sends them.
+      const error = await failureOf(resolveConnection({ connectionId }, BOB));
+      expect(error).toBeInstanceOf(SeedConnectionError);
+      expect(error).toMatchObject({
+        message: "Connection access is unavailable while this server cannot read its governance source",
+        statusCode: 503,
+        code: "GOVERNANCE_UNAVAILABLE",
+      });
+    }
+    expect(auditLines()).toEqual([]);
+    expect(unfiltered).not.toHaveBeenCalled();
+  });
+
+  it("governance: an inline connection keeps the 403 CUSTOM_CONNECTIONS_DISABLED, also while the snapshot cannot be served", async () => {
+    const own: DatabaseConnection = {
+      id: "my-own",
+      name: "Platform database",
+      type: "postgres",
+      host: "platform-postgres",
+      createdAt: new Date(T),
+    };
+    const refusal = { statusCode: 403, code: "CUSTOM_CONNECTIONS_DISABLED" };
+
+    expect(await failureOf(resolveConnection({ connection: own }, ALICE))).toMatchObject(refusal);
+    resetGovernanceState();
+    expect(await failureOf(resolveConnection({ connection: own }, ALICE))).toMatchObject(refusal);
+  });
+
+  it("governance: an inline record that claims a granted id resolves to the governed record, not the caller's copy", async () => {
+    const copy: DatabaseConnection = {
+      id: "seed:billing",
+      name: "My copy",
+      type: "postgres",
+      host: "attacker.example.com",
+      password: "typed-by-the-caller",
+      createdAt: new Date(T),
+    };
+
+    const result = await resolveConnection({ connection: copy }, ALICE);
+
+    expect(result.host).toBe("billing.db.example.internal");
+    expect(result.password).toBe(READ_CREDENTIAL.password);
+  });
+
+  it("governance: a value the control plane set is handed over as written: a Vault reference in it is never read", async () => {
+    const VAULT_REFERENCE = "${vault:secret/data/x#y}";
+    const vaulted = admittedConnection("vaulted", { extra: { password: VAULT_REFERENCE } });
+    recordGovernanceSnapshot(
+      grantedSnapshot([vaulted], [{ subject: ALICE.idpSubject, connection: vaulted, level: "read" }], T),
+    );
+
+    expect((await resolveConnection({ connectionId: "seed:vaulted" }, ALICE)).password).toBe(VAULT_REFERENCE);
+    expect(readVaultSecret).not.toHaveBeenCalled();
+  });
+
+  it("governance: a session without an identity provider subject resolves nothing", async () => {
+    const error = await failureOf(
+      resolveConnection({ connectionId: "seed:billing" }, { role: "admin", username: "admin" }),
+    );
+    expect(error).toMatchObject(NOT_FOUND);
   });
 });
