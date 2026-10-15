@@ -58,6 +58,7 @@ export function mcpUrlFor(hostname, port) {
  * - NODE_EXTRA_CA_CERTS: read by Node itself when server.js starts (docs/OIDC.md)
  * - GOOGLE_APPLICATION_CREDENTIALS: src/lib/db/providers/document/firestore/google-credentials.ts and
  *   src/lib/db/providers/sql/bigquery/auth.ts, each read only on its server-credentials opt-in
+ * - GOVERNANCE_PRIVATE_KEYS_FILE: src/lib/governance/keyring.ts, read only under governance
  *
  * The guard in tests/unit/launcher-utils.test.ts fails when .env.example documents a *_PATH, *_DIR
  * or *_FILE variable that is in neither this list nor URL_PATH_VARIABLES.
@@ -75,6 +76,7 @@ export const PATH_VARIABLES = Object.freeze([
   "ORACLE_CLIENT_LIB_DIR",
   "NODE_EXTRA_CA_CERTS",
   "GOOGLE_APPLICATION_CREDENTIALS",
+  "GOVERNANCE_PRIVATE_KEYS_FILE",
 ]);
 
 /**

@@ -6,22 +6,31 @@
  * preflight refuses to start on any of them with one banner that names every variable to fix, and never prints a
  * secret. With `GOVERNANCE_SOURCE` unset it checks nothing, so a Studio without governance starts as before.
  */
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { randomBytes } from "node:crypto";
+import path from "node:path";
 import { customConnectionsAllowed } from "@/lib/config/custom-connections";
 import { governanceEnabled, governanceSource } from "@/lib/governance/config";
+import { resetGovernanceKeyring } from "@/lib/governance/keyring";
 import { verifyGovernanceEnvAtBoot } from "@/lib/governance/preflight";
 import { readMcpSwitch } from "@/lib/mcp/config";
+import { keyringFileOf, removeKeyringFiles, testKey, writeKeyringFile } from "../../../helpers/governance/keyring-file";
 
 /** Recognisable on sight as test values; the banner must never carry one. */
 const PASSWORD = "example-only-password-in-a-test";
 const LAUNCH_SECRET = "example-only-launch-secret-in-a-test-0123456789";
 const URL_SECRET = "example-only-url-password";
 
+/** The keyring of the install below: two private keys, drawn fresh, so no key text is checked in. */
+const KEYRING_KEYS = [testKey(), testKey()];
+const KEYRING_FILE = keyringFileOf(...KEYRING_KEYS);
+
 /** A governance install as appendix B.1 describes it: everything the preflight requires, nothing it refuses. */
 const GOVERNED: Readonly<Record<string, string>> = {
   GOVERNANCE_SOURCE: "postgres",
   GOVERNANCE_POSTGRES_URL: `postgresql://libredb_studio:${URL_SECRET}@db.internal:5432/libredb?sslmode=verify-full`,
   GOVERNANCE_INSTANCE_ID: "libredb-studio",
+  GOVERNANCE_PRIVATE_KEYS_FILE: KEYRING_FILE,
   STORAGE_POSTGRES_SCHEMA: "studio",
   NEXT_PUBLIC_AUTH_PROVIDER: "oidc",
   OIDC_ROLE_CLAIM: "libredb_roles",
@@ -66,6 +75,11 @@ beforeEach(() => {
 
 afterEach(() => {
   for (const key of KEYS) setEnv(key, saved[key]);
+  resetGovernanceKeyring();
+});
+
+afterAll(() => {
+  removeKeyringFiles();
 });
 
 interface Run {
@@ -74,28 +88,39 @@ interface Run {
   readonly banner: string;
   /** The banner's problem lines, without their bullet. */
   readonly problems: string[];
+  /** Every line the boot wrote to the console, the banner included. */
+  readonly log: string;
 }
 
-/** Runs the preflight with process.exit stubbed, so a refusal cannot take the test runner down. */
+/**
+ * Runs the preflight as a fresh boot would, with process.exit stubbed, so a refusal cannot take the test runner down.
+ * The keyring is read once per process, so it is forgotten first.
+ */
 function runPreflight(): Run {
+  resetGovernanceKeyring();
   const originalExit = process.exit;
   const exitCalls: Array<number | undefined> = [];
   process.exit = ((code?: number) => {
     exitCalls.push(code);
   }) as unknown as typeof process.exit;
   const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+  const otherSpies = (["debug", "info", "log", "warn"] as const).map((method) =>
+    spyOn(console, method).mockImplementation(() => {}),
+  );
   try {
     const passed = verifyGovernanceEnvAtBoot();
     // Read before mockRestore(): bun clears the recorded calls on restore.
     const banner = errorSpy.mock.calls.flat().join("\n");
+    const log = [errorSpy, ...otherSpies].flatMap((spy) => spy.mock.calls.flat()).join("\n");
     const problems = banner
       .split("\n")
       .filter((line) => line.startsWith("   - "))
       .map((line) => line.slice("   - ".length));
-    return { passed, exitCalls, banner, problems };
+    return { passed, exitCalls, banner, problems, log };
   } finally {
     process.exit = originalExit;
     errorSpy.mockRestore();
+    for (const spy of otherSpies) spy.mockRestore();
   }
 }
 
@@ -136,6 +161,8 @@ const REFUSED: readonly { readonly variable: string; readonly value: string | un
   { variable: "GOVERNANCE_MAX_STALENESS_MS", value: "10000" },
   { variable: "GOVERNANCE_ALLOWED_ENGINES", value: "," },
   { variable: "GOVERNANCE_ALLOWED_ENGINES", value: "postgres,postgress" },
+  { variable: "GOVERNANCE_PRIVATE_KEYS_FILE", value: undefined },
+  { variable: "GOVERNANCE_PRIVATE_KEYS_FILE", value: path.join(path.dirname(KEYRING_FILE), "absent.json") },
 ];
 
 describe("governance/preflight verifyGovernanceEnvAtBoot", () => {
@@ -163,9 +190,8 @@ describe("governance/preflight verifyGovernanceEnvAtBoot", () => {
   });
 
   test("each refused variable stops the boot with a banner that names it, one case per condition", () => {
-    // Every variable of spec 9.2 but the keyring, which arrives with the keyring itself, and every GOVERNANCE_*
-    // setting but the switch, which the next test covers.
-    expect(new Set(REFUSED.map((refused) => refused.variable)).size).toBe(22);
+    // Every variable of spec 9.2, and every GOVERNANCE_* setting but the switch, which the next test covers.
+    expect(new Set(REFUSED.map((refused) => refused.variable)).size).toBe(23);
     for (const { variable, value } of REFUSED) {
       setEnv(variable, value);
       const run = runPreflight();
@@ -214,6 +240,7 @@ describe("governance/preflight verifyGovernanceEnvAtBoot", () => {
         "ADMIN_PASSWORD",
         "GOVERNANCE_INSTANCE_ID",
         "GOVERNANCE_POSTGRES_URL",
+        "GOVERNANCE_PRIVATE_KEYS_FILE",
         "GOVERNANCE_REFRESH_MS",
         "LIBREDB_MCP_ENABLED",
         "NEXT_PUBLIC_AUTH_PROVIDER",
@@ -236,6 +263,55 @@ describe("governance/preflight verifyGovernanceEnvAtBoot", () => {
     expect(run.banner).not.toContain(LAUNCH_SECRET);
     expect(run.banner).not.toContain(URL_SECRET);
     expect(run.banner).not.toContain("db.internal");
+  });
+
+  test("a keyring file that does not load stops the boot naming GOVERNANCE_PRIVATE_KEYS_FILE", () => {
+    const [first, second] = KEYRING_KEYS;
+    const short = randomBytes(31).toString("base64url");
+    const material = [first.text, second.text, short, first.raw.toString("hex"), second.raw.toString("hex")];
+    const missing = path.join(path.dirname(KEYRING_FILE), "absent.json");
+    const cases: readonly { readonly file: string | undefined; readonly reason: string }[] = [
+      { file: undefined, reason: "is not set" },
+      { file: missing, reason: `${JSON.stringify(missing)} cannot be read (ENOENT)` },
+      // A directory, whose error code is EISDIR on Linux and may differ on another platform.
+      { file: path.dirname(KEYRING_FILE), reason: "cannot be read (E" },
+      { file: writeKeyringFile(`{"version":1,"keys":["${first.text}"`), reason: "is not valid JSON" },
+      { file: writeKeyringFile({ version: 2, keys: [first.text] }), reason: "is keyring version 2" },
+      { file: writeKeyringFile({ version: 1, keys: [] }), reason: "holds no keys" },
+      {
+        file: keyringFileOf(...Array.from({ length: 17 }, () => testKey())),
+        reason: "holds 17 keys, more than the limit of 16",
+      },
+      { file: writeKeyringFile({ version: 1, keys: [first.text, short] }), reason: "holds key 2 of 31 bytes" },
+      {
+        file: writeKeyringFile({ version: 1, keys: [first.text, second.text, first.text] }),
+        reason: `holds keys 1 and 3 with the same key id ${first.kid}`,
+      },
+    ];
+    for (const { file, reason } of cases) {
+      setEnv("GOVERNANCE_PRIVATE_KEYS_FILE", file);
+      const run = runPreflight();
+      expect(run.passed, reason).toBe(false);
+      expect(run.exitCalls, reason).toEqual([1]);
+      expect(run.problems, reason).toHaveLength(1);
+      expect(run.problems[0], reason).toStartWith("GOVERNANCE_PRIVATE_KEYS_FILE ");
+      expect(run.problems[0], reason).toContain(reason);
+      // Never key material, in the banner or anywhere else the boot printed.
+      for (const text of material) expect(run.log, reason).not.toContain(text);
+    }
+  });
+
+  test("a two-key keyring boots, and the boot log names both kids and no key text", () => {
+    const run = runPreflight();
+    expect(run.passed).toBe(true);
+    expect(run.exitCalls).toEqual([]);
+    expect(run.banner).toBe("");
+    for (const key of KEYRING_KEYS) {
+      expect(run.log).toContain(key.kid);
+      expect(run.log).not.toContain(key.text);
+      expect(run.log).not.toContain(key.raw.toString("hex"));
+      expect(run.log).not.toContain(key.raw.toString("base64"));
+    }
   });
 
   test("the values that leave a refused feature off pass", () => {

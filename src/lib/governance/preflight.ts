@@ -11,6 +11,10 @@
  * It reads each variable as written rather than asking the module that consumes it: under governance those modules
  * hold their feature off whatever the environment says, so asking them would hide the contradiction it reports.
  *
+ * It also loads the keyring of `GOVERNANCE_PRIVATE_KEYS_FILE` (`keyring.ts`), which the process keeps, so the server
+ * opens sealed credentials with exactly the keyring it checked here. A keyring that does not load is refused with
+ * the file and the reason, and never with key material.
+ *
  * Runs only on standalone boot, right after `verifyAuthEnvAtBoot()` in `src/instrumentation.ts`, and checks nothing
  * while governance is off, so a Studio without GOVERNANCE_SOURCE starts exactly as before.
  */
@@ -25,6 +29,7 @@ import {
   governanceSource,
 } from "@/lib/governance/config";
 import { governanceInstanceId } from "@/lib/governance/instance";
+import { governanceKeyring } from "@/lib/governance/keyring";
 
 /** The spellings that switch custom connections off, as `src/lib/config/custom-connections.ts` reads them. */
 const CUSTOM_CONNECTIONS_OFF = new Set(["false", "0", "off", "no"]);
@@ -163,6 +168,8 @@ function governanceEnvProblems(): string[] {
     // Reports an invalid GOVERNANCE_REFRESH_MS as well, which the set below keeps once.
     refusalOf(governanceMaxStalenessMs),
     refusalOf(governanceAllowedEngines) ?? unknownEnginesProblem(),
+    // Loads the keyring the server opens sealed credentials with, and keeps it for the life of the process.
+    refusalOf(governanceKeyring),
   );
 
   return [...new Set(problems.filter((problem): problem is string => problem !== null))];
