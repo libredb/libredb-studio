@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, test } from "bun:test";
+import { parse as parseYaml } from "yaml";
 
 /**
  * The OPC UA fixture's own environment: where it publishes, and what image it is.
@@ -23,6 +24,7 @@ import { describe, expect, test } from "bun:test";
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 const README = readFileSync(path.join(ROOT, "tests/fixtures/opcua/README.md"), "utf8");
 const CI_STEP = readFileSync(path.join(ROOT, "docker/opcua/ci-step.yml"), "utf8");
+const SERVICE = readFileSync(path.join(ROOT, "docker/opcua/compose-service.yml"), "utf8");
 
 /** The `docker run` line the capture is started with, which is the fixture's definition. */
 const runLine = (): string => {
@@ -48,9 +50,11 @@ describe("the OPC UA fixture's environment", () => {
     expect(published.filter((port) => !port.startsWith("127.0.0.1:"))).toEqual([]);
     // The planted case, in the shape the defect had: `-p 54840:50000` with no host address is
     // Docker's `0.0.0.0`, and the filter above is what catches it.
-    expect(publishedPorts("docker run -d --name opcua-evidence -p 54840:50000 \\").filter(
-      (port) => !port.startsWith("127.0.0.1:"),
-    )).toEqual(["54840:50000"]);
+    expect(
+      publishedPorts("docker run -d --name opcua-evidence -p 54840:50000 \\").filter(
+        (port) => !port.startsWith("127.0.0.1:"),
+      ),
+    ).toEqual(["54840:50000"]);
   });
 
   test("the image is pinned by tag AND digest, in the README and in the CI step alike", () => {
@@ -68,6 +72,38 @@ describe("the OPC UA fixture's environment", () => {
       text.match(/mcr\.microsoft\.com\/iotedge\/opc-plc:[\d.]+@sha256:[0-9a-f]{64}/)?.[0];
     expect(of(CI_STEP)).toBeDefined();
     expect(of(CI_STEP)).toBe(of(README));
+  });
+
+  test("the compose service publishes on loopback and runs the same image", () => {
+    // The block is written to be merged into `database-compose.yml`; until it is, this is the only
+    // thing holding it to the two files beside it. A third copy of an image reference is a third
+    // thing to drift.
+    expect(SERVICE).toContain('"127.0.0.1:54840:50000"');
+    expect(SERVICE.match(/mcr\.microsoft\.com\/iotedge\/opc-plc:[\d.]+@sha256:[0-9a-f]{64}/)?.[0]).toBe(
+      README.match(/mcr\.microsoft\.com\/iotedge\/opc-plc:[\d.]+@sha256:[0-9a-f]{64}/)?.[0],
+    );
+  });
+
+  test("the compose service carries the flags the captures were measured against", () => {
+    // The flags ARE the fixture: `--hn` is what adds the one historized node, and every node count
+    // in the provider's comments was measured with this list. A service missing one would serve a
+    // different server under the same name.
+    //
+    // Read from the PARSED command rather than from the file's text, and the difference is not
+    // cosmetic: `--hn` appears twice in the file, once in the comment that explains it, so a
+    // `toContain` over the text stayed green with the flag deleted from the command. The canary
+    // caught that, which is what canaries are for.
+    const command = (parseYaml(SERVICE) as { opcua: { command: readonly string[] } }).opcua.command;
+    expect(command).toEqual([
+      "--pn=50000",
+      "--autoaccept",
+      "--unsecuretransport",
+      "--ut",
+      "--sph",
+      "--hn",
+      "--slownodes=3",
+      "--fastnodes=3",
+    ]);
   });
 
   test("the CI step publishes on loopback too, and silences nothing", () => {
