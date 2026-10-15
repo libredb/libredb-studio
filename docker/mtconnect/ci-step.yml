@@ -78,6 +78,15 @@
     # passed from its captures, and the step exited 0 - a step that reached no agent reported
     # success. Without this flag the canary below is green, which is how it was found.
     MTCONNECT_LIVE_REQUIRED=1 bun tests/live/mtconnect-live-check.ts
+    # And the same check under Node, which is what the contract asks for and what this file's own
+    # docblock describes: the provider's transport is the repository's own and both runtimes drive
+    # it, so a difference between them is a defect the Bun run alone cannot see. The Node run goes
+    # through `bun build --target=node` rather than Node's own TypeScript support, as
+    # `tests/live/oxia-live-check.ts` does, so the `@/` alias is resolved while bundling.
+    OUT="$(mktemp -d)"
+    bun build tests/live/mtconnect-live-check.ts --target=node --outfile "$OUT/live.mjs"
+    MTCONNECT_LIVE_REQUIRED=1 node "$OUT/live.mjs"
+    rm -rf "$OUT"
     # Then the same captures the integration test replays, read against the agent that produced
     # them: a capture taken from another build fails the digest case rather than drifting quietly.
     bun tests/run-tests.ts tests/integration/db/mtconnect-provider.test.ts
