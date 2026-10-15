@@ -92,6 +92,12 @@ The chart is tightly coupled to the Dockerfile:
 | `WORKDIR /app` | Volume mounts under `/app/` |
 | `mkdir -p data` | `/app/data` volume: PVC when persistence is enabled, emptyDir otherwise |
 | `GET /api/db/health` | Startup/readiness/liveness probes |
+| `GET /api/ready` | Readiness endpoint: `200` without governance, the governance freshness state under governance |
+
+Liveness stays on `GET /api/db/health`, which depends on nothing, so a governance source that is down never gets a healthy pod restarted.
+`GET /api/ready` is the readiness endpoint ([API_DOCS.md](./API_DOCS.md#get-apiready), [GOVERNANCE.md](./GOVERNANCE.md#freshness-and-readiness)): it answers `200` with `status` `ready` without governance, and under governance `503` while the snapshot is loading, misconfigured or incompatible, so a pod receives traffic only once it can serve data routes.
+It reads only in-process state and opens no user database, so it is as cheap to probe as the liveness path.
+Under governance point `readinessProbe.httpGet.path` at `/api/ready`.
 
 ### 3. Storage Modes
 

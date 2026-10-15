@@ -98,6 +98,16 @@ describe("proxy", () => {
       expect(isRedirect(await proxy(createNextRequest("/api/health")))).toBe(false);
     });
 
+    // The readiness probe (spec 7.5, 12.1) carries no session either, and a 401 or a redirect would read as not ready
+    // or, worse, as ready.
+    test("/api/ready passes without a session", async () => {
+      const res = await proxy(createNextRequest("/api/ready"));
+
+      expect(isRedirect(res)).toBe(false);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("x-middleware-next")).toBe("1");
+    });
+
     test("/_next/static/chunk.js passes through without redirect", async () => {
       const req = createNextRequest("/_next/static/chunk.js");
       const res = await proxy(req);
@@ -646,7 +656,7 @@ describe("proxy", () => {
   // ───────────────────────────────────────────────────────────────────────────
 
   describe("agent drive path", () => {
-    test("the public-path list is exactly the eight it names", () => {
+    test("the public-path list is exactly the nine it names", () => {
       const source = readFileSync(new URL("../../src/proxy.ts", import.meta.url), "utf8");
       const block = source.slice(source.indexOf("// Allow public routes"), source.indexOf("if (!token)"));
       const literals = [...block.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
@@ -658,6 +668,7 @@ describe("proxy", () => {
         "/health",
         "/api/health",
         "/api/db/health",
+        "/api/ready",
         "/api/storage/config",
         "/launch",
       ]);

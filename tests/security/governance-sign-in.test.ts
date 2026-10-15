@@ -75,6 +75,7 @@ const READS_NO_SESSION: Record<string, string> = {
   "GET /api/mcp": "verifies a scoped MCP bearer token instead of a session; the owner check below refuses it",
   "POST /api/mcp": "verifies a scoped MCP bearer token instead of a session; the owner check below refuses it",
   "DELETE /api/mcp": "verifies a scoped MCP bearer token instead of a session; the owner check below refuses it",
+  "GET /api/ready": "public readiness, answered from the in-process governance state for an orchestrator's probe",
   "GET /api/storage/config": "publicly documents whether server storage is enabled",
   "GET /health": "public liveness at the app root, a fixed body",
 };

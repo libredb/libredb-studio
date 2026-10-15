@@ -85,6 +85,7 @@ The middleware (`src/proxy.ts`) gates every route: all of them require a valid `
 - `/api/auth/*`: login, logout, me, OIDC login/callback, `POST /api/auth/passkey/sign-in` and `POST /api/auth/launch`, which create the session and so cannot need one; the other auth routes that act on an account (`/api/auth/totp`, `/api/auth/passkey`) check the session themselves
 - `/launch`: the page a platform's launch link opens; it posts the token from its URL fragment to `POST /api/auth/launch`, after a Continue click when the browser has no session ([LAUNCH.md](./LAUNCH.md))
 - `/health` and `/api/health` — liveness, fully public, no dependencies
+- `GET /api/ready` — readiness, fully public; it reads only the in-process governance state ([GOVERNANCE.md](./GOVERNANCE.md#freshness-and-readiness))
 - `/api/db/health` — excluded from the middleware for **both** methods; `GET` is fully public and answers the same as the two above, while `POST` performs its own session check and returns JSON `401` if unauthenticated
 - `GET /api/storage/config` — storage-mode discovery (returns `{ provider, serverMode }`, no user data)
 
@@ -329,6 +330,47 @@ a dead application.
   "status": "healthy",
   "timestamp": "2025-12-24T12:00:00.000Z",
   "service": "libredb-studio"
+}
+```
+
+---
+
+#### GET /api/ready
+
+Readiness, for orchestrators: whether this instance can serve data routes now.
+Liveness stays on the three paths above, which depend on nothing, so a governance source that is down never gets a healthy instance restarted.
+Point the readiness probe here and the liveness probe at `GET /api/db/health`.
+
+The route answers one JSON body in every state and never opens a user database.
+Without governance it always answers `200` with `status` `ready`.
+Under governance (`GOVERNANCE_SOURCE=postgres`) it answers the freshness state of the governance snapshot:
+
+| `status` | HTTP | When |
+|----------|------|------|
+| `ready` | 200 | Governance is off |
+| `ok` | 200 | The snapshot is fresh |
+| `degraded` | 200 | Reloads fail and the snapshot is past the refresh interval, also once it is past the maximum staleness, so an administrator can still reach the status page while data routes answer `503 GOVERNANCE_UNAVAILABLE` |
+| `loading` | 503 | No snapshot has loaded since the start |
+| `misconfigured` | 503 | The governance source lacks an object, a column, the schema or a privilege, or the keyring is unusable; `detail` names it |
+| `incompatible` | 503 | No contract version is common to both sides; `detail` lists both version sets |
+
+In every state but `ok` and `ready` the route also starts a single-flight load of the snapshot without waiting for it.
+The answer carries `Cache-Control: no-store`.
+The body's JSON Schema is `readiness.schema` in `tests/fixtures/governance/contract-v1.json`, and [GOVERNANCE.md](./GOVERNANCE.md#freshness-and-readiness) describes the states.
+
+**Authentication:** Not required
+
+**Response (200 OK, governance off):**
+```json
+{ "status": "ready", "contract": { "supported": [1], "active": null } }
+```
+
+**Response (503 Service Unavailable, governance on):**
+```json
+{
+  "status": "misconfigured",
+  "contract": { "supported": [1], "active": null },
+  "detail": "bridge.grants_v1: permission denied for view grants_v1 (SQLSTATE 42501)"
 }
 ```
 
@@ -2449,6 +2491,7 @@ These are the values of the `code` field emitted by `createErrorResponse` (`src/
 | `INTERNAL_ERROR` | Unhandled server error (500) |
 | `NETWORK_ERROR` | Network failure |
 | `RATE_LIMITED` | Application-level rate limit exceeded (429) - see "Rate Limiting" below |
+| `GOVERNANCE_UNAVAILABLE` | Under governance the snapshot is loading, too old, misconfigured or incompatible, so the route cannot be served (503); `GET /api/ready` names the state ([GOVERNANCE.md](./GOVERNANCE.md#api-codes)) |
 | `EDIT_PLAN_INVALID` | An object edit plan did not verify: forged, expired, digest mismatch, wrong connection fingerprint, or an unknown `planVersion` (400). Returned by the two `/api/db/objects/edit-*` routes directly rather than through `createErrorResponse`. It is a machine-readable code and not a sentence, so a client can tell a plan that no longer verifies apart from an apply that failed and offer to rebuild the preview; no shipped UI branches on it yet |
 
 The Origin-mismatch 403 (see "CSRF: Origin Check" below) is not in this table: it is returned

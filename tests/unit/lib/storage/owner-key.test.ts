@@ -38,6 +38,20 @@ describe("storageOwnerKey", () => {
     expect(storageOwnerKey(oidcSession())).toBe("alice@example.com");
   });
 
+  test("without governance a username that starts with sub: is refused for server storage", () => {
+    // Governance files a user's rows under sub: and the subject, so a username of that shape could later read or
+    // overwrite the rows of the user whose subject it names.
+    expect(() => storageOwnerKey({ role: "user", username: "sub:kc-user-1" })).toThrow(
+      'A username that starts with "sub:" cannot use server storage',
+    );
+    expect(() => storageOwnerKey(oidcSession({ username: "sub:" }))).toThrow(
+      'A username that starts with "sub:" cannot use server storage',
+    );
+    // Only the exact prefix is refused.
+    expect(storageOwnerKey({ role: "user", username: "Sub:alice" })).toBe("Sub:alice");
+    expect(storageOwnerKey({ role: "user", username: "subscriber" })).toBe("subscriber");
+  });
+
   test("governance keys by sub: and the IdP subject, never by the username", () => {
     process.env.GOVERNANCE_SOURCE = "postgres";
     expect(storageOwnerKey(oidcSession())).toBe("sub:kc-user-1");
