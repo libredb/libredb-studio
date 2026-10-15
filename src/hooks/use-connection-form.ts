@@ -1729,6 +1729,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     "opcua",
     "spark",
     "mtconnect",
+    "modbus",
   ];
   const dbTypes = selectableTypes.map((t) => {
     const cfg = getDBConfig(t);

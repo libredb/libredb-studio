@@ -32,7 +32,7 @@ LibreDB Studio provides a RESTful API for database management operations. The AP
 ### Key Features
 
 - **JWT Authentication** - Secure token-based authentication stored in HTTP-only cookies
-- **Multi-Database Support** - Thirty-seven engines: PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Apache Spark, Apache Cassandra, Redis, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA, MTConnect
+- **Multi-Database Support** - Thirty-eight engines: PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Apache Spark, Apache Cassandra, Redis, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA, MTConnect
 - **AI-Powered Insights** - EXPLAIN explanations, query-safety analysis and schema docs, streamed
 - **Real-time Health Monitoring** - Database metrics and performance insights
 
