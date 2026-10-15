@@ -2252,6 +2252,9 @@ A source that fails is reported here with `state: "error"` while `GET /api/conne
 ---
 
 > **Internal routes (not part of this public reference).** The frontend also calls several internal `/api/db/*` endpoints that mirror provider internals and change with the UI: `multi-query`, `transaction`, `cancel`, `disconnect`, `test-connection`, `monitoring`, `pool-stats`, `profile`, `provider-meta`, and the object-surface routes under `objects/` that are not documented above (`describe`, `edit-plan` and `edit-apply` are). They're auth-gated by the middleware like everything else; consult the route handlers in `src/app/api/db/` for their shapes.
+>
+> Under governance (`GOVERNANCE_SOURCE=postgres`, see [GOVERNANCE.md](GOVERNANCE.md)) `POST /api/db/monitoring` is admin-only: a session whose role is not `admin` gets `403` with `{"error": "Unauthorized. Admin access required."}` before any connection is resolved, and the denial is audited as `permission_denied` with reason `insufficient_role`.
+> Without governance every signed-in session keeps its monitoring access.
 
 ---
 
