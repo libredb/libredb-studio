@@ -80,6 +80,8 @@ export const ROUTES_WITHOUT_A_PROVIDER: Record<string, string> = {
   health:
     "liveness only: returns a fixed body and touches nothing, so there is no provider to require a session for (GET, no POST export). The connection-scoped check is POST /api/db/health, which is not on this list",
   mcp: "reaches a provider, but is called by an MCP client of the user's own and verifies a scoped bearer token instead of a session (src/lib/mcp/bearer.ts): its 401 body differs from guardRoute's on purpose, and tests/security/mcp-auth.test.ts proves that no refused identity constructs a provider",
+  ready:
+    "readiness only, public because an orchestrator's probe carries no session: answers from the in-process governance state and never opens a user database or an LLM provider (GET, no POST export). Under governance a probe that finds no usable snapshot asks the governance source for a single-flight load without waiting for it, which is the refresher's own read and never a user database (tests/api/ready.test.ts)",
   storage: "reaches the app's own storage backend (STORAGE_PROVIDER), not a user database or LLM provider (GET only)",
   "storage/[collection]": "same storage backend as above, scoped to the caller's own data (PUT, no POST export)",
   "storage/config": "publicly documents whether server storage is enabled; no session, no provider (GET only)",

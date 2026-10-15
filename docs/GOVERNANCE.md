@@ -302,6 +302,12 @@ The connection behind `GOVERNANCE_POSTGRES_URL` must therefore reach the primary
   In governance mode it is `ok`, `degraded`, `loading`, `misconfigured` or `incompatible`.
 - `contract.supported` lists the versions Studio supports, and `contract.active` is the version it negotiated, or null.
 - `detail` is present when there is something to name: the missing object or privilege, or both version sets.
+- `contract.active` is null whenever no snapshot is served: while loading, misconfigured or incompatible, even when an older snapshot is kept for the admin status.
+
+`GET /api/ready` is the readiness probe, and liveness stays on `GET /api/db/health`, which depends on nothing.
+The route reads the in-process state only and never opens a user database.
+In every state but `ok` it also asks for a single-flight load of the snapshot and answers without waiting for it, so a probe joins the refresher's load instead of starting a second one.
+While the snapshot is fresh it starts no load, so an anonymous caller cannot make Studio reload the governance source at will.
 
 The manifest publishes the body as JSON Schema with an example for each status.
 A background refresher retries every 5 seconds with jitter while the snapshot is absent or expired, so an instance that started before PostgreSQL becomes ready on its own, and the process never exits because the database is down.
