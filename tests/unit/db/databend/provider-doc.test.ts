@@ -1177,29 +1177,21 @@ describe("docs/providers/databend.md quotes what the code says", () => {
       DATABEND_ERROR_SENTENCES.resuming("[warehouse]", "10"),
     );
     const timeout = createErrorResponse(new TimeoutError(DATABEND_ERROR_SENTENCES.deadline("10"), "databend", 10_000));
-    expect(timeout.status).toBe(408);
+    expect(timeout.status).toBe(504);
     const routeSentence = ((await timeout.json()) as { error: string }).error;
     const cloud = flat(sectionOf(DOC, "### 4.4 Databend Cloud: warehouse, cold start and billing"));
     expect(cloud).toContain(
       "It is a `ConnectionError`, which Studio's routes answer with HTTP 503 and the sentence itself, so the object tree, the monitoring page and Test Connection show it as written.",
     );
     const cancellation = flat(sectionOf(DOC, "### 5.8 Cancellation and deadlines"));
-    expect(cancellation).toContain(`answer it with HTTP 408 and their own sentence, "${routeSentence}"`);
+    expect(cancellation).toContain(
+      `answer it with HTTP 504 and their own sentence, "${routeSentence}", a status no browser sends again`,
+    );
     expect(cancellation).toContain(
       "The resuming sentence of section 4.4 and the slot wait above are no statement's timeout: each is a `ConnectionError`, which Studio's routes answer with HTTP 503 and the sentence itself.",
     );
     expect(flat(sectionOf(DOC, "## 10. Error handling"))).toContain(
       "Studio's own read that outlasts its deadline on a named warehouse, and a statement that waited for a statement slot past its deadline, are `unavailable`",
-    );
-  });
-
-  test("X27 keeps its measurement and says Databend's resuming warehouse is answered 503 now, which is not resent (GAP-CL-1)", () => {
-    const x27 = flat(/^### X27\. [\s\S]*?(?=^---$)/m.exec(BACKLOG)?.[0] ?? "");
-    expect(x27).toContain(
-      "a first Databend Cloud connect that met a resuming warehouse was answered 408 twice before its third attempt passed.",
-    );
-    expect(x27).toContain(
-      "Since #1593, Databend's resuming-warehouse case, Studio's own read that outlasts its deadline on a named warehouse, is answered with HTTP 503, which Chromium does not resend.",
     );
   });
 

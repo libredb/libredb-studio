@@ -474,7 +474,7 @@ describe("POST /api/db/profile", () => {
 
     const res = await POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never);
 
-    expect(res.status).toBe(408);
+    expect(res.status).toBe(504);
     expect(sent).toHaveLength(2);
   });
 
@@ -1239,7 +1239,7 @@ describe("POST /api/db/profile under governance", () => {
 
     const res = await POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never);
 
-    expect(res.status).toBe(408);
+    expect(res.status).toBe(504);
     expect(onlyRow()).toMatchObject({
       status: "error",
       error_code: "TIMEOUT_ERROR",

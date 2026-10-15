@@ -810,7 +810,7 @@ describe("POST /api/db/multi-query", () => {
     expect(data.error).toContain("Bad query");
   });
 
-  test("TimeoutError from getOrCreateProvider returns 408", async () => {
+  test("TimeoutError from getOrCreateProvider returns 504", async () => {
     mockGetOrCreateProvider.mockImplementation(async () => {
       throw new TimeoutError("Query timed out", "postgres", 30000);
     });
@@ -823,7 +823,7 @@ describe("POST /api/db/multi-query", () => {
     const res = await POST(req as never);
     const data = await parseResponseJSON<{ error: string }>(res);
 
-    expect(res.status).toBe(408);
+    expect(res.status).toBe(504);
     expect(data.error).toContain("timed out");
   });
   // ── An unfinished transaction never outlives the request (D71) ────────────

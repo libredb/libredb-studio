@@ -1183,7 +1183,7 @@ describe("a route shows the resuming and slot-wait sentences as they are", () =>
     await Promise.all(holding);
   });
 
-  test("a user statement's own deadline on a named warehouse stays the route's timeout, HTTP 408 (X27)", async () => {
+  test("a user statement's own deadline on a named warehouse stays the route's timeout, HTTP 504", async () => {
     const fake = fakeDatabend({
       answer: withConnect((sql) => (sql === "SELECT sleep(9)" ? { state: "Running", next_uri: "PAGE" } : undefined)),
     });
@@ -1195,7 +1195,7 @@ describe("a route shows the resuming and slot-wait sentences as they are", () =>
     const failure = await running;
     expect(failure).toBeInstanceOf(TimeoutError);
     expect((failure as Error).message).toBe(DATABEND_ERROR_SENTENCES.deadline("60"));
-    expect((await routeAnswer(failure)).status).toBe(408);
+    expect((await routeAnswer(failure)).status).toBe(504);
   });
 });
 
