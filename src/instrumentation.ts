@@ -20,6 +20,13 @@ export async function register(): Promise<void> {
   const { verifyAuthEnvAtBoot } = await import("@/lib/config/auth-preflight");
   if (!verifyAuthEnvAtBoot()) return;
 
+  // Governance preflight (spec 9.2): with GOVERNANCE_SOURCE set, refuse an
+  // environment that contradicts governance mode, such as a password, a seed
+  // file or a missing governance URL, before anything acts on it. It checks
+  // nothing while governance is off.
+  const { verifyGovernanceEnvAtBoot } = await import("@/lib/governance/preflight");
+  if (!verifyGovernanceEnvAtBoot()) return;
+
   const { logger } = await import("@/lib/logger");
 
   // LibreDB sample: programmatic and fast — seeded synchronously as before.

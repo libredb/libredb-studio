@@ -12,6 +12,7 @@ Studio publishes the contract before it implements all of it: until a release's 
 
 - [Conformance files](#conformance-files)
 - [Schema and roles](#schema-and-roles)
+- [Studio configuration](#studio-configuration)
 - [Objects](#objects)
 - [Row semantics](#row-semantics)
 - [Snapshot protocol](#snapshot-protocol)
@@ -63,6 +64,53 @@ The contract needs PostgreSQL 15 or later, the first release with the `security_
 Neither runtime role can create objects in the schema.
 Studio's role cannot read the control plane's own tables, cannot read the query events it writes, and cannot run the retention function.
 Every view is created `WITH (security_barrier = true, security_invoker = false)`, so it reads its sources with its owner's rights and a function in a reader's query cannot see the rows the view leaves out.
+
+## Studio configuration
+
+An installer switches Studio into governance mode with environment variables.
+Nothing in the governance source can switch it on or off.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `GOVERNANCE_SOURCE` | unset | `postgres` switches governance mode on, and unset or empty leaves it off. Any other value counts as on as well, so a typo fails closed and the boot checks below refuse it. |
+| `GOVERNANCE_POSTGRES_URL` | none, required | The governance source as a `postgresql://` or `postgres://` URL for `libredb_studio`. |
+| `GOVERNANCE_POSTGRES_SCHEMA` | `bridge` | The schema of the contract, a lowercase identifier of at most 63 characters. |
+| `GOVERNANCE_REFRESH_MS` | `30000` | How often Studio reloads when no notification arrives, from 1000 to 600000 milliseconds. |
+| `GOVERNANCE_MAX_STALENESS_MS` | `120000` | How old the snapshot may grow while reloads fail, from `GOVERNANCE_REFRESH_MS` to 3600000 milliseconds. A refresh interval above 120000 needs this raised with it. |
+| `GOVERNANCE_ALLOWED_ENGINES` | `postgres,mysql,mssql,oracle,mongodb,redis` | The connection type ids Studio admits, separated by commas. |
+| `GOVERNANCE_INSTANCE_ID` | none, required | This instance's id, as the next section describes. |
+
+### Instance id
+
+`GOVERNANCE_INSTANCE_ID` keys the instance's heartbeat row and names its listener's ping channel.
+
+- It is required, and it matches `^[A-Za-z0-9._:-]{1,128}$`, the CHECK on `instance_id`.
+- It stays the same across restarts, so a recreated container or pod updates the row it left.
+- Studio never falls back to the host name.
+  A container's host name changes every time the container is recreated, and each new name would leave a dead heartbeat row behind.
+- Every instance needs an id of its own, and an install that runs one replica uses `libredb-studio`.
+
+### Boot checks
+
+With governance on, Studio refuses to start when any of these holds.
+It prints one banner that names every variable to fix and never prints a secret, and exits with status 1, so an orchestrator sees a failed start instead of a server that looks healthy and cannot serve.
+
+- `NEXT_PUBLIC_AUTH_PROVIDER` is not `oidc`, or `OIDC_ROLE_CLAIM` or `OIDC_USER_ROLES` is empty.
+- `ADMIN_PASSWORD`, `USER_PASSWORD` or `LAUNCH_TOKEN_SECRET` is set.
+- `ALLOW_CUSTOM_CONNECTIONS` is set to anything but empty or a value that switches custom connections off: `false`, `0`, `off` or `no`.
+- `LIBREDB_EMBEDDED_SAMPLE` or `SQLITE_EMBEDDED_SAMPLE` is set to anything but empty or `false`.
+- `SEED_CONFIG_PATH` or `SEED_DISCOVERY_PATH` is set.
+- `BIGQUERY_SERVER_CREDENTIALS` or `FIRESTORE_SERVER_CREDENTIALS` is `true`, because the server's own identity would stand in for the credential a grant selects.
+- `LIBREDB_MCP_ENABLED` or `LIBREDB_AGENT_ENABLED` is set to anything but empty or a value that switches it off: `false`, `off` or `0`.
+- `GOVERNANCE_POSTGRES_URL`, `GOVERNANCE_INSTANCE_ID` or `STORAGE_POSTGRES_SCHEMA` is missing.
+- A variable of the table above has an invalid value, `GOVERNANCE_SOURCE` included, or `GOVERNANCE_ALLOWED_ENGINES` names an engine Studio has no connection type for.
+
+### What governance mode switches off
+
+- Sign-in with a password, a passkey or a launch token: the identity provider is the only way in, for an account that holds the admin or the user role.
+- Custom connections, the embedded samples, seed files and discovery: the governance source is the only catalog of connections.
+- The server's own Google identity for BigQuery and Firestore connections.
+- MCP and the agent, until a later Studio release runs them under governance.
 
 ## Objects
 
