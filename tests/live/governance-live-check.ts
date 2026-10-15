@@ -18,7 +18,8 @@
  * snapshot changes only when a notification makes it, and with a ping every half second instead of every minute.
  * The heartbeat cases send beats as `libredb_studio` and read the row back as the superuser. The session revocation
  * case runs the real `getSession()` with `next/headers` mocked by a cookie jar, on sessions signed with a throwaway
- * `JWT_SECRET`.
+ * `JWT_SECRET`. The query event cases record events through Studio's own sink, which inserts them as
+ * `libredb_studio` on its one-second flush, and read the rows back as the superuser.
  *
  * It is NOT in `bun run test`: the runner excludes `tests/live/` by name (`EXCLUDED` in `tests/runner/discover.ts`).
  * CI runs it in the "Functional Smoke (PostgreSQL, RabbitMQ)" job of .github/workflows/ci.yml, against a throwaway
@@ -50,9 +51,14 @@ import {
 import { loadGovernanceSnapshot } from "../../src/lib/governance/snapshot";
 import { requestFreshGovernanceLoad } from "../../src/lib/governance/start";
 import { effectiveGrant, governanceState, resetGovernanceState } from "../../src/lib/governance/state";
+import { buildQueryEvent, queryEventPolicy } from "../../src/lib/query-events/build";
+import { writeQueryEventBatch } from "../../src/lib/query-events/postgres-sink";
+import { queryEventSinkState, recordQueryEvent, resetQueryEventSink } from "../../src/lib/query-events/sink";
+import type { QueryEventInput } from "../../src/lib/query-events/types";
 import { resolveConnection, SeedConnectionError } from "../../src/lib/seed/resolve-connection";
 import { buildFixtureDdl, FIXTURE_OWNER, readFixtureManifest } from "../helpers/governance/fixture-ddl";
 import { keyringFileOf, removeKeyringFiles, type TestKey, testKey } from "../helpers/governance/keyring-file";
+import { queryEventInput, startInTheFuture } from "../helpers/governance/query-event-input";
 import { sealSecret } from "../helpers/governance/lsb1-seal";
 import { cookieJar, deletedCookies, installNextHeadersMock, resetCookieJar } from "../helpers/next-cookie-jar";
 import packageJson from "../../package.json";
@@ -243,6 +249,39 @@ function nextNotification(client: Client, withinMs: number): Promise<string> {
     });
   });
 }
+
+/** An editor statement Alice ran on her granted connection, as a route records it. */
+const aliceEvent = (overrides: Partial<QueryEventInput>): QueryEventInput =>
+  queryEventInput({
+    principal: { subject: "alice@example.com", username: "alice@example.com", role: "user" },
+    connection: { id: "seed:live-both", name: "Connection live-both", engine: "postgres", accessLevel: "write" },
+    ...overrides,
+  });
+
+/** The query event rows whose correlation id starts with `prefix`, read as the superuser, in correlation id order. */
+async function eventRows(context: LiveContext, prefix: string): Promise<Record<string, unknown>[]> {
+  const result = (await context.superuser((client) =>
+    client.query(
+      `SELECT event_id::text AS event_id, correlation_id, subject, connection_id, source, status, error_code,
+              studio_instance, contract_version, received_at IS NOT NULL AS received
+       FROM ${SCHEMA}.query_event WHERE starts_with(correlation_id, $1) ORDER BY correlation_id`,
+      [prefix],
+    ),
+  )) as { rows: Record<string, unknown>[] };
+  return result.rows;
+}
+
+const UUID = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
+
+/** The sink state, with whether it names a last flush in place of the instant. */
+function sinkStateFlushed(): Record<string, unknown> {
+  const state = queryEventSinkState();
+  return { ...state, lastFlushAt: state.lastFlushAt !== null };
+}
+
+/** Waits until the sink has inserted, or refused, every event it holds. */
+const untilSinkDrained = (): Promise<void> =>
+  until(() => queryEventSinkState().queued === 0, 5000, "the flush of the queued query events");
 
 function loadedSnapshot() {
   const { snapshot, failure } = governanceState();
@@ -628,6 +667,118 @@ const CASES: readonly LiveCase[] = [
     },
   },
   {
+    name: "events insert as libredb_studio, which holds only INSERT",
+    run: async (context) => {
+      const privileges = async (object: string) =>
+        (
+          (await context.superuser((client) =>
+            client.query(
+              `SELECT privilege FROM unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) AS privilege
+               WHERE has_table_privilege('libredb_studio', $1, privilege)`,
+              [`${SCHEMA}.${object}`],
+            ),
+          )) as { rows: { privilege: string }[] }
+        ).rows.map((row) => row.privilege);
+      same(await privileges("query_events_v1"), ["INSERT"], "the privileges of libredb_studio on query_events_v1");
+      same(await privileges("query_event"), [], "the privileges of libredb_studio on query_event");
+
+      recordQueryEvent(aliceEvent({ correlationId: "live-insert-1" }));
+      recordQueryEvent(aliceEvent({ correlationId: "live-insert-2", status: "error", errorCode: "42P01" }));
+      await untilSinkDrained();
+
+      same(
+        (await eventRows(context, "live-insert-")).map((row) =>
+          Object.assign(row, { event_id: UUID.test(String(row.event_id)) }),
+        ),
+        ["live-insert-1", "live-insert-2"].map((correlation_id, index) => ({
+          event_id: true,
+          correlation_id,
+          subject: "alice@example.com",
+          connection_id: "live-both",
+          source: "editor",
+          status: index === 0 ? "success" : "error",
+          error_code: index === 0 ? null : "42P01",
+          studio_instance: INSTANCE_ID,
+          contract_version: 1,
+          received: true,
+        })),
+        "the query event rows",
+      );
+      same(
+        sinkStateFlushed(),
+        { queued: 0, dropped: 0, rejected: 0, lastFlushAt: true, backingOff: false, lastSqlstate: null },
+        "the sink state, and whether it names a last flush",
+      );
+    },
+  },
+  {
+    name: "a retried batch adds no duplicate",
+    run: async (context) => {
+      const instance = { studioInstance: INSTANCE_ID };
+      const batch = ["live-retry-1", "live-retry-2"].map((correlationId) =>
+        buildQueryEvent(aliceEvent({ correlationId }), queryEventPolicy(), instance),
+      );
+      const first = await writeQueryEventBatch(batch, AbortSignal.timeout(10_000));
+      same([first.settled, first.rejections, first.failure], [2, [], null], "the first insert");
+      // An insert whose answer was lost is sent again with the same event ids, alone or with newer events.
+      const retry = await writeQueryEventBatch(batch, AbortSignal.timeout(10_000));
+      same([retry.settled, retry.rejections, retry.failure], [2, [], null], "the retried insert");
+      const newer = buildQueryEvent(aliceEvent({ correlationId: "live-retry-3" }), queryEventPolicy(), instance);
+      const mixed = await writeQueryEventBatch([batch[1], newer], AbortSignal.timeout(10_000));
+      same([mixed.settled, mixed.rejections, mixed.failure], [2, [], null], "the insert that repeats one event");
+
+      same(
+        (await eventRows(context, "live-retry-")).map((row) => [row.correlation_id, row.event_id]),
+        [...batch, newer].map((row) => [row.correlation_id, row.event_id]),
+        "the query event rows, one per event id",
+      );
+    },
+  },
+  {
+    name: "an event 10 minutes in the future is rejected while the rest of its batch lands",
+    run: async (context) => {
+      const { lines } = await capturingStdout(async () => {
+        recordQueryEvent(aliceEvent({ correlationId: "live-future-1" }));
+        recordQueryEvent(aliceEvent({ correlationId: "live-future-2", started: startInTheFuture() }));
+        recordQueryEvent(aliceEvent({ correlationId: "live-future-3" }));
+        await untilSinkDrained();
+      });
+      const rejections = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+      same(
+        rejections.map((line) => ({
+          type: line.type,
+          event_id: UUID.test(String(line.event_id)),
+          sqlstate: line.sqlstate,
+          constraint: line.constraint,
+        })),
+        [{ type: "query_event_rejected", event_id: true, sqlstate: "23514", constraint: "query_event_not_future" }],
+        "the rejection lines",
+      );
+      const rows = await eventRows(context, "live-future-");
+      same(
+        rows.map((row) => row.correlation_id),
+        ["live-future-1", "live-future-3"],
+        "the query event rows of the batch",
+      );
+      check(
+        !rows.some((row) => row.event_id === rejections[0].event_id),
+        `the rejected event ${String(rejections[0].event_id)} should not be stored`,
+      );
+      same(
+        sinkStateFlushed(),
+        { queued: 0, dropped: 0, rejected: 1, lastFlushAt: true, backingOff: false, lastSqlstate: "23514" },
+        "the sink state, and whether it names a last flush",
+      );
+
+      // The next beat reports the sink as it stands.
+      await sendGovernanceHeartbeat();
+      const beat = (await context.superuser((client) =>
+        client.query(`SELECT sink FROM ${SCHEMA}.studio_instances_v1 WHERE instance_id = $1`, [INSTANCE_ID]),
+      )) as { rows: { sink: unknown }[] };
+      same(canonicalJson(beat.rows[0].sink), canonicalJson(queryEventSinkState()), "the heartbeat's sink column");
+    },
+  },
+  {
     name: "revoking SELECT on one view turns the state misconfigured, naming that view",
     run: async ({ superuser }) => {
       await superuser((client) => client.query(`REVOKE SELECT ON ${SCHEMA}.grants_v1 FROM libredb_studio`));
@@ -690,6 +841,8 @@ async function main(): Promise<void> {
     console.error(error);
   } finally {
     await stopGovernanceListener();
+    // A case that failed can leave events queued, whose next flush would open the pool again.
+    resetQueryEventSink();
     await closeGovernancePool();
     // A provider a case opened to the fixture server, which a failed case may have left open.
     await clearProviderCache();

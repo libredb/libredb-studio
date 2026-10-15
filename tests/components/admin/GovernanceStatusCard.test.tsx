@@ -35,6 +35,7 @@ function status(overrides: Partial<GovernanceStatus> = {}): GovernanceStatus {
       heldMs: 1_804_900,
       lastNotificationAt: "2026-10-15T07:59:12.000Z",
     },
+    sink: { queued: 0, dropped: 0, rejected: 0, lastFlushAt: null, backingOff: false, lastSqlstate: null },
     ...overrides,
   };
 }
@@ -286,6 +287,42 @@ describe("GovernanceStatusCard", () => {
     expect(getAllByTestId("governance-ignored-setting").map((item) => item.textContent)).toEqual([
       "queryLog.statementCapture: ignored, SETTING_INVALID",
     ]);
+  });
+
+  test("shows the query event sink's counts, last flush, backoff and last SQLSTATE", async () => {
+    const answers = [
+      answer(status()),
+      answer(
+        status({
+          sink: {
+            queued: 12,
+            dropped: 3,
+            rejected: 1,
+            lastFlushAt: "2026-10-15T07:59:58.000Z",
+            backingOff: true,
+            lastSqlstate: "57P01",
+          },
+        }),
+      ),
+    ];
+    let calls = 0;
+    mockGlobalFetch({ "/api/admin/governance": () => answers[Math.min(calls++, answers.length - 1)] });
+    const { captured, restore } = captureAutoRefresh();
+
+    try {
+      const { findByText, getByTestId } = await renderCard();
+      await findByText("0 queued, 0 dropped, 0 rejected; last flush none yet");
+
+      await act(async () => {
+        captured.fire!();
+      });
+      await findByText(
+        "12 queued, 3 dropped, 1 rejected; last flush 2026-10-15T07:59:58.000Z; backing off; last SQLSTATE 57P01",
+      );
+      expect(getByTestId("governance-sink").textContent).toContain("backing off");
+    } finally {
+      restore();
+    }
   });
 
   test("refreshes every 30 seconds and hides itself when governance turns off", async () => {

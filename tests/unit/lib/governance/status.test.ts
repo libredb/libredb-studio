@@ -3,8 +3,9 @@
  * moment of the request, with ids, levels, paths and codes only, never a value or an envelope, and the full message of
  * the latest load failure, which only an administrator reads.
  *
- * The listener is replaced by a status this file sets, so each case reports the listener it names;
- * tests/api/admin/governance.test.ts reports a real one.
+ * The listener and the query event sink are replaced by states this file sets, so each case reports the listener and
+ * the sink it names; tests/api/admin/governance.test.ts reports a real listener, and
+ * tests/unit/lib/query-events/sink.test.ts drives a real sink.
  */
 import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import type { AdmittedConnection } from "@/lib/governance/admission";
@@ -12,6 +13,7 @@ import { resetGovernanceKeyring } from "@/lib/governance/keyring";
 import type { GovernanceListenerStatus } from "@/lib/governance/listener";
 import { validateSettings } from "@/lib/governance/settings";
 import type { GovernanceStatus } from "@/lib/governance/status";
+import type { QueryEventSinkState } from "@/lib/query-events/sink";
 import {
   type GovernanceSnapshot,
   recordGovernanceFailure,
@@ -22,6 +24,18 @@ import { keyringFileOf, removeKeyringFiles, testKey } from "../../../helpers/gov
 
 let listenerStatus: GovernanceListenerStatus | null = null;
 mock.module("@/lib/governance/listener", () => ({ governanceListenerStatus: () => listenerStatus }));
+
+/** The state of a sink that has recorded no event. */
+const IDLE_SINK: QueryEventSinkState = {
+  queued: 0,
+  dropped: 0,
+  rejected: 0,
+  lastFlushAt: null,
+  backingOff: false,
+  lastSqlstate: null,
+};
+let sinkState: QueryEventSinkState = IDLE_SINK;
+mock.module("@/lib/query-events/sink", () => ({ queryEventSinkState: () => sinkState }));
 
 const { governanceStatus, HELD_SETTING_NOTE } = await import("@/lib/governance/status");
 
@@ -95,6 +109,7 @@ beforeEach(() => {
 afterEach(() => {
   infoSpy.mockRestore();
   listenerStatus = null;
+  sinkState = IDLE_SINK;
   resetGovernanceState();
   resetGovernanceKeyring();
   for (const key of ENV_KEYS) {
@@ -138,6 +153,7 @@ describe("governanceStatus", () => {
       settings: NO_RUNTIME_VALUES,
       ignoredSettings: [],
       listener: null,
+      sink: IDLE_SINK,
     });
   });
 
@@ -168,6 +184,7 @@ describe("governanceStatus", () => {
       settings: NO_RUNTIME_VALUES,
       ignoredSettings: [],
       listener: null,
+      sink: IDLE_SINK,
     });
   });
 
@@ -191,6 +208,19 @@ describe("governanceStatus", () => {
       heldMs: 1000,
       lastNotificationAt: null,
     });
+  });
+
+  test("the sink section is the query event sink's state, as the heartbeat reports it", () => {
+    sinkState = {
+      queued: 12,
+      dropped: 3,
+      rejected: 1,
+      lastFlushAt: "2026-10-15T07:59:58.000Z",
+      backingOff: true,
+      lastSqlstate: "57P01",
+    };
+
+    expect(governanceStatus(T).sink).toEqual(sinkState);
   });
 
   test("a failed load keeps the snapshot and reports the failure's kind, code and full message, and no value", () => {

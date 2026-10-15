@@ -6,10 +6,10 @@
  * A beat reports the instance id (`GOVERNANCE_INSTANCE_ID`), the Studio version, the contract versions Studio supports
  * and the one in use (0 while none is negotiated), the key ids of the keyring, the listener's state and its last
  * change notification, the snapshot's load time, the rows admission skipped and the setting keys the settings store
- * ignored, the query event sink's state and the result of each key id's seal canary. Every beat sends the process
- * start time as `started_at`, which only the first insert writes; the update of every later beat sets each reported
- * column and `last_seen_at = now()`, so a restart with the same instance id updates the same row and a control plane
- * reads liveness from `last_seen_at`.
+ * ignored, the state of the query event sink (`queryEventSinkState()`, src/lib/query-events/sink.ts) and the result
+ * of each key id's seal canary. Every beat sends the process start time as `started_at`, which only the first insert
+ * writes; the update of every later beat sets each reported column and `last_seen_at = now()`, so a restart with the
+ * same instance id updates the same row and a control plane reads liveness from `last_seen_at`.
  *
  * Like the admin status, a beat carries ids, levels, paths and codes only: a skipped row goes out as the item
  * admission built, without the envelope code beside it, and never with a definition value, an envelope or a
@@ -21,6 +21,7 @@
  */
 import { getAppVersion } from "@/lib/app-version";
 import { logger } from "@/lib/logger";
+import { queryEventSinkState } from "@/lib/query-events/sink";
 import { governancePostgresSchema } from "./config";
 import { buildHeartbeatUpsert, HEARTBEAT_COLUMNS, SUPPORTED_CONTRACT_VERSIONS } from "./contract";
 import { withGovernanceClient } from "./db";
@@ -37,19 +38,6 @@ const BEAT_DEADLINE_MS = 10_000;
 const SKIPPED_MAX = 500;
 /** The shortest gap between two log lines of failed beats. */
 const FAILURE_LOG_INTERVAL_MS = 60_000;
-
-/**
- * The query event sink's state as the manifest shapes it. No sink runs in this release, so nothing is queued, dropped
- * or refused, and no flush has happened.
- */
-const IDLE_SINK = {
-  queued: 0,
-  dropped: 0,
-  rejected: 0,
-  lastFlushAt: null,
-  backingOff: false,
-  lastSqlstate: null,
-} as const;
 
 /** When this process started, which every beat sends as `started_at`. */
 const PROCESS_STARTED_AT = new Date(performance.timeOrigin);
@@ -87,7 +75,7 @@ function heartbeatParameters(): unknown[] {
         SKIPPED_MAX,
       ),
     ),
-    sink: JSON.stringify(IDLE_SINK),
+    sink: JSON.stringify(queryEventSinkState()),
     canary: JSON.stringify(snapshot?.canary ?? {}),
     started_at: PROCESS_STARTED_AT,
   };

@@ -6,9 +6,9 @@
  * contract versions on both sides, the freshness state, the age and load time of the snapshot, why the latest load
  * failed, how many connections were admitted, the rows admission skipped, the key ids of the keyring, the result of
  * each key id's seal canary, and the listener's state, how long it has held and when the last change notification
- * arrived, and where each runtime setting's value comes from with the setting keys the settings store ignored. A key
- * whose consumer this version holds off under governance is marked held with a note, as a control plane shows it
- * read-only (spec 7.8). The sink slice adds its section here.
+ * arrived, where each runtime setting's value comes from with the setting keys the settings store ignored, and the
+ * state of the query event sink, as the heartbeat reports it. A key whose consumer this version holds off under
+ * governance is marked held with a note, as a control plane shows it read-only (spec 7.8).
  *
  * Like the heartbeat, it carries ids, levels, paths and codes only: never a definition value, an envelope, a
  * credential or a statement. The one exception is the full message of the latest load failure, which only an
@@ -17,6 +17,7 @@
  */
 import { isAgentHeldByGovernance } from "@/lib/agent/config";
 import { isMcpHeldByGovernance } from "@/lib/mcp/config";
+import { type QueryEventSinkState, queryEventSinkState } from "@/lib/query-events/sink";
 import type { AdmissionSkip, SkippedItem } from "./admission";
 import { type GovernanceSource, governancePostgresSchema, governanceSource } from "./config";
 import { SUPPORTED_CONTRACT_VERSIONS } from "./contract";
@@ -97,6 +98,8 @@ export interface GovernanceStatus {
     /** When the last change notification arrived, as an ISO 8601 instant, or null before the first. */
     readonly lastNotificationAt: string | null;
   } | null;
+  /** The query event sink of this process: the state the heartbeat reports in its `sink` column. */
+  readonly sink: QueryEventSinkState;
 }
 
 const skipOf = ({ item, envelopeCode }: AdmissionSkip): GovernanceStatusSkip =>
@@ -149,5 +152,6 @@ export function governanceStatus(nowMs = Date.now()): GovernanceStatus {
     settings: SETTINGS_REGISTRY.map(settingStatus),
     ignoredSettings: (snapshot?.settings.ignored ?? []).map(({ id, code }) => ({ key: id, code })),
     listener: listenerAt(nowMs),
+    sink: queryEventSinkState(),
   };
 }

@@ -58,6 +58,7 @@ Studio holds itself to the same manifest.
 Its live check, `tests/live/governance-live-check.ts`, builds a governance source in a throwaway PostgreSQL 17 database from the manifest alone, with `tests/helpers/governance/fixture-ddl.ts`: the roles, one source table per read view with exactly the published columns and CHECKs, the views with the published options, the grants, and a statement-level trigger on each source table that sends the view's notification kind.
 It seeds connections sealed to a fresh key and runs Studio's own snapshot loader as `libredb_studio`, so a view shape, a grant or a statement that drifts from the manifest fails Studio's CI before a control plane meets it.
 It also runs Studio's change notification listener against that database, and checks that a deleted grant refuses its connection within a second through the trigger's notification alone.
+And it inserts query events through Studio's own sink as `libredb_studio`, which holds only INSERT on `query_events_v1`, and checks that a retried batch adds no duplicate and that a row the table's CHECK refuses is dropped alone while the rest of its batch lands.
 Run it against a disposable server as a superuser, because it creates and drops a database and the roles:
 
 ```sh
@@ -408,7 +409,7 @@ How an instance connects to the governance source:
 - Each pooled connection names itself `libredb-studio-governance` in `application_name`, and the listener's connection `libredb-studio-governance-listener`, so they show up as such in `pg_stat_activity`.
 - A load waits at most 5 seconds for a connection, each statement runs under a `statement_timeout` of 10 seconds and is abandoned by Studio after 15, and the whole load gives up after 20 seconds, so a governance source that hangs never holds a load for long.
   Studio closes the connection of a load that gave up, and a statement still running on it keeps its server process busy until it ends, at most the 10 seconds of `statement_timeout`, because PostgreSQL notices a closed connection only when it next reads from it.
-- On SIGTERM or SIGINT Studio first closes the listener's connection and the governance pool, waiting at most 5 seconds for them, and then closes its connections to the users' databases and exits.
+- On SIGTERM or SIGINT Studio first inserts the [query events](#query-events) it still holds, for at most 4 seconds, and closes the listener's connection and the governance pool, waiting at most 5 seconds for all of it, and then closes its connections to the users' databases and exits.
 
 ## Admin status
 
@@ -430,7 +431,8 @@ It names ids, levels, paths and codes only, never a definition value, an envelop
     "canary": { "<kid>": "ok" },
     "settings": [{ "key": "ai.enabled", "source": "runtime" }, { "key": "agent.enabled", "source": "environment" }, { "key": "query.timeoutMs", "source": "default" }],
     "ignoredSettings": [{ "key": "queryLog.statementCapture", "code": "SETTING_INVALID" }],
-    "listener": { "state": "listening", "since": "2026-10-15T07:30:00.000Z", "heldMs": 1845000, "lastNotificationAt": "2026-10-15T08:00:12.000Z" }
+    "listener": { "state": "listening", "since": "2026-10-15T07:30:00.000Z", "heldMs": 1845000, "lastNotificationAt": "2026-10-15T08:00:12.000Z" },
+    "sink": { "queued": 12, "dropped": 0, "rejected": 1, "lastFlushAt": "2026-10-15T08:00:44.000Z", "backingOff": false, "lastSqlstate": "23514" }
   }
 }
 ```
@@ -447,6 +449,7 @@ It names ids, levels, paths and codes only, never a definition value, an envelop
 - `ignoredSettings` lists each key whose row the last successful load ignored, with its code, as the heartbeat reports it, and never with its value.
 - `listener` is the [change notification](#change-notification) listener: its state, `since` when that state has held and `heldMs` for how long at the moment of the request, and `lastNotificationAt`, when the last `libredb_bridge` notification arrived, or null before the first.
   It is null only in a process where no listener runs.
+- `sink` is the state of the instance's [query event](#query-events) queue, the value the [heartbeat](#heartbeat) reports in its `sink` column.
 - With governance off the route answers `{ "governance": null }`, and a user who is not an administrator gets 403.
 
 ## Heartbeat
@@ -490,8 +493,11 @@ An item is `{kind, id, level?, path?, code}`: `kind` is `connection` or `setting
 ]
 ```
 
-`sink` is the state of Studio's query event queue: events waiting, events dropped because the queue was full, events the database refused, the last successful flush, whether Studio is backing off, and the last SQLSTATE it saw.
-A Studio that sends no query events yet reports zero counters, a null `lastFlushAt` and `lastSqlstate`, and `backingOff` false.
+`sink` is the state of Studio's [query event](#query-events) queue.
+`queued` counts the events waiting for their insert, those of an insert under way included, `dropped` the events dropped because the queue was full, and `rejected` the events the database refused for good.
+`lastFlushAt` is when an insert last settled its whole batch, `backingOff` is true while Studio waits out a failed insert, and `lastSqlstate` is the SQLSTATE of the latest failed insert, which a later successful insert leaves in place.
+A failure without a SQLSTATE, such as a timeout or a connection the server never accepted, sets `lastSqlstate` to null, and the instance's log names its cause.
+A Studio that has recorded no query event reports zero counters, a null `lastFlushAt` and `lastSqlstate`, and `backingOff` false.
 
 ```json
 { "queued": 12, "dropped": 0, "rejected": 1, "lastFlushAt": "2026-10-14T12:00:04.000Z", "backingOff": false, "lastSqlstate": "23514" }
@@ -644,8 +650,15 @@ Catalog and metadata reads, schema browsing, monitoring, health checks and pool 
 Delivery:
 
 - Studio queues events in memory, at most 10000, and inserts them every second or at 500 rows with one multi-row `INSERT ... ON CONFLICT DO NOTHING`, and once more when it shuts down.
-- A transient failure (SQLSTATE classes 08, 53300, 57P01 to 57P03, 40001, 40P01, or a timeout) keeps the batch and backs off from 1 to 30 seconds.
-- A permanent failure (classes 22 and 23) splits the batch and drops only the rows the database refuses, each logged as one line `{type: "query_event_rejected", event_id, sqlstate, constraint}` without statement text.
+  An insert carries at most 500 events from the head of the queue and may take 10 seconds, and an event leaves the queue once the database holds it or refused it for good.
+- When the queue is full, Studio drops the newest event and counts it in `dropped`, so the events already queued keep their order, and logs the first drop of each spell of a full queue.
+- Studio generates each `event_id` when it records the event and keeps it across retries, so a batch sent again after an insert that did land, whose answer was lost, adds nothing.
+- A transient failure (SQLSTATE classes 08, 53300, 57P01 to 57P03, 40001, 40P01, or a timeout) keeps the batch and backs off from 1 to 30 seconds: the next insert waits 1 second, then 2, 4, 8 and 16, and then 30 until one succeeds.
+  Any other SQLSTATE outside classes 22 and 23, such as 42501 for a missing privilege, is handled the same way and shows in the sink state's `lastSqlstate`, and each failed insert is logged with its SQLSTATE or, for a failure without one, its message.
+- A permanent failure (classes 22 and 23) splits the batch: its rows go in one by one, in order, and only the rows the database refuses again are dropped and counted in `rejected`.
+  Each is logged as one line on standard output, `{"type":"query_event_rejected","event_id":"<uuid>","sqlstate":"23514","constraint":"query_event_not_future"}`, which carries neither the statement nor the server's message, because that can quote the row; `constraint` is null when the server names none.
+  A refusal for good is not a reason to wait, so Studio does not back off after it.
+- At shutdown Studio inserts every queued event at once, batch after batch and without waiting out a backoff, for at most 4 seconds, and logs how many events it could not send.
 - With `queryLog.onSinkFailure` set to `refuse`, Studio refuses new executions with 503 `AUDIT_UNAVAILABLE` while it is backing off or its queue is at least 90% full.
   A refused row never trips this.
 
