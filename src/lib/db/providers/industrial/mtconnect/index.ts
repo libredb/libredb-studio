@@ -15,15 +15,10 @@
  *
  * No `queryReadOnly`: the console text is a request line rather than a query language, so there is
  * no agent statement execution and no MCP read query.
- *
- * The type id is not yet a member of the published `DatabaseType` union. That line and the factory's
- * `case` are the last step of this provider's PR, because six other issues queue for the same two
- * files; until then this class is exported and unreferenced by the factory, and the directory's
- * README records the two lines and the local alias they delete.
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
-import { httpOrigin, type HttpOrigin } from "@/lib/db/http/endpoint";
+import type { HttpOrigin } from "@/lib/db/http/endpoint";
 import { createNodeTransport, type NodeTransport } from "@/lib/db/http/node-transport";
 import { engineLimiter } from "@/lib/db/utils/bounded-limiter";
 import type {
@@ -56,6 +51,7 @@ import {
   MTCONNECT_QUERY_DIALECT,
 } from "./capabilities";
 import { headerOf, MtcClientError, readObservations, readOnce, type MtcAnswer, type MtcClientOptions } from "./client";
+import { mtconnectEndpoint } from "./connection-options";
 import { guardRequestLine, MtcRefusal, type MtcGuardOptions, type MtcRequest, type MtcWindow } from "./guard";
 import { indexMtconnectModel, modelIsCurrent, type MtcModel } from "./model";
 import type { MtcElement, MtcObservation } from "./xml";
@@ -101,7 +97,7 @@ export const ROW_CAP = 10_000;
  * MEASURED on the pinned agent: while a 300 alternative `path` ran in a loop, the median of
  * `sample?count=1` on the same agent rose from 1.4 ms to 74.1 ms. The agent serves the machine's own
  * clients too, so this bound is about not degrading the shop floor's monitoring rather than about
- * our own latency (decision K-61).
+ * our own latency.
  */
 export const MTC_LIMITS = Object.freeze({
   /** MEASURED: the 1.4 ms to 74.1 ms figure above. One request at a time per agent. */
@@ -199,11 +195,10 @@ export class MTConnectProvider extends BaseDatabaseProvider {
   // ==========================================================================
 
   public async connect(): Promise<void> {
-    const scheme = this.config.ssl === undefined || this.config.ssl === null ? "http" : "https";
-    const origin = httpOrigin(scheme, this.config.host, this.config.port ?? MTCONNECT_DEFAULT_PORT);
+    const { origin, tls, pathPrefix } = mtconnectEndpoint(this.config);
     const transport = createNodeTransport({
       origin,
-      tls: null,
+      tls,
       maxSockets: 1,
       headers: {},
       // RabbitMQ's three settings, for the reasons MEASURED there and here: a link-local address is
@@ -215,7 +210,7 @@ export class MTConnectProvider extends BaseDatabaseProvider {
     });
     this.session = {
       origin,
-      pathPrefix: "/",
+      pathPrefix,
       transport,
       model: undefined,
       window: undefined,
@@ -306,7 +301,7 @@ export class MTConnectProvider extends BaseDatabaseProvider {
     session: MtcSession,
     request: MtcRequest,
     onObservation: (observation: MtcObservation) => void,
-  ): Promise<{ readonly read: number; readonly capped: boolean }> {
+  ): Promise<{ readonly read: number; readonly capped: boolean; readonly agentError?: MtcElement }> {
     try {
       return await readObservations(this.clientOptions(session), request, ROW_CAP, onObservation);
     } catch (error) {
@@ -425,6 +420,7 @@ export class MTConnectProvider extends BaseDatabaseProvider {
         const row = buildRow(observation, model);
         if (row !== undefined) rows.push(row);
       });
+      if (walk.agentError !== undefined) throw new QueryError(this.sentenceFor(walk.agentError));
       return this.resultOf(sortRows(rows), started, walk.capped);
     } else {
       const answer = await this.read(session, request);

@@ -7,7 +7,7 @@
  * path appear nowhere in a Streams document at all: they are in the `probe` answer.
  *
  * So a row is built by joining an observation to this index on `dataItemId`, which is the only
- * identifier XML guarantees to be unique (issue #1722 section 6 item 4, decision K-82). `name` is
+ * identifier XML guarantees to be unique (issue #1722 section 6 item 4). `name` is
  * not a key: MEASURED on the pinned agent, a model that gives three data items in one device the
  * name `load` is ACCEPTED, with the agent logging "Duplicate name 'load' found" and
  * "Name 'load' may not resolve correctly on incoming streams". A model like that can arrive from
@@ -54,7 +54,7 @@ export interface MtcModel {
   readonly deviceModelChangeTime?: string;
   /** Every data item by `dataItemId`. */
   readonly items: ReadonlyMap<string, MtcDataItem>;
-  /** Device names in document order, for the one container level the tree draws (decision K-82). */
+  /** Device names in document order, for the one container level the tree draws. */
   readonly devices: readonly { readonly name: string; readonly uuid: string; readonly itemCount: number }[];
 }
 
@@ -94,7 +94,7 @@ export function indexMtconnectModel(root: MtcElement): MtcModel | undefined {
     // MEASURED on a hand written model holding no host name: the agent added an Agent device whose
     // fourteen items all lack `name`, whose ids read `_localhost_7878_connection_status` and so on,
     // and whose component is named `Adapter:shdr://localhost:7878`. The adapter's host and port are
-    // synthesised by the agent, so they reach the model on every connection (MT-S10, decision K-83).
+    // synthesised by the agent, so they reach the model on every connection (MT-S10).
     const deviceUuid = device.attributes.uuid ?? "";
     const deviceName = device.attributes.name ?? deviceUuid;
     let itemCount = 0;
@@ -172,7 +172,7 @@ export function modelIsCurrent(model: MtcModel, header: Readonly<Record<string, 
  * the demo, 67 on a five level model, 79 on an Agent device.
  *
  * This is a label, never a key. The qualified form produced no collision on any measured model, but
- * a collision was never shown to be impossible, so nothing keys on it (decision K-82).
+ * a collision was never shown to be impossible, so nothing keys on it.
  */
 export function displayName(item: MtcDataItem): string {
   const leaf = item.name ?? item.dataItemId;

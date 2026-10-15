@@ -2,7 +2,7 @@
  * The model index and the row builder, against the captured answers.
  *
  * Every number asserted here was measured on the agent before it was written down, and the
- * documents are the real ones rather than fixtures written to suit the code (decision K-72): the
+ * documents are the real ones rather than fixtures written to suit the code: the
  * `probe` and `current` answers in `tests/fixtures/mtconnect/2.8.0.3/` came from one instance of the
  * Institute's demo agent in the same minute, so a row built from one can be checked against the
  * other.
@@ -336,7 +336,7 @@ describe("the row builders go red when broken", () => {
 });
 
 /**
- * The branch the captured page cannot reach, and the measurement that says so (K-185).
+ * The branch the captured page cannot reach, and the measurement that says so.
  *
  * `sortRows` compares two sequence numbers by LENGTH first and only then by text, because a
  * sequence is an unsigned decimal and plain text order puts "100000000" before "99999999". The

@@ -4,12 +4,12 @@
  * The authoritative list is the agent's own. MEASURED on `mtconnect/agent:2.8.0.3` with `AllowPut`
  * unset: `GET /swagger` answered 200 with 15 routes and 15 operations, every one a GET. This table
  * is NINE of those fifteen, and the six it leaves out are left out for stated reasons rather than
- * by oversight (decision K-65). The table of omissions below holds seven entries: the sixth of the
+ * by oversight. The table of omissions below holds seven entries: the sixth of the
  * fifteen plus `/swagger` itself, which the agent answers and which is not one of the fifteen.
  *
  * The count was ten in an earlier draft of this file, and the tenth route, `/{device}/asset/{assetIds}`,
  * DOES NOT EXIST: it was completed by symmetry rather than read, and the Swagger document names no such
- * route. A test that pinned the count is what sent this back to the document (decision K-65, corrected).
+ * route. A test that pinned the count is what sent this back to the document.
  *
  * The parameter sets below were read from that Swagger document route by route, not copied from the
  * issue. The difference matters twice:
@@ -32,7 +32,7 @@
  * guard would refuse cannot be a route the editor offers, which is what a hand copy drifts into.
  *
  * The `"text"` member the mapping leans on is the one change the shared console took for this provider
- * (decision K-102, `src/lib/db/console/dialect.ts`): `path` is an XPath, `count` may be negative and a
+ * (`src/lib/db/console/dialect.ts`): `path` is an XPath, `count` may be negative and a
  * sequence number runs past the safe integer, so none of the three older kinds can carry them.
  *
  * Browser-safe: no Node built-in, no server module.
@@ -222,7 +222,7 @@ export const MTC_REFUSED_KEYS: Readonly<Record<string, string>> = Object.freeze(
  * agent accepted a request whose whole header block was 8,153 bytes and answered nothing at all,
  * closing the connection with zero bytes written, at 8,216. The limit is on the header block, so a
  * path's ceiling is what remains of an 8 KiB budget after the route, the device name, the other
- * parameters and the headers (decision K-61). This number is the console's own text bound, which
+ * parameters and the headers. This number is the console's own text bound, which
  * sits below that budget.
  */
 export const MTC_CONSOLE_DIALECT = Object.freeze({

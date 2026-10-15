@@ -14,26 +14,24 @@
  * ONE REQUEST AT A TIME PER AGENT. MEASURED on the pinned agent: while a 300 alternative `path` ran
  * in a loop, the median of `sample?count=1` on the same agent rose from 1.4 ms to 74.1 ms, a factor
  * of 51, with a worst case of 169.9 ms. That is not a latency budget question. The agent serves the
- * machine's own clients, so a careless read from Studio degrades the shop floor's own monitoring
- * (decision K-61).
+ * machine's own clients, so a careless read from Studio degrades the shop floor's own monitoring.
  *
  * THE REQUEST HAS AN 8 KiB CEILING AND CROSSING IT IS SILENT. MEASURED with a raw socket: a request
  * whose whole header block was 8,153 bytes was answered, and one of 8,216 bytes got no answer at
  * all, the agent writing zero bytes and closing the connection. The limit is on the header block
  * rather than on the path, so this module budgets the whole request target and leaves room for the
- * headers (decision K-61). There is no error document in that case, so the sentence the user reads
+ * headers. There is no error document in that case, so the sentence the user reads
  * comes from here.
  *
  * CAPS ARE IN BYTES. MEASURED across four models: `current` is about 164 bytes an observation and
  * `probe` about 110 bytes a data item on a generated model and 190 on the richer demo one. Bytes per
  * observation hold steady across a factor of a hundred in model size while bytes per data item move
- * with how rich the model is, so a cap counted in rows is quietly wrong on a rich model
- * (decision K-62).
+ * with how rich the model is, so a cap counted in rows is quietly wrong on a rich model.
  *
  * A NON MTCONNECT ANSWER GETS OUR OWN SENTENCE. MEASURED through a reverse proxy: a 401 came back as
  * `text/html`, nginx's own page, not as an `MTConnectError`. A provider that parses every non 200
  * answer as an error document gets nothing from it, so the root element is checked and anything else
- * is named here (decision K-81). This holds whether or not authentication is ever offered, because a
+ * is named here. This holds whether or not authentication is ever offered, because a
  * proxy can answer with HTML for a 401, a 403, a 502 or a maintenance page.
  */
 import { endpointUrl, type HttpOrigin } from "@/lib/db/http/endpoint";
@@ -240,7 +238,7 @@ export interface MtcClientOptions {
   readonly origin: HttpOrigin;
   readonly pathPrefix: string;
   readonly transport: NodeTransport;
-  /** One permit per agent (decision K-61). The provider's limiter supplies it. */
+  /** One permit per agent. The provider's limiter supplies it. */
   readonly withPermit: <T>(run: () => Promise<T>) => Promise<T>;
   readonly signal: AbortSignal;
 }
@@ -279,7 +277,7 @@ export async function readOnce(options: MtcClientOptions, request: MtcRequest): 
  * (MT-S4). What this does NOT claim is that streaming always costs less memory: MEASURED over fifty
  * reads of a 4.4 MiB answer in one process, peak RSS was 382.6 MiB as a tree and 161.0 MiB streaming
  * under Node, and 171.2 MiB as a tree against 216.9 MiB streaming under Bun. The gain depends on the
- * runtime (decision K-100). What holds in both is that the cap is enforced while reading, and that
+ * runtime. What holds in both is that the cap is enforced while reading, and that
  * nothing leaks: RSS settled by the twentieth read in all four runs.
  */
 export async function readObservations(
@@ -287,7 +285,7 @@ export async function readObservations(
   request: MtcRequest,
   rowCap: number,
   onObservation: (observation: MtcObservation) => void,
-): Promise<{ readonly read: number; readonly capped: boolean }> {
+): Promise<{ readonly read: number; readonly capped: boolean; readonly agentError?: MtcElement }> {
   const url = buildTarget(options.origin, options.pathPrefix, request);
   const response = await options.withPermit(() =>
     options.transport.request({
@@ -301,9 +299,10 @@ export async function readObservations(
   const bytes = new Uint8Array(new TextEncoder().encode(response.text));
 
   // An error document is small and is read as a tree, because it is not a stream of observations.
+  // It is handed back rather than dropped: the agent refused the read, and the caller says so.
   const peek = readMtconnectXml(bytes);
   if (peek.ok && peek.root.name === "MTConnectError") {
-    return { read: 0, capped: false };
+    return { read: 0, capped: false, agentError: peek.root };
   }
   if (!peek.ok || !MTCONNECT_ROOTS.has(peek.root.name)) {
     assertMtconnect(response.status, response.contentType, response.text);

@@ -69,7 +69,7 @@ describe("every refusal leaves as a QueryError", () => {
   });
 
   /**
-   * The second case the first one needs (K-48): a conversion that returned a `QueryError` for
+   * The second case the first one needs: a conversion that returned a `QueryError` for
    * everything would pass both tests above, and would bury a programming fault as a query refusal.
    */
   test("an unrelated failure is passed through as itself, not dressed as a refusal", () => {

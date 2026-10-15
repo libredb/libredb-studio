@@ -29,6 +29,7 @@ export type MtcRefusalCode =
   | "refused-key"
   | "unknown-key"
   | "repeated-key"
+  | "bad-encoding"
   | "bad-sequence"
   | "bad-count"
   | "bad-boolean"
@@ -102,8 +103,8 @@ export const MAX_ALTERNATIVES = 32;
  * MEASURED on the pinned agent with a raw socket: a request whose whole header block was 8,153
  * bytes was answered, and one of 8,216 bytes got no answer at all, the agent writing zero bytes and
  * closing the connection. The limit is on the header block, not on the path, so this number is what
- * is left of an 8 KiB budget after a route, a device name, the other parameters and the headers
- * (decision K-61). There is no error document to read in that case, which is the other reason to
+ * is left of an 8 KiB budget after a route, a device name, the other parameters and the headers.
+ * There is no error document to read in that case, which is the other reason to
  * stay well inside it.
  */
 const MAX_PATH_BYTES = 4096;
@@ -130,7 +131,7 @@ const MAX_PARAM_BYTES = 256;
  * MEASURED, the widest request this provider can legitimately send is a `/sample` with a path
  * parameter at `MAX_PATH_BYTES`, a device segment at `MAX_PARAM_BYTES`, and `from`, `count` and
  * `interval` beside it: 4,096 + 256 + the route and the three numbers, under 4,500 bytes. 8,192 is
- * above every such line and below the agent's own header budget of about 8 KiB (decision K-61),
+ * above every such line and below the agent's own header budget of about 8 KiB,
  * so a line this guard accepts is a line the agent would still answer.
  */
 const MAX_REQUEST_BYTES = 8192;
@@ -142,6 +143,15 @@ const NAME_HEAD = /[A-Za-z]/;
 
 function refuse(code: MtcRefusalCode, message: string): never {
   throw new MtcRefusal(code, message);
+}
+
+/** One percent-decoded key or value; a broken escape is refused by name rather than thrown as a bare URIError. */
+function decodedPart(text: string, pair: string): string {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return refuse("bad-encoding", `The query holds a % that does not start a valid escape such as %22: ${pair}`);
+  }
 }
 
 /** Match a route by segment count, preferring the template with more literal segments. */
@@ -168,7 +178,7 @@ function matchRoute(relative: string): { route: MtcRoute; params: Record<string,
 }
 
 /**
- * Check a `path` against the subset the provider forwards (decision K2).
+ * Check a `path` against the subset the provider forwards.
  *
  * The subset is ours, not the agent's: READ in cppagent's source, the expression goes to libxml2's
  * `xmlXPathEvalExpression`, so the agent accepts whatever libxml2 does. What the agent does do is
@@ -330,7 +340,7 @@ export interface MtcGuardOptions {
  * A trailing slash is refused rather than trimmed. MEASURED on the demo: the agent accepts it and
  * answers the same bytes, so this is the provider's rule and not the agent's. Trimming would open
  * another place where what is sent is not what was written, and once one variant is accepted there
- * is no principled end to `/probe//` or `/./probe` (decision K-65).
+ * is no principled end to `/probe//` or `/./probe`.
  */
 export function guardRequestLine(line: string, options: MtcGuardOptions): MtcRequest {
   // COMMENT LINES FIRST, BECAUSE THE DIALECT PROMISES THEM. `MTC_CONSOLE_DIALECT` declares `#` as a
@@ -432,8 +442,8 @@ export function guardRequestLine(line: string, options: MtcGuardOptions): MtcReq
     for (const pair of queryText.split("&")) {
       if (pair === "") continue;
       const equals = pair.indexOf("=");
-      const key = decodeURIComponent(equals === -1 ? pair : pair.slice(0, equals));
-      const value = equals === -1 ? "" : decodeURIComponent(pair.slice(equals + 1).replace(/\+/g, " "));
+      const key = decodedPart(equals === -1 ? pair : pair.slice(0, equals), pair);
+      const value = equals === -1 ? "" : decodedPart(pair.slice(equals + 1).replace(/\+/g, " "), pair);
       if (Object.prototype.hasOwnProperty.call(query, key)) {
         refuse(
           "repeated-key",

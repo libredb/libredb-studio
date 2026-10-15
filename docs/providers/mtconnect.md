@@ -55,6 +55,7 @@ grammar (`src/lib/db/console/`).
 | `routes.ts` | The closed route table, the six published routes left out with reasons, the refused parameters, the console dialect and the console's derived view of the table |
 | `guard.ts` | Phase 0: everything refused before a socket opens, including the `path` subset |
 | `client.ts` | One operation, a GET of a route from the table, with the byte caps and the request ceiling |
+| `connection-options.ts` | The address as dialled: the scheme and TLS material from the SSL / TLS panel, and the Path prefix |
 | `capabilities.ts` | What the provider declares about itself |
 | `index.ts` | The provider class and the refusal boundary |
 
@@ -147,6 +148,9 @@ MEASURED through a reverse proxy: a 401 came back as `text/html`, nginx's own pa
 whether or not authentication is ever offered, because a proxy can answer with HTML for a 401, a
 403, a 502 or a maintenance page.
 
+An `MTConnectError` answer is the agent's own refusal, and it reaches the reader as the agent's sentence and code on every route, `current` and `sample` included.
+A `path` that matches nothing (`INVALID_XPATH`) or a `from` that has left the buffer (`OUT_OF_RANGE`) is an error the reader sees, never an empty grid.
+
 A refusal from the reader says WHO refused, and that was a defect first. Eleven of the reader's
 sixteen refusals are Studio's own rule applied to a document that is well-formed XML and often
 perfectly good MTConnect: a DOCTYPE or an entity declaration, refused before parsing so no DTD is
@@ -196,8 +200,13 @@ proxy's own answer, named as not being an MTConnect document.
 
 ### 4.3 TLS
 
-The scheme follows the SSL setting: with no SSL configuration the provider dials `http`, otherwise
-`https`.
+The scheme follows the SSL / TLS panel: with no panel, or the `disable` mode, the provider dials `http`, otherwise `https`.
+The panel's mode, CA and client certificate are what the handshake uses, so an agent with a private CA or one that asks for a client certificate is read the same way as any other HTTPS engine.
+A TLS failure is reported as one, and the provider never retries over `http`.
+Through an SSH tunnel the certificate is checked against the agent the user named, not the local forward.
+
+The Path prefix is put in front of every route, so `/mtc` reads `/mtc/probe`, `/mtc/current` and so on.
+It is a path only: a query, a fragment, percent-encoding, a space or an empty, `.` or `..` segment is refused before any request.
 
 ## 5. Query interface
 
@@ -221,6 +230,7 @@ the guard drops. Two request lines in one text are refused as two rather than ru
 | `starts-with` and `contains` only | The two functions measured to work |
 | No `/` or `|` inside a quoted value | MEASURED: the agent rewrites the inside of the quotes, so what runs is not what was written |
 | Six parameters refused by name | `interval`, `heartbeat` and `frequency` are streaming; `format` and `pretty` are not in the standard; `device` belongs in the path, and MEASURED `/assets?device=<unknown>` answered 200 with every asset in the buffer |
+| A `%` that starts no valid escape | Refused by name with the pair it sits in; before this rule it left as a bare `URIError` with no sentence |
 
 ### 5.3 The path subset, measured against the live agent
 

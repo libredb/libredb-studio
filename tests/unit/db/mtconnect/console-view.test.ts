@@ -8,7 +8,7 @@
  * here, and the real shared parser is run over the lines the agent actually answers.
  *
  * It also finishes the job `console-delta.test.ts` started. That suite mirrored the `"text"` kind
- * while the shared module did not have it; the member has landed (K-102), so the expectations it
+ * while the shared module did not have it; the member has landed, so the expectations it
  * pinned are asserted here against the shared parser itself rather than against a copy.
  */
 import { describe, expect, test } from "bun:test";
@@ -74,7 +74,7 @@ describe("the derived table is the guard's table", () => {
 });
 
 /**
- * Why the shared console needed a change at all, shown against THIS dialect (K-102).
+ * Why the shared console needed a change at all, shown against THIS dialect.
  *
  * The three kinds the console had could not carry any of MTConnect's three awkward values, and this
  * says so with the real dialect rather than with a stand-in: a route is fabricated here because no

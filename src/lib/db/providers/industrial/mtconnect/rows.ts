@@ -13,7 +13,7 @@
  *         <Load dataItemId="dv1-x-load" name="load" sequence="17" timestamp="..."/>
  *
  * The streaming reader keeps those wrappers on a stack and hands each observation the inherited
- * fields (decision K-83), so this module never looks upward. What it does instead is join on
+ * fields, so this module never looks upward. What it does instead is join on
  * `dataItemId` against the held model, because category, type, units and the component path live
  * only in `probe`.
  *
@@ -43,7 +43,7 @@ export interface MtcRow {
   readonly componentId?: string;
   /** A composition inside the component, from the observation itself. MEASURED on 6 of 478. */
   readonly compositionId?: string;
-  /** The row key. The only identifier XML guarantees unique (decision K-82). */
+  /** The row key. The only identifier XML guarantees unique. */
   readonly dataItemId: string;
   /** For display. Absent from 287 of 478 observations, so it falls back to the component path and id. */
   readonly name: string;

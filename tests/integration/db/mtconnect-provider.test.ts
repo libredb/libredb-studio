@@ -29,10 +29,12 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { createServer, type Server } from "node:http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { createServer as createHttpsServer, type Server as HttpsServer } from "node:https";
 import { join } from "node:path";
 import type { DatabaseConnection } from "@/lib/types";
 import { MTConnectProvider } from "@/lib/db/providers/industrial/mtconnect/index";
+import { loadTlsFixtures } from "../../helpers/tls-fixtures";
 
 const FIXTURES = join(import.meta.dir, "..", "..", "fixtures", "mtconnect");
 
@@ -72,6 +74,23 @@ const ANSWERS: ReadonlyMap<string, string> = new Map([
   [`/current?path=${encodeURIComponent('//DataItem[@category="CONDITION"]')}`, capture("current-condition")],
 ]);
 
+/**
+ * Error documents an agent answered with, served with the agent's own 400. Both are verbatim answers
+ * of the demo agent (`tests/fixtures/mtconnect/2.8.0.3/README.md`). The `path` one is the request it
+ * was captured for. The `from` one stands for a buffer that moved on between the window read and the
+ * sample: the guard passes a `from` inside the window it holds, and the agent refuses it.
+ */
+const REFUSALS: ReadonlyMap<string, string> = new Map([
+  [
+    `/current?path=${encodeURIComponent("//DataItem[")}`,
+    readFileSync(join(FIXTURES, "2.8.0.3", "error-invalid-xpath.xml"), "utf-8"),
+  ],
+  [`/sample?from=${BUFFER.first}&count=5`, readFileSync(join(FIXTURES, "2.8.0.3", "error-out-of-range.xml"), "utf-8")],
+]);
+
+/** The Path prefix a reverse proxy puts in front of the agent; the fixture server answers under it too. */
+const PROXY_PREFIX = "/mtc";
+
 /** Every request the server was asked for, so a case can assert what never reached the agent. */
 const seen: string[] = [];
 
@@ -87,21 +106,30 @@ const connected = async (): Promise<MTConnectProvider> => {
   return provider;
 };
 
+function answer(request: IncomingMessage, response: ServerResponse): void {
+  const line = request.url ?? "";
+  seen.push(line);
+  const route = line.startsWith(`${PROXY_PREFIX}/`) ? line.slice(PROXY_PREFIX.length) : line;
+  const refusal = REFUSALS.get(route);
+  if (refusal !== undefined) {
+    response.writeHead(400, { "content-type": "application/xml" });
+    response.end(refusal);
+    return;
+  }
+  const body = ANSWERS.get(route);
+  if (body === undefined) {
+    // Not 404: a 404 is an answer this provider knows how to read, and a missing capture is a
+    // defect in the test rather than in the provider, so it has to look different.
+    response.writeHead(599, { "content-type": "text/plain" });
+    response.end(`no capture for ${line}`);
+    return;
+  }
+  response.writeHead(200, { "content-type": "application/xml" });
+  response.end(body);
+}
+
 beforeAll(async () => {
-  server = createServer((request, response) => {
-    const line = request.url ?? "";
-    seen.push(line);
-    const body = ANSWERS.get(line);
-    if (body === undefined) {
-      // Not 404: a 404 is an answer this provider knows how to read, and a missing capture is a
-      // defect in the test rather than in the provider, so it has to look different.
-      response.writeHead(599, { "content-type": "text/plain" });
-      response.end(`no capture for ${line}`);
-      return;
-    }
-    response.writeHead(200, { "content-type": "application/xml" });
-    response.end(body);
-  });
+  server = createServer(answer);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   if (address === null || typeof address === "string") throw new Error("the fixture server did not take a port");
@@ -260,6 +288,76 @@ describe("the reads the issue promises", () => {
     const row = result.rows[0] as Record<string, unknown>;
     expect(String(row.category)).toBe("CONDITION");
     expect(String(row.nativeCode)).toBe("SYS-1722");
+    await provider.disconnect();
+  });
+});
+
+describe("an agent's error document reaches the reader on every route", () => {
+  test("a path the agent refuses on current is the agent's sentence, not an empty grid", async () => {
+    const provider = await connected();
+    await expect(provider.query("GET /current?path=//DataItem[")).rejects.toThrow(
+      "The path could not be parsed. Invalid syntax: //DataItem[ (INVALID_XPATH)",
+    );
+    await provider.disconnect();
+  });
+
+  test("a from the agent refuses on sample is the agent's sentence, not an empty grid", async () => {
+    const provider = await connected();
+    await expect(provider.query(`GET /sample?from=${BUFFER.first}&count=5`)).rejects.toThrow(
+      "'from' must be greater than 29516470 (OUT_OF_RANGE)",
+    );
+    await provider.disconnect();
+  });
+});
+
+describe("the connection's Path prefix", () => {
+  test("is put in front of every route the provider sends", async () => {
+    seen.length = 0;
+    const provider = new MTConnectProvider({ ...connection(), apiPath: `${PROXY_PREFIX}/` }, {});
+    await provider.connect();
+    const result = await provider.query("GET /current");
+    expect(result.rowCount).toBeGreaterThan(0);
+    expect(seen).toEqual([`${PROXY_PREFIX}/current`, `${PROXY_PREFIX}/probe`, `${PROXY_PREFIX}/current`]);
+    await provider.disconnect();
+  });
+});
+
+describe("an agent served over https", () => {
+  const material = loadTlsFixtures();
+  let tlsServer: HttpsServer;
+  let tlsPort = 0;
+
+  beforeAll(async () => {
+    tlsServer = createHttpsServer({ cert: material.server.cert, key: material.server.key }, answer);
+    await new Promise<void>((resolve) => tlsServer.listen(0, "127.0.0.1", resolve));
+    const address = tlsServer.address();
+    if (address === null || typeof address === "string") throw new Error("the TLS fixture server did not take a port");
+    tlsPort = address.port;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => tlsServer.close(() => resolve()));
+  });
+
+  test("is read with the CA the SSL / TLS panel carries", async () => {
+    const provider = new MTConnectProvider(
+      { ...connection(), port: tlsPort, ssl: { mode: "verify-full", caCert: material.ca } },
+      {},
+    );
+    await provider.connect();
+    const result = await provider.query("GET /current");
+    expect(result.rowCount).toBeGreaterThan(0);
+    await provider.disconnect();
+  });
+
+  test("is refused as a TLS failure when another CA is given, and nothing is asked over http", async () => {
+    seen.length = 0;
+    const provider = new MTConnectProvider(
+      { ...connection(), port: tlsPort, ssl: { mode: "verify-full", caCert: material.otherCa } },
+      {},
+    );
+    await expect(provider.connect()).rejects.toThrow("The TLS connection failed");
+    expect(seen).toEqual([]);
     await provider.disconnect();
   });
 });

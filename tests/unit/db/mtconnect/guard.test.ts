@@ -253,6 +253,15 @@ describe("parameters", () => {
     }
   });
 
+  test("a broken percent-escape in a key or a value is refused by name, not thrown as a URIError", () => {
+    for (const line of ["/current?path=//DataItem[@name=%22100%%22]", "/sample?count%=5", "/sample?count=%E0%A4%A"]) {
+      expect(code(() => guardRequestLine(line, OPTIONS))).toBe("bad-encoding");
+    }
+    expect(() => guardRequestLine("/sample?count=%ZZ", OPTIONS)).toThrow(
+      "The query holds a % that does not start a valid escape such as %22: count=%ZZ",
+    );
+  });
+
   test("device as a query key is refused even on the route that accepts it", () => {
     expect(code(() => guardRequestLine("/assets?device=Mazak", OPTIONS))).toBe("refused-key");
   });

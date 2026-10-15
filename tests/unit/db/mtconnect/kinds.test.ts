@@ -7,8 +7,8 @@
  * nothing either way, because the field is optional.
  *
  * So this suite calls `enumerableKinds` and `keyBrowserKind` from `src/lib/db/object-kinds.ts` with
- * this provider's own kinds, and then breaks the declaration and shows the check going red
- * (decision K-120). A suite that only ever sees the correct declaration cannot tell a working check
+ * this provider's own kinds, and then breaks the declaration and shows the check going red.
+ * A suite that only ever sees the correct declaration cannot tell a working check
  * from one that returns true.
  */
 import { describe, expect, test } from "bun:test";

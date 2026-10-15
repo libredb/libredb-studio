@@ -41,7 +41,7 @@ export const MTCONNECT_QUERY_DIALECT = "mtconnect";
  * (`Mazak / Resources / Materials / Stock`, with a data item at the third), and a model with five
  * nested components is served by the agent without complaint, at XML element depth 15. So there is
  * no agent side ceiling to design against, and components are named into the data item's label
- * while the Keys panel walks the real hierarchy (decision K-82).
+ * while the Keys panel walks the real hierarchy.
  */
 export const MTCONNECT_CONTAINER_LEVEL = Object.freeze({
   /** One level: the device. The Agent device is a device here like any other. */
@@ -71,8 +71,8 @@ export const MTCONNECT_CONTAINER_LEVEL = Object.freeze({
  * fixture holds at most 123 in one device. A folder lists a hundred rows without paging, so the
  * panel's paging buys nothing here.
  *
- * This refines decision K-82 rather than contradicting it. K-82 chose the Prometheus naming pattern
- * AND the Keys panel, and the mechanism above makes the two exclusive per kind: if `dataitem` were
+ * The tree takes the Prometheus naming pattern, and a Keys panel cannot sit beside it for the same
+ * kind: the mechanism above makes the two exclusive per kind. If `dataitem` were
  * declared `enumeratedBy: "key-browser"` it would vanish from the tree, from the inventory and from
  * plan mode's grounding, which is the opposite of what the Prometheus pattern is for. What the Keys
  * panel would add, walking the component hierarchy deeper than the tree's two container levels, is

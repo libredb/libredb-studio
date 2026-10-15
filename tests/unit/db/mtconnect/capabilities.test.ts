@@ -52,7 +52,7 @@ describe("every flag by name", () => {
   });
 
   /**
-   * The cost of registering late, closed (K-184).
+   * The cost of registering late, closed.
    *
    * A provider whose `queryDialect` is absent falls through the tab-type ladder to the JSON rung,
    * so until the union member landed this provider's console would have been typed `mongodb` and
@@ -135,7 +135,7 @@ describe("the declaration is a closed set", () => {
 
   test("the keys this provider deliberately does NOT declare are absent, each named", () => {
     // Each absence is a decision recorded elsewhere, so each is asserted rather than assumed.
-    expect(capabilities.keyScan).toBeUndefined(); // decision K-134: no Keys panel surface
+    expect(capabilities.keyScan).toBeUndefined(); // no Keys panel surface
     expect(capabilities.agentWalkScope).toBeUndefined(); // MEASURED: it cannot express what MT-S10 wants
     expect(capabilities.explainFormat).toBeUndefined(); // no explain, so no format
     expect(capabilities.identifierQuoting).toBeUndefined(); // the text is not SQL

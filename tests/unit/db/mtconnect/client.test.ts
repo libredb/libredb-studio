@@ -3,7 +3,7 @@
  *
  * The transport is a stand-in that records what it was asked for and answers with the captured
  * documents, so the assertions are about this module rather than about the network. The documents
- * are the real ones from `tests/fixtures/mtconnect/2.8.0.3/` (decision K-72).
+ * are the real ones from `tests/fixtures/mtconnect/2.8.0.3/`.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -319,7 +319,7 @@ describe("a sample read", () => {
     expect(result.capped).toBe(true);
   });
 
-  test("an error document walks to nothing rather than being read as observations", async () => {
+  test("an error document is handed back for the caller to report, never read as observations", async () => {
     const { transport } = standIn(fixture("error-out-of-range.xml"), 400);
     const result = await readObservations(
       options(transport, { count: 0 }),
@@ -329,7 +329,8 @@ describe("a sample read", () => {
         throw new Error("an error document has no observations");
       },
     );
-    expect(result).toEqual({ read: 0, capped: false });
+    expect({ read: result.read, capped: result.capped }).toEqual({ read: 0, capped: false });
+    expect(result.agentError?.name).toBe("MTConnectError");
   });
 
   test("a proxy page is refused here too, not walked", async () => {
