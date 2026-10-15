@@ -14,9 +14,9 @@
  *   maintenance only. A session without a subject holds no grant.
  * - A record carries one credential: the one of the grant's level by default, or always the read credential with
  *   `credential: "read"`, which the agent, MCP, classification and handover paths ask for. It carries the statement
- *   timeout of governed connections and the server-only markers `literal`, so no `${NAME}` or Vault reference in a
- *   value the control plane set is ever resolved, and `grantLevel`, the level of the credential it carries. The
- *   managed route removes both before anything reaches the browser.
+ *   timeout of governed connections, the runtime setting `query.timeoutMs`, and the server-only markers `literal`, so
+ *   no `${NAME}` or Vault reference in a value the control plane set is ever resolved, and `grantLevel`, the level of
+ *   the credential it carries. The managed route removes both before anything reaches the browser.
  * - A connection that does not exist and one granted to another subject are the same miss: only the caller's own
  *   grants are read, so nothing here can tell a caller which ids exist.
  * - While the snapshot cannot be served (spec 7.5), every call throws `GovernanceUnavailableError`, which the routes
@@ -28,6 +28,7 @@ import { ApiErrorCode } from "@/lib/api/error-codes";
 import { getManagedConnections, getSeedConnectionById, type ManagedConnection } from "@/lib/seed";
 import { governanceEnabled } from "./config";
 import { governanceServable } from "./freshness";
+import { runtimeSetting } from "./settings";
 import { type EffectiveGrant, effectiveGrant, type GovernanceSnapshot, governanceState } from "./state";
 
 /** Who asks: the session's role and username, and the identity provider subject that grants name under governance. */
@@ -71,8 +72,9 @@ export class GovernanceUnavailableError extends Error {
 }
 
 /**
- * The statement timeout of every governed connection: the default of the runtime setting `query.timeoutMs` (spec 7.8).
- * A definition may not set `queryTimeout` (row admission), so a control plane cannot lift it per connection.
+ * The statement timeout of a governed connection when the control plane set no valid `query.timeoutMs`: the default of
+ * that runtime setting (spec 7.8). A definition may not set `queryTimeout` (row admission), so a control plane sets it
+ * for every governed connection at once and never per connection.
  */
 const GOVERNED_QUERY_TIMEOUT_MS = 60_000;
 
@@ -97,7 +99,9 @@ function projection(grant: EffectiveGrant, options: VisibilityOptions): Governed
       `The governance snapshot grants write on connection "${grant.connection.id}", which has no write credential`,
     );
   }
-  return { ...record, queryTimeout: GOVERNED_QUERY_TIMEOUT_MS, literal: true, grantLevel: level };
+  // Read at every projection, so a changed value applies to the next statement a route opens the record for.
+  const queryTimeout = runtimeSetting("query.timeoutMs") ?? GOVERNED_QUERY_TIMEOUT_MS;
+  return { ...record, queryTimeout, literal: true, grantLevel: level };
 }
 
 /** By name, then by id: the governance source returns its rows in no particular order. */

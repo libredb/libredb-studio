@@ -1,5 +1,6 @@
 import type { EditorExecutionContext } from "@/lib/db/types";
 import { governanceEnabled } from "@/lib/governance/config";
+import { runtimeSetting } from "@/lib/governance/settings";
 import type { DatabaseConnection } from "@/lib/types";
 
 /**
@@ -10,9 +11,9 @@ import type { DatabaseConnection } from "@/lib/types";
 const SEED_NAMESPACE = "seed:";
 
 /**
- * The pool size of each user's provider under governance (spec 9.4): the default of the runtime setting
- * `provider.poolMaxPerUser` (spec 7.8), which `tests/unit/lib/api/execution-context.test.ts` holds equal to the
- * registry's.
+ * The pool size of each user's provider under governance (spec 9.4) when the control plane set no valid
+ * `provider.poolMaxPerUser`: the default of that runtime setting (spec 7.8), which
+ * `tests/unit/lib/api/execution-context.test.ts` holds equal to the registry's.
  */
 const OWNER_POOL_MAX = 3;
 
@@ -87,8 +88,10 @@ export function sessionOwner(session: { idpSubject?: string }): string | undefin
  *
  * Under governance (`GOVERNANCE_SOURCE`, docs/GOVERNANCE.md) it also names the owner of a per-user provider
  * (spec 9.4): `owner`, the session's identity provider subject, and `ownerPoolMax`, the pool size of that user's
- * provider. The factory keys, opens and records a provider per owner, so two users of one connection never share a
- * pool, a database session state or an interactive transaction. Without governance neither field is set, and every
+ * provider, the runtime setting `provider.poolMaxPerUser`. The size applies only when the factory creates a provider:
+ * the cache key does not frame it, so a provider already open keeps its pool until it is torn down. The factory keys,
+ * opens and records a provider per owner, so two users of one connection never share a pool, a database session state
+ * or an interactive transaction. Without governance neither field is set, and every
  * caller of a connection shares its provider exactly as before.
  */
 export function editorExecutionContext(
@@ -98,5 +101,5 @@ export function editorExecutionContext(
   const allowExternalFileAccess = session.role === "admin" && !openToNonAdminRoles(connection);
   const owner = sessionOwner(session);
   if (owner === undefined) return { allowExternalFileAccess };
-  return { allowExternalFileAccess, owner, ownerPoolMax: OWNER_POOL_MAX };
+  return { allowExternalFileAccess, owner, ownerPoolMax: runtimeSetting("provider.poolMaxPerUser") ?? OWNER_POOL_MAX };
 }

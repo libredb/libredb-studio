@@ -112,6 +112,32 @@ describe("readConnectionPolicy", () => {
     expect(await readConnectionPolicy()).toStrictEqual({ customConnections: false });
   });
 
+  test.each(["none", "redacted", "full"] as const)(
+    "carries statementCapture %s under governance",
+    async (statementCapture) => {
+      mockGlobalFetch({
+        "/api/connections/policy": { json: { customConnections: false, governance: true, statementCapture } },
+      });
+      expect(await readConnectionPolicy()).toStrictEqual({
+        customConnections: false,
+        governance: true,
+        statementCapture,
+      });
+    },
+  );
+
+  test("drops a statementCapture that names no capture mode, and any without governance", async () => {
+    mockGlobalFetch({
+      "/api/connections/policy": { json: { customConnections: false, governance: true, statementCapture: "FULL" } },
+    });
+    expect(await readConnectionPolicy()).toStrictEqual({ customConnections: false, governance: true });
+    restoreGlobalFetch();
+
+    // Only governance reports a capture mode, so a server without it never carries one.
+    mockGlobalFetch({ "/api/connections/policy": { json: { customConnections: true, statementCapture: "full" } } });
+    expect(await readConnectionPolicy()).toStrictEqual({ customConnections: true });
+  });
+
   test("only an explicit false withholds anything", async () => {
     mockGlobalFetch({ "/api/connections/policy": { json: { customConnections: "false" } } });
     expect(await readConnectionPolicy()).toEqual(CUSTOM_CONNECTIONS_ALLOWED);

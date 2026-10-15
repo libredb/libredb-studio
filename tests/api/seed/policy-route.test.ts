@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import * as realAuth from "@/lib/auth";
+import { recordGovernanceSnapshot, resetGovernanceState } from "@/lib/governance/state";
+import { grantedSnapshot } from "../../helpers/governance/granted-snapshot";
 
 const mockGetSession = mock(
   async (): Promise<{ role: string; username: string } | null> => ({ role: "user", username: "ada" }),
@@ -21,6 +23,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  resetGovernanceState();
   if (original === undefined) delete process.env.ALLOW_CUSTOM_CONNECTIONS;
   else process.env.ALLOW_CUSTOM_CONNECTIONS = original;
   if (originalGovernance === undefined) delete process.env.GOVERNANCE_SOURCE;
@@ -66,6 +69,31 @@ describe("GET /api/connections/policy", () => {
     const res = await GET();
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ customConnections: false, governance: true });
+    // No snapshot has set queryLog.statementCapture yet, so the registry default applies.
+    expect(await res.json()).toEqual({ customConnections: false, governance: true, statementCapture: "none" });
+  });
+
+  test("governance reports statementCapture full", async () => {
+    process.env.GOVERNANCE_SOURCE = "postgres";
+    recordGovernanceSnapshot({
+      ...grantedSnapshot([], []),
+      settings: { values: new Map([["queryLog.statementCapture", "full"]]), ignored: [], malformed: 0 },
+    });
+
+    const res = await GET();
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ customConnections: false, governance: true, statementCapture: "full" });
+  });
+
+  test("without governance a recorded statementCapture is not reported", async () => {
+    recordGovernanceSnapshot({
+      ...grantedSnapshot([], []),
+      settings: { values: new Map([["queryLog.statementCapture", "full"]]), ignored: [], malformed: 0 },
+    });
+
+    const res = await GET();
+
+    expect(await res.json()).toEqual({ customConnections: true });
   });
 });

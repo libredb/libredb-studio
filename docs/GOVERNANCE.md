@@ -242,8 +242,9 @@ Grants decide what each person sees and which credential Studio uses for them:
 
 What a person sees in the connection list:
 
-- `GET /api/connections/policy` answers `{"customConnections": false, "governance": true}`, so the editor offers no connection of the person's own.
-  Without governance the answer has no `governance` field, as before.
+- `GET /api/connections/policy` answers `{"customConnections": false, "governance": true, "statementCapture": "redacted"}`, so the editor offers no connection of the person's own.
+  `statementCapture` is the active `queryLog.statementCapture`, and while it is `full` the editor shows the one-line notice "Statements you run are recorded in full in this server's query log."
+  Without governance the answer has neither `governance` nor `statementCapture`, as before.
 - A person with no grants sees "No databases have been granted to you yet. Ask an administrator for access." instead of the list.
 - While Studio cannot serve its snapshot, `GET /api/connections/managed` answers 503 `GOVERNANCE_UNAVAILABLE`, never an empty list.
   The connection list then shows a banner that connection access is temporarily unavailable, keeps the connections it already listed, and never shows the no-grants message.
@@ -255,8 +256,8 @@ Studio opens a governed connection for each person separately, even when two peo
 
 - Each person's requests run on a provider of their own, named by their identity provider subject, with its own pool of database sessions.
   A `SET` value, a temporary table or any other session state one person leaves behind never reaches another person's statements.
-- A person's pool opens a database session only when that person runs something, and holds at most 3, the default of `provider.poolMaxPerUser`.
-  So each person who uses a connection can hold up to 3 of its database sessions per Studio instance, and the database's connection limit needs room for that.
+- A person's pool opens a database session only when that person runs something, and holds at most `provider.poolMaxPerUser` sessions, 3 by default.
+  So each person who uses a connection can hold that many of its database sessions per Studio instance, and the database's connection limit needs room for that.
 - An interactive transaction belongs to the person who began it: another person neither sees it in the transaction status nor runs a statement inside it, and can begin their own beside it.
 - A cancel reaches only the statements of the person who sends it, so naming another person's query id stops nothing.
 - A disconnect request (`POST /api/db/disconnect`) closes only the providers of the person who sends it, never another person's sessions or transactions on the same connection.
@@ -586,6 +587,14 @@ A control plane may set these keys through `bridge.settings_v1`, and no others:
 - In this contract version Studio keeps the agent and MCP off in governance mode whatever `agent.enabled` and `mcp.enabled` say, so a control plane shows those two keys read-only.
 - A control plane chooses the capture mode it sets.
   `redacted` keeps statements searchable by table and column without their literals.
+
+When the query and pool settings take effect:
+
+- `query.timeoutMs` becomes the statement timeout of every governed connection from the next request after the snapshot that carries it.
+  A provider already open with another timeout is closed and reopened with the new one on that request, as when a saved connection's timeout changes without governance.
+- `provider.poolMaxPerUser` sizes the pool of each per-user provider Studio creates after the snapshot that carries it.
+  A provider already open keeps its pool size until it is torn down: by a disconnect, the idle sweep, a revoked grant or a changed credential.
+- `queryLog.statementCapture` is reported by `GET /api/connections/policy` from the next request, and the editor reads that route when the page loads, so the notice for `full` appears or goes away on the next page load.
 
 The manifest lists each key with its type, allowed values or bounds, Studio default or environment counterpart, the contract version that published it and the description a control plane shows next to it.
 
