@@ -648,10 +648,10 @@ describe("MCP_EXPOSABLE (#1089)", () => {
     expect(Object.isFrozen(MCP_EXPOSABLE)).toBe(true);
   });
 
-  test("offers MCP for every shipped engine but etcd, oxia, s3, kubernetes, mqtt, firestore, opcua, sparkplug, modbus, netconf and snmp", () => {
+  test("offers MCP for every shipped engine but etcd, oxia, s3, kubernetes, mqtt, firestore, opcua and modbus", () => {
     // An engine MCP is not offered for answers false with its registration, and is named here then.
-    // The four industrial and network engines that landed after OPC UA each refuse for a reason of
-    // their own, written beside their registration in compatibility.ts rather than repeated here.
+    // Modbus refuses for a reason of its own, written beside its registration in
+    // compatibility.ts rather than repeated here.
     expect(SHIPPED_DATABASE_TYPES.filter((type) => MCP_EXPOSABLE[type] !== true)).toEqual([
       "etcd",
       "oxia",
@@ -660,10 +660,7 @@ describe("MCP_EXPOSABLE (#1089)", () => {
       "mqtt",
       "firestore",
       "opcua",
-      "sparkplug",
       "modbus",
-      "netconf",
-      "snmp",
     ]);
   });
 });
