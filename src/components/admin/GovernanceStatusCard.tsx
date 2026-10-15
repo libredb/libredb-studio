@@ -106,9 +106,11 @@ function StatusBody({ status }: { status: GovernanceStatus }) {
       <div className="space-y-1">
         <span className="text-xs text-fg-muted">Runtime settings</span>
         <ul className="space-y-1">
-          {status.settings.map(({ key, source }) => (
-            <li key={key} data-testid="governance-setting" className="text-xs text-fg-secondary break-words">
-              {`${key}: ${source}`}
+          {status.settings.map((setting) => (
+            <li key={setting.key} data-testid="governance-setting" className="text-xs text-fg-secondary break-words">
+              {"held" in setting
+                ? `${setting.key}: ${setting.source}, held: ${setting.note}`
+                : `${setting.key}: ${setting.source}`}
             </li>
           ))}
           {status.ignoredSettings.map(({ key, code }) => (

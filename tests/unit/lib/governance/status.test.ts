@@ -10,6 +10,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } 
 import type { AdmittedConnection } from "@/lib/governance/admission";
 import { resetGovernanceKeyring } from "@/lib/governance/keyring";
 import type { GovernanceListenerStatus } from "@/lib/governance/listener";
+import { validateSettings } from "@/lib/governance/settings";
 import type { GovernanceStatus } from "@/lib/governance/status";
 import {
   type GovernanceSnapshot,
@@ -22,7 +23,7 @@ import { keyringFileOf, removeKeyringFiles, testKey } from "../../../helpers/gov
 let listenerStatus: GovernanceListenerStatus | null = null;
 mock.module("@/lib/governance/listener", () => ({ governanceListenerStatus: () => listenerStatus }));
 
-const { governanceStatus } = await import("@/lib/governance/status");
+const { governanceStatus, HELD_SETTING_NOTE } = await import("@/lib/governance/status");
 
 const T = Date.parse("2026-10-15T08:00:00.000Z");
 const PASSWORD = "STATUS-UNIT-CANARY-4b1e";
@@ -106,11 +107,14 @@ afterAll(() => {
   removeKeyringFiles();
 });
 
-/** Where each key's value comes from while the control plane set none: its environment variable or Studio's default. */
+/**
+ * Where each key's value comes from while the control plane set none: its environment variable or Studio's default.
+ * The agent and MCP keys are held, because this version runs neither under governance.
+ */
 const NO_RUNTIME_VALUES: GovernanceStatus["settings"] = [
   { key: "ai.enabled", source: "default" },
-  { key: "agent.enabled", source: "environment" },
-  { key: "mcp.enabled", source: "environment" },
+  { key: "agent.enabled", source: "environment", held: true, note: "MCP and agent governance ship in v1.1" },
+  { key: "mcp.enabled", source: "environment", held: true, note: "MCP and agent governance ship in v1.1" },
   { key: "query.timeoutMs", source: "default" },
   { key: "provider.poolMaxPerUser", source: "default" },
   { key: "queryLog.statementCapture", source: "default" },
@@ -213,6 +217,30 @@ describe("governanceStatus", () => {
     expect(body).not.toContain(PASSWORD);
     expect(body).not.toContain("db.internal.example");
     expect(body).not.toContain(CONNECTION.envelopes.read);
+  });
+
+  test("a runtime key whose consumer is held is reported as held with the v1.1 note", () => {
+    recordGovernanceSnapshot({
+      ...snapshotAt(T),
+      settings: validateSettings(
+        [
+          { key: "ai.enabled", value: false, updated_at: new Date() },
+          { key: "agent.enabled", value: true, updated_at: new Date() },
+          { key: "mcp.enabled", value: true, updated_at: new Date() },
+        ],
+        1,
+      ),
+    });
+
+    const settings = governanceStatus(T).settings;
+
+    expect(HELD_SETTING_NOTE).toBe("MCP and agent governance ship in v1.1");
+    expect(settings.slice(0, 3)).toEqual([
+      { key: "ai.enabled", source: "runtime" },
+      { key: "agent.enabled", source: "runtime", held: true, note: HELD_SETTING_NOTE },
+      { key: "mcp.enabled", source: "runtime", held: true, note: HELD_SETTING_NOTE },
+    ]);
+    expect(settings.slice(3).every((setting) => !("held" in setting))).toBe(true);
   });
 
   test("throws when the keyring does not load", () => {

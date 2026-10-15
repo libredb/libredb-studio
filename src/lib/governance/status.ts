@@ -6,14 +6,17 @@
  * contract versions on both sides, the freshness state, the age and load time of the snapshot, why the latest load
  * failed, how many connections were admitted, the rows admission skipped, the key ids of the keyring, the result of
  * each key id's seal canary, and the listener's state, how long it has held and when the last change notification
- * arrived, and where each runtime setting's value comes from with the setting keys the settings store ignored. The
- * sink slice adds its section here.
+ * arrived, and where each runtime setting's value comes from with the setting keys the settings store ignored. A key
+ * whose consumer this version holds off under governance is marked held with a note, as a control plane shows it
+ * read-only (spec 7.8). The sink slice adds its section here.
  *
  * Like the heartbeat, it carries ids, levels, paths and codes only: never a definition value, an envelope, a
  * credential or a statement. The one exception is the full message of the latest load failure, which only an
  * administrator reads here: the public `GET /api/ready` names the cause in Studio's own words alone, and without this
  * message an operator would have the log alone to find a privilege or object the server named.
  */
+import { isAgentHeldByGovernance } from "@/lib/agent/config";
+import { isMcpHeldByGovernance } from "@/lib/mcp/config";
 import type { AdmissionSkip, SkippedItem } from "./admission";
 import { type GovernanceSource, governancePostgresSchema, governanceSource } from "./config";
 import { SUPPORTED_CONTRACT_VERSIONS } from "./contract";
@@ -22,8 +25,25 @@ import type { EnvelopeCode } from "./hpke";
 import { governanceKeyring } from "./keyring";
 import { governanceListenerStatus, type ListenerState } from "./listener";
 import { type SettingSource, settingSource } from "./settings";
-import { SETTINGS_REGISTRY } from "./settings-registry";
+import { type SettingDefinition, SETTINGS_REGISTRY } from "./settings-registry";
 import { type CanaryResult, governanceState, type LoadFailure } from "./state";
+
+/** Why a held key has no effect, as the status and the control plane say it. */
+export const HELD_SETTING_NOTE = "MCP and agent governance ship in v1.1";
+
+/**
+ * The keys whose consumer is held off under governance, each with the hold predicate its consumer asks, so the status
+ * stops reporting a key as held in the release that lifts the hold there.
+ */
+const SETTING_HOLDS: Readonly<Record<string, () => boolean>> = {
+  "agent.enabled": isAgentHeldByGovernance,
+  "mcp.enabled": isMcpHeldByGovernance,
+};
+
+/** Each key of the settings registry, where its value comes from, and, for a held key, the hold and its note. */
+export type GovernanceStatusSetting =
+  | { readonly key: string; readonly source: SettingSource }
+  | { readonly key: string; readonly source: SettingSource; readonly held: true; readonly note: string };
 
 /** A row, or a row's write level, that admission left out, with the envelope code the heartbeat item has no field for. */
 export type GovernanceStatusSkip = SkippedItem & { readonly envelopeCode?: EnvelopeCode };
@@ -63,8 +83,8 @@ export interface GovernanceStatus {
   readonly keyringKids: readonly string[];
   /** For each key id with a seal canary, `ok` or the code its envelope failed with; null before a successful load. */
   readonly canary: Readonly<Record<string, CanaryResult>> | null;
-  /** Each key of the settings registry, in registry order, and where its value comes from at the moment. */
-  readonly settings: readonly { readonly key: string; readonly source: SettingSource }[];
+  /** Each key of the settings registry, in registry order, where its value comes from at the moment, and its hold. */
+  readonly settings: readonly GovernanceStatusSetting[];
   /** The setting keys the last successful load ignored, with their code; never their values. */
   readonly ignoredSettings: readonly { readonly key: string; readonly code: SkippedItem["code"] }[];
   /** The change notification listener of this process, or null when none runs. */
@@ -94,6 +114,11 @@ function listenerAt(nowMs: number): GovernanceStatus["listener"] {
   };
 }
 
+function settingStatus(definition: SettingDefinition): GovernanceStatusSetting {
+  const entry = { key: definition.key, source: settingSource(definition) };
+  return SETTING_HOLDS[definition.key]?.() ? { ...entry, held: true, note: HELD_SETTING_NOTE } : entry;
+}
+
 /**
  * The governance status of this process at `nowMs`. Call it under governance only. It throws when the keyring does
  * not load, which the boot preflight rules out for a running server.
@@ -121,7 +146,7 @@ export function governanceStatus(nowMs = Date.now()): GovernanceStatus {
     skipped: (snapshot?.skipped ?? []).map(skipOf),
     keyringKids: [...governanceKeyring().keys()],
     canary: snapshot?.canary ?? null,
-    settings: SETTINGS_REGISTRY.map((definition) => ({ key: definition.key, source: settingSource(definition) })),
+    settings: SETTINGS_REGISTRY.map(settingStatus),
     ignoredSettings: (snapshot?.settings.ignored ?? []).map(({ id, code }) => ({ key: id, code })),
     listener: listenerAt(nowMs),
   };

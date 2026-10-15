@@ -33,7 +33,7 @@ const GROUPS = {
   rateLimit: ["RATE_LIMITED"],
   session: ["AUTH_REQUIRED", "WORKSPACE_OWNER_MISMATCH"],
   connectionPolicy: ["CUSTOM_CONNECTIONS_DISABLED"],
-  governance: ["CONNECTION_NOT_FOUND", "GOVERNANCE_UNAVAILABLE", "TRANSACTION_CREDENTIAL_CHANGED"],
+  governance: ["AI_DISABLED", "CONNECTION_NOT_FOUND", "GOVERNANCE_UNAVAILABLE", "TRANSACTION_CREDENTIAL_CHANGED"],
   generic: ["INTERNAL_ERROR", "NETWORK_ERROR"],
 } as const;
 
@@ -89,6 +89,11 @@ describe("ApiErrorCode", () => {
 
   test("contains the governed refusal of a transaction whose grant level or credential changed while it was open", () => {
     expect(ApiErrorCode.TRANSACTION_CREDENTIAL_CHANGED).toBe("TRANSACTION_CREDENTIAL_CHANGED");
+  });
+
+  test("contains the governed refusal of the AI routes while the runtime setting ai.enabled is false", () => {
+    expect(ApiErrorCode.AI_DISABLED).toBe("AI_DISABLED");
+    expect(ApiErrorCode.AI_DISABLED).not.toBe(ApiErrorCode.LLM_UNCONFIGURED);
   });
 
   test("contains the application rate-limit error code", () => {

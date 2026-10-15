@@ -3,7 +3,9 @@ import { getSession, type UserPayload } from "@/lib/auth";
 import { clientAddress } from "@/lib/api/client-address";
 import { createErrorResponse } from "@/lib/api/errors";
 import { consumeRateLimit, RateLimitError } from "@/lib/api/rate-limit";
+import { ApiErrorCode } from "@/lib/api/error-codes";
 import { emitAuditEvent } from "@/lib/audit";
+import { runtimeSetting } from "@/lib/governance/settings";
 import { sessionRequiredBody } from "@/lib/api/session-ended";
 import { logger } from "@/lib/logger";
 
@@ -25,6 +27,8 @@ import { logger } from "@/lib/logger";
  * produces still comes from createErrorResponse, so Retry-After is constructed in one place.
  */
 export type GuardResult = { response: NextResponse } | { session: UserPayload };
+
+const AI_DISABLED_MESSAGE = "AI assistance is switched off on this server";
 
 export async function guardRoute(opts: {
   /** "POST /api/ai/explain" - recorded verbatim in the audit trail. */
@@ -57,6 +61,19 @@ export async function guardRoute(opts: {
       }
     }
     return { response: NextResponse.json(sessionRequiredBody("Authentication required"), { status: 401 }) };
+  }
+
+  // Under governance the control plane's ai.enabled switches the whole AI bucket off (spec 7.8). It is read after the
+  // session, so an anonymous caller learns nothing about it, and before the rate limit, so a refusal spends no budget.
+  // Without governance runtimeSetting answers undefined and nothing changes; true adds nothing either, because the LLM
+  // configuration stays in the environment and the route answers as it does without governance.
+  if (opts.bucket === "ai" && runtimeSetting("ai.enabled") === false) {
+    return {
+      response: NextResponse.json(
+        { error: AI_DISABLED_MESSAGE, code: ApiErrorCode.AI_DISABLED, statusCode: 403 },
+        { status: 403 },
+      ),
+    };
   }
 
   // Keyed on username, the JWT payload's only stable identity field. role is available but is

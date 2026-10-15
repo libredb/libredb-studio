@@ -40,7 +40,7 @@
 
 import { SignJWT, jwtVerify } from "jose";
 import { getJwtSecret } from "@/lib/config/auth-env";
-import { AGENT_RUN_ID_PATTERN } from "./run-store";
+import { AGENT_RUN_ID_PATTERN } from "./run-id";
 
 /** The one path this credential opens. */
 export const AGENT_DRIVE_PATH = "/api/agent/drive";

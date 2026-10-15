@@ -1,10 +1,17 @@
 import type { AuthInfo } from "@modelcontextprotocol/server";
 import { NextResponse } from "next/server";
 import { getAppVersion } from "@/lib/app-version";
+import { runtimeSetting } from "@/lib/governance/settings";
 import { logger } from "@/lib/logger";
 import { mcpTokenOwnerAllowed } from "@/lib/mcp/account-check";
 import { auditMcpDenial, authenticateMcpRequest, mcpRevokedTokenResponse } from "@/lib/mcp/bearer";
-import { MCP_ENABLED_INVALID_MESSAGE, MCP_PATH, readMcpSwitch } from "@/lib/mcp/config";
+import {
+  isMcpHeldByGovernance,
+  MCP_ENABLED_INVALID_MESSAGE,
+  MCP_PATH,
+  type McpSwitchReading,
+  readMcpSwitch,
+} from "@/lib/mcp/config";
 import { mcpOriginHostRefusal } from "@/lib/mcp/origin-policy";
 import { preprocessMcpPost, recordInvalidArguments } from "@/lib/mcp/preprocess";
 import { mcpHandler } from "@/lib/mcp/server";
@@ -27,6 +34,18 @@ const VERSION_UNAVAILABLE_MESSAGE = "server version unavailable: NEXT_PUBLIC_APP
 /** Each unrecognized switch value is logged once per process, not once per request. */
 const reportedSwitchValues = new Set<string>();
 
+/**
+ * The switch as this request reads it. A valid runtime `mcp.enabled` from the control plane wins over
+ * LIBREDB_MCP_ENABLED (spec 7.8), and the other MCP variables stay prerequisites. It is applied here rather than in
+ * readMcpSwitch() because the proxy imports src/lib/mcp/config.ts and must never load the settings store. Only
+ * governance sets a runtime value, and the governance hold answers first, so in this version the value has no effect.
+ */
+function readMcpSwitchForRequest(): McpSwitchReading {
+  const runtime = isMcpHeldByGovernance() ? undefined : runtimeSetting("mcp.enabled");
+  if (runtime === undefined) return readMcpSwitch();
+  return { state: runtime ? "on" : "off" };
+}
+
 type Admission = { readonly authInfo: AuthInfo } | { readonly response: Response };
 
 async function admit(request: Request): Promise<Admission> {
@@ -42,7 +61,7 @@ async function admit(request: Request): Promise<Admission> {
     auditMcpDenial(request, "mcp_token_invalid");
     return { response: mcpRevokedTokenResponse() };
   }
-  const reading = readMcpSwitch();
+  const reading = readMcpSwitchForRequest();
   if (reading.state === "off") return { response: NextResponse.json(MCP_DISABLED_BODY, { status: 404 }) };
   if (reading.state === "invalid") {
     if (!reportedSwitchValues.has(reading.raw)) {
