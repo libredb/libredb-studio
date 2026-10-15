@@ -487,4 +487,75 @@ describe("GET /api/auth/oidc/callback", () => {
       expect(setCookies.has("oidc-logout-hint")).toBe(false);
     });
   });
+
+  // Spec 5.2: under governance a session counts only with a subject and only for the identity provider at
+  // OIDC_ISSUER. The callback mints no session that every request would refuse, because OIDC_AUTO_REDIRECT would
+  // answer each refusal with the next sign-in, in a loop.
+  describe("under governance", () => {
+    const KEYS = ["GOVERNANCE_SOURCE", "OIDC_ISSUER"] as const;
+    const saved: Record<string, string | undefined> = {};
+    const callbackUrl = "http://localhost:3000/api/auth/oidc/callback?code=auth-code&state=test-state";
+    let logSpy: ReturnType<typeof spyOn<Console, "log">>;
+
+    beforeEach(() => {
+      for (const key of KEYS) saved[key] = process.env[key];
+      process.env.GOVERNANCE_SOURCE = "postgres";
+      process.env.OIDC_ISSUER = ISSUER;
+      logSpy = spyOn(console, "log").mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      logSpy.mockRestore();
+      for (const key of KEYS) {
+        if (saved[key] === undefined) delete process.env[key];
+        else process.env[key] = saved[key];
+      }
+    });
+
+    function auditReasons(): unknown[] {
+      return logSpy.mock.calls.map((call) => (JSON.parse(String(call[0])) as Record<string, unknown>).reason);
+    }
+
+    async function expectRefusedAsConfiguration(res: Response): Promise<void> {
+      expect(res.headers.get("location")).toBe("http://localhost:3000/login?error=oidc_config");
+      expect(setCookies.has("auth-token")).toBe(false);
+      // The exchange used the state up, so its cookie goes as it does after a sign-in.
+      expect(mockCookieStore.delete).toHaveBeenCalledWith({ name: "oidc-state", path: "/" });
+      expect(auditReasons()).toEqual(["oidc_config"]);
+    }
+
+    test("an ID token whose iss is not OIDC_ISSUER signs no one in and lands on /login?error=oidc_config", async () => {
+      // openid-client accepts this for Microsoft Entra ID, whose common endpoint names each user's own tenant in iss.
+      mockExchangeCode.mockImplementationOnce(async () =>
+        exchanged({
+          ...defaultClaims,
+          iss: "https://login.microsoftonline.com/9188040d-6c67-4c5b-b112-36a304b66dad/v2.0",
+        }),
+      );
+
+      await expectRefusedAsConfiguration(await GET(new Request(callbackUrl)));
+    });
+
+    test("an ID token with an empty sub signs no one in and lands on /login?error=oidc_config", async () => {
+      mockExchangeCode.mockImplementationOnce(async () => exchanged({ ...defaultClaims, sub: "" }));
+
+      await expectRefusedAsConfiguration(await GET(new Request(callbackUrl)));
+    });
+
+    test("an ID token from OIDC_ISSUER with a subject signs in as it does without governance", async () => {
+      const res = await GET(new Request(callbackUrl));
+
+      expect(res.headers.get("location")).toBe("http://localhost:3000/");
+      expect(await mintedSession()).toMatchObject({ idpSubject: "user-123", idpIssuer: ISSUER });
+      expect(auditReasons()).toEqual([undefined]);
+    });
+
+    test("an iss that differs from OIDC_ISSUER only by the trailing slash of a bare host signs in", async () => {
+      mockExchangeCode.mockImplementationOnce(async () => exchanged({ ...defaultClaims, iss: `${ISSUER}/` }));
+
+      await GET(new Request(callbackUrl));
+
+      expect(await mintedSession()).toMatchObject({ idpSubject: "user-123", idpIssuer: `${ISSUER}/` });
+    });
+  });
 });

@@ -60,6 +60,7 @@ export const PROGRAMME_CONTROL_IDS = [
   "1.7",
   "1.8",
   "1.9",
+  "1.10",
   "2.1",
   "2.2",
   "2.3",

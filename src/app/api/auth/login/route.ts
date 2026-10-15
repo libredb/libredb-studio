@@ -9,6 +9,7 @@ import { enforceLoginLimit } from "@/lib/api/login-budget";
 import { consumeRateLimit, resetRateLimit } from "@/lib/api/rate-limit";
 import { hmacHex, secretsMatch } from "@/lib/auth-compare";
 import { emitAuditEvent, MAX_AUDIT_FIELD_LENGTH, type AuditReason } from "@/lib/audit";
+import { governanceEnabled } from "@/lib/governance/config";
 import { logger } from "@/lib/logger";
 import { claimTotpStep, verifyTotp } from "@/lib/totp";
 
@@ -26,6 +27,8 @@ const DUMMY_PASSWORD = "libredb-dummy-password-never-a-credential";
 // bun's line coverage under-counts the continuation lines of a wrapped string.
 const MFA_REQUIRED_MESSAGE = "Enter the 6-digit code from your authenticator app";
 const MFA_INVALID_MESSAGE = "Invalid authentication code";
+const PASSWORD_LOGIN_DISABLED_MESSAGE =
+  "Password sign-in is disabled: this server signs in through the identity provider only";
 
 export async function POST(request: NextRequest) {
   const ip = clientAddress(request);
@@ -37,6 +40,29 @@ export async function POST(request: NextRequest) {
     // refused before this route ever attempts to parse anything - including a malformed body,
     // which the catch below cannot reach for the same reason it cannot be enforced afterwards.
     enforceLoginLimit("login_client", clientKey, "anonymous", ip, ROUTE);
+
+    // Under governance the identity provider is the only way in (docs/GOVERNANCE.md), so every caller is refused here,
+    // before the body is read, even when the boot check that refuses ADMIN_PASSWORD was bypassed. The refusal is a
+    // wasted attempt from this address, as a malformed body is: it spends the client bucket, so a flood is refused
+    // with 429 and its audit lines stay bounded.
+    if (governanceEnabled()) {
+      consumeRateLimit("login_client", clientKey);
+      // Isolated like every other emit in this route: the 403 below is already decided.
+      try {
+        emitAuditEvent({
+          type: "login_failure",
+          action: "login",
+          target: ROUTE,
+          user: "anonymous",
+          result: "failure",
+          reason: "password_login_disabled",
+          ip,
+        });
+      } catch (auditError) {
+        logger.error("Failed to record login_failure audit event", auditError, { route: ROUTE });
+      }
+      return NextResponse.json({ success: false, message: PASSWORD_LOGIN_DISABLED_MESSAGE }, { status: 403 });
+    }
 
     let email: unknown;
     let password: unknown;

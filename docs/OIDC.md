@@ -30,6 +30,7 @@ Browser → Redirect to app (/ or /admin based on role)
   - [Role Mapping](#role-mapping)
     - [Requiring a role](#requiring-a-role)
   - [Session Identity](#session-identity)
+  - [Governance mode](#governance-mode)
   - [Security Features](#security-features)
   - [Troubleshooting](#troubleshooting)
   - [Switching Between Auth Modes](#switching-between-auth-modes)
@@ -429,6 +430,43 @@ Password, passkey and launch sessions carry neither claim.
 `GET /api/auth/me` answers with the session payload, so for an OIDC session its `user` object includes `idpSubject` and `idpIssuer`.
 An ID token without a string `sub` or `iss` signs no one in: the callback redirects to `/login?error=oidc_no_claims`.
 
+### Governance mode
+
+With `GOVERNANCE_SOURCE=postgres` a control plane decides which databases each person may open ([GOVERNANCE.md](./GOVERNANCE.md#sign-in)), and the identity provider's `sub` is the key that joins a session to that person's grants.
+The identity provider is then the only way into Studio, and Studio applies these rules on every request:
+
+- A session counts only when it carries a non-empty `idpSubject` and an `idpIssuer` equal to `OIDC_ISSUER`, the two compared as URLs with one trailing slash ignored.
+  Only the OIDC callback writes those claims, so a password, passkey or launch session is refused, and so is a session whose subject is empty or whose issuer is another provider's.
+- A refused session's `auth-token` cookie is cleared, so the next page load reaches the sign-in page.
+  A changed `OIDC_ISSUER` therefore ends every session of the previous issuer at its next request, and with `OIDC_ISSUER` unset or not a URL no session counts.
+- The callback applies the same rule to the ID token before it mints a session: a token with an empty `sub`, or whose `iss` is not `OIDC_ISSUER`, signs no one in and lands on `/login?error=oidc_config`, so `OIDC_AUTO_REDIRECT` never repeats a sign-in that every request would refuse.
+- `POST /api/auth/login` answers 403 with `Password sign-in is disabled: this server signs in through the identity provider only` before it reads a credential, and the audit trail records `login_failure` with reason `password_login_disabled`.
+
+The identity provider needs:
+
+- `OIDC_ISSUER` set to the issuer the provider writes in its ID tokens.
+  openid-client accepts another `iss` from Microsoft Entra ID and Azure AD B2C, but governance does not: for Entra ID use the tenant's own `https://login.microsoftonline.com/<tenant id>/v2.0`, never the `common` or `organizations` endpoint, whose tokens name each user's own tenant.
+- A confidential client for Studio that uses the authorization code flow with PKCE S256, with the redirect URI `https://<studio>/api/auth/oidc/callback` and the post-logout URI `https://<studio>/login`.
+- The roles `admin` and `user` in a flat ID-token claim: an array of strings at the top level of the ID token, named by `OIDC_ROLE_CLAIM`, with `OIDC_ADMIN_ROLES=admin` and `OIDC_USER_ROLES=user`.
+  An account that holds neither role is refused as `oidc_no_role` ([Requiring a role](#requiring-a-role)).
+- No pairwise subject mapper on Studio's client or on the control plane's: both must see the same `sub` for a user, because the control plane writes grants under the `sub` it sees and Studio matches them against the session's `idpSubject`.
+
+For single sign-on with the control plane, set `OIDC_PROMPT=omit` and `OIDC_AUTO_REDIRECT=true` as well.
+
+With Keycloak, the roles come from client roles, because the built-in realm-role mapper writes no ID-token claim by default and its `realm_access.roles` claim is nested:
+
+1. A client `libredb` that only holds the client roles `admin` and `user`, with every flow disabled.
+2. A client scope `libredb-roles` with one mapper of type User Client Role: client `libredb`, token claim name `libredb_roles`, multivalued, claim JSON type String, and Add to ID token on.
+   Give the scope the role scope mappings `libredb` `admin` and `libredb` `user`, so the claim is written even when a client has Full Scope Allowed off.
+3. Studio's client: client authentication on, standard flow only, PKCE method S256, and `libredb-roles` among its default client scopes.
+4. Each user assigned the `libredb` client role `admin` or `user`, directly or through a group.
+
+```env
+OIDC_ROLE_CLAIM=libredb_roles
+OIDC_ADMIN_ROLES=admin
+OIDC_USER_ROLES=user
+```
+
 ---
 
 ## Security Features
@@ -458,6 +496,7 @@ An ID token without a string `sub` or `iss` signs no one in: the callback redire
 ### "Single sign-on is not configured correctly on this server"
 
 - `GET /api/auth/oidc/login` found the deployment incomplete: one of `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` is unset or the issuer is not `https://` (both checked before any network call), or the JWT secret the state cookie is signed with is missing or too short (checked after discovery, when the cookie is signed)
+- In [governance mode](#governance-mode), the callback received an ID token with an empty `sub` or with an `iss` other than `OIDC_ISSUER`; the server log names the rule
 - The audit trail records `login_failure` with reason `oidc_config`. Trying again cannot help until the environment is fixed
 
 ### "The identity provider could not be reached"
@@ -1129,7 +1168,7 @@ Both OIDC routes redirect to `/login?error=<code>` on failure, and record the sa
 
 | Error Code | Route | Cause | When |
 |------------|-------|-------|------|
-| `oidc_config` | login, callback | `AuthConfigError` | Missing `OIDC_*` env vars, a non-`https://` issuer, or a missing/too-short JWT secret |
+| `oidc_config` | login, callback | `AuthConfigError`, or the governed sign-in rule | Missing `OIDC_*` env vars, a non-`https://` issuer, or a missing/too-short JWT secret; in governance mode also an ID token with an empty `sub` or an `iss` other than `OIDC_ISSUER` |
 | `oidc_discovery` | login | Any other error before discovery answered | Issuer does not resolve, TLS failure, response is not JSON or names a different issuer |
 | `oidc_state_missing` | callback | `oidc-state` cookie not found | Cookie expired (>5 min) or blocked by browser |
 | `oidc_state_invalid` | callback | State decryption failed or state mismatch | Tampered cookie, wrong JWT_SECRET, or CSRF attempt |

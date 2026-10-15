@@ -14,6 +14,7 @@ import { randomBytes, randomInt } from "node:crypto";
 import { emitAuditEvent, type AuditReason } from "@/lib/audit";
 import type { Role, UserPayload } from "@/lib/auth";
 import { hmacHex } from "@/lib/auth-compare";
+import { governanceEnabled } from "@/lib/governance/config";
 import { getAuthUsers, type AuthUser } from "@/lib/local-auth";
 import { logger } from "@/lib/logger";
 import { hashPassword, needsRehash, passwordMatchesHash } from "@/lib/password-hash";
@@ -410,15 +411,47 @@ export async function resolveLocalAuthUsers(): Promise<AuthUser[]> {
 }
 
 /**
+ * An issuer as the governed sign-in rule compares it: serialized by the URL parser, so the host's case and a default
+ * port read the same, with one trailing slash dropped, because a bare-host issuer such as Auth0's ends in a slash that
+ * `OIDC_ISSUER` may leave out. Null when the value is not a URL.
+ */
+function comparableIssuer(value: string): string | null {
+  const href = URL.parse(value)?.href;
+  if (href === undefined) return null;
+  return href.endsWith("/") ? href.slice(0, -1) : href;
+}
+
+/**
+ * The governed sign-in rule (spec 5.2, docs/GOVERNANCE.md): whether an identity provider's subject and issuer may
+ * speak for someone under governance. The subject must be a non-empty string, because openid-client accepts
+ * `sub: ""`, and the issuer must be the identity provider at `OIDC_ISSUER`, because openid-client accepts another
+ * `iss` for Microsoft Entra ID and Azure AD B2C. With `OIDC_ISSUER` unset or not a URL no issuer matches it.
+ *
+ * `storedAccountAllows()` applies it to a session's `idpSubject` and `idpIssuer`, which only the OIDC callback writes,
+ * and the callback applies it to the ID token before it mints a session, so it never mints one that is refused.
+ */
+export function governedIdentityAccepted(subject: unknown, issuer: unknown): boolean {
+  if (typeof subject !== "string" || subject === "" || typeof issuer !== "string") return false;
+  const comparable = comparableIssuer(issuer);
+  return comparable !== null && comparable === comparableIssuer(process.env.OIDC_ISSUER ?? "");
+}
+
+/**
  * Whether a verified session still speaks for its stored account. src/lib/auth.ts getSession()
  * calls this on every request, because the token itself stays valid for 24 hours.
  *
- * OIDC and `STORAGE_PROVIDER=local` sessions have no row to consult and pass. In store mode the
+ * Under governance the governed sign-in rule above decides alone, before any store is opened and
+ * whatever NEXT_PUBLIC_AUTH_PROVIDER says. Only the OIDC callback writes `idpSubject` and
+ * `idpIssuer`, so an env password, passkey or launch session never reaches a route, even when the
+ * boot check was bypassed, and neither does a session minted for another issuer.
+ *
+ * Otherwise, OIDC and `STORAGE_PROVIDER=local` sessions have no row to consult and pass. In store mode the
  * account must exist, be enabled, hold the role the token names, and carry the token's session
  * version. A token with no version predates the registry and matches nothing: its holder signs in
  * once more.
  */
 export async function storedAccountAllows(session: UserPayload): Promise<boolean> {
+  if (governanceEnabled()) return governedIdentityAccepted(session.idpSubject, session.idpIssuer);
   if (process.env.NEXT_PUBLIC_AUTH_PROVIDER === "oidc") return true;
   const provider = await getStorageProvider();
   if (!provider) return true;
