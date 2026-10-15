@@ -79,6 +79,7 @@ Nothing in the governance source can switch it on or off.
 | `GOVERNANCE_MAX_STALENESS_MS` | `120000` | How old the snapshot may grow while reloads fail, from `GOVERNANCE_REFRESH_MS` to 3600000 milliseconds. A refresh interval above 120000 needs this raised with it. |
 | `GOVERNANCE_ALLOWED_ENGINES` | `postgres,mysql,mssql,oracle,mongodb,redis` | The connection type ids Studio admits, separated by commas. |
 | `GOVERNANCE_INSTANCE_ID` | none, required | This instance's id, as the next section describes. |
+| `GOVERNANCE_PRIVATE_KEYS_FILE` | none, required | The path of the keyring file that holds Studio's private keys, as [keyring](#keyring) describes. |
 
 ### Instance id
 
@@ -102,7 +103,8 @@ It prints one banner that names every variable to fix and never prints a secret,
 - `SEED_CONFIG_PATH` or `SEED_DISCOVERY_PATH` is set.
 - `BIGQUERY_SERVER_CREDENTIALS` or `FIRESTORE_SERVER_CREDENTIALS` is `true`, because the server's own identity would stand in for the credential a grant selects.
 - `LIBREDB_MCP_ENABLED` or `LIBREDB_AGENT_ENABLED` is set to anything but empty or a value that switches it off: `false`, `off` or `0`.
-- `GOVERNANCE_POSTGRES_URL`, `GOVERNANCE_INSTANCE_ID` or `STORAGE_POSTGRES_SCHEMA` is missing.
+- `GOVERNANCE_POSTGRES_URL`, `GOVERNANCE_INSTANCE_ID`, `GOVERNANCE_PRIVATE_KEYS_FILE` or `STORAGE_POSTGRES_SCHEMA` is missing.
+- The keyring file does not load, for one of the reasons [keyring](#keyring) lists.
 - A variable of the table above has an invalid value, `GOVERNANCE_SOURCE` included, or `GOVERNANCE_ALLOWED_ENGINES` names an engine Studio has no connection type for.
 
 ### What governance mode switches off
@@ -200,7 +202,7 @@ COMMIT;
 - Studio reads `bridge.contract` first, and stops as `incompatible` without touching any `_v1` object when no published version is one it supports.
 - It names its columns and never selects `*`, and it reads only the columns of the version it supports, so a column appended within version 1 never breaks an older Studio.
 - The new snapshot replaces the old one at once.
-  Opened credentials are cached by the SHA-256 of their envelope and never logged.
+  Opened credentials are cached by the SHA-256 of their envelope together with the additional authenticated data they opened under, and never logged.
 - On every reload Studio compares the effective grants with the previous snapshot and closes exactly the database sessions of the subject and connection pairs that lost access, or whose level or credential changed.
 - A load uses at most 4 pooled connections, a 5 second connect timeout, a 10 second statement timeout and a 20 second deadline for the whole load.
 
@@ -433,7 +435,7 @@ A row takes about 950 bytes with a redacted statement of 170 characters and abou
 ## Sealed credentials: lsb1
 
 A control plane stores each credential only as an `lsb1` envelope sealed to Studio's public key.
-It can write envelopes and never open them; only Studio holds the private keys, in its keyring.
+It can write envelopes and never open them; only Studio holds the private keys, in its [keyring](#keyring).
 An envelope has this form and matches this pattern:
 
 ```text
@@ -466,6 +468,51 @@ The canary proves the seal before the first real credential is created: the cont
 Studio opens every canary on every load and reports `ok` or the failure code per key id in its heartbeat's `canary` column, so a wrong public key shows up at once.
 The vectors file holds positive and negative cases with their exact codes, and a control plane's sealer reproduces each positive envelope byte for byte from its fixed ephemeral key.
 An `lsb1` vector never changes; a change to one would be a new format, `lsb2`.
+
+### Keyring
+
+Studio holds the private keys that open envelopes in a keyring file, at the path `GOVERNANCE_PRIVATE_KEYS_FILE` names:
+
+```json
+{ "version": 1, "keys": ["<unpadded base64url of a raw 32-byte X25519 private key>"] }
+```
+
+- Studio holds each key under the `kid` of its public key, and opens an envelope only with the key its `kid` names.
+- The file lists 1 to 16 keys, because the heartbeat reports every key id and `keyring_kids` takes at most 16.
+- Deliver the keyring as a mounted file, never as an environment variable, readable only by the user Studio runs as, uid `1001` in Studio's image.
+  With Docker that is a file with mode `0400` owned by uid `1001`, bind-mounted read-only, and in Kubernetes a Secret mounted as a file.
+- Studio reads the file once, when it starts, and keeps the keys for the life of the process, so a changed keyring takes effect when Studio restarts.
+- Studio refuses to start, naming `GOVERNANCE_PRIVATE_KEYS_FILE` and the reason, when the file cannot be read or is not JSON, when its `version` is not 1, when it lists no key or more than 16, when a key is not the unpadded base64url of 32 bytes, or when two keys have the same `kid`.
+- Neither that message nor any log line carries key material: Studio logs the key ids it loaded and nothing else.
+- Opened credentials stay in Studio's memory, cached under the SHA-256 of their envelope together with the additional authenticated data they opened under, so a cached credential is never served for any binding but its own.
+
+The control plane holds only the public key, as the unpadded base64url of its raw 32 bytes, and seals to it.
+OpenSSL makes a key pair, and prints the private key for the keyring, the public key for the control plane and its `kid`:
+
+```sh
+umask 077
+openssl genpkey -algorithm X25519 -outform DER -out x25519.der
+tail -c 32 x25519.der | base64 | tr '+/' '-_' | tr -d '=\n'
+openssl pkey -inform DER -in x25519.der -pubout -outform DER | tail -c 32 | base64 | tr '+/' '-_' | tr -d '=\n'
+openssl pkey -inform DER -in x25519.der -pubout -outform DER | tail -c 32 | openssl dgst -sha256 -binary | head -c 8 | od -An -tx1 | tr -d ' \n'
+```
+
+The private key is the last 32 bytes of the PKCS #8 file; delete `x25519.der` once the keyring holds it.
+
+### Key rotation
+
+A control plane cannot seal a stored credential again under a new key, by design, so a new key pair joins the keyring before the old one leaves it.
+Steps 1, 2 and 5 are Studio's, and steps 3 and 4 are the control plane's:
+
+1. Add the new private key to the keyring of every Studio instance, keep the old one in it, and restart Studio.
+2. Wait until the heartbeat of every live instance lists the new key id in `keyring_kids`, and its `canary` still reports `ok` for the old key id.
+3. Switch the control plane to the new public key.
+   It publishes the canary of the new key id, and every heartbeat should report `ok` for that key id before the next step.
+4. Enter again, in the control plane, every credential still sealed under the old key id.
+5. Remove the old private key from the keyring of every Studio instance and restart Studio.
+   Keep the old private key in escrow for as long as backups that hold envelopes sealed to it are kept.
+
+If a private key leaks, rotate every governed database credential as well, because that key and any copy of the governance source's database open every envelope sealed to it.
 
 ## API codes
 
