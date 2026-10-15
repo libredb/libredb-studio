@@ -46,7 +46,7 @@ import {
 import { downloadText } from "@/lib/export/download";
 import { writeToClipboard } from "@/components/copy-button";
 import { newLocalId } from "@/lib/ids";
-import { catalogField, resolveAgentRunConnectionId } from "@/hooks/use-connection-payload";
+import { buildConnectionPayload, catalogField, resolveAgentRunConnectionId } from "@/hooks/use-connection-payload";
 import { isMobileViewport, useIsMobile } from "@/hooks/use-mobile";
 import { useAgentCapability } from "@/hooks/use-agent-capability";
 import type { AgentArtifactHydration } from "@/components/agent/hydration";
@@ -1255,14 +1255,19 @@ export default function Studio() {
   }, []);
 
   const handleDeleteConnection = (id: string) => {
-    // Clean up server-side provider cache and close connections/tunnels
-    appFetch("/api/db/disconnect", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ connectionId: id }),
-    }).catch(() => {
-      /* best-effort cleanup */
-    });
+    // Clean up the server-side provider cache and close connections and tunnels, best effort. The connection is sent as
+    // every route is sent one, a connection of the user's own as its record: without governance the server removes only
+    // the provider that record's own key names, and refuses a bare id outside the seed namespace (spec 17).
+    const deleted = conn.connections.find((c) => c.id === id);
+    if (deleted) {
+      appFetch("/api/db/disconnect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildConnectionPayload(deleted)),
+      }).catch(() => {
+        /* best-effort cleanup */
+      });
+    }
 
     storage.deleteConnection(id);
     // Preserve managed (seed) connections that aren't in localStorage

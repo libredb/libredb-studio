@@ -1169,10 +1169,12 @@ export async function getOrCreateProvider(
  * `providerOwner` answers. A connection without an id is refused before the key frames it, as in `getOrCreateProvider`
  * (#1539).
  *
- * Exported for one caller that must compare keys without deriving a second one, as `profiledCacheKey` is for its own:
- * the transaction route records the key a governed `begin` resolved, and a later request that resolves another one,
- * because the owner's grant level or the connection's credential changed, has the transaction rolled back on the
- * provider {@link findCachedProvider} answers for the recorded key (spec 9.4). The package does not re-export it.
+ * Exported for two callers that must name a cached entry without deriving a second key, as `profiledCacheKey` is for its
+ * own. The transaction route records the key a governed `begin` resolved, and a later request that resolves another
+ * one, because the owner's grant level or the connection's credential changed, has the transaction rolled back on the
+ * provider {@link findCachedProvider} answers for the recorded key (spec 9.4). And without governance the disconnect
+ * route removes only the entry the caller's own record names, by the key scope of `removeProvider` (spec 17). The
+ * package does not re-export it.
  */
 export async function editorCacheKey(
   connection: DatabaseConnection,
@@ -1475,35 +1477,47 @@ export async function acquireExecutionProfileProvider(
  * execution-profile providers: a deleted or re-credentialed connection must
  * not leave a stale agent pool running under the old configuration.
  *
- * With `scope`, only the entries opened for `scope.owner` go, from both caches (spec 9.4): under governance every
+ * With an owner scope, only the entries opened for `scope.owner` go, from both caches (spec 9.4): under governance every
  * user's providers are their own, so one user's disconnect must not tear down another user's pool, session state or
  * transaction. An engine that keeps one handle per file records no owner on it (`providerOwner`), so its one handle,
- * which every owner shares, is left to the removal without a scope. The SSH tunnel serves every entry of the
- * connection, so a scoped removal closes it only once no entry of either cache still serves the connection, as the idle
- * sweep does. A scope whose owner is not a string is refused before anything is removed: matching on a missing owner
- * would remove the entries every caller shares. Without a scope every entry of the connection goes and its tunnel is
- * closed, as before owners existed.
+ * which every owner shares, is left to the removal without a scope.
+ *
+ * With a key scope, only the entry of the connection cached under `scope.key` goes, the key {@link editorCacheKey}
+ * answers for one record of it (spec 17): without governance every caller of a connection shares its provider, so a
+ * disconnect may remove only the entry the caller's own record names, never one another user opened with another
+ * record of the same id. The key frames the server and the credentials, so naming a connection id reaches nothing.
+ *
+ * The SSH tunnel serves every entry of the connection, so a scoped removal closes it only once no entry of either cache
+ * still serves the connection, as the idle sweep does. A scope that names neither an owner nor a key as a string, or
+ * names both, is refused before anything is removed: matching on a missing owner would remove the entries every caller
+ * shares. Without a scope every entry of the connection goes and its tunnel is closed, as before owners existed.
  *
  * An owned entry is torn down (`teardownProvider`): it leaves the cache first, an open transaction on it is rolled
  * back, and a pool that hangs is abandoned, so the removal of a user's providers, which the governance loader asks for
  * when a grant is taken away or changed (`src/lib/db/owner-removal.ts`), ends within 15 s. The owned entries are torn
  * down at once, and before the tunnel goes. An entry every caller shares is disconnected as before.
  */
-export async function removeProvider(connectionId: string, scope?: { owner: string }): Promise<void> {
-  if (scope !== undefined && typeof scope.owner !== "string") {
+export async function removeProvider(
+  connectionId: string,
+  scope?: { owner: string; key?: never } | { key: string; owner?: never },
+): Promise<void> {
+  const owner: unknown = scope?.owner;
+  const scopedKey: unknown = scope?.key;
+  const byKey = typeof scopedKey === "string" && owner === undefined;
+  if (scope !== undefined && !byKey && !(typeof owner === "string" && scopedKey === undefined)) {
     throw new DatabaseConfigError(
-      "removeProvider takes a scope only with the owner whose providers it removes, as a string.",
+      "removeProvider takes a scope only with the owner whose providers it removes or the key of the one cache entry it removes, as a string, and never with both.",
     );
   }
-  const removes = (entry: CachedProvider): boolean =>
-    entry.connectionId === connectionId && (scope === undefined || entry.owner === scope.owner);
+  const removes = (key: string, entry: CachedProvider): boolean =>
+    entry.connectionId === connectionId && (scope === undefined || (byKey ? key === scopedKey : entry.owner === owner));
   const teardowns: Promise<void>[] = [];
 
   // A connection can hold more than one entry now - one per distinct server-and-credentials
   // it was opened with - so this removes every entry serving it, the way the profiled loop
   // below always has.
   for (const [key, entry] of providerCache) {
-    if (!removes(entry)) continue;
+    if (!removes(key, entry)) continue;
     if (entry.owner !== undefined) {
       teardowns.push(teardownProvider(providerCache, key, entry));
       continue;
@@ -1517,7 +1531,7 @@ export async function removeProvider(connectionId: string, scope?: { owner: stri
   }
 
   for (const [key, entry] of profiledProviderCache) {
-    if (!removes(entry)) continue;
+    if (!removes(key, entry)) continue;
     if (entry.owner !== undefined) {
       teardowns.push(teardownProvider(profiledProviderCache, key, entry));
       continue;
@@ -1534,7 +1548,7 @@ export async function removeProvider(connectionId: string, scope?: { owner: stri
   }
   await Promise.all(teardowns);
 
-  // Another owner's entries keep the tunnel they reach the connection through.
+  // The entries the scope left, another owner's or another record's, keep the tunnel they reach the connection through.
   if (scope !== undefined && connectionStillServed(connectionId)) return;
 
   // Close SSH tunnel if exists

@@ -2272,11 +2272,14 @@ A source that fails is reported here with `state: "error"` while `GET /api/conne
 > Under governance (`GOVERNANCE_SOURCE=postgres`, see [GOVERNANCE.md](GOVERNANCE.md)) `POST /api/db/monitoring` is admin-only: a session whose role is not `admin` gets `403` with `{"error": "Unauthorized. Admin access required."}` before any connection is resolved, and the denial is audited as `permission_denied` with reason `insufficient_role`.
 > Without governance every signed-in session keeps its monitoring access.
 >
-> `POST /api/db/disconnect` takes `{"connectionId": "<id>"}` and answers `{"success": true}`.
+> `POST /api/db/disconnect` takes the connection as the other `/api/db/*` routes do, `{"connectionId": "seed:<id>"}` for a managed connection or `{"connection": {...}}` with the record of a connection of the user's own, and answers `{"success": true}`.
+> A body that names neither answers `400` with `{"success": false, "error": "Either connection or connectionId is required"}`.
 > Under governance it removes only the caller's own providers of that connection, the ones opened for the session's identity provider subject, for the editor and the agent alike.
 > It rolls back the caller's open transaction there first, and answers within 15 seconds even when the database does not: it waits at most 5 seconds for the rollback and at most 10 for the provider's sessions to close.
 > Another user's providers, transactions and running statements on the same connection stay as they are.
-> Without governance it removes every provider and SSH tunnel of the connection, whoever opened them.
+> Without governance it resolves a connection of the user's own from its record, as every route does, and removes only the provider cached under that record's own key, which frames its server and credentials, so a request naming another user's connection id closes nothing of theirs.
+> The SSH tunnel of the connection closes only once no provider of it is left, a bare id outside the `seed:` namespace answers `400` as on every route, and the record is refused with `403 CUSTOM_CONNECTIONS_DISABLED` while custom connections are off.
+> A `seed:` id removes nothing without governance and answers `{"success": true}`, because one provider serves every user of that seed, and the idle sweep closes it once it has been idle for 30 minutes.
 > `POST /api/db/cancel` reaches only the statements the caller's own provider runs, so under governance a `queryId` that another user's statement runs under answers `{"cancelled": false}` and stops nothing.
 
 ---

@@ -1764,6 +1764,72 @@ describe("removeProvider with an owner scope (spec 9.4)", () => {
   });
 });
 
+// ─── removeProvider with a key scope (spec 17) ───────────────────────────────
+//
+// Without governance every caller of a connection shares its provider, so a disconnect cannot be scoped by owner. The
+// disconnect route resolves the caller's own record instead and removes only the entry that record's key names
+// (`editorCacheKey`), which frames the server and the credentials, so naming another user's connection id closes
+// nothing of theirs. The SSH tunnel serves every entry of the connection, so it closes only once nothing serves it.
+
+describe("removeProvider with a key scope (spec 17)", () => {
+  const TUNNEL: SSHTunnelConfig = {
+    enabled: true,
+    host: "bastion.example.com",
+    port: 22,
+    username: "tunnel",
+    authMethod: "password",
+    password: "example-only-tunnel-password",
+  };
+
+  test("removeProvider with a key scope removes only the entry its key names", async () => {
+    const alice = makeConnection("postgres", { id: "conn-orders", user: "alice", password: "a-pw", sshTunnel: TUNNEL });
+    const bob = makeConnection("postgres", { id: "conn-orders", user: "bob", password: "b-pw", sshTunnel: TUNNEL });
+    const billing = makeConnection("postgres", { id: "conn-billing", user: "bob", password: "b-pw" });
+    const alicesProvider = await getOrCreateProvider(alice);
+    const bobsProvider = await getOrCreateProvider(bob);
+    const billingProvider = await getOrCreateProvider(billing);
+
+    await removeProvider("conn-orders", { key: await editorCacheKey(bob) });
+
+    expect(bobsProvider.isConnected()).toBe(false);
+    expect([alicesProvider.isConnected(), billingProvider.isConnected()]).toEqual([true, true]);
+    // Alice is served her own provider again rather than a new one, and her entry keeps the tunnel open.
+    expect(await getOrCreateProvider(alice)).toBe(alicesProvider);
+    expect(mockCloseSSHTunnel).not.toHaveBeenCalled();
+
+    // A key names an entry of one connection only: under another connection's id it removes nothing.
+    await removeProvider("conn-billing", { key: await editorCacheKey(alice) });
+    expect([alicesProvider.isConnected(), billingProvider.isConnected()]).toEqual([true, true]);
+
+    // Alice's own key takes the last entry of the connection, so the tunnel goes with it.
+    await removeProvider("conn-orders", { key: await editorCacheKey(alice) });
+    expect(alicesProvider.isConnected()).toBe(false);
+    expect(mockCloseSSHTunnel).toHaveBeenCalledTimes(1);
+    expect(mockCloseSSHTunnel).toHaveBeenCalledWith("conn-orders");
+    expect(getProviderCacheStats().connections).toEqual(["conn-billing"]);
+  });
+
+  test.each([
+    ["{ key: 7 }", { key: 7 }],
+    ["an owner and a key", { owner: "alice-subject", key: "conn-orders" }],
+  ])(
+    "a scope that names no single owner or key string, %s, is refused before anything is removed",
+    async (_label, scope) => {
+      const conn = makeConnection("postgres", { id: "conn-orders" });
+      const provider = await getOrCreateProvider(conn);
+
+      const refusal: unknown = await removeProvider("conn-orders", scope as { key: string }).catch(
+        (error: unknown) => error,
+      );
+
+      expect(refusal).toBeInstanceOf(DatabaseConfigError);
+      expect((refusal as Error).message).toContain("key");
+      expect(provider.isConnected()).toBe(true);
+      expect(mockCloseSSHTunnel).not.toHaveBeenCalled();
+    },
+  );
+});
+
 // ─── Teardown of an owned provider (spec 9.4) ────────────────────────────────
 //
 // When a reload of the governance snapshot takes a grant away or changes it, the loader removes that subject's
