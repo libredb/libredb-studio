@@ -44,7 +44,7 @@ None of it is a GitHub issue.
 - [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B116 · 50
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP3 · 3
-- [Governance follow-ups](#governance-follow-ups) — GOV1-GOV4 · 4
+- [Governance follow-ups](#governance-follow-ups) — GOV1-GOV20 · 20
 
 ---
 
@@ -6228,10 +6228,12 @@ Not fixed there: the etcd PR touches no other script.
 
 **Done when:** every command script decides that it runs as the program by comparing real paths, as `generate-etcd-descriptor.mjs` does, and one test runs a drift guard through a symlinked checkout and sees it check.
 
-### REL6. Five dynamic file reads make Turbopack trace the whole repository into the server output
+### REL6. Dynamic file reads make Turbopack trace the whole repository into the server output
 
 `bun run build` prints "Turbopack build encountered 5 warnings", each "Dynamic filesystem access causes tracing of the whole project", at `resolveAgentLedgerDirectory` in `src/lib/agent/config.ts`, `reservedStoragePaths` and `canonicalPath` in `src/lib/data-dir.ts`, `getDatabasePath` in `src/lib/db/providers/sql/sqlite.ts` and `kubernetesLogin` in `src/lib/seed/vault-client.ts`.
 Re-measured 2026-10-07 with the operator seed sources in place: the seed file read in `src/lib/seed/sources/file.ts` and DuckDB's `getDatabasePath` are no longer reported, and `src/lib/data-dir.ts` now is, twice.
+Re-measured 2026-10-16 on the governance branch (#1785) with `main` merged in: seven warnings, the five above, the read in `src/lib/data-dir.ts` reported once more as a file pattern that matches 14,846 files, and `readFileSync` of the application default credentials in `src/lib/db/providers/sql/bigquery/auth.ts`, which the BigQuery provider (#1672) added.
+No file of the governance mode is reported.
 The trace of `/api/db/query` then lists 2,662 project files outside `node_modules` and `.next`, `src/`, `tests/`, `operator/`, `research/` and `docs/` among them, and `scripts/lib/prune-standalone-payload.sh` removes only what its deny-list names, so a payload built from the committed tree still carries `operator/`, `CONTRIBUTORS.md` and the seven translated READMEs into the release tarball the `npx` launcher downloads.
 Measured 2026-10-01 on a build of the committed tree, when the five warnings were those reported before the re-measure above, the seed file read and DuckDB's `getDatabasePath` among them: marking those five calls `/*turbopackIgnore: true*/` in a scratch copy removed all five warnings and cut that trace to one project file, `seed-assets/sqlite/employee.db`.
 The warnings are printed on every run of the required check, where a sixth is easy to miss; `main`'s CI printed the same five on 2026-10-01.
@@ -6239,7 +6241,7 @@ The warnings are printed on every run of the required check, where a sixth is ea
 Found while building the etcd provider (#1089), whose diff touches none of the five files, and measured again by its review.
 Not fixed there: none of the five files reported on 2026-10-01 is an etcd file.
 
-**Done when:** `bun run build` prints no tracing warning, because each of the five reads tells Turbopack what it reaches or is marked as outside the trace, and a payload built from the committed tree holds at its root only what the server runs, `LICENSE` and `README.md`.
+**Done when:** `bun run build` prints no tracing warning, because each read it reports tells Turbopack what it reaches or is marked as outside the trace, and a payload built from the committed tree holds at its root only what the server runs, `LICENSE` and `README.md`.
 
 ### REL7. A local E2E run spends the shared account's query budget
 
@@ -7623,8 +7625,8 @@ Found 2026-10-12 while designing the RabbitMQ provider.
 
 ## Governance follow-ups
 
-Defects and open questions found while designing the governance mode (`GOVERNANCE_SOURCE=postgres`), recorded for the modes it does not cover.
-Each was re-verified against the code on 2026-10-15.
+Defects and open questions found while designing and building the governance mode (`GOVERNANCE_SOURCE=postgres`), in that mode and in the modes it does not cover.
+GOV1 to GOV4 were re-verified against the code on 2026-10-15, and GOV5 to GOV20 on 2026-10-16.
 
 ### GOV1. Resolving a seed id answers 403 for an existing id and 404 for an unknown one
 
@@ -7665,3 +7667,162 @@ The severity is low: `providerCacheKey()` in `src/lib/db/provider-cache-key.ts` 
 Governance mode removes the cross-user path because each user gets their own provider; the other modes still share.
 
 **Done when:** a client released after a user statement carries no session state into the next checkout (by `DISCARD ALL` on release, or an equivalent reset where the statement left a session change), the reset does not run inside an open transaction, and a live test against PostgreSQL shows a `SET` and a temporary table from one call are gone in the next.
+
+### GOV5. Under governance the browser copy's owner is still the username, not the subject
+
+Under governance the server files a user's rows under the identity provider's subject (`storageOwnerKey` in `src/lib/storage/owner-key.ts`), but the browser copy keeps the username as its owner.
+`readSignedInUsername` in `src/lib/storage/workspace-owner.ts` reads `user.username` from `GET /api/auth/me`, `claimAccountWorkspace` in `src/lib/storage/local-storage.ts` compares it with the stored owner, every request names it in the `X-LibreDB-Workspace-Owner` header, and `src/proxy.ts` answers 409 `WORKSPACE_OWNER_MISMATCH` when it differs from the session's `username`.
+After an OIDC sign-in the username is the email, else `preferred_username`, else the subject (`src/app/api/auth/oidc/callback/route.ts`), so it can change while the subject stays, and another subject can take it over.
+An email change clears the browser copy at the next sign-in, editor tabs, drafts and unsynced collections with it, although the server rows belong to the same person.
+A username another subject takes over on a shared browser keeps the earlier person's copy, which `useStorageSync` in `src/hooks/use-storage-sync.ts` then pushes into the new person's rows before it pulls, and the 409 check cannot tell the two people apart.
+`docs/STORAGE.md` states the choice; this entry asks to change it.
+
+**Done when:** under governance the browser copy's owner, the header and the check in `src/proxy.ts` use the session's `idpSubject`, without governance they keep the username, and tests cover a changed email (the copy is kept) and a username another subject takes over (the copy is cleared).
+
+### GOV6. A governed MySQL, SQL Server or Db2 row without a database is admitted and can never open
+
+Admission skips a row without a `database` only where `OPENS_SERVER_LEVEL_WITHOUT_DATABASE` in `src/lib/db/compatibility.ts` is true (`src/lib/governance/admission.ts`), which is PostgreSQL alone.
+The MySQL, SQL Server and Db2 providers refuse to open without one: `validate()` in `src/lib/db/providers/sql/mysql.ts` (skipped when a `connectionString` is set) and in `src/lib/db/providers/sql/mssql.ts`, and `resolveTarget` in `src/lib/db/providers/sql/db2/connection.ts`.
+So such a row is admitted, every user it is granted to sees the connection, and every open fails with a configuration error, while the heartbeat's skipped rows and the admin status report nothing wrong.
+MySQL and SQL Server are among the engines governance admits by default (`GOVERNANCE_ALLOWED_ENGINES`), Db2 only when an operator lists it.
+No privilege boundary is crossed: on these engines the credential's grants bound what a session reaches, not its default database.
+
+**Done when:** admission skips a MySQL, SQL Server or Db2 row whose merged read record has no `database` (and, for MySQL and Db2, no `connectionString`) as `DEFINITION_INVALID` with path `database`, from a record kept beside `OPENS_SERVER_LEVEL_WITHOUT_DATABASE` that a test holds equal to each provider's own refusal, and `docs/GOVERNANCE.md`'s admission steps say so.
+
+### GOV7. A TLS panel without a mode means three different things, depending on the engine
+
+`SSLConfig` in `src/lib/types.ts` types `mode` as required, the seed schema in `src/lib/seed/types.ts` leaves it optional, and a cast in `src/lib/seed/connection-filter.ts` hides the difference from the compiler.
+Under governance a definition can carry `ssl.caCert` or `ssl.rejectUnauthorized` without `ssl.mode` (`DEFINITION_ALLOWLIST` in `src/lib/governance/contract.ts`), and a sealed client certificate pair alone builds a panel with no mode (`mergedRecord` in `src/lib/governance/admission.ts`).
+The providers read an absent mode three ways.
+PostgreSQL, MySQL, SQL Server, MongoDB, Redis and the shared HTTP and gRPC transports verify the chain and the host name.
+Oracle verifies the chain only (`buildTLSAttributes` in `src/lib/db/providers/sql/oracle.ts` sets `sslServerDNMatch` for `verify-full` and `verify-system` alone).
+Cassandra (`src/lib/db/providers/sql/cassandra/driver-transport.ts`) and MQTT connect without TLS, and Db2 refuses the connection.
+So the same `{"ssl":{"caCert":"<PEM>"}}` checks the host name on PostgreSQL, does not on Oracle, and sends a Cassandra password in cleartext.
+`docs/SEED_CONNECTIONS.md` documents `ssl.caCert` and the client pair but not `ssl.mode`.
+
+**Done when:** a panel without a mode means one thing, either because the schema and admission require `ssl.mode` whenever `ssl` is present (`DEFINITION_INVALID` with path `ssl.mode`) or because the type makes it optional and every provider reads its absence as `verify-full`, the cast is gone, and a test runs every provider's TLS mapping on a panel without a mode.
+
+### GOV8. MongoDB writes the database name into its connection string unencoded, and Oracle checks nothing in its Easy Connect string
+
+`buildConnectionString` in `src/lib/db/providers/document/mongodb.ts` builds `mongodb://user:password@host:port/database` from the fields, encoding the user, the password and `authSource` but not the database name or the host.
+The driver percent-decodes the path into the database name and also uses it as the default authentication database, so a name with `?` fails to parse, one with `#` loses its tail and the appended `?authSource=` with it, and one with `%` is decoded or throws, although MongoDB allows those characters in a database name.
+`getConnectString` in `src/lib/db/providers/sql/oracle.ts` writes `host:port/serviceName` as Easy Connect, which node-oracledb never percent-decodes, so encoding is not the fix there: a `?` in the service name starts Easy Connect parameters, `/` and `:` change the instance name or the server mode, and an IPv6 host without brackets does not parse.
+No privilege boundary is crossed, because whoever writes the fields chooses the target anyway.
+The cost is MongoDB databases that cannot be opened from the fields, and on Oracle connection settings that a field adds without saying so.
+
+**Done when:** MongoDB's builder encodes the database name and brackets an IPv6 host, Oracle refuses a host or service name outside the Easy Connect grammar before any socket, naming the field, and a test covers each character above.
+
+### GOV9. The conformance manifest lists the credential keys Studio reads, but not which engine reads which
+
+The manifest `scripts/generate-governance-manifest.ts` writes publishes one flat list of the keys a sealed credential may hold (`plaintext.keys`, from `PLAINTEXT_KEYS` in `src/lib/governance/contract.ts`), the same nine keys for every engine.
+Which of them an engine reads is decided only once a row is opened: the API key pair is accepted on Elasticsearch alone, `connectionString` is refused where `CONNECTION_STRING_ACCEPTED` in `src/lib/db/compatibility.ts` is false (SQL Server and Redis), and a key an engine ignores is admitted without a word.
+So a control plane that builds its credential form from the manifest can seal a `connectionString` for SQL Server or an API key pair for OpenSearch, and learns of the skip only from the heartbeat afterwards.
+This is an enhancement rather than a defect: the skip is reported, and nothing is opened with the wrong key.
+
+**Done when:** the manifest publishes, per engine, the credential and definition keys that engine's provider reads, from one exhaustive record a test holds equal to the providers' own rules, the manifest is regenerated, and `docs/GOVERNANCE.md` describes the new section.
+
+### GOV10. Studio's shutdown handler is registered by importing the provider factory, and Next's own SIGTERM handler exits first
+
+The only `SIGTERM` and `SIGINT` listeners in `src/` are added by `registerShutdownHandlers` in `src/lib/db/factory.ts` when the module loads, so the hooks that flush query events and close the governance pool (`onShutdown` in `src/lib/shutdown.ts`) run only in a process that has loaded the factory.
+Nothing on the boot path loads it: `register()` in `src/instrumentation.ts` never reaches it, and the production server's preload of every route at start hides that in `node server.js` soon after boot, but not in `next dev` or for a signal that arrives earlier.
+Next's own handler, which `next start` and the standalone server add unless `NEXT_MANUAL_SIG_HANDLE` is set, closes the HTTP server and calls `process.exit(143)` without waiting for Studio's, which awaits the hooks for up to 5 seconds before its own `process.exit(0)`.
+So a routine restart normally exits while the hooks are still inserting the query events Studio holds, and those rows are lost, although `docs/GOVERNANCE.md` says Studio inserts them before it exits.
+On a busy server the reverse can happen, and Studio's `exit(0)` cuts Next's drain of the requests in flight.
+
+**Done when:** one handler, registered at boot rather than by an import, owns the exit (for example with `NEXT_MANUAL_SIG_HANDLE=true` in the images and the chart), runs the shutdown hooks and lets Next drain, and a test that sends SIGTERM to the built server shows the queued query events inserted before the process exits.
+
+### GOV11. At shutdown the governance pool can close under the query event flush
+
+`runShutdownHooks` in `src/lib/shutdown.ts` starts every hook at once, so the query event flush (`flushQueryEvents` in `src/lib/query-events/sink.ts`, which writes through `withGovernanceClient` in `src/lib/governance/db.ts`) runs beside `stopGovernance` in `src/lib/governance/start.ts`, which awaits the listener's close and then `closeGovernancePool()` in `src/lib/governance/db.ts`.
+The flush's first batch takes its client before the pool closes, and `pool.end()` waits for it.
+A later batch, when more than 500 events are queued or when the flush first waits for one already in flight, finds the pool gone, and `governancePool()` in the same file builds a new one that nothing closes, connecting again inside the flush's 4 seconds.
+`docs/GOVERNANCE.md` says Studio first inserts the query events and then closes the pool, and nothing in the code orders the two.
+Alone this rarely loses a row (a connect queued on a full pool when `end()` runs is never served, so that batch dies at the deadline); the larger loss is GOV10's.
+
+**Done when:** the governance pool closes only after the query event hook has settled, `governancePool()` refuses to build a pool once shutdown has begun, and a test with more than 500 queued events shows every batch inserted through the original pool before it closes.
+
+### GOV12. The PostgreSQL and MySQL providers leave their transaction timer running through `disconnect()`
+
+Both providers arm a five-minute timer when an editor transaction begins (`TX_TIMEOUT_MS` and `expireTransaction` in `src/lib/db/providers/sql/postgres.ts`, the same in `src/lib/db/providers/sql/mysql.ts`), and neither `disconnect()` clears it or releases the transaction's client, where the SQL Server and Oracle providers start `disconnect()` with `clearTxTimeout()`.
+On PostgreSQL `pool.end()` waits for every checked-out client, so a `disconnect()` with a transaction open returns only when the timer releases the client, up to five minutes after `BEGIN`, and the transaction keeps its locks until then.
+A shared provider is disconnected without a rollback first, by `removeProvider`, by `clearProviderCache` at shutdown, and when a request names another query timeout (D115), so deleting a custom connection that has an open transaction leaves the request waiting.
+On MySQL `end()` closes the held connection, so `disconnect()` returns and the server rolls back, but `txActive` stays true, and five minutes later the timer logs a timeout that never happened and sends a `ROLLBACK` to a closed connection.
+An owned provider is rolled back before it is disconnected (`teardownProvider` in `src/lib/db/factory.ts`), so this is the shared providers' defect.
+
+**Done when:** both providers' `disconnect()` roll back and release a held transaction and clear the timer before they end the pool, and a test per provider shows `disconnect()` resolving without the timer firing, `isInTransaction()` false and no timer left pending.
+
+### GOV13. The package exports `removeProvider` with a key scope that no embedder can build a key for
+
+`@libredb/studio` exports `removeProvider` (`src/exports/providers.ts`), whose public signature in `src/lib/db/factory.ts` takes either `{ owner }` or `{ key }`.
+The key is the cache key `editorCacheKey` in `src/lib/db/factory.ts` derives through `providerCacheKey` in `src/lib/db/provider-cache-key.ts`, a length-framed mix of the connection id, the server, a digest of the credentials, the mode, the file-access posture and the owner, and the package exports neither function, as `editorCacheKey`'s docblock says.
+An embedder who passes `{ key: connection.id }` removes nothing and gets no error.
+The owner scope does work, because `EditorExecutionContext` is exported.
+
+**Done when:** either `editorCacheKey` is exported and documented beside `removeProvider`, or the `{ key }` variant leaves the public type and stays on an internal function, and a type test pins the package's surface either way.
+
+### GOV14. Without governance, an edited custom connection keeps its old provider open until the idle sweep
+
+Saving an edit in the connection dialog (`handleConnect` in `src/components/Studio.tsx`) only stores the new record, and the browser calls `POST /api/db/disconnect` only when it deletes a connection.
+The edited record has a new cache key, and `getOrCreateProvider` in `src/lib/db/factory.ts` closes the other entries of the same id only for single-writer file engines and when nothing but the query timeout changed.
+So the old provider and its pool stay open until `evictIdleProviders` finds them idle, 30 minutes after their last use, swept every 5 minutes.
+After a host or password change, for example to rotate a leaked password, the old pool stays signed in with the old credential for up to 35 minutes and keeps its database connections.
+A seed connection is never closed by that route, which `docs/API_DOCS.md` documents under `POST /api/db/disconnect`, and the UI offers no edit or delete for it; under governance the loader removes a user's providers when a grant changes.
+
+**Done when:** saving an edit closes the providers of the record as it was before the edit, for example by posting that record to `POST /api/db/disconnect`, which removes only its key, and a test shows the old pool closed right after the edit.
+
+### GOV15. Under governance a disconnect with an open transaction records the transaction as `timed-out`
+
+The governed branch of `POST /api/db/disconnect` (`src/app/api/db/disconnect/route.ts`) calls `removeProvider(connectionId, { owner })`, and `teardownProvider` in `src/lib/db/factory.ts` rolls the caller's open transaction back, but the route records no terminal event and leaves the transaction's owner record in place.
+That record is closed later by `recordTimedOut` in `src/lib/api/transaction-ownership.ts`, from its watch timer about five minutes after `BEGIN`, the caller's next transaction request or the lapsed lease, which records `timed-out` with `status` `cancelled`.
+`docs/GOVERNANCE.md` reserves `timed-out` for the database driver rolling the transaction back at its five-minute limit, so the audit trail names the wrong cause at the wrong time, where the grant loader records `rolled-back` for the same rollback (`endRevokedTransactions` in `src/lib/governance/grant-diff.ts`).
+Only the API reaches it, since the UI disconnects only to delete a custom connection, which governance switches off, and at shutdown `clearProviderCache` rolls transactions back and records no terminal event at all.
+The loader's own `rolled-back` is recorded even when the rollback did not finish in time, because `teardownProvider` never rejects, so the rule in `docs/GOVERNANCE.md` that a close that fails records nothing does not hold there either; a fix here should not copy it.
+
+**Done when:** the governed disconnect records `rolled-back`, with `status` `error` when the rollback was not confirmed, and releases the owner record, and a test shows that a `begin` followed by a disconnect records exactly one `rolled-back` and no later `timed-out`.
+
+### GOV16. A request the admission gate refuses on the transaction route records no `refused` event
+
+With `queryLog.onSinkFailure` at `refuse`, `POST /api/db/transaction` (`src/app/api/db/transaction/route.ts`) calls `admitQueryExecution()` for `begin`, a statement, `commit` and `rollback`, and answers its refusal, 503 `AUDIT_UNAVAILABLE`, without recording anything.
+Every other gated route records one `refused` row for it (`recordRefusedRequest` in the query and multi-query routes, the maintenance and object edit routes, and `runRecorded` for profile and key scan), and `docs/GOVERNANCE.md` says a request the gate refuses records one `refused` row with its route's source.
+So an auditor sees refusals from every surface but interactive transactions, and `tests/api/db/transaction.test.ts` pins the gap by expecting no event after five refused requests.
+
+**Done when:** each refused statement action of the transaction route records one `refused` row with source `transaction`, the engine, the grant level, `AUDIT_UNAVAILABLE` and the statement or the `COMMIT` or `ROLLBACK` text, and that test expects them.
+
+### GOV17. Maintenance events carry no statement, no target and no error code
+
+`maintenanceEvent` in `src/app/api/db/maintenance/route.ts` records every maintenance action with `statement: null`, because the provider builds the statement inside `runMaintenance` and `MaintenanceResult` in `src/lib/db/types.ts` does not return it, and a failed action records no `error_code` either.
+The route holds the operation and its target (`type`, `target` and the requested container), but writes them only to Studio's local audit log.
+`docs/GOVERNANCE.md` documents the NULL statement, so this is a gap in what the control plane can see rather than a broken promise: it cannot tell a `kill` of another session from an `analyze`, see which object an action touched, or see why it failed.
+
+**Done when:** maintenance rows carry the operation and its target, as the statement the provider ran or as a descriptor the route builds, captured under `queryLog.statementCapture` like any statement, and the error code of a failure, and `docs/GOVERNANCE.md` and the route's tests say so.
+
+### GOV18. Each route builds its query events with its own copy of the same helpers, and the copies have drifted
+
+The principal, the connection fields and the error code of a query event are built in five places: `queryEventRequest` and `resolvedConnection` in `src/lib/query-events/route-events.ts`, `runRecorded` in `src/lib/query-events/recorded-run.ts`, `maintenanceEvent` in the maintenance route, `objectEditEvent` in the object edit apply route and `transactionEventScope` in the transaction route.
+They no longer agree.
+`errorCode` in `route-events.ts` records the driver's SQLSTATE first, while `codeOf` in `recorded-run.ts` and `eventError` in the transaction route read only the error's `code`, which for a PostgreSQL error is the API code, so the same failure records `42703` from the editor and `QUERY_ERROR` from a profile or a transaction.
+`runRecorded` sets no client address, so every profile and key scan row has `client_ip` NULL.
+The maintenance and transaction routes miss what GOV16 and GOV17 describe.
+
+**Done when:** one module under `src/lib/query-events/` builds the principal, the connection fields, the SQLSTATE-first error code, the row count, the client address and the admission step with its `refused` row, every route uses it, and one table-driven test checks those fields for every event source.
+
+### GOV19. A governed MTConnect, RabbitMQ or Kubernetes definition cannot set `apiPath`
+
+`DEFINITION_ALLOWLIST` in `src/lib/governance/contract.ts` has no `apiPath`, so `definitionFault` in `src/lib/governance/admission.ts` skips a definition that sets it as `DEFINITION_INVALID` with path `apiPath`, before any credential is opened.
+The MTConnect, RabbitMQ and Kubernetes providers read it (`connection-options.ts` under `src/lib/db/providers/industrial/mtconnect/`, `src/lib/db/providers/stream/rabbitmq/` and `src/lib/db/providers/platform/kubernetes/`), and the seed schema accepts it.
+So an agent behind a proxy path, a management API under a prefix or a cluster behind Rancher can be seeded but not governed: a row with the path is skipped, and one without it calls the proxy's root.
+Kubernetes `namespaces` and `tlsServerName` and RabbitMQ `amqpPort` are missing from the allowlist too, and a Snowflake row cannot carry the `role` that Studio's own load checks require, so it is always skipped.
+None of these engines is in the default `GOVERNANCE_ALLOWED_ENGINES`, so this applies once an operator lists one.
+
+**Done when:** `apiPath` and every other key a governed engine's provider reads join the allowlist and `docs/GOVERNANCE.md`'s table, the manifest is regenerated, an admission test admits an MTConnect, a RabbitMQ and a Kubernetes row that carry `apiPath`, and `docs/GOVERNANCE.md` says whether adding a definition key is allowed within contract v1, since an older Studio skips such a row.
+
+### GOV20. Before MCP and the agent run under governance, their call sites must pass the subject and the read credential
+
+Governance holds both off today: `isMcpHeldByGovernance` in `src/lib/mcp/config.ts` switches MCP off (the endpoint answers 404 and no token is minted), `isAgentHeldByGovernance` in `src/lib/agent/config.ts` switches the agent off, and the boot preflight in `src/lib/governance/preflight.ts` refuses `LIBREDB_MCP_ENABLED` and `LIBREDB_AGENT_ENABLED`.
+Their call sites are not ready for the hold to be lifted.
+`VisibilityOptions` in `src/lib/governance/visible.ts` takes `credential: "read"`, which `docs/GOVERNANCE.md` says the agent, MCP, classification and handover paths always use, and no call site passes it.
+MCP's `McpCaller` in `src/lib/mcp/context.ts` and the agent's `AgentRunActor` in `src/lib/agent/types.ts` carry no identity provider subject, so neither can resolve a governed connection or own a per-user provider, and MCP lists its connections through `getManagedConnections`, which answers none under governance.
+The agent runs route also opens the writable editor provider to check a run's catalog (`src/app/api/agent/runs/route.ts`).
+Lifted as it is, the paths without a subject would fail closed, but that check would open a provider with the write credential of any user who holds a write grant.
+
+**Done when:** MCP tokens and `AgentRunActor` keep the subject, every MCP, agent runtime, handover, runs and classify call resolves its connection with the subject and `{ credential: "read" }` and acquires its provider for that subject, the runs route no longer opens the writable provider, their query event sources and the admission gate are wired, and a governance test checks the read credential and the per-subject owner on each path before the hold predicates answer false.
