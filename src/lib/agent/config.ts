@@ -1,5 +1,6 @@
 import { access, constants, mkdir, readFile, unlink, writeFile } from "fs/promises";
 import * as path from "path";
+import { governanceEnabled } from "@/lib/governance/config";
 import { resolveConfig, validateConfig } from "@/lib/llm/utils/config";
 import { AGENT_MODEL_TURN_TIMEOUT_MS, AGENT_WORKFLOW_BUDGETS } from "./execution-policy";
 
@@ -34,6 +35,9 @@ import { AGENT_MODEL_TURN_TIMEOUT_MS, AGENT_WORKFLOW_BUDGETS } from "./execution
  * cannot conjure a model: deriving the answer is what keeps the surface from
  * appearing where it cannot work, and an override that renders a rail whose first
  * Start must fail would give that back.
+ *
+ * Governance mode holds the agent off before any of that is read: this version does
+ * not run the agent under governance (`isAgentHeldByGovernance` below).
  *
  * An unrecognised backend is **refused**, not defaulted away. The storage factory
  * can safely fall back to `local` because every value it accepts is one of its
@@ -217,8 +221,13 @@ export type AgentRuntimeConfig =
  * ledger already sitting there was written by something this release cannot read —
  * the action is removing or replacing one file. An operator sent to `chmod` by a
  * corrupt `version.txt` would find nothing wrong with the directory.
+ *
+ * `GOVERNANCE_HOLD` is separate from `OPERATOR_DISABLED` for the same reason:
+ * governance mode holds the agent off whatever `LIBREDB_AGENT_ENABLED` says, so an
+ * operator sent to that variable would find nothing there to change.
  */
 export type AgentUnavailableReason =
+  | "GOVERNANCE_HOLD"
   | "OPERATOR_DISABLED"
   | "NO_MODEL_CONFIGURED"
   | "LEDGER_UNAVAILABLE"
@@ -259,6 +268,10 @@ const unrecognizedFlagMessage = (raw: string): string =>
 const operatorDisabledMessage = (): string =>
   `${AGENT_ENABLED_ENV} is set to a negative value, so this server runs no agent whatever else is configured`;
 
+// The same rule: the hold answers before the off-switch and the model are read, so it names neither.
+const governanceHoldMessage = (): string =>
+  "GOVERNANCE_SOURCE is set: this version of Studio does not run the agent under governance, so this server runs no agent whatever else is configured";
+
 const ledgerUnwritableMessage = (directory: string, cause: string): string =>
   `the agent's durable ledger cannot be written at "${directory}" (${cause}); point ${AGENT_LOCAL_DATA_DIR_ENV} at a writable directory`;
 
@@ -277,13 +290,31 @@ const implicitHostedWorldMessage = (): string =>
 const describeCause = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 /**
- * The off-switch's two states. `auto` covers absent, empty, affirmative and
- * unrecognised alike: the pre-T5 rule was that a typo must never silently enable
- * the agent, and with a derived default the same rule now also says a typo must
- * never silently take the product's only AI surface away. Landing on the default
- * satisfies both, and the warning is what makes the typo visible.
+ * Whether governance mode holds the agent off (docs/GOVERNANCE.md). This version
+ * does not run the agent under governance: a run keeps no identity provider subject
+ * to resolve its owner's grants by when it is driven. So with GOVERNANCE_SOURCE set
+ * the agent is unavailable whatever the off-switch and the AI configuration say,
+ * and every agent route answers as it does with the agent switched off, also where
+ * the boot preflight that refuses LIBREDB_AGENT_ENABLED was bypassed. The
+ * availability answer and the governance status both ask this one predicate, so
+ * the release that runs the agent under governance lifts the hold here.
  */
-function readAgentEnableFlag(): "off" | "auto" {
+export function isAgentHeldByGovernance(): boolean {
+  return governanceEnabled();
+}
+
+/**
+ * The off-switch's two states, and the governance hold that wins over it. `auto`
+ * covers absent, empty, affirmative and unrecognised alike: the pre-T5 rule was
+ * that a typo must never silently enable the agent, and with a derived default the
+ * same rule now also says a typo must never silently take the product's only AI
+ * surface away. Landing on the default satisfies both, and the warning is what
+ * makes the typo visible. `held` is off too, kept apart so the answer names the
+ * hold rather than an off-switch nobody set, and it is decided before the variable
+ * is read.
+ */
+function readAgentEnableFlag(): "held" | "off" | "auto" {
+  if (isAgentHeldByGovernance()) return "held";
   const raw = process.env[AGENT_ENABLED_ENV];
   if (!raw) return "auto";
 
@@ -371,7 +402,11 @@ export function agentStaleRunAfterMs(): number {
 }
 
 function availabilityWithoutIO(): AgentAvailability {
-  if (readAgentEnableFlag() === "off") {
+  const flag = readAgentEnableFlag();
+  if (flag === "held") {
+    return { available: false, reason: "GOVERNANCE_HOLD", detail: governanceHoldMessage() };
+  }
+  if (flag === "off") {
     return { available: false, reason: "OPERATOR_DISABLED", detail: operatorDisabledMessage() };
   }
 

@@ -19,6 +19,7 @@ import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { signJWT } from "@/lib/auth";
 import { SQLiteProvider } from "@/lib/db/providers/sql/sqlite";
 import { logger } from "@/lib/logger";
+import * as accountCheck from "@/lib/mcp/account-check";
 import { MCP_ENABLED_ENV, MCP_ENABLED_INVALID_MESSAGE } from "@/lib/mcp/config";
 import { config, proxy } from "@/proxy";
 import { withBasePathEnv } from "../helpers/base-path";
@@ -435,6 +436,28 @@ describe("at the route, the kill switch is read after identity", () => {
     restoreChannel();
     restoreChannel = useMcpChannel({ enabled: "off" });
     expect((await call("GET", token)).status).toBe(404);
+  });
+
+  // Governance mode holds MCP off in this version (docs/GOVERNANCE.md). GOVERNANCE_SOURCE is set after boot, so the
+  // boot refusal of LIBREDB_MCP_ENABLED never ran, and the token's owner check is held open, so the 404 is the hold's
+  // whatever that check decides about a token under governance.
+  test("governance: /api/mcp answers 404 although LIBREDB_MCP_ENABLED is true", async () => {
+    const token = await mintTestToken();
+    const saved = process.env.GOVERNANCE_SOURCE;
+    process.env.GOVERNANCE_SOURCE = "postgres";
+    const ownerCheck = spyOn(accountCheck, "mcpTokenOwnerAllowed").mockResolvedValue(true);
+    try {
+      for (const method of methods) {
+        const response = await call(method, token);
+        expect(response.status).toBe(404);
+        expect(await response.json()).toEqual({ error: "MCP is not enabled on this server" });
+      }
+      expect(ownerCheck).toHaveBeenCalledTimes(methods.length);
+    } finally {
+      ownerCheck.mockRestore();
+      if (saved === undefined) delete process.env.GOVERNANCE_SOURCE;
+      else process.env.GOVERNANCE_SOURCE = saved;
+    }
   });
 });
 

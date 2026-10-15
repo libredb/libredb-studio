@@ -280,6 +280,7 @@ Each refusal and each malformed body spends one unit of the `passkey_client` bud
 Exchanges a platform launch token for a session; no session is needed ([LAUNCH.md](./LAUNCH.md)).
 The `/launch` page posts it with the token from its URL fragment: at once when the browser holds a session, and otherwise only after the person clicks Continue on a page that names the account the token signs into.
 With local sign-in the route exists only while `LAUNCH_TOKEN_SECRET` is set; under `NEXT_PUBLIC_AUTH_PROVIDER=oidc` it answers `503`.
+In governance mode (`GOVERNANCE_SOURCE`) it answers `404` whatever the launch variables say, and so does the `/launch` page.
 
 **Request:**
 ```json
@@ -292,11 +293,11 @@ With local sign-in the route exists only while `LAUNCH_TOKEN_SECRET` is set; und
 | `400` | `{ "success": false, "message": "Invalid request body" }` | The body is not JSON or carries no non-empty string `token` |
 | `401` | `{ "success": false, "message": "<reason>" }` | The token is refused, or its account is disabled |
 | `403` | `{ "success": false, "message": "<reason>" }` | The email is `ADMIN_EMAIL`, or with `STORAGE_PROVIDER=local` `USER_EMAIL` while `USER_PASSWORD` is set; in the server store, the account has a password, an authenticator or a passkey, or a launch created it for another `iss` or `sub` |
-| `404` | `{ "success": false, "message": "Launch sign-in is not enabled on this server." }` | `LAUNCH_TOKEN_SECRET` is unset or empty and `NEXT_PUBLIC_AUTH_PROVIDER` is not `oidc` |
+| `404` | `{ "success": false, "message": "Launch sign-in is not enabled on this server." }` | `LAUNCH_TOKEN_SECRET` is unset or empty and `NEXT_PUBLIC_AUTH_PROVIDER` is not `oidc`, or governance mode is on |
 | `409` | `{ "success": false, "message": "<reason>", "signedInAs": "<current username>", "launchFor": "<token email>" }` | The browser holds a valid session for another account; that session stays and the token is spent |
 | `409` | `{ "success": false, "message": "<reason>" }` | The role change would demote the last enabled admin, or crossed another change to the account |
 | `413` | `{ "success": false, "message": "Request body is too large" }` | The body is over 8192 bytes |
-| `503` | `{ "success": false, "message": "<problem>" }` | `NEXT_PUBLIC_AUTH_PROVIDER=oidc` (`Launch sign-in is not available when NEXT_PUBLIC_AUTH_PROVIDER=oidc.`), the launch variables are misconfigured, the server cannot sign sessions, or more launches arrived in the last minute than the process can remember |
+| `503` | `{ "success": false, "message": "<problem>" }` | `NEXT_PUBLIC_AUTH_PROVIDER=oidc` outside governance mode (`Launch sign-in is not available when NEXT_PUBLIC_AUTH_PROVIDER=oidc.`), the launch variables are misconfigured, the server cannot sign sessions, or more launches arrived in the last minute than the process can remember |
 
 Every answer carries `Cache-Control: no-store`.
 The `401` messages name the refusal (expired, already used, issued for a different Studio, not signed for this Studio, and the rest), and the audit log records one reason per refusal; [LAUNCH.md](./LAUNCH.md#audit) lists them.
@@ -1659,7 +1660,7 @@ required", "code": "AUTH_REQUIRED" }` without a session). Never `500`, and never
 |-------|---------|
 | `enabled` | A literal boolean. The rail compares `=== true` |
 | `ledgerVerified` | `true` when the durable ledger's writable-path probe passed; `false` for the Postgres backend, which is accepted without being contacted |
-| `reason` | One code per operator action: `OPERATOR_DISABLED`, `NO_MODEL_CONFIGURED`, `LEDGER_UNAVAILABLE`, `LEDGER_INCOMPATIBLE`, `UNSANCTIONED_WORLD_TARGET`, `IMPLICIT_HOSTED_WORLD`. Sent to every session |
+| `reason` | One code per operator action: `GOVERNANCE_HOLD`, `OPERATOR_DISABLED`, `NO_MODEL_CONFIGURED`, `LEDGER_UNAVAILABLE`, `LEDGER_INCOMPATIBLE`, `UNSANCTIONED_WORLD_TARGET`, `IMPLICIT_HOSTED_WORLD`. `GOVERNANCE_HOLD` means governance mode (`GOVERNANCE_SOURCE`) holds the agent off in this version. Sent to every session |
 | `detail` | The underlying message. **Admin sessions only** — the ledger codes' carry an absolute server path plus an OS error string or a quoted fragment of a file on that disk. Every other session gets one stable sentence instead |
 
 This route is **not** metered out of the `ai` bucket: a visibility probe must not spend a run's
@@ -1970,7 +1971,7 @@ The answers, in the order they are checked:
 |---|---|---|
 | 403 | JSON-RPC `-32000`: `Invalid Origin: <host>`, `Invalid Host: <host>` or `Missing Host header` | The `Origin` is not on the MCP allowlist, or on a loopback bind the `Host` is not |
 | 401 | `{"error":"invalid_token","error_description":"..."}` with `WWW-Authenticate: Bearer error="invalid_token", error_description="...", scope="mcp:read"` | No bearer, or one that does not verify |
-| 404 | `{"error":"MCP is not enabled on this server"}` | `LIBREDB_MCP_ENABLED` is off |
+| 404 | `{"error":"MCP is not enabled on this server"}` | `LIBREDB_MCP_ENABLED` is off, or governance mode (`GOVERNANCE_SOURCE`) holds MCP off in this version |
 | 500 | `{"error":"..."}` naming `LIBREDB_MCP_ENABLED` or `NEXT_PUBLIC_APP_VERSION`, or the OAuth `server_error` body | An unrecognized switch value, an unset server version, or a server fault during verification |
 | 429 | The rate-limit body of [Error Handling](#error-handling), with `Retry-After` | The per-user query budget is spent |
 | 415, 413, 400 | JSON-RPC `-32000`, `-32700`, `-32600` or `-32020` | A body that is not JSON, over 4 MiB, unreadable or invalid, a batch, or a standard header outside visible ASCII or missing after `initialize` |

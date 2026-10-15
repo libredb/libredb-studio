@@ -14,6 +14,7 @@ import {
   MCP_TOKEN_TTL_DAYS_MAX,
   MCP_URL_ENV,
   McpConfigError,
+  isMcpHeldByGovernance,
   mcpChannelStatus,
   readMcpSwitch,
   readMcpTokenLabel,
@@ -21,7 +22,7 @@ import {
   readMcpUrl,
 } from "@/lib/mcp/config";
 
-const NAMES = [MCP_ENABLED_ENV, MCP_URL_ENV, MCP_TOKEN_LABEL_ENV, MCP_TOKEN_TTL_DAYS_ENV];
+const NAMES = [MCP_ENABLED_ENV, MCP_URL_ENV, MCP_TOKEN_LABEL_ENV, MCP_TOKEN_TTL_DAYS_ENV, "GOVERNANCE_SOURCE"];
 const saved = new Map<string, string | undefined>();
 
 beforeEach(() => {
@@ -47,6 +48,8 @@ const URL_NOT_ABSOLUTE =
 const LABEL_UNSET =
   "LIBREDB_MCP_TOKEN_LABEL is not set: set it to any value, and change it to revoke every MCP token at once";
 const TTL_INVALID = "LIBREDB_MCP_TOKEN_TTL_DAYS must be a whole number of days from 1 to 365";
+const GOVERNANCE_HOLD =
+  "GOVERNANCE_SOURCE is set: this version of Studio does not run MCP under governance, so MCP stays off whatever LIBREDB_MCP_ENABLED says";
 
 describe("LIBREDB_MCP_ENABLED", () => {
   test("is off when unset", () => {
@@ -203,6 +206,42 @@ describe("the channel status", () => {
       url: null,
       tokenTtlDays: null,
     });
+  });
+});
+
+/**
+ * Governance mode holds MCP off in this version (docs/GOVERNANCE.md): the switch answers off whatever the environment
+ * says, so the route and the token endpoint behave as on a server where MCP is switched off. The boot preflight
+ * refuses LIBREDB_MCP_ENABLED switched on, and these hold for an environment changed after boot.
+ */
+describe("the governance hold", () => {
+  test("is not in force without governance, so the switch alone decides", () => {
+    expect(isMcpHeldByGovernance()).toBe(false);
+    process.env.GOVERNANCE_SOURCE = "";
+    expect(isMcpHeldByGovernance()).toBe(false);
+    process.env[MCP_ENABLED_ENV] = "true";
+    expect(readMcpSwitch()).toEqual({ state: "on" });
+  });
+
+  test.each(["postgres", "postgress"])("GOVERNANCE_SOURCE=%p holds MCP off, an unknown value included", (value) => {
+    process.env.GOVERNANCE_SOURCE = value;
+    expect(isMcpHeldByGovernance()).toBe(true);
+  });
+
+  test("under governance readMcpSwitch answers off although LIBREDB_MCP_ENABLED is true", () => {
+    process.env.GOVERNANCE_SOURCE = "postgres";
+    for (const value of ["true", "on", "1", "yes"]) {
+      process.env[MCP_ENABLED_ENV] = value;
+      expect(readMcpSwitch(), value).toEqual({ state: "off" });
+    }
+  });
+
+  test("under governance the channel is off and names the hold alone, because no other setting enables it", () => {
+    process.env.GOVERNANCE_SOURCE = "postgres";
+    process.env[MCP_ENABLED_ENV] = "true";
+    process.env[MCP_URL_ENV] = "https://mcp-host.test/api/mcp";
+    process.env[MCP_TOKEN_LABEL_ENV] = "label-one";
+    expect(mcpChannelStatus()).toEqual({ state: "off", problems: [GOVERNANCE_HOLD], url: null, tokenTtlDays: null });
   });
 });
 
