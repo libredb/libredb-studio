@@ -627,6 +627,7 @@ When the query and pool settings take effect:
 - `provider.poolMaxPerUser` sizes the pool of each per-user provider Studio creates after the snapshot that carries it.
   A provider already open keeps its pool size until it is torn down: by a disconnect, the idle sweep, a revoked grant or a changed credential.
 - `queryLog.statementCapture` is reported by `GET /api/connections/policy` from the next request, and the editor reads that route when the page loads, so the notice for `full` appears or goes away on the next page load.
+- `queryLog.onSinkFailure` applies from the next execution after the snapshot that carries it, as [query events](#query-events) describes.
 
 The manifest lists each key with its type, allowed values or bounds, Studio default or environment counterpart, the contract version that published it and the description a control plane shows next to it.
 
@@ -659,8 +660,11 @@ Delivery:
   Each is logged as one line on standard output, `{"type":"query_event_rejected","event_id":"<uuid>","sqlstate":"23514","constraint":"query_event_not_future"}`, which carries neither the statement nor the server's message, because that can quote the row; `constraint` is null when the server names none.
   A refusal for good is not a reason to wait, so Studio does not back off after it.
 - At shutdown Studio inserts every queued event at once, batch after batch and without waiting out a backoff, for at most 4 seconds, and logs how many events it could not send.
-- With `queryLog.onSinkFailure` set to `refuse`, Studio refuses new executions with 503 `AUDIT_UNAVAILABLE` while it is backing off or its queue is at least 90% full.
-  A refused row never trips this.
+- With `queryLog.onSinkFailure` set to `refuse`, Studio refuses new executions with 503 `AUDIT_UNAVAILABLE` while it is backing off or its queue is at least 90% full, which is 9000 events.
+  It checks before a statement reaches the database, so a refused request runs nothing, and it admits executions again once an insert settles its whole batch and the queue holds fewer than 9000 events.
+  A row the database refused for good never trips it, because Studio drops that row and goes on without backing off.
+  The sink state's `backingOff` and `queued`, in the [heartbeat](#heartbeat) and on the [admin status](#admin-status), show when it applies.
+- With `continue`, the default, Studio keeps executing while it cannot record query events: their events wait in the queue, and once it is full the newest are dropped and counted in `dropped`.
 
 Capture follows `queryLog.statementCapture`, which is `none` while the control plane sets no valid value:
 
@@ -798,6 +802,6 @@ Under governance Studio's API answers these codes in the `code` field of an erro
 | --- | --- | --- |
 | `CONNECTION_NOT_FOUND` | 404 | The connection does not exist or is not granted to the caller; the two are indistinguishable. |
 | `GOVERNANCE_UNAVAILABLE` | 503 | The snapshot is loading, too old, misconfigured or incompatible. |
-| `AUDIT_UNAVAILABLE` | 503 | `queryLog.onSinkFailure` is `refuse` and Studio cannot record query events. |
+| `AUDIT_UNAVAILABLE` | 503 | `queryLog.onSinkFailure` is `refuse` and Studio cannot record query events: it is backing off after a failed insert or its queue is at least 90% full, so the request was refused before any statement ran. |
 | `TRANSACTION_CREDENTIAL_CHANGED` | 409 | The grant level or credential under the caller's open transaction changed, and Studio rolled the transaction back; `rolledBack` is `false` when it could not confirm the rollback. |
 | `AI_DISABLED` | 403 | `ai.enabled` is `false`, and a route of the AI bucket refused a signed-in caller before any LLM provider was built. |
