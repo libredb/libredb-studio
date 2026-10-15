@@ -166,6 +166,15 @@ export const NO_TRANSACTION_OPENED =
   "This server accepted BEGIN but did not open a transaction, so nothing run in it could be rolled back. Transactions and SANDBOX are not available on this connection.";
 
 /**
+ * What every transaction provider (postgres, mysql, mssql, oracle) raises for a statement, COMMIT or ROLLBACK sent
+ * while it holds no transaction, and what `POST /api/db/transaction` raises under governance for a caller who owns no
+ * transaction there (docs/GOVERNANCE.md#query-events). Raised as a `QueryError`, so the route answers 400 QUERY_ERROR
+ * with this sentence, and the editor's `transactionGone()` reads exactly this sentence as "the transaction is gone" and
+ * leaves transaction mode. One constant for every producer and the one reader, so the two can never drift apart.
+ */
+export const NO_ACTIVE_TRANSACTION = "No active transaction";
+
+/**
  * What `beginTransaction({ requireReportedState: true })` raises when the server answered the
  * BEGIN without reporting any transaction state (see `BeginTransactionResult`). SANDBOX asks
  * for that, because it tells the user their changes were rolled back, and on such a server

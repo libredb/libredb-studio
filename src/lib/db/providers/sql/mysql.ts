@@ -67,6 +67,7 @@ import {
   NO_TRANSACTION_OPENED,
   TRANSACTION_STATE_UNREPORTED,
   MYSQL_ACCOUNT_LIMIT_ERRNOS,
+  NO_ACTIVE_TRANSACTION,
 } from "../../errors";
 import type { ProviderExecutionContext, ReadOnlyStatementBudget, ReadOnlyStatementMode } from "../../types";
 import { assertReadOnlyBudget, measureRowBytes } from "./read-only-budget";
@@ -4040,7 +4041,7 @@ export class MySQLProvider extends SQLBaseProvider {
   }
 
   public async commitTransaction(): Promise<void> {
-    if (!this.txConn || !this.txActive) throw new QueryError("No active transaction", "mysql");
+    if (!this.txConn || !this.txActive) throw new QueryError(NO_ACTIVE_TRANSACTION, "mysql");
     this.clearTxTimeout();
     const conn = this.txConn;
     try {
@@ -4051,7 +4052,7 @@ export class MySQLProvider extends SQLBaseProvider {
   }
 
   public async rollbackTransaction(): Promise<void> {
-    if (!this.txConn || !this.txActive) throw new QueryError("No active transaction", "mysql");
+    if (!this.txConn || !this.txActive) throw new QueryError(NO_ACTIVE_TRANSACTION, "mysql");
     this.clearTxTimeout();
     const conn = this.txConn;
     try {
@@ -4097,7 +4098,7 @@ export class MySQLProvider extends SQLBaseProvider {
   }
 
   public async queryInTransaction(sql: string, params?: unknown[]): Promise<QueryResult> {
-    if (!this.txConn || !this.txActive) throw new QueryError("No active transaction", "mysql");
+    if (!this.txConn || !this.txActive) throw new QueryError(NO_ACTIVE_TRANSACTION, "mysql");
 
     return this.trackQuery(async () => {
       const { result, executionTime } = await this.measureExecution(async () => {

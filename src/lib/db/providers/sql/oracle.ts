@@ -58,6 +58,7 @@ import {
   QueryError,
   mapDatabaseError,
   describeOracleClientLoadFailure,
+  NO_ACTIVE_TRANSACTION,
 } from "../../errors";
 import { formatBytes } from "../../utils/pool-manager";
 import { analyzeQuery, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../utils/query-limiter";
@@ -2111,7 +2112,7 @@ export class OracleProvider extends SQLBaseProvider {
   }
 
   public async commitTransaction(): Promise<void> {
-    if (!this.txConn || !this.txActive) throw new QueryError("No active transaction", "oracle");
+    if (!this.txConn || !this.txActive) throw new QueryError(NO_ACTIVE_TRANSACTION, "oracle");
     this.clearTxTimeout();
     try {
       await this.txConn.commit();
@@ -2123,7 +2124,7 @@ export class OracleProvider extends SQLBaseProvider {
   }
 
   public async rollbackTransaction(): Promise<void> {
-    if (!this.txConn || !this.txActive) throw new QueryError("No active transaction", "oracle");
+    if (!this.txConn || !this.txActive) throw new QueryError(NO_ACTIVE_TRANSACTION, "oracle");
     this.clearTxTimeout();
     try {
       await this.txConn.rollback();
@@ -2139,7 +2140,7 @@ export class OracleProvider extends SQLBaseProvider {
   }
 
   public async queryInTransaction(sql: string, params?: unknown[]): Promise<QueryResult> {
-    if (!this.txConn || !this.txActive) throw new QueryError("No active transaction", "oracle");
+    if (!this.txConn || !this.txActive) throw new QueryError(NO_ACTIVE_TRANSACTION, "oracle");
 
     return this.trackQuery(async () => {
       const { result, executionTime } = await this.measureExecution(async () => {

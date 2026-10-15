@@ -658,7 +658,8 @@ Exactly one terminal row ends a transaction, with `statement_type` `OTHER`:
 
 A `COMMIT` or `ROLLBACK` that fails records `status` `error`: `rolled-back` when the transaction ended with it, else `open`.
 A statement that itself ends the transaction, such as a typed `COMMIT`, records only its `open` row.
-A statement, `COMMIT` or `ROLLBACK` request from a person who holds no open transaction on the connection, such as one sent right after the five-minute limit, is refused with 400 `QUERY_ERROR` before anything reaches the database, so no statement runs in a transaction without its row.
+A statement, `COMMIT` or `ROLLBACK` request from a person who holds no open transaction on the connection, such as one sent right after the five-minute limit, is refused with 400 `QUERY_ERROR` and the sentence `No active transaction` before anything reaches the database, so no statement runs in a transaction without its row.
+It is the sentence the database providers answer for a statement outside a transaction, so the editor leaves transaction mode on either.
 
 How the editor and a multi-statement run record:
 

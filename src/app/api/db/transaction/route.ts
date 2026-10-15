@@ -18,7 +18,7 @@ import { countCodeStatements, splitExecutionUnits, type ExecutionUnit } from "@/
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { noteAppendedBound } from "@/lib/db/utils/query-limiter";
 import { withTimeout } from "@/lib/db/utils/pool-manager";
-import { QueryError } from "@/lib/db/errors";
+import { NO_ACTIVE_TRANSACTION, QueryError } from "@/lib/db/errors";
 import { logger } from "@/lib/logger";
 import type { UserPayload } from "@/lib/auth";
 import { clientAddress } from "@/lib/api/client-address";
@@ -184,13 +184,6 @@ async function rollBackOnProvider(
   }
 }
 
-/**
- * Under governance, the answer to a statement action from a caller who owns no transaction record here. One string
- * literal, for the coverage reason above.
- */
-const NO_OWNED_TRANSACTION =
-  "No transaction of yours is open on this connection, so Studio sent nothing to the database. Begin a new transaction to run statements in one.";
-
 /** The actions that send a statement to the database: BEGIN, the caller's own, COMMIT and ROLLBACK. */
 const STATEMENT_ACTIONS: ReadonlySet<unknown> = new Set(["begin", "query", "commit", "rollback"]);
 
@@ -350,10 +343,10 @@ export async function POST(req: NextRequest) {
     // the scope of its query events (docs/GOVERNANCE.md#query-events). Without that record a statement would reach the
     // database with no event behind it: right after the provider's own timeout (the reconcile above), or on a
     // transaction whose record is gone. Every provider that implements the transaction interface refuses a statement
-    // outside a transaction with "No active transaction" anyway, so this is refused the same way, before the provider
-    // runs anything.
+    // outside a transaction with NO_ACTIVE_TRANSACTION anyway, so this is refused with that same sentence, before the
+    // provider runs anything, and the editor reads it as the end of its transaction as it does the provider's.
     if (subject !== undefined && owner === null && IN_TRANSACTION_ACTIONS.has(action)) {
-      throw new QueryError(NO_OWNED_TRANSACTION, connection.type);
+      throw new QueryError(NO_ACTIVE_TRANSACTION, connection.type);
     }
 
     switch (action) {

@@ -59,6 +59,7 @@ import {
   ExecutionProfileError,
   QueryError,
   mapDatabaseError,
+  NO_ACTIVE_TRANSACTION,
 } from "../../errors";
 import { assertReadOnlyBudget, measureResultBytes } from "./read-only-budget";
 import { formatBytes } from "../../utils/pool-manager";
@@ -2771,7 +2772,7 @@ export class MSSQLProvider extends SQLBaseProvider {
   }
 
   public async commitTransaction(): Promise<void> {
-    if (!this.txTransaction || !this.txActive) throw new QueryError("No active transaction", "mssql");
+    if (!this.txTransaction || !this.txActive) throw new QueryError(NO_ACTIVE_TRANSACTION, "mssql");
     this.clearTxTimeout();
     try {
       await this.txTransaction.commit();
@@ -2782,7 +2783,7 @@ export class MSSQLProvider extends SQLBaseProvider {
   }
 
   public async rollbackTransaction(): Promise<void> {
-    if (!this.txTransaction || !this.txActive) throw new QueryError("No active transaction", "mssql");
+    if (!this.txTransaction || !this.txActive) throw new QueryError(NO_ACTIVE_TRANSACTION, "mssql");
     this.clearTxTimeout();
     try {
       await this.txTransaction.rollback();
@@ -2797,7 +2798,7 @@ export class MSSQLProvider extends SQLBaseProvider {
   }
 
   public async queryInTransaction(sql: string, params?: unknown[]): Promise<QueryResult> {
-    if (!this.txTransaction || !this.txActive) throw new QueryError("No active transaction", "mssql");
+    if (!this.txTransaction || !this.txActive) throw new QueryError(NO_ACTIVE_TRANSACTION, "mssql");
 
     return this.trackQuery(async () => {
       const { result, executionTime } = await this.measureExecution(async () => {

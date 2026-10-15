@@ -85,6 +85,7 @@ import {
   QueryError,
   mapDatabaseError,
   NO_TRANSACTION_OPENED,
+  NO_ACTIVE_TRANSACTION,
 } from "../../errors";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import type { QueryResultSet } from "@/lib/types";
@@ -3528,7 +3529,7 @@ export class PostgresProvider extends SQLBaseProvider {
   }
 
   public async commitTransaction(): Promise<void> {
-    if (!this.txClient || !this.txActive) throw new QueryError("No active transaction", "postgres");
+    if (!this.txClient || !this.txActive) throw new QueryError(NO_ACTIVE_TRANSACTION, "postgres");
     this.clearTxTimeout();
     const client = this.txClient;
     try {
@@ -3539,7 +3540,7 @@ export class PostgresProvider extends SQLBaseProvider {
   }
 
   public async rollbackTransaction(): Promise<void> {
-    if (!this.txClient || !this.txActive) throw new QueryError("No active transaction", "postgres");
+    if (!this.txClient || !this.txActive) throw new QueryError(NO_ACTIVE_TRANSACTION, "postgres");
     this.clearTxTimeout();
     const client = this.txClient;
     try {
@@ -3734,7 +3735,7 @@ export class PostgresProvider extends SQLBaseProvider {
   }
 
   public async queryInTransaction(sql: string, params?: unknown[]): Promise<QueryResult> {
-    if (!this.txClient || !this.txActive) throw new QueryError("No active transaction", "postgres");
+    if (!this.txClient || !this.txActive) throw new QueryError(NO_ACTIVE_TRANSACTION, "postgres");
 
     return this.trackQuery(async () => {
       const { result, executionTime } = await this.measureExecution(async () => {

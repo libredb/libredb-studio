@@ -5,6 +5,7 @@ import { admittedConnection, grantedSnapshot } from "../../helpers/governance/gr
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { API_CODES } from "@/lib/governance/contract";
 import { logger } from "@/lib/logger";
+import { transactionGone } from "@/hooks/use-transaction-control";
 import {
   QueryError,
   DatabaseError,
@@ -1682,9 +1683,11 @@ describe("POST /api/db/transaction under governance", () => {
     await provider?.rollbackTransaction();
     provider?.rollbackTransaction.mockClear();
 
+    // Refused the way the provider itself refuses a statement outside a transaction, so the editor's own reading of
+    // the answer, transactionGone(), leaves transaction mode instead of refusing every later run.
     const afterTimeout = await send({ action: "query", sql: "INSERT INTO orders VALUES (1)" });
     expect(afterTimeout.status).toBe(400);
-    expect((await parseResponseJSON<{ error: string }>(afterTimeout)).error).toContain("No transaction of yours");
+    expect(transactionGone(await parseResponseJSON<{ code?: string; error?: string }>(afterTimeout))).toBe(true);
 
     // A transaction the provider holds with no record of the caller's behind it, as a record lost to a race would leave.
     expect((await send({ action: "begin" })).status).toBe(200);
@@ -1695,7 +1698,9 @@ describe("POST /api/db/transaction under governance", () => {
       { action: "commit" },
       { action: "rollback" },
     ]) {
-      expect((await send(body)).status).toBe(400);
+      const refused = await send(body);
+      expect(refused.status).toBe(400);
+      expect(transactionGone(await parseResponseJSON<{ code?: string; error?: string }>(refused))).toBe(true);
     }
 
     expect(provider?.queryInTransaction).not.toHaveBeenCalled();
