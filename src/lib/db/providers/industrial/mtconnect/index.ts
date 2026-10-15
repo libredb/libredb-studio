@@ -534,10 +534,10 @@ export class MTConnectProvider extends BaseDatabaseProvider {
 
   public async listContainers(): Promise<Container[]> {
     const model = await this.model();
-    return model.devices.map((device, index) => ({
+    return model.devices.map((device) => ({
       path: [device.name],
       name: device.name,
-      level: index === 0 ? 0 : 0,
+      level: 0,
       kinds: MTCONNECT_OBJECT_KINDS.map((kind) => kind.id),
     }));
   }
