@@ -6,6 +6,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getStorageProvider } from "@/lib/storage/factory";
+import { storageOwnerKey } from "@/lib/storage/owner-key";
 import { STORAGE_COLLECTIONS, type StorageCollection } from "@/lib/storage/types";
 import { createErrorResponse } from "@/lib/api/errors";
 import { guardRoute } from "@/lib/api/require-session";
@@ -38,7 +39,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
       return NextResponse.json({ error: "Missing required field: data" }, { status: 400 });
     }
 
-    await provider.setCollection(guard.session.username, collection as StorageCollection, body.data);
+    await provider.setCollection(storageOwnerKey(guard.session), collection as StorageCollection, body.data);
 
     return NextResponse.json({ ok: true });
   } catch (error) {

@@ -6,6 +6,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getStorageProvider } from "@/lib/storage/factory";
+import { storageOwnerKey } from "@/lib/storage/owner-key";
 import { createErrorResponse } from "@/lib/api/errors";
 import { guardRoute } from "@/lib/api/require-session";
 
@@ -23,7 +24,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Server storage is not enabled" }, { status: 404 });
     }
 
-    const data = await provider.getAllData(guard.session.username);
+    const data = await provider.getAllData(storageOwnerKey(guard.session));
     return NextResponse.json(data);
   } catch (error) {
     return createErrorResponse(error, { route: "GET /api/storage" });

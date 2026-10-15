@@ -799,7 +799,7 @@ CREATE INDEX IF NOT EXISTS passkey_spent_challenges_expiry ON passkey_spent_chal
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `user_id` | TEXT | User's email from JWT token (e.g., `admin@libredb.org`) |
+| `user_id` | TEXT | User's email from JWT token (e.g., `admin@libredb.org`), or under governance `sub:` followed by the identity provider's subject ([Governance Mode](#governance-mode)) |
 | `collection` | TEXT | Data category: `connections`, `history`, `saved_queries`, `schema_snapshots`, `saved_charts`, `active_connection_id`, `audit_log`, `masking_config`, `threshold_config`, `dismissed_seeds`, `favorite_connections`, `connection_order`, `connection_groups` |
 | `data` | TEXT | JSON-serialized collection data |
 | `updated_at` | TEXT / TIMESTAMPTZ | Last modification timestamp |
@@ -995,6 +995,7 @@ src/lib/storage/
 ├── storage-facade.ts     # Public storage object with domain methods
 ├── provider-type.ts      # getStorageProviderType(), import-free so the proxy can read it
 ├── factory.ts            # Env-based provider instantiation (singleton)
+├── owner-key.ts          # storageOwnerKey(): the user_id a session's rows are filed under
 ├── passkey-row.ts        # passkey_credentials row to StoredPasskey, refusing a malformed row
 └── providers/
     ├── sqlite.ts         # better-sqlite3 implementation
@@ -1175,7 +1176,8 @@ Provider classes are **dynamically imported** — SQLite and PostgreSQL dependen
 
 ## 8. API Routes
 
-All routes (except `/config`) require JWT authentication. The authenticated user's `username` (email) is used as the `user_id` for storage scoping.
+All routes (except `/config`) require JWT authentication.
+The `user_id` for storage scoping is the authenticated user's `username` (email), or under governance `sub:` followed by the identity provider's subject ([Governance Mode](#governance-mode)).
 
 | Endpoint | Method | Auth | Purpose |
 |----------|--------|------|---------|
@@ -1395,7 +1397,7 @@ Every row in `user_storage` is scoped by `user_id`:
 (user@libredb.org,  connections) → [{"id":"c2", "name":"Dev DB"...}]
 ```
 
-- `user_id` = JWT session `username` (email address)
+- `user_id` = JWT session `username` (email address), or under governance `sub:` followed by the identity provider's subject ([Governance Mode](#governance-mode))
 - **Client never sends `user_id`** — server always extracts from JWT cookie
 - Every query includes `WHERE user_id = $username` — no cross-user access possible
 
@@ -1408,6 +1410,26 @@ Every row in `user_storage` is scoped by `user_id`:
 ### OIDC Users
 
 OIDC users (Auth0, Keycloak, Okta, Azure AD) have their `preferred_username` or email claim mapped to the same `username` field used as `user_id`. See [OIDC.md](./OIDC.md) for SSO configuration — it pairs well with server storage for team deployments.
+
+### Governance Mode
+
+With `GOVERNANCE_SOURCE=postgres` ([GOVERNANCE.md](./GOVERNANCE.md#sign-in)) the key is not the username.
+Studio files every row under `sub:` followed by the session's `idpSubject`, the identity provider's subject for the user ([OIDC.md](./OIDC.md#session-identity)), which for Keycloak is the user id:
+
+```
+(sub:6f1c2b7e-0d4a-4c51-9a1e-2f3b8c9d0e11, connections) → [...]
+(sub:6f1c2b7e-0d4a-4c51-9a1e-2f3b8c9d0e11, history)     → [...]
+```
+
+- The subject is the key a control plane writes the user's grants under, and it stays when the email changes.
+  So a later email change does not move a user's storage: the next sign-in reads and writes the same rows.
+- The username keeps its other uses: display, rate limiting and the owner of the browser copy, so the `X-LibreDB-Workspace-Owner` header still names it ([The Browser Copy Belongs to the Signed-In Account](#the-browser-copy-belongs-to-the-signed-in-account)).
+  After an email change the next sign-in finds a copy owned by the old address, clears it, and pulls the same rows from the server again.
+- The prefix keeps subjects apart from usernames.
+  Rows a store filed under a username before governance was switched on stay under that username, and governance mode neither reads nor moves them.
+- Under governance sign-in refuses a session without a subject, and a storage route that meets one answers 500 rather than file rows under the username.
+- `src/lib/storage/owner-key.ts` builds the key.
+  Without governance it is the username exactly as before, also for an OIDC session that carries a subject.
 
 ### Accounts
 
