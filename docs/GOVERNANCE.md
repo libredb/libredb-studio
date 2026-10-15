@@ -142,6 +142,8 @@ Studio checks the session of every request against these rules:
 - A session issued at or before its subject's latest `revoked_before` in [`bridge.session_revocations_v1`](#row-semantics) is refused, typically within a second of the commit that adds the row, because its change notification reloads the snapshot.
   A session's issue time is its token's `iat`, in whole seconds, so a session signed within the second of `revoked_before` counts as issued before it.
   A sign-in after that second gets a session the row does not refuse, so a control plane that means to keep someone out also disables them at the identity provider.
+- The OIDC callback applies the same rule to the session it is about to mint: when the subject's latest `revoked_before` is at or after the current second, as when the control plane's clock runs ahead of Studio's or the row's `revoked_before` cannot be read, the sign-in ends on `/login?error=oidc_session_revoked` with no session, and the audit trail records `login_failure` with reason `oidc_session_revoked`.
+  So `OIDC_AUTO_REDIRECT` never answers a refused session with a sign-in that every request refuses again.
 - Only a snapshot that data routes are served from revokes a session.
   While none can be served, data routes answer 503 instead and no session is refused for a revocation, so an outage of the governance source sets off no wave of sign-ins.
 - A refused session's cookie is cleared, so the next page load reaches the sign-in page.

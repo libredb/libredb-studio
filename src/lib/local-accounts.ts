@@ -430,7 +430,8 @@ function comparableIssuer(value: string): string | null {
  * `iss` for Microsoft Entra ID and Azure AD B2C. With `OIDC_ISSUER` unset or not a URL no issuer matches it.
  *
  * `storedAccountAllows()` applies it to a session's `idpSubject` and `idpIssuer`, which only the OIDC callback writes,
- * and the callback applies it to the ID token before it mints a session, so it never mints one that is refused.
+ * and the callback applies it to the ID token, with `governedSignInRevoked()` below, before it mints a session, so it
+ * never mints one that is refused.
  */
 export function governedIdentityAccepted(subject: unknown, issuer: unknown): boolean {
   if (typeof subject !== "string" || subject === "" || typeof issuer !== "string") return false;
@@ -455,6 +456,18 @@ function governanceRevoked(subject: string, iat: number | undefined): boolean {
   const { snapshot } = governanceState();
   if (snapshot === null || !governanceServable()) return false;
   return sessionRevoked(snapshot, subject, iat === undefined ? undefined : iat * 1000);
+}
+
+/**
+ * Whether a session the OIDC callback minted for `subject` now would be refused by the rule above, so the callback
+ * mints none: a revocation dated at or after the current second, as when the control plane's clock runs ahead of
+ * Studio's or a row's `revoked_before` is unreadable and counts as infinity. signJWT() sets `iat` to this second or a
+ * later one, and a later `iat` is never revoked where this one is not, so checking now cannot let a refused session
+ * through. A revocation dated before this second ends the sessions issued before it and lets this sign-in through
+ * (docs/GOVERNANCE.md#sign-in).
+ */
+export function governedSignInRevoked(subject: string): boolean {
+  return governanceRevoked(subject, Math.floor(Date.now() / 1000));
 }
 
 /**

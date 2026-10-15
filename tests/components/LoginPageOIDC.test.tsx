@@ -76,6 +76,17 @@ describe("LoginPage (OIDC mode)", () => {
     expect(queryByText("Authentication failed. Please try again.")).toBeNull();
   });
 
+  // Under governance the control plane ended this account's sessions with a revocation that still applies, so the
+  // callback minted none: the message says who ended them and where to go, instead of a generic failure.
+  test("error=oidc_session_revoked shows the ended-sessions message", () => {
+    setMockSearchParams(new URLSearchParams("error=oidc_session_revoked"));
+    const { getByText, queryByText } = render(<LoginForm authProvider="oidc" passkey={null} />);
+    expect(
+      getByText("An administrator has ended your sessions. Try again later, or ask your administrator."),
+    ).not.toBeNull();
+    expect(queryByText("Authentication failed. Please try again.")).toBeNull();
+  });
+
   test("renders the generic message for every other code", () => {
     for (const code of ["oidc_state_missing", "oidc_state_invalid", "oidc_no_claims", "constructor", "__proto__"]) {
       setMockSearchParams(new URLSearchParams(`error=${code}`));

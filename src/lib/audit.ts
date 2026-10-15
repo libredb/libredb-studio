@@ -113,6 +113,12 @@ export type AuditReason =
    */
   | "oidc_no_role"
   /**
+   * Under governance (docs/GOVERNANCE.md#sign-in), the provider authenticated the account, but the governance source
+   * revoked its subject's sessions at or after this second, so every request would refuse the session the callback
+   * was about to mint and none was minted. The record names the account, which the provider vouched for.
+   */
+  | "oidc_session_revoked"
+  /**
    * A `POST /api/auth/login` under governance (docs/GOVERNANCE.md), where the identity provider is the only way in.
    * Refused before the body is read, so the record names no submitted account and the actor is anonymous.
    */

@@ -450,6 +450,7 @@ The identity provider needs:
 - A confidential client for Studio that uses the authorization code flow with PKCE S256, with the redirect URI `https://<studio>/api/auth/oidc/callback` and the post-logout URI `https://<studio>/login`.
 - The roles `admin` and `user` in a flat ID-token claim: an array of strings at the top level of the ID token, named by `OIDC_ROLE_CLAIM`, with `OIDC_ADMIN_ROLES=admin` and `OIDC_USER_ROLES=user`.
   An account that holds neither role is refused as `oidc_no_role` ([Requiring a role](#requiring-a-role)).
+- A sign-in whose subject the governance source revoked at or after the current second gets no session and ends on `/login?error=oidc_session_revoked`, because every request would refuse that session (`docs/GOVERNANCE.md#sign-in`).
 - No pairwise subject mapper on Studio's client or on the control plane's: both must see the same `sub` for a user, because the control plane writes grants under the `sub` it sees and Studio matches them against the session's `idpSubject`.
 
 For single sign-on with the control plane, set `OIDC_PROMPT=omit` and `OIDC_AUTO_REDIRECT=true` as well.
@@ -1175,6 +1176,7 @@ Both OIDC routes redirect to `/login?error=<code>` on failure, and record the sa
 | `oidc_state_invalid` | callback | State decryption failed or state mismatch | Tampered cookie, wrong JWT_SECRET, or CSRF attempt |
 | `oidc_no_claims` | callback | Token exchange returned no claims, or no string `sub` or `iss` | Provider returned invalid/empty ID token |
 | `oidc_no_role` | callback | `mapOIDCRole()` returned null: `OIDC_USER_ROLES` is set and the role claim holds no admin or user role | The account has no role at the provider; no session is created, and the audit record names the account |
+| `oidc_session_revoked` | callback | Governance mode only: the subject's latest `revoked_before` is at or after the current second | The control plane ended the account's sessions with a revocation that still applies, such as one dated ahead of Studio's clock; no session is created, and the audit record names the account |
 | `oidc_failed` | login, callback | Any other error after the provider answered | A discovery document that parses but lacks an endpoint, PKCE or state-cookie failure on login; network error, invalid client credentials, etc. on callback |
 
 ### Login Page Error Display
@@ -1186,6 +1188,7 @@ Both OIDC routes redirect to `/login?error=<code>` on failure, and record the sa
 | `oidc_config` | Single sign-on is not configured correctly on this server. Contact your administrator. |
 | `oidc_discovery` | The identity provider could not be reached. Try again later, or contact your administrator if this continues. |
 | `oidc_no_role` | Your account has no role that allows access to LibreDB Studio. Ask your administrator. |
+| `oidc_session_revoked` | An administrator has ended your sessions. Try again later, or ask your administrator. |
 | anything else | Authentication failed. Please try again. |
 
 The page is unauthenticated, so it is never given the underlying error: the code names the class and nothing the issuer said reaches the browser. `tests/components/LoginPageOIDC.test.tsx` asserts the negative.

@@ -16,7 +16,7 @@ import { clientAddress } from "@/lib/api/client-address";
 import { emitAuditEvent, type AuditReason } from "@/lib/audit";
 import { AuthConfigError } from "@/lib/auth-errors";
 import { governanceEnabled } from "@/lib/governance/config";
-import { governedIdentityAccepted } from "@/lib/local-accounts";
+import { governedIdentityAccepted, governedSignInRevoked } from "@/lib/local-accounts";
 
 const ROUTE = "GET /api/auth/oidc/callback";
 
@@ -123,6 +123,16 @@ export async function GET(request: Request) {
       cookieStore.delete({ name: "oidc-state", path: getBasePath() || "/" });
       auditFailure("oidc_no_role", ip, String(identity));
       return NextResponse.redirect(`${origin}${withBasePath("/login")}?error=oidc_no_role`);
+    }
+
+    // Under governance every request refuses a session issued at or before its subject's revoked_before
+    // (docs/GOVERNANCE.md#sign-in), so a revocation dated at or after this second would refuse the session minted here,
+    // and OIDC_AUTO_REDIRECT would answer each refusal with the next silent sign-in. None is minted, and the login page,
+    // which always renders with an error, says an administrator ended the account's sessions.
+    if (governanceEnabled() && governedSignInRevoked(claims.sub)) {
+      cookieStore.delete({ name: "oidc-state", path: getBasePath() || "/" });
+      auditFailure("oidc_session_revoked", ip, String(identity));
+      return NextResponse.redirect(`${origin}${withBasePath("/login")}?error=oidc_session_revoked`);
     }
 
     // Create local JWT session (same as password login). `username` keeps its display meaning, and the provider's

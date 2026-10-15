@@ -97,6 +97,8 @@ mock.module("next/headers", () => ({
 
 const { GET } = await import("@/app/api/auth/oidc/callback/route");
 const { verifyJWT } = await import("@/lib/auth");
+const { recordGovernanceSnapshot, resetGovernanceState } = await import("@/lib/governance/state");
+const { grantedSnapshot } = await import("../../helpers/governance/granted-snapshot");
 
 /** The session the callback minted, verified and decoded from the auth-token cookie it set. */
 async function mintedSession() {
@@ -506,11 +508,17 @@ describe("GET /api/auth/oidc/callback", () => {
 
     afterEach(() => {
       logSpy.mockRestore();
+      resetGovernanceState();
       for (const key of KEYS) {
         if (saved[key] === undefined) delete process.env[key];
         else process.env[key] = saved[key];
       }
     });
+
+    /** Swaps in a fresh snapshot whose only revocation ends the sessions of `subject` issued at or before `atMs`. */
+    function recordRevocation(subject: string, atMs: number): void {
+      recordGovernanceSnapshot({ ...grantedSnapshot([], [], Date.now()), revocations: new Map([[subject, atMs]]) });
+    }
 
     function auditReasons(): unknown[] {
       return logSpy.mock.calls.map((call) => (JSON.parse(String(call[0])) as Record<string, unknown>).reason);
@@ -548,6 +556,50 @@ describe("GET /api/auth/oidc/callback", () => {
       expect(res.headers.get("location")).toBe("http://localhost:3000/");
       expect(await mintedSession()).toMatchObject({ idpSubject: "user-123", idpIssuer: ISSUER });
       expect(auditReasons()).toEqual([undefined]);
+    });
+
+    // Every request refuses a session issued at or before its subject's revoked_before (docs/GOVERNANCE.md#sign-in).
+    // A revocation dated ahead of this second, as when the control plane's clock runs ahead of Studio's or a row's
+    // revoked_before is unreadable and counts as infinity, would refuse the session the callback is about to mint, and
+    // OIDC_AUTO_REDIRECT would answer that refusal with the next silent sign-in, again and again.
+    test("a subject whose sessions are revoked from this second on gets no session and lands on /login?error=oidc_session_revoked", async () => {
+      recordRevocation("user-123", Date.now() + 60_000);
+
+      const res = await GET(new Request(callbackUrl));
+
+      expect(res.headers.get("location")).toBe("http://localhost:3000/login?error=oidc_session_revoked");
+      expect(setCookies.has("auth-token")).toBe(false);
+      expect(mockCookieStore.delete).toHaveBeenCalledWith({ name: "oidc-state", path: "/" });
+      expect(auditReasons()).toEqual(["oidc_session_revoked"]);
+    });
+
+    test("a revocation that refuses sessions issued for good, an unreadable revoked_before, also mints none", async () => {
+      recordRevocation("user-123", Number.POSITIVE_INFINITY);
+
+      const res = await GET(new Request(callbackUrl));
+
+      expect(res.headers.get("location")).toBe("http://localhost:3000/login?error=oidc_session_revoked");
+      expect(setCookies.has("auth-token")).toBe(false);
+    });
+
+    // The control: a revocation ends the sessions issued before it, and a sign-in after it gets a session the
+    // revocation does not refuse, as docs/GOVERNANCE.md#sign-in states.
+    test("a sign-in after the subject's revoked_before gets a session", async () => {
+      recordRevocation("user-123", Date.now() - 60_000);
+
+      const res = await GET(new Request(callbackUrl));
+
+      expect(res.headers.get("location")).toBe("http://localhost:3000/");
+      expect(await mintedSession()).toMatchObject({ idpSubject: "user-123" });
+      expect(auditReasons()).toEqual([undefined]);
+    });
+
+    test("another subject's revocation does not refuse this sign-in", async () => {
+      recordRevocation("someone-else", Date.now() + 60_000);
+
+      await GET(new Request(callbackUrl));
+
+      expect(await mintedSession()).toMatchObject({ idpSubject: "user-123" });
     });
 
     test("an iss that differs from OIDC_ISSUER only by the trailing slash of a bare host signs in", async () => {
