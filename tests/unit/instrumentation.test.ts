@@ -18,6 +18,7 @@ const ENV_KEYS = [
   "ADMIN_PASSWORD",
   "AUTH_BOOTSTRAP",
   "LIBREDB_NO_BANNER",
+  "GOVERNANCE_SOURCE",
 ] as const;
 
 /** The sqlite sample seeds fire-and-forget; poll for its observable effects. */
@@ -137,6 +138,45 @@ describe("instrumentation register()", () => {
     expect(fs.existsSync(path.join(tmpDir, "sample.libredb"))).toBe(false);
     expect(fs.existsSync(path.join(tmpDir, "sample-employees.db"))).toBe(false);
     expect(process.env.JWT_SECRET).toBe("x".repeat(24));
+  });
+
+  test("hard-exits before seeding and the banner when the governance preflight refuses the environment", async () => {
+    process.env.NEXT_RUNTIME = "nodejs";
+    process.env.AUTH_BOOTSTRAP = "off";
+    // Governance on, with none of the settings it requires.
+    process.env.GOVERNANCE_SOURCE = "postgres";
+    process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = path.join(tmpDir, "sample.libredb");
+    process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(tmpDir, "sample-employees.db");
+    delete process.env.LIBREDB_NO_BANNER;
+
+    const originalExit = process.exit;
+    const exitCalls: Array<number | undefined> = [];
+    process.exit = ((code?: number) => {
+      exitCalls.push(code);
+    }) as unknown as typeof process.exit;
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    let banner = "";
+    let output = "";
+    try {
+      await register();
+      // Read the recorded calls before mockRestore(): bun clears them on restore.
+      banner = errorSpy.mock.calls.flat().join("\n");
+      output = log.mock.calls.flat().join("\n");
+    } finally {
+      process.exit = originalExit;
+      errorSpy.mockRestore();
+      log.mockRestore();
+    }
+
+    expect(exitCalls).toEqual([1]);
+    expect(banner).toContain("GOVERNANCE_POSTGRES_URL is not set");
+    expect(banner).toContain("GOVERNANCE_INSTANCE_ID is not set");
+    // register() abandons the rest of boot: no sample is seeded and no welcome is printed.
+    expect(getSqliteSampleSeedState()).toBe("idle");
+    expect(fs.existsSync(path.join(tmpDir, "sample.libredb"))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, "sample-employees.db"))).toBe(false);
+    expect(output).not.toContain("Star the project");
   });
 
   test("seeds the sample file on a nodejs boot", async () => {
