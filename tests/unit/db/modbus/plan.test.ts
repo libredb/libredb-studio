@@ -50,7 +50,10 @@ describe("one unit and one table per block", () => {
   test("two units never share a block", () => {
     const blocks = planReads([reg("a", 10, "uint16", 1), reg("b", 11, "uint16", 3)]);
     expect(blocks).toHaveLength(2);
-    expect(blocks.map((b) => b.unitId).sort()).toEqual([1, 3]);
+    // Numerically, because a bare sort compares unit ids as text: [1, 3] reads the same either
+    // way and this assertion would stay green the day a unit id of 10 arrives, which is the trap
+    // objects.test.ts measures on [1, 3, 10].
+    expect(blocks.map((b) => b.unitId).sort((x, y) => x - y)).toEqual([1, 3]);
   });
 
   test("two tables never share a block", () => {
