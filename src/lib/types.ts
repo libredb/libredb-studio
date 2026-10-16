@@ -187,17 +187,10 @@ export type DatabaseType =
   // services and none of them writes, so there is no Write, Call or HistoryUpdate to send.
   | "opcua"
   // Apache Spark (#1736): Spark SQL over Spark Connect (gRPC with Arrow results) for self-hosted Spark 4.1 and later
-  // (`src/lib/db/providers/industrial/mtconnect/`), the second member of the `industrial/` family. One connection is
+  // (`src/lib/db/providers/sql/spark/`). One Spark session per request, released at its end, plus a provider-owned
   // session for the tree and the panels that never runs user text. The connection's Password is the server's
   // spark.connect.authenticate.token, Database the catalog and Schema the namespace.
   | "spark"
-  // MTConnect (#1722). One agent read only over HTTP: the probe document's device model, its current and sample
-  // MTConnect (#1722). One agent read only over HTTP: the probe document's device model, its current and sample
-  // observations, and its asset documents, by a client of this repository's own on the shared node transport
-  // (`src/lib/db/providers/industrial/mtconnect/`), the second member of the `industrial/` family. One connection is
-  // one agent address, and `apiPath`, the field RabbitMQ already carries, holds the path prefix a reverse proxy puts
-  // in front of it. There is no credential field: the agent's own interface takes none, and a proxy that asks for
-  // Basic answers with an HTML 401 rather than an MTConnect document, which the provider reports as what it is.
   // MTConnect (#1722). One agent read only over HTTP: the probe document's device model, its current and sample
   // observations, and its asset documents, by a client of this repository's own on the shared node transport
   // (`src/lib/db/providers/industrial/mtconnect/`), the second member of the `industrial/` family. One connection is
