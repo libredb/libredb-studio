@@ -60,7 +60,7 @@
 </p>
 
 <p align="center">
-  <img src="public/screenshots/hero-demo.gif" alt="LibreDB Studio에서 테이블 조회, JOIN 실행, 결과 시각화, ER 다이어그램 확인" width="100%" />
+  <img src="public/screenshots/hero-demo.gif" width="100%" />
 </p>
 
 <p align="center">
@@ -68,11 +68,9 @@
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
   <a href="https://sonarcloud.io/project/overview?id=libredb_libredb-studio"><img src="https://sonarcloud.io/api/project_badges/measure?project=libredb_libredb-studio&metric=alert_status" alt="Quality Gate"></a>
   <a href="https://codecov.io/github/libredb/libredb-studio"><img src="https://codecov.io/github/libredb/libredb-studio/graph/badge.svg?token=VA6CO9R7IH" alt="Coverage"></a>
-  <a href="https://deepwiki.com/libredb/libredb-studio"><img src="https://img.shields.io/badge/Docs-DeepWiki-blue?logo=gitbook" alt="DeepWiki Docs"></a>
+  <a href="https://deepwiki.com/libredb/libredb-studio"><img src=".github/assets/deepwiki-badge.svg" alt="Ask DeepWiki"></a>
   <a href="https://artifacthub.io/packages/helm/libredb-studio/libredb-studio"><img src="https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/libredb-studio" alt="Artifact Hub"></a>
 </p>
-
-> 이 한국어 README는 커뮤니티에서 번역한 문서로, 영문 버전의 최신 내용이 아직 반영되지 않았을 수 있습니다. 내용이 다른 경우 [영문 버전](README.md)을 기준으로 합니다.
 
 <p align="center">
   <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/Next.js-16-black?logo=next.js" alt="Next.js 16"></a>
@@ -87,6 +85,8 @@
   <a href="#설치-방법"><strong>설치 방법</strong></a> •
   <a href="#one-click-배포"><strong>LibreDB Studio 배포하기</strong></a>
 </p>
+
+> 이 한국어 README는 커뮤니티에서 번역한 문서로, 영문 버전의 최신 내용이 아직 반영되지 않았을 수 있습니다. 내용이 다른 경우 [영문 버전](README.md)을 기준으로 합니다.
 
 ## 빠른 시작
 
