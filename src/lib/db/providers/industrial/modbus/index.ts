@@ -60,6 +60,7 @@ import {
   UNIT_ID_MIN,
 } from "./constants";
 import { dialModbus, socketWire, type Endpoint } from "./client";
+import { modbusEndpoint } from "./connection-options";
 import { runRead } from "./read";
 import { parseReadRequest } from "./request";
 import { ModbusSession } from "./session";
@@ -441,14 +442,9 @@ export class ModbusProvider extends BaseDatabaseProvider {
    * block planner and the frame reader are in place and tested, and what is missing is the step
    * that turns one JSON document into those calls. It refuses rather than pretending to read.
    */
-  /** Host and port as the connection gives them, with 502 where none is set. */
+  /** The dial target, read from the connection by `connection-options.ts`. */
   private endpoint(): Endpoint {
-    const config = this.config as { host?: string; port?: number; ssl?: { enabled?: boolean } };
-    return {
-      host: config.host ?? "127.0.0.1",
-      port: config.port ?? MODBUS_DEFAULT_PORT,
-      ...(config.ssl?.enabled === true ? { tls: {} } : {}),
-    };
+    return modbusEndpoint(this.config);
   }
 
   /**

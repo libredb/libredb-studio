@@ -679,3 +679,71 @@ describe("what ends an exchange besides an answer", () => {
     expect(fake.destroys).toBe(1);
   });
 });
+
+/**
+ * The panel's material at the dial, which is the half the provider hands over.
+ *
+ * `connection-options.test.ts` measures what the panel YIELDS; these measure what the dial DOES
+ * with it. The two halves were both broken at once and in opposite ways: the provider asked for
+ * TLS on a field that does not exist, so it never asked, and the dial spread the material as a
+ * plain object, so even a material that arrived would have lost `servername` and the host check.
+ */
+describe("the TLS material becomes the dial's options", () => {
+  const material = {
+    rejectUnauthorized: true,
+    ca: Buffer.from("ca"),
+    cert: Buffer.from("cert"),
+    key: Buffer.from("key"),
+    identity: "plant.internal",
+  } as const;
+
+  /** Captures what the dial asked for, and never opens anything. */
+  function capturing(): { calls: { target: Record<string, unknown>; tls: boolean }[]; connect: never } {
+    const calls: { target: Record<string, unknown>; tls: boolean }[] = [];
+    const connect = (target: Record<string, unknown>, tls: boolean) => {
+      calls.push({ target, tls });
+      return { on: () => undefined, once: () => undefined, setNoDelay: () => undefined, destroy: () => undefined };
+    };
+    return { calls, connect: connect as never };
+  }
+
+  test("a plain endpoint dials net, with no TLS option in sight", () => {
+    const seen = capturing();
+
+    void dialModbus({ host: "127.0.0.1", port: 502 }, { connect: seen.connect }).catch(() => undefined);
+
+    expect(seen.calls[0]?.tls).toBe(false);
+    expect(seen.calls[0]?.target).not.toHaveProperty("rejectUnauthorized");
+  });
+
+  test("the material's trust anchor, client pair and host check all reach the options", () => {
+    const seen = capturing();
+
+    void dialModbus({ host: "plant.internal", port: 802, tls: material }, { connect: seen.connect }).catch(
+      () => undefined,
+    );
+
+    const target = seen.calls[0]?.target ?? {};
+    expect(seen.calls[0]?.tls).toBe(true);
+    expect(target.rejectUnauthorized).toBe(true);
+    expect((target.ca as Buffer)?.toString()).toBe("ca");
+    expect((target.cert as Buffer)?.toString()).toBe("cert");
+    expect((target.key as Buffer)?.toString()).toBe("key");
+    // The two a hand-spread material drops: SNI for a name-addressed device, and the check against
+    // the host the user typed rather than whatever the lookup resolved to.
+    expect(target.servername).toBe("plant.internal");
+    expect(typeof target.checkServerIdentity).toBe("function");
+  });
+
+  test("an address-addressed device sends no SNI, because an IP literal is not a server name", () => {
+    const seen = capturing();
+
+    void dialModbus(
+      { host: "127.0.0.1", port: 802, tls: { ...material, identity: "127.0.0.1" } },
+      { connect: seen.connect },
+    ).catch(() => undefined);
+
+    expect(seen.calls[0]?.target).not.toHaveProperty("servername");
+    expect(seen.calls[0]?.target.checkServerIdentity).toBeDefined();
+  });
+});

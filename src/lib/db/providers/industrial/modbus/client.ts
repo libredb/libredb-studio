@@ -28,6 +28,7 @@ import { connect as netConnect, type LookupFunction, type Socket } from "node:ne
 import { connect as tlsConnect } from "node:tls";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
 import { socketEgress } from "@/lib/db/http/egress-policy";
+import { type NodeTlsMaterial, nodeTlsConnectOptions } from "@/lib/db/http/node-transport";
 import { DIAL_TIMEOUT_MS, REQUEST_TIMEOUT_MS } from "./constants";
 import { expectationOf } from "./pdu";
 import type { Wire } from "./session";
@@ -56,7 +57,13 @@ export interface ModbusSocket {
 export interface Endpoint {
   readonly host: string;
   readonly port: number;
-  readonly tls?: Record<string, unknown>;
+  /**
+   * The SSL / TLS panel's material, or absent for a plain `mbap` dial. `NodeTlsMaterial` rather
+   * than a loose record, for the reason `nodeTlsMaterial` exists: a record would take a panel the
+   * provider assembled itself, and the panel's mode, trust anchor and client pair are checked in
+   * one place for every engine that reads them.
+   */
+  readonly tls?: NodeTlsMaterial;
   /** See the module comment: `true` is the safer end and refuses a self-assigned device. */
   readonly refusesLinkLocal?: boolean;
 }
@@ -168,8 +175,12 @@ export const dialModbus: Dialer = (endpoint, options = {}) =>
       ...(lookup ? { lookup } : {}),
     };
 
+    // `nodeTlsConnectOptions` and not the material as it stands: it is what turns the panel into
+    // a dial's options, and it carries the two things a hand-spread object drops - `servername`
+    // for a name-addressed device, and `checkServerIdentity` against the host the user typed
+    // rather than the address the lookup returned.
     const socket: Socket = make(
-      endpoint.tls === undefined ? target : { ...target, ...endpoint.tls },
+      endpoint.tls === undefined ? target : { ...target, ...nodeTlsConnectOptions(endpoint.tls) },
       endpoint.tls !== undefined,
     );
 
