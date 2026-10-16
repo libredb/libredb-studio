@@ -151,7 +151,30 @@ function streaming(seen: Seen, handler: StreamHandler | undefined): StreamHandle
   };
 }
 
-/** One server for the allowlisted services, bound to [::]:0 (dual stack: 127.0.0.1, localhost and [::1] reach it). */
+/**
+ * One server for the allowlisted services, bound to [::]:0 (dual stack: 127.0.0.1, localhost and
+ * [::1] reach it).
+ *
+ * THIS FILE IS THE ONLY ONE THAT DIALS A DIFFERENT ADDRESS FAMILY THAN IT BINDS, and that is
+ * recorded here because this file is also the only one that has been seen to fail at connect.
+ * MEASURED 2026-10-16: nine files in this repository bind a gRPC server, none of them waits for
+ * the server to be accepting, eight bind `127.0.0.1:0` and dial the same family, and only this one
+ * binds `[::]` while `optionsFor` dials `127.0.0.1`. The `[::]` bind stays: the cases that read
+ * `localhost`, `[::1]` and `[0:0::1]` need one server all three reach.
+ *
+ * WHAT THE FAILURE LOOKS LIKE, so the next one is read correctly: three runs that day failed here,
+ * each a DIFFERENT case, each in milliseconds (3,14 · 17,38 · 8,70 ms) against a 3.000 ms deadline.
+ * The category was `not-connected`, which `keyvalue/oxia/errors.ts:294-304` reaches only when the
+ * details hold "No connection established" and carry NO errno - so it is NOT a refusal. A refusal
+ * reads `refused` there, which was confirmed by shutting a server down on purpose and watching the
+ * category change. gRPC code 14, "No connection established", no errno: that is the signature.
+ *
+ * WHAT IS NOT KNOWN: why. The race did not reproduce in 23 attempts - ten idle, ten under two
+ * concurrent coverage suites, and three full suites at `--jobs=4`, which is what CI runs. A dial to
+ * the bound port was accepted 600 times out of 600 across those conditions, so a dial of our own is
+ * not a way to catch it either. Nothing here is a fix; it is what the next red should be read
+ * against.
+ */
 async function serve(script: Script = {}): Promise<Served> {
   const seen: Seen = { calls: [], cancelled: 0 };
   const server = new Server();
