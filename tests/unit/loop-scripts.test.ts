@@ -19,6 +19,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { MISSING_POSIX_FILE_MODES, describeIf, missingPosixShell, posixShell } from "../helpers/posix-tools";
+import { howItFailed } from "../helpers/spawn-outcome";
 
 const REPO_ROOT = join(import.meta.dir, "../..");
 const NEW_MILESTONE = join(REPO_ROOT, "loop/scripts/new-milestone.sh");
@@ -49,8 +50,8 @@ afterEach(() => {
  *
  * Without it the fixture repo inherits the contributor's own git config: `commit.gpgsign=true` (a
  * common macOS setup) makes the fixture commit prompt or fail, and `core.hooksPath` pointing at a
- * missing directory does the same, so makePipelineFixture throws "fixture git setup failed" for
- * every pipeline test on a machine where nothing is wrong. tests/unit/sync-chart-version.test.ts
+ * missing directory does the same, so makePipelineFixture throws "fixture git setup failed with
+ * exit 128" for every pipeline test on a machine where nothing is wrong. tests/unit/sync-chart-version.test.ts
  * already isolates git this way for the same reason.
  */
 function emptyConfigPath(): string {
@@ -394,7 +395,8 @@ function makePipelineFixture({ planningViolation = false } = {}): string {
     ["git", "checkout", "--quiet", "-b", "loop/fixture-run"],
   ]) {
     const r = run(cmd, root);
-    if (r.exitCode !== 0) throw new Error(`fixture git setup failed: ${cmd.join(" ")}: ${r.stderr.toString()}`);
+    if (r.exitCode !== 0)
+      throw new Error(`fixture git setup ${howItFailed(r)}: ${cmd.join(" ")}: ${r.stderr.toString()}`);
   }
   return root;
 }

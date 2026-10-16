@@ -77,6 +77,7 @@ import {
 } from "../../helpers/etcd-fixtures";
 import { KEY_SPACE_HEADER, keySpaceRange, permissionDenied } from "../../helpers/etcd-key-space";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
+import { howItFailed } from "../../helpers/spawn-outcome";
 
 // ============================================================================
 // The recorded cluster
@@ -336,7 +337,8 @@ function selfSigned(subject: string): { readonly cert: string; readonly key: str
       ],
       { stderr: "pipe" },
     );
-    if (made.exitCode !== 0) throw new Error(`openssl made no test certificate: ${made.stderr.toString()}`);
+    if (made.exitCode !== 0)
+      throw new Error(`openssl ${howItFailed(made)} and made no test certificate: ${made.stderr.toString()}`);
     return { cert: readFileSync(join(dir, "cert.pem"), "utf8"), key: readFileSync(join(dir, "key.pem"), "utf8") };
   } finally {
     rmSync(dir, { recursive: true, force: true });

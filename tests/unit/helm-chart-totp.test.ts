@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { parseAllDocuments } from "yaml";
 import { RFC6238_SECRET } from "../helpers/rfc6238";
 import { decodeBase32, TOTP_MIN_SECRET_BYTES } from "@/lib/totp";
+import { howItFailed } from "../helpers/spawn-outcome";
 
 const CHART_DIR = join(import.meta.dir, "../../charts/libredb-studio");
 const RELEASE = "release-under-test";
@@ -43,7 +44,7 @@ function renderChart(extraArgs: string[] = []): { secret?: RenderedManifest; env
     stderr: "pipe",
   });
   if (run.exitCode !== 0) {
-    throw new Error(`helm template failed (exit ${run.exitCode}): ${run.stderr.toString()}`);
+    throw new Error(`helm template ${howItFailed(run)}: ${run.stderr.toString()}`);
   }
   const docs = parseAllDocuments(run.stdout.toString()).map((doc) => doc.toJSON() as RenderedManifest);
   const secret = docs.find((doc) => doc?.kind === "Secret" && doc.metadata.name === SECRET_NAME);

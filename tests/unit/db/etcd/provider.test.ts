@@ -82,6 +82,7 @@ import type {
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { createFakeEtcdClient, type FakeEtcdClient } from "../../../helpers/etcd-fake-client";
 import { KEY_SPACE_HEADER, type KeySpaceEntry, keySpaceRange, permissionDenied } from "../../../helpers/etcd-key-space";
+import { howItFailed } from "../../../helpers/spawn-outcome";
 
 const QUERY_TIMEOUT = 5_000;
 const PASSWORD = "unit-reader-password";
@@ -220,7 +221,8 @@ function selfSigned(subject: string): { readonly cert: string; readonly key: str
       ],
       { stderr: "pipe" },
     );
-    if (made.exitCode !== 0) throw new Error(`openssl made no test certificate: ${made.stderr.toString()}`);
+    if (made.exitCode !== 0)
+      throw new Error(`openssl ${howItFailed(made)} and made no test certificate: ${made.stderr.toString()}`);
     return { cert: readFileSync(join(dir, "cert.pem"), "utf8"), key: readFileSync(join(dir, "key.pem"), "utf8") };
   } finally {
     rmSync(dir, { recursive: true, force: true });

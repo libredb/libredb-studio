@@ -40,6 +40,7 @@ import { quoteCypherName } from "@/lib/db/graph/cypher/quote";
 import { CATALOG_ROW_BOUND, NEO4J_CATALOG_STATEMENTS } from "@/lib/db/providers/graph/neo4j/catalog";
 import { NEO4J_POLICY_PROFILE } from "@/lib/db/providers/graph/neo4j/profile";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
+import { howItFailed } from "../helpers/spawn-outcome";
 
 const ROOT = join(import.meta.dir, "..", "..");
 const CONTAINER = "libredb-neo4j";
@@ -71,7 +72,7 @@ interface CaptureError {
 
 function docker(...args: string[]): string {
   const out = spawnSync("docker", args, { encoding: "utf8" });
-  if (out.status !== 0) throw new Error(`docker ${args.join(" ")} failed: ${out.stderr}`);
+  if (out.status !== 0) throw new Error(`docker ${args.join(" ")} ${howItFailed(out)}: ${out.stderr}`);
   return out.stdout.trim();
 }
 
@@ -125,7 +126,7 @@ async function main(): Promise<void> {
     const seeded = spawnSync("docker", ["exec", "-i", CONTAINER, "cypher-shell", "-u", USER, "-p", PASSWORD], {
       input: readFileSync(join(ROOT, "docker", "neo4j", "seed.cypher")),
     });
-    if (seeded.status !== 0) throw new Error(`the seed failed: ${seeded.stderr}`);
+    if (seeded.status !== 0) throw new Error(`the seed ${howItFailed(seeded)}: ${seeded.stderr}`);
   }
 
   const components = await run("CALL dbms.components() YIELD versions RETURN versions[0] AS version", home);

@@ -66,6 +66,7 @@ import { comparePaths } from "@/lib/db/object-path";
 import { readFixtureStatements } from "../../../docker/sqlite-init/build-fixture";
 import { logger } from "@/lib/logger";
 import { MISSING_POSIX_FILE_MODES, describeIf, testIf } from "../../helpers/posix-tools";
+import { howItFailed } from "../../helpers/spawn-outcome";
 
 // ============================================================================
 // Helpers
@@ -3798,14 +3799,16 @@ describe.skipIf(!nodeDriverTestable)("SQLiteProvider with LIBREDB_SQLITE_DRIVER=
       { timeout: 60_000 },
     );
     // `build.error` first: on a timeout spawnSync returns status null with error set, and
-    // `status !== 0` is true for null, so checking status alone raises "bun build failed:" with an
-    // empty stderr, a message that names nothing. Under a concurrent runner a timeout is the
-    // likely failure, so it has to say so.
+    // `status !== 0` is true for null, so a status read on its own used to raise
+    // "bun build failed:" with an empty stderr, a message that names nothing. Under a concurrent
+    // runner a timeout is the likely failure, so it has to say so. `howItFailed` below now also
+    // names a signal, which is the other way a status arrives null; this branch stays because an
+    // error that stopped the spawn carries a message neither of those fields does.
     if (build.error) {
       throw new Error(`bun build could not run: ${build.error.message}`);
     }
     if (build.status !== 0) {
-      throw new Error(`bun build failed: ${build.stderr?.toString()}`);
+      throw new Error(`bun build ${howItFailed(build)}: ${build.stderr?.toString()}`);
     }
 
     // Run it under real Node with the node driver forced.
@@ -3817,7 +3820,7 @@ describe.skipIf(!nodeDriverTestable)("SQLiteProvider with LIBREDB_SQLITE_DRIVER=
       throw new Error(`node harness could not run: ${run.error.message}`);
     }
     if (run.status !== 0) {
-      throw new Error(`node harness failed: ${run.stderr?.toString()}`);
+      throw new Error(`node harness ${howItFailed(run)}: ${run.stderr?.toString()}`);
     }
 
     const report = JSON.parse(run.stdout.toString()) as Record<string, unknown>;
@@ -4949,13 +4952,13 @@ function runNodeHarness(dbPath: string, scenario: string): Record<string, unknow
       { timeout: 60_000 },
     );
     if (build.error) throw new Error(`bun build could not run: ${build.error.message}`);
-    if (build.status !== 0) throw new Error(`bun build failed: ${build.stderr?.toString()}`);
+    if (build.status !== 0) throw new Error(`bun build ${howItFailed(build)}: ${build.stderr?.toString()}`);
     const run = spawnSync("node", [bundlePath, dbPath, scenario], {
       env: { ...process.env, LIBREDB_SQLITE_DRIVER: "node" },
       timeout: 60_000,
     });
     if (run.error) throw new Error(`node harness could not run: ${run.error.message}`);
-    if (run.status !== 0) throw new Error(`node harness failed: ${run.stderr?.toString()}`);
+    if (run.status !== 0) throw new Error(`node harness ${howItFailed(run)}: ${run.stderr?.toString()}`);
     // The report is the last line; the logger writes to stdout too, and its lines come back
     // beside the report as `logLines`.
     const lines = run.stdout.toString().trim().split("\n");

@@ -26,6 +26,7 @@ import { cpSync, existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseAllDocuments } from "yaml";
+import { howItFailed } from "../helpers/spawn-outcome";
 
 const CHART_DIR = join(import.meta.dir, "../../charts/libredb-studio");
 
@@ -58,7 +59,7 @@ function helmTemplate(
 function renderDocs(args: string[]): RenderedManifest[] {
   const run = helmTemplate(args);
   if (run.exitCode !== 0) {
-    throw new Error(`helm template failed (exit ${run.exitCode}): ${run.stderr}`);
+    throw new Error(`helm template ${howItFailed(run)}: ${run.stderr}`);
   }
   return parseAllDocuments(run.stdout)
     .map((doc) => doc.toJSON() as RenderedManifest)
@@ -208,8 +209,12 @@ describe("charts/libredb-studio PostgreSQL subchart contracts (#152)", () => {
       env: helmEnv,
     });
     if (repoAdd.exitCode !== 0 || depBuild.exitCode !== 0) {
+      // Both children are named, because either can be the one that failed and a kill writes
+      // nothing to stderr: without the clause this read "dependency:  " and named neither.
       throw new Error(
-        `could not vendor the postgresql subchart dependency: ${repoAdd.stderr.toString()} ${depBuild.stderr.toString()}`,
+        `could not vendor the postgresql subchart dependency: ` +
+          `helm repo add ${howItFailed(repoAdd)}: ${repoAdd.stderr.toString()}; ` +
+          `helm dependency build ${howItFailed(depBuild)}: ${depBuild.stderr.toString()}`,
       );
     }
   });
@@ -223,7 +228,7 @@ describe("charts/libredb-studio PostgreSQL subchart contracts (#152)", () => {
   function statefulSetSource(args: string[]): string {
     const run = helmTemplate([...PG_ARGS, ...args], pgChartDir);
     if (run.exitCode !== 0) {
-      throw new Error(`helm template failed (exit ${run.exitCode}): ${run.stderr}`);
+      throw new Error(`helm template ${howItFailed(run)}: ${run.stderr}`);
     }
     const statefulSet = run.stdout
       .split("---")
