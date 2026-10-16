@@ -227,6 +227,7 @@ const SOURCE_DECLARATIONS: Readonly<Record<DatabaseType, readonly string[]>> = O
   // Source tab renders it in `xml` rather than re-encoding it as JSON. A data item and a condition
   // carry no document, so neither declares a source (#1722).
   mtconnect: ["asset/xml"],
+  netconf: ["node/plaintext", "key/xml"],
   libredb: [],
 });
 
@@ -322,7 +323,7 @@ describe("the fleet census of object source declarations", () => {
     expect([...CENSUS_TYPES].sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
     // EXTERNAL_DATABASE_TYPES.length (36 with db2, neo4j, milvus, qdrant, influxdb, influxdb3, oxia, databend,
     // bigquery, snowflake, s3, kubernetes, mqtt, firestore, rabbitmq, opcua and mtconnect) plus the embedded store.
-    expect(CENSUS_TYPES).toHaveLength(38);
+    expect(CENSUS_TYPES).toHaveLength(39);
     expect(Object.keys(SOURCE_DECLARATIONS).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
   });
 
@@ -340,8 +341,8 @@ describe("the fleet census of object source declarations", () => {
     // `hasSource` moves between the two halves, so both halves must be pinned or the total alone
     // would still be satisfied. Neither half may be edited to match a build: if this fails, the
     // DECLARATION is wrong or the design's table is, and the repair is one of those two.
-    expect(UNCONNECTED_SOURCE_KINDS).toHaveLength(142);
-    expect(rows.filter((row) => row.kind.hasSource === true)).toHaveLength(142);
+    expect(UNCONNECTED_SOURCE_KINDS).toHaveLength(144);
+    expect(rows.filter((row) => row.kind.hasSource === true)).toHaveLength(144);
     // neo4j added four kinds, none source-bearing, db2 five source-bearing kinds and four others, milvus and
     // qdrant one source-bearing kind each, influxdb and influxdb3 one kind each, neither source-bearing, oxia
     // two source-bearing kinds, databend four source-bearing kinds, bigquery three kinds, snowflake nine source-bearing
@@ -349,7 +350,7 @@ describe("the fleet census of object source declarations", () => {
     // kind, firestore one source-bearing kind and one other, rabbitmq three source-bearing kinds, opcua one
     // source-bearing kind, and mtconnect three kinds of which two are not source-bearing: a data item and a
     expect(rows.filter((row) => row.kind.hasSource !== true)).toHaveLength(42);
-    expect(rows).toHaveLength(184);
+    expect(rows).toHaveLength(186);
   });
 
   test("the MariaDB branch declares two more, which an unconnected provider cannot show", async () => {
@@ -378,7 +379,7 @@ describe("the fleet census of object source declarations", () => {
     // 126 on a MariaDB connection against 124 unconnected: the design states both numbers because
     // criterion 2's evidence method reads an unconnected provider and would otherwise
     // structurally exclude the two riskiest declarations in the phase. 142 since MTConnect's `asset`
-    expect(UNCONNECTED_SOURCE_KINDS.length + MARIADB_EXTRA_SOURCE_KINDS.length).toBe(144);
+    expect(UNCONNECTED_SOURCE_KINDS.length + MARIADB_EXTRA_SOURCE_KINDS.length).toBe(146);
   });
 
   /*
@@ -465,7 +466,7 @@ describe("the fleet census of object source declarations", () => {
       }
     }
     // 181 unconnected kinds plus the MariaDB branch's eight: MTConnect's three joined (#1722), of which
-    expect(rows).toHaveLength(192);
+    expect(rows).toHaveLength(194);
 
     const halfDeclared = rows
       .filter((row) => row.kind.sourceLanguage !== undefined && row.kind.hasSource !== true)
@@ -509,6 +510,7 @@ const KEY_BROWSER_KINDS: readonly string[] = Object.freeze([
   "mqtt/topic",
   "firestore/document",
   "opcua/node",
+  "netconf/key",
 ]);
 
 /**
@@ -574,7 +576,9 @@ function keyBrowserBreaches(type: string, capabilities: ProviderCapabilities): r
  */
 // OPC UA declares `levels` with no `rootKind`: the walk's first segment is `Objects`, and no row of
 // another kind stands for it (#1677).
-const LEVEL_SCAN_TYPES: readonly string[] = Object.freeze(["s3", "firestore", "opcua"]);
+// NETCONF declares `levels` too: a device is addressed by datastore and then by YANG module, so its
+// walk has two container levels where every other engine here has one (#1724).
+const LEVEL_SCAN_TYPES: readonly string[] = Object.freeze(["s3", "firestore", "opcua", "netconf"]);
 
 /** The breaches of the level rules in one declaration, one sentence each. */
 function levelBreaches(type: string, capabilities: ProviderCapabilities): readonly string[] {

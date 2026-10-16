@@ -1,8 +1,8 @@
 apiVersion: v2
 name: libredb-studio
-description: Web-based SQL IDE for cloud-native teams supporting thirty-seven engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Apache Spark, Apache Cassandra, libSQL, Prometheus, Apache Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, InfluxDB, InfluxDB 3, Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA and MTConnect
+description: Web-based SQL IDE for cloud-native teams supporting thirty-eight engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Apache Spark, Apache Cassandra, libSQL, Prometheus, Apache Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, InfluxDB, InfluxDB 3, Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA, MTConnect and NETCONF
 type: application
-version: 0.1.93
+version: 0.1.95
 appVersion: "0.18.3"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
@@ -114,6 +114,11 @@ keywords:
   # One keyword, like opcua above: `mtconnect` is the type-id and the protocol an evaluator
   # searches for, and the agent itself is not a product name anyone would search.
   - mtconnect
+  # One keyword, like mtconnect above: `netconf` is the type-id and the protocol an evaluator
+  # searches for. No product name to catch either, and here that is the standard's own doing:
+  # RFC 6241 is what a device implements, so an evaluator looks for the protocol and not for
+  # Netopeer2 or a vendor's agent.
+  - netconf
   - web-ide
 maintainers:
   - name: cevheri
@@ -291,6 +296,7 @@ annotations:
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
     - "Name Apache Spark, reached over Spark Connect, in the description and the keywords"
+    - "Name NETCONF, read over SSH with the device's own host key, in the description and the keywords"
 dependencies:
   - name: postgresql
     version: "16.x.x"

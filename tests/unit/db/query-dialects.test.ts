@@ -40,6 +40,7 @@ describe("QUERY_DIALECTS", () => {
       "milvus",
       "mqtt",
       "mtconnect",
+      "netconf",
       "opcua",
       "oxia",
       "qdrant",
@@ -143,6 +144,12 @@ describe("QUERY_DIALECTS", () => {
       },
       mtconnect: {
         tabType: "mtconnect",
+        offersColumnProfiling: false,
+        offersCodeGeneration: false,
+        offersCountQuery: false,
+      },
+      netconf: {
+        tabType: "netconf",
         offersColumnProfiling: false,
         offersCodeGeneration: false,
         offersCountQuery: false,

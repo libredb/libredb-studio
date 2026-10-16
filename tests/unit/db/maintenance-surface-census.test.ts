@@ -117,6 +117,7 @@ const EXPECTED: Readonly<Record<DatabaseType, SurfaceRow>> = {
   opcua: NONE,
   // The same: every route this provider sends is a GET (#1722).
   mtconnect: NONE,
+  netconf: NONE,
   libredb: NONE,
 };
 
@@ -132,7 +133,7 @@ describe("every shipped provider's per-row maintenance controls (R46 C3)", () =>
 
   test("11 of 38 type-ids offer per-row controls on the two tabs, 10 on the row menus, one outside MaintenanceType", () => {
     const rows = Object.values(EXPECTED);
-    expect(rows.length).toBe(38);
+    expect(rows.length).toBe(39);
     expect(rows.filter((row) => row.tabs !== "").length).toBe(11);
     expect(rows.filter((row) => row.tree !== "").length).toBe(10);
     expect(rows.filter((row) => row.outsideMaintenanceType !== "").length).toBe(1);

@@ -115,6 +115,7 @@ const EXPECTED: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   // A read is bounded by bytes and by `count`, and the next page of a stream is the reader's own
   // next request from the sequence the last answer ended at, not a page a panel can ask for (#1722).
   mtconnect: false,
+  netconf: false,
 });
 
 const TYPES = Object.keys(EXPECTED) as DatabaseType[];

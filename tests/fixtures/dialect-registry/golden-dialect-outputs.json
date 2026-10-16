@@ -443,6 +443,18 @@
   "selectQuery": "# Order\"Items: one row of this answer\nGET /c0/current",
   "countQuery": null
  },
+ "netconf": {
+  "queryLanguage": "json",
+  "queryDialect": "netconf",
+  "tabType": "netconf",
+  "monacoLanguage": "json",
+  "offersColumnProfiling": false,
+  "offersCodeGeneration": false,
+  "offersCountQuery": false,
+  "tableQuery": "{\n  \"datastore\": \"c0\",\n  \"path\": \"\",\n  \"limit\": 1000\n}",
+  "selectQuery": "{\n  \"datastore\": \"c0\",\n  \"path\": \"\",\n  \"limit\": 1000\n}",
+  "countQuery": null
+ },
  "libredb": {
   "queryLanguage": "json",
   "queryDialect": "libredb",

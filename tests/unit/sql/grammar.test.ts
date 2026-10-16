@@ -458,6 +458,7 @@ const GRAMMAR_COVERAGE: Record<DatabaseType, "established" | "default"> = {
   opcua: "default",
   // One request line in a URL grammar, not SQL: no SQL grammar is established for it (#1722).
   mtconnect: "default",
+  netconf: "default",
 };
 
 /**
@@ -783,6 +784,7 @@ const SQL_TEXT_COVERAGE: Record<DatabaseType, boolean> = {
   opcua: false,
   // A request line is a URL, not SQL text.
   mtconnect: false,
+  netconf: false,
 };
 
 describe("readsSqlText", () => {

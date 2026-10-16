@@ -1433,6 +1433,8 @@ const NON_SQL_DIALECTS: ReadonlySet<DatabaseType> = new Set<DatabaseType>([
   "opcua",
   // One request line in the agent's own URL grammar, so no span of it is SQL (#1722).
   "mtconnect",
+  // One JSON read request naming a datastore and a path, so no span of it is SQL (#1724).
+  "netconf",
 ]);
 
 /**

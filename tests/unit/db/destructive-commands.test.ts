@@ -381,6 +381,7 @@ describe("vocabularyDecidesAlone", () => {
       "rabbitmq",
       "opcua",
       "mtconnect",
+      "netconf",
     ]);
   });
 
@@ -402,6 +403,7 @@ describe("NON_SQL_DESTRUCTIVE_VOCABULARY", () => {
       "mqtt",
       "mtconnect",
       "neo4j",
+      "netconf",
       "opcua",
       "oxia",
       "prometheus",
@@ -528,6 +530,7 @@ describe("vocabularySendsToModel", () => {
       "rabbitmq",
       "opcua",
       "mtconnect",
+      "netconf",
     ]);
   });
 

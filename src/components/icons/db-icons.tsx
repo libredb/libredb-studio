@@ -936,3 +936,31 @@ export const MtconnectIcon: React.FC<IconProps> = ({ className, ...props }) => (
     <circle cx="17" cy="8" r="1.4" />
   </svg>
 );
+
+/**
+ * NETCONF (#1724). A mark drawn for Studio and never a vendor's: a device with a configuration
+ * tree above it, which is what this provider reads and the one thing every NETCONF device has.
+ * The tree has one branch that forks, because a datastore holds modules and a module holds nodes,
+ * and those two levels are what the object browser draws.
+ */
+export const NetconfIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <rect x="3" y="16" width="18" height="5" rx="1.5" />
+    <path d="M7 18.5 H9" />
+    <path d="M12 16 V11" />
+    <path d="M7 11 H17" />
+    <path d="M7 11 V8" />
+    <path d="M17 11 V8" />
+    <circle cx="7" cy="6.5" r="1.5" />
+    <circle cx="17" cy="6.5" r="1.5" />
+  </svg>
+);

@@ -4,6 +4,8 @@ import "../helpers/mock-navigation";
 import { pemArmour } from "../helpers/pem-armour";
 
 import { mock } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import React from "react";
 
 // ── Mock framer-motion before component imports ─────────────────────────────
@@ -1840,31 +1842,72 @@ describe("ConnectionModal", () => {
     copy is pinned in tests/unit/lib/db-ui-config.test.ts, which runs the real helpers.
   */
   describe("declared connection-field copy (#1085)", () => {
-    /** Every connection field, in the order `DatabaseUIConfig.connectionFields` names them. */
-    const EVERY_FIELD = [
-      "host",
-      "port",
-      "user",
-      "password",
-      "database",
-      "schema",
-      "connectionString",
-      "serviceName",
-      "instanceName",
-      "localDataCenter",
-      "authSource",
-      "apiKeyId",
-      "apiKeySecret",
-      "saslMechanism",
-      "allowInsecureAuth",
-      "dataServers",
-      "warehouse",
-      "region",
-      "apiPath",
-      "namespaces",
-      "tlsServerName",
-      "amqpPort",
-    ] as const;
+    /**
+     * Every connection field, in the order `DatabaseUIConfig.connectionFields` names them -
+     * DERIVED from the real table, which is what this comment claimed while the list was typed by
+     * hand.
+     *
+     * MEASURED, and it is why the derivation exists: the hand-written list held 22 names and the
+     * real table declares 30. `hostKeyFingerprint` was one of the eight it did not hold, and the
+     * helpers below WALK THIS LIST, so a field missing from it is a field no case ever asks about.
+     * NETCONF declared that field, the modal drew it nowhere, and nothing here went red: the
+     * provider refused every connection with "this connection needs the device's host key
+     * fingerprint" while the box to type it in did not exist.
+     *
+     * Read from the source rather than imported, because this file MOCKS `@/lib/db-ui-config`:
+     * importing it here would return the mock, and the mock is a second hand-written list with the
+     * same failure mode. The real file is the authority and the regular expression is held to it
+     * by the first case below, which fails if it stops matching.
+     */
+    const EVERY_FIELD: readonly string[] = (() => {
+      const table = readFileSync(join(import.meta.dir, "../../src/lib/db-ui-config.ts"), "utf8");
+      const seen: string[] = [];
+      for (const declaration of table.matchAll(/connectionFields: \[([^\]]*)\]/g)) {
+        for (const [, field] of (declaration[1] ?? "").matchAll(/"(\w+)"/g)) {
+          if (field !== undefined && !seen.includes(field)) seen.push(field);
+        }
+      }
+      return seen;
+    })();
+
+    test("the derivation found the real table, so every case below walks a full list", () => {
+      // The pattern reads one file; if that file changes shape the list goes short or empty and
+      // every case that walks it certifies nothing. So the derivation is held to a count and to
+      // three names it must contain, one of them the field this derivation exists for.
+      expect(EVERY_FIELD.length).toBeGreaterThanOrEqual(28);
+      expect(EVERY_FIELD).toContain("host");
+      expect(EVERY_FIELD).toContain("connectionString");
+      expect(EVERY_FIELD).toContain("hostKeyFingerprint");
+      expect(new Set(EVERY_FIELD).size).toBe(EVERY_FIELD.length);
+    });
+
+    test("every field the real table declares is a field the modal can draw", () => {
+      /*
+       * THE GUARD THAT WAS MISSING, and the one defect it names. `use-connection-form.ts` is held
+       * by the compiler - "a field added to connectionFields without a setter here fails the
+       * typecheck" - so the STATE side cannot drift. The DRAWING side had no such hold: a field
+       * could be declared, carry state, be saved by `buildConnection`, and never appear on screen.
+       * NETCONF's `hostKeyFingerprint` was exactly that, and the provider refuses every connection
+       * without it, so the engine could not be reached from the dialog at all.
+       *
+       * Read from the component's source rather than from a render, because a render answers for
+       * ONE type with the mocked field list, and the claim here is about every declared field.
+       */
+      const modal = readFileSync(join(import.meta.dir, "../../src/components/ConnectionModal.tsx"), "utf8");
+      /*
+       * THREE PATTERNS, because the component draws a field in three shapes and a one-pattern
+       * criterion reports four fields that ARE drawn. Measured: `id="field"` alone flags
+       * `serviceName`, `instanceName`, `saslMechanism` and `authMethod`, which are drawn through a
+       * select gate (`takesConnectionField`) or a label call with `value={field}` under it. A
+       * finding whose criterion is wrong is a finding nobody can act on, so the criterion is the
+       * union of the three the component actually uses.
+       */
+      const drawn = (field: string): boolean =>
+        modal.includes(`id="${field}"`) ||
+        modal.includes(`takesConnectionField(type, "${field}")`) ||
+        modal.includes(`connectionFieldLabel(uiConfig, "${field}"`);
+      expect(EVERY_FIELD.filter((field) => !drawn(field))).toEqual([]);
+    });
 
     /** Each connection-field label a render draws, keyed by the input it names (`htmlFor`). */
     const fieldLabelsOf = (container: HTMLElement): Record<string, string> => {

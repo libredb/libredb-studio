@@ -163,6 +163,7 @@ const CONNECTION_RELEVANCE: Record<keyof DatabaseConnection, FieldRelevance> = {
   // Both decide HOW the server is reached and verified, so a change to either is a different connection.
   securityMode: "resolution",
   serverCertificateThumbprint: "resolution",
+  hostKeyFingerprint: "resolution",
   // Each one changes which channel is opened and which identity it is opened with, so each travels
   // to the server with the request, as the mode and the pin do.
   securityPolicyUri: "resolution",

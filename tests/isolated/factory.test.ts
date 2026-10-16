@@ -851,7 +851,7 @@ describe("createDatabaseProvider", () => {
   test("the factory error lists milvus among the supported types, before qdrant and the embedded store", async () => {
     const conn = makeConnection("not-an-engine");
     await expect(createDatabaseProvider(conn)).rejects.toThrow(
-      /Supported types: .*\bneo4j, milvus, qdrant, s3, mqtt, opcua, mtconnect, rabbitmq, kubernetes, libredb$/,
+      /Supported types: .*\bneo4j, milvus, qdrant, s3, mqtt, opcua, mtconnect, rabbitmq, kubernetes, netconf, libredb$/,
     );
   });
 
@@ -917,7 +917,7 @@ describe("createDatabaseProvider", () => {
   test("the factory error lists s3 between qdrant and kubernetes, kubernetes before the embedded store", async () => {
     const conn = makeConnection("not-an-engine");
     await expect(createDatabaseProvider(conn)).rejects.toThrow(
-      /Supported types: .*\bqdrant, s3, mqtt, opcua, mtconnect, rabbitmq, kubernetes, libredb$/,
+      /Supported types: .*\bqdrant, s3, mqtt, opcua, mtconnect, rabbitmq, kubernetes, netconf, libredb$/,
     );
   });
 
@@ -1036,6 +1036,11 @@ describe("createDatabaseProvider", () => {
       // instead, at most 16 MiB a request and one request at a time per agent, and MTConnect's
       // interface has no request that stops one in flight (#1722).
       "mtconnect",
+      // No cancel either, and the reason is the protocol's: RFC 6241 has no operation that stops a
+      // read in flight, and this provider holds one request per session, so there is nothing to
+      // cancel and nothing to cancel it with. A read is bounded instead, by the session's deadline
+      // and the framing's byte cap (#1724).
+      "netconf",
       // No cancel either: a read is bounded instead, at most 200 nodes or 500 values a request, and
       // the protocol has no service that stops one in flight (#1677).
       "opcua",

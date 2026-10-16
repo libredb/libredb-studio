@@ -80,6 +80,10 @@ export const EXPECTED_EDIT_ABSTAINERS: readonly DatabaseType[] = Object.freeze([
   // No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: the provider is read-only in its first
   // version and refuses every write before sending it (Neo4j spec 4.1, 5.5), which docs/providers/neo4j.md names.
   "neo4j",
+  // No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: the provider builds four read
+  // operations and a close, and no function in it can build an `<edit-config>`, a `<commit>` or a
+  // `<lock>` at all (#1724), which docs/providers/netconf.md names under "Object edit (#789)".
+  "netconf",
   "opensearch",
   "oracle",
   // No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: v1 reads only, whatever `readOnly` says

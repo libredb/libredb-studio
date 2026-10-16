@@ -189,6 +189,18 @@ export const QUERY_DIALECTS: Readonly<Record<QueryDialect, DialectSpec>> = Objec
     offersCodeGeneration: false,
     offersCountQuery: false,
   }),
+  // One JSON read request naming a datastore, a path and a limit (#1724). No column profiling: a
+  // YANG leaf is a value in a tree and the rows a read answers are built per entry, so there is no
+  // column to profile over. No code generation and no count query: this provider sends four read
+  // operations and a close and nothing else, and NETCONF has no request that counts what is below
+  // a path, so a generated statement would be one no device could run and a count would be a
+  // number nobody measured.
+  netconf: Object.freeze({
+    tabType: "netconf",
+    offersColumnProfiling: false,
+    offersCodeGeneration: false,
+    offersCountQuery: false,
+  }),
 });
 
 /**

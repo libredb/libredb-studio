@@ -113,6 +113,7 @@ const FIELD_OWNERSHIP: Record<keyof DatabaseConnection, FieldOwnership> = {
   amqpPort: "edited",
   securityMode: "edited",
   serverCertificateThumbprint: "edited",
+  hostKeyFingerprint: "edited",
   // OPC UA's three deployment fields have no box in this dialog - they come from a seed file - so
   // editing a seeded connection must hand them back unchanged rather than drop them. Preserved,
   // which is what every field the form does not own is.
@@ -248,6 +249,7 @@ export const CONNECTION_FORM_DEFAULTS = {
   amqpPort: "",
   securityMode: "",
   serverCertificateThumbprint: "",
+  hostKeyFingerprint: "",
   // SSH tunnel. A leftover tunnel sends the next connection through the previous one's
   // bastion, with that bastion's password or private key.
   showSSH: false,
@@ -312,6 +314,7 @@ const TARGET_SCOPED: Record<keyof ConnectionFormDefaults, boolean> = {
   amqpPort: true,
   securityMode: true,
   serverCertificateThumbprint: true,
+  hostKeyFingerprint: true,
   showSSH: false,
   sshEnabled: false,
   sshHost: false,
@@ -687,6 +690,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
   const [amqpPort, setAmqpPort] = useState(D.amqpPort);
   const [securityMode, setSecurityMode] = useState(D.securityMode);
   const [serverCertificateThumbprint, setServerCertificateThumbprint] = useState(D.serverCertificateThumbprint);
+  const [hostKeyFingerprint, setHostKeyFingerprint] = useState(D.hostKeyFingerprint);
 
   // SSH Tunnel
   const [showSSH, setShowSSH] = useState(D.showSSH);
@@ -749,6 +753,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       amqpPort: setAmqpPort,
       securityMode: setSecurityMode,
       serverCertificateThumbprint: setServerCertificateThumbprint,
+      hostKeyFingerprint: setHostKeyFingerprint,
       showSSH: setShowSSH,
       sshEnabled: setSSHEnabled,
       sshHost: setSSHHost,
@@ -802,6 +807,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       tlsServerName: setTlsServerName,
       securityMode: setSecurityMode,
       serverCertificateThumbprint: setServerCertificateThumbprint,
+      hostKeyFingerprint: setHostKeyFingerprint,
       location: setLocation,
       amqpPort: setAmqpPort,
       // An imported method is stored as written; the provider refuses one it does not know, naming the field.
@@ -952,6 +958,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       // The same rule for OPC UA's two: a connection that pins no certificate must show an empty box.
       setSecurityMode(editConnection.securityMode ?? "");
       setServerCertificateThumbprint(editConnection.serverCertificateThumbprint ?? "");
+      setHostKeyFingerprint(editConnection.hostKeyFingerprint ?? "");
       // SSL
       if (editConnection.ssl) {
         setSSLMode(editConnection.ssl.mode);
@@ -1244,6 +1251,9 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       ...(addressedFields.has("securityMode") && securityMode.trim() !== ""
         ? { securityMode: securityMode.trim() }
         : {}),
+      ...(addressedFields.has("hostKeyFingerprint") && hostKeyFingerprint.trim() !== ""
+        ? { hostKeyFingerprint: hostKeyFingerprint.trim() }
+        : {}),
       ...(addressedFields.has("serverCertificateThumbprint") && serverCertificateThumbprint.trim() !== ""
         ? { serverCertificateThumbprint: serverCertificateThumbprint.trim() }
         : {}),
@@ -1301,6 +1311,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     amqpPort,
     securityMode,
     serverCertificateThumbprint,
+    hostKeyFingerprint,
   ]);
 
   /**
@@ -1729,6 +1740,10 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     "opcua",
     "spark",
     "mtconnect",
+    // An engine missing from this list cannot be created at all, and the compiler cannot see the
+    // omission: the array is typed `DatabaseType[]`, and every subset of a union satisfies that.
+    // So registering an engine everywhere else is not enough; it has to be named here too.
+    "netconf",
   ];
   const dbTypes = selectableTypes.map((t) => {
     const cfg = getDBConfig(t);
@@ -1803,6 +1818,10 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     setSecurityMode,
     serverCertificateThumbprint,
     setServerCertificateThumbprint,
+    // NETCONF: the device's SSH host key fingerprint, a different object from the certificate
+    // thumbprint above and checked by different code.
+    hostKeyFingerprint,
+    setHostKeyFingerprint,
 
     // Advanced (Oracle/MSSQL)
     showAdvanced,

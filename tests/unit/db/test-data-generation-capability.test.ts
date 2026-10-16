@@ -61,6 +61,7 @@ const OFFERED: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   opcua: false,
   // The same, and more plainly: every route this provider sends is a GET (#1722).
   mtconnect: false,
+  netconf: false,
 });
 
 const TYPES = Object.keys(OFFERED) as DatabaseType[];

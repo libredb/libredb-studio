@@ -124,6 +124,10 @@ export const SHOWCASE_RANK: Record<DatabaseType, number> = {
   // Last (rank 37), behind the address space: a machine tool's agent is a narrower name still, so nothing
   // above it moves for it either (#1722).
   mtconnect: 37,
+  // Last (rank 38): a device's configuration tree is the narrowest name of the four, and the people
+  // who know it are network engineers rather than the readers a page of databases is written for, so
+  // nothing above it moves for this one either (#1724).
+  netconf: 38,
 };
 
 /**

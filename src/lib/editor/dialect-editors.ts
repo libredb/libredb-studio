@@ -136,6 +136,8 @@ export const DIALECT_EDITORS: Readonly<Record<QueryTab["type"], DialectEditor>> 
   // this record, and has NO FORMATTER: the console formatter is the HTTP grammar's, which writes a method, a route
   // and a JSON body, and this dialect has no body at all. The SQL and JSON formatters both rewrite a URL line.
   mtconnect: Object.freeze({ monacoId: "mtconnect", console: MTCONNECT_CONSOLE_LANGUAGE }),
+  // language is XML, and a reader never types any, so no XML editor is registered here.
+  netconf: Object.freeze({ monacoId: "json", format: formatJson }),
 });
 
 /**

@@ -198,7 +198,7 @@ describe("the key-space walk is declared by the providers with an unbounded keys
     }
     // Named rather than counted: a count alone would hold while one engine replaced another, and
     // the sentence in `capabilities.ts` is an argument about WHICH keyspaces are unbounded.
-    expect(declaring.sort()).toEqual(["etcd", "firestore", "mqtt", "opcua", "oxia", "redis", "s3"]);
+    expect(declaring.sort()).toEqual(["etcd", "firestore", "mqtt", "netconf", "opcua", "oxia", "redis", "s3"]);
     expect(declaring).not.toContain("mtconnect");
   });
 });

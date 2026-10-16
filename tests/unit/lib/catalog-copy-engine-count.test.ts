@@ -108,6 +108,7 @@ const NUMERAL_WORDS: Record<string, number> = {
   "thirty-seven": 37,
   "thirty-eight": 38,
   "thirty-nine": 39,
+  forty: 40,
 };
 
 /**

@@ -9,6 +9,7 @@ import {
   MSSQLIcon,
   LibreDBIcon,
   MtconnectIcon,
+  NetconfIcon,
   OpcuaIcon,
   CouchbaseIcon,
   ClickHouseIcon,
@@ -120,6 +121,11 @@ export interface DatabaseUIConfig {
     // Studio's SSL modes, which have no meaning to a server offering None, Sign and SignAndEncrypt.
     | "securityMode"
     | "serverCertificateThumbprint"
+    // NETCONF only: the device's SSH host key fingerprint, pasted from `ssh-keygen -lf`. A field of
+    // its own rather than `serverCertificateThumbprint`: a host key is not a certificate, the two
+    // are checked by different code, and one box for both would carry a label that is wrong half
+    // the time.
+    | "hostKeyFingerprint"
   )[];
   /**
    * The connection dialog's label for a field, where this engine names the field differently from
@@ -1357,6 +1363,53 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     // The dialog's own sentence says the mode can be turned off, which is false here.
     readOnlyHint:
       "MTConnect connections are read-only whether or not this is ticked: Studio sends the agent GET requests from a closed table and nothing else.",
+  },
+  netconf: {
+    // A mark drawn for Studio, never a vendor's: a device with the configuration tree it serves
+    // above it, forking once, because a datastore holds modules and a module holds nodes and those
+    // two levels are what the browser draws.
+    icon: NetconfIcon,
+    // A NEW hue, and the step was chosen by SEPARATION rather than contrast. `neutral-600`, `-700`
+    // and `-800` all clear AA in light by a wide margin (6.85, 9.12, 13.27), so contrast alone would
+    // have allowed any of them; in OKLab distance `neutral-700` sits 0.0166 from Snowflake's
+    // `mist-700`, nearer than the closest identity pair this palette had (0.0205), while
+    // `neutral-600` stands 0.0368 from its own nearest.
+    color: "text-hue-neutral",
+    label: "NETCONF",
+    // IANA registers 830/tcp as `netconf-ssh` and RFC 6242 section 3 names it. Port 22 is the other
+    // thing a device may listen on, and it is the user's to type.
+    defaultPort: "830",
+    // `netconf://` is not a scheme this product parses, and inventing one would be ours rather than
+    // the protocol's. MEASURED: every address a reader would paste here, `netconf://host:830`,
+    // `ssh://host:830` and a bare `host:830`, is answered `null` by the shared parser, so the box
+    // would offer a reading nothing can do.
+    showConnectionStringToggle: false,
+    // AND NO SSL/TLS PANEL, for the reason OPC UA states above: this transport's security is its
+    // own. RFC 6242 carries NETCONF over SSH, so what secures the dial is the host key pin in
+    // `hostKeyFingerprint` below and not a certificate chain. The shared panel's vocabulary -
+    // disable, require, verify-ca, verify-full - names nothing a NETCONF device offers.
+    //
+    // MEASURED: no file under `providers/network/netconf/` reads `sslMode`, `sslCa`, `sslCert`,
+    // `sslKey` or `rejectUnauthorized`, so every value the panel collected was written to the
+    // connection and then read by nothing. That is worse than a refusal: a reader who set
+    // `verify-full` was shown no objection and got no verification either. The third engine to
+    // declare this after BigQuery and OPC UA, and the first where the panel was silently inert
+    // rather than answered with a word the engine does not know.
+    showSslPanel: false,
+    // The SSH TUNNEL panel stays, and the reason is NOT that this provider reads `sshTunnel`: it
+    // does not, and `open.ts:59` says so in as many words ("`sshTunnel` is NOT where these come
+    // from"). The tunnel is opened by the shared layer, before the provider is reached.
+    //
+    // What justifies the panel is MEASURED, in `hostkey.ts:9-12`: a wrong pin stops the handshake
+    // with `Host denied (verification failed)` before any authentication packet, AND it does so
+    // through an SSH tunnel as well, where the key seen inside the forward was the device's own and
+    // not the bastion's - the two fingerprints differed. So a tunnel to an SSH service is not a
+    // redundancy: there are two identities and the pin checks the one that matters.
+    // The device's key or its password, and the device's host key fingerprint, which is what makes
+    // the dial refuse an unknown device rather than trust whatever answers on the port. The
+    // fingerprint has a field of its own rather than borrowing `serverCertificateThumbprint`: a
+    // host key is not a certificate, and the two are checked by different code.
+    connectionFields: ["host", "port", "user", "password", "privateKey", "privateKeyPassphrase", "hostKeyFingerprint"],
   },
   libredb: {
     icon: LibreDBIcon,

@@ -206,7 +206,17 @@ export type DatabaseType =
   // Basic answers with an HTML 401 rather than an MTConnect document, which the provider reports as what it is.
   // Read-only is structural rather than a mode: the request table holds nine routes and every one of them is a GET,
   // so there is nothing to send that writes.
-  | "mtconnect";
+  | "mtconnect"
+  // NETCONF (issue #1724), the configuration protocol RFC 6241 defines, read over SSH on port 830
+  // with `ssh2` and no NETCONF library: this provider writes its own framing, both of RFC 6242's
+  // forms, and sends five operations and nothing else - `get`, `get-config`, `get-data`,
+  // `get-schema` and `close-session`. Read-only is structural rather than a mode, as it is for the
+  // three above: there is no function here that can encode an `edit-config`, a `lock` or a
+  // `commit`. A device's tree is addressed by datastore and then by YANG module, which is the only
+  // engine here whose container levels are two kinds of thing rather than one. The module list and
+  // every namespace come from the device's own YANG library, never from a guess, because a wrong
+  // namespace answers an empty document rather than an error on both servers measured.
+  | "netconf";
 
 export type ConnectionEnvironment = "production" | "staging" | "development" | "local" | "other";
 
@@ -519,11 +529,26 @@ export interface DatabaseConnection {
   /**
    * Snowflake only: the contents of the PEM private key the key-pair JWT is signed with, PKCS#8 or PKCS#1, encrypted
    * or not. Never a path: the provider reads no file. A secret. Read by no other engine; `ssl.clientKey` and the SSH
-   * tunnel's `privateKey` are other features' fields.
+   * tunnel's `privateKey` are other features' fields. NETCONF (#1724) reads the same two fields for
+   * the device's SSH key, because they hold the same thing: a private key and its passphrase.
    */
   privateKey?: string;
-  /** Snowflake only: the passphrase of an encrypted `privateKey`. A secret. Absent and empty are one value. */
+  /** Snowflake and NETCONF: the passphrase of an encrypted `privateKey`. A secret. Absent and empty are one value. */
   privateKeyPassphrase?: string;
+  /**
+   * NETCONF only (#1724): the device's SSH host key fingerprint, in OpenSSH's presentation, which
+   * is `SHA256:` and forty-three unpadded base64 characters, exactly what `ssh-keygen -lf` prints.
+   *
+   * NOT the same field as `sshTunnel.hostKeyFingerprint`, which pins a BASTION this connection
+   * passes through. This one pins the device itself, and a connection may carry both: a device
+   * behind a bastion has two identities to check and they are checked by different code.
+   *
+   * Required rather than optional in practice: the dial refuses before opening a socket when it is
+   * empty, because an SSH client that does not know the key it expects cannot tell the device from
+   * anything else answering on that port. Public key material, so it is stored and shown in the
+   * clear.
+   */
+  hostKeyFingerprint?: string;
   /**
    * Snowflake only: the role every statement of this connection runs as, sent on every request, case preserved; a
    * double-quoted name is exact, a bare one is folded to upper case by Snowflake. Required by the provider. It decides
@@ -942,7 +967,8 @@ export interface QueryTab {
     | "firestore"
     | "rabbitmq"
     | "opcua"
-    | "mtconnect";
+    | "mtconnect"
+    | "netconf";
   viewMode?: "results" | "explain" | "history" | "saved";
   explainPlan?: unknown;
   // Pagination state

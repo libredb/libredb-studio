@@ -85,6 +85,9 @@ export const CONNECTION_FIELDS: Record<keyof DatabaseConnection, FieldClass> = {
   // A thumbprint is the PUBLIC fingerprint of a public certificate: it identifies a server, it does not
   // authenticate anyone, and hiding it would stop an operator reading back what they pinned.
   serverCertificateThumbprint: "public",
+  // Public key material, exactly as the tunnel's own fingerprint is: it names a key, it is not one,
+  // and a reader has to be able to see it to compare it with what the device prints.
+  hostKeyFingerprint: "public",
   // A policy URI is published by the server, and the other two are PATHS and not keys: the private
   // key stays in the file the path names and never enters a connection record, which is the reason
   // this provider takes a path at all.

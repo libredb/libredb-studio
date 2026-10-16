@@ -991,7 +991,8 @@ export interface ProviderCapabilities {
     | "rabbitmq"
     | "kubectl"
     | "opcua"
-    | "mtconnect";
+    | "mtconnect"
+    | "netconf";
   supportsExplain: boolean;
   /**
    * Present iff supportsExplain is true (enforced by provider tests).

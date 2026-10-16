@@ -115,5 +115,6 @@ export const CENSUS_CONNECTION: Readonly<Record<DatabaseType, DatabaseConnection
   rabbitmq: rabbitmqConnection(),
   opcua: unconnected("opcua"),
   mtconnect: unconnected("mtconnect"),
+  netconf: unconnected("netconf"),
   libredb: unconnected("libredb"),
 });

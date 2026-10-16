@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { ALLOWED_OPERATIONS } from "@/lib/db/providers/network/netconf/requests";
 import { diffSchemas } from "@/lib/schema-diff/diff-engine";
 import {
   DATABEND_COLUMN_MODIFICATION_REASON,
@@ -1120,6 +1121,7 @@ describe("generateMigrationSQL: SQLite's grammar declares a foreign key only ins
     rabbitmq: "engine-has-no-foreign-key",
     opcua: "engine-has-no-foreign-key",
     mtconnect: "engine-has-no-foreign-key",
+    netconf: "engine-has-no-foreign-key",
   };
 
   for (const [dialectId, entry] of Object.entries(GRAMMAR)) {
@@ -1286,6 +1288,11 @@ const MODIFIED_COLUMN_COVERAGE: Record<
     label: "MTConnect",
     reason:
       "An MTConnect data item's shape is declared in the agent's own device model, not in columns a client can change, and every request this provider sends is a GET, so there is no column definition to change.",
+  },
+  netconf: {
+    label: "NETCONF",
+    reason:
+      "A NETCONF node's shape is declared in the device's YANG module, which the device serves and a client reads, and this provider builds four read operations and a close, and nothing else, so there is no column definition here for anything to change.",
   },
   opcua: {
     label: "OPC UA",
@@ -1620,6 +1627,7 @@ describe("generateMigrationSQL: dialects that cannot modify a column", () => {
           "rabbitmq",
           "opcua",
           "mtconnect",
+          "netconf",
         ].includes(dialect)
       ) {
         expect(sql).toContain(`-- ${expected.label}: Cannot generate table DDL.`);
@@ -1698,6 +1706,7 @@ const TRANSACTION_WRAPPER_COVERAGE: Record<DatabaseType, "BEGIN;" | "BEGIN TRANS
   opcua: false,
   // No wrapper: every request this provider sends is a GET, so there is no statement to wrap (#1722).
   mtconnect: false, // one JSON read request, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
+  netconf: false, // one JSON read request, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
 };
 
 // Both creation and modification paths must use the same wrapper policy.
@@ -1740,6 +1749,7 @@ describe("generateMigrationSQL: transaction wrapper by dialect", () => {
             "rabbitmq",
             "opcua",
             "mtconnect",
+            "netconf",
           ].includes(dialect)
         ) {
           expect(sql).toMatch(/^CREATE TABLE /m);
@@ -2303,5 +2313,31 @@ describe("generateMigrationSQL: spark", () => {
     const sql = generateMigrationSQL(makeModifiedTableDiff(), "spark");
     expect(sql).not.toContain("BEGIN");
     expect(sql).not.toContain("COMMIT;");
+  });
+});
+
+describe("generateMigrationSQL: the NETCONF reason counts the operations rather than quoting a number", () => {
+  /*
+   * THE NUMBER IS A FACT HERE TOO, and the table above pins it as a phrase.
+   *
+   * `MODIFIED_COLUMN_COVERAGE` holds this reason as written text, so it answers "is this sentence
+   * present" and never "is this sentence true". The sentence said "five read operations" until
+   * 1723 measured the module; the gate was green throughout, because the text matched itself.
+   *
+   * `tests/unit/db/netconf/provider.test.ts` now derives the count from `ALLOWED_OPERATIONS`, but
+   * it covers the provider's own three strings and not this one. Without the assertion below, a
+   * read added to that set turns the provider's tests red and leaves THIS sentence quietly wrong.
+   */
+  test("the count in the emitted comment is the number of reads ALLOWED_OPERATIONS holds", () => {
+    const reads = ALLOWED_OPERATIONS.filter((operation) => operation !== "close-session");
+    expect(reads.length).toBe(4);
+    const counted = ["zero", "one", "two", "three", "four", "five", "six"][reads.length];
+
+    const sql = generateMigrationSQL(makeModifiedTableDiff(), "netconf");
+    expect(sql).toContain(`builds ${counted} read operations and a close, and nothing else`);
+    // The close is counted and is NOT called a read, which is the half of the old sentence that
+    // made "and nothing else" untrue of the operation it had miscounted.
+    expect(sql).not.toMatch(/five read operations/);
+    expect(sql).not.toContain(`${counted} read operations and nothing else`);
   });
 });
