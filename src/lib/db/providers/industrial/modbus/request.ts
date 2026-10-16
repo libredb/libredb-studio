@@ -75,9 +75,26 @@ function shapeOf(body: Record<string, unknown>): "points" | "range" | "identify"
   return present[0] as "points" | "range" | "identify";
 }
 
+/**
+ * The order the three refusal sentences below list their accepted values in.
+ *
+ * MEASURED: each of those sets is a closed list of ASCII identifiers declared in this repository -
+ * the request's own keys, the four table names, and the eight types `values.ts` decodes - and
+ * sorting by code unit put them in the same order as `String.localeCompare` did in en-US, de-DE,
+ * sv-SE, tr-TR and lt-LT. So the comparator is not a change of order; it is the order written
+ * down. `localeCompare` is NOT used because it would make a sentence's word order depend on the
+ * runtime's locale data to no end, and a bare `.sort()` leaves a reader to ask which of the two
+ * was meant.
+ */
+const byCodeUnit = (a: string, b: string): number => {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
+};
+
 function onlyKnownKeys(body: Record<string, unknown>, known: ReadonlySet<string>, shape: string): void {
   for (const key of Object.keys(body))
-    if (!known.has(key)) refuse(`A ${shape} read carries no key "${key}". It accepts ${[...known].sort().join(", ")}.`);
+    if (!known.has(key))
+      refuse(`A ${shape} read carries no key "${key}". It accepts ${[...known].sort(byCodeUnit).join(", ")}.`);
 }
 
 function wholeNumber(value: unknown, key: string): number {
@@ -121,7 +138,7 @@ function parseRange(body: Record<string, unknown>): ReadRequest {
     if (!Object.hasOwn(body, key)) refuse(`A range read needs "${key}".`);
   const table = body.table;
   if (typeof table !== "string" || !TABLES.has(table))
-    refuse(`"table" must be one of ${[...TABLES].sort().join(", ")}, and it is ${describe(table)}.`);
+    refuse(`"table" must be one of ${[...TABLES].sort(byCodeUnit).join(", ")}, and it is ${describe(table)}.`);
   const unitId = wholeNumber(body.unit, "unit");
   const address = wholeNumber(body.address, "address");
   const count = wholeNumber(body.count, "count");
@@ -136,7 +153,7 @@ function parseRange(body: Record<string, unknown>): ReadRequest {
     const span = REGISTERS_OF_TYPE[type];
     if (span === undefined)
       refuse(
-        `"${type}" is not a type this provider decodes. It decodes ${Object.keys(REGISTERS_OF_TYPE).sort().join(", ")}.`,
+        `"${type}" is not a type this provider decodes. It decodes ${Object.keys(REGISTERS_OF_TYPE).sort(byCodeUnit).join(", ")}.`,
       );
     if (count % span !== 0)
       refuse(
