@@ -21,11 +21,81 @@ import { expect, test } from "@playwright/test";
  * map - which the dialog does not collect - is only needed for named points.
  */
 
-const FIXTURE = { host: "127.0.0.1", port: "1502" };
+/*
+ * The fixture's address, overridable the way `mtconnect-provider.spec.ts` overrides its agent's
+ * (`MTCONNECT_E2E_ORIGIN`): one variable, read in one place, so the probe below and the two boxes
+ * the cases type into can never name different ports. It is also what let the skip be measured -
+ * pointed at a port nothing serves, the six device cases skip and the three dialog cases run.
+ */
+const TARGET = process.env.MODBUS_E2E_TARGET ?? "127.0.0.1:1502";
+const FIXTURE = {
+  host: TARGET.slice(0, TARGET.lastIndexOf(":")),
+  port: TARGET.slice(TARGET.lastIndexOf(":") + 1),
+};
 const READ = '{"unit":1,"table":"holding_register","address":0,"count":5}';
 
 /** The fixture's holding table, as the formula `docker/modbus/README.md` documents. */
 const holding = (address: number): number => 7000 + 11 * address;
+
+/**
+ * Whether the fixture is ANSWERING MODBUS on that address, asked once for the whole file.
+ *
+ * SKIPPED RATHER THAN FAILED WHERE NO FIXTURE WAS MEANT TO BE. CI's e2e job starts no compose
+ * service - `.github/workflows/ci.yml` names no engine, and the Modbus step is delivered on its
+ * own in `docker/modbus/ci-step.yml` for a maintainer to paste - so the six cases that dial a
+ * device cannot pass there. MEASURED on this branch's run: they dialled 127.0.0.1:1502 and got
+ * `connect ECONNREFUSED` eighteen times. `mtconnect-provider.spec.ts` and
+ * `opcua-screens.spec.ts` guard their live cases this same way, and the dialog cases below need
+ * nothing but a browser and keep running everywhere.
+ *
+ * NOT "does the port accept". MEASURED and recorded in `tests/live/modbus-ready-probe.ts`:
+ * against a published container port Docker itself answers the accept in 5 ms while the server
+ * behind it took 332 ms to listen, so an accept is not a readiness fact. This asks the device for
+ * one register and requires the reply's MBAP header to echo the transaction and unit it was sent.
+ * The frame is built here rather than through `ModbusProvider`, because a probe that runs through
+ * the thing under test cannot tell a broken fixture from a broken provider.
+ *
+ * THE THRESHOLD IS "SPEAKS", NOT "SERVES THIS FIXTURE'S VALUES", on purpose: nothing listening is
+ * an absent fixture and skips, while a server answering another table's values is a WRONG fixture
+ * and must stay red. `docker/modbus/ci-step.yml` keeps those two apart for the same reason.
+ */
+const TRANSACTION = 0x4242;
+const UNIT = 1;
+
+let asked: Promise<boolean> | undefined;
+
+function fixtureSpeaksModbus(): Promise<boolean> {
+  asked ??= (async (): Promise<boolean> => {
+    const { connect } = await import("node:net");
+    return new Promise((resolve) => {
+      const request = Buffer.alloc(12);
+      request.writeUInt16BE(TRANSACTION, 0);
+      request.writeUInt16BE(0, 2);
+      request.writeUInt16BE(6, 4);
+      request[6] = UNIT;
+      request[7] = 3;
+      request.writeUInt16BE(0, 8);
+      request.writeUInt16BE(1, 10);
+
+      const socket = connect(Number(FIXTURE.port), FIXTURE.host);
+      const answer = (speaks: boolean): void => {
+        socket.destroy();
+        resolve(speaks);
+      };
+      socket.setTimeout(3_000);
+      socket.once("connect", () => socket.write(request));
+      socket.once("data", (reply: Buffer) =>
+        // An exception response counts: a device that refuses is still a device.
+        answer(reply.length >= 8 && reply.readUInt16BE(0) === TRANSACTION && reply[6] === UNIT),
+      );
+      socket.once("timeout", () => answer(false));
+      socket.once("error", () => answer(false));
+    });
+  })();
+  return asked;
+}
+
+const NO_FIXTURE = `no Modbus device answered on ${FIXTURE.host}:${FIXTURE.port}, so nothing was dialled`;
 
 test.describe("Modbus in the connection dialog", () => {
   test.beforeEach(async ({ page }) => {
@@ -52,6 +122,8 @@ test.describe("Modbus in the connection dialog", () => {
   });
 
   test("a connection that read nothing is not saved silently, it asks first", async ({ page }) => {
+    // The only case in this describe that dials: the two above read the dialog alone.
+    test.skip(!(await fixtureSpeaksModbus()), NO_FIXTURE);
     /*
      * The product's own honesty, and nothing held it before this.
      *
@@ -85,6 +157,8 @@ test.describe("Modbus in the connection dialog", () => {
 
 test.describe("a read of the fixture, as a reader sees it", () => {
   test.beforeEach(async ({ page }) => {
+    // Every case here reads the device, so the guard sits in the hook rather than five times over.
+    test.skip(!(await fixtureSpeaksModbus()), NO_FIXTURE);
     await page.goto("/login");
     await page.locator('input[type="email"]').fill("user@libredb.org");
     await page.locator('input[type="password"]').fill("test-user");
