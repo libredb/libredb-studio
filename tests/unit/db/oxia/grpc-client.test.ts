@@ -164,10 +164,19 @@ function streaming(seen: Seen, handler: StreamHandler | undefined): StreamHandle
  *
  * WHAT THE FAILURE LOOKS LIKE, so the next one is read correctly: three runs that day failed here,
  * each a DIFFERENT case, each in milliseconds (3,14 · 17,38 · 8,70 ms) against a 3.000 ms deadline.
- * The category was `not-connected`, which `keyvalue/oxia/errors.ts:294-304` reaches only when the
- * details hold "No connection established" and carry NO errno - so it is NOT a refusal. A refusal
- * reads `refused` there, which was confirmed by shutting a server down on purpose and watching the
- * category change. gRPC code 14, "No connection established", no errno: that is the signature.
+ * The category was `not-connected`. On the gRPC-status path, `keyvalue/oxia/errors.ts:294-304`
+ * reaches it when the details hold "No connection established" and hold none of the three errnos
+ * that path tests for - `ECONNREFUSED` reads `refused`, `ENOTFOUND` and `EAI_AGAIN` read `dns`. So
+ * this was NOT a refusal; that was confirmed by shutting a server down on purpose and watching the
+ * category change to `refused`. gRPC code 14, "No connection established", none of those three
+ * errnos: that is the signature.
+ *
+ * TWO PRECISIONS, so the sentence above is not read wider than it was measured. It tests THREE
+ * strings and not "an errno", so a details carrying `ETIMEDOUT` would read `not-connected` too. And
+ * the category has a second route that is not this path at all: an error raised OUTSIDE a gRPC
+ * status, carrying a Node code, is classified at `errors.ts:381` through `SYSTEM_ERRORS`, where
+ * `EHOSTUNREACH`, `ENETUNREACH` and `ETIMEDOUT` all map to `not-connected` - with an errno, not
+ * without one. `not-connected` therefore does not mean "no errno" in the module; it means that here.
  *
  * WHAT IS NOT KNOWN: why. The race did not reproduce in 23 attempts - ten idle, ten under two
  * concurrent coverage suites, and three full suites at `--jobs=4`, which is what CI runs. A dial to
