@@ -37,10 +37,6 @@ const coil = (address: number): boolean => address % 3 === 0;
 const prime = (n: number): boolean => n > 1 && [2, 3, 5, 7].some((p) => n === p || (n % p !== 0 && n < p * p));
 const discreteInput = (address: number): boolean => prime(address);
 
-/** A word bank and a bit bank, read by the device below the way a real one reads its memory. */
-const WORDS = { 3: holding, 4: inputRegister } as const;
-const BITS = { 1: coil, 2: discreteInput } as const;
-
 interface Device {
   readonly port: number;
   /** Every connection the device accepted, so a test can ask whether one was held. */
@@ -70,11 +66,20 @@ async function device(options: { oneClientAtATime?: boolean } = {}): Promise<Dev
     const quantity = adu.readUInt16BE(10);
     let body: Buffer;
     if (functionCode === 3 || functionCode === 4) {
-      const read = WORDS[functionCode];
+      /*
+       * THE TABLE IS CHOSEN, NOT LOOKED UP BY THE BYTE. A two-key object indexed by
+       * `functionCode` reads the same and ran the same - MEASURED: `adu[7]` is one byte, so the
+       * index is a number in 0..255, the object held exactly two own keys, and the guard above
+       * narrows it to those two, which leaves no other target reachable. But a scanner cannot
+       * read a guard: CodeQL called it `js/unvalidated-dynamic-method-call` (two highs), and a
+       * red gate is red whatever the pattern does. An explicit choice says the same thing in a
+       * form that needs no guard to be safe.
+       */
+      const read = functionCode === 3 ? holding : inputRegister;
       body = Buffer.alloc(quantity * 2);
       for (let at = 0; at < quantity; at += 1) body.writeUInt16BE(read(address + at), at * 2);
     } else if (functionCode === 1 || functionCode === 2) {
-      const read = BITS[functionCode];
+      const read = functionCode === 1 ? coil : discreteInput;
       body = Buffer.alloc(Math.ceil(quantity / 8));
       for (let at = 0; at < quantity; at += 1) {
         if (read(address + at)) body[Math.floor(at / 8)] |= 1 << (at % 8);
