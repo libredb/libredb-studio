@@ -187,17 +187,10 @@ export type DatabaseType =
   // services and none of them writes, so there is no Write, Call or HistoryUpdate to send.
   | "opcua"
   // Apache Spark (#1736): Spark SQL over Spark Connect (gRPC with Arrow results) for self-hosted Spark 4.1 and later
-  // (`src/lib/db/providers/industrial/mtconnect/`), the second member of the `industrial/` family. One connection is
+  // (`src/lib/db/providers/sql/spark/`). One Spark session per request, released at its end, plus a provider-owned
   // session for the tree and the panels that never runs user text. The connection's Password is the server's
   // spark.connect.authenticate.token, Database the catalog and Schema the namespace.
   | "spark"
-  // MTConnect (#1722). One agent read only over HTTP: the probe document's device model, its current and sample
-  // MTConnect (#1722). One agent read only over HTTP: the probe document's device model, its current and sample
-  // observations, and its asset documents, by a client of this repository's own on the shared node transport
-  // (`src/lib/db/providers/industrial/mtconnect/`), the second member of the `industrial/` family. One connection is
-  // one agent address, and `apiPath`, the field RabbitMQ already carries, holds the path prefix a reverse proxy puts
-  // in front of it. There is no credential field: the agent's own interface takes none, and a proxy that asks for
-  // Basic answers with an HTML 401 rather than an MTConnect document, which the provider reports as what it is.
   // MTConnect (#1722). One agent read only over HTTP: the probe document's device model, its current and sample
   // observations, and its asset documents, by a client of this repository's own on the shared node transport
   // (`src/lib/db/providers/industrial/mtconnect/`), the second member of the `industrial/` family. One connection is
@@ -207,6 +200,15 @@ export type DatabaseType =
   // Read-only is structural rather than a mode: the request table holds nine routes and every one of them is a GET,
   // so there is nothing to send that writes.
   | "mtconnect"
+  // Modbus TCP (#1723), the third member of the `industrial/` family. A device or a gateway in
+  // front of serial devices, read only: the encoder names four read function codes and device
+  // identification, and there is no code here that can build a write - read-only is structural
+  // rather than a mode, as it is for the two above. Modbus has NO DISCOVERY: no request lists
+  // what a device holds, and no register carries a name, a type or a unit, so the object tree is
+  // built from a register map the user supplies with the connection rather than from the device.
+  // One connection is one device address and one unit id; `mbaps`, the protocol's TLS form on
+  // port 802, rides on the SSL panel the other engines already use.
+  | "modbus"
   // NETCONF (issue #1724), the configuration protocol RFC 6241 defines, read over SSH on port 830
   // with `ssh2` and no NETCONF library: this provider writes its own framing, both of RFC 6242's
   // forms, and sends five operations and nothing else - `get`, `get-config`, `get-data`,
@@ -611,6 +613,37 @@ export interface DatabaseConnection {
    */
   apiKeyId?: string;
   apiKeySecret?: string;
+  /**
+   * Modbus only: the register map, as the JSON document the provider parses. A point names a unit,
+   * a table, a zero-based PDU address, a type and the orders a value wider than one register needs.
+   *
+   * WHY IT IS A FIELD. Modbus has no discovery: the protocol offers no request that lists what a
+   * device holds, so the map is the only thing that can name a point, and the user is who writes
+   * it. `keyof DatabaseConnection` is the write list of what a user may fill in, send and have
+   * stored (see `WithTunnelFarEnd`, which is deliberately NOT a field because nobody fills it in),
+   * and a document the user writes belongs on it. The length is no argument against that: BigQuery
+   * carries a whole key file's JSON in `password`.
+   *
+   * WHY NOT `password`. It is not a secret. `password` is classified `secret` in
+   * `connection-secrets.ts`, which would mask the map in the dialog and store it as a credential,
+   * and a reader cannot correct a document they cannot see.
+   *
+   * WHY `resolution` IN `CONNECTION_RELEVANCE`, and it is NOT the summary criterion there. That
+   * record's docblock asks which database a connection reaches and as whom, and this field answers
+   * neither: the same device answers, and Modbus TCP authenticates nobody. The reason is what READS
+   * the key. `use-provider-metadata` makes `connectionResolutionKey` part of its `readKey`,
+   * `use-connection-pulse` keys the pulse on it and `SchemaDiff` keys its snapshot on it, so a map
+   * that changed while the key did not would leave the PREVIOUS map's points drawn on screen.
+   *
+   * And the map DEFINES the names rather than filtering them, which is why Kubernetes' namespace
+   * list is `cosmetic` and this is not: that list narrows names the cluster itself defines, while
+   * `volts` is unit 1, holding register 100 under one document and can be unit 3, coil 5 under the
+   * next. Two such maps are not two views of one answer.
+   *
+   * Bounded by `MAX_REGISTER_MAP_BYTES` at the parser rather than here, so a seed file and a
+   * dialog answer the same way. Read by no other engine.
+   */
+  registerMap?: string;
 }
 
 export interface ForeignKeySchema {
@@ -968,6 +1001,7 @@ export interface QueryTab {
     | "rabbitmq"
     | "opcua"
     | "mtconnect"
+    | "modbus"
     | "netconf";
   viewMode?: "results" | "explain" | "history" | "saved";
   explainPlan?: unknown;

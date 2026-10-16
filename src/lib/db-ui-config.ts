@@ -8,6 +8,7 @@ import {
   OracleIcon,
   MSSQLIcon,
   LibreDBIcon,
+  ModbusIcon,
   MtconnectIcon,
   NetconfIcon,
   OpcuaIcon,
@@ -42,6 +43,7 @@ import {
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import type { HostUriScheme } from "@/lib/connection-host-uri";
 import type { ConnectionImportDeclaration } from "@/lib/connection-import";
+import { MODBUS_READ_ONLY_HINT } from "@/lib/db/providers/industrial/modbus/constants";
 import { CREDENTIAL_WARNINGS, type CredentialWarning } from "@/lib/db/credential-warnings";
 import {
   SNOWFLAKE_FIELD_SENTENCES,
@@ -121,6 +123,9 @@ export interface DatabaseUIConfig {
     // Studio's SSL modes, which have no meaning to a server offering None, Sign and SignAndEncrypt.
     | "securityMode"
     | "serverCertificateThumbprint"
+    // Modbus only: the register map, a JSON document rather than a word, drawn as a text area. The
+    // protocol answers no discovery request, so this is the only thing that can name a point.
+    | "registerMap"
     // NETCONF only: the device's SSH host key fingerprint, pasted from `ssh-keygen -lf`. A field of
     // its own rather than `serverCertificateThumbprint`: a host key is not a certificate, the two
     // are checked by different code, and one box for both would carry a label that is wrong half
@@ -1363,6 +1368,44 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     // The dialog's own sentence says the mode can be turned off, which is false here.
     readOnlyHint:
       "MTConnect connections are read-only whether or not this is ticked: Studio sends the agent GET requests from a closed table and nothing else.",
+  },
+  modbus: {
+    // A mark drawn for Studio, never the Modbus Organization's: a terminal block with three screws.
+    icon: ModbusIcon,
+    // A NEW hue. Every base hue and every `-alt` step was an engine's by the time this one registered -
+    // MTConnect took `slate-alt` while it was being built - so the palette gains `stone`. Of the four greys
+    // Tailwind ships that no identity used, `stone`, `neutral` and `zinc` clear every test at -700, -800 and
+    // -900 and `gray-800` does not clear AA in light, measured by running
+    // tests/unit/theme-accent-contrast.test.ts against all twelve. A warm grey was chosen of the three that
+    // pass because it stands furthest from `slate`, which is OPC UA's: those two are the industrial pair a
+    // reader is most likely to need to tell apart on one tree.
+    color: "text-hue-stone",
+    label: "Modbus",
+    // IANA `mbap`. MODBUS/TCP Security listens on 802 and the SSL panel turns it on, but the box offers the
+    // plain port: a device that speaks mbaps is the rarer one, and the port is the user's to change.
+    defaultPort: "502",
+    // Modbus TCP has no connection string form of its own, and inventing one would be ours rather than the
+    // protocol's.
+    showConnectionStringToggle: false,
+    // Host, Port and the register map. The protocol defines no authentication at all - no user, no password,
+    // no token - so the form offers no credential to fill in; what protects a device is mbaps or a network
+    // path you control.
+    //
+    // The map is a field on the connection, which was an open question until the write list answered it:
+    // `keyof DatabaseConnection` is what a user may fill in, send and have stored, and this is a document
+    // the user writes. It is not `password`, because it is not a secret and a masked document cannot be
+    // corrected; BigQuery's key file sits in `password` because that one IS a credential.
+    connectionFields: ["host", "port", "registerMap"],
+    fieldLabels: { registerMap: "Register map" },
+    fieldHints: {
+      registerMap:
+        "A JSON array of points, each naming a unit, a table, a zero-based PDU address and a type. Without it a connection can still read a range by address, but no point has a name. Vendor documentation often counts addresses from one; these are the addresses that go on the wire.",
+    },
+    fieldPlaceholders: {
+      registerMap: '[{ "name": "volts", "unitId": 1, "table": "holding_register", "address": 100, "type": "uint16" }]',
+    },
+    // The dialog's own sentence says the mode can be turned off, which is false here.
+    readOnlyHint: MODBUS_READ_ONLY_HINT,
   },
   netconf: {
     // A mark drawn for Studio, never a vendor's: a device with the configuration tree it serves

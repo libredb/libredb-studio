@@ -189,6 +189,15 @@ export const QUERY_DIALECTS: Readonly<Record<QueryDialect, DialectSpec>> = Objec
     offersCodeGeneration: false,
     offersCountQuery: false,
   }),
+  // One JSON read request, in the Kafka style (#1723 section 3). No column profiling: a point is a
+  // value, not a column, and there is no statement to profile over. No count query: Modbus has no
+  // request that counts anything, and the number of points is the map's own, already on the tree.
+  modbus: Object.freeze({
+    tabType: "modbus",
+    offersColumnProfiling: false,
+    offersCodeGeneration: false,
+    offersCountQuery: false,
+  }),
   // One JSON read request naming a datastore, a path and a limit (#1724). No column profiling: a
   // YANG leaf is a value in a tree and the rows a read answers are built per entry, so there is no
   // column to profile over. No code generation and no count query: this provider sends four read

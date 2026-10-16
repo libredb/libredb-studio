@@ -238,6 +238,14 @@ const HUES: ReadonlyArray<{ hue: string; light: string; lightAlt: string }> = [
   // taupe-400 7.41:1 on the worst dark one, its nearest shipped hue is mist (0.0331 light, 0.0296 dark), and both
   // closest identity pairs stay where they were (0.0205 light, 0.0160 dark).
   { hue: "taupe", light: "taupe-700", lightAlt: "taupe-900" },
+  // Modbus's identity (#1723): every base hue and every `-alt` step was an engine's by the time it registered,
+  // so the palette gains one more. Of the four greys Tailwind ships that no identity used, `stone`, `neutral` and
+  // `zinc` all clear every test below at -700, -800 and -900, and `gray-800` does NOT clear AA in light while
+  // gray-700 and gray-900 do - measured by running this file against all twelve. `stone-800` was chosen of the
+  // three that pass: a warm grey stands furthest from `slate`, which is OPC UA's, and those two are the
+  // industrial pair a reader is most likely to need to tell apart.
+  { hue: "stone", light: "stone-800", lightAlt: "stone-900" },
+  // Modbus's identity (#1723): every base hue and every `-alt` step was an engine's by the time it registered,
   // closest identity pair on record (0.0205). `neutral-600`'s nearest is `olive-600` at 0.0368.
   { hue: "neutral", light: "neutral-600", lightAlt: "neutral-800" },
 ];

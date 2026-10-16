@@ -216,6 +216,11 @@
      palette gains one, and a steel grey is the one colour a plant's address space can carry
      without borrowing another engine's. */
   --studio-hue-slate: #1d293d;
+  /* Modbus (#1723): every base hue and every `-alt` step was an engine's by the time it registered -
+     MTConnect had just taken `slate-alt` - so the palette gains one. `stone-800` clears AA in light,
+     and a warm grey stands apart from `slate`, which is OPC UA's: both are industrial protocols and
+     telling them apart on a tree matters more than telling either apart from a database. */
+  --studio-hue-stone: #292524;
   /* NETCONF (#1724). The step is NOT chosen by contrast, and that is the measurement worth
      keeping: `neutral-600`, `-700` and `-800` all clear AA in light by a wide margin (6.85, 9.12,
      13.27 against the worst ground). Separation decides it. In OKLab distance `neutral-800` sits
@@ -356,6 +361,7 @@
   --studio-hue-lime-alt: #bbf451;
   --studio-hue-mist: #9ca8ab;
   --studio-hue-slate: #90a1b9;
+  --studio-hue-stone: #a6a09b;
   --studio-hue-neutral: #a1a1a1;
   --studio-hue-slate-alt: #cad5e2;
   --studio-hue-taupe: #aba09c;
@@ -469,6 +475,7 @@
   --color-hue-lime-alt: var(--studio-hue-lime-alt);
   --color-hue-mist: var(--studio-hue-mist);
   --color-hue-slate: var(--studio-hue-slate);
+  --color-hue-stone: var(--studio-hue-stone);
   --color-hue-neutral: var(--studio-hue-neutral);
   --color-hue-slate-alt: var(--studio-hue-slate-alt);
   --color-hue-taupe: var(--studio-hue-taupe);

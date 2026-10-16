@@ -151,7 +151,39 @@ function streaming(seen: Seen, handler: StreamHandler | undefined): StreamHandle
   };
 }
 
-/** One server for the allowlisted services, bound to [::]:0 (dual stack: 127.0.0.1, localhost and [::1] reach it). */
+/**
+ * One server for the allowlisted services, bound to [::]:0 (dual stack: 127.0.0.1, localhost and
+ * [::1] reach it).
+ *
+ * THIS FILE IS THE ONLY ONE THAT DIALS A DIFFERENT ADDRESS FAMILY THAN IT BINDS, and that is
+ * recorded here because this file is also the only one that has been seen to fail at connect.
+ * MEASURED 2026-10-16: nine files in this repository bind a gRPC server, none of them waits for
+ * the server to be accepting, eight bind `127.0.0.1:0` and dial the same family, and only this one
+ * binds `[::]` while `optionsFor` dials `127.0.0.1`. The `[::]` bind stays: the cases that read
+ * `localhost`, `[::1]` and `[0:0::1]` need one server all three reach.
+ *
+ * WHAT THE FAILURE LOOKS LIKE, so the next one is read correctly: three runs that day failed here,
+ * each a DIFFERENT case, each in milliseconds (3,14 · 17,38 · 8,70 ms) against a 3.000 ms deadline.
+ * The category was `not-connected`. On the gRPC-status path, `keyvalue/oxia/errors.ts:294-304`
+ * reaches it when the details hold "No connection established" and hold none of the three errnos
+ * that path tests for - `ECONNREFUSED` reads `refused`, `ENOTFOUND` and `EAI_AGAIN` read `dns`. So
+ * this was NOT a refusal; that was confirmed by shutting a server down on purpose and watching the
+ * category change to `refused`. gRPC code 14, "No connection established", none of those three
+ * errnos: that is the signature.
+ *
+ * TWO PRECISIONS, so the sentence above is not read wider than it was measured. It tests THREE
+ * strings and not "an errno", so a details carrying `ETIMEDOUT` would read `not-connected` too. And
+ * the category has a second route that is not this path at all: an error raised OUTSIDE a gRPC
+ * status, carrying a Node code, is classified at `errors.ts:381` through `SYSTEM_ERRORS`, where
+ * `EHOSTUNREACH`, `ENETUNREACH` and `ETIMEDOUT` all map to `not-connected` - with an errno, not
+ * without one. `not-connected` therefore does not mean "no errno" in the module; it means that here.
+ *
+ * WHAT IS NOT KNOWN: why. The race did not reproduce in 23 attempts - ten idle, ten under two
+ * concurrent coverage suites, and three full suites at `--jobs=4`, which is what CI runs. A dial to
+ * the bound port was accepted 600 times out of 600 across those conditions, so a dial of our own is
+ * not a way to catch it either. Nothing here is a fix; it is what the next red should be read
+ * against.
+ */
 async function serve(script: Script = {}): Promise<Served> {
   const seen: Seen = { calls: [], cancelled: 0 };
   const server = new Server();

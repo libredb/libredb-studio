@@ -394,6 +394,35 @@ describe("which database a connection would be read from", () => {
     expect(connectionResolutionKey({ ...base, port: 5433 })).not.toBe(same);
   });
 
+  test("a register map moves the key, because the panels keyed on it hold the previous map's tree", () => {
+    // Modbus's map is NOT a target and NOT a credential, so the summary criterion - which database,
+    // and as whom - does not reach it: the same device answers, to the same nobody, either way. The
+    // reason it is `resolution` is what READS this key. `use-provider-metadata` makes it part of
+    // `readKey`, `use-connection-pulse` keys the pulse on it and `SchemaDiff` keys its snapshot on
+    // it, so a map that changed while the key did not would leave the previous map's points drawn.
+    //
+    // And the map DEFINES the names rather than filtering them, which is why Kubernetes' namespace
+    // list is `cosmetic` and this is not: `volts` is one address under one document and another
+    // under the next, so the two are not two views of one answer.
+    const same = connectionResolutionKey({ ...base, type: "modbus" });
+    const one = JSON.stringify([{ name: "volts", unitId: 1, table: "holding_register", address: 100, type: "uint16" }]);
+    // The same NAME over a different address is what the key has to separate, so the two documents
+    // are made the SAME LENGTH and the test MEASURES that rather than claiming it: any byte of
+    // difference moves the key on its own, because the key carries the whole document, and a case
+    // whose two maps differ in length would pass without ever reaching the address. `unit` is the
+    // padding - a unit of measure a coil can carry - chosen to bring this document to the other's
+    // eighty-six bytes.
+    const other = JSON.stringify([
+      { name: "volts", unitId: 3, table: "coil", address: 5, type: "bool", unit: "on/off" },
+    ]);
+    expect(Buffer.byteLength(other, "utf8")).toBe(Buffer.byteLength(one, "utf8"));
+
+    expect(connectionResolutionKey({ ...base, type: "modbus", registerMap: one })).not.toBe(same);
+    expect(connectionResolutionKey({ ...base, type: "modbus", registerMap: other })).not.toBe(
+      connectionResolutionKey({ ...base, type: "modbus", registerMap: one }),
+    );
+  });
+
   test("a container present on one side only is a difference, and so is a field inside it", () => {
     // The nested tables are read the same way as the top one, and an absent container is
     // not an empty one: adding SSL changes where and as whom the connection connects.

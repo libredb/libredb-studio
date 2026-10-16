@@ -68,6 +68,7 @@ import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseAllDocuments } from "yaml";
+import { howItFailed } from "../helpers/spawn-outcome";
 
 const CHART_DIR = join(import.meta.dir, "../../charts/libredb-studio");
 const OPERATOR_CHART_DIR = join(import.meta.dir, "../../operator/helm-charts/libredb-studio");
@@ -107,7 +108,7 @@ function helmTemplate(args: string[], chartDir = CHART_DIR): { exitCode: number;
 function renderDocs(args: string[], chartDir = CHART_DIR): RenderedManifest[] {
   const run = helmTemplate(args, chartDir);
   if (run.exitCode !== 0) {
-    throw new Error(`helm template failed (exit ${run.exitCode}): ${run.stderr}`);
+    throw new Error(`helm template ${howItFailed(run)}: ${run.stderr}`);
   }
   return parseAllDocuments(run.stdout)
     .map((doc) => doc.toJSON() as RenderedManifest)
@@ -125,7 +126,7 @@ function service(args: string[], chartDir = CHART_DIR): RenderedManifest {
 function serviceSource(args: string[], chartDir = CHART_DIR): string {
   const run = helmTemplate([...args, "-s", "templates/service.yaml"], chartDir);
   if (run.exitCode !== 0) {
-    throw new Error(`helm template failed (exit ${run.exitCode}): ${run.stderr}`);
+    throw new Error(`helm template ${howItFailed(run)}: ${run.stderr}`);
   }
   return run.stdout;
 }
@@ -406,7 +407,7 @@ describe("charts/libredb-studio install notes warn about an IPv4-pinned pod (#43
       },
     );
     if (run.exitCode !== 0) {
-      throw new Error(`helm template of the notes probe failed (exit ${run.exitCode}): ${run.stderr.toString()}`);
+      throw new Error(`helm template of the notes probe ${howItFailed(run)}: ${run.stderr.toString()}`);
     }
     // Only the probe ConfigMap comes back, so unlike the full dry-run output
     // there is no surrounding manifest whose own "IPv6" and "HOSTNAME" strings

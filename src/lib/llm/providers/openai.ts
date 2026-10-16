@@ -4,6 +4,7 @@
  */
 
 import { BaseLLMProvider } from "../base-provider";
+import type { RetryOptions } from "../utils/retry";
 import { type LLMConfig, type LLMStreamOptions, LLMAuthError, LLMRateLimitError, LLMStreamError } from "../types";
 import { createStreamFromSSEResponse } from "../utils/streaming";
 import { DEFAULT_API_URLS } from "../utils/config";
@@ -16,8 +17,8 @@ import { logger } from "@/lib/logger";
 export class OpenAIProvider extends BaseLLMProvider {
   protected baseUrl: string;
 
-  constructor(config: LLMConfig) {
-    super(config);
+  constructor(config: LLMConfig, retryOptions?: RetryOptions) {
+    super(config, retryOptions);
     this.validate();
     this.baseUrl = config.apiUrl ?? DEFAULT_API_URLS.openai;
   }

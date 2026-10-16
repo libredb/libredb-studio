@@ -318,10 +318,10 @@ never off the kind id.
 **It is OPTIONAL, and omitting it entirely is the right answer for an engine that publishes no
 definition text.** `readObjectSource?` is declared optional on `DatabaseProvider` in
 `src/lib/db/types.ts` for that reason: a provider with no source-bearing kind can never reach the
-method, so requiring it would put an unreachable throw in each. Six shipped providers are exactly
-that case and say so in their own docs, `bigquery`, `druid`, `influxdb`, `influxdb3`, `libredb` and `neo4j`. If
-yours is a seventh, declare `hasSource` on no kind, write no method, and add your type-id to the
-committed ABSTAINER list in `tests/isolated/object-source-declarations.test.ts` beside those six.
+method, so requiring it would put an unreachable throw in each. Seven shipped providers are exactly
+that case and say so in their own docs, `bigquery`, `druid`, `influxdb`, `influxdb3`, `libredb`, `neo4j` and
+`modbus`. If yours is an eighth, declare `hasSource` on no kind, write no method, and add your type-id to
+the committed ABSTAINER list in `tests/isolated/object-source-declarations.test.ts` beside those seven.
 Do NOT write the method answering an empty document, an empty string or any other neutral value: the
 pairing fails by name on a method with no source-bearing kind, and an empty text is a RAISE
 everywhere in the table below.

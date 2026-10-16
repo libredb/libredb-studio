@@ -7,6 +7,7 @@ import {
   type LLMConfig,
   type LLMStreamOptions,
 } from "@/lib/llm/types";
+import { NO_BACKOFF } from "../../helpers/llm-no-backoff";
 
 // ============================================================================
 // Import module under test (no mock.module needed — Custom uses globalThis.fetch)
@@ -94,18 +95,20 @@ describe("CustomProvider", () => {
 
   describe("constructor", () => {
     test("creates with valid config including apiUrl", () => {
-      const provider = new CustomProvider(makeConfig());
+      const provider = new CustomProvider(makeConfig(), NO_BACKOFF);
       expect(provider.name).toBe("custom");
       expect(provider.config.model).toBe("my-custom-model");
       expect(provider.config.apiUrl).toBe("https://my-llm-proxy.example.com/v1");
     });
 
     test("throws LLMConfigError without apiUrl", () => {
-      expect(() => new CustomProvider(makeConfig({ apiUrl: undefined }))).toThrow(LLMConfigError);
+      expect(() => new CustomProvider(makeConfig({ apiUrl: undefined }), NO_BACKOFF)).toThrow(LLMConfigError);
     });
 
     test("throws LLMConfigError without model", () => {
-      expect(() => new CustomProvider(makeConfig({ model: undefined as unknown as string }))).toThrow(LLMConfigError);
+      expect(() => new CustomProvider(makeConfig({ model: undefined as unknown as string }), NO_BACKOFF)).toThrow(
+        LLMConfigError,
+      );
     });
   });
 
@@ -118,7 +121,7 @@ describe("CustomProvider", () => {
       const sseData = [makeSSEChunk("Hi"), "data: [DONE]\n\n"];
       fetchSpy.mockResolvedValueOnce(createSSEResponse(sseData));
 
-      const provider = new CustomProvider(makeConfig({ apiKey: "my-secret-key" }));
+      const provider = new CustomProvider(makeConfig({ apiKey: "my-secret-key" }), NO_BACKOFF);
       await provider.stream(makeStreamOptions());
 
       expect(fetchSpy).toHaveBeenCalledTimes(1);
@@ -131,7 +134,7 @@ describe("CustomProvider", () => {
       const sseData = [makeSSEChunk("Hi"), "data: [DONE]\n\n"];
       fetchSpy.mockResolvedValueOnce(createSSEResponse(sseData));
 
-      const provider = new CustomProvider(makeConfig({ apiKey: undefined }));
+      const provider = new CustomProvider(makeConfig({ apiKey: undefined }), NO_BACKOFF);
       await provider.stream(makeStreamOptions());
 
       expect(fetchSpy).toHaveBeenCalledTimes(1);
@@ -144,7 +147,7 @@ describe("CustomProvider", () => {
       const sseData = [makeSSEChunk("Custom"), makeSSEChunk(" response"), "data: [DONE]\n\n"];
       fetchSpy.mockResolvedValueOnce(createSSEResponse(sseData));
 
-      const provider = new CustomProvider(makeConfig());
+      const provider = new CustomProvider(makeConfig(), NO_BACKOFF);
       const stream = await provider.stream(makeStreamOptions());
 
       expect(stream).toBeInstanceOf(ReadableStream);
@@ -161,28 +164,28 @@ describe("CustomProvider", () => {
     test("401 throws LLMAuthError", async () => {
       fetchSpy.mockImplementation(async () => createJsonResponse({ error: { message: "Unauthorized" } }, 401));
 
-      const provider = new CustomProvider(makeConfig());
+      const provider = new CustomProvider(makeConfig(), NO_BACKOFF);
       await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(LLMAuthError);
     });
 
     test("403 throws LLMAuthError", async () => {
       fetchSpy.mockImplementation(async () => createJsonResponse({ error: { message: "Forbidden" } }, 403));
 
-      const provider = new CustomProvider(makeConfig());
+      const provider = new CustomProvider(makeConfig(), NO_BACKOFF);
       await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(LLMAuthError);
     });
 
     test("429 throws LLMRateLimitError", async () => {
       fetchSpy.mockImplementation(async () => createJsonResponse({ error: { message: "Rate limited" } }, 429));
 
-      const provider = new CustomProvider(makeConfig());
+      const provider = new CustomProvider(makeConfig(), NO_BACKOFF);
       await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(LLMRateLimitError);
     });
 
     test("500 throws LLMStreamError", async () => {
       fetchSpy.mockImplementation(async () => createJsonResponse({ error: { message: "Server error" } }, 500));
 
-      const provider = new CustomProvider(makeConfig());
+      const provider = new CustomProvider(makeConfig(), NO_BACKOFF);
       await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(LLMStreamError);
     });
   });
@@ -197,7 +200,7 @@ describe("CustomProvider", () => {
         throw new Error("connect ECONNREFUSED 127.0.0.1:8080");
       });
 
-      const provider = new CustomProvider(makeConfig());
+      const provider = new CustomProvider(makeConfig(), NO_BACKOFF);
       try {
         await provider.stream(makeStreamOptions());
         expect(true).toBe(false);
@@ -210,7 +213,7 @@ describe("CustomProvider", () => {
     test("LLMStreamError passes through", async () => {
       fetchSpy.mockImplementation(async () => createJsonResponse({ error: { message: "stream broken" } }, 500));
 
-      const provider = new CustomProvider(makeConfig());
+      const provider = new CustomProvider(makeConfig(), NO_BACKOFF);
       await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(LLMStreamError);
     });
 
@@ -219,7 +222,7 @@ describe("CustomProvider", () => {
         throw new Error("Something unexpected");
       });
 
-      const provider = new CustomProvider(makeConfig());
+      const provider = new CustomProvider(makeConfig(), NO_BACKOFF);
       await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(LLMStreamError);
     });
 
@@ -228,14 +231,14 @@ describe("CustomProvider", () => {
         throw "string error";
       });
 
-      const provider = new CustomProvider(makeConfig());
+      const provider = new CustomProvider(makeConfig(), NO_BACKOFF);
       await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(LLMStreamError);
     });
 
     test("LLMAuthError passes through in stream()", async () => {
       fetchSpy.mockImplementation(async () => createJsonResponse({ error: { message: "bad key" } }, 401));
 
-      const provider = new CustomProvider(makeConfig());
+      const provider = new CustomProvider(makeConfig(), NO_BACKOFF);
       await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(LLMAuthError);
     });
   });
@@ -257,7 +260,7 @@ describe("CustomProvider abort signal", () => {
   test("hands the caller's signal to fetch", async () => {
     fetchSpy.mockResolvedValueOnce(createSSEResponse([makeSSEChunk("Hi"), "data: [DONE]\n\n"]));
     const controller = new AbortController();
-    await new CustomProvider(makeConfig()).stream(makeStreamOptions({ signal: controller.signal }));
+    await new CustomProvider(makeConfig(), NO_BACKOFF).stream(makeStreamOptions({ signal: controller.signal }));
     expect((fetchSpy.mock.calls[0][1] as RequestInit).signal).toBe(controller.signal);
   });
 
@@ -265,12 +268,16 @@ describe("CustomProvider abort signal", () => {
     const controller = new AbortController();
     controller.abort();
     await expect(
-      new CustomProvider(makeConfig()).stream(makeStreamOptions({ signal: controller.signal })),
+      new CustomProvider(makeConfig(), NO_BACKOFF).stream(makeStreamOptions({ signal: controller.signal })),
     ).rejects.toThrow();
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   test("an abort during the retry backoff sends no second request", async () => {
+    // THE ONE CASE HERE THAT KEEPS THE REAL BACKOFF, because the backoff is what it asserts: the
+    // abort has to land inside the wait, and `NO_BACKOFF` leaves no wait to land in. With a zero
+    // delay the second attempt goes out before the 10 ms abort and `toHaveBeenCalledTimes(1)`
+    // reads 3 (MEASURED - all four provider files failed exactly this case).
     const controller = new AbortController();
     fetchSpy.mockImplementation(async () => {
       setTimeout(() => controller.abort(), 10);

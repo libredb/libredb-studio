@@ -110,8 +110,8 @@ Every one of those tags is published on three bases, and the suffix is appended 
 
 ## Supported databases
 
-Thirty-eight external engines share one interface.
-The thirty-ninth row is the embedded LibreDB store: it ships inside the image.
+Thirty-nine external engines share one interface.
+The fortieth row is the embedded LibreDB store: it ships inside the image.
 
 | Database | Driver | Highlights |
 | :--- | :--- | :--- |
@@ -154,11 +154,11 @@ The thirty-ninth row is the embedded LibreDB store: it ships inside the image.
 | **LibreDB** | `@libredb/libredb` | The embedded key-value store, for a database with nothing to install |
 
 **Read-only where the engine is.** Druid, Elasticsearch and OpenSearch have no `UPDATE` and no `CREATE TABLE` anywhere in their grammar, so inline editing and DDL are reported as unsupported instead of failing when used.
-Firestore, Prometheus, InfluxDB, Apache Kafka, MQTT, RabbitMQ, OPC UA, MTConnect, Oxia, S3-compatible object storage and Kubernetes are read-only too: Studio calls only read APIs.
+Firestore, Prometheus, InfluxDB, Apache Kafka, MQTT, RabbitMQ, OPC UA, MTConnect, Modbus, Oxia, S3-compatible object storage and Kubernetes are read-only too: Studio calls only read APIs.
 
 ### Engines with no provider of their own
 
-Twenty-seven further engines speak the wire protocol of one of the thirty-eight drivers above: pick that driver in the connection dialog. Each was measured against a real instance, and how much worked is recorded per engine.
+Twenty-seven further engines speak the wire protocol of one of the thirty-nine drivers above: pick that driver in the connection dialog. Each was measured against a real instance, and how much worked is recorded per engine.
 
 | Engine | Connect as | Support |
 | :--- | :--- | :--- |

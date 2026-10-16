@@ -1,0 +1,73 @@
+{
+  "server": {
+    "listenerAddress": "0.0.0.0",
+    "listenerPort": 5020,
+    "protocol": "TCP",
+    "tlsParams": {
+      "privateKey": null,
+      "certificate": null
+    },
+    "logging": {
+      "format": "%(asctime)-15s %(levelname)-8s %(message)s",
+      "logLevel": "INFO"
+    }
+  },
+  "persistence": {
+    "enabled": false,
+    "file": "/data/modbus_registers.json",
+    "saveInterval": 30
+  },
+  "metrics": {
+    "enabled": false,
+    "address": "0.0.0.0",
+    "port": 9090,
+    "path": "/metrics"
+  },
+  "registers": {
+    "initializeUndefinedRegisters": true,
+    "holdingRegister": {
+      "1": 7000,
+      "2": 7011,
+      "3": 7022,
+      "4": 7033,
+      "5": 7044,
+      "6": 7055,
+      "7": 7066,
+      "8": 7077,
+      "9": 7088,
+      "10": 7099
+    },
+    "inputRegister": {
+      "1": 8500,
+      "2": 8493,
+      "3": 8486,
+      "4": 8479,
+      "5": 8472,
+      "6": 8465,
+      "7": 8458,
+      "8": 8451
+    },
+    "coils": {
+      "1": true,
+      "2": false,
+      "3": false,
+      "4": true,
+      "5": false,
+      "6": false,
+      "7": true,
+      "8": false,
+      "9": false,
+      "10": true
+    },
+    "discreteInput": {
+      "1": false,
+      "2": false,
+      "3": true,
+      "4": true,
+      "5": false,
+      "6": true,
+      "7": false,
+      "8": true
+    }
+  }
+}

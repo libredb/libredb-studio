@@ -112,9 +112,9 @@ LibreDB Studioは逆向きです。**データをツールのところへ持っ�
 
 ## 主な機能
 
-### 38のエンジン、1つのインターフェース
+### 39のエンジン、1つのインターフェース
 
-PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · Firestore · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · BigQuery · Databend · Snowflake · Apache Spark · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j · Milvus · Qdrant · InfluxDB (InfluxQL) · InfluxDB 3 (SQL) · Oxia · S3-compatible object storage · Kubernetes · MQTT · RabbitMQ · OPC UA · MTConnect · NETCONF
+PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · Firestore · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · BigQuery · Databend · Snowflake · Apache Spark · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j · Milvus · Qdrant · InfluxDB (InfluxQL) · InfluxDB 3 (SQL) · Oxia · S3-compatible object storage · Kubernetes · MQTT · RabbitMQ · OPC UA · MTConnect · Modbus · NETCONF
 
 スキーマエクスプローラ、ER図、スキーマ差分、モニタリングは全SQLエンジンで共通です。MongoDBとRedisはSQLエンジンではないため、ER図とスキーマ差分はありません。Druid、Elasticsearch、OpenSearch、TrinoはこのビルドがパースできるURI形式を持たないためhostとportで設定する二重の例外で、生成されるマイグレーションもDDLを出力せず制約を明示します（Couchbaseのスキーマレスなコレクションも同様）。検索クラスタのER図は箱だけで線がありません。インデックスは外部キーを宣言せず、エンジンのモデルにも宣言できる外部キーが存在しないためです。
 
@@ -156,6 +156,7 @@ PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · Du
 | **RabbitMQ** | なし（管理 HTTP API、ポート 15672 と、Studio 独自の AMQP 0-9-1 読み取りクライアント、ポート 5672） | 構造上の読み取り専用。読み取りクライアントは publish、メッセージの取り出し、宣言をエンコードできません。ツリーには仮想ホスト、ストリーム、キュー、エクスチェンジ。JSON の読み取りリクエストはストリームのメッセージを読み、キューのメッセージは読みません |
 | **OPC UA** | `node-opcua-client`（純粋なJavaScript、`opc.tcp`、ポート4840） | 構造上の読み取り専用。クライアントのシームはGetEndpoints、CreateSession、ActivateSession、Browse、BrowseNext、Read、HistoryRead、CloseSessionの8つの読み取りサービスだけを宣言し、Write、Call、HistoryUpdate、サブスクリプションはプロバイダのどこにもありません。キーパネルはアドレス空間を1階層ずつ、1階層につき1回のBrowseで辿ります。BrowseNameが区切り文字を含みうるため、キーはエスケープされたブラウズパスです。ノードを開くと値、ステータス、2つのタイムスタンプ、デコードされたAccessLevelが見られ、コンソールは現在値または生の履歴を1つのJSONリクエストとして読みます。境界値はサーバーが公開した上限ではなくStudio自身のものです。計測した4つのサーバーのうち2つは自ら公開した上限を超える要求も処理し、1つは上限を0として公開していました。Methodノードは一覧されるだけで呼び出されません。Microsoft OPC PLC 2.15.10、open62541 1.5.9、Python asyncua 2.1.0、Eclipse Miloのデモで検証済み |
 | **MTConnect** | なし：共用の `node:http(s)` トランスポート上で動く本リポジトリ独自のクライアント（ポート5000） | 構造上の読み取り専用。リクエスト表は九つのルートだけで、そのすべてがGETなので、送るPUTもPOSTもストリームもない。デバイスはコンテナ、data itemとconditionは値・タイムスタンプ・シーケンスを列に持つリレーション、各assetのXMLはSourceタブで開く |
+| **Modbus** | なし：共用の送信規則を通る raw socket 上で動く本リポジトリ独自のクライアント（ポート502、MODBUS/TCP Security は802） | 構造上の読み取り専用。エンコーダが組み立てられるのは四つの読み取りファンクションコードとデバイス識別だけで、書き込みを組み立てる関数は存在せず、バルブが送出する全バイトを再検査します。Modbus にはディスカバリがないため、ツリーは接続とともに保持されるレジスタマップから作られ、読み取りはそのマップが名前を付けたポイントに対する一つの JSON リクエストです |
 | **Redis** | `ioredis` | コマンドエディタ、キーブラウザ、INFOベースの監視 |
 
 > **トランスポート層のセキュリティはエンジンごとではなく横断的な機能です。** SSHトンネルはproviderが接続する前に張られ、接続先はローカルのエンドポイントに書き換えられます。つまりエンジンに依存せず、hostとportが設定された接続であれば適用されます。ただしKafkaの接続はトンネルを拒否します。Kafkaクライアントは各brokerにそのbrokerが広告するアドレスで接続し、1つのアドレスだけを転送するトンネルはそのアドレスを運べないためです。接続文字列で入力した接続（MongoDB、Couchbase、ClickHouseで選択できます）はhostもportも持たないためトンネルされません。SQLiteとDuckDBも同様です。SSL/TLSパネルが実際に効くのはPostgreSQL、MySQL、SQL Server、Couchbase、ClickHouse、Druid、Elasticsearch、OpenSearch、Trino、Prometheus、Apache Kafkaです。Trinoでは任意ではなく必須に近い意味を持ちます。コーディネータが平文HTTP上のパスワードを拒否するためです。Oracle、MongoDB、Redisはこの設定を無視するため、この3つで暗号化されるかどうかはダイアログの選択ではなく接続文字列の内容次第になります。

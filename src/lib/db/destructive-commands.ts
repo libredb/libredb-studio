@@ -543,6 +543,11 @@ export const NON_SQL_DESTRUCTIVE_VOCABULARY: Readonly<Partial<Record<DatabaseTyp
   // there is no destructive verb to find. The row names no operation ON PURPOSE, in the shape Prometheus and Kafka
   // use: naming one would claim this provider can send it.
   mtconnect: { operations: new Set<string>(), read: () => [], decidesAlone: true, safetyAnalysis: false },
+  // Modbus (#1723): the row exists because `readsSqlText` says this engine's text is not SQL, and
+  // it names NO operation on purpose, in the shape MTConnect and Prometheus use. The encoder builds
+  // four read function codes and the identification request and nothing else, so there is no
+  // destructive verb to find; naming one would claim this provider can send it.
+  modbus: { operations: new Set<string>(), read: () => [], decidesAlone: true, safetyAnalysis: false },
 
   // NETCONF (#1724): the console reads one JSON read request naming a datastore, a path and a bound, so there is no
   // destructive verb to find. The operations list is empty BY CONSTRUCTION rather than by this version's scope:

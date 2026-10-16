@@ -1,0 +1,43 @@
+# The OPC UA capture fixture as a compose service (#1677). NOT a compose file on its own: this one
+# block is to be merged into `database-compose.yml` by whoever owns that file. It is kept here
+# because six sessions are editing that file and a seventh writing into it would overwrite one.
+#
+# It is the `docker run` line of `tests/fixtures/opcua/README.md`, unchanged in every part that the
+# captures depend on. THE FLAGS ARE THE FIXTURE: `--hn` is what adds the one historized node, and
+# the node counts every comment under `src/lib/db/providers/industrial/opcua/` carries were measured
+# against this exact command line. Changing one means re-running `tests/live/opcua-evidence.ts` and
+# moving those numbers with it.
+opcua:
+  # Tag AND digest: the digest is what binds, the tag is what tells a reader which release the
+  # captures were taken from. MEASURED: `imagetools inspect opc-plc:2.15.10` answers exactly this
+  # digest, so the two name one image rather than two claims.
+  image: mcr.microsoft.com/iotedge/opc-plc:2.15.10@sha256:28bbdaa2e8781fe3b8bda1bbd2d4ebe0ad5bcb1fbb83f69c74b8a92efa7fe75c
+  container_name: libredb-opcua
+  hostname: libredb-opcua
+  restart: unless-stopped
+  command:
+    - --pn=50000
+    - --autoaccept
+    - --unsecuretransport
+    - --ut
+    - --sph
+    - --hn
+    - --slownodes=3
+    - --fastnodes=3
+  ports:
+    # Loopback only, and here it is the whole point rather than a habit: the flags above make this
+    # server accept any client certificate on an unsecured channel. Published without the host
+    # address, Docker's default is 0.0.0.0, and the fixture answered on every interface of whatever
+    # machine ran it. `tests/unit/db/opcua/live-environment.test.ts` holds this line.
+    - "127.0.0.1:54840:50000"
+  # NO HEALTHCHECK, and the reason is measured rather than an omission. A healthcheck runs INSIDE
+  # the container, and nothing in this image can speak OPC UA to ask the server whether it is up:
+  # `nc` and `wget` are absent (checked in the image), `curl` is present but OPC UA is a binary
+  # protocol over `opc.tcp://` that curl cannot talk, the image declares no healthcheck of its own,
+  # and the server serves no HTTP endpoint to probe. A `curl` line here would report healthy on
+  # something it never measured, which is worse than none.
+  #
+  # Readiness therefore belongs to the caller, and `docker/opcua/ci-step.yml` carries it as two
+  # independent checks: the server's own `PLC simulation started` line, and a real GetEndpoints
+  # through `tests/live/opcua-endpoints-probe.ts`. Neither is a TCP connect, because a published
+  # port answers as soon as Docker's proxy binds it, which is before the server can speak.

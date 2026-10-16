@@ -992,6 +992,7 @@ export interface ProviderCapabilities {
     | "kubectl"
     | "opcua"
     | "mtconnect"
+    | "modbus"
     | "netconf";
   supportsExplain: boolean;
   /**
@@ -1035,6 +1036,41 @@ export interface ProviderCapabilities {
    * column.
    */
   inlineEditRefusedColumns?: { readonly type: string; readonly reason: string };
+  /**
+   * The result columns this engine's own vocabulary names in a way the masking rules would
+   * otherwise read as personal data, where the value is not personal data at all.
+   *
+   * `column` is a regular expression source matched against the result's column NAME, because
+   * the masking rules match on the name too (`detectSensitiveColumnsFromConfig` is handed
+   * `fields: string[]` and nothing else) and this engine declares no `columnTypes` to match on.
+   * `reason` is shown in the column header where the masked-column lock would have been, so the
+   * question "why is this one not masked" is answered where the reader already looks. A string
+   * pattern rather than a `RegExp` because capabilities travel to the client as JSON.
+   *
+   * ANCHOR IT. Measured: an unanchored `address` reaches `ip_address` too, which belongs to the
+   * IP rule, so an exemption written for one column of one engine crosses into a second rule.
+   * `tests/unit/db/masking-exemption-guard.test.ts` measures which protected names a declared
+   * pattern reaches and holds each declarer to the set it was accepted for.
+   *
+   * It exempts, it never adds: a column this does not name is masked exactly as before, so no
+   * engine can widen what another engine's user sees.
+   *
+   * Modbus is the case: a read answers a column named `address`
+   * (`providers/industrial/modbus/read.ts`), the zero-based PDU register the caller asked for
+   * rather than a place; `builtin-address` stars out the one value the request was about.
+   *
+   * WHERE THIS BOUNDARY WILL BREAK. The exemption is read by the grid alone, and that is enough
+   * TODAY only because the two other surfaces that mask cannot reach the engines needing it: the
+   * Graph tab is offered only for a result holding a graph value (`hasGraphValues`), and the
+   * column profiler only where `offersColumnProfiling` is true, which every one of the eighteen
+   * JSON dialects declares false. The day a JSON dialect opens profiling, this exemption has to
+   * travel to `DataProfiler.tsx` with it, or the same column reads one way in the grid and
+   * another in the profiler.
+   *
+   * Optional for the same published-interface reason as `supportsInlineRowEdit`; absent exempts
+   * no column.
+   */
+  maskingExemptColumns?: { readonly column: string; readonly reason: string };
   /**
    * Whether this provider can take the rows the Generate Test Data dialog writes
    * (`src/components/TestDataGenerator.tsx`): one multi-row `INSERT INTO ... VALUES` for a

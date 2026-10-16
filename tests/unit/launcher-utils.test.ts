@@ -30,6 +30,7 @@ import {
   URL_PATH_VARIABLES,
 } from "../../bin/lib/launcher-utils.mjs";
 import { describeIf, missingUnixTool, resolveUnixTool } from "../helpers/posix-tools";
+import { howItFailed } from "../helpers/spawn-outcome";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "launcher-utils-test-"));
 /*
@@ -423,7 +424,8 @@ describeIf(missingUnixTool("tar"), "extractArchive", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    if (result.exitCode !== 0) throw new Error(`failed to build fixture tarball: ${result.stderr.toString()}`);
+    if (result.exitCode !== 0)
+      throw new Error(`building the fixture tarball ${howItFailed(result)}: ${result.stderr.toString()}`);
     return tarballPath;
   }
 

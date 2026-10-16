@@ -851,7 +851,7 @@ describe("createDatabaseProvider", () => {
   test("the factory error lists milvus among the supported types, before qdrant and the embedded store", async () => {
     const conn = makeConnection("not-an-engine");
     await expect(createDatabaseProvider(conn)).rejects.toThrow(
-      /Supported types: .*\bneo4j, milvus, qdrant, s3, mqtt, opcua, mtconnect, rabbitmq, kubernetes, netconf, libredb$/,
+      /Supported types: .*\bneo4j, milvus, qdrant, s3, mqtt, opcua, mtconnect, modbus, rabbitmq, kubernetes, netconf, libredb$/,
     );
   });
 
@@ -917,7 +917,7 @@ describe("createDatabaseProvider", () => {
   test("the factory error lists s3 between qdrant and kubernetes, kubernetes before the embedded store", async () => {
     const conn = makeConnection("not-an-engine");
     await expect(createDatabaseProvider(conn)).rejects.toThrow(
-      /Supported types: .*\bqdrant, s3, mqtt, opcua, mtconnect, rabbitmq, kubernetes, netconf, libredb$/,
+      /Supported types: .*\bqdrant, s3, mqtt, opcua, mtconnect, modbus, rabbitmq, kubernetes, netconf, libredb$/,
     );
   });
 
@@ -1029,6 +1029,10 @@ describe("createDatabaseProvider", () => {
       "kafka",
       "libredb",
       "libsql",
+      // No cancel either, and for a reason of its own: a read is one exchange at a time on a
+      // connection this provider does not hold open, and Modbus has no request that stops one in
+      // flight - the five requests MB-S1 allows are four reads and the identification read (#1723).
+      "modbus",
       "mongodb",
       // No cancel: a read is one subscription with its own budget, and there is no statement to stop.
       "mqtt",

@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { howItFailed } from "../../helpers/spawn-outcome";
 
 /**
  * Closes the gap named in the pull request: the threat suite
@@ -67,12 +68,12 @@ describe.skipIf(!nodeBetterSqliteTestable)(
         { timeout: 60_000 },
       );
       if (build.status !== 0) {
-        throw new Error(`bun build failed: ${build.stderr?.toString()}`);
+        throw new Error(`bun build ${howItFailed(build)}: ${build.stderr?.toString()}`);
       }
 
       const run = spawnSync("node", [bundlePath, dbPath], { timeout: 60_000 });
       if (run.status !== 0) {
-        throw new Error(`node harness failed: ${run.stderr?.toString() || run.stdout?.toString()}`);
+        throw new Error(`node harness ${howItFailed(run)}: ${run.stderr?.toString() || run.stdout?.toString()}`);
       }
 
       const report = JSON.parse(run.stdout.toString()) as Record<string, unknown>;

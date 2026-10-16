@@ -8,6 +8,7 @@ import {
   type LLMConfig,
   type LLMStreamOptions,
 } from "@/lib/llm/types";
+import { NO_BACKOFF } from "../../helpers/llm-no-backoff";
 
 // ============================================================================
 // Mock State
@@ -102,13 +103,13 @@ describe("GeminiProvider", () => {
 
   describe("constructor", () => {
     test("creates instance with valid config", () => {
-      const provider = new GeminiProvider(makeConfig());
+      const provider = new GeminiProvider(makeConfig(), NO_BACKOFF);
       expect(provider.name).toBe("gemini");
       expect(provider.config.model).toBe("gemini-2.0-flash");
     });
 
     test("throws LLMConfigError without apiKey", () => {
-      expect(() => new GeminiProvider(makeConfig({ apiKey: undefined }))).toThrow(LLMConfigError);
+      expect(() => new GeminiProvider(makeConfig({ apiKey: undefined }), NO_BACKOFF)).toThrow(LLMConfigError);
     });
   });
 
@@ -118,7 +119,7 @@ describe("GeminiProvider", () => {
 
   describe("stream()", () => {
     test("returns ReadableStream on success", async () => {
-      const provider = new GeminiProvider(makeConfig());
+      const provider = new GeminiProvider(makeConfig(), NO_BACKOFF);
       const stream = await provider.stream(makeStreamOptions());
 
       expect(stream).toBeInstanceOf(ReadableStream);
@@ -127,13 +128,13 @@ describe("GeminiProvider", () => {
     });
 
     test("passes model from options", async () => {
-      const provider = new GeminiProvider(makeConfig());
+      const provider = new GeminiProvider(makeConfig(), NO_BACKOFF);
       const stream = await provider.stream(makeStreamOptions({ model: "gemini-pro" }));
       expect(stream).toBeInstanceOf(ReadableStream);
     });
 
     test("passes system instruction", async () => {
-      const provider = new GeminiProvider(makeConfig());
+      const provider = new GeminiProvider(makeConfig(), NO_BACKOFF);
       const stream = await provider.stream(
         makeStreamOptions({
           messages: [
@@ -148,7 +149,7 @@ describe("GeminiProvider", () => {
     // B20: an operator behind an egress proxy or on a regional endpoint sets
     // LLM_API_URL and this SDK's RequestOptions.baseUrl is where it has to land.
     test("routes through config.apiUrl when one is configured", async () => {
-      const provider = new GeminiProvider(makeConfig({ apiUrl: "https://proxy.example.com/v1beta" }));
+      const provider = new GeminiProvider(makeConfig({ apiUrl: "https://proxy.example.com/v1beta" }), NO_BACKOFF);
       await provider.stream(makeStreamOptions());
 
       // The origin, not the versioned URL: this SDK appends the version itself.
@@ -156,7 +157,7 @@ describe("GeminiProvider", () => {
     });
 
     test("leaves baseUrl unset when no apiUrl is configured, keeping the SDK's Google default", async () => {
-      const provider = new GeminiProvider(makeConfig());
+      const provider = new GeminiProvider(makeConfig(), NO_BACKOFF);
       await provider.stream(makeStreamOptions());
 
       expect(capturedRequestOptions?.baseUrl).toBeUndefined();
@@ -168,7 +169,7 @@ describe("GeminiProvider", () => {
         stream: mockStreamChunks([]),
       });
 
-      const provider = new GeminiProvider(makeConfig());
+      const provider = new GeminiProvider(makeConfig(), NO_BACKOFF);
       const stream = await provider.stream(makeStreamOptions());
       const text = await readStream(stream);
       expect(text).toBe("");
@@ -185,7 +186,7 @@ describe("GeminiProvider", () => {
         throw new Error("Invalid API key provided");
       };
 
-      const provider = new GeminiProvider(makeConfig());
+      const provider = new GeminiProvider(makeConfig(), NO_BACKOFF);
       await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(LLMAuthError);
     });
 
@@ -194,7 +195,7 @@ describe("GeminiProvider", () => {
         throw new Error("Unauthorized access");
       };
 
-      const provider = new GeminiProvider(makeConfig());
+      const provider = new GeminiProvider(makeConfig(), NO_BACKOFF);
       await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(LLMAuthError);
     });
 
@@ -203,7 +204,7 @@ describe("GeminiProvider", () => {
         throw new Error("Quota exceeded for this project");
       };
 
-      const provider = new GeminiProvider(makeConfig());
+      const provider = new GeminiProvider(makeConfig(), NO_BACKOFF);
       await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(LLMRateLimitError);
     });
 
@@ -212,7 +213,7 @@ describe("GeminiProvider", () => {
         throw new Error("Rate limit reached");
       };
 
-      const provider = new GeminiProvider(makeConfig());
+      const provider = new GeminiProvider(makeConfig(), NO_BACKOFF);
       await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(LLMRateLimitError);
     });
 
@@ -221,7 +222,7 @@ describe("GeminiProvider", () => {
         throw new Error("Content blocked by safety filters");
       };
 
-      const provider = new GeminiProvider(makeConfig());
+      const provider = new GeminiProvider(makeConfig(), NO_BACKOFF);
       await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(LLMSafetyError);
     });
 
@@ -230,7 +231,7 @@ describe("GeminiProvider", () => {
         throw new Error("Response was blocked");
       };
 
-      const provider = new GeminiProvider(makeConfig());
+      const provider = new GeminiProvider(makeConfig(), NO_BACKOFF);
       await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(LLMSafetyError);
     });
 
@@ -239,7 +240,7 @@ describe("GeminiProvider", () => {
         throw new Error("Something unexpected happened");
       };
 
-      const provider = new GeminiProvider(makeConfig());
+      const provider = new GeminiProvider(makeConfig(), NO_BACKOFF);
       await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(LLMStreamError);
     });
 
@@ -248,7 +249,7 @@ describe("GeminiProvider", () => {
         throw "string error value";
       };
 
-      const provider = new GeminiProvider(makeConfig());
+      const provider = new GeminiProvider(makeConfig(), NO_BACKOFF);
       await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(LLMStreamError);
     });
   });
@@ -264,7 +265,7 @@ describe("GeminiProvider abort signal", () => {
 
   test("hands the caller's signal to the SDK request", async () => {
     const controller = new AbortController();
-    await new GeminiProvider(makeConfig()).stream(makeStreamOptions({ signal: controller.signal }));
+    await new GeminiProvider(makeConfig(), NO_BACKOFF).stream(makeStreamOptions({ signal: controller.signal }));
     expect(capturedStreamRequestOptions?.signal).toBe(controller.signal);
   });
 
@@ -279,12 +280,16 @@ describe("GeminiProvider abort signal", () => {
       return { stream: mockStreamChunks(["sent anyway"]) };
     };
     await expect(
-      new GeminiProvider(makeConfig()).stream(makeStreamOptions({ signal: controller.signal })),
+      new GeminiProvider(makeConfig(), NO_BACKOFF).stream(makeStreamOptions({ signal: controller.signal })),
     ).rejects.toThrow();
     expect(calls).toBe(0);
   });
 
   test("an abort during the retry backoff sends no second request", async () => {
+    // THE ONE CASE HERE THAT KEEPS THE REAL BACKOFF, because the backoff is what it asserts: the
+    // abort has to land inside the wait, and `NO_BACKOFF` leaves no wait to land in. With a zero
+    // delay the second attempt goes out before the 10 ms abort and `toHaveBeenCalledTimes(1)`
+    // reads 3 (MEASURED - all four provider files failed exactly this case).
     const controller = new AbortController();
     let calls = 0;
     mockGenerateContentStream = async () => {

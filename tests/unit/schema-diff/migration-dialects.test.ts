@@ -58,6 +58,8 @@ const COLUMN_GRAMMAR: Record<DatabaseType, [string, string] | null> = {
   opcua: null,
   // No migration dialect: a data item's shape is the agent's own model, which no client writes (#1722).
   mtconnect: null,
+  // No migration dialect: a register's meaning is the device vendor's, and no client writes it (#1723).
+  modbus: null,
   netconf: null,
 };
 

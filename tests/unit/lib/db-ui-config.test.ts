@@ -122,6 +122,7 @@ const ALL_TYPES: DatabaseType[] = [
   "rabbitmq",
   "opcua",
   "mtconnect",
+  "modbus",
   "netconf",
 ];
 
@@ -194,6 +195,23 @@ describe("db-ui-config", () => {
       expect(getDBConfig("druid").label).toBe("Apache Druid");
       expect(getDBConfig("druid").defaultPort).toBe("8888");
       expect(getDBConfig("druid").connectionFields).toEqual(["host", "port", "user", "password"]);
+    });
+
+    test("modbus offers Host, Port and the register map, and no credential at all", () => {
+      // The real config, not the modal's mirror of it. The modal's own case proves the box is drawn
+      // for an engine that declares the field; this proves the engine declares it. Removing it from
+      // `connectionFields` turns THIS red, which the mirrored case could not do.
+      expect(getDBConfig("modbus").connectionFields).toEqual(["host", "port", "registerMap"]);
+      // Modbus TCP defines no authentication, so a credential box would be a control with nothing
+      // behind it.
+      for (const credential of ["user", "password", "authMethod", "privateKey"]) {
+        expect(getDBConfig("modbus").connectionFields).not.toContain(credential);
+      }
+      // The map is named and explained, because an empty box on an engine with no discovery looks
+      // like a broken connection rather than an unnamed device.
+      expect(getDBConfig("modbus").fieldLabels?.registerMap).toBe("Register map");
+      expect(getDBConfig("modbus").fieldHints?.registerMap).toContain("zero-based PDU address");
+      expect(getDBConfig("modbus").fieldPlaceholders?.registerMap).toContain('"table": "holding_register"');
     });
 
     test("druid offers no database field, because Druid has exactly one catalog", () => {
@@ -736,6 +754,7 @@ const FIELD_CHECKLIST: Record<ConnectionField, true> = {
   role: true,
   securityMode: true,
   serverCertificateThumbprint: true,
+  registerMap: true,
   hostKeyFingerprint: true,
 };
 const EVERY_FIELD = Object.keys(FIELD_CHECKLIST) as ConnectionField[];
@@ -1017,7 +1036,7 @@ describe("declared connection-field copy (#1085)", () => {
     }
   });
 
-  test("only libsql, db2, prometheus, kafka, etcd, neo4j, milvus, qdrant, the two InfluxDB types, oxia, databend, bigquery, snowflake, spark, s3, kubernetes, mqtt, firestore, rabbitmq, opcua and mtconnect declare field copy, so every other engine draws every label and hint it drew before", () => {
+  test("only libsql, db2, prometheus, kafka, etcd, neo4j, milvus, qdrant, the two InfluxDB types, oxia, databend, bigquery, snowflake, spark, s3, kubernetes, mqtt, firestore, rabbitmq, opcua, mtconnect and modbus declare field copy, so every other engine draws every label and hint it drew before", () => {
     const declared = Object.entries(DB_UI_CONFIG)
       .filter(([, config]) => config.fieldLabels !== undefined || config.fieldHints !== undefined)
       .map(([type]) => type);
@@ -1045,6 +1064,9 @@ describe("declared connection-field copy (#1085)", () => {
       // OPC UA relabels Host as the endpoint URL and adds its own two boxes, each with a hint (#1677).
       "opcua",
       "mtconnect",
+      // Modbus names and explains its register map: the engine answers no discovery request, so the
+      // document is the only thing that can name a point and the box has to say so (#1723).
+      "modbus",
     ]);
     // The control that the walk saw the whole table rather than nothing.
     expect(Object.keys(DB_UI_CONFIG).sort()).toEqual([...ALL_TYPES].sort());
@@ -1575,6 +1597,9 @@ describe("db-showcase", () => {
         // name on a page of databases, so no existing engine moves for it (#1677).
         "opcua",
         "mtconnect",
+        // Last, behind the address space and the agent: a device's registers are named only by a map
+        // the user writes, which is the narrowest name of the three (#1723).
+        "modbus",
         // network engineers rather than by the readers a page of databases is written for (#1724).
         "netconf",
       ]);

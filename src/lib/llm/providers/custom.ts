@@ -4,6 +4,7 @@
  */
 
 import { BaseLLMProvider } from "../base-provider";
+import type { RetryOptions } from "../utils/retry";
 import {
   type LLMConfig,
   type LLMStreamOptions,
@@ -22,8 +23,8 @@ import { logger } from "@/lib/logger";
 export class CustomProvider extends BaseLLMProvider {
   private baseUrl: string;
 
-  constructor(config: LLMConfig) {
-    super(config);
+  constructor(config: LLMConfig, retryOptions?: RetryOptions) {
+    super(config, retryOptions);
     this.validate();
     this.baseUrl = this.ensureApiUrl();
   }

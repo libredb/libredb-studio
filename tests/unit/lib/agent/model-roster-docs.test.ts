@@ -69,7 +69,7 @@ const WORDS: Readonly<Record<number, string>> = {
   35: "Thirty-five",
   36: "Thirty-six",
   37: "Thirty-seven",
-  38: "Thirty-eight",
+  38: "Thirty-nine",
   39: "Thirty-nine",
   40: "Forty",
   41: "Forty-one",

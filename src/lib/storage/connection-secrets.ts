@@ -103,6 +103,10 @@ export const CONNECTION_FIELDS: Record<keyof DatabaseConnection, FieldClass> = {
   // leak has to guess from two values to one. See the field's own doc in types.ts.
   apiKeyId: "secret",
   apiKeySecret: "secret",
+  // Addresses on a device the user wrote down, not a credential: Modbus TCP defines no authentication at
+  // all, so there is nothing here to leak. Storing it `secret` would also mask it in the dialog, and a
+  // document nobody can read is a document nobody can correct.
+  registerMap: "public",
 };
 
 export const SSL_FIELDS: Record<keyof SSLConfig, FieldClass> = {

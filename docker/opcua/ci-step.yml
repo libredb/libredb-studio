@@ -1,0 +1,67 @@
+# The OPC UA live check's CI step (#1677). NOT a workflow: one step, to be merged into
+# `.github/workflows/ci.yml` by whoever owns that file, beside the RabbitMQ step it is modelled on.
+#
+# The fixture is the one `tests/fixtures/opcua/README.md` records, with the same flags, because the
+# flags ARE the fixture: `--hn` is what adds the one historized node, and the node counts every
+# comment under `src/lib/db/providers/industrial/opcua/` carries were measured against this exact
+# command line.
+#
+# WHY TWO READINESS CHECKS, AND WHY NEITHER IS A TCP CONNECT. A published port answers as soon as
+# Docker's proxy binds it, which is before the server behind it can speak, so `/dev/tcp` or `nc`
+# measures Docker rather than the fixture. The two below are independent of each other and of the
+# proxy: the first reads what the SERVER says about itself, the second speaks the protocol.
+# Both were run against this image on 15 Oct 2026 and both answered: the log line appears, and
+# GetEndpoints returned 7 endpoints.
+- name: OPC UA read-only check
+  run: |
+    set -euo pipefail
+    image="mcr.microsoft.com/iotedge/opc-plc:2.15.10@sha256:28bbdaa2e8781fe3b8bda1bbd2d4ebe0ad5bcb1fbb83f69c74b8a92efa7fe75c"
+    # The digest reaches the suite, so the image this step runs and the image the fixture documents
+    # cannot drift apart: `tests/unit/db/opcua/live-environment.test.ts` compares them.
+    export OPCUA_LIVE_DIGEST="${image#*@}"
+    export LIBREDB_OPCUA_LIVE_URL="opc.tcp://127.0.0.1:54840/"
+    trap 'docker rm -f libredb-ci-opcua > /dev/null' EXIT
+    # Loopback only. Without the host address Docker publishes on 0.0.0.0, and this server is
+    # started --autoaccept --unsecuretransport: it would accept any client on every interface of
+    # the runner.
+    docker run -d --name libredb-ci-opcua -p 127.0.0.1:54840:50000 "$image" \
+      --pn=50000 --autoaccept --unsecuretransport --ut --sph --hn --slownodes=3 --fastnodes=3
+
+    # 1. The server's own statement. opc-plc prints this once the simulation is up.
+    logged=""
+    end=$((SECONDS + 90))
+    while [ "$SECONDS" -lt "$end" ]; do
+      if docker logs libredb-ci-opcua 2>&1 | grep -q "PLC simulation started"; then
+        logged=yes
+        break
+      fi
+      sleep 1
+    done
+    if [ -z "$logged" ]; then
+      echo "NOT MEASURED: the OPC UA fixture never printed its start line within 90 s, so nothing below ran."
+      docker logs --tail 50 libredb-ci-opcua
+      exit 1
+    fi
+
+    # 2. The protocol. GetEndpoints on an unsecured channel, before any session exists: it proves a
+    # reader can reach the server, which the log line alone does not.
+    answered=""
+    end=$((SECONDS + 60))
+    while [ "$SECONDS" -lt "$end" ]; do
+      if bun tests/live/opcua-endpoints-probe.ts "$LIBREDB_OPCUA_LIVE_URL" | grep -q "GETENDPOINTS_OK"; then
+        answered=yes
+        break
+      fi
+      sleep 2
+    done
+    if [ -z "$answered" ]; then
+      echo "NOT MEASURED: the fixture started but answered no GetEndpoints within 60 s, so the live check never ran."
+      docker logs --tail 50 libredb-ci-opcua
+      exit 1
+    fi
+
+    # Two runners. The provider reaches the network through `node-opcua-client`, and Bun and Node
+    # do not resolve or socket alike; a check that ran on one of them would be a claim about one.
+    bun tests/live/opcua-live-check.ts
+    bun build --target=node --outfile=/tmp/opcua-live-check.mjs tests/live/opcua-live-check.ts
+    node /tmp/opcua-live-check.mjs

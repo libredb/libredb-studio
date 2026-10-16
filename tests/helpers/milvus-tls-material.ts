@@ -6,6 +6,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { howItFailed } from "./spawn-outcome";
 
 export interface MilvusTlsMaterial {
   readonly dir: string;
@@ -32,7 +33,7 @@ export function makeMilvusTlsMaterial(): MilvusTlsMaterial {
   writeFileSync(join(dir, "openssl.cnf"), "[req]\ndistinguished_name = dn\n[dn]\n");
   const openssl = (...args: string[]) => {
     const run = Bun.spawnSync(["openssl", ...args], { cwd: dir, env, stdout: "ignore", stderr: "pipe" });
-    if (run.exitCode !== 0) throw new Error(`openssl ${args.join(" ")} failed: ${run.stderr.toString()}`);
+    if (run.exitCode !== 0) throw new Error(`openssl ${args.join(" ")} ${howItFailed(run)}: ${run.stderr.toString()}`);
   };
   let serial = 1000;
   const certificate = (name: string, subject: string, extensions: readonly string[], issuer = name) => {

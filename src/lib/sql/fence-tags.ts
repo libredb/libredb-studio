@@ -135,6 +135,8 @@ const ENGINE_FENCE_TAGS: Readonly<Record<DatabaseType, true>> = Object.freeze({
   opcua: true,
   // An ```mtconnect block holds one request line in the agent's own URL grammar, which the console runs as it is.
   mtconnect: true,
+  // A ```modbus block holds one JSON read request, which the console runs as it is.
+  modbus: true,
   // A ```netconf block holds one JSON read request naming a datastore, a path and a limit, which
   // the console runs as it is. The device's own language is XML and nothing here writes any.
   netconf: true,

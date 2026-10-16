@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TLSSocket } from "node:tls";
 import { constants, createGzip } from "node:zlib";
+import { howItFailed } from "./spawn-outcome";
 
 export interface Seen {
   readonly method: string;
@@ -178,7 +179,7 @@ export function makeCertificates(): TransportCertificates {
   const env = { ...process.env, OPENSSL_CONF: at("openssl.cnf") };
   const openssl = (...args: string[]): void => {
     const run = Bun.spawnSync(["openssl", ...args], { cwd: dir, env, stdout: "ignore", stderr: "pipe" });
-    if (run.exitCode !== 0) throw new Error(`openssl ${args.join(" ")} failed: ${run.stderr.toString()}`);
+    if (run.exitCode !== 0) throw new Error(`openssl ${args.join(" ")} ${howItFailed(run)}: ${run.stderr.toString()}`);
   };
   let serial = 2000;
   const make = (name: string, subject: string, extensions: readonly string[], issuer = name): Pair => {

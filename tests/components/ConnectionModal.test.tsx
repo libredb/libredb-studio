@@ -339,6 +339,9 @@ const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
     "role",
   ],
   spark: ["host", "port", "password", "database", "schema"],
+  // Modbus takes no credential at all - the protocol defines none - and takes the register map,
+  // the only thing that can name a point on an engine that answers no discovery request.
+  modbus: ["host", "port", "registerMap"],
 };
 /**
  * A field list one test declares on top of the mirrored table, reset before every test. The dataServers cases
@@ -2198,6 +2201,11 @@ describe("ConnectionModal", () => {
         ["host", "port", "user", "password", "database", "region", "allowInsecureAuth"],
       ],
       ["sqlite", "sqlite", {}, labelsFor("database"), ["database"]],
+      // Modbus draws the register map beside Host and Port and no credential at all: the protocol
+      // defines none. The map is the only thing that can name a point on an engine that answers no
+      // discovery request, so a render without this box is a connection that can only read raw
+      // addresses - which is what this case is here to catch.
+      ["modbus", "modbus", {}, labelsFor("host", "port", "registerMap"), ["host", "port", "registerMap"]],
     ];
 
     test.each(DECLARED)(

@@ -1,0 +1,74 @@
+# The Modbus step of `.github/workflows/ci.yml`, delivered on its own.
+#
+# Not written into that file directly, for the reason `docker/modbus/compose-service.yml` gives:
+# five engines land in one round and five sessions editing one file is a small rerun of the merge
+# this repository just finished.
+#
+# Paste the step below into the job that runs the other live checks, after the functional smoke.
+# It needs no `if:` and no secret. The image is the one `docker/modbus/compose-service.yml`
+# declares, and `tests/unit/db/modbus/live-environment.test.ts` holds the two equal, so CI and a
+# developer's machine run the same device.
+#
+# WHAT THE TWO READINESS CHECKS ARE FOR. The first asks whether anything there speaks Modbus: a
+# reply whose MBAP header echoes what was sent. The second asks whether a known register answers
+# the value the fixture is configured with. Both build their frames by hand rather than going
+# through the provider being measured, because a readiness check that runs through the thing under
+# test cannot tell a broken fixture from a broken provider and would name the wrong one.
+#
+# The second plainly implies the first, and they are still asked separately: it is what lets the
+# step say WHICH of the two failed. Nothing speaking Modbus and a server serving another table's
+# values are different things to go and fix.
+#
+# NOT `/dev/tcp`. The first question used to be whether the port accepted a connection, and
+# MEASURED, against a published container port that is answered by Docker itself: 5 ms for the
+# accept against 332 ms for the server behind it. A published port accepts while nothing inside
+# the container is listening, so "the port is open" is not a readiness fact.
+#
+# AND WHAT THE RED SAYS. A fixture that never became ready exits before the live check runs and
+# says NOT MEASURED, because nothing about the product was measured. A live check that ran and
+# failed says which claim failed. Those are two different results and the step keeps them apart:
+# the third state is in the sentence rather than hidden inside a red.
+
+      # The Modbus provider's live check (#1723): the four tables of a third-party fixture read
+      # through the real provider, the refusals it makes before dialling, and the device asked
+      # afterwards whether it can still answer somebody else. It runs on both runtimes, because
+      # the provider ships to both and the Node path is the one that bundles.
+      - name: Modbus live check
+        run: |
+          image="oitc/modbus-server:2.3.0@sha256:32bfe144512e1f070cf7e7e2513cdcb774d74db142ee5dbad45b21d6d705ab97"
+          export MODBUS_LIVE_DIGEST="${image#*@}"
+          trap 'docker rm -f libredb-ci-modbus > /dev/null' EXIT
+          docker run -d --name libredb-ci-modbus \
+            -v "$PWD/docker/modbus/modbus_server.json:/app/modbus_server.json:ro" \
+            -p 127.0.0.1:1502:5020 "$image"
+          # The address the probes use AND the sentences name, from one place: the sentences said
+          # "on 1502" while the probe read MODBUS_PROBE, so a run against another port was
+          # refused with a sentence naming a port it had never asked.
+          export MODBUS_PROBE="${MODBUS_PROBE:-127.0.0.1:1502}"
+          ready=""
+          end=$((SECONDS + 60))
+          while [ "$SECONDS" -lt "$end" ]; do
+            # Two questions, and the second plainly implies the first. They are asked separately
+            # so the two failures can be told apart below, not for coverage.
+            if bun tests/live/modbus-ready-probe.ts --speaks && bun tests/live/modbus-ready-probe.ts --tables; then
+              ready=yes
+              break
+            fi
+            sleep 1
+          done
+          if [ -z "$ready" ]; then
+            # Which of the two it was, in its own sentence. Both are NOT MEASURED, because in
+            # neither case did anything about this repository's code get measured, but a reader
+            # who has to fix one of them needs to know which one.
+            if bun tests/live/modbus-ready-probe.ts --speaks; then
+              echo "NOT MEASURED: a Modbus server answered on $MODBUS_PROBE but its tables are not this fixture's, so the live check never ran."
+            else
+              echo "NOT MEASURED: nothing speaking Modbus answered on $MODBUS_PROBE within 60 s, so the live check never ran."
+            fi
+            docker logs --tail 50 libredb-ci-modbus
+            exit 1
+          fi
+          bun tests/live/modbus-live-check.ts
+          out="$(mktemp -d)"
+          bun build tests/live/modbus-live-check.ts --target=node --outfile "$out/live.mjs"
+          node "$out/live.mjs"
