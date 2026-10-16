@@ -1,8 +1,10 @@
 import type { McpServer } from "@modelcontextprotocol/server";
+import { readMcpWriteEnabled } from "../write-switch";
 import type { McpConnectionContext } from "../context";
 import { InspectSchemaInputSchema, registerInspectSchema } from "./inspect-schema";
 import { ListConnectionsInputSchema, registerListConnections } from "./list-connections";
 import { RunReadQueryInputSchema, registerRunReadQuery } from "./run-read-query";
+import { RunQueryInputSchema, registerRunQuery } from "./run-query";
 
 /**
  * The one map from tool name to the zod object that tool registers (#246).
@@ -15,6 +17,7 @@ export const MCP_TOOL_INPUT_SCHEMAS = {
   list_connections: ListConnectionsInputSchema,
   inspect_schema: InspectSchemaInputSchema,
   run_read_query: RunReadQueryInputSchema,
+  run_query: RunQueryInputSchema,
 } as const;
 
 export type McpToolName = keyof typeof MCP_TOOL_INPUT_SCHEMAS;
@@ -28,4 +31,7 @@ export function registerStudioTools(server: McpServer, context: McpConnectionCon
   registerListConnections(server, context);
   registerInspectSchema(server, context);
   registerRunReadQuery(server, context);
+  // The write tool is registered only when the operator turned it on (#1774); off, it is absent
+  // from tools/list rather than answered with a refusal, so no client is told the switch exists.
+  if (readMcpWriteEnabled()) registerRunQuery(server, context);
 }

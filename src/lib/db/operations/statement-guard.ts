@@ -299,6 +299,28 @@ function findSideEffectWord(sql: string, allowPlanExecution: boolean): string | 
 }
 
 /**
+ * The statement-shape violations every execution path shares, checked cheapest and most certain
+ * first: unreadable text, text no single reading settles, a second statement after a terminator,
+ * then no statement at all. The agent path layers its read-only rules on top; the MCP write path
+ * (#1774) calls this alone, because a write is allowed but a second statement is not.
+ */
+export function inspectStatementShape(
+  sql: string,
+): Extract<
+  AgentStatementViolation,
+  "UNDETERMINABLE_TEXT" | "DIALECT_AMBIGUOUS_TEXT" | "MULTIPLE_STATEMENTS" | "NO_STATEMENT"
+> | null {
+  if (hasUnterminatedSpan(sql, DEFAULT_SQL_GRAMMAR)) return "UNDETERMINABLE_TEXT";
+
+  const shape = scanStatementShape(sql);
+  if (shape.dialectAmbiguous) return "DIALECT_AMBIGUOUS_TEXT";
+  if (shape.statementTail) return "MULTIPLE_STATEMENTS";
+
+  if (readOperativeKeyword(sql, DEFAULT_SQL_GRAMMAR) === null) return "NO_STATEMENT";
+  return null;
+}
+
+/**
  * Why this statement may not run on the agent path, or `null` when the guard
  * has no objection. `null` is NOT a safety claim — it means this layer found
  * nothing; the database-native profile still has to refuse whatever it missed.
@@ -312,14 +334,10 @@ export function inspectAgentStatement(
   sql: string,
   options: AgentStatementOptions = {},
 ): AgentStatementViolation | null {
-  if (hasUnterminatedSpan(sql, DEFAULT_SQL_GRAMMAR)) return "UNDETERMINABLE_TEXT";
+  const shapeViolation = inspectStatementShape(sql);
+  if (shapeViolation !== null) return shapeViolation;
 
-  const shape = scanStatementShape(sql);
-  if (shape.dialectAmbiguous) return "DIALECT_AMBIGUOUS_TEXT";
-  if (shape.statementTail) return "MULTIPLE_STATEMENTS";
-
-  const operative = readOperativeKeyword(sql, DEFAULT_SQL_GRAMMAR);
-  if (operative === null) return "NO_STATEMENT";
+  const operative = readOperativeKeyword(sql, DEFAULT_SQL_GRAMMAR)!;
   if (!READ_STATEMENTS.has(operative.keyword)) return "NON_READ_STATEMENT";
 
   return findSideEffectWord(sql, options.allowPlanExecution === true) === null ? null : "SIDE_EFFECT_KEYWORD";

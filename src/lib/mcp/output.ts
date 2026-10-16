@@ -26,6 +26,8 @@ export const MCP_TABLE_COMMENT_CAP_BYTES = 2_048;
 export const MCP_ENGINE_MESSAGE_CUT_SUFFIX = " (message cut at 4 KiB)";
 export const MCP_ENGINE_ERROR_PREFIX = "The database refused or failed the call: ";
 export const MCP_READ_ONLY_ANNOTATIONS = { readOnlyHint: true, openWorldHint: false } as const;
+/** The write tool is not read only, and its statement may change data (#1774). */
+export const MCP_WRITE_ANNOTATIONS = { readOnlyHint: false, destructiveHint: true, openWorldHint: false } as const;
 /** The same answer for a connection id that exists and one that does not, so no id can be probed. */
 export const MCP_NOT_VISIBLE_TEXT =
   "No connection with that id is available to this token. Call list_connections for the ids you can use.";

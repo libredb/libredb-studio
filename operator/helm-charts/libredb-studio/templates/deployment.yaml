@@ -290,10 +290,11 @@ spec:
             - name: AGENT_MODEL_TUNING_PATH
               value: "/app/model-tuning/{{ include "libredb-studio.agentTuningKey" . }}"
             {{- end }}
-            {{- /* The MCP server (#246): nothing by default, and all four variables as strings
-                   when mcp.enabled is true; the guards at the top of this file have already
-                   refused an enabled block without url or tokenLabel. Written before extraEnv,
-                   like the agent flag, so an extraEnv entry of the same name still wins. */}}
+            {{- /* The MCP server (#246): nothing by default, and the four base variables as strings
+                   when mcp.enabled is true, plus the write switch when writeEnabled is true; the
+                   guards at the top of this file have already refused an enabled block without url
+                   or tokenLabel. Written before extraEnv, like the agent flag, so an extraEnv entry
+                   of the same name still wins. */}}
             {{- with (.Values.mcp | default dict) }}
             {{- if .enabled }}
             - name: LIBREDB_MCP_ENABLED
@@ -304,6 +305,10 @@ spec:
               value: {{ .tokenLabel | quote }}
             - name: LIBREDB_MCP_TOKEN_TTL_DAYS
               value: {{ .tokenTtlDays | default 30 | quote }}
+            {{- if .writeEnabled }}
+            - name: LIBREDB_MCP_WRITE_ENABLED
+              value: "true"
+            {{- end }}
             {{- end }}
             {{- end }}
             {{- /* The agent's ledger directory, set by the chart because the image a
