@@ -467,6 +467,14 @@ describe("mapDatabaseError", () => {
     expect(result).toBeInstanceOf(ConnectionError);
   });
 
+  // The server's real 4060 sentence ENDS in "The login failed.", so it satisfies the
+  // "login failed" substring too - the more specific branch has to be read first (#1451).
+  test('the full 4060 sentence maps to ConnectionError, not the "login failed" it ends with', () => {
+    const err = new Error('Cannot open database "nope_db" requested by the login. The login failed.');
+    const result = mapDatabaseError(err, "mssql");
+    expect(result).toBeInstanceOf(ConnectionError);
+  });
+
   test('"syntax error" maps to QueryError', () => {
     const err = new Error('syntax error at or near "FORM"');
     const result = mapDatabaseError(err, "postgres", "SELECT * FORM users");

@@ -1653,6 +1653,12 @@ export class MSSQLProvider extends SQLBaseProvider {
   /** True when this instance was opened under the agent read-only profile. */
   private readonly readOnlyProfile: boolean;
 
+  /** SQL Server's "Cannot open database", which the 18456 that tedious keeps would otherwise speak for (#1451). */
+  private static readonly CANNOT_OPEN_DATABASE = 4060;
+
+  /** The server's 4060 message from the most recent connect attempt, if it sent one (#1451). */
+  private cannotOpenDatabaseMessage: string | null = null;
+
   constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderExecutionContext = {}) {
     super(config, options);
     // Server-injected only (see ProviderExecutionContext): the editor path builds
@@ -1876,6 +1882,18 @@ export class MSSQLProvider extends SQLBaseProvider {
         connectTimeout: this.poolConfig.acquireTimeout,
         requestTimeout: this.queryTimeout,
       },
+      // tedious emits every login error token here but keeps only the LAST as `loginError`, so the
+      // 4060 that precedes "Login failed for user" is taken from this event instead (#1451).
+      beforeConnect: (connection: unknown) => {
+        const emitter = connection as {
+          on(event: string, listener: (token: { number: number; message: string }) => void): void;
+        };
+        emitter.on("errorMessage", (token) => {
+          if (token.number === MSSQLProvider.CANNOT_OPEN_DATABASE) {
+            this.cannotOpenDatabaseMessage = token.message;
+          }
+        });
+      },
     };
 
     // Named instance support
@@ -1895,6 +1913,8 @@ export class MSSQLProvider extends SQLBaseProvider {
     if (this.pool) {
       return;
     }
+
+    this.cannotOpenDatabaseMessage = null;
 
     try {
       const config = this.buildConfig();
@@ -1938,12 +1958,23 @@ export class MSSQLProvider extends SQLBaseProvider {
         throw error;
       }
       throw new ConnectionError(
-        `Failed to connect to SQL Server: ${error instanceof Error ? error.message : error}`,
+        `Failed to connect to SQL Server: ${this.loginFailureMessage(error)}`,
         "mssql",
         this.config.host,
         this.config.port,
       );
     }
+  }
+
+  /**
+   * The server's 4060 when it sent one, else the driver's own message. A database that does not
+   * exist is answered with 4060 and then 18456, and reporting the latter reads as a wrong password (#1451).
+   */
+  private loginFailureMessage(error: unknown): string {
+    if (this.cannotOpenDatabaseMessage) {
+      return this.cannotOpenDatabaseMessage;
+    }
+    return error instanceof Error ? error.message : String(error);
   }
 
   public async disconnect(): Promise<void> {

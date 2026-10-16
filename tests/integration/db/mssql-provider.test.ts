@@ -181,6 +181,15 @@ class MockTransaction {
   }
 }
 
+/** The connection `beforeConnect` receives, which is where tedious emits every login error token (#1451). */
+class MockTediousConnection extends EventEmitter {}
+
+/**
+ * The tokens the server sends during a login, in order, and the failure the acquire ends with.
+ * Models the driver's real ordering: 4060 then 18456, rejecting with the last. `null` succeeds.
+ */
+let loginAnswer: { tokens: Array<{ number: number; message: string }>; error: Error } | null = null;
+
 /**
  * A real EventEmitter, because `mssql`'s ConnectionPool is one and emits `error` for a
  * background connection failure (a non-ESOCKET tedious error) as well as for a failed
@@ -201,7 +210,20 @@ class MockConnectionPool extends EventEmitter {
   /** How many times this pool was closed, which is how "the pool is ENDED" is observed. */
   public closeCount = 0;
 
+  /** The connection this pool handed `beforeConnect`. */
+  public tedious: MockTediousConnection | null = null;
+
   async connect() {
+    // The driver calls `beforeConnect` before connecting, on every connect rather than only a failing one (#1451).
+    const config = this._config as { beforeConnect?: (connection: unknown) => void } | undefined;
+    if (typeof config?.beforeConnect === "function") {
+      this.tedious = new MockTediousConnection();
+      config.beforeConnect(this.tedious);
+    }
+    if (loginAnswer) {
+      for (const token of loginAnswer.tokens) this.tedious?.emit("errorMessage", token);
+      throw loginAnswer.error;
+    }
     return this;
   }
 
@@ -596,6 +618,7 @@ describe("MSSQLProvider", () => {
     mockQueryFn = async (sql: string) => defaultQuery(sql);
     capturedInputs = [];
     cancelShouldThrow = false;
+    loginAnswer = null;
     provider = new MSSQLProvider(baseConfig);
   });
 
@@ -719,6 +742,31 @@ describe("MSSQLProvider", () => {
       await provider.connect();
 
       expect(lastPool?.listenerCount("error")).toBe(1);
+    });
+
+    // ── Login error tokens (#1451) ───────────────────────────────────────────
+
+    test("a database that does not exist reports the server's 4060, not the 18456 that follows it", async () => {
+      loginAnswer = {
+        tokens: [
+          { number: 4060, message: 'Cannot open database "nope_db" requested by the login. The login failed.' },
+          { number: 18456, message: "Login failed for user 'sa'." },
+        ],
+        error: new Error("Login failed for user 'sa'."),
+      };
+
+      await expect(provider.connect()).rejects.toThrow(
+        'Failed to connect to SQL Server: Cannot open database "nope_db" requested by the login. The login failed.',
+      );
+    });
+
+    test("a login that fails with 18456 alone keeps its own sentence", async () => {
+      loginAnswer = {
+        tokens: [{ number: 18456, message: "Login failed for user 'sa'." }],
+        error: new Error("Login failed for user 'sa'."),
+      };
+
+      await expect(provider.connect()).rejects.toThrow("Failed to connect to SQL Server: Login failed for user 'sa'.");
     });
   });
 
