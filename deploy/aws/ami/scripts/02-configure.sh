@@ -44,6 +44,16 @@ grep -qx 'PasswordAuthentication no' /etc/ssh/sshd_config.d/00-libredb-marketpla
 grep -qx 'PermitRootLogin prohibit-password' /etc/ssh/sshd_config.d/00-libredb-marketplace.conf \
   || { echo "FATAL: the sshd drop-in is missing PermitRootLogin prohibit-password" >&2; exit 1; }
 
+# `sshd -t` and `sshd -T` both open the privilege separation directory before
+# they parse anything, and a Packer build runs this script on a booted-but-not-
+# yet-sshd-restarted image where /run is a fresh tmpfs. Without the directory
+# both calls die with "Missing privilege separation directory: /run/sshd"
+# BEFORE reading the config, so the next line's FATAL blames the config for a
+# directory problem. The 0.18.3 AMI build failed exactly this way. systemd
+# creates it from /usr/lib/tmpfiles.d/sshd.conf at boot; create it here too so
+# the check does not depend on whether sshd has been started in this image yet.
+install -d -m 0755 /run/sshd
+
 sshd -t || { echo "FATAL: sshd config does not parse" >&2; exit 1; }
 # Captured once, into a variable: it fails closed on its own under `set -e`, it
 # does not run sshd twice, and the failure below can print what it actually saw
