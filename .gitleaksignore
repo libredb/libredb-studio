@@ -143,93 +143,54 @@ eb6b696af19d6b6ac7b53406bbd4201fb0890058:tests/fixtures/s3/captures/silo-2026-10
 # ships with the suite (AKIDEXAMPLE), checked by the signer's tests.
 11717b7e56f0dc8d293e834a1327b01aa2a4e342:tests/fixtures/s3/sigv4-suite.json:generic-api-key:252
 
-# The CFRG HPKE test vector of the lsb1 suite (425df499): base mode with
-# DHKEM(X25519, HKDF-SHA256), HKDF-SHA256 and AES-256-GCM, copied unchanged
-# from the test-vectors.json of the draft-irtf-cfrg-hpke repository, whose URL
-# and SHA-256 the fixture's header records. The rule fires on the vector's
-# shared_secret, key_schedule_context, secret, key and exporter_secret: values
-# the CFRG publishes, derived from its published test keys, which open nothing
-# but the vector's own sample ciphertexts.
-425df4998010d2a3807431a583fa16e643839726:tests/fixtures/governance/hpke-cfrg-x25519-sha256-aes256gcm.json:generic-api-key:21
-425df4998010d2a3807431a583fa16e643839726:tests/fixtures/governance/hpke-cfrg-x25519-sha256-aes256gcm.json:generic-api-key:22
-425df4998010d2a3807431a583fa16e643839726:tests/fixtures/governance/hpke-cfrg-x25519-sha256-aes256gcm.json:generic-api-key:23
-425df4998010d2a3807431a583fa16e643839726:tests/fixtures/governance/hpke-cfrg-x25519-sha256-aes256gcm.json:generic-api-key:24
-425df4998010d2a3807431a583fa16e643839726:tests/fixtures/governance/hpke-cfrg-x25519-sha256-aes256gcm.json:generic-api-key:26
+# The CFRG HPKE test vector of the lsb1 suite, squash-merged in 173d9679
+# (#1785): base mode with DHKEM(X25519, HKDF-SHA256), HKDF-SHA256 and
+# AES-256-GCM, copied unchanged from the test-vectors.json of the
+# draft-irtf-cfrg-hpke repository, whose URL and SHA-256 the fixture's header
+# records. The rule fires on the vector's shared_secret, key_schedule_context,
+# secret, key and exporter_secret: values the CFRG publishes, derived from its
+# published test keys, which open nothing but the vector's own sample
+# ciphertexts.
+173d9679af01674d83d53ec9e22b453a88b8a4ab:tests/fixtures/governance/hpke-cfrg-x25519-sha256-aes256gcm.json:generic-api-key:21
+173d9679af01674d83d53ec9e22b453a88b8a4ab:tests/fixtures/governance/hpke-cfrg-x25519-sha256-aes256gcm.json:generic-api-key:22
+173d9679af01674d83d53ec9e22b453a88b8a4ab:tests/fixtures/governance/hpke-cfrg-x25519-sha256-aes256gcm.json:generic-api-key:23
+173d9679af01674d83d53ec9e22b453a88b8a4ab:tests/fixtures/governance/hpke-cfrg-x25519-sha256-aes256gcm.json:generic-api-key:24
+173d9679af01674d83d53ec9e22b453a88b8a4ab:tests/fixtures/governance/hpke-cfrg-x25519-sha256-aes256gcm.json:generic-api-key:26
 
-# The 5 above, as the merge commit df6a913a re-presents them: that merge adds
-# the fixture to its first parent, which did not hold it yet, so the scanner,
-# which reads a merge as its diff against the first parent, sees the vector as
-# content the merge commit itself adds and reports it under fingerprints naming
-# the merge. The values are the ones the block above already classified, byte
-# for byte the CFRG's published vector, no credential; only the presenting
-# commit differs, which is exactly the re-presentation the fingerprint design
-# reports rather than silently inherits.
-df6a913aaaab4471b16ee77b34e5319991651112:tests/fixtures/governance/hpke-cfrg-x25519-sha256-aes256gcm.json:generic-api-key:21
-df6a913aaaab4471b16ee77b34e5319991651112:tests/fixtures/governance/hpke-cfrg-x25519-sha256-aes256gcm.json:generic-api-key:22
-df6a913aaaab4471b16ee77b34e5319991651112:tests/fixtures/governance/hpke-cfrg-x25519-sha256-aes256gcm.json:generic-api-key:23
-df6a913aaaab4471b16ee77b34e5319991651112:tests/fixtures/governance/hpke-cfrg-x25519-sha256-aes256gcm.json:generic-api-key:24
-df6a913aaaab4471b16ee77b34e5319991651112:tests/fixtures/governance/hpke-cfrg-x25519-sha256-aes256gcm.json:generic-api-key:26
+# The lsb1 test vectors, squash-merged in 173d9679 (#1785): the fixed
+# ephemeral private key of each of the 21 vectors in
+# tests/fixtures/governance/lsb1-vectors.json, one per vector. Each is the
+# SHA-256 of a published label ("libredb lsb1 test vectors, test only:
+# ephemeral key of <id>"), so anyone can derive it, and it seals only that
+# vector's sample credential to a recipient key derived the same way.
+# scripts/generate-governance-vectors.ts writes the file, and a published lsb1
+# vector never changes, so these lines never move.
+173d9679af01674d83d53ec9e22b453a88b8a4ab:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:37
+173d9679af01674d83d53ec9e22b453a88b8a4ab:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:71
+173d9679af01674d83d53ec9e22b453a88b8a4ab:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:111
+173d9679af01674d83d53ec9e22b453a88b8a4ab:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:155
+173d9679af01674d83d53ec9e22b453a88b8a4ab:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:203
+173d9679af01674d83d53ec9e22b453a88b8a4ab:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:250
+173d9679af01674d83d53ec9e22b453a88b8a4ab:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:293
+173d9679af01674d83d53ec9e22b453a88b8a4ab:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:335
+173d9679af01674d83d53ec9e22b453a88b8a4ab:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:387
+173d9679af01674d83d53ec9e22b453a88b8a4ab:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:433
+173d9679af01674d83d53ec9e22b453a88b8a4ab:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:479
+173d9679af01674d83d53ec9e22b453a88b8a4ab:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:525
+173d9679af01674d83d53ec9e22b453a88b8a4ab:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:571
+173d9679af01674d83d53ec9e22b453a88b8a4ab:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:617
+173d9679af01674d83d53ec9e22b453a88b8a4ab:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:663
+173d9679af01674d83d53ec9e22b453a88b8a4ab:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:709
+173d9679af01674d83d53ec9e22b453a88b8a4ab:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:755
+173d9679af01674d83d53ec9e22b453a88b8a4ab:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:801
+173d9679af01674d83d53ec9e22b453a88b8a4ab:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:847
+173d9679af01674d83d53ec9e22b453a88b8a4ab:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:893
+173d9679af01674d83d53ec9e22b453a88b8a4ab:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:940
 
-# The lsb1 test vectors (ffc981de): the fixed ephemeral private key of each of
-# the 21 vectors in tests/fixtures/governance/lsb1-vectors.json, one per
-# vector. Each is the SHA-256 of a published label ("libredb lsb1 test
-# vectors, test only: ephemeral key of <id>"), so anyone can derive it, and it
-# seals only that vector's sample credential to a recipient key derived the
-# same way. scripts/generate-governance-vectors.ts writes the file, and a
-# published lsb1 vector never changes, so these lines never move.
-ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:37
-ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:71
-ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:111
-ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:155
-ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:203
-ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:250
-ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:293
-ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:335
-ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:387
-ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:433
-ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:479
-ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:525
-ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:571
-ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:617
-ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:663
-ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:709
-ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:755
-ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:801
-ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:847
-ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:893
-ffc981de48cad25da00ad4e710cd289c92f3f887:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:940
-
-# The 21 above, as the merge commit 5dc202d4 re-presents them, the same way as
-# the merge df6a913a above: the merge adds lsb1-vectors.json to its first parent,
-# so the scanner reports the same 21 derivable test keys, byte for byte, under
-# fingerprints naming the merge.
-5dc202d4e6c42a22e1e178124ae21deba6a9df72:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:37
-5dc202d4e6c42a22e1e178124ae21deba6a9df72:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:71
-5dc202d4e6c42a22e1e178124ae21deba6a9df72:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:111
-5dc202d4e6c42a22e1e178124ae21deba6a9df72:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:155
-5dc202d4e6c42a22e1e178124ae21deba6a9df72:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:203
-5dc202d4e6c42a22e1e178124ae21deba6a9df72:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:250
-5dc202d4e6c42a22e1e178124ae21deba6a9df72:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:293
-5dc202d4e6c42a22e1e178124ae21deba6a9df72:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:335
-5dc202d4e6c42a22e1e178124ae21deba6a9df72:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:387
-5dc202d4e6c42a22e1e178124ae21deba6a9df72:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:433
-5dc202d4e6c42a22e1e178124ae21deba6a9df72:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:479
-5dc202d4e6c42a22e1e178124ae21deba6a9df72:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:525
-5dc202d4e6c42a22e1e178124ae21deba6a9df72:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:571
-5dc202d4e6c42a22e1e178124ae21deba6a9df72:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:617
-5dc202d4e6c42a22e1e178124ae21deba6a9df72:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:663
-5dc202d4e6c42a22e1e178124ae21deba6a9df72:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:709
-5dc202d4e6c42a22e1e178124ae21deba6a9df72:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:755
-5dc202d4e6c42a22e1e178124ae21deba6a9df72:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:801
-5dc202d4e6c42a22e1e178124ae21deba6a9df72:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:847
-5dc202d4e6c42a22e1e178124ae21deba6a9df72:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:893
-5dc202d4e6c42a22e1e178124ae21deba6a9df72:tests/fixtures/governance/lsb1-vectors.json:generic-api-key:940
-
-# The placeholder password of the fixture DDL's unit test: sequential
-# hex filler, the sixteen digits 0 to f written twice, in the lowercase hex
-# shape buildFixtureDdl requires. The test only compares the DDL text it builds
-# and never opens a database, and the live check that does run the DDL draws a
-# random password instead, so the literal authenticates nothing. Once as
-# commit 86379702 adds it and once as its merge 642655a8 re-presents it.
-86379702167a1e95b8006afb54a56d58467a0a14:tests/unit/governance-fixture-ddl.test.ts:generic-api-key:28
-642655a8d66c9ff7a6adf8b92bd69890356988b0:tests/unit/governance-fixture-ddl.test.ts:generic-api-key:28
+# The placeholder password of the fixture DDL's unit test, squash-merged in
+# 173d9679 (#1785): sequential hex filler, the sixteen digits 0 to f written
+# twice, in the lowercase hex shape buildFixtureDdl requires. The test only
+# compares the DDL text it builds and never opens a database, and the live
+# check that does run the DDL draws a random password instead, so the literal
+# authenticates nothing.
+173d9679af01674d83d53ec9e22b453a88b8a4ab:tests/unit/governance-fixture-ddl.test.ts:generic-api-key:28
