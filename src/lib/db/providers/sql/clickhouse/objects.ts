@@ -40,14 +40,17 @@
  *    in `/etc/clickhouse-server/*_dictionary.xml`, has NO `system.tables` row and no
  *    `system.columns` row at all: it exists only in `system.dictionaries`, with an
  *    EMPTY `database`, the same way a user-defined function exists only in
- *    `system.functions`. So `system.dictionaries` is unioned into the same subquery -
- *    the count and the listing still read one text, so no 5f seam comes back with it -
- *    and it is also what `describeObject` reads for the kind, because it is the only
- *    catalog both flavours are in. The engine name is NOT what identifies a
- *    dictionary either: `CREATE TABLE d (...) ENGINE = Dictionary(other_dict)` is
- *    accepted and produces a `system.tables` row with engine `Dictionary` and no
- *    `system.dictionaries` row. That object is a TABLE that reads a dictionary, so the
- *    kind expression asks `system.dictionaries` for membership instead.
+ *    `system.functions`. `system.dictionaries` is read in its own statement alongside
+ *    `system.tables` rather than inside the same subquery, so a restricted user
+ *    lacking grants on `system.dictionaries` sees code 497 mark only the dictionary
+ *    folder unavailable while tables, views, and functions survive. If dictionary
+ *    membership is unknown because `system.dictionaries` was refused, tables whose
+ *    engine is `Dictionary` remain under `table` without falling back to engine name.
+ *    The engine name is NOT what identifies a dictionary either:
+ *    `CREATE TABLE d (...) ENGINE = Dictionary(other_dict)` is accepted and produces
+ *    a `system.tables` row with engine `Dictionary` and no `system.dictionaries` row.
+ *    That object is a TABLE that reads a dictionary, so the kind expression asks
+ *    `system.dictionaries` for membership instead.
  *
  * Two absences are declarations rather than gaps. ClickHouse has no trigger and no
  * stored procedure, so neither kind is declared at all - a declared kind draws a
@@ -270,23 +273,28 @@ const CONTAINERS_SQL = [
   "ORDER BY name ASC",
 ].join(" ");
 
-/** Every dictionary on the server, by address. See point 6 of this file's docblock. */
-const DICTIONARY_ADDRESSES_SQL = "SELECT dd.database, dd.name FROM system.dictionaries AS dd";
-
 /**
  * The exceptions diverted off the `table` default, and nothing else.
  *
- * Read the docblock at the top of this file for why the arms are written as
- * exceptions rather than as an inclusion list, and why the dictionary arm asks
- * `system.dictionaries` for MEMBERSHIP instead of matching the engine name.
+ * Read point 6 of this file's docblock for why the arms are written as
+ * exceptions rather than as an inclusion list, and why dictionary membership
+ * checks known dictionaries instead of matching the engine name. When dictionary
+ * membership is unknown (e.g. read refused on system.dictionaries), rows with
+ * engine Dictionary stay under table.
  */
-const OBJECT_KIND_EXPR = [
-  "multiIf(",
-  "t.engine = 'View', 'view',",
-  "t.engine = 'MaterializedView', 'materialized_view',",
-  `(t.database, t.name) IN (${DICTIONARY_ADDRESSES_SQL}), 'dictionary',`,
-  "'table')",
-].join(" ");
+function objectKindExpr(knownDictionaries?: readonly string[]): string {
+  const dictMatch =
+    knownDictionaries !== undefined && knownDictionaries.length > 0
+      ? `t.name IN (${knownDictionaries.map(literal).join(", ")})`
+      : "0";
+  return [
+    "multiIf(",
+    "t.engine = 'View', 'view',",
+    "t.engine = 'MaterializedView', 'materialized_view',",
+    `${dictMatch}, 'dictionary',`,
+    "'table')",
+  ].join(" ");
+}
 
 /**
  * Every implicit inner table on the server, by address.
@@ -304,21 +312,16 @@ const IMPLICIT_INNER_TABLES_SQL = [
 ].join(" ");
 
 /**
- * Every object of every declared kind in one database, kind-tagged, as ONE subquery.
+ * Objects from `system.tables` and `system.functions` in one database, kind-tagged.
  *
- * The count GROUPs this and the listing FILTERs it, which is standing ruling 5f held
- * by construction rather than by two statements agreeing: there is no second WHERE
- * clause for the two to drift apart in. Oracle and MySQL both failed that rule on
- * their first pass, and both had a count and a listing reading different catalogs.
- *
- * The function arm casts its two counters explicitly. A bare `NULL` in a `UNION ALL`
- * takes `Nullable(Nothing)`, and a function has no rows and no bytes in any sense -
- * omitting the columns is not available, because the two arms must have one shape.
+ * This query touches ONLY `system.tables` and `system.functions` so that restricted users
+ * with grants on their database and `system.tables` survive even when `system.dictionaries`
+ * is refused with code 497.
  */
-function databaseObjectsSql(database: string): string {
+function tablesAndFunctionsSql(database: string, knownDictionaries?: readonly string[]): string {
   return [
     "SELECT t.name AS objectName,",
-    `${OBJECT_KIND_EXPR} AS objectKind,`,
+    `${objectKindExpr(knownDictionaries)} AS objectKind,`,
     "t.total_rows AS objectRows,",
     "t.total_bytes AS objectBytes",
     "FROM system.tables AS t",
@@ -331,24 +334,48 @@ function databaseObjectsSql(database: string): string {
     "CAST(NULL, 'Nullable(UInt64)') AS objectBytes",
     "FROM system.functions AS f",
     "WHERE f.origin != 'System'",
-    "UNION ALL",
-    "SELECT d.name AS objectName,",
-    "'dictionary' AS objectKind,",
-    "CAST(NULL, 'Nullable(UInt64)') AS objectRows,",
-    "CAST(NULL, 'Nullable(UInt64)') AS objectBytes",
-    "FROM system.dictionaries AS d",
-    "WHERE d.database = ''",
   ].join(" ");
 }
 
-function countsSql(database: string): string {
-  return `SELECT objectKind, count() AS objectCount FROM (${databaseObjectsSql(database)}) GROUP BY objectKind`;
+/**
+ * Every dictionary on the server visible to this database, out of `system.dictionaries`.
+ *
+ * Holds both DDL dictionaries (in this database) and config-file dictionaries
+ * (declared with empty database).
+ */
+function dictionariesSql(database: string): string {
+  return [
+    "SELECT name AS objectName,",
+    "'dictionary' AS objectKind,",
+    "CAST(NULL, 'Nullable(UInt64)') AS objectRows,",
+    "CAST(NULL, 'Nullable(UInt64)') AS objectBytes",
+    "FROM system.dictionaries",
+    `WHERE database = ${literal(database)} OR database = ''`,
+    "ORDER BY name ASC",
+  ].join(" ");
 }
 
-function listingSql(database: string, kind: string): string {
+function countsSql(database: string, knownDictionaries?: readonly string[]): string {
+  return [
+    "SELECT objectKind, count() AS objectCount",
+    `FROM (${tablesAndFunctionsSql(database, knownDictionaries)})`,
+    "WHERE objectKind != 'dictionary'",
+    "GROUP BY objectKind",
+  ].join(" ");
+}
+
+function listingSql(database: string, kind: string, knownDictionaries?: readonly string[]): string {
+  if (kind === "dictionary") {
+    return [
+      "SELECT objectName, objectRows, objectBytes",
+      `FROM (${dictionariesSql(database)})`,
+      "WHERE objectKind = 'dictionary'",
+      "ORDER BY objectName ASC",
+    ].join(" ");
+  }
   return [
     "SELECT objectName, objectRows, objectBytes",
-    `FROM (${databaseObjectsSql(database)})`,
+    `FROM (${tablesAndFunctionsSql(database, knownDictionaries)})`,
     `WHERE objectKind = ${literal(kind)}`,
     "ORDER BY objectName ASC",
   ].join(" ");
@@ -415,10 +442,19 @@ function dictionaryColumnsSql(database: string, name: string): string {
  * value has already been refused unless it is a positive whole number, so nothing that
  * reaches this template can be anything but digits.
  */
-function bulkTargetSql(database: string, kind: string, limit?: number): string {
+function bulkTargetSql(database: string, kind: string, knownDictionaries?: readonly string[], limit?: number): string {
+  if (kind === "dictionary") {
+    return [
+      "SELECT objectName",
+      `FROM (${dictionariesSql(database)})`,
+      "WHERE objectKind = 'dictionary'",
+      "ORDER BY objectName ASC",
+      ...(limit === undefined ? [] : [`LIMIT ${limit}`]),
+    ].join(" ");
+  }
   return [
     "SELECT objectName",
-    `FROM (${databaseObjectsSql(database)})`,
+    `FROM (${tablesAndFunctionsSql(database, knownDictionaries)})`,
     `WHERE objectKind = ${literal(kind)}`,
     "ORDER BY objectName ASC",
     ...(limit === undefined ? [] : [`LIMIT ${limit}`]),
@@ -433,7 +469,7 @@ function bulkTargetSql(database: string, kind: string, limit?: number): string {
  * every database on the server, and two databases holding a table of the same name is the
  * ordinary case rather than a corner.
  */
-function bulkColumnsSql(database: string, kind: string, limit?: number): string {
+function bulkColumnsSql(database: string, kind: string, knownDictionaries?: readonly string[], limit?: number): string {
   return [
     "SELECT c.table AS objectName,",
     "c.name AS columnName,",
@@ -443,18 +479,18 @@ function bulkColumnsSql(database: string, kind: string, limit?: number): string 
     "c.default_expression AS defaultExpression",
     "FROM system.columns AS c",
     `WHERE c.database = ${literal(database)}`,
-    `AND c.table IN (${bulkTargetSql(database, kind, limit)})`,
+    `AND c.table IN (${bulkTargetSql(database, kind, knownDictionaries, limit)})`,
     "ORDER BY c.table, c.position",
   ].join(" ");
 }
 
 /** The same reshaping of `objectIndexesSql()`. */
-function bulkIndexesSql(database: string, kind: string, limit?: number): string {
+function bulkIndexesSql(database: string, kind: string, knownDictionaries?: readonly string[], limit?: number): string {
   return [
     "SELECT i.table AS objectName, i.name AS indexName, i.expr AS indexExpression",
     "FROM system.data_skipping_indices AS i",
     `WHERE i.database = ${literal(database)}`,
-    `AND i.table IN (${bulkTargetSql(database, kind, limit)})`,
+    `AND i.table IN (${bulkTargetSql(database, kind, knownDictionaries, limit)})`,
     "ORDER BY i.table, i.name",
   ].join(" ");
 }
@@ -484,7 +520,7 @@ function bulkDictionaryColumnsSql(database: string, kind: string, limit?: number
     "argMax(`attribute.types`, database) AS attributeTypes",
     "FROM system.dictionaries",
     `WHERE (database = ${literal(database)} OR database = '')`,
-    `AND name IN (${bulkTargetSql(database, kind, limit)})`,
+    `AND name IN (${bulkTargetSql(database, kind, undefined, limit)})`,
     "GROUP BY name)) AS d",
   ].join(" ");
 }
@@ -601,28 +637,48 @@ function seedZeroCounts(kinds: readonly ObjectKindSpec[]): Record<string, KindCo
  * so: `in` walks the prototype chain, so a row whose kind read `toString` or
  * `constructor` would pass the test and write a folder the provider never declared.
  */
-function applyKindCounts(counts: Record<string, KindCount>, rows: readonly ClickHouseRow[]): void {
+function applyKindCounts(
+  counts: Record<string, KindCount>,
+  rows: readonly ClickHouseRow[],
+  skipKinds?: readonly string[],
+): void {
   for (const row of rows) {
     const kind = readIdentifier(row.objectKind);
     const n = readCount(row.objectCount);
-    if (kind !== null && n !== undefined && Object.hasOwn(counts, kind)) counts[kind] = { count: n };
+    if (kind !== null && n !== undefined && Object.hasOwn(counts, kind) && !skipKinds?.includes(kind)) {
+      counts[kind] = { count: n };
+    }
   }
 }
 
 /**
- * The server's own sentence, verbatim, against every kind the failed read covered.
- *
- * Deliberately NOT through the provider's error mapping: that gives a THROWN error a
- * type and this product's prefix, and nothing here throws. The sentence is rendered to
- * a person as the reason a folder has no number, so prefixing it would put our words
- * in front of ClickHouse's. A refused read is never 0 - "Not enough privileges" and
- * "this database holds no tables" are different facts, and `KindCount` is the type
- * that keeps them apart. Both are live cases here: `system.tables` filters by grant
- * while `system.functions` needs one, so a restricted user really does see this.
+ * True when the error is ClickHouse exception 497 (ACCESS_DENIED).
  */
-function unavailableCounts(ids: readonly string[], error: unknown): Record<string, KindCount> {
-  const reason = error instanceof Error ? error.message : String(error);
-  return Object.fromEntries(ids.map((id) => [id, { unavailable: reason } as KindCount]));
+function isAccessDenied(error: unknown): boolean {
+  return error instanceof ClickHouseTransportError && error.is("ACCESS_DENIED");
+}
+
+/**
+ * Attempt to read dictionary names in the given database.
+ * If reading `system.dictionaries` is refused with ACCESS_DENIED (code 497),
+ * returns undefined so the caller knows dictionary membership is unknown.
+ */
+async function tryReadingDictionaryNames(
+  transport: ClickHouseTransport,
+  database: string,
+): Promise<readonly string[] | undefined> {
+  try {
+    const dictResult = await transport.query(dictionariesSql(database));
+    const names = new Set<string>();
+    for (const row of dictResult.rows) {
+      const name = readIdentifier(row.objectName);
+      if (name !== null) names.add(name);
+    }
+    return Array.from(names);
+  } catch (error) {
+    if (isAccessDenied(error)) return undefined;
+    throw error;
+  }
 }
 
 // ============================================================================
@@ -658,13 +714,18 @@ export async function listContainers(transport: ClickHouseTransport, parent?: re
 }
 
 /**
- * How many objects of each declared kind one database holds, in one statement.
+ * How many objects of each declared kind one database holds.
  *
  * Three outcomes, and the type keeps all three apart. A kind the GROUP BY answered for
  * carries its count. A kind it did not carries `{ count: 0 }`, because it was seeded
  * before the read. A kind whose read was refused carries the server's own sentence, so
  * the object browser can say why a folder has no number instead of showing a zero
  * nobody measured.
+ *
+ * `system.dictionaries` is queried separately from `system.tables` so that a restricted
+ * user lacking grants on `system.dictionaries` sees only dictionaries marked unavailable,
+ * while tables, views, and functions survive. When dictionary membership is unknown,
+ * tables whose engine is `Dictionary` stay under `table`.
  *
  * The container path is checked BEFORE the read and raises, because a path of the
  * wrong shape is a caller mistake and not something the engine refused.
@@ -678,15 +739,31 @@ export async function countObjects(
   const declared = declaredKinds(capabilities);
   const counts = seedZeroCounts(declared);
 
+  let knownDictionaries: readonly string[] | undefined;
   try {
-    const result = await transport.query(countsSql(database));
-    applyKindCounts(counts, result.rows);
+    const dictResult = await transport.query(dictionariesSql(database));
+    const names = new Set<string>();
+    for (const row of dictResult.rows) {
+      const name = readIdentifier(row.objectName);
+      if (name !== null) names.add(name);
+    }
+    counts.dictionary = { count: names.size };
+    knownDictionaries = Array.from(names);
+  } catch (error) {
+    counts.dictionary = { unavailable: error instanceof Error ? error.message : String(error) };
+    knownDictionaries = undefined;
+  }
+
+  try {
+    const result = await transport.query(countsSql(database, knownDictionaries));
+    applyKindCounts(counts, result.rows, ["dictionary"]);
     return counts;
   } catch (error) {
-    return unavailableCounts(
-      declared.map((kind) => kind.id),
-      error,
-    );
+    const reason = error instanceof Error ? error.message : String(error);
+    for (const kind of ["table", "view", "materialized_view", "function"]) {
+      counts[kind] = { unavailable: reason };
+    }
+    return counts;
   }
 }
 
@@ -724,7 +801,12 @@ export async function listObjects(
   }
   const database = containerDatabase(capabilities, container);
 
-  const sql = listingSql(database, kind);
+  let knownDictionaries: readonly string[] | undefined;
+  if (kind === "table") {
+    knownDictionaries = await tryReadingDictionaryNames(transport, database);
+  }
+
+  const sql = listingSql(database, kind, knownDictionaries);
   const result = await transport.query(sql);
   const objects: DatabaseObject[] = [];
   for (const row of result.rows) {
@@ -810,7 +892,7 @@ function dictionaryDetailFromRows(path: readonly string[], rows: readonly ClickH
 function objectDetailFromRows(
   path: readonly string[],
   columnRows: readonly ClickHouseRow[],
-  indexRows: readonly ClickHouseRow[],
+  indexRowsOrUnavailable: readonly ClickHouseRow[] | { readonly unavailable: string },
 ): ObjectDetail {
   const columns: ColumnSchema[] = [];
   for (const row of columnRows) {
@@ -831,20 +913,26 @@ function objectDetailFromRows(
     });
   }
 
-  const indexes: IndexSchema[] = [];
-  for (const row of indexRows) {
-    const indexName = readIdentifier(row.indexName);
-    if (indexName === null) continue;
-    indexes.push({
-      name: indexName,
-      // A skipping index is declared over an EXPRESSION that may carry commas of its own,
-      // so the split is parenthesis-aware and shared with `getSchema()`.
-      columns: splitKeyExpression(readText(row.indexExpression)),
-      // A data-skipping index prunes granules and enforces nothing, so no index ClickHouse
-      // reports is unique. Nor is the primary key: live-verified, three identical values
-      // were accepted into a table declared PRIMARY KEY (a).
-      unique: false,
-    });
+  let indexes: readonly IndexSchema[] | { readonly unavailable: string };
+  if ("unavailable" in indexRowsOrUnavailable) {
+    indexes = indexRowsOrUnavailable;
+  } else {
+    const parsedIndexes: IndexSchema[] = [];
+    for (const row of indexRowsOrUnavailable) {
+      const indexName = readIdentifier(row.indexName);
+      if (indexName === null) continue;
+      parsedIndexes.push({
+        name: indexName,
+        // A skipping index is declared over an EXPRESSION that may carry commas of its own,
+        // so the split is parenthesis-aware and shared with `getSchema()`.
+        columns: splitKeyExpression(readText(row.indexExpression)),
+        // A data-skipping index prunes granules and enforces nothing, so no index ClickHouse
+        // reports is unique. Nor is the primary key: live-verified, three identical values
+        // were accepted into a table declared PRIMARY KEY (a).
+        unique: false,
+      });
+    }
+    indexes = parsedIndexes;
   }
 
   // `foreignKeys` is ALWAYS empty, and that is the engine: ClickHouse parses `REFERENCES`
@@ -878,8 +966,9 @@ function objectDetailFromRows(
  * The index read is NOT degraded to empty on a refusal, unlike `getSchema()`'s.
  * `system.data_skipping_indices` needs its own grant and answers code 497 without it,
  * and "this object has no skipping index" is a different fact from "you may not see
- * its indexes". A detail panel showing the first when the second is true is a claim
- * nobody measured.
+ * its indexes". Nor is the whole object detail thrown away: columns the user is
+ * permitted to see are returned, with `indexes: { readonly unavailable: string }`
+ * so the caller knows why indexes are absent.
  */
 export async function describeObject(
   transport: ClickHouseTransport,
@@ -926,9 +1015,15 @@ export async function describeObject(
     throw new QueryError(`No ClickHouse ${kind} named ${name} in ${database}`, PROVIDER, columnsSql);
   }
 
-  const indexRows = (await transport.query(objectIndexesSql(database, name))).rows;
+  let indexRowsOrUnavailable: readonly ClickHouseRow[] | { readonly unavailable: string };
+  try {
+    indexRowsOrUnavailable = (await transport.query(objectIndexesSql(database, name))).rows;
+  } catch (error) {
+    if (!isAccessDenied(error)) throw error;
+    indexRowsOrUnavailable = { unavailable: error instanceof Error ? error.message : String(error) };
+  }
 
-  return objectDetailFromRows(path, columnRows, indexRows);
+  return objectDetailFromRows(path, columnRows, indexRowsOrUnavailable);
 }
 
 /**
@@ -992,9 +1087,14 @@ export async function describeObjects(
   }
   if (catalog === "functions") return { details: [] };
 
+  let knownDictionaries: readonly string[] | undefined;
+  if (kind === "table") {
+    knownDictionaries = await tryReadingDictionaryNames(transport, database);
+  }
+
   // One row more than the bound, so the read itself says whether it stopped short.
   const bound = limit === undefined ? undefined : limit + 1;
-  const targetRows = (await transport.query(bulkTargetSql(database, kind, bound))).rows;
+  const targetRows = (await transport.query(bulkTargetSql(database, kind, knownDictionaries, bound))).rows;
   const targets: string[] = [];
   for (const row of targetRows) {
     const name = readIdentifier(row.objectName);
@@ -1013,7 +1113,7 @@ export async function describeObjects(
   const details =
     catalog === "dictionaries"
       ? await describeDictionaries(transport, container, database, kind, bound, named)
-      : await describeRelations(transport, container, database, kind, bound, named);
+      : await describeRelations(transport, container, database, kind, knownDictionaries, bound, named);
 
   // Sorted by PATH, which is what every caller joins the two answers on, and not by the
   // name the statement ordered by: that order is the server's and decides only which
@@ -1043,13 +1143,24 @@ async function describeRelations(
   container: readonly string[],
   database: string,
   kind: string,
+  knownDictionaries: readonly string[] | undefined,
   bound: number | undefined,
   named: readonly string[],
 ): Promise<ObjectDetail[]> {
-  const columns = groupRows((await transport.query(bulkColumnsSql(database, kind, bound))).rows);
-  const indexes = groupRows((await transport.query(bulkIndexesSql(database, kind, bound))).rows);
+  const columns = groupRows((await transport.query(bulkColumnsSql(database, kind, knownDictionaries, bound))).rows);
+  let indexes: Map<string, ClickHouseRow[]> | { readonly unavailable: string };
+  try {
+    indexes = groupRows((await transport.query(bulkIndexesSql(database, kind, knownDictionaries, bound))).rows);
+  } catch (error) {
+    if (!isAccessDenied(error)) throw error;
+    indexes = { unavailable: error instanceof Error ? error.message : String(error) };
+  }
   return named.map((name) =>
-    objectDetailFromRows([...container, name], columns.get(name) ?? [], indexes.get(name) ?? []),
+    objectDetailFromRows(
+      [...container, name],
+      columns.get(name) ?? [],
+      "unavailable" in indexes ? indexes : (indexes.get(name) ?? []),
+    ),
   );
 }
 

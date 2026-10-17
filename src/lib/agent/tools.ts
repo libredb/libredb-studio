@@ -3570,7 +3570,7 @@ async function walkObjectInventory(
           // A column the engine only inferred from sampled data is named by the data, so it never enters the
           // inventory a model is grounded on.
           columns: machineColumns(detail?.columns ?? []),
-          indexes: detail?.indexes ?? [],
+          indexes: Array.isArray(detail?.indexes) ? detail.indexes : [],
           foreignKeys: detail?.foreignKeys ?? [],
           // `rowCount` and `sizeBytes` are deliberately NOT carried, and the reason is the
           // fingerprint: a snapshot's identity is over the schema, so a row estimate on it

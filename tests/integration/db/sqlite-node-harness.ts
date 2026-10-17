@@ -155,7 +155,7 @@ async function main(): Promise<void> {
     return {
       name: object.name,
       columns: (detail?.columns ?? []).map((c) => ({ name: c.name, isPrimary: c.isPrimary, nullable: c.nullable })),
-      indexes: (detail?.indexes ?? []).map((i) => i.name),
+      indexes: (Array.isArray(detail?.indexes) ? detail.indexes : []).map((i) => i.name),
       foreignKeys: detail?.foreignKeys ?? [],
     };
   });
@@ -239,7 +239,10 @@ async function runObjectSurface(provider: SQLiteProvider, report: Record<string,
   report.objectDetail = {
     path: detail.path,
     columns: detail.columns.map((column) => ({ name: column.name, isPrimary: column.isPrimary })),
-    indexes: detail.indexes.map((index) => ({ name: index.name, columns: index.columns })),
+    indexes: (Array.isArray(detail.indexes) ? detail.indexes : []).map((index) => ({
+      name: index.name,
+      columns: index.columns,
+    })),
   };
   report.objectDetailTrigger = await provider.describeObject!(["users", "users_stamp"], "trigger");
   report.objectMissingRefused = await rejects(() => provider.describeObject!(["not_here"], "table"));

@@ -1,5 +1,6 @@
 import React from "react";
 import { sampledMark, type DetailedObject } from "@/lib/db/detailed-object";
+import { isIndexesUnavailable } from "@/lib/db/object-kinds";
 import { Key, Hash } from "lucide-react";
 
 interface ColumnListProps {
@@ -37,7 +38,7 @@ export const ColumnList = React.memo(function ColumnList({ columns, indexes }: C
           </span>
         </div>
       ))}
-      {indexes.length > 0 && (
+      {Array.isArray(indexes) && indexes.length > 0 && (
         <div className="pt-2 pb-1">
           <div className="flex items-center gap-1.5 px-2 mb-1">
             <Hash strokeWidth={1.5} className="w-2.5 h-2.5 text-hue-purple/40" />
@@ -54,6 +55,21 @@ export const ColumnList = React.memo(function ColumnList({ columns, indexes }: C
               </span>
             </div>
           ))}
+        </div>
+      )}
+      {isIndexesUnavailable(indexes) && (
+        <div className="pt-2 pb-1">
+          <div className="flex items-center gap-1.5 px-2 mb-1">
+            <Hash strokeWidth={1.5} className="w-2.5 h-2.5 text-hue-purple/40" />
+            <span className="text-[0.625rem] font-medium text-muted-foreground">Indexes</span>
+          </div>
+          <div
+            className="px-2 py-0.5 text-xs text-muted-foreground italic truncate"
+            title={indexes.unavailable}
+            data-testid="indexes-unavailable"
+          >
+            {indexes.unavailable}
+          </div>
         </div>
       )}
     </div>

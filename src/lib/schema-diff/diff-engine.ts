@@ -335,7 +335,7 @@ export function diffSchemas(source: readonly StoredObject[], target: readonly St
           targetIsPrimary: c.isPrimary,
           changes: [`Added column "${c.name}" (${c.type})`],
         })),
-        indexes: table.indexes.map((idx) => ({
+        indexes: (Array.isArray(table.indexes) ? table.indexes : []).map((idx) => ({
           action: "added" as const,
           indexName: idx.name,
           targetColumns: idx.columns,
@@ -385,7 +385,10 @@ export function diffSchemas(source: readonly StoredObject[], target: readonly St
     const targetTable = targetEntry.object;
 
     const columns = diffColumns(sourceTable.columns, targetTable.columns);
-    const indexes = diffIndexes(sourceTable.indexes, targetTable.indexes);
+    const indexes = diffIndexes(
+      Array.isArray(sourceTable.indexes) ? sourceTable.indexes : [],
+      Array.isArray(targetTable.indexes) ? targetTable.indexes : [],
+    );
     const foreignKeys = diffForeignKeys(sourceTable.foreignKeys || [], targetTable.foreignKeys || []);
 
     if (columns.length > 0 || indexes.length > 0 || foreignKeys.length > 0) {

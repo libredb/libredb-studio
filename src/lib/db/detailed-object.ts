@@ -30,7 +30,7 @@ export interface DetailedObject {
   /** The object's segments, as the object surface addressed it. Never split from `name`. */
   readonly path: readonly string[];
   readonly columns: readonly ColumnSchema[];
-  readonly indexes: readonly IndexSchema[];
+  readonly indexes: readonly IndexSchema[] | { readonly unavailable: string };
   readonly foreignKeys?: readonly ForeignKeySchema[];
   /** Only where the engine counts. */
   readonly rowCount?: number;

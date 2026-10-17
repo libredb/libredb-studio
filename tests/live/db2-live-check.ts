@@ -131,7 +131,7 @@ async function main(): Promise<void> {
       `foreign keys ${JSON.stringify(detail.foreignKeys)}`,
     );
     expect(
-      detail.indexes.some((index) => index.name === "ORDERS_CUSTOMER_IX"),
+      Array.isArray(detail.indexes) && detail.indexes.some((index) => index.name === "ORDERS_CUSTOMER_IX"),
       `indexes ${JSON.stringify(detail.indexes)}`,
     );
   });

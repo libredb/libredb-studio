@@ -154,7 +154,7 @@ async function inspectTable(
   // Before the cap and the count: a column the engine only inferred from sampled data is named by the data, so it
   // never reaches a client, and `columns_omitted` keeps meaning "beyond the 50-column cap".
   const columns = machineColumns(detail?.columns ?? []);
-  const indexes = detail?.indexes ?? [];
+  const indexes = Array.isArray(detail?.indexes) ? detail.indexes : [];
   return {
     name: object.name,
     kind: object.kind,

@@ -2132,7 +2132,10 @@ describe("SQLiteProvider object surface (#789)", () => {
       "total_with_tax",
     ]);
     expect(detail.foreignKeys.map((fk) => fk.columnName).sort()).toEqual(["customer_email", "customer_id"]);
-    expect(detail.indexes.map((index) => index.name).sort()).toEqual(["idx_orders_customer", "idx_orders_doubled"]);
+    expect((Array.isArray(detail.indexes) ? detail.indexes : []).map((index) => index.name).sort()).toEqual([
+      "idx_orders_customer",
+      "idx_orders_doubled",
+    ]);
   });
 
   // --------------------------------------------------------------------------

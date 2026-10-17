@@ -429,7 +429,9 @@ export function TestDataGenerator({
     // The columns under a unique constraint: the primary key and every column of a unique index.
     const uniqueColumns = new Set([
       ...cols.filter((c) => c.isPrimary).map((c) => c.name),
-      ...tableSchema.indexes.filter((index) => index.unique).flatMap((index) => index.columns),
+      ...(Array.isArray(tableSchema.indexes)
+        ? tableSchema.indexes.filter((index) => index.unique).flatMap((index) => index.columns)
+        : []),
     ]);
     // One token per generation, so Regenerate and the next opening give values no earlier run used.
     const runToken = uniqueColumns.size > 0 ? randomHex(3) : "";
