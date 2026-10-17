@@ -81,6 +81,12 @@ describe("an enabled render", () => {
     expect(env.find((entry) => entry.name === "LIBREDB_MCP_TOKEN_TTL_DAYS")?.value).toBe("7");
   });
 
+  test("writes the write switch only when mcp.writeEnabled is true (#1774)", () => {
+    expect(mcpEntries(containerEnv(ENABLED))).not.toContainEqual({ name: "LIBREDB_MCP_WRITE_ENABLED", value: "true" });
+    const env = containerEnv([...ENABLED, "--set", "mcp.writeEnabled=true"]);
+    expect(env.find((entry) => entry.name === "LIBREDB_MCP_WRITE_ENABLED")?.value).toBe("true");
+  });
+
   test("writes the variables before extraEnv, so an extraEnv entry of the same name wins", () => {
     const env = containerEnv([
       ...ENABLED,

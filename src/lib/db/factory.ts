@@ -1056,14 +1056,15 @@ export async function getOrCreateProvider(
 // ============================================================================
 
 /**
- * The execution profiles this factory can vend. Three exist: `agent-read-only` for
+ * The execution profiles this factory can vend. Four exist: `agent-read-only` for
  * the paths that send a model-authored statement, `agent-operations` for the curated
- * reading path that sends none, and `agent-handover` for the editor replay of an
- * answer a run already produced. An unknown profile string is refused, never
- * defaulted (fail closed), and what each one means is stated once in
- * `PROFILE_ACQUISITION`.
+ * reading path that sends none, `agent-handover` for the editor replay of an
+ * answer a run already produced, and `mcp-write` for the MCP write tool, which runs
+ * what the token owner may run in the editor under the seed's own account (#1774).
+ * An unknown profile string is refused, never defaulted (fail closed), and what each
+ * one means is stated once in `PROFILE_ACQUISITION`.
  */
-export type ExecutionProfile = "agent-read-only" | "agent-operations" | "agent-handover";
+export type ExecutionProfile = "agent-read-only" | "agent-operations" | "agent-handover" | "mcp-write";
 
 /**
  * What a profile means at acquisition: the context the provider is opened under,
@@ -1109,6 +1110,8 @@ const PROFILE_ACQUISITION: Record<ExecutionProfile, ProfileAcquisition> = {
   "agent-read-only": { context: { readOnly: true }, requiresReadOnlyStatements: true },
   "agent-operations": { context: { readOnly: true }, requiresReadOnlyStatements: false },
   "agent-handover": { context: { readOnly: true }, requiresReadOnlyStatements: true },
+  // The write path opens under the connection's own credentials, never a read-only context (#1774).
+  "mcp-write": { context: { readOnly: false }, requiresReadOnlyStatements: false },
 };
 
 const EXECUTION_PROFILES: ReadonlySet<string> = new Set(Object.keys(PROFILE_ACQUISITION));
@@ -1259,7 +1262,10 @@ export async function acquireExecutionProfileProvider(
     return cached.provider;
   }
 
-  const credential = resolveAgentCredential(connection);
+  // The MCP write tool acts under the connection's own credentials, as the editor does (#1774):
+  // an agent credential is a separate least-privilege principal for the read-only agent path, so
+  // it is never overlaid here.
+  const credential = profile === "mcp-write" ? null : resolveAgentCredential(connection);
   const acquisition = PROFILE_ACQUISITION[profile];
 
   /*

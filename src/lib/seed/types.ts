@@ -34,8 +34,8 @@ const AllowedRoleSchema = z.enum(["*", "admin", "user"]);
  * answers false.
  */
 export function refuseMcpWhereNotOffered(exposable: Readonly<Record<DatabaseType, boolean>>) {
-  return (conn: { type: DatabaseType; mcp?: boolean }, ctx: z.RefinementCtx): void => {
-    if (conn.mcp !== true || exposable[conn.type]) return;
+  return (conn: { type: DatabaseType; mcp?: boolean | "write" }, ctx: z.RefinementCtx): void => {
+    if ((conn.mcp !== true && conn.mcp !== "write") || exposable[conn.type]) return;
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: `mcp is not offered for ${conn.type}: the product does not expose this engine to MCP clients. Remove mcp from this connection.`,
@@ -155,7 +155,7 @@ export const SeedDefaultsSchema = z.object({
   mcp: z
     .never({
       error:
-        "mcp is set per connection and never in defaults: add mcp: true to each seed connection an MCP client may use",
+        "mcp is set per connection and never in defaults: add mcp: true or mcp: write to each seed connection an MCP client may use",
     })
     .optional(),
   // Refused rather than stripped (#1089), like mcp: a default is merged only after the file is parsed,
@@ -230,9 +230,11 @@ export const SeedConnectionSchema = z
     skipObjectScan: z.boolean().optional(),
     // Visible to MCP clients (#246). Per connection and never a default, because a file-wide
     // default would turn the opt-in into an opt-out for every connection the file later gains.
-    // Declared for the reason skipObjectScan is: zod strips an undeclared key silently, and a seed
-    // file's opt-in would validate and vanish. src/lib/seed/connection-filter.ts copies it.
-    mcp: z.boolean().optional(),
+    // `true` opts the connection in for the read-only tools; `"write"` also admits run_query,
+    // which runs what the seed's own account may run (#1774). Declared for the reason
+    // skipObjectScan is: zod strips an undeclared key silently, and a seed file's opt-in would
+    // validate and vanish. src/lib/seed/connection-filter.ts copies it.
+    mcp: z.union([z.boolean(), z.literal("write")]).optional(),
     // Refuse every write on this connection (#1089). Declared for the reason skipObjectScan is: zod
     // strips an undeclared key silently, and a seed file's read-only mode would validate and vanish,
     // leaving a connection that writes. A literal boolean, never a reference: it names no credential
@@ -354,6 +356,16 @@ export const SeedConnectionSchema = z
   })
   // An MCP opt-in on an engine MCP is not offered for (#1089), read from MCP_EXPOSABLE.
   .superRefine(refuseMcpWhereNotOffered(MCP_EXPOSABLE))
+  // A write opt-in on a read-only seed is a promise nobody keeps (#1774): the seed refuses every
+  // write before any request, so run_query could never run. Refused rather than stripped.
+  .superRefine((conn, ctx) => {
+    if (conn.mcp !== "write" || conn.readOnly !== true) return;
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `Seed connection "${conn.id}": mcp: "write" is refused with readOnly: true, because the seed refuses every write and run_query could never run. Remove readOnly, or use mcp: true for a read-only MCP connection.`,
+      path: ["mcp"],
+    });
+  })
   // A read-only mode the engine's provider ignores would be a promise nobody keeps: the seed would be
   // listed as read-only and still write (#1089). Read from READ_ONLY_ENFORCED, never a type-id branch,
   // so an engine is admitted by its own declaration.
@@ -415,6 +427,17 @@ function unmanagedReadOnlyMessage(fromDefaults: boolean): string {
   return `readOnly: true needs a managed connection, and this one has ${managed}: an unmanaged seed is copied into the browser of every user its roles admit, with its password and TLS client key, and Duplicate turns that copy into a connection of the user's own whose readOnly can be cleared. Set managed: true on this connection, or remove readOnly.`;
 }
 
+/**
+ * The load's refusal of a write MCP opt-in on a seed that is not managed (#1774). The argument
+ * is the read-only one: an unmanaged seed is copied into the browser of every user its roles
+ * admit, so a write token would act under credentials the client already holds, and the opt-in
+ * would add nothing the person cannot already do.
+ */
+function unmanagedMcpWriteMessage(fromDefaults: boolean): string {
+  const managed = fromDefaults ? "managed: false from defaults.managed" : "managed: false";
+  return `mcp: "write" needs a managed connection, and this one has ${managed}: an unmanaged seed is copied into the browser of every user its roles admit, with its password and TLS client key, so a write token would act under credentials the client already holds. Set managed: true on this connection, or remove mcp: "write".`;
+}
+
 export const SeedConfigSchema = z
   .object({
     version: z.literal("1"),
@@ -453,6 +476,19 @@ export const SeedConfigSchema = z
         path: ["connections", index, "readOnly"],
       });
     });
+  })
+  // The write opt-in's managed rule (#1774), beside the read-only one: defaults.managed is
+  // merged only after parsing, so the effective value is decided here as it is for readOnly.
+  .superRefine((cfg, ctx) => {
+    cfg.connections.forEach((conn, index) => {
+      if (conn.mcp !== "write") return;
+      if ((conn.managed ?? cfg.defaults?.managed ?? true) === true) return;
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: unmanagedMcpWriteMessage(conn.managed === undefined),
+        path: ["connections", index, "mcp"],
+      });
+    });
   });
 
 export type SeedConnection = z.infer<typeof SeedConnectionSchema>;
@@ -463,8 +499,8 @@ export interface ManagedConnection extends DatabaseConnection {
   managed: boolean;
   roles: string[];
   seedId: string;
-  /** Visible to MCP clients (#246); absent on the built-in samples, which never opt in. */
-  mcp?: boolean;
+  /** Visible to MCP clients (#246); `"write"` also admits the MCP write tool (#1774). Absent on the built-in samples, which never opt in. */
+  mcp?: boolean | "write";
   /**
    * Set in code after the role filter, by the discovery source on every discovered connection and, for an
    * operator entry, by src/lib/seed/index.ts when the operator loader's fill read it as literal (every

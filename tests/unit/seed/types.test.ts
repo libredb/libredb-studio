@@ -383,7 +383,7 @@ describe("SeedDefaultsSchema and the MCP opt-in", () => {
     const result = SeedDefaultsSchema.safeParse({ managed: true, mcp: true });
     expect(result.success).toBe(false);
     expect(result.error?.issues.map((issue) => issue.message)).toEqual([
-      "mcp is set per connection and never in defaults: add mcp: true to each seed connection an MCP client may use",
+      "mcp is set per connection and never in defaults: add mcp: true or mcp: write to each seed connection an MCP client may use",
     ]);
   });
 

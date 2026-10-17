@@ -290,6 +290,10 @@ mcp:
   tokenLabel: ""
   # -- How many days a minted token stays valid, from 1 to 365.
   tokenTtlDays: 30
+  # -- Register the run_query write tool on /api/mcp (#1774). false (the
+  # default) leaves the endpoint read only. A seed is reached by run_query only
+  # when its entry says mcp: "write".
+  writeEnabled: false
 
 # =============================================================================
 # Persistence — PVC for SQLite storage mode

@@ -235,6 +235,10 @@
           "minimum": 1,
           "maximum": 365,
           "description": "Days a minted MCP token stays valid"
+        },
+        "writeEnabled": {
+          "type": "boolean",
+          "description": "Register the run_query write tool on /api/mcp (#1774); false (default) leaves the endpoint read only"
         }
       }
     },

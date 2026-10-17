@@ -312,6 +312,11 @@ export interface AuditEvent {
    * #246).
    */
   correlationId?: string;
+  /**
+   * The kind of statement a run_query call sent (#1774): `read`, `write`, `ddl` or `other`,
+   * classified from the statement's own operative keyword. Set only by mcp_operation tool events.
+   */
+  statementKind?: string;
   /** The internal id of the passkey the event concerns, never the WebAuthn credential ID. */
   passkey?: string;
 }

@@ -8,7 +8,7 @@ It is off by default.
 
 - One endpoint, `POST /api/mcp`, served by the official MCP TypeScript SDK.
   It speaks revision 2026-07-28 and, without sessions, the 2025 revisions 2025-11-25 and 2025-06-18 that most clients still use.
-- Three tools, each annotated read-only and closed-world:
+- Three read-only tools, each annotated read-only and closed-world, and, when the write switch is on, a fourth tool that writes:
   - `list_connections` lists the connections opted in for MCP that your token's role may use, without credentials.
     It works for every engine but etcd, Oxia, S3-compatible object storage, Kubernetes, MQTT, Firestore, OPC UA, Modbus, NETCONF, SNMP and Sparkplug B, whose connections the seed file cannot opt in.
   - `inspect_schema` lists one connection's tables with their columns and, on request, their indexes.
@@ -25,6 +25,7 @@ It is off by default.
     It refuses every engine outside that list as soon as the connection resolves, before anything is acquired, answering "this tool does not serve <engine>; use inspect_schema there".
     MongoDB is one of them although agent mode executes on it, because its statement is a JSON command and this tool takes SQL (issue #1614); the MCP arm it lacks is `docs/BACKLOG.md` B117.
     Kubernetes is executed by agent mode too and is not offered to MCP at all.
+  - `run_query` (#1774) runs one statement, read or write, on a connection the operator opted in with `mcp: write`, when `LIBREDB_MCP_WRITE_ENABLED` is on. It runs under the seed's own account, as the token owner may run it in the editor, on every engine MCP serves, and is not annotated read-only. A write is refused before any provider opens when the seed did not opt in, and a multi-statement text is refused the same way; `mcp: true` keeps its read-only meaning.
 - Read-only is the database's own enforcement, not a filter over SQL text: `run_read_query` takes the connection under Studio's agent read-only execution profile and runs through the provider's read-only statement path, which PostgreSQL enforces with a read-only transaction, SQLite and DuckDB with a read-only open, SQL Server by verifying the principal cannot write, and MySQL and MariaDB by a least-privilege principal beside a read-only transaction.
   A statement check runs first as defence in depth.
 - A result that carries database content starts with a text block telling the model to treat what follows as untrusted data.
@@ -39,6 +40,7 @@ Four variables decide it, and `.env.example` documents each.
 | `LIBREDB_MCP_URL` | The address clients use, which every token is bound to: an absolute http(s) URL ending in `/api/mcp`, with your `BASE_PATH`, and no user name, password, query or fragment |
 | `LIBREDB_MCP_TOKEN_LABEL` | Any non-empty value; changing it revokes every MCP token at once |
 | `LIBREDB_MCP_TOKEN_TTL_DAYS` | How many days a minted token stays valid, from 1 to 365, 30 when unset |
+| `LIBREDB_MCP_WRITE_ENABLED` | `true`, `on` or `1` register the `run_query` write tool; `false`, `off`, `0`, empty, unset or any other value leave it unregistered, so a deployment stays read only until it opts in |
 
 ### npx
 
@@ -85,7 +87,7 @@ The native packages and every other way of running `server.js` derive nothing: s
 
 ## Opting connections in
 
-An MCP client reaches a connection only when its seed entry says `mcp: true`, and only when the connection's `roles` admit the role your token carries ([`docs/SEED_CONNECTIONS.md`](SEED_CONNECTIONS.md)).
+An MCP client reaches a connection only when its seed entry says `mcp: true` or `mcp: write`, and only when the connection's `roles` admit the role your token carries ([`docs/SEED_CONNECTIONS.md`](SEED_CONNECTIONS.md)). `mcp: true` opts a connection in for the read-only tools; `mcp: write` also admits `run_query`, which runs what the seed's own account may run. The write opt-in is refused with `readOnly: true`, on an unmanaged seed and in `defaults`, and it is independent of `environment`: the instance and its seed file are the boundary, and any environment label may carry it.
 
 ```yaml
 connections:
@@ -98,7 +100,20 @@ connections:
     mcp: true
 ```
 
-The opt-in is per connection, so `defaults.mcp` is refused.
+The opt-in is per connection, so `defaults.mcp` is refused. A write opt-in reads `mcp: write`:
+
+```yaml
+connections:
+  - id: billing-dev-rw
+    name: Billing (write)
+    type: postgres
+    host: db.internal
+    database: billing
+    roles: ["admin"]
+    mcp: write
+```
+
+Give a `mcp: write` seed its own least-privilege database account, because `run_query` runs whatever that account may run, and its audit events name the seed and the statement kind.
 A SQLite seed's `database` is an absolute path on the machine running Studio, and under Docker a path inside the container, so mount the file there.
 The built-in sample connections are never visible to an MCP client.
 An empty `list_connections` answer means no connection is opted in for your token's role: an operator adds `mcp: true` to a seed connection.
@@ -295,6 +310,7 @@ For the first few seconds after that service starts, `opencode mcp list` can say
 - Studio honours a cancel only when the client closes the request.
   A 2026-07-28 client does that on every cancel, and a 2025 client only by disconnecting.
   A 2025 client's `notifications/cancelled`, sent in a `POST` of its own, gets 202 and is ignored, because each `POST` is answered by a server that keeps no session and does not know the call it names: the call runs to completion or `timeout_ms`, answers on the request that is still open, and is audited that way, never as cancelled.
+- `run_query`'s cancel and timeout end the wait, not the statement: a write already sent may still commit after the client stops waiting. Send writes on seeds whose account and statement are chosen for that.
 - A cancel or a timeout ends the wait, not the statement:
 
 | Engine | The client closes the request | `timeout_ms` passes |

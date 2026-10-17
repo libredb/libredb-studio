@@ -10,7 +10,7 @@ import { emitAuditEvent, type AuditReason } from "@/lib/audit";
  * failure through: the caller decides, and every caller refuses to run what it cannot record.
  */
 
-export type McpToolAction = "list_connections" | "inspect_schema" | "run_read_query";
+export type McpToolAction = "list_connections" | "inspect_schema" | "run_read_query" | "run_query";
 
 export const MCP_DECISION_TARGET = "mcp/decision";
 export const MCP_EXECUTION_TARGET = "mcp/execution";
@@ -30,11 +30,16 @@ export type McpToolAuditReason = Extract<
   | "mcp_connections_unreadable"
 >;
 
+/** The kind of statement a run_query call sent, named in its audit events (#1774). */
+export type McpStatementKind = "read" | "write" | "ddl" | "other";
+
 export interface McpCallRecord {
   readonly action: McpToolAction;
   readonly user: string;
   readonly correlationId: string;
   readonly connectionName?: string;
+  /** The statement kind of a run_query call; absent on the other tools. */
+  readonly statementKind?: McpStatementKind;
 }
 
 export const MCP_AUDIT_FAILURE_TEXT = "The call was not run because its audit record could not be written.";
@@ -51,6 +56,7 @@ function record(call: McpCallRecord, target: string, failure: McpToolAuditReason
     user: call.user,
     correlationId: call.correlationId,
     ...(call.connectionName === undefined ? {} : { connectionName: call.connectionName }),
+    ...(call.statementKind === undefined ? {} : { statementKind: call.statementKind }),
     ...(duration === undefined ? {} : { duration }),
     result: failure === undefined ? "success" : "failure",
     ...(failure === undefined ? {} : { reason: failure }),

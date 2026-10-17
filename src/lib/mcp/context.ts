@@ -93,7 +93,9 @@ export class McpConnectionContext {
   private async load(): Promise<readonly ManagedConnection[] | typeof MCP_CONNECTIONS_UNREADABLE> {
     try {
       const connections = await getManagedConnections([this.caller.role]);
-      return connections.filter((connection) => connection.mcp === true);
+      // A write opt-in (#1774) is also visible: run_query needs the seed, and the read-only tools
+      // still work on it where the engine admits them. mcp: false and an absent mcp stay hidden.
+      return connections.filter((connection) => connection.mcp === true || connection.mcp === "write");
     } catch (error) {
       logger.error("Could not load managed connections for MCP", redactError(error), { route: "/api/mcp" });
       return MCP_CONNECTIONS_UNREADABLE;
