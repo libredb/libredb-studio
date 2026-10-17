@@ -126,7 +126,7 @@ Facts drift. Provider counts, channel counts and competitor editions all change,
 | :--- | :--- | :--- | :--- |
 | Forty-one database engines | One reference document per engine: PostgreSQL, MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase, Firestore, ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Databend, Snowflake, Apache Spark, Apache Cassandra, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, Oxia, S3-compatible object storage, Kubernetes, OPC UA, MTConnect, Modbus, NETCONF, SNMP and Sparkplug B. One more, `libredb.md`, is the embedded provider and is not an external engine. The count is derived, not written: `SHIPPED` in `src/lib/db/compatibility.ts` is an exhaustive record over `DatabaseType`, so the compiler refuses a missing id: read the count from there, minus `libredb` | `docs/providers/`, `src/lib/db/compatibility.ts` | 2026-10-08 |
 | Published as an embeddable npm package | `"name": "@libredb/studio"`, version 0.16.1 | `package.json` | 2026-09-19 |
-| MIT licensed | "MIT License / Copyright (c) 2025 LibreDB" | `LICENSE` | 2026-08-07 |
+| MIT licensed | "MIT License / Copyright (c) 2025 SEKOYA GRUP BİLİŞİM VE TEKNOLOJİ LİMİTED ŞİRKETİ" | `LICENSE` | 2026-08-07 |
 | 42 distribution channels, 34 live | "42 channels · 34 live · 7 pending · 1 deprecated" | `docs/CHANNELS.md` | 2026-10-01 |
 | One-click deployment on managed platforms | Railway, Dokploy, CapRover, DigitalOcean and Sealos are listed channels | `docs/CHANNELS.md` | 2026-08-07 |
 | Usable from a phone | Dedicated mobile navigation and mobile card and table result views | `src/components/MobileNav.tsx`, `src/components/results-grid/ResultCard.tsx` | 2026-08-07 |

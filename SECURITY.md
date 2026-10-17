@@ -26,7 +26,7 @@ Instead, please report them via email to:
 
 **Email:** info@sekoya.tech
 
-Reports are handled by Sekoya Grup Bilişim ve Teknoloji Ltd. Şti., the
+Reports are handled by SEKOYA GRUP BİLİŞİM VE TEKNOLOJİ LİMİTED ŞİRKETİ, the
 maintainer of LibreDB Studio.
 
 ### What to Include

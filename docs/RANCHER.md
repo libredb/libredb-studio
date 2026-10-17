@@ -35,8 +35,9 @@ upstream.
 
 ## Commercial support
 
-LibreDB Studio is developed and maintained by **Sekoya Grup Bilişim ve
-Teknoloji Ltd. Şti.** (Istanbul, Türkiye), trading publicly as **LibreDB**.
+LibreDB Studio is developed and maintained by
+**SEKOYA GRUP BİLİŞİM VE TEKNOLOJİ LİMİTED ŞİRKETİ** (Istanbul, Türkiye),
+trading publicly as **LibreDB**.
 Sekoya is the primary developer and maintainer of the software.
 
 **Sekoya provides commercial support for LibreDB Studio on every Rancher,
