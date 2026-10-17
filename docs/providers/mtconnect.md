@@ -48,7 +48,7 @@ grammar (`src/lib/db/console/`).
 
 | File | What it is |
 |---|---|
-| `xml.ts` | The reader: attributes and namespace prefixes preserved, CDATA and an optional prolog accepted, DOCTYPE and ENTITY refused before parsing, plus a streaming walker over observations |
+| `xml.ts` | The reader: attributes and namespace prefixes preserved, CDATA and an optional prolog accepted, DOCTYPE and ENTITY refused before parsing, plus a streaming walker over observations that reports the root it opened |
 | `xml-bounds.ts` | The reader's bounds, each beside the measurement it was sized from |
 | `model.ts` | The `probe` answer indexed by `dataItemId`, with the freshness test on `instanceId` |
 | `rows.ts` | One observation to one row, joined with the model for category, type and units |
@@ -150,6 +150,8 @@ whether or not authentication is ever offered, because a proxy can answer with H
 
 An `MTConnectError` answer is the agent's own refusal, and it reaches the reader as the agent's sentence and code on every route, `current` and `sample` included.
 A `path` that matches nothing (`INVALID_XPATH`) or a `from` that has left the buffer (`OUT_OF_RANGE`) is an error the reader sees, never an empty grid.
+
+On `current` and `sample` the root is learned in the same pass that reads the observations: the walker reports the root element it opened and walks only an `MTConnectStreams` document, so an answer is parsed once and never also held as a whole tree (#1787). An `MTConnectError` answer is small and is then read as a tree for the agent's sentence, and any other root gets the sentence above.
 
 A refusal from the reader says WHO refused, and that was a defect first. Eleven of the reader's
 sixteen refusals are Studio's own rule applied to a document that is well-formed XML and often
