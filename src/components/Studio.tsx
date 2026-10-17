@@ -22,6 +22,7 @@ import { StudioOverlays } from "@/components/studio/StudioOverlays";
 import { AgentRail } from "@/components/agent/AgentRail";
 import { DatabaseConnection, type ColumnSchema, SavedQuery } from "@/lib/types";
 import type { DatabaseObject } from "@/lib/db/types";
+import { splitMaskedColumns } from "@/lib/db/masking-exemption";
 import {
   activationRowActionForKind,
   catalogOfPath,
@@ -921,7 +922,14 @@ export default function Studio() {
       // a different key order — or a document store's row missing a field entirely —
       // lands in the right column instead of shifting the rest.
       const fields = source.fields;
-      const sensitiveColumns = detectSensitiveColumnsFromConfig(fields, maskingConfig);
+      // The same split the grid makes, from the same function: a column this engine excused must
+      // not arrive starred out in the rows a run is handed, or the grid would draw it open over
+      // values that are already asterisks.
+      const { masked: sensitiveColumns } = splitMaskedColumns(
+        fields,
+        maskingConfig,
+        metadata?.capabilities.maskingExemptColumns,
+      );
       const rows = effectiveMasking ? applyMaskingToRows(source.rows, fields, sensitiveColumns) : source.rows;
       return {
         rows,

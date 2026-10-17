@@ -5,6 +5,7 @@
 
 import { GoogleGenerativeAI, type GenerateContentStreamResult } from "@google/generative-ai";
 import { BaseLLMProvider } from "../base-provider";
+import type { RetryOptions } from "../utils/retry";
 import {
   type LLMConfig,
   type LLMStreamOptions,
@@ -23,8 +24,8 @@ import { encodeText, streamFromAsyncIterable } from "../utils/streaming";
 export class GeminiProvider extends BaseLLMProvider {
   private client: GoogleGenerativeAI;
 
-  constructor(config: LLMConfig) {
-    super(config);
+  constructor(config: LLMConfig, retryOptions?: RetryOptions) {
+    super(config, retryOptions);
     this.validate();
     this.client = new GoogleGenerativeAI(this.ensureApiKey());
   }

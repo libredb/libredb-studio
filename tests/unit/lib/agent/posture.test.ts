@@ -72,8 +72,8 @@ describe("agentPosture in plan mode", () => {
   test("an engine agent mode cannot execute on gets the identical plan posture", () => {
     const onMongo = agentPosture({
       mode: "planning",
-      engine: "mongodb",
-      engineLabel: getDBConfig("mongodb").label,
+      engine: "cassandra",
+      engineLabel: getDBConfig("cassandra").label,
       handover: false,
     });
     const onPostgres = agentPosture({
@@ -160,7 +160,63 @@ describe("agentPosture in agent mode, on an engine it can execute on", () => {
       `${AGENT_HANDOVER_BUDGET.maxResultRows} rows, no time limit, same read-only session`,
     );
     expect(posture.title).toBe("Reads only, and one statement lands in your editor");
-    expect(posture.body).toBe(autoExecuteTerms("investigation"));
+    expect(posture.body).toBe(autoExecuteTerms("investigation", "sql"));
+  });
+});
+
+describe("the posture on MongoDB", () => {
+  const posture = agentPosture({
+    mode: "agent",
+    engine: "mongodb",
+    engineLabel: getDBConfig("mongodb").label,
+    handover: false,
+  });
+  const rows = STATEMENT_BUDGETS.maxResultRows;
+  const seconds = STATEMENT_BUDGETS.statementTimeoutMs / 1000;
+
+  // Who holds each bound, in this engine's own terms: the server's deadline with Studio's kill behind it, the server's
+  // row bound, a principal the server must report and test before a command-sending run's first model turn (the
+  // operations workflow sends none and is not verified), and the fence. There is no read-only session to name.
+  test("states the reviewed wording, with the figures read from the policy row", () => {
+    expect(posture.tone).toBe("reads");
+    expect(posture.headline).toBe("Reads only");
+    expect(posture.qualifier).toBe(`${rows} rows and ${seconds} s per command, enforced by the server`);
+    expect(posture.title).toBe("Agent mode reads, under a boundary the server enforces");
+    expect(posture.body).toBe(
+      `Agent mode runs commands it wrote itself, bounded to ${rows} rows and ${seconds} seconds each: maxTimeMS is the server's own deadline, and Studio ends a command the server does not. On the server, find and aggregate stop one row past the budget. Before the first model turn of a run that sends commands, the server must report that this connection's user holds only read privileges on this database and must refuse a write from it: a user that can write, a server without authentication, or a server that is not MongoDB ends that run there. The fence refuses writes, write stages, server-side JavaScript and diagnostic stages before the engine is reached. Nothing reaches your editor.`,
+    );
+  });
+
+  test("a hand-over tick widens nothing, because no hand-over is offered on this engine", () => {
+    const ticked = agentPosture({ mode: "agent", engine: "mongodb", engineLabel: "MongoDB", handover: true });
+
+    expect(ticked).toEqual(posture);
+  });
+
+  test("autoExecuteTerms on mongo says no hand-over runs there, in the kubectl sentence's shape", () => {
+    expect(autoExecuteTerms("data-analysis", "mongo")).toBe(
+      "A MongoDB answer is never run in your editor: the hand-over is not offered on this engine, so the run produces its answer on its own read-only path only.",
+    );
+  });
+
+  test("no MongoDB sentence promises what the engine does not do", () => {
+    const ticked = agentPosture({ mode: "agent", engine: "mongodb", engineLabel: "MongoDB", handover: true });
+    const sentences = [
+      ...Object.values(posture),
+      ...Object.values(ticked),
+      ...WORKFLOW_TYPES.map((workflowType) => autoExecuteTerms(workflowType, "mongo")),
+    ];
+    for (const sentence of sentences) {
+      for (const overclaim of [
+        "proven read-only at open",
+        "no time limit",
+        "run it there",
+        "read-only session",
+        "before they cross the wire",
+      ]) {
+        expect(sentence, sentence).not.toContain(overclaim);
+      }
+    }
   });
 });
 
@@ -168,17 +224,17 @@ describe("agentPosture in agent mode, where it cannot execute", () => {
   test("an unsupported engine is blocked, and the copy names what still runs", () => {
     const posture = agentPosture({
       mode: "agent",
-      engine: "mongodb",
-      engineLabel: getDBConfig("mongodb").label,
+      engine: "cassandra",
+      engineLabel: getDBConfig("cassandra").label,
       handover: false,
     });
 
     expect(posture.tone).toBe("blocked");
-    expect(posture.headline).toBe("Cannot execute on MongoDB");
+    expect(posture.headline).toBe("Cannot execute on Apache Cassandra");
     expect(posture.qualifier).toBe("plan mode drafts here, and the operations workflow still runs");
-    expect(posture.title).toBe("Agent mode has no read-only statement path on MongoDB");
+    expect(posture.title).toBe("Agent mode has no read-only statement path on Apache Cassandra");
     expect(posture.body).toBe(
-      `Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: ${EXECUTION_ENGINE_NAMES}. On MongoDB a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine.`,
+      `Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: ${EXECUTION_ENGINE_NAMES}. On Apache Cassandra a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine.`,
     );
   });
 
@@ -255,7 +311,7 @@ describe("the posture on Kubernetes", () => {
   });
 
   test("the engine-less arms no longer call every listed engine database-native", () => {
-    const unsupported = agentPosture({ mode: "agent", engine: "mongodb", engineLabel: "MongoDB", handover: false });
+    const unsupported = agentPosture({ mode: "agent", engine: "cassandra", engineLabel: "Cassandra", handover: false });
     expect(unsupported.body).not.toContain("database-native");
     expect(unsupported.body).toContain("Kubernetes");
     const unresolved = agentPosture({ mode: "agent", engine: null, engineLabel: "", handover: false });
@@ -269,17 +325,20 @@ describe("the posture on Kubernetes", () => {
       "A kubectl answer is never run in your editor: the hand-over is not offered on this engine, so the run produces its answer on its own read-only path only.",
     );
   });
-
-  test("autoExecuteTerms defaults to SQL, the language the consent step is shown for", () => {
-    expect(autoExecuteTerms("data-analysis")).toBe(autoExecuteTerms("data-analysis", "sql"));
-  });
 });
 
 describe("autoExecuteTerms", () => {
+  // No default: a caller that names no language would be shown SQL's terms on whatever engine it is on, SQL's
+  // read-only session included, on an engine that has none.
+  test("takes the language it states, with no default", () => {
+    // @ts-expect-error: the language is required, so this call does not compile
+    expect(() => autoExecuteTerms("data-analysis")).toThrow();
+  });
+
   test("names the run's own bounds and the editor's, for every workflow", () => {
     for (const workflowType of WORKFLOW_TYPES) {
       const budgets = AGENT_WORKFLOW_BUDGETS[workflowType].policy.budgets;
-      const terms = autoExecuteTerms(workflowType);
+      const terms = autoExecuteTerms(workflowType, "sql");
 
       expect(terms).toContain(
         `bounded to ${budgets.maxResultRows} rows and ${budgets.statementTimeoutMs / 1000} seconds`,
@@ -305,7 +364,7 @@ describe("autoExecuteTerms", () => {
       const budgets = AGENT_WORKFLOW_BUDGETS[workflowType].policy.budgets;
       expect(budgets.maxResultRows).toBe(STATEMENT_BUDGETS.maxResultRows);
       expect(budgets.statementTimeoutMs).toBe(STATEMENT_BUDGETS.statementTimeoutMs);
-      expect(autoExecuteTerms(workflowType)).toBe(
+      expect(autoExecuteTerms(workflowType, "sql")).toBe(
         agentPosture({
           mode: "agent",
           engine: "postgres",
@@ -335,8 +394,8 @@ describe("the engine names follow the enforcing list", () => {
       const { agentPosture: withThree } = await import("@/lib/agent/posture");
       const blocked = withThree({
         mode: "agent",
-        engine: "mongodb",
-        engineLabel: getDBConfig("mongodb").label,
+        engine: "cassandra",
+        engineLabel: getDBConfig("cassandra").label,
         handover: false,
       });
 
@@ -373,8 +432,8 @@ describe("the engine names follow the enforcing list", () => {
   });
 
   test("the list is read per call, so nothing in the copy is frozen at module load", () => {
-    expect(agentPosture({ mode: "agent", engine: "mongodb", engineLabel: "MongoDB", handover: false }).body).toContain(
-      `boundary it declares: ${EXECUTION_ENGINE_NAMES}.`,
-    );
+    expect(
+      agentPosture({ mode: "agent", engine: "cassandra", engineLabel: "Apache Cassandra", handover: false }).body,
+    ).toContain(`boundary it declares: ${EXECUTION_ENGINE_NAMES}.`);
   });
 });

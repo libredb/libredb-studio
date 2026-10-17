@@ -52,6 +52,7 @@
   <a href="https://aiven.io/docs/products/mysql/howto/connect-libredb-studio">Aiven for MySQL</a>,
   <a href="https://docs.scylladb.com/stable/get-started/gui-clients/libredb-studio.html">ScyllaDB</a>,
   <a href="https://cloudberry.apache.org/docs/ecosystem/sql-clients/libredb-studio/">Apache Cloudberry</a>,
+  <a href="https://doris.apache.org/docs/4.x/connection-integration/data-integration/libredb-studio/">Apache Doris</a>,
   <a href="https://cwiki.apache.org/confluence/display/KAFKA/Ecosystem#:~:text=LibreDB%20Studio">Apache Kafka</a>,
   <a href="https://cassandra.apache.org/_/ecosystem.html">Apache Cassandra</a>
   и
@@ -59,14 +60,30 @@
 </p>
 
 <p align="center">
-  <img src="public/screenshots/hero-demo.gif" alt="LibreDB Studio" width="100%" />
+  <img src="public/screenshots/hero-demo.gif" width="100%" />
 </p>
 
 <p align="center">
+  <a href="https://github.com/libredb/libredb-studio"><img src="https://img.shields.io/github/stars/libredb/libredb-studio?style=social" alt="GitHub stars"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
   <a href="https://sonarcloud.io/project/overview?id=libredb_libredb-studio"><img src="https://sonarcloud.io/api/project_badges/measure?project=libredb_libredb-studio&metric=alert_status" alt="Quality Gate"></a>
   <a href="https://codecov.io/github/libredb/libredb-studio"><img src="https://codecov.io/github/libredb/libredb-studio/graph/badge.svg?token=VA6CO9R7IH" alt="Coverage"></a>
+  <a href="https://deepwiki.com/libredb/libredb-studio"><img src=".github/assets/deepwiki-badge.svg" alt="Ask DeepWiki"></a>
   <a href="https://artifacthub.io/packages/helm/libredb-studio/libredb-studio"><img src="https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/libredb-studio" alt="Artifact Hub"></a>
+</p>
+
+<p align="center">
+  <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/Next.js-16-black?logo=next.js" alt="Next.js 16"></a>
+  <a href="https://react.dev/"><img src="https://img.shields.io/badge/React-19-61DAFB?logo=react" alt="React 19"></a>
+  <a href="https://hub.docker.com/r/libredb/libredb-studio?tag=latest"><img src="https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker" alt="Docker Support"></a>
+  <a href="https://artifacthub.io/packages/helm/libredb-studio/libredb-studio"><img src="https://img.shields.io/badge/Kubernetes-Compatible-326CE5?logo=kubernetes" alt="Kubernetes Compatible"></a>
+</p>
+
+<p align="center">
+  <a href="#быстрый-старт"><strong>Quick Start</strong></a> •
+  <a href="README.md#live-test"><strong>Live Demo</strong></a> •
+  <a href="#установка"><strong>Install Options</strong></a> •
+  <a href="README.md#one-click-deploy"><strong>Deploy Your Own</strong></a>
 </p>
 
 > Этот README на русском языке переведён сообществом и может отставать от английского. Если тексты расходятся, верной считается [английская версия](README.md).
@@ -113,9 +130,9 @@ LibreDB Studio устроен наоборот: **инструмент прих�
 
 ## Основные возможности
 
-### Тридцать семь СУБД, один интерфейс
+### Сорок один СУБД, один интерфейс
 
-PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · Firestore · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · BigQuery · Databend · Snowflake · Apache Spark · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j · Milvus · Qdrant · InfluxDB (InfluxQL) · InfluxDB 3 (SQL) · Oxia · S3-compatible object storage · Kubernetes · MQTT · RabbitMQ · OPC UA · MTConnect
+PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · Firestore · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · BigQuery · Databend · Snowflake · Apache Spark · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j · Milvus · Qdrant · InfluxDB (InfluxQL) · InfluxDB 3 (SQL) · Oxia · S3-compatible object storage · Kubernetes · MQTT · RabbitMQ · OPC UA · MTConnect · Modbus · NETCONF · SNMP · Sparkplug B
 
 Для всех SQL-СУБД доступен одинаковый набор инструментов: дерево объектов базы (схемы, таблицы, столбцы), ER-диаграммы, сравнение схем и панели мониторинга. MongoDB и Redis работают не на SQL, поэтому ER-диаграмм и сравнения схем для них нет.
 
@@ -161,6 +178,10 @@ ER-диаграмма для Elasticsearch и OpenSearch показывает и
 | **RabbitMQ** | нет: HTTP API управления (порт 15672) и собственный клиент чтения AMQP 0-9-1 в Studio (порт 5672) | Только чтение по построению: клиент чтения не умеет кодировать публикацию, изъятие сообщения или объявление. Виртуальные хосты, стримы, очереди и обменники в дереве; JSON-запрос на чтение читает сообщения стрима и никогда не читает очередь |
 | **OPC UA** | `node-opcua-client` (чистый JavaScript, `opc.tcp`, порт 4840) | Только чтение по построению: шов клиента объявляет восемь служб чтения (GetEndpoints, CreateSession, ActivateSession, Browse, BrowseNext, Read, HistoryRead и CloseSession), и ни Write, ни Call, ни HistoryUpdate, ни подписки в провайдере нет вовсе. Панель ключей идёт по адресному пространству уровень за уровнем, один Browse на уровень, а ключ — это экранированный путь обзора, потому что BrowseName сам может содержать разделитель; узел открывается со своим значением, статусом, двумя метками времени и расшифрованным AccessLevel, а консоль читает текущие значения или сырую историю одним JSON-запросом. Каждая граница — своя, а не та, которую публикует сервер: из четырёх измеренных серверов два обслуживают запросы далеко за пределами объявленного ими лимита, а один публикует его как 0. Узел-метод перечисляется и никогда не вызывается. Проверено на Microsoft OPC PLC 2.15.10, open62541 1.5.9, Python asyncua 2.1.0 и демо Eclipse Milo |
 | **MTConnect** | нет: собственный клиент этого репозитория поверх общего транспорта `node:http(s)` (порт 5000) | Только чтение по устройству: в таблице маршрутов девять записей, и все они GET, поэтому нет ни PUT, ни POST, ни потока. Устройство — это контейнер, data item и condition — отношения со столбцами значение, метка времени и номер последовательности, а XML каждого asset открывается во вкладке Source |
+| **Modbus** | нет: собственный клиент этого репозитория поверх сырого сокета через общее правило исходящих соединений (порт 502, или 802 для MODBUS/TCP Security) | Только чтение по построению: кодировщик называет четыре функциональных кода чтения и идентификацию устройства, ни одна функция не собирает запись, а клапан перепроверяет каждый исходящий байт. В Modbus нет обнаружения, поэтому дерево строится из карты регистров, хранимой вместе с подключением, а чтение — это один JSON-запрос к точкам, которые эта карта называет |
+| **NETCONF** | `ssh2` (только транспорт SSH; этот репозиторий открывает сокет и передаёт его, а кадрирование, запросы и сессия NETCONF свои собственные, порт 830) | Только чтение по построению: `requests.ts` собирает пять тел запросов, четыре из них чтения, `<get-config>`, `<get>`, `<get-data>` и `<get-schema>`, а пятое закрывает сессию, и ни одна функция не собирает `<edit-config>`, `<copy-config>`, `<commit>` или `<lock>`. Хранилище данных это контейнер, модуль YANG контейнер под ним, контейнер или список первого уровня модуля это объект, а ключевые листья записи списка это столбцы объекта |
+| **SNMP** | нет: собственный клиент этого репозитория поверх UDP (порт 161), через общее правило исходящего трафика | Только чтение по устройству: исходящий клапан отклоняет любой PDU, кроме Get, GetNext и GetBulk, поэтому Set не доходит до сокета. Группа объектов служит контейнером, обход поддерева и есть чтение, а таблица собирается из ответов GetBulk |
+| **Sparkplug B** | нет: собственная ограниченная MQTT-сессия этого репозитория поверх общих транспортов `node:net` и `node:tls` (порт 1883 или 8883 через панель SSL / TLS) | Только чтение по построению: в кодировщике нет функции, которая пишет PUBLISH, а CONNECT не несёт завещания (will), потому что 5.4 регистрирует свидетельство о смерти краевого узла как его will, и читатель, установивший его, опубликовал бы смерть при обрыве собственного сокета. Группа и краевой узел служат контейнерами, а метрика образует строку, чьи значение, метка времени и определение берутся из свидетельства о рождении, объявившего её |
 | **Redis** | `ioredis` | Редактор команд, просмотр ключей, мониторинг на основе INFO |
 
 > **Защита соединения настраивается одинаково для всех СУБД.** SSH-туннель открывается до подключения к базе, поэтому он работает с любой СУБД, если подключение задано хостом и портом. Исключение — Kafka: её клиент подключается к каждому брокеру по отдельному адресу, и туннель до одного адреса здесь не поможет. Если подключение задано строкой подключения (так можно для MongoDB, Couchbase, ClickHouse и libSQL), туннель не используется. У SQLite и DuckDB сетевого соединения нет вообще. Настройки SSL/TLS доступны для всех СУБД, кроме файловых. Для Trino TLS обязателен: без него координатор не принимает пароль.
@@ -183,7 +204,7 @@ ER-диаграмма для Elasticsearch и OpenSearch показывает и
 Главная функция ИИ в Studio — **панель агента** рядом с редактором. Вы пишете вопрос, например *«в каком отделе больше всего сотрудников?»* или *«почему этот запрос медленный?»*, и нажимаете Start. Агент составляет SQL-запросы к подключённой базе, читает результаты и пишет отчёт, **в котором каждое утверждение ссылается на результат, из которого оно получено**.
 
 - **Только чтение, и это гарантирует сама база.** Все запросы агента выполняются в режиме только для чтения средствами СУБД: в PostgreSQL это транзакция только для чтения, в SQLite `PRAGMA query_only`, в DuckDB подключение `READ_ONLY` с дополнительной проверкой на уровне SQL. В SQL Server таких транзакций нет, поэтому Studio проверяет, что у учётной записи нет прав на запись, ограничивает число строк и всегда откатывает транзакцию. Запись и DDL отклоняются ещё до обращения к базе. `EXPLAIN ANALYZE` по умолчанию запрещён, потому что он выполняет запрос. Каждый запрос агента проверяется политикой и записывается в аудит (`executeAuditedOperation`, `src/lib/db/operations/execution.ts:129`). На запросы, которые вы сами запускаете в редакторе, эти проверки не распространяются (`src/app/api/db/query/route.ts:44`).
-- **Режим Agent работает только с PostgreSQL, SQLite, DuckDB, SQL Server и MySQL.** Только для этих пяти СУБД реализован режим только для чтения (`queryReadOnly`). Для остальных СУБД запуск в режиме Agent отклоняется ещё до начала работы. Режим **Plan** доступен для любого подключения: в нём модель ничего не выполняет и не записывает, а только готовит запрос, который вы запустите сами. Схему базы для подсказок (GROUNDING) Studio читает для всех СУБД. Если прочитать схему не удалось, агент прямо об этом сообщает и не выдумывает таблицы.
+- **Режим Agent работает только с PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes и MongoDB.** Только для них реализован режим только для чтения (`queryReadOnly`); у каждой из них своя граница, и она описана в её документации. Для остальных СУБД запуск в режиме Agent отклоняется ещё до начала работы. Режим **Plan** доступен для любого подключения: в нём модель ничего не выполняет и не записывает, а только готовит запрос, который вы запустите сами. Схему базы для подсказок (GROUNDING) Studio читает для всех СУБД. Если прочитать схему не удалось, агент прямо об этом сообщает и не выдумывает таблицы.
 - **Три сценария**: **Investigate** (ответить на вопрос), **Optimize** (сравнить планы выполнения, предложить индекс или переписать запрос), **Assess** (оценить таблицы: только подсчёт строк, сами значения не читаются).
 - **Ничего не запускается само.** Агент не начинает работу без вас, не пишет в редактор и не выполняет то, что сам рекомендует. Запустить предложенный запрос можете только вы.
 - **Без доказательств нет утверждений.** Агент не может написать вывод без ссылки на результат запроса. В конце он сам указывает, удалось ли ответить на вопрос: *«Run answered»* или *«Run did not answer»*.

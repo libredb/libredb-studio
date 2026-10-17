@@ -7,7 +7,7 @@
  * 3. The underlying database data remains untouched.
  *
  * It is NOT in `bun run test`: the runner excludes `tests/live/` by name (`EXCLUDED` in
- * `tests/runner/discover.ts`). CI runs it in the "Functional Smoke (PostgreSQL, RabbitMQ)" job of
+ * `tests/runner/discover.ts`). CI runs it in the "Functional Smoke (PostgreSQL, MongoDB, RabbitMQ)" job of
  * .github/workflows/ci.yml, and loop/scripts/functional-smoke.sh runs it locally. It needs Docker
  * and nothing else:
  *

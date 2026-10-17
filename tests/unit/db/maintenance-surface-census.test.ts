@@ -117,6 +117,14 @@ const EXPECTED: Readonly<Record<DatabaseType, SurfaceRow>> = {
   opcua: NONE,
   // The same: every route this provider sends is a GET (#1722).
   mtconnect: NONE,
+  // The same: the encoder can build four read requests and the identification request, and nothing else
+  // (#1723).
+  modbus: NONE,
+  netconf: NONE,
+  snmp: NONE,
+  // The same, and for an absence rather than a choice: there is no packet this provider can send that writes
+  // (#1720).
+  sparkplug: NONE,
   libredb: NONE,
 };
 
@@ -130,9 +138,9 @@ describe("every shipped provider's per-row maintenance controls (R46 C3)", () =>
     expect(surfacesOf(provider.getCapabilities(), provider.getLabels())).toEqual(EXPECTED[type]);
   });
 
-  test("11 of 38 type-ids offer per-row controls on the two tabs, 10 on the row menus, one outside MaintenanceType", () => {
+  test("11 of 4041 type-ids offer per-row controls on the two tabs, 10 on the row menus, one outside MaintenanceType", () => {
     const rows = Object.values(EXPECTED);
-    expect(rows.length).toBe(38);
+    expect(rows.length).toBe(42);
     expect(rows.filter((row) => row.tabs !== "").length).toBe(11);
     expect(rows.filter((row) => row.tree !== "").length).toBe(10);
     expect(rows.filter((row) => row.outsideMaintenanceType !== "").length).toBe(1);

@@ -1,0 +1,20 @@
+{
+  "measured": "2026-10-17",
+  "server": "MongoDB 9.0.4, authorization on",
+  "principal": "none: the connection authenticated no user",
+  "command": {
+    "connectionStatus": 1,
+    "showPrivileges": true,
+    "maxTimeMS": 5000,
+    "comment": "libredb-studio-agent"
+  },
+  "reply": {
+    "authInfo": {
+      "authenticatedUsers": [],
+      "authenticatedUserRoles": [],
+      "authenticatedUserPrivileges": []
+    },
+    "uuid": "b0891b0a-466a-48cf-b95a-4cf6789ef57b",
+    "ok": 1
+  }
+}

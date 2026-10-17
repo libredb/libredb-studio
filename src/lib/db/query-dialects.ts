@@ -189,6 +189,53 @@ export const QUERY_DIALECTS: Readonly<Record<QueryDialect, DialectSpec>> = Objec
     offersCodeGeneration: false,
     offersCountQuery: false,
   }),
+  // One JSON read request, in the Kafka style (#1723 section 3). No column profiling: a point is a
+  // value, not a column, and there is no statement to profile over. No count query: Modbus has no
+  // request that counts anything, and the number of points is the map's own, already on the tree.
+  modbus: Object.freeze({
+    tabType: "modbus",
+    offersColumnProfiling: false,
+    offersCodeGeneration: false,
+    offersCountQuery: false,
+  }),
+  // One JSON read request naming a datastore, a path and a limit (#1724). No column profiling: a
+  // YANG leaf is a value in a tree and the rows a read answers are built per entry, so there is no
+  // column to profile over. No code generation and no count query: this provider sends four read
+  // operations and a close and nothing else, and NETCONF has no request that counts what is below
+  // a path, so a generated statement would be one no device could run and a count would be a
+  // number nobody measured.
+  netconf: Object.freeze({
+    tabType: "netconf",
+    offersColumnProfiling: false,
+    offersCodeGeneration: false,
+    offersCountQuery: false,
+  }),
+  // Registered rather than left absent, and the measurement is why: with no dialect the registry
+  // fell back to MongoDB's tab, so a tree click on an SNMP object would have opened a MongoDB
+  // editor and the generator would have written a `find`. No profiling, because summarising a
+  // column means walking the subtree a second time with no statement the agent understands; no
+  // count, because an SNMP table is assembled by walking and there is nothing to count without
+  // doing it; no code generation, because the grammar is four words and a numbered name.
+  snmp: Object.freeze({
+    tabType: "snmp",
+    offersColumnProfiling: false,
+    offersCodeGeneration: false,
+    offersCountQuery: false,
+  }),
+
+  // FOUR FALSE ANSWERS, AND THE REGISTRY'S GOLDEN FILE IS WHAT MADE THEM VISIBLE. Without a record
+  // here a provider falls back to its query language, and `json` answers yes to three of these: the
+  // golden file recorded this engine as `tabType: "mongodb"` with column profiling, code generation
+  // and a count query all true, which are four things it cannot do. There is no count because a
+  // broker publishes none and a metric is not a table; no column profile because a column here is a
+  // metric a certificate declared rather than a sampled set of values; and no code generation
+  // because a read request names a group and a window rather than a statement to compose.
+  sparkplug: Object.freeze({
+    tabType: "sparkplug",
+    offersColumnProfiling: false,
+    offersCodeGeneration: false,
+    offersCountQuery: false,
+  }),
 });
 
 /**

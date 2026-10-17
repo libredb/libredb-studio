@@ -7,6 +7,10 @@ import {
   dbSchemaReadDescriptor,
   isStatementReadOperation,
   kubectlQueryReadDescriptor,
+  mongoPlanEstimateDescriptor,
+  mongoQueryReadDescriptor,
+  mongoSchemaReadDescriptor,
+  mongoTableProfileDescriptor,
   sqlExplainAnalyzeDescriptor,
   sqlExplainEstimateDescriptor,
   sqlQueryReadDescriptor,
@@ -33,18 +37,16 @@ const canonicalDescriptors = [
   kubectlQueryReadDescriptor,
   clusterUsageReadDescriptor,
   clusterWorkloadsReadDescriptor,
+  mongoQueryReadDescriptor,
+  mongoSchemaReadDescriptor,
+  mongoPlanEstimateDescriptor,
+  mongoTableProfileDescriptor,
 ];
 
 describe("canonical operation registry", () => {
-  test("registers exactly the nine canonical descriptors: no write, DDL, or admin operation exists", () => {
-    // Nine since the Kubernetes workload profile, the second curated cluster reading. Eight since the Kubernetes usage reading, a curated read with its own row ceiling. Seven since the Kubernetes agent read, which has its own id so the SQL contract
-    // and its audit action stay exactly what they were. Six since #414, which gave the provider's own schema inspection an id so that
-    // grounding on an engine with no composed catalog goes through the audited path
-    // rather than beside it. Five since the `operations` workflow, which added the
-    // first descriptor carrying no statement at all (#372). Four
-    // since #330 T3, which reopened a decision epic #325 had pinned at three.
-    // The assertion is exact-array equality on purpose: it is the one place a
-    // descriptor can be added without somebody noticing.
+  test("registers exactly the canonical descriptors: no write, DDL, or admin operation exists", () => {
+    // Every id below is a read, each for the reason its docblock states; the exact-array equality is the one place a
+    // descriptor, a write, DDL or admin one included, can be added without somebody noticing.
     const registry = createCanonicalOperationRegistry();
     expect(registry.registeredIds()).toEqual([
       "cluster.usage.read",
@@ -52,6 +54,10 @@ describe("canonical operation registry", () => {
       "db.operations.read",
       "db.schema.read",
       "kubectl.query.read",
+      "mongo.plan.estimate",
+      "mongo.query.read",
+      "mongo.schema.read",
+      "mongo.table.profile",
       "sql.explain.analyze",
       "sql.explain.estimate",
       "sql.query.read",
@@ -61,8 +67,8 @@ describe("canonical operation registry", () => {
 
   test("the provider schema read is R0 metadata, and takes no input at all", () => {
     // R0 for the same reason the curated reading is: an R1 descriptor must NAME the
-    // database-native mechanism bounding it, and a provider call has no statement for
-    // a read-only transaction to bound. What bounds this one is that its input is
+    // mechanism bounding it, and a provider call has no statement for a read-only
+    // transaction to bound. What bounds this one is that its input is
     // EMPTY — there is no selector to widen and nothing a model wrote reaches an
     // engine.
     expect(dbSchemaReadDescriptor).toMatchObject({
@@ -87,8 +93,8 @@ describe("canonical operation registry", () => {
 
   test("the curated operational read is R0 metadata, and takes no statement at all", () => {
     // R0 rather than R1, and that is a claim about what bounds it rather than a way
-    // around the verification marker: an R1 descriptor must NAME the database-native
-    // mechanism bounding it, and a curated provider call has none — there is no
+    // around the verification marker: an R1 descriptor must NAME the mechanism
+    // bounding it, and a curated provider call has none: there is no
     // statement for a read-only transaction to bound. What bounds it is the shape of
     // the input, which carries a kind out of a closed enum and nothing a model wrote.
     expect(dbOperationsReadDescriptor).toMatchObject({
@@ -119,8 +125,8 @@ describe("canonical operation registry", () => {
       resourceCost: "heavy",
       supportsDryRun: false,
     });
-    // R1 is registrable only with a substantive verification marker naming a
-    // database-native boundary; the registry refuses a blank one.
+    // R1 is registrable only with a substantive verification marker naming its
+    // boundary; the registry refuses a blank one.
     expect(sqlTableProfileDescriptor.verification?.boundary).toContain("READ ONLY");
     expect(sqlTableProfileDescriptor.verification?.reviewedBy).toContain("#330");
   });
@@ -168,20 +174,19 @@ describe("sql.query.read", () => {
 });
 
 describe("the statement-read operations", () => {
-  test("are exactly the two a model writes a read for", () => {
+  test("are exactly the reads a model writes a statement for, one per language", () => {
     // A profile is a data read too, but its statement is the server's, and a plan's
     // statement is described rather than run: neither is one, or `present_answer`
-    // would accept what it refuses on SQL today.
-    const ids = [
-      "sql.query.read",
-      "sql.explain.estimate",
-      "sql.explain.analyze",
-      "sql.table.profile",
-      "db.operations.read",
-      "db.schema.read",
+    // would accept what it refuses on SQL today. That holds of MongoDB's plan and
+    // profile exactly as of SQL's.
+    const ids = createCanonicalOperationRegistry().registeredIds();
+    expect(ids.filter(isStatementReadOperation).sort()).toEqual([
       "kubectl.query.read",
-    ];
-    expect(ids.filter(isStatementReadOperation)).toEqual(["sql.query.read", "kubectl.query.read"]);
+      "mongo.query.read",
+      "sql.query.read",
+    ]);
+    expect(isStatementReadOperation("mongo.plan.estimate")).toBe(false);
+    expect(isStatementReadOperation("mongo.table.profile")).toBe(false);
   });
 
   test("an unknown id is not one", () => {
@@ -343,6 +348,94 @@ describe("canonical input schemas", () => {
   });
 });
 
+describe("the MongoDB composed profile", () => {
+  /**
+   * A profile's `$group` in the shape `mongo-tools.ts` composes it at pattern depth: a presence count for every field,
+   * and the two shape tests for every textual one, over `fields` fields whose dotted names are `nameLength` long.
+   */
+  function composedProfile(fields: number, nameLength: number): string {
+    const group: Record<string, unknown> = { _id: null, row_count: { $sum: 1 } };
+    for (let index = 0; index < fields; index += 1) {
+      const path = `$${`f${index}.`.padEnd(nameLength, "x")}`;
+      const textual = { $eq: [{ $type: path }, "string"] };
+      group[`present_${index}`] = { $sum: { $cond: [{ $in: [{ $type: path }, ["missing", "null"]] }, 0, 1] } };
+      group[`shaped_${index}`] = {
+        $sum: { $cond: [{ $and: [textual, { $regexMatch: { input: path, regex: ".@.+\\..", options: "s" } }] }, 1, 0] },
+      };
+      group[`digits_${index}`] = {
+        $sum: {
+          $cond: [{ $and: [textual, { $regexMatch: { input: path, regex: "[0-9]{9,}", options: "s" } }] }, 1, 0],
+        },
+      };
+    }
+    return JSON.stringify({
+      collection: "orders",
+      database: "app",
+      operation: "aggregate",
+      pipeline: [{ $group: group }],
+    });
+  }
+
+  test("admits the composed command past the cap a model's command is held to, because the server wrote it", () => {
+    // Sixteen fields (MAX_PROFILE_COLUMNS) with long nested paths: field names have no length bound, so a batch
+    // sized by count still composes far past the 4,096 characters that bound text a model writes.
+    const command = composedProfile(16, 120);
+    expect(command.length).toBeGreaterThan(4096);
+    expect(mongoTableProfileDescriptor.inputSchema.safeParse({ command }).success).toBe(true);
+    expect(mongoQueryReadDescriptor.inputSchema.safeParse({ command }).success).toBe(false);
+  });
+
+  test("holds the composed command to 65,536 characters, measured on a command the reader admits", () => {
+    /** A count the reader admits, its filter's one value padded so the whole command is exactly `length` long. */
+    const sized = (length: number): string => {
+      const head = '{"collection":"orders","operation":"count","filter":{"note":"';
+      const tail = '"}}';
+      return `${head}${"x".repeat(length - head.length - tail.length)}${tail}`;
+    };
+    expect(sized(65_536)).toHaveLength(65_536);
+    expect(mongoTableProfileDescriptor.inputSchema.safeParse({ command: sized(65_536) }).success).toBe(true);
+    // One character past the bound, and the length is the only thing refused: the reader admits the command.
+    const over = mongoTableProfileDescriptor.inputSchema.safeParse({ command: sized(65_537) });
+    expect(over.error?.issues.map((issue) => issue.code)).toEqual(["too_big"]);
+  });
+
+  test("still reads the composed command with the reader every command meets", () => {
+    const write = JSON.stringify({ collection: "orders", operation: "aggregate", pipeline: [{ $out: "copy" }] });
+    expect(mongoTableProfileDescriptor.inputSchema.safeParse({ command: write }).success).toBe(false);
+    expect(mongoTableProfileDescriptor.inputSchema.safeParse({ sql: composedProfile(1, 8) }).success).toBe(false);
+  });
+});
+
+describe("the MongoDB boundaries", () => {
+  test("name what the profile proves, and none of the claims a live probe measured false", () => {
+    // Measured during review: an explain with candidate plans runs each for a trial, explain carried no deadline of
+    // its own, a client timer only stops waiting, and a principal with write privileges on another database passed
+    // the write probe on this one.
+    const boundaries = [mongoQueryReadDescriptor, mongoPlanEstimateDescriptor, mongoTableProfileDescriptor].map(
+      (descriptor) => descriptor.verification?.boundary ?? "",
+    );
+    for (const boundary of boundaries) {
+      expect(boundary).not.toMatch(
+        /no document is touched|ends a silent server|no write-capable connection is admitted|bounds the planning itself/,
+      );
+    }
+    expect(mongoQueryReadDescriptor.verification?.boundary).toContain("privileges read as reads");
+    expect(mongoQueryReadDescriptor.verification?.boundary).toContain("kills the session");
+    expect(mongoPlanEstimateDescriptor.verification?.boundary).toContain("bounded trial");
+  });
+
+  test("count a cursor's documents in BSON bytes before decoding, and say a distinct's reply is decoded whole first", () => {
+    // The driver decodes a command's reply even when asked for it raw (`distinctWithinBudget` in agent-read.ts), so
+    // the before-decode measure holds for the documents a cursor yields and not for the one reply a distinct answers.
+    const boundary = mongoQueryReadDescriptor.verification?.boundary ?? "";
+    expect(boundary).toContain("a cursor's documents are counted in BSON bytes before they are decoded");
+    expect(boundary).toContain(
+      "a distinct's one reply, which the server holds to 16 MiB, is decoded whole before its values are counted",
+    );
+    expect(boundary).not.toMatch(/(?<!a cursor's )documents are counted in BSON bytes/);
+  });
+});
+
 describe("the R1 boundary contract", () => {
   // R1 admits the engine's own read-only mechanism, or, where the engine has none,
   // a Studio-enforced allowlist on the final request plus the identity's own
@@ -355,6 +448,9 @@ describe("the R1 boundary contract", () => {
       "kubectl.query.read",
       "cluster.usage.read",
       "cluster.workloads.read",
+      "mongo.query.read",
+      "mongo.plan.estimate",
+      "mongo.table.profile",
     ]) {
       const resolution = createCanonicalOperationRegistry().resolve(id);
       if (resolution.kind !== "resolved") throw new Error(`expected ${id} resolved, got ${resolution.kind}`);

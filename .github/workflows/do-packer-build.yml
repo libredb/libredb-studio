@@ -55,7 +55,25 @@ jobs:
         env:
           DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
           VERSION: ${{ inputs.version }}
-        run: packer build -var "version=$VERSION" .
+        # Birden fazla bolge denenir: DigitalOcean bir bolgede kapasite
+        # yoksa 422 "Size is not available in this region" doner ve yapim
+        # cokerdi - 0.18.3'te iki deneme de nyc3'te bu yuzden dustu. Snapshot
+        # hangi bolgede uretildiginden bagimsiz, o yuzden sirayla denemek
+        # guvenli. Ilk basarili bolge isi bitirir.
+        run: |
+          set -o pipefail
+          for BOLGE in nyc3 nyc1 sfo3 ams3 fra1; do
+            echo "::group::packer build (region=$BOLGE)"
+            if packer build -var "version=$VERSION" -var "region=$BOLGE" . ; then
+              echo "::endgroup::"
+              echo "yapim bolgesi: $BOLGE" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "::endgroup::"
+            echo "$BOLGE basarisiz, siradaki bolge deneniyor" >&2
+          done
+          echo "FATAL: hicbir bolgede yapim tamamlanamadi" >&2
+          exit 1
 
       # DO artifact_id format is "region1,region2:snapshot_id" — the ID is after the colon
       - name: Snapshot ID to job summary

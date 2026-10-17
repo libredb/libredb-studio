@@ -187,17 +187,10 @@ export type DatabaseType =
   // services and none of them writes, so there is no Write, Call or HistoryUpdate to send.
   | "opcua"
   // Apache Spark (#1736): Spark SQL over Spark Connect (gRPC with Arrow results) for self-hosted Spark 4.1 and later
-  // (`src/lib/db/providers/industrial/mtconnect/`), the second member of the `industrial/` family. One connection is
+  // (`src/lib/db/providers/sql/spark/`). One Spark session per request, released at its end, plus a provider-owned
   // session for the tree and the panels that never runs user text. The connection's Password is the server's
   // spark.connect.authenticate.token, Database the catalog and Schema the namespace.
   | "spark"
-  // MTConnect (#1722). One agent read only over HTTP: the probe document's device model, its current and sample
-  // MTConnect (#1722). One agent read only over HTTP: the probe document's device model, its current and sample
-  // observations, and its asset documents, by a client of this repository's own on the shared node transport
-  // (`src/lib/db/providers/industrial/mtconnect/`), the second member of the `industrial/` family. One connection is
-  // one agent address, and `apiPath`, the field RabbitMQ already carries, holds the path prefix a reverse proxy puts
-  // in front of it. There is no credential field: the agent's own interface takes none, and a proxy that asks for
-  // Basic answers with an HTML 401 rather than an MTConnect document, which the provider reports as what it is.
   // MTConnect (#1722). One agent read only over HTTP: the probe document's device model, its current and sample
   // observations, and its asset documents, by a client of this repository's own on the shared node transport
   // (`src/lib/db/providers/industrial/mtconnect/`), the second member of the `industrial/` family. One connection is
@@ -206,7 +199,36 @@ export type DatabaseType =
   // Basic answers with an HTML 401 rather than an MTConnect document, which the provider reports as what it is.
   // Read-only is structural rather than a mode: the request table holds nine routes and every one of them is a GET,
   // so there is nothing to send that writes.
-  | "mtconnect";
+  | "mtconnect"
+  // Modbus TCP (#1723), the third member of the `industrial/` family. A device or a gateway in
+  // front of serial devices, read only: the encoder names four read function codes and device
+  // identification, and there is no code here that can build a write - read-only is structural
+  // rather than a mode, as it is for the two above. Modbus has NO DISCOVERY: no request lists
+  // what a device holds, and no register carries a name, a type or a unit, so the object tree is
+  // built from a register map the user supplies with the connection rather than from the device.
+  // One connection is one device address and one unit id; `mbaps`, the protocol's TLS form on
+  // port 802, rides on the SSL panel the other engines already use.
+  | "modbus"
+  // NETCONF (issue #1724), the configuration protocol RFC 6241 defines, read over SSH on port 830
+  // with `ssh2` and no NETCONF library: this provider writes its own framing, both of RFC 6242's
+  // forms, and sends five operations and nothing else - `get`, `get-config`, `get-data`,
+  // `get-schema` and `close-session`. Read-only is structural rather than a mode, as it is for the
+  // three above: there is no function here that can encode an `edit-config`, a `lock` or a
+  // `commit`. A device's tree is addressed by datastore and then by YANG module, which is the only
+  // engine here whose container levels are two kinds of thing rather than one. The module list and
+  // every namespace come from the device's own YANG library, never from a guess, because a wrong
+  // namespace answers an empty document rather than an error on both servers measured.
+  | "netconf"
+  | "snmp"
+  // Eclipse Sparkplug B (#1720). One MQTT subscription read only, the third member of the `industrial/` family,
+  // with its own bounded session (`src/lib/db/providers/industrial/sparkplug/`) rather than the shipped MQTT read,
+  // because that read returns a map keyed by topic while a Sparkplug read depends on the ORDER of successive
+  // messages on one topic: a sequence gap is read from two consecutive data messages, a rebirth replaces a
+  // definition mid-read, and the specification warns a death can arrive after the next birth. One connection is
+  // one broker. Read-only is structural rather than a mode: the provider's encoder has no function that writes a
+  // PUBLISH, and its CONNECT takes no will parameter, because 5.4 registers an edge node's death certificate as
+  // its MQTT will and a reader that set one would publish a death when its own socket dropped.
+  | "sparkplug";
 
 export type ConnectionEnvironment = "production" | "staging" | "development" | "local" | "other";
 
@@ -519,11 +541,26 @@ export interface DatabaseConnection {
   /**
    * Snowflake only: the contents of the PEM private key the key-pair JWT is signed with, PKCS#8 or PKCS#1, encrypted
    * or not. Never a path: the provider reads no file. A secret. Read by no other engine; `ssl.clientKey` and the SSH
-   * tunnel's `privateKey` are other features' fields.
+   * tunnel's `privateKey` are other features' fields. NETCONF (#1724) reads the same two fields for
+   * the device's SSH key, because they hold the same thing: a private key and its passphrase.
    */
   privateKey?: string;
-  /** Snowflake only: the passphrase of an encrypted `privateKey`. A secret. Absent and empty are one value. */
+  /** Snowflake and NETCONF: the passphrase of an encrypted `privateKey`. A secret. Absent and empty are one value. */
   privateKeyPassphrase?: string;
+  /**
+   * NETCONF only (#1724): the device's SSH host key fingerprint, in OpenSSH's presentation, which
+   * is `SHA256:` and forty-three unpadded base64 characters, exactly what `ssh-keygen -lf` prints.
+   *
+   * NOT the same field as `sshTunnel.hostKeyFingerprint`, which pins a BASTION this connection
+   * passes through. This one pins the device itself, and a connection may carry both: a device
+   * behind a bastion has two identities to check and they are checked by different code.
+   *
+   * Required rather than optional in practice: the dial refuses before opening a socket when it is
+   * empty, because an SSH client that does not know the key it expects cannot tell the device from
+   * anything else answering on that port. Public key material, so it is stored and shown in the
+   * clear.
+   */
+  hostKeyFingerprint?: string;
   /**
    * Snowflake only: the role every statement of this connection runs as, sent on every request, case preserved; a
    * double-quoted name is exact, a bare one is folded to upper case by Snowflake. Required by the provider. It decides
@@ -586,6 +623,37 @@ export interface DatabaseConnection {
    */
   apiKeyId?: string;
   apiKeySecret?: string;
+  /**
+   * Modbus only: the register map, as the JSON document the provider parses. A point names a unit,
+   * a table, a zero-based PDU address, a type and the orders a value wider than one register needs.
+   *
+   * WHY IT IS A FIELD. Modbus has no discovery: the protocol offers no request that lists what a
+   * device holds, so the map is the only thing that can name a point, and the user is who writes
+   * it. `keyof DatabaseConnection` is the write list of what a user may fill in, send and have
+   * stored (see `WithTunnelFarEnd`, which is deliberately NOT a field because nobody fills it in),
+   * and a document the user writes belongs on it. The length is no argument against that: BigQuery
+   * carries a whole key file's JSON in `password`.
+   *
+   * WHY NOT `password`. It is not a secret. `password` is classified `secret` in
+   * `connection-secrets.ts`, which would mask the map in the dialog and store it as a credential,
+   * and a reader cannot correct a document they cannot see.
+   *
+   * WHY `resolution` IN `CONNECTION_RELEVANCE`, and it is NOT the summary criterion there. That
+   * record's docblock asks which database a connection reaches and as whom, and this field answers
+   * neither: the same device answers, and Modbus TCP authenticates nobody. The reason is what READS
+   * the key. `use-provider-metadata` makes `connectionResolutionKey` part of its `readKey`,
+   * `use-connection-pulse` keys the pulse on it and `SchemaDiff` keys its snapshot on it, so a map
+   * that changed while the key did not would leave the PREVIOUS map's points drawn on screen.
+   *
+   * And the map DEFINES the names rather than filtering them, which is why Kubernetes' namespace
+   * list is `cosmetic` and this is not: that list narrows names the cluster itself defines, while
+   * `volts` is unit 1, holding register 100 under one document and can be unit 3, coil 5 under the
+   * next. Two such maps are not two views of one answer.
+   *
+   * Bounded by `MAX_REGISTER_MAP_BYTES` at the parser rather than here, so a seed file and a
+   * dialog answer the same way. Read by no other engine.
+   */
+  registerMap?: string;
 }
 
 export interface ForeignKeySchema {
@@ -942,7 +1010,11 @@ export interface QueryTab {
     | "firestore"
     | "rabbitmq"
     | "opcua"
-    | "mtconnect";
+    | "mtconnect"
+    | "modbus"
+    | "netconf"
+    | "snmp"
+    | "sparkplug";
   viewMode?: "results" | "explain" | "history" | "saved";
   explainPlan?: unknown;
   // Pagination state

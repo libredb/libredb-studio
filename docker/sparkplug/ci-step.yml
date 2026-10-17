@@ -1,0 +1,81 @@
+# The Sparkplug B CI step, delivered as its own file.
+#
+# `.github/workflows/ci.yml` is a shared surface, so this block is not written into it: it is
+# lifted in whole, after the RabbitMQ read-only check, inside the same job and with the same
+# indentation (six spaces before `- name:`).
+#
+# WHAT IT RUNS, and why each piece is there:
+#
+#   * The broker is started FROM A DIGEST, and the digest is exported so the live check can hold
+#     it equal to the one `docker/sparkplug/compose-service.yml` pins. A CI run that measured
+#     another build would otherwise prove nothing about the build the repository claims.
+#   * `trap ... EXIT` removes both containers whatever happens, including a failure inside the
+#     readiness loop, so a red step never leaves a broker behind on the runner.
+#   * TWO INDEPENDENT READINESS CHECKS, because each can pass while the fixture is useless: the
+#     first asks the broker about itself (`$SYS/broker/version`), which proves the listener
+#     accepts a session; the second waits for a Sparkplug PUBLISH to actually arrive, which
+#     proves the publisher is running and talking. A broker with no publisher answers the first
+#     and never the second, and that is exactly the state a one-check step would call ready.
+#   * The live check runs under BOTH RUNTIMES, Bun and Node, because the provider ships to both
+#     and the two have already differed here: a file that reaches `createDatabaseProvider` does
+#     not build for Node at all (the factory imports every provider, and DuckDB's win32 binding
+#     cannot be resolved on another platform).
+#   * It never writes. The provider's encoder has no function that builds a PUBLISH, and the one
+#     request that would command somebody else's equipment is refused by name, which item 9 of
+#     the live check asks live.
+- name: Sparkplug B live check
+  run: |
+    image="eclipse-mosquitto:2.0.22@sha256:199ea8ef2e35ec2b1b37e59cfd1dbae538ed4dfa4a2251a121a52215a6248a21"
+    export SPARKPLUG_LIVE_DIGEST="${image#*@}"
+    trap 'docker rm -f libredb-ci-sparkplug libredb-ci-sparkplug-publisher > /dev/null 2>&1' EXIT
+    docker run -d --name libredb-ci-sparkplug \
+      -v "$PWD/docker/sparkplug/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro" \
+      -p 127.0.0.1:1884:1883 "$image"
+
+    # First readiness check: the broker answers about itself.
+    listening=""
+    end=$((SECONDS + 60))
+    while [ "$SECONDS" -lt "$end" ]; do
+      if docker exec libredb-ci-sparkplug \
+        mosquitto_sub -h 127.0.0.1 -p 1883 -t '$SYS/broker/version' -C 1 -W 3 > /dev/null 2>&1; then
+        listening=yes
+        break
+      fi
+      sleep 1
+    done
+    if [ -z "$listening" ]; then
+      echo "The broker did not accept a session within 60 s."
+      docker logs --tail 50 libredb-ci-sparkplug
+      exit 1
+    fi
+
+    docker run -d --name libredb-ci-sparkplug-publisher --network host \
+      -v "$PWD/docker/sparkplug:/publisher:ro" \
+      python:3.14-slim@sha256:0741d101873c12ab927e6f8653feb8862b9bd58771177acb1b885b95141f91b4 \
+      python3 /publisher/publisher.py --host 127.0.0.1 --port 1884
+
+    # Second readiness check, independent of the first: a Sparkplug message actually arrives.
+    # The broker answered the first one before the publisher existed, which is the state this
+    # check exists to refuse.
+    publishing=""
+    end=$((SECONDS + 60))
+    while [ "$SECONDS" -lt "$end" ]; do
+      if docker exec libredb-ci-sparkplug \
+        mosquitto_sub -h 127.0.0.1 -p 1883 -t 'spBv1.0/#' -C 1 -W 5 > /dev/null 2>&1; then
+        publishing=yes
+        break
+      fi
+      sleep 1
+    done
+    if [ -z "$publishing" ]; then
+      echo "No Sparkplug message arrived within 60 s, so the fixture is a broker with nothing on it."
+      docker logs --tail 50 libredb-ci-sparkplug-publisher
+      exit 1
+    fi
+
+    # --strict, because a SKIP keeps the exit code at 0: if the digest export above were ever
+    # dropped, the digest item would skip, this step would stay green and nothing would have
+    # checked which broker the run measured. In CI an item that cannot run is a failure.
+    bun tests/live/sparkplug-live-check.ts --strict
+    bun build tests/live/sparkplug-live-check.ts --target=node --outfile "$RUNNER_TEMP/sparkplug-live.mjs"
+    node "$RUNNER_TEMP/sparkplug-live.mjs" --strict

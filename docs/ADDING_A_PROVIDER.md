@@ -288,7 +288,7 @@ is kept in sync with its per-provider doc). Don't copy a skeleton from this guid
 | Embedded / file SQL | `SQLBaseProvider` | `sqlite.ts` | [sqlite.md](./providers/sqlite.md) |
 | SQL database reached over HTTP (no driver) | `SQLBaseProvider` | `sql/clickhouse/`, `sql/druid/` or `sql/trino/` | [clickhouse.md](./providers/clickhouse.md) · [druid.md](./providers/druid.md) · [trino.md](./providers/trino.md) |
 | SQL over HTTP where a **second product** speaks the same protocol | `SQLBaseProvider` | `sql/search/` (two ids, one module) or `sql/trino/` (one id, a dialect descriptor ready for the second) | [elasticsearch.md](./providers/elasticsearch.md) · [trino.md](./providers/trino.md) |
-| Document store | `BaseDatabaseProvider` | `mongodb.ts` | [mongodb.md](./providers/mongodb.md) |
+| Document store | `BaseDatabaseProvider` | `document/mongodb/` | [mongodb.md](./providers/mongodb.md) |
 | Document store reached over HTTP/REST (no driver) | `BaseDatabaseProvider` | `document/couchbase/` | [couchbase.md](./providers/couchbase.md) |
 | Key-value store | `BaseDatabaseProvider` | `redis.ts` | [redis.md](./providers/redis.md) |
 | Embedded (in-process, no wire protocol) | `BaseDatabaseProvider` | `embedded/libredb.ts` | [libredb.md](./providers/libredb.md) |
@@ -318,10 +318,9 @@ never off the kind id.
 **It is OPTIONAL, and omitting it entirely is the right answer for an engine that publishes no
 definition text.** `readObjectSource?` is declared optional on `DatabaseProvider` in
 `src/lib/db/types.ts` for that reason: a provider with no source-bearing kind can never reach the
-method, so requiring it would put an unreachable throw in each. Six shipped providers are exactly
-that case and say so in their own docs, `bigquery`, `druid`, `influxdb`, `influxdb3`, `libredb` and `neo4j`. If
-yours is a seventh, declare `hasSource` on no kind, write no method, and add your type-id to the
-committed ABSTAINER list in `tests/isolated/object-source-declarations.test.ts` beside those six.
+method, so requiring it would put an unreachable throw in each. Eight shipped providers are exactly
+that case and say so in their own docs, `bigquery`, `druid`, `influxdb`, `influxdb3`, `libredb`, `neo4j`, `modbus` and `snmp`. If yours is a ninth, declare `hasSource` on no kind, write no method, and add your type-id to
+the committed ABSTAINER list in `tests/isolated/object-source-declarations.test.ts` beside those eight.
 Do NOT write the method answering an empty document, an empty string or any other neutral value: the
 pairing fails by name on a method with no source-bearing kind, and an empty text is a RAISE
 everywhere in the table below.

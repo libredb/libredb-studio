@@ -443,6 +443,54 @@
   "selectQuery": "# Order\"Items: one row of this answer\nGET /c0/current",
   "countQuery": null
  },
+ "modbus": {
+  "queryLanguage": "json",
+  "queryDialect": "modbus",
+  "tabType": "modbus",
+  "monacoLanguage": "json",
+  "offersColumnProfiling": false,
+  "offersCodeGeneration": false,
+  "offersCountQuery": false,
+  "tableQuery": "{\n  \"read\": [\n    \"Order\\\"Items\"\n  ]\n}",
+  "selectQuery": "{\n  \"read\": [\n    \"Order\\\"Items\"\n  ]\n}",
+  "countQuery": null
+ },
+ "netconf": {
+  "queryLanguage": "json",
+  "queryDialect": "netconf",
+  "tabType": "netconf",
+  "monacoLanguage": "json",
+  "offersColumnProfiling": false,
+  "offersCodeGeneration": false,
+  "offersCountQuery": false,
+  "tableQuery": "{\n  \"datastore\": \"c0\",\n  \"path\": \"\",\n  \"limit\": 1000\n}",
+  "selectQuery": "{\n  \"datastore\": \"c0\",\n  \"path\": \"\",\n  \"limit\": 1000\n}",
+  "countQuery": null
+ },
+ "snmp": {
+  "queryLanguage": "json",
+  "queryDialect": "snmp",
+  "tabType": "snmp",
+  "monacoLanguage": "json",
+  "offersColumnProfiling": false,
+  "offersCodeGeneration": false,
+  "offersCountQuery": false,
+  "tableQuery": "walk Order\"Items",
+  "selectQuery": "walk Order\"Items",
+  "countQuery": null
+ },
+ "sparkplug": {
+  "queryLanguage": "json",
+  "queryDialect": "sparkplug",
+  "tabType": "sparkplug",
+  "monacoLanguage": "json",
+  "offersColumnProfiling": false,
+  "offersCodeGeneration": false,
+  "offersCountQuery": false,
+  "tableQuery": "{\n  \"group\": \"c0\",\n  \"edgeNode\": \"Order\\\"Items\"\n}",
+  "selectQuery": "{\n  \"group\": \"c0\",\n  \"edgeNode\": \"Order\\\"Items\"\n}",
+  "countQuery": null
+ },
  "libredb": {
   "queryLanguage": "json",
   "queryDialect": "libredb",

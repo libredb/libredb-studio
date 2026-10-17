@@ -1587,7 +1587,7 @@ abstract class SearchProvider extends SQLBaseProvider {
         // which is not part of this seam, and the shard and node counts that ARE here
         // would be a different number wearing this field's name. So nothing was read,
         // and `DatabaseOverview.activeConnections` is optional precisely so that can be
-        // said - `mssql.ts`, `oracle.ts`, `mongodb.ts` and `cassandra` all omit it for
+        // said - `mssql.ts`, `oracle.ts`, `mongodb/index.ts` and `cassandra` all omit it for
         // the same reason, and this provider held the last unconditional
         // `activeConnections: 0` in the codebase - but not the last zero of any kind.
         // Trino, Druid, ClickHouse and Couchbase still coerce a REFUSED read to 0. Each

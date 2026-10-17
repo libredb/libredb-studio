@@ -11,9 +11,11 @@
  *    (#414). On a dialect `CATALOG_PLANS` serves, `captureContextSnapshot` calls
  *    `readCatalogForGrounding`, which composes the statement server-side and drives
  *    it through `executeAuditedOperation` under the read-only profile. On every other
- *    dialect it calls `readProviderSchemaForGrounding`, which asks the provider for
- *    its own schema inspection — the reading the sidebar already performs — under the
- *    operations profile.
+ *    dialect it calls `readObjectInventoryForGrounding`, which asks the provider for
+ *    its own object inventory, the reading the sidebar already performs, under the
+ *    operations profile, or under the read-only profile for an agent run whose statements
+ *    are not SQL (that function decides), so such a run's grounding opens the boundary
+ *    its statements will run under and can be refused by it.
  *
  *    The second path is not the objection above returning under a new name, and the
  *    difference is mechanical rather than a matter of degree. What "asking the
@@ -39,7 +41,7 @@
  *    reconstruction from the model-facing text. The provider path does not round-trip
  *    through the store, because it never turned its inventory into text: it returns
  *    the tables themselves and puts a projection of them in the artifact so the call
- *    is still citable. See `readProviderSchemaForGrounding`.
+ *    is still citable. See `readObjectInventoryForGrounding`.
  *  - **The inventory is all-or-nothing.** One refused read loses the whole
  *    snapshot, because an inventory missing its keys while claiming to be whole is
  *    worse than no inventory: the model would reason about relations that are
@@ -110,7 +112,10 @@ export interface AgentContextRowBudget {
   readonly allowed: number;
 }
 
-/** Why a run has no snapshot. All are states the run continues from, not failures. */
+/**
+ * Why a run has no snapshot. Each is a state the capture reports, not a failure of it; whether the run goes on
+ * without a snapshot is the drive's decision, which a profile refusal informs (`profileRefusal`).
+ */
 export type AgentContextUnavailableCode =
   /**
    * A schema read did not complete: refused, denied, out of budget, rejected by the
@@ -139,7 +144,7 @@ export type AgentContextUnavailableCode =
  * What a capture SPENT, taken from the tracker's own accounting (B13).
  *
  * The capture's reads reach `executeAuditedOperation` through
- * `readCatalogForGrounding` and `readProviderSchemaForGrounding` rather than through
+ * `readCatalogForGrounding` and `readObjectInventoryForGrounding` rather than through
  * the run loop's `runStep`, and `runStep` is the only writer of `tool-completed`. So
  * two or three catalog statements were charged against exactly the ceilings the rail
  * displays and left no entry the rail could fold: an agent-mode drive with no
@@ -162,6 +167,20 @@ export interface AgentContextCharge {
   readonly statements: number;
   /** The span it charged them, in milliseconds. */
   readonly elapsedMs: number;
+}
+
+/**
+ * The execution profile's own refusal of a grounding read, carried on the capture it cost (#1614).
+ *
+ * The capture never decides whether a run ends on it. Plan mode and the operations workflow continue ungrounded
+ * (B48); a run that sends statements is the drive's to end, and the drive needs two things to do it: the code, to
+ * record on the run's `context-unavailable` entry, and the error itself, to rethrow so the run's failure is classified
+ * on its own type and code. The error stays in memory: the entry records the code, never the error's message, which
+ * may carry text a driver wrote.
+ */
+export interface AgentContextProfileRefusal {
+  readonly reasonCode: ExecutionProfileDenyCode;
+  readonly error: ExecutionProfileError;
 }
 
 export type AgentContextCapture =
@@ -191,6 +210,14 @@ export type AgentContextCapture =
        * inventory is not.
        */
       readonly charged?: AgentContextCharge;
+      /**
+       * The execution profile's refusal, when the profile is what refused this capture.
+       * Present only for an `ExecutionProfileError`: a database that could not be reached,
+       * and a read that was refused, carry none. `reasonCode` stays `CATALOG_READ_REFUSED`
+       * and `detail` carries the code's advice either way, so the entry a ledger records is
+       * the one it always was.
+       */
+      readonly profileRefusal?: AgentContextProfileRefusal;
       /**
        * WHY this run has no inventory, in one sentence and with no advice in it.
        *
@@ -615,13 +642,18 @@ export function rowBudgetIn(detail: string): AgentContextRowBudget | undefined {
   return { projected: Number(matched[1]), allowed: Number(matched[2]) };
 }
 
-function unavailable(reasonCode: AgentContextUnavailableCode, detail: string): AgentContextCapture {
+function unavailable(
+  reasonCode: AgentContextUnavailableCode,
+  detail: string,
+  profileRefusal?: AgentContextProfileRefusal,
+): AgentContextCapture {
   const rowBudget = rowBudgetIn(detail);
   return {
     kind: "unavailable",
     reasonCode,
     detail,
     ...(rowBudget === undefined ? {} : { rowBudget }),
+    ...(profileRefusal === undefined ? {} : { profileRefusal }),
     modelText: `${detail}\n${FALLBACK_ADVICE}`,
   };
 }
@@ -684,7 +716,7 @@ export function reusableSnapshot(events: readonly AgentRunEvent[], connectionId:
  * safe mode's usefulness conditional on having already used the unsafe one. What has
  * NOT changed is the property the mode actually sells: this is a schema read, no
  * statement of the user's is run, nothing is written, and the model is still handed
- * no tools — both `readCatalogForGrounding` and `readProviderSchemaForGrounding` are
+ * no tools: both `readCatalogForGrounding` and `readObjectInventoryForGrounding` are
  * the server's own calls, and `selectAgentTools` still yields an empty set for the
  * mode.
  */
@@ -957,22 +989,6 @@ function displayName(object: AgentInventoryObject): string {
 }
 
 /**
- * An environment failure read as an unavailable capture, or `null` when it is not one.
- *
- * BOTH grounding paths ask this, which is the whole of B48: the same unreachable host
- * lost only the grounding on the nine provider-path engines and lost the RUN on
- * PostgreSQL and SQLite, and the difference was one catch block. One reading rather
- * than two also means the sentence a plan run is shown does not depend on which route
- * its dialect takes.
- *
- * Two classes and no others. Anything else is this server's bug — a `TypeError` here is
- * not a property of the user's database and must not be reported to them as one — so it
- * is handed back for the caller to rethrow rather than swallowed.
- *
- * Neither sentence carries the error's own message: `detail` is spliced into a note the
- * run reads as the server's own voice, and a driver message is text the database wrote.
- */
-/**
  * What an operator can DO about each way the execution profile refuses, in the server's
  * own words.
  *
@@ -993,13 +1009,19 @@ function displayName(object: AgentInventoryObject): string {
  * silently missing sentence.
  */
 const PROFILE_REFUSAL_ADVICE: Readonly<Record<ExecutionProfileDenyCode, string>> = Object.freeze({
+  // No run can carry an agent credential (B85: a run opens on a seed id, and a seed declares none), so the way out is
+  // the connection's own user.
   PROFILE_PRIVILEGES_TOO_BROAD:
-    "The connection's own user holds privileges no read-only boundary can contain, so the profile refused it rather than run as that user. Point the connection's agent credential at a least-privilege principal, or connect as one.",
+    "The connection's own user holds privileges no read-only boundary can contain, so the profile refused it rather than run as that user. Connect as a least-privilege user, one that holds read privileges and nothing more.",
   PROFILE_PRIVILEGES_TOO_NARROW:
-    "The user this connection would run the agent as is missing a privilege the read-only boundary itself needs, so the profile refused it rather than run without that layer. Grant the missing privilege named in the server log to that user; this is the opposite repair to the one above, and the two are separate codes for that reason.",
+    "The user this connection would run the agent as is missing a privilege the read-only boundary itself needs, or the connection authenticated no user at all, so the profile refused it rather than run without that layer. Grant that user the missing privilege named in the server log, or connect as a user that holds it; this is the opposite of the repair for a user that holds too much, and the two are separate codes for that reason.",
+  PROFILE_SERVER_UNENFORCED:
+    "The server accepted a write it should have refused, from a user whose privileges allow none or from no user at all, so it does not enforce authorization and no user is held read-only there. Turn on the server's authorization (on MongoDB, security.authorization) and connect as a user holding only read privileges; changing the connection's user alone cannot help.",
   PROFILE_UNSUPPORTED_BY_PROVIDER:
-    "This engine has no database-native read-only statement path, so the profile cannot be granted on it at all.",
-  PROFILE_UNSUPPORTED_TARGET: "This engine can grant the profile, but not against this target.",
+    "This engine's provider implements no read-only statement path, so the profile cannot be granted on it at all.",
+  // One code for several targets on several engines, so it says what the target is and names none of them.
+  PROFILE_UNSUPPORTED_TARGET:
+    "This engine can grant the profile, but not against this target: a server on the engine's wire protocol that is not, or does not identify itself as, the server its read-only enforcement was measured on, or an in-memory database, where a read-only handle has nothing to read. Point the connection at the measured engine itself, or at a database file.",
   UNSUPPORTED_PROFILE: "The execution profile asked for is not one this server vends.",
   AGENT_CREDENTIAL_UNRESOLVABLE:
     "The connection configures an agent credential that could not be resolved: both a user and a password are required, and a sealed password must be decryptable.",
@@ -1007,11 +1029,30 @@ const PROFILE_REFUSAL_ADVICE: Readonly<Record<ExecutionProfileDenyCode, string>>
     "The connection configures an agent credential alongside a connection string, which would silently drop the credential, so acquisition was refused.",
 });
 
+/**
+ * An environment failure read as an unavailable capture, or `null` when it is not one.
+ *
+ * BOTH grounding paths ask this, which is the whole of B48: the same unreachable host
+ * lost only the grounding on the nine provider-path engines and lost the RUN on
+ * PostgreSQL and SQLite, and the difference was one catch block. One reading rather
+ * than two also means the sentence a plan run is shown does not depend on which route
+ * its dialect takes.
+ *
+ * Two classes and no others. Anything else is this server's bug (a `TypeError` here is
+ * not a property of the user's database and must not be reported to them as one), so it
+ * is handed back for the caller to rethrow rather than swallowed. A profile refusal also
+ * travels as itself (`profileRefusal`), because whether the run goes on without its
+ * grounding is the drive's decision, not this module's.
+ *
+ * Neither sentence carries the error's own message: `detail` is spliced into a note the
+ * run reads as the server's own voice, and a driver message is text the database wrote.
+ */
 function environmentFailure(error: unknown, context: AgentToolContext): AgentContextCapture | null {
   if (error instanceof ExecutionProfileError) {
     return unavailable(
       "CATALOG_READ_REFUSED",
       `This server could not open a connection to this ${context.connection.type} database under the execution profile a grounding read takes, so its schema was not read for this run. ${PROFILE_REFUSAL_ADVICE[error.reasonCode]}`,
+      { reasonCode: error.reasonCode, error },
     );
   }
   if (error instanceof DatabaseError) {

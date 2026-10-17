@@ -354,7 +354,14 @@ describe("the installed editor's language ids", () => {
     // and exchange each declare `json`, 131 before Snowflake, whose nine kinds with a source each declare `sql`,
     // 140 before OPC UA, whose node declares `json` too, 141 before Apache Spark, whose table and view kinds
     // each declare `sql`, and 143 before MTConnect, whose asset declares `xml`.
-    expect(declared).toHaveLength(144);
+    // falling back to plaintext (#1722).
+    // 144 since NETCONF's two kinds joined (#1724): a node declares `plaintext`, the first kind in
+    // the fleet to declare it, and a key declares `xml`. `plaintext` is the honest answer rather
+    // than a near relative: the installed bundle registers no YANG, and declaring `ini` or `sql`
+    // for a module's text would colour it as something it is not.
+    // 146 with that pair, and 148 since Sparkplug B's two kinds joined (#1720): a node and a device
+    // each declare `json`, the payload this provider decodes a birth certificate into.
+    expect(declared).toHaveLength(148);
 
     const unregistered = declared.filter((entry) => !registered.has(entry.language));
     // Named, so a failure says which kind on which engine declared what, rather than false. This
@@ -374,6 +381,11 @@ describe("the installed editor's language ids", () => {
       "lua",
       "mysql",
       "pgsql",
+      // The eighth, and the first that declares an ABSENCE rather than a language: NETCONF's node
+      // answers a YANG module's text, the bundle registers no YANG, and `plaintext` says so instead
+      // of pretending. The editor CORE registers it, which is why it passes the membership check
+      // above (#1724).
+      "plaintext",
       "sql",
       "xml",
       "yaml",

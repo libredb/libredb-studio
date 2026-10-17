@@ -146,6 +146,21 @@ const EXPECTED_COLUMN_KINDS: Readonly<Record<DatabaseType, readonly string[]>> =
   // All three kinds: a data item and a condition each answer value, timestamp and sequence, and an
   // asset answers the fixed shape of an asset read (#1722).
   mtconnect: ["dataitem", "condition", "asset"],
+  // No kind declares columns: a point is one value, and what a read answers is a row per point rather
+  // than a shape the tree can show under the point itself (#1723).
+  modbus: [],
+  // first committed, which was a claim about `describeObject` rather than about the declaration
+  // this census measures; see docs/providers/netconf.md section 6.3 for what each surface answers.
+  netconf: ["node"],
+  // Measured, not assumed: the provider's kinds carry no column list of their own, so the census
+  // reads an empty set for both. The entry was briefly written as the two kind ids and the census
+  // contradicted it, which is the direction this file is for.
+  snmp: [],
+  // Both kinds, and the names are the design's own: a Sparkplug read declares two object kinds, the edge
+  // node's own metrics and one object per device under it. A GROUP and an EDGE NODE are CONTAINER LEVELS
+  // rather than kinds (`SPARKPLUG_CONTAINER_LEVELS`), so neither appears here. Both kinds answer columns:
+  // a metric's name, its datatype, and the certificate that defined it (#1720).
+  sparkplug: ["node", "device"],
   libredb: ["table", "collection", "keyspace"],
 });
 
@@ -229,16 +244,18 @@ describe("the fleet census of object column declarations", () => {
     // The population every assertion below iterates. If this were empty or short, each of those
     // loops would certify only the engines it happened to reach, so it is asserted first.
     expect([...CENSUS_TYPES].sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
-    // EXTERNAL_DATABASE_TYPES.length (36 with db2, neo4j, milvus, qdrant, influxdb, influxdb3, oxia, databend,
-    // bigquery, snowflake, s3, kubernetes, mqtt, firestore, rabbitmq, opcua and mtconnect) plus the embedded store.
-    expect(CENSUS_TYPES).toHaveLength(38);
+    // `EXTERNAL_DATABASE_TYPES.length` plus the embedded store. The names are not repeated here,
+    // because a prose list of them is what goes stale while the assertion stays green: the registry
+    // is the list, and this numeral only says how long it is.
+    expect(CENSUS_TYPES).toHaveLength(42);
     expect(Object.keys(EXPECTED_COLUMN_KINDS).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
     // A row naming nothing would make its type-id's census pass on the empty set, so the design's
-    // table has three such rows, and they are named here: every engine but Oxia, S3 and Kubernetes has at least one
+    // table has three such rows, and they are named here: every engine but Oxia, S3, Kubernetes, MQTT, OPC UA and Modbus has at least one
     // kind with columns; Oxia's shard and key and S3's bucket and object declare none (consistency ruling 24), and
-    // every Kubernetes kind opens its YAML instead.
+    // every Kubernetes kind opens its YAML instead. A Modbus point is one value rather than a
+    // shape the tree can show beneath it (#1723).
     const empty = CENSUS_TYPES.filter((type) => EXPECTED_COLUMN_KINDS[type].length === 0);
-    expect(empty).toEqual(["oxia", "s3", "kubernetes", "mqtt", "opcua"]);
+    expect(empty).toEqual(["oxia", "s3", "kubernetes", "mqtt", "opcua", "modbus", "snmp"]);
   });
 
   test("every kind id the expectation names is a kind its provider actually declares", async () => {

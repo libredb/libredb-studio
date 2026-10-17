@@ -1,0 +1,111 @@
+{
+  "measured": "2026-10-17",
+  "server": "MongoDB 9.0.4, authorization on",
+  "principal": "rv_p6_read_two, roles [{\"role\":\"read\",\"db\":\"rv_p6_db\"},{\"role\":\"read\",\"db\":\"rv_p6_other\"}], authSource rv_p6_db",
+  "command": {
+    "connectionStatus": 1,
+    "showPrivileges": true,
+    "maxTimeMS": 5000,
+    "comment": "libredb-studio-agent"
+  },
+  "reply": {
+    "authInfo": {
+      "authenticatedUsers": [
+        {
+          "user": "rv_p6_read_two",
+          "db": "rv_p6_db"
+        }
+      ],
+      "authenticatedUserRoles": [
+        {
+          "role": "read",
+          "db": "rv_p6_db"
+        },
+        {
+          "role": "read",
+          "db": "rv_p6_other"
+        }
+      ],
+      "authenticatedUserPrivileges": [
+        {
+          "resource": {
+            "db": "rv_p6_db",
+            "collection": ""
+          },
+          "actions": [
+            "changeStream",
+            "collStats",
+            "dbHash",
+            "dbStats",
+            "find",
+            "killCursors",
+            "listCollections",
+            "listIndexes",
+            "listSearchIndexes",
+            "planCacheRead",
+            "performRawDataOperations"
+          ]
+        },
+        {
+          "resource": {
+            "db": "rv_p6_db",
+            "collection": "system.js"
+          },
+          "actions": [
+            "changeStream",
+            "collStats",
+            "dbHash",
+            "dbStats",
+            "find",
+            "killCursors",
+            "listCollections",
+            "listIndexes",
+            "listSearchIndexes",
+            "planCacheRead",
+            "performRawDataOperations"
+          ]
+        },
+        {
+          "resource": {
+            "db": "rv_p6_other",
+            "collection": ""
+          },
+          "actions": [
+            "changeStream",
+            "collStats",
+            "dbHash",
+            "dbStats",
+            "find",
+            "killCursors",
+            "listCollections",
+            "listIndexes",
+            "listSearchIndexes",
+            "planCacheRead",
+            "performRawDataOperations"
+          ]
+        },
+        {
+          "resource": {
+            "db": "rv_p6_other",
+            "collection": "system.js"
+          },
+          "actions": [
+            "changeStream",
+            "collStats",
+            "dbHash",
+            "dbStats",
+            "find",
+            "killCursors",
+            "listCollections",
+            "listIndexes",
+            "listSearchIndexes",
+            "planCacheRead",
+            "performRawDataOperations"
+          ]
+        }
+      ]
+    },
+    "uuid": "ed3654ee-7e1c-4ee7-a8e7-80586a1e5aa2",
+    "ok": 1
+  }
+}

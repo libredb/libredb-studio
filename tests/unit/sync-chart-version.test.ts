@@ -28,6 +28,7 @@ import {
   refreshOperatorCopy,
   tagQueryNeeded,
 } from "../../scripts/sync-chart-version.mjs";
+import { howItFailed } from "../helpers/spawn-outcome";
 
 function chartYaml({
   version = "0.1.3",
@@ -558,7 +559,7 @@ describe("CLI (--check against git fixtures, #151/#167)", () => {
       stderr: "pipe",
     });
     if (result.exitCode !== 0) {
-      throw new Error(`git ${args.join(" ")} failed: ${result.stderr.toString()}`);
+      throw new Error(`git ${args.join(" ")} ${howItFailed(result)}: ${result.stderr.toString()}`);
     }
     return result.stdout.toString().trim();
   }

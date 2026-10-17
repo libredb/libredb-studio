@@ -32,6 +32,7 @@ import * as grpc from "@grpc/grpc-js";
 import { fromJSON, type MethodDefinition } from "@grpc/proto-loader";
 import protobuf from "protobufjs";
 import { loadMilvusDescriptor } from "../../scripts/generate-milvus-descriptor.mjs";
+import { howItFailed } from "../helpers/spawn-outcome";
 
 type Service = "milvus" | "milvus-tls" | "milvus-mtls";
 type User = "root" | "reader" | "nobody" | "wrong";
@@ -1131,7 +1132,7 @@ function runChild(names: readonly string[]): Map<string, { readonly runtime: str
       maxBuffer: 256 * 1024 * 1024,
       timeout: 60 * 60 * 1000,
     });
-    if (child.status !== 0) throw new Error(`the Node child exited ${child.status}: ${child.stderr}`);
+    if (child.status !== 0) throw new Error(`the Node child ${howItFailed(child)}: ${child.stderr}`);
     const report = JSON.parse(child.stdout.trim().split("\n").at(-1) as string) as {
       runtime: string;
       results: Record<string, Measured>;

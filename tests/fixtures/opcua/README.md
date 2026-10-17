@@ -9,15 +9,20 @@ bridge against the fixture below and writes what came back.
 **The fixture.** Microsoft OPC PLC 2.15.10, pinned by digest:
 
 ```
-mcr.microsoft.com/iotedge/opc-plc@sha256:28bbdaa2e8781fe3b8bda1bbd2d4ebe0ad5bcb1fbb83f69c74b8a92efa7fe75c
+mcr.microsoft.com/iotedge/opc-plc:2.15.10@sha256:28bbdaa2e8781fe3b8bda1bbd2d4ebe0ad5bcb1fbb83f69c74b8a92efa7fe75c
 ```
 
 ```bash
-docker run -d --name opcua-evidence -p 54840:50000 \
-  mcr.microsoft.com/iotedge/opc-plc@sha256:28bbdaa2e8781fe3b8bda1bbd2d4ebe0ad5bcb1fbb83f69c74b8a92efa7fe75c \
+docker run -d --name opcua-evidence -p 127.0.0.1:54840:50000 \
+  mcr.microsoft.com/iotedge/opc-plc:2.15.10@sha256:28bbdaa2e8781fe3b8bda1bbd2d4ebe0ad5bcb1fbb83f69c74b8a92efa7fe75c \
   --pn=50000 --autoaccept --unsecuretransport --ut --sph --hn --slownodes=3 --fastnodes=3
 bun tests/live/opcua-evidence.ts
 ```
+
+The port is published on `127.0.0.1` rather than on every interface. `-p 54840:50000` with no host
+address is Docker's default of `0.0.0.0`, which puts an unauthenticated OPC UA server (it is started
+`--autoaccept --unsecuretransport`) on every interface of whatever machine runs it, CI included. The
+capture needs one client on the same host, so the narrower binding costs nothing.
 
 `--hn` is what adds the one historized node, `ns=3;s=HistorianInt32`; without it a history read
 answers `BadHistoryOperationUnsupported`, which is also captured.

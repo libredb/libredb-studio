@@ -312,7 +312,7 @@ export async function POST(req: Request) {
     const connection = await resolveConnection({ connectionId }, guard.session);
 
     /*
-      An engine whose provider implements no database-native read-only statement path,
+      An engine whose provider implements no read-only statement path,
       refused at the point the run is OPENED (#512).
 
       Driven live on 2026-08-15 before this existed: a run on the bundled `libredb`

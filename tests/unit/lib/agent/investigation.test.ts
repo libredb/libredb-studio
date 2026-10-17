@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, mock, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -12,7 +12,7 @@ import { UNTRUSTED_CONTENT_BEGIN, UNTRUSTED_CONTENT_END } from "@/lib/agent/untr
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
 import { AgentRunService } from "@/lib/agent/run-service";
 import { AgentRunStore } from "@/lib/agent/run-store";
-import { AGENT_ANSWER_CONTRACT } from "@/lib/agent/tools";
+import { AGENT_ANSWER_CONTRACT, type AgentToolContext } from "@/lib/agent/tools";
 import type { AgentRunEvent, AgentRunMode, AgentRunWorkflowType } from "@/lib/agent/types";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
@@ -20,6 +20,7 @@ import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptor
 import { createTargetScope } from "@/lib/db/operations/policy";
 import { QueryError } from "@/lib/db/errors";
 import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
+import { MongoDBProvider } from "@/lib/db/providers/document/mongodb";
 import { KubernetesProvider } from "@/lib/db/providers/platform/kubernetes";
 import { CLUSTER_USAGE_FIELDS, WORKLOAD_PROFILE_FIELDS } from "@/lib/db/providers/platform/kubernetes/agent-readings";
 import { kubectlStatementLanguage } from "@/lib/db/providers/platform/kubernetes/labels";
@@ -31,6 +32,7 @@ import type {
   WorkloadProfileReading,
 } from "@/lib/db/types";
 import type { DatabaseConnection, QueryResult } from "@/lib/types";
+import { TABLE_LABELS } from "../../../fixtures/provider-labels";
 import { kubernetesConnection } from "../../../helpers/kubernetes-connection";
 import {
   answersProse,
@@ -962,6 +964,206 @@ describe("neutraliseAssistantMessages (B29)", () => {
   });
 });
 
+/**
+ * One agent-mode run of `turns` on `connection`, over a provider double that grounds the run on one object
+ * (`orders`, in the session's own container `app` where the engine has containers) and answers every statement with
+ * one row: the events it recorded and the requests it sent. `methods` adds to or replaces the double's methods;
+ * `options.workflowType` is the workflow (an investigation when absent), and `options.prior` is appended to the ledger
+ * before the drive, as a resumed run finds it.
+ */
+async function agentDrive(
+  connection: DatabaseConnection,
+  declared: Declarations,
+  turns: readonly ScriptedTurn[],
+  methods: Readonly<Record<string, unknown>> = {},
+  options: { readonly workflowType?: AgentRunWorkflowType; readonly prior?: readonly AgentRunEvent[] } = {},
+): Promise<{ readonly events: readonly AgentRunEvent[]; readonly turns: readonly Turn[] }> {
+  const { workflowType = "investigation", prior = [] } = options;
+  forgetHeldSnapshots();
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-step-identity-"));
+  dataDirs.push(dataDir);
+  const [listed] = declared.capabilities.objectKinds ?? [];
+  const provider = {
+    queryReadOnly: async (): Promise<QueryResult> => ({
+      rows: [{ n: 1 }],
+      fields: ["n"],
+      rowCount: 1,
+      executionTime: 1,
+    }),
+    listContainers: async () => [],
+    countObjects: async () => (listed === undefined ? {} : { [listed.id]: { count: 1 } }),
+    listObjects: async (container: readonly string[], kind: string) =>
+      kind === listed?.id ? [{ path: [...container, "orders"], name: "orders", kind }] : [],
+    describeObjects: async () => ({ details: [] }),
+    ...methods,
+  } as unknown as DatabaseProvider;
+  const store = new AgentRunStore({ world: createLocalWorld({ dataDir, recoverActiveRuns: false }) });
+  const tracker = new ExecutionBudgetTracker();
+  const artifacts = new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 });
+  const service = new AgentRunService({ store, resources: { tracker, artifacts } });
+  const availability = workflowAvailability("agent", workflowType, connection.type);
+  if (!availability.open) throw new Error(`${workflowType} does not open on ${connection.type}`);
+  const run = await service.start({
+    mode: "agent",
+    workflowType,
+    ...persistedRunFacts("agent", workflowType, availability),
+    actor: { sessionId: "sess_1", role: "user" },
+    connectionId: connection.id,
+    objective: "Which customers ordered most?",
+  });
+  for (const event of prior) {
+    // oxlint-disable-next-line no-await-in-loop -- a ledger is ordered: each event lands after the one before it.
+    await store.appendEvent(run.runId, event);
+  }
+  const script = scriptedModel(...turns, answersProse("No report."), answersProse("No report."));
+  await runInvestigation(run.runId, {
+    service,
+    model: await modelOver(script.fetch),
+    resources: {
+      connection,
+      ...declared,
+      registry: createCanonicalOperationRegistry(),
+      scope: createTargetScope(connection.id),
+      tracker,
+      artifacts,
+      deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS[workflowType].runDeadlineMs, () => 10_000),
+      repairs: new AgentRepairLedger(),
+      acquireProvider: async () => provider,
+    },
+  }).catch(() => undefined);
+  const view = await store.read(run.runId);
+  if (!view) throw new Error(`run ${run.runId} has no ledger`);
+  return { events: view.record.events, turns: script.turns };
+}
+
+/** The `tool-invoked` step ids an agent drive recorded, in order. */
+async function stepIdsOfDrive(
+  connection: DatabaseConnection,
+  declared: Declarations,
+  turns: readonly ScriptedTurn[],
+): Promise<readonly string[]> {
+  const { events } = await agentDrive(connection, declared, turns);
+  return events.flatMap((event) => (event.kind === "tool-invoked" ? [event.stepId] : []));
+}
+
+const mongoConnection: DatabaseConnection = {
+  id: "conn_mongo",
+  name: "MongoDB",
+  type: "mongodb",
+  host: "127.0.0.1",
+  port: 27017,
+  database: "app",
+  createdAt: new Date(0),
+};
+const mongo = new MongoDBProvider(mongoConnection);
+
+describe("a step's identity is the call it makes", () => {
+  test("two mongo reads that differ only in their sort's key order are two steps, because they are two reads", async () => {
+    // Key order is part of a MongoDB sort: {b: 1, a: 1} and {a: 1, b: 1} return different documents, so a step id
+    // that sorted the keys would answer the second read with the first one's rows.
+    const find = (sort: Record<string, number>) => ({
+      command: { collection: "orders", operation: "find", options: { sort } },
+    });
+    const ids = await stepIdsOfDrive(
+      mongoConnection,
+      { capabilities: mongo.getCapabilities(), labels: mongo.getLabels() },
+      [
+        callsTool("run_read_query", find({ b: 1, a: 1 }), "call_1"),
+        callsTool("run_read_query", find({ a: 1, b: 1 }), "call_2"),
+      ],
+    );
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids).size).toBe(2);
+  });
+
+  test("a mongo catalog read resolves the model's spelling against the inventory this very run captured", async () => {
+    // The run's record is read before the drive captures its inventory, so the snapshot the catalog arm resolves
+    // against has to be read off the ledger as it stands at the call, or a first drive would resolve against none.
+    // Typed as any mock, so its calls are read back without restating the provider method's signature.
+    const readCatalogReadOnly: ReturnType<typeof mock> = mock(async () => ({
+      kind: "described",
+      container: "app",
+      object: "orders",
+      objectKind: "collection",
+      columns: [{ name: "customer", type: "string" }],
+      indexes: [],
+      sampled: 1,
+    }));
+    const { events } = await agentDrive(
+      mongoConnection,
+      { capabilities: mongo.getCapabilities(), labels: mongo.getLabels() },
+      [callsTool("inspect_schema", { table: "app.orders" })],
+      {
+        listContainers: async () => [
+          { path: ["app"], name: "app", level: 0, isSessionDefault: true, kinds: ["collection", "view"] },
+        ],
+        countObjects: async () => ({ collection: { count: 1 }, view: { count: 0 } }),
+        readCatalogReadOnly,
+      },
+    );
+    const capturedEvent = events.find((event) => event.kind === "context-captured");
+    expect(capturedEvent?.kind === "context-captured" && capturedEvent.snapshot?.objects.map((o) => o.path)).toEqual([
+      ["app", "orders"],
+    ]);
+    expect(readCatalogReadOnly.mock.calls[0]?.[0]).toEqual({ container: "app", object: "orders" });
+  });
+
+  test("a SQL read's step id is the one it always was", async () => {
+    // Pinned to the value the derivation produced before a statement could arrive as an object: SQL and kubectl
+    // arguments are text, so nothing about how an object is identified may move their ids.
+    const postgres: DatabaseConnection = { id: "conn_pg", name: "Orders", type: "postgres", createdAt: new Date(0) };
+    const capabilities: ProviderCapabilities = {
+      queryLanguage: "sql",
+      supportsExplain: true,
+      explainFormat: "postgres-json",
+      supportsExternalQueryLimiting: true,
+      supportsCreateTable: true,
+      supportsInlineRowEdit: true,
+      supportsMaintenance: false,
+      maintenanceOperations: [],
+      supportsConnectionString: true,
+      defaultPort: 5432,
+      schemaRefreshPattern: "manual",
+    };
+    const ids = await stepIdsOfDrive(postgres, { capabilities, labels: TABLE_LABELS }, [
+      callsTool("run_read_query", { sql: "SELECT count(*) FROM orders", rationale: "count them" }),
+    ]);
+    expect(ids).toEqual(["step_57da0a529f8975349da5d70663c32fb7"]);
+  });
+});
+
+describe("a resumed mongo run that already recommended an index", () => {
+  test("is told the index it already recommended, by collection, with no statement", async () => {
+    const recommended: AgentRunEvent = {
+      kind: "recommendation",
+      atMs: 1,
+      change: "document-index",
+      collection: "orders",
+      database: "app",
+      keys: { customer: 1 },
+      evidence: [{ source: "artifact", correlationId: "p1" }],
+    };
+
+    const { turns } = await agentDrive(
+      mongoConnection,
+      { capabilities: mongo.getCapabilities(), labels: mongo.getLabels() },
+      [],
+      {},
+      { workflowType: "query-optimization", prior: [recommended] },
+    );
+    const [first] = turns;
+    if (first === undefined) throw new Error("the drive sent no request");
+    const { opening } = splitPrompt(first);
+
+    expect(opening).toContain(
+      "An index was already recommended and is recorded: on collection orders. Do not propose it a second time.",
+    );
+    // The SQL sentence quotes a statement; an index stated as data has none, so it must never reach that arm.
+    expect(opening).not.toContain("A document-index was already recommended");
+    expect(opening).not.toContain("undefined");
+  });
+});
+
 describe("the database tool dispatch", () => {
   /*
     A total record keyed by the tool name, so a new database tool stops `investigation.ts` compiling until it names
@@ -975,5 +1177,17 @@ describe("the database tool dispatch", () => {
       "inspect_schema",
       "run_read_query",
     ]);
+  });
+
+  test("a tool the run's language has no arm for is the server's own fault, said by name, never SQL's arm", () => {
+    // No kubectl variant offers either tool, so only a server fault routes one here: it throws before anything is
+    // acquired, rather than running the SQL arm against a cluster.
+    const context = { statementLanguage: "kubectl" } as unknown as AgentToolContext;
+    expect(() => DATABASE_TOOL_HANDLERS.inspect_schema(context, {}, null)).toThrow(
+      "agent run loop: the kubectl language has no inspect_schema arm",
+    );
+    expect(() => DATABASE_TOOL_HANDLERS.inspect_plan(context, {}, null)).toThrow(
+      "agent run loop: the kubectl language has no inspect_plan arm",
+    );
   });
 });

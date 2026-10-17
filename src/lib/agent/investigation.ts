@@ -48,6 +48,7 @@ import {
   AGENT_LANGUAGE_COPY,
   type AgentLanguageCopy,
   type AgentStatementLanguageId,
+  PLAN_ESTIMATE_OPERATIONS,
   planDeliverableOf,
   planObjectiveOf,
   requiredVariant,
@@ -85,7 +86,7 @@ import {
   unreadStopAsksFor,
 } from "./models";
 import { erDetailForWorkflow, renderErDiagram } from "./er-diagram";
-import { type AgentGoalShortfall, verifyRunGoal } from "./goal-verifier";
+import { type AgentGoalShortfall, recommendsIndex, verifyRunGoal } from "./goal-verifier";
 import { type AgentInventoryNoun, inventoryNoun } from "./inventory-noun";
 import {
   CALL_NAMING_KEYS,
@@ -128,19 +129,19 @@ import {
   handoverText,
   inspectOperationsTool,
   inspectUsageTool,
-  inspectPlanTool,
-  planTableProfile,
   presentAnswerTool,
   profileWorkloadsTool,
-  profileTableTool,
   recommendChangeTool,
-  inspectSchemaTool,
   runReadQueryTool,
   selectAgentTools,
   presentableArtifact,
+  capturedSnapshot,
 } from "./tools";
+import { languageArms } from "./language-arms";
+import { languageServer } from "./statement-languages";
 import {
   AGENT_WORKFLOW_PRESENTS_ANSWER,
+  AGENT_WORKFLOW_SENDS_STATEMENTS,
   type AgentContextSnapshot,
   type AgentGuidanceNotice,
   type AgentReportClaim,
@@ -565,6 +566,18 @@ function compareBeforeReportNotice(before: string, after: string): string {
 }
 
 /**
+ * The plans this run inspected, oldest first, by the artifact id a citation names: a completed step under any
+ * language's plan-estimate operation (`PLAN_ESTIMATE_OPERATIONS`), so a MongoDB plan counts wherever a plan does.
+ */
+function inspectedPlans(events: readonly AgentRunEvent[]): readonly string[] {
+  return events.flatMap((event) =>
+    event.kind === "tool-completed" && PLAN_ESTIMATE_OPERATIONS.has(event.artifact.operationId)
+      ? [event.artifact.correlationId]
+      : [],
+  );
+}
+
+/**
  * The shortfalls the report being submitted WOULD earn, asked of the verifier itself.
  *
  * The architectural form of every notice in this loop, and the reason it is worth having.
@@ -691,12 +704,22 @@ interface ShortfallAdvice {
   readonly narrow: boolean;
 }
 
+/**
+ * What the run holds and calls things, as the notice below needs it: the plans it inspected, oldest first, whether it
+ * is offered `compare_plans` at all, and what its language calls one unit it sends.
+ */
+interface ShortfallContext {
+  readonly plans: readonly string[];
+  readonly readingsHeld: number;
+  readonly holdsPresentable: boolean;
+  readonly holdsCompare: boolean;
+  readonly noun: string;
+}
+
 function shortfallNotice(
   shortfall: AgentGoalShortfall,
   table: string | undefined,
-  plansInspected: number,
-  readingsHeld: number,
-  holdsPresentable: boolean,
+  { plans, readingsHeld, holdsPresentable, holdsCompare, noun }: ShortfallContext,
 ): ShortfallAdvice | null {
   /*
     The shortfall this drive never spoke, and it is worth a whole cell.
@@ -780,12 +803,24 @@ function shortfallNotice(
     };
   }
   if (shortfall === "no-plan-comparison") {
-    // Only for a run holding NO plan. With one or two in hand the run is not missing the
-    // idea, it is one call short, and `compareBeforeReportNotice` says that better because
-    // it can name the ids. Saying "this run has inspected none" to a run that inspected two
-    // is worse than saying nothing — caught by the two gate evals that assert exactly that
-    // arc.
-    if (plansInspected > 0) return null;
+    const latest = plans.at(-1);
+    if (latest !== undefined) {
+      // With a plan in hand the run is not missing the idea, it is one call short. Where it
+      // holds `compare_plans`, `compareBeforeReportNotice` says that better because it can name
+      // the ids. Saying "this run has inspected none" to a run that inspected two is worse than
+      // saying nothing, caught by the two gate evals that assert exactly that arc.
+      if (holdsCompare) return null;
+      // Where it does not, nothing else would speak: that notice is gated on the tool. The one
+      // route its verdict accepts is the index arm, so the sentence names it and the plan it
+      // holds, and narrows to it: `recommend_change` is the variant's `narrowedExtras`.
+      return {
+        said: [
+          "This workflow answers with an index recommended because of a plan, and this run holds a plan and has recommended nothing, so the report would be scored as having established nothing.",
+          `Your compose_report call was not run. Call recommend_change for an index citing artifact "${latest}", the plan whose access path it would change, and then call compose_report.`,
+        ].join(" "),
+        narrow: true,
+      };
+    }
     /*
       The largest shortfall that had no sentence at all. It blocks NINE cells across the
       measured models, five of them losing to nothing else, and `shortfallNotice` returned
@@ -808,7 +843,11 @@ function shortfallNotice(
     return {
       said: [
         "This workflow is judged on plans: a report is scored on whether it shows HOW the engine reaches its rows, and this run has inspected none, so it would be scored as having established nothing.",
-        "Your compose_report call was not run. Call inspect_plan on the statement in question, then either recommend_change citing that plan's artifact id, or inspect_plan on a rewritten form and compare_plans on the two — and then call compose_report.",
+        // The comparison route only where the run holds the tool (#350): a variant with no
+        // `compare_plans` is told the one route it has.
+        holdsCompare
+          ? `Your compose_report call was not run. Call inspect_plan on the ${noun} in question, then either recommend_change citing that plan's artifact id, or inspect_plan on a rewritten form and compare_plans on the two, and then call compose_report.`
+          : `Your compose_report call was not run. Call inspect_plan on the ${noun} in question, then recommend_change for an index citing that plan's artifact id, and then call compose_report.`,
       ].join(" "),
       narrow: false,
     };
@@ -822,7 +861,7 @@ function shortfallNotice(
     return {
       said: [
         "Your index recommendation rests on no plan: this workflow judges a change by HOW the engine reaches its rows, and no plan has been inspected, so the report would be scored as having established nothing.",
-        "Your compose_report call was not run. Call inspect_plan on the slow statement, then call recommend_change again citing that plan's artifact id, and then call compose_report.",
+        `Your compose_report call was not run. Call inspect_plan on the slow ${noun}, then call recommend_change again citing that plan's artifact id, and then call compose_report.`,
       ].join(" "),
       // NOT narrowed: `inspect_plan` is a reading tool, and this verdict accepts only
       // `compare_plans` and `recommend_change`. Narrowing would take away the tool this very
@@ -1304,17 +1343,17 @@ interface PlanningGrounding {
  * sentences say: no statement of the USER'S was run, nothing was written, and the
  * model has no tools.
  *
- * FOUR sentences since #414, over the same two axes as `PLANNING_SNAPSHOT_PREFACE`,
- * and this record was left one-dimensional when that one was made 2x2 — which put the
- * two halves of one conversation in direct contradiction on twelve of the fourteen
- * said the inventory came "through the same read-only catalog path the agent mode
- * uses" and the message under them said it came from the engine's own inspection.
- * Both halves of the first were false there: no catalog statement is composed on a
- * dialect `CATALOG_PLANS` does not serve, and agent mode cannot take a read-only path
- * on those engines at all — it is refused the profile and ends `engine-unsupported`,
- * which is the whole reason `readProviderSchemaForGrounding` exists. Telling a model
- * how the run came by what it knows and getting it wrong is the defect class #414 was
- * opened to close, so it may not be stated in the rules either.
+ * FOUR sentences since #414, over the same two axes as `PLANNING_SNAPSHOT_PREFACE`.
+ * This record was left one-dimensional when that one was made 2x2, which put the two
+ * halves of one conversation in direct contradiction on every engine `CATALOG_PLANS`
+ * does not serve: the rules said the inventory came "through the same read-only
+ * catalog path the agent mode uses", and the message under them said it came from the
+ * engine's own inspection. Both halves of the first were false there: no catalog
+ * statement is composed on those engines, and at #414 agent mode took no read-only
+ * path on them at all. That is why the provider's own reading grounds them
+ * (`readObjectInventoryForGrounding` in `tools.ts`). Telling a model how the run came
+ * by what it knows and getting it wrong is the defect class #414 was opened to close,
+ * so it may not be stated in the rules either.
  *
  * The composed arms keep their reference to agent mode because it is true where they
  * are said: on PostgreSQL and SQLite the agent path takes exactly that read.
@@ -1744,6 +1783,22 @@ const SQL_WORKFLOW_TOOL_RULES: Readonly<Record<AgentRunWorkflowType, string>> = 
 } satisfies Record<AgentRunWorkflowType, string>);
 
 /**
+ * How a MongoDB command spells a collection the inventory names. The inventory names each collection by its database
+ * and its name (`app.orders`), while a command's `collection` is the name alone: written whole, `app.orders` is a
+ * collection of that name inside the connection's database, which does not exist, and a read of it returns nothing
+ * rather than an error, so nothing would tell the run its spelling was wrong.
+ */
+const MONGO_COLLECTION_RULE =
+  'The inventory names each collection with its database in front, as in app.orders; a command names the collection alone, as in "collection": "orders", and reads the database this run\'s connection is bound to.';
+
+/**
+ * How a command reads a field's value, said beside the collection rule because the server cannot say it: a model that
+ * wrote `{"$sum": "total"}` was answered 0 for every group, since `$sum` ignores a string, and nothing refused it.
+ */
+const MONGO_FIELD_PATH_RULE =
+  'Where an aggregation reads a field\'s value, as $group and $project do, write "$<field>", with the dollar sign, as in {"$sum": "$total"}: a bare "total" is the string itself, which $sum ignores, so the sum reads 0. A filter, in a find or a $match stage, names its fields without the dollar sign.';
+
+/**
  * The tool rules by language, then by workflow. The SQL record is total, as above. A language holds rules for the
  * workflows it has a variant of, and no more: `systemPrompt` throws for an agent-mode run whose language has none,
  * which `requiredVariant` would already have refused. `operations` sends no statement in any language, so its
@@ -1751,8 +1806,11 @@ const SQL_WORKFLOW_TOOL_RULES: Readonly<Record<AgentRunWorkflowType, string>> = 
  *
  * The kubectl investigation names what the redaction removes, because a model told nothing would read `<redacted>`
  * as the value and report it, or guess at it: the honest claim is that the value was not available to the run.
+ *
+ * Exported so `tests/unit/lib/agent/tool-offer-census.test.ts` can hold every rule to the tools its variant offers:
+ * a rule naming a tool the run does not hold costs the run a turn on "there is no tool called ..." (#350).
  */
-const WORKFLOW_TOOL_RULES: Readonly<
+export const WORKFLOW_TOOL_RULES: Readonly<
   Record<AgentStatementLanguageId, Readonly<Partial<Record<AgentRunWorkflowType, string>>>>
 > = Object.freeze({
   sql: SQL_WORKFLOW_TOOL_RULES,
@@ -1784,6 +1842,56 @@ const WORKFLOW_TOOL_RULES: Readonly<
     "data-analysis": [
       "Answer from what you have READ with run_read_query: only a result you ran can be the answer.",
       "When you have it, call present_answer with the artifact id of the read that IS the answer. Most kubectl columns are text, so present the read as a table unless the columns you would chart are numeric, such as a Deployment's Up-to-date and Available counts.",
+      AGENT_ANSWER_CONTRACT,
+      "Then call compose_report. The presentation shows the result; the claims are what say what it means.",
+      "At least one of those claims must cite the artifact you presented: a report about other evidence entirely is prose beside a picture, and the run is scored as not having answered.",
+    ].join(" "),
+  }),
+  /**
+   * The MongoDB tool rules: the read-class four exist here, so the rules say how THIS engine spells them - the
+   * command envelope rather than SQL, the aggregation that stands in for a GROUP BY, and the sample-inferred
+   * schema the inventory carries, which is the one honest limit a MongoDB run is told about its own grounding.
+   * Every workflow that writes a command is told how a collection is spelled in one (`MONGO_COLLECTION_RULE`) and how
+   * it reads a field (`MONGO_FIELD_PATH_RULE`).
+   */
+  mongo: Object.freeze({
+    investigation: [
+      "Read the database with run_read_query, one command envelope at a time: find, findOne, aggregate, count and distinct are the reads there are, each as JSON.",
+      MONGO_COLLECTION_RULE,
+      MONGO_FIELD_PATH_RULE,
+      "Narrow every read to what the question needs with a filter, or a $match stage before any $group: a read past the row budget is refused, never cut.",
+      "A pipeline stage that writes ($out, $merge) is refused, as is any write operation: this run reads and reports, and what it establishes goes into the report.",
+      "The schema inventory was sampled from documents, not declared: a field the sample never saw is absent from it, so say what you read rather than what the schema implies.",
+      "Report what the evidence supports, and nothing further.",
+    ].join(" "),
+    // Built around the arm of `agent-query-optimization.3` this variant can reach: an index recommended because of a
+    // plan it inspected. It names no comparison, because the variant offers none (`agent-manifest.ts` says why).
+    "query-optimization": [
+      "inspect_plan runs the explain command at queryPlanner verbosity: it answers with the plan the engine would choose for a command and returns none of its documents, and where several plans are candidates the engine tries each for a bounded trial, under the same deadline your reads have.",
+      "What a plan names is this engine's own vocabulary - COLLSCAN, IXSCAN, the index it chose - and that is what an index changes.",
+      "One plan on its own answers nothing: before you report, call recommend_change for an index citing the inspect_plan artifact whose access path it would change. A different filter or a different shape of the command is a finding for your report, not a card.",
+      "Every plan you can obtain is an estimate with no timings in it. Say so rather than implying a measurement.",
+      "recommend_change offers the index to the user and never creates it: this run is read-only by construction.",
+      MONGO_COLLECTION_RULE,
+      MONGO_FIELD_PATH_RULE,
+    ].join(" "),
+    "database-assessment": [
+      "You must call profile_table on at least one collection before you report: this workflow answers with the counts that tool takes, and counts you compose yourself with run_read_query do not establish them.",
+      "Only COUNTS come back. No value is read out of any field, so do not claim what a field contains — claim what its counts show.",
+      "MongoDB declares no foreign keys and no nullability: a field may be absent or null, and the profile's counts are the honest way to tell which is which.",
+      "Grade what you find against completeness, uniqueness, consistency and validity, and say which of the four each finding speaks to.",
+      MONGO_COLLECTION_RULE,
+      MONGO_FIELD_PATH_RULE,
+    ].join(" "),
+    operations: SQL_WORKFLOW_TOOL_RULES.operations,
+    "data-analysis": [
+      "Answer from data you have READ. The schema inventory tells you where to look; only a result you ran can be the answer.",
+      MONGO_COLLECTION_RULE,
+      MONGO_FIELD_PATH_RULE,
+      "profile_table at basic depth tells a large collection from a small one, and a field the documents fill from one they do not: it returns document counts and how many documents have a value, and reads no value out of any field.",
+      "When you have the answer, call present_answer with the artifact id of the read that IS the answer.",
+      "Only a result of run_read_query can be presented: a plan returns none of the command's documents, and a profile counts a collection rather than answering the question. Cite either as evidence, but present a read.",
+      "A chart names columns of THAT result: they are checked against the result's real column names and refused if they do not match.",
       AGENT_ANSWER_CONTRACT,
       "Then call compose_report. The presentation shows the result; the claims are what say what it means.",
       "At least one of those claims must cite the artifact you presented: a report about other evidence entirely is prose beside a picture, and the run is scored as not having answered.",
@@ -1943,6 +2051,15 @@ const GROUNDING_COPY: Readonly<
     relations: false,
     ungrounded: (detail: string, noun: AgentInventoryNoun) =>
       `${detail}\nSo nothing about this cluster has been established for you: not one ${noun.singular} name. Read what you need with run_read_query, starting with get on the kinds your objective names.`,
+  },
+  /**
+   * MongoDB holds `inspect_schema` (its catalog arm reads the provider's own inventory), so its omission advice
+   * names that tool the way SQL's does. `relations` is false because MongoDB declares no foreign keys, and a
+   * relations block that can only ever be empty is a block the model reads as a claim of absence it cannot check.
+   */
+  mongo: {
+    omissionAdvice: "Ask inspect_schema for the collection to list its fields.",
+    relations: false,
   },
 });
 
@@ -2150,6 +2267,22 @@ function describeSettled(event: AgentSettledStepEvent, toolName: string): string
 }
 
 /**
+ * A recommendation a resumed run already made, told apart by its `change`. Every name in it is the model's own
+ * argument to an earlier call (a container and its owner, a collection, a statement), so none of it is database text.
+ */
+function describePriorRecommendation(event: Extract<AgentRunEvent, { kind: "recommendation" }>): string {
+  switch (event.change) {
+    case "resources":
+      return `New requests and limits for container ${event.container} of ${event.ownerKind}/${event.ownerName} were already recommended and are recorded. Do not propose them a second time.`;
+    case "document-index":
+      return `An index was already recommended and is recorded: on collection ${event.collection}. Do not propose it a second time.`;
+    case "index":
+    case "rewrite":
+      return `A ${event.change} was already recommended and is recorded: ${event.statement}. Do not propose it a second time.`;
+  }
+}
+
+/**
  * What a run has already established, read off its ledger and nothing else.
  *
  * `null` when the ledger holds nothing worth stating, which is the ordinary case
@@ -2227,15 +2360,8 @@ function describePriorProgress(record: AgentRunRecord): string | null {
       lines.push(
         `Usage could not be read in namespace ${event.namespace}: this cluster serves no usage metrics (metrics.k8s.io), because metrics-server is not installed or not answering. Asking again will not change that.`,
       );
-    } else if (event.kind === "recommendation" && event.change === "resources") {
-      // The container and the owner are the model's own arguments to an earlier call, as the statement is below.
-      lines.push(
-        `New requests and limits for container ${event.container} of ${event.ownerKind}/${event.ownerName} were already recommended and are recorded. Do not propose them a second time.`,
-      );
     } else if (event.kind === "recommendation") {
-      lines.push(
-        `A ${event.change} was already recommended and is recorded: ${event.statement}. Do not propose it a second time.`,
-      );
+      lines.push(describePriorRecommendation(event));
     }
   }
 
@@ -2370,14 +2496,45 @@ function deriveStepId(toolName: string, input: unknown): string {
 }
 
 /**
- * The model's own statement, when the arguments carry one under the language's `argument`. Used for the draft entry,
- * whose field stays `sql` whatever the language calls its argument, so a persisted event reads the same.
+ * A tool call's arguments as its step identity reads them: the language's argument, when it arrived as an OBJECT,
+ * replaced by the text the language's `canonicalize` makes of it, and everything else as it came.
+ *
+ * Without it, `deriveStepId`'s key sort would reach inside a mongo command and make `{"b": 1, "a": 1}` and
+ * `{"a": 1, "b": 1}` one step, so the second sort would be answered with the first one's documents. Only an object
+ * argument is touched, so a SQL or kubectl call, whose argument is text, keeps the id it always had; and the text is
+ * the one the run executes, in the order the model wrote it, so one read is one step and two reads are two.
  */
-function draftedStatement(input: unknown, argument: "sql" | "statement"): { sql: string; rationale: string } | null {
+function identifyingInput(input: unknown, language: AgentStatementLanguageId): unknown {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) return input;
+  const { argument } = AGENT_LANGUAGE_COPY[language];
+  const raw = (input as Readonly<Record<string, unknown>>)[argument];
+  if (raw === null || typeof raw !== "object") return input;
+  const text = languageServer(language).canonicalize(raw);
+  return text === null ? input : { ...input, [argument]: text };
+}
+
+/**
+ * The model's own statement, when the arguments carry one under the language's argument. Used for the draft entry,
+ * whose field stays `sql` whatever the language calls its argument, so a persisted event reads the same.
+ *
+ * Read by the language's own `canonicalize`, the one the tool dispatch reads with (`runReadQueryTool`), so the draft,
+ * the ledger's statement, the repair identity and the provider's read are one text by construction: a mongo command
+ * arrives as a JSON OBJECT and is written out in the order the model wrote it.
+ */
+export function draftedStatement(
+  input: unknown,
+  language: AgentStatementLanguageId,
+): { sql: string; rationale: string } | null {
   if (input === null || typeof input !== "object") return null;
-  const { [argument]: sql, rationale } = input as Readonly<Record<string, unknown>>;
-  if (typeof sql !== "string" || sql.length === 0) return null;
+  const { [AGENT_LANGUAGE_COPY[language].argument]: statement, rationale } = input as Readonly<Record<string, unknown>>;
+  const sql = languageServer(language).canonicalize(statement);
+  if (sql === null) return null;
   return { sql, rationale: typeof rationale === "string" && rationale.length > 0 ? rationale : "(none given)" };
+}
+
+/** A tool a run was offered and has no arm for in its language: the server's own fault, said by name. */
+function missingArm(context: AgentToolContext, tool: AgentToolName): never {
+  throw new Error(`agent run loop: the ${context.statementLanguage ?? "sql"} language has no ${tool} arm`);
 }
 
 /**
@@ -2389,14 +2546,33 @@ function draftedStatement(input: unknown, argument: "sql" | "statement"): { sql:
  * INVALID_TOOL_INPUT forever. Each handler re-validates the arguments against the
  * schema it declares, so the unchecked shape here becomes a typed `INVALID_TOOL_INPUT`
  * outcome rather than a throw.
+ *
+ * The two tools whose execution differs by language run their language's arm
+ * (`LANGUAGE_TOOL_ARMS`), chosen by the run's own persisted language, never by
+ * connection type: the same key the tool definitions are offered by
+ * (`agentToolDefinition`), so the offer and the execution cannot disagree about which
+ * arm serves a call. `snapshot` is the inventory the run captured, which a catalog arm
+ * resolves a spelling against.
  */
 export const DATABASE_TOOL_HANDLERS: Readonly<
-  Record<DatabaseToolName, (context: AgentToolContext, input: unknown) => Promise<AgentToolOutcome>>
+  Record<
+    DatabaseToolName,
+    (context: AgentToolContext, input: unknown, snapshot: AgentContextSnapshot | null) => Promise<AgentToolOutcome>
+  >
 > = Object.freeze({
-  inspect_schema: (context, input) => inspectSchemaTool(context, input as { schema?: string; table?: string }),
-  run_read_query: runReadQueryTool,
-  inspect_plan: (context, input) => inspectPlanTool(context, input as { sql: string }),
-  inspect_operations: inspectOperationsTool,
+  inspect_schema: (context, input, snapshot) =>
+    (languageArms(context.statementLanguage ?? "sql").inspect_schema ?? missingArm(context, "inspect_schema")).run(
+      context,
+      input,
+      snapshot,
+    ),
+  run_read_query: (context, input) => runReadQueryTool(context, input),
+  inspect_plan: (context, input) =>
+    (languageArms(context.statementLanguage ?? "sql").inspect_plan ?? missingArm(context, "inspect_plan")).run(
+      context,
+      input,
+    ),
+  inspect_operations: (context, input) => inspectOperationsTool(context, input),
 });
 
 /** Dispatches one database tool through `DATABASE_TOOL_HANDLERS`. */
@@ -2404,8 +2580,9 @@ function invokeDatabaseTool(
   context: AgentToolContext,
   name: DatabaseToolName,
   input: unknown,
+  snapshot: AgentContextSnapshot | null,
 ): Promise<AgentToolOutcome> {
-  return DATABASE_TOOL_HANDLERS[name](context, input);
+  return DATABASE_TOOL_HANDLERS[name](context, input, snapshot);
 }
 
 function settlementOf(outcome: AgentToolOutcome): AgentRunStepSettlement {
@@ -3192,6 +3369,10 @@ export async function runInvestigation(
         reasonCode: capture.reasonCode,
         detail: capture.detail,
         ...(capture.rowBudget === undefined ? {} : { rowBudget: capture.rowBudget }),
+        // The profile's own code, where the profile is what refused: the direction of the
+        // repair (narrow the user, grant it one privilege, turn the server's authorization
+        // on) in the closed vocabulary rather than only in the sentence.
+        ...(capture.profileRefusal === undefined ? {} : { profileReasonCode: capture.profileRefusal.reasonCode }),
         // What the refused reading cost anyway (B13). Spread rather than defaulted: a
         // capture that carries no measurement records none, because a zero here would
         // say the refusal was free.
@@ -3408,6 +3589,16 @@ export async function runInvestigation(
       const capture = await captureContextSnapshot(context);
       if (capture.kind === "unavailable") {
         await recordRefusedCapture(capture);
+        // A run that sends statements ends here, before its first model turn, when the
+        // execution profile is what refused its grounding: every database tool it holds
+        // acquires the read-only profile, which grants nothing the grounding's profile was
+        // refused, so a turn would buy nothing but a drafted statement that never runs.
+        // Rethrown as itself, so the run's failure is classified on its own code
+        // (`classifyDriveFailure`), on every engine alike. The operations workflow sends no
+        // statement of the model's and goes on ungrounded, as plan mode does (B48).
+        if (capture.profileRefusal !== undefined && AGENT_WORKFLOW_SENDS_STATEMENTS[record.workflowType]) {
+          throw capture.profileRefusal.error;
+        }
         // The capture's own words send a model to `inspect_schema`, which an operations
         // run does not hold: naming a tool the run has not got is the #350 failure, and
         // this workflow is the one that reaches engines where the capture always fails.
@@ -4224,19 +4415,17 @@ export async function runInvestigation(
             event.kind === "context-captured" && event.snapshot !== undefined ? event.snapshot.objects : [],
           );
           const spoken = would.flatMap((shortfall) => {
-            const advice = shortfallNotice(
-              shortfall,
-              tableToProfile(inventory, previewClaims(call.input)),
+            const advice = shortfallNotice(shortfall, tableToProfile(inventory, previewClaims(call.input)), {
               // Counted the way `compareBeforeReportNotice` counts them below: a plan is a
-              // completed step under the estimate operation, not an event kind of its own.
-              sofar.events.filter(
-                (event) => event.kind === "tool-completed" && event.artifact.operationId === "sql.explain.estimate",
-              ).length,
-              sofar.events.filter((event) => event.kind === "tool-completed").length,
+              // completed step under a plan-estimate operation, not an event kind of its own.
+              plans: inspectedPlans(sofar.events),
+              readingsHeld: sofar.events.filter((event) => event.kind === "tool-completed").length,
               // Asked of the same function `present_answer` asks, so "presentable" cannot
               // drift between the notice and the tool it points at.
-              presentableArtifact(sofar.events) !== undefined,
-            );
+              holdsPresentable: presentableArtifact(sofar.events) !== undefined,
+              holdsCompare: holdsTool("compare_plans"),
+              noun: AGENT_LANGUAGE_COPY[record.statementLanguage ?? "sql"].noun,
+            });
             return advice === null ? [] : [{ shortfall, advice }];
           })[0];
           if (spoken !== undefined) {
@@ -4322,11 +4511,7 @@ export async function runInvestigation(
           holdsTool("compare_plans")
         ) {
           const { record: sofar } = await service.resume(context.runId);
-          const plans = sofar.events.flatMap((event) =>
-            event.kind === "tool-completed" && event.artifact.operationId === "sql.explain.estimate"
-              ? [event.artifact.correlationId]
-              : [],
-          );
+          const plans = inspectedPlans(sofar.events);
           // Either route the verdict accepts counts as satisfied, and the index one has to
           // be read as carefully as the verifier reads it: an index recommendation whose
           // evidence cites a plan this run inspected IS the answer for a case that cannot be
@@ -4337,8 +4522,7 @@ export async function runInvestigation(
             sofar.events.some((event) => event.kind === "plan-comparison") ||
             sofar.events.some(
               (event) =>
-                event.kind === "recommendation" &&
-                event.change === "index" &&
+                recommendsIndex(event) &&
                 event.evidence.some(
                   (reference) => reference.source === "artifact" && planIds.has(reference.correlationId),
                 ),
@@ -4489,20 +4673,26 @@ async function handleCall(input: {
   }
 
   const name = call.toolName as DatabaseToolName;
-  const stepId = deriveStepId(name, call.input);
-  const draft = draftedStatement(call.input, AGENT_LANGUAGE_COPY[context.statementLanguage ?? "sql"].argument);
+  const language = context.statementLanguage ?? "sql";
+  const stepId = deriveStepId(name, identifyingInput(call.input, language));
+  const draft = draftedStatement(call.input, language);
+  // The run as its ledger stands NOW. `record` was read before this drive captured its
+  // inventory, so the snapshot a catalog arm resolves a spelling against is read here,
+  // and the same read answers whether the run was paused meanwhile.
+  const live = await service.status(record.runId);
   // The draft is narrated before the invocation it describes, and only for a step
   // the ledger has not seen: a resumed run that replays a call must not write a
   // second draft for it.
   if (draft !== null && !known.has(stepId)) {
-    // Not a safety gate anymore — `recordEvent` now accepts a paused run — but still
+    // Not a safety gate anymore, since `recordEvent` accepts a paused run, but still
     // worth the read: a pause means "take no new step", and narrating a draft the
     // user will never see run would record a step the drive then refuses to perform.
-    const live = await service.status(record.runId);
     if (live?.record.status === "paused") return { kind: "paused" };
     await service.recordEvent(record.runId, { kind: "statement-drafted", stepId, ...draft });
   }
   known.add(stepId);
+  // A run that vanished has no snapshot, and `runStep` below refuses it by name.
+  const snapshot = live === null ? null : capturedSnapshot(live.record.events);
 
   const { operationId } = agentToolDefinition(context.statementLanguage, context.workflowType, name);
   const invocation: AgentRunInvocation = {
@@ -4516,7 +4706,7 @@ async function handleCall(input: {
   // prose.
   let modelText = "";
   const result = await service.runStep(record.runId, invocation, async () => {
-    const outcome = await invokeDatabaseTool(context, name, call.input);
+    const outcome = await invokeDatabaseTool(context, name, call.input, snapshot);
     modelText = outcome.modelText;
     const settlement = settlementOf(outcome);
     if (settlement.kind === "not-attempted") notAttempted.add(stepId);
@@ -4541,37 +4731,19 @@ async function handleCall(input: {
 }
 
 /**
- * The report tool, which reaches no database and therefore no ledger step: its
- * whole job is to check the model's citations against the run's OWN event log, so
- * there is no effect to write ahead of.
+ * One table profiled, recorded and NOT terminal, on the arm of whichever language the run speaks
+ * (`LANGUAGE_TOOL_ARMS`): a SQL table's catalog-composed aggregates, or a MongoDB collection's `$group`.
  *
- * The VERIFICATION is idempotent — re-checking the same claims against the same log
- * answers the same thing. Composing is not: a second composition appends a second
- * `report-composed` entry, so a death between that append and `finish` leaves a
- * resumed run able to add another. Harmless (the entries are claims with their
- * evidence, and every claim was still checked against the ledger) but not the same
- * property, so it is not claimed as one.
- *
- * The record is re-read here rather than reused: the log has grown since the run
- * started, and the artifacts a claim may cite are exactly the entries that were
- * added while the loop was running.
+ * It reaches the database through `executeAgentOperation`, like every other reach, and so through the run's deadline,
+ * its repair ledger, its budgets and the audit trail; and it settles a step through `runStep`, like every database
+ * tool, so a replay is answered from the ledger and a cancellation requested after the model's turn stops the read
+ * (found by review on #345, when a version routed around `runStep`). It is handled apart from the other database tools
+ * only because its statement is composed from the run's own inventory: the step is identified by what the request
+ * RESOLVED to - the target, the depth and the batch - so two requests naming one object settle as one step rather than
+ * executing twice. The `table-profiled` event is written inside the settled step, so a reader never sees a profile
+ * whose read was not also recorded.
  */
-/**
- * One table profiled, recorded and NOT terminal.
- *
- * Unlike the other two handled here, this one reaches the database — through
- * `executeAgentOperation` like every other reach, and therefore through the run's
- * deadline, its repair ledger, its budgets and the audit trail. What it does NOT go
- * through is `runStep`: the tool composes its own statement from the inventory, so
- * there is no model-supplied argument for a step id to be derived from, and the
- * repair ledger's statement fingerprint already refuses the same profile twice.
- *
- * The honest consequence, stated rather than glossed: a drive that dies between the
- * database reach and this append loses the profile and a resumed run re-reads it.
- * That costs a statement out of twenty; it cannot double-count anything, because
- * the profile changes no state.
- */
-async function profileTable(
+export async function profileTable(
   service: AgentRunService,
   context: AgentToolContext,
   call: { readonly input: unknown },
@@ -4579,10 +4751,11 @@ async function profileTable(
   notAttempted: Set<string>,
 ): Promise<CallResult> {
   const { record } = await service.resume(context.runId);
+  const arm = languageArms(context.statementLanguage ?? "sql").profile_table ?? missingArm(context, "profile_table");
   // Resolution and composition first, and they reach nothing: the step's identity
   // has to come from what the profile RESOLVED to, so that two requests naming the
   // same table settle as one step rather than executing twice.
-  const planned = planTableProfile(context, record, call.input);
+  const planned = arm.plan(context, record, call.input);
   if (planned.kind !== "planned") return { kind: "answered", text: planned.modelText };
 
   const { plan } = planned;
@@ -4594,12 +4767,14 @@ async function profileTable(
   });
   known.add(stepId);
 
+  // Recorded under the operation the run's own definition of the tool names, as every database tool's step is.
+  const { operationId } = agentToolDefinition(context.statementLanguage, context.workflowType, "profile_table");
   let modelText = "";
   const result = await service.runStep(
     record.runId,
-    { stepId, tool: "profile_table", operationId: "sql.table.profile" },
+    { stepId, tool: "profile_table", ...(operationId === undefined ? {} : { operationId }) },
     async () => {
-      const outcome = await profileTableTool(context, plan);
+      const outcome = await arm.run(context, plan);
       modelText = outcome.modelText;
       if (outcome.kind !== "profiled") {
         if (outcome.kind === "refused") return { kind: "refused", refusal: outcome.refusal };
@@ -4799,6 +4974,22 @@ async function presentAnswer(service: AgentRunService, context: AgentToolContext
   return { kind: "answered", text: outcome.modelText };
 }
 
+/**
+ * The report tool, which reaches no database and therefore no ledger step: its
+ * whole job is to check the model's citations against the run's OWN event log, so
+ * there is no effect to write ahead of.
+ *
+ * The VERIFICATION is idempotent: re-checking the same claims against the same log
+ * answers the same thing. Composing is not: a second composition appends a second
+ * `report-composed` entry, so a death between that append and `finish` leaves a
+ * resumed run able to add another. Harmless (the entries are claims with their
+ * evidence, and every claim was still checked against the ledger) but not the same
+ * property, so it is not claimed as one.
+ *
+ * The record is re-read here rather than reused: the log has grown since the run
+ * started, and the artifacts a claim may cite are exactly the entries that were
+ * added while the loop was running.
+ */
 async function composeReport(service: AgentRunService, context: AgentToolContext, input: unknown): Promise<CallResult> {
   // `resume` rather than `status`: it is the read that REFUSES a run which has
   // ended or vanished, so the report is verified against a live run's own log

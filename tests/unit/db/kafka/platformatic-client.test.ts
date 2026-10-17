@@ -1865,7 +1865,8 @@ describe("createPlatformaticClient", () => {
           clientHost: "/10.0.0.9",
           assignment: [{ topic: "orders", partitions: [0, 2] }],
         },
-        // A member whose metadata the library could not read carries no assignment.
+        // A member the broker answered with no assignments carries none; one whose subscription or
+        // assignment the library cannot decode is absent from the answer whole (2.13.0).
         { memberId: "m2", clientId: "c2", clientHost: "/10.0.0.8", assignment: [] },
       ],
     });

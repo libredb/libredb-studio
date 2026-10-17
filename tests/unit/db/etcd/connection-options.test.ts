@@ -41,6 +41,7 @@ import {
 } from "@/lib/db/providers/keyvalue/etcd/connection-options";
 import { toProviderError } from "@/lib/db/providers/keyvalue/etcd/errors";
 import { type DatabaseConnection, TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
+import { howItFailed } from "../../../helpers/spawn-outcome";
 
 // A named placeholder, never a realistic value: a credential in a test fixture is a stand-in.
 const TEST_PASSWORD = "password";
@@ -129,7 +130,7 @@ function openssl(...args: string[]): void {
     stdout: "ignore",
     stderr: "pipe",
   });
-  if (run.exitCode !== 0) throw new Error(`openssl ${args.join(" ")} failed: ${run.stderr.toString()}`);
+  if (run.exitCode !== 0) throw new Error(`openssl ${args.join(" ")} ${howItFailed(run)}: ${run.stderr.toString()}`);
 }
 
 /** A self-signed client certificate and its key, for a subject written one attribute per line in openssl's config syntax. */

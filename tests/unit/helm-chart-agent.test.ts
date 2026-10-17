@@ -35,6 +35,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseAllDocuments } from "yaml";
+import { howItFailed } from "../helpers/spawn-outcome";
 
 const ROOT = join(import.meta.dir, "../..");
 const CHART_DIR = join(ROOT, "charts/libredb-studio");
@@ -70,7 +71,7 @@ function helmTemplate(args: string[]): { exitCode: number; stdout: string; stder
 function containerEnv(args: string[] = []): EnvVar[] {
   const run = helmTemplate(args);
   if (run.exitCode !== 0) {
-    throw new Error(`helm template failed (exit ${run.exitCode}): ${run.stderr}`);
+    throw new Error(`helm template ${howItFailed(run)}: ${run.stderr}`);
   }
   const docs = parseAllDocuments(run.stdout).map((doc) => doc.toJSON() as { kind?: string; spec?: never });
   const deployment = docs.find((doc) => doc?.kind === "Deployment") as
@@ -429,7 +430,7 @@ describe("the chart mounts an operator's model-tuning document", () => {
     configMaps: Array<{ metadata: { name: string }; data: Record<string, string> }>;
   } {
     const run = helmTemplate(args);
-    if (run.exitCode !== 0) throw new Error(`helm template failed (exit ${run.exitCode}): ${run.stderr}`);
+    if (run.exitCode !== 0) throw new Error(`helm template ${howItFailed(run)}: ${run.stderr}`);
     const docs = parseAllDocuments(run.stdout).map((doc) => doc.toJSON() as { kind?: string });
     const deployment = docs.find((doc) => doc?.kind === "Deployment") as {
       spec: {

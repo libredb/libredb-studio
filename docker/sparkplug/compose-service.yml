@@ -1,0 +1,69 @@
+# The Sparkplug B fixture, delivered as its own file.
+#
+# `database-compose.yml` is the one file all five industrial and network providers touch, so no
+# provider writes into it: each delivers its block here and one hand lands all five. This file
+# is a complete compose file as well as a block to lift, so the fixture can be brought up on its
+# own while it waits:
+#
+#   docker compose -f docker/sparkplug/compose-service.yml up -d
+#
+# Lifted into `database-compose.yml`, the two services go under its `services:` key unchanged.
+services:
+  # ---------------------------------------------------------------------------------------
+  # Sparkplug B: one broker and one edge node publishing onto it.
+  #
+  # A Sparkplug connection reads a BROKER, and a broker with nothing on it is not a fixture:
+  # the provider's whole job is reading birth certificates, aliases and data messages, and an
+  # empty broker exercises none of them. So the fixture is two services, and the second one is
+  # what makes the first one worth connecting to. docker/sparkplug/README.md lists exactly what
+  # is published and what each node is for.
+  # ---------------------------------------------------------------------------------------
+  sparkplug:
+    # Pinned by digest to the build the provider was live-verified against on 14 October 2026.
+    image: eclipse-mosquitto:2.0.22@sha256:199ea8ef2e35ec2b1b37e59cfd1dbae538ed4dfa4a2251a121a52215a6248a21
+    container_name: libredb-sparkplug
+    restart: unless-stopped
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    ports:
+      # Loopback only, and 1884 rather than 1883: the broker is anonymous, and a second broker
+      # on the IANA port is the one most likely to be already running on a developer's machine.
+      - "127.0.0.1:1884:1883"
+    healthcheck:
+      # The broker's own client, asking the broker about itself: `$SYS/broker/version` is
+      # published on connect, so an answer proves the listener accepts a session rather than
+      # only that the port is open.
+      test: ["CMD-SHELL", "mosquitto_sub -h 127.0.0.1 -p 1883 -t '$$SYS/broker/version' -C 1 -W 3 >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+    memswap_limit: 128M
+
+  sparkplug-publisher:
+    # THE PUBLISHER IS WRITTEN BY HAND AND MUST STAY THAT WAY. docker/sparkplug/publisher.py
+    # builds the protobuf wire and the MQTT packets itself and imports nothing from `src/`, so
+    # the values this fixture carries never pass through the code that reads them back. A
+    # publisher sharing the provider's encoder would share its mistakes, and the fixture would
+    # be measuring itself. It is also why no `pip install` runs here: the standard library is
+    # the only dependency.
+    image: python:3.14-slim@sha256:0741d101873c12ab927e6f8653feb8862b9bd58771177acb1b885b95141f91b4
+    container_name: libredb-sparkplug-publisher
+    restart: unless-stopped
+    depends_on:
+      sparkplug:
+        condition: service_healthy
+    volumes:
+      - ./:/publisher:ro
+    entrypoint: ["python3", "/publisher/publisher.py"]
+    command: ["--host", "sparkplug", "--port", "1883"]
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+    memswap_limit: 128M

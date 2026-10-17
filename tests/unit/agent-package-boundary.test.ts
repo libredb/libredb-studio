@@ -236,9 +236,16 @@ function isAgentModule(file: string): boolean {
  * provider code under `src/lib/db`, which imports nothing from `src/lib/agent`:
  * only its own name is excused, and every module it reaches is still walked and
  * still checked. The Kubernetes provider's curated readings answer the agent's
- * `cluster.usage.read` and ship in the package with the provider.
+ * `cluster.usage.read` and ship in the package with the provider. The MongoDB
+ * provider's read-only profile (its bounded read and the boundary it proves at
+ * open) is `queryReadOnly`'s own code, split out of `mongodb/index.ts`, and
+ * ships with the provider the same way.
  */
-const NOT_AGENT_CODE: ReadonlySet<string> = new Set(["src/lib/db/providers/platform/kubernetes/agent-readings.ts"]);
+const NOT_AGENT_CODE: ReadonlySet<string> = new Set([
+  "src/lib/db/providers/platform/kubernetes/agent-readings.ts",
+  "src/lib/db/providers/document/mongodb/agent-read.ts",
+  "src/lib/db/providers/document/mongodb/agent-boundary.ts",
+]);
 
 // ---------------------------------------------------------------------------
 // The scanner itself, before anything is concluded from it
@@ -331,6 +338,8 @@ describe("the scanner reads what it claims to read", () => {
       "src/components/studio/BottomPanel.tsx",
       "src/lib/db/operations/execution.ts",
       "src/lib/db/providers/platform/kubernetes/agent-readings.ts",
+      "src/lib/db/providers/document/mongodb/agent-read.ts",
+      "src/lib/db/providers/document/mongodb/agent-boundary.ts",
       "src/workspace/StudioWorkspace.tsx",
     ]) {
       expect(isAgentModule(path.join(ROOT, ordinaryFile))).toBe(false);

@@ -15,8 +15,9 @@ import {
 } from "@/hooks/use-connection-payload";
 import { applyStatementName } from "@/components/agent/rail-parts";
 import { useAgentRun } from "@/components/agent/use-agent-run";
+import * as manifest from "@/lib/agent/agent-manifest";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
-import { agentPosture } from "@/lib/agent/posture";
+import { agentPosture, autoExecuteTerms } from "@/lib/agent/posture";
 import type { AgentRunWorkflowType, AgentThreadContext } from "@/lib/agent/types";
 import { getDBConfig } from "@/lib/db-ui-config";
 import type { DatabaseConnection } from "@/lib/types";
@@ -4040,7 +4041,7 @@ describe("AgentRail", () => {
     describe("the hand-over follows the connection's statement language", () => {
       test("an engine with no statement language reaches no consent step", async () => {
         const fetchMock = mockAgentFetch([OPENED_LINE, STARTED_LINE]);
-        const view = analyze({ connectionType: "mongodb" });
+        const view = analyze({ connectionType: "cassandra" });
         fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by region" } });
         await act(async () => {
           fireEvent.click(view.getByTestId("agent-start"));
@@ -4063,6 +4064,21 @@ describe("AgentRail", () => {
         expect(startBodyOf(fetchMock).autoExecute).toBe(false);
       });
 
+      // No plan of a MongoDB answer can be weighed, so a tick could only ever be declined: the setting is not offered,
+      // as on a cluster, and the run opens with it off.
+      test("a MongoDB data-analysis run reaches no consent step: its variant cannot auto-execute", async () => {
+        const fetchMock = mockAgentFetch([OPENED_LINE, STARTED_LINE]);
+        const view = analyze({ connectionType: "mongodb" });
+        fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "orders by status" } });
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-start"));
+        });
+
+        expect(view.queryByTestId("agent-consent")).toBeNull();
+        expect(view.queryByTestId("agent-auto-execute")).toBeNull();
+        expect(startBodyOf(fetchMock).autoExecute).toBe(false);
+      });
+
       test.each([undefined, null, "postgres"])("a connection type of %p is offered it", async (connectionType) => {
         mockAgentFetch([OPENED_LINE, STARTED_LINE]);
         const view = analyze({ connectionType });
@@ -4072,6 +4088,45 @@ describe("AgentRail", () => {
         });
 
         expect(view.getByTestId("agent-consent")).toBeTruthy();
+      });
+
+      test.each([undefined, null, "postgres", "sqlite"])(
+        "a connection type of %p is stated the terms of SQL, the language the rail resolved for it",
+        async (connectionType) => {
+          const view = await consentOf({ connectionType });
+
+          expect(view.getByTestId("agent-auto-execute-terms").textContent).toBe(
+            autoExecuteTerms("data-analysis", "sql"),
+          );
+        },
+      );
+
+      /*
+        SQL is the only language whose variants offer the hand-over today, so a real manifest can only show the step
+        stating SQL's terms. This one test substitutes a kubectl data-analysis variant that may auto-execute, to show
+        the step states the terms of whichever language the rail resolved rather than SQL's by assumption. Restored
+        in `finally`: `mock.module` reaches every importer in this process.
+      */
+      test("the step states the terms of the language the rail resolved, not SQL's by assumption", async () => {
+        const real = { ...manifest };
+        // Built before the substitution: the manifest's own functions read the substitute once it is in place.
+        const handingOver = { ...real.requiredVariant("kubectl", "data-analysis"), canAutoExecute: true };
+        try {
+          mock.module("@/lib/agent/agent-manifest", () => ({
+            ...real,
+            agentVariant: (language: manifest.AgentStatementLanguageId | undefined, workflow: AgentRunWorkflowType) =>
+              language === "kubectl" && workflow === "data-analysis"
+                ? handingOver
+                : real.agentVariant(language, workflow),
+          }));
+          const view = await consentOf({ connectionType: "kubernetes" });
+
+          expect(view.getByTestId("agent-auto-execute-terms").textContent).toBe(
+            autoExecuteTerms("data-analysis", "kubectl"),
+          );
+        } finally {
+          mock.module("@/lib/agent/agent-manifest", () => real);
+        }
       });
     });
 
@@ -5801,11 +5856,11 @@ describe("AgentRail", () => {
       });
 
       test("agent mode on an engine it cannot execute on says so, and plan mode is offered", () => {
-        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="mongodb" />);
+        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="cassandra" />);
         fireEvent.click(view.getByTestId("agent-mode-agent"));
 
         expect(view.getByTestId("agent-safety-strip").getAttribute("data-tone")).toBe("blocked");
-        expect(view.getByTestId("agent-safety-headline").textContent).toContain("MongoDB");
+        expect(view.getByTestId("agent-safety-headline").textContent).toContain("Cassandra");
         expect(view.getByTestId("agent-safety-qualifier").textContent).toContain("plan mode drafts here");
       });
 
@@ -6063,11 +6118,11 @@ describe("AgentRail", () => {
 
     describe("the engine notice", () => {
       test("agent mode on an engine with no read-only statement path is told, before Start", () => {
-        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="mongodb" />);
+        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="cassandra" />);
         fireEvent.click(view.getByTestId("agent-mode-agent"));
 
         const notice = view.getByTestId("agent-engine-unsupported-notice").textContent ?? "";
-        expect(notice).toContain("MongoDB");
+        expect(notice).toContain("Cassandra");
         expect(notice).toContain("no read-only statement path");
         // The two things that ARE open here, because a dead end is not what this is:
         // the operations workflow sends no statement at all, and plan mode drafts.
@@ -6076,7 +6131,7 @@ describe("AgentRail", () => {
       });
 
       test("it does not gate Start, because the refusal is the server's and one workflow is unaffected", () => {
-        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="mongodb" />);
+        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="cassandra" />);
         fireEvent.click(view.getByTestId("agent-mode-agent"));
         fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "what is blocked right now" } });
 
@@ -6087,7 +6142,7 @@ describe("AgentRail", () => {
       test("its way out selects plan mode and starts nothing", () => {
         const fetchMock = mock(async () => jsonResponse({}, 202));
         globalThis.fetch = fetchMock as unknown as typeof fetch;
-        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="mongodb" />);
+        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="cassandra" />);
         fireEvent.click(view.getByTestId("agent-mode-agent"));
 
         fireEvent.click(view.getByTestId("agent-engine-unsupported-plan"));
@@ -6122,7 +6177,7 @@ describe("AgentRail", () => {
       */
       test("its facts are the selection's, even while another run is describing the strip", async () => {
         mockAgentFetch([OPENED_LINE, STARTED_LINE]);
-        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="mongodb" />);
+        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="cassandra" />);
         fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "what is slow" } });
         await act(async () => {
           fireEvent.click(view.getByTestId("agent-start"));
@@ -6133,13 +6188,13 @@ describe("AgentRail", () => {
 
         const notice = view.getByTestId("agent-engine-unsupported-notice").textContent ?? "";
         expect(notice).toContain("no read-only statement path");
-        expect(view.getByTestId("agent-engine-unsupported-reason").textContent).toContain("On MongoDB");
+        expect(view.getByTestId("agent-engine-unsupported-reason").textContent).toContain("On Apache Cassandra");
         // The open plan run is still what the strip describes.
         expect(view.getByTestId("agent-safety-strip").getAttribute("data-tone")).toBe("safe");
       });
 
       test("plan mode is warned about nothing, on any engine", () => {
-        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="mongodb" />);
+        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="cassandra" />);
 
         expect(view.queryByTestId("agent-engine-unsupported-notice")).toBeNull();
       });

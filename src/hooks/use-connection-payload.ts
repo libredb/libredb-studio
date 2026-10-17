@@ -135,6 +135,13 @@ const CONNECTION_RELEVANCE: Record<keyof DatabaseConnection, FieldRelevance> = {
   // The secret half authenticates but does not itself decide the catalog view.
   apiKeyId: "resolution",
   apiKeySecret: "resolution",
+  // Modbus: not a target and not a credential, so the question above does not reach it - the same device
+  // answers, and the protocol authenticates nobody. It is `resolution` because of what reads this key:
+  // `use-provider-metadata`'s `readKey`, the pulse and `SchemaDiff`'s snapshot. A map that changed while
+  // the key did not would leave the previous map's points drawn. And unlike the namespace list, which
+  // filters names the cluster defines, this document DEFINES them: `volts` is one address under one map
+  // and another under the next.
+  registerMap: "resolution",
   // Whether a Db2 connection may connect with no TLS at all (#786): like every transport field
   // below, it decides whether, and how, the connection connects.
   allowInsecureAuth: "resolution",
@@ -163,6 +170,7 @@ const CONNECTION_RELEVANCE: Record<keyof DatabaseConnection, FieldRelevance> = {
   // Both decide HOW the server is reached and verified, so a change to either is a different connection.
   securityMode: "resolution",
   serverCertificateThumbprint: "resolution",
+  hostKeyFingerprint: "resolution",
   // Each one changes which channel is opened and which identity it is opened with, so each travels
   // to the server with the request, as the mode and the pin do.
   securityPolicyUri: "resolution",

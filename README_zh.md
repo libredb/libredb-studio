@@ -52,6 +52,7 @@
   <a href="https://aiven.io/docs/products/mysql/howto/connect-libredb-studio">Aiven for MySQL</a>、
   <a href="https://docs.scylladb.com/stable/get-started/gui-clients/libredb-studio.html">ScyllaDB</a>、
   <a href="https://cloudberry.apache.org/docs/ecosystem/sql-clients/libredb-studio/">Apache Cloudberry</a>、
+  <a href="https://doris.apache.org/docs/4.x/connection-integration/data-integration/libredb-studio/">Apache Doris</a>、
   <a href="https://cwiki.apache.org/confluence/display/KAFKA/Ecosystem#:~:text=LibreDB%20Studio">Apache Kafka</a>、
   <a href="https://cassandra.apache.org/_/ecosystem.html">Apache Cassandra</a>
   和
@@ -60,7 +61,7 @@
 </p>
 
 <p align="center">
-  <img src="public/screenshots/hero-demo.gif" alt="在 LibreDB Studio 里打开一张表、跑一次 join、把结果画成图表并阅读 ER 图" width="100%" />
+  <img src="public/screenshots/hero-demo.gif" width="100%" />
 </p>
 
 <p align="center">
@@ -68,11 +69,9 @@
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
   <a href="https://sonarcloud.io/project/overview?id=libredb_libredb-studio"><img src="https://sonarcloud.io/api/project_badges/measure?project=libredb_libredb-studio&metric=alert_status" alt="Quality Gate"></a>
   <a href="https://codecov.io/github/libredb/libredb-studio"><img src="https://codecov.io/github/libredb/libredb-studio/graph/badge.svg?token=VA6CO9R7IH" alt="Coverage"></a>
-  <a href="https://deepwiki.com/libredb/libredb-studio"><img src="https://img.shields.io/badge/Docs-DeepWiki-blue?logo=gitbook" alt="DeepWiki Docs"></a>
+  <a href="https://deepwiki.com/libredb/libredb-studio"><img src=".github/assets/deepwiki-badge.svg" alt="Ask DeepWiki"></a>
   <a href="https://artifacthub.io/packages/helm/libredb-studio/libredb-studio"><img src="https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/libredb-studio" alt="Artifact Hub"></a>
 </p>
-
-> 这份中文 README 由社区翻译，可能落后于英文版。两者有出入时，以[英文版](README.md)为准。
 
 <p align="center">
   <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/Next.js-16-black?logo=next.js" alt="Next.js 16"></a>
@@ -87,6 +86,8 @@
   <a href="#安装方式"><strong>安装方式</strong></a> •
   <a href="#一键部署"><strong>部署你自己的实例</strong></a>
 </p>
+
+> 这份中文 README 由社区翻译，可能落后于英文版。两者有出入时，以[英文版](README.md)为准。
 
 ## 快速开始
 
@@ -143,8 +144,16 @@ LibreDB Studio 走另一条路：**工具去找数据，而不是把数据搬来
 
 LibreDB Studio 走的是另一条路。它部署在数据旁边：一个容器、一个 Helm chart、一个 operator、一份 PaaS 一键模板，或者用 `npm i @libredb/studio` 嵌进你自己的产品。没有任何东西需要朝外暴露。
 
-三十七种引擎共用一个界面，PostgreSQL、MySQL、Oracle、Db2 LUW、SQL Server、SQLite、libSQL、DuckDB、MongoDB、Redis、Couchbase、Firestore、ClickHouse、Druid、Elasticsearch、OpenSearch、Trino、BigQuery、Databend、Snowflake、Apache Spark、Apache Cassandra、Prometheus、Apache Kafka、etcd、Neo4j、Milvus、Qdrant、InfluxDB (InfluxQL)、InfluxDB 3 (SQL)、Oxia、S3-compatible object storage、Kubernetes、MQTT、RabbitMQ 和 OPC UA、MTConnect，处处是同一套浏览器，凡是引擎有东西可报的地方都有 ER 图、schema 对比和监控。三十七种里有三种是只读的，因为它们自己的 SQL 就是只读的：Druid、Elasticsearch 和 OpenSearch 的文法里根本没有 `UPDATE`，也没有 `CREATE TABLE`，所以那些控件被如实报告为不支持，而不是等到用的时候才失败。Cassandra 是其中刻意报告得最少的一个：它给出的任何行数和容量都不真实，所以对象浏览器索性两者都不显示，而不是显示一个错的数字；它确实会发布的分区估算来自已刷盘的文件，实测一张 500 行的表被读作 143。Trino 是另一个异类：它是查询引擎而不是数据库，所以不声明任何主键和索引，报告的字节数属于它背后那些连接器所在的系统。
-MTConnect 是最新的一个：通过 HTTP 读取一台 agent，设备模型来自它的 probe 文档，观测值来自 `current` 和 `sample`，每个 asset 自己的 XML 在 Source 标签页中打开；它从构造上就是只读的，因为请求表只有九条路由、每一条都是 GET，整个 provider 里没有 PUT、没有 POST、也没有流式读取。设备是一个容器，data item 和 condition 是以值、时间戳和序号为列的关系，而空值是第三种状态，不是缺失。agent 本身也是一台设备，这一点在 MCP 客户端读取之前值得知道：它带着自己适配器的地址。
+四十一种引擎共用一个界面，PostgreSQL、MySQL、Oracle、Db2 LUW、SQL Server、SQLite、libSQL、DuckDB、MongoDB、Redis、Couchbase、Firestore、ClickHouse、Druid、Elasticsearch、OpenSearch、Trino、BigQuery、Databend、Snowflake、Apache Spark、Apache Cassandra、Prometheus、Apache Kafka、etcd、Neo4j、Milvus、Qdrant、InfluxDB (InfluxQL)、InfluxDB 3 (SQL)、Oxia、S3-compatible object storage、Kubernetes、MQTT、RabbitMQ 和 OPC UA、MTConnect、Modbus、NETCONF、SNMP 和 Sparkplug B，处处是同一套浏览器，凡是引擎有东西可报的地方都有 ER 图、schema 对比和监控。四十种里有三种是只读的，因为它们自己的 SQL 就是只读的：Druid、Elasticsearch 和 OpenSearch 的文法里根本没有 `UPDATE`，也没有 `CREATE TABLE`，所以那些控件被如实报告为不支持，而不是等到用的时候才失败。Cassandra 是其中刻意报告得最少的一个：它给出的任何行数和容量都不真实，所以对象浏览器索性两者都不显示，而不是显示一个错的数字；它确实会发布的分区估算来自已刷盘的文件，实测一张 500 行的表被读作 143。Trino 是另一个异类：它是查询引擎而不是数据库，所以不声明任何主键和索引，报告的字节数属于它背后那些连接器所在的系统。
+
+Sparkplug B 是最新的一个：通过 MQTT 读取一台 broker，metric 来自边缘节点出生证书的声明，值来自其后的数据消息；它从构造上就是只读的，因为 encoder 没有任何写 PUBLISH 的函数，CONNECT 也不带遗嘱（will）：5.4 把边缘节点的死亡证书注册为它的遗嘱，读取方若设置了遗嘱，自己断开时就会发布一条死亡消息。组和边缘节点是容器，每个 metric 是一行，它的值、时间戳和定义都来自声明它的出生证书，序号缺口从两条相邻的数据消息读出而不是猜出。
+
+SNMP 在 Sparkplug B 之前：通过 UDP 读取一台 agent，读取由带编号的名字所指向的 managed object；它从构造上就是只读的，因为出站阀门拒绝任何不是 Get、GetNext 或 GetBulk 的 PDU，所以 Set 永远到不了套接字。能到达 agent 的命令只有四个，`get`、`next`、`walk` 和 `table`，而一次 walk 何时结束只由一个文件决定：子树的末尾、预算、没有向前移动的 OID，或者沉默。对象组是一个容器，对子树的 walk 就是读取，表则由 GetBulk 的回答拼装而成。今天它只说 SNMPv2c，这是关于连接表单的事实而不是偏好：v3 的安全层已经写好，并按字节对照自己的抓包做过测量，但共用的连接记录里没有安全级别、隐私口令、context 名称和 engine id 固定值可填，运营者没有地方把它打开。
+
+NETCONF 在 SNMP 之前：通过 SSH 上的 NETCONF 读取一台网络设备；它从构造上就是只读的，因为 `requests.ts` 只构造五个请求体，其中四个是读取，`<get-config>`、`<get>`、`<get-data>` 和 `<get-schema>`，第五个是结束连接的 `<close-session>`：这个 provider 里没有任何函数能构造 `<edit-config>`、`<copy-config>`、`<delete-config>`、`<commit>` 或 `<lock>`。datastore 是第一层的容器，YANG 模块是第二层的容器，模块最上层的 container 或 list 是一个对象，list entry 的 key leaf 就是该对象的列。
+
+Modbus 在 NETCONF 之前：通过 raw socket 读取一台设备或网关，读取由你提供的 register map 命名的 register 和 bit，以及设备自己的 identification object；它从构造上就是只读的，因为 encoder 只能构造四个读取 function code 和 identification 请求，provider 里没有任何代码能构造写入，并且有一个阀门会重新检查每一个出站字节。Modbus 没有 discovery：没有任何请求能列出设备持有什么，register 也不带名称、类型或单位，所以树是由那份 map 而不是由设备构建的，没有 map 的连接会把这件事说出来，而不是显示一棵空树。一次读取就是一个 JSON 请求：map 命名的那些 point、按地址指定的一个范围，或者 identification object。
+MTConnect 在 Modbus 之前：通过 HTTP 读取一台 agent，设备模型来自它的 probe 文档，观测值来自 `current` 和 `sample`，每个 asset 自己的 XML 在 Source 标签页中打开；它从构造上就是只读的，因为请求表只有九条路由、每一条都是 GET，整个 provider 里没有 PUT、没有 POST、也没有流式读取。设备是一个容器，data item 和 condition 是以值、时间戳和序号为列的关系，而空值是第三种状态，不是缺失。agent 本身也是一台设备，这一点在 MCP 客户端读取之前值得知道：它带着自己适配器的地址。
 Apache Spark 在 MTConnect 之前：在编辑器中输入的 SQL 通过 Spark Connect 在自托管的 Spark 4.1 或更高版本服务器上运行，走 gRPC，结果以 Arrow 返回，每个请求都在自己的 Spark 会话中执行；树中显示目录及其命名空间，以及其中的表、视图和函数，`EXPLAIN FORMATTED` 不执行语句即可生成计划，令牌只经 TLS、回环地址或 SSH 隧道传输。
 OPC UA 在 Apache Spark 之前：一条 `opc.tcp` 会话把工厂的地址空间逐层读入 Keys 面板，节点的值、状态和属性在 Source 标签页中打开，原始历史在控制台中读取；它从构造上就是只读的，因为客户端接缝只列出八个读服务，其中没有一个会写：整个 provider 里没有 Write、没有 Call、也没有订阅。每个界限都取 Studio 自己的，而不取服务器发布的上限：实测的四个服务器里有两个会处理远超自己发布上限的请求，还有一个把其中八项发布为 0。Method 节点只被列出、从不调用；历史读取会说明自己为什么停下，而不是暗示历史已经结束。
 MQTT 在 OPC UA 之前：一次订阅就把 broker 的主题树读入 Keys 面板，每行旁边是服务器自己给出的剩余寿命，主题的有效载荷在 Source 标签页中打开；它从构造上就是只读的，因为发出的包只有 CONNECT、SUBSCRIBE、UNSUBSCRIBE、PINGREQ 和 DISCONNECT，没有任何函数能写出 PUBLISH，CONNECT 也不携带 Will。MQTT 没有列出主题的命令，所以任何一次读取都不声称自己是完整的：每次都报告它看到了什么、为什么停下来、以及它能证明自己丢了什么；`$share/`、`$queue/` 和 `$exclusive/` 过滤器在 SUBSCRIBE 之前就被拒绝，因为它们会把消息从旁边订阅的设备那里拿走。
@@ -165,14 +174,14 @@ Oxia、InfluxDB (InfluxQL)、Milvus、Qdrant、Neo4j、etcd、Apache Kafka、MQT
 ### 为什么选择 LibreDB Studio？
 
 - **部署在数据旁边**：容器、Helm chart、Rancher、OpenShift operator、PaaS 一键模板，或用 npm 嵌入。
-- **三十七种引擎，一个界面**：PostgreSQL、MySQL、Oracle、Db2 LUW、SQL Server、SQLite、libSQL、DuckDB、MongoDB、Redis、Couchbase、Firestore、ClickHouse、Druid、Elasticsearch、OpenSearch、Trino、BigQuery、Databend、Snowflake、Apache Spark、Cassandra、Prometheus、Apache Kafka、etcd、Neo4j、Milvus、Qdrant、InfluxDB (InfluxQL)、InfluxDB 3 (SQL)、Oxia、S3-compatible object storage、Kubernetes、MQTT、RabbitMQ、OPC UA、MTConnect。
+- **四十一种引擎，一个界面**：PostgreSQL、MySQL、Oracle、Db2 LUW、SQL Server、SQLite、libSQL、DuckDB、MongoDB、Redis、Couchbase、Firestore、ClickHouse、Druid、Elasticsearch、OpenSearch、Trino、BigQuery、Databend、Snowflake、Apache Spark、Cassandra、Prometheus、Apache Kafka、etcd、Neo4j、Milvus、Qdrant、InfluxDB (InfluxQL)、InfluxDB 3 (SQL)、Oxia、S3-compatible object storage、Kubernetes、MQTT、RabbitMQ、OPC UA、MTConnect、Modbus、NETCONF、SNMP、Sparkplug B。
 - **你人在哪它就在哪跑**：浏览器、手机、Windows、MacOS、Linux 桌面。
 - **一个只读的 Agent，配你自己的模型**：说一个问题，这次运行就会起草 SQL、读取结果，并写出一份每条结论都引用来源的报告。Gemini、OpenAI，或者跑开源模型的本地 Ollama。
 - **没有东西被锁在墙后**：RBAC、OIDC 单点登录、查询审计日志和 ER 图，全部以 MIT 发布。
 
 <p align="center">
   <img src="public/screenshots/connection-modal.png" alt="多数据库连接管理器" width="100%" />
-  <br/><em>连接 PostgreSQL、MySQL、Oracle、Db2 LUW、SQL Server、MongoDB、Couchbase、Firestore、ClickHouse、Druid、Elasticsearch、OpenSearch、Trino、BigQuery、Databend、Snowflake、Apache Spark、Cassandra、Redis、SQLite、DuckDB、libSQL、Prometheus、Apache Kafka、MQTT、RabbitMQ、etcd、Neo4j、Milvus、Qdrant、InfluxDB (InfluxQL)、InfluxDB 3 (SQL)、Oxia、S3-compatible object storage、Kubernetes、MTConnect，支持 SSL/TLS 与 SSH 隧道（Kafka 支持 TLS，不支持隧道；OPC UA 自带传输层安全，不走共用面板）。</em>
+  <br/><em>连接 PostgreSQL、MySQL、Oracle、Db2 LUW、SQL Server、MongoDB、Couchbase、Firestore、ClickHouse、Druid、Elasticsearch、OpenSearch、Trino、BigQuery、Databend、Snowflake、Apache Spark、Cassandra、Redis、SQLite、DuckDB、libSQL、Prometheus、Apache Kafka、MQTT、RabbitMQ、etcd、Neo4j、Milvus、Qdrant、InfluxDB (InfluxQL)、InfluxDB 3 (SQL)、Oxia、S3-compatible object storage、Kubernetes、MTConnect、Modbus、NETCONF、Sparkplug B，支持 SSL/TLS 与 SSH 隧道（Kafka 支持 TLS，不支持隧道；OPC UA 自带传输层安全，不走共用面板；NETCONF 通过 SSH 连接，固定设备自身的主机密钥，两者都不走；SNMP 两者都没有：它走 UDP，共用隧道载不了，v3 的安全在报文内部）。</em>
 </p>
 
 [![Ask DeepWiki](.github/assets/deepwiki-badge.svg)](https://deepwiki.com/libredb/libredb-studio)
@@ -201,7 +210,7 @@ Oxia、InfluxDB (InfluxQL)、Milvus、Qdrant、Neo4j、etcd、Apache Kafka、MQT
 Studio 最主要的 AI 界面是编辑器旁边的 **Agent 侧栏**，下面列出的模型辅助功能是其余部分。你说出一个目标：*“哪个部门人最多？”*、*“这条查询为什么慢？”*，然后按下 Start。这次运行会针对已连接的数据库起草 SQL、读取返回结果，最后写出一份报告，其中每一条结论都引用它所依据的那次读取。
 
 - **只读，由数据库本身来保证，而不是靠解析器。** Agent 执行的每条语句都走 Agent 自己的受审计管线，在碰到驱动之前先做策略判定、记录审计事件、核算预算（`executeAuditedOperation`，`src/lib/db/operations/execution.ts:129`），并使用只读执行配置：PostgreSQL 上是只读事务，SQLite 上每条语句都重新声明 `PRAGMA query_only`，DuckDB 上是 `READ_ONLY` 引擎句柄外加一层 SQL 守卫，因为仅靠该标志仍然放行 `COPY … TO`、`EXPORT DATABASE` 和读取本地文件的表函数；SQL Server 上没有任何形式的只读事务，因此改由四层保证：开启连接时先核验会话主体确实无法写入，再由优化器在不执行的前提下编译放行每条语句，并在服务端限定返回行数，最后把语句放进一个总是回滚的事务里。写入和 DDL 在到达数据库之前就被拒绝，`EXPLAIN ANALYZE` 因为会真正执行语句而默认禁止。这条管线只属于 Agent：你自己在编辑器里执行的语句是直接调用 provider 的（`src/app/api/db/query/route.ts:44`），不会经过这里的策略判定，也不会产生这类审计记录。
-- **Agent 模式只读取 PostgreSQL、SQLite、DuckDB、SQL Server 和 MySQL。** 只读配置由数据库原生保证，因此只在实现了它的 provider 上存在，也就是 `postgres.ts`、`sqlite.ts`、`duckdb/index.ts`、`mssql.ts` 和 `mysql.ts` 上的 `queryReadOnly`，别无其他。在其他引擎上，只要某个 Agent 模式工作流会发送语句，它就会在启动时被拒绝，此时运行尚未开启；万一有请求走到 provider 工厂，也会以 `engine-unsupported` 结束。**Plan** 模式对所有连接都可用，那里的模型不使用任何工具，不执行你的任何语句，不做任何写入，只为你起草一条由你自己去执行的语句。它的 GROUNDING 覆盖全部引擎：PostgreSQL 和 SQLite 上由服务端自己组装目录查询，其他连接则请该连接自己的 provider 描述其 schema，也就是侧边栏本来就在做的那次读取，这不需要只读语句通道。所以两条限制是分开的：Agent 模式是这五种引擎，GROUNDING 是全部引擎，而读取失败的运行会直接说明，不会凭空编造表名。
+- **Agent 模式只读取 PostgreSQL、SQLite、DuckDB、SQL Server、MySQL、Kubernetes 和 MongoDB。** 只读配置只在实现了它的 provider 上存在，也就是 `postgres.ts`、`sqlite.ts`、`duckdb/index.ts`、`mssql.ts`、`mysql.ts`、`kubernetes/index.ts` 和 `mongodb/index.ts` 上的 `queryReadOnly`，别无其他；每种引擎的只读边界各不相同，记录在各自的文档中。在其他引擎上，只要某个 Agent 模式工作流会发送语句，它就会在启动时被拒绝，此时运行尚未开启；万一有请求走到 provider 工厂，也会以 `engine-unsupported` 结束。**Plan** 模式对所有连接都可用，那里的模型不使用任何工具，不执行你的任何语句，不做任何写入，只为你起草一条由你自己去执行的语句。它的 GROUNDING 覆盖全部引擎：PostgreSQL 和 SQLite 上由服务端自己组装目录查询，其他连接则请该连接自己的 provider 描述其 schema，也就是侧边栏本来就在做的那次读取，这不需要只读语句通道。所以两条限制是分开的：Agent 模式是上面这些引擎，GROUNDING 是全部引擎，而读取失败的运行会直接说明，不会凭空编造表名。
 - **三种工作流**：**Investigate**（回答问题）、**Optimize**（比较预估执行计划，提出索引或改写）、**Assess**（做表画像，只有计数，永远不含具体值）。
 - **不会自行执行。** Agent 不会替你开始运行，不会写入编辑器，也不会执行它建议的语句。是否采用由你点击决定。
 - **有证据才有结论。** 没有引用的结论无法被写出，运行结束时会给出自己的判定，*“Run answered”* 或 *“Run did not answer”*，并与结束方式并列显示。
@@ -316,9 +325,13 @@ Studio 最主要的 AI 界面是编辑器旁边的 **Agent 侧栏**，下面列�
 | **RabbitMQ** | 无（管理 HTTP API，端口 15672；Studio 自有的 AMQP 0-9-1 读取客户端，端口 5672） | 结构上只读：读取客户端无法编码发布、取走消息或声明。树中显示虚拟主机、流、队列和交换器；JSON 读取请求读取流的消息，从不读取队列的消息 |
 | **OPC UA** | `node-opcua-client`（纯 JavaScript，`opc.tcp`，端口 4840） | 结构上只读：客户端接缝只列出八个读服务（GetEndpoints、CreateSession、ActivateSession、Browse、BrowseNext、Read、HistoryRead 和 CloseSession），整个 provider 里没有 Write、Call、HistoryUpdate，也没有订阅。键浏览器每次一个 Browse 读一层地址空间，键是转义后的浏览路径，因为浏览名本身可能含有分隔符；点开一个节点可以看到它的值、状态、两个时间戳和解码后的 AccessLevel，控制台用一条 JSON 请求读取当前值或原始历史。每个界限都取 Studio 自己的，而不取服务器发布的上限：实测的四个服务器里有两个会处理远超自己发布上限的请求，还有一个把上限发布为 0。Method 节点只被列出、从不调用。已在 Microsoft OPC PLC 2.15.10、open62541 1.5.9、Python asyncua 2.1.0 和 Eclipse Milo 演示服务器上验证 |
 | **MTConnect** | 无：本仓库自己的客户端，走共用的 `node:http(s)` 传输层（端口 5000） | 结构上只读：请求表只有九条路由，每一条都是 GET，所以没有 PUT、POST 或流式读取可发。设备是一个容器，data item 和 condition 是以值、时间戳和序号为列的关系，每个 asset 自己的 XML 在 Source 标签页中打开 |
+| **Modbus** | 无：本仓库自己的客户端，经共用的出站规则走 raw socket（端口 502，MODBUS/TCP Security 为 802） | 结构上只读：encoder 只能构造四个读取 function code 和 identification 请求，没有任何函数能构造写入，并且有一个阀门会重新检查每一个出站字节。Modbus 没有 discovery，所以树由随连接保存的 register map 构建，一次读取就是针对该 map 命名的那些 point 的一个 JSON 请求 |
+| **NETCONF** | `ssh2`（只用 SSH 传输；本仓库打开套接字后把它交出去，NETCONF 的分帧、请求和会话都是本仓库自己的，端口 830） | 结构上只读：`requests.ts` 只构造五个请求体，其中四个是读取，`<get-config>`、`<get>`、`<get-data>` 和 `<get-schema>`，第五个用来关闭会话，没有任何函数能构造 `<edit-config>`、`<copy-config>`、`<commit>` 或 `<lock>`。datastore 是一个容器，它下面的 YANG 模块是另一个容器，模块最上层的 container 或 list 是一个对象，list entry 的 key leaf 就是该对象的列 |
+| **SNMP** | 无：本仓库自己的客户端，走 UDP（端口 161），经过共用的出站规则 | 结构上只读：出站阀门拒绝任何不是 Get、GetNext 或 GetBulk 的 PDU，所以 Set 永远到不了套接字。对象组是一个容器，对子树的 walk 就是读取，表则由 GetBulk 的回答拼装而成 |
+| **Sparkplug B** | 无：本仓库自己的受限 MQTT 会话，走共用的 `node:net` 与 `node:tls` 传输层（端口 1883，启用 SSL / TLS 面板后为 8883） | 结构上只读：编码器没有任何写 PUBLISH 的函数，CONNECT 也不带遗嘱（will），因为 5.4 把边缘节点的死亡证书注册为它的遗嘱，读取方若设置了遗嘱，自己断开时就会发布一条死亡消息。组和边缘节点是容器，每个 metric 是一行，它的值、时间戳和定义都来自声明它的出生证书 |
 | **Redis** | `ioredis` | 命令编辑器、键浏览器、基于 INFO 的监控 |
 
-> **另有二十七种引擎没有自己的驱动。** 上面三十七种是这个构建自带的驱动。另有二十七种引擎使用其中某一种线协议，通过已有驱动原样接入，所以三十七个驱动一共覆盖六十四个具名引擎。它们是 MariaDB、Percona Server for MySQL、TiDB、Vitess、StarRocks、Apache Doris、OceanBase、SingleStore、Citus、Percona Distribution for PostgreSQL、[ParadeDB](https://www.paradedb.com/)、OrioleDB、TimescaleDB、YugabyteDB、AlloyDB Omni、Apache Cloudberry（孵化中）、CockroachDB、Materialize 和 RisingWave（按 PostgreSQL 或 MySQL 接入），Valkey、DragonflyDB、KeyDB 和 Garnet（按 Redis 接入），FerretDB（按 MongoDB 接入），ScyllaDB（按 Cassandra 接入），VictoriaMetrics（按 Prometheus 接入），以及 Redpanda（按 Apache Kafka 接入）。每一种都对着一个真实实例测过，而产品能用的部分因引擎而异。MariaDB、两个 Percona 发行版、TiDB、Vitess、AlloyDB Omni、Citus、TimescaleDB、YugabyteDB、ParadeDB、OrioleDB、Valkey、DragonflyDB、KeyDB 和 FerretDB 的表现与它们所借驱动自身的引擎一致，不过其中三种会报告不该信任的统计值：Citus 的分布式表和 TimescaleDB 的 hypertable 报告的行数与容量是错的而不是缺的，YugabyteDB 则在你跑 `ANALYZE` 之前一直报 0。Vitess 不属于那三种，它的行数与容量精确到字节，但在那里无法取消正在运行的查询：vtgate 拒绝 `KILL QUERY`，语句会一直跑到结束。AlloyDB Omni 也不属于那三种，2000 行就报 2000 行、270336 字节就报 270336 字节，但那里有两件事出人意料：`version()` 在任何地方都不提 AlloyDB，所以版本面板与一个原生 PostgreSQL 17 无法区分；而 AlloyDB 自己的八个 `google_ml` 表会出现在对象浏览器里，任何能连上的角色也都能读它们。StarRocks 自称 MySQL 5.1，并失去了概览、健康和会话面板，它的监控面板只渲染出六个，其中会话面板带着引擎自己的拒绝理由；Apache Doris 是 StarRocks 所 fork 的引擎，只失去概览和健康面板，原因是一种它的文法拒绝的语句形式，而在真正要紧的地方它比 StarRocks 更可信：一张确实有那么多数据的表，它报 2000 行和 10187 字节，而 StarRocks 起初也读作零（它自己的后台统计收集器更慢，实测 4.5 分钟对 3.3.22，而 Doris 大约一分钟），并且在 2026-09-16 的一次修复之前，单就容量而言此后会永远读作零，因为 StarRocks 的 `INDEX_LENGTH` 是 NULL 而不是 Doris 那样的真实 0，把 provider 在 SQL 里算的那个和值毒化了；索引从不被报告，外键会被接受、被 `SHOW CONSTRAINTS` 列出、对 ER 图不可见且不被强制执行；Cloudberry 失去监控面板及其表和索引统计，三者都源于同一条 MPP 计划器限制，并且会把外键读成似乎被强制执行的样子，实际并没有，尽管它的行数是正确的；CockroachDB 失去对象浏览器和容量面板；OceanBase 能应答十五个界面中的十四个，但只有十二个有用，健康面板直接失败，因为它的租户根本没有 `performance_schema` 库，而每一处容量都读作 0 B，不过一旦跑过 `ANALYZE TABLE`，它的行数就是正确的；SingleStore 失去五个界面，原因在我们这边而不在它那边，provider 把每条语句都走预处理语句协议，而 SingleStore 对四个面板所需的 `SHOW` 和 `EXPLAIN` 语句拒绝该协议，这五个里现在已有四个恢复，未恢复的是它的 Explain 面板，因为那里的文法要 `EXPLAIN JSON`，而该语句在两种协议下都失败；它的数字仍然是缺的而不是错的，一张 2000 行的表读作 0 行和 0 B，且任何 `ANALYZE` 都改不了；ScyllaDB 失去五个界面，连 Test Connection 一起，六个全都源于同一个缺失的 keyspace，概览、健康、性能指标、活动会话和监控面板都读 Cassandra 的 `system_views` 虚拟表，而 ScyllaDB 根本没有 `system_views` keyspace，这五个现在降级为空而不是抛错，于是 Test Connection 能通过、对话框能保存连接，而在那次改动之前它完全做不到，同时编辑器与对象浏览器完好可用，18 种 CQL 类型每一种读回来的字节都与同一轮里探测的 Cassandra 5.0.9 一致；ParadeDB 和 OrioleDB 都是完整的，代价却正好相反：ParadeDB 的九个扩展为 2 张用户表在对象浏览器里放进 41 个对象，不过 Agent Plan 模式在最小权限角色下可以正常工作，只有以 `postgres` 超级用户身份时才会被拒绝，这与任何 PostgreSQL 上的情况相同，而 OrioleDB 的浏览器很干净，但它自己的存储对 PostgreSQL 的容量函数不可见，所以每个索引都读作 0 字节，缓存命中率读作 N/A。Materialize 和 RisingWave 为部分支持：对象浏览器能显示它们的表、视图和物化视图及其列，但行数、大小和监控统计仍为空。Garnet 的表现与 Redis 一致，并且是这里三个近亲之一（另外两个是 Valkey 和 DragonflyDB），它们的 `INFO` 里会在 Redis 兼容级别旁边带上自己的版本，概览现在把后者标在前面，即 `Garnet 2.1.5 (Redis 7.4.3)`，而它有两处读数是以数值面目出现的空缺：每处容量都显示 0 B，因为它不发布 `used_memory`，缓存命中率显示 100%，因为它不发布 keyspace 计数器。
+> **另有二十七种引擎没有自己的驱动。** 上面四十一种是这个构建自带的驱动。另有二十七种引擎使用其中某一种线协议，通过已有驱动原样接入，所以四十个驱动一共覆盖六十七个具名引擎所以四十个驱动一共覆盖六十六个具名引擎。它们是 MariaDB、Percona Server for MySQL、TiDB、Vitess、StarRocks、Apache Doris、OceanBase、SingleStore、Citus、Percona Distribution for PostgreSQL、[ParadeDB](https://www.paradedb.com/)、OrioleDB、TimescaleDB、YugabyteDB、AlloyDB Omni、Apache Cloudberry（孵化中）、CockroachDB、Materialize 和 RisingWave（按 PostgreSQL 或 MySQL 接入），Valkey、DragonflyDB、KeyDB 和 Garnet（按 Redis 接入），FerretDB（按 MongoDB 接入），ScyllaDB（按 Cassandra 接入），VictoriaMetrics（按 Prometheus 接入），以及 Redpanda（按 Apache Kafka 接入）。每一种都对着一个真实实例测过，而产品能用的部分因引擎而异。MariaDB、两个 Percona 发行版、TiDB、Vitess、AlloyDB Omni、Citus、TimescaleDB、YugabyteDB、ParadeDB、OrioleDB、Valkey、DragonflyDB、KeyDB 和 FerretDB 的表现与它们所借驱动自身的引擎一致，不过其中三种会报告不该信任的统计值：Citus 的分布式表和 TimescaleDB 的 hypertable 报告的行数与容量是错的而不是缺的，YugabyteDB 则在你跑 `ANALYZE` 之前一直报 0。Vitess 不属于那三种，它的行数与容量精确到字节，但在那里无法取消正在运行的查询：vtgate 拒绝 `KILL QUERY`，语句会一直跑到结束。AlloyDB Omni 也不属于那三种，2000 行就报 2000 行、270336 字节就报 270336 字节，但那里有两件事出人意料：`version()` 在任何地方都不提 AlloyDB，所以版本面板与一个原生 PostgreSQL 17 无法区分；而 AlloyDB 自己的八个 `google_ml` 表会出现在对象浏览器里，任何能连上的角色也都能读它们。StarRocks 自称 MySQL 5.1，并失去了概览、健康和会话面板，它的监控面板只渲染出六个，其中会话面板带着引擎自己的拒绝理由；Apache Doris 是 StarRocks 所 fork 的引擎，只失去概览和健康面板，原因是一种它的文法拒绝的语句形式，而在真正要紧的地方它比 StarRocks 更可信：一张确实有那么多数据的表，它报 2000 行和 10187 字节，而 StarRocks 起初也读作零（它自己的后台统计收集器更慢，实测 4.5 分钟对 3.3.22，而 Doris 大约一分钟），并且在 2026-09-16 的一次修复之前，单就容量而言此后会永远读作零，因为 StarRocks 的 `INDEX_LENGTH` 是 NULL 而不是 Doris 那样的真实 0，把 provider 在 SQL 里算的那个和值毒化了；索引从不被报告，外键会被接受、被 `SHOW CONSTRAINTS` 列出、对 ER 图不可见且不被强制执行；Cloudberry 失去监控面板及其表和索引统计，三者都源于同一条 MPP 计划器限制，并且会把外键读成似乎被强制执行的样子，实际并没有，尽管它的行数是正确的；CockroachDB 失去对象浏览器和容量面板；OceanBase 能应答十五个界面中的十四个，但只有十二个有用，健康面板直接失败，因为它的租户根本没有 `performance_schema` 库，而每一处容量都读作 0 B，不过一旦跑过 `ANALYZE TABLE`，它的行数就是正确的；SingleStore 失去五个界面，原因在我们这边而不在它那边，provider 把每条语句都走预处理语句协议，而 SingleStore 对四个面板所需的 `SHOW` 和 `EXPLAIN` 语句拒绝该协议，这五个里现在已有四个恢复，未恢复的是它的 Explain 面板，因为那里的文法要 `EXPLAIN JSON`，而该语句在两种协议下都失败；它的数字仍然是缺的而不是错的，一张 2000 行的表读作 0 行和 0 B，且任何 `ANALYZE` 都改不了；ScyllaDB 失去五个界面，连 Test Connection 一起，六个全都源于同一个缺失的 keyspace，概览、健康、性能指标、活动会话和监控面板都读 Cassandra 的 `system_views` 虚拟表，而 ScyllaDB 根本没有 `system_views` keyspace，这五个现在降级为空而不是抛错，于是 Test Connection 能通过、对话框能保存连接，而在那次改动之前它完全做不到，同时编辑器与对象浏览器完好可用，18 种 CQL 类型每一种读回来的字节都与同一轮里探测的 Cassandra 5.0.9 一致；ParadeDB 和 OrioleDB 都是完整的，代价却正好相反：ParadeDB 的九个扩展为 2 张用户表在对象浏览器里放进 41 个对象，不过 Agent Plan 模式在最小权限角色下可以正常工作，只有以 `postgres` 超级用户身份时才会被拒绝，这与任何 PostgreSQL 上的情况相同，而 OrioleDB 的浏览器很干净，但它自己的存储对 PostgreSQL 的容量函数不可见，所以每个索引都读作 0 字节，缓存命中率读作 N/A。Materialize 和 RisingWave 为部分支持：对象浏览器能显示它们的表、视图和物化视图及其列，但行数、大小和监控统计仍为空。Garnet 的表现与 Redis 一致，并且是这里三个近亲之一（另外两个是 Valkey 和 DragonflyDB），它们的 `INFO` 里会在 Redis 兼容级别旁边带上自己的版本，概览现在把后者标在前面，即 `Garnet 2.1.5 (Redis 7.4.3)`，而它有两处读数是以数值面目出现的空缺：每处容量都显示 0 B，因为它不发布 `used_memory`，缓存命中率显示 100%，因为它不发布 keyspace 计数器。
 > VictoriaMetrics 通过 Prometheus 驱动运行 PromQL，并列出它的指标及其标签列、它的抓取目标，以及序列数最多的至多五十个指标，但它的规则文件夹是空的，因为单节点服务器不评估任何规则；概览、存储统计和抓取池文件夹都会失败，因为它们读取的 Prometheus 端点中有三个它根本不提供；指标的源不显示单位，目标的源不显示抓取间隔和超时，因为它不发送这些字段，它尚未抓取过的目标也会显示为 down；此外，字符串表达式不返回任何行，子查询的数据点从求值时间往回计算，任何结果旁边也不会出现 PromQL 的 info 或 warning 提示。
 > Redpanda 通过 Apache Kafka 驱动应答每一个 Kafka 界面，主题、带延迟的消费者组、broker 和读取都可用，但它的概览把最大连接数读作 0，broker 的源只列出九项配置，因为它对 broker 配置的应答只有这些；它的存储统计没有使用百分比；每个消费者组都读作 classic，这在 Redpanda 上是对的，因为它没有别的组协议。
 > 每个引擎的细节，连同探测所用的确切版本，都在 [`docs/providers/README.md`](docs/providers/README.md#wire-compatible-engines) 里：我们只有在连上某个引擎之后才会写出它的名字，所以那里没有的名字是尚未测试，而不是不受支持。
@@ -339,7 +352,7 @@ Studio 最主要的 AI 界面是编辑器旁边的 **Agent 侧栏**，下面列�
 | **编辑器** | Monaco Editor（VS Code 内核） | Web |
 | **AI** | 多模型（Gemini、OpenAI、Ollama、自定义） | Web、移动端 |
 | **认证** | JWT（`jose`）+ OIDC（`openid-client`）、PKCE、角色映射 | Web、移动端 |
-| **数据库** | PostgreSQL、MySQL、Oracle、Db2 LUW、SQL Server、SQLite、libSQL、DuckDB、MongoDB、Couchbase、Firestore、ClickHouse、Apache Druid、Elasticsearch、OpenSearch、Trino、BigQuery、Databend、Snowflake、Apache Spark、Apache Cassandra、Redis、Prometheus、Apache Kafka、MQTT、RabbitMQ、etcd、Neo4j、Milvus、Qdrant、InfluxDB (InfluxQL)、InfluxDB 3 (SQL)、Oxia、S3-compatible object storage、Kubernetes、OPC UA、MTConnect | Web、移动端 |
+| **数据库** | PostgreSQL、MySQL、Oracle、Db2 LUW、SQL Server、SQLite、libSQL、DuckDB、MongoDB、Couchbase、Firestore、ClickHouse、Apache Druid、Elasticsearch、OpenSearch、Trino、BigQuery、Databend、Snowflake、Apache Spark、Apache Cassandra、Redis、Prometheus、Apache Kafka、MQTT、RabbitMQ、etcd、Neo4j、Milvus、Qdrant、InfluxDB (InfluxQL)、InfluxDB 3 (SQL)、Oxia、S3-compatible object storage、Kubernetes、OPC UA、MTConnect、Modbus、NETCONF、SNMP、Sparkplug B | Web、移动端 |
 | **图表** | Recharts（柱状图、折线图、饼图、面积图、散点图、直方图、堆叠图） | Web、移动端 |
 | **ERD** | React Flow、ELK.js（自动布局） | Web |
 | **状态与表格** | TanStack Table 与 Virtual | Web、移动端 |
@@ -426,7 +439,7 @@ journalctl -u libredb-studio
 
 ### 前置条件
 - [Bun](https://bun.sh/)（推荐）或 Node.js 24+
-- 一个可查询的目标数据库（PostgreSQL、MySQL、Oracle、Db2 LUW、SQL Server、SQLite、libSQL、DuckDB、MongoDB、Couchbase、Firestore、ClickHouse、Apache Druid、Elasticsearch、OpenSearch、Trino、BigQuery、Databend、Snowflake、Apache Spark、Apache Cassandra、Redis、Prometheus、Apache Kafka、MQTT、RabbitMQ、etcd、Neo4j、Milvus、Qdrant、InfluxDB (InfluxQL)、InfluxDB 3 (SQL)、Oxia、S3-compatible object storage、Kubernetes、OPC UA 或 MTConnect）
+- 一个可查询的目标数据库（PostgreSQL、MySQL、Oracle、Db2 LUW、SQL Server、SQLite、libSQL、DuckDB、MongoDB、Couchbase、Firestore、ClickHouse、Apache Druid、Elasticsearch、OpenSearch、Trino、BigQuery、Databend、Snowflake、Apache Spark、Apache Cassandra、Redis、Prometheus、Apache Kafka、MQTT、RabbitMQ、etcd、Neo4j、Milvus、Qdrant、InfluxDB (InfluxQL)、InfluxDB 3 (SQL)、Oxia、S3-compatible object storage、Kubernetes、OPC UA、MTConnect、Modbus、NETCONF、SNMP 或 Sparkplug B）
 
 ### 快速开始（本地）
 1. **克隆并安装**
@@ -929,7 +942,7 @@ extraEnvFrom:
 | `defaults` | 否 | 合并进所有连接的默认值 |
 | `connections[].id` | 是 | 唯一 slug（`[a-z0-9-]+`，最多 64 字符） |
 | `connections[].name` | 是 | UI 中显示的名称 |
-| `connections[].type` | 是 | `postgres`、`mysql`、`sqlite`、`libsql`、`duckdb`、`oracle`、`db2`、`mssql`、`clickhouse`、`druid`、`trino`、`bigquery`、`databend`、`snowflake`、`spark`、`cassandra`、`elasticsearch`、`opensearch`、`mongodb`、`couchbase`、`firestore`、`redis`、`prometheus`、`kafka`、`mqtt`、`rabbitmq`、`etcd`、`neo4j`、`milvus`、`qdrant`、`influxdb`、`influxdb3`、`oxia`、`s3`、`kubernetes`、`opcua`、`mtconnect`、`libredb` |
+| `connections[].type` | 是 | `postgres`、`mysql`、`sqlite`、`libsql`、`duckdb`、`oracle`、`db2`、`mssql`、`clickhouse`、`druid`、`trino`、`bigquery`、`databend`、`snowflake`、`spark`、`cassandra`、`elasticsearch`、`opensearch`、`mongodb`、`couchbase`、`firestore`、`redis`、`prometheus`、`kafka`、`mqtt`、`rabbitmq`、`etcd`、`neo4j`、`milvus`、`qdrant`、`influxdb`、`influxdb3`、`oxia`、`s3`、`kubernetes`、`opcua`、`mtconnect`、`modbus`、`netconf`、`snmp`、`sparkplug`、`libredb` |
 | `connections[].roles` | 是 | `["*"]`（所有人）、`["admin"]`、`["user"]` 或 `["admin", "user"]` |
 | `connections[].managed` | 否 | `true` = 由管理员控制，界面中不可编辑（默认），`false` = 给用户一份可编辑的副本 |
 | `connections[].readOnly` | 否 | `true` 时拒绝该连接上的所有写入（仅在执行该模式的引擎上，即 etcd）；在非托管连接上会被拒绝 |

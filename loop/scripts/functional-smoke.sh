@@ -42,6 +42,9 @@ bunx playwright install chromium
 echo "=== functional smoke: live postgres agent read-only profile ==="
 bun tests/live/postgres-read-only-live.ts
 
+echo "=== functional smoke: live mongodb agent read-only profile ==="
+bun tests/live/mongodb-agent-profile.ts
+
 echo "=== functional smoke: run ==="
 bunx playwright test --config=playwright.smoke.config.ts
 

@@ -38,14 +38,18 @@ describe("QUERY_DIALECTS", () => {
       "kubectl",
       "libredb",
       "milvus",
+      "modbus",
       "mqtt",
       "mtconnect",
+      "netconf",
       "opcua",
       "oxia",
       "qdrant",
       "rabbitmq",
       "redis",
       "s3",
+      "snmp",
+      "sparkplug",
     ]);
   });
 
@@ -143,6 +147,31 @@ describe("QUERY_DIALECTS", () => {
       },
       mtconnect: {
         tabType: "mtconnect",
+        offersColumnProfiling: false,
+        offersCodeGeneration: false,
+        offersCountQuery: false,
+      },
+      modbus: {
+        tabType: "modbus",
+        offersColumnProfiling: false,
+        offersCodeGeneration: false,
+        offersCountQuery: false,
+      },
+      netconf: {
+        tabType: "netconf",
+        offersColumnProfiling: false,
+        offersCodeGeneration: false,
+        offersCountQuery: false,
+      },
+      snmp: {
+        tabType: "snmp",
+        offersColumnProfiling: false,
+        offersCodeGeneration: false,
+        offersCountQuery: false,
+      },
+
+      sparkplug: {
+        tabType: "sparkplug",
         offersColumnProfiling: false,
         offersCodeGeneration: false,
         offersCountQuery: false,

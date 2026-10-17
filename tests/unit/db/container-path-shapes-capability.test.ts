@@ -64,6 +64,21 @@ const EXPECTED_CONTAINER_PATH_SHAPES: Readonly<
   // One level, the agent's devices, and a path is the device name exactly as the probe document
   // spells it: nothing is prefixed and nothing is derived (#1722).
   mtconnect: "exact",
+  // A container is one unit id, written as the number the map holds: nothing is prefixed and nothing
+  // is derived (#1723).
+  modbus: "prefixes",
+  // datastore and a module), which is the same shape the other absent engines are in.
+  netconf: "absent",
+  snmp: "absent",
+  // ABSENT, and measuring the landed rule rather than the behaviour is what corrected this: the old
+  // row said `exact` and described the BEHAVIOUR truthfully (two levels, group then edge node, each
+  // spelled as the topic spells it, 4.1), but the landed rule is stricter - a type-id declares a value
+  // IF AND ONLY IF its provider calls `assertContainerPathShape`, and this provider calls it nowhere
+  // (`grep -rn assertContainerPathShape providers/industrial/sparkplug` is empty). The kernel reads an
+  // absent field as `exact` anyway, so nothing a user sees changes; what was wrong was claiming a
+  // DECLARATION that does not exist. This provider checks its own levels itself (`parseTopic` refuses a
+  // device level where the namespace has none), which is the shape the other absent engines are in.
+  sparkplug: "absent",
   libredb: "exact",
   duckdb: "prefixes",
   mssql: "prefixes",
@@ -171,7 +186,7 @@ describe("the declaration follows the check (#1147)", () => {
     expect(unknownTypeIds(callerFiles)).toEqual([]);
     const callers = callerFiles.map(providerTypeId).sort();
     const declaring = TYPES.filter((type) => EXPECTED_CONTAINER_PATH_SHAPES[type] !== "absent").sort();
-    expect(callers).toHaveLength(25);
+    expect(callers).toHaveLength(26);
     expect(callers).toEqual(declaring);
   });
 });

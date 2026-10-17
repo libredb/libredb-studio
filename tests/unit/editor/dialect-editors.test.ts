@@ -39,9 +39,11 @@ describe("DIALECT_EDITORS", () => {
       "kubectl",
       "libredb",
       "milvus",
+      "modbus",
       "mongodb",
       "mqtt",
       "mtconnect",
+      "netconf",
       "opcua",
       "oxia",
       "promql",
@@ -49,6 +51,8 @@ describe("DIALECT_EDITORS", () => {
       "rabbitmq",
       "redis",
       "s3",
+      "snmp",
+      "sparkplug",
       "sql",
     ]);
   });
@@ -61,8 +65,12 @@ describe("DIALECT_EDITORS", () => {
       sql: "sql",
       mongodb: "json",
       mqtt: "json",
+      modbus: "json",
       opcua: "json",
       mtconnect: "mtconnect",
+      netconf: "json",
+      snmp: "json",
+      sparkplug: "json",
       libredb: "libredb",
       redis: "redis",
       promql: "promql",
@@ -80,12 +88,25 @@ describe("DIALECT_EDITORS", () => {
     });
   });
 
-  test("only the SQL tab, the five JSON tabs and the Milvus and Qdrant consoles have a formatter", () => {
+  test("only the SQL tab, the eight JSON tabs and the Milvus and Qdrant consoles have a formatter", () => {
     const formatted = Object.entries(DIALECT_EDITORS)
       .filter(([, editor]) => editor.format !== undefined)
       .map(([type]) => type)
       .sort();
-    expect(formatted).toEqual(["kafka", "milvus", "mongodb", "mqtt", "opcua", "qdrant", "rabbitmq", "sql"]);
+    expect(formatted).toEqual([
+      "kafka",
+      "milvus",
+      "modbus",
+      "mongodb",
+      "mqtt",
+      "netconf",
+      "opcua",
+      "qdrant",
+      "rabbitmq",
+      "snmp",
+      "sparkplug",
+      "sql",
+    ]);
   });
 
   test("tab types that render in one Monaco language share one formatter, or all have none", () => {

@@ -27,7 +27,7 @@ import { describeAgentCapability } from "@/lib/agent/capability-labels";
   variant says whether its answer may be handed over. It gates nothing: the refusal is
   the route's, and this is a notice about it.
 */
-import { AGENT_STATEMENT_LANGUAGE, agentVariant } from "@/lib/agent/agent-manifest";
+import { AGENT_STATEMENT_LANGUAGE, type AgentStatementLanguageId, agentVariant } from "@/lib/agent/agent-manifest";
 import {
   AGENT_MAX_OBJECTIVE_LENGTH,
   AGENT_REPORT_RESERVE_MS,
@@ -260,6 +260,12 @@ interface AgentDecidedStart {
    * would destroy the open run for a replacement that is never opened.
    */
   readonly replacesOpenRun: boolean;
+}
+
+/** A start held at the consent step, with the statement language its hand-over was offered in. */
+interface AgentHeldStart extends AgentDecidedStart {
+  /** What `handOverLanguage` answered when the step was raised: the step states this language's terms. */
+  readonly language: AgentStatementLanguageId;
 }
 
 /**
@@ -851,7 +857,7 @@ export const AgentRail = React.memo(function AgentRail({
    * `src/lib/agent/types.ts`'s invariant intact: every widening decision is made by the
    * request that opens the run, and no later request may widen it.
    */
-  const [pendingStart, setPendingStart] = useState<AgentDecidedStart | null>(null);
+  const [pendingStart, setPendingStart] = useState<AgentHeldStart | null>(null);
   /** The consent step's own tick, reset every time that step is entered. */
   const [autoExecute, setAutoExecute] = useState(false);
   /**
@@ -1123,16 +1129,21 @@ export const AgentRail = React.memo(function AgentRail({
     the user it had run on their connection. A control that promises what this host
     cannot perform is not offered, which is the rule the stop control and the hydration
     affordances already follow.
+
+    It answers with the LANGUAGE rather than a yes, because the consent step states that
+    language's terms: a card that assumed SQL would promise SQL's read-only session on an
+    engine that has none. `canHandOver` is the yes.
   */
-  const canHandOver = (candidate: AgentRunWorkflowType): boolean => {
-    const language = connectionType === null ? undefined : AGENT_STATEMENT_LANGUAGE[connectionType];
-    return (
+  const handOverLanguage = (candidate: AgentRunWorkflowType): AgentStatementLanguageId | null => {
+    const language = connectionType === null ? "sql" : AGENT_STATEMENT_LANGUAGE[connectionType];
+    const offered =
       mode === "agent" &&
       language !== null &&
       agentVariant(language, candidate)?.canAutoExecute === true &&
-      onRunStatement !== undefined
-    );
+      onRunStatement !== undefined;
+    return offered ? language : null;
   };
+  const canHandOver = (candidate: AgentRunWorkflowType): boolean => handOverLanguage(candidate) !== null;
 
   /**
    * The connection this run was opened on, kept for as long as the rail follows it.
@@ -1329,17 +1340,21 @@ export const AgentRail = React.memo(function AgentRail({
   /*
     The one step between a decided workflow and an open run.
 
-    It exists for exactly one workflow and one mode, and `canHandOver` is what says so:
+    It exists for exactly one workflow and one mode, and `handOverLanguage` is what says so:
     `data-analysis` is the only workflow offered `present_answer`, agent mode is the
     only mode with tools at all, and a host with no runner cannot perform the hand-over
     whatever the run decides. Everything else opens uninterrupted, because there is
     nothing to consent TO — a checkbox offered where the tool is not is the mismatch
     `AGENT_WORKFLOW_PRESENTS_ANSWER` was written to end, and it shipped once already.
+
+    The language it answers is held with the start, and the step states that language's
+    terms.
   */
   const hold = (decided: AgentDecidedStart): void => {
-    if (canHandOver(decided.workflowType)) {
+    const language = handOverLanguage(decided.workflowType);
+    if (language !== null) {
       setAutoExecute(false);
-      setPendingStart(decided);
+      setPendingStart({ ...decided, language });
       return;
     }
     void beginRun({ ...decided, autoExecute: false });
@@ -2337,6 +2352,7 @@ export const AgentRail = React.memo(function AgentRail({
             workflowLabel={WORKFLOW_LABELS[pendingStart.workflowType]}
             connectionName={pendingStart.connection.name}
             engine={pendingStart.connection.type}
+            language={pendingStart.language}
             autoExecute={autoExecute}
             onAutoExecuteChange={setAutoExecute}
             onOpen={() => {

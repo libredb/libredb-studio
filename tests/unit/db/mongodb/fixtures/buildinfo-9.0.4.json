@@ -1,0 +1,48 @@
+{
+  "measured": "2026-10-17",
+  "server": "MongoDB 9.0.4",
+  "command": {
+    "buildInfo": 1,
+    "maxTimeMS": 5000,
+    "comment": "libredb-studio-agent"
+  },
+  "reply": {
+    "version": "9.0.4",
+    "versionArray": [
+      9,
+      0,
+      4,
+      0
+    ],
+    "gitVersion": "64ade602b836c9adeffba7fa038c887ffab56196",
+    "modules": [],
+    "allocator": "tcmalloc-google",
+    "javascriptEngine": "mozjs-wasm",
+    "sysinfo": "deprecated",
+    "openssl": {
+      "running": "OpenSSL 3.5.5 27 Jan 2026",
+      "compiled": "OpenSSL 3.5.5 27 Jan 2026"
+    },
+    "buildEnvironment": {
+      "distmod": "ubuntu2604",
+      "distarch": "x86_64",
+      "cc": "external/mongo_toolchain_v5/stow/llvm-v5/bin/clang++: version unknown",
+      "ccflags": "-std=c++20 -nostdinc++ -Wall -Wsign-compare -Winvalid-pch -Wno-missing-braces -Wno-psabi -B external/mongo_toolchain_v5/v5/bin -B external/mongo_toolchain_v5/stow/gcc-v5/libexec/gcc/x86_64-mongodb-linux/14.2.0 -B external/mongo_toolchain_v5/stow/gcc-v5/lib/gcc/x86_64-mongodb-linux/14.2.0 -B external/mongo_toolchain_v5/stow/llvm-v5/bin -fPIE -D_XOPEN_SOURCE=700 -D_GNU_SOURCE -no-canonical-prefixes -D__DATE__=\"OMITTED_FOR_HASH_CONSISTENCY\" -D__TIMESTAMP__=\"OMITTED_FOR_HASH_CONSISTENCY\" -D__TIME__=\"OMITTED_FOR_HASH_CONSISTENCY\" -isystem external/mongo_toolchain_v5/stow/gcc-v5/include/c++/14.2.0 -isystem external/mongo_toolchain_v5/stow/gcc-v5/include/c++/14.2.0/x86_64-mongodb-linux -isystem /usr/include/openssl -isystem /usr/include/x86_64-mongodb-linux -isystem /usr/include -isystem external/mongo_toolchain_v5/stow/gcc-v5/include/c++/14.2.0/backward -isystem external/mongo_toolchain_v5/stow/llvm-v5/lib/clang/19/include -gdwarf-5 -g2 -Wno-non-virtual-dtor -fsized-deallocation -Woverloaded-virtual -Wpessimizing-move -ffp-contract=off -Wunused-exception-parameter -Wno-tautological-constant-out-of-range-compare -Wno-tautological-constant-compare -Wno-tautological-unsigned-zero-compare -Wno-tautological-unsigned-enum-zero-compare -Wno-inconsistent-missing-override -Wno-instantiation-after-specialization -fasynchronous-unwind-tables -fno-omit-frame-pointer -fstack-protector-strong -fno-strict-aliasing -fdiagnostics-color -fprofile-use=external/_main~_repo_rules~pgo_data/clang_pgo.profdata -Wno-profile-instr-unprofiled -Wno-profile-instr-out-of-date -Wno-backend-plugin -mllvm -profile-accurate-for-symsinlist=false -flto=thin -fno-debug-types-section -ffile-prefix-map=/proc/self/cwd=. -Wimplicit-fallthrough -march=sandybridge -mtune=generic -mprefer-vector-width=128 -O2 -Wno-unused-function -Wno-defaulted-function-deleted -Wno-unknown-pragmas -Wno-builtin-macro-redefined -Wno-unused-local-typedefs -Wno-unused-lambda-capture -Wno-deprecated-declarations -Wno-unused-const-variable -Wno-deprecated-this-capture -Wno-undefined-var-template -Wno-unused-private-field -Wno-potentially-evaluated-expression -Wa,--compress-debug-sections -DNDEBUG -DABSL_ALLOCATOR_NOTHROW -D_FORTIFY_SOURCE=2 -DBOOST_ENABLE_ASSERT_DEBUG_HANDLER -DBOOST_FILESYSTEM_NO_CXX20_ATOMIC_REF -DBOOST_LOG_NO_SHORTHAND_NAMES -DBOOST_LOG_WITHOUT_THREAD_ATTR -DBOOST_MATH_NO_LONG_DOUBLE_MATH_FUNCTIONS -DBOOST_SYSTEM_NO_DEPRECATED -DBOOST_THREAD_USES_DATETIME -DBOOST_THREAD_VERSION=5 -DBOOST_LOG_USE_NATIVE_SYSLOG -DABSL_FORCE_ALIGNED_ACCESS -DPCRE2_STATIC -DSAFEINT_USE_INTRINSICS=0 -Wno-deprecated-declarations -Wno-deprecated-non-prototype -Wno-missing-template-arg-list-after-template-kw -Wno-sign-compare -Wno-implicit-fallthrough -Wno-shorten-64-to-32 -Wno-unused-but-set-variable -Wno-nullability-completeness -Isrc -I$(GENDIR)/src -I$(GENDIR)/src/mongo/db/modules/enterprise/src -Isrc/mongo/db/modules/enterprise/src -Isrc/third_party/valgrind/include",
+      "cxx": "None: version unknown",
+      "cxxflags": "-std=c++20 -nostdinc++ -Wall -Wsign-compare -Winvalid-pch -Wno-missing-braces -Wno-psabi -B external/mongo_toolchain_v5/v5/bin -B external/mongo_toolchain_v5/stow/gcc-v5/libexec/gcc/x86_64-mongodb-linux/14.2.0 -B external/mongo_toolchain_v5/stow/gcc-v5/lib/gcc/x86_64-mongodb-linux/14.2.0 -B external/mongo_toolchain_v5/stow/llvm-v5/bin -fPIE -D_XOPEN_SOURCE=700 -D_GNU_SOURCE -no-canonical-prefixes -D__DATE__=\"OMITTED_FOR_HASH_CONSISTENCY\" -D__TIMESTAMP__=\"OMITTED_FOR_HASH_CONSISTENCY\" -D__TIME__=\"OMITTED_FOR_HASH_CONSISTENCY\" -isystem external/mongo_toolchain_v5/stow/gcc-v5/include/c++/14.2.0 -isystem external/mongo_toolchain_v5/stow/gcc-v5/include/c++/14.2.0/x86_64-mongodb-linux -isystem /usr/include/openssl -isystem /usr/include/x86_64-mongodb-linux -isystem /usr/include -isystem external/mongo_toolchain_v5/stow/gcc-v5/include/c++/14.2.0/backward -isystem external/mongo_toolchain_v5/stow/llvm-v5/lib/clang/19/include -gdwarf-5 -g2 -Wno-non-virtual-dtor -fsized-deallocation -Woverloaded-virtual -Wpessimizing-move -ffp-contract=off -Wunused-exception-parameter -Wno-tautological-constant-out-of-range-compare -Wno-tautological-constant-compare -Wno-tautological-unsigned-zero-compare -Wno-tautological-unsigned-enum-zero-compare -Wno-inconsistent-missing-override -Wno-instantiation-after-specialization -fasynchronous-unwind-tables -fno-omit-frame-pointer -fstack-protector-strong -fno-strict-aliasing -fdiagnostics-color -fprofile-use=external/_main~_repo_rules~pgo_data/clang_pgo.profdata -Wno-profile-instr-unprofiled -Wno-profile-instr-out-of-date -Wno-backend-plugin -mllvm -profile-accurate-for-symsinlist=false -flto=thin -fno-debug-types-section -ffile-prefix-map=/proc/self/cwd=. -Wimplicit-fallthrough -march=sandybridge -mtune=generic -mprefer-vector-width=128 -O2 -Wno-unused-function -Wno-defaulted-function-deleted -Wno-unknown-pragmas -Wno-builtin-macro-redefined -Wno-unused-local-typedefs -Wno-unused-lambda-capture -Wno-deprecated-declarations -Wno-unused-const-variable -Wno-deprecated-this-capture -Wno-undefined-var-template -Wno-unused-private-field -Wno-potentially-evaluated-expression -Wa,--compress-debug-sections -DNDEBUG -DABSL_ALLOCATOR_NOTHROW -D_FORTIFY_SOURCE=2 -DBOOST_ENABLE_ASSERT_DEBUG_HANDLER -DBOOST_FILESYSTEM_NO_CXX20_ATOMIC_REF -DBOOST_LOG_NO_SHORTHAND_NAMES -DBOOST_LOG_WITHOUT_THREAD_ATTR -DBOOST_MATH_NO_LONG_DOUBLE_MATH_FUNCTIONS -DBOOST_SYSTEM_NO_DEPRECATED -DBOOST_THREAD_USES_DATETIME -DBOOST_THREAD_VERSION=5 -DBOOST_LOG_USE_NATIVE_SYSLOG -DABSL_FORCE_ALIGNED_ACCESS -DPCRE2_STATIC -DSAFEINT_USE_INTRINSICS=0 -Wno-deprecated-declarations -Wno-deprecated-non-prototype -Wno-missing-template-arg-list-after-template-kw -Wno-sign-compare -Wno-implicit-fallthrough -Wno-shorten-64-to-32 -Wno-unused-but-set-variable -Wno-nullability-completeness -Isrc -I$(GENDIR)/src -I$(GENDIR)/src/mongo/db/modules/enterprise/src -Isrc/mongo/db/modules/enterprise/src -Isrc/third_party/valgrind/include",
+      "linkflags": "-B external/mongo_toolchain_v5/v5/bin -B external/mongo_toolchain_v5/stow/gcc-v5/libexec/gcc/x86_64-mongodb-linux/14.2.0 -B external/mongo_toolchain_v5/stow/gcc-v5/lib/gcc/x86_64-mongodb-linux/14.2.0 -B external/mongo_toolchain_v5/stow/llvm-v5/bin -pie -Wl,--hash-style=gnu -Wl,-z,noexecstack -Wl,--warn-execstack -Wl,-z,relro -pthread -Wl,--compress-debug-sections=none -rdynamic -lm -lresolv -latomic -Wl,--build-id -flto=thin -ffile-prefix-map=/proc/self/cwd=. -resource-dir=external/mongo_toolchain_v5/stow/llvm-v5/lib/clang/19/ -Wl,-z,now -Wl,--fatal-warnings -fuse-ld=lld -Lexternal/mongo_toolchain_v5/stow/gcc-v5/lib/gcc/x86_64-mongodb-linux/14.2.0 -Lexternal/mongo_toolchain_v5/v5/lib -Lexternal/mongo_toolchain_v5/v5/lib64",
+      "target_arch": "x86_64",
+      "target_os": "linux",
+      "cppdefines": "NDEBUG ABSL_ALLOCATOR_NOTHROW _FORTIFY_SOURCE=2 BOOST_ENABLE_ASSERT_DEBUG_HANDLER BOOST_FILESYSTEM_NO_CXX20_ATOMIC_REF BOOST_LOG_NO_SHORTHAND_NAMES BOOST_LOG_WITHOUT_THREAD_ATTR BOOST_MATH_NO_LONG_DOUBLE_MATH_FUNCTIONS BOOST_SYSTEM_NO_DEPRECATED BOOST_THREAD_USES_DATETIME BOOST_THREAD_VERSION=5 BOOST_LOG_USE_NATIVE_SYSLOG ABSL_FORCE_ALIGNED_ACCESS PCRE2_STATIC SAFEINT_USE_INTRINSICS=0"
+    },
+    "bits": 64,
+    "debug": false,
+    "maxBsonObjectSize": 16777216,
+    "storageEngines": [
+      "devnull",
+      "wiredTiger"
+    ],
+    "opentelemetry": true,
+    "ok": 1
+  }
+}

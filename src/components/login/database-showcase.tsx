@@ -71,6 +71,24 @@ export function DatabaseShowcase({ variant }: DatabaseShowcaseProps) {
  * 777px at the 4px row gap, while 1280x800 kept its six rows needing 794 and 1440x900 and 1920x1080
  * kept five and four; at the 2px row gap the four sizes need 784, 767, 749 and 695px of 800, 768,
  * 900 and 1080.
+ * The forty-second entry (Sparkplug B, #1720) took a SEVENTH row at 1280x800 and scrolled that size
+ * to 802px of its 800, the other three unchanged on six, six and four rows. THIS ONE THE GAPS
+ * CANNOT PAY FOR, and the sweep is why rather than a hunch: measured in a container at the four
+ * sizes, moving one lever at a time, 1280x800 needs
+ *
+ *     gap-x 6 / gap-y 2 / py-8   802 of 800   (this is the overflow)
+ *     gap-x 6 / gap-y 1 / py-8   796           4px left
+ *     gap-x 6 / gap-y 0 / py-8   790          10px left
+ *     gap-x 4 / gap-y 1 / py-8   796           the column gap buys NOTHING here
+ *     gap-x 6 / gap-y 2 / py-7   794           6px left
+ *     gap-x 6 / gap-y 2 / py-6   786          14px left
+ *
+ * so the hero column's padding pays, 32px to 24px (login-form.tsx), and both gaps stay as they
+ * are. A 1px or 0px row gap would buy less than the padding does AND put seven rows of 12px type
+ * against each other; the column gap is at its floor and moving it down to 4px does not change a
+ * single one of the four row counts. 14px left is what the page had at forty-one entries (784 of
+ * 800), so the next entry is the one that spends it. The control is in the same sweep: with the
+ * last item hidden, forty-one entries need 784 of 800 on six rows, which is what main measures.
  */
 function DesktopDatabases() {
   return (

@@ -916,6 +916,26 @@ export const SparkIcon: React.FC<IconProps> = ({ className, ...props }) => (
  * three samples standing on it at three heights: what a Sample document holds, rather than a
  * protocol badge.
  */
+export const ModbusIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <rect x="3" y="8" width="18" height="11" rx="1.5" />
+    <path d="M8 8 V4" />
+    <path d="M16 8 V4" />
+    <circle cx="7.5" cy="13.5" r="1.1" />
+    <circle cx="12" cy="13.5" r="1.1" />
+    <circle cx="16.5" cy="13.5" r="1.1" />
+  </svg>
+);
+
 export const MtconnectIcon: React.FC<IconProps> = ({ className, ...props }) => (
   <svg
     viewBox="0 0 24 24"
@@ -934,5 +954,107 @@ export const MtconnectIcon: React.FC<IconProps> = ({ className, ...props }) => (
     <circle cx="7" cy="11" r="1.4" />
     <circle cx="12" cy="4" r="1.4" />
     <circle cx="17" cy="8" r="1.4" />
+  </svg>
+);
+
+/**
+ * NETCONF (#1724). A mark drawn for Studio and never a vendor's: a device with a configuration
+ * tree above it, which is what this provider reads and the one thing every NETCONF device has.
+ * The tree has one branch that forks, because a datastore holds modules and a module holds nodes,
+ * and those two levels are what the object browser draws.
+ */
+export const NetconfIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <rect x="3" y="16" width="18" height="5" rx="1.5" />
+    <path d="M7 18.5 H9" />
+    <path d="M12 16 V11" />
+    <path d="M7 11 H17" />
+    <path d="M7 11 V8" />
+    <path d="M17 11 V8" />
+    <circle cx="7" cy="6.5" r="1.5" />
+    <circle cx="17" cy="6.5" r="1.5" />
+  </svg>
+);
+
+/**
+ * SNMP (#1721).
+ * A mark drawn for Studio, never a vendor's asset and never a network-gear silhouette: a router
+ * or a switch would say WHAT is being read, and every other engine's mark says what the reading
+ * IS.
+ *
+ * What makes SNMP different from the other device protocols here is that an agent answers from a
+ * NAMED TREE and is read by walking it: each object hangs at a numbered place, and a reader
+ * descends from the root one branch at a time. So the mark is a trunk with three numbered stops
+ * descending from it, the last one filled, because a walk ends at a leaf and not at the device.
+ */
+export const SnmpIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <path d="M3 19 H21" />
+    <path d="M7 19 V13" />
+    <path d="M12 19 V6" />
+    <path d="M17 19 V10" />
+    <circle cx="7" cy="11" r="1.4" />
+    <circle cx="12" cy="4" r="1.4" />
+    <circle cx="17" cy="8" r="1.4" />
+    <circle cx="5" cy="5" r="2" />
+    <path d="M5 7 V17" />
+    <path d="M5 9.5 H11" />
+    <path d="M5 13.5 H11" />
+    <path d="M5 17 H11" />
+    <circle cx="13.5" cy="9.5" r="1.6" />
+    <circle cx="13.5" cy="13.5" r="1.6" />
+    <circle cx="13.5" cy="17" r="1.6" fill="currentColor" />
+    <rect x="17.5" y="3" width="4" height="5.5" rx="1" />
+    <path d="M19.5 8.5 V11 H13.5" />
+  </svg>
+);
+
+/**
+ * A mark drawn for Studio, never the Eclipse Foundation's logo or any vendor's asset, and
+ * deliberately NOT a spark: the published mark for Sparkplug is a lightning form, so borrowing that
+ * shape would be borrowing the mark itself.
+ *
+ * What the mark says instead is the thing that makes this engine different from plain MQTT: an edge
+ * node publishes a BIRTH CERTIFICATE that defines what it will later send, so the mark is a node
+ * carrying a small tag, with the two it defines hanging under it. The tag is the schema; the two
+ * below are what the tag names.
+ */
+export const SparkplugIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <circle cx="12" cy="6" r="2.5" />
+    <rect x="15" y="3.5" width="5.5" height="5" rx="1" />
+    <path d="M12 8.5 V13" />
+    <path d="M7 13 H17" />
+    <path d="M7 13 V16" />
+    <path d="M17 13 V16" />
+    <circle cx="7" cy="18.5" r="2" />
+    <circle cx="17" cy="18.5" r="2" />
   </svg>
 );

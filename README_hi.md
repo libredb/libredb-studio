@@ -52,6 +52,7 @@
   <a href="https://aiven.io/docs/products/mysql/howto/connect-libredb-studio">Aiven for MySQL</a>,
   <a href="https://docs.scylladb.com/stable/get-started/gui-clients/libredb-studio.html">ScyllaDB</a>,
   <a href="https://cloudberry.apache.org/docs/ecosystem/sql-clients/libredb-studio/">Apache Cloudberry</a>,
+  <a href="https://doris.apache.org/docs/4.x/connection-integration/data-integration/libredb-studio/">Apache Doris</a>,
   <a href="https://cwiki.apache.org/confluence/display/KAFKA/Ecosystem#:~:text=LibreDB%20Studio">Apache Kafka</a>,
   <a href="https://cassandra.apache.org/_/ecosystem.html">Apache Cassandra</a>
   और
@@ -60,14 +61,30 @@
 </p>
 
 <p align="center">
-  <img src="public/screenshots/hero-demo.gif" alt="LibreDB Studio" width="100%" />
+  <img src="public/screenshots/hero-demo.gif" width="100%" />
 </p>
 
 <p align="center">
+  <a href="https://github.com/libredb/libredb-studio"><img src="https://img.shields.io/github/stars/libredb/libredb-studio?style=social" alt="GitHub stars"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
   <a href="https://sonarcloud.io/project/overview?id=libredb_libredb-studio"><img src="https://sonarcloud.io/api/project_badges/measure?project=libredb_libredb-studio&metric=alert_status" alt="Quality Gate"></a>
   <a href="https://codecov.io/github/libredb/libredb-studio"><img src="https://codecov.io/github/libredb/libredb-studio/graph/badge.svg?token=VA6CO9R7IH" alt="Coverage"></a>
+  <a href="https://deepwiki.com/libredb/libredb-studio"><img src=".github/assets/deepwiki-badge.svg" alt="Ask DeepWiki"></a>
   <a href="https://artifacthub.io/packages/helm/libredb-studio/libredb-studio"><img src="https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/libredb-studio" alt="Artifact Hub"></a>
+</p>
+
+<p align="center">
+  <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/Next.js-16-black?logo=next.js" alt="Next.js 16"></a>
+  <a href="https://react.dev/"><img src="https://img.shields.io/badge/React-19-61DAFB?logo=react" alt="React 19"></a>
+  <a href="https://hub.docker.com/r/libredb/libredb-studio?tag=latest"><img src="https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker" alt="Docker Support"></a>
+  <a href="https://artifacthub.io/packages/helm/libredb-studio/libredb-studio"><img src="https://img.shields.io/badge/Kubernetes-Compatible-326CE5?logo=kubernetes" alt="Kubernetes Compatible"></a>
+</p>
+
+<p align="center">
+  <a href="#जल्दी-शुरू-करें"><strong>Quick Start</strong></a> •
+  <a href="README.md#live-test"><strong>Live Demo</strong></a> •
+  <a href="#इंस्टॉल-करने-के-तरीके"><strong>Install Options</strong></a> •
+  <a href="README.md#one-click-deploy"><strong>Deploy Your Own</strong></a>
 </p>
 
 > यह हिन्दी README समुदाय द्वारा किया गया अनुवाद है और अंग्रेज़ी से पीछे हो सकता है। अंतर होने पर [अंग्रेज़ी संस्करण](README.md) मान्य है।
@@ -114,9 +131,9 @@ LibreDB Studio दूसरा रास्ता चुनता है: **tool
 
 ## मुख्य क्षमताएँ
 
-### सैंतीस engines, एक interface
+### इकतालीस engines, एक interface
 
-PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · Firestore · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · BigQuery · Databend · Snowflake · Apache Spark · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j · Milvus · Qdrant · InfluxDB (InfluxQL) · InfluxDB 3 (SQL) · Oxia · S3-compatible object storage · Kubernetes · MQTT · RabbitMQ · OPC UA · MTConnect
+PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · Firestore · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · BigQuery · Databend · Snowflake · Apache Spark · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j · Milvus · Qdrant · InfluxDB (InfluxQL) · InfluxDB 3 (SQL) · Oxia · S3-compatible object storage · Kubernetes · MQTT · RabbitMQ · OPC UA · MTConnect · Modbus · NETCONF · SNMP · Sparkplug B
 
 सभी SQL engines एक ही schema browser, ER diagram, schema diff और monitoring dashboard इस्तेमाल करते हैं। MongoDB और Redis SQL engines नहीं हैं, इसलिए उनमें ER diagram और schema diff नहीं है। Druid, Elasticsearch, OpenSearch और Trino दोहरे अपवाद हैं: उनके HTTP SQL interface का कोई ऐसा URI रूप नहीं है जिसे यह build पढ़ सके, इसलिए उन्हें सिर्फ़ host/port से configure किया जाता है। साथ ही, generated migration सीधे अपनी सीमा बताता है, बजाय ऐसे engine के लिए DDL बनाने के जिसकी SQL में column बदलने का कोई statement ही नहीं है। Couchbase के schemaless collections पर भी यही लागू है। Search clusters के ER diagram में सिर्फ़ boxes होते हैं, कोई line नहीं: indexes foreign keys declare नहीं करते, और engine के model में declare करने के लिए foreign key होती ही नहीं।
 
@@ -158,6 +175,10 @@ PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · Du
 | **RabbitMQ** | कोई नहीं: प्रबंधन HTTP API (पोर्ट 15672) और Studio का अपना AMQP 0-9-1 पठन क्लाइंट (पोर्ट 5672) | संरचना से केवल-पठन: पठन क्लाइंट publish, संदेश निकालना या declare एन्कोड नहीं कर सकता। ट्री में वर्चुअल होस्ट, स्ट्रीम, क्यू और एक्सचेंज; JSON पठन अनुरोध स्ट्रीम के संदेश पढ़ता है, क्यू के कभी नहीं |
 | **OPC UA** | `node-opcua-client` (शुद्ध JavaScript, `opc.tcp`, पोर्ट 4840) | बनावट से ही केवल-पढ़ने योग्य: क्लाइंट की सीम केवल आठ पढ़ने वाली सेवाएँ घोषित करती है (GetEndpoints, CreateSession, ActivateSession, Browse, BrowseNext, Read, HistoryRead और CloseSession), और प्रोवाइडर में Write, Call, HistoryUpdate या कोई सब्सक्रिप्शन कहीं नहीं है। कुंजी पैनल पता-स्थान को एक-एक स्तर पर, प्रति स्तर एक Browse से चलता है; कुंजी एस्केप किया हुआ ब्राउज़ पथ है, क्योंकि BrowseName में ही विभाजक आ सकता है। कोई नोड खुलने पर उसका मान, स्थिति, दोनों समय-चिह्न और समझा गया AccessLevel दिखता है, और कंसोल एक ही JSON अनुरोध से वर्तमान मान या कच्चा इतिहास पढ़ता है। हर सीमा Studio की अपनी है, सर्वर की घोषित सीमा नहीं: मापे गए चार सर्वरों में से दो अपनी घोषित सीमा से कहीं आगे के अनुरोध भी पूरे करते हैं और एक उसे 0 घोषित करता है। मेथड नोड सूची में आता है, कभी नहीं चलाया जाता। Microsoft OPC PLC 2.15.10, open62541 1.5.9, Python asyncua 2.1.0 और Eclipse Milo डेमो पर सत्यापित |
 | **MTConnect** | कोई नहीं: साझा `node:http(s)` transport पर इस repository का अपना client (पोर्ट 5000) | बनावट से ही read-only: request table में नौ routes हैं और हर एक GET है, इसलिए भेजने के लिए कोई PUT, POST या stream नहीं। device एक container है, data item और condition ऐसी relations हैं जिनकी पंक्तियाँ value, timestamp और sequence हैं, और हर asset का XML Source टैब में खुलता है |
+| **Modbus** | कोई नहीं: साझा egress नियम से गुजरते हुए raw socket पर इस repository का अपना client (पोर्ट 502, MODBUS/TCP Security के लिए 802) | बनावट से read-only: encoder केवल चार read function code और device identification बनाता है, कोई function लिखना नहीं बना सकता, और एक valve बाहर जाने वाले हर byte को दोबारा जाँचता है। Modbus में discovery नहीं है, इसलिए tree connection के साथ रखे register map से बनता है, और एक read उस map के नाम दिए points पर एक JSON request है |
+| **NETCONF** | `ssh2` (केवल SSH transport; यह repository socket खोलकर सौंप देता है, और NETCONF का framing, request और session इसके अपने हैं, पोर्ट 830) | बनावट से ही read-only: `requests.ts` पाँच request body बनाता है और उनमें चार पढ़ने वाले हैं, `<get-config>`, `<get>`, `<get-data>` और `<get-schema>`, पाँचवाँ session बंद करता है, और कोई function `<edit-config>`, `<copy-config>`, `<commit>` या `<lock>` नहीं बनाता। datastore एक container है और उसके नीचे YANG module दूसरा, module का पहले स्तर का container या list एक object है, और list entry के key leaf उस object के column हैं |
+| **SNMP** | कोई नहीं: साझा egress नियम से होकर UDP पर इस repository का अपना client (पोर्ट 161) | बनावट से ही read-only: बाहर जाने वाला valve Get, GetNext या GetBulk के अलावा हर PDU को मना करता है, इसलिए कोई Set socket तक पहुँचता ही नहीं। object group एक container है, subtree का walk ही पढ़ना है, और table GetBulk के उत्तरों से बनती है |
+| **Sparkplug B** | कोई नहीं: साझा `node:net` और `node:tls` ट्रांसपोर्ट पर इस रिपॉज़िटरी का अपना सीमित MQTT सत्र (पोर्ट 1883, या SSL / TLS पैनल से 8883) | रचना से ही केवल-पठनीय: एन्कोडर में PUBLISH लिखने वाला कोई फ़ंक्शन नहीं है, और CONNECT कोई will नहीं भेजता, क्योंकि 5.4 एज नोड के मृत्यु प्रमाणपत्र को उसका will मानता है और will सेट करने वाला पाठक अपना सॉकेट टूटने पर एक मृत्यु प्रकाशित कर देता। एक group और एक edge node कंटेनर हैं, और हर metric एक पंक्ति है जिसका मान, समय-चिह्न और परिभाषा उसे घोषित करने वाले जन्म प्रमाणपत्र से आते हैं |
 | **Redis** | `ioredis` | Command editor, key browser, INFO पर आधारित monitoring |
 
 > **Transport security हर engine की अलग सुविधा नहीं, सब पर लागू होने वाली क्षमता है।** SSH tunnel provider के connect होने से पहले ही बन जाता है और connection को local endpoint पर मोड़ देता है, इसलिए यह engine पर निर्भर नहीं: जिस connection में host और port हो, उस पर यह लागू होता है, Kafka connection को छोड़कर: Kafka client हर broker तक उसके advertised address पर पहुँचता है, जिसे एक address forward करने वाला tunnel नहीं ले जा सकता, इसलिए Kafka connection tunnel मना कर देता है। Connection string से भरे गए connections (MongoDB, Couchbase और ClickHouse में यह तरीका है) में host/port नहीं होता, इसलिए वे tunnel से नहीं जाते। SQLite और DuckDB में भी दोनों नहीं होते। SSL/TLS panel अभी PostgreSQL, MySQL, SQL Server, Couchbase, ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, Prometheus और Apache Kafka पर काम करता है। Trino पर यह वैकल्पिक नहीं है, क्योंकि coordinator plain HTTP पर password मना कर देता है। Oracle, MongoDB और Redis इस setting को नज़रअंदाज़ करते हैं, इसलिए इन तीनों में encryption इस पर निर्भर है कि connection string में क्या लिखा है, dialog में क्या चुना है इस पर नहीं।
@@ -196,15 +217,16 @@ PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · Du
   Writes और DDL डेटाबेस तक पहुँचने से पहले ही मना कर दिए जाते हैं। `EXPLAIN ANALYZE` statement को सच में चलाता है,
   इसलिए default रूप से बंद है। यह pipeline सिर्फ़ Agent के लिए है: एडिटर में आप जो statements ख़ुद चलाते हैं वे सीधे
   provider को जाते हैं (`src/app/api/db/query/route.ts:44`), यहाँ की policy से नहीं गुज़रते, और ऐसा audit record नहीं बनाते।
-- **Agent mode सिर्फ़ PostgreSQL, SQLite, DuckDB, SQL Server और MySQL पर**: read-only profile डेटाबेस के native तरीक़े से लागू होता है,
-  इसलिए यह सिर्फ़ उन providers पर है जिन्होंने इसे implement किया है: `postgres.ts`, `sqlite.ts`, `duckdb/index.ts`, `mssql.ts` और `mysql.ts`
-  का `queryReadOnly`, और कोई नहीं। बाक़ी engines पर, statements भेजने वाला Agent-mode workflow शुरू होते ही मना कर दिया जाता है,
+- **Agent mode सिर्फ़ PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes और MongoDB पर**: read-only profile सिर्फ़ उन providers पर है
+  जिन्होंने इसे implement किया है: `postgres.ts`, `sqlite.ts`, `duckdb/index.ts`, `mssql.ts`, `mysql.ts`, `kubernetes/index.ts` और `mongodb/index.ts`
+  का `queryReadOnly`, और कोई नहीं। हर engine की read-only सीमा अलग है, और वह उस engine के docs में लिखी है।
+  बाक़ी engines पर, statements भेजने वाला Agent-mode workflow शुरू होते ही मना कर दिया जाता है,
   run बनने से पहले; और जो अनुरोध provider factory तक पहुँच जाए वह `engine-unsupported` के साथ ख़त्म होता है।
   **Plan** mode हर connection पर खुलता है: वहाँ का model कोई tool इस्तेमाल नहीं करता, आपका कोई statement नहीं चलाता, कुछ लिखता नहीं,
   और सिर्फ़ एक statement का मसौदा देता है जिसे आप ख़ुद चलाते हैं। उसकी GROUNDING हर engine तक पहुँचती है: PostgreSQL और SQLite पर
   server ख़ुद catalog statements बनाता है, और बाक़ी हर connection पर उसी connection के provider से schema का ब्यौरा माँगा जाता है,
   यानी वही read जो sidebar पहले से करता है, जिसके लिए read-only statement path चाहिए ही नहीं। इसलिए दोनों सीमाएँ अलग हैं:
-  Agent mode यही चार engines हैं, GROUNDING सारे engines, और जिस run की reading नाकाम रहे वह tables गढ़ने के बजाय यह साफ़ कह देता है।
+  Agent mode ऊपर लिखे engines तक सीमित है, GROUNDING सारे engines, और जिस run की reading नाकाम रहे वह tables गढ़ने के बजाय यह साफ़ कह देता है।
 - **तीन workflows**: **Investigate** (सवाल का जवाब), **Optimize** (अनुमानित execution plans की तुलना, index या rewrite का सुझाव),
   **Assess** (table profiling: सिर्फ़ counts, कभी भी असली values नहीं)।
 - **अपने-आप कुछ नहीं करता**: Agent आपकी जगह run शुरू नहीं करता, एडिटर में नहीं लिखता, और अपने सुझाए statements नहीं चलाता।

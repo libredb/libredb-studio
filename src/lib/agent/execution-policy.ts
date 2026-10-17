@@ -24,7 +24,7 @@
  *   leaves every database route open to any authenticated session, so an agent
  *   restricted to admins would be more restrictive than the editor it reads for.
  *   Least privilege for the agent path is enforced where it belongs — the
- *   database-native read-only profile, and optionally a dedicated `agentUser`.
+ *   read-only execution profile's boundary, and optionally a dedicated `agentUser`.
  * - **`maxResultRows` / `maxResultBytes` are model-sized, not editor-sized.** A
  *   read on this path is going to be rendered into a prompt, so the cap that
  *   matters is the one that keeps a result affordable in tokens; the editor's
@@ -77,8 +77,8 @@ export const AGENT_OPERATIONS_PROFILE: ExecutionProfile = "agent-operations";
  * spend on a run, and the hand-over is not that. What the two share is the whole of
  * the boundary: `PROFILE_ACQUISITION` gives both the same `readOnly: true` open, the
  * same optional `agentUser` credential, the same profiled cache (never the editor's
- * writable pool), and the same demand that the provider expose a database-native
- * read-only statement path — which is what makes `BEGIN READ ONLY` and
+ * writable pool), and the same demand that the provider expose a read-only
+ * statement path (`queryReadOnly`), which is what makes `BEGIN READ ONLY` and
  * `PRAGMA query_only` apply to a replayed statement exactly as they do to the run's
  * own. They differ in one thing, the budget below, and they are separate names so
  * that a later change to one cannot silently move the other.

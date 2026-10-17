@@ -40,6 +40,7 @@ import {
   translateError,
 } from "@/lib/db/providers/stream/kafka/platformatic-client";
 import { recordedLib } from "../../../helpers/kafka-fixtures";
+import { howItFailed } from "../../../helpers/spawn-outcome";
 
 const dir = mkdtempSync(join(tmpdir(), "kafka-tls-"));
 const at = (file: string) => join(dir, file);
@@ -73,7 +74,7 @@ function openssl(...args: string[]): void {
     stdout: "ignore",
     stderr: "pipe",
   });
-  if (run.exitCode !== 0) throw new Error(`openssl ${args.join(" ")} failed: ${run.stderr.toString()}`);
+  if (run.exitCode !== 0) throw new Error(`openssl ${args.join(" ")} ${howItFailed(run)}: ${run.stderr.toString()}`);
 }
 
 /** A new RSA key and its certificate request, or with `-x509` its self-signed certificate. */

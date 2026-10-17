@@ -12,7 +12,7 @@ import { MongoClient, ObjectId, Binary, Decimal128, type Db, type Document, type
 // real - `require("mongodb").BSON` answers it - so the namespace form reaches the same object with
 // no extra dependency (#789).
 import * as mongodbDriver from "mongodb";
-import { BaseDatabaseProvider } from "../../base-provider";
+import { BaseDatabaseProvider } from "../../../base-provider";
 import {
   type DatabaseConnection,
   type ColumnSchema,
@@ -44,7 +44,7 @@ import {
   type ObjectKindSpec,
   type ObjectSourceDocument,
   type ObjectSourcePart,
-} from "../../types";
+} from "../../../types";
 import {
   applySourceBound,
   assertContainerPathShape,
@@ -58,10 +58,36 @@ import {
   type ObjectPathShapeEngine,
 } from "@/lib/db/object-kinds";
 import { comparePaths } from "@/lib/db/object-path";
-import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../errors";
-import { formatBytes } from "../../utils/pool-manager";
-import { unionFields, uniquelyKeyedRows } from "../../utils/result-fields";
+import {
+  DatabaseConfigError,
+  ConnectionError,
+  QueryError,
+  ExecutionProfileError,
+  mapDatabaseError,
+} from "../../../errors";
+import { formatBytes } from "../../../utils/pool-manager";
+import { unionFields, uniquelyKeyedRows } from "../../../utils/result-fields";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
+import {
+  AGENT_COMMAND_COMMENT,
+  anotherDatabaseRefusal,
+  readMongoForAgent,
+  rowBudgetRefusal,
+  runUnderAgentDeadline,
+  sampleWithinBudget,
+} from "./agent-read";
+import { assertReadOnlyBudget } from "../../sql/read-only-budget";
+import { AGENT_VERIFY_MAX_TIME_MS, agentHostsOf, verifyAgentProfile } from "./agent-boundary";
+import { parseExtendedJson, reviveEnvelope } from "./extended-json";
+import { readMongoCommand } from "./envelope";
+import { bsonTypeOf, serializeMongoDocument, uuidText } from "./values";
+import type {
+  ProviderExecutionContext,
+  ReadOnlyCatalogReading,
+  ReadOnlyCatalogSelector,
+  ReadOnlyStatementBudget,
+  ReadOnlyStatementMode,
+} from "../../../types";
 
 /**
  * MongoDB's identity for the shared container-path renderer.
@@ -128,151 +154,6 @@ const SUPPORTED_OPERATIONS: ReadonlySet<MongoQuery["operation"]> = new Set([
   "deleteMany",
 ]);
 
-/**
- * The query is read as MongoDB Extended JSON, the format mongosh, Compass and
- * `mongoexport` print, and not as plain JSON. Plain JSON has no ObjectId and no Date, so
- * a document the grid shows could not be found, updated or deleted by its `_id`:
- * measured on MongoDB 8.2.12, `{"_id": {"$oid": ...}}` reached the server as an operator
- * and failed `unknown operator: $oid`, a date range matched nothing, and `{"$date": ...}`
- * in an insert was stored as a subdocument with a `$date` key.
- *
- * WHY NOT `EJSON.parse` OVER THE WHOLE TEXT. The bson parser replaces an object with a
- * value as soon as ANY of its keys is one it knows, and drops the others in silence:
- * `{"$regex": "^a", "$nin": ["admin"]}` becomes the bare regular expression, so a
- * `deleteMany` with that filter deletes `admin` too. So the statement is read with plain
- * `JSON.parse` and then walked, and an object is handed to the bson parser only when its
- * keys are EXACTLY one wrapper's (`EJSON_WRAPPERS`). An object that mixes a wrapper key
- * with anything else is refused, and an object with no wrapper key is left as written,
- * which keeps every query operator, the legacy `{"$regex", "$options"}` form included,
- * exactly what the server receives.
- *
- * A plain number is never touched, so the driver writes it exactly as it did under
- * `JSON.parse`: int32 when it fits, a double otherwise, and `options.limit` stays the
- * number the cursor wants.
- */
-const EJSON_WRAPPERS: ReadonlySet<string> = new Set([
-  "$oid",
-  "$date",
-  "$numberInt",
-  "$numberLong",
-  "$numberDouble",
-  "$numberDecimal",
-  "$binary",
-  "$uuid",
-  "$regularExpression",
-  "$timestamp",
-  "$minKey",
-  "$maxKey",
-]);
-
-/**
- * Relaxed for every wrapper but one: relaxed accepts a `$date` as a plain number of
- * milliseconds, which canonical refuses below 2^31. `useBigInt64` because relaxed reads
- * `$numberLong` into a JS number, rounding `9007199254740993` to `...992`; a bigint holds
- * it, and the driver writes a bigint as a 64-bit integer. `$numberDouble` alone is read
- * canonically, because relaxed answers a JS number and `{"$numberDouble": "5"}` would be
- * written as int32 rather than the double it names.
- */
-const EJSON_RELAXED = { relaxed: true, useBigInt64: true } as const;
-const EJSON_CANONICAL = { relaxed: false, useBigInt64: true } as const;
-
-/** The 64-bit range a `$numberLong` must fit. The parser wraps a larger one to a negative in silence. */
-const INT64_MIN = -(BigInt(2) ** BigInt(63));
-const INT64_MAX = BigInt(2) ** BigInt(63) - BigInt(1);
-
-function parseExtendedJson(text: string): Document {
-  return reviveExtendedJson(JSON.parse(text), "") as Document;
-}
-
-function extendedJsonError(path: string, reason: string): QueryError {
-  return new QueryError(`Invalid Extended JSON in the query at "${path}": ${reason}`, "mongodb");
-}
-
-function reviveExtendedJson(value: unknown, path: string): unknown {
-  if (Array.isArray(value)) return value.map((item, index) => reviveExtendedJson(item, joinPath(path, String(index))));
-  if (typeof value !== "object" || value === null) return value;
-  const entries = Object.entries(value);
-  const wrapper = entries.find(([key]) => EJSON_WRAPPERS.has(key))?.[0];
-  if (wrapper === undefined) {
-    return Object.fromEntries(entries.map(([key, child]) => [key, reviveExtendedJson(child, joinPath(path, key))]));
-  }
-  if (entries.length !== 1) {
-    throw extendedJsonError(
-      path,
-      `${wrapper} must be the only key of its object, and this one also has ${entries
-        .map(([key]) => key)
-        .filter((key) => key !== wrapper)
-        .join(", ")}. To compare against it, nest it: {"$lt": {"${wrapper}": ...}}`,
-    );
-  }
-  let parsed: unknown;
-  try {
-    parsed = mongodbDriver.BSON.EJSON.parse(
-      JSON.stringify(value),
-      wrapper === "$numberDouble" ? EJSON_CANONICAL : EJSON_RELAXED,
-    );
-  } catch (error) {
-    // A wrapper that cannot be read, such as a `$oid` that is not 24 hex digits. The JSON
-    // itself was fine, so the format example `parseQuery` answers with would point at the
-    // wrong thing; the parser's own sentence says what is wrong.
-    throw extendedJsonError(path, (error as Error).message);
-  }
-  // The parser answers `Date.parse("next tuesday")`, which is NaN, with an invalid Date
-  // rather than an error, and the driver serialises an invalid Date as 0: 1970-01-01.
-  if (parsed instanceof Date && Number.isNaN(parsed.getTime())) {
-    throw extendedJsonError(
-      path,
-      'the $date is not a date. Use an ISO-8601 string such as "2025-01-01T00:00:00Z" or milliseconds since the epoch',
-    );
-  }
-  if (wrapper === "$numberLong" && (value as { $numberLong: string }).$numberLong !== String(parsed)) {
-    // Reached only for a value the parser accepted, so it is a decimal string: a
-    // round trip that differs is one `BigInt.asIntN(64, ...)` wrapped.
-    const exact = BigInt((value as { $numberLong: string }).$numberLong);
-    if (exact < INT64_MIN || exact > INT64_MAX) {
-      throw extendedJsonError(path, `$numberLong ${exact} is outside the 64-bit integer range`);
-    }
-  }
-  return parsed;
-}
-
-/**
- * A bigint as a JSON-safe value: a number while it is exact, its digits past 2^53. The
- * driver reads no bigint back (it is not asked to), so the only one a result holds is an
- * echo of a `$numberLong` the statement wrote, `insertedId` above all; `JSON.stringify`
- * throws on a bigint, which answered the write with an error after it had committed.
- */
-function serializeBigInt(value: unknown): unknown {
-  if (typeof value !== "bigint") return value;
-  const asNumber = Number(value);
-  return Number.isSafeInteger(asNumber) ? asNumber : value.toString();
-}
-
-/**
- * The BSON class a driver value is an instance of, read from the `_bsontype` every BSON class
- * carries. Read by NAME and not by `instanceof` for the reason `isMongoServerError` gives: the
- * integration suite replaces the driver module, so only a name is the same on both sides.
- */
-function bsonTypeOf(value: object): string | undefined {
-  // A BSON class declares it on its prototype; a document's own field of that name is data.
-  if (Object.hasOwn(value, "_bsontype")) return undefined;
-  const name = (value as { _bsontype?: unknown })._bsontype;
-  return typeof name === "string" ? name : undefined;
-}
-
-/** The Binary subtype of a UUID (BSON spec, subtype 4). */
-const BINARY_SUBTYPE_UUID = 4;
-
-/** A UUID in its dashed hex form, or null for any other value, a subtype-4 Binary of another length included. */
-function uuidText(value: object): string | null {
-  if (bsonTypeOf(value) !== "Binary") return null;
-  const binary = value as InstanceType<typeof mongodbDriver.BSON.Binary>;
-  if (binary.sub_type !== BINARY_SUBTYPE_UUID) return null;
-  const hex = binary.toString("hex");
-  if (hex.length !== 32) return null;
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-
 /** The type name schema inference gives each BSON class, MongoDB's own `$type` alias where there is one. */
 const BSON_TYPE_NAMES: Readonly<Record<string, string>> = {
   Long: "long",
@@ -289,46 +170,6 @@ const BSON_TYPE_NAMES: Readonly<Record<string, string>> = {
   Decimal128: "decimal",
   Binary: "binary",
 };
-
-/**
- * The grid text of a BSON value the classic branches of `serializeDocument` do not know, or
- * undefined for a value that is not a BSON class (#1423).
- *
- * Each of these used to fall through to the subdocument branch, which copies a value's own
- * enumerable fields: measured on MongoDB 8.2.12, a Long above 2^53 showed as
- * `{"high":2097152,"low":1,"unsigned":false}`, a Timestamp the same way, a regular expression
- * as `{}` (its pattern lost) and a UUID as `<Binary: 16 bytes>`. A Long is its decimal digits,
- * as other providers carry a 64-bit integer; a Timestamp is `Timestamp(t, i)`, the shell's own
- * spelling; a regular expression is `/pattern/flags`; a UUID is its dashed hex, read before this
- * by `uuidText`. Every other BSON class (Code, MinKey, MaxKey, DBRef, BSONSymbol) is its relaxed
- * Extended JSON text.
- */
-function bsonScalarText(value: object): string | number | undefined {
-  // The driver reads a BSON regular expression back as a native RegExp unless asked otherwise.
-  if (value instanceof RegExp) return String(value);
-  switch (bsonTypeOf(value)) {
-    case undefined:
-      return undefined;
-    case "Long":
-      return String(value);
-    case "Timestamp": {
-      const timestamp = value as InstanceType<typeof mongodbDriver.BSON.Timestamp>;
-      return `Timestamp(${timestamp.t}, ${timestamp.i})`;
-    }
-    case "BSONRegExp": {
-      const regexp = value as InstanceType<typeof mongodbDriver.BSON.BSONRegExp>;
-      return `/${regexp.pattern}/${regexp.options}`;
-    }
-    case "Int32":
-      return Number(value.valueOf());
-    default:
-      return mongodbDriver.BSON.EJSON.stringify(value, { relaxed: true });
-  }
-}
-
-function joinPath(path: string, key: string): string {
-  return path === "" ? key : `${path}.${key}`;
-}
 
 /**
  * How deep `inferSchemaFromDocuments` walks a subdocument, counting the top level as
@@ -904,8 +745,27 @@ export class MongoDBProvider extends BaseDatabaseProvider {
   private client: MongoClient | null = null;
   private db: Db | null = null;
 
-  constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
+  /**
+   * Whether this provider was opened to send an agent's statements: under an execution profile (`readOnly`) whose
+   * acquisition calls `queryReadOnly` (`sendsStatements`). Only then does `connect()` prove the profile's boundary
+   * (`verifyAgentProfile` in `agent-boundary.ts`), and only then do `queryReadOnly` and `readCatalogReadOnly` answer.
+   * The operations profile's acquisitions send no statement, so they open unverified, as every MongoDB connection did
+   * before agent mode reached the engine, and the profiled cache, which keys on the profile, never hands such a handle
+   * to a statement-sending one (`ProviderExecutionContext.sendsStatements`).
+   */
+  private readonly readOnlyProfile: boolean;
+
+  /**
+   * Whether this provider was opened under any execution profile. Its client then retries no write, so a write the
+   * server accepts is attempted once, and names itself to the server as the agent (`AGENT_COMMAND_COMMENT`), so the
+   * server's own records of what it sent can be told from the editor's.
+   */
+  private readonly executionProfile: boolean;
+
+  constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderExecutionContext = {}) {
     super(config, options);
+    this.executionProfile = execution.readOnly === true;
+    this.readOnlyProfile = this.executionProfile && execution.sendsStatements === true;
     this.validate();
   }
 
@@ -987,7 +847,7 @@ export class MongoDBProvider extends BaseDatabaseProvider {
       // it excludes: naming only what the language IS did not survive contact with
       // the model's prior on Elasticsearch, and does not here either.
       statementLanguage:
-        'the JSON command object this editor executes - {"collection": "<name>", "operation": "find" | "findOne" | "aggregate" | "count" | "distinct", "database": "<name>" (optional, another database than the connected one), "filter": {...}, "pipeline": [...], "field": "<name>" (distinct only), "options": {"limit": 50}} - and NOT mongosh shell syntax: a statement that starts with `db.` cannot be run here',
+        'the JSON command object this editor executes - {"collection": "<name>", "operation": "find" | "findOne" | "aggregate" | "count" | "distinct", "database": "<name>" (optional, in the editor another database than the connected one; an agent run reads only the database its connection is bound to), "filter": {...}, "pipeline": [...], "field": "<name>" (distinct only), "options": {"limit": 50}} - and NOT mongosh shell syntax: a statement that starts with `db.` cannot be run here',
       // `getSlowQueries()` reads `system.profile`, which does not exist until the
       // profiler is switched on - so the empty panel is the ordinary case here, and it
       // used to name a PostgreSQL extension (#463).
@@ -1049,6 +909,7 @@ export class MongoDBProvider extends BaseDatabaseProvider {
         connectTimeoutMS: this.poolConfig.acquireTimeout,
         serverSelectionTimeoutMS: MONGODB_SERVER_SELECTION_TIMEOUT_MS,
         ...this.buildTLSOptions(),
+        ...(this.executionProfile ? { retryWrites: false, appName: AGENT_COMMAND_COMMENT } : {}),
       };
 
       this.client = new MongoClient(connectionString, options);
@@ -1096,10 +957,27 @@ export class MongoDBProvider extends BaseDatabaseProvider {
         // Test connection
         await this.db.command({ ping: 1 });
 
+        // A connection that will send an agent's statements proves the boundary before it is used:
+        // the server is MongoDB, its user holds only reads of this database, and the server
+        // enforces that (`verifyAgentProfile`). A refusal is an `ExecutionProfileError`, which the
+        // run reads as its own refusal with advice rather than as a broken connection.
+        if (this.readOnlyProfile) {
+          await verifyAgentProfile(this.client, dbName, {
+            maxTimeMS: AGENT_VERIFY_MAX_TIME_MS,
+            hosts: agentHostsOf(this.client),
+          });
+        }
+
         this.setConnected(true);
         return;
       }
     } catch (error) {
+      // A profile verdict is not a connection failure and must not be wrapped as one:
+      // the refusal's own deny code (`PROFILE_PRIVILEGES_TOO_BROAD`, `PROFILE_SERVER_UNENFORCED`
+      // and the rest) is what the run reads to name its reason and the advice, and a
+      // `ConnectionError` here would bury it in "failed to connect". The client still
+      // closes below before it is rethrown.
+      const isProfileVerdict = error instanceof ExecutionProfileError;
       this.setError(error instanceof Error ? error : new Error(String(error)));
       // The error path must leave no client behind (#1573): `connect()` used to keep
       // `this.client` set while `this.db` stayed null, so a later `connect()` found
@@ -1110,6 +988,7 @@ export class MongoDBProvider extends BaseDatabaseProvider {
         this.db = null;
         await client.close().catch(() => {});
       }
+      if (isProfileVerdict) throw error;
       throw new ConnectionError(
         `Failed to connect to MongoDB: ${error instanceof Error ? error.message : error}`,
         "mongodb",
@@ -1390,6 +1269,114 @@ export class MongoDBProvider extends BaseDatabaseProvider {
     });
   }
 
+  /**
+   * The agent read-only execution profile's statement path (issue #1614).
+   *
+   * The statement is read once, by the command reader the run's tool path admits it with (`readMongoCommand` in
+   * `envelope.ts`): the provider reads the text again rather than trusting the caller, so a statement that reached
+   * this method any other way meets the same refusal the model would. Its Extended JSON values are then revived by the
+   * editor's own rules (`reviveEnvelope`), and the read runs under the profile's bounds (`readMongoForAgent` in
+   * `agent-read.ts`): in the database the connection is bound to, `maxTimeMS` and a deadline this provider owns, a
+   * server-side row bound, and the row and byte budgets on the documents as they arrive.
+   *
+   * The connection was verified at open (`verifyAgentProfile`): the server is MongoDB, its user holds only reads of
+   * this database, and the server enforces that. Refused outside that profile: a provider nobody verified has no
+   * boundary to run agent semantics on, and `query()`'s own envelope accepts writes this path must never send.
+   */
+  public async queryReadOnly(
+    statement: string,
+    budget: ReadOnlyStatementBudget,
+    mode: ReadOnlyStatementMode = "execute",
+  ): Promise<QueryResult> {
+    this.ensureConnected();
+    this.assertOpenedToSendStatements(statement);
+    const reading = readMongoCommand(statement);
+    if (!reading.ok) {
+      throw new QueryError(reading.message, "mongodb", statement);
+    }
+    const envelope = reviveEnvelope(reading.envelope);
+    const read = await readMongoForAgent(this.client!, this.getDatabaseName(), envelope, budget, mode, statement);
+    return {
+      rows: read.rows,
+      fields: read.fields,
+      rowCount: read.rowCount,
+      executionTime: read.executionTime,
+    };
+  }
+
+  /**
+   * The agent's catalog read (`inspect_schema`): the bound database's collections and views, or one of them described,
+   * under the profile's bounds as `queryReadOnly` reads a statement (issue #1614).
+   *
+   * An absent or empty container is the database the connection is bound to (`getDatabaseName()`, so a URI's path
+   * counts), and any other is refused before anything is read. One `listCollections` decides what a named object is,
+   * by the same classifier the editor's object surface uses (`mongoObjectKind`), so a view is never described as a
+   * collection and a namespace the server keeps for itself is not found; the name is taken whole, never split on a
+   * dot. A described object's fields are inferred from a sample of up to `OBJECT_SAMPLE_SIZE` documents by the
+   * editor's own inference, the sample stopping short of the byte budget (`sampleWithinBudget`), and a collection's
+   * indexes are read beside them; a view has none of its own, and `listIndexes` on one is refused. Every command runs
+   * in a session under the deadline `readMongoForAgent` runs under, with `maxTimeMS` and the agent's comment. The
+   * editor's `listObjects` and `describeObject` are unchanged.
+   */
+  public async readCatalogReadOnly(
+    selector: ReadOnlyCatalogSelector,
+    budget: ReadOnlyStatementBudget,
+  ): Promise<ReadOnlyCatalogReading> {
+    const label = JSON.stringify(selector);
+    this.ensureConnected();
+    this.assertOpenedToSendStatements(label);
+    assertReadOnlyBudget(budget, "mongodb");
+    const bound = this.getDatabaseName();
+    const container = selector.container === undefined || selector.container === "" ? bound : selector.container;
+    if (container !== bound) throw anotherDatabaseRefusal(bound, `the database "${container}"`, label);
+    const db = this.client!.db(bound);
+    return runUnderAgentDeadline(this.client!, budget, label, async (session, maxTimeMS, track) => {
+      const options = { session, maxTimeMS, comment: AGENT_COMMAND_COMMENT };
+      const object = selector.object;
+      if (object === undefined) {
+        const infos = await track(db.listCollections({}, { ...options, nameOnly: true })).toArray();
+        const objects = infos
+          .flatMap((info) => {
+            const kind = mongoObjectKind(info);
+            return kind === undefined ? [] : [{ name: readText(info.name), kind }];
+          })
+          .sort((left, right) => comparePaths([left.name], [right.name]));
+        if (objects.length > budget.maxResultRows) throw rowBudgetRefusal(objects.length, budget, label);
+        return { kind: "listed", container: bound, objects };
+      }
+      const [info] = await track(db.listCollections({ name: object }, { ...options, nameOnly: true })).toArray();
+      const objectKind = info === undefined ? undefined : mongoObjectKind(info);
+      if (objectKind === undefined) return { kind: "not-found", container: bound, object };
+      const collection = db.collection(object);
+      const sample = await sampleWithinBudget(
+        track(collection.find({}, { ...options, limit: OBJECT_SAMPLE_SIZE, batchSize: OBJECT_SAMPLE_SIZE, raw: true })),
+        budget,
+        label,
+      );
+      const indexes = objectKind === MONGODB_KIND_VIEW ? [] : await track(collection.listIndexes(options)).toArray();
+      return {
+        kind: "described",
+        container: bound,
+        object,
+        objectKind,
+        columns: this.inferSchemaFromDocuments(sample).map(({ name, type }) => ({ name, type })),
+        indexes: indexes.map((index) => ({ name: readText(index.name), columns: Object.keys(index.key ?? {}) })),
+        sampled: sample.length,
+      };
+    });
+  }
+
+  /** Refuses the agent's reads on a provider not opened to send statements: it carries no proven boundary. */
+  private assertOpenedToSendStatements(statement: string): void {
+    if (!this.readOnlyProfile) {
+      throw new QueryError(
+        "Read-only execution requires a provider opened under the agent read-only profile",
+        "mongodb",
+        statement,
+      );
+    }
+  }
+
   private parseQuery(queryStr: string): MongoQuery {
     try {
       const parsed = parseExtendedJson(queryStr.trim());
@@ -1417,32 +1404,7 @@ export class MongoDBProvider extends BaseDatabaseProvider {
   }
 
   private serializeDocument(doc: Document): Record<string, unknown> {
-    const serialized: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(doc)) serialized[key] = this.serializeValue(value);
-    return serialized;
-  }
-
-  /**
-   * One value as the grid shows it. An array's entries go through the same rules as a field's
-   * (#1423): an ObjectId, a Date or a Long inside an array used to be copied field by field.
-   */
-  private serializeValue(value: unknown): unknown {
-    if (value === null || value === undefined) return value;
-    if (typeof value !== "object") return serializeBigInt(value);
-    if (value instanceof ObjectId) return value.toString();
-    // Before the Binary branch: a UUID is a subtype-4 Binary, and its hex is what identifies it.
-    const uuid = uuidText(value);
-    if (uuid !== null) return uuid;
-    if (value instanceof Binary) return `<Binary: ${value.length()} bytes>`;
-    if (value instanceof Decimal128) return value.toString();
-    if (value instanceof Date) return value.toISOString();
-    // Only an echo of what the statement wrote (`insertedId` of a `$numberDouble`
-    // `_id`) is a Double here: the driver promotes every double it reads to a number.
-    if (value instanceof mongodbDriver.BSON.Double) return value.valueOf();
-    if (Array.isArray(value)) return value.map((entry) => this.serializeValue(entry));
-    const scalar = bsonScalarText(value);
-    if (scalar !== undefined) return scalar;
-    return this.serializeDocument(value as Document);
+    return serializeMongoDocument(doc);
   }
 
   // ============================================================================

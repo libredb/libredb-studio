@@ -28,16 +28,18 @@ Three properties frame everything below, and each of them is load-bearing rather
   ([`tools.ts`](../src/lib/agent/tools.ts)) is its only production call site, and the editor's
   `/api/db/query` reaches the provider directly in `POST()`
   ([`query/route.ts`](../src/app/api/db/query/route.ts)).
-- **Agent mode requires PostgreSQL, SQLite, DuckDB, SQL Server, MySQL or Kubernetes, except the `operations` workflow, which runs anywhere.**
+- **Agent mode requires PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes or MongoDB, except the `operations` workflow, which runs anywhere.**
   They are the only providers implementing `queryReadOnly`:
   [`postgres.ts`](../src/lib/db/providers/sql/postgres.ts),
   [`sqlite.ts`](../src/lib/db/providers/sql/sqlite.ts),
   [`duckdb/index.ts`](../src/lib/db/providers/sql/duckdb/index.ts),
   [`mssql.ts`](../src/lib/db/providers/sql/mssql.ts),
-  [`mysql.ts`](../src/lib/db/providers/sql/mysql.ts) and
-  [`kubernetes/index.ts`](../src/lib/db/providers/platform/kubernetes/index.ts).
-  On the five SQL engines the database's own read-only session bounds an agent statement.
+  [`mysql.ts`](../src/lib/db/providers/sql/mysql.ts),
+  [`kubernetes/index.ts`](../src/lib/db/providers/platform/kubernetes/index.ts) and
+  [`mongodb/index.ts`](../src/lib/db/providers/document/mongodb/index.ts).
+  On the SQL engines the database itself bounds an agent statement: on PostgreSQL a read-only transaction, run by a role verified at open to hold no superuser, server-file or program privilege, because the transaction alone does not stop `COPY … TO PROGRAM`; on SQLite and DuckDB a read-only handle; on MySQL and MariaDB a principal verified before the first statement to hold nothing past `SELECT` and `SHOW VIEW`, with `START TRANSACTION READ ONLY` behind it, because DDL, `GRANT` and `SET GLOBAL` each commit implicitly and so end a read-only transaction ([`docs/providers/mysql.md`](./providers/mysql.md) section 12.1); and on SQL Server, which has no read-only transaction or session switch, a principal verified at open plus an optimizer admission of each statement.
   Kubernetes has no read-only transaction, so there the boundary is Studio's request allowlist, checked on the final method and path of every request before it is sent, together with the RBAC of the identity the agent runs as; the kubectl reader in front of it explains a refusal to the model and is never the boundary ([On a Kubernetes connection](#on-a-kubernetes-connection)).
+  MongoDB has no read-only session or transaction either, so there the boundary is the connection's user: when a run that sends commands opens its connection, the server must report that the user holds only read privileges on the bound database and must refuse a write from it, and Studio's command fence in front of the engine refuses writes, write stages, server-side JavaScript and diagnostic stages; every command carries `maxTimeMS` and Studio kills the session of a read the server does not end, and a `find` or `aggregate` stops on the server one row past the row budget ([On a MongoDB connection](#on-a-mongodb-connection)).
   On any other engine an agent-mode run whose workflow sends a statement is
   **refused when it is started**: `POST /api/agent/runs` answers `400` with the posture's own
   paragraph before a run id exists or a model turn is spent (#512). The provider factory's gate sits
@@ -63,12 +65,15 @@ Three properties frame everything below, and each of them is load-bearing rather
   on which of its two readings it takes**: `agent-read-only` on the dialects `CATALOG_PLANS` serves,
   because it composes catalog statements, and `agent-operations` everywhere else, because asking a
   provider to describe its own schema sends nothing an engine has to plan.
-  That is what lets grounding reach the thirty-two the read-only profile refuses, and it still cannot narrow any workflow's reach: the profile whose acquisition would be refused is never the profile that capture asks for.
+  That is what lets grounding reach every engine the read-only profile refuses, and it still cannot narrow any workflow's reach: the profile whose acquisition would be refused is never the profile that capture asks for.
+  An agent run that sends statements on Kubernetes or MongoDB, whose statement language is not SQL, takes the provider reading under `agent-read-only` instead (`groundsUnderExecutionProfile` in `src/lib/agent/tools.ts`), so a connection whose boundary its provider cannot prove is refused at the grounding.
+  On every engine, a statement-sending agent run whose grounding the execution profile refuses ends there, before its first model turn, under the run reason of the refusal's own code, while a plan run and an operations run whose grounding is refused begin ungrounded.
   Everything else about
   the three acquisitions is identical: the same `readOnly: true` open, the same optional
   least-privilege `agentUser`, and the same profiled cache, so neither an operations run nor an
   editor replay is ever handed the editor's writable pool.
-  **Plan mode grounds itself the same way**: the server reads the schema, and on PostgreSQL and SQLite the engine's estimated statistics beside it, before the model's first turn, so a plan run is now ordinarily grounded on every engine, including the thirty-two where an agent run cannot read anything at all.
+  The one fact a provider may read beyond that is `sendsStatements`, which the factory derives from the same requirement (`executionContextFor`): MongoDB proves its user at open only under the two profiles that send statements, so an operations run, MCP `inspect_schema` and a plan run's grounding open a MongoDB connection unverified, as the editor does.
+  **Plan mode grounds itself the same way**: the server reads the schema, and on PostgreSQL and SQLite the engine's estimated statistics beside it, before the model's first turn, so a plan run is now ordinarily grounded on every engine, including every engine where an agent run cannot read anything at all.
   What is left of the old engine
   rule is narrower and still worth stating: the engine no longer decides WHETHER a plan run is
   grounded, only whether it is grounded through a composed statement or through its provider, and
@@ -106,6 +111,7 @@ Two companion pages carry what this one deliberately does not:
     - [A drive that dies before the loop](#a-drive-that-dies-before-the-loop)
   - [The tool set](#the-tool-set)
     - [On a Kubernetes connection](#on-a-kubernetes-connection)
+    - [On a MongoDB connection](#on-a-mongodb-connection)
     - [The query-optimization template](#the-query-optimization-template)
     - [The database-assessment template](#the-database-assessment-template)
     - [The operations template](#the-operations-template)
@@ -473,7 +479,7 @@ that every statement it sends arrives inside `BEGIN READ ONLY`, down to the prov
 EXPLAIN-format probe at connect to keep that true, and an object read taken there acquired a second
 provider under `agent-operations` and sent the walk's catalog SQL outside that envelope.
 
-Those two dialects do not lose the kind for it. They are two of the six engines agent mode executes on, and
+Those two dialects do not lose the kind for it. They are among the engines agent mode executes on, and
 an inventory that hands a model a view under the word table is the defect #414 measured, so the kind is
 composed on the catalog path the same way every other fact that path carries is: the composed statement
 selects the ENGINE's own word for the relation, and `context-snapshot.ts` maps it onto the kind id the
@@ -604,7 +610,7 @@ What a grounded plan run is given, and where each part comes from:
   which process happened to have read a catalog first. They are read from what the engine already
   holds — `pg_class.reltuples` and `pg_stats` on PostgreSQL, `sqlite_stat1` on SQLite — so no column
   is scanned and no value is read out of any row. `ESTIMATE_BUILDERS` serves those two and SQL Server (`buildMssqlEstimates`, from `sys.partitions`) and
-  nothing else, and #414 added no engine to it: on the other thirty-five `readSchemaStatistics` answers
+  nothing else, and #414 added no engine to it: on the other thirty-nine `readSchemaStatistics` answers
   `DIALECT_HAS_NO_STATISTICS` — *"this engine does not hold statistics this run knows how to read"* —
   so **a known schema with no statistics is now the ORDINARY combination rather than a rare one**, and
   the two sentences the run is handed agree: the inventory is a record of what exists, and every
@@ -725,9 +731,9 @@ Three consequences worth stating plainly, because each is easy to assume the oth
 
 1. **A plan run costs statements now.** On PostgreSQL and SQLite grounding is catalog reads plus one
    statistics read (two on SQLite: the `sqlite_stat1` availability probe has to be its own statement,
-   because SQLite resolves table names at prepare time). On the other thirty-six it is **one**, the
+   because SQLite resolves table names at prepare time). On the other forty it is **one**, the
    single `db.schema.read` call, except on SQL Server, which adds the one statistics read
-   `ESTIMATE_BUILDERS` serves outside `CATALOG_PLANS`; the other thirty-five hold no statistics this run
+   `ESTIMATE_BUILDERS` serves outside `CATALOG_PLANS`; the other thirty-nine hold no statistics this run
    knows how to read. Since #789 an engine that declares object kinds costs **one more**, the
    object-surface reading above; an engine that declares none is charged nothing extra, because a read
    that cannot exist is never admitted. They come out of the same per-run statement budget every other read does,
@@ -785,7 +791,7 @@ block tagged with the connection's canonical type-id, rationale after the block,
 not in the inventory.
 Since #414 the WORDING varies with the engine's `queryLanguage` and the TAG does not: on an engine whose language is not SQL (a `json` engine, since #1085 a `promql` one, a `cypher` one since Neo4j, and an `influxql` one) the run is asked for one statement or command in that engine's own language, a MongoDB aggregation or a PromQL expression rather than a SELECT, and told that this engine speaks no SQL, while the tag stays the canonical type-id in both arms.
 That is deliberate rather than an oversight: `isQueryFenceTag`
-is a total record over `DatabaseType`, so all thirty-eight ids pass it, whereas a draft the model fenced as
+is a total record over `DatabaseType`, so all forty-two ids pass it, whereas a draft the model fenced as
 ```` ```javascript ```` passes nothing and records no `plan-statement-drafted` event at all — the run
 would score as having drafted nothing while the user is looking at a statement. A run that cannot answer from the
 inventory takes the other legitimate ending: a line beginning `NO STATEMENT:` saying exactly what is
@@ -975,7 +981,7 @@ Two consequences worth stating:
   composed path has and the provider path cannot: reads audited statement by statement rather than as
   one opaque call; foreign keys, which no provider can report on an engine that declares none; and
   SQLite's inventory, which is parsed out of the DDL text the engine stored and which its provider
-  does not expose in the same shape. Collapsing the other thirty-six onto the composed one is the thing
+  does not expose in the same shape. Collapsing the other forty onto the composed one is the thing
   #414 exists because nobody can do: a catalog statement has to be written per dialect and verified
   against a live server, and until it is, refusing the dialect was the honest answer and reading the
   provider is a better one.
@@ -983,7 +989,7 @@ Two consequences worth stating:
   because it runs the statement; the tool exposed to a model is the estimating variant, and nothing
   in the run loop may convert a require-approval outcome into an allow.
 
-**Every database reach is one of nine operation descriptors, and its id is the audit action.**
+**Every database reach is one of the operation descriptors below, and its id is the audit action.**
 `executeAuditedOperation` records the descriptor's own id as the action of each audit event, so an operator can see one kind of reach in the audit stream, and deny it, without denying another.
 The table is the registry `createCanonicalOperationRegistry()` builds (`src/lib/db/operations/descriptors.ts`), and `tests/unit/agent-documentation.test.ts` holds each row to it.
 
@@ -998,9 +1004,15 @@ The table is the registry `createCanonicalOperationRegistry()` builds (`src/lib/
 | `kubectl.query.read` | R1 | `data-read` | `heavy` | `kubectl.query.read` | `run_read_query` on Kubernetes |
 | `cluster.usage.read` | R1 | `data-read` | `heavy` | `cluster.usage.read` | `inspect_usage` on Kubernetes |
 | `cluster.workloads.read` | R1 | `data-read` | `heavy` | `cluster.workloads.read` | `profile_workloads` on Kubernetes |
+| `mongo.query.read` | R1 | `data-read` | `heavy` | `mongo.query.read` | `run_read_query` on MongoDB (issue #1614) |
+| `mongo.schema.read` | R0 | `metadata-read` | `moderate` | `mongo.schema.read` | `inspect_schema` on MongoDB |
+| `mongo.plan.estimate` | R1 | `data-read` | `moderate` | `mongo.plan.estimate` | `inspect_plan` on MongoDB |
+| `mongo.table.profile` | R1 | `data-read` | `heavy` | `mongo.table.profile` | `profile_table` on MongoDB |
 
 The three Kubernetes descriptors are R1 under one boundary, Studio's request allowlist on the final method and path plus the identity's RBAC (the R1 contract is stated under [The operations template](#the-operations-template)).
 `cluster.usage.read` and `cluster.workloads.read` are R1 `data-read` and not metadata, although the server chooses their requests: a namespace or a selector the model wrote reaches the API server, and the answer is the cluster's own state.
+The four MongoDB descriptors sit under one boundary too, the connection's user proven at open; the three that send a command (`mongo.query.read`, `mongo.plan.estimate`, `mongo.table.profile`) also meet the command reader, and `mongo.schema.read` sends only the provider's own catalog commands ([On a MongoDB connection](#on-a-mongodb-connection)).
+`mongo.plan.estimate` is R1 `data-read` where the SQL estimate is R0: with several candidate plans the server runs each for a bounded trial, so documents are read although none is returned.
 
 ### On a Kubernetes connection
 
@@ -1036,6 +1048,69 @@ Kubernetes declares `agentCredential: "token"`, so the connection's `agentPasswo
 That identity's RBAC decides what the agent can see, which is why a token bound to the `view` ClusterRole is the one to give it.
 
 No kubectl variant can auto-execute: a kubectl answer is never run in the editor, so the run route refuses `autoExecute` on Kubernetes, the rail hides the setting, and the run's rules never mention it.
+
+### On a MongoDB connection
+
+A MongoDB connection runs JSON commands rather than SQL, and every workflow there is its own variant of the template, offered its own tools (`AGENT_WORKFLOW_VARIANTS.mongo` in `src/lib/agent/agent-manifest.ts`).
+`operations` is the one variant every engine shares, so it is not repeated here.
+A narrowed run keeps `compose_report` and the extras below.
+
+| Workflow | Tools on mongo | Narrowed extras |
+| --- | --- | --- |
+| `investigation` | `inspect_schema`, `run_read_query`, `inspect_plan`, `compose_report` | none |
+| `query-optimization` | `inspect_schema`, `run_read_query`, `inspect_plan`, `recommend_change`, `compose_report` | `recommend_change` |
+| `database-assessment` | `inspect_schema`, `run_read_query`, `inspect_plan`, `compose_report`, `profile_table` | `profile_table` |
+| `data-analysis` | `inspect_schema`, `run_read_query`, `inspect_plan`, `compose_report`, `profile_table`, `present_answer` | `present_answer` |
+
+Every statement workflow is offered the read-class four whole, because the engine answers each of them: a cluster has neither a catalog nor a plan, and a MongoDB database has both.
+`compare_plans` is the one tool left out (B119): a comparison's whole value is the structural access reading of `summarisePlan` (`src/lib/agent/plan-summary.ts`), which reads a MongoDB plan as `unknown`, so a comparison would state that two plans differ in a way nobody has read; an optimization run recommends an index from one inspected plan instead, which `agent-query-optimization.3` accepts.
+Auto-execute is not offered on any mongo variant (B118): its gate has no reading of a MongoDB plan to weigh and the replay of a MongoDB answer is not verified, so the run route refuses `autoExecute` on a MongoDB connection, the rail raises no consent step, the run's rules never mention it, and a MongoDB answer is never run in the editor.
+MCP clients reach a MongoDB connection through `inspect_schema` alone (B117): `run_read_query` takes SQL, so it refuses a MongoDB connection as soon as the connection resolves, before anything is acquired ([`docs/MCP.md`](./MCP.md)).
+
+**A run that sends commands proves the connection's user before its first model turn.**
+Its grounding takes the provider reading under `agent-read-only`, so the open checks the server first: `buildInfo` must be MongoDB's, `connectionStatus` must list only the read role's actions on collections of the bound database, and the server must refuse a delete of an `_id` no document holds, a write that changes nothing on any outcome.
+A refused open ends the run there, under the run reason of the refusal's code:
+
+| Cause | Deny code | Run reason |
+| --- | --- | --- |
+| The user holds more than reads of the bound database: the admin seed, `readAnyDatabase`, `backup`, `readWrite` anywhere | `PROFILE_PRIVILEGES_TOO_BROAD` | `agent-principal-refused` |
+| The user holds no privilege, or the connection authenticated no user on a server that enforces authorization | `PROFILE_PRIVILEGES_TOO_NARROW` | `agent-principal-underprivileged` |
+| The server accepted the delete: authorization is off, so no user is held to its privileges | `PROFILE_SERVER_UNENFORCED` | `server-authorization-off` |
+| The server names itself as another (FerretDB, Percona Server for MongoDB, Atlas Data Federation) or lacks MongoDB's own `buildInfo` fields, or its host is a wire-compatible service's (Amazon DocumentDB, Azure Cosmos DB, Firestore) | `PROFILE_UNSUPPORTED_TARGET` | `profile-target-unsupported` |
+
+Each reason has its own sentence on the rail, naming its repair (`FAILURE_SENTENCES` in `src/components/agent/timeline.ts`).
+The setup the profile admits, a user holding `read` on the one database the run reads, on a server with authorization on, is [`docs/providers/mongodb.md`](./providers/mongodb.md#setting-up-the-agents-user), and so is the boundary, layer by layer.
+A plan run and an operations run open their connection under `agent-operations`, unverified, as the editor's opens, so no refusal above reaches them.
+
+**`run_read_query` takes one command, under `mongo.query.read`.**
+The model passes it as `command`, a JSON object rather than text, in the editor's envelope: `collection`, `operation` (`find`, `findOne`, `aggregate`, `count` or `distinct`), and the `filter`, `pipeline`, `field` and `options` that operation reads.
+The server writes it out once, in the order the model wrote its keys (the language's `canonicalize` in `src/lib/agent/statement-languages.ts`), so a sort runs in that order and the fence, the provider, the ledger and the repair ledger read one text; the ledger's own fields, `statement-drafted.sql` and `answer-composed.sql`, keep their names.
+The collection is named bare, `orders` for an inventory entry `app.orders`: the run reads the database its connection is bound to (`getDatabaseName()`), a `database` key naming that one is read there, and one naming any other is refused before anything is sent, with a sentence naming the bound one.
+The rules also tell every workflow that writes a command that an aggregation reads a field as `"$<field>"` while a filter names it bare (`MONGO_FIELD_PATH_RULE` in `src/lib/agent/investigation.ts`), because no refusal can catch the slip: `{"$sum": "total"}` is a valid read whose sum is 0, which a real model sent and reported on the browser pass of #1614.
+The fence is the command reader the provider reads with too (`readMongoCommand` in `src/lib/db/providers/document/mongodb/envelope.ts`): it admits the five reads with only the keys each one honours, and refuses, with a sentence naming what to send instead, a write, a pipeline stage that writes (`$out`, `$merge`), the diagnostic and session stages, `$where`, `$function` and `$accumulator` wherever they sit, every internal `$_` operator, and a model's command past 4,096 characters (`src/lib/db/operations/mongo-admission.ts`).
+It is defence in depth: the user is the boundary, and the reader is the one refusal of what the server lets a reader run, such as the JavaScript operators.
+A read past the row budget is refused, never cut, with advice that names what that operation narrows with: a filter or `"options": {"limit": N}` for `find`, a `$match` or a `$limit` stage for `aggregate`.
+The byte budget counts each document's BSON bytes before it is decoded, while a `distinct` answers one reply that is decoded whole first (D370).
+
+**`inspect_schema` reads the provider's own catalog, under `mongo.schema.read`.**
+It lists the bound database's collections and views, or describes one: its fields and the indexes it declares (`readCatalogReadOnly` in `src/lib/db/providers/document/mongodb/index.ts`).
+A collection listing past the row budget is refused, not truncated.
+One collection's fields are inferred from a sample of up to 100 of its documents, which stops short of the run's byte budget, and listed up to the provider's fixed bound (`MAX_INFERRED_FIELDS`), `_id` first and the rest in sorted order, so a field missing from a very wide collection's list may still exist.
+`relations` is refused (`KIND_REFUSED`), because MongoDB declares no foreign keys and an empty block would read as an absence the engine never stated, and `indexes` needs a collection, since a collection's indexes are described beside its fields.
+
+**`inspect_plan` asks the engine for the estimated plan, under `mongo.plan.estimate`.**
+It explains the command a read of it would run, built by the same builder, at `queryPlanner` verbosity and under the same deadline: the server plans it and returns no result rows, and where several plans are candidates it runs each for a bounded trial.
+The plan is answered without what the server says about itself: only the plan's own keys pass its top level, so `serverInfo` with its host and port, `serverParameters`, the echoed `command` and `queryShapeHash` are dropped.
+A plan is evidence a run may cite, never an answer it may present.
+
+**`profile_table` composes an aggregation, under `mongo.table.profile`.**
+The server composes one `$group` over the collection's inventoried fields; the model supplies the collection, the depth and `fromColumn`, where in the fields a batch starts.
+So a profile covers every field the inventory lists for the collection, not every field the collection holds.
+`basic` counts documents and missing values, and `pattern` adds the shape tests for personal data; only counts come back, and no value is read out of any field.
+`distribution` depth is not offered, and that is a limitation: a distinct count here has no one-command shape that does not materialise the set or pay one `$group` per field.
+
+**`recommend_change` proposes one index, as data.**
+The card is `change: "document-index"` with the collection, the keys and any options, and the timeline offers to the clipboard the mongosh `createIndex` call that creates it; the editor's envelope creates no index, so nothing is handed to the editor, and nothing here runs it.
 
 ### The query-optimization template
 
@@ -1222,12 +1297,9 @@ storage pressure — and it is the one workflow that is **not** built on the rea
 | --- | --- |
 | `inspect_operations`, `recommend_change`, `compose_report` | `inspect_schema`, `run_read_query`, `inspect_plan`, `profile_table`, `compare_plans` |
 
-**Everything it leaves out is left out for one reason: those tools send SQL.** All three read-class
-tools reach the database through `provider.queryReadOnly`, which only PostgreSQL, SQLite, DuckDB and
-SQL Server implement, so offering any of them here would reintroduce — tool by tool — the exact engine
-restriction this workflow exists to escape. `compare_plans` is left out because it names two
-`inspect_plan` artifacts this run cannot produce: a tool that could only ever refuse is worse than
-no tool.
+**Everything it leaves out is left out for one reason: those tools send statements.**
+All three read-class tools reach the database under the `agent-read-only` profile, which the factory grants only to a provider with `queryReadOnly`, and only PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes and MongoDB implement it, so offering any of them here would reintroduce, tool by tool, the exact engine restriction this workflow exists to escape.
+`compare_plans` is left out because it names two `inspect_plan` artifacts this run cannot produce: a tool that could only ever refuse is worse than no tool.
 
 **It is grounded, and with a different inventory from every other workflow** (#411). Until then this
 was the one workflow that captured no schema at all, on the reasoning that an operations objective is
@@ -1301,11 +1373,9 @@ no inventory, and an ungrounded one is never handed a sentence saying it has one
 Four properties carry the template:
 
 - **The reach is the point.** Every provider declares these six methods, so this workflow runs on
-  MySQL, Oracle, Cassandra, MongoDB and Redis as well as on the engines agent mode executes on. That is asserted
-  against what a run actually did, not against its tool set:
-  `tests/evals/operations.test.ts` drives the arc on a MySQL preset that carries no `queryReadOnly`
-  at all — as the real provider does not — so it can answer **no statement whatsoever**, and the
-  eval asserts the run sent none.
+  Oracle, Cassandra and Redis as well as on the engines agent mode executes on.
+  That is asserted against what a run actually did, not against its tool set:
+  `tests/evals/operations.test.ts` drives the arc on a MySQL preset whose provider carries no `queryReadOnly` at all, so it can answer **no statement whatsoever**, and the eval asserts the run sent none.
 - **A reading is an ordinary artifact.** It settles a step through `runStep` like `profile_table`,
   produces a `QueryResult` (rows and declared fields, projected by the server from the typed provider
   result), and is stored under its own operation id — so citations, `verifiedAgainst`, the artifact
@@ -1375,8 +1445,9 @@ Two limits stated rather than glossed:
 shape the backlog's monitor-snapshot deferral asked for, "a descriptor shape for non-SQL reads".
 R0 rather than R1 is a claim about what bounds it: an R1 descriptor must name the mechanism that bounds it, and that mechanism is never a parser.
 Where the engine has a read-only mechanism, that mechanism is the boundary: a read-only transaction or session.
-Where it has none, as on Kubernetes, the boundary is an allowlist Studio enforces on the final method and path of every request before it is sent, together with the authorization of the identity the request runs as, which on a cluster is its RBAC; that is what `kubectl.query.read`, `cluster.usage.read` and `cluster.workloads.read` name.
-A curated provider call is not held to either, because it carries no statement for one to bound.
+On Kubernetes, which has none, the boundary is an allowlist Studio enforces on the final method and path of every request before it is sent, together with the authorization of the identity the request runs as, which on a cluster is its RBAC; that is what `kubectl.query.read`, `cluster.usage.read` and `cluster.workloads.read` name.
+On MongoDB, which has none either, the boundary is the connection's user, proven at open to hold only reads of the bound database on a server that enforces authorization; that is what `mongo.query.read`, `mongo.plan.estimate` and `mongo.table.profile` name.
+A curated provider call is not held to any of them, because it carries no statement for one to bound.
 What bounds it instead is the input contract, which carries a kind out of a closed enum and two
 scalars — no `sql` key exists on it at all. The honest edge: `SlowQueryStats.query` and
 `ActiveSessionDetails.query` are statements somebody wrote, and a statement can carry literal values;
@@ -1550,7 +1621,7 @@ under a **third execution profile**, `agent-handover`:
 | | `agent-read-only` (the run's own read) | `agent-handover` (the editor replay) |
 | --- | --- | --- |
 | Opened with | `readOnly: true`, `agentUser` credential, profiled cache | identical |
-| Requires a database-native read-only statement path | yes | yes |
+| Requires a read-only statement path its provider implements | yes | yes |
 | Rows | 200, refused not truncated | 500 (`DEFAULT_QUERY_LIMIT`), refused not truncated |
 | Statement timeout | 10 s | none — spelled as 2 147 483 647 ms |
 | Bytes | 256 KiB | 64 MiB |
@@ -1585,8 +1656,12 @@ decided — absent means `false`, and a value that is not a boolean is refused r
 `present_answer`'s and that tool is offered to that workflow alone. The rail renders the checkbox
 only there, the route **refuses** `autoExecute: true` on any other workflow or in planning mode
 rather than normalising it to `false`, and `investigation.ts` states `AUTO_EXECUTE_RULE` to the model
-only when the same record says the run can present an answer. All four read
-`AGENT_WORKFLOW_PRESENTS_ANSWER`.
+only when the same record says the run can present an answer.
+The workflow half of that is `AGENT_WORKFLOW_PRESENTS_ANSWER`, and the engine half is the run's variant's `canAutoExecute` (`AGENT_WORKFLOW_VARIANTS` in `src/lib/agent/agent-manifest.ts`), which the route, the rail and the run's rules all read.
+
+**It is not offered on Kubernetes or MongoDB, and on SQL Server, DuckDB and MySQL it never fires.**
+Every kubectl and mongo variant declares `canAutoExecute: false`: a kubectl answer is never run on the editor's terms, and a MongoDB one waits on a plan reading the gate can weigh and a verified replay, which land together (B118).
+On the SQL engines the setting is offered on `data-analysis`, but the gate below reads only PostgreSQL's and SQLite's plans, so every answer of a ticked run on SQL Server, DuckDB or MySQL is put in the editor unrun with the gate's own warning (A6 records why).
 
 **And only to a host that can actually run a statement.** `onRunStatement` is an optional prop of
 `AgentRail`, so an embedding host may have no runner at all; the rail then renders no checkbox and
@@ -2221,7 +2296,7 @@ model passed the capability probe**; for anybody else the answer is that there i
 | **A free-form markdown report**, opening with a performance score out of 100 and closing with configuration advice. | A report is claims, each citing an artifact this run read or the snapshot it captured, verified against the run's own ledger before it is recorded. A number cited to nothing cannot be reported — the citation is what is checked, never the claim's text, so a fabricated score citing a real artifact would be accepted. | `src/lib/agent/tools.ts` (`composeReportTool`); `tests/evals/legacy-surface-coverage.test.ts` — an invented correlation id is refused and the run ends `unanswered (no-report)`. |
 | **Maintenance tasks** — `VACUUM`, `ANALYZE`, reindexing — in the same report. | Nothing proposes them: the `change` card has two members and neither is maintenance. It stays where it was before the panels — the monitoring surface, and the user's own editor. | `src/lib/agent/tools.ts` (`recommendationSchema`). |
 | **Multi-turn conversation.** NL2SQL replayed the whole exchange on every request, so "and how many in the second one?" was answerable. | **Largely restored, and differently.** A follow-up is still a NEW run — a run's objective is fixed when it starts, and no ledger event records a later question — but it now belongs to a CONVERSATION and is told about it: every earlier step's objective, and the most recent step's report, derived server-side from those runs' own ledgers and fenced before the model reads it. What is not restored is the replay: NL2SQL re-sent the whole exchange verbatim, while a conversation carries a bounded account of it, and only the newest step's findings. Two other differences are deliberate — the run still re-reads the catalog, because its inventory is its own evidence; and `LIBREDB_AGENT_THREAD_CONTEXT=false` turns the whole thing off, which no panel offered. See [the conversation a run belongs to](#the-conversation-a-run-belongs-to). | `src/lib/agent/thread-context.ts`; `src/app/api/agent/runs/route.ts`; `tests/evals/thread-context.test.ts` — a three-step conversation, and the fence the block arrives inside. |
-| **MongoDB, MySQL and every other engine.** Both panels ran against whatever the connection was, and NL2SQL emitted Mongo query documents when the connection's query language was JSON. | The agent composes SQL for **four** dialects. `CATALOG_COMPOSERS` carries `postgres`, `sqlite`, `duckdb` and `mssql` only, `CATALOG_PLANS` the first two of those, and an unlisted dialect is never guessed at — since #414 it is read a different way instead of being refused. **A run whose workflow sends statements is refused on another engine before it opens**: `POST /api/agent/runs` answers 400 with the posture's own sentence when the mode is agent and `AGENT_WORKFLOW_SENDS_STATEMENTS` holds for the requested workflow, so no run id and no model turn are spent on a refusal the connection's type already decided. What an engine that IS admitted can then do differs by MODE. **Agent mode is still only the dialects a provider can bound**: its read-class tools reach the database through `provider.queryReadOnly`, which is the same fact the refusal reads. **Plan mode is now every engine**: its grounding acquires `agent-operations` and walks the provider's object surface (`db.schema.read`), so a plan run on MongoDB is ordinarily grounded and is asked for one statement or command **in that engine's own language**, in a block still tagged with the canonical type-id. What the engine decides is no longer whether a plan is grounded but HOW — a composed catalog statement or a provider inventory, and whether estimated statistics exist at all — and the four prefaces say which. Where the reading itself fails, the run is steered to the `NO STATEMENT:` refusal with the capture's own diagnosis. **The `operations` workflow reaches every engine in both modes**, because it composes no SQL at all, and since #411 it is grounded under the same rule as everything else. | `src/lib/agent/composed-sql.ts`, `src/lib/agent/context-snapshot.ts` (`captureContextSnapshot`, `captureFromProvider`, `packOperationsInventory`), `src/lib/db/operations/descriptors.ts` (`db.schema.read`); `tests/unit/lib/agent/context-snapshot.test.ts` — the provider path, its timeout and its refusals; `tests/unit/lib/agent/composed-sql.test.ts` — `UNSUPPORTED_DIALECT`; `tests/evals/plan-grounding.test.ts` — a plan run whose provider cannot describe itself runs no statement and says it is ungrounded; `tests/isolated/agent-investigation.test.ts` — a plan run grounded through the engine's own schema inspection. |
+| **MongoDB, MySQL and every other engine.** Both panels ran against whatever the connection was, and NL2SQL emitted Mongo query documents when the connection's query language was JSON. | The agent composes catalog SQL for the dialects `CATALOG_COMPOSERS` carries, the engines whose statement language is SQL, and grounds a run through composed catalog statements on PostgreSQL and SQLite among them (`CATALOG_PLANS`); an unlisted dialect is never guessed at: since #414 it is read a different way instead of being refused. `run_read_query` takes each engine's own command language, as `AGENT_STATEMENT_LANGUAGE` (`src/lib/agent/agent-manifest.ts`) names it: SQL, a kubectl read on Kubernetes, and a JSON command on MongoDB. **A run whose workflow sends statements is refused on another engine before it opens**: `POST /api/agent/runs` answers 400 with the posture's own sentence when the mode is agent and `AGENT_WORKFLOW_SENDS_STATEMENTS` holds for the requested workflow, so no run id and no model turn are spent on a refusal the connection's type already decided. What an engine that IS admitted can then do differs by MODE. **Agent mode is still only the engines a provider can bound**: its read-class tools reach the database under the `agent-read-only` profile, which the factory grants only to a provider with `queryReadOnly`, the same fact the refusal reads. **Plan mode is now every engine**: its grounding acquires `agent-operations` and walks the provider's object surface (`db.schema.read`), so a plan run on MongoDB is ordinarily grounded and is asked for one statement or command **in that engine's own language**, in a block still tagged with the canonical type-id. What the engine decides is no longer whether a plan is grounded but HOW (a composed catalog statement or a provider inventory, and whether estimated statistics exist at all), and the four prefaces say which. Where the reading itself fails, the run is steered to the `NO STATEMENT:` refusal with the capture's own diagnosis. **The `operations` workflow reaches every engine in both modes**, because it composes no SQL at all, and since #411 it is grounded under the same rule as everything else. | `src/lib/agent/composed-sql.ts`, `src/lib/agent/context-snapshot.ts` (`captureContextSnapshot`, `captureFromProvider`, `packOperationsInventory`), `src/lib/db/operations/descriptors.ts` (`db.schema.read`); `tests/unit/lib/agent/context-snapshot.test.ts`: the provider path, its timeout and its refusals; `tests/unit/lib/agent/composed-sql.test.ts`: `UNSUPPORTED_DIALECT`; `tests/evals/plan-grounding.test.ts`: a plan run whose provider cannot describe itself runs no statement and says it is ungrounded; `tests/isolated/agent-investigation.test.ts`: a plan run grounded through the engine's own schema inspection. |
 
 One of these has since been restored under its own workflow (the monitoring row, which closed both
 deferrals that tracked it), and the first row is Phase 1's own boundary rather than a defect, and its one
@@ -2327,11 +2402,12 @@ own.
 | `safe` | *Executes nothing it drafts* | *one schema read grounds it, nothing else reaches the database* | Plan mode, on every engine, with or without the hand-over |
 | `reads` | *Reads only* | the policy row's own per-statement row cap and timeout, *enforced by the engine* | Agent mode on a SQL engine in `AGENT_EXECUTION_ENGINES`, hand-over not ticked |
 | `reads` | *Reads only* | the same row cap and timeout, *enforced by Studio's request allowlist* | Agent mode on Kubernetes, ticked or not: no kubectl variant offers the hand-over, so there is nothing to widen |
+| `reads` | *Reads only* | the same row cap and timeout per command, *enforced by the server* | Agent mode on MongoDB, ticked or not: no mongo variant offers the hand-over, so there is nothing to widen |
 | `widened` | *Reads only, and one statement in your editor* | `AGENT_HANDOVER_BUDGET`'s row cap, *no time limit, same read-only session* | The same, with the hand-over consented for the run being opened |
 | `blocked` | *Cannot execute on `<engine>`* | *plan mode drafts here, and the operations workflow still runs* | Agent mode on any other engine |
 | `blocked` | *Cannot execute yet* | *no connection is resolved, so no engine has been established* | Agent mode with no connection resolved |
 
-Four levels and six readings: `blocked` covers both arms that execute nothing and have no bound to state, and they stay separate arms because "has no read-only statement path" is a claim about an engine, which a panel that has resolved no connection has not seen.
+Four levels, one reading per row above: `blocked` covers both arms that execute nothing and have no bound to state, and they stay separate arms because "has no read-only statement path" is a claim about an engine, which a panel that has resolved no connection has not seen.
 Not one engine name and not one
 figure is typed in the module — the names come from `AGENT_EXECUTION_ENGINES` through
 `getDBConfig().label` and the figures from the policy rows, which is the rule `hero-proof.tsx`
@@ -2689,7 +2765,7 @@ src/lib/agent/
 ├── runtime.ts            # composition root: the only place that assembles a tool context
 ├── tools.ts              # the four tools + server-side selection; the only database reach,
                           #   the model's tools and the server's own grounding reads alike
-├── composed-sql.ts       # the SQL the SERVER writes, per dialect: four of the thirty-eight
+├── composed-sql.ts # the SQL the SERVER writes, per dialect: four of the forty-two
 ├── sqlite-ddl.ts         # reading SQLite's stored DDL back into an inventory
 ├── execution-policy.ts   # the frozen policy and the run-level ceilings
 ├── deadline.ts           # the wall-clock deadline and the timeout clamp
@@ -2832,12 +2908,16 @@ the role's own grants are the whole boundary (A3).
 - **B110**: the answer card's inventory chip counts every captured object under the engine's entity noun, so a RabbitMQ capture of 17 streams, 6 queues and 18 exchanges reads "41 streams read".
 - **B111**: DuckDB is offered `profile_table` by the database-assessment and data-analysis workflows, and `composeTableProfile` (`src/lib/agent/table-profile.ts`) has no verified DuckDB composition, so every call answers `UNSUPPORTED_DIALECT`; it was kept as it is when the agent layer moved to workflow variants, so the SQL surface stayed byte-identical.
 - **B112**: a run's persisted workflow type is not checked when its ledger is read, so a ledger naming a workflow Studio does not know reaches five workflow-keyed tables as `undefined`, and a budget read on it fails as a `TypeError` rather than a named refusal.
-- **B113**: [`AGENT_GUIDE.md`](./AGENT_GUIDE.md) cites code by line number, and those numbers have drifted from the code they name; read the file and symbol a citation names rather than its line.
+- **B113**: [`AGENT_GUIDE.md`](./AGENT_GUIDE.md) and [`AGENT_DATA_FLOW.md`](./AGENT_DATA_FLOW.md) cite code by line number, and those numbers have drifted from the code they name; read the file and symbol a citation names rather than its line.
 - **B114**: a cluster health run drops the Warning events of a controller whose kind the workload profile does not list, such as a CloudNativePG `Cluster` or an Argo `Rollout`, when that controller has no pod in the namespace, because `readWorkloadProfile` gives it no row to count them under.
 - **B115**: plan mode on a Kubernetes connection still speaks of a database: its safety strip says nothing else reaches the database, and the objective field suggests "Why is checkout slow?".
 - **B116**: the agent section of [`FEATURES.md`](./FEATURES.md), the "Two independent axes" bullet among others, still carries em dashes.
-- **B101**: a principal the read-only execution profile refuses for lacking a privilege it needs, such as `SHOWPLAN` on SQL Server, ends its run with the advice to point the agent credential at a least-privilege user, the repair for the opposite refusal, because the run classifier folds both deny codes into the one reason `agent-principal-refused`, and the right advice reaches only the run's ledger; measured on a seeded SQL Server login without `SHOWPLAN`.
 - **B102**: plan mode's name check marks two kinds of correct statement as naming something the inventory does not hold: a read of the engine's own catalog (`sys.databases`, `information_schema.tables`, `pg_class`), which the catalog reading leaves out of the inventory, and a `FROM` inside a function call (`EXTRACT(YEAR FROM created_at)`), which the reader takes for a table position; the statements run, and the mark is a hint, not a refusal.
+- **B117**: MongoDB is offered to MCP for `inspect_schema` alone: `run_read_query` takes SQL and refuses a MongoDB connection before anything is acquired (issue #1614, decision 2), so an MCP client can list a MongoDB database's collections and fields and cannot read a document; the non-SQL arm this needs is the one the MCP halves of B93, B94, B100, B104, B105, B107 and B108 wait on too.
+- **B118**: auto-execute is not offered on MongoDB, because the gate has no reading of a MongoDB plan to weigh and the replay of a MongoDB answer in the editor is not verified; the two land together, for the reason A6 gives on SQL Server.
+- **B119**: `compare_plans` is not offered on MongoDB, because `summarisePlan` reads a MongoDB plan as `unknown`, so a comparison would claim a difference nobody has read; an optimization run there recommends an index from one inspected plan instead.
+- **B120**: every measurement of the MongoDB profile is of a standalone server; what the open answers through `mongos`, and on a direct connection to a replica-set secondary, where the probe's delete may meet `NotWritablePrimary` before the authorization check, is unmeasured.
+- **B121**: the model evals have no MongoDB preset, so `bun run agent:eval` cannot measure a real model on the command envelope; the mongo workflows are proved with scripted model turns only.
 
 **What machine redaction leaves unmasked on Kubernetes.**
 Agent reads on a cluster are masked by structural rules and by request target (see [On a Kubernetes connection](#on-a-kubernetes-connection)), and what those rules do not reach is stated here, in the same six lines as [`docs/providers/kubernetes.md`](./providers/kubernetes.md) section 9:

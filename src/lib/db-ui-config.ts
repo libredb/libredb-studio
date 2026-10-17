@@ -8,8 +8,12 @@ import {
   OracleIcon,
   MSSQLIcon,
   LibreDBIcon,
+  ModbusIcon,
   MtconnectIcon,
+  NetconfIcon,
+  SparkplugIcon,
   OpcuaIcon,
+  SnmpIcon,
   CouchbaseIcon,
   ClickHouseIcon,
   DruidIcon,
@@ -41,6 +45,7 @@ import {
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import type { HostUriScheme } from "@/lib/connection-host-uri";
 import type { ConnectionImportDeclaration } from "@/lib/connection-import";
+import { MODBUS_READ_ONLY_HINT } from "@/lib/db/providers/industrial/modbus/constants";
 import { CREDENTIAL_WARNINGS, type CredentialWarning } from "@/lib/db/credential-warnings";
 import {
   SNOWFLAKE_FIELD_SENTENCES,
@@ -120,6 +125,14 @@ export interface DatabaseUIConfig {
     // Studio's SSL modes, which have no meaning to a server offering None, Sign and SignAndEncrypt.
     | "securityMode"
     | "serverCertificateThumbprint"
+    // Modbus only: the register map, a JSON document rather than a word, drawn as a text area. The
+    // protocol answers no discovery request, so this is the only thing that can name a point.
+    | "registerMap"
+    // NETCONF only: the device's SSH host key fingerprint, pasted from `ssh-keygen -lf`. A field of
+    // its own rather than `serverCertificateThumbprint`: a host key is not a certificate, the two
+    // are checked by different code, and one box for both would carry a label that is wrong half
+    // the time.
+    | "hostKeyFingerprint"
   )[];
   /**
    * The connection dialog's label for a field, where this engine names the field differently from
@@ -1357,6 +1370,217 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     // The dialog's own sentence says the mode can be turned off, which is false here.
     readOnlyHint:
       "MTConnect connections are read-only whether or not this is ticked: Studio sends the agent GET requests from a closed table and nothing else.",
+  },
+  modbus: {
+    // A mark drawn for Studio, never the Modbus Organization's: a terminal block with three screws.
+    icon: ModbusIcon,
+    // A NEW hue. Every base hue and every `-alt` step was an engine's by the time this one registered -
+    // MTConnect took `slate-alt` while it was being built - so the palette gains `stone`. Of the four greys
+    // Tailwind ships that no identity used, `stone`, `neutral` and `zinc` clear every test at -700, -800 and
+    // -900 and `gray-800` does not clear AA in light, measured by running
+    // tests/unit/theme-accent-contrast.test.ts against all twelve. A warm grey was chosen of the three that
+    // pass because it stands furthest from `slate`, which is OPC UA's: those two are the industrial pair a
+    // reader is most likely to need to tell apart on one tree.
+    color: "text-hue-stone",
+    label: "Modbus",
+    // IANA `mbap`. MODBUS/TCP Security listens on 802 and the SSL panel turns it on, but the box offers the
+    // plain port: a device that speaks mbaps is the rarer one, and the port is the user's to change.
+    defaultPort: "502",
+    // Modbus TCP has no connection string form of its own, and inventing one would be ours rather than the
+    // protocol's.
+    showConnectionStringToggle: false,
+    // Host, Port and the register map. The protocol defines no authentication at all - no user, no password,
+    // no token - so the form offers no credential to fill in; what protects a device is mbaps or a network
+    // path you control.
+    //
+    // The map is a field on the connection, which was an open question until the write list answered it:
+    // `keyof DatabaseConnection` is what a user may fill in, send and have stored, and this is a document
+    // the user writes. It is not `password`, because it is not a secret and a masked document cannot be
+    // corrected; BigQuery's key file sits in `password` because that one IS a credential.
+    connectionFields: ["host", "port", "registerMap"],
+    fieldLabels: { registerMap: "Register map" },
+    fieldHints: {
+      registerMap:
+        "A JSON array of points, each naming a unit, a table, a zero-based PDU address and a type. Without it a connection can still read a range by address, but no point has a name. Vendor documentation often counts addresses from one; these are the addresses that go on the wire.",
+    },
+    fieldPlaceholders: {
+      registerMap: '[{ "name": "volts", "unitId": 1, "table": "holding_register", "address": 100, "type": "uint16" }]',
+    },
+    // The dialog's own sentence says the mode can be turned off, which is false here.
+    readOnlyHint: MODBUS_READ_ONLY_HINT,
+  },
+  netconf: {
+    // A mark drawn for Studio, never a vendor's: a device with the configuration tree it serves
+    // above it, forking once, because a datastore holds modules and a module holds nodes and those
+    // two levels are what the browser draws.
+    icon: NetconfIcon,
+    // A NEW hue, and the step was chosen by SEPARATION rather than contrast. `neutral-600`, `-700`
+    // and `-800` all clear AA in light by a wide margin (6.85, 9.12, 13.27), so contrast alone would
+    // have allowed any of them; in OKLab distance `neutral-700` sits 0.0166 from Snowflake's
+    // `mist-700`, nearer than the closest identity pair this palette had (0.0205), while
+    // `neutral-600` stands 0.0368 from its own nearest.
+    color: "text-hue-neutral",
+    label: "NETCONF",
+    // IANA registers 830/tcp as `netconf-ssh` and RFC 6242 section 3 names it. Port 22 is the other
+    // thing a device may listen on, and it is the user's to type.
+    defaultPort: "830",
+    // `netconf://` is not a scheme this product parses, and inventing one would be ours rather than
+    // the protocol's. MEASURED: every address a reader would paste here, `netconf://host:830`,
+    // `ssh://host:830` and a bare `host:830`, is answered `null` by the shared parser, so the box
+    // would offer a reading nothing can do.
+    showConnectionStringToggle: false,
+    // AND NO SSL/TLS PANEL, for the reason OPC UA states above: this transport's security is its
+    // own. RFC 6242 carries NETCONF over SSH, so what secures the dial is the host key pin in
+    // `hostKeyFingerprint` below and not a certificate chain. The shared panel's vocabulary -
+    // disable, require, verify-ca, verify-full - names nothing a NETCONF device offers.
+    //
+    // MEASURED: no file under `providers/network/netconf/` reads `sslMode`, `sslCa`, `sslCert`,
+    // `sslKey` or `rejectUnauthorized`, so every value the panel collected was written to the
+    // connection and then read by nothing. That is worse than a refusal: a reader who set
+    // `verify-full` was shown no objection and got no verification either. The third engine to
+    // declare this after BigQuery and OPC UA, and the first where the panel was silently inert
+    // rather than answered with a word the engine does not know.
+    showSslPanel: false,
+    // The SSH TUNNEL panel stays, and the reason is NOT that this provider reads `sshTunnel`: it
+    // does not, and `open.ts:59` says so in as many words ("`sshTunnel` is NOT where these come
+    // from"). The tunnel is opened by the shared layer, before the provider is reached.
+    //
+    // What justifies the panel is MEASURED, in `hostkey.ts:9-12`: a wrong pin stops the handshake
+    // with `Host denied (verification failed)` before any authentication packet, AND it does so
+    // through an SSH tunnel as well, where the key seen inside the forward was the device's own and
+    // not the bastion's - the two fingerprints differed. So a tunnel to an SSH service is not a
+    // redundancy: there are two identities and the pin checks the one that matters.
+    // The device's key or its password, and the device's host key fingerprint, which is what makes
+    // the dial refuse an unknown device rather than trust whatever answers on the port. The
+    // fingerprint has a field of its own rather than borrowing `serverCertificateThumbprint`: a
+    // host key is not a certificate, and the two are checked by different code.
+    connectionFields: ["host", "port", "user", "password", "privateKey", "privateKeyPassphrase", "hostKeyFingerprint"],
+  },
+  snmp: {
+    // A mark drawn for Studio: a trunk with three numbered stops descending from it, because an
+    // agent answers from a named tree and is read by walking it. Not a router silhouette, which
+    // would say what is being read rather than what the reading is.
+    icon: SnmpIcon,
+    // `mauve`, measured rather than chosen. Four grey hues were already spoken for by the time
+    // this registered (slate, mist, stone, neutral), and clearing AA stopped being the deciding
+    // test among them: `zinc`, `gray` and `taupe` all clear it and all sit closer to a
+    // neighbour. Against the declared identity set, `mauve-700` reads 9.51 on the worst light
+    // ground and leaves the closest pair in BOTH palettes exactly where it was, light 0.0166 and
+    // dark 0.0100, which none of the other three do. Putting `gray-800` in this slot instead
+    // fails the separation test (tests/unit/theme-accent-contrast.test.ts).
+    color: "text-hue-mauve",
+    label: "SNMP",
+    // RFC 3417 section 3.2. 162 is the trap port and is deliberately not the default: a reader
+    // pointed there would be talking to a trap receiver, which answers no Get at all.
+    defaultPort: "161",
+    // No URI form. Measured: `snmp://` is not in `ENGINE_URI_SCHEMES`, and the house rule runs
+    // one way only - an engine with this toggle on must have a scheme, and of the 36 engines
+    // measured there was no exception.
+    showConnectionStringToggle: false,
+    // AND NO SSL / TLS PANEL. The transport is bare UDP - `client.ts` opens `createSocket("udp4")`
+    // and nothing else - so there is no session for a certificate chain to secure. MEASURED: across
+    // the nineteen files of this provider, `sslMode`, `sslCa`, `sslCert`, `sslKey` and
+    // `rejectUnauthorized` appear zero times, so every value the panel collected was written to the
+    // connection and read by nothing.
+    //
+    // The field below says the same thing in the other direction: the consent box's hint states
+    // there is no transport security under a v2c datagram at all. A panel offering `verify-full`
+    // beside that sentence contradicts it. What secures this protocol is SNMPv3's own USM, inside
+    // the message rather than under it.
+    showSslPanel: false,
+    // AND NO SSH TUNNEL, which is a different reason and not the same one twice. Something would
+    // read it - `factory.ts` opens the tunnel for any connection that carries one, with no test on
+    // the engine - and that is exactly the problem: MEASURED, the shared tunnel is a local TCP
+    // listener (`src/lib/ssh/tunnel.ts` is `net.createServer` plus `forwardOut`, and the word
+    // `dgram` does not appear in its 392 lines). The factory then rewrites host and port to that
+    // TCP endpoint, and this provider sends datagrams to it, where nothing is listening for them.
+    // A tunnel the dialog offers and the transport cannot use is a box that breaks the connection
+    // it promises to carry.
+    showSshTunnel: false,
+    // FOUR FIELDS. Three are what the provider reads; the fourth is the consent without which it
+    // REFUSES to open. `connection-options.ts` turns down a v2c connection to a host that is not
+    // loopback unless `allowInsecureAuth` is set, and names two ways out: choose v3, or consent to
+    // the community travelling in clear. Declaring only the first three left NEITHER way on the
+    // screen, so every agent off this machine was unreachable through the dialog - a defect that
+    // lived between two correct halves, a refusal that reads right and a field list that is valid.
+    // The v3 half is still missing and this list does not pretend otherwise: v3 needs a security
+    // level, a privacy passphrase, a context name and an engine id pin, and none of those exist on
+    // the shared connection record. A field collected and dropped is worse than one that is absent.
+    connectionFields: ["host", "port", "password", "allowInsecureAuth"],
+    // The community is one shared secret with no user beside it, which is why it sits in the
+    // password field and is labelled for what it is.
+    // Both labels are declared because the dialog's own fallbacks are wrong here twice over: the
+    // secret is a community rather than a password, and the consent box's default sentence offers
+    // TLS, which SNMP has nowhere to put. What v2c lacks is not TLS, it is any transport security
+    // at all; v3's answer is USM inside the message, not a tunnel under it.
+    fieldLabels: {
+      // `host` because the dialog's own default is "Host & Instance", which is SQL Server's
+      // vocabulary: an SNMP agent has no instance, and a reader asked for one looks for a thing
+      // that does not exist. Twenty-three entries declare this label for the same reason, and the
+      // browser spec of this engine is what found it here.
+      host: "Host",
+      password: "Community",
+      allowInsecureAuth: "Send the community in clear to an agent that is not on this machine",
+    },
+    fieldPlaceholders: { password: "" },
+    fieldHints: {
+      host: "A name or address only. If Studio runs in a container, localhost is that container: use host.docker.internal.",
+      password:
+        "The read community. It travels in clear in every v2c datagram and there is no transport security under it, so `public` and `private` are the documented defaults every device ships with.",
+      allowInsecureAuth:
+        "Ticked, the community travels in clear in every datagram to an agent that is not on this machine. SNMPv2c has no authentication either: an answer can be forged by anything that can reach this connection.",
+    },
+    readOnlyHint:
+      "SNMP connections are read-only whether or not this is ticked, and not by a setting: the outgoing valve parses every datagram and refuses any PDU that is not a Get, GetNext or GetBulk, so a Set never reaches the socket.",
+  },
+
+  sparkplug: {
+    // A mark drawn for Studio, never the Eclipse Foundation's logo, and deliberately not a spark.
+    icon: SparkplugIcon,
+    // A NEW hue, for the third time: every base hue and every `-alt` step theme.css declared was an
+    // engine's by the time this registered, so the palette gains `olive`. The step is `-600` rather than
+    // the -700/-800 the others use, and that is measured rather than stylistic: `olive-700` would clear
+    // AA more comfortably and fall to 0.0351 from `mist-700`, and `olive-800` to 0.0237 from `stone-800`.
+    // The unusual step is the separable one.
+    //
+    // THE SEPARATION FIGURE, RE-MEASURED against the palette as it now stands (42 identity tokens,
+    // holding stone, neutral, mauve and taupe, which it did not when the line above was written):
+    // `olive`'s nearest identity is `neutral` at 0.0373 in light and `taupe` at 0.0305 in dark, while
+    // the closest pair the palette already had without it is 0.0205 in light and 0.0076 in dark. So the
+    // hue tightens neither palette. Those figures are read from the hex values theme.css stores, which
+    // are 8-bit; the same pair measured from the installed palette's oklch, before that rounding, gives
+    // 0.0368. Two numbers, one distance, and neither is wrong - said here so a reader does not "correct"
+    // one of them. The earlier note said 0.0940, measured
+    // before stone, neutral, mauve and taupe joined;
+    // the figures that hold the palette are the separation assertions in
+    // tests/unit/theme-accent-contrast.test.ts, which read theme.css at run time and now see `olive`.
+    //
+    // This class resolved to NO RULE until theme.css declared `--studio-hue-olive`: the entry named a
+    // hue the stylesheet did not have, Tailwind emitted no `.text-hue-olive`, and the mark inherited
+    // the surrounding text colour. Nothing was red, because both completeness tests walked a list of
+    // hues kept by hand. The census that reads these entries closes that direction.
+    color: "text-hue-olive",
+    label: "Sparkplug B",
+    // The IANA-assigned port for MQTT, which Sparkplug runs over. 8883 is the TLS port.
+    defaultPort: "1883",
+    // Host and Port hold the broker, as MQTT's do. There is no URI form that says more.
+    showConnectionStringToggle: false,
+    // THREE FIELDS AND NOT MQTT'S SIX, because these are the three the provider reads. `config.host`,
+    // `config.port` and `config.database` are the only connection fields `SparkplugProvider` touches;
+    // declaring a user or a password here would put a box on the form that the read ignores. The session
+    // can carry credentials and the encoder sets their flags, but nothing passes them from a connection
+    // yet, and a field that is collected and dropped is worse than one that is absent.
+    connectionFields: ["host", "port", "database"],
+    // `database` carries the group, as MQTT's carries a topic filter: one connection reads one group.
+    fieldLabels: { database: "Group" },
+    fieldPlaceholders: { database: "" },
+    fieldHints: {
+      host: "A name or address only. If Studio runs in a container, localhost is that container: use host.docker.internal.",
+      database:
+        "One Sparkplug group id, or empty for every group. A group is a level of the topic and nothing else: it is not a thing on the broker that can be subscribed to on its own, so an empty field reads every group under spBv1.0 and a filled one reads that group alone.",
+    },
+    readOnlyHint:
+      "Sparkplug connections are read-only whether or not this is ticked, and not by a setting: this provider's encoder has no function that writes a PUBLISH, and its CONNECT carries no Will, which is how a death certificate would be registered.",
   },
   libredb: {
     icon: LibreDBIcon,

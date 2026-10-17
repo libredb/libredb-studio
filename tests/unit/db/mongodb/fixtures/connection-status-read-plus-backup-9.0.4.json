@@ -1,0 +1,229 @@
+{
+  "measured": "2026-10-17",
+  "server": "MongoDB 9.0.4, authorization on",
+  "principal": "rv_p6_backup, roles [{\"role\":\"read\",\"db\":\"rv_p6_db\"},{\"role\":\"backup\",\"db\":\"admin\"}], authSource rv_p6_db",
+  "command": {
+    "connectionStatus": 1,
+    "showPrivileges": true,
+    "maxTimeMS": 5000,
+    "comment": "libredb-studio-agent"
+  },
+  "reply": {
+    "authInfo": {
+      "authenticatedUsers": [
+        {
+          "user": "rv_p6_backup",
+          "db": "rv_p6_db"
+        }
+      ],
+      "authenticatedUserRoles": [
+        {
+          "role": "backup",
+          "db": "admin"
+        },
+        {
+          "role": "read",
+          "db": "rv_p6_db"
+        }
+      ],
+      "authenticatedUserPrivileges": [
+        {
+          "resource": {
+            "db": "rv_p6_db",
+            "collection": "system.js"
+          },
+          "actions": [
+            "changeStream",
+            "collStats",
+            "dbHash",
+            "dbStats",
+            "find",
+            "killCursors",
+            "listCollections",
+            "listIndexes",
+            "listSearchIndexes",
+            "planCacheRead",
+            "performRawDataOperations"
+          ]
+        },
+        {
+          "resource": {
+            "db": "local",
+            "collection": "replset.election"
+          },
+          "actions": [
+            "find",
+            "performRawDataOperations"
+          ]
+        },
+        {
+          "resource": {
+            "db": "",
+            "collection": ""
+          },
+          "actions": [
+            "find",
+            "performRawDataOperations"
+          ]
+        },
+        {
+          "resource": {
+            "system_buckets": ""
+          },
+          "actions": [
+            "find",
+            "performRawDataOperations"
+          ]
+        },
+        {
+          "resource": {
+            "db": "config",
+            "collection": ""
+          },
+          "actions": [
+            "find",
+            "performRawDataOperations"
+          ]
+        },
+        {
+          "resource": {
+            "db": "local",
+            "collection": ""
+          },
+          "actions": [
+            "find",
+            "performRawDataOperations"
+          ]
+        },
+        {
+          "resource": {
+            "db": "admin",
+            "collection": "system.roles"
+          },
+          "actions": [
+            "find",
+            "performRawDataOperations"
+          ]
+        },
+        {
+          "resource": {
+            "db": "config",
+            "collection": "settings"
+          },
+          "actions": [
+            "find",
+            "insert",
+            "performRawDataOperations",
+            "update"
+          ]
+        },
+        {
+          "resource": {
+            "db": "",
+            "collection": "system.users"
+          },
+          "actions": [
+            "find",
+            "performRawDataOperations"
+          ]
+        },
+        {
+          "resource": {
+            "db": "rv_p6_db",
+            "collection": ""
+          },
+          "actions": [
+            "changeStream",
+            "collStats",
+            "dbHash",
+            "dbStats",
+            "find",
+            "killCursors",
+            "listCollections",
+            "listIndexes",
+            "listSearchIndexes",
+            "planCacheRead",
+            "performRawDataOperations"
+          ]
+        },
+        {
+          "resource": {
+            "db": "admin",
+            "collection": "system.version"
+          },
+          "actions": [
+            "find",
+            "performRawDataOperations"
+          ]
+        },
+        {
+          "resource": {
+            "db": "",
+            "collection": "system.profile"
+          },
+          "actions": [
+            "find",
+            "performRawDataOperations"
+          ]
+        },
+        {
+          "resource": {
+            "db": "admin",
+            "collection": "system.backup_users"
+          },
+          "actions": [
+            "find",
+            "performRawDataOperations"
+          ]
+        },
+        {
+          "resource": {
+            "db": "local",
+            "collection": "replset.minvalid"
+          },
+          "actions": [
+            "find",
+            "performRawDataOperations"
+          ]
+        },
+        {
+          "resource": {
+            "cluster": true
+          },
+          "actions": [
+            "appendOplogNote",
+            "getParameter",
+            "listDatabases",
+            "readBackupFile",
+            "serverStatus",
+            "setUserWriteBlockMode",
+            "useUUID"
+          ]
+        },
+        {
+          "resource": {
+            "anyResource": true
+          },
+          "actions": [
+            "collStats",
+            "listCollections",
+            "listIndexes",
+            "listSearchIndexes"
+          ]
+        },
+        {
+          "resource": {
+            "db": "",
+            "collection": "system.js"
+          },
+          "actions": [
+            "find",
+            "performRawDataOperations"
+          ]
+        }
+      ]
+    },
+    "uuid": "ecde8f2e-7677-41dd-a372-402fced81660",
+    "ok": 1
+  }
+}

@@ -64,7 +64,7 @@
     },
     {
       "title": "NoSQL Database Providers",
-      "purpose": "Document the MongoDB provider (src/lib/db/providers/document/mongodb.ts) and Redis provider (src/lib/db/providers/keyvalue/redis.ts). Cover JSON-based query format for MongoDB (collection, operation, filter, options), Redis command execution, and how both extend BaseDatabaseProvider.",
+      "purpose": "Document the MongoDB provider (src/lib/db/providers/document/mongodb/index.ts) and Redis provider (src/lib/db/providers/keyvalue/redis.ts). Cover JSON-based query format for MongoDB (collection, operation, filter, options), Redis command execution, and how both extend BaseDatabaseProvider.",
       "parent": "Database Provider System",
       "page_notes": [
         "Redis maps onto the SQL-oriented provider interface by convention: getSchema() uses a non-blocking SCAN (never KEYS *) and groups key prefixes as 'tables'; health/metrics come from INFO; slow queries / sessions from SLOWLOG GET / CLIENT LIST. See docs/providers/redis.md.",

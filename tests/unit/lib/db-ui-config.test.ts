@@ -122,6 +122,10 @@ const ALL_TYPES: DatabaseType[] = [
   "rabbitmq",
   "opcua",
   "mtconnect",
+  "modbus",
+  "netconf",
+  "snmp",
+  "sparkplug",
 ];
 
 describe("db-ui-config", () => {
@@ -193,6 +197,23 @@ describe("db-ui-config", () => {
       expect(getDBConfig("druid").label).toBe("Apache Druid");
       expect(getDBConfig("druid").defaultPort).toBe("8888");
       expect(getDBConfig("druid").connectionFields).toEqual(["host", "port", "user", "password"]);
+    });
+
+    test("modbus offers Host, Port and the register map, and no credential at all", () => {
+      // The real config, not the modal's mirror of it. The modal's own case proves the box is drawn
+      // for an engine that declares the field; this proves the engine declares it. Removing it from
+      // `connectionFields` turns THIS red, which the mirrored case could not do.
+      expect(getDBConfig("modbus").connectionFields).toEqual(["host", "port", "registerMap"]);
+      // Modbus TCP defines no authentication, so a credential box would be a control with nothing
+      // behind it.
+      for (const credential of ["user", "password", "authMethod", "privateKey"]) {
+        expect(getDBConfig("modbus").connectionFields).not.toContain(credential);
+      }
+      // The map is named and explained, because an empty box on an engine with no discovery looks
+      // like a broken connection rather than an unnamed device.
+      expect(getDBConfig("modbus").fieldLabels?.registerMap).toBe("Register map");
+      expect(getDBConfig("modbus").fieldHints?.registerMap).toContain("zero-based PDU address");
+      expect(getDBConfig("modbus").fieldPlaceholders?.registerMap).toContain('"table": "holding_register"');
     });
 
     test("druid offers no database field, because Druid has exactly one catalog", () => {
@@ -334,9 +355,14 @@ describe("db-ui-config", () => {
       expect(offersSshTunnel("postgres")).toBe(true);
     });
 
-    test("only kafka's, bigquery's, snowflake's, firestore's and rabbitmq's connections refuse an SSH tunnel, and only because their entries declare it", () => {
+    test("only kafka's, bigquery's, snowflake's, firestore's, rabbitmq's and snmp's connections refuse an SSH tunnel, and only because their entries declare it", () => {
       // Derived from the declaration rather than typed out: a tunnel forwards one address, and a
       // Kafka client reaches every broker at the address the broker advertises (docs/providers/kafka.md).
+      // SNMP refuses it for a different reason, and the difference is worth keeping: something WOULD read it,
+      // because `factory.ts` opens a tunnel for any connection that carries one with no test on the engine.
+      // MEASURED: the shared tunnel is a local TCP listener (`src/lib/ssh/tunnel.ts`, `net.createServer` plus
+      // `forwardOut`, and `dgram` appears zero times in it), and this provider sends datagrams. The factory
+      // would rewrite host and port to that TCP endpoint and the reads would go nowhere (#1721).
       for (const type of ALL_TYPES) {
         expect({ type, offered: offersSshTunnel(type) }).toEqual({
           type,
@@ -344,18 +370,27 @@ describe("db-ui-config", () => {
         });
       }
       const refusing = ALL_TYPES.filter((type) => !offersSshTunnel(type));
-      expect(refusing.sort()).toEqual(["bigquery", "firestore", "kafka", "rabbitmq", "snowflake"]);
+      expect(refusing.sort()).toEqual(["bigquery", "firestore", "kafka", "rabbitmq", "snmp", "snowflake"]);
       // A file-based engine still answers true: its panel is hidden by isFileBased instead.
       expect(offersSshTunnel("sqlite")).toBe(true);
     });
 
-    test("only bigquery's, snowflake's, firestore's and opcua's connections withhold the SSL panel, and only because their entries declare it", () => {
+    test("only bigquery's, snowflake's, firestore's, opcua's, netconf's and snmp's connections withhold the SSL panel, and only because their entries declare it", () => {
       // BigQuery always speaks HTTPS to googleapis.com with the system trust store, and Snowflake to the account host with
       // the certificate checked against that name, so an SSL mode is read by nothing.
       // OPC UA's transport security is its own: a security mode of None, Sign or SignAndEncrypt and a pinned server
       // certificate, with the client's key pair in the installation's PKI directory. The shared panel's vocabulary
       // names nothing a server offers, and a reader who chose `require` there was refused with a word this engine
       // does not know (#1677).
+      // NETCONF is the same shape with one difference worth stating: RFC 6242 carries it over SSH, so the host key pin in
+      // `hostKeyFingerprint` is what secures the dial, and MEASURED, no file under `providers/network/netconf/` read
+      // `sslMode`, `sslCa`, `sslCert`, `sslKey` or `rejectUnauthorized`. The panel was not answered with the wrong word
+      // there; it was read by nothing at all, so a reader who chose `verify-full` was shown no objection and given no
+      // verification (#1722).
+      // SNMP has no session to secure at all: the transport is bare UDP (`createSocket("udp4")`), and MEASURED,
+      // the nineteen files of that provider read `sslMode`, `sslCa`, `sslCert`, `sslKey` and `rejectUnauthorized`
+      // zero times. Its own consent hint says there is no transport security under a v2c datagram, which a panel
+      // offering `verify-full` beside it would contradict; v3's answer is USM, inside the message (#1721).
       for (const type of ALL_TYPES) {
         expect({ type, offered: offersSslPanel(type) }).toEqual({
           type,
@@ -365,7 +400,9 @@ describe("db-ui-config", () => {
       expect(ALL_TYPES.filter((type) => !offersSslPanel(type)).sort()).toEqual([
         "bigquery",
         "firestore",
+        "netconf",
         "opcua",
+        "snmp",
         "snowflake",
       ]);
     });
@@ -729,6 +766,8 @@ const FIELD_CHECKLIST: Record<ConnectionField, true> = {
   role: true,
   securityMode: true,
   serverCertificateThumbprint: true,
+  registerMap: true,
+  hostKeyFingerprint: true,
 };
 const EVERY_FIELD = Object.keys(FIELD_CHECKLIST) as ConnectionField[];
 
@@ -1002,14 +1041,14 @@ describe("declared connection-field copy (#1085)", () => {
     // The consent box draws the type's own sentence, with no fallback, so a type that takes the field and declares no
     // hint would draw an empty paragraph under the box (InfluxDB spec R4).
     const taking = ALL_TYPES.filter((type) => takesConnectionField(type, "allowInsecureAuth"));
-    expect(taking).toEqual(["db2", "influxdb", "influxdb3", "oxia", "databend", "s3", "mqtt", "rabbitmq"]);
+    expect(taking).toEqual(["db2", "influxdb", "influxdb3", "oxia", "databend", "s3", "mqtt", "rabbitmq", "snmp"]);
     for (const type of taking) {
       const hint = connectionFieldHint(getDBConfig(type), "allowInsecureAuth");
       expect({ type, hint: typeof hint, empty: hint?.length === 0 }).toEqual({ type, hint: "string", empty: false });
     }
   });
 
-  test("only libsql, db2, prometheus, kafka, etcd, neo4j, milvus, qdrant, the two InfluxDB types, oxia, databend, bigquery, snowflake, spark, s3, kubernetes, mqtt, firestore, rabbitmq, opcua and mtconnect declare field copy, so every other engine draws every label and hint it drew before", () => {
+  test("only libsql, db2, prometheus, kafka, etcd, neo4j, milvus, qdrant, the two InfluxDB types, oxia, databend, bigquery, snowflake, spark, s3, kubernetes, mqtt, firestore, rabbitmq, opcua, mtconnect and modbus declare field copy, so every other engine draws every label and hint it drew before", () => {
     const declared = Object.entries(DB_UI_CONFIG)
       .filter(([, config]) => config.fieldLabels !== undefined || config.fieldHints !== undefined)
       .map(([type]) => type);
@@ -1037,6 +1076,11 @@ describe("declared connection-field copy (#1085)", () => {
       // OPC UA relabels Host as the endpoint URL and adds its own two boxes, each with a hint (#1677).
       "opcua",
       "mtconnect",
+      // Modbus names and explains its register map: the engine answers no discovery request, so the
+      // document is the only thing that can name a point and the box has to say so (#1723).
+      "modbus",
+      "snmp",
+      "sparkplug",
     ]);
     // The control that the walk saw the whole table rather than nothing.
     expect(Object.keys(DB_UI_CONFIG).sort()).toEqual([...ALL_TYPES].sort());
@@ -1567,6 +1611,16 @@ describe("db-showcase", () => {
         // name on a page of databases, so no existing engine moves for it (#1677).
         "opcua",
         "mtconnect",
+        // Last, behind the address space and the agent: a device's registers are named only by a map
+        // the user writes, which is the narrowest name of the three (#1723).
+        "modbus",
+        // network engineers rather than by the readers a page of databases is written for (#1724).
+        "netconf",
+        "snmp",
+        // Last, behind the register map: the name on the box is a specification's rather than a
+        // product's, so a reader scanning the login page is least likely to arrive already knowing
+        // it, and no existing engine moves for it (#1720).
+        "sparkplug",
       ]);
     });
   });

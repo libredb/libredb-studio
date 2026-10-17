@@ -260,8 +260,9 @@ export class MTConnectProvider extends BaseDatabaseProvider {
    *
    * MEASURED on `origin/main`: `providers/platform/kubernetes/objects.ts:348` turns a `QueryError` or
    * a `TimeoutError` into `{ unavailable: error.message }` and RE-THROWS anything else, and
-   * `errors.ts:244` defines `isQueryError` as `instanceof QueryError`. So a refusal thrown as a plain
-   * `Error` is handled as an unexpected failure and THE SENTENCE IT CARRIES NEVER REACHES THE READER.
+   * `src/lib/db/errors.ts` defines `isQueryError` as `instanceof QueryError`. So a refusal thrown
+   * as a plain `Error` is handled as an unexpected failure and THE SENTENCE IT CARRIES NEVER
+   * REACHES THE READER.
    *
    * This provider had that defect in its first version, and it is recorded rather than quietly fixed:
    * `MtcClientError` (`client.ts`) and `MtcRefusal` (`guard.ts`) both derive from `Error`, and only the

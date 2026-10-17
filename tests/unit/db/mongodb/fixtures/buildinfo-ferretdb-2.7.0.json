@@ -1,0 +1,44 @@
+{
+  "measured": "2026-10-17",
+  "server": "FerretDB v2.7.0",
+  "command": {
+    "buildInfo": 1,
+    "maxTimeMS": 5000,
+    "comment": "libredb-studio-agent"
+  },
+  "reply": {
+    "version": "7.0.77",
+    "gitVersion": "0d5eb3343a50b800634cc08ace608bb6f3a3f74b",
+    "modules": [],
+    "sysInfo": "deprecated",
+    "versionArray": [
+      7,
+      0,
+      77,
+      0
+    ],
+    "bits": 64,
+    "debug": false,
+    "maxBsonObjectSize": 16777216,
+    "buildEnvironment": {
+      "-buildmode": "exe",
+      "-compiler": "gc",
+      "-trimpath": "true",
+      "CGO_ENABLED": "0",
+      "GOAMD64": "v1",
+      "GOARCH": "amd64",
+      "GOOS": "linux",
+      "go.runtime": "go1.25.4",
+      "go.version": "go1.25.4",
+      "vcs": "git",
+      "vcs.modified": "true",
+      "vcs.revision": "0d5eb3343a50b800634cc08ace608bb6f3a3f74b",
+      "vcs.time": "2025-11-10T17:18:24Z"
+    },
+    "ferretdb": {
+      "version": "v2.7.0",
+      "package": "docker"
+    },
+    "ok": 1
+  }
+}

@@ -991,7 +991,11 @@ export interface ProviderCapabilities {
     | "rabbitmq"
     | "kubectl"
     | "opcua"
-    | "mtconnect";
+    | "mtconnect"
+    | "modbus"
+    | "netconf"
+    | "snmp"
+    | "sparkplug";
   supportsExplain: boolean;
   /**
    * Present iff supportsExplain is true (enforced by provider tests).
@@ -1034,6 +1038,41 @@ export interface ProviderCapabilities {
    * column.
    */
   inlineEditRefusedColumns?: { readonly type: string; readonly reason: string };
+  /**
+   * The result columns this engine's own vocabulary names in a way the masking rules would
+   * otherwise read as personal data, where the value is not personal data at all.
+   *
+   * `column` is a regular expression source matched against the result's column NAME, because
+   * the masking rules match on the name too (`detectSensitiveColumnsFromConfig` is handed
+   * `fields: string[]` and nothing else) and this engine declares no `columnTypes` to match on.
+   * `reason` is shown in the column header where the masked-column lock would have been, so the
+   * question "why is this one not masked" is answered where the reader already looks. A string
+   * pattern rather than a `RegExp` because capabilities travel to the client as JSON.
+   *
+   * ANCHOR IT. Measured: an unanchored `address` reaches `ip_address` too, which belongs to the
+   * IP rule, so an exemption written for one column of one engine crosses into a second rule.
+   * `tests/unit/db/masking-exemption-guard.test.ts` measures which protected names a declared
+   * pattern reaches and holds each declarer to the set it was accepted for.
+   *
+   * It exempts, it never adds: a column this does not name is masked exactly as before, so no
+   * engine can widen what another engine's user sees.
+   *
+   * Modbus is the case: a read answers a column named `address`
+   * (`providers/industrial/modbus/read.ts`), the zero-based PDU register the caller asked for
+   * rather than a place; `builtin-address` stars out the one value the request was about.
+   *
+   * WHERE THIS BOUNDARY WILL BREAK. The exemption is read by the grid alone, and that is enough
+   * TODAY only because the two other surfaces that mask cannot reach the engines needing it: the
+   * Graph tab is offered only for a result holding a graph value (`hasGraphValues`), and the
+   * column profiler only where `offersColumnProfiling` is true, which every one of the eighteen
+   * JSON dialects declares false. The day a JSON dialect opens profiling, this exemption has to
+   * travel to `DataProfiler.tsx` with it, or the same column reads one way in the grid and
+   * another in the profiler.
+   *
+   * Optional for the same published-interface reason as `supportsInlineRowEdit`; absent exempts
+   * no column.
+   */
+  maskingExemptColumns?: { readonly column: string; readonly reason: string };
   /**
    * Whether this provider can take the rows the Generate Test Data dialog writes
    * (`src/components/TestDataGenerator.tsx`): one multi-row `INSERT INTO ... VALUES` for a
@@ -1352,7 +1391,7 @@ export interface ProviderCapabilities {
    * Optional for the same published-interface reason as `enforcesReadOnly`: a required field added
    * after the fact stops every external implementer compiling. Only the literal `true` is declared, so
    * an absent flag reads as "this engine has no file-access posture", the answer for every engine but
-   * DuckDB.
+   * DuckDB and SQLite.
    */
   readonly readsFileAccessPosture?: true;
   /**
@@ -1805,10 +1844,21 @@ export interface ProviderLabels {
 
 /**
  * Enforcement caps for a single statement executed through an agent read-only
- * execution profile (#328). The timeout is enforced database-side
- * (transaction-local), the row/byte caps result-side after the statement
- * returns. Every field must be a positive integer — queryReadOnly refuses the
- * whole call otherwise (fail closed).
+ * execution profile (#328). Every field must be a positive integer, and queryReadOnly
+ * refuses the whole call otherwise (fail closed).
+ *
+ * The row and byte caps bound the result, which is refused rather than truncated when it
+ * would carry more. The timeout is held by the engine's own per-statement deadline, by a
+ * deadline the provider owns, or by both, as each engine allows:
+ *
+ * - PostgreSQL: `SET LOCAL statement_timeout`, transaction-local.
+ * - MySQL and MariaDB: the provider kills the statement from another session at the deadline,
+ *   and the session's `max_execution_time` or `max_statement_time`, set past it, is the backstop.
+ * - MongoDB: `maxTimeMS` on every command, and a session the provider kills at its deadline.
+ * - SQL Server and Kubernetes: a client deadline the provider owns, which cancels the request.
+ * - SQLite: the worker the statement runs in is killed at the deadline.
+ * - DuckDB, and SQLite without its worker: no interrupt is wired, so the deadline is checked
+ *   once the statement returns, and an overrun result is refused rather than served.
  */
 export interface ReadOnlyStatementBudget {
   statementTimeoutMs: number;
@@ -1844,6 +1894,51 @@ export interface WorkloadProfileInput {
 export type WorkloadProfileReading =
   | { readonly kind: "rows"; readonly result: QueryResult }
   | { readonly kind: "over-ceiling" };
+
+/**
+ * What the agent's catalog read asks of `readCatalogReadOnly`: one container's objects, or one object's description.
+ */
+export interface ReadOnlyCatalogSelector {
+  /**
+   * The container to read. Absent or empty reads the container the provider is bound to, so the agent layer never
+   * guesses one; a container the provider is not bound to is refused, never read.
+   */
+  readonly container?: string;
+  /**
+   * One object in the container, by the name the engine holds it under, taken whole and never split on a separator
+   * (a MongoDB collection may be named `fs.files`). Absent lists the container's objects.
+   */
+  readonly object?: string;
+}
+
+/**
+ * What `readCatalogReadOnly` answers. `container` is the container actually read: an absent or empty selector container
+ * resolves to the bound one. A listed object's `kind`, and a described one's `objectKind`, are ids of the provider's
+ * declared object kinds, as the engine's own catalog classifies the object, so a view is never described as the
+ * collection underneath it.
+ *
+ * `described` carries both halves, columns and indexes, so the caller presents whichever one it was asked for and
+ * neither is ever answered empty for not having been read. Its columns are inferred from a sample of the object's own
+ * records, because an engine answering this read declares no columns, and `sampled` is how many records that sample
+ * held: no columns with `sampled: 0` is an object whose sample held nothing. `not-found` is the only answer for an
+ * object the container does not hold.
+ */
+export type ReadOnlyCatalogReading =
+  | {
+      readonly kind: "listed";
+      readonly container: string;
+      readonly objects: readonly { readonly name: string; readonly kind: string }[];
+    }
+  | {
+      readonly kind: "described";
+      readonly container: string;
+      readonly object: string;
+      readonly objectKind: string;
+      readonly columns: readonly { readonly name: string; readonly type: string }[];
+      readonly indexes: readonly { readonly name: string; readonly columns: readonly string[] }[];
+      readonly sampled: number;
+    }
+  | { readonly kind: "not-found"; readonly container: string; readonly object: string };
 
 /**
  * What the caller wants out of the one statement it is sending: the statement's own
@@ -2036,15 +2131,29 @@ export interface DatabaseProvider {
   query(sql: string, params?: unknown[], queryId?: string, scope?: string): Promise<QueryResult>;
 
   /**
-   * Execute exactly one statement under a declared read-only boundary (#328):
-   * the engine's own read-only mechanism, or on an engine without one a
-   * Studio-enforced allowlist on every final request plus the identity's
-   * authorization. Never a parser of the statement text. Optional on purpose:
-   * only providers with a verified boundary implement it, and execution-profile
-   * acquisition (`acquireExecutionProfileProvider` in factory.ts) refuses provider
-   * types that lack it rather than falling back to `query()` (fail closed).
+   * Execute exactly one statement, in the language the provider declares (`queryLanguage`,
+   * `queryDialect`), under a declared read-only boundary (#328). The boundary takes one of
+   * three forms, and it never rests on parsing the statement text:
+   *
+   * - the engine's own read-only handle or transaction: SQLite and DuckDB open the file
+   *   read-only; PostgreSQL, MySQL and MariaDB run the statement in a read-only transaction,
+   *   beside a role or principal verified as least-privilege, because a transaction alone
+   *   does not stop everything a privileged role can do;
+   * - a least-privilege principal proved by the server's own answers, on an engine with no
+   *   read-only session: SQL Server, whose optimizer also admits the statement without
+   *   running it, and MongoDB, with Studio's command fence as defence in depth;
+   * - a Studio-enforced allowlist on every final request, plus the identity's own
+   *   authorization: Kubernetes (RBAC).
+   *
+   * Optional on purpose: only providers with a verified boundary implement it, and
+   * execution-profile acquisition (`acquireExecutionProfileProvider` in factory.ts) refuses
+   * provider types that lack it rather than falling back to `query()` (fail closed).
    */
-  queryReadOnly?(sql: string, budget: ReadOnlyStatementBudget, mode?: ReadOnlyStatementMode): Promise<QueryResult>;
+  queryReadOnly?(
+    statement: string,
+    budget: ReadOnlyStatementBudget,
+    mode?: ReadOnlyStatementMode,
+  ): Promise<QueryResult>;
 
   /**
    * Container usage against requests and limits in one namespace, for the agent's `cluster.usage.read`. Optional:
@@ -2052,6 +2161,17 @@ export interface DatabaseProvider {
    * profile, bounded by `budget` as `queryReadOnly` is.
    */
   readClusterUsage?(input: ClusterUsageInput, budget: ReadOnlyStatementBudget): Promise<ClusterUsageReading>;
+
+  /**
+   * One container's objects, or one object's columns and indexes, for the agent's catalog read on an engine whose
+   * catalog is not a statement the agent composes (`inspect_schema`). Optional: only a provider whose agent catalog
+   * read needs it has it, and it answers only where `queryReadOnly` on the same provider would, bounded by `budget`
+   * as `queryReadOnly` is. The editor's `listObjects` and `describeObject` are unchanged by it.
+   */
+  readCatalogReadOnly?(
+    selector: ReadOnlyCatalogSelector,
+    budget: ReadOnlyStatementBudget,
+  ): Promise<ReadOnlyCatalogReading>;
 
   /**
    * The workload profile of one namespace, for the agent's `cluster.workloads.read`: one row per workload, with its
@@ -2429,7 +2549,8 @@ export interface ProviderOptions {
  * be set, or cleared, by whoever builds the options for a request.
  *
  * Two producers pass it. `acquireExecutionProfileProvider` passes an execution
- * profile's context (`readOnly`). The db routes pass the editor file-access posture
+ * profile's context (`readOnly` and `sendsStatements`, with the requester's file-access
+ * posture), which `executionContextFor` builds. The db routes pass the editor file-access posture
  * (`allowExternalFileAccess`), and under governance the owner of a per-user provider
  * (`owner`, `ownerPoolMax`), through `getOrCreateProvider` or `createDatabaseProvider`,
  * derived by `editorExecutionContext` (`src/lib/api/execution-context.ts`) from the
@@ -2443,37 +2564,71 @@ export interface ProviderOptions {
  */
 export interface ProviderExecutionContext {
   /**
-   * Open the connection under the database's own read-only enforcement.
+   * Open the connection under an execution profile's read-only boundary. Every execution
+   * profile sets it.
    *
-   * Every provider that implements `queryReadOnly` reads it, and what each one
-   * ESTABLISHES with it differs: SQLite and DuckDB open the file read-only, so the
-   * boundary is the handle; PostgreSQL and SQL Server open an ordinary connection and
-   * use the flag to (a) verify at connect that the session's own role or principal is
-   * least-privilege and (b) refuse `queryReadOnly` outright on a provider that was not
-   * opened this way, so agent semantics are never served without the layer that makes
-   * them true. Test Connection also passes it for a DuckDB test handle opened beside a
-   * writer of the other file-access posture, where only a read-only handle is safe.
+   * Every provider that implements `queryReadOnly` reads it, and refuses `queryReadOnly`
+   * outright on a provider not opened this way, so agent semantics are never served without
+   * the layer that makes them true. What each one ESTABLISHES with it differs:
+   *
+   * - SQLite and DuckDB open the file read-only, so the boundary is the handle.
+   * - PostgreSQL and SQL Server open an ordinary connection and verify, at open and under
+   *   every profile, that the session's own role or principal is least-privilege.
+   * - MySQL and MariaDB refuse nothing at open: the engine's version answers, recorded there,
+   *   and the session's grants are checked once, at the first `queryReadOnly`.
+   * - Kubernetes verifies nothing at open: each request is bounded by the request allowlist
+   *   and the identity's RBAC.
+   * - MongoDB, at open and only when `sendsStatements` is also set, reads the server's
+   *   identity and the principal's privileges, and sends a probe that changes nothing,
+   *   which the server must refuse.
+   *
+   * A provider without `queryReadOnly` may read it too, to refuse its own writes for the
+   * life of the handle, as etcd, Oxia, Milvus, Qdrant and S3 do. Whatever the engine, an
+   * open never changes what the server holds. Test Connection also passes it for a DuckDB
+   * test handle opened beside a writer of the other file-access posture, where only a
+   * read-only handle is safe.
    */
   readOnly?: boolean;
+  /**
+   * Whether this acquisition will call `queryReadOnly` with statements: a model's, or the one
+   * a run already answered with, replayed in the editor.
+   *
+   * A provider that proves its statement boundary at open (MongoDB) proves it only when this
+   * is set beside `readOnly`, and refuses `queryReadOnly` on a handle opened without it, which
+   * carries no proof. So an acquisition that sends no statement, the operations profile's
+   * curated reads, is neither verified nor refused by a check it would never use, and the
+   * profiled cache, which keys on the profile, never hands that handle to a profile that sends
+   * statements. PostgreSQL and SQL Server do not read it: they verify on `readOnly` alone.
+   *
+   * Absent reads as false. Set only by `acquireExecutionProfileProvider`, through
+   * `executionContextFor` (factory.ts), which derives it from the profile's
+   * `requiresReadOnlyStatements`, so the proof and the engine gate cannot disagree.
+   */
+  sendsStatements?: boolean;
   /**
    * Whether an ordinary (editor) DuckDB handle may reach files and the network (non-admin DuckDB file access).
    *
    * Server-derived and never taken from the request body: the db routes set it with
    * `editorExecutionContext(guard.session, connection)`, which answers `true` only for an
    * admin, and never on a seed a non-admin role can use, because that record is one handle
-   * for every role. ONLY DuckDB reads it, and only on its writable (editor) open: `false`
+   * for every role. DuckDB reads it on its writable (editor) open: `false`
    * opens the handle with `enable_external_access: 'false'`, so no statement reaches the
    * network, or a file other than the database's own and the handle's private temp directory,
    * while that database stays read-write; `true` keeps the full editor reach. It closes
-   * statement-level reach only: the database path itself is the connection's. Every other
-   * engine ignores it.
+   * statement-level reach only: the database path itself is the connection's. SQLite reads it
+   * on every open, a profiled one included, and refuses to open at all when it is `false`,
+   * because its drivers cannot confine a statement's file access. Every other engine ignores it.
    *
-   * ABSENT MEANS DENY (fail closed): a caller that forgets to pass it gets the denied handle,
-   * never the open one, so a forged or missing context cannot widen file access. That
-   * includes an embedder calling `createDatabaseProvider` or `getOrCreateProvider` without a
-   * context, which had the full reach before this field existed and now passes `true` to keep
-   * it. `readOnly: true` already implies external access off and keeps precedence, so the
-   * agent read-only profile does not set this field.
+   * On DuckDB, ABSENT MEANS DENY (fail closed): a caller that forgets to pass it gets the
+   * denied handle, never the open one, so a forged or missing context cannot widen file access.
+   * That includes an embedder calling `createDatabaseProvider` or `getOrCreateProvider` without
+   * a context, which had the full reach before this field existed and now passes `true` to keep
+   * it. `readOnly: true` already implies external access off there and keeps precedence.
+   *
+   * SQLite refuses only an explicit `false`. `getOrCreateProvider` reads an absent posture as
+   * `false`, and so does `executionContextFor`, which carries the requester's posture into
+   * every execution profile; `createDatabaseProvider` called without a context opens SQLite
+   * with the trusted reach (docs/providers/sqlite.md).
    */
   allowExternalFileAccess?: boolean;
   /**

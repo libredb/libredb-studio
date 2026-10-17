@@ -1,0 +1,72 @@
+{
+ "$captured": {
+  "image": "apache/kafka:4.3.1",
+  "clusterId": "4L6g3nShT-eMCtK--X86sw",
+  "date": "2026-10-14T19:57:48.918Z",
+  "surface": "admin.describeGroups({ groups: [\"issue1520-subscription\"] })"
+ },
+ "outcome": "pass",
+ "payload": {
+  "$map": [
+   [
+    "issue1520-subscription",
+    {
+     "id": "issue1520-subscription",
+     "state": "Stable",
+     "protocolType": "consumer",
+     "protocol": "issue1520-custom",
+     "members": {
+      "$map": [
+       [
+        "issue1520-0-6e69d910-c46a-4f67-bd6f-a6f9dbc9cc67",
+        {
+         "id": "issue1520-0-6e69d910-c46a-4f67-bd6f-a6f9dbc9cc67",
+         "groupInstanceId": "issue1520-0",
+         "clientId": "issue1520-client-0",
+         "clientHost": "/172.19.0.1",
+         "metadata": {
+          "version": 0,
+          "topics": [
+           "issue1520-topic"
+          ],
+          "metadata": {
+           "$bytes": ""
+          },
+          "ownedPartitions": [],
+          "generationId": -1,
+          "rackId": null
+         },
+         "assignments": {
+          "$map": [
+           [
+            "issue1520-topic",
+            {
+             "topic": "issue1520-topic",
+             "partitions": [
+              0
+             ]
+            }
+           ]
+          ]
+         }
+        }
+       ]
+      ]
+     },
+     "authorizedOperations": -2147483648,
+     "error": {
+      "message": "Malformed consumer protocol subscription",
+      "code": "PLT_KFK_UNSUPPORTED_FORMAT",
+      "class": "UnsupportedFormatError",
+      "canRetry": false,
+      "cause": {
+       "message": "Out of bounds.",
+       "code": "OUT_OF_BOUNDS",
+       "class": "OutOfBoundsError"
+      }
+     }
+    }
+   ]
+  ]
+ }
+}

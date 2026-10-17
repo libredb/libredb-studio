@@ -44,6 +44,7 @@
 import type { Role } from "@/lib/auth";
 import type { LLMProviderType } from "@/lib/llm/types";
 
+import type { ExecutionProfileDenyCode } from "@/lib/db/errors";
 import type { PolicyDenyCode } from "@/lib/db/operations/policy";
 import type { AgentStatementViolation } from "@/lib/db/operations/statement-guard";
 import type { AgentChartSpec, ColumnSchema, DatabaseType, ForeignKeySchema, IndexSchema } from "@/lib/types";
@@ -353,10 +354,22 @@ export type AgentRunFailureReason =
    * profile whose acquisition would be refused is never the profile that capture asks for
    * on an engine that would refuse it.
    *
-   * ONLY the engine's own refusal, since B47: the other cause of the same error type
-   * is `agent-credential-unusable` below.
+   * ONLY the engine's own refusal, since B47: the other causes of the same error type
+   * are `agent-credential-unusable`, the three principal and server reasons and
+   * `profile-target-unsupported` below.
    */
   | "engine-unsupported"
+  /**
+   * The engine runs agent mode, and the profile cannot be granted against THIS target:
+   * a server on the engine's wire protocol whose read-only enforcement is not measured
+   * (FerretDB on the MongoDB wire, Percona on the MySQL wire), or an in-memory database.
+   *
+   * Split out of `engine-unsupported` because that sentence ("it offers no read-only
+   * execution profile") is false of the engine and sends the user away from one that
+   * works: the repair is to point the connection at the measured server itself, or at a
+   * database file. `PROFILE_UNSUPPORTED_TARGET` is the one code that reaches it.
+   */
+  | "profile-target-unsupported"
   /**
    * The connection's agent credential could not be applied, so the profile was
    * refused before any provider existed — on ANY engine, including the two the agent
@@ -372,21 +385,47 @@ export type AgentRunFailureReason =
    */
   | "agent-credential-unusable"
   /**
-   * The database principal this run would have executed as was refused by the
-   * read-only execution profile itself. The engine IS supported and the credential
-   * WAS applied: what failed is the user it names.
+   * The database principal this run would have executed as holds privileges the
+   * read-only boundary cannot contain, so the execution profile refused it. The engine
+   * IS supported and the credential WAS applied: what failed is the user it names.
    *
    * Split out of `engine-unsupported` the same way and for the same reason B47 split
-   * `agent-credential-unusable` out of it. `PROFILE_PRIVILEGES_TOO_BROAD` is raised by
-   * PostgreSQL for a superuser and by SQL Server for a principal that is unverified or
-   * too broad, and SQL Server raises it a second way, for a principal that cannot ask
-   * for the plan its admission step compiles. Folded into the engine reason, every one
-   * of those told the user to investigate a different connection while the fix was one
-   * GRANT: measured on the SQL Server fixture, where `sa`, the only credential this
-   * repository's own `database-compose.yml` ships, is refused by the profile, and the
-   * least-privilege `libredb_agent` principal beside it is accepted.
+   * `agent-credential-unusable` out of it. `PROFILE_PRIVILEGES_TOO_BROAD` is the one code
+   * that reaches it: raised by PostgreSQL for a superuser, by SQL Server for a principal
+   * that is unverified or too broad, and by MongoDB for a user whose privileges reach past
+   * reads of the connection's own database. Folded into the engine reason, every one of
+   * those told the user to investigate a different connection while the fix was one user:
+   * measured on the SQL Server fixture, where `sa`, the only credential this repository's
+   * own `database-compose.yml` ships, is refused by the profile, and the least-privilege
+   * `libredb_agent` principal beside it is accepted.
+   *
+   * Ledgers written before the two reasons below existed recorded those causes here too,
+   * so this reason keeps its meaning for them: a user the profile would not run as.
    */
   | "agent-principal-refused"
+  /**
+   * The database principal this run would have executed as LACKS a privilege the
+   * read-only path itself needs, so the execution profile refused it rather than run
+   * without that layer: SQL Server's admission step compiles a candidate under
+   * `SHOWPLAN`, so a plain reader cannot be admitted. It also covers a MongoDB connection
+   * that authenticated no user at all, which holds no read privilege to run under.
+   *
+   * Its own reason because the repair is the opposite of `agent-principal-refused`'s:
+   * grant the user one privilege, or connect as a user, never narrow it.
+   * `PROFILE_PRIVILEGES_TOO_NARROW` is the one code that reaches it.
+   */
+  | "agent-principal-underprivileged"
+  /**
+   * The server does not enforce authorization, so no user is held read-only there and
+   * the profile refused the connection whoever its user is. Measured on MongoDB started
+   * without authorization: a user holding only the `read` role wrote, while its own
+   * privileges still read as read-only (issue #1614).
+   *
+   * Its own reason because neither principal repair helps: narrowing the user changes
+   * nothing on such a server, and granting it more is the wrong direction. The repair is
+   * the server's configuration. `PROFILE_SERVER_UNENFORCED` is the one code that reaches it.
+   */
+  | "server-authorization-off"
   /** The run's persisted connection no longer resolves on the server. */
   | "connection-unresolvable"
   /** Anything else. Deliberately unspecific; the log carries the detail. */
@@ -480,7 +519,7 @@ export interface AgentResourceSettings {
  * therefore already knows.
  */
 export interface AgentPlanSide {
-  /** The `sql.explain.estimate` artifact this side was read from. */
+  /** The artifact this side was read from, produced under a plan-estimate operation (`PLAN_ESTIMATE_OPERATIONS`). */
   readonly correlationId: string;
   /** The statement that was explained. */
   readonly sql: string;
@@ -1117,6 +1156,14 @@ export type AgentRunEvent =
       /** Present only when the row budget is what refused it. */
       readonly rowBudget?: AgentContextRowBudget;
       /**
+       * The execution profile's own deny code, present only when the profile is what
+       * refused the capture. `reasonCode` stays `CATALOG_READ_REFUSED` for it, as it was
+       * written before this field existed, and `detail` carries the code's advice; this is
+       * the code itself, so a reader can tell a user holding too much from a server that
+       * enforces nothing without parsing a sentence.
+       */
+      readonly profileReasonCode?: ExecutionProfileDenyCode;
+      /**
        * What the refused reading cost this run, measured off the tracker (B13).
        *
        * A refusal is not a free capture: the pipeline admitted the call, charged the
@@ -1377,9 +1424,9 @@ export type AgentRunEvent =
        * verifier requires: a run that recommends a rewrite without having compared
        * the plans has recommended it on the strength of its own opinion.
        *
-       * Both sides cite an artifact THIS run produced under `sql.explain.estimate`,
-       * checked against the ledger the way a report's citations are, so a comparison
-       * of two plans the run never asked for is inexpressible.
+       * Both sides cite an artifact THIS run produced under a plan-estimate operation
+       * (`PLAN_ESTIMATE_OPERATIONS`), checked against the ledger the way a report's citations
+       * are, so a comparison of two plans the run never asked for is inexpressible.
        */
       readonly kind: "plan-comparison";
       readonly before: AgentPlanSide;
@@ -1422,6 +1469,31 @@ export type AgentRunEvent =
       readonly current: AgentResourceSettings;
       readonly proposed: AgentResourceSettings;
       readonly rationale: string;
+      readonly evidence: readonly [AgentEvidenceReference, ...AgentEvidenceReference[]];
+    })
+  | (AgentRunEventBase & {
+      /**
+       * One MongoDB index, proposed and NOT created (issue #1614).
+       *
+       * The same event kind as a statement's index recommendation, because it is the same act: the run proposes, the
+       * user decides. Its own `change`, as the resources card has, so every reader tells the three cards apart by that
+       * one field. It carries no `statement`, for the reason the resources card carries none - there is nothing to
+       * hand an editor, because the editor's command envelope runs reads and writes on documents and creates no
+       * index. The change is stated as DATA the user reads and applies in their own tool: the collection, the keys
+       * in the engine's own form (`{"field": 1}`), and any options. `keys` and `options` are validated by the card's
+       * schema, not by this type, which says only that they are records - the engine's spelling of a key is its own.
+       *
+       * `database` is stamped by the server, never written by the model: the database the run's captured inventory
+       * read the collection in, or, for a spelling the inventory does not resolve, the session's database where the
+       * capture read one. It is absent when neither is known.
+       */
+      readonly kind: "recommendation";
+      readonly change: "document-index";
+      readonly collection: string;
+      readonly database?: string;
+      readonly keys: Record<string, string | number>;
+      readonly options?: Record<string, unknown>;
+      readonly rationale?: string;
       readonly evidence: readonly [AgentEvidenceReference, ...AgentEvidenceReference[]];
     })
   | (AgentRunEventBase & {

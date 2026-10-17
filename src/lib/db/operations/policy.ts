@@ -315,8 +315,9 @@ export function evaluateOperation(params: PolicyEvaluationParams): PolicyDecisio
   if (descriptor.riskClass > policy.maxRiskClass) return deny("RISK_EXCEEDS_POLICY");
 
   // Stage 6 — budgets. This request counts as one statement: the input model
-  // admits exactly one statement string, and the execution profiles enforce
-  // single-statement database-natively.
+  // admits exactly one statement string, and the execution profiles enforce a
+  // single statement: database-natively on the SQL engines, and in Studio's own
+  // reader on MongoDB and Kubernetes.
   if (usage.activeExecutions >= effectiveBudget.maxConcurrentExecutions) return deny("CONCURRENCY_BUDGET_EXCEEDED");
   if (usage.executedStatements + 1 > effectiveBudget.maxStatementsPerRun) return deny("STATEMENT_BUDGET_EXCEEDED");
   if (usage.totalElapsedMs >= effectiveBudget.maxTotalRunMs) return deny("TOTAL_RUN_BUDGET_EXCEEDED");

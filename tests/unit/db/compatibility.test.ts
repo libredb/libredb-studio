@@ -512,9 +512,9 @@ describe("wire-compatibility registry", () => {
     // The one place these numerals live. A new provider moves them here and nowhere else, and the derived
     // assertions around this test say how the counts relate.
     expect([SHIPPED_DATABASE_TYPES.length, EXTERNAL_DATABASE_TYPES.length, WIRE_COMPATIBLE_ENGINES.length]).toEqual([
-      38, 37, 27,
+      42, 41, 27,
     ]);
-    expect(connectableProductCount()).toBe(64);
+    expect(connectableProductCount()).toBe(68);
   });
 
   test("the Apache Spark row of each record (#1736)", () => {
@@ -654,8 +654,10 @@ describe("MCP_EXPOSABLE (#1089)", () => {
     expect(Object.isFrozen(MCP_EXPOSABLE)).toBe(true);
   });
 
-  test("offers MCP for every shipped engine but etcd, oxia, s3, kubernetes, mqtt, firestore and opcua", () => {
+  test("offers MCP for every shipped engine but etcd, oxia, s3, kubernetes, mqtt, firestore, opcua, modbus and netconf", () => {
     // An engine MCP is not offered for answers false with its registration, and is named here then.
+    // Modbus refuses for a reason of its own, written beside its registration in
+    // compatibility.ts rather than repeated here.
     expect(SHIPPED_DATABASE_TYPES.filter((type) => MCP_EXPOSABLE[type] !== true)).toEqual([
       "etcd",
       "oxia",
@@ -664,6 +666,10 @@ describe("MCP_EXPOSABLE (#1089)", () => {
       "mqtt",
       "firestore",
       "opcua",
+      "modbus",
+      "netconf",
+      "snmp",
+      "sparkplug",
     ]);
   });
 });

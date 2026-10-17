@@ -816,6 +816,19 @@ export interface DialectGenerators {
  * and `generateRowActionQuery` are its only readers, and this module's export list is pinned
  * (`tests/unit/lib/query-generators.test.ts`).
  */
+/**
+ * Every query dialect's generators, read by `generateTableQuery` and `generateSelectQuery` BEFORE their JSON arm:
+ * each dialect declares `queryLanguage: "json"` too, and without its record a tree click auto-executes a MongoDB
+ * `find` its provider refuses (#427, #1088, #1089). A `Record` over `QueryDialect`, so a dialect added to the
+ * union does not compile until it has its generators. Module-internal: the two generators, `generateCountQuery`
+ * and `generateRowActionQuery` are its only readers, and this module's export list is pinned
+ * (`tests/unit/lib/query-generators.test.ts`).
+ */
+/** The object a tree click landed on: the last segment, which is the numbered name itself. */
+function snmpObjectName(path: readonly string[]): string {
+  return path[path.length - 1] ?? "";
+}
+
 const DIALECT_GENERATORS: Readonly<Record<QueryDialect, DialectGenerators>> = Object.freeze({
   // LibreDB speaks its own command grammar (get/put/delete/prefix/range), not SQL and not MongoDB JSON. "Scan"
   // lists everything under the group's prefix, and "Scan Keys" AUTO-EXECUTES, so a newline in the name, which
@@ -965,7 +978,54 @@ const DIALECT_GENERATORS: Readonly<Record<QueryDialect, DialectGenerators>> = Ob
     table: (path: readonly string[]) => mtconnectCurrentRequest(path),
     select: (path: readonly string[]) => mtconnectCurrentRequest(path),
   }),
+  modbus: Object.freeze({
+    table: (path: readonly string[]) => modbusReadRequest(path),
+    select: (path: readonly string[]) => modbusReadRequest(path),
+  }),
+  netconf: Object.freeze({
+    table: (path: readonly string[]) => netconfReadRequest(path),
+    select: (path: readonly string[]) => netconfReadRequest(path),
+  }),
+  // A tree click writes the statement this provider's own grammar reads, and nothing else: four
+  // words and a numbered name. `walk` rather than `get`, because a click lands on a subtree and
+  // a Get of a subtree answers one object or nothing at all.
+  snmp: Object.freeze({
+    table: (path: readonly string[]) => `walk ${snmpObjectName(path)}`,
+    select: (path: readonly string[]) => `walk ${snmpObjectName(path)}`,
+  }),
+
+  /*
+   * A tree click writes the read request for what was clicked, which is a JSON object rather than a
+   * statement: a Sparkplug read names a group, an edge node and a device and takes a window, and
+   * there is nothing to compose. The deeper the click the narrower the read, and a click on nothing
+   * reads every group, which is what an empty request means.
+   */
+  sparkplug: Object.freeze({
+    table: (path: readonly string[]) => sparkplugReadRequest(path),
+    select: (path: readonly string[]) => sparkplugReadRequest(path),
+  }),
 });
+
+/**
+ * One JSON read request for the clicked point.
+ *
+ * A point's path is its unit id and its name (`src/lib/db/providers/industrial/modbus/index.ts`),
+ * and the name is the only thing a read needs: the map already holds the unit, the table, the
+ * address and the type. Where the path stops at the unit there is no point to name, so the
+ * request written is the one shape that needs no map - a range by address - with the unit filled
+ * in and the rest left for the reader to say.
+ */
+function modbusReadRequest(path: readonly string[]): string {
+  const unit = path[0];
+  const name = path.length > 1 ? path[path.length - 1] : undefined;
+  if (name !== undefined) return JSON.stringify({ read: [name] }, null, 2);
+  const unitId = unit === undefined || unit === "" ? 1 : Number(unit);
+  return JSON.stringify(
+    { unit: Number.isInteger(unitId) ? unitId : 1, table: "holding_register", address: 0, count: 1 },
+    null,
+    2,
+  );
+}
 
 /** The device's `current`, with the clicked item named in a comment where the path holds one. */
 function mtconnectCurrentRequest(path: readonly string[]): string {
@@ -1444,4 +1504,45 @@ export function generateCountQuery(
 
 export function shouldRefreshSchema(query: string, schemaRefreshPattern: string): boolean {
   return new RegExp(schemaRefreshPattern, "i").test(query);
+}
+
+/**
+ * One JSON read request for the clicked node.
+ *
+ * A node's path is `[datastore, module, node]` - what `listObjects` builds in
+ * `src/lib/db/providers/network/netconf/index.ts` - and that is what the console's own parser
+ * needs: the datastore by name, and the node written `module:node`, the module-qualified form
+ * `parsePathArgument` reads. The bound goes into the text because the type declares
+ * `supportsExternalQueryLimiting: false`; the number written is the parser's own default, so the
+ * line states what an omitted bound would have done rather than changing it.
+ *
+ * A shorter path names no node. No shipped row reaches that arm - every object row this provider
+ * lists carries all three segments - so rather than inventing a datastore or a module it writes
+ * the request with an empty path, which the console refuses BY NAME ("this request names no
+ * path"). The alternative, filling in a plausible module, would read a node nobody clicked.
+ *
+ * `offersCodeGeneration: false`, so `select` is never drawn; it answers the same request as
+ * `table` rather than a sentence, because the request is correct wherever it lands.
+ */
+function netconfReadRequest(path: readonly string[]): string {
+  const datastore = path[0] ?? "";
+  const moduleName = path[1];
+  const node = path.length > 2 ? path[path.length - 1] : undefined;
+  const addressed = moduleName === undefined || node === undefined ? "" : `${moduleName}:${node}`;
+  return JSON.stringify({ datastore, path: addressed, limit: 1000 }, null, 2);
+}
+
+/**
+ * The read request for a clicked path: group, then edge node, then device, as far as the path goes.
+ *
+ * The window and the row limit are left out rather than written with their defaults: a number a user
+ * did not choose, printed in the console they are about to run, reads as a measurement of something.
+ */
+function sparkplugReadRequest(path: readonly string[]): string {
+  const [group, edgeNode, device] = path;
+  const request: Record<string, string> = {};
+  if (group !== undefined && group !== "") request.group = group;
+  if (edgeNode !== undefined && edgeNode !== "") request.edgeNode = edgeNode;
+  if (device !== undefined && device !== "") request.device = device;
+  return JSON.stringify(request, null, 2);
 }

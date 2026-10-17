@@ -53,10 +53,11 @@ describe("docs/MCP.md", () => {
     const refused = SHIPPED_DATABASE_TYPES.filter((type) => !MCP_EXPOSABLE[type]).map(
       (type) => DB_UI_CONFIG[type].label,
     );
-    // The control that the record answers: etcd, Oxia, S3, Kubernetes, MQTT, Firestore and OPC UA are the engines it
-    // refuses today.
+    // The control that the record answers: etcd, Oxia, S3, Kubernetes, MQTT, Firestore, OPC UA,
+    // Modbus, NETCONF and Sparkplug B are the engines it refuses today, with SNMP (#1721) the eighth: a Get is a read of one numbered object, and the
+    // tools answer schemas rather than objects.
     expect(refused).toEqual(
-      ["etcd", "oxia", "s3", "kubernetes", "mqtt", "firestore", "opcua"].map(
+      ["etcd", "oxia", "s3", "kubernetes", "mqtt", "firestore", "opcua", "modbus", "netconf", "snmp", "sparkplug"].map(
         (type) => DB_UI_CONFIG[type as DatabaseType].label,
       ),
     );
@@ -127,11 +128,15 @@ describe("docs/MCP.md", () => {
   // #1462: inspect_schema acquires under agent-operations, which carries the same
   // readOnly: true execution context as run_read_query's agent-read-only, so the same
   // role check refuses a privileged login there too - it does not get a free pass.
+  // MongoDB proves its principal only for a profile that sends statements (#1614).
   test("says inspect_schema needs the same least-privilege principal as run_read_query, not a free pass", () => {
     expect(MCP_DOC).toContain(
-      "`inspect_schema` acquires its connection under the same read-only execution context as `run_read_query`",
+      "`inspect_schema` acquires its connection read-only too, under `agent-operations` where `run_read_query` takes `agent-read-only`, and on PostgreSQL and SQL Server both profiles verify the principal at open",
     );
     expect(MCP_DOC).not.toContain("`inspect_schema` has no such requirement");
+    expect(MCP_DOC).toContain(
+      "so `inspect_schema` opens a MongoDB connection unverified, as the editor does, and no principal check refuses it there (`tests/integration/mcp/inspect-schema.test.ts`",
+    );
   });
 
   test("says npx resolves a relative path variable against the directory it is run from", () => {

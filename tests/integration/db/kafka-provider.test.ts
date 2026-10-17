@@ -1161,6 +1161,58 @@ describe("the object surface", () => {
     expect(rows.find((r) => r.partition === 0)).toMatchObject({ committedOffset: "1", lag: "0" });
   });
 
+  // #1520: @platformatic/kafka 2.13.0 no longer throws when a classic group member's consumer-protocol
+  // subscription or assignment cannot be decoded. It answers the group with `error` set, the members
+  // before the bad one kept, and the bad one and every later one dropped, which the source would read
+  // as a complete member list. The two captures are 2.13.0 answers, not 2.11.0 ones; their provenance
+  // is in tests/fixtures/kafka/README.md.
+  const UNDECODABLE_MEMBER = [
+    ["subscription", "issue1520-subscription", "describe-groups-classic-undecodable-subscription"],
+    ["assignment", "issue1520-assignment", "describe-groups-classic-undecodable-assignment"],
+  ] as const;
+
+  test.each(UNDECODABLE_MEMBER)(
+    "a classic group whose member's %s the client could not decode is refused its whole description, naming the group, and no high watermark is read for it",
+    async (what, groupId, fixture) => {
+      const { provider, recorded } = await connected({
+        // The listing says the group exists, stable and classic; the description is the captured
+        // 2.13.0 answer: the one member before the bad one, and `error`.
+        "admin.listGroups": () =>
+          new Map([[groupId, { id: groupId, state: "Stable", groupType: "classic", protocolType: "consumer" }]]),
+        "admin.describeGroups": () => kafkaFixture(fixture),
+        // The committed offsets start concurrently with the description (Promise.all in groups.ts) and
+        // are answered, so the decode refusal is the only failure the read meets.
+        "admin.listConsumerGroupOffsets": () => [{ groupId, topics: [] }],
+        // The assigned topic's high watermark, stated inline: one partition, one offset.
+        "consumer.listOffsets": () => new Map([["issue1520-topic", [BigInt(1)]]]),
+        // The member's assigned topic exists on the broker that answered the capture but in no captured
+        // metadata file, so it answers orders' captured shape under its own id, as the file's other
+        // built answers do; it is there so the read resolves on the code before the fix, whose lag loop
+        // sends this metadata read.
+        "admin.metadata": (request) => {
+          const wanted = (request as { topics: string[] }).topics;
+          if (wanted.includes("issue1520-topic")) {
+            const topic = { ...ALL.topics.get("orders")!, id: "issue1520-topic-id" };
+            return { ...ALL, topics: new Map([["issue1520-topic", topic]]) };
+          }
+          return metadataFor(request);
+        },
+      });
+      const sent = recorded.calls.length;
+      const error = await provider.readObjectSource([groupId], "consumer_group").catch((e) => e);
+      expect(error).toBeInstanceOf(QueryError);
+      expect(error).toMatchObject({ provider: "kafka" });
+      expect(error.message).toContain(JSON.stringify(groupId));
+      expect(error.message).toMatch(/a member's subscription or assignment could not be decoded/);
+      // The refusal is the provider's own sentence: neither the library's message nor its cause
+      // reaches the caller.
+      expect(error.message).not.toContain("Malformed consumer protocol");
+      expect(error.message).not.toContain("Out of bounds");
+      // No document is returned, and the failed description is not followed by a high-watermark read.
+      expect(argsOf(recorded.calls.slice(sent), "consumer.listOffsets")).toEqual([]);
+    },
+  );
+
   test("a container path is refused by name, since a Kafka connection has no container level (spec 4.1)", async () => {
     const { provider, recorded } = await connected();
     const sent = recorded.calls.length;

@@ -2,7 +2,9 @@
  * The one reader of the Kafka fixtures (#1088, spec section 10, gate 4).
  *
  * `tests/fixtures/kafka/` holds what `@platformatic/kafka` 2.11.0 answered against the compose
- * brokers before any provider code existed, one surface per file, as its README lists them.
+ * brokers before any provider code existed, one surface per file, as its README lists them,
+ * except the two `describe-groups-classic-undecodable-*` captures, which are 2.13.0 answers
+ * taken later for #1520.
  * Each file is `{ "$captured": {...}, "outcome": "pass" | "fail", "payload": <value> }`, with a
  * bigint written as `{ "$bigint": "<digits>" }`, a Buffer as `{ "$bytes": "<base64>" }` and a
  * Map as `{ "$map": [[key, value], ...] }`. `kafkaFixture` revives the payload. A captured error

@@ -35,6 +35,7 @@ import * as grpc from "@grpc/grpc-js";
 import { fromJSON, type MethodDefinition } from "@grpc/proto-loader";
 import protobuf from "protobufjs";
 import { loadEtcdDescriptor } from "../../scripts/generate-etcd-descriptor.mjs";
+import { howItFailed } from "../helpers/spawn-outcome";
 
 type Service = "etcd" | "etcd-cluster" | "etcd-auth" | "etcd-auth-password" | "transport";
 type Server = Exclude<Service, "transport">;
@@ -2389,7 +2390,7 @@ function runChild(names: readonly string[], contextFile: string): Map<string, Me
     maxBuffer: 256 * 1024 * 1024,
     stdio: ["ignore", "pipe", "inherit"],
   });
-  if (child.status !== 0) throw new Error(`The Node child exited with ${child.status} for ${names.join(", ")}`);
+  if (child.status !== 0) throw new Error(`The Node child ${howItFailed(child)} for ${names.join(", ")}`);
   return new Map(Object.entries(JSON.parse(child.stdout) as Record<string, Measured>));
 }
 

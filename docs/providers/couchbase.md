@@ -73,7 +73,7 @@ provider that is a *directory* rather than a single file, because the transport 
 
 ```
 src/lib/db/providers/document/
-├── mongodb.ts
+├── mongodb/
 └── couchbase/
     ├── index.ts             # CouchbaseProvider - the DatabaseProvider implementation
     ├── transport.ts         # CouchbaseTransport interface + neutral result types (no I/O)

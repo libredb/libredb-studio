@@ -105,8 +105,8 @@ export interface EvalEnginePreset {
   /**
    * Whether the stub provider carries `queryReadOnly` at all.
    *
-   * The engine property that decides which workflows may run: only PostgreSQL and
-   * SQLite implement it, and `acquireExecutionProfileProvider` refuses the
+   * The engine property that decides which workflows may run: the providers of
+   * `AGENT_EXECUTION_ENGINES` implement it, and `acquireExecutionProfileProvider` refuses the
    * `agent-read-only` profile without it. A preset that does not serve it therefore
    * cannot answer a statement AT ALL — which is what makes "this run sent none" a
    * property the fixture enforces rather than one the assertions merely observe.
@@ -276,14 +276,16 @@ export const EVAL_ENGINES: Readonly<Record<EvalEngine, EvalEnginePreset>> = Obje
    * A THIRD engine, and the only one here that is not a Phase 1 engine.
    *
    * It exists to make the operations workflow's whole claim observable: that
-   * workflow is offered on engines with no database-native read-only statement path,
-   * and until this preset the harness could not express one.
+   * workflow is offered on engines with no read-only statement path, and until this
+   * preset the harness could not express one.
    *
-   * It carries NO `queryReadOnly`, exactly as the real MySQL provider does not, so it
-   * can answer neither a catalog read nor a statement: a run that sent one dies
-   * visibly here instead of being quietly answered by PostgreSQL's default fixture
-   * row. That is the difference between a fixture that observes the workflow's
-   * central property and one that enforces it.
+   * It carries NO `queryReadOnly`, so it stands for an engine outside
+   * `AGENT_EXECUTION_ENGINES` under MySQL's name and capabilities: the real MySQL
+   * provider has implemented `queryReadOnly` since #1629. It can answer neither a
+   * catalog read nor a statement: a run that sent one dies visibly here instead of
+   * being quietly answered by PostgreSQL's default fixture row. That is the difference
+   * between a fixture that observes the workflow's central property and one that
+   * enforces it.
    */
   mysql: {
     connection: { id: "conn_eval", name: "Company (MySQL)", type: "mysql", createdAt: new Date(0) },

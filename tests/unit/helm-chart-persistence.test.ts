@@ -10,6 +10,7 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { parseAllDocuments } from "yaml";
+import { howItFailed } from "../helpers/spawn-outcome";
 
 const CHART_DIR = join(import.meta.dir, "../../charts/libredb-studio");
 
@@ -42,7 +43,7 @@ function renderDeployment(extraArgs: string[] = []): RenderedDeployment {
     stderr: "pipe",
   });
   if (run.exitCode !== 0) {
-    throw new Error(`helm template failed (exit ${run.exitCode}): ${run.stderr.toString()}`);
+    throw new Error(`helm template ${howItFailed(run)}: ${run.stderr.toString()}`);
   }
   const docs = parseAllDocuments(run.stdout.toString()).map((doc) => doc.toJSON() as RenderedDeployment);
   const deployment = docs.find((doc) => doc?.kind === "Deployment");

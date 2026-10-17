@@ -159,7 +159,7 @@ export function providerOwner(connection: DatabaseConnection, owner: string | un
  *   hand-kept and no compiler walks `DatabaseConnection` for it, and without it two connections
  *   differing only in the mechanism would share one cached provider.
  * - `authSource` names the database MongoDB looks the user up in (`buildConnectionString` in
- *   `src/lib/db/providers/document/mongodb.ts`), so the same user and password under another auth
+ *   `src/lib/db/providers/document/mongodb/index.ts`), so the same user and password under another auth
  *   database are another principal's record. `connectionIdentity` in
  *   `src/lib/agent/context-snapshot.ts` frames it for the same reason.
  * - `allowInsecureAuth` decides whether a Db2, InfluxDB or Databend provider sends its secret with no TLS (#786,

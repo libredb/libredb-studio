@@ -2,15 +2,16 @@
  * Canonical Phase 1 operation descriptors (#328, epic #325; extended by #330 T3,
  * B27 and #414).
  *
- * Seven operations exist: bounded read, plan inspection, plan execution, table
- * profiling, the curated operational reading, the provider's schema read and the
- * kubectl read. The set was pinned at THREE by epic #325 and reopened by #330 T3,
- * which is why the fourth carries that reversal in its own comment rather than
- * arriving as though the number had never been a decision; the fifth, sixth and
- * seventh carry their own reasons for the same reason. The fifth and sixth are the
- * ones that name no statement at all. The seventh is the bounded read for a
- * `kubernetes` connection: a statement the model wrote, in kubectl rather than SQL,
- * under its own id so the SQL contract stays what it was.
+ * Every operation is a read: the bounded read, plan inspection, plan execution and
+ * table profiling on SQL; the curated operational reading and the provider's schema
+ * read, which name no statement at all; the kubectl read and the two curated
+ * cluster readings on Kubernetes; and the command read, the scoped catalog, the
+ * estimating plan and the composed profile on MongoDB. The set was pinned at THREE
+ * by epic #325 and reopened by #330 T3, which is why the profile carries that
+ * reversal in its own comment rather than arriving as though the number had never
+ * been a decision, and every operation added since carries its own reason the same
+ * way. A language's statement read has an id of its own, so the SQL contract stays
+ * what it was.
  *
  * Plan inspection and plan execution are DISTINCT descriptors whose
  * ids are derived from the explain seam's modes (`ExplainMode`,
@@ -21,8 +22,10 @@
 
 import { z } from "zod";
 import type { ExplainMode } from "@/lib/explain";
+import { readMongoCommand } from "@/lib/db/providers/document/mongodb/envelope";
 import { OperationRegistry } from "./registry";
 import { kubectlAgentReadInput } from "./kubectl-admission";
+import { mongoAgentReadInput } from "./mongo-admission";
 import { agentPlanExecutionSqlInput, agentReadSqlInput } from "./statement-guard";
 import type { RegistrableOperationDescriptor } from "./types";
 
@@ -332,6 +335,159 @@ export const kubectlQueryReadDescriptor: RegistrableOperationDescriptor = {
   },
 };
 
+const MONGO_READ_BOUNDARY =
+  "MongoDB: the profiled connection opens only after the server identifies itself as the measured engine " +
+  "(buildInfo, fail-closed past FerretDB and the other wire relatives), after the session's own privileges read as " +
+  "reads on the connection's database alone against a fail-closed action allowlist, and after the server refuses a " +
+  "delete that matches nothing, which changes nothing either way; a server that accepts it enforces no authorization " +
+  "and is refused. The command reader (envelope.ts) admits the five reads of the editor's command envelope with read " +
+  "pipeline stages only and refuses server-side JavaScript; a command naming a database other than the connection's " +
+  "is refused; every command carries maxTimeMS, and Studio kills the session when the server overruns it; find and " +
+  "aggregate are capped one document past the row budget server-side; a cursor's documents are counted in BSON " +
+  "bytes before they are decoded, while a distinct's one reply, which the server holds to 16 MiB, is decoded whole " +
+  "before its values are counted; and a result past either budget is refused, never truncated.";
+
+/**
+ * One MongoDB command the model wrote, on a `mongodb` connection (issue #1614).
+ *
+ * R1 on a boundary the ENGINE provides in the direction that matters: MongoDB has no read-only transaction, so the
+ * boundary is the principal's own inability to write, proven at the profiled connection's open by its privileges,
+ * read against a read-only allowlist, and by the server's refusal of a probe - which is why an auth-off server, where
+ * role restrictions are not enforced at all (measured 2026-09-27), is refused outright rather than served. Its own
+ * id, and not a widened `sql.query.read`, so the SQL contract and its audit action stay exactly what they were.
+ */
+export const mongoQueryReadDescriptor: RegistrableOperationDescriptor = {
+  id: "mongo.query.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  modelStatement: true,
+  inputSchema: mongoAgentReadInput,
+  verification: {
+    reviewedBy: "MongoDB agent execution design review",
+    boundary: MONGO_READ_BOUNDARY,
+    verifiedOn: "2026-10-17",
+  },
+};
+
+/** The selector of a scoped MongoDB catalog read: a kind, a database and a collection, any of them narrowed. */
+const mongoCatalogSelectorInput = z.strictObject({
+  kind: z.enum(["columns", "indexes"]).default("columns"),
+  schema: z.string().min(1).optional(),
+  table: z.string().min(1).optional(),
+});
+
+/**
+ * A scoped MongoDB catalog read, on a `mongodb` connection: the provider's own catalog, narrowed by the selector the
+ * model supplied.
+ *
+ * R0 `metadata-read`: the shape of the call bounds it. The selector reaches the provider's catalog read for the agent
+ * (`readCatalogReadOnly`) - a collection listing, or one collection's fields and indexes - and no value out of any
+ * document is returned, which is the same claim `db.schema.read` makes for the unscoped walk. Its own id so an
+ * operator can deny the scoped catalog read without denying either the unscoped walk or the model's command reads.
+ * No `RiskVerification`, like `db.schema.read`: R0 has no boundary to name beyond the shape of the call itself.
+ */
+export const mongoSchemaReadDescriptor: RegistrableOperationDescriptor = {
+  id: "mongo.schema.read",
+  riskClass: 0,
+  accessLevel: "metadata-read",
+  requiredCapabilities: [],
+  resourceCost: "moderate",
+  supportsDryRun: false,
+  requiresApproval: false,
+  inputSchema: mongoCatalogSelectorInput,
+};
+
+const MONGO_PLAN_BOUNDARY =
+  "MongoDB: the estimating plan runs under the same profiled connection, reader and bound database as " +
+  "mongo.query.read, built by the same builder: the command wrapped in explain at queryPlanner verbosity, which " +
+  "answers with the plan and none of the command's documents; with several candidate plans the server runs each for " +
+  "a bounded trial, under the same maxTimeMS and kill.";
+
+/**
+ * The estimating plan of one MongoDB command: `explain` at `queryPlanner` verbosity, which answers with the plan and
+ * none of the command's documents.
+ *
+ * R1 `data-read`, where the SQL estimate is R0: with several candidate plans the server runs each for a bounded trial,
+ * so the documents are read even though none is returned, and the command text is model-written and reaches the
+ * engine. Not a statement read (`modelStatement` unset), because the command is planned rather than run: a plan is
+ * evidence a run may cite, never an answer it may present. Its own id rather than a widened `sql.explain.estimate`,
+ * so the SQL contract and its audit action stay exactly what they were, and so the plan-reading surfaces can name the
+ * estimating-plan operations of BOTH languages without a dialect comparison.
+ */
+export const mongoPlanEstimateDescriptor: RegistrableOperationDescriptor = {
+  id: "mongo.plan.estimate",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "moderate",
+  supportsDryRun: false,
+  requiresApproval: false,
+  inputSchema: mongoAgentReadInput,
+  verification: {
+    reviewedBy: "MongoDB agent execution design review",
+    boundary: MONGO_PLAN_BOUNDARY,
+    verifiedOn: "2026-10-17",
+  },
+};
+
+/**
+ * The longest command Studio composes for a run, the collection profile's (`mongo-tools.ts`): room for a batch of
+ * `MAX_PROFILE_COLUMNS` fields with long nested paths, since a field name has no length bound of its own.
+ */
+const MONGO_COMPOSED_MAX_STATEMENT_CHARS = 65_536;
+
+/**
+ * The input of a command the SERVER composes: one command, read by the reader every command meets
+ * (`readMongoCommand`), up to `MONGO_COMPOSED_MAX_STATEMENT_CHARS`.
+ *
+ * Its own input because the 4,096 characters of `mongoAgentReadInput` bound text a MODEL writes, and a composition is
+ * not that: a profile of sixteen fields with long nested paths runs past it, and held to it the profile would be
+ * refused by its own descriptor. The SQL profile meets no such cap: its input is the bounded read's, which has none.
+ */
+const mongoComposedReadInput = z
+  .strictObject({ command: z.string().min(1).max(MONGO_COMPOSED_MAX_STATEMENT_CHARS) })
+  .superRefine((value, context) => {
+    const read = readMongoCommand(value.command);
+    if (!read.ok) context.addIssue({ code: "custom", path: ["command"], message: read.message });
+  });
+
+const MONGO_PROFILE_BOUNDARY =
+  "MongoDB: the profile's aggregation is composed by the SERVER from the run's own captured inventory - the model " +
+  "supplies only the collection, the depth and where in its fields to start - and it runs under the same profiled " +
+  "connection, reader, bound database, deadline and budgets as mongo.query.read. Only counts come back: no value is " +
+  "read out of any field, which is what makes pointing a profile at a collection of personal data acceptable at all.";
+
+/**
+ * One MongoDB collection profile, composed as an aggregation and run under the profile's bounds.
+ *
+ * R1 `data-read` on the same boundary the model's own command reads take. The composition is server-authored from
+ * the captured inventory (`mongo-tools.ts`), so what the pipeline validates and the engine runs is the COMPOSED
+ * COMMAND - read by the same reader every model command meets, under a length bound of its own
+ * (`mongoComposedReadInput`) - and never a word the model wrote: the selector it named was resolved against the run's
+ * own inventory before this descriptor saw anything. Not a statement read (`modelStatement` unset), for the reason
+ * `sql.table.profile` is not one: its statement is the server's. Its own id for the reason that one has its own: the
+ * counts are the one reading an operator may want to deny without denying the reads the model itself writes.
+ */
+export const mongoTableProfileDescriptor: RegistrableOperationDescriptor = {
+  id: "mongo.table.profile",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  inputSchema: mongoComposedReadInput,
+  verification: {
+    reviewedBy: "MongoDB agent execution design review",
+    boundary: MONGO_PROFILE_BOUNDARY,
+    verifiedOn: "2026-10-17",
+  },
+};
+
 /** One namespace (a DNS-1123 label, as the API server names one) and an optional label selector over its pods. */
 export const clusterUsageReadInput = z.strictObject({
   namespace: z.string().regex(/^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/),
@@ -408,6 +564,10 @@ const CANONICAL_DESCRIPTORS: readonly RegistrableOperationDescriptor[] = Object.
   kubectlQueryReadDescriptor,
   clusterUsageReadDescriptor,
   clusterWorkloadsReadDescriptor,
+  mongoQueryReadDescriptor,
+  mongoSchemaReadDescriptor,
+  mongoPlanEstimateDescriptor,
+  mongoTableProfileDescriptor,
 ]);
 
 /**

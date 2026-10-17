@@ -1,0 +1,23 @@
+{
+  "measured": "2026-10-17",
+  "server": "MongoDB 9.0.4, authorization on",
+  "principal": "rv_p6_noroles, roles [], authSource rv_p6_db",
+  "command": {
+    "connectionStatus": 1,
+    "showPrivileges": true
+  },
+  "reply": {
+    "authInfo": {
+      "authenticatedUsers": [
+        {
+          "user": "rv_p6_noroles",
+          "db": "rv_p6_db"
+        }
+      ],
+      "authenticatedUserRoles": [],
+      "authenticatedUserPrivileges": []
+    },
+    "uuid": "02dcf3aa-07c1-4a62-9f66-bb09ddcaec60",
+    "ok": 1
+  }
+}

@@ -1,0 +1,139 @@
+{
+  "measured": "2026-10-17",
+  "server": "MongoDB 9.0.4, authorization on",
+  "principal": "rv_p6_rw_other, roles [{\"role\":\"read\",\"db\":\"rv_p6_db\"},{\"role\":\"readWrite\",\"db\":\"rv_p6_other\"}], authSource rv_p6_db",
+  "command": {
+    "connectionStatus": 1,
+    "showPrivileges": true,
+    "maxTimeMS": 5000,
+    "comment": "libredb-studio-agent"
+  },
+  "reply": {
+    "authInfo": {
+      "authenticatedUsers": [
+        {
+          "user": "rv_p6_rw_other",
+          "db": "rv_p6_db"
+        }
+      ],
+      "authenticatedUserRoles": [
+        {
+          "role": "read",
+          "db": "rv_p6_db"
+        },
+        {
+          "role": "readWrite",
+          "db": "rv_p6_other"
+        }
+      ],
+      "authenticatedUserPrivileges": [
+        {
+          "resource": {
+            "db": "rv_p6_db",
+            "collection": ""
+          },
+          "actions": [
+            "changeStream",
+            "collStats",
+            "dbHash",
+            "dbStats",
+            "find",
+            "killCursors",
+            "listCollections",
+            "listIndexes",
+            "listSearchIndexes",
+            "planCacheRead",
+            "performRawDataOperations"
+          ]
+        },
+        {
+          "resource": {
+            "db": "rv_p6_other",
+            "collection": ""
+          },
+          "actions": [
+            "changeStream",
+            "cleanupStructuredEncryptionData",
+            "collStats",
+            "compactStructuredEncryptionData",
+            "convertToCapped",
+            "createCollection",
+            "createIndex",
+            "createSearchIndexes",
+            "dbHash",
+            "dbStats",
+            "dropCollection",
+            "dropIndex",
+            "dropSearchIndex",
+            "find",
+            "insert",
+            "killCursors",
+            "listCollections",
+            "listIndexes",
+            "listSearchIndexes",
+            "updateSearchIndex",
+            "planCacheRead",
+            "performRawDataOperations",
+            "remove",
+            "renameCollectionSameDB",
+            "update"
+          ]
+        },
+        {
+          "resource": {
+            "db": "rv_p6_db",
+            "collection": "system.js"
+          },
+          "actions": [
+            "changeStream",
+            "collStats",
+            "dbHash",
+            "dbStats",
+            "find",
+            "killCursors",
+            "listCollections",
+            "listIndexes",
+            "listSearchIndexes",
+            "planCacheRead",
+            "performRawDataOperations"
+          ]
+        },
+        {
+          "resource": {
+            "db": "rv_p6_other",
+            "collection": "system.js"
+          },
+          "actions": [
+            "changeStream",
+            "cleanupStructuredEncryptionData",
+            "collStats",
+            "compactStructuredEncryptionData",
+            "convertToCapped",
+            "createCollection",
+            "createIndex",
+            "createSearchIndexes",
+            "dbHash",
+            "dbStats",
+            "dropCollection",
+            "dropIndex",
+            "dropSearchIndex",
+            "find",
+            "insert",
+            "killCursors",
+            "listCollections",
+            "listIndexes",
+            "listSearchIndexes",
+            "updateSearchIndex",
+            "planCacheRead",
+            "performRawDataOperations",
+            "remove",
+            "renameCollectionSameDB",
+            "update"
+          ]
+        }
+      ]
+    },
+    "uuid": "279f1814-11ec-4dc9-9bd2-4018c0eea11f",
+    "ok": 1
+  }
+}

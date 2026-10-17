@@ -27,12 +27,12 @@
 
 ## Overview
 
-LibreDB Studio provides a RESTful API for database management operations. The API supports PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Apache Spark, Apache Cassandra, Redis, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant, Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA and MTConnect.
+LibreDB Studio provides a RESTful API for database management operations. The API supports PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Apache Spark, Apache Cassandra, Redis, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant, Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA, MTConnect, Modbus, NETCONF, SNMP and Sparkplug B.
 
 ### Key Features
 
 - **JWT Authentication** - Secure token-based authentication stored in HTTP-only cookies
-- **Multi-Database Support** - Thirty-seven engines: PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Apache Spark, Apache Cassandra, Redis, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA, MTConnect
+- **Multi-Database Support** - Forty-one engines: PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Apache Spark, Apache Cassandra, Redis, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA, MTConnect, Modbus, NETCONF, SNMP, NETCONF, Sparkplug B
 - **AI-Powered Insights** - EXPLAIN explanations, query-safety analysis and schema docs, streamed
 - **Real-time Health Monitoring** - Database metrics and performance insights
 
@@ -1882,7 +1882,7 @@ could arrive twice.
 { "error": "previousRunId must be a non-empty string when provided" }
 { "error": "This connection reaches every database on its server: name the database the run reads in catalog" }
 {
-  "error": "Agent mode executes only where the provider implements a database-native read-only statement path — PostgreSQL, SQLite, DuckDB, SQL Server and MySQL. On Oracle a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine.",
+  "error": "Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes and MongoDB. On Oracle a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine.",
   "refused": "engine-unsupported"
 }
 
@@ -1899,9 +1899,9 @@ could arrive twice.
 
 > **The engine refusal is a `400`, and it changed this contract.** Since #512 an `agent` run whose
 > `workflowType` sends a statement — every workflow but `operations` — is refused here when the
-> connection's engine implements no database-native read-only statement path, and `error` carries the
+> connection's provider implements no read-only statement path, and `error` carries the
 > posture's whole paragraph. It is refused **before a run id exists**: a client that used to receive
-> `202` for `investigation` on MySQL and then read `engine-unsupported` off the run receives `400`
+> `202` for `investigation` on Oracle and then read `engine-unsupported` off the run receives `400`
 > and no run. `operations` is admitted on every engine because it sends no statement at all, and a
 > `planning` run is never refused this way — it executes nothing anywhere. The refusal reads the
 > same fact the provider factory does (`typeof provider.queryReadOnly`), so the two cannot disagree.
@@ -2321,7 +2321,7 @@ The object is one shape on the wire. Fields the server reads from a request body
 change how a connection is opened — are the coordinates and credentials (`id`, `name`, `type`,
 `host`, `port`, `user`, `password`, `database`, `schema`, `connectionString`), plus `ssl`,
 `sshTunnel`, `serviceName` (Oracle), `instanceName` (MSSQL), `localDataCenter` (Cassandra),
-`authSource` (MongoDB), `saslMechanism` (Kafka), `allowInsecureAuth` (Db2, InfluxDB, InfluxDB 3, Oxia, Databend, S3, MQTT, RabbitMQ), `dataServers` (Oxia), `warehouse` (Databend, Snowflake), `region` (S3), `apiPath` (Kubernetes, RabbitMQ), `namespaces` and `tlsServerName` (Kubernetes), `location` (BigQuery), `amqpPort` (RabbitMQ), `securityMode`, `serverCertificateThumbprint`, `securityPolicyUri`, `clientCertificatePath` and `clientPrivateKeyPath` (OPC UA), `authMethod`, `privateKey`, `privateKeyPassphrase` and `role` (Snowflake), `queryTimeout`, `agentUser`, `agentPassword`, `apiKeyId`/`apiKeySecret`
+`authSource` (MongoDB), `saslMechanism` (Kafka), `allowInsecureAuth` (Db2, InfluxDB, InfluxDB 3, Oxia, Databend, S3, MQTT, RabbitMQ, SNMP), `dataServers` (Oxia), `warehouse` (Databend, Snowflake), `region` (S3), `apiPath` (Kubernetes, RabbitMQ), `namespaces` and `tlsServerName` (Kubernetes), `location` (BigQuery), `amqpPort` (RabbitMQ), `securityMode`, `serverCertificateThumbprint`, `securityPolicyUri`, `clientCertificatePath` and `clientPrivateKeyPath` (OPC UA), `authMethod`, `privateKey`, `privateKeyPassphrase` and `role` (Snowflake), `queryTimeout`, `agentUser`, `agentPassword`, `apiKeyId`/`apiKeySecret`
 (Elasticsearch, #708), and `readOnly` (#1089). `color`, `environment`, `group`,
 `managed`, `seedId`, and `createdAt` are client-side bookkeeping that travel in the same object.
 
@@ -2349,7 +2349,7 @@ interface DatabaseConnection {
   localDataCenter?: string; // Cassandra only, and REQUIRED there: the driver refuses to connect without it (`datacenter1` on a stock single node)
   authSource?: string; // MongoDB only: the database the credentials live in (`?authSource=admin`). Not the database being opened - without it the driver checks the user against that one, which fails as a credentials error
   saslMechanism?: 'PLAIN' | 'SCRAM-SHA-256' | 'SCRAM-SHA-512'; // Kafka only: the SASL mechanism that checks user and password, absent meaning none. A user or password with no mechanism is refused, and every mechanism requires TLS
-  allowInsecureAuth?: boolean; // Db2, both InfluxDB types, Oxia, Databend, S3, MQTT and RabbitMQ (#786): connect with no TLS although the password (Db2, Databend), the password or token (InfluxDB) or the token (Oxia) then crosses the network in cleartext; without it the Db2 provider refuses a connection that has no TLS, both InfluxDB providers one that sends its secret with no TLS to a host that is not loopback, the Oxia provider one that sends a token with no TLS to a host that is not this machine (docs/providers/oxia.md section 4.6), and the Databend provider one that sends its password with no TLS to a host that is not loopback, and the S3 provider one that connects over plain HTTP to a host that is not loopback, signed or not; and the MQTT provider one that sends its password with no TLS to a host that is not this machine and is not carried by an SSH tunnel, because an MQTT connection carries its username and password in the CONNECT packet, which crosses the network in cleartext when the SSL mode is disable; and the RabbitMQ provider, on both endpoints, one that sends its password with no TLS to a host that is not this machine
+  allowInsecureAuth?: boolean; // Db2, both InfluxDB types, Oxia, Databend, S3, MQTT, RabbitMQ and SNMP (#786): connect with no TLS although the password (Db2, Databend), the password or token (InfluxDB) or the token (Oxia) then crosses the network in cleartext; without it the Db2 provider refuses a connection that has no TLS, both InfluxDB providers one that sends its secret with no TLS to a host that is not loopback, the Oxia provider one that sends a token with no TLS to a host that is not this machine (docs/providers/oxia.md section 4.6), and the Databend provider one that sends its password with no TLS to a host that is not loopback, and the S3 provider one that connects over plain HTTP to a host that is not loopback, signed or not; and the MQTT provider one that sends its password with no TLS to a host that is not this machine and is not carried by an SSH tunnel, because an MQTT connection carries its username and password in the CONNECT packet, which crosses the network in cleartext when the SSL mode is disable; and the RabbitMQ provider, on both endpoints, one that sends its password with no TLS to a host that is not this machine
   dataServers?: string; // Oxia only: a cluster's data-server addresses, host:port entries separated by commas or whitespace, at most 64; see docs/providers/oxia.md section 4.4
   warehouse?: string;   // Databend and Snowflake: the warehouse statements run on. Databend sends it as the X-DATABEND-WAREHOUSE header; Databend Cloud requires one (the warehouse= value of its DSN) and resumes a suspended one on the first statement, billing while it runs. Snowflake sends it as the warehouse field of every request body; optional, and empty means the user's default warehouse. Not a secret
   region?: string;      // S3-compatible object storage only: the region every request is signed for (the SigV4 credential scope); absent or empty means us-east-1. Garage refuses any region but its s3_region; a MinIO or Silo started with a site region refuses bucket and object reads signed for another. Not a secret
@@ -2365,7 +2365,8 @@ interface DatabaseConnection {
   amqpPort?: string;    // RabbitMQ only: the AMQP 0-9-1 port of stream reads; empty means browse only.
   authMethod?: 'keypair' | 'pat'; // Snowflake only: the sign-in method, a key-pair JWT signed with privateKey or a programmatic access token in password; absent means keypair. Not the SSH tunnel's sshTunnel.authMethod. Not a secret
   privateKey?: string;  // Snowflake only: the PEM private key's contents, PKCS#8 or PKCS#1, encrypted or not; never a path. Secret-classified
-  privateKeyPassphrase?: string; // Snowflake only: the passphrase of an encrypted privateKey. Secret-classified
+  privateKeyPassphrase?: string;
+  hostKeyFingerprint?: string; // Snowflake only: the passphrase of an encrypted privateKey. Secret-classified
   role?: string;        // Snowflake only: the role every statement runs as, sent on every request; part of the connection's identity. Not a secret
   skipObjectScan?: boolean; // read no catalog when this connection opens: zero reads on connect, so the editor is usable immediately and the object tree offers a load action instead of scanning (#765, an Oracle owner with 43,512 tables froze the browser on connect). It defers the CATALOG, not the walk: a connection that also declares `keyScan` keeps the sidebar's Objects / Keys switch, and the switch reads nothing, because the key panel mounts only when Keys is chosen and then takes the same bounded sample (#1169)
   readOnly?: boolean;      // refuse writes, value edits and maintenance before any request (#1089). Accepted only where the engine's provider enforces it: true anywhere else is refused at seed load and before any provider is built, and a value that is not a boolean is refused everywhere
@@ -2375,9 +2376,10 @@ interface DatabaseConnection {
   agentPassword?: string;  // password for agentUser; secret-classified, sealed at rest by connection-secrets
   apiKeyId?: string;       // Elasticsearch only (#708): API key pair, sent in preference to user/password when both halves are set (trimmed). Secret-classified like agentPassword, not public like user. OpenSearch refuses the pair
   apiKeySecret?: string;   // the pair's secret half; either alone (after trim) falls back to user/password rather than sending a key built from an empty half
+  registerMap?: string;    // Modbus only: the register map, as the JSON document the provider parses - a list of points, each naming a unit, a table, a zero-based PDU address and a type. Bounded at 65536 bytes, checked before the parse; public-classified, because Modbus TCP defines no authentication and the document carries nothing to leak
 }
 
-type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'db2' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'bigquery' | 'snowflake' | 'spark' | 'cassandra' | 'prometheus' | 'kafka' | 'etcd' | 'neo4j' | 'milvus' | 'qdrant' | 'influxdb' | 'influxdb3' | 'oxia' | 'databend' | 's3' | 'kubernetes' | 'mqtt' | 'firestore' | 'rabbitmq' | 'opcua' | 'mtconnect';
+type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'db2' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'bigquery' | 'snowflake' | 'spark' | 'cassandra' | 'prometheus' | 'kafka' | 'etcd' | 'neo4j' | 'milvus' | 'qdrant' | 'influxdb' | 'influxdb3' | 'oxia' | 'databend' | 's3' | 'kubernetes' | 'mqtt' | 'firestore' | 'rabbitmq' | 'opcua' | 'mtconnect' | 'modbus' | 'netconf' | 'snmp' | 'sparkplug';
 type ConnectionEnvironment = 'production' | 'staging' | 'development' | 'local' | 'other';
 ```
 

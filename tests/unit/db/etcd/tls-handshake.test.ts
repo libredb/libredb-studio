@@ -53,6 +53,7 @@ import {
 } from "@/lib/db/providers/keyvalue/etcd/grpc-client";
 import { ETCD_DESCRIPTOR } from "@/lib/db/providers/keyvalue/etcd/proto/descriptor";
 import { TUNNEL_FAR_END } from "@/lib/types";
+import { howItFailed } from "../../../helpers/spawn-outcome";
 
 // -- the cases, as both runtimes run them ------------------------------------------------------------------------
 
@@ -243,7 +244,7 @@ const OPENSSL_ENV = { ...process.env, OPENSSL_CONF: at("openssl.cnf") };
 
 function openssl(...args: string[]): void {
   const run = Bun.spawnSync(["openssl", ...args], { cwd: dir, env: OPENSSL_ENV, stdout: "ignore", stderr: "pipe" });
-  if (run.exitCode !== 0) throw new Error(`openssl ${args.join(" ")} failed: ${run.stderr.toString()}`);
+  if (run.exitCode !== 0) throw new Error(`openssl ${args.join(" ")} ${howItFailed(run)}: ${run.stderr.toString()}`);
 }
 
 let serial = 1000;

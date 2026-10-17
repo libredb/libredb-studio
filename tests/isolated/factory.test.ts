@@ -374,6 +374,7 @@ const {
   evictIdleProviders,
   registerShutdownHandlers,
   acquireExecutionProfileProvider: rawAcquireExecutionProfileProvider,
+  executionContextFor,
   profiledCacheKey,
   findOpenSingleWriterProvider,
   isSingleWriterFileOpen,
@@ -878,7 +879,7 @@ describe("createDatabaseProvider", () => {
   test("the factory error lists milvus among the supported types, before qdrant and the embedded store", async () => {
     const conn = makeConnection("not-an-engine");
     await expect(createDatabaseProvider(conn)).rejects.toThrow(
-      /Supported types: .*\bneo4j, milvus, qdrant, s3, mqtt, opcua, mtconnect, rabbitmq, kubernetes, libredb$/,
+      /Supported types: .*\bneo4j, milvus, qdrant, s3, mqtt, opcua, mtconnect, modbus, snmp, rabbitmq, kubernetes, netconf, sparkplug, libredb$/,
     );
   });
 
@@ -944,7 +945,7 @@ describe("createDatabaseProvider", () => {
   test("the factory error lists s3 between qdrant and kubernetes, kubernetes before the embedded store", async () => {
     const conn = makeConnection("not-an-engine");
     await expect(createDatabaseProvider(conn)).rejects.toThrow(
-      /Supported types: .*\bqdrant, s3, mqtt, opcua, mtconnect, rabbitmq, kubernetes, libredb$/,
+      /Supported types: .*\bqdrant, s3, mqtt, opcua, mtconnect, modbus, snmp, rabbitmq, kubernetes, netconf, sparkplug, libredb$/,
     );
   });
 
@@ -1056,6 +1057,10 @@ describe("createDatabaseProvider", () => {
       "kafka",
       "libredb",
       "libsql",
+      // No cancel either, and for a reason of its own: a read is one exchange at a time on a
+      // connection this provider does not hold open, and Modbus has no request that stops one in
+      // flight - the five requests MB-S1 allows are four reads and the identification read (#1723).
+      "modbus",
       "mongodb",
       // No cancel: a read is one subscription with its own budget, and there is no statement to stop.
       "mqtt",
@@ -1063,11 +1068,22 @@ describe("createDatabaseProvider", () => {
       // instead, at most 16 MiB a request and one request at a time per agent, and MTConnect's
       // interface has no request that stops one in flight (#1722).
       "mtconnect",
+      // No cancel either, and the reason is the protocol's: RFC 6241 has no operation that stops a
+      // read in flight, and this provider holds one request per session, so there is nothing to
+      // cancel and nothing to cancel it with. A read is bounded instead, by the session's deadline
+      // and the framing's byte cap (#1724).
+      "netconf",
       // No cancel either: a read is bounded instead, at most 200 nodes or 500 values a request, and
       // the protocol has no service that stops one in flight (#1677).
+      // No cancel: the eight read services the seam names have no Cancel among them.
       "opcua",
       "opensearch",
       "redis",
+      // No cancel either, and the reason is UDP's: a Get is one datagram out and one back, with
+      // nothing in RFC 3416 that stops one in flight. A read is bounded instead, by the walk's
+      // budget and by what one datagram can carry (#1721).
+      "snmp",
+      "sparkplug",
     ]);
   });
 });
@@ -2488,6 +2504,56 @@ describe("shutdown signal handlers", () => {
   });
 });
 
+// ─── executionContextFor: what each profile opens its provider under (#1614) ──────
+
+describe("executionContextFor", () => {
+  test("all three profiles open read-only, and only the two that send statements say they do", () => {
+    expect(executionContextFor("agent-read-only")).toEqual({
+      readOnly: true,
+      sendsStatements: true,
+      allowExternalFileAccess: false,
+    });
+    expect(executionContextFor("agent-operations")).toEqual({
+      readOnly: true,
+      sendsStatements: false,
+      allowExternalFileAccess: false,
+    });
+    expect(executionContextFor("agent-handover")).toEqual({
+      readOnly: true,
+      sendsStatements: true,
+      allowExternalFileAccess: false,
+    });
+  });
+
+  test("the file-access posture is the requester's, and an absent one reads as denied", () => {
+    expect(executionContextFor("agent-read-only", { allowExternalFileAccess: true }).allowExternalFileAccess).toBe(
+      true,
+    );
+    expect(executionContextFor("agent-operations", { allowExternalFileAccess: true }).allowExternalFileAccess).toBe(
+      true,
+    );
+    expect(executionContextFor("agent-handover", { allowExternalFileAccess: false }).allowExternalFileAccess).toBe(
+      false,
+    );
+    expect(executionContextFor("agent-read-only", {}).allowExternalFileAccess).toBe(false);
+  });
+
+  test("an unknown profile is refused rather than defaulted, an inherited property name included", () => {
+    // A lookup that read `toString` or `constructor` off the table would answer a context with no `readOnly` in it,
+    // which is the editor's writable reach under a profile's name.
+    for (const profile of ["agent-read-write", "toString", "constructor", "__proto__"]) {
+      let error: unknown = null;
+      try {
+        executionContextFor(profile as never);
+      } catch (caught) {
+        error = caught;
+      }
+      expect(error).toBeInstanceOf(ExecutionProfileError);
+      expect((error as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe("UNSUPPORTED_PROFILE");
+    }
+  });
+});
+
 // ─── acquireExecutionProfileProvider — agent read-only profile (#328) ──────
 
 describe("acquireExecutionProfileProvider", () => {
@@ -2572,7 +2638,7 @@ describe("acquireExecutionProfileProvider", () => {
     expect(getExecutionProfileCacheStats().size).toBe(0);
   });
 
-  test("refuses a provider type without a database-native read-only wrapper", async () => {
+  test("refuses a provider type without a read-only statement path", async () => {
     const error: unknown = await acquireExecutionProfileProvider(
       makeConnection("redis", { id: "redis-profile" }),
       "agent-read-only",
@@ -2580,6 +2646,11 @@ describe("acquireExecutionProfileProvider", () => {
 
     expect(error).toBeInstanceOf(ExecutionProfileError);
     expect((error as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe("PROFILE_UNSUPPORTED_BY_PROVIDER");
+    // The rule is the method, not the kind of boundary behind it: Kubernetes and MongoDB are granted the profile with
+    // no database read-only session.
+    expect((error as Error).message).toBe(
+      'Provider type "redis" implements no read-only statement path (queryReadOnly)',
+    );
     expect(getExecutionProfileCacheStats().size).toBe(0);
   });
 
@@ -2646,6 +2717,39 @@ describe("acquireExecutionProfileProvider", () => {
     expect(typeof handover.queryReadOnly).toBe("function");
     expect(handover).not.toBe(agent);
     expect(getExecutionProfileCacheStats().size).toBe(2);
+  });
+
+  test("opens each profile's provider under its own context, and only a statement-sending one is told it sends statements", async () => {
+    // A provider that proves its statement boundary at open (MongoDB) keys that proof on the flag, so the flag
+    // has to arrive in the context the provider is built with: all three profiles carry `readOnly`, so a proof
+    // read off it would refuse the operations profile, which sends no statement. The spy constructs the real
+    // class, so it records the argument and changes nothing else about the open.
+    const postgres = await import("@/lib/db/providers/sql/postgres");
+    const RealProvider = postgres.PostgresProvider;
+    // bun types a spied class as `Mock<never>`, since a class has no call signature, hence the cast.
+    const constructed = spyOn(postgres, "PostgresProvider").mockImplementation(function (
+      ...args: ConstructorParameters<typeof RealProvider>
+    ) {
+      return new RealProvider(...args);
+    } as never);
+    try {
+      const operations = await acquireExecutionProfileProvider(pgConn(), "agent-operations");
+      const readOnly = await acquireExecutionProfileProvider(pgConn(), "agent-read-only");
+      const handover = await acquireExecutionProfileProvider(pgConn(), "agent-handover");
+
+      expect(constructed.mock.calls.map((call) => (call as unknown[])[2])).toEqual([
+        { readOnly: true, sendsStatements: false, allowExternalFileAccess: false },
+        { readOnly: true, sendsStatements: true, allowExternalFileAccess: false },
+        { readOnly: true, sendsStatements: true, allowExternalFileAccess: false },
+      ]);
+      // The profile is framed into the profiled cache key and decides the flag, so a provider opened without the
+      // proof a statement needs is never the one a statement-sending profile is handed.
+      expect(readOnly).not.toBe(operations);
+      expect(handover).not.toBe(operations);
+      expect(getExecutionProfileCacheStats().size).toBe(3);
+    } finally {
+      constructed.mockRestore();
+    }
   });
 
   test("refuses to vend a PostgreSQL profile whose role is too privileged, and caches nothing", async () => {

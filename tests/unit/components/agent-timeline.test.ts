@@ -22,6 +22,7 @@ import {
   DEFAULT_AGENT_WORKFLOW_READING,
   DEFAULT_AGENT_WORKFLOW_SOURCE,
   DEFAULT_AGENT_WORKFLOW_TYPE,
+  type AgentRunFailureReason,
   type AgentRunStatus,
 } from "@/lib/agent/types";
 
@@ -227,6 +228,57 @@ describe("foldLedgerEntries", () => {
     // The whole point of the second reason: the sentence must not send the reader
     // after their engine, which is not what refused the run.
     expect(detail).not.toContain("engine");
+  });
+
+  /*
+    Every reason against the sentence the rail shows for it, total over the reason union, so a reason added to
+    `AgentRunFailureReason` does not compile here until its sentence is pinned. The four profile refusals each name
+    their own repair: a user holding too much, a user lacking a privilege, a server that enforces nothing, and a
+    target the profile is not measured against. One sentence for two of them could only ever give one repair.
+  */
+  const FAILURE_SENTENCE_OF = {
+    "model-unavailable": "The model provider is not configured or could not be reached.",
+    "model-rate-limited": "The model provider is limiting this key's requests. Waiting a minute usually clears it.",
+    "model-unauthorized": "The model provider rejected the configured credentials.",
+    "engine-unsupported": "The agent cannot run on this database engine: it offers no read-only execution profile.",
+    "agent-credential-unusable":
+      "This connection's agent credential cannot be used: check that it is complete (an agent user and password, or where the database takes one, an agent token alone), that the password still decrypts under the current secret key, and that no connection string is set beside it.",
+    "agent-principal-refused":
+      "The database user this run would execute as holds privileges the read-only boundary cannot contain, so the profile refused it. Connect as a user holding only read privileges.",
+    "agent-principal-underprivileged":
+      "The database user this run would execute as lacks a privilege the read-only path needs, so the profile refused it. Grant it that privilege, or connect as a user that holds it.",
+    "server-authorization-off":
+      "This database server does not enforce authorization, so no user's read-only boundary holds there and agent mode cannot run. Turn on the server's authorization (on MongoDB, security.authorization) and connect as a read-only user.",
+    "profile-target-unsupported":
+      "Agent mode runs on this engine, but not against this server or target: a compatible server whose read-only enforcement is not measured, such as FerretDB on the MongoDB wire or Percona on the MySQL wire, or an in-memory database. Plan mode and the operations workflow still work.",
+    "connection-unresolvable": "This run's database connection no longer resolves on the server.",
+    internal: "The server could not carry this run. The reason is in the server log.",
+  } as const satisfies Record<AgentRunFailureReason, string>;
+
+  const failureDetail = (reason: AgentRunFailureReason): string =>
+    foldLedgerEntries([
+      OPENED,
+      event({ kind: "event", event: { kind: "run-finished", atMs: 9, status: "failed", reason } }),
+    ]).items.at(-1)?.detail ?? "";
+
+  test.each(Object.entries(FAILURE_SENTENCE_OF) as [AgentRunFailureReason, string][])(
+    "a run that failed %s says so in its own sentence",
+    (reason, sentence) => {
+      expect(failureDetail(reason)).toBe(sentence);
+    },
+  );
+
+  test("no sentence a MongoDB run can reach names an agent credential or the plan that admits a statement", () => {
+    // A run opens on a seed id and no seed declares an agent credential (B85), so a MongoDB run cannot reach the
+    // credential reason, and every other sentence must give advice it can follow: no credential field and no
+    // SQL Server SHOWPLAN step, neither of which a MongoDB connection has.
+    const reachable = (Object.keys(FAILURE_SENTENCE_OF) as AgentRunFailureReason[]).filter(
+      (reason) => reason !== "agent-credential-unusable",
+    );
+    for (const reason of reachable) {
+      expect(failureDetail(reason), reason).not.toContain("agent credential");
+      expect(failureDetail(reason), reason).not.toContain("plan that admits");
+    }
   });
 
   /*
@@ -2476,6 +2528,72 @@ describe("a resources recommendation folds", () => {
         "Deployment/web, container web: requests cpu 500m, memory 256Mi to cpu 150m, memory 128Mi; limits cpu 1, memory 512Mi to cpu 500m, memory 256Mi",
     });
     expect(view.items[1]?.applySql).toBeUndefined();
+  });
+
+  /*
+    The document-index card (issue #1614): no statement to hand the editor, because the editor's command envelope
+    creates no index. What it quotes is the mongosh helper, which names the index itself: the createIndexes command
+    with no `name` in its index spec is refused by the server (FailedToParse, measured on 9.0.4 and 7.0.43). The names
+    are JSON-quoted and read through getCollection, so a collection named with a dot or a dash pastes as written.
+  */
+  /** A document-index card, with the fields given; a rationale of null is a card that states none, as one may. */
+  const documentIndex = ({
+    rationale = "The plan reads a COLLSCAN on a filtered customer.",
+    ...fields
+  }: {
+    readonly database?: string;
+    readonly options?: Record<string, unknown>;
+    readonly rationale?: string | null;
+  }) =>
+    foldLedgerEntries([
+      OPENED,
+      event({
+        kind: "event",
+        event: {
+          kind: "recommendation",
+          atMs: 6,
+          change: "document-index",
+          collection: "orders",
+          keys: { customer: 1, status: -1 },
+          ...fields,
+          ...(rationale === null ? {} : { rationale }),
+          evidence: [{ source: "artifact", correlationId: "p1" }],
+        },
+      } as AgentLedgerEntry & { kind: "event" }),
+    ]);
+
+  test("a document index is data the user applies in their own tool, never an editor statement", () => {
+    const view = documentIndex({ database: "app" });
+
+    expect(view.items).toHaveLength(2);
+    expect(view.items[1]).toMatchObject({
+      tone: "progress",
+      headline: "Index recommended",
+      detail: "The plan reads a COLLSCAN on a filtered customer. Not applied: nothing here runs this statement.",
+    });
+    expect(view.items[1]?.quoted).toBe(
+      'db.getSiblingDB("app").getCollection("orders").createIndex({"customer":1,"status":-1})',
+    );
+    expect(view.items[1]?.applySql).toBeUndefined();
+  });
+
+  test("a document index's options follow its keys, and the database is named only where the run knew it", () => {
+    expect(documentIndex({ database: "app", options: { unique: true } }).items[1]?.quoted).toBe(
+      'db.getSiblingDB("app").getCollection("orders").createIndex({"customer":1,"status":-1}, {"unique":true})',
+    );
+    expect(documentIndex({}).items[1]?.quoted).toBe(
+      'db.getCollection("orders").createIndex({"customer":1,"status":-1})',
+    );
+    expect(documentIndex({ options: { unique: true } }).items[1]?.quoted).toBe(
+      'db.getCollection("orders").createIndex({"customer":1,"status":-1}, {"unique":true})',
+    );
+  });
+
+  test("a document index stating no rationale reads as the caveat alone, never as an undefined one", () => {
+    // The card's schema leaves the rationale optional, where the statement card's requires one.
+    expect(documentIndex({ database: "app", rationale: null }).items[1]?.detail).toBe(
+      "Not applied: nothing here runs this statement.",
+    );
   });
 
   test("a side with nothing set reads as unset, and a half-set side names the missing half", () => {

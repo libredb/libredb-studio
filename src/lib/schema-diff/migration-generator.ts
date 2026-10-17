@@ -311,6 +311,33 @@ const NO_COLUMN_MODIFICATION: Partial<Record<DatabaseType, { label: string; reas
     reason:
       "An MTConnect data item's shape is declared in the agent's own device model, not in columns a client can change, and every request this provider sends is a GET, so there is no column definition to change.",
   },
+  modbus: {
+    label: "Modbus",
+    reason:
+      "A Modbus register has no column definition anywhere: the device holds 16-bit words and single bits with no name, no type and no unit, and what gives them meaning is the register map the user wrote, so there is nothing a client could change here.",
+  },
+  // Not a table store either (#1724): a node's shape is declared in the device's own YANG module,
+  // which the device serves and a client only reads, and this provider builds four read operations
+  // and a close, so there is no statement in it that could change a definition.
+  netconf: {
+    label: "NETCONF",
+    reason:
+      "A NETCONF node's shape is declared in the device's YANG module, which the device serves and a client reads, and this provider builds four read operations and a close, and nothing else, so there is no column definition here for anything to change.",
+  },
+  snmp: {
+    label: "SNMP",
+    reason:
+      "An SNMP object's type is declared in the MIB module the device was built with, not in columns a client can change, and this provider's valve refuses any PDU that is not a Get, GetNext or GetBulk, so there is no column definition to change.",
+  },
+
+  // Not a table store either (#1720): a metric's shape is declared by the birth certificate the edge
+  // node publishes, and this provider's encoder has no function that writes a PUBLISH, so there is
+  // nothing a client here could change.
+  sparkplug: {
+    label: "Sparkplug B",
+    reason:
+      "A Sparkplug metric's shape is declared in the birth certificate its edge node publishes, not in columns a client can change, and this provider's encoder has no function that writes a PUBLISH, so there is no column definition to change.",
+  },
 };
 
 /**
@@ -401,6 +428,7 @@ const NO_TRANSACTION_WRAPPER: ReadonlySet<DatabaseType> = new Set<DatabaseType>(
   "influxdb3",
   "oxia",
   "databend",
+  "snmp",
   // BigQuery runs a statement as its own job; BEGIN TRANSACTION exists only inside a multi-statement script.
   "bigquery",
   // On Databend's reason: a DDL statement commits the open transaction, and each SQL API statement runs in its own
@@ -418,6 +446,12 @@ const NO_TRANSACTION_WRAPPER: ReadonlySet<DatabaseType> = new Set<DatabaseType>(
   "opcua",
   // No table DDL to wrap either (#1722): an agent's model is the agent's own.
   "mtconnect",
+  // No table DDL to wrap either (#1723): what a register means is the device vendor's, written
+  // down in the user's map rather than in anything a client could migrate.
+  "modbus",
+  "netconf",
+  // No table DDL to wrap either (#1720): a birth certificate is the edge node's own.
+  "sparkplug",
 ]);
 
 // These engines cannot apply a relational table diff through SQL. In particular,
@@ -451,6 +485,14 @@ const NO_TABLE_DDL: ReadonlySet<DatabaseType> = new Set<DatabaseType>([
   "opcua",
   // One container level of devices and no schema, so no table DDL to decline (#1722).
   "mtconnect",
+  // One container level of unit ids and no schema; a register has no definition to alter, and the
+  // provider has no code that could write one (#1723).
+  "modbus",
+  "netconf",
+  "snmp",
+  // One container level of edge nodes and no schema; a metric's shape is the birth certificate's,
+  // and the encoder has no function that writes a PUBLISH (#1720).
+  "sparkplug",
 ]);
 
 // IndexDiff carries column names/uniqueness, not ClickHouse's index expression,

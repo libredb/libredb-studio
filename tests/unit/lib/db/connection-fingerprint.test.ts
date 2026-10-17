@@ -60,7 +60,7 @@ describe("connectionFingerprint", () => {
     expect(await connectionFingerprint(vary({ user: "someone" }))).not.toBe(base);
     // The four an external review of PR #831 asked for. Each one, changed ALONE, sends the same
     // sealed plan somewhere else: `connectionString` overrides the field-by-field form outright
-    // (`postgres.ts:2070-2074`), `schema` is Trino's `X-Trino-Schema` submission header and is what
+    // (`buildPoolConfig` in `postgres.ts`), `schema` is Trino's `X-Trino-Schema` submission header and is what
     // an unqualified name in the applied statement resolves against, `serviceName` is the tail of
     // Oracle's `host:port/service` connect string, and `instanceName` selects a MSSQL named
     // instance the Browser resolves to another process.
@@ -69,7 +69,7 @@ describe("connectionFingerprint", () => {
     expect(await connectionFingerprint(vary({ serviceName: "XEPDB1" }))).not.toBe(base);
     expect(await connectionFingerprint(vary({ instanceName: "SQLEXPRESS" }))).not.toBe(base);
     // The tenth, which the four above were audited without and which a review of THAT audit found
-    // one field away: the bastion is the ROUTE, and `factory.ts:1148-1155` rewrites `host` and `port`
+    // one field away: the bastion is the ROUTE, and `factory.ts:1189-1196` rewrites `host` and `port`
     // to the tunnel's local endpoint before the provider is constructed, so the tunnel and not the
     // record decides which machine the sealed statement reaches.
     expect(await connectionFingerprint(vary({ sshTunnel: BASTION }))).not.toBe(base);
@@ -95,7 +95,7 @@ describe("connectionFingerprint", () => {
     expect(ours).not.toBe(await connectionFingerprint(vary({ sshTunnel: { ...BASTION, port: 2222 } })));
     expect(ours).not.toBe(await connectionFingerprint(vary({ sshTunnel: { ...BASTION, username: "mallory" } })));
     // A DISABLED tunnel is not the same route as an enabled one to the same bastion, because
-    // `factory.ts:1148` branches on exactly that flag and only the enabled arm rewrites the endpoint.
+    // `factory.ts:1189` branches on exactly that flag and only the enabled arm rewrites the endpoint.
     expect(ours).not.toBe(await connectionFingerprint(vary({ sshTunnel: { ...BASTION, enabled: false } })));
     // And the tunnel's SECRETS are out, on the rule the database password already follows: rotating
     // a key changes who may reach the bastion, never which machine it is. `hostKeyFingerprint` is
@@ -168,7 +168,7 @@ describe("connectionFingerprint", () => {
     //
     // It is the population the digest exists for and the one it could not see. Every one of the
     // five original fields is IDENTICAL here, `id` included, so neither an id check nor the
-    // five-field frame separates them, while `postgres.ts:2070-2074` opens the URI and ignores all
+    // five-field frame separates them, while `buildPoolConfig` in `postgres.ts` opens the URI and ignores all
     // five. The plan is sealed against the left-hand server and applied against the right-hand one.
     const ours = await connectionFingerprint(vary({ connectionString: "postgres://libredb@db.internal:5432/app" }));
     const theirs = await connectionFingerprint(vary({ connectionString: "postgres://libredb@evil.example:5432/app" }));
@@ -237,8 +237,8 @@ describe("connectionFingerprint", () => {
       createdAt: BASE.createdAt,
     };
     expect(await connectionFingerprint(bare)).toMatch(/^[0-9a-f]{64}$/);
-    // The other half: a URI-only connection, which is what `postgres.ts:2070-2074`,
-    // `mysql.ts:1948-1951` and `mongodb.ts:794-795` all open when the record carries one. Every
+    // The other half: a URI-only connection, which `buildPoolConfig` in `postgres.ts` and `mysql.ts`
+    // and `buildConnectionString` in `mongodb/index.ts` all open when the record carries one. Every
     // one of the five original fields is absent on it and the URI is the entire address.
     const uriOnly: DatabaseConnection = {
       id: "conn-4",

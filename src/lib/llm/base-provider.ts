@@ -15,9 +15,25 @@ export abstract class BaseLLMProvider implements LLMProvider {
   public readonly name: LLMProviderType;
   public readonly config: LLMConfig;
 
-  protected constructor(config: LLMConfig) {
+  /**
+   * The retry settings every stream of this provider goes through, or none for the defaults.
+   *
+   * A SEAM, the way `KubernetesSeams` is one (`platform/kubernetes/client.ts:37`, whose own
+   * docblock says "a test hands in a recording one"): the backoff is real waiting, and a unit test
+   * that asserts how an error is MAPPED should not spend it. MEASURED on main: the four provider
+   * test files spend 12,2 to 18,3 s each, and ~20 of their cases take 3.004 ms apiece - 1.000 +
+   * 2.000 ms of `sleep`, not work, because `withRetry` retries a retryable failure twice before it
+   * gives up. Those cases ran at 60% of bun's 5.000 ms per-test budget for no measured reason.
+   *
+   * Optional, so a call site that passes nothing keeps the real defaults - which is what
+   * `factory.ts` does at every one of its four, so no shipped behaviour changes.
+   */
+  protected readonly retryOptions: RetryOptions | undefined;
+
+  protected constructor(config: LLMConfig, retryOptions?: RetryOptions) {
     this.name = config.provider;
     this.config = config;
+    this.retryOptions = retryOptions;
   }
 
   /**
@@ -43,6 +59,8 @@ export abstract class BaseLLMProvider implements LLMProvider {
     return withRetry(streamFn, {
       provider: this.name,
       operation: "stream",
+      ...this.retryOptions,
+      // Last, so a per-call setting still wins over the one the provider was built with.
       ...retryOptions,
     });
   }

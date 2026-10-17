@@ -1,0 +1,25 @@
+{
+  "producedBy": "Eclipse Tahu sparkplug-payload 1.0.3 (npm, EPL-2.0)",
+  "integrity": "sha512-JAQSyuHVQQe/LzIlJdcIaD1F1c+rbXoolII3H1whQkhuZ96+G53RoPWqP9zCPZYFjvfSMHnQNIedGIZw/zjHJw==",
+  "producedOn": "Node 24.14.0, 2026-10-15",
+  "regenerateWith": [
+    "mkdir -p /tmp/tahu && cd /tmp/tahu && npm install sparkplug-payload@1.0.3",
+    "node <repo>/tests/fixtures/sparkplug/record-tahu-datatypes.mjs",
+    "the script prints the payload hex; the rest of this file is written by hand around it"
+  ],
+  "topic": "spBv1.0/ReferencePlant/NBIRTH/Tahu1",
+  "payloadHex": "0880d095ffbc31121a0a07496e74384d696e10011880d095ffbc31200150ffffffff0f121b0a08496e7431364d696e10021880d095ffbc312002508080feff0f121b0a08496e7433324e656710031880d095ffbc31200350ffffffff0f12180a0855496e74384d617810041880d095ffbc31200550ff01121c0a0955496e7433324d617810051880d095ffbc31200758ffffffff0f12200a08496e7436344e656710061880d095ffbc31200458fbffffffffffffffff0112210a0955496e7436344d617810071880d095ffbc31200858ffffffffffffffffff01121f0a09446f75626c654f6e6510081880d095ffbc31200a690000000000404540121a0a08466c6f61744f6e6510091880d095ffbc312009650000c03f12170a08426f6f6c54727565100a1880d095ffbc31200b700112210a07546578744f6e65100b1880d095ffbc31200c7a0b4e494748542d53484946541800",
+  "expected": {
+    "Int8Min": "-1",
+    "Int16Min": "-32768",
+    "Int32Neg": "-1",
+    "UInt8Max": "255",
+    "UInt32Max": "4294967295",
+    "Int64Neg": "-5",
+    "UInt64Max": "18446744073709551615",
+    "DoubleOne": "42.5",
+    "FloatOne": "1.5",
+    "BoolTrue": "true",
+    "TextOne": "NIGHT-SHIFT"
+  }
+}

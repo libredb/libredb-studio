@@ -1,0 +1,133 @@
+/**
+ * Constants of the Modbus TCP wire, and the two timers without which a read never ends.
+ *
+ * WHY THE TIMERS ARE HERE AND NOT IN THE UI. Measured on 13 October 2026 under Node 24 and Bun 1,
+ * against a device made to vanish without sending FIN or RST (`iptables -A INPUT -p tcp --dport 502
+ * -j DROP`, interface left in place): with `setTimeout(3000)` the read ended at 3005 ms under Node
+ * and 3029 ms under Bun; with no timer at all nothing happened for 143995 ms and the socket still
+ * read as ESTABLISHED. The request timer is therefore not a quality of implementation detail, it is
+ * the only thing that ends a stalled read, so it is a constant of the provider rather than an
+ * option a caller may omit.
+ */
+
+/**
+ * IANA `mbap`.
+ *
+ * MODBUS/TCP Security listens on `mbap-s`, 802 (SEC section 5), and that number is not a constant
+ * here because nothing is in a position to read it: the provider does not reach a socket yet, so
+ * no code chooses between the two ports. It was written as an exported constant first, then kept
+ * as an unexported one, and both are the same mistake in different clothes - the first is a
+ * published name with no reader, the second an unused local that eslint names. What stands in
+ * production because it is absent, which is the question worth asking, is nothing: a connection
+ * cannot be made at all yet. It arrives as a name in the change that dials, where choosing
+ * between 502 and 802 is a decision some code actually makes.
+ */
+export const MODBUS_DEFAULT_PORT = 502;
+
+/** MBAP header: transaction id, protocol id, length, unit id. TCP 3.1.3. */
+export const MBAP_HEADER_BYTES = 7;
+/**
+ * A PDU is at most 253 bytes and a TCP ADU 260 (MB 4.1), so a valid MBAP Length field is 3 to 254:
+ * one unit id plus one to 253 PDU bytes.
+ */
+export const MBAP_LENGTH_MIN = 3;
+export const MBAP_LENGTH_MAX = 254;
+
+/**
+ * The most bytes ONE identification object can carry, derived rather than written down.
+ *
+ * The MBAP length counts the unit id and the PDU, so the PDU is at most `MBAP_LENGTH_MAX - 1`.
+ * A 43/14 answer spends 1 byte on the function code and 6 on its own header (MEI type, read
+ * code, conformity level, More Follows, Next Object Id, object count), and each object spends 2
+ * more on its id and its length. What is left is this.
+ *
+ * Written as a literal it would be a number that stays still while the frame bound moves, and the
+ * two would disagree without either one looking wrong.
+ */
+/**
+ * How many 43/14 requests one walk may make (MB-S6).
+ *
+ * The fixture forces a three-transaction extended walk (#1723 section 4.10), so three is the most
+ * a conforming device was measured needing; this leaves room for a device with more objects while
+ * still ending a walk that would otherwise not end.
+ */
+export const MAX_IDENTIFICATION_ROUNDS = 8;
+
+export const MAX_IDENTIFICATION_OBJECT_BYTES = MBAP_LENGTH_MAX - 1 - 1 - 6 - 2;
+export const PROTOCOL_ID = 0;
+
+/** The four read function codes MB-S1 allows, and nothing else. */
+export const FC_READ_COILS = 0x01;
+export const FC_READ_DISCRETE_INPUTS = 0x02;
+export const FC_READ_HOLDING_REGISTERS = 0x03;
+export const FC_READ_INPUT_REGISTERS = 0x04;
+/** The fifth allowed request: Encapsulated Interface Transport with MEI type 14. MB 6.19, 6.21. */
+export const FC_ENCAPSULATED_INTERFACE = 0x2b;
+export const MEI_READ_DEVICE_IDENTIFICATION = 0x0e;
+
+/** Quantity limits of MB 6.1 to 6.4. Bits and registers do not share one. */
+export const MAX_BITS_PER_READ = 2000;
+export const MAX_REGISTERS_PER_READ = 125;
+/** The data model gives each table 65536 items (MB 4.3), so address plus quantity may not pass it. */
+export const TABLE_SIZE = 65536;
+
+/** Timers, in milliseconds. Above the 2137 ms an absent unit cost through mbusd at its defaults. */
+export const DIAL_TIMEOUT_MS = 3000;
+export const REQUEST_TIMEOUT_MS = 3000;
+
+/** NumberMaxOfClientTransaction, which TCP 4.4.1.2 requires a client to publish. Ours is one. */
+export const MAX_TRANSACTIONS_IN_FLIGHT = 1;
+
+/** Unit ids. 0 is a broadcast that carries writes only and is never answered (SL 2.1). */
+export const UNIT_ID_MIN = 1;
+export const UNIT_ID_MAX = 255;
+/** 248 to 255 are reserved on a serial line (SL 2.2), accepted here with a warning. */
+export const UNIT_ID_SERIAL_RESERVED_FROM = 248;
+
+/**
+ * The most a register map may carry, in UTF-8 bytes, checked before the document is parsed.
+ *
+ * WHY THERE IS A BOUND AT ALL. The map is a field on the connection, so it travels with every
+ * request a read makes and is stored with the connection record. Before this there was no total
+ * bound anywhere - the parser checked each point and nothing checked how many there were - so a
+ * document of any size reached the parser, the payload and storage without meeting a rule.
+ *
+ * WHY THIS FIGURE. MEASURED against the shapes a point actually has: the provider's own example
+ * map is 79 bytes a point, and a point with every optional field set and a forty-character name is
+ * 248. So this admits about 264 of the widest points or 829 plain ones, where a device's named
+ * points run to tens or low hundreds. It is a bound on what a reader can paste into one
+ * connection, not a statement about the protocol: a device can hold 255 units of four tables of
+ * 65536 addresses, and naming all of them would not be a map.
+ */
+export const MAX_REGISTER_MAP_BYTES = 65536;
+
+/**
+ * The sentences the product has to say out loud, kept here because `index.ts` imports this file and
+ * a sentence nothing imports is a sentence that drifts.
+ *
+ * They were first written in a `provider-surface.ts` that declared the capabilities a second time.
+ * Nothing read that file: the provider declares its own capabilities inline, so the duplicate was a
+ * stand-in whose tests protected nothing, and the two had already diverged on `queryDialect`. The
+ * file is gone and these two sentences are what was worth keeping.
+ */
+export const MODBUS_READ_ONLY_HINT =
+  "Studio cannot write to a Modbus device: it builds four read requests and the identification request, and nothing else. The device enforces nothing of its own, so anything else that reaches its port can write to it. Protection is MODBUS/TCP Security or a network path you control.";
+
+export const MODBUS_NO_REVOCATION_SENTENCE =
+  "Over MODBUS/TCP Security, Studio checks the device's certificate chain and host name but does not check revocation. Measured on 13 October 2026: a stapled OCSP response saying revoked still completes the connection under Node, and under Bun it never reaches the application.";
+
+/**
+ * The result column this provider exempts from the masking rules, and why
+ * (`ProviderCapabilities.maskingExemptColumns`).
+ *
+ * `address` here is the zero-based PDU register the read asked for, not a place. The built-in
+ * Address rule matches a column by NAME, so without this it stars out the one value the request
+ * was about: a reader who asked for register 0 could not see which register answered.
+ *
+ * Anchored, and that is the whole of the care it needs: unanchored, `address` also reaches
+ * `ip_address`, which belongs to a different rule.
+ */
+export const MODBUS_ADDRESS_COLUMN_SOURCE = "^address$";
+
+export const MODBUS_ADDRESS_MASKING_REASON =
+  "The PDU register number this row answered for, not a postal address, so it is shown as it was read.";

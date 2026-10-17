@@ -136,6 +136,15 @@ export const DIALECT_EDITORS: Readonly<Record<QueryTab["type"], DialectEditor>> 
   // this record, and has NO FORMATTER: the console formatter is the HTTP grammar's, which writes a method, a route
   // and a JSON body, and this dialect has no body at all. The SQL and JSON formatters both rewrite a URL line.
   mtconnect: Object.freeze({ monacoId: "mtconnect", console: MTCONNECT_CONSOLE_LANGUAGE }),
+  // One JSON read request, so Monaco's built-in `json` mode and the JSON formatter, as Kafka's.
+  modbus: Object.freeze({ monacoId: "json", format: formatJson }),
+  // language is XML, and a reader never types any, so no XML editor is registered here.
+  netconf: Object.freeze({ monacoId: "json", format: formatJson }),
+  snmp: Object.freeze({ monacoId: "json", format: formatJson }),
+  // A Sparkplug read request is a JSON object, as MQTT's and OPC UA's are, so it renders in `json` and
+  // Format is the JSON formatter. No console language of its own: the request names a group, an edge node and
+  // a window rather than a route, so there is no grammar or route table to register (#1720).
+  sparkplug: Object.freeze({ monacoId: "json", format: formatJson }),
 });
 
 /**

@@ -18,6 +18,7 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { parseAllDocuments } from "yaml";
+import { howItFailed } from "../helpers/spawn-outcome";
 
 const CHART_DIR = join(import.meta.dir, "../../charts/libredb-studio");
 const RELEASE = "release-under-test";
@@ -37,7 +38,7 @@ function template(args: string[]): { exitCode: number; stdout: string; stderr: s
 function configMapData(args: string[]): Record<string, string> {
   const run = template(args);
   if (run.exitCode !== 0) {
-    throw new Error(`helm template failed (exit ${run.exitCode}): ${run.stderr}`);
+    throw new Error(`helm template ${howItFailed(run)}: ${run.stderr}`);
   }
   const docs = parseAllDocuments(run.stdout).map((doc) => doc.toJSON() as RenderedManifest);
   const configMap = docs.find((doc) => doc?.kind === "ConfigMap" && doc.metadata.name.endsWith("-config"));

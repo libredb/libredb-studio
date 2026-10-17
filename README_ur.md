@@ -52,6 +52,7 @@
   <a href="https://aiven.io/docs/products/mysql/howto/connect-libredb-studio">Aiven for MySQL</a>،
   <a href="https://docs.scylladb.com/stable/get-started/gui-clients/libredb-studio.html">ScyllaDB</a>،
   <a href="https://cloudberry.apache.org/docs/ecosystem/sql-clients/libredb-studio/">Apache Cloudberry</a>،
+  <a href="https://doris.apache.org/docs/4.x/connection-integration/data-integration/libredb-studio/">Apache Doris</a>،
   <a href="https://cwiki.apache.org/confluence/display/KAFKA/Ecosystem#:~:text=LibreDB%20Studio">Apache Kafka</a>،
   <a href="https://cassandra.apache.org/_/ecosystem.html">Apache Cassandra</a>
   اور
@@ -60,14 +61,30 @@
 </p>
 
 <p align="center">
-  <img src="public/screenshots/hero-demo.gif" alt="LibreDB Studio" width="100%" />
+  <img src="public/screenshots/hero-demo.gif" width="100%" />
 </p>
 
 <p align="center">
+  <a href="https://github.com/libredb/libredb-studio"><img src="https://img.shields.io/github/stars/libredb/libredb-studio?style=social" alt="GitHub stars"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
   <a href="https://sonarcloud.io/project/overview?id=libredb_libredb-studio"><img src="https://sonarcloud.io/api/project_badges/measure?project=libredb_libredb-studio&metric=alert_status" alt="Quality Gate"></a>
   <a href="https://codecov.io/github/libredb/libredb-studio"><img src="https://codecov.io/github/libredb/libredb-studio/graph/badge.svg?token=VA6CO9R7IH" alt="Coverage"></a>
+  <a href="https://deepwiki.com/libredb/libredb-studio"><img src=".github/assets/deepwiki-badge.svg" alt="Ask DeepWiki"></a>
   <a href="https://artifacthub.io/packages/helm/libredb-studio/libredb-studio"><img src="https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/libredb-studio" alt="Artifact Hub"></a>
+</p>
+
+<p align="center">
+  <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/Next.js-16-black?logo=next.js" alt="Next.js 16"></a>
+  <a href="https://react.dev/"><img src="https://img.shields.io/badge/React-19-61DAFB?logo=react" alt="React 19"></a>
+  <a href="https://hub.docker.com/r/libredb/libredb-studio?tag=latest"><img src="https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker" alt="Docker Support"></a>
+  <a href="https://artifacthub.io/packages/helm/libredb-studio/libredb-studio"><img src="https://img.shields.io/badge/Kubernetes-Compatible-326CE5?logo=kubernetes" alt="Kubernetes Compatible"></a>
+</p>
+
+<p align="center">
+  <a href="#فوری-شروعات"><strong>Quick Start</strong></a> •
+  <a href="README.md#live-test"><strong>Live Demo</strong></a> •
+  <a href="#انسٹالیشن"><strong>Install Options</strong></a> •
+  <a href="README.md#one-click-deploy"><strong>Deploy Your Own</strong></a>
 </p>
 
 > <span dir="rtl">یہ اردو README کمیونٹی کا ترجمہ ہے اور انگریزی نسخے سے پیچھے ہو سکتا ہے۔ فرق کی صورت میں [انگریزی نسخہ](README.md) درست ہے۔</span>
@@ -122,11 +139,11 @@ npx @libredb/studio
 
 ## <span dir="rtl">بنیادی صلاحیتیں</span>
 
-### <span dir="rtl">سینتیس engines، ایک interface</span>
+### <span dir="rtl">اکتالیس engines، ایک interface</span>
 
 </div>
 
-PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · Firestore · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · BigQuery · Databend · Snowflake · Apache Spark · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j · Milvus · Qdrant · InfluxDB (InfluxQL) · InfluxDB 3 (SQL) · Oxia · S3-compatible object storage · Kubernetes · MQTT · RabbitMQ · OPC UA · MTConnect
+PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · Firestore · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · BigQuery · Databend · Snowflake · Apache Spark · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j · Milvus · Qdrant · InfluxDB (InfluxQL) · InfluxDB 3 (SQL) · Oxia · S3-compatible object storage · Kubernetes · MQTT · RabbitMQ · OPC UA · MTConnect · Modbus · NETCONF · SNMP · Sparkplug B
 
 <div dir="rtl" align="right">
 
@@ -172,6 +189,10 @@ PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · Du
 | **RabbitMQ** | <span dir="rtl">کوئی نہیں: مینجمنٹ HTTP API (پورٹ 15672) اور Studio کا اپنا AMQP 0-9-1 ریڈ کلائنٹ (پورٹ 5672)</span> | <span dir="rtl">ساخت کے لحاظ سے صرف پڑھنے کے لیے: ریڈ کلائنٹ publish، پیغام نکالنا یا declare انکوڈ نہیں کر سکتا۔ درخت میں ورچوئل ہوسٹ، اسٹریم، قطاریں اور ایکسچینج؛ JSON ریڈ درخواست اسٹریم کے پیغامات پڑھتی ہے، قطار کے کبھی نہیں</span> |
 | **OPC UA** | <span dir="rtl">`node-opcua-client` (خالص JavaScript، `opc.tcp`، پورٹ 4840)</span> | <span dir="rtl">ساخت ہی سے صرف پڑھنے کے لیے: کلائنٹ کی سیم صرف آٹھ پڑھنے والی سروسز بتاتی ہے (GetEndpoints، CreateSession، ActivateSession، Browse، BrowseNext، Read، HistoryRead اور CloseSession)، اور پرووائیڈر میں Write، Call، HistoryUpdate یا کوئی سبسکرپشن کہیں موجود نہیں۔ کی پینل ایڈریس اسپیس کو ایک ایک سطح، فی سطح ایک Browse سے دیکھتا ہے؛ کلید ایک ایسکیپ کیا ہوا براؤز راستہ ہے، کیونکہ BrowseName میں خود جداکار آ سکتا ہے۔ کوئی نوڈ کھولنے پر اس کی قیمت، حالت، دونوں وقتی نشان اور کھولا گیا AccessLevel نظر آتا ہے، اور کنسول ایک ہی JSON درخواست سے موجودہ قیمتیں یا خام تاریخ پڑھتا ہے۔ ہر حد Studio کی اپنی ہے، سرور کی اعلان کردہ حد نہیں: ماپے گئے چار سرورز میں سے دو اپنی اعلان کردہ حد سے بہت آگے کی درخواستیں بھی پوری کرتے ہیں اور ایک اسے 0 بتاتا ہے۔ میتھڈ نوڈ فہرست میں آتا ہے، کبھی چلایا نہیں جاتا۔ Microsoft OPC PLC 2.15.10، open62541 1.5.9، Python asyncua 2.1.0 اور Eclipse Milo ڈیمو پر جانچا گیا</span> |
 | **MTConnect** | <span dir="rtl">کوئی نہیں: مشترکہ `node:http(s)` ٹرانسپورٹ پر اس ریپازٹری کا اپنا کلائنٹ (پورٹ 5000)</span> | <span dir="rtl">بناوٹ سے ہی صرف پڑھنے کے لیے: ریکویسٹ ٹیبل میں نو روٹ ہیں اور ہر ایک GET ہے، اس لیے بھیجنے کے لیے کوئی PUT، POST یا سٹریم نہیں۔ ڈیوائس ایک کنٹینر ہے، data item اور condition وہ relations ہیں جن کی سطریں value، timestamp اور sequence ہیں، اور ہر asset کی XML ایک Source ٹیب میں کھلتی ہے</span> |
+| **Modbus** | <span dir="rtl">کوئی نہیں: مشترکہ egress اصول سے گزرتے ہوئے raw socket پر اس ریپازٹری کا اپنا کلائنٹ (پورٹ 502، MODBUS/TCP Security کے لیے 802)</span> | <span dir="rtl">ساخت کے اعتبار سے read-only: encoder صرف چار read function code اور device identification بناتا ہے، کوئی function لکھنا نہیں بنا سکتا، اور ایک valve ہر باہر جانے والے byte کو دوبارہ جانچتا ہے۔ Modbus میں discovery نہیں ہے، اس لیے tree اس register map سے بنتا ہے جو connection کے ساتھ رکھا جاتا ہے، اور ایک read اس map کے نامزد کردہ points پر ایک JSON request ہے</span> |
+| **NETCONF** | <span dir="rtl">`ssh2` (صرف SSH ٹرانسپورٹ؛ یہ ریپازٹری ساکٹ کھول کر سونپ دیتی ہے، اور NETCONF کی framing، requests اور session اس کی اپنی ہیں، پورٹ 830)</span> | <span dir="rtl">بناوٹ سے ہی صرف پڑھنے کے لیے: `requests.ts` پانچ request body بناتا ہے اور ان میں چار پڑھنے والے ہیں، `<get-config>`، `<get>`، `<get-data>` اور `<get-schema>`، پانچواں session بند کرتا ہے، اور کوئی function `<edit-config>`، `<copy-config>`، `<commit>` یا `<lock>` نہیں بناتا۔ datastore ایک کنٹینر ہے اور اس کے نیچے YANG module دوسرا، module کا پہلے درجے کا container یا list ایک آبجیکٹ ہے، اور list entry کے key leaf اسی آبجیکٹ کے کالم ہیں</span> |
+| **SNMP** | <span dir="rtl">کوئی نہیں: مشترکہ ایگریس اصول سے ہوتے ہوئے UDP پر اس ریپازٹری کا اپنا کلائنٹ (پورٹ 161)</span> | <span dir="rtl">بناوٹ سے ہی صرف پڑھنے کے لیے: باہر جانے والا والو Get، GetNext یا GetBulk کے علاوہ ہر PDU کو رد کرتا ہے، اس لیے کوئی Set ساکٹ تک پہنچتا ہی نہیں۔ آبجیکٹ گروپ ایک کنٹینر ہے، ذیلی شاخ کا walk ہی پڑھنا ہے، اور ٹیبل GetBulk کے جوابوں سے بنتی ہے</span> |
+| **Sparkplug B** | کوئی نہیں: مشترکہ `node:net` اور `node:tls` ٹرانسپورٹ پر اس ریپازٹری کا اپنا محدود MQTT سیشن (پورٹ 1883، یا SSL / TLS پینل سے 8883) | ساخت کے لحاظ سے صرف پڑھنے کے لیے: اینکوڈر میں PUBLISH لکھنے والا کوئی فنکشن نہیں، اور CONNECT کوئی will نہیں بھیجتا، کیونکہ 5.4 ایج نوڈ کے سرٹیفکیٹِ موت کو اس کا will قرار دیتا ہے اور will مقرر کرنے والا قاری اپنا ساکٹ ٹوٹنے پر موت کا پیغام شائع کر دیتا۔ ایک group اور ایک edge node کنٹینر ہیں، اور ہر metric ایک قطار ہے جس کی قیمت، وقت کی مہر اور تعریف اسے قرار دینے والے سرٹیفکیٹِ پیدائش سے آتی ہے |
 | **Redis** | `ioredis` | <span dir="rtl">command editor، keys explorer، INFO پر مبنی monitoring</span> |
 
 <div dir="rtl" align="right">

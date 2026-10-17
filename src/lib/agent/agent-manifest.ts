@@ -12,11 +12,11 @@
  */
 import type { DatabaseType } from "@/lib/types";
 import type { AgentGoalVerifierId } from "./goal-verifier";
-import type { AgentToolName } from "./tools";
+import type { AgentOperationId, AgentToolName } from "./tools";
 import type { AgentRunMode, AgentRunWorkflowType } from "./types";
 
 /** The statement languages agent mode can send. A later engine reuses one or registers a new id here. */
-export type AgentStatementLanguageId = "sql" | "kubectl";
+export type AgentStatementLanguageId = "sql" | "kubectl" | "mongo";
 
 export const AGENT_STATEMENT_LANGUAGE: Readonly<Record<DatabaseType, AgentStatementLanguageId | null>> = Object.freeze({
   postgres: "sql",
@@ -36,7 +36,7 @@ export const AGENT_STATEMENT_LANGUAGE: Readonly<Record<DatabaseType, AgentStatem
   cassandra: null,
   elasticsearch: null,
   opensearch: null,
-  mongodb: null,
+  mongodb: "mongo",
   couchbase: null,
   redis: null,
   prometheus: null,
@@ -56,8 +56,15 @@ export const AGENT_STATEMENT_LANGUAGE: Readonly<Record<DatabaseType, AgentStatem
   rabbitmq: null,
   opcua: null,
   mtconnect: null,
+  modbus: null,
+  netconf: null,
+  snmp: null,
+  sparkplug: null,
   libredb: null,
 } satisfies Record<DatabaseType, AgentStatementLanguageId | null>);
+
+/** The name of the model argument a language's statement arrives in: one type for every reader of it. */
+export type AgentStatementArgument = "sql" | "statement" | "command";
 
 /**
  * The words a language contributes to the sentences a run reads. The SQL entry is the wording the agent rules have
@@ -69,7 +76,7 @@ export interface AgentLanguageCopy {
   /** What one unit the model sends is called. */
   readonly noun: string;
   /** The name of the model argument that carries it. Persisted event fields keep `sql` whatever this says. */
-  readonly argument: "sql" | "statement";
+  readonly argument: AgentStatementArgument;
   /** What the boundary refuses, as the rules name it. */
   readonly writes: string;
   /** What a refused statement never reaches. */
@@ -99,7 +106,42 @@ export const AGENT_LANGUAGE_COPY: Readonly<Record<AgentStatementLanguageId, Agen
     defect: "your kubectl statement",
     adviceKeys: Object.freeze(["get", "top", "logs", "events"]),
   }),
+  /**
+   * MongoDB's words. The noun is COMMAND because that is what MongoDB calls what the envelope carries, and the
+   * argument is `command` because the model writes it as a JSON object rather than as text. The server turns it into
+   * text once, in the order the model wrote it (the language adapter's `canonicalize` in `statement-languages.ts`),
+   * so the fence, the provider, the ledger and the repair identity read one text, and a sort or an embedded-document
+   * match runs in the order it was written.
+   */
+  mongo: Object.freeze({
+    subject: "a MongoDB database",
+    noun: "command",
+    argument: "command",
+    writes: "writes and pipeline stages that write",
+    reached: "the database",
+    defect: "your MongoDB command",
+    adviceKeys: Object.freeze(["find", "aggregate", "count", "distinct"]),
+  }),
 } satisfies Record<AgentStatementLanguageId, AgentLanguageCopy>);
+
+/**
+ * The operation each language's `inspect_plan` drives, which is the id a run's plan artifacts are recorded under;
+ * null for a language with no plan to read (no kubectl variant offers `inspect_plan`). Kept here, client-safe, so
+ * every reader that asks whether an artifact is a plan reads one record rather than a set of its own, and a
+ * language's plans count wherever plans are counted. `agent-manifest.test.ts` holds each entry to the
+ * `inspect_plan` definition the run is offered.
+ */
+export const AGENT_PLAN_ESTIMATE_OPERATION: Readonly<Record<AgentStatementLanguageId, AgentOperationId | null>> =
+  Object.freeze({
+    sql: "sql.explain.estimate",
+    kubectl: null,
+    mongo: "mongo.plan.estimate",
+  } satisfies Record<AgentStatementLanguageId, AgentOperationId | null>);
+
+/** Every language's plan-estimate operation: the question "is this artifact a plan", asked of any language. */
+export const PLAN_ESTIMATE_OPERATIONS: ReadonlySet<string> = new Set(
+  Object.values(AGENT_PLAN_ESTIMATE_OPERATION).filter((operation): operation is AgentOperationId => operation !== null),
+);
 
 /**
  * What a workflow variant needs of an engine beyond its language, evaluated over the engine TYPE so a client can
@@ -177,7 +219,7 @@ export interface AgentWorkflowVariant {
   readonly verifier: AgentGoalVerifierId;
 }
 
-/** The read-class four every SQL statement workflow starts from. */
+/** The read-class four every SQL statement workflow starts from, and every MongoDB one offers whole. */
 const READ_CLASS_TOOLS: readonly AgentToolName[] = [
   "inspect_schema",
   "run_read_query",
@@ -188,13 +230,14 @@ const READ_CLASS_TOOLS: readonly AgentToolName[] = [
 /**
  * The operations workflow, one variant for every language because it sends no statement at all.
  *
- * Its tools are the ONLY set not built on the read-class four. All three of the read-class tools it leaves out,
- * `inspect_schema`, `run_read_query` and `inspect_plan`, reach the database through `provider.queryReadOnly`, which
- * only the engines `AGENT_EXECUTION_ENGINES` (`engine-support.ts`) names implement. Offering any of them here would
- * reintroduce, tool by tool, the exact engine restriction this workflow exists to escape: the run would open on an
- * engine with no read-only statement path, be offered a tool, call it, and be answered by an acquisition that
- * refuses the engine. `inspect_schema` was checked rather than assumed: it composes a statement and runs it through
- * `provider.queryReadOnly`, so it is left out.
+ * Its tools are not built on the read-class four. All three of the read-class tools it leaves out,
+ * `inspect_schema`, `run_read_query` and `inspect_plan`, reach the database under the `agent-read-only` profile,
+ * which the factory grants only to a provider with `queryReadOnly`, and only the engines `AGENT_EXECUTION_ENGINES`
+ * (`engine-support.ts`) names implement it. Offering any of them here would reintroduce, tool by tool, the exact
+ * engine restriction this workflow exists to escape: the run would open on an engine with no read-only statement
+ * path, be offered a tool, call it, and be answered by an acquisition that refuses the engine. `inspect_schema` was
+ * checked rather than assumed: it is answered under that profile too (a composed catalog statement through
+ * `provider.queryReadOnly` on a SQL engine, the provider's own inventory on MongoDB), so it is left out.
  *
  * `recommend_change` is here and `compare_plans` is not: a comparison names two `inspect_plan` artifacts this run
  * cannot produce, so offering it would be offering a tool that can only ever refuse.
@@ -363,6 +406,92 @@ export const AGENT_WORKFLOW_VARIANTS: Readonly<
       objective:
         "Your objective is a question about this cluster's objects. Establish the answer from what you read and produce something to show for it.",
       planDeliverable: "inherits",
+      canAutoExecute: false,
+      requires: Object.freeze<AgentVariantRequirement[]>([]),
+      verifier: "agent-data-analysis.1",
+    }),
+  }),
+  /**
+   * The MongoDB variants (issue #1614). Every statement workflow is offered the read-class four whole, as the SQL
+   * variants are, because the engine answers each of them: the catalog from the provider's own inventory, the plan
+   * from the `explain` command at `queryPlanner` verbosity, and the read through the command envelope. So no tool
+   * here can only refuse. That differs from kubectl's deliberate narrowing, which exists because a cluster has
+   * neither a catalog nor a plan.
+   *
+   * `requires` is empty by a different argument than kubectl's: there, the requirements gate cluster readings only
+   * that engine family has. Here the language is the gate: the server code chooses each tool's arm by the language,
+   * so an engine holds this variant's tools by holding the language, and a later engine reusing the `mongo` id
+   * holds the same arms.
+   *
+   * No variant here auto-executes; `data-analysis` says why.
+   */
+  mongo: Object.freeze({
+    investigation: Object.freeze({
+      tools: Object.freeze([...READ_CLASS_TOOLS]),
+      narrowedExtras: Object.freeze<AgentToolName[]>([]),
+      classifierDescription: "a question about the database that is answered from what the run establishes",
+      objective: "Your objective is a question about this MongoDB database. Answer it from what you establish.",
+      planDeliverable: "inherits",
+      canAutoExecute: false,
+      requires: Object.freeze<AgentVariantRequirement[]>([]),
+      verifier: "agent-investigation.1",
+    }),
+    /**
+     * The optimization template without `compare_plans`, and that absence is a refusal to overclaim rather than a
+     * gap: a comparison's whole value is the structural access reading (`plan-summary.ts`), which reads only the
+     * plan formats it was verified against and every other one as `unknown` by design, so a mongo comparison would
+     * state that two plans differ in a way nobody has read. `agent-query-optimization.3`'s other arm (an index
+     * recommendation grounded in an inspected plan) is the bar this variant is built to reach. `inspect_plan` here
+     * runs the `explain` command at `queryPlanner` verbosity, which returns the plan and no result rows, although
+     * with several candidate plans the server runs each for a bounded trial: the estimate the SQL engines take from
+     * `EXPLAIN`, in this engine's own word.
+     */
+    "query-optimization": Object.freeze({
+      tools: Object.freeze<AgentToolName[]>([
+        "inspect_schema",
+        "run_read_query",
+        "inspect_plan",
+        "recommend_change",
+        "compose_report",
+      ]),
+      narrowedExtras: Object.freeze<AgentToolName[]>(["recommend_change"]),
+      classifierDescription: "a specific command that is too slow, and how the engine reaches its documents",
+      objective:
+        "Your objective is a command that is too slow. What matters is HOW the engine reaches its documents, and what change would make it reach them differently.",
+      planDeliverable: Object.freeze({ kind: "statement", noun: "the rewritten command" }),
+      canAutoExecute: false,
+      requires: Object.freeze<AgentVariantRequirement[]>([]),
+      verifier: "agent-query-optimization.3",
+    }),
+    /** The assessment template's own tool, on top of the read-class four: the profile counts through aggregation. */
+    "database-assessment": Object.freeze({
+      tools: Object.freeze<AgentToolName[]>([...READ_CLASS_TOOLS, "profile_table"]),
+      narrowedExtras: Object.freeze<AgentToolName[]>(["profile_table"]),
+      classifierDescription: "the state of the data itself: where it is incomplete, inconsistent or surprising",
+      objective:
+        "Your objective is the state of this MongoDB database itself: where its documents are incomplete, inconsistent or surprising.",
+      planDeliverable: Object.freeze({ kind: "statement", noun: "the command that measures the quality concern" }),
+      canAutoExecute: false,
+      requires: Object.freeze<AgentVariantRequirement[]>([]),
+      verifier: "agent-database-assessment.1",
+    }),
+    operations: OPERATIONS_VARIANT,
+    /**
+     * The analysis template, with the auto-execute hand-over not offered, as on a cluster. The gate that would run
+     * the answer in the editor weighs the answer's own plan by a reading of the engine's explain format
+     * (`planRefusal` in `auto-execute.ts`). No `ExplainFormat` names a MongoDB plan and `plan-summary.ts` has no
+     * reading of one, so every ticked run would be declined, and the hand-over's replay of a MongoDB command has never
+     * been verified end to end either. A setting that can only ever be declined is a consent it cannot honour, so the
+     * route refuses it and the rail raises no consent step. What would turn it on is one change, recorded as
+     * `docs/BACKLOG.md` B118: a MongoDB plan reading, its rule in the gate and a verified replay, together.
+     */
+    "data-analysis": Object.freeze({
+      tools: Object.freeze<AgentToolName[]>([...READ_CLASS_TOOLS, "profile_table", "present_answer"]),
+      narrowedExtras: Object.freeze<AgentToolName[]>(["present_answer"]),
+      classifierDescription: "a question about the data whose answer is a result the user wants to see",
+      objective:
+        "Your objective is a question about the data in this MongoDB database. Establish the answer from the data and produce something to show for it.",
+      planDeliverable: Object.freeze({ kind: "statement", noun: "the command that produces the answer" }),
       canAutoExecute: false,
       requires: Object.freeze<AgentVariantRequirement[]>([]),
       verifier: "agent-data-analysis.1",

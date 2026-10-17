@@ -378,7 +378,7 @@ export function assertContainerPathShape(
  * inline row editor (`canEditRows` in `src/components/Studio.tsx`), and folding it in here
  * would answer false for three engines that do take row writes: MongoDB, Couchbase and
  * Cassandra all declare `supportsInlineRowEdit: false` in `getCapabilities()`
- * (`src/lib/db/providers/document/mongodb.ts`,
+ * (`src/lib/db/providers/document/mongodb/index.ts`,
  * `src/lib/db/providers/document/couchbase/index.ts` and `src/lib/db/providers/sql/cassandra/index.ts`),
  * and #789 declares a kind that accepts a row write on
  * each of the three, so a conjunction would silently drop all three out of the import

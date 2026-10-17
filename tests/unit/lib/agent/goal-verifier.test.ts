@@ -428,6 +428,44 @@ describe("a query-optimization run is judged by its own artifact as well as the 
       expect(verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.3", unmet: [] });
     });
 
+    test("a document index citing a MongoDB plan answers on the same arm", () => {
+      // The index arm counts an index in any language: the document-index card is MongoDB's, and its plan is
+      // recorded under `mongo.plan.estimate`, which counts as a plan wherever a plan does.
+      const mongoPlan: AgentRunEvent = {
+        ...planRead,
+        artifact: { ...planRead.artifact, operationId: "mongo.plan.estimate" },
+      } as AgentRunEvent;
+      const documentIndex = (correlationId: string): AgentRunEvent => ({
+        kind: "recommendation",
+        atMs: 28,
+        change: "document-index",
+        collection: "salary",
+        database: "app",
+        keys: { amount: 1 },
+        evidence: [{ source: "artifact", correlationId }],
+      });
+
+      expect(
+        optimization([
+          contextCaptured,
+          mongoPlan,
+          completed(CORRELATION.full, 8),
+          documentIndex(CORRELATION.plan),
+          reportCiting(ARTIFACT(CORRELATION.full)),
+        ]),
+      ).toEqual({ outcome: "answered", verifier: "agent-query-optimization.3", unmet: [] });
+      // And it is held to the plan as the statement card is: citing a read grounds nothing.
+      expect(
+        optimization([
+          contextCaptured,
+          mongoPlan,
+          completed(CORRELATION.full, 8),
+          documentIndex(CORRELATION.full),
+          reportCiting(ARTIFACT(CORRELATION.full)),
+        ]).unmet,
+      ).toEqual(["no-plan-evidence"]);
+    });
+
     test("an index citing a read rather than a plan is not grounded in what the engine does", () => {
       // The plan is on the ledger; this recommendation does not rest on it. Naming
       // the plan is what ties this index to that access path.

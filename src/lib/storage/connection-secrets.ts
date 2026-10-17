@@ -85,6 +85,9 @@ export const CONNECTION_FIELDS: Record<keyof DatabaseConnection, FieldClass> = {
   // A thumbprint is the PUBLIC fingerprint of a public certificate: it identifies a server, it does not
   // authenticate anyone, and hiding it would stop an operator reading back what they pinned.
   serverCertificateThumbprint: "public",
+  // Public key material, exactly as the tunnel's own fingerprint is: it names a key, it is not one,
+  // and a reader has to be able to see it to compare it with what the device prints.
+  hostKeyFingerprint: "public",
   // A policy URI is published by the server, and the other two are PATHS and not keys: the private
   // key stays in the file the path names and never enters a connection record, which is the reason
   // this provider takes a path at all.
@@ -100,6 +103,10 @@ export const CONNECTION_FIELDS: Record<keyof DatabaseConnection, FieldClass> = {
   // leak has to guess from two values to one. See the field's own doc in types.ts.
   apiKeyId: "secret",
   apiKeySecret: "secret",
+  // Addresses on a device the user wrote down, not a credential: Modbus TCP defines no authentication at
+  // all, so there is nothing here to leak. Storing it `secret` would also mask it in the dialog, and a
+  // document nobody can read is a document nobody can correct.
+  registerMap: "public",
 };
 
 export const SSL_FIELDS: Record<keyof SSLConfig, FieldClass> = {

@@ -18,6 +18,8 @@ import { assertPersistableState } from "@/lib/agent/state-guard";
 import type { AgentToolContext } from "@/lib/agent/tools";
 import type { AgentContextSnapshot, AgentRunEvent } from "@/lib/agent/types";
 import { UNTRUSTED_CONTENT_BEGIN, UNTRUSTED_CONTENT_END } from "@/lib/agent/untrusted-content";
+import { getDBConfig } from "@/lib/db-ui-config";
+import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { ConnectionError, ExecutionProfileError, QueryError } from "@/lib/db/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { measureResultBytes } from "@/lib/db/providers/sql/read-only-budget";
@@ -773,6 +775,8 @@ describe("captureContextSnapshot — when no honest inventory can be built", () 
     if (capture.kind !== "unavailable") throw new Error("unreachable");
     expect(capture.reasonCode).toBe("CATALOG_READ_REFUSED");
     expect(capture.modelText).toContain("inspect_schema");
+    // The profile opened and the read itself was refused, so there is no profile refusal for a drive to act on.
+    expect(capture).not.toHaveProperty("profileRefusal");
   });
 
   test("a partial inventory is never presented as whole: one failed read loses the snapshot", async () => {
@@ -884,9 +888,11 @@ describe("captureContextSnapshot — an environment failure on the composed path
     expect(capture.detail).toContain("could not reach this postgres database to ask it for its schema");
     // The driver's own message stays out of the note a run reads as the server's voice.
     expect(capture.detail).not.toContain("ECONNREFUSED");
+    // An unreachable database is not the profile refusing anything, so no refusal travels for a drive to act on.
+    expect(capture).not.toHaveProperty("profileRefusal");
   });
 
-  test("a credential the profile layer will not grant loses the grounding, not the run", async () => {
+  test("a credential the profile layer will not grant becomes an unavailable capture carrying the refusal, never a throw", async () => {
     const h = harness("sqlite");
 
     const capture = await captureContextSnapshot({
@@ -902,6 +908,8 @@ describe("captureContextSnapshot — an environment failure on the composed path
     expect(capture.kind).toBe("unavailable");
     if (capture.kind !== "unavailable") throw new Error("unreachable");
     expect(capture.reasonCode).toBe("CATALOG_READ_REFUSED");
+    // A credential code travels like the privilege codes: what the run does next is the drive's call.
+    expect(capture.profileRefusal?.reasonCode).toBe("AGENT_CREDENTIAL_UNRESOLVABLE");
     expect(capture.detail).toContain("under the execution profile a grounding read takes");
     expect(capture.detail).not.toContain("could not be decrypted");
     // The generic sentence names no cause, so what the operator gets is that sentence AND
@@ -936,13 +944,132 @@ describe("captureContextSnapshot — an environment failure on the composed path
     if (capture.kind !== "unavailable") throw new Error("unreachable");
     expect(capture.reasonCode).toBe("CATALOG_READ_REFUSED");
     expect(capture.detail).toContain("under the execution profile a grounding read takes");
-    expect(capture.detail).toContain("Point the connection's agent credential at a least-privilege principal");
+    expect(capture.detail).toContain("Connect as a least-privilege user");
+    // No run can carry an agent credential (B85: runs open on seed ids, and a seed declares none), so advice naming
+    // one sends the operator to a field the run never reads.
+    expect(capture.detail).not.toContain("agent credential");
     // The generic sentence alone is not what a caller gets, and the advice is not the
     // credential code's: a shared sentence would make both assertions above vacuous.
     expect(capture.detail).not.toMatch(/so its schema was not read for this run\.$/);
     expect(capture.detail).not.toContain("both a user and a password are required");
     // The error's own message stays out of the note a run reads as the server's voice.
     expect(capture.detail).not.toContain("the session principal holds");
+  });
+
+  test("the profile's own refusal travels on the capture beside the entry it always wrote", async () => {
+    // The capture only reports it: plan mode and the operations workflow continue ungrounded on it (B48), and a
+    // run that sends statements is the drive's to end, which needs the code to record and the error to rethrow.
+    const h = harness("postgres");
+    const refusal = new ExecutionProfileError(
+      "the session principal holds privileges no read-only boundary can contain",
+      "PROFILE_PRIVILEGES_TOO_BROAD",
+    );
+
+    const capture = await captureContextSnapshot({
+      ...h.context,
+      acquireProvider: async () => {
+        throw refusal;
+      },
+    });
+
+    if (capture.kind !== "unavailable") throw new Error("unreachable");
+    // The entry a ledger reader already knows is unchanged.
+    expect(capture.reasonCode).toBe("CATALOG_READ_REFUSED");
+    expect(capture.profileRefusal?.reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+    // The thrown error itself, so a drive that rethrows it is classified on its own type and code.
+    expect(capture.profileRefusal?.error).toBe(refusal);
+  });
+
+  test("a server that does not enforce authorization is told to turn it on, since changing its user alone cannot help", async () => {
+    // Keyed by the deny code, so driven on the composed path like the test above. On such a server no user is held
+    // read-only, so the advice for a user holding too much, or too little, could not help.
+    const h = harness("postgres");
+
+    const capture = await captureContextSnapshot({
+      ...h.context,
+      acquireProvider: async () => {
+        throw new ExecutionProfileError(
+          "the server accepted a write it should have refused",
+          "PROFILE_SERVER_UNENFORCED",
+        );
+      },
+    });
+
+    if (capture.kind !== "unavailable") throw new Error("unreachable");
+    expect(capture.reasonCode).toBe("CATALOG_READ_REFUSED");
+    expect(capture.profileRefusal?.reasonCode).toBe("PROFILE_SERVER_UNENFORCED");
+    expect(capture.detail).toContain("Turn on the server's authorization");
+    expect(capture.detail).toContain("changing the connection's user alone cannot help");
+    expect(capture.detail).not.toContain("holds privileges no read-only boundary can contain");
+    expect(capture.detail).not.toContain("the server accepted a write it should have refused");
+  });
+
+  test("a target the profile cannot be granted against is described by what it is, naming no engine", async () => {
+    // One code for an in-memory SQLite or DuckDB database, a server on the MySQL wire that is neither MySQL nor
+    // MariaDB, and a server on the MongoDB wire that is not MongoDB: advice naming one of them is false of the rest.
+    const h = harness("postgres");
+
+    const capture = await captureContextSnapshot({
+      ...h.context,
+      acquireProvider: async () => {
+        throw new ExecutionProfileError(
+          "this server identifies itself as another engine",
+          "PROFILE_UNSUPPORTED_TARGET",
+        );
+      },
+    });
+
+    if (capture.kind !== "unavailable") throw new Error("unreachable");
+    const advice = capture.detail.split("so its schema was not read for this run. ")[1] ?? "";
+    expect(advice).toContain("wire protocol");
+    expect(advice).toContain("in-memory database");
+    // Not "opens empty": bun:sqlite refuses to open an anonymous database read-only at all (measured), so the claim
+    // was false for one of the two engines that raise this code for an in-memory target.
+    expect(advice).not.toContain("opens empty");
+    const engines = [
+      ...EXTERNAL_DATABASE_TYPES.map((type) => getDBConfig(type).label),
+      "MariaDB",
+      "Percona",
+      "FerretDB",
+      "DocumentDB",
+      "Cosmos DB",
+    ];
+    expect(engines.filter((engine) => advice.includes(engine))).toEqual([]);
+  });
+
+  test("a provider with no read-only statement path is told so, naming no kind of boundary", async () => {
+    // The factory grants the profile to any provider that implements `queryReadOnly`, whatever bounds it: a database
+    // read-only session on the SQL engines, a request allowlist on Kubernetes, a server-proven principal on MongoDB.
+    const h = harness("postgres");
+
+    const capture = await captureContextSnapshot({
+      ...h.context,
+      acquireProvider: async () => {
+        throw new ExecutionProfileError("no read-only statement path", "PROFILE_UNSUPPORTED_BY_PROVIDER");
+      },
+    });
+
+    if (capture.kind !== "unavailable") throw new Error("unreachable");
+    expect(capture.detail.split("so its schema was not read for this run. ")[1]).toBe(
+      "This engine's provider implements no read-only statement path, so the profile cannot be granted on it at all.",
+    );
+  });
+
+  test("a principal that lacks a privilege is told to grant it, or to connect as a user at all", async () => {
+    // The same code is raised for a connection that authenticated no user, whose repair is a user and not a grant.
+    const h = harness("postgres");
+
+    const capture = await captureContextSnapshot({
+      ...h.context,
+      acquireProvider: async () => {
+        throw new ExecutionProfileError("the principal cannot ask for a plan", "PROFILE_PRIVILEGES_TOO_NARROW");
+      },
+    });
+
+    if (capture.kind !== "unavailable") throw new Error("unreachable");
+    expect(capture.detail).toContain("Grant that user the missing privilege named in the server log");
+    expect(capture.detail).toContain("authenticated no user");
+    expect(capture.detail).toContain("connect as a user that holds it");
   });
 
   test("anything that is not one of those two is this server's own bug, and propagates", async () => {
@@ -1121,8 +1248,8 @@ describe("captureContextSnapshot — the provider's own inventory", () => {
       describeObjects,
     } as unknown as DatabaseProvider;
     // The profile is recorded here rather than read off the spy's call list, because
-    // it is the ARGUMENT that is under test: acquiring `agent-read-only` would throw
-    // PROFILE_UNSUPPORTED_BY_PROVIDER on every engine this path exists to reach.
+    // it is the ARGUMENT that is under test: what the run is decides it
+    // (`groundsUnderExecutionProfile` in `src/lib/agent/tools.ts`), not the engine.
     const profiles: unknown[] = [];
     const acquireProvider = mock(async (_connection: DatabaseConnection, profile: unknown) => {
       if (options.acquireThrows) throw options.acquireThrows;
@@ -1198,10 +1325,12 @@ describe("captureContextSnapshot — the provider's own inventory", () => {
     }
   });
 
-  test("the profile acquired is the operations one, which is the only one these engines serve", async () => {
-    // Not a style preference: `agent-read-only` requires `queryReadOnly`, which none
-    // of these engines implements, so acquiring it would throw
-    // PROFILE_UNSUPPORTED_BY_PROVIDER before the provider was ever reached.
+  test("the profile acquired is the operations one, for a run whose context names no statement language", async () => {
+    // A capture on this path takes `agent-read-only` only for an agent run of a
+    // statement-sending workflow on an engine whose statement language is its own, kubectl
+    // or mongo (`groundsUnderExecutionProfile`). This context names none, as for a SQL engine
+    // or one whose provider has no read-only statement path, so the capture takes the
+    // operations profile, which every provider serves.
     const h = providerHarness();
 
     await captureContextSnapshot(h.context);
@@ -1293,8 +1422,8 @@ describe("captureContextSnapshot — the provider's own inventory", () => {
   });
 
   /*
-    A failure raised BEFORE the reading left is the environment's, and it loses the
-    grounding rather than the run.
+    A failure raised BEFORE the reading left is the environment's, and the capture reports
+    it rather than throwing it, so a plan run loses its grounding and not the run.
 
     Plan mode's promise is that it opens and answers on every connection, and on these
     twelve type-ids it did — because it reached no database at all. Letting an unreachable
@@ -1316,9 +1445,25 @@ describe("captureContextSnapshot — the provider's own inventory", () => {
     // The driver's own message stays out of it: this sentence is the server's voice in
     // the note a plan run reads, and nothing fenced it.
     expect(capture.detail).not.toContain("ECONNREFUSED");
+    expect(capture).not.toHaveProperty("profileRefusal");
   });
 
-  test("a credential the profile layer will not grant loses the grounding, not the run", async () => {
+  test("the profile's own refusal travels on this path's capture too, the error itself included", async () => {
+    const refusal = new ExecutionProfileError(
+      "the server accepted a write it should have refused",
+      "PROFILE_SERVER_UNENFORCED",
+    );
+    const h = providerHarness({ acquireThrows: refusal });
+
+    const capture = await captureContextSnapshot(h.context);
+
+    if (capture.kind !== "unavailable") throw new Error("unreachable");
+    expect(capture.reasonCode).toBe("CATALOG_READ_REFUSED");
+    expect(capture.profileRefusal?.reasonCode).toBe("PROFILE_SERVER_UNENFORCED");
+    expect(capture.profileRefusal?.error).toBe(refusal);
+  });
+
+  test("a credential the profile layer will not grant becomes an unavailable capture carrying the refusal, never a throw", async () => {
     const h = providerHarness({
       acquireThrows: new ExecutionProfileError(
         "agent credential for this connection could not be decrypted",
@@ -1331,6 +1476,7 @@ describe("captureContextSnapshot — the provider's own inventory", () => {
     expect(capture.kind).toBe("unavailable");
     if (capture.kind !== "unavailable") throw new Error("unreachable");
     expect(capture.reasonCode).toBe("CATALOG_READ_REFUSED");
+    expect(capture.profileRefusal?.reasonCode).toBe("AGENT_CREDENTIAL_UNRESOLVABLE");
     expect(capture.detail).toContain("under the execution profile a grounding read takes");
     expect(capture.detail).not.toContain("could not be decrypted");
     // Same refusal, same advice, on the other of the two paths that catch this error.

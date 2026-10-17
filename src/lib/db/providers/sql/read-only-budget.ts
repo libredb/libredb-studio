@@ -15,8 +15,11 @@ import type { DatabaseType, ReadOnlyStatementBudget } from "../../types";
 import { QueryError } from "../../errors";
 
 /** PostgreSQL's statement_timeout is a 32-bit millisecond setting; the same
- * ceiling is applied everywhere — a timeout beyond ~24 days is not a budget. */
-const MAX_STATEMENT_TIMEOUT_MS = 2_147_483_647;
+ * ceiling is applied everywhere: a timeout beyond ~24 days is not a budget.
+ * It is also the largest delay `setTimeout` accepts (a larger one fires after
+ * 1 ms) and the largest `maxTimeMS` MongoDB takes, so a provider that arms its
+ * own timer past the budget clamps it here. */
+export const MAX_STATEMENT_TIMEOUT_MS = 2_147_483_647;
 
 export function assertReadOnlyBudget(budget: ReadOnlyStatementBudget, provider: DatabaseType): void {
   const fields: Array<[name: string, value: unknown, max: number]> = [

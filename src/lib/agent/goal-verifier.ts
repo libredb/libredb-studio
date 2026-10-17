@@ -41,7 +41,7 @@
  * claims RESTED on, which is a fact about the run.
  */
 
-import { requiredVariant } from "./agent-manifest";
+import { PLAN_ESTIMATE_OPERATIONS, requiredVariant } from "./agent-manifest";
 import { readPlanStatement } from "./plan-draft";
 import type {
   AgentEvidenceReference,
@@ -413,23 +413,29 @@ function verifyInvestigationGoal(
 type GoalRule = (run: VerifiableAgentRun) => readonly AgentGoalShortfall[];
 
 /**
- * Workflow type → the rule an agent run of it is judged by. Kept in step with
- * `AGENT_WORKFLOW_VERIFIERS` by construction: a rule and the id that names it are
- * two halves of one decision, and the half that drifted would be the one a reader
- * could not interpret.
+ * Every plan THIS run read from the engine, by the id a citation would name: an artifact recorded under any
+ * language's plan-estimate operation (`PLAN_ESTIMATE_OPERATIONS`), so a language's plans count here by being
+ * registered there.
  */
-/** The operation an inspected plan is read under. */
-const PLAN_OPERATION = "sql.explain.estimate";
-
-/** Every plan THIS run read from the engine, by the id a citation would name. */
 function planArtifacts(events: readonly AgentRunEvent[]): ReadonlySet<string> {
   const ids = new Set<string>();
   for (const event of events) {
-    if (event.kind === "tool-completed" && event.artifact.operationId === PLAN_OPERATION) {
+    if (event.kind === "tool-completed" && PLAN_ESTIMATE_OPERATIONS.has(event.artifact.operationId)) {
       ids.add(event.artifact.correlationId);
     }
   }
   return ids;
+}
+
+/**
+ * Whether an event recommends an INDEX, in any language: a statement's `CREATE INDEX` card or a document-index card.
+ * The index arm of `agent-query-optimization.3` accepts either, and the drive's compare-before-report hold reads it
+ * the same way, so the two cannot come to disagree about what an index recommendation is.
+ */
+export function recommendsIndex(
+  event: AgentRunEvent,
+): event is Extract<AgentRunEvent, { kind: "recommendation"; change: "index" | "document-index" }> {
+  return event.kind === "recommendation" && (event.change === "index" || event.change === "document-index");
 }
 
 /**
@@ -478,9 +484,7 @@ function verifyQueryOptimizationGoal(run: VerifiableAgentRun): readonly AgentGoa
   if (baseline.length > 0) return baseline;
   if (run.events.some((event) => event.kind === "plan-comparison")) return [];
 
-  const indexes = run.events.flatMap((event) =>
-    event.kind === "recommendation" && event.change === "index" ? [event] : [],
-  );
+  const indexes = run.events.filter(recommendsIndex);
   if (indexes.length === 0) return ["no-plan-comparison"];
 
   const grounded = indexes.some((event) =>

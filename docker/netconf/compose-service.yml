@@ -1,0 +1,58 @@
+# The service block for database-compose.yml, kept here until it is merged.
+#
+# It is NOT merged yet on purpose: database-compose.yml is one of the files every new provider
+# edits, so the merge happens as the last step of the provider PR rather than here, where it would
+# collide with every other provider in flight.
+#
+# The port is a spec decision, not a measurement: 1830 is 830 moved above the privileged range,
+# bound to loopback the way the other fixtures are.
+#
+# TO RUN IT FROM HERE, before it is merged, the project directory has to be the repository root:
+#
+#   docker compose -f docker/netconf/compose-service.yml --project-directory . --profile netconf up -d netconf
+#
+# The `build.context` is written as `./docker/netconf` because that is what it will be once this
+# block sits in `database-compose.yml`; with `-f` alone compose resolves it against THIS file's
+# directory and fails on a path that does not exist. That is part of why the healthcheck below had
+# never run: the device it was written for was started by hand with `docker run`, which carries no
+# healthcheck at all.
+services:
+  netconf:
+    build: { context: ./docker/netconf }
+    image: libredb-fixture/netconf:2.8.7
+    pull_policy: build
+    container_name: libredb-netconf
+    profiles: ["netconf"]
+    environment:
+      # The size the provider's read sizes were measured at. A focused test can lower it.
+      LIBREDB_NETCONF_INTERFACES: "5000"
+      # The fixture's three throwaway credentials, which `setup.sh` refuses to invent: it holds
+      # none of them, so that no commit adding it can carry one past a secret scanner. They are
+      # written here, in the orchestration, where a reader looking for what the fixture accepts
+      # finds them next to the port it listens on.
+      LIBREDB_NETCONF_RO_PASSWORD: "fixture-password"
+      LIBREDB_NETCONF_ROOT_PASSWORD: "fixture-root"
+      LIBREDB_NETCONF_KEY_PASSPHRASE: "fixture-passphrase"
+    ports:
+      - "127.0.0.1:1830:830"
+    healthcheck:
+      # TWO FACTS, and the marker alone was only one of them.
+      #
+      # `.ready` says the accounts, the NACM rule-list and the interface list are all in the
+      # datastore, so the fixture is not reported healthy while it is still half configured. But
+      # `setup.sh` writes it BEFORE `exec netopeer2-server`, so on its own it can be true while
+      # nothing is answering yet: MEASURED on a fresh container, the marker and the SSH banner
+      # landed in the same 100 ms here, which is close enough to mislead and not the same fact.
+      #
+      # So the banner is asked for too, from inside the container where 127.0.0.1 is the server
+      # itself. It is deliberately NOT a TCP connect: MEASURED, a published container port is
+      # accepted by Docker 327 ms before the server behind it says anything, so "the port is
+      # open" is not a readiness fact at all. The banner's own text is matched rather than
+      # ssh-keyscan's exit code, because an empty answer and a refused one must not look alike.
+      test:
+        - CMD-SHELL
+        - test -f /fixture/.ready && ssh-keyscan -T 3 -p 830 127.0.0.1 2>/dev/null | grep -q SSH-2.0
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 10s

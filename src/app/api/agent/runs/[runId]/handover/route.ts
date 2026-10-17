@@ -106,7 +106,7 @@ export async function POST(req: Request, context?: HandoverParams) {
     );
     if (typeof provider.queryReadOnly !== "function") {
       // Never a fallback to `query()`. `acquireExecutionProfileProvider` already
-      // refuses a provider without the database-native path under this profile, so
+      // refuses a provider without a read-only statement path under this profile, so
       // reaching here is a server fault — and the one thing it must not do is put the
       // statement on the writable path this route exists to leave.
       throw new Error("agent hand-over: the acquired provider exposes no read-only execution path");

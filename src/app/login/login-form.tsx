@@ -217,8 +217,15 @@ export default function LoginForm({ authProvider, passkey }: LoginFormProps) {
           The thirtieth entry (Kubernetes) wrapped it into a fifth row at 1366x768 and scrolled the
           page to 781px, with the column gap already at its 6px floor (database-showcase.tsx), so
           another 16px comes from the padding (40 to 32).
+          The forty-second entry (Sparkplug B, #1720) wrapped it into a SEVENTH row at 1280x800 and
+          scrolled that size to 802px of its 800. The row gap is at 2px and the column gap at its
+          6px floor, so the padding pays again, 32 to 24. Swept in a container at the four sizes,
+          with only the one lever moved each time: the row gap at 1px leaves 4px of 800 and at 0px
+          10px, the padding at 28px leaves 6px, and at 24px it leaves 14 - which is the slack the
+          page had at forty-one entries (784 of 800), so the entry after this one is what spends it.
+          The full table is in database-showcase.tsx, beside the gaps it compares against.
         */}
-        <div className="relative z-10 flex flex-col px-12 py-8 w-full overflow-y-auto">
+        <div className="relative z-10 flex flex-col px-12 py-6 w-full overflow-y-auto">
           {/* Top: Logo */}
           <a
             href="https://libredb.org"

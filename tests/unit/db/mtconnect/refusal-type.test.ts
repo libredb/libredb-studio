@@ -3,11 +3,11 @@
  *
  * WHY THE TYPE AND NOT THE MESSAGE. MEASURED on `origin/main`:
  * `providers/platform/kubernetes/objects.ts:348` turns a `QueryError` or a `TimeoutError` into
- * `{ unavailable: error.message }` and re-throws everything else, and `errors.ts:244` defines
- * `isQueryError` as `instanceof QueryError`. A refusal thrown as a plain `Error` is therefore
- * handled as an unexpected failure, and the sentence it carries never reaches the reader. The
- * message can be reworded; the type cannot change without breaking that handling, so these
- * assertions name the type.
+ * `{ unavailable: error.message }` and re-throws everything else, and `src/lib/db/errors.ts`
+ * defines `isQueryError` as `instanceof QueryError`. A refusal thrown as a plain `Error` is
+ * therefore handled as an unexpected failure, and the sentence it carries never reaches the
+ * reader. The message can be reworded; the type cannot change without breaking that handling,
+ * so these assertions name the type.
  *
  * This provider HAD that defect in its first version: `MtcRefusal` and `MtcClientError` both derive
  * from `Error`, and only the `query()` path converted one of them. Every byte cap, every 8 KiB

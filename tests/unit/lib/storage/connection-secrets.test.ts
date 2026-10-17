@@ -165,12 +165,17 @@ describe("the classification is exhaustive by construction", () => {
         // certificate: it identifies a server and authenticates nobody (#1677).
         "securityMode",
         "serverCertificateThumbprint",
+        "hostKeyFingerprint",
         // OPC UA's three deployment fields, seed-file only. A policy URI is published by the server,
         // and the other two are PATHS: the private key stays in the file the path names, which is
         // the reason this provider takes a path rather than a key.
         "securityPolicyUri",
         "clientCertificatePath",
         "clientPrivateKeyPath",
+        // Modbus's register map: addresses on a device the user wrote down. Modbus TCP defines no
+        // authentication at all, so there is nothing here to leak, and masking a document would
+        // stop the person who wrote it from fixing it.
+        "registerMap",
       ].sort(),
     );
   });

@@ -579,8 +579,8 @@ describe("the CI step", () => {
   const step = smoke.steps.find((s) => s.name === "RabbitMQ read-only check");
   const run = step?.run ?? "";
 
-  test("the job keeps its id and names both engines, so a red oracle never shows under a PostgreSQL label", () => {
-    expect(smoke.name).toBe("Functional Smoke (PostgreSQL, RabbitMQ)");
+  test("the job keeps its id and names every engine it checks, so a red oracle never shows under another's label", () => {
+    expect(smoke.name).toBe("Functional Smoke (PostgreSQL, MongoDB, RabbitMQ)");
   });
 
   test("the step runs after the functional smoke, with no condition, so it cannot hide that result", () => {

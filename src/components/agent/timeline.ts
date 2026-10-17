@@ -499,9 +499,21 @@ const FAILURE_SENTENCES = {
     "This connection's agent credential cannot be used: check that it is complete (an agent user and password, or where the database takes one, an agent token alone), that the password still decrypts under the current secret key, and that no connection string is set beside it.",
   // Names the database user, because the engine is supported and the credential was
   // applied: the profile refused the principal it opened as. Folded into the engine
-  // sentence, an operator connected as `sa` was told to change engines.
+  // sentence, an operator connected as `sa` was told to change engines. The repair is
+  // the connection's own user, since no run can carry an agent credential (B85).
   "agent-principal-refused":
-    "The database user this run would execute as was refused by the read-only execution profile, not by the engine: it holds privileges the boundary cannot contain, or it cannot ask for the plan that admits a statement. Point the connection's agent credential at a least-privilege user.",
+    "The database user this run would execute as holds privileges the read-only boundary cannot contain, so the profile refused it. Connect as a user holding only read privileges.",
+  // The opposite repair to the sentence above: one more privilege, never a narrower user.
+  "agent-principal-underprivileged":
+    "The database user this run would execute as lacks a privilege the read-only path needs, so the profile refused it. Grant it that privilege, or connect as a user that holds it.",
+  // Neither user repair helps on a server that holds no user read-only, so this names the
+  // server setting; engine-neutral, with MongoDB's spelling of it in parentheses.
+  "server-authorization-off":
+    "This database server does not enforce authorization, so no user's read-only boundary holds there and agent mode cannot run. Turn on the server's authorization (on MongoDB, security.authorization) and connect as a read-only user.",
+  // One code for several targets on several engines, so it names examples of each kind
+  // and claims nothing about the engine itself, which does run agent mode.
+  "profile-target-unsupported":
+    "Agent mode runs on this engine, but not against this server or target: a compatible server whose read-only enforcement is not measured, such as FerretDB on the MongoDB wire or Percona on the MySQL wire, or an in-memory database. Plan mode and the operations workflow still work.",
   "connection-unresolvable": "This run's database connection no longer resolves on the server.",
   internal: "The server could not carry this run. The reason is in the server log.",
 } as const satisfies Record<AgentRunFailureReason, string>;
@@ -528,6 +540,65 @@ const NOT_APPLIED_CAVEAT = "Not applied: nothing here runs this statement.";
 function describeResourceSide(quantities: AgentResourceQuantities): string {
   if (quantities.cpu === undefined && quantities.memory === undefined) return "unset";
   return `cpu ${quantities.cpu ?? "unset"}, memory ${quantities.memory ?? "unset"}`;
+}
+
+/**
+ * A document index as the mongosh helper that creates it, which is what the card offers to the clipboard.
+ *
+ * The helper rather than the createIndexes command because the helper names the index itself: the command with no
+ * `name` in its index spec is refused by the server (FailedToParse, measured on 9.0.4 and 7.0.43), and nothing obliges
+ * a run to name one. Every name is JSON-quoted and read through getCollection, so a collection named with a dot or a
+ * dash pastes as written, and the database is named only where the run knew which one it read.
+ */
+function documentIndexText(
+  event: Extract<AgentRunEvent, { kind: "recommendation"; change: "document-index" }>,
+): string {
+  const collection = `getCollection(${JSON.stringify(event.collection)})`;
+  const reach =
+    event.database === undefined
+      ? `db.${collection}`
+      : `db.getSiblingDB(${JSON.stringify(event.database)}).${collection}`;
+  const options = event.options === undefined ? "" : `, ${JSON.stringify(event.options)}`;
+  return `${reach}.createIndex(${JSON.stringify(event.keys)}${options})`;
+}
+
+/** A recommendation's entry, told apart by its `change`: each card offers the user something different. */
+function describeRecommendation(
+  event: Extract<AgentRunEvent, { kind: "recommendation" }>,
+): Omit<AgentTimelineItem, "id" | "atMs"> {
+  switch (event.change) {
+    // A resources change has no statement to quote or to hand the editor: it is a change to a workload's manifest,
+    // which this runtime never writes, so the card offers nothing to apply.
+    case "resources":
+      return {
+        tone: "progress",
+        headline: "Resources recommended",
+        detail: `${event.rationale} Not applied: nothing here changes the cluster.`,
+        // The change itself, quoted rather than narrated because the owner and container names are the cluster's own
+        // text; it is what the user writes into the manifest, so it is offered to the clipboard and nowhere else.
+        quoted: `${event.ownerKind}/${event.ownerName}, container ${event.container}: requests ${describeResourceSide(event.current.requests)} to ${describeResourceSide(event.proposed.requests)}; limits ${describeResourceSide(event.current.limits)} to ${describeResourceSide(event.proposed.limits)}`,
+      };
+    // A document index is stated as data for the reason the resources card states its own: the editor's command
+    // envelope creates no index, so there is nothing to hand it, and the card offers it to the clipboard instead.
+    case "document-index":
+      return {
+        tone: "progress",
+        headline: "Index recommended",
+        detail: event.rationale === undefined ? NOT_APPLIED_CAVEAT : `${event.rationale} ${NOT_APPLIED_CAVEAT}`,
+        quoted: documentIndexText(event),
+      };
+    case "index":
+    case "rewrite":
+      return {
+        tone: "progress",
+        headline: event.change === "index" ? "Index recommended" : "Rewrite recommended",
+        detail: `${event.rationale} ${NOT_APPLIED_CAVEAT}`,
+        quoted: event.statement,
+        // The whole affordance: the statement is handed to the editor and to nobody else. Nothing in this runtime
+        // executes it.
+        applySql: event.statement,
+      };
+  }
 }
 
 /**
@@ -1089,27 +1160,7 @@ function describeEvent(
         applySql: event.after.sql,
       };
     case "recommendation":
-      // A resources change has no statement to quote or to hand the editor: it is a change to a workload's manifest,
-      // which this runtime never writes, so the card offers nothing to apply.
-      if (event.change === "resources") {
-        return {
-          tone: "progress",
-          headline: "Resources recommended",
-          detail: `${event.rationale} Not applied: nothing here changes the cluster.`,
-          // The change itself, quoted rather than narrated because the owner and container names are the cluster's
-          // own text; it is what the user writes into the manifest, so it is offered to the clipboard and nowhere else.
-          quoted: `${event.ownerKind}/${event.ownerName}, container ${event.container}: requests ${describeResourceSide(event.current.requests)} to ${describeResourceSide(event.proposed.requests)}; limits ${describeResourceSide(event.current.limits)} to ${describeResourceSide(event.proposed.limits)}`,
-        };
-      }
-      return {
-        tone: "progress",
-        headline: event.change === "index" ? "Index recommended" : "Rewrite recommended",
-        detail: `${event.rationale} ${NOT_APPLIED_CAVEAT}`,
-        quoted: event.statement,
-        // The whole affordance: the statement is handed to the editor and to nobody
-        // else. Nothing in this runtime executes it.
-        applySql: event.statement,
-      };
+      return describeRecommendation(event);
     case "table-profiled":
       return {
         tone: "progress",

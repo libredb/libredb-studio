@@ -36,6 +36,10 @@ export const EXPECTED_EDIT_ABSTAINERS: readonly DatabaseType[] = Object.freeze([
   // No kind accepts a write of any sort, and the absence is structural rather than a version's scope:
   // every route this provider sends is a GET, which docs/providers/mtconnect.md names (#1722).
   "mtconnect",
+  // No kind declares a write of any sort, and the absence is structural: the encoder names four
+  // read function codes and device identification, and there is no code that can build a write.
+  // A point is also not a thing to edit - what names it is the user's own register map (#1723).
+  "modbus",
   "cassandra",
   "clickhouse",
   "couchbase",
@@ -64,6 +68,7 @@ export const EXPECTED_EDIT_ABSTAINERS: readonly DatabaseType[] = Object.freeze([
   "kubernetes",
   // A node has attributes defined by its type in the server's model, and this provider writes nothing.
   "opcua",
+  "snmp",
   "libredb",
   "libsql",
   // No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: this provider has no code that can write to a
@@ -80,6 +85,10 @@ export const EXPECTED_EDIT_ABSTAINERS: readonly DatabaseType[] = Object.freeze([
   // No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: the provider is read-only in its first
   // version and refuses every write before sending it (Neo4j spec 4.1, 5.5), which docs/providers/neo4j.md names.
   "neo4j",
+  // No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: the provider builds four read
+  // operations and a close, and no function in it can build an `<edit-config>`, a `<commit>` or a
+  // `<lock>` at all (#1724), which docs/providers/netconf.md names under "Object edit (#789)".
+  "netconf",
   "opensearch",
   "oracle",
   // No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: v1 reads only, whatever `readOnly` says
@@ -99,6 +108,10 @@ export const EXPECTED_EDIT_ABSTAINERS: readonly DatabaseType[] = Object.freeze([
   // No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: object edit is not in this version, which
   // docs/providers/spark.md names under "Object edit".
   "spark",
+  // No editable kind either, and the absence is structural rather than a setting: this provider's
+  // encoder has no function that writes a PUBLISH, so there is no packet it could send that changes
+  // a metric. A metric's shape is declared by the birth certificate its edge node publishes (#1720).
+  "sparkplug",
   "sqlite",
 ] as const);
 

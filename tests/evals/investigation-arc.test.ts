@@ -240,8 +240,10 @@ describe("a planning run is judged by what planning mode can produce", () => {
     connection is no longer the ungrounded case — the run reads its own catalog — so
     the case that still ships is the engine this server cannot ground at all: the
     dialects `CATALOG_COMPOSERS` does not serve. The MySQL preset carries no
-    `queryReadOnly`, exactly as the real provider does not, so a run that tried to
-    read one here would die on the fixture rather than pass quietly.
+    `queryReadOnly`, so a run that tried to read one here would die on the fixture
+    rather than pass quietly. The preset stands for an engine outside
+    `AGENT_EXECUTION_ENGINES`: the real MySQL provider has implemented `queryReadOnly`
+    since #1629.
   */
   test("a plan run on an engine this server cannot ground says so instead of inventing tables", async () => {
     const run = await open("mysql", { mode: "planning" });

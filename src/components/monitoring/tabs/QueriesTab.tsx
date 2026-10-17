@@ -133,7 +133,7 @@ export function QueriesTab({ data, loading, labels }: QueriesTabProps) {
   // defaults to 10 in src/lib/db/base-provider.ts, MonitoringDashboard overrides nothing,
   // and every provider that fills the list applies that ceiling - `LIMIT` in postgres.ts
   // and mysql.ts, `SELECT TOP` in mssql.ts, `ROWNUM <=` in oracle.ts, `.limit()` in
-  // mongodb.ts, and redis.ts asks `SLOWLOG GET 10` outright. So the length of a populated
+  // mongodb/index.ts, and redis.ts asks `SLOWLOG GET 10` outright. So the length of a populated
   // list is the ceiling, not a count: measured 2026-08-27 on MySQL 26.7.0, the same server
   // as HEALTH_SLOW_QUERY_LIMIT in providers/sql/mysql.ts, the digest table held 59 rows
   // for one connected schema and the panel was handed ten of them.

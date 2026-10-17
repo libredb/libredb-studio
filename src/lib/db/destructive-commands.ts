@@ -50,7 +50,7 @@ import { QDRANT_CONSOLE } from "@/lib/db/providers/vector/qdrant/routes";
  * Scope rule, and the reason this file is short: it names ONLY what each provider
  * can really run. Each was read before its table below was written -
  * `src/lib/db/providers/keyvalue/redis.ts`,
- * `src/lib/db/providers/document/mongodb.ts`,
+ * `src/lib/db/providers/document/mongodb/index.ts`,
  * `src/lib/db/providers/timeseries/prometheus/` and
  * `src/lib/db/providers/stream/kafka/` - and none was probed against a live
  * server for the rows here, so nothing here is claimed as measured behaviour. What
@@ -543,6 +543,22 @@ export const NON_SQL_DESTRUCTIVE_VOCABULARY: Readonly<Partial<Record<DatabaseTyp
   // there is no destructive verb to find. The row names no operation ON PURPOSE, in the shape Prometheus and Kafka
   // use: naming one would claim this provider can send it.
   mtconnect: { operations: new Set<string>(), read: () => [], decidesAlone: true, safetyAnalysis: false },
+  // Modbus (#1723): the row exists because `readsSqlText` says this engine's text is not SQL, and
+  // it names NO operation on purpose, in the shape MTConnect and Prometheus use. The encoder builds
+  // four read function codes and the identification request and nothing else, so there is no
+  // destructive verb to find; naming one would claim this provider can send it.
+  modbus: { operations: new Set<string>(), read: () => [], decidesAlone: true, safetyAnalysis: false },
+
+  // NETCONF (#1724): the console reads one JSON read request naming a datastore, a path and a bound, so there is no
+  // destructive verb to find. The operations list is empty BY CONSTRUCTION rather than by this version's scope:
+  // `requests.ts` builds four read operations and a close, and no function in the provider can build an
+  // `<edit-config>`, a `<commit>` or a `<lock>`. Naming an operation here would claim this provider can send one.
+  netconf: { operations: new Set<string>(), read: () => [], decidesAlone: true, safetyAnalysis: false },
+  snmp: { operations: new Set<string>(), read: () => [], decidesAlone: true, safetyAnalysis: false },
+  // Sparkplug B (#1720): a read request names a group, an edge node and a window, so there is no destructive verb
+  // to read, and nothing is posted for an AI analysis. The absence is structural: the encoder has no function that
+  // writes a PUBLISH, so no console text could change a plant even if one named a verb.
+  sparkplug: { operations: new Set<string>(), read: () => [], decidesAlone: true, safetyAnalysis: false },
   kubernetes: {
     operations: KUBERNETES_DESTRUCTIVE_OPERATIONS,
     read: readKubernetesOperations,

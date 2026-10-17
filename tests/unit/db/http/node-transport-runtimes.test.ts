@@ -42,6 +42,7 @@ import {
   silentListener,
   streamingAnswer,
 } from "../../../helpers/node-transport-fixtures";
+import { howItFailed } from "../../../helpers/spawn-outcome";
 
 interface Deps {
   readonly createNodeTransport: typeof createNodeTransport;
@@ -1228,7 +1229,7 @@ function expectCase(report: Report | undefined, name: string): void {
 function expectedRuntime(binary: string): string {
   if (binary === process.execPath) return `bun ${Bun.version}`;
   const printed = Bun.spawnSync([binary, "--version"], { stdout: "pipe", stderr: "pipe" });
-  if (printed.exitCode !== 0) throw new Error(`${binary} --version exited ${printed.exitCode}`);
+  if (printed.exitCode !== 0) throw new Error(`${binary} --version ${howItFailed(printed)}`);
   return `node ${printed.stdout.toString().trim()}`;
 }
 

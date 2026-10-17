@@ -21,7 +21,7 @@
 | **Transactions** | ❌ no explicit begin/commit/rollback API |
 | **Query cancellation** | ❌ no `cancelQuery` (operations can be killed via maintenance `killOp`) |
 | **SSL** | Yes — `connection.ssl` → `tls` + Node's `ca`/`cert`/`key` ([§4.1](#41-ssl--tls)) |
-| **Source** | [`src/lib/db/providers/document/mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts) |
+| **Source** | [`src/lib/db/providers/document/mongodb/index.ts`](../../src/lib/db/providers/document/mongodb/index.ts) |
 | **Tests** | [`tests/integration/db/mongodb-provider.test.ts`](../../tests/integration/db/mongodb-provider.test.ts) |
 
 ---
@@ -66,7 +66,7 @@ Loaded on demand by `createDatabaseProvider()` ([`factory.ts`](../../src/lib/db/
 ```ts
 case 'mongodb': {
   const { MongoDBProvider } = await import('./providers/document/mongodb');
-  return new MongoDBProvider(connection, options);
+  return new MongoDBProvider(connection, options, execution);
 }
 ```
 
@@ -76,8 +76,8 @@ case 'mongodb': {
 
 ### 3.1 JSON / MQL query format
 
-`query()` ([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts)) accepts a JSON object,
-parsed by `parseQuery()` ([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts)), which
+`query()` ([`mongodb/index.ts`](../../src/lib/db/providers/document/mongodb/index.ts)) accepts a JSON object,
+parsed by `parseQuery()` ([`mongodb/index.ts`](../../src/lib/db/providers/document/mongodb/index.ts)), which
 requires `collection` and `operation`:
 
 ```json
@@ -148,7 +148,7 @@ cannot read as a document with a string `operation` (mongosh syntax such as
 
 ### 3.2 BSON serialization for the grid
 
-`serializeDocument()` ([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts)) recursively
+`serializeDocument()` ([`mongodb/index.ts`](../../src/lib/db/providers/document/mongodb/index.ts)) recursively
 normalises BSON types so documents render in the JSON grid: `ObjectId` → string, `Decimal128` →
 string, `Date` → ISO-8601, `Binary` → `<Binary: N bytes>` (placeholder, not the raw bytes), and
 nested objects/arrays are walked recursively, an array's entries by the same rules as a field. The
@@ -166,9 +166,9 @@ bigint past 2^53 as its digits) ([§3.1](#extended-json-in-the-query)).
 
 ### 3.3 Sampling-based schema inference, nested to three levels
 
-MongoDB has no fixed schema, so the object surface ([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts))
+MongoDB has no fixed schema, so the object surface ([`mongodb/index.ts`](../../src/lib/db/providers/document/mongodb/index.ts))
 **infers** one: it lists collections (skipping `system.*`, capped at 200), and for each samples the
-first **100 documents** to derive field types ([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts)).
+first **100 documents** to derive field types ([`mongodb/index.ts`](../../src/lib/db/providers/document/mongodb/index.ts)).
 Caveats baked into this approach:
 - Fields absent from the sample (or appearing only in unsampled documents) won't show.
 - **Subdocuments are expanded into dotted paths**, to `MAX_NESTED_FIELD_DEPTH = 3` counting the top
@@ -238,7 +238,7 @@ Caveats baked into this approach:
 ### 3.4 `find` is capped at 100; `aggregate` is not
 
 A `find` with no explicit `options.limit` is capped at **100** documents
-([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts)). **`aggregate` passes none of
+([`mongodb/index.ts`](../../src/lib/db/providers/document/mongodb/index.ts)). **`aggregate` passes none of
 `options` to the cursor** (no `limit`/`skip`) and has no default cap, so a pipeline without a
 `$limit` stage can return an unbounded result set.
 
@@ -252,7 +252,7 @@ The `unlimited` option is **not** honoured; see [Known limitations](#13-known-li
 ## 4. Connection
 
 `connectionString` is used **directly** (this is a genuine connection-string provider, unlike
-SQL Server). `buildConnectionString()` ([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts))
+SQL Server). `buildConnectionString()` ([`mongodb/index.ts`](../../src/lib/db/providers/document/mongodb/index.ts))
 returns `config.connectionString` if present, else assembles
 `mongodb://<user>:<password>@<host>:<port>/<database>[?authSource=<authSource>]` (credentials and
 the auth database are URL-encoded; the `<user>:<password>@` segment is omitted when no credentials
@@ -283,7 +283,7 @@ const c = { id: 'mg-1', name: 'App', type: 'mongodb',
   user: 'app', password: 'secret', authSource: 'admin', createdAt: new Date() };
 ```
 
-`validate()` ([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts)) requires either a
+`validate()` ([`mongodb/index.ts`](../../src/lib/db/providers/document/mongodb/index.ts)) requires either a
 `connectionString` or a `host`.
 `database` is optional in both modes (#843): it is only the default for a statement that names no database, and every statement the product writes names its own.
 `connect()` builds a `MongoClient` whose built-in
@@ -295,7 +295,7 @@ pool is configured from `ProviderOptions.pool`:
 | `minPoolSize` | `pool.min` |
 | `maxIdleTimeMS` | `pool.idleTimeout` |
 | `connectTimeoutMS` | `pool.acquireTimeout` |
-| `serverSelectionTimeoutMS` | 30 s, a constant in `mongodb.ts` (`MONGODB_SERVER_SELECTION_TIMEOUT_MS`), not configurable |
+| `serverSelectionTimeoutMS` | 30 s, a constant in `mongodb/index.ts` (`MONGODB_SERVER_SELECTION_TIMEOUT_MS`), not configurable |
 
 The database name comes from `config.database`, else from the connection string's path (after the authority, so `mongodb://host:27017` names none), else
 defaults to `test`, the driver's own default; it is the database a statement with no `database` key reads.
@@ -319,7 +319,7 @@ an unplanned primary loss waits the election out instead of failing at the deadl
 ceiling under abnormal discovery, not a latency budget: a healthy deployment selects a server well
 before it, and a closed port used to be reported only after the full 30 s, half the old
 minute. The value is a constant in
-[`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts) rather than a second pool field,
+[`mongodb/index.ts`](../../src/lib/db/providers/document/mongodb/index.ts) rather than a second pool field,
 because it governs the whole client and not only the connect; `connectTimeoutMS` keeps following
 `pool.acquireTimeout` for the pool's own dial.
 
@@ -348,7 +348,7 @@ run to measure it here.
 
 ### 4.1 SSL / TLS
 
-`buildTLSOptions()` ([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts)) maps
+`buildTLSOptions()` ([`mongodb/index.ts`](../../src/lib/db/providers/document/mongodb/index.ts)) maps
 `connection.ssl` onto the driver's TLS options. `tls`, `ca`, `cert`, `key` and `rejectUnauthorized`
 are all on the driver's own allow-list (`LEGAL_TLS_SOCKET_OPTIONS` in `mongodb/lib/cmap/connect.js`)
 and reach `tls.connect` under Node's names, so the material maps exactly as it does for PostgreSQL,
@@ -409,11 +409,11 @@ before the mode reached the driver `require` failed the same way `disable` does.
 ## 5. Query interface
 
 `query(jsonString)` parses the MQL object and dispatches on `operation`
-([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts)). Reads (`find`/`findOne`/
+([`mongodb/index.ts`](../../src/lib/db/providers/document/mongodb/index.ts)). Reads (`find`/`findOne`/
 `aggregate`/`count`/`distinct`) return documents; writes return an acknowledgement summary
 (`insertedId`/`modifiedCount`/`deletedCount`, …). `rowCount = rows.length || affectedCount`, and
 every returned document passes through `serializeDocument()`. There is no `prepareQuery` limit
-injection, no transactions, and no `cancelQuery`. `EXPLAIN` is not supported
+injection, no transactions, and no `cancelQuery`. The editor offers no `EXPLAIN`
 (`supportsExplain: false`).
 
 **The result's `fields` (the grid columns, and the columns the CSV, SQL INSERT and DDL exports
@@ -456,8 +456,9 @@ from the engine's name. It is what the driver and this provider make reachable:
 - A MongoDB transaction lives on a **`ClientSession`**: `startSession()` creates one,
   `session.startTransaction()` opens the transaction, `session.inTransaction()` is the reading, and
   an operation joins it only when that session is passed in its options (mongodb 7.6.0,
-  `mongodb.d.ts`). This provider holds a `MongoClient` and a `Db` and never creates a session, so no
-  operation it sends can be inside one.
+  `mongodb.d.ts`). `query()` runs on a `MongoClient` and a `Db` and never passes a session, so no
+  operation it sends can be inside one. (The agent profile's reads each run in a session of their own,
+  so that its deadline can kill them, and none starts a transaction.)
 - `query()` dispatches over the closed `SUPPORTED_OPERATIONS` set — `find`, `findOne`, `aggregate`,
   `count`, `distinct`, `insertOne`, `insertMany`, `updateOne`, `updateMany`, `deleteOne`,
   `deleteMany` — and refuses everything else. Measured 2026-09-15 against MongoDB 8 in a replica
@@ -1088,7 +1089,7 @@ something was measured:
 
 ## 8. Maintenance
 
-`runMaintenance(type, target?, container?)` ([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts))
+`runMaintenance(type, target?, container?)` ([`mongodb/index.ts`](../../src/lib/db/providers/document/mongodb/index.ts))
 maps the generic operations onto MongoDB admin commands:
 
 A `container` is a DATABASE name (#772). The provider is bound to one database and no admin command
@@ -1173,7 +1174,7 @@ request here.
 
 ## 9. Capabilities & labels
 
-### `getCapabilities()` ([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts))
+### `getCapabilities()` ([`mongodb/index.ts`](../../src/lib/db/providers/document/mongodb/index.ts))
 
 | Capability | Value |
 |------------|-------|
@@ -1198,7 +1199,7 @@ request here.
 `schemaRefreshPattern` matches write operations in the JSON query so the UI refreshes collections
 after inserts/updates/deletes.
 
-### Labels — overridden (`getLabels()`, [`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts))
+### Labels: overridden (`getLabels()`, [`mongodb/index.ts`](../../src/lib/db/providers/document/mongodb/index.ts))
 
 Document vocabulary: entity → *Collection*, row → *document*, select → *Find Documents*, analyze →
 *Validate Collection*, vacuum → *Compact Collection*, search → *Search collections or fields…*.
@@ -1210,6 +1211,7 @@ to write "one runnable statement in this MongoDB database's own query language",
 2026-08-22 answered `db.orders.aggregate([{ $group: … }])`, which is correct MongoDB and unrunnable
 here, because `query()` parses the JSON command object and nothing else. Naming only what the
 language *is* did not survive contact with the model's prior; naming what it is not did.
+Its `database` key names another database for the editor's reads alone: the label tells the model that an agent run reads only the database its connection is bound to, which layer 8 of [the boundary](#the-boundary-layer-by-layer) holds.
 
 `slowQueriesEmptyState` (*"Query stats come from the database profiler - run db.setProfilingLevel()
 to start recording into system.profile."*) is the monitoring Queries panel's empty state. That
@@ -1237,15 +1239,30 @@ branch:
 | A refused credential (code `18`, `AuthenticationFailed`), or a driver error with no server code whose message contains *authentication* | `AuthenticationError`, answered `401 AUTH_ERROR` |
 | Other driver errors | generic `QueryError` / `DatabaseError` with the original message |
 
+The mapper reads a message, not a class, so on the editor's path a server that went away is misread: a `MongoServerSelectionError` ("Server selection timed out ...") becomes a query `TimeoutError`, and a socket the server closed a generic `DatabaseError` (`docs/BACKLOG.md` D366).
+An agent run's reads map the driver's transport failures to `ConnectionError` by class name (`TRANSPORT_FAILURES` in [`agent-read.ts`](../../src/lib/db/providers/document/mongodb/agent-read.ts)).
+A server cut mid-read reaches that mapping only after the driver's own 30 s server selection, so under an agent run's deadline it ends as the client giving up instead (layer 5 of [the boundary](#the-boundary-layer-by-layer), `docs/BACKLOG.md` D371).
+
 ---
 
 ## 11. Testing
 
 Integration tests live in
 [`tests/integration/db/mongodb-provider.test.ts`](../../tests/integration/db/mongodb-provider.test.ts),
-mocking the `mongodb` driver via `mock.module('mongodb', …)` **before** the provider is imported. The
-mock collection/cursor/admin returns canned documents and stats, exercising every operation, BSON
-serialization, schema inference, monitoring, and maintenance.
+replacing the `mongodb` driver via `mock.module('mongodb', …)` **before** the provider is imported with the stand-in in
+[`tests/helpers/mongodb-driver.ts`](../../tests/helpers/mongodb-driver.ts), which answers what a test configures and
+records every cursor, command and session the provider sends, exercising every operation, BSON
+serialization, schema inference, monitoring, maintenance, and the agent profile's open, reads and catalog read.
+
+The agent profile's own modules have unit tests of their own under [`tests/unit/db/mongodb/`](../../tests/unit/db/mongodb/):
+`envelope.test.ts` (the command reader), `agent-boundary.test.ts` (the engine gate, the privilege read and the
+verification, over `buildInfo` and `connectionStatus` replies captured from 9.0.4, 8.3.11, 7.0.43 and FerretDB in
+`fixtures/`), `agent-read.test.ts` (the deadline, the streamed read, the one builder and the bound database, against a
+client of its own over the real driver's BSON) and `seam-guard.test.ts` (no registry and no agent module loads the
+driver). The live check is `tests/live/mongodb-agent-profile.ts`.
+`driver-stand-in.test.ts` holds the stand-in's own `$regexMatch` to a 9.0.4 server's answers.
+The agent runs themselves are [`tests/isolated/agent-mongodb-e2e.test.ts`](../../tests/isolated/agent-mongodb-e2e.test.ts), driven through the composition root over the stand-in: the four statement-sending workflows answered on the fixture, the admin, no-auth and FerretDB refusals with their run reasons, and plan mode and the operations workflow opening unverified.
+[`tests/integration/mcp/inspect-schema.test.ts`](../../tests/integration/mcp/inspect-schema.test.ts) holds MCP `inspect_schema` on MongoDB, which opens under `agent-operations` unverified on the admin seed, on a server without authorization and on FerretDB.
 
 > ⚠️ **Mock isolation:** `bun`'s `mock.module()` is process-wide; files mocking different drivers
 > would cross-contaminate if they shared one. They never do: `bun run test` gives every test file its
@@ -1287,6 +1304,7 @@ docker exec <container> mongosh -u <user> -p <password> --quiet --file /tmp/01-o
 #   configstore.settings                          a database whose name starts with "config"
 #   configstore.dark_settings                     a view with a collation and BSON in its pipeline
 #   libredb_nolist                                a user with `read` on configstore and nothing else
+#   libredb_agent                                 a user with `read` on app and nothing else (02-agent-principal.js)
 #   oddnames.{x"a, x-a, x\a}                      names that sort differently under JSON escaping
 ```
 
@@ -1294,13 +1312,15 @@ Connect the provider against the `app` database. Every object above exists to ma
 the engine re-measurable; [§6](#the-object-surface-789) says which claim each one carries.
 
 ```bash
-bun test tests/integration/db/mongodb-provider.test.ts   # just this file
-bun run test                                              # the whole suite, one process per file
-bun run test:coverage                                     # CI coverage workflow
+bun tests/run-tests.ts tests/integration/db/mongodb-provider.test.ts   # just this file
+bun run test                                                           # the whole suite, one process per file
+bun run test:coverage                                                  # CI coverage workflow
 ```
 
-To smoke-test against a live server: `docker run --rm -p 27017:27017 mongo:7`, then connect to
-`mongodb://localhost:27017/test` in the Studio UI.
+To smoke-test against a live server, start the compose fixture: `docker compose -f database-compose.yml up -d mongodb` runs MongoDB 9.0.4, pinned by digest, with the fixture above applied.
+The editor connects to `mongodb://admin:admin@localhost:27017/app?authSource=admin`, and an agent run connects as `libredb_agent` ([Setting up the agent's user](#setting-up-the-agents-user)).
+The agent profile's live check starts servers of its own: `bun tests/live/mongodb-agent-profile.ts` runs 9.0.4 with and without authorization, and `--matrix` adds 8.3.11, 7.0.43 and FerretDB 2.7.0.
+`LIBREDB_LIVE_MONGO_IMAGE` may name another reference to the same 9.0.4 digest, such as `mirror.gcr.io/library/mongo:9.0.4@sha256:f90507905ce6e52e4a63d0ff8964fc254fa4d37ccbe56c56f4bc0186eb02edea`, where Docker Hub cannot be reached.
 
 ---
 
@@ -1328,16 +1348,192 @@ Over the API: `POST /api/db/query` (JSON MQL in the `sql` field) and `POST /api/
 
 ---
 
+### The agent read-only execution profile (issue #1614)
+
+Agent mode executes on MongoDB through `queryReadOnly()`, and reads the catalog for `inspect_schema` through `readCatalogReadOnly()`, both on [`mongodb/index.ts`](../../src/lib/db/providers/document/mongodb/index.ts).
+MongoDB has no read-only session or transaction, so the boundary is the connection's user, proven at open by the server's own answers ([`agent-boundary.ts`](../../src/lib/db/providers/document/mongodb/agent-boundary.ts)), and each read is bounded once it is sent ([`agent-read.ts`](../../src/lib/db/providers/document/mongodb/agent-read.ts)).
+The command a model writes is read by [`envelope.ts`](../../src/lib/db/providers/document/mongodb/envelope.ts), which both the run's tool path ([`mongo-admission.ts`](../../src/lib/db/operations/mongo-admission.ts)) and the provider use, so the two refuse the same commands with the same sentences.
+The checks run only on a connection opened to send statements (`sendsStatements` beside `readOnly` on the execution context).
+The operations workflow, MCP's `inspect_schema` and plan mode's grounding open under the operations profile, which sends no statement: unverified, as the editor's connection opens, but naming themselves to the server as the agent and retrying no write, as every execution-profile client does.
+
+#### Setting up the agent's user
+
+1. Run the server with authorization on (`security.authorization: enabled`, or `--auth`; the `mongo` image turns it on when `MONGO_INITDB_ROOT_USERNAME` is set).
+   A server without it enforces no user's privileges, and the profile refuses it.
+2. Create a user holding the `read` role on the one database the agent reads, and nothing else:
+
+   ```js
+   db.getSiblingDB("app").createUser({
+     user: "libredb_agent",
+     pwd: "<a secret>",
+     roles: [{ role: "read", db: "app" }],
+   });
+   ```
+
+3. Seed a connection whose own user is that user ([`SEED_CONNECTIONS.md`](../SEED_CONNECTIONS.md)):
+
+   ```yaml
+   version: "1"
+
+   connections:
+     - id: "app-agent"
+       name: "App (agent)"
+       type: mongodb
+       host: "${MONGO_HOST}"
+       port: 27017
+       user: libredb_agent
+       password: "${MONGO_AGENT_PASSWORD}"
+       database: app
+       authSource: app
+       roles: ["admin"]
+   ```
+
+   The seed's own user is the read user because a run opens on a seed only and a seed carries no separate agent credential (B85); an agent credential beside a connection string is refused with `AGENT_CREDENTIAL_WITH_CONNECTION_STRING`.
+   `authSource` names the database the user was created in: the wrong one fails as a credentials error, not as a refusal of the profile.
+4. Keep the admin seed for the editor and the monitoring panels, and add this one beside it.
+   As the read user, `serverStatus`, `currentOp` and `top` answer code 13 (measured on 9.0.4; `dbStats` answers), so the overview, the sessions panel and the slow-query view go blank on a read-only connection.
+
+[`docker/mongodb-init/02-agent-principal.js`](../../docker/mongodb-init/02-agent-principal.js) creates this user, `libredb_agent` with `read` on `app`, for the compose fixture.
+The image runs the init scripts on a fresh data directory only, so recreate the container after an edit.
+
+#### The boundary, layer by layer
+
+1. **The server is MongoDB** (`assertAgentEngineIsAdmissible`).
+   `buildInfo` must not name another server, no host the client was given or resolved may be a wire-compatible service's, and the reply must hold the stable fields a MongoDB answers: a version whose first three numbers `versionArray` repeats, and `storageEngines` listing `wiredTiger`.
+   `allocator` (unstable, by the manual's own account) and `javascriptEngine` and `gitVersion` (stable fields whose values change between releases) are never read: 9.0.4 answers `tcmalloc-google` and `mozjs-wasm` where 7.0.43 answers `tcmalloc` and `mozjs`, and FerretDB answers a 40-hex `gitVersion` of its own.
+   Each server refused here is refused with `PROFILE_UNSUPPORTED_TARGET` until its own enforcement is measured, the D347 precedent that keeps Percona off the MySQL wire:
+
+   | Server | Recognised by | Measured |
+   |---|---|---|
+   | FerretDB | `buildInfo.ferretdb` | Yes: 2.7.0, which answers `version: "7.0.77"` and no `storageEngines` |
+   | Percona Server for MongoDB | `buildInfo.psmdbVersion` (Percona's documented way to tell it apart) | No |
+   | Atlas Data Federation | `buildInfo.dataLake` | No |
+   | Amazon DocumentDB | a host ending `.docdb.amazonaws.com` or `.docdb-elastic.amazonaws.com` | No |
+   | Azure Cosmos DB | a host ending `.cosmos.azure.com` | No |
+   | Firestore with MongoDB compatibility | a host ending `.firestore.goog` | No |
+
+   The host suffixes mirror the driver's own checks (`DOCUMENT_DB_CHECK` and `COSMOS_DB_CHECK`, internal to the driver and so copied rather than imported); a name check is defeated by a tunnel or a CNAME, which is why the stable fields are read after it.
+2. **The user holds only reads of the bound database** (`assertAgentPrivilegesAreReadOnly`, the scope issue #1614 settled on).
+   `connectionStatus` with `showPrivileges` lists every privilege the session's user holds, and each must be one of the read role's actions on one collection of the database the connection is bound to:
+   `changeStream`, `collStats`, `dbHash`, `dbStats`, `find`, `killCursors`, `listCollections`, `listIndexes`, `listSearchIndexes`, `performRawDataOperations` and `planCacheRead`, measured 2026-10-17 on 9.0.4, 8.3.11 and 7.0.43 (7.0.43 has no `performRawDataOperations`).
+   A resource must be `{db: <bound database>, collection: <name>}`; a `system.*` collection is refused except `system.js`, and a cluster, `anyResource` or `system_buckets` resource, a `db: ""` wildcard and every other database are refused, so `readAnyDatabase`, `backup`, `userAdmin`, `readWrite` on another database and a role reading `admin.system.users` all end the open with `PROFILE_PRIVILEGES_TOO_BROAD`, naming the action and the resource.
+   The read is fail-closed: an action the list does not name is a refusal (a newer server that adds one to the role is refused, naming it, until it is added), and a list it cannot read is too.
+   A user that holds no privilege at all reads as an empty list (measured), and is refused with `PROFILE_PRIVILEGES_TOO_NARROW`.
+3. **The server enforces authorization** (`probeServerEnforcesAuthorization`).
+   A user's privileges read the same on a server that enforces nothing: on 9.0.4 with authorization off, the read user's status is the read role's, and the same user wrote with `insertOne` into another database (re-measured 2026-10-17; the issue measured the same write on 8.3.9 on 2026-09-27).
+   So the profile asks the server to refuse `{delete: "libredb_agent_probe", deletes: [{q: {_id: <a new ObjectId>}, limit: 1}]}`, a delete of one `_id` no document holds, in a collection the probe names and never creates.
+   It changes nothing on any outcome: a server that enforces authorization refuses it with code 13, even where the collection and the database do not exist, and one that does not answers `n: 0` and creates nothing (measured on 9.0.4, 8.3.11, 7.0.43 and 9.0.4 with authorization off).
+   Code 13 is the proof; an accepted delete ends the open with `PROFILE_SERVER_UNENFORCED`; any other error fails the open as it is.
+   A connection that authenticated no user is refused with `PROFILE_PRIVILEGES_TOO_NARROW` on an enforcing server (9.0.4 and 8.3.11 refuse it even `buildInfo`), and with `PROFILE_SERVER_UNENFORCED` on one that enforces nothing.
+   Every command of the check carries `maxTimeMS` and the agent's comment.
+4. **The command is a read** (`readMongoCommand` in `envelope.ts`).
+   It admits the five reads of the editor's envelope (`find`, `findOne`, `aggregate`, `count`, `distinct`), each with only the keys that read honours, and refuses with a sentence naming what to send instead: a write, a write's payload, a key the read would drop, a `limit` or `skip` a cursor would misread, a pipeline stage outside the read stages (`$out` and `$merge`, the diagnostic and session stages, `$changeStream`, `$search`), `$where`, `$function` and `$accumulator` wherever they sit, every internal (`$_`) operator, and a model's command past 4,096 characters.
+   It is defence in depth: a user holding only read can still run the JavaScript operators and the diagnostic stages the read role grants, and the reader is the one refusal of those.
+5. **The server's deadline, and Studio's.**
+   Every command carries `maxTimeMS`, the budget's own deadline; an explain carries it at the top of the explain command, because 8.3.11 and 7.0.43 ignore the one inside the explained command (measured: given only that one, their explains ran 1,520 ms and 715 ms against a 300 ms budget).
+   Each read runs in a session the provider starts, and a timer one second past the deadline (`AGENT_DEADLINE_BACKSTOP_MS`) kills that session with `killSessions` and closes the cursor; a user holding only read may kill its own session (measured on 9.0.4, 8.3.11 and 7.0.43: the read ends with code 11601 and no operation is left).
+   Measured with `maxTimeMS` disabled by the `maxTimeNeverTimeOut` fail point, every read and plan under a 500 ms budget ended at 1,501 to 1,521 ms, killed server-side, with nothing left running, on 9.0.4, 8.3.11 and 7.0.43.
+   The server's own expiry (code 50), and anything the read settles with after the kill, is the statement deadline, killed server-side; a read that has not ended a second after the kill (`AGENT_KILL_GRACE_MS`) is the client giving up on a server that did not end it; and a transport failure the driver reports is a `ConnectionError`, never a fault in the statement.
+   A server cut mid-read is not reported in time, though: the driver retries a read's first command, and a failed `getMore` first sends `killCursors` to the lost server, each after the client's 30 s server selection, so under an agent workflow's 10 s deadline the read ends as the client giving up (measured on 9.0.4: a cut 1.7 s into a read settled at 12.0 s, and under a 60 s deadline as a `ConnectionError` at 31.8 s; `docs/BACKLOG.md` D371).
+   The timer is clamped to the 32-bit range of `setTimeout` (`MAX_STATEMENT_TIMEOUT_MS`, the largest statement timeout a budget may carry), because a delay past it fires after 1 ms.
+6. **A server-side row bound.** A `find` asks for one row past the row budget, or for its own limit when that is smaller; an `aggregate` ends with `{$limit: <budget + 1>}`; a `count` is the `$match` and `$group` pipeline the driver's `countDocuments` sends.
+   The row past the budget is the refusal, in the sentence every engine's profile uses.
+7. **The byte budget, in BSON bytes**, the measure issue #1614 settled on.
+   A cursor is read raw, one document at a time, and each document's own BSON size is added to the byte budget before it is decoded, so the document that crosses it is never decoded and memory holds the budget's rows and one batch, not the result.
+   Measured on 9.0.4 under a 512 MiB memory limit, one read per fresh process: an aggregate projecting `$range: [0, 200000]` over 1,000 documents, and a `find` projecting the same, are refused on the byte budget, and a 15 MiB document is refused without being decoded, each with the process's resident memory growing about 31 MiB, under the 64 MiB ceiling [`tests/live/mysql-agent-profile.ts`](../../tests/live/mysql-agent-profile.ts) holds its own reads to.
+   So the budget counts what the server sends, not the served text: a document holding a large `Binary` counts its bytes, though the grid shows it as `<Binary: N bytes>`.
+   A `distinct` answers one reply, which the server holds to 16 MiB, and the driver decodes it whole before either budget is read, because it decodes a command's reply even when asked for it raw: `raw` keeps only embedded documents as bytes, and the reply and its `values` list are decoded (driver 7.7.0, measured against 9.0.4, 8.3.11 and 7.0.43).
+   Decoded, a reply of many small values near that cap costs about ten times its size, well past the 64 MiB ceiling: on 9.0.4 under the same limit, a 14.8 MiB reply of 780,000 small documents grew resident memory by about 145 MiB, and a 14.4 MiB reply of 900,000 short strings by about 175 MiB, before the row refusal.
+   It is refused past the row budget before any row is built, then on the row whose BSON size carries the total past the byte budget.
+8. **The bound database**, as issue #1614 settled.
+   A run reads the database its connection is bound to (`getDatabaseName()`: the connection's database, or a connection string's path).
+   A command whose `database` names another is refused before anything is sent, naming the bound one; one naming the bound database is read there.
+   `readCatalogReadOnly()` refuses another container the same way.
+
+The estimating plan (`inspect_plan`) explains the command the read would run, built by the same builder (`openBoundedRead`), at `queryPlanner` verbosity and under the same deadline.
+A cursor's explain is a command of its own in the read's session and never opens that cursor (driver 7.7.0's `FindCursor.explain` and `AggregationCursor.explain`), so a plan the server does not end itself is ended by the kill of the session alone, and the plan's cursor is closed once the explain settles.
+The server plans it and, when several candidate plans fit, runs each for a bounded trial to choose one; it returns no result rows.
+The plan is answered without the rest of the reply: only the plan's own keys pass its top level, so what the server says about itself (`serverInfo` with its host and port, `serverParameters`, the echoed `command`, `ok` and the cluster time) is dropped, and so is the `queryShapeHash` 9.0.4 and 8.3.11 answer for the command's shape.
+Below the top level the plan passes as the server wrote it, because it echoes the command's field names, whatever they are: a filter on a field named `ok` keeps `ok` in the parsed query, the index's key pattern and its bounds (measured on 9.0.4, 8.3.11 and 7.0.43, where an unsharded plan holds none of the server's own keys below the top level).
+A sharded plan names each shard's address, and those are dropped where the server's 9.0.4 source writes them (a shard a find lists loses its `connectionString` and `serverInfo`, and a shard a split pipeline answers for its `host`); no sharded cluster is measured.
+
+The catalog read answers the bound database's collections and views, or one of them: one `listCollections` decides what a name is, the name is taken whole (a collection may be called `fs.files`), its fields are inferred from up to 100 sampled documents by the editor's own inference, the sample stopping short of the byte budget, and a collection's indexes are read beside them.
+A view has no indexes of its own, and the server refuses `listIndexes` on one.
+
+#### The refusals
+
+| Cause | Deny code | Run reason | What the rail says | Repair |
+|---|---|---|---|---|
+| The user holds more than reads of the bound database (the admin seed, `readAnyDatabase`, `backup`, `readWrite` anywhere) | `PROFILE_PRIVILEGES_TOO_BROAD` | `agent-principal-refused` | the user holds privileges the read-only boundary cannot contain | connect as a user holding only `read` on the database |
+| The user holds no privilege at all, or the connection authenticated no user on an enforcing server | `PROFILE_PRIVILEGES_TOO_NARROW` | `agent-principal-underprivileged` | the user lacks a privilege the read-only path needs | grant `read` on the database, or connect as a user that holds it |
+| The server accepted the probe: authorization is off | `PROFILE_SERVER_UNENFORCED` | `server-authorization-off` | the server does not enforce authorization | turn on `security.authorization`, then connect as the read user |
+| The server is not MongoDB, or its host is a wire-compatible service's | `PROFILE_UNSUPPORTED_TARGET` | `profile-target-unsupported` | agent mode runs on this engine, but not against this server | point the connection at MongoDB; plan mode and the operations workflow still work |
+| An agent credential set beside a connection string | `AGENT_CREDENTIAL_WITH_CONNECTION_STRING` | `agent-credential-unusable` | the agent credential cannot be used on this connection | put the read user in the seed's own `user` and `password` |
+
+A refusal ends a statement-sending run before its first model turn.
+The reason is read from the code, never from the message (`classifyDriveFailure` in [`runtime.ts`](../../src/lib/agent/runtime.ts)), and the sentence is the reason's own (`FAILURE_SENTENCES` in [`timeline.ts`](../../src/components/agent/timeline.ts)).
+
+#### Measured versions
+
+Measured 2026-10-17; the replies are [`tests/unit/db/mongodb/fixtures/`](../../tests/unit/db/mongodb/fixtures/).
+
+| Server | Authorization | Connecting as | Result at open |
+|---|---|---|---|
+| MongoDB 9.0.4, 8.3.11 and 7.0.43 | On | `libredb_agent`, `read` on `app` | Admitted (7.0.43's read role has no `performRawDataOperations`) |
+| MongoDB 9.0.4, 8.3.11 and 7.0.43 | On | the admin seed (`root`) | `PROFILE_PRIVILEGES_TOO_BROAD`, no probe sent |
+| MongoDB 9.0.4, 8.3.11 and 7.0.43 | On | no user | `PROFILE_PRIVILEGES_TOO_NARROW` |
+| MongoDB 9.0.4 | On | `read` plus `backup`, `userAdmin`, `readWrite` on another database, `insert` on one collection, a role reading `admin.system.users`, or `read` on two databases; `readAnyDatabase` | `PROFILE_PRIVILEGES_TOO_BROAD` |
+| MongoDB 9.0.4 | On | a user with no roles | `PROFILE_PRIVILEGES_TOO_NARROW` |
+| MongoDB 9.0.4 | Off | `libredb_agent`, or no user | `PROFILE_SERVER_UNENFORCED`, nothing created |
+| FerretDB 2.7.0 | Its PostgreSQL backend's user | that user | `PROFILE_UNSUPPORTED_TARGET` |
+
+The live check, `tests/live/mongodb-agent-profile.ts`, re-measures these against containers of its own (`--matrix` adds 8.3.11, 7.0.43 and FerretDB) and runs in CI's Functional Smoke job.
+
+#### What a run leaves on the server
+
+The profile writes nothing, but the server records what it is sent:
+
+- With the profiler on, every read is a document in `system.profile`, which the server writes; `getSlowQueries()` reads that collection, and with profiling off (the default) the empty panel is the ordinary case.
+- Every verified open writes one `ACCESS` line (id 20436, "Checking authorization failed") with the refused probe's whole command, measured on 9.0.4; on MongoDB Enterprise and Atlas, whose auditing logs authorization failures by default, it is also one audited `authCheck` failure (not measured).
+- A read slower than `slowms` (100 ms by default) is a "Slow query" line (id 51803) in the server's log, its filter written out literally.
+- `allowDiskUseByDefault` is on (measured on 9.0.4, 8.3.11 and 7.0.43), so a large sort or group may spill to the server's disk.
+- Every client of an execution profile names itself `libredb-studio-agent` (`appName`) and retries no write, and the commands a statement-sending run sends (the checks at open, each read and plan, the catalog read and the kill of a read's session) also carry the comment `libredb-studio-agent`, so each of these records can be filtered to the agent's own.
+  The operations profile's acquisitions send the editor's own reads, which carry no comment.
+
+#### What matches the editor, and what differs on purpose
+
+The envelope, its Extended JSON values and the serialization of every value are the editor's own, so the same document reads the same in an answer and in the grid (`values.ts`, `extended-json.ts`).
+The bounds are the run's: the editor answers a `find` with no limit with 100 documents and an `aggregate` with every document, while a run answers at most its row budget and refuses a read past it rather than truncating it, so a model is never shown part of an answer as the whole.
+A run also refuses keys the editor ignores (`sort`, `skip` or `limit` on a `findOne`, `options` on an `aggregate`), and refuses a `database` other than the bound one, which the editor reads.
+A `count` is the same `countDocuments` pipeline in both, and a run's `findOne` is a `find` with a limit of 1.
+
+Three residuals of reading the text as JSON stay in both: JavaScript puts integer-like keys such as `"0"` and `"42"` first, in ascending order, wherever the text wrote them; a key written twice keeps its last value; and a plain number past 2^53 is read as the nearest double, so write it as `{"$numberLong": "..."}`.
+
+**What this profile does not overclaim.** MongoDB has no read-only transaction, which is the whole reason the boundary is the user and not a session.
+`distribution`-depth profiling is refused rather than composed: a distinct count here has no one-statement shape that does not materialise the set, and trading the profile's one-statement-per-table contract silently is worse than saying so.
+
 ## 13. Known limitations & future work
 
 - **Schema is inferred from a 100-document sample.** Fields outside the sample don't appear;
   subdocuments are expanded only to depth 3 and only up to 200 fields per collection, and array
   elements' fields are never expanded ([§3.3](#33-sampling-based-schema-inference-nested-to-three-levels)).
-- **`aggregate` results are unbounded.** Only `find` gets a default 100-document cap; an `aggregate`
-  pipeline without `$limit` can return a very large result set
+  The object surface's sample is bounded in documents and not in bytes (`docs/BACKLOG.md` D369); the
+  agent's catalog read stops its sample short of the run's byte budget (§12).
+- **The editor's `aggregate` results are unbounded.** In the editor only `find` gets a default 100-document cap; an
+  `aggregate` pipeline without `$limit` can return a very large result set
   ([§3.4](#34-find-is-capped-at-100-aggregate-is-not)). *Future:* inject a safety `$limit` / cap
-  aggregate output.
-- **No `EXPLAIN`.** MongoDB's `explain()` is not wired (`supportsExplain: false`).
+  aggregate output. An agent run's reads are bounded (see the agent profile in §12).
+- **An agent run's `distinct` is decoded whole before its budgets are read.**
+  The driver decodes a command's reply even when asked for it raw, so a `distinct` reply of many small values near the server's 16 MiB cap costs about ten times its size in memory before its row refusal, past the ceiling the run's cursor reads stay under (the byte budget in §12).
+  *Future:* bound it on the server, as a pipeline read from a raw cursor with a trailing `$limit`, the way a `count` is the `countDocuments` pipeline (`docs/BACKLOG.md` D370).
+- **A server cut mid-read ends an agent read at its deadline, not as a lost connection.**
+  The driver reports the cut only after its own 30 s server selection, so the run is told the client gave up on a server that did not end the read, a statement failure, rather than that the server went away (layer 5 of §12).
+  *Future:* read the client's own server monitoring during the read (`docs/BACKLOG.md` D371).
+- **Editor reads carry no server deadline.** `query()` sends no `maxTimeMS`, and `connection.queryTimeout` bounds the
+  connect alone, so a read started in the editor runs until the server finishes it or the Sessions panel's Terminate
+  kills it. *Future:* `docs/BACKLOG.md` D364. An agent run's reads carry `maxTimeMS` and Studio's kill (§12).
+- **No `EXPLAIN` in the editor.** MongoDB's `explain()` is not wired to the editor (`supportsExplain: false`); the
+  agent's `inspect_plan` explains through the read-only profile (see §12).
 - **No multi-document transactions.** MongoDB supports them on replica sets/sharded clusters, but the
   provider exposes no begin/commit/rollback API, and no statement it accepts can open one, which is
   why `endOpenQueryTransaction()` is absent ([§5](#endopenquerytransaction-is-absent-and-which-absence-it-is-d75)).
@@ -1389,7 +1585,7 @@ Over the API: `POST /api/db/query` (JSON MQL in the `sql` field) and `POST /api/
 
 - Driver: [`mongodb` (node-mongodb-native)](https://github.com/mongodb/node-mongodb-native)
 - MongoDB manual: [`serverStatus`](https://www.mongodb.com/docs/manual/reference/command/serverStatus/) · [`dbStats`](https://www.mongodb.com/docs/manual/reference/command/dbStats/) — the two commands §7.1–§7.3 read, and the pages the claims about which output fields are guaranteed come from
-- Source: [`src/lib/db/providers/document/mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts)
+- Source: [`src/lib/db/providers/document/mongodb/index.ts`](../../src/lib/db/providers/document/mongodb/index.ts)
 - Base class: [`src/lib/db/base-provider.ts`](../../src/lib/db/base-provider.ts)
 - Interface & DTOs: [`src/lib/db/types.ts`](../../src/lib/db/types.ts)
 - Errors: [`src/lib/db/errors.ts`](../../src/lib/db/errors.ts)

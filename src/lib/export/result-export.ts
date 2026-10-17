@@ -599,6 +599,12 @@ const STANDS_ALONE: Record<DatabaseType, readonly string[]> = {
   opcua: NOTHING_STANDS_ALONE,
   // A request line is a URL and names observations, not rows: nothing it produces stands alone as a statement.
   mtconnect: NOTHING_STANDS_ALONE,
+  // A read request names points of a map, not rows: nothing it produces stands alone as a statement.
+  modbus: NOTHING_STANDS_ALONE,
+  netconf: NOTHING_STANDS_ALONE,
+  snmp: NOTHING_STANDS_ALONE,
+  // A read request names a group and a window, not rows: nothing it produces stands alone as a statement.
+  sparkplug: NOTHING_STANDS_ALONE,
   // Measured by M08a and M08c on the pinned image: each was created and read back unbounded (`String`, `Timestamp`
   // with microseconds, `Binary`). Every other bare name is re-spelled from its family (design 7.2, X01).
   databend: ["varchar", "timestamp", "binary"],
@@ -836,6 +842,13 @@ const BINARY_LITERAL: Record<DatabaseType, BinaryLiteral> = {
   opcua: "standard-hex",
   // Every observation value arrives as the text the document carried; the inert default, as RabbitMQ's.
   mtconnect: "standard-hex",
+  // Raw words are shown as hex by the provider itself; the inert default, as MTConnect's.
+  modbus: "standard-hex",
+  netconf: "standard-hex",
+  snmp: "standard-hex",
+  // Not the inert default here: Sparkplug's Bytes and File datatypes carry real binary, and the value layer
+  // already renders them as hex, so an exported cell is the same hex the panel showed (#1720).
+  sparkplug: "standard-hex",
   // Measured on SQL Server 2022: `SELECT CONVERT(varchar(64), 0x0102deadbeef, 2)`
   // answers `0102DEADBEEF`, `DATALENGTH(0x)` answers 0 — so the empty case is spelled
   // — and `SELECT X'0102'` is `Msg 207 … Invalid column name 'X'`.

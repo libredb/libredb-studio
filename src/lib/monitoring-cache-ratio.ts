@@ -17,7 +17,7 @@
 /**
  * What an unavailable ratio is called on screen.
  *
- * "N/A" is the spelling `sqlite.ts`, `oracle.ts`, `mssql.ts` and `mongodb.ts`
+ * "N/A" is the spelling `sqlite.ts`, `oracle.ts`, `mssql.ts` and `mongodb/index.ts`
  * already use for a ratio they cannot read, so this is the repo's existing word
  * for it rather than a new one.
  */
@@ -38,7 +38,7 @@ export function formatCacheHitRatio(ratio: number | undefined): string {
  *
  * This is the guard that keeps the whole "absent is not zero" rule enforceable at
  * the provider boundary, and it lives here rather than in each provider because
- * four of them wrote it independently (mysql.ts and mongodb.ts word for word,
+ * four of them wrote it independently (mysql.ts and mongodb/index.ts word for word,
  * couchbase/index.ts as an inline `=== null` pair, and postgres/oracle/mssql not
  * at all - which is how they came to invent numbers).
  *

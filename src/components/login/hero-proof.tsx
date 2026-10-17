@@ -90,14 +90,11 @@ export function HeroProof() {
   const claims = HERO_CLAIMS;
 
   return (
-    // `space-y-1.5`, not `space-y-2`: the agent claim's detail names the execution
-    // engines, and the fifth of them (#1612) is the line that made this panel tall
-    // enough that the login page scrolled at 1280x800 in the WORST state a real
-    // resize produces - the window grown from 720, the fallback face still on, the
-    // vertical scrollbar narrowing the columns until the detail wrapped a fifth line.
-    // The page is tuned to exactly 800px (#541) and has no slack of its own, so this
-    // panel pays its extra line back here and in the detail's line height below.
-    <div className="space-y-1.5">
+    // `space-y-1`, and no wider: the agent claim's detail names every engine agent mode
+    // executes on, and at 1280x800 the login page fits without scrolling (#541) with a few
+    // pixels to spare, so a wider gap here, or one more wrapped line in the detail, scrolls
+    // it. Why the claim should stop growing with the engine list is `docs/BACKLOG.md` U139.
+    <div className="space-y-1">
       <dl data-testid="hero-proof" className="grid grid-cols-3 gap-x-6 gap-y-2 select-none">
         {claims.map((claim) => (
           <div key={claim.key} className="space-y-0.5">
@@ -108,11 +105,11 @@ export function HeroProof() {
               <span className="text-xs text-fg-tertiary">{claim.unit}</span>
             </dt>
             <dd
-              // `leading-normal`, not `leading-relaxed`: five wrapped lines at 12px pay
-              // 7.5px for the relaxation, and the row this cell sets is the row the
-              // page's 800px budget feels. The 1.5 leading still reads as prose at
-              // this size.
-              className="text-xs text-fg-tertiary leading-normal"
+              // `leading-snug`, not `leading-normal`: at 1280x800 the agent detail wraps to
+              // six lines, which at 12px pay 9px for the wider leading, and the row this
+              // cell sets is the row the page's 800px budget feels. The 1.375 leading still
+              // reads as prose at this size.
+              className="text-xs text-fg-tertiary leading-snug"
               data-testid={claim.key === "agent" ? "agent-claim" : undefined}
             >
               {claim.detail}

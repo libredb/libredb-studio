@@ -1,13 +1,14 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { AGENT_EXECUTION_ENGINES, namedList } from "@/lib/agent/engine-support";
+import { AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
 import { getDBConfig } from "@/lib/db-ui-config";
 import { MCP_EXPOSABLE } from "@/lib/db/compatibility";
 import { ExecutionProfileError } from "@/lib/db/errors";
 import type { DatabaseProvider, PreparedQuery } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
 import type { ManagedConnection } from "@/lib/seed";
-import type { QueryResult } from "@/lib/types";
+import type { DatabaseType, QueryResult } from "@/lib/types";
 import {
   newMcpCorrelationId,
   recordMcpDecision,
@@ -57,7 +58,8 @@ import {
  *
  * The boundary is the agent-read-only acquisition and the provider's queryReadOnly, which the
  * factory refuses to hand out for an engine without one; this module never calls query(), and that
- * is what makes its readOnlyHint true. The execution fence runs first as defence in depth. One
+ * is what makes its readOnlyHint true. An engine this tool does not serve (RUN_READ_QUERY_TYPES) is
+ * refused before anything is acquired, and the execution fence then runs as defence in depth. One
  * deadline, the call's start plus timeout_ms, covers acquisition and execution; neither a cancel
  * nor the deadline stops a statement already running (docs/BACKLOG.md D128), they end the wait.
  *
@@ -100,14 +102,22 @@ export type RunReadQueryInput = z.infer<typeof RunReadQueryInputSchema>;
 
 const RUN_READ_QUERY_TITLE = "Run a read-only query";
 /**
- * Derived from the engine list, as src/lib/agent/posture.ts derives its own sentence, filtered by
- * MCP_EXPOSABLE. MCP is offered per engine by MCP_EXPOSABLE, and the engines agent mode executes
- * statements on are a different list: Kubernetes is executed by the agent and closed to MCP, so
- * naming it here would advertise a tool that only ever refuses there.
+ * The engines this tool serves: those agent mode executes statements on, offered to MCP by
+ * MCP_EXPOSABLE, whose statement is SQL. The description names them and runReadQuery refuses every
+ * other engine before anything is acquired, both from this one list, so the tool cannot advertise
+ * an engine it refuses or run on one it does not name.
+ *
+ * The factory's profile does not draw this line: it refuses a provider with no read-only path at
+ * all. Kubernetes is executed by the agent and closed to MCP. MongoDB is offered to MCP for
+ * inspect_schema, and agent mode executes its JSON command, so its provider has a read-only path,
+ * but this tool's input is a SQL statement: issue #1614 (decision 2) keeps it out of this tool, and
+ * docs/BACKLOG.md records the MCP tool it lacks as "MongoDB has no MCP run_read_query arm".
  */
-export const RUN_READ_QUERY_ENGINES = namedList(
-  AGENT_EXECUTION_ENGINES.filter((type) => MCP_EXPOSABLE[type]).map((type) => getDBConfig(type).label),
+export const RUN_READ_QUERY_TYPES: readonly DatabaseType[] = AGENT_EXECUTION_ENGINES.filter(
+  (type) => MCP_EXPOSABLE[type] && AGENT_STATEMENT_LANGUAGE[type] === "sql",
 );
+/** Derived from the list, as src/lib/agent/posture.ts derives its own sentence. */
+export const RUN_READ_QUERY_ENGINES = namedList(RUN_READ_QUERY_TYPES.map((type) => getDBConfig(type).label));
 export const RUN_READ_QUERY_DESCRIPTION = `Run one read-only SQL statement on a connection: a SELECT (a WITH is fine), VALUES, TABLE, or EXPLAIN without ANALYZE. Runs on ${RUN_READ_QUERY_ENGINES}; other engines refuse it, so use inspect_schema there. Returns at most max_rows rows (default 100, at most 500) and at most 32 KiB; truncated and pagination.hasMore say when rows were cut, and pagination.nextOffset is the offset of the next page when the query can be paged. ${MCP_UNTRUSTED_NOTICE}`;
 
 /** A result, and the reason its outcome event records when it is a failure. */
@@ -250,6 +260,12 @@ export async function runReadQuery(args: RunReadQueryInput, call: McpToolCall): 
     return refuse(record, "mcp_connections_unreadable", MCP_CONNECTIONS_UNREADABLE_TEXT);
   if (connection === null) return refuse(record, "mcp_connection_not_visible", MCP_NOT_VISIBLE_TEXT);
   const resolved: McpCallRecord = { ...record, connectionName: connection.seedId };
+  // Ahead of the fence, so the answer names the engine rather than the statement, and of any
+  // acquisition, so no provider is built or dialled for an engine this tool does not serve.
+  if (!RUN_READ_QUERY_TYPES.includes(connection.type)) {
+    const notServed = `this tool does not serve ${getDBConfig(connection.type).label}; use inspect_schema there`;
+    return refuse(resolved, "mcp_execution_failed", profileRefusalText(notServed, RUN_READ_QUERY_ENGINES));
+  }
   const violation = checkReadOnlyStatement(args.sql);
   if (violation !== null) return refuse(resolved, "mcp_statement_refused", fenceRefusalText(violation));
   const unrecorded = recordOrRefuse(() => recordMcpDecision(resolved));

@@ -51,6 +51,7 @@
   <a href="https://aiven.io/docs/products/mysql/howto/connect-libredb-studio">Aiven for MySQL</a>、
   <a href="https://docs.scylladb.com/stable/get-started/gui-clients/libredb-studio.html">ScyllaDB</a>、
   <a href="https://cloudberry.apache.org/docs/ecosystem/sql-clients/libredb-studio/">Apache Cloudberry</a>、
+  <a href="https://doris.apache.org/docs/4.x/connection-integration/data-integration/libredb-studio/">Apache Doris</a>、
   <a href="https://cwiki.apache.org/confluence/display/KAFKA/Ecosystem#:~:text=LibreDB%20Studio">Apache Kafka</a>、
   <a href="https://cassandra.apache.org/_/ecosystem.html">Apache Cassandra</a>、
   <a href="https://druid.apache.org/libraries/#:~:text=LibreDB%20Studio">Apache Druid</a>
@@ -58,14 +59,30 @@
 </p>
 
 <p align="center">
-  <img src="public/screenshots/hero-demo.gif" alt="LibreDB Studio" width="100%" />
+  <img src="public/screenshots/hero-demo.gif" width="100%" />
 </p>
 
 <p align="center">
+  <a href="https://github.com/libredb/libredb-studio"><img src="https://img.shields.io/github/stars/libredb/libredb-studio?style=social" alt="GitHub stars"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
   <a href="https://sonarcloud.io/project/overview?id=libredb_libredb-studio"><img src="https://sonarcloud.io/api/project_badges/measure?project=libredb_libredb-studio&metric=alert_status" alt="Quality Gate"></a>
   <a href="https://codecov.io/github/libredb/libredb-studio"><img src="https://codecov.io/github/libredb/libredb-studio/graph/badge.svg?token=VA6CO9R7IH" alt="Coverage"></a>
+  <a href="https://deepwiki.com/libredb/libredb-studio"><img src=".github/assets/deepwiki-badge.svg" alt="Ask DeepWiki"></a>
   <a href="https://artifacthub.io/packages/helm/libredb-studio/libredb-studio"><img src="https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/libredb-studio" alt="Artifact Hub"></a>
+</p>
+
+<p align="center">
+  <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/Next.js-16-black?logo=next.js" alt="Next.js 16"></a>
+  <a href="https://react.dev/"><img src="https://img.shields.io/badge/React-19-61DAFB?logo=react" alt="React 19"></a>
+  <a href="https://hub.docker.com/r/libredb/libredb-studio?tag=latest"><img src="https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker" alt="Docker Support"></a>
+  <a href="https://artifacthub.io/packages/helm/libredb-studio/libredb-studio"><img src="https://img.shields.io/badge/Kubernetes-Compatible-326CE5?logo=kubernetes" alt="Kubernetes Compatible"></a>
+</p>
+
+<p align="center">
+  <a href="#クイックスタート"><strong>Quick Start</strong></a> •
+  <a href="README.md#live-test"><strong>Live Demo</strong></a> •
+  <a href="#インストール方法"><strong>Install Options</strong></a> •
+  <a href="README.md#one-click-deploy"><strong>Deploy Your Own</strong></a>
 </p>
 
 > この日本語 README はコミュニティによる翻訳で、英語版より古い場合があります。内容が食い違うときは[英語版](README.md)が正です。
@@ -112,9 +129,9 @@ LibreDB Studioは逆向きです。**データをツールのところへ持っ�
 
 ## 主な機能
 
-### 37のエンジン、1つのインターフェース
+### 41のエンジン、1つのインターフェース
 
-PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · Firestore · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · BigQuery · Databend · Snowflake · Apache Spark · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j · Milvus · Qdrant · InfluxDB (InfluxQL) · InfluxDB 3 (SQL) · Oxia · S3-compatible object storage · Kubernetes · MQTT · RabbitMQ · OPC UA · MTConnect
+PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · Firestore · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · BigQuery · Databend · Snowflake · Apache Spark · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j · Milvus · Qdrant · InfluxDB (InfluxQL) · InfluxDB 3 (SQL) · Oxia · S3-compatible object storage · Kubernetes · MQTT · RabbitMQ · OPC UA · MTConnect · Modbus · NETCONF · SNMP · Sparkplug B
 
 スキーマエクスプローラ、ER図、スキーマ差分、モニタリングは全SQLエンジンで共通です。MongoDBとRedisはSQLエンジンではないため、ER図とスキーマ差分はありません。Druid、Elasticsearch、OpenSearch、TrinoはこのビルドがパースできるURI形式を持たないためhostとportで設定する二重の例外で、生成されるマイグレーションもDDLを出力せず制約を明示します（Couchbaseのスキーマレスなコレクションも同様）。検索クラスタのER図は箱だけで線がありません。インデックスは外部キーを宣言せず、エンジンのモデルにも宣言できる外部キーが存在しないためです。
 
@@ -156,6 +173,10 @@ PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · Du
 | **RabbitMQ** | なし（管理 HTTP API、ポート 15672 と、Studio 独自の AMQP 0-9-1 読み取りクライアント、ポート 5672） | 構造上の読み取り専用。読み取りクライアントは publish、メッセージの取り出し、宣言をエンコードできません。ツリーには仮想ホスト、ストリーム、キュー、エクスチェンジ。JSON の読み取りリクエストはストリームのメッセージを読み、キューのメッセージは読みません |
 | **OPC UA** | `node-opcua-client`（純粋なJavaScript、`opc.tcp`、ポート4840） | 構造上の読み取り専用。クライアントのシームはGetEndpoints、CreateSession、ActivateSession、Browse、BrowseNext、Read、HistoryRead、CloseSessionの8つの読み取りサービスだけを宣言し、Write、Call、HistoryUpdate、サブスクリプションはプロバイダのどこにもありません。キーパネルはアドレス空間を1階層ずつ、1階層につき1回のBrowseで辿ります。BrowseNameが区切り文字を含みうるため、キーはエスケープされたブラウズパスです。ノードを開くと値、ステータス、2つのタイムスタンプ、デコードされたAccessLevelが見られ、コンソールは現在値または生の履歴を1つのJSONリクエストとして読みます。境界値はサーバーが公開した上限ではなくStudio自身のものです。計測した4つのサーバーのうち2つは自ら公開した上限を超える要求も処理し、1つは上限を0として公開していました。Methodノードは一覧されるだけで呼び出されません。Microsoft OPC PLC 2.15.10、open62541 1.5.9、Python asyncua 2.1.0、Eclipse Miloのデモで検証済み |
 | **MTConnect** | なし：共用の `node:http(s)` トランスポート上で動く本リポジトリ独自のクライアント（ポート5000） | 構造上の読み取り専用。リクエスト表は九つのルートだけで、そのすべてがGETなので、送るPUTもPOSTもストリームもない。デバイスはコンテナ、data itemとconditionは値・タイムスタンプ・シーケンスを列に持つリレーション、各assetのXMLはSourceタブで開く |
+| **Modbus** | なし：共用の送信規則を通る raw socket 上で動く本リポジトリ独自のクライアント（ポート502、MODBUS/TCP Security は802） | 構造上の読み取り専用。エンコーダが組み立てられるのは四つの読み取りファンクションコードとデバイス識別だけで、書き込みを組み立てる関数は存在せず、バルブが送出する全バイトを再検査します。Modbus にはディスカバリがないため、ツリーは接続とともに保持されるレジスタマップから作られ、読み取りはそのマップが名前を付けたポイントに対する一つの JSON リクエストです |
+| **NETCONF** | `ssh2`（SSH トランスポートのみ。本リポジトリがソケットを開いて渡し、NETCONF のフレーミング、リクエスト、セッションは独自のもの、ポート830） | 構造上の読み取り専用。`requests.ts` が組み立てるリクエストボディは五つで、そのうち四つが読み取りの `<get-config>`、`<get>`、`<get-data>`、`<get-schema>` であり、五つめはセッションを閉じるもので、`<edit-config>`、`<copy-config>`、`<commit>`、`<lock>` を組み立てる関数は存在しません。データストアがコンテナ、その下の YANG モジュールがもう一つのコンテナで、モジュール最上位のコンテナまたはリストがオブジェクト、リストエントリのキーリーフがそのオブジェクトの列です |
+| **SNMP** | なし：共用の送信規則を通る本リポジトリ独自のUDPクライアント（ポート161） | 構造上の読み取り専用。送信側のバルブはGet、GetNext、GetBulk以外のPDUを拒むので、Setがソケットに届くことはない。オブジェクトグループはコンテナ、サブツリーのwalkが読み取りで、テーブルはGetBulkの応答から組み立てられる |
+| **Sparkplug B** | なし：共用の `node:net` と `node:tls` トランスポート上で動く本リポジトリ独自の有界MQTTセッション（ポート1883、SSL / TLSパネル経由では8883） | 構造上の読み取り専用。エンコーダにPUBLISHを書く関数はなく、CONNECTはwillを持たない。5.4がエッジノードの死亡証明書をwillとして登録するため、willを設定した読み取り側は自分のソケットが切れたときに死亡を公開してしまう。グループとエッジノードはコンテナ、metricは一行で、その値・タイムスタンプ・定義はそれを宣言した出生証明書から来る |
 | **Redis** | `ioredis` | コマンドエディタ、キーブラウザ、INFOベースの監視 |
 
 > **トランスポート層のセキュリティはエンジンごとではなく横断的な機能です。** SSHトンネルはproviderが接続する前に張られ、接続先はローカルのエンドポイントに書き換えられます。つまりエンジンに依存せず、hostとportが設定された接続であれば適用されます。ただしKafkaの接続はトンネルを拒否します。Kafkaクライアントは各brokerにそのbrokerが広告するアドレスで接続し、1つのアドレスだけを転送するトンネルはそのアドレスを運べないためです。接続文字列で入力した接続（MongoDB、Couchbase、ClickHouseで選択できます）はhostもportも持たないためトンネルされません。SQLiteとDuckDBも同様です。SSL/TLSパネルが実際に効くのはPostgreSQL、MySQL、SQL Server、Couchbase、ClickHouse、Druid、Elasticsearch、OpenSearch、Trino、Prometheus、Apache Kafkaです。Trinoでは任意ではなく必須に近い意味を持ちます。コーディネータが平文HTTP上のパスワードを拒否するためです。Oracle、MongoDB、Redisはこの設定を無視するため、この3つで暗号化されるかどうかはダイアログの選択ではなく接続文字列の内容次第になります。
@@ -190,15 +211,16 @@ StudioのAIの中心は、エディタの隣にあるエージェントレール
   書き込みとDDLはデータベースに届く前に拒否され、`EXPLAIN ANALYZE`は文を実際に実行してしまうため既定で
   不許可です。このパイプラインはエージェント専用です。あなたがエディタで自分で実行する文はプロバイダを直接
   呼び出しており（`src/app/api/db/query/route.ts:44`）、ここでのポリシー判定も監査も受けません。
-- **Agentモードが対応するのはPostgreSQL・SQLite・DuckDB・SQL Server・MySQLだけ**：読み取り専用プロファイルはデータベース側の
-  機能で保証されるため、それを実装したプロバイダにしか存在しません。`postgres.ts`、`sqlite.ts`、`duckdb/index.ts`、
-  `mssql.ts`、`mysql.ts`の`queryReadOnly`のみで、他にはありません。それ以外のエンジンでは、文を送るワークフローのAgentモードは
+- **Agentモードが対応するのはPostgreSQL・SQLite・DuckDB・SQL Server・MySQL・Kubernetes・MongoDBだけ**：読み取り専用プロファイルは、
+  それを実装したプロバイダにしか存在しません。`postgres.ts`、`sqlite.ts`、`duckdb/index.ts`、
+  `mssql.ts`、`mysql.ts`、`kubernetes/index.ts`、`mongodb/index.ts`の`queryReadOnly`のみで、他にはありません。
+  読み取り専用の境界はエンジンごとに異なり、各エンジンのドキュメントに記されています。それ以外のエンジンでは、文を送るワークフローのAgentモードは
   開始時点で拒否され、Runは作られません。プロバイダのファクトリまで到達したものは`engine-unsupported`で終わります。
   **Plan**モードはどの接続でも開けます。そこでのモデルはツールを使わず、あなたの文を1つも実行せず、何も書き込まず、
   あなた自身が実行するための文を起草するだけです。そのGROUNDINGはすべてのエンジンに届きます。PostgreSQLとSQLiteでは
   サーバーがカタログ文を自分で組み立て、それ以外の接続ではその接続のプロバイダにスキーマを記述させます。サイドバーが
   すでに行っている読み取りと同じもので、読み取り専用の文の経路を必要としません。つまり2つの制限は別物です。Agentモードは
-  この4つのエンジン、GROUNDINGはすべてのエンジンであり、読み取りに失敗したRunはテーブルをでっち上げず、そのことを明示します。
+  上記のエンジン、GROUNDINGはすべてのエンジンであり、読み取りに失敗したRunはテーブルをでっち上げず、そのことを明示します。
 - **3つのワークフロー**：**Investigate**（質問に答える）、**Optimize**（推定プランを比較し、インデックスや
   書き換えを提案）、**Assess**（テーブルのプロファイリング。件数だけで、値は決して読み出しません）。
 - **勝手には動きません**：エージェントが自分でRunを開始することはなく、エディタに書き込むこともなく、

@@ -52,6 +52,7 @@
   <a href="https://aiven.io/docs/products/mysql/howto/connect-libredb-studio">Aiven for MySQL</a>,
   <a href="https://docs.scylladb.com/stable/get-started/gui-clients/libredb-studio.html">ScyllaDB</a>,
   <a href="https://cloudberry.apache.org/docs/ecosystem/sql-clients/libredb-studio/">Apache Cloudberry</a>,
+  <a href="https://doris.apache.org/docs/4.x/connection-integration/data-integration/libredb-studio/">Apache Doris</a>,
   <a href="https://cwiki.apache.org/confluence/display/KAFKA/Ecosystem#:~:text=LibreDB%20Studio">Apache Kafka</a>,
   <a href="https://cassandra.apache.org/_/ecosystem.html">Apache Cassandra</a>
   y
@@ -59,14 +60,30 @@
 </p>
 
 <p align="center">
-  <img src="public/screenshots/hero-demo.gif" alt="LibreDB Studio" width="100%" />
+  <img src="public/screenshots/hero-demo.gif" width="100%" />
 </p>
 
 <p align="center">
+  <a href="https://github.com/libredb/libredb-studio"><img src="https://img.shields.io/github/stars/libredb/libredb-studio?style=social" alt="GitHub stars"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
   <a href="https://sonarcloud.io/project/overview?id=libredb_libredb-studio"><img src="https://sonarcloud.io/api/project_badges/measure?project=libredb_libredb-studio&metric=alert_status" alt="Quality Gate"></a>
   <a href="https://codecov.io/github/libredb/libredb-studio"><img src="https://codecov.io/github/libredb/libredb-studio/graph/badge.svg?token=VA6CO9R7IH" alt="Coverage"></a>
+  <a href="https://deepwiki.com/libredb/libredb-studio"><img src=".github/assets/deepwiki-badge.svg" alt="Ask DeepWiki"></a>
   <a href="https://artifacthub.io/packages/helm/libredb-studio/libredb-studio"><img src="https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/libredb-studio" alt="Artifact Hub"></a>
+</p>
+
+<p align="center">
+  <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/Next.js-16-black?logo=next.js" alt="Next.js 16"></a>
+  <a href="https://react.dev/"><img src="https://img.shields.io/badge/React-19-61DAFB?logo=react" alt="React 19"></a>
+  <a href="https://hub.docker.com/r/libredb/libredb-studio?tag=latest"><img src="https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker" alt="Docker Support"></a>
+  <a href="https://artifacthub.io/packages/helm/libredb-studio/libredb-studio"><img src="https://img.shields.io/badge/Kubernetes-Compatible-326CE5?logo=kubernetes" alt="Kubernetes Compatible"></a>
+</p>
+
+<p align="center">
+  <a href="#inicio-rápido"><strong>Quick Start</strong></a> •
+  <a href="README.md#live-test"><strong>Live Demo</strong></a> •
+  <a href="#instalación"><strong>Install Options</strong></a> •
+  <a href="README.md#one-click-deploy"><strong>Deploy Your Own</strong></a>
 </p>
 
 > Este README en español es una traducción de la comunidad y puede ir por detrás del inglés. Si difieren, manda la [versión en inglés](README.md).
@@ -113,9 +130,9 @@ Tomada en serio, esa frase deja de ser una preferencia y se vuelve una especific
 
 ## Capacidades principales
 
-### Treinta y siete motores, una sola interfaz
+### Cuarenta y uno motores, una sola interfaz
 
-PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · Firestore · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · BigQuery · Databend · Snowflake · Apache Spark · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j · Milvus · Qdrant · InfluxDB (InfluxQL) · InfluxDB 3 (SQL) · Oxia · S3-compatible object storage · Kubernetes · MQTT · RabbitMQ · OPC UA · MTConnect
+PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · Firestore · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · BigQuery · Databend · Snowflake · Apache Spark · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j · Milvus · Qdrant · InfluxDB (InfluxQL) · InfluxDB 3 (SQL) · Oxia · S3-compatible object storage · Kubernetes · MQTT · RabbitMQ · OPC UA · MTConnect · Modbus · NETCONF · SNMP · Sparkplug B
 
 Todos los motores SQL comparten el mismo explorador de esquemas, los diagramas ER, la comparación de esquemas y los paneles de monitoreo. MongoDB y Redis no son motores SQL: no tienen diagrama ER ni comparación de esquemas. Druid, Elasticsearch, OpenSearch y Trino son doblemente excepcionales: sus interfaces SQL sobre HTTP no tienen una forma de URI que este build sepa interpretar, así que se configuran por host y puerto, y las migraciones que se generan explican la limitación en lugar de inventar DDL para un motor cuyo SQL no tiene sentencias de cambio de columna. Lo mismo pasa con las colecciones sin esquema de Couchbase. El diagrama ER de los clústeres de búsqueda tiene cajas pero no líneas: los índices no declaran claves foráneas, y en el modelo del motor no hay ninguna que declarar.
 
@@ -157,6 +174,10 @@ Todos los motores SQL comparten el mismo explorador de esquemas, los diagramas E
 | **RabbitMQ** | ninguno: la API HTTP de gestión (puerto 15672) y el cliente de lectura AMQP 0-9-1 propio de Studio (puerto 5672) | De solo lectura por construcción: el cliente de lectura no codifica publicaciones, extracciones ni declaraciones. Hosts virtuales, streams, colas y exchanges en el árbol; una petición de lectura JSON lee los mensajes de un stream, nunca los de una cola |
 | **OPC UA** | `node-opcua-client` (JavaScript puro, `opc.tcp`, puerto 4840) | De solo lectura por construcción: la costura del cliente declara ocho servicios de lectura (GetEndpoints, CreateSession, ActivateSession, Browse, BrowseNext, Read, HistoryRead y CloseSession) y en el proveedor no hay Write, Call, HistoryUpdate ni suscripción alguna. El panel de claves recorre el espacio de direcciones nivel por nivel, un Browse por nivel, con la ruta de exploración escapada, porque un BrowseName puede contener el separador; un nodo se abre con su valor, su estado, sus dos marcas de tiempo y su AccessLevel descodificado, y la consola lee valores actuales o historial sin procesar como una sola petición JSON. Cada límite es el de Studio y no el que publica el servidor: de los cuatro servidores medidos, dos atienden peticiones muy por encima del límite que publican y uno lo publica como 0. Un nodo de método se lista y nunca se llama. Verificado con Microsoft OPC PLC 2.15.10, open62541 1.5.9, Python asyncua 2.1.0 y la demo de Eclipse Milo |
 | **MTConnect** | ninguno: un cliente propio de este repositorio sobre el transporte `node:http(s)` compartido (puerto 5000) | De solo lectura por construcción: la tabla de rutas tiene nueve entradas y todas son GET, así que no hay PUT, POST ni stream que enviar. Un dispositivo es un contenedor, un data item y una condition son relaciones cuyas filas son valor, marca de tiempo y secuencia, y el XML de cada asset se abre en una pestaña Source |
+| **Modbus** | ninguno: un cliente propio de este repositorio sobre un socket en crudo, a traves de la regla de salida compartida (puerto 502, u 802 para MODBUS/TCP Security) | Solo lectura por construccion: el codificador nombra cuatro codigos de funcion de lectura y la identificacion del dispositivo, ninguna funcion construye una escritura, y una valvula vuelve a comprobar cada byte que sale. Modbus no tiene descubrimiento, asi que el arbol se construye a partir de un mapa de registros guardado con la conexion, y una lectura es una sola peticion JSON sobre los puntos que ese mapa nombra |
+| **NETCONF** | `ssh2` (solo el transporte SSH; este repositorio abre el socket y lo entrega, y el framing, las peticiones y la sesión NETCONF son propios, puerto 830) | De solo lectura por construcción: `requests.ts` construye cinco cuerpos de petición y cuatro de ellos son las lecturas, `<get-config>`, `<get>`, `<get-data>` y `<get-schema>`, mientras el quinto cierra la sesión, y ninguna función construye un `<edit-config>`, un `<copy-config>`, un `<commit>` ni un `<lock>`. Un datastore es un contenedor y un módulo YANG otro por debajo, el contenedor o la lista de primer nivel de un módulo es un objeto, y las hojas clave de una entrada de lista son las columnas del objeto |
+| **SNMP** | ninguno: un cliente propio de este repositorio sobre UDP (puerto 161), a través de la regla de salida compartida | De solo lectura por construcción: la válvula de salida rechaza cualquier PDU que no sea Get, GetNext o GetBulk, así que un Set nunca llega al socket. Un grupo de objetos es un contenedor, el recorrido de un subárbol es la lectura y una tabla se arma con las respuestas de GetBulk |
+| **Sparkplug B** | ninguno: una sesión MQTT acotada propia de este repositorio sobre los transportes compartidos `node:net` y `node:tls` (puerto 1883, u 8883 a través del panel SSL / TLS) | De solo lectura por construcción: el codificador no tiene ninguna función que escriba un PUBLISH y el CONNECT no lleva testamento (will), porque 5.4 registra el certificado de defunción de un nodo de borde como su will y un lector que lo fijara publicaría una defunción al caerse su propio socket. Un grupo y un nodo de borde son contenedores, y una métrica es una fila cuyo valor, marca de tiempo y definición vienen del certificado de nacimiento que la declaró |
 | **Redis** | `ioredis` | Editor de comandos, explorador de claves, monitoreo basado en INFO |
 
 > **La seguridad del transporte es transversal, no depende del motor.** El túnel SSH se abre antes de que el proveedor establezca la conexión y esta se redirige al extremo local, por lo que funciona independientemente del motor. Se aplica a cualquier conexión configurada con host y puerto, excepto Kafka, que no admite este túnel porque sus clientes se conectan a cada broker usando la dirección que este anuncia, y un túnel que redirige una sola dirección no puede cubrir todas esas conexiones. Las conexiones configuradas mediante una cadena de conexión (una opción disponible para MongoDB, Couchbase, ClickHouse y libSQL) no pasan por el túnel SSH porque no utilizan host y puerto por separado. SQLite y DuckDB tampoco tienen host ni puerto. El panel de SSL/TLS funciona en todos los motores que lo muestran. SQLite, DuckDB y LibreDB integrado no muestran este panel porque no tienen una conexión de red que proteger. En Trino, SSL/TLS es obligatorio porque el coordinador rechaza las contraseñas enviadas por HTTP sin cifrar. Oracle tiene una particularidad: su driver Thin siempre verifica la cadena de certificados, por lo que, si se usa `require` con un certificado autofirmado, es necesario proporcionar la CA del servidor. Además, si se pega una cadena de conexión completa, se conserva el protocolo que esta indique. Por su parte, Db2 LUW exige TLS de forma predeterminada, a menos que se desactive intencionalmente, porque sin esta protección el driver envía la contraseña sin cifrar.

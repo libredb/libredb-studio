@@ -348,7 +348,7 @@ function PerformanceSummaryCard({
  * `getSlowQueries` and `getActiveSessions`, and MonitoringDashboard overrides neither (it
  * sets only the three `include*` flags). The providers that fill the session list apply the
  * ceiling in SQL or in memory - `$2` in postgres.ts, `LIMIT` in mysql.ts, `SELECT TOP` in
- * mssql.ts, `ROWNUM <=` in oracle.ts, `.slice(0, limit)` over `currentOp` in mongodb.ts -
+ * mssql.ts, `ROWNUM <=` in oracle.ts, `.slice(0, limit)` over `currentOp` in mongodb/index.ts -
  * so a server past either ceiling hands this card a truncated list and nothing in the
  * payload says how much was cut.
  *

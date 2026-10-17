@@ -1,8 +1,8 @@
 /**
  * MongoDB Provider Integration Tests
  *
- * Uses mock.module() from bun:test to mock the 'mongodb' driver
- * before importing the MongoDBProvider class.
+ * Uses mock.module() from bun:test to replace the 'mongodb' driver with the stand-in in
+ * `tests/helpers/mongodb-driver.ts` before importing the MongoDBProvider class.
  */
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -15,70 +15,22 @@ import type { DatabaseConnection } from "@/lib/types";
 // would make every assertion about the rendered text an assertion about the test's own code,
 // which is the shape standing ruling 5b catalogues as a fake that cannot see a change.
 import * as realMongoDriver from "mongodb";
+import {
+  MockBinary,
+  type MockCollectionInfo,
+  MockObjectId,
+  mongoDriver,
+  mongoDriverModule,
+  mongoServerError,
+  resetMongoDriver,
+} from "../../helpers/mongodb-driver";
 
 // ============================================================================
 // Mock Setup — MUST come before provider import
 // ============================================================================
 
-// Track mock instances for assertions
-let mockCollectionData: Record<string, unknown>[] = [];
-let mockCollections: { name: string; type: string }[] = [
-  { name: "users", type: "collection" },
-  { name: "orders", type: "collection" },
-];
-let mockCurrentOps: Record<string, unknown>[] = [];
-/** Every `killOp` command the admin database received, so a test can read what Terminate sent (#1424). */
-let killOpCommands: Record<string, unknown>[] = [];
+mock.module("mongodb", () => mongoDriverModule());
 
-// ----------------------------------------------------------------------------
-// Object-surface state (#789)
-//
-// The object surface reads across DATABASES, so the fake has to honour the name
-// `MongoClient.db(name)` is given instead of answering one fixed database. That is
-// deliberate and it is what makes a wrong container bind visible: a provider reading
-// the connected database instead of the one the container names gets a different
-// collection list here rather than the same one.
-// ----------------------------------------------------------------------------
-
-interface MockCollectionInfo {
-  name: string;
-  type: string;
-  options?: Record<string, unknown>;
-}
-
-/** What `listDatabases` answers. Mirrors `docker/mongodb-init/01-object-fixture.js`. */
-let mockDatabaseList: { name: string }[] = [];
-/** One collection list per database name; absent falls back to `mockCollections`. */
-let mockCollectionsByDb: Record<string, MockCollectionInfo[]> = {};
-/** A database whose `listCollections` is refused, by name, with the server's own error. */
-let mockListCollectionsError: Record<string, Error> = {};
-/** Sampled documents per `<database>.<collection>`; absent falls back to `mockCollectionData`. */
-let mockDocumentsByNs: Record<string, Record<string, unknown>[]> = {};
-/** Every database name `MongoClient.db()` was opened with, in order. */
-let mongoOpenedDatabases: string[] = [];
-/**
- * Every aggregate pipeline the bulk sample chain sent, in order.
- *
- * The bulk column read's claim is that a folder costs ONE aggregate per chunk rather than
- * one read per object, and nothing about the RESULT can distinguish the two. So the
- * pipelines themselves are captured, and the tests assert how many there were and which
- * collections each one named (#789).
- */
-let mongoAggregatePipelines: Record<string, unknown>[][] = [];
-/** Every `<database>.<collection>` whose indexes were read, in order. */
-let mongoIndexReads: string[] = [];
-/** Every `<database>.<collection>` a `find()` cursor was opened on, in order. */
-let mongoFoundCollections: string[] = [];
-/** A server refusal per `<database>.<collection>`, raised when a `find()` cursor is read. */
-let mockFindErrors: Record<string, Error> = {};
-/**
- * The arguments each collection method received, by method name, last call wins.
- *
- * The query JSON is read as Extended JSON, and what that changes is only visible in what the
- * driver is HANDED: `{"$oid": ...}` has to arrive as an ObjectId and `{"$date": ...}` as a
- * Date, and a fake that ignored its arguments would answer the same rows either way.
- */
-let mongoDriverArgs: Record<string, unknown[]> = {};
 /** A placeholder credential: the driver is mocked, so nothing ever authenticates with it. */
 const TEST_PASSWORD = "password";
 
@@ -88,414 +40,27 @@ function pipelineNamespaces(pipeline: Record<string, unknown>[]): string[] {
   const rest = pipeline.slice(2).map((stage) => (stage as { $unionWith?: { coll?: string } }).$unionWith?.coll ?? "");
   return [String(first), ...rest];
 }
-/** The `listDatabases` command document the driver received, verbatim. */
-let lastListDatabasesCommand: Record<string, unknown> = {};
-/** Every `listDatabases` command the driver received, in order. */
-let listDatabasesCommands: Record<string, unknown>[] = [];
-/**
- * Decides whether one `listDatabases` command is refused, and with what. `undefined` answers
- * every command, which is how MongoDB behaves.
- */
-let mockListDatabasesRefusal: ((cmd: Record<string, unknown>) => Error | undefined) | undefined;
-
-/** A server error reply as the driver delivers it: named `MongoServerError`, with its code. */
-const mongoServerError = (code: number, message: string): Error => {
-  const error = new Error(message) as Error & { code: number };
-  error.code = code;
-  error.name = "MongoServerError";
-  return error;
-};
 
 /** What FerretDB 2.7.0 replies to `authorizedDatabases`, as measured in #1299. */
 const FERRETDB_UNKNOWN_FIELD = "authorizedDatabases is an unknown field";
-// The URI `buildConnectionString()` composed, as the driver received it. The only
-// place the query string is observable: `MongoClient` is where it goes.
-let lastMongoUri = "";
-// The options object the driver received. TLS is observable nowhere else: the
-// `MongoClient` constructor is the only place it is stated.
-let lastMongoOptions: Record<string, unknown> = {};
-
-// ----------------------------------------------------------------------------
-// #1573: the connect deadline. The mock client has to behave like the driver on
-// the two paths the deadline opens: it must RELAY the heartbeat failure the way
-// `Topology` relays `serverHeartbeatFailed` to the client, and its `close()` must
-// be countable, because "no client outlives a timed-out connect" is the second
-// acceptance criterion of the issue.
-// ----------------------------------------------------------------------------
-
-/**
- * How the next `MongoClient.connect()` behaves. `undefined` connects at once; a
- * function returns its promise, which the deadline tests leave pending the way a
- * server-selection loop retries a refused port until its own 30 s bound.
- */
-let mockConnectBehavior: (() => Promise<void>) | undefined;
-/**
- * The failure the monitoring delivered, delivered to every `serverHeartbeatFailed`
- * listener the provider registered on the client, exactly as the driver does.
- */
-let mockHeartbeatFailure: Error | undefined;
-/** Every `close()` the mocked clients received, per client instance, in order. */
-let mockClientCloses: number[] = [];
-
-/** Delivers the configured heartbeat failure the way the driver relays it. */
-function emitMockHeartbeatFailure(): void {
-  if (mockHeartbeatFailure === undefined) return;
-  // The event shape `ServerHeartbeatFailedEvent` carries: the refusal is on `.failure`.
-  const event = { failure: mockHeartbeatFailure };
-  for (const listener of mockHeartbeatListeners) listener(event);
-}
-/** The provider's heartbeat listeners on the current client, as `on()` registered them. */
-let mockHeartbeatListeners: ((event: { failure: Error }) => void)[] = [];
-
-const createMockCursor = (data: Record<string, unknown>[]) => {
-  const cursor = {
-    project: () => cursor,
-    sort: () => cursor,
-    skip: () => cursor,
-    limit: () => cursor,
-    toArray: async () => data,
-    close: async () => {},
-  };
-  return cursor;
-};
-
-/**
- * The server's own answer for a command that is not supported on a view: code 166,
- * `CommandNotSupportedOnView`. Reproduced here because it is what one view in a
- * database used to do to the WHOLE schema read - `estimatedDocumentCount()` and
- * `indexes()` were unguarded, so the first view aborted every collection after it.
- */
-const commandNotSupportedOnView = (command: string, name: string): Error => {
-  const error = new Error(`Namespace testdb.${name} is a view, not a collection`) as Error & { code: number };
-  error.code = 166;
-  error.name = `MongoServerError(${command})`;
-  return error;
-};
-
-const mockCollectionInfos = (dbName: string): { name: string; type: string }[] =>
-  mockCollectionsByDb[dbName] ?? mockCollections;
-
-const isMockView = (name: string, dbName: string): boolean =>
-  mockCollectionInfos(dbName).some((c) => c.name === name && c.type === "view");
-
-/**
- * The bulk sample pipeline, INTERPRETED rather than ignored (standing ruling 5b).
- *
- * `describeObjects` reads every object's documents in one `$unionWith` chain, and a fake
- * that answered one canned array whatever the pipeline said could not see a rewrite of it:
- * the collection names, the per-collection `$limit` and the `__ks` tag would all be
- * unasserted. So this walks the exact stage shape the provider builds and refuses anything
- * else by name, which is what makes a mutation of that construction fail here rather than
- * only against a live server (#789).
- *
- * Anything that is not that shape falls through to the canned array, because `query()`
- * sends arbitrary user pipelines through the same method and has always been answered that
- * way.
- */
-function runMockAggregate(
-  name: string,
-  dbName: string,
-  pipeline: Record<string, unknown>[],
-): Record<string, unknown>[] {
-  const project = pipeline[1] as { $project?: { __ks?: { $literal?: string } } } | undefined;
-  if (project?.$project?.__ks === undefined) return mockCollectionData;
-
-  const readLimit = (stage: unknown): number => {
-    const limit = (stage as { $limit?: unknown } | undefined)?.$limit;
-    if (typeof limit !== "number") throw new Error("the bulk sample pipeline must start each arm with $limit");
-    return limit;
-  };
-  // The SAME fallback `find()` takes for a namespace no test named, so the fake models one
-  // server for both reads: an asymmetry here would show up as the bulk read and the single
-  // read disagreeing about a collection, which is a defect this suite exists to catch.
-  const sample = (coll: string, limit: number): Record<string, unknown>[] =>
-    (mockDocumentsByNs[`${dbName}.${coll}`] ?? mockCollectionData)
-      .slice(0, limit)
-      .map((document) => ({ __ks: coll, d: document }));
-
-  if (project.$project.__ks.$literal !== name) {
-    throw new Error(`the bulk sample pipeline tagged ${name} as ${String(project.$project.__ks.$literal)}`);
-  }
-  const rows = sample(name, readLimit(pipeline[0]));
-  for (const stage of pipeline.slice(2)) {
-    const union = (stage as { $unionWith?: { coll?: string; pipeline?: Record<string, unknown>[] } }).$unionWith;
-    if (union?.coll === undefined || union.pipeline === undefined) {
-      throw new Error("the bulk sample pipeline may only carry $unionWith after its first two stages");
-    }
-    const tag = (union.pipeline[1] as { $project?: { __ks?: { $literal?: string } } })?.$project?.__ks?.$literal;
-    if (tag !== union.coll) throw new Error(`a $unionWith arm on ${union.coll} tagged its rows ${String(tag)}`);
-    rows.push(...sample(union.coll, readLimit(union.pipeline[0])));
-  }
-  return rows;
-}
-
-const createMockCollection = (name = "users", dbName = "testdb") => ({
-  find: (...args: unknown[]) => {
-    mongoDriverArgs.find = args;
-    mongoFoundCollections.push(`${dbName}.${name}`);
-    const cursor = createMockCursor(mockDocumentsByNs[`${dbName}.${name}`] ?? mockCollectionData);
-    const refusal = mockFindErrors[`${dbName}.${name}`];
-    if (refusal !== undefined) {
-      cursor.toArray = async () => {
-        throw refusal;
-      };
-    }
-    return cursor;
-  },
-  findOne: async (...args: unknown[]) => {
-    mongoDriverArgs.findOne = args;
-    return mockCollectionData[0] || null;
-  },
-  aggregate: (pipeline?: Record<string, unknown>[]) => ({
-    toArray: async () => {
-      mongoDriverArgs.aggregate = [pipeline];
-      const stages = pipeline ?? [];
-      if ((stages[1] as { $project?: { __ks?: unknown } })?.$project?.__ks !== undefined) {
-        mongoAggregatePipelines.push(stages);
-      }
-      return runMockAggregate(name, dbName, stages);
-    },
-  }),
-  countDocuments: async (...args: unknown[]) => {
-    mongoDriverArgs.countDocuments = args;
-    return mockCollectionData.length;
-  },
-  distinct: async (field: string, ...rest: unknown[]) => {
-    mongoDriverArgs.distinct = [field, ...rest];
-    return mockCollectionData.map((d) => d[field]);
-  },
-  insertOne: async (...args: unknown[]) => {
-    mongoDriverArgs.insertOne = args;
-    // Echoes a statement's own `_id`, as the driver does, so a typed one reaches the result.
-    return { insertedId: (args[0] as { _id?: unknown })._id ?? "new-id-123", acknowledged: true };
-  },
-  insertMany: async (docs: Record<string, unknown>[]) => {
-    mongoDriverArgs.insertMany = [docs];
-    return { insertedCount: docs.length, insertedIds: docs.map((doc, i) => doc._id ?? `id-${i}`) };
-  },
-  updateOne: async (...args: unknown[]) => {
-    mongoDriverArgs.updateOne = args;
-    return { matchedCount: 1, modifiedCount: 1 };
-  },
-  updateMany: async (...args: unknown[]) => {
-    mongoDriverArgs.updateMany = args;
-    return { matchedCount: 2, modifiedCount: 2 };
-  },
-  deleteOne: async (...args: unknown[]) => {
-    mongoDriverArgs.deleteOne = args;
-    return { deletedCount: 1 };
-  },
-  deleteMany: async (...args: unknown[]) => {
-    mongoDriverArgs.deleteMany = args;
-    return { deletedCount: 3 };
-  },
-  estimatedDocumentCount: async () => {
-    if (isMockView(name, dbName)) throw commandNotSupportedOnView("count", name);
-    return 42;
-  },
-  indexes: async () => {
-    mongoIndexReads.push(`${dbName}.${name}`);
-    if (isMockView(name, dbName)) throw commandNotSupportedOnView("listIndexes", name);
-    return [
-      { name: "_id_", key: { _id: 1 }, unique: true },
-      { name: "email_1", key: { email: 1 }, unique: false },
-    ];
-  },
-});
-
-const mockCommandResults: Record<string, unknown> = {};
-
-/** A per-collection `validate` / `compact` refusal, by collection name (#1408). */
-let mockMaintenanceRefusal: Record<string, Error> = {};
-
-/**
- * What `serverStatus` answers, as a function rather than a literal: the metric
- * paths have to be driven on a server that publishes NO `wiredTiger` section
- * (mongos, the in-memory storage engine, an API-compatible service) and on one
- * where the command fails outright. Both used to reach the panel as a cache hit
- * ratio of 99%.
- */
-const defaultServerStatus = () => ({
-  connections: { current: 5, available: 95 },
-  uptime: 86400,
-  wiredTiger: {
-    cache: {
-      "pages read into cache": 10,
-      "pages requested from the cache": 1000,
-      "bytes currently in the cache": 5000000,
-      "maximum bytes configured": 10000000,
-    },
-  },
-  opcounters: { query: 100, insert: 50, update: 30, delete: 20 },
-});
-
-let mockServerStatus: () => Record<string, unknown> = defaultServerStatus;
-
-/**
- * What `db.stats()` answers, a function for the same reason `serverStatus` is one:
- * `databaseSizeBytes` is optional, so the byte figure has to be driven on a database
- * that measures 0 bytes AND on a deployment that answers without `dataSize` at all.
- * Both used to reach the Storage tab as a measured 0.
- */
-const defaultDbStats = () => ({
-  dataSize: 2048,
-  indexSize: 512,
-  storageSize: 4096,
-  collections: 2,
-  objects: 100,
-});
-
-let mockDbStats: () => Record<string, unknown> = defaultDbStats;
-
-/**
- * Per-collection `collStats` answers, for a test that has to drive the ROW BYTES rather
- * than the one shared fixture below. A collection the map does not name keeps answering
- * `{ size: 1024, totalIndexSize: 512, count: 42 }`.
- */
-let mockCollStatsByCollection: Record<string, { size: number; totalIndexSize: number; count: number }> = {};
-
-const createMockDb = (dbName = "testdb") => ({
-  command: async (cmd: Record<string, unknown>) => {
-    if (cmd.ping) return { ok: 1 };
-    if (cmd.collStats) {
-      const collName = String(cmd.collStats);
-      if (isMockView(collName, dbName)) throw commandNotSupportedOnView("collStats", collName);
-      return mockCollStatsByCollection[collName] ?? { size: 1024, totalIndexSize: 512, count: 42 };
-    }
-    if (cmd.validate || cmd.compact) {
-      const name = String(cmd.validate ?? cmd.compact);
-      // The server refuses both on a view, code 166 with these sentences (measured on
-      // 7.0.43, 8.0.32 and 8.2.12, #1408).
-      if (isMockView(name, dbName)) {
-        throw mongoServerError(166, cmd.validate ? "Cannot validate a view" : "can't compact a view");
-      }
-      const refusal = mockMaintenanceRefusal[name];
-      if (refusal !== undefined) throw refusal;
-      return cmd.validate ? { ok: 1, valid: true } : { ok: 1 };
-    }
-    return mockCommandResults;
-  },
-  listCollections: () => ({
-    toArray: async () => {
-      const refusal = mockListCollectionsError[dbName];
-      if (refusal !== undefined) throw refusal;
-      return mockCollectionInfos(dbName);
-    },
-  }),
-  collection: (name?: string) => createMockCollection(name, dbName),
-  stats: async () => mockDbStats(),
-  admin: () => ({
-    serverStatus: async () => mockServerStatus(),
-    command: async (cmd: Record<string, unknown>) => {
-      if (cmd.currentOp) return { inprog: mockCurrentOps };
-      if (cmd.killOp) {
-        killOpCommands.push(cmd);
-        return { info: "attempting to kill op", ok: 1 };
-      }
-      if (cmd.buildInfo) return { version: "7.0.0" };
-      if (cmd.listDatabases) {
-        lastListDatabasesCommand = cmd;
-        listDatabasesCommands.push(cmd);
-        const refusal = mockListDatabasesRefusal?.(cmd);
-        if (refusal !== undefined) throw refusal;
-        return { databases: mockDatabaseList, ok: 1 };
-      }
-      return {};
-    },
-  }),
-});
-
-class MockObjectId {
-  private _str: string;
-  constructor(str?: string) {
-    this._str = str || "mock-object-id-123456789012";
-  }
-  toString() {
-    return this._str;
-  }
-}
-
-class MockBinary {
-  private _data: Buffer;
-  constructor(data?: Buffer | string) {
-    this._data = Buffer.from(data || "binary-data");
-  }
-  length() {
-    return this._data.length;
-  }
-}
-
-class MockDecimal128 {
-  private _val: string;
-  constructor(val?: string) {
-    this._val = val || "123.456";
-  }
-  toString() {
-    return this._val;
-  }
-}
-
-mock.module("mongodb", () => ({
-  MongoClient: class MockMongoClient {
-    private _uri: string;
-    private _opts: unknown;
-    private _closes = 0;
-
-    constructor(uri: string, opts?: unknown) {
-      this._uri = uri;
-      this._opts = opts;
-      lastMongoUri = uri;
-      lastMongoOptions = (opts ?? {}) as Record<string, unknown>;
-      mockClientCloses.push(0);
-    }
-
-    // The driver's client is an event emitter and `Topology` relays the monitor's
-    // `serverHeartbeatFailed` to it (`constants.js` SERVER_RELAY_EVENTS), which is
-    // where the provider reads the refusal the deadline reports (#1573).
-    on(event: string, listener: (...args: never[]) => void) {
-      if (event === "serverHeartbeatFailed") {
-        mockHeartbeatListeners.push(listener as (event: { failure: Error }) => void);
-      }
-      return this;
-    }
-
-    async connect() {
-      // The heartbeat failure lands while the connect is still selecting, as it does
-      // on a closed port: the monitor's connect attempt fails at once and the
-      // selection loop keeps retrying (#1458). Deferred to a microtask because the
-      // provider registers its `serverHeartbeatFailed` listener between the
-      // constructor and this call, and the monitor on a real client fires only once
-      // the topology starts connecting.
-      queueMicrotask(() => emitMockHeartbeatFailure());
-      return mockConnectBehavior?.();
-    }
-
-    async close() {
-      this._closes++;
-      mockClientCloses[mockClientCloses.length - 1] = this._closes;
-    }
-
-    db(name?: string) {
-      mongoOpenedDatabases.push(name ?? "");
-      return createMockDb(name);
-    }
-  },
-  ObjectId: MockObjectId,
-  Binary: MockBinary,
-  Decimal128: MockDecimal128,
-  BSON: realMongoDriver.BSON,
-}));
 
 // ============================================================================
 // Provider import — AFTER mock registration
 // ============================================================================
 
 const { MongoDBProvider } = await import("@/lib/db/providers/document/mongodb");
-const { AuthenticationError, DatabaseConfigError, ConnectionError, PermissionDeniedError, QueryError } = await import(
-  "@/lib/db/errors"
-);
+const {
+  AuthenticationError,
+  DatabaseConfigError,
+  ConnectionError,
+  ExecutionProfileError,
+  PermissionDeniedError,
+  QueryError,
+} = await import("@/lib/db/errors");
 const { createErrorResponse } = await import("@/lib/api/errors");
 const { ApiErrorCode } = await import("@/lib/api/error-codes");
+const { AGENT_VERIFY_MAX_TIME_MS } = await import("@/lib/db/providers/document/mongodb/agent-boundary");
+const { rowBudgetIn } = await import("@/lib/agent/context-snapshot");
 const { assertObjectSurface } = await import("../../helpers/object-surface-conformance");
 const { isSourcePartUnavailable } = await import("@/lib/db/object-kinds");
 
@@ -691,34 +256,34 @@ function serverErrorReply(message: string): Error {
 }
 
 function resetObjectSurfaceMocks(): void {
-  mockDatabaseList = [];
-  mockCollectionsByDb = {};
-  mockListCollectionsError = {};
-  mockMaintenanceRefusal = {};
-  mockDocumentsByNs = {};
-  mongoOpenedDatabases = [];
-  mongoAggregatePipelines = [];
-  mongoIndexReads = [];
-  mongoFoundCollections = [];
-  mockFindErrors = {};
-  mongoDriverArgs = {};
-  lastListDatabasesCommand = {};
-  listDatabasesCommands = [];
-  mockListDatabasesRefusal = undefined;
-  mockConnectBehavior = undefined;
-  mockHeartbeatFailure = undefined;
-  mockClientCloses = [];
-  mockHeartbeatListeners = [];
+  mongoDriver.databaseList = [];
+  mongoDriver.collectionsByDb = {};
+  mongoDriver.listCollectionsErrors = {};
+  mongoDriver.maintenanceRefusals = {};
+  mongoDriver.documentsByNs = {};
+  mongoDriver.openedDatabases = [];
+  mongoDriver.samplePipelines = [];
+  mongoDriver.indexReads = [];
+  mongoDriver.foundCollections = [];
+  mongoDriver.findErrors = {};
+  mongoDriver.args = {};
+  mongoDriver.lastListDatabasesCommand = {};
+  mongoDriver.listDatabasesCommands = [];
+  mongoDriver.listDatabasesRefusal = undefined;
+  mongoDriver.connectBehavior = undefined;
+  mongoDriver.heartbeatFailure = undefined;
+  mongoDriver.clientCloses = [];
+  mongoDriver.heartbeatListeners = [];
 }
 
 function useObjectFixture(): void {
-  mockDatabaseList = OBJECT_FIXTURE_DATABASES;
-  mockCollectionsByDb = {
+  mongoDriver.databaseList = OBJECT_FIXTURE_DATABASES;
+  mongoDriver.collectionsByDb = {
     app: OBJECT_FIXTURE_APP,
     configstore: OBJECT_FIXTURE_CONFIGSTORE,
     oddnames: OBJECT_FIXTURE_ODDNAMES,
   };
-  mockDocumentsByNs = {
+  mongoDriver.documentsByNs = {
     "app.customers": [
       { _id: new MockObjectId("c1"), name: "Ada", city: "Istanbul" },
       { _id: new MockObjectId("c2"), name: "Grace", city: "Ankara" },
@@ -735,20 +300,11 @@ describe("MongoDBProvider", () => {
   let provider: InstanceType<typeof MongoDBProvider>;
 
   beforeEach(() => {
-    mockCollectionData = [
+    resetMongoDriver();
+    mongoDriver.collectionData = [
       { _id: new MockObjectId("aaa"), name: "Alice", email: "alice@test.com" },
       { _id: new MockObjectId("bbb"), name: "Bob", email: "bob@test.com" },
     ];
-    mockCollections = [
-      { name: "users", type: "collection" },
-      { name: "orders", type: "collection" },
-    ];
-    mockCurrentOps = [];
-    killOpCommands = [];
-    mockServerStatus = defaultServerStatus;
-    mockDbStats = defaultDbStats;
-    mockCollStatsByCollection = {};
-    resetObjectSurfaceMocks();
     provider = new MongoDBProvider({ ...baseConfig });
   });
 
@@ -810,7 +366,7 @@ describe("MongoDBProvider", () => {
   describe("the composed URI", () => {
     test("carries no query string when no auth database is named", async () => {
       await provider.connect();
-      expect(lastMongoUri).toBe("mongodb://localhost:27017/testdb");
+      expect(mongoDriver.lastUri).toBe("mongodb://localhost:27017/testdb");
     });
 
     test("names no database in the path when none is configured", async () => {
@@ -819,13 +375,13 @@ describe("MongoDBProvider", () => {
       // credentials. An empty path leaves the driver's own default, which is `admin`.
       provider = new MongoDBProvider({ ...baseConfig, database: undefined, user: "app", password: TEST_PASSWORD });
       await provider.connect();
-      expect(lastMongoUri).toBe(`mongodb://app:${TEST_PASSWORD}@localhost:27017/`);
+      expect(mongoDriver.lastUri).toBe(`mongodb://app:${TEST_PASSWORD}@localhost:27017/`);
     });
 
     test("keeps the auth database when no database is configured", async () => {
       provider = new MongoDBProvider({ ...baseConfig, database: undefined, authSource: "admin" });
       await provider.connect();
-      expect(lastMongoUri).toBe("mongodb://localhost:27017/?authSource=admin");
+      expect(mongoDriver.lastUri).toBe("mongodb://localhost:27017/?authSource=admin");
     });
 
     test("names the auth database as ?authSource, and percent-encodes it", async () => {
@@ -835,7 +391,7 @@ describe("MongoDBProvider", () => {
       // reached through the form fields at all: it failed as a credentials error.
       provider = new MongoDBProvider({ ...baseConfig, user: "app", password: "s3cret", authSource: "admin db" });
       await provider.connect();
-      expect(lastMongoUri).toBe("mongodb://app:s3cret@localhost:27017/testdb?authSource=admin%20db");
+      expect(mongoDriver.lastUri).toBe("mongodb://app:s3cret@localhost:27017/testdb?authSource=admin%20db");
     });
 
     // The session database is read from the URI's PATH, after the authority. A regex over
@@ -849,7 +405,7 @@ describe("MongoDBProvider", () => {
       test(`the session database of ${uri} is ${expected}`, async () => {
         provider = new MongoDBProvider({ ...baseConfig, database: undefined, connectionString: uri });
         await provider.connect();
-        expect(mongoOpenedDatabases).toEqual([expected]);
+        expect(mongoDriver.openedDatabases).toEqual([expected]);
       });
     }
 
@@ -863,7 +419,7 @@ describe("MongoDBProvider", () => {
         connectionString: "mongodb://app:s3cret@remote:27017/shop?authSource=users&replicaSet=rs0",
       });
       await provider.connect();
-      expect(lastMongoUri).toBe("mongodb://app:s3cret@remote:27017/shop?authSource=users&replicaSet=rs0");
+      expect(mongoDriver.lastUri).toBe("mongodb://app:s3cret@remote:27017/shop?authSource=users&replicaSet=rs0");
     });
   });
 
@@ -875,12 +431,12 @@ describe("MongoDBProvider", () => {
     const connectWithSSL = async (ssl: DatabaseConnection["ssl"], extra: Partial<DatabaseConnection> = {}) => {
       provider = new MongoDBProvider({ ...baseConfig, ...extra, ssl });
       await provider.connect();
-      return lastMongoOptions;
+      return mongoDriver.lastOptions;
     };
 
     test("carries no tls option when the connection names no SSL config", async () => {
       await provider.connect();
-      expect("tls" in lastMongoOptions).toBe(false);
+      expect("tls" in mongoDriver.lastOptions).toBe(false);
     });
 
     test("carries no tls option in mode disable", async () => {
@@ -935,7 +491,7 @@ describe("MongoDBProvider", () => {
       // appended to it - but the options object is a second, independent channel the
       // driver reads, and the form shows the SSL panel in connection-string mode too.
       const options = await connectWithSSL({ mode: "require" }, { connectionString: "mongodb://remote:27017/shop" });
-      expect(lastMongoUri).toBe("mongodb://remote:27017/shop");
+      expect(mongoDriver.lastUri).toBe("mongodb://remote:27017/shop");
       expect(options.tls).toBe(true);
     });
   });
@@ -971,8 +527,8 @@ describe("MongoDBProvider", () => {
     // refusal fails that attempt at once.
     test("server selection carries its own bound, not the pool acquire timeout", async () => {
       await provider.connect();
-      expect(lastMongoOptions.serverSelectionTimeoutMS).toBe(30000);
-      expect(lastMongoOptions.connectTimeoutMS).toBe(60000);
+      expect(mongoDriver.lastOptions.serverSelectionTimeoutMS).toBe(30000);
+      expect(mongoDriver.lastOptions.connectTimeoutMS).toBe(60000);
     });
 
     test("a configured pool still reaches the driver, and does not move the selection bound", async () => {
@@ -981,7 +537,7 @@ describe("MongoDBProvider", () => {
         { pool: { min: 1, max: 4, idleTimeout: 12000, acquireTimeout: 25000 } },
       );
       await provider.connect();
-      expect(lastMongoOptions).toMatchObject({
+      expect(mongoDriver.lastOptions).toMatchObject({
         minPoolSize: 1,
         maxPoolSize: 4,
         maxIdleTimeMS: 12000,
@@ -997,8 +553,8 @@ describe("MongoDBProvider", () => {
     // measurement against the real one is `mongodb-server-selection.test.ts`.
     describe("the request's query timeout bounds connect() (#1573)", () => {
       test("a connect that outlives queryTimeout is refused, the client closed, and the refusal names the driver's error", async () => {
-        mockConnectBehavior = () => new Promise<void>(() => {});
-        mockHeartbeatFailure = new Error("connect ECONNREFUSED 127.0.0.1:27999");
+        mongoDriver.connectBehavior = () => new Promise<void>(() => {});
+        mongoDriver.heartbeatFailure = new Error("connect ECONNREFUSED 127.0.0.1:27999");
         const deadlineProvider = new MongoDBProvider({ ...baseConfig }, { queryTimeout: 25 });
 
         const started = Date.now();
@@ -1016,15 +572,15 @@ describe("MongoDBProvider", () => {
         expect(elapsed).toBeLessThan(5000);
         expect(refusal).toContain("ECONNREFUSED");
         // No client outlives a timed-out connect: close() was called on it.
-        expect(mockClientCloses[0]).toBeGreaterThan(0);
+        expect(mongoDriver.clientCloses[0]).toBeGreaterThan(0);
 
         await deadlineProvider.disconnect();
       }, 10_000);
 
       test("a later connect() starts fresh after a timed-out one", async () => {
         let release: (() => void) | undefined;
-        mockConnectBehavior = () => new Promise<void>((resolve) => (release = resolve));
-        mockHeartbeatFailure = new Error("connect ECONNREFUSED 127.0.0.1:27999");
+        mongoDriver.connectBehavior = () => new Promise<void>((resolve) => (release = resolve));
+        mongoDriver.heartbeatFailure = new Error("connect ECONNREFUSED 127.0.0.1:27999");
         const deadlineProvider = new MongoDBProvider({ ...baseConfig }, { queryTimeout: 25 });
 
         await expect(deadlineProvider.connect()).rejects.toThrow(/ECONNREFUSED/);
@@ -1032,18 +588,18 @@ describe("MongoDBProvider", () => {
         // SRV before it creates the topology, so a close during the lookup is a no-op)
         // and the client is closed again once it does: the close count goes from 1
         // (the deadline path) to 2 (the settle), pinning the second close.
-        expect(mockClientCloses.length).toBe(1);
-        expect(mockClientCloses[0]).toBe(1);
+        expect(mongoDriver.clientCloses.length).toBe(1);
+        expect(mongoDriver.clientCloses[0]).toBe(1);
         release?.();
         await new Promise((resolve) => setTimeout(resolve, 10));
-        expect(mockClientCloses.length).toBe(1);
-        expect(mockClientCloses[0]).toBe(2);
+        expect(mongoDriver.clientCloses.length).toBe(1);
+        expect(mongoDriver.clientCloses[0]).toBe(2);
 
         // A fresh connect succeeds on the same provider, on a new client.
-        mockConnectBehavior = undefined;
+        mongoDriver.connectBehavior = undefined;
         await deadlineProvider.connect();
         expect(deadlineProvider.isConnected()).toBe(true);
-        expect(mockClientCloses.length).toBe(2);
+        expect(mongoDriver.clientCloses.length).toBe(2);
 
         await deadlineProvider.disconnect();
       }, 10_000);
@@ -1054,40 +610,40 @@ describe("MongoDBProvider", () => {
         // (the state is not connected), but a later `disconnect()` finds the stale
         // client and closes it a third time.
         let release: (() => void) | undefined;
-        mockConnectBehavior = () => new Promise<void>((resolve) => (release = resolve));
-        mockHeartbeatFailure = new Error("connect ECONNREFUSED 127.0.0.1:27999");
+        mongoDriver.connectBehavior = () => new Promise<void>((resolve) => (release = resolve));
+        mongoDriver.heartbeatFailure = new Error("connect ECONNREFUSED 127.0.0.1:27999");
         const deadlineProvider = new MongoDBProvider({ ...baseConfig }, { queryTimeout: 25 });
 
         await expect(deadlineProvider.connect()).rejects.toThrow(/ECONNREFUSED/);
         release?.();
         await new Promise((resolve) => setTimeout(resolve, 10));
         // The deadline closed the client once and the settle closed it again.
-        expect(mockClientCloses.length).toBe(1);
-        expect(mockClientCloses[0]).toBe(2);
+        expect(mongoDriver.clientCloses.length).toBe(1);
+        expect(mongoDriver.clientCloses[0]).toBe(2);
 
         // With the clear, `disconnect()` is a no-op: the client it would close is
         // already gone. Without it, the stale client takes a third close.
         await deadlineProvider.disconnect();
-        expect(mockClientCloses.length).toBe(1);
-        expect(mockClientCloses[0]).toBe(2);
+        expect(mongoDriver.clientCloses.length).toBe(1);
+        expect(mongoDriver.clientCloses[0]).toBe(2);
       }, 10_000);
 
       test("a failed connect leaves no half-open client behind", async () => {
         // The driver's own refusal, before any deadline: `connect()` used to keep
         // `this.client` set while `this.db` stayed null, so a later `connect()` found
         // the half-open one and returned as if it were connected (#1573).
-        mockConnectBehavior = async () => {
+        mongoDriver.connectBehavior = async () => {
           throw new Error("connect ECONNREFUSED 127.0.0.1:27999");
         };
         const failingProvider = new MongoDBProvider({ ...baseConfig });
         await expect(failingProvider.connect()).rejects.toThrow(/ECONNREFUSED/);
-        expect(mockClientCloses.length).toBe(1);
-        expect(mockClientCloses[0]).toBeGreaterThan(0);
+        expect(mongoDriver.clientCloses.length).toBe(1);
+        expect(mongoDriver.clientCloses[0]).toBeGreaterThan(0);
 
-        mockConnectBehavior = undefined;
+        mongoDriver.connectBehavior = undefined;
         await failingProvider.connect();
         expect(failingProvider.isConnected()).toBe(true);
-        expect(mockClientCloses.length).toBe(2);
+        expect(mongoDriver.clientCloses.length).toBe(2);
 
         await failingProvider.disconnect();
       });
@@ -1096,8 +652,8 @@ describe("MongoDBProvider", () => {
         const fastProvider = new MongoDBProvider({ ...baseConfig }, { queryTimeout: 10000 });
         await fastProvider.connect();
         expect(fastProvider.isConnected()).toBe(true);
-        expect(mockClientCloses.length).toBe(1);
-        expect(mockClientCloses[0]).toBe(0);
+        expect(mongoDriver.clientCloses.length).toBe(1);
+        expect(mongoDriver.clientCloses[0]).toBe(0);
         await fastProvider.disconnect();
       });
     });
@@ -1234,7 +790,7 @@ describe("MongoDBProvider", () => {
     // the first document's keys as the columns, so the other document's fields were in
     // the rows (and the JSON export) but in no grid column and no CSV/SQL/DDL export.
     test("find answers the union of the documents' keys as columns, first seen first", async () => {
-      mockDocumentsByNs["testdb.mixed"] = [
+      mongoDriver.documentsByNs["testdb.mixed"] = [
         { _id: new MockObjectId("b1"), name: "B", ts: 1 },
         { _id: new MockObjectId("a1"), name: "A", balance: 10, tags: ["x"] },
         { _id: new MockObjectId("c1"), ts: 2, re: "^a" },
@@ -1247,7 +803,7 @@ describe("MongoDBProvider", () => {
     // BSON carries an empty key (`BSON.deserialize(BSON.serialize({ "": 1 }))` answers `{ "": 1 }`,
     // measured in-process 2026-10-07), and a grid column cannot take an empty id.
     test("a document key that is empty is answered under a name of its own", async () => {
-      mockDocumentsByNs["testdb.blank"] = [
+      mongoDriver.documentsByNs["testdb.blank"] = [
         { _id: new MockObjectId("b1"), "": "blank" },
         { _id: new MockObjectId("b2"), name: "B" },
       ];
@@ -1260,7 +816,7 @@ describe("MongoDBProvider", () => {
     });
 
     test("an empty find answers no columns", async () => {
-      mockDocumentsByNs["testdb.empty"] = [];
+      mongoDriver.documentsByNs["testdb.empty"] = [];
       const result = await provider.query(JSON.stringify({ collection: "empty", operation: "find", filter: {} }));
       expect(result.fields).toEqual([]);
     });
@@ -1270,27 +826,27 @@ describe("MongoDBProvider", () => {
     // silently read the same-named collection in the CONNECTED database instead - a
     // wrong answer, not an error.
     test("database key reads a collection in another database", async () => {
-      mockDocumentsByNs["otherdb.users"] = [{ _id: new MockObjectId("z1"), name: "Zoe" }];
+      mongoDriver.documentsByNs["otherdb.users"] = [{ _id: new MockObjectId("z1"), name: "Zoe" }];
       const result = await provider.query(
         JSON.stringify({ database: "otherdb", collection: "users", operation: "find", filter: {} }),
       );
       expect(result.rows.length).toBe(1);
       expect(result.rows[0].name).toBe("Zoe");
-      expect(mongoFoundCollections).toEqual(["otherdb.users"]);
+      expect(mongoDriver.foundCollections).toEqual(["otherdb.users"]);
     });
 
     test("a statement with no database key reads the connected database", async () => {
       // Every statement written before the key existed, saved queries and snippets alike.
-      mockDocumentsByNs["otherdb.users"] = [{ _id: new MockObjectId("z1"), name: "Zoe" }];
+      mongoDriver.documentsByNs["otherdb.users"] = [{ _id: new MockObjectId("z1"), name: "Zoe" }];
       const result = await provider.query(JSON.stringify({ collection: "users", operation: "find", filter: {} }));
       expect(result.rows.length).toBe(2);
-      expect(mongoFoundCollections).toEqual(["testdb.users"]);
+      expect(mongoDriver.foundCollections).toEqual(["testdb.users"]);
     });
 
     test("a database the credentials cannot read raises the server's own sentence", async () => {
       // Not an empty result: a refusal read as 0 rows is the #843 failure in another form.
       const sentence = 'not authorized on analytics to execute command { find: "events" }';
-      mockFindErrors["analytics.events"] = Object.assign(new Error(sentence), { code: 13 });
+      mongoDriver.findErrors["analytics.events"] = Object.assign(new Error(sentence), { code: 13 });
       await expect(
         provider.query(JSON.stringify({ database: "analytics", collection: "events", operation: "find" })),
       ).rejects.toThrow(sentence);
@@ -1301,7 +857,7 @@ describe("MongoDBProvider", () => {
     // refused credential, and it used to fall through to a 500.
     test("a command the role may not run (13, Unauthorized) is a PermissionDeniedError answered 403", async () => {
       const sentence = 'not authorized on analytics to execute command { find: "events" }';
-      mockFindErrors["analytics.events"] = Object.assign(serverErrorReply(sentence), {
+      mongoDriver.findErrors["analytics.events"] = Object.assign(serverErrorReply(sentence), {
         code: 13,
         codeName: "Unauthorized",
       });
@@ -1321,7 +877,7 @@ describe("MongoDBProvider", () => {
     });
 
     test("a refused credential (18, AuthenticationFailed) is still an AuthenticationError answered 401", async () => {
-      mockFindErrors["analytics.events"] = Object.assign(serverErrorReply("Authentication failed."), {
+      mongoDriver.findErrors["analytics.events"] = Object.assign(serverErrorReply("Authentication failed."), {
         code: 18,
         codeName: "AuthenticationFailed",
       });
@@ -1343,7 +899,7 @@ describe("MongoDBProvider", () => {
         expect((error as Error).message).toContain('"database" must be a non-empty string');
       }
       // Refused before any database is opened: `MongoClient.db("")` is not a question to send.
-      expect(mongoOpenedDatabases).toEqual(["testdb"]);
+      expect(mongoDriver.openedDatabases).toEqual(["testdb"]);
     });
 
     test("findOne returns a single document", async () => {
@@ -1411,7 +967,7 @@ describe("MongoDBProvider", () => {
 
       test("a $oid filter reaches find as an ObjectId", async () => {
         await run({ collection: "users", operation: "find", filter: { _id: { $oid: OID } } });
-        const filter = mongoDriverArgs.find[0] as Record<string, unknown>;
+        const filter = mongoDriver.args.find[0] as Record<string, unknown>;
         expect(filter._id).toBeInstanceOf(BSON.ObjectId);
         expect((filter._id as InstanceType<typeof BSON.ObjectId>).toHexString()).toBe(OID);
       });
@@ -1429,7 +985,7 @@ describe("MongoDBProvider", () => {
             },
           },
         });
-        const range = (mongoDriverArgs.find[0] as { created: Record<string, unknown> }).created;
+        const range = (mongoDriver.args.find[0] as { created: Record<string, unknown> }).created;
         for (const bound of [range.$gt, range.$gte, range.$lt]) {
           expect(bound).toBeInstanceOf(Date);
           expect((bound as Date).getTime()).toBe(instant);
@@ -1451,20 +1007,20 @@ describe("MongoDBProvider", () => {
         await run({ collection: "users", operation: "deleteMany", filter });
 
         const isOid = (value: unknown) => (value as { _id: unknown })._id instanceof BSON.ObjectId;
-        expect(isOid(mongoDriverArgs.findOne[0])).toBe(true);
-        expect(isOid(mongoDriverArgs.countDocuments[0])).toBe(true);
-        expect(isOid(mongoDriverArgs.distinct[1])).toBe(true);
-        expect(isOid(mongoDriverArgs.updateOne[0])).toBe(true);
-        expect(isOid(mongoDriverArgs.updateMany[0])).toBe(true);
-        expect(isOid(mongoDriverArgs.deleteOne[0])).toBe(true);
-        expect(isOid(mongoDriverArgs.deleteMany[0])).toBe(true);
+        expect(isOid(mongoDriver.args.findOne[0])).toBe(true);
+        expect(isOid(mongoDriver.args.countDocuments[0])).toBe(true);
+        expect(isOid(mongoDriver.args.distinct[1])).toBe(true);
+        expect(isOid(mongoDriver.args.updateOne[0])).toBe(true);
+        expect(isOid(mongoDriver.args.updateMany[0])).toBe(true);
+        expect(isOid(mongoDriver.args.deleteOne[0])).toBe(true);
+        expect(isOid(mongoDriver.args.deleteMany[0])).toBe(true);
 
-        const pipeline = mongoDriverArgs.aggregate[0] as { $match: { when: { $gte: unknown } } }[];
+        const pipeline = mongoDriver.args.aggregate[0] as { $match: { when: { $gte: unknown } } }[];
         expect(pipeline[0].$match.when.$gte).toBeInstanceOf(Date);
-        expect((mongoDriverArgs.insertOne[0] as { when: unknown }).when).toBeInstanceOf(Date);
-        for (const doc of mongoDriverArgs.insertMany[0] as { when: unknown }[]) expect(doc.when).toBeInstanceOf(Date);
-        expect((mongoDriverArgs.updateOne[1] as { $set: { when: unknown } }).$set.when).toBeInstanceOf(Date);
-        expect((mongoDriverArgs.updateMany[1] as { $set: { when: unknown } }).$set.when).toBeInstanceOf(Date);
+        expect((mongoDriver.args.insertOne[0] as { when: unknown }).when).toBeInstanceOf(Date);
+        for (const doc of mongoDriver.args.insertMany[0] as { when: unknown }[]) expect(doc.when).toBeInstanceOf(Date);
+        expect((mongoDriver.args.updateOne[1] as { $set: { when: unknown } }).$set.when).toBeInstanceOf(Date);
+        expect((mongoDriver.args.updateMany[1] as { $set: { when: unknown } }).$set.when).toBeInstanceOf(Date);
       });
 
       test("the typed wrappers arrive as the BSON types they name, a 64-bit integer exactly", async () => {
@@ -1482,7 +1038,7 @@ describe("MongoDBProvider", () => {
             },
           ],
         });
-        const doc = mongoDriverArgs.insertOne[0] as Record<string, unknown>;
+        const doc = mongoDriver.args.insertOne[0] as Record<string, unknown>;
         // 2^53 + 1: a JS number cannot hold it, and relaxed Extended JSON alone would round it
         // to ...992. A bigint is what the driver writes as a 64-bit integer.
         expect(doc.big).toBe(BigInt("9007199254740993"));
@@ -1500,7 +1056,7 @@ describe("MongoDBProvider", () => {
         // and anything else as a double, as before, and operators are left alone.
         const filter = { age: { $gt: 18, $in: [1, 3000000000, 2.5] }, name: { $type: "string" }, tags: ["a"] };
         await run({ collection: "users", operation: "find", filter, options: { limit: 10 } });
-        expect(mongoDriverArgs.find[0]).toEqual(filter);
+        expect(mongoDriver.args.find[0]).toEqual(filter);
       });
 
       test("a malformed wrapper is a QueryError carrying the reason", async () => {
@@ -1520,7 +1076,7 @@ describe("MongoDBProvider", () => {
           email: { $regex: "^a", $options: "i", $ne: "a@x.io" },
         };
         await run({ collection: "users", operation: "deleteMany", filter });
-        expect(mongoDriverArgs.deleteMany[0]).toEqual(filter);
+        expect(mongoDriver.args.deleteMany[0]).toEqual(filter);
       });
 
       test("a wrapper sharing its object with another key is refused, naming both", async () => {
@@ -1538,12 +1094,12 @@ describe("MongoDBProvider", () => {
           expect((error as Error).message).toContain('at "filter.f"');
           expect((error as Error).message).toContain(`also has ${other}`);
         }
-        expect(mongoDriverArgs.deleteMany).toBeUndefined();
+        expect(mongoDriver.args.deleteMany).toBeUndefined();
       });
 
       test("an integral $numberDouble stays a double", async () => {
         await run({ collection: "users", operation: "insertOne", documents: [{ x: { $numberDouble: "5" } }] });
-        const x = (mongoDriverArgs.insertOne[0] as { x: unknown }).x;
+        const x = (mongoDriver.args.insertOne[0] as { x: unknown }).x;
         expect(x).toBeInstanceOf(BSON.Double);
         expect(Number(x)).toBe(5);
       });
@@ -1556,7 +1112,7 @@ describe("MongoDBProvider", () => {
         }).catch((caught: unknown) => caught);
         expect(error).toBeInstanceOf(QueryError);
         expect((error as Error).message).toContain("outside the 64-bit integer range");
-        expect(mongoDriverArgs.insertOne).toBeUndefined();
+        expect(mongoDriver.args.insertOne).toBeUndefined();
 
         // The edges themselves are integers, and an explicit plus sign names the same one.
         await run({
@@ -1570,7 +1126,7 @@ describe("MongoDBProvider", () => {
             },
           ],
         });
-        expect(mongoDriverArgs.insertOne[0]).toEqual({
+        expect(mongoDriver.args.insertOne[0]).toEqual({
           min: BigInt("-9223372036854775808"),
           max: BigInt("9223372036854775807"),
           signed: BigInt(7),
@@ -1586,7 +1142,7 @@ describe("MongoDBProvider", () => {
           pointer: { $dbPointer: { $ref: "users", $id: "abc" } },
         };
         await run({ collection: "users", operation: "insertOne", documents: [document] });
-        expect(mongoDriverArgs.insertOne[0]).toEqual(document);
+        expect(mongoDriver.args.insertOne[0]).toEqual(document);
       });
 
       test("a typed _id the write echoes back is a value the response can carry", async () => {
@@ -1625,7 +1181,7 @@ describe("MongoDBProvider", () => {
         }).catch((caught: unknown) => caught);
         expect(error).toBeInstanceOf(QueryError);
         expect((error as Error).message).toContain("documents.1.tags.0.when");
-        expect(mongoDriverArgs.insertMany).toBeUndefined();
+        expect(mongoDriver.args.insertMany).toBeUndefined();
       });
     });
   });
@@ -1658,13 +1214,13 @@ describe("MongoDBProvider", () => {
     });
 
     test("a server with no wiredTiger section reports the cache hit ratio as unavailable", async () => {
-      mockServerStatus = () => ({ connections: { current: 5, available: 95 }, uptime: 86400 });
+      mongoDriver.serverStatus = () => ({ connections: { current: 5, available: 95 }, uptime: 86400 });
       const health = await provider.getHealth();
       expect(health.cacheHitRatio).toBe("N/A");
     });
 
     test("a cache nothing has been requested from yet reports the ratio as unavailable", async () => {
-      mockServerStatus = () => ({
+      mongoDriver.serverStatus = () => ({
         connections: { current: 5, available: 95 },
         uptime: 86400,
         wiredTiger: { cache: { "pages read into cache": 0, "pages requested from the cache": 0 } },
@@ -1675,7 +1231,7 @@ describe("MongoDBProvider", () => {
     });
 
     test("a cache that served nothing from memory reports a measured zero", async () => {
-      mockServerStatus = () => ({
+      mongoDriver.serverStatus = () => ({
         connections: { current: 5, available: 95 },
         uptime: 86400,
         wiredTiger: { cache: { "pages read into cache": 400, "pages requested from the cache": 400 } },
@@ -1692,7 +1248,7 @@ describe("MongoDBProvider", () => {
       // server that is up (the health-gate lockout class). What it must NOT do is
       // resolve with `activeConnections: 0`, because nothing was read: the agent's
       // curated health reading forwards that key to the model as a measurement.
-      mockServerStatus = () => {
+      mongoDriver.serverStatus = () => {
         throw new Error("not authorized on admin to execute command { serverStatus: 1 }");
       };
       const health = await provider.getHealth();
@@ -1709,7 +1265,7 @@ describe("MongoDBProvider", () => {
       // `wiredTiger` its absence is not tied to the storage engine, and which
       // deployments omit it is not measured here. `connections?.current || 0` read
       // that as zero open connections; the figure was never published.
-      mockServerStatus = () => ({ uptime: 86400 });
+      mongoDriver.serverStatus = () => ({ uptime: 86400 });
       const health = await provider.getHealth();
 
       expect("activeConnections" in health).toBe(false);
@@ -1718,7 +1274,7 @@ describe("MongoDBProvider", () => {
     test("a server with zero open connections keeps its measured zero", async () => {
       // The anti-vacuity twin of the two tests above. Absence must never be spelled
       // with a falsy test (`activeConnections || undefined`): 0 here is a reading.
-      mockServerStatus = () => ({ connections: { current: 0, available: 100 }, uptime: 86400 });
+      mongoDriver.serverStatus = () => ({ connections: { current: 0, available: 100 }, uptime: 86400 });
       const health = await provider.getHealth();
 
       expect("activeConnections" in health).toBe(true);
@@ -1731,13 +1287,13 @@ describe("MongoDBProvider", () => {
       // sends `databaseSize` verbatim (`method: "getHealth"`, `fields: [..., "databaseSize",
       // ...]` in `src/lib/agent/tools.ts`), so `dbStats.dataSize || 0` told it a database it
       // never measured holds nothing. "N/A" is the spelling this method's own catch uses.
-      mockDbStats = () => ({ indexSize: 512, storageSize: 4096 });
+      mongoDriver.dbStats = () => ({ indexSize: 512, storageSize: 4096 });
       expect((await provider.getHealth()).databaseSize).toBe("N/A");
     });
 
     test("a database that really measures zero bytes still reports 0 B", async () => {
       // The anti-vacuity twin: an empty database measured 0 bytes, and that is a reading.
-      mockDbStats = () => ({ dataSize: 0, indexSize: 0, storageSize: 0 });
+      mongoDriver.dbStats = () => ({ dataSize: 0, indexSize: 0, storageSize: 0 });
       expect((await provider.getHealth()).databaseSize).toBe("0 B");
     });
 
@@ -1746,7 +1302,7 @@ describe("MongoDBProvider", () => {
       // `getOverview().databaseSizeBytes` as its total, and the Monitoring Overview's DB Size
       // card reads the overview figure. While `getHealth()` still published `dataSize` alone,
       // one MongoDB read two sizes side by side: a data-only row against a data+index total.
-      mockDbStats = () => ({ dataSize: 2048, indexSize: 1024, storageSize: 4096 });
+      mongoDriver.dbStats = () => ({ dataSize: 2048, indexSize: 1024, storageSize: 4096 });
       const health = await provider.getHealth();
       const overview = await provider.getOverview();
 
@@ -1758,7 +1314,7 @@ describe("MongoDBProvider", () => {
       // The same omit-when-either-is-missing rule the overview follows: a sum of one reading
       // and a guess is not a reading, and `indexSize` alone is no more a database size than
       // `dataSize` alone was.
-      mockDbStats = () => ({ dataSize: 2048, storageSize: 4096 });
+      mongoDriver.dbStats = () => ({ dataSize: 2048, storageSize: 4096 });
       const health = await provider.getHealth();
       const overview = await provider.getOverview();
 
@@ -1767,7 +1323,7 @@ describe("MongoDBProvider", () => {
     });
 
     test("maps in-progress operations to active sessions", async () => {
-      mockCurrentOps = [
+      mongoDriver.currentOps = [
         {
           opid: 123,
           client: "127.0.0.1:5555",
@@ -1860,7 +1416,7 @@ describe("MongoDBProvider", () => {
 
       const result = await provider.runMaintenance("kill", "64517");
 
-      expect(killOpCommands).toEqual([{ killOp: 1, op: 64517 }]);
+      expect(mongoDriver.killOpCommands).toEqual([{ killOp: 1, op: 64517 }]);
       expect(result.success).toBe(true);
       expect(result.message).toBe("Killed operation: 64517");
     });
@@ -1870,7 +1426,7 @@ describe("MongoDBProvider", () => {
     // the run with a 500. Compact swallowed every error and answered a bare success.
     describe("over the whole database (#1408)", () => {
       beforeEach(() => {
-        mockCollections = [
+        mongoDriver.collections = [
           { name: "users", type: "collection" },
           { name: "active_users", type: "view" },
           { name: "readings", type: "timeseries" },
@@ -1887,7 +1443,7 @@ describe("MongoDBProvider", () => {
       });
 
       test("a collection whose validate fails is named while the rest still run", async () => {
-        mockMaintenanceRefusal.users = mongoServerError(13, "not authorized on testdb to execute command");
+        mongoDriver.maintenanceRefusals.users = mongoServerError(13, "not authorized on testdb to execute command");
         const result = await provider.runMaintenance("analyze");
         expect(result).toMatchObject({
           success: false,
@@ -1897,7 +1453,7 @@ describe("MongoDBProvider", () => {
       });
 
       test("compact skips the view and reports a failure instead of a bare success", async () => {
-        mockMaintenanceRefusal.orders = mongoServerError(20, "compact is not allowed here");
+        mongoDriver.maintenanceRefusals.orders = mongoServerError(20, "compact is not allowed here");
         const result = await provider.runMaintenance("vacuum");
         expect(result).toMatchObject({
           success: false,
@@ -1906,7 +1462,7 @@ describe("MongoDBProvider", () => {
       });
 
       test("a single collection and a single view read in the singular", async () => {
-        mockCollections = [
+        mongoDriver.collections = [
           { name: "users", type: "collection" },
           { name: "active_users", type: "view" },
         ];
@@ -1941,19 +1497,19 @@ describe("MongoDBProvider", () => {
       const overview = await provider.getOverview();
       expect(overview.maxConnections).toBe(100);
 
-      mockServerStatus = () => ({ connections: { current: 5, available: 0 }, uptime: 1 });
+      mongoDriver.serverStatus = () => ({ connections: { current: 5, available: 0 }, uptime: 1 });
       // A pool with nothing left is a limit of 5, not the fabricated 100.
       expect((await provider.getOverview()).maxConnections).toBe(5);
     });
 
     test("a server publishing no connection headroom publishes no limit", async () => {
-      mockServerStatus = () => ({ connections: { current: 5 }, uptime: 1 });
+      mongoDriver.serverStatus = () => ({ connections: { current: 5 }, uptime: 1 });
       // 0 is how every provider spells "no limit published"; 100 was invented.
       expect((await provider.getOverview()).maxConnections).toBe(0);
     });
 
     test("a failing serverStatus publishes no connection limit either", async () => {
-      mockServerStatus = () => {
+      mongoDriver.serverStatus = () => {
         throw new Error("not authorized on admin to execute command { serverStatus: 1 }");
       };
       expect((await provider.getOverview()).maxConnections).toBe(0);
@@ -1965,7 +1521,7 @@ describe("MongoDBProvider", () => {
       // reads this panel through `Promise.allSettled`, so a rethrow would replace the
       // whole overview with an error entry rather than the version/uptime placeholders
       // the tab renders - but nothing was read, so it must not name a connection count.
-      mockServerStatus = () => {
+      mongoDriver.serverStatus = () => {
         throw new Error("not authorized on admin to execute command { serverStatus: 1 }");
       };
       const overview = await provider.getOverview();
@@ -1981,7 +1537,7 @@ describe("MongoDBProvider", () => {
       // not tied to the storage engine, and which deployments omit it is not measured
       // here. `connections?.current || 0` read the missing section as zero open
       // connections and the Overview card rated it against the limit.
-      mockServerStatus = () => ({ uptime: 86400 });
+      mongoDriver.serverStatus = () => ({ uptime: 86400 });
       const overview = await provider.getOverview();
 
       expect("activeConnections" in overview).toBe(false);
@@ -1991,7 +1547,7 @@ describe("MongoDBProvider", () => {
       // The anti-vacuity twin of the two tests above: `|| 0` destroyed a real zero as
       // well as inventing a fake one, so absence must never be spelled with a falsy
       // test. An idle server measured 0, and 0 is a reading.
-      mockServerStatus = () => ({ connections: { current: 0, available: 100 }, uptime: 86400 });
+      mongoDriver.serverStatus = () => ({ connections: { current: 0, available: 100 }, uptime: 86400 });
       const overview = await provider.getOverview();
 
       expect("activeConnections" in overview).toBe(true);
@@ -2008,7 +1564,7 @@ describe("MongoDBProvider", () => {
       // (it goes through `listCollections` + `collStats`, not `serverStatus`), its
       // "Other (unattributed)" row is `0 - tables - indexes`, a negative byte figure.
       // Absent, the tab draws its own "No storage size information available."
-      mockServerStatus = () => {
+      mongoDriver.serverStatus = () => {
         throw new Error("not authorized on admin to execute command { serverStatus: 1 }");
       };
       const overview = await provider.getOverview();
@@ -2028,7 +1584,7 @@ describe("MongoDBProvider", () => {
     test("a database that really measures zero bytes keeps its measured zero", async () => {
       // The anti-vacuity twin: absence must not be spelled with a falsy test. An empty
       // database measures 0 bytes, and 0 is a reading the Storage tab may divide by.
-      mockDbStats = () => ({ dataSize: 0, indexSize: 0, storageSize: 0 });
+      mongoDriver.dbStats = () => ({ dataSize: 0, indexSize: 0, storageSize: 0 });
       const overview = await provider.getOverview();
 
       expect("databaseSizeBytes" in overview).toBe(true);
@@ -2041,7 +1597,7 @@ describe("MongoDBProvider", () => {
       // three `freeStorage` fields are gated, on the command's `freeStorage: 1` option),
       // so this is not a measured deployment - it is the one arm `|| 0` could not tell
       // apart from the zero above, and the optional field exists to carry it.
-      mockDbStats = () => ({ indexSize: 512, storageSize: 4096 });
+      mongoDriver.dbStats = () => ({ indexSize: 512, storageSize: 4096 });
       const overview = await provider.getOverview();
 
       expect("databaseSizeBytes" in overview).toBe(false);
@@ -2059,7 +1615,7 @@ describe("MongoDBProvider", () => {
       // documents, uncompressed - put index bytes in the numerator and left them out of the
       // denominator, so the Indexes share and every collection carrying an index read over
       // 100% (measured on MongoDB 8.2: 1062.8% for Indexes, 354.7% for `customers`).
-      mockDbStats = () => ({ dataSize: 2048, indexSize: 1024, storageSize: 4096 });
+      mongoDriver.dbStats = () => ({ dataSize: 2048, indexSize: 1024, storageSize: 4096 });
       const overview = await provider.getOverview();
       const tables = await provider.getTableStats();
 
@@ -2086,7 +1642,7 @@ describe("MongoDBProvider", () => {
       // a reading: `dataSize` alone is exactly the state the shares were wrong in, and 0 for
       // the index bytes the answer never carried would be the same fabrication one step
       // further in. The absence the optional field carries is unchanged by that.
-      mockDbStats = () => ({ dataSize: 2048, storageSize: 4096 });
+      mongoDriver.dbStats = () => ({ dataSize: 2048, storageSize: 4096 });
       const overview = await provider.getOverview();
 
       expect("databaseSizeBytes" in overview).toBe(false);
@@ -2104,17 +1660,17 @@ describe("MongoDBProvider", () => {
       // negative (#1455). The numbers here are the `mongo:8` measurement the reviewer took:
       // 110334 B of rows against a 105066 B total, the 5268 B time series collection counted
       // twice.
-      mockCollections = [
+      mongoDriver.collections = [
         { name: "weather", type: "timeseries" },
         { name: "system.buckets.weather", type: "collection" },
         { name: "sensors", type: "collection" },
       ];
-      mockCollStatsByCollection = {
+      mongoDriver.collStatsByCollection = {
         weather: { size: 5000, totalIndexSize: 268, count: 12 },
         "system.buckets.weather": { size: 5000, totalIndexSize: 268, count: 12 },
         sensors: { size: 99798, totalIndexSize: 0, count: 900 },
       };
-      mockDbStats = () => ({ dataSize: 104798, indexSize: 268, storageSize: 4096 });
+      mongoDriver.dbStats = () => ({ dataSize: 104798, indexSize: 268, storageSize: 4096 });
 
       const overview = await provider.getOverview();
       const tables = await provider.getTableStats();
@@ -2151,7 +1707,7 @@ describe("MongoDBProvider", () => {
     });
 
     test("omits the cache metrics on a server with no wiredTiger section", async () => {
-      mockServerStatus = () => ({ uptime: 100, opcounters: { query: 100 } });
+      mongoDriver.serverStatus = () => ({ uptime: 100, opcounters: { query: 100 } });
       const metrics = await provider.getPerformanceMetrics();
       expect("cacheHitRatio" in metrics).toBe(false);
       expect("bufferPoolUsage" in metrics).toBe(false);
@@ -2160,7 +1716,7 @@ describe("MongoDBProvider", () => {
     });
 
     test("omits the ratio when nothing has been requested from the cache", async () => {
-      mockServerStatus = () => ({
+      mongoDriver.serverStatus = () => ({
         uptime: 100,
         wiredTiger: { cache: { "pages read into cache": 0, "pages requested from the cache": 0 } },
       });
@@ -2168,7 +1724,7 @@ describe("MongoDBProvider", () => {
     });
 
     test("reports a measured zero rather than dropping it", async () => {
-      mockServerStatus = () => ({
+      mongoDriver.serverStatus = () => ({
         uptime: 100,
         wiredTiger: {
           cache: {
@@ -2185,7 +1741,7 @@ describe("MongoDBProvider", () => {
     });
 
     test("measures nothing and reports nothing when serverStatus fails", async () => {
-      mockServerStatus = () => {
+      mongoDriver.serverStatus = () => {
         throw new Error("not authorized on admin to execute command { serverStatus: 1 }");
       };
       // The whole point of the change: this used to answer the panel with 99% cache hit.
@@ -2223,7 +1779,7 @@ describe("MongoDBProvider", () => {
     });
 
     test("maps in-progress operations with duration formatting for every range", async () => {
-      mockCurrentOps = [
+      mongoDriver.currentOps = [
         {
           opid: 1,
           client: "10.0.0.1:4444",
@@ -2276,7 +1832,7 @@ describe("MongoDBProvider", () => {
     // Studio's own idle connections with no opid, and 2 were server jobs (`Checkpointer`, `JournalFlusher`)
     // whose opid `killOp` answered `ok: 1` for while both kept running.
     test("marks a row with no opid, with no client, or that is this read itself, as not terminable", async () => {
-      mockCurrentOps = [
+      mongoDriver.currentOps = [
         { opid: 64517, client: "10.0.0.1:4444", active: true, command: { insert: "t" }, microsecs_running: 1000 },
         { client: "10.0.0.1:4445", active: false },
         { desc: "TTLMonitor", active: false },
@@ -2294,7 +1850,7 @@ describe("MongoDBProvider", () => {
     });
 
     test("respects the limit option", async () => {
-      mockCurrentOps = [
+      mongoDriver.currentOps = [
         { opid: 1, microsecs_running: 1000 },
         { opid: 2, microsecs_running: 2000 },
         { opid: 3, microsecs_running: 3000 },
@@ -2318,7 +1874,7 @@ describe("MongoDBProvider", () => {
       // (#1428). The bucket here has no time-series parent, so the earlier duplicate-bucket
       // check would have kept it; the reserved prefix is what drops it. `systemetrics` does
       // not start with `system.` and is a collection a person created.
-      mockCollections = [
+      mongoDriver.collections = [
         { name: "orders", type: "collection" },
         { name: "system.views", type: "collection" },
         { name: "system.buckets.readings", type: "collection" },
@@ -2400,7 +1956,7 @@ describe("MongoDBProvider", () => {
       const big = BSON.Long.fromString("9007199254740993");
       const ts = new BSON.Timestamp({ t: 1700000000, i: 1 });
       const uid = new BSON.UUID("3b241101-e2bb-4255-8caf-4136c566a962");
-      mockCollectionData = [
+      mongoDriver.collectionData = [
         {
           big,
           ts,
@@ -2571,6 +2127,673 @@ describe("MongoDBProvider", () => {
       expect(data.activeSessions).toBeArray();
     });
   });
+  // --------------------------------------------------------------------------
+  // The agent read-only execution profile (issue #1614)
+  // --------------------------------------------------------------------------
+  /*
+    The provider's half of the profile, through the stand-in driver: what it sends at open and on each read, and how it
+    reads what the server answers. The boundary's pure checks are held to captured server documents in
+    `tests/unit/db/mongodb/agent-boundary.test.ts`, and the deadline, the streamed read and the one builder to a fake
+    client in `tests/unit/db/mongodb/agent-read.test.ts`; here they are driven through `connect()` and
+    `queryReadOnly`, so a seam between the provider and those modules is a red test too.
+  */
+  describe("the agent read-only execution profile", () => {
+    const budget = { statementTimeoutMs: 5000, maxResultRows: 10, maxResultBytes: 512 * 1024 };
+    const profiledProvider = (overrides: Partial<DatabaseConnection> = {}) =>
+      new MongoDBProvider({ ...baseConfig, ...overrides }, {}, { readOnly: true, sendsStatements: true });
+    const envelope = (operation: string, extra: Record<string, unknown> = {}) =>
+      JSON.stringify({ collection: "orders", operation, ...extra });
+    /** One captured server reply (`tests/unit/db/mongodb/fixtures/`). */
+    const captured = (name: string): Record<string, unknown> =>
+      (
+        JSON.parse(readFileSync(join(import.meta.dir, "../../unit/db/mongodb/fixtures", `${name}.json`), "utf8")) as {
+          reply: Record<string, unknown>;
+        }
+      ).reply;
+    /** The names of the commands the stand-in was sent, in order. */
+    const commandNames = () => mongoDriver.commands.map(({ command }) => Object.keys(command)[0]);
+    /** The refusal a profiled open ends in, held to its class and code: the verdict, never a wrapped ConnectionError. */
+    async function refusedAtOpen(reasonCode: string, pattern: RegExp): Promise<void> {
+      const profiled = profiledProvider();
+      const caught = await profiled.connect().then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      expect(caught).toBeInstanceOf(ExecutionProfileError);
+      expect(caught).toMatchObject({ reasonCode });
+      expect(String((caught as Error).message)).toMatch(pattern);
+      expect(profiled.isConnected()).toBe(false);
+      // The refused open leaves no client behind (#1573).
+      expect(mongoDriver.clientCloses.at(-1)).toBe(1);
+    }
+
+    test("a provider nobody opened under the profile refuses the read outright", async () => {
+      await provider.connect();
+      await expect(provider.queryReadOnly(envelope("count"), budget)).rejects.toThrow(
+        /requires a provider opened under the agent read-only profile/,
+      );
+    });
+
+    describe("at open", () => {
+      test("reads buildInfo, the session's privileges and a probe that changes nothing, in that order", async () => {
+        const profiled = profiledProvider();
+        await profiled.connect();
+        expect(commandNames()).toEqual(["ping", "buildInfo", "connectionStatus", "delete"]);
+        for (const { database, command } of mongoDriver.commands.slice(1)) {
+          expect(database).toBe("testdb");
+          expect(command.maxTimeMS).toBe(AGENT_VERIFY_MAX_TIME_MS);
+          expect(command.comment).toBe("libredb-studio-agent");
+        }
+        // No write and no cleanup is ever issued: the probe is one delete that matches nothing.
+        expect(mongoDriver.args.insertOne).toBeUndefined();
+        expect(mongoDriver.args.deleteMany).toBeUndefined();
+        expect(mongoDriver.cursors).toEqual([]);
+        await profiled.disconnect();
+      });
+
+      test("the admin seed is refused on its privileges, and no probe is sent", async () => {
+        mongoDriver.connectionStatus = captured("connection-status-root-9.0.4");
+        await refusedAtOpen("PROFILE_PRIVILEGES_TOO_BROAD", /this session holds "analyze" on \{"system_buckets":""\}/);
+        expect(commandNames()).toEqual(["ping", "buildInfo", "connectionStatus"]);
+      });
+
+      test("a server that accepts the probe does not enforce authorization", async () => {
+        mongoDriver.probe = "accepted";
+        await refusedAtOpen("PROFILE_SERVER_UNENFORCED", /does not enforce authorization/);
+        expect(commandNames()).toEqual(["ping", "buildInfo", "connectionStatus", "delete"]);
+      });
+
+      test("a connection that authenticated no user is too narrow on an enforcing server", async () => {
+        mongoDriver.connectionStatus = captured("connection-status-anonymous-9.0.4");
+        mongoDriver.buildInfoError = mongoServerError(13, "Command buildInfo requires authentication");
+        await refusedAtOpen("PROFILE_PRIVILEGES_TOO_NARROW", /authenticated no user/);
+      });
+
+      test("a FerretDB buildInfo is refused as an unmeasured target, and a Cosmos DB host before its shape is read", async () => {
+        mongoDriver.buildInfo = captured("buildinfo-ferretdb-2.7.0");
+        await refusedAtOpen("PROFILE_UNSUPPORTED_TARGET", /identifies itself as FerretDB on the wire/);
+        expect(commandNames()).toEqual(["ping", "buildInfo"]);
+        resetMongoDriver();
+        const cosmos = profiledProvider({ host: "acct.mongo.cosmos.azure.com" });
+        const caught = await cosmos.connect().catch((error: unknown) => error);
+        expect(caught).toMatchObject({ reasonCode: "PROFILE_UNSUPPORTED_TARGET" });
+        expect(String(caught)).toContain("Azure Cosmos DB");
+      });
+
+      test("a buildInfo that answers no MongoDB shape is refused fail-closed", async () => {
+        mongoDriver.buildInfo = { version: "5.0.0", ok: 1 };
+        await refusedAtOpen("PROFILE_UNSUPPORTED_TARGET", /does not answer the shape a MongoDB answers/);
+      });
+
+      test("a server that cannot answer buildInfo at all fails the connect with its own error", async () => {
+        mongoDriver.buildInfoError = new Error("connection destroyed");
+        const profiled = profiledProvider();
+        await expect(profiled.connect()).rejects.toThrow("connection destroyed");
+      });
+
+      test("a probe that fails for any reason but authorization fails the connect, never reading as a verdict", async () => {
+        for (const failure of [
+          mongoServerError(121, "Document failed validation"),
+          mongoServerError(11000, "E11000"),
+        ]) {
+          resetMongoDriver();
+          mongoDriver.probe = failure;
+          const caught = await profiledProvider()
+            .connect()
+            .catch((error: unknown) => error);
+          expect(caught).not.toBeInstanceOf(ExecutionProfileError);
+          expect(String(caught)).toContain(failure.message);
+        }
+      });
+
+      test("an acquisition that sends no statement opens unverified, and refuses statements", async () => {
+        // The operations profile's curated reads: an admin principal opens as on main, with no check sent.
+        mongoDriver.connectionStatus = captured("connection-status-root-9.0.4");
+        const operations = new MongoDBProvider({ ...baseConfig }, {}, { readOnly: true, sendsStatements: false });
+        await operations.connect();
+        expect(commandNames()).toEqual(["ping"]);
+        await expect(operations.queryReadOnly(envelope("count"), budget)).rejects.toThrow(
+          /requires a provider opened under the agent read-only profile/,
+        );
+        await operations.disconnect();
+        // The same principal, opened to send statements, is refused.
+        mongoDriver.commands = [];
+        await refusedAtOpen("PROFILE_PRIVILEGES_TOO_BROAD", /this session holds/);
+      });
+
+      test("every execution-profile client retries no write and names itself; the editor's does neither", async () => {
+        for (const sendsStatements of [true, false]) {
+          const profiled = new MongoDBProvider({ ...baseConfig }, {}, { readOnly: true, sendsStatements });
+          await profiled.connect();
+          expect(mongoDriver.lastOptions).toMatchObject({ retryWrites: false, appName: "libredb-studio-agent" });
+          await profiled.disconnect();
+        }
+        await provider.connect();
+        expect(mongoDriver.lastOptions.retryWrites).toBeUndefined();
+        expect(mongoDriver.lastOptions.appName).toBeUndefined();
+      });
+    });
+
+    describe("the read", () => {
+      /** The cursor or command each read opened, with what it was opened with. */
+      const lastCursor = () => mongoDriver.cursors.at(-1) as (typeof mongoDriver.cursors)[number];
+
+      test("the five read operations answer through the envelope the editor takes", async () => {
+        mongoDriver.collectionData = [
+          { customer: "Ada", status: "shipped", total: 120 },
+          { customer: "Grace", status: "open", total: 80 },
+          { customer: "Ada", status: "open", total: 40 },
+        ];
+        const profiled = profiledProvider();
+        await profiled.connect();
+        const find = await profiled.queryReadOnly(envelope("find", { filter: { status: "shipped" } }), budget);
+        expect(find.rows).toEqual(mongoDriver.collectionData);
+        expect(find.fields).toEqual(["customer", "status", "total"]);
+        const findOne = await profiled.queryReadOnly(envelope("findOne"), budget);
+        expect(findOne.rows).toEqual([mongoDriver.collectionData[0]]);
+        // A findOne's projection reaches the find it is, beside its limit of 1.
+        await profiled.queryReadOnly(envelope("findOne", { options: { projection: { total: 1 } } }), budget);
+        expect(mongoDriver.cursors.at(-1)?.options).toMatchObject({ projection: { total: 1 }, limit: 1 });
+        await profiled.queryReadOnly(envelope("findOne", { options: {} }), budget);
+        expect(mongoDriver.cursors.at(-1)?.options.projection).toBeUndefined();
+        const aggregate = await profiled.queryReadOnly(
+          envelope("aggregate", { pipeline: [{ $match: { status: "open" } }] }),
+          budget,
+        );
+        expect(aggregate.rowCount).toBe(3);
+        const count = await profiled.queryReadOnly(envelope("count"), budget);
+        expect(count.rows).toEqual([{ count: 3 }]);
+        const distinct = await profiled.queryReadOnly(envelope("distinct", { field: "customer" }), budget);
+        expect(distinct.rows).toEqual([{ customer: "Ada" }, { customer: "Grace" }]);
+        await profiled.disconnect();
+      });
+
+      test("a write operation, a write stage and an unknown key are each refused before the engine is reached", async () => {
+        const profiled = profiledProvider();
+        await profiled.connect();
+        await expect(profiled.queryReadOnly(envelope("insertOne", { documents: [{ a: 1 }] }), budget)).rejects.toThrow(
+          /not one of the five reads/,
+        );
+        await expect(
+          profiled.queryReadOnly(envelope("aggregate", { pipeline: [{ $out: "elsewhere" }] }), budget),
+        ).rejects.toThrow(/\$out.*writes the pipeline's result/);
+        await expect(profiled.queryReadOnly(envelope("find", { flter: {} }), budget)).rejects.toThrow(
+          /"flter" is not a key the command envelope takes/,
+        );
+        await profiled.disconnect();
+      });
+
+      test("a malformed limit, a mixed wrapper and an unreadable wrapper are refused before any cursor opens", async () => {
+        const profiled = profiledProvider();
+        await profiled.connect();
+        mongoDriver.foundCollections = [];
+        await expect(profiled.queryReadOnly(envelope("find", { options: { limit: 0.5 } }), budget)).rejects.toThrow(
+          /"limit" must be a whole number of at least 1/,
+        );
+        await expect(
+          profiled.queryReadOnly(
+            envelope("find", { filter: { _id: { $oid: "65f0a1b2c3d4e5f6a7b8c9d0", other: 1 } } }),
+            budget,
+          ),
+        ).rejects.toThrow(/\$oid must be the only key of its object, and this one also has other/);
+        // The reader admits the wrapper's shape; its value is the reviver's to read, before anything is sent.
+        await expect(
+          profiled.queryReadOnly(envelope("find", { filter: { _id: { $oid: "zz" } } }), budget),
+        ).rejects.toThrow(/Invalid Extended JSON in the query at "filter._id"/);
+        expect(mongoDriver.foundCollections).toEqual([]);
+        await profiled.disconnect();
+      });
+
+      test("every object slot of every read reaches the driver revived, each value the BSON value it names", async () => {
+        const OID = { $oid: "65f0a1b2c3d4e5f6a7b8c9d0" };
+        const AT = { $date: "2026-01-01T00:00:00Z" };
+        const ONE = { $numberInt: "1" };
+        /**
+         * A value as the driver was handed it, its BSON values named, so a revived ObjectId or Date reads apart from
+         * the wrapper's own subdocument: a slot left unrevived would send `{"$oid": ...}` as a field to match.
+         */
+        const named = (value: unknown): unknown => {
+          if (value instanceof realMongoDriver.BSON.ObjectId) return `ObjectId(${value.toHexString()})`;
+          if (value instanceof Date) return `Date(${value.toISOString()})`;
+          if (Array.isArray(value)) return value.map(named);
+          if (typeof value !== "object" || value === null) return value;
+          return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, named(child)]));
+        };
+        const oid = "ObjectId(65f0a1b2c3d4e5f6a7b8c9d0)";
+        const at = "Date(2026-01-01T00:00:00.000Z)";
+        // Each read carries a wrapper in every object slot it takes; `$numberInt` stands where the server reads a plain
+        // number (a projection's inclusion, a sort's direction), and revives to that number.
+        const reads: { command: Record<string, unknown>; sent: () => unknown; expected: unknown }[] = [
+          {
+            command: {
+              operation: "find",
+              filter: { _id: OID, at: { $gte: AT } },
+              options: {
+                projection: { total: ONE, recent: { $gte: ["$at", AT] } },
+                sort: { total: { $numberInt: "-1" } },
+                skip: 2,
+                limit: 5,
+              },
+            },
+            sent: () => {
+              const { filter, options } = lastCursor();
+              return named({
+                filter,
+                projection: options.projection,
+                sort: options.sort,
+                skip: options.skip,
+                limit: options.limit,
+              });
+            },
+            expected: {
+              filter: { _id: oid, at: { $gte: at } },
+              projection: { total: 1, recent: { $gte: ["$at", at] } },
+              sort: { total: -1 },
+              skip: 2,
+              limit: 5,
+            },
+          },
+          {
+            command: {
+              operation: "findOne",
+              filter: { _id: OID },
+              options: { projection: { total: ONE, at: { $max: ["$at", AT] } } },
+            },
+            sent: () => {
+              const { filter, options } = lastCursor();
+              return named({ filter, projection: options.projection, limit: options.limit });
+            },
+            expected: { filter: { _id: oid }, projection: { total: 1, at: { $max: ["$at", at] } }, limit: 1 },
+          },
+          {
+            command: {
+              operation: "aggregate",
+              pipeline: [{ $match: { at: { $gte: AT } } }, { $project: { total: ONE } }],
+            },
+            sent: () => named(lastCursor().pipeline),
+            expected: [{ $match: { at: { $gte: at } } }, { $project: { total: 1 } }, { $limit: 11 }],
+          },
+          {
+            command: { operation: "count", filter: { _id: OID } },
+            sent: () => named(lastCursor().pipeline),
+            expected: [{ $match: { _id: oid } }, { $group: { _id: 1, n: { $sum: 1 } } }],
+          },
+          {
+            command: { operation: "distinct", field: "customer", filter: { at: { $lt: AT } } },
+            sent: () => named(mongoDriver.commands.at(-1)?.command.query),
+            expected: { at: { $lt: at } },
+          },
+        ];
+        const profiled = profiledProvider();
+        await profiled.connect();
+        for (const { command, sent, expected } of reads) {
+          const { operation, ...rest } = command;
+          await profiled.queryReadOnly(envelope(String(operation), rest), budget);
+          expect(sent()).toEqual(expected);
+        }
+        await profiled.disconnect();
+      });
+
+      test("the provider re-admits and refuses the JavaScript operators the fence refuses", async () => {
+        const profiled = profiledProvider();
+        await profiled.connect();
+        // The provider never trusts the caller: a statement that reached queryReadOnly any other way
+        // meets the same admission the model's tool path meets - including the JavaScript operators.
+        await expect(
+          profiled.queryReadOnly(envelope("find", { filter: { $where: "this.total > 5" } }), budget),
+        ).rejects.toThrow(/runs JavaScript this run wrote on the server/);
+        await profiled.disconnect();
+      });
+
+      test("every read carries the server deadline and the agent's comment, in a session it ends", async () => {
+        const profiled = profiledProvider();
+        await profiled.connect();
+        const reads = [
+          envelope("find"),
+          envelope("findOne"),
+          envelope("aggregate", { pipeline: [] }),
+          envelope("count"),
+        ];
+        for (const [index, text] of reads.entries()) {
+          for (const mode of ["execute", "estimate-plan"] as const) {
+            await profiled.queryReadOnly(text, budget, mode);
+            const cursor = lastCursor();
+            expect(cursor.options).toMatchObject({ maxTimeMS: 5000, comment: "libredb-studio-agent" });
+            expect((cursor.options.session as { id: unknown }).id).toEqual(mongoDriver.sessions.at(-1)?.id);
+            expect(cursor.options.raw).toBe(mode === "execute");
+            if (mode === "estimate-plan")
+              expect(cursor.explained).toEqual({ verbosity: "queryPlanner", maxTimeMS: 5000 });
+          }
+          expect(mongoDriver.cursors).toHaveLength((index + 1) * 2);
+        }
+        for (const mode of ["execute", "estimate-plan"] as const) {
+          await profiled.queryReadOnly(envelope("distinct", { field: "customer" }), budget, mode);
+          const { command, options } = mongoDriver.commands.at(-1) as (typeof mongoDriver.commands)[number];
+          expect(command).toMatchObject({ maxTimeMS: 5000, comment: "libredb-studio-agent" });
+          expect(options).toMatchObject({ session: { id: mongoDriver.sessions.at(-1)?.id } });
+        }
+        expect(mongoDriver.sessions.every((session) => session.ended)).toBe(true);
+        await profiled.disconnect();
+      });
+
+      test("a read is bounded one row past the budget server-side, and the crossing row is the refusal", async () => {
+        mongoDriver.collectionData = Array.from({ length: 40 }, (_, i) => ({ id: i }));
+        const profiled = profiledProvider();
+        await profiled.connect();
+        const error = await profiled.queryReadOnly(envelope("find"), budget).catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(QueryError);
+        expect((error as Error).message).toBe("Read-only execution exceeded the row budget: 11 rows > 10 allowed");
+        // The sentence is the one the run reads its row-budget advice from.
+        expect(rowBudgetIn((error as Error).message)).toEqual({ projected: 11, allowed: 10 });
+        expect(lastCursor()).toMatchObject({ pulled: 11, closes: 1 });
+        expect(lastCursor().options.limit).toBe(11);
+        // The command's own limit is sent when it is the smaller.
+        await profiled.queryReadOnly(envelope("find", { options: { limit: 3 } }), budget);
+        expect(lastCursor().options.limit).toBe(3);
+        const aggregate = await profiled
+          .queryReadOnly(envelope("aggregate", { pipeline: [{ $match: {} }] }), budget)
+          .catch((caught: unknown) => caught);
+        expect((aggregate as Error).message).toContain("11 rows > 10 allowed");
+        expect(lastCursor().pipeline?.at(-1)).toEqual({ $limit: 11 });
+        // Exactly the budget is admitted.
+        mongoDriver.collectionData = mongoDriver.collectionData.slice(0, 10);
+        expect((await profiled.queryReadOnly(envelope("find"), budget)).rowCount).toBe(10);
+        await profiled.disconnect();
+      });
+
+      test("a result past the byte budget is refused on the document whose bytes cross it", async () => {
+        mongoDriver.collectionData = Array.from({ length: 8 }, () => ({ blob: "x".repeat(400) }));
+        const profiled = profiledProvider();
+        await profiled.connect();
+        const tinyBudget = { statementTimeoutMs: 5000, maxResultRows: 10, maxResultBytes: 512 };
+        await expect(profiled.queryReadOnly(envelope("find"), tinyBudget)).rejects.toThrow(
+          /^Read-only execution exceeded the byte budget: \d+ bytes > 512 allowed$/,
+        );
+        expect(lastCursor()).toMatchObject({ pulled: 2, closes: 1 });
+        await profiled.disconnect();
+      });
+
+      test("a maxTimeMS expiry is the statement deadline, in the sentence the SQL engines established", async () => {
+        mongoDriver.findErrors["testdb.orders"] = mongoServerError(
+          50,
+          "Executor error during find command :: caused by :: operation exceeded time limit",
+        );
+        const profiled = profiledProvider();
+        await profiled.connect();
+        await expect(profiled.queryReadOnly(envelope("find"), budget)).rejects.toThrow(
+          /deadline of 5000ms and was killed server-side/,
+        );
+        await profiled.disconnect();
+      });
+
+      test("a findOne that matches nothing answers no rows, and a distinct answers its values as rows", async () => {
+        const profiled = profiledProvider();
+        await profiled.connect();
+        mongoDriver.collectionData = [];
+        const none = await profiled.queryReadOnly(envelope("findOne", { filter: { customer: "nobody" } }), budget);
+        expect(none.rowCount).toBe(0);
+        // The distinct's reply IS the values, one row per value under the field's name.
+        mongoDriver.collectionData = [{ customer: "Ada" }, { customer: "Grace" }, { customer: "Ada" }];
+        const values = await profiled.queryReadOnly(envelope("distinct", { field: "customer" }), budget);
+        expect(values.rows).toEqual([{ customer: "Ada" }, { customer: "Grace" }]);
+        expect(values.fields).toEqual(["customer"]);
+        await profiled.disconnect();
+      });
+
+      test("the estimating plan explains the command the read runs, and answers the plan alone", async () => {
+        const profiled = profiledProvider();
+        await profiled.connect();
+        const plan = await profiled.queryReadOnly(
+          envelope("find", { filter: { customer: "Ada" } }),
+          budget,
+          "estimate-plan",
+        );
+        expect(plan.rows).toEqual([
+          {
+            explainVersion: "1",
+            queryPlanner: { namespace: "testdb.orders", winningPlan: { stage: "COLLSCAN" }, rejectedPlans: [] },
+          },
+        ]);
+        expect(lastCursor()).toMatchObject({ kind: "find", filter: { customer: "Ada" }, pulled: 0 });
+        // A count plans the $group it runs, never the count command.
+        await profiled.queryReadOnly(envelope("count", { filter: { customer: "Ada" } }), budget, "estimate-plan");
+        expect(lastCursor().pipeline).toEqual([
+          { $match: { customer: "Ada" } },
+          { $group: { _id: 1, n: { $sum: 1 } } },
+        ]);
+        await profiled.queryReadOnly(envelope("distinct", { field: "customer" }), budget, "estimate-plan");
+        expect(mongoDriver.commands.at(-1)?.command).toEqual({
+          explain: { distinct: "orders", key: "customer", query: {} },
+          verbosity: "queryPlanner",
+          maxTimeMS: 5000,
+          comment: "libredb-studio-agent",
+        });
+        await profiled.disconnect();
+      });
+
+      test("a run reads the database its connection is bound to, and refuses a command naming another", async () => {
+        // A connection-string connection: the bound database is the URI's path (#1091), not a database field.
+        const bound = new MongoDBProvider(
+          {
+            ...baseConfig,
+            database: undefined,
+            connectionString: "mongodb://reader:secret@db.internal:27017/fromstring",
+          },
+          {},
+          { readOnly: true, sendsStatements: true },
+        );
+        await bound.connect();
+        mongoDriver.openedDatabases = [];
+        mongoDriver.cursors = [];
+        await expect(bound.queryReadOnly(envelope("find", { database: "elsewhere" }), budget)).rejects.toThrow(
+          'This run reads the database "fromstring" its connection is bound to, and "database": "elsewhere" names another, so nothing was sent. Drop the key or name "fromstring".',
+        );
+        expect([mongoDriver.openedDatabases, mongoDriver.cursors]).toEqual([[], []]);
+        await bound.queryReadOnly(envelope("find", { database: "fromstring" }), budget);
+        await bound.queryReadOnly(envelope("find"), budget);
+        expect(mongoDriver.cursors.map(({ namespace }) => namespace)).toEqual([
+          "fromstring.orders",
+          "fromstring.orders",
+        ]);
+        await bound.disconnect();
+      });
+
+      test("a read before the connection is open, or under an invalid budget, is refused with nothing sent", async () => {
+        const profiled = profiledProvider();
+        await expect(profiled.queryReadOnly(envelope("find"), budget)).rejects.toThrow(
+          "Provider is not connected. Call connect() first.",
+        );
+        await expect(profiled.readCatalogReadOnly!({}, budget)).rejects.toThrow(
+          "Provider is not connected. Call connect() first.",
+        );
+        await profiled.connect();
+        mongoDriver.sessions = [];
+        for (const invalid of [
+          { ...budget, maxResultRows: 0 },
+          { ...budget, statementTimeoutMs: 1.5 },
+        ]) {
+          await expect(profiled.queryReadOnly(envelope("find"), invalid)).rejects.toThrow(
+            /Read-only execution budget field/,
+          );
+        }
+        expect(mongoDriver.sessions).toEqual([]);
+        await profiled.disconnect();
+      });
+    });
+
+    describe("the catalog read", () => {
+      /** A connected provider opened to send statements, with the connect's own commands dropped. */
+      const connected = async (overrides: Partial<DatabaseConnection> = {}) => {
+        const profiled = profiledProvider(overrides);
+        await profiled.connect();
+        mongoDriver.commands = [];
+        return profiled;
+      };
+
+      test("lists the bound database's collections and views, never the server's own namespaces", async () => {
+        mongoDriver.collectionsByDb = {
+          testdb: [
+            { name: "users", type: "collection" },
+            { name: "active_users", type: "view" },
+            { name: "system.views", type: "collection" },
+            { name: "Orders", type: "collection" },
+          ],
+        };
+        const profiled = await connected();
+        const listed = await profiled.readCatalogReadOnly!({}, budget);
+        expect(listed).toEqual({
+          kind: "listed",
+          container: "testdb",
+          objects: [
+            { name: "Orders", kind: "collection" },
+            { name: "active_users", kind: "view" },
+            { name: "users", kind: "collection" },
+          ],
+        });
+        const [call] = mongoDriver.listCollectionsCalls;
+        expect(call).toMatchObject({ database: "testdb", filter: {} });
+        expect(call.options).toMatchObject({ nameOnly: true, maxTimeMS: 5000, comment: "libredb-studio-agent" });
+        expect((call.options.session as { id: unknown }).id).toEqual(mongoDriver.sessions.at(-1)?.id);
+        // An empty container is the bound one too.
+        expect(await profiled.readCatalogReadOnly!({ container: "" }, budget)).toEqual(listed);
+        await profiled.disconnect();
+      });
+
+      test("a container other than the bound database is refused, and nothing is read", async () => {
+        const profiled = await connected();
+        await expect(profiled.readCatalogReadOnly!({ container: "admin" }, budget)).rejects.toThrow(
+          'This run reads the database "testdb" its connection is bound to, and the database "admin" names another, so nothing was sent. Drop the key or name "testdb".',
+        );
+        expect(mongoDriver.listCollectionsCalls).toEqual([]);
+        await profiled.disconnect();
+      });
+
+      test("describes one collection: its kind from one listCollections, columns from a sample, indexes, each bounded", async () => {
+        mongoDriver.documentsByNs["testdb.users"] = [
+          { _id: 1, name: "Ada", address: { city: "Istanbul" } },
+          { _id: 2, name: "Grace" },
+        ];
+        const profiled = await connected();
+        const described = await profiled.readCatalogReadOnly!({ object: "users" }, budget);
+        expect(described).toEqual({
+          kind: "described",
+          container: "testdb",
+          object: "users",
+          objectKind: "collection",
+          columns: [
+            { name: "_id", type: "number" },
+            { name: "address", type: "object" },
+            { name: "address.city", type: "string" },
+            { name: "name", type: "string" },
+          ],
+          indexes: [
+            { name: "_id_", columns: ["_id"] },
+            { name: "email_1", columns: ["email"] },
+          ],
+          sampled: 2,
+        });
+        expect(mongoDriver.listCollectionsCalls.map(({ filter }) => filter)).toEqual([{ name: "users" }]);
+        const sample = mongoDriver.cursors.at(-1) as (typeof mongoDriver.cursors)[number];
+        expect(sample).toMatchObject({ kind: "find", namespace: "testdb.users", filter: {}, closes: 1 });
+        expect(sample.options).toMatchObject({
+          limit: 100,
+          raw: true,
+          maxTimeMS: 5000,
+          comment: "libredb-studio-agent",
+        });
+        expect(mongoDriver.listIndexesCalls[0].options).toMatchObject({
+          maxTimeMS: 5000,
+          comment: "libredb-studio-agent",
+        });
+        await profiled.disconnect();
+      });
+
+      test("a view is described with no indexes, which the server would refuse", async () => {
+        mongoDriver.collectionsByDb = { testdb: [{ name: "active_users", type: "view" }] };
+        mongoDriver.documentsByNs["testdb.active_users"] = [{ name: "Ada" }];
+        const profiled = await connected();
+        const described = await profiled.readCatalogReadOnly!({ object: "active_users" }, budget);
+        expect(described).toMatchObject({ kind: "described", objectKind: "view", indexes: [], sampled: 1 });
+        expect(mongoDriver.listIndexesCalls).toEqual([]);
+        await profiled.disconnect();
+      });
+
+      test("an object the database does not hold is not found, and a name is taken whole, never split on a dot", async () => {
+        mongoDriver.collectionsByDb = {
+          testdb: [
+            { name: "fs.files", type: "collection" },
+            { name: "system.profile", type: "collection" },
+          ],
+        };
+        const profiled = await connected();
+        expect(await profiled.readCatalogReadOnly!({ object: "orderz" }, budget)).toEqual({
+          kind: "not-found",
+          container: "testdb",
+          object: "orderz",
+        });
+        expect(await profiled.readCatalogReadOnly!({ object: "system.profile" }, budget)).toMatchObject({
+          kind: "not-found",
+        });
+        expect(await profiled.readCatalogReadOnly!({ object: "fs.files" }, budget)).toMatchObject({
+          kind: "described",
+          object: "fs.files",
+        });
+        expect(mongoDriver.cursors.at(-1)?.namespace).toBe("testdb.fs.files");
+        await profiled.disconnect();
+      });
+
+      test("an object whose sample holds nothing is described with no columns and a sample of 0", async () => {
+        mongoDriver.documentsByNs["testdb.users"] = [];
+        const profiled = await connected();
+        expect(await profiled.readCatalogReadOnly!({ object: "users" }, budget)).toMatchObject({
+          kind: "described",
+          columns: [],
+          sampled: 0,
+        });
+        await profiled.disconnect();
+      });
+
+      test("the sample stops before the document whose bytes would cross the budget, and the listing is held to the row budget", async () => {
+        mongoDriver.documentsByNs["testdb.users"] = Array.from({ length: 5 }, (_, i) => ({ i, pad: "x".repeat(300) }));
+        const profiled = await connected();
+        const tight = { ...budget, maxResultBytes: 700 };
+        expect(await profiled.readCatalogReadOnly!({ object: "users" }, tight)).toMatchObject({ sampled: 2 });
+        expect(mongoDriver.cursors.at(-1)).toMatchObject({ pulled: 3, closes: 1 });
+        // A first document that alone crosses it is refused: there is nothing honest to infer from.
+        await expect(
+          profiled.readCatalogReadOnly!({ object: "users" }, { ...budget, maxResultBytes: 100 }),
+        ).rejects.toThrow(/exceeded the byte budget/);
+        mongoDriver.collectionsByDb = {
+          testdb: Array.from({ length: 11 }, (_, i) => ({ name: `c${i}`, type: "collection" })),
+        };
+        await expect(profiled.readCatalogReadOnly!({}, budget)).rejects.toThrow("11 rows > 10 allowed");
+        await profiled.disconnect();
+      });
+
+      test("only a provider opened to send statements answers it", async () => {
+        await provider.connect();
+        await expect(provider.readCatalogReadOnly!({}, budget)).rejects.toThrow(
+          /requires a provider opened under the agent read-only profile/,
+        );
+        const operations = new MongoDBProvider({ ...baseConfig }, {}, { readOnly: true, sendsStatements: false });
+        await operations.connect();
+        await expect(operations.readCatalogReadOnly!({}, budget)).rejects.toThrow(
+          /requires a provider opened under the agent read-only profile/,
+        );
+        await operations.disconnect();
+      });
+
+      test("a catalog the server refuses is the server's own error", async () => {
+        mongoDriver.listCollectionsErrors.testdb = mongoServerError(
+          13,
+          "not authorized on testdb to execute command { listCollections: 1 }",
+        );
+        const profiled = await connected();
+        await expect(profiled.readCatalogReadOnly!({}, budget)).rejects.toThrow("not authorized on testdb");
+        await profiled.disconnect();
+      });
+    });
+  });
 });
 
 // ============================================================================
@@ -2591,7 +2814,7 @@ describe("object surface", () => {
   ): Promise<InstanceType<typeof MongoDBProvider>> => {
     const created = new MongoDBProvider({ ...baseConfig, database: "app", ...overrides });
     await created.connect();
-    mongoOpenedDatabases = [];
+    mongoDriver.openedDatabases = [];
     return created;
   };
 
@@ -2676,7 +2899,7 @@ describe("object surface", () => {
   test("declares columns on every kind it has, and both answer a usable column shape", async () => {
     const kinds = objectProvider.getCapabilities().objectKinds ?? [];
     // BOTH, and there is no third: `describeObject` samples documents the same way for a
-    // collection and for a view (its docblock in `mongodb.ts`), so no kind here abstains and the
+    // collection and for a view (its docblock in `mongodb/index.ts`), so no kind here abstains and the
     // expectation above has to say `noAbstainingKinds`.
     expect(kinds.filter((kind) => kind.hasColumns === true).map((kind) => kind.id)).toEqual(["collection", "view"]);
     expect(kinds.filter((kind) => kind.hasColumns !== true).map((kind) => kind.id)).toEqual([]);
@@ -2718,7 +2941,7 @@ describe("object surface", () => {
       // Every kind this engine has declares `hasColumns`, so invariant 8's negative
       // direction iterates zero times and certifies nothing unless it is said out loud.
       // There is no schema to read here: a collection and a view both get their fields SAMPLED from
-      // documents by the same code path (`describeObject` in `mongodb.ts`), so there is no kind
+      // documents by the same code path (`describeObject` in `mongodb/index.ts`), so there is no kind
       // left that could abstain.
       noAbstainingKinds: true,
     });
@@ -2745,7 +2968,7 @@ describe("object surface", () => {
     // fixture cannot tell a provider that sorts from one that inherits the server's order.
     // MongoDB does not document that ordering, and the tree addresses by path, so the
     // guarantee is the provider's own and is pinned with a list the server did not sort.
-    mockDatabaseList = [{ name: "oddnames" }, { name: "app" }, { name: "local" }, { name: "configstore" }];
+    mongoDriver.databaseList = [{ name: "oddnames" }, { name: "app" }, { name: "local" }, { name: "configstore" }];
     const containers = await objectProvider.listContainers();
     expect(containers.map((c) => c.name)).toEqual(["app", "configstore", "oddnames"]);
   });
@@ -2762,20 +2985,26 @@ describe("object surface", () => {
     // `authorizedDatabases`, a role holding no cluster-wide `listDatabases` action gets a
     // refusal instead of the databases it CAN read: measured with a role granted only
     // `read` on one database, the flag turns a refusal into that one database.
-    expect(lastListDatabasesCommand).toEqual({ listDatabases: 1, nameOnly: true, authorizedDatabases: true });
+    expect(mongoDriver.lastListDatabasesCommand).toEqual({
+      listDatabases: 1,
+      nameOnly: true,
+      authorizedDatabases: true,
+    });
   });
 
   test("sends listDatabases once on a server that accepts authorizedDatabases", async () => {
     await objectProvider.listContainers();
-    expect(listDatabasesCommands).toEqual([{ listDatabases: 1, nameOnly: true, authorizedDatabases: true }]);
+    expect(mongoDriver.listDatabasesCommands).toEqual([
+      { listDatabases: 1, nameOnly: true, authorizedDatabases: true },
+    ]);
   });
 
   test("retries without authorizedDatabases when the server refuses that field (FerretDB)", async () => {
     // FerretDB 2.7.0 refuses the flag with BadValue and accepts the command without it.
-    mockListDatabasesRefusal = (cmd) =>
+    mongoDriver.listDatabasesRefusal = (cmd) =>
       cmd.authorizedDatabases === undefined ? undefined : mongoServerError(2, FERRETDB_UNKNOWN_FIELD);
     const containers = await objectProvider.listContainers();
-    expect(listDatabasesCommands).toEqual([
+    expect(mongoDriver.listDatabasesCommands).toEqual([
       { listDatabases: 1, nameOnly: true, authorizedDatabases: true },
       { listDatabases: 1, nameOnly: true },
     ]);
@@ -2783,41 +3012,41 @@ describe("object surface", () => {
   });
 
   test("raises the second refusal when the retry without authorizedDatabases is refused too", async () => {
-    mockListDatabasesRefusal = (cmd) =>
+    mongoDriver.listDatabasesRefusal = (cmd) =>
       cmd.authorizedDatabases === undefined
         ? mongoServerError(13, "not authorized on admin to execute command")
         : mongoServerError(2, FERRETDB_UNKNOWN_FIELD);
     await expect(objectProvider.listContainers()).rejects.toThrow("not authorized on admin");
-    expect(listDatabasesCommands).toEqual([
+    expect(mongoDriver.listDatabasesCommands).toEqual([
       { listDatabases: 1, nameOnly: true, authorizedDatabases: true },
       { listDatabases: 1, nameOnly: true },
     ]);
   });
 
   test("does not retry a BadValue that is about something other than authorizedDatabases", async () => {
-    mockListDatabasesRefusal = () => mongoServerError(2, "nameOnly is an unknown field");
+    mongoDriver.listDatabasesRefusal = () => mongoServerError(2, "nameOnly is an unknown field");
     await expect(objectProvider.listContainers()).rejects.toThrow("nameOnly is an unknown field");
-    expect(listDatabasesCommands).toHaveLength(1);
+    expect(mongoDriver.listDatabasesCommands).toHaveLength(1);
   });
 
   test("does not retry when the refusal is not BadValue", async () => {
     // An unauthorized role is a real answer about this connection. Dropping the flag would
     // ask a different question rather than the same one again.
-    mockListDatabasesRefusal = () => mongoServerError(13, `not authorized: ${FERRETDB_UNKNOWN_FIELD}`);
+    mongoDriver.listDatabasesRefusal = () => mongoServerError(13, `not authorized: ${FERRETDB_UNKNOWN_FIELD}`);
     await expect(objectProvider.listContainers()).rejects.toThrow("not authorized");
-    expect(listDatabasesCommands).toHaveLength(1);
+    expect(mongoDriver.listDatabasesCommands).toHaveLength(1);
   });
 
   test("does not retry when the failure is not the server's own reply", async () => {
     // A transport failure is nobody answering at all, whatever its sentence says.
-    mockListDatabasesRefusal = () => {
+    mongoDriver.listDatabasesRefusal = () => {
       const error = new Error(FERRETDB_UNKNOWN_FIELD) as Error & { code: number };
       error.code = 2;
       error.name = "MongoNetworkError";
       return error;
     };
     await expect(objectProvider.listContainers()).rejects.toThrow(FERRETDB_UNKNOWN_FIELD);
-    expect(listDatabasesCommands).toHaveLength(1);
+    expect(mongoDriver.listDatabasesCommands).toHaveLength(1);
   });
 
   test("answers nothing under a container, because nothing nests under a database", async () => {
@@ -2879,12 +3108,12 @@ describe("object surface", () => {
   test("reads the database the CONTAINER names, not the one the session is in", async () => {
     const counts = await objectProvider.countObjects(["configstore"]);
     expect(counts).toEqual({ collection: { count: 1 }, view: { count: 1 } });
-    expect(mongoOpenedDatabases).toEqual(["configstore"]);
+    expect(mongoDriver.openedDatabases).toEqual(["configstore"]);
 
-    mongoOpenedDatabases = [];
+    mongoDriver.openedDatabases = [];
     const listed = await objectProvider.listObjects(["configstore"], "collection");
     expect(listed.map((o) => o.path)).toEqual([["configstore", "settings"]]);
-    expect(mongoOpenedDatabases).toEqual(["configstore"]);
+    expect(mongoDriver.openedDatabases).toEqual(["configstore"]);
   });
 
   test("carries the server's own sentence when a database's catalog is refused", async () => {
@@ -2892,7 +3121,7 @@ describe("object surface", () => {
     // other with "not authorized on adminx to execute command { listCollections: 1 ... }".
     // That is a refusal and not an empty database, and reporting it as 0 would say the
     // database is empty when nobody has looked.
-    mockListCollectionsError.configstore = new Error("not authorized on configstore to execute command");
+    mongoDriver.listCollectionsErrors.configstore = new Error("not authorized on configstore to execute command");
 
     const counts = await objectProvider.countObjects(["configstore"]);
     expect(counts).toEqual({
@@ -2902,7 +3131,7 @@ describe("object surface", () => {
   });
 
   test("counts a declared kind the catalog holds none of as zero rather than omitting it", async () => {
-    mockCollectionsByDb.app = [{ name: "customers", type: "collection" }];
+    mongoDriver.collectionsByDb.app = [{ name: "customers", type: "collection" }];
     const counts = await objectProvider.countObjects(["app"]);
     // A declared-and-empty kind keeps its folder and its 0 badge; leaving it out of the
     // record makes the folder disappear.
@@ -2955,7 +3184,7 @@ describe("object surface", () => {
   // profiler and the agent's inventory (#1423). Every BSON class is a scalar to inference.
   test("infers a BSON scalar as one field, never its internals (#1423)", async () => {
     const { BSON } = realMongoDriver;
-    mockDocumentsByNs["app.customers"] = [
+    mongoDriver.documentsByNs["app.customers"] = [
       {
         _id: new MockObjectId("c1"),
         big: BSON.Long.fromString("9007199254740993"),
@@ -2987,7 +3216,7 @@ describe("object surface", () => {
   // #1456: nullable was set only when a sampled value was `null`, so a field most documents
   // lack read "Nullable: No" in Docs and `NN` in the ERD. Absent counts as empty too.
   test("infers nullable from absent fields as well as nulls (#1456)", async () => {
-    mockDocumentsByNs["app.customers"] = [
+    mongoDriver.documentsByNs["app.customers"] = [
       {
         _id: new MockObjectId("c1"),
         name: "Ada",
@@ -3014,7 +3243,7 @@ describe("object surface", () => {
   });
 
   test("a field present in every sampled document is nullable only when one of them holds null (#1456)", async () => {
-    mockDocumentsByNs["app.customers"] = [
+    mongoDriver.documentsByNs["app.customers"] = [
       { _id: new MockObjectId("c1"), name: "Ada", city: null },
       { _id: new MockObjectId("c2"), name: "Grace", city: "Ankara" },
     ];
@@ -3030,7 +3259,7 @@ describe("object surface", () => {
   // collection holding `{_id: null}` and `{_id: 2}` (or a `$group` view with `_id: null`) has a
   // null `_id`, and a fixed "never nullable" for `_id` contradicted the sample.
   test("an _id that is null in a sampled document is nullable (#1456)", async () => {
-    mockDocumentsByNs["app.customers"] = [
+    mongoDriver.documentsByNs["app.customers"] = [
       { _id: null, name: "Ada" },
       { _id: 2, name: "Grace" },
     ];
@@ -3089,18 +3318,18 @@ describe("object surface", () => {
     const counts = await objectProvider.countObjects(["cluster0", "app"]);
     expect(counts).toEqual({ collection: { count: 4 }, view: { count: 1 } });
     // The BOUND VALUE. `path[0]` would have opened `cluster0`, which holds nothing here.
-    expect(mongoOpenedDatabases).toEqual(["app"]);
+    expect(mongoDriver.openedDatabases).toEqual(["app"]);
 
-    mongoOpenedDatabases = [];
+    mongoDriver.openedDatabases = [];
     const listed = await objectProvider.listObjects(["cluster0", "app"], "view");
     expect(listed.map((o) => o.path)).toEqual([["cluster0", "app", "active_customers"]]);
-    expect(mongoOpenedDatabases).toEqual(["app"]);
+    expect(mongoDriver.openedDatabases).toEqual(["app"]);
 
-    mongoOpenedDatabases = [];
+    mongoDriver.openedDatabases = [];
     const detail = await objectProvider.describeObject(["cluster0", "app", "customers"], "collection");
     expect(detail.path).toEqual(["cluster0", "app", "customers"]);
     expect(detail.columns.map((c) => c.name)).toEqual(["_id", "city", "name"]);
-    expect(mongoOpenedDatabases).toEqual(["app", "app"]);
+    expect(mongoDriver.openedDatabases).toEqual(["app", "app"]);
 
     // And the hardcoded depth: a one-segment container is now the wrong shape, and a
     // three-segment object path is the right one.
@@ -3134,9 +3363,14 @@ describe("object surface", () => {
     // ONE aggregate for the four collections, and no `find` at all: the sample chain is
     // what replaces the per-object read. `system.views` and `system.buckets.readings` are
     // absent because the classifier drops them, so the union names four arms and not six.
-    expect(mongoAggregatePipelines.length).toBe(1);
-    expect(pipelineNamespaces(mongoAggregatePipelines[0])).toEqual(["customers", "orders", "readings", "systemetrics"]);
-    expect(mongoFoundCollections).toEqual([]);
+    expect(mongoDriver.samplePipelines.length).toBe(1);
+    expect(pipelineNamespaces(mongoDriver.samplePipelines[0])).toEqual([
+      "customers",
+      "orders",
+      "readings",
+      "systemetrics",
+    ]);
+    expect(mongoDriver.foundCollections).toEqual([]);
   });
 
   test("the sample chain is chunked, so a wide folder cannot outgrow the pipeline limit", async () => {
@@ -3144,8 +3378,8 @@ describe("object surface", () => {
       name: `c${String(index).padStart(3, "0")}`,
       type: "collection",
     }));
-    mockCollectionsByDb = { wide: many };
-    mockDocumentsByNs = Object.fromEntries(many.map((info) => [`wide.${info.name}`, [{ _id: 1, v: "x" }]]));
+    mongoDriver.collectionsByDb = { wide: many };
+    mongoDriver.documentsByNs = Object.fromEntries(many.map((info) => [`wide.${info.name}`, [{ _id: 1, v: "x" }]]));
 
     const batch = await objectProvider.describeObjects!(["wide"], "collection");
 
@@ -3153,15 +3387,15 @@ describe("object surface", () => {
     // Three aggregates of at most 100 arms each, and not 250 reads: the count grows with
     // the folder divided by the chunk, which is what keeps a 5,000-collection database off
     // both the N+1 and MongoDB's own 1,000-stage pipeline ceiling.
-    expect(mongoAggregatePipelines.length).toBe(3);
-    expect(mongoAggregatePipelines.map((pipeline) => pipelineNamespaces(pipeline).length)).toEqual([100, 100, 50]);
+    expect(mongoDriver.samplePipelines.length).toBe(3);
+    expect(mongoDriver.samplePipelines.map((pipeline) => pipelineNamespaces(pipeline).length)).toEqual([100, 100, 50]);
     // Every collection is described exactly once, in path order, across the chunks.
     expect(batch.details[0].path).toEqual(["wide", "c000"]);
     expect(batch.details[249].path).toEqual(["wide", "c249"]);
   });
 
   test("each arm carries its OWN documents, so no collection is described with another's fields", async () => {
-    mockDocumentsByNs = {
+    mongoDriver.documentsByNs = {
       "app.customers": [{ _id: 1, name: "Ada" }],
       "app.orders": [{ _id: 2, total: 10 }],
       "app.readings": [{ _id: 3, sensor: "s1" }],
@@ -3185,13 +3419,13 @@ describe("object surface", () => {
     ]);
     expect(collections.details.every((detail) => detail.foreignKeys.length === 0)).toBe(true);
 
-    mongoIndexReads = [];
+    mongoDriver.indexReads = [];
     const views = await objectProvider.describeObjects!(["app"], "view");
     expect(views.details.map((detail) => detail.path)).toEqual([["app", "active_customers"]]);
     expect(views.details[0].indexes).toEqual([]);
     // `listIndexes` on a view is refused with code 166, so a bulk read that asked would
     // fail the whole folder on the one object that cannot answer. Nothing asks.
-    expect(mongoIndexReads).toEqual([]);
+    expect(mongoDriver.indexReads).toEqual([]);
   });
 
   test("the bulk read spells an object exactly as the single read does", async () => {
@@ -3219,8 +3453,8 @@ describe("object surface", () => {
     // The bound reaches the EXPENSIVE half: only the two objects that will be returned are
     // sampled and only their indexes are read. A cut applied after the detail reads would
     // answer the same rows for four times the work.
-    expect(pipelineNamespaces(mongoAggregatePipelines[0])).toEqual(["customers", "orders"]);
-    expect(mongoIndexReads).toEqual(["app.customers", "app.orders"]);
+    expect(pipelineNamespaces(mongoDriver.samplePipelines[0])).toEqual(["customers", "orders"]);
+    expect(mongoDriver.indexReads).toEqual(["app.customers", "app.orders"]);
   });
 
   test("a bound the folder fits inside reports nothing, on either side of the boundary", async () => {
@@ -3229,18 +3463,18 @@ describe("object surface", () => {
   });
 
   test("an empty folder answers an empty batch and sends no detail read at all", async () => {
-    mockCollectionsByDb = { app: [{ name: "only_a_view", type: "view", options: { viewOn: "x" } }] };
+    mongoDriver.collectionsByDb = { app: [{ name: "only_a_view", type: "view", options: { viewOn: "x" } }] };
     const batch = await objectProvider.describeObjects!(["app"], "collection");
 
     expect(batch).toEqual({ details: [] });
-    expect(mongoAggregatePipelines).toEqual([]);
-    expect(mongoIndexReads).toEqual([]);
+    expect(mongoDriver.samplePipelines).toEqual([]);
+    expect(mongoDriver.indexReads).toEqual([]);
   });
 
   test("the bulk read opens the database the CONTAINER names, not the one the session is in", async () => {
-    mongoOpenedDatabases = [];
+    mongoDriver.openedDatabases = [];
     await objectProvider.describeObjects!(["configstore"], "collection");
-    expect(new Set(mongoOpenedDatabases)).toEqual(new Set(["configstore"]));
+    expect(new Set(mongoDriver.openedDatabases)).toEqual(new Set(["configstore"]));
   });
 
   test("orders the cut by path segments, not by a JSON rendering of the path", async () => {
@@ -3248,7 +3482,7 @@ describe("object surface", () => {
     // disagree: by code point the names are `x"a`, `x-a`, `x\a`, and the server answered
     // them in the JSON order. A bounded read is where that becomes a MEMBERSHIP difference
     // rather than only a display one.
-    mockDocumentsByNs = {
+    mongoDriver.documentsByNs = {
       'oddnames.x"a': [{ _id: 1, quote: true }],
       "oddnames.x-a": [{ _id: 2, hyphen: true }],
       "oddnames.x\\a": [{ _id: 3, backslash: true }],
@@ -3289,7 +3523,7 @@ describe("object surface", () => {
   });
 
   test("a refused catalog read raises rather than answering an empty folder", async () => {
-    mockListCollectionsError = {
+    mongoDriver.listCollectionsErrors = {
       app: new Error("not authorized on app to execute command { listCollections: 1 }"),
     };
     await expect(objectProvider.describeObjects!(["app"], "collection")).rejects.toThrow(/not authorized on app/);
@@ -3309,12 +3543,12 @@ describe("object surface", () => {
       ],
     });
 
-    mongoOpenedDatabases = [];
+    mongoDriver.openedDatabases = [];
     const batch = await objectProvider.describeObjects!(["cluster0", "app"], "collection", 1);
 
     expect(batch.details.map((detail) => detail.path)).toEqual([["cluster0", "app", "customers"]]);
     expect(batch.details[0].columns.map((column) => column.name)).toEqual(["_id", "city", "name"]);
-    expect(new Set(mongoOpenedDatabases)).toEqual(new Set(["app"]));
+    expect(new Set(mongoDriver.openedDatabases)).toEqual(new Set(["app"]));
   });
 
   // --------------------------------------------------------------------------
@@ -3391,7 +3625,7 @@ describe("object surface", () => {
     expect(part.text).toBe(OBJECT_FIXTURE_CONFIGSTORE_VIEW_SOURCE);
     expect(part.form).toBe("complete");
     // The database the CONTAINER names, not the one the session opened.
-    expect(mongoOpenedDatabases).toEqual(["configstore"]);
+    expect(mongoDriver.openedDatabases).toEqual(["configstore"]);
   });
 
   test("carries the server's own sentence, unprefixed, when the catalog read is refused", async () => {
@@ -3404,7 +3638,7 @@ describe("object surface", () => {
     const sentence =
       "not authorized on app to execute command { listCollections: 1, filter: {}, cursor: {}, " +
       'nameOnly: false, authorizedCollections: false, $db: "app" }';
-    mockListCollectionsError.app = serverErrorReply(sentence);
+    mongoDriver.listCollectionsErrors.app = serverErrorReply(sentence);
 
     const document = await objectProvider.readObjectSource!(["app", "active_customers"], "view");
     const [part] = document.parts;
@@ -3457,7 +3691,7 @@ describe("object surface", () => {
     ] as const) {
       const failure = new Error(message);
       failure.name = name;
-      mockListCollectionsError.app = failure;
+      mongoDriver.listCollectionsErrors.app = failure;
       await expect(objectProvider.readObjectSource!(["app", "active_customers"], "view")).rejects.toThrow(
         new RegExp(
           `Failed to read the MongoDB view "active_customers" in app: ${message.replace(/[.*+?^$()|[\]\\]/g, "\\$&")}`,
@@ -3470,7 +3704,9 @@ describe("object surface", () => {
 
     // The CONTROL that makes the two arms different rather than the catch simply being gone: the
     // server's own error reply, in the same shape, still answers a refusal document.
-    mockListCollectionsError.app = serverErrorReply("not authorized on app to execute command { listCollections: 1 }");
+    mongoDriver.listCollectionsErrors.app = serverErrorReply(
+      "not authorized on app to execute command { listCollections: 1 }",
+    );
     const document = await objectProvider.readObjectSource!(["app", "active_customers"], "view");
     expect(isSourcePartUnavailable(document.parts[0])).toBe(true);
   });
@@ -3479,7 +3715,7 @@ describe("object surface", () => {
     // OUR sentence and not the server's, declared as such in docs/providers/mongodb.md: the
     // read SUCCEEDED and the row carried nothing, so MongoDB said nothing to carry. This is
     // the arm that makes a misspelt field name a visible refusal instead of `{}` in an editor.
-    mockCollectionsByDb.app = [{ name: "active_customers", type: "view" }];
+    mongoDriver.collectionsByDb.app = [{ name: "active_customers", type: "view" }];
 
     const document = await objectProvider.readObjectSource!(["app", "active_customers"], "view");
     const [part] = document.parts;
@@ -3514,7 +3750,7 @@ describe("object surface", () => {
       { viewOn: "customers", pipeline: { $match: {} } },
     ];
     for (const options of rows) {
-      mockCollectionsByDb.app = [{ name: "active_customers", type: "view", options }];
+      mongoDriver.collectionsByDb.app = [{ name: "active_customers", type: "view", options }];
       const document = await objectProvider.readObjectSource!(["app", "active_customers"], "view");
       const [part] = document.parts;
       expect(isSourcePartUnavailable(part)).toBe(true);
@@ -3525,7 +3761,7 @@ describe("object surface", () => {
 
     // `options: null`, which the typed fixture record cannot express, so it is cast at the one
     // place a real driver reply could carry it.
-    mockCollectionsByDb.app = [
+    mongoDriver.collectionsByDb.app = [
       { name: "active_customers", type: "view", options: null as unknown as Record<string, unknown> },
     ];
     const nulled = await objectProvider.readObjectSource!(["app", "active_customers"], "view");
@@ -3601,7 +3837,7 @@ describe("object surface", () => {
       );
       // Nothing was read: the declaration is refused before a database is opened, exactly as the
       // kind check above it is.
-      expect(mongoOpenedDatabases).toEqual([]);
+      expect(mongoDriver.openedDatabases).toEqual([]);
     } finally {
       spy.mockRestore();
     }
@@ -3625,7 +3861,7 @@ describe("object surface", () => {
     await expect(objectProvider.readObjectSource!(["app", "sub", "active_customers"], "view")).rejects.toThrow(
       /"view" path is \[database, name\]/,
     );
-    expect(mongoOpenedDatabases).toEqual([]);
+    expect(mongoDriver.openedDatabases).toEqual([]);
   });
 
   test("bounds the text at the caller's limit and says so in the caller's own number", async () => {
@@ -3668,7 +3904,7 @@ describe("object surface", () => {
       if (isSourcePartUnavailable(part)) throw new Error("narrowing");
       expect(part.text).toBe(OBJECT_FIXTURE_APP_VIEW_SOURCE);
       // The BOUND VALUE. `path[0]` would have opened `cluster0`, which holds nothing here.
-      expect(mongoOpenedDatabases).toEqual(["app"]);
+      expect(mongoDriver.openedDatabases).toEqual(["app"]);
     } finally {
       spy.mockRestore();
     }
@@ -3683,12 +3919,12 @@ describe("object surface", () => {
       ],
     });
     try {
-      mongoOpenedDatabases = [];
+      mongoDriver.openedDatabases = [];
       const document = await objectProvider.readObjectSource!(["app", "cluster0", "active_customers"], "view");
       const [part] = document.parts;
       if (isSourcePartUnavailable(part)) throw new Error("narrowing");
       expect(part.text).toBe(OBJECT_FIXTURE_APP_VIEW_SOURCE);
-      expect(mongoOpenedDatabases).toEqual(["app"]);
+      expect(mongoDriver.openedDatabases).toEqual(["app"]);
     } finally {
       swapped.mockRestore();
     }

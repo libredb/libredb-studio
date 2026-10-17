@@ -235,6 +235,19 @@ export type ExecutionProfileDenyCode =
    * it told an operator to narrow a principal that needed one more grant.
    */
   | "PROFILE_PRIVILEGES_TOO_NARROW"
+  /**
+   * The server does not enforce authorization: it accepted a write from a principal whose own
+   * privileges read as read-only, or from no principal at all.
+   *
+   * Its own code, apart from both above, because neither of their repairs works here. No user is
+   * held read-only on such a server, so narrowing the principal changes nothing, and neither does
+   * granting it more; the repair is the server's configuration, the opposite of narrowing a user.
+   * MongoDB is where it came apart: on a server started without authorization, a user holding only
+   * the `read` role wrote with `insertOne` while its own privileges still read as read-only (issue
+   * #1614). Reported as `PROFILE_PRIVILEGES_TOO_BROAD` it told an operator to narrow a user who was
+   * already as narrow as a user can be.
+   */
+  | "PROFILE_SERVER_UNENFORCED"
   | "AGENT_CREDENTIAL_UNRESOLVABLE"
   | "AGENT_CREDENTIAL_WITH_CONNECTION_STRING";
 

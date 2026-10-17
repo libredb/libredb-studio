@@ -70,7 +70,7 @@ export function tunnelRoute(tunnel: SSHTunnelConfig | undefined): string {
  *   `MySQLProvider.buildPoolConfig()` in `src/lib/db/providers/sql/mysql.ts` (`uri`),
  *   `OracleProvider.getConnectString()` in `src/lib/db/providers/sql/oracle.ts`,
  *   `SQLiteProvider.getDatabasePath()` in `src/lib/db/providers/sql/sqlite.ts`,
- *   `MongoDBProvider.buildConnectionString()` in `src/lib/db/providers/document/mongodb.ts`,
+ *   `MongoDBProvider.buildConnectionString()` in `src/lib/db/providers/document/mongodb/index.ts`,
  *   `resolveConnection()` in `src/lib/db/providers/sql/libsql/index.ts` and
  *   `src/lib/db/providers/sql/clickhouse/index.ts`, and
  *   `CouchbaseProvider.hostFromConnectionString()` in

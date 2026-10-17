@@ -30,12 +30,14 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { operatorCopyViolations } from "../../scripts/sync-chart-version.mjs";
-import { AGENT_WORKFLOW_VARIANTS } from "@/lib/agent/agent-manifest";
+import { AGENT_STATEMENT_LANGUAGE, AGENT_WORKFLOW_VARIANTS } from "@/lib/agent/agent-manifest";
 import { AGENT_EXECUTION_ENGINES, namedList } from "@/lib/agent/engine-support";
 import { AGENT_HISTORY_MAX_CONVERSATIONS, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { agentPosture } from "@/lib/agent/posture";
 import { getDBConfig } from "@/lib/db-ui-config";
+import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
+import type { DatabaseType } from "@/lib/types";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
@@ -223,6 +225,32 @@ describe("the panel's documentation describes the rail in the words it renders",
     expect(row).toBeDefined();
     expect(row).not.toContain("table count");
     expect(row).toContain("the engine's own noun");
+  });
+
+  test("the guide's strip table has one row for each reading the posture renders, and no other", () => {
+    // Every reading the strip can show, from the module that writes it: plan mode, agent mode with no connection
+    // resolved, and agent mode on every engine with the hand-over consented and not. The engine is labelled the way
+    // the guide names one, so the arm that names it renders the guide's own placeholder.
+    const label = "`<engine>`";
+    const engines = Object.keys(AGENT_STATEMENT_LANGUAGE) as DatabaseType[];
+    const postures = [
+      agentPosture({ mode: "planning", engine: null, engineLabel: label, handover: false }),
+      agentPosture({ mode: "agent", engine: null, engineLabel: label, handover: false }),
+      ...engines.flatMap((engine) =>
+        [false, true].map((handover) => agentPosture({ mode: "agent", engine, engineLabel: label, handover })),
+      ),
+    ];
+    const readings = [...new Set(postures.map((posture) => `*${posture.headline}* | *${posture.qualifier}*`))].sort();
+    const table = AGENT_GUIDE.split("| The pill says | Beside it | When |\n| --- | --- | --- |\n")[1]?.split("\n\n")[0];
+    const rows = (table ?? "").split("\n").map((row) =>
+      row
+        .split("|")
+        .slice(1, 3)
+        .map((cell) => cell.trim())
+        .join(" | "),
+    );
+    expect(rows).toHaveLength(readings.length);
+    expect([...rows].sort()).toEqual(readings);
   });
 });
 
@@ -425,6 +453,115 @@ describe("the chart says the zero-config durable backend is single-instance", ()
   });
 });
 
+/**
+ * The provider file that implements each listed engine's `queryReadOnly`, which `docs/AGENT.md` links in its engine
+ * paragraph. Keyed by the list, and a test holds its keys to it, so an engine added to `AGENT_EXECUTION_ENGINES`
+ * fails until its provider is named here and linked there.
+ */
+const READ_ONLY_PROVIDER_FILES: Readonly<Record<string, string>> = {
+  postgres: "src/lib/db/providers/sql/postgres.ts",
+  sqlite: "src/lib/db/providers/sql/sqlite.ts",
+  duckdb: "src/lib/db/providers/sql/duckdb/index.ts",
+  mssql: "src/lib/db/providers/sql/mssql.ts",
+  mysql: "src/lib/db/providers/sql/mysql.ts",
+  kubernetes: "src/lib/db/providers/platform/kubernetes/index.ts",
+  mongodb: "src/lib/db/providers/document/mongodb/index.ts",
+};
+
+/**
+ * The copy that names the engines agent mode executes on: the READMEs and their translations, the agent pages, and the
+ * marketplace listings (the `LISTINGS` of `tests/unit/marketplace-copy.test.ts` that carry such a sentence, plus the
+ * Azure offer's HTML description and the PCSC page body).
+ */
+const ENGINE_CLAIM_FILES = [
+  "README.md",
+  "README_hi.md",
+  "README_ja.md",
+  "README_ko.md",
+  "README_ru.md",
+  "README_zh.md",
+  "DOCKERHUB.md",
+  "docs/AGENT.md",
+  "docs/AGENT_GUIDE.md",
+  "docs/AGENT_DEMO.md",
+  "docs/FEATURES.md",
+  "docs/providers/libsql.md",
+  "docs/API_DOCS.md",
+  "deploy/railway/TEMPLATE_OVERVIEW.md",
+  "deploy/digitalocean/assets/description-long.md",
+  "deploy/rancher/CATALOG_LISTING.md",
+  "deploy/rancher/app-readme.md",
+  "deploy/rancher/pcsc-listing.html",
+  "deploy/azure/listing/description.html",
+];
+
+/** Copy that names no agent-mode engine today, scanned so that a sentence added there is held to the list too. */
+const ENGINE_CLAIM_SCANNED = [
+  "README_es.md",
+  "README_pt.md",
+  "README_ur.md",
+  "docs/AGENT_DATA_FLOW.md",
+  "deploy/azure/listing/listing-fields.md",
+  "deploy/aws/listing/listing-fields.md",
+];
+
+/**
+ * The phrase each file uses for agent mode, in English and in each translated README's own words, and the method the
+ * agent's statements reach an engine through, which a sentence naming its implementers names instead.
+ */
+const AGENT_ENGINE_CLAIM =
+  /agent mode|agentモード|agent 모드|режим agent|agent 模式|read-only (?:investigation )?agent|(?:execut(?:es|ing)|runs) statements|statement path|agent read-only profile|queryReadOnly/i;
+
+/** A sentence naming SQL engines for MCP, whose `run_read_query` serves the SQL engines alone (#1614 decision 2). */
+const MCP_CLAIM = /\bMCP\b|run_read_query|Three read-only tools/;
+
+/**
+ * An engine count where the engines should be named (#1614: "Never write a count of engines; name them from the
+ * list"), in each language a README states one in.
+ */
+const ENGINE_COUNT =
+  /\b(five|six|seven) (engines|providers)\b|thirty-five|sixth engine|шести|여섯|六种|यही चार engines|この\d+つのエンジン/;
+
+/**
+ * A file's sentences, for a claim that may wrap: a soft line break inside a paragraph is joined, a list item, a table
+ * row, a heading and an HTML block each start a sentence, a blockquote's markers are dropped, and a sentence ends at a
+ * full stop before a space or at a Devanagari or CJK full stop, which needs none.
+ */
+const sentencesOf = (text: string): string[] =>
+  text
+    .replace(/<\/?(?:p|ul|li|h3)>/g, "\n\n")
+    .replace(/^> ?/gm, "")
+    .replace(/\n(?![\n\-*|#])[ \t]*/g, " ")
+    .split(/(?<=[。।])\s*|(?<=\.)\s+|\n+/);
+
+const PRODUCT_ENGINES = EXTERNAL_DATABASE_TYPES.map((type) => getDBConfig(type).label);
+
+/**
+ * The sentences of `text` that claim where agent mode executes: three or more of the engines on the list, named beside
+ * an agent-mode phrase. Two named engines are a statement about that pair, such as the composed catalog on PostgreSQL
+ * and SQLite, rather than a list.
+ */
+const engineClaimsIn = (text: string): string[] =>
+  sentencesOf(text).filter(
+    (sentence) =>
+      AGENT_EXECUTION_ENGINES.filter((type) => sentence.includes(getDBConfig(type).label)).length >= 3 &&
+      AGENT_ENGINE_CLAIM.test(sentence) &&
+      !MCP_CLAIM.test(sentence) &&
+      !PRODUCT_ENGINES.every((label) => sentence.includes(label)),
+  );
+
+const engineClaims = (relative: string): string[] => engineClaimsIn(read(relative));
+
+/** The part of the Rancher listing that is submitted, as `tests/unit/marketplace-copy.test.ts` cuts it. */
+const rancherSubmittedCopy = (): string => {
+  const listing = read("deploy/rancher/CATALOG_LISTING.md");
+  const from = listing.indexOf("## Short description");
+  const to = listing.indexOf("## Outstanding corrections");
+  // Thrown rather than sliced: a heading renamed away would leave an empty slice, which no count can fail.
+  if (from < 0 || to < from) throw new Error("deploy/rancher/CATALOG_LISTING.md: the submitted sections moved");
+  return listing.slice(from, to);
+};
+
 describe("every agent-mode engine sentence is the one engine list (#246)", () => {
   /**
    * AGENT_EXECUTION_ENGINES is the list, and every sentence that names the engines agent mode and
@@ -437,8 +574,8 @@ describe("every agent-mode engine sentence is the one engine list (#246)", () =>
   const list = namedList(AGENT_EXECUTION_ENGINES.map((type) => getDBConfig(type).label));
   const prose = (relative: string) => read(relative).replace(/\n[ \t]*(?:\*|\/\/|#)?[ \t]*/g, " ");
 
-  test("the derived list is today's six engines", () => {
-    expect(list).toBe("PostgreSQL, SQLite, DuckDB, SQL Server, MySQL and Kubernetes");
+  test("the derived list is today's seven engines", () => {
+    expect(list).toBe("PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes and MongoDB");
   });
 
   test(".env.example states it, and says plan mode is grounded on every engine", () => {
@@ -454,6 +591,71 @@ describe("every agent-mode engine sentence is the one engine list (#246)", () =>
 
   test("the seed loader's sample comment states it", () => {
     expect(prose("src/lib/seed/index.ts")).toContain(`Agent mode executes statements on ${list};`);
+  });
+
+  test("each engine on the list has its read-only provider file, and the map has no other key", () => {
+    expect(Object.keys(READ_ONLY_PROVIDER_FILES).sort()).toEqual([...AGENT_EXECUTION_ENGINES].sort());
+    for (const file of Object.values(READ_ONLY_PROVIDER_FILES)) expect(existsSync(path.join(ROOT, file))).toBe(true);
+  });
+
+  /**
+   * The copy that names the engines agent mode executes on, in prose and in five languages. A sentence is selected by
+   * what it claims rather than by where it sits: it names three or more of the engines on the list beside one of the
+   * phrases each file uses for agent mode, or beside `queryReadOnly`, the method a sentence naming its implementers
+   * names. Two kinds of sentence name those engines for another reason and are left out: MCP's `run_read_query` list,
+   * by name, because that tool serves the SQL engines alone (#1614 decision 2), and the product's whole engine list,
+   * which names every engine and which the Railway overview runs into its agent clause.
+   */
+  test.each(ENGINE_CLAIM_FILES)(
+    "%s carries an agent-mode engine sentence (an empty selection passes the rest)",
+    (file) => {
+      expect(engineClaims(file).length).toBeGreaterThan(0);
+    },
+  );
+
+  test.each([...ENGINE_CLAIM_FILES, ...ENGINE_CLAIM_SCANNED])(
+    "every agent-mode engine sentence in %s names the list",
+    (file) => {
+      for (const claim of engineClaims(file)) {
+        for (const type of AGENT_EXECUTION_ENGINES) expect(claim).toContain(getDBConfig(type).label);
+      }
+    },
+  );
+
+  test("the selector reads a claim in another language and leaves the product's engine list out", () => {
+    const agentClaim = "- **Режим Agent работает только с PostgreSQL, SQLite, DuckDB, SQL Server, MySQL и MongoDB.**";
+    expect(engineClaimsIn(agentClaim)).toHaveLength(1);
+    const productList = `Query ${EXTERNAL_DATABASE_TYPES.map((type) => getDBConfig(type).label).join(", ")} from your browser, with a read-only agent beside them.`;
+    expect(engineClaimsIn(productList)).toEqual([]);
+    expect(
+      engineClaimsIn("- `run_read_query` runs on PostgreSQL, SQLite, DuckDB, SQL Server and MySQL in agent mode."),
+    ).toEqual([]);
+  });
+
+  test("the selector reads a list of queryReadOnly's implementers, and leaves a pair of engines out", () => {
+    expect(
+      engineClaimsIn(
+        "The read tools reach the database through `provider.queryReadOnly`, which PostgreSQL, SQLite and DuckDB implement.",
+      ),
+    ).toHaveLength(1);
+    expect(engineClaimsIn("In agent mode the server composes catalog statements on PostgreSQL and SQLite.")).toEqual(
+      [],
+    );
+  });
+
+  test.each([...ENGINE_CLAIM_FILES, ...ENGINE_CLAIM_SCANNED, "src/lib/agent/engine-support.ts"])(
+    "%s counts no engines",
+    (file) => {
+      // The Rancher file's editorial notes date old copy by its engine count, so only its submitted copy is held.
+      const text = file === "deploy/rancher/CATALOG_LISTING.md" ? rancherSubmittedCopy() : read(file);
+      // The READMEs and listings wrap their lines, so a count split by a line break is matched too.
+      expect(text.replace(/\s+/g, " ")).not.toMatch(ENGINE_COUNT);
+    },
+  );
+
+  test("docs/API_DOCS.md quotes the refusal the posture writes for an engine outside the list", () => {
+    const body = agentPosture({ mode: "agent", engine: "oracle", engineLabel: "Oracle", handover: false }).body;
+    expect(read("docs/API_DOCS.md")).toContain(`"error": "${body}"`);
   });
 });
 
@@ -473,13 +675,16 @@ describe("docs/AGENT.md states agent execution on Kubernetes as the code decides
       .map((cell) => cell.trim());
   const ticked = (cell: string): string[] => [...cell.matchAll(/`([^`]+)`/g)].map((m) => m[1]);
 
-  test("the engine paragraph names every executing engine, links the Kubernetes provider and names its boundary", () => {
+  test("the engine paragraph names every executing engine, links each one's provider and names Kubernetes' boundary", () => {
     const paragraph = AGENT_DOC.split("- **Agent mode requires ")[1]?.split(/\n\n/)[0] ?? "";
     expect(paragraph.length).toBeGreaterThan(0);
-    for (const type of AGENT_EXECUTION_ENGINES) expect(paragraph).toContain(getDBConfig(type).label);
-    expect(paragraph).toContain("(../src/lib/db/providers/platform/kubernetes/index.ts)");
+    for (const type of AGENT_EXECUTION_ENGINES) {
+      expect(paragraph).toContain(getDBConfig(type).label);
+      expect(paragraph).toContain(`(../${READ_ONLY_PROVIDER_FILES[type]})`);
+    }
     expect(paragraph).toContain("request allowlist");
     expect(paragraph).toContain("RBAC");
+    expect(paragraph).toContain("(#on-a-mongodb-connection)");
   });
 
   test("the R1 paragraph admits a Studio-enforced final-request allowlist and never a parser", () => {
@@ -571,5 +776,52 @@ describe("docs/AGENT.md states agent execution on Kubernetes as the code decides
     ]) {
       expect(section).toContain(`- ${line}\n`);
     }
+  });
+});
+
+/**
+ * A read-only transaction is not what bounds an agent statement on MySQL and MariaDB: DDL, GRANT and SET GLOBAL each
+ * commit implicitly, which ends the transaction before the statement runs, so the principal is the first layer there
+ * and the transaction the second (`docs/providers/mysql.md` section 12.1, measured), and the provider reads the
+ * principal's grants at its first statement rather than at open. On PostgreSQL the read-only transaction is not the
+ * whole boundary either, because it does not stop a superuser's `COPY ... TO PROGRAM`, which is why the role is
+ * verified at open (`docs/SECURITY.md` row 3.4). A sentence that lists MySQL among the engines a read-only transaction
+ * bounds says the reverse of the first, and one that names PostgreSQL's transaction alone leaves out half of the second.
+ */
+describe("the SQL engines' boundaries are stated in the order their provider documents measured", () => {
+  const clausesOf = (sentence: string, label: string): string[] =>
+    sentence.split("; ").filter((clause) => clause.includes(label));
+
+  test("the MySQL provider document is still the source: the principal first, read at the first statement", () => {
+    const mysql = read("docs/providers/mysql.md");
+    expect(mysql).toContain(
+      "### 12.1 The principal is the first layer, because a read-only transaction ends where DDL begins",
+    );
+    expect(mysql).toContain("The verification runs at the FIRST `queryReadOnly` call, not at `connect()`");
+  });
+
+  test("docs/AGENT.md's engine paragraph puts MySQL's principal before its transaction, and PostgreSQL's role beside its own", () => {
+    const paragraph = AGENT_DOC.split("- **Agent mode requires ")[1]?.split(/\n\n/)[0] ?? "";
+    const sentence = paragraph.split("\n").find((line) => line.trim().startsWith("On the SQL engines")) ?? "";
+    const [mysql = "", ...otherMysql] = clausesOf(sentence, "MySQL");
+    expect(otherMysql).toEqual([]);
+    expect(mysql).toContain("principal verified before the first statement");
+    expect(mysql).toContain("implicit");
+    expect(mysql.indexOf("principal")).toBeLessThan(mysql.indexOf("`START TRANSACTION READ ONLY`"));
+    const [postgres = "", ...otherPostgres] = clausesOf(sentence, "PostgreSQL");
+    expect(otherPostgres).toEqual([]);
+    expect(postgres).toContain("read-only transaction");
+    expect(postgres).toContain("role verified at open");
+  });
+
+  test("docs/FEATURES.md's read-only bullet reads MySQL's principal at the first statement, not at open", () => {
+    const bullet =
+      read("docs/FEATURES.md")
+        .split("\n")
+        .find((line) => line.includes("**Read-only, enforced by the database:**")) ?? "";
+    const mysql = bullet.slice(bullet.indexOf("On MySQL and MariaDB"));
+    expect(bullet).toContain("On MySQL and MariaDB");
+    expect(mysql).toContain("principal verified before the first statement");
+    expect(mysql).not.toMatch(/^On MySQL and MariaDB[^.]*verified at open/);
   });
 });

@@ -16,6 +16,7 @@ import { objectPath, s3Query } from "@/lib/db/providers/objectstore/s3/encoding"
 import { S3_RESPONSE_HEADERS } from "@/lib/db/providers/objectstore/s3/headers";
 import { canonicalQueryOf, s3Signer, signatureV4 } from "@/lib/db/providers/objectstore/s3/sigv4";
 import { bucketsXml, objectsXml } from "../../../helpers/s3-fake-transport";
+import { howItFailed } from "../../../helpers/spawn-outcome";
 
 interface Received {
   readonly method: string;
@@ -378,7 +379,7 @@ afterAll(() => {
 /** The runtime string a child of `binary` must report: what the Node binary prints. */
 function expectedRuntime(binary: string): string {
   const printed = Bun.spawnSync([binary, "--version"], { stdout: "pipe", stderr: "pipe" });
-  if (printed.exitCode !== 0) throw new Error(`${binary} --version exited ${printed.exitCode}`);
+  if (printed.exitCode !== 0) throw new Error(`${binary} --version ${howItFailed(printed)}`);
   return `node ${printed.stdout.toString().trim()}`;
 }
 

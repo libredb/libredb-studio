@@ -1536,10 +1536,13 @@ read a module's text.
 **What the profile refuses at open.** `connect()` runs one statement (`AGENT_PRINCIPAL_SQL`) and
 `assertAgentPrincipalIsUnprivileged` refuses the provider unless all sixteen forbidden answers read
 back `0` and `showplan` reads back `1`.
-The refusal is an `ExecutionProfileError` carrying `PROFILE_PRIVILEGES_TOO_BROAD`
-([errors.ts](../../src/lib/db/errors.ts)), named so the message says which privilege was held, and
-`connect()` deliberately does not wrap it into a generic `ConnectionError`: a caller branches on the
-code, never on a message.
+It reads them in two checks, each refusing with an `ExecutionProfileError` whose code says which way to repair the principal ([errors.ts](../../src/lib/db/errors.ts)):
+
+- A forbidden answer that does not read back `0` is refused with `PROFILE_PRIVILEGES_TOO_BROAD`, named so the message says which privileges were held, and a run ends `agent-principal-refused`: connect as a principal that holds none of them.
+- A `showplan` answer that does not read back `1` is refused with `PROFILE_PRIVILEGES_TOO_NARROW`, and a run ends `agent-principal-underprivileged`: grant `SHOWPLAN`, the opposite repair.
+
+The too-broad check runs first, so a principal that both holds a forbidden privilege and lacks `SHOWPLAN` is refused as too broad.
+A run's reason is read from the code alone (`classifyDriveFailure` in [runtime.ts](../../src/lib/agent/runtime.ts)), and `connect()` deliberately does not wrap either refusal into a generic `ConnectionError`: a caller branches on the code, never on a message.
 **`sa` is refused**, because it holds `sysadmin`, which is the whole point of the check: an admin can
 point `agentUser` at a privileged login exactly as easily as a connection's own user can already be
 one.

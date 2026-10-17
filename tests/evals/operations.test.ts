@@ -6,16 +6,17 @@ import { chatToolCallStream } from "../isolated/fixtures/agent-transport";
 import { QueryError } from "@/lib/db/errors";
 
 /**
- * The `operations` template, driven end to end — including on an engine the rest of
- * agent mode is refused on.
+ * The `operations` template, driven end to end, including on an engine outside
+ * `AGENT_EXECUTION_ENGINES`, which the rest of agent mode is refused on.
  *
  * The invariant asserted hardest here is not the arc but the reason the workflow
  * exists: **it reaches a database that offers no read-only statement path, and it
  * sends no statement to get there.** Both halves are checked against what the run
  * actually did, not against what its tools intend — and the MySQL preset carries no
- * `queryReadOnly` at all, exactly as the real provider does not, so a run that sent a
- * statement dies on the fixture rather than being quietly answered by PostgreSQL's
- * default row.
+ * `queryReadOnly` at all, so a run that sent a statement dies on the fixture rather
+ * than being quietly answered by PostgreSQL's default row. The preset stands for an
+ * engine outside `AGENT_EXECUTION_ENGINES`: the real MySQL provider has implemented
+ * `queryReadOnly` since #1629.
  */
 
 const runs: EvalRun[] = [];

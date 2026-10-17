@@ -110,6 +110,7 @@ const mockStart = mock(
     workflowSource?: string;
     workflowReading?: string;
     autoExecute?: boolean;
+    statementLanguage?: string;
     actor: FakeRun["actor"];
     connectionId: string;
     connectionIdentity?: string;
@@ -716,15 +717,15 @@ describe("POST /api/agent/runs", () => {
     expect(mockStart).toHaveBeenCalledTimes(1);
   });
 
-  test("a MongoDB investigation is refused with the posture's own paragraph", async () => {
-    mockResolveConnection.mockResolvedValueOnce({ id: "seed:docs", name: "Docs", type: "mongodb" });
+  test("a Cassandra investigation is refused with the posture's own paragraph", async () => {
+    mockResolveConnection.mockResolvedValueOnce({ id: "seed:docs", name: "Docs", type: "cassandra" });
 
     const res = await POST(startRequest({ ...VALID_BODY, workflowType: "investigation" }));
     const body = await parseResponseJSON<{ error: string; refused?: string }>(res);
 
     expect(res.status).toBe(400);
     expect(body.error).toBe(
-      agentPosture({ mode: "agent", engine: "mongodb", engineLabel: getDBConfig("mongodb").label, handover: false })
+      agentPosture({ mode: "agent", engine: "cassandra", engineLabel: getDBConfig("cassandra").label, handover: false })
         .body,
     );
     // The listed engines include a cluster, which no database bounds, so the refusal
@@ -733,6 +734,16 @@ describe("POST /api/agent/runs", () => {
     expect(body.error).not.toContain("database-native");
     expect(body.refused).toBe("engine-unsupported");
     expect(mockStart).not.toHaveBeenCalled();
+  });
+
+  test("a MongoDB investigation opens under the mongo language (issue #1614)", async () => {
+    mockResolveConnection.mockResolvedValueOnce({ id: "seed:docs", name: "Docs", type: "mongodb" });
+
+    const res = await POST(startRequest({ ...VALID_BODY, workflowType: "investigation" }));
+
+    expect(res.status).toBe(202);
+    expect(mockStart).toHaveBeenCalledTimes(1);
+    expect(mockStart.mock.calls[0]?.[0].statementLanguage).toBe("mongo");
   });
 
   test("a Postgres run is opened with no statement language and no verifier, so its header is unchanged", async () => {
@@ -783,6 +794,31 @@ describe("POST /api/agent/runs", () => {
 
     expect(res.status).toBe(202);
     expect(mockStart.mock.calls[0]?.[0]).toMatchObject({ workflowType: "data-analysis", statementLanguage: "kubectl" });
+  });
+
+  // No plan of a MongoDB answer can be weighed, so the gate could only ever decline: the setting is refused at the
+  // door, before a run id or a model call, exactly as on a cluster.
+  test("auto-execute is refused on a MongoDB data-analysis run, whose answer is never run in the editor", async () => {
+    mockResolveConnection.mockResolvedValueOnce({ id: "seed:docs", name: "Docs", type: "mongodb" });
+
+    const res = await POST(startRequest({ ...VALID_BODY, workflowType: "data-analysis", autoExecute: true }));
+    const body = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(body.error).toBe(
+      "autoExecute is not offered for this workflow on this engine: its answer is never run in the editor.",
+    );
+    expect(mockStart).not.toHaveBeenCalled();
+    expect(mockDriveAgentRun).not.toHaveBeenCalled();
+  });
+
+  test("the same MongoDB data-analysis run without auto-execute opens under the mongo variant", async () => {
+    mockResolveConnection.mockResolvedValueOnce({ id: "seed:docs", name: "Docs", type: "mongodb" });
+
+    const res = await POST(startRequest({ ...VALID_BODY, workflowType: "data-analysis" }));
+
+    expect(res.status).toBe(202);
+    expect(mockStart.mock.calls[0]?.[0]).toMatchObject({ workflowType: "data-analysis", statementLanguage: "mongo" });
   });
 
   test("a Postgres data-analysis run with auto-execute still opens", async () => {

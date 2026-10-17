@@ -50,8 +50,9 @@ describe("getManagedConnections: sqlite embedded sample", () => {
   /*
     Order is the default connection. `useConnectionManager` selects the first merged
     connection when no active id is persisted, so whichever sample leads is what a
-    brand-new user lands on — and the agent runtime targets PostgreSQL and SQLite,
-    not the LibreDB engine, which has no database-native read-only execution profile.
+    brand-new user lands on, and the agent runtime executes on the engines
+    `AGENT_EXECUTION_ENGINES` lists, not on the LibreDB engine, whose provider implements no
+    read-only statement path.
     Leading with LibreDB put every zero-config user on the one connection the agent
     can never run against, and it took a real run to notice.
 

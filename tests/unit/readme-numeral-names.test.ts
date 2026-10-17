@@ -39,19 +39,26 @@ const ENGINE_NAMES = EXTERNAL_DATABASE_TYPES.map((type) => DB_UI_CONFIG[type].la
 /**
  * One row per README: the numeral word for today's count, and the one for the count before it.
  *
+ * FIVE ROWS CARRY THE NUMERAL WITH ITS NOUN, and the reason is measured rather than stylistic.
+ * `README_ja.md` and `README_ko.md` write the figure rather than a word, so a bare `40` would match
+ * a port number or a version. `README_zh.md`, `README_hi.md` and `README_ur.md` write a word that
+ * their own prose also uses for a DURATION - each of the three says the database is ready in forty
+ * seconds - so a bare 四十 / चालीस / چالیس is stale in a sentence that has nothing to do with the
+ * fleet. Pinning the noun beside the numeral is what tells the two apart, and it is why this gate
+ * reports three files instead of none on the step from forty to forty-one.
  * `README_ja.md` writes the figure rather than a word, which is that file's own style, so its pair is
  * digits. Every other file writes it out.
  */
 const READMES: ReadonlyArray<{ file: string; now: string; before: string }> = [
-  { file: "README.md", now: "Thirty-seven", before: "Thirty-six" },
-  { file: "README_zh.md", now: "三十七", before: "三十六" },
-  { file: "README_ja.md", now: "37のエンジン", before: "36のエンジン" },
-  { file: "README_es.md", now: "Treinta y siete", before: "Treinta y seis" },
-  { file: "README_pt.md", now: "Trinta e sete", before: "Trinta e seis" },
-  { file: "README_ru.md", now: "Тридцать семь", before: "Тридцать шесть" },
-  { file: "README_hi.md", now: "सैंतीस", before: "छत्तीस" },
-  { file: "README_ur.md", now: "سینتیس", before: "چھتیس" },
-  { file: "README_ko.md", now: "37개의 엔진", before: "36개의 엔진" },
+  { file: "README.md", now: "Forty-one", before: "Forty" },
+  { file: "README_zh.md", now: "四十一种引擎", before: "四十种引擎" },
+  { file: "README_ja.md", now: "41のエンジン", before: "40のエンジン" },
+  { file: "README_es.md", now: "Cuarenta y uno", before: "Cuarenta" },
+  { file: "README_pt.md", now: "Quarenta e um", before: "Quarenta" },
+  { file: "README_ru.md", now: "Сорок один", before: "Сорок" },
+  { file: "README_hi.md", now: "इकतालीस engines", before: "चालीस engines" },
+  { file: "README_ur.md", now: "اکتالیس engines", before: "چالیس engines" },
+  { file: "README_ko.md", now: "41개의 엔진", before: "40개의 엔진" },
 ];
 
 /** The engines a line names, which is what a numeral beside a list is claiming. */
@@ -114,7 +121,19 @@ describe("each README's numeral and its own engine list agree", () => {
       expect({ file: entry.file, says: text.includes(entry.now) }).toEqual({ file: entry.file, says: true });
       // The half-done move, which is the defect this file was written for: the numeral moved in one
       // file and the others kept the previous word while matching each other's lists.
-      expect({ file: entry.file, stale: text.includes(entry.before) }).toEqual({ file: entry.file, stale: false });
+      //
+      // TODAY'S WORD IS REMOVED BEFORE THE PREVIOUS ONE IS LOOKED FOR, because in several of these
+      // languages the previous word is a PREFIX of today's: Forty of Forty-one, 四十 of 四十一,
+      // Cuarenta of Cuarenta y uno, Quarenta of Quarenta e um, Сорок of Сорок один. A plain
+      // `includes` reported all five as stale on the step where the count went from forty to
+      // forty-one, which is a false alarm on five files at once and would teach a reader to ignore
+      // this gate. What the gate means is "the previous word appears somewhere that is not part of
+      // today's word", and that is what this measures.
+      const withoutToday = text.split(entry.now).join("\u0000");
+      expect({ file: entry.file, stale: withoutToday.includes(entry.before) }).toEqual({
+        file: entry.file,
+        stale: false,
+      });
     },
   );
 

@@ -28,12 +28,12 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S9 · 6
-- [Drivers and connections](#drivers-and-connections) — D1-D365, U17 · 262
+- [Drivers and connections](#drivers-and-connections) — D1-D374, U17 · 271
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U144 · 131
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U145 · 132
 - [Dependencies](#dependencies) — P1-P9 · 7
-- [Documentation](#documentation) — DOC3-DOC33 · 29
+- [Documentation](#documentation) — DOC3-DOC35 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
 - [Chart configuration surface](#chart-configuration-surface) — N1 · 1
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H14 · 4
@@ -41,7 +41,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B116 · 50
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B121 · 54
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP3 · 3
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV23 · 23
@@ -386,7 +386,7 @@ Found 2026-08-27 by the audit that closed the curated health projection's cap-as
 #512 removed MySQL's fabricated "Performance schema not available" row; four providers still ship the same shape, in the same field:
 
 - `getHealth()` in `src/lib/db/providers/sql/postgres.ts`: a database without `pg_stat_statements` answers `[{ query: "pg_stat_statements extension not enabled", calls: 0, avgTime: "N/A" }]`.
-- `getHealth()` in `src/lib/db/providers/document/mongodb.ts`: a database whose profiler is off answers `[{ query: "Profiler not enabled. Run db.setProfilingLevel(1) to enable." }]`, and the outer catch of the same method answers `[{ query: "Error fetching health info" }]` for a read that failed entirely.
+- `getHealth()` in `src/lib/db/providers/document/mongodb/index.ts`: a database whose profiler is off answers `[{ query: "Profiler not enabled. Run db.setProfilingLevel(1) to enable." }]`, and the outer catch of the same method answers `[{ query: "Error fetching health info" }]` for a read that failed entirely.
 - `getHealth()` in `src/lib/db/providers/sql/sqlite.ts`: EVERY SQLite database answers two synthetic rows, `Integrity: OK|FAILED` and `Journal Mode: <mode>`, about statements that were never executed.
 - `readHealth()` in `src/lib/db/providers/sql/libsql/introspect.ts`: every libSQL database answers the same two synthetic rows, `Integrity: OK|FAILED` and `Journal Mode: <mode>`.
 
@@ -399,7 +399,7 @@ reason could travel in, so "nobody could look" has no representation.
 Making it optional the way `activeConnections` already is touches every provider, every provider doc and every provider test file, and falsifies the AlloyDB Omni caveat in `WIRE_COMPATIBLE_ENGINES` (`src/lib/db/compatibility.ts`), section "3.5 Resilient monitoring" of `docs/providers/postgres.md`, the test "pg_stat_statements fallback when extension is not enabled" in `tests/integration/db/postgres-provider.test.ts`, `tests/integration/db/sqlite-provider.test.ts`, `tests/integration/db/sqlite-node-harness.ts`, `tests/integration/db/libsql-provider.test.ts` and `tests/unit/db/libsql/introspect.test.ts`, all of which pin the current sentences.
 
 **The other path swallows instead of fabricating, and that is not better.**
-On the `slow-queries` reading the agent actually uses, `getSlowQueries()` in `src/lib/db/providers/keyvalue/redis.ts` and `getSlowQueries()` in `src/lib/db/providers/document/mongodb.ts` `return []` from their catch where MySQL now rejects.
+On the `slow-queries` reading the agent actually uses, `getSlowQueries()` in `src/lib/db/providers/keyvalue/redis.ts` and `getSlowQueries()` in `src/lib/db/providers/document/mongodb/index.ts` `return []` from their catch where MySQL now rejects.
 So a denied grant reaches the model as an empty reading, and the run prompt tells it `"A reading that comes back EMPTY is an answer, not a failure - no blocked session, no slow query, no unused index is what a healthy server looks like"` (`WORKFLOW_TOOL_RULES` in `src/lib/agent/investigation.ts`).
 It also costs the operator the reason: `getMonitoringData()` in `src/lib/db/base-provider.ts` records `errors.slowQueries` from a REJECTION, and a resolved `[]` records nothing, so the panel says "no slow queries" where the truth is that the profiler is off.
 
@@ -721,7 +721,7 @@ materialized view, or the provider doc is accepted as the permanent home of thos
 
 ### D60. `countObjects` reports a MongoDB transport failure as the engine's own refusal
 
-`src/lib/db/providers/document/mongodb.ts` `countObjects` catches every `listCollections` rejection
+`src/lib/db/providers/document/mongodb/index.ts` `countObjects` catches every `listCollections` rejection
 and answers `{ unavailable: <the error message> }` for every declared kind.
 
 Measured against mongodb 7.6.0 and MongoDB 8.2.12: only a `MongoServerError` is the server's own
@@ -848,7 +848,7 @@ multi-line entry for an unmapped kind fails it.
 
 Measured in the tree on 2026-09-13: `assertObjectPathShape` is DEFINED, not imported, in eight
 provider files (`postgres.ts`, `mysql.ts`, `oracle.ts`, `sqlite.ts`, `libsql/objects.ts`,
-`clickhouse/objects.ts`, `cassandra/objects.ts`, `document/mongodb.ts`). It belongs beside
+`clickhouse/objects.ts`, `cassandra/objects.ts`, `document/mongodb/index.ts`). It belongs beside
 `containerDepth` in `src/lib/db/object-kinds.ts`, which is where `comparePaths` already went: that
 one was written four times, was hoisted to `src/lib/db/object-path.ts`, and is now imported by every
 caller, so the pattern is settled and only this helper is left behind.
@@ -1173,10 +1173,11 @@ test pins the behaviour that was chosen.
 
 ### D85. The `@/lib/auth` mock is hand-copied across a layer, untyped, and already misses four exports
 
-`grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 53 hits, re-measured 2026-10-15.
+`grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 54 hits, re-measured 2026-10-17.
 Twenty of them spread the real module and replace one function (`{ ...realAuth, getSession: mockGetSession }`, the agent routes' pattern).
-Thirty write out the same five-key object - `getSession`, `signJWT`, `verifyJWT`, `login`, `logout` - down to the same `mock(async () => "mock-token")` for a token nothing reads, and one of those thirty is `tests/helpers/object-edit-route-harness.ts`, a shared harness that could have been the factory and copied the stub instead.
+Thirty-one write out the same five-key object - `getSession`, `signJWT`, `verifyJWT`, `login`, `logout` - down to the same `mock(async () => "mock-token")` for a token nothing reads, and one of those thirty-one is `tests/helpers/object-edit-route-harness.ts`, a shared harness that could have been the factory and copied the stub instead.
 The remaining three write a shorter stub of their own, two with two keys and one with a single `getSession`.
+The count moved from 53 to 54 between 2026-10-12 and 2026-10-14: `tests/api/db-test-connection-modbus.test.ts`, added by `1ab0d88ff`, is the fifty-fourth, and it is a five-key copy down to the `mock(async () => "mock-token")` for a token nothing reads. The copying this entry describes continued after the entry was written, which is the argument for the factory rather than against it.
 
 `src/lib/auth.ts` exports nine names. The four that all but one hand-written stub lack are
 `shouldMarkCookieSecure`, `resetCookieSecurityWarning`, `readCookieSecureOverride` and
@@ -1701,7 +1702,7 @@ Not fixed there: both digests are compared server-side exactly as they are, so c
 
 Found 2026-09-24 in the browser while verifying #843 (PR #1106), on a connection opened with `appdata` whose tree also lists `analytics`.
 Both hold a collection called `events`.
-The tree's **Validate Collection** on `analytics > events` opens `/admin/operations?path=analytics&path=events`, and that page lists the connected database's collections, `appdata . events` among them: `getTableStats()`, `getIndexStats()` and `runMaintenance()` in `src/lib/db/providers/document/mongodb.ts` all read `this.db`, the connected database, and since #1091 `runMaintenance()` takes the row's container but refuses one that is not the connected database.
+The tree's **Validate Collection** on `analytics > events` opens `/admin/operations?path=analytics&path=events`, and that page lists the connected database's collections, `appdata . events` among them: `getTableStats()`, `getIndexStats()` and `runMaintenance()` in `src/lib/db/providers/document/mongodb/index.ts` all read `this.db`, the connected database, and since #1091 `runMaintenance()` takes the row's container but refuses one that is not the connected database.
 So the row a person presses for the collection they chose is the connected database's same-named collection, which is the shape #843 removed from the query path.
 
 Not fixed in #1106, which is scoped to the statement grammar.
@@ -1935,7 +1936,7 @@ Found 2026-09-30 while designing the etcd provider (spec section 8).
 
 ### D136. `MongoDBProvider.runMaintenance` checks its operation with a set lookup the compiler does not read
 
-`runMaintenance` in `src/lib/db/providers/document/mongodb.ts` refuses an unknown operation with `SUPPORTED_MAINTENANCE_TYPES.has(type)`, a `ReadonlySet<MaintenanceType>` lookup that narrows nothing, and then ends its work in a `switch` over the six members of `MaintenanceType` with no `default`.
+`runMaintenance` in `src/lib/db/providers/document/mongodb/index.ts` refuses an unknown operation with `SUPPORTED_MAINTENANCE_TYPES.has(type)`, a `ReadonlySet<MaintenanceType>` lookup that narrows nothing, and then ends its work in a `switch` over the six members of `MaintenanceType` with no `default`.
 So the set and the `switch` are two hand-kept lists of one union, and a seventh member makes the method's result possibly undefined to the compiler instead of failing at the lookup.
 That is why `MaintenanceType` stayed at six when etcd added `compact`, `defragment` and `disarm`: they went into a union of their own, `MaintenanceOperation` in `src/lib/db/types.ts`, whose docblock records the reason.
 
@@ -2075,7 +2076,7 @@ Found 2026-10-03 while building the Db2 provider (#786); narrowed to the foreign
 
 ### D151. MongoDB and Couchbase read their fields from a sample and do not mark them sampled
 
-`describeObject` in `src/lib/db/providers/document/mongodb.ts` infers a collection's fields from up to `OBJECT_SAMPLE_SIZE` (100) documents and sets no `provenance` on the columns it builds.
+`describeObject` in `src/lib/db/providers/document/mongodb/index.ts` infers a collection's fields from up to `OBJECT_SAMPLE_SIZE` (100) documents and sets no `provenance` on the columns it builds.
 `src/lib/db/providers/document/couchbase/index.ts` does the same with the engine's `INFER` sampler, because Couchbase stores no schema to read, and sets no `provenance` either.
 So every field name either reports, which comes from the stored documents rather than from a declaration, reaches MCP `inspect_schema`, agent grounding and the four AI panels.
 `ColumnSchema.provenance: "sampled"` exists for that case, and `machineColumns` in `src/lib/db/detailed-object.ts` keeps a marked column from every one of those surfaces.
@@ -3514,6 +3515,10 @@ The SQL Server half is read from the code, not yet driven.
 Found 2026-10-13 while reviewing #1629.
 Not fixed in #1629: a new provider PR changes no other provider.
 
+Amended 2026-10-17 (#1614): the factory now hands every provider `sendsStatements` beside `readOnly` (`executionContextFor` in `src/lib/db/factory.ts`), true under `agent-read-only` and `agent-handover` and false under `agent-operations`, and the MongoDB provider proves its principal only where it is true.
+SQL Server can close this entry by reading the same flag in `connect()`.
+PostgreSQL refuses a superuser seed under all three profiles the same way (`assertAgentRoleIsUnprivileged` in `src/lib/db/providers/sql/postgres.ts`), and `docs/MCP.md` states that refusal for MCP `inspect_schema` (#1462), so whether PostgreSQL reads the flag too is a decision of its own: it changes what that tool answers on such a seed.
+
 **Done when:** a plan run and an operations run on a SQL Server connection as `sa` read the schema, an Agent-mode run on it is still refused before its first statement with `PROFILE_PRIVILEGES_TOO_BROAD`, a provider test pins both, and `docs/providers/mssql.md` says where the check runs.
 
 ### D347. Percona Server is refused by the MySQL agent read-only profile
@@ -3697,7 +3702,105 @@ The identity rule is the transport's bound on what it parses, so it was not loos
 
 **Done when:** the Snowflake provider reads the status answer that carries partition 0 compressed, through a streaming gunzip under the same byte bound as a partition (the byte transport and `rows.ts` already decode gzip partitions that way), and an 8 MB text cell measures within a small factor of a raw gzip fetch.
 
-### D364. Providers that map their own errors answer a missing privilege as a refused credential or a statement error
+### D364. MongoDB editor reads carry no `maxTimeMS` and ignore `connection.queryTimeout`
+
+`MongoDBProvider.query()` in `src/lib/db/providers/document/mongodb/index.ts` sends every editor read (`find`, `findOne`, `aggregate`, `count`, `distinct`) with no `maxTimeMS`, so the server ends none of them on a deadline of its own.
+`connection.queryTimeout` bounds the connect alone, the race `connect()` runs against it (#1573), and no read after it.
+So a read started in the editor runs until the server finishes it, and its one other end is the Sessions panel's Terminate, a `killOp` on its opid (#1424).
+The agent's reads carry `maxTimeMS` and a deadline the provider owns (`runUnderAgentDeadline` in `src/lib/db/providers/document/mongodb/agent-read.ts`), which the editor path does not share.
+
+Filed 2026-10-17 as issue #1614 asked (engine fact 4, measured there against MongoDB 8.3.9); the editor path is outside that change.
+
+**Done when:** `query()` sets `maxTimeMS` from `connection.queryTimeout` on every read it sends, a read past it is ended by the server, and `tests/integration/db/mongodb-provider.test.ts` pins both.
+
+### D365. Servers on the MongoDB wire are refused by the agent profile until measured
+
+`assertAgentEngineIsAdmissible` in `src/lib/db/providers/document/mongodb/agent-boundary.ts` refuses with `PROFILE_UNSUPPORTED_TARGET` a server whose `buildInfo` names Percona Server for MongoDB (`psmdbVersion`) or Atlas Data Federation (`dataLake`), and one whose host is Amazon DocumentDB's, Azure Cosmos DB's or Firestore's, because the profile's layers were measured on MongoDB alone (9.0.4, 8.3.11 and 7.0.43, `docs/providers/mongodb.md` section 12).
+None of them is known to differ where the profile depends on it; the refusal is the absence of a measurement, not a finding, as D347 records for Percona Server on the MySQL wire.
+FerretDB is refused for a reason of its own and is not this entry: it has no authorization model, so no user can be the boundary there.
+
+Found 2026-10-16 in the review of #1790 (issue #1614).
+
+**Done when:** `tests/live/mongodb-agent-profile.ts` passes against a server this entry names, the profile admits it, and `docs/providers/mongodb.md` moves its row from refused to admitted with the version measured, one server at a time.
+
+### D366. `mapDatabaseError` classes MongoDB network and server-selection failures as timeouts or generic errors on the editor path
+
+`mapDatabaseError` in `src/lib/db/errors.ts` classes an error by its message, and two of the MongoDB driver's connection failures land in the wrong class on the editor path (`MongoDBProvider.query()` and `runMaintenance()` in `src/lib/db/providers/document/mongodb/index.ts`).
+A `MongoServerSelectionError` ("Server selection timed out after 30000 ms") becomes a `TimeoutError` reported as a query timeout, and a `MongoNetworkError` whose message names no refused connection, such as a socket the server closed, becomes a plain `DatabaseError`.
+So a user whose server went away is told that a query timed out, or is told nothing about the connection.
+The object routes do not map the driver's error at all: `listContainers`, `listObjects`, `describeObject` and `describeObjects` let it reach `createErrorResponse` in `src/lib/api/errors.ts`, which answers it as an internal error (500), and `countObjects` turns it into an unavailable count; only `readObjectSource` answers a transport failure as a `ConnectionError`.
+The agent path maps all three of the driver's transport failures to `ConnectionError` by their class names (`TRANSPORT_FAILURES` in `src/lib/db/providers/document/mongodb/agent-read.ts`, issue #1614); the editor path was left as it was, because the shared mapper decides every engine's classification.
+
+Found 2026-10-16 in the review of #1790 (issue #1614).
+
+**Done when:** the MongoDB editor path classes `MongoNetworkError`, `MongoNetworkTimeoutError` and `MongoServerSelectionError` as `ConnectionError` by class name, as `TRANSPORT_FAILURES` does, in `query()`, `runMaintenance()` and those four object methods alike, so an object route answers those three as a connection failure rather than an internal error, every other engine's classification is unchanged, and a test pins each class on `query()` and on an object route.
+
+### D367. The read-only budget refusal sentences are typed out in each provider
+
+The row and byte refusals of `queryReadOnly` ("Read-only execution exceeded the row budget: N rows > M allowed", and its byte twin) are written out by hand in seven files: `postgres.ts`, `sqlite.ts`, `duckdb/index.ts`, `mssql.ts` and `mysql.ts` under `src/lib/db/providers/sql/`, `src/lib/db/providers/platform/kubernetes/console/context.ts` and `src/lib/db/providers/document/mongodb/agent-read.ts`.
+They are a parsed contract rather than prose: `otherStatementAdvice` in `src/lib/agent/tools.ts` and `rowBudgetIn` in `src/lib/agent/context-snapshot.ts` read the numbers back with one pattern, and MCP's `run_read_query` classifies a refusal by the prefixes of `READ_ONLY_REFUSALS` (`src/lib/mcp/tools/read-query-limits.ts`).
+The census that holds those prefixes to the files that write them (`RAISED_IN` in `tests/unit/mcp/read-query-limits.test.ts`) leaves out `mysql.ts`, which MCP reaches, and MySQL's deadline refusal ("exceeded the statement deadline", which MongoDB's reuses) is no prefix of `READ_ONLY_REFUSALS` at all.
+Each copy is pinned by its own provider's tests, so a reworded sentence fails there, but nothing makes the next provider write the same one.
+
+Found 2026-10-16 in the review of #1790 (issue #1614), which added the MongoDB copy; the other six are older.
+
+**Done when:** the sentences are built by constructors beside `assertReadOnlyBudget` in `src/lib/db/providers/sql/read-only-budget.ts`, or at a provider-neutral path it moves to, every provider that implements `queryReadOnly` uses them, `RAISED_IN` lists every provider MCP reaches, and MySQL's deadline refusal is either a `READ_ONLY_REFUSALS` prefix of kind `time` or worded with one that is.
+
+### D368. Agent connections on PostgreSQL, MySQL and SQL Server carry no application name
+
+An execution profile's MongoDB client names itself `libredb-studio-agent` (`appName`), and a statement-sending run's commands carry the same word as their comment (`AGENT_COMMAND_COMMENT` in `src/lib/db/providers/document/mongodb/agent-read.ts`), so the server's profiler, its slow-query log and `currentOp` can be filtered to the agent's own reads (issue #1614).
+The SQL providers set nothing of the kind on an agent acquisition: `postgres.ts`, `mysql.ts` and `mssql.ts` under `src/lib/db/providers/sql/` name no application on the connections an execution profile opens.
+So `pg_stat_activity`, the process list and `sys.dm_exec_sessions` show an agent read as the driver's default client, which the editor's connections are too.
+
+Found 2026-10-16 in the review of #1790 (issue #1614).
+
+**Done when:** each of the three names an execution profile's connection to the server as the agent, the way MongoDB's `appName` does, the editor's connections keep their own name, and each provider's integration test pins it.
+
+### D369. The MongoDB object surface's 100-document schema sample has no byte bound
+
+`describeObject` in `src/lib/db/providers/document/mongodb/index.ts` infers a collection's fields from `collection.find({}).limit(OBJECT_SAMPLE_SIZE)`, 100 whole documents decoded at once, and `describeObjects` samples up to 100 documents of each collection in one `$unionWith` pipeline per 100 collections.
+A document may be up to 16 MiB, and neither read stops at a byte bound.
+Both are the object surface the editor's tree, MCP `inspect_schema` and a plan run's grounding read through.
+The agent's own catalog read does not share it: `readCatalogReadOnly` reads its sample raw and stops it short of the run's byte budget (`sampleWithinBudget` in `src/lib/db/providers/document/mongodb/agent-read.ts`, issue #1614).
+
+Found 2026-10-16 in the review of #1790 (issue #1614).
+
+**Done when:** the object surface's samples stop at a byte bound the way `sampleWithinBudget` does, a collection of documents near 16 MiB is described without decoding past that bound, and `tests/integration/db/mongodb-provider.test.ts` pins it.
+
+### D370. A MongoDB agent `distinct` is decoded whole before its budgets
+
+`readMongoForAgent` in `src/lib/db/providers/document/mongodb/agent-read.ts` sends one `distinct` command, and `distinctWithinBudget` reads the row and byte budgets on the reply after it is decoded.
+Driver 7.7.0 decodes a command's reply even when asked for it raw, because bson's `raw` keeps only embedded documents as bytes, and the reply and its `values` list are decoded.
+Measured 2026-10-17 on 9.0.4 under a 512 MiB memory limit, investigation budget (200 rows, 262,144 bytes, 10 s), one fresh process per read, as a read user through `acquireExecutionProfileProvider`: a 14.8 MiB reply of 780,000 small documents grew resident memory by about 145 MiB (134.6 to 152.9 over 6 runs), and a 14.4 MiB reply of 900,000 short strings by about 175 MiB (172.4 to 180.3 over 6 runs).
+Both were refused on the row budget only after the decode; the cursor reads grow about 31 MiB.
+
+Found 2026-10-17 while building the MongoDB agent read (#1790, issue #1614).
+
+**Done when:** the agent's `distinct` is bounded on the server, for example as a `$match` and `$group` pipeline read from a raw cursor with a trailing `$limit` of one past the row budget, the way `count` became the `countDocuments` pipeline, keeping `distinct`'s flattening of arrays, and `tests/live/mongodb-agent-profile.ts` holds a near-16 MiB `distinct` under the 64 MiB ceiling.
+
+### D371. A MongoDB server cut mid-read reaches an agent run as a statement deadline, not a lost connection
+
+`runUnderAgentDeadline` in `src/lib/db/providers/document/mongodb/agent-read.ts` maps the driver's transport failures to `ConnectionError` by class name (`TRANSPORT_FAILURES`), which ends a run as an environment failure, but a server cut mid-read does not reach that mapping before the read's deadline.
+Driver 7.7.0 retries a read's first command, which waits out the client's 30 s server selection (`MONGODB_SERVER_SELECTION_TIMEOUT_MS` in `src/lib/db/providers/document/mongodb/index.ts`), and a cursor whose `getMore` failed first sends `killCursors` to the lost server through the same selection (`AbstractCursor.cleanup`), so the network error surfaces only after that wait.
+Every agent workflow reads under a 10 s statement deadline, so the provider's timer fires first, its `killSessions` waits on the same selection, and the read ends as the client giving up on a server that did not end it: a `QueryError`, which the run offers the model as a statement to repair.
+Measured 2026-10-17 on 9.0.4, `docker kill` 1.7 s into a read as `libredb_agent` through `acquireExecutionProfileProvider` under the investigation budget: a cut during an aggregate's first command and one during a find's `getMore` both settled at 12.0 s with "Read-only execution exceeded the statement deadline of 10000ms and the server did not end it, so the client stopped waiting", while the client had seen its connection close and the server's heartbeat fail at the cut.
+Under a 60 s deadline the same two cuts were a `ConnectionError` at 31.8 s ("The MongoDB server could not be reached while the statement ran: ..."), so the mapping holds and only its timing loses.
+
+Found 2026-10-17 in the review of #1790 (issue #1614).
+
+**Done when:** a server cut mid-read reaches the run as a `ConnectionError` before the statement deadline ends it, while a replica-set election the driver rides out is still read as the read it is, for example by reading the client's own server monitoring during the read, and a test cuts a live standalone and a live replica-set primary mid-read.
+
+### D372. The no-plan-evidence notice says no plan was inspected when one was
+
+`shortfallNotice` in `src/lib/agent/investigation.ts` answers the `no-plan-evidence` shortfall with "Your index recommendation rests on no plan: ... and no plan has been inspected", and asks the run to call `inspect_plan` before it recommends again.
+`verifyQueryOptimizationGoal` in `src/lib/agent/goal-verifier.ts` returns `no-plan-evidence` whenever no index recommendation cites a plan artifact, which includes a run that inspected a plan and cited a read instead, so the sentence is false there and sends the run to read a plan it already holds.
+The notice is the same on every engine an optimization run reaches, SQL and MongoDB alike, and no test pins that clause.
+
+Found 2026-10-17 in the review of #1790 (issue #1614); it is older than that change.
+
+**Done when:** the sentence says the recommendation cites no plan this run inspected, or names the plan the run holds by its artifact id, and a test drives a run that holds a plan, cites a read, and is told so.
+
+### D373. Providers that map their own errors answer a missing privilege as a refused credential or a statement error
 
 `mapDatabaseError` in `src/lib/db/errors.ts` answers a privilege the credential lacks with `PermissionDeniedError`, HTTP 403 `PERMISSION_DENIED`, read from the driver's code, and PostgreSQL, MySQL, SQL Server, Oracle, Db2 and MongoDB reach it.
 A provider that maps its own driver's errors decides that refusal itself, and the mappers read on 2026-10-15 decide it two other ways.
@@ -3711,7 +3814,7 @@ Found 2026-10-15 while separating the two refusals in `mapDatabaseError`; each p
 
 **Done when:** each provider above answers its authorization refusal with `PermissionDeniedError` and keeps its credential refusal an `AuthenticationError`, its provider doc names the code it reads, and its `tests/integration/db/<type-id>-provider.test.ts` pins both, each refusal measured on its engine.
 
-### D365. A test that dials a port it closed, expecting a refusal, can reach another process's listener
+### D374. A test that dials a port it closed, expecting a refusal, can reach another process's listener
 
 Several test files take a port that nothing listens on by listening on an ephemeral port and closing it again, then dial that port and expect a refusal: `refusingOrigin` in `tests/unit/db/prometheus/request.test.ts`, `closedPort` in `tests/helpers/rabbitmq-fake-peer.ts`, and the copies and users in the gRPC, etcd, Kafka, Milvus, RabbitMQ, SSH tunnel and seed discovery tests (thirteen files under `tests/` name `closedPort` or `refusingOrigin`).
 The runner runs one file per CPU, and a port just freed is soon handed out again, so by the time a test dials it another file's server can be listening there.
@@ -4054,7 +4157,7 @@ MSSQL and MongoDB declare `check` as globally runnable and MySQL declares `optim
 `ProviderLabels` has only the `analyzeGlobal*` and `vacuumGlobal*` triads, so a global card can only be
 rendered where the provider's `vacuumActionOperation` happens to redirect the vacuum slot to it. MySQL
 gets an Optimize card that way; MSSQL's and MongoDB's `check` gets nothing.
-Amended 2026-09-30: the Operations tab now draws a declared card for an operation whose `MaintenanceOperationSpec` carries a `title` and a `description` (#1089), so a global operation gets a card by declaring them; DuckDB's optimize and the global check of SQL Server, SQLite, libSQL and MySQL stay withheld until each provider declares them after a live run, and MongoDB's check leaves this entry, because `src/lib/db/providers/document/mongodb.ts` declares it `global: false`.
+Amended 2026-09-30: the Operations tab now draws a declared card for an operation whose `MaintenanceOperationSpec` carries a `title` and a `description` (#1089), so a global operation gets a card by declaring them; DuckDB's optimize and the global check of SQL Server, SQLite, libSQL and MySQL stay withheld until each provider declares them after a live run, and MongoDB's check leaves this entry, because `src/lib/db/providers/document/mongodb/index.ts` declares it `global: false`.
 
 Deliberately not fixed with U9 (2026-08-25): inventing card copy for five providers without measuring
 what each statement actually does is the generic mapping #427 reverted. What is needed first is the
@@ -5005,7 +5108,7 @@ Not fixed there: the rail is shared by every engine, and the PR does not touch i
 
 ### U86. A MongoDB view's row menu offers Validate, Compact and Check Collection
 
-X25's MongoDB sibling. MongoDB's `maintenanceOperationSpecs` (`src/lib/db/providers/document/mongodb.ts:821-825`) declares `vacuum` ("Compact Collection"), `analyze` ("Validate Collection") and `check` ("Check Collection") with no `kinds`, and an absent `kinds` means every kind, so the object tree's row menu offers all three on a row of kind `view` (`MONGODB_KIND_VIEW`, `:384`).
+X25's MongoDB sibling. MongoDB's `maintenanceOperationSpecs` (`getCapabilities()` in `src/lib/db/providers/document/mongodb/index.ts`) declares `vacuum` ("Compact Collection"), `analyze` ("Validate Collection") and `check` ("Check Collection") with no `kinds`, and an absent `kinds` means every kind, so the object tree's row menu offers all three on a row of kind `view` (`MONGODB_KIND_VIEW`).
 The entry opens `/admin/operations?path=...&path=paid_orders`, which says "No tables found ... this page has no row for "paid_orders" to run it on", and nothing is sent.
 Measured on MongoDB 8.2.12 (`mongo:8.2`), view `paid_orders`.
 
@@ -5521,7 +5624,12 @@ Each further engine will need another squeeze, and the next one has none left to
 
 Found 2026-10-13 while reviewing #1629.
 
-**Done when:** the claim's height no longer grows with the engine list (for example a count with the names behind a disclosure), the spacing #1629 took back is restored, and `tests/components/LoginPage.test.tsx` still pins that the claim names only engines agent mode executes on.
+Amended 2026-10-17 (#1614): MongoDB made the claim one line longer again, six lines at 1280x800.
+Taking the panel's `space-y-1.5` to `space-y-1` did not pay for it once #1798 gave the engine showcase another row: the page measured 802px at 1280x800 and the #541 check in `e2e/login.spec.ts` failed.
+It was paid back by that and by taking the claims' `leading-normal` to `leading-snug` in `hero-proof.tsx`, which leaves the page 793px tall at 1280 wide (`main` before it: 786px), less than one wrapped line (16.5px) of slack for the next engine.
+A window narrowed by a vertical scrollbar (1265 wide) wraps more of the hero and scrolls on both, 843px here and 854px on `main`.
+
+**Done when:** the claim's height no longer grows with the engine list (for example a count with the names behind a disclosure), the spacing #1629 and #1614 took back is restored, and `tests/components/LoginPage.test.tsx` still pins that the claim names only engines agent mode executes on.
 
 ### U140. The connection dialog's field census leaves six shipped types out
 
@@ -5576,6 +5684,17 @@ Verified 2026-10-14 on `main` at 5b77948ee: no test file imports both modules.
 Found 2026-10-14 in the final review of the Apache Spark provider (#1759).
 
 **Done when:** a test under `tests/unit/lib/export/` renders edge values through the functions of `temporal.ts` and asserts that `typedLiteral(..., "spark")` writes each as a literal.
+
+### U145. E2E specs open the connection dialog by clicking the sidebar header's first button, which is the ERD button once metadata has loaded
+
+The `beforeEach` of 27 specs under `e2e/` opens the connection dialog with `page.locator("text=LibreDB Studio").locator("..").locator("..").locator("button").first()`.
+`Sidebar.tsx` renders `Show ERD Diagram` before `New connection` in that header whenever the active connection offers a schema diagram, and the Sample (LibreDB) connection is active at sign-in, so which button is first depends on whether its metadata arrived before the click.
+When it has, the click opens the ERD visualizer instead, the dialog never opens, and the test times out waiting for an engine button inside it.
+Measured 2026-10-17 on `main` at 674683b19 with `e2e/opcua-provider.spec.ts`, one worker and four repeats while a second run loaded the machine: 3 of 28 tests failed this way, and 0 of 14 without the load.
+
+Found 2026-10-17 while verifying #1790.
+
+**Done when:** the specs open the dialog by the button's own name (`getByRole("button", { name: "New connection" })`, the header's `aria-label`), and no spec under `e2e/` picks a sidebar header button by its position.
 
 ## Dependencies
 
@@ -5778,7 +5897,7 @@ they were another lane's live files at the time, not because they are correct.
 
 Four comments inside provider directories, one test comment beside them and eight sentences of other providers' docs count the providers as they stood before #1085 made the shipped type-ids eighteen, served by seventeen provider implementations because `elasticsearch` and `opensearch` share one.
 Four of the eight doc sentences mirror the comments; the other four have no code twin.
-- `src/lib/db/providers/document/mongodb.ts`, the `describeObjects` docblock: "this method is the ONE place in the seventeen providers where a per-object read survives", mirrored in `docs/providers/mongodb.md` under "What `describeObjects` answers, and the one half this engine cannot bulk-read".
+- `src/lib/db/providers/document/mongodb/index.ts`, the `describeObjects` docblock: "this method is the ONE place in the seventeen providers where a per-object read survives", mirrored in `docs/providers/mongodb.md` under "What `describeObjects` answers, and the one half this engine cannot bulk-read".
   Still true of eighteen, because the Prometheus bulk read is one series read; the count is what is stale.
 - `src/lib/db/providers/sql/druid/objects.ts`, point 4 of the header: "the guard the other sixteen providers write is absent here", mirrored in `docs/providers/druid.md` under "`describeObjects()` describes a whole folder in ONE statement (#789)", point 2.
   Prometheus writes that guard too, answering a kind with no columns with `{ details: [] }` and no read, so the others are seventeen.
@@ -5809,7 +5928,7 @@ Not fixed in #1085: that PR edits another provider's doc only where a shared sur
 ### DOC7. Four translated READMEs still say the SSL/TLS panel takes effect on nine engines
 
 The transport paragraph of `README_es.md`, `README_ja.md`, `README_hi.md` and `README_ur.md` carries wording `README.md` replaced in #466: it names the engines the SSL/TLS panel takes effect on, PostgreSQL to Trino, and says that Oracle, MongoDB and Redis ignore the option.
-`README.md` says instead that the panel is honoured by every engine that shows it, which is every engine but SQLite, DuckDB and the embedded LibreDB, and the three named as ignoring it read `config.ssl` (`src/lib/db/providers/document/mongodb.ts`, `src/lib/db/providers/keyvalue/redis.ts`, `src/lib/db/providers/sql/oracle.ts`), while libSQL and Cassandra, which honour it, are not in the list, and libSQL is not in the connection-string list beside it either.
+`README.md` says instead that the panel is honoured by every engine that shows it, which is every engine but SQLite, DuckDB and the embedded LibreDB, and the three named as ignoring it read `config.ssl` (`src/lib/db/providers/document/mongodb/index.ts`, `src/lib/db/providers/keyvalue/redis.ts`, `src/lib/db/providers/sql/oracle.ts`), while libSQL and Cassandra, which honour it, are not in the list, and libSQL is not in the connection-string list beside it either.
 #1085 added Prometheus to that list in all four files, because each file's new Prometheus row tells the reader to enable TLS, and changed nothing else there.
 `README_zh.md` already carries the English wording.
 Each file's translation-lag banner names `README.md` as the one that wins, and `bun run readme:check` reads no prose, so nothing flags the paragraph.
@@ -6108,6 +6227,27 @@ Verified 2026-10-14 on `main`: `git diff 22543b91b..5b77948ee -- docs/providers/
 Found 2026-10-14 in the final review of the Apache Spark provider (#1759).
 
 **Done when:** section 8.3 of `docs/providers/snowflake.md` says that a database whose schemas fail to list is named in the inventory as not read, with Snowflake's sentence, and the walk goes on, and `tests/unit/db/snowflake/provider-doc.test.ts` pins that sentence.
+
+### DOC34. Three pages describe each agent engine's read-only boundary and leave MySQL's out
+
+The narrative of `docs/SECURITY.md` row 3.4 states the layers that bound an agent statement on PostgreSQL, SQLite, DuckDB and SQL Server, and on MongoDB since #1790, and the read-only bullets of `README.md` ("Read-only, enforced by the database rather than by a parser") and `docs/AGENT_GUIDE.md` ("It cannot write") state the first four.
+None of them says what bounds one on MySQL and MariaDB, where agent mode has executed statements since #1629: a principal verified before the first statement to hold nothing past `SELECT` and `SHOW VIEW`, then `START TRANSACTION READ ONLY` on a connection closed after the call (`docs/providers/mysql.md` section 12).
+The read-only bullet of `docs/FEATURES.md` ("Read-only, enforced by the database") states those two layers and why the principal comes first, and is the wording to mirror; the engine paragraph of `docs/AGENT.md` has stated them too since #1790.
+The row's file list has named `mysql.ts` and its integration test since #1790.
+
+Found 2026-10-17 in the review of #1790 (issue #1614); pre-existing since #1629.
+
+**Done when:** each of the three pages states MySQL's layers beside the other engines', in its own register and from `docs/providers/mysql.md` section 12, and a test holds each page's boundary sentence to name every SQL engine of `AGENT_EXECUTION_ENGINES`.
+
+### DOC35. The provider tree in DATABASE_PROVIDERS.md leaves out every provider directory added since it was last drawn
+
+The directory tree at the top of `docs/DATABASE_PROVIDERS.md` has no line for `document/firestore`, `industrial/` (`modbus`, `mtconnect`, `opcua`, `sparkplug`), `keyvalue/mqtt`, `network/` (`netconf`, `snmp`) or `sql/bigquery`, `sql/snowflake` and `sql/spark`, although the engine table further down the same page lists each of them.
+It also leaves out shared modules a provider author meets: `keyvalue/redis-command-text.ts` and, under `sql/`, `column-types.ts`, `mysql-show-create.ts`, `pg-wire-cancel.ts`, `read-only-budget.ts`, `sqlite-int64.ts` and `sqlite-worker.ts`.
+Counted 2026-10-17 on the #1790 branch; every omission is older than that PR, which only redrew the MongoDB line as `mongodb/`.
+
+Found 2026-10-17 while verifying #1790.
+
+**Done when:** the tree names every directory and shared module under `src/lib/db/providers/`, and a test walks that directory and fails when the tree misses one.
 
 ## Release pipeline
 
@@ -6701,6 +6841,12 @@ no reading either.
 with no reading gives the editor a plan the agent still cannot weigh, and a reading with no
 `ExplainFormat` member has nothing to key on.
 
+Amended 2026-10-17 (#1614): MongoDB does not offer auto-execute at all (`canAutoExecute` is false on every mongo variant in `src/lib/agent/agent-manifest.ts`), because both halves are missing there too and a third with them, a verified replay of a MongoDB answer in the editor; B118 records the three as one change.
+
+Amended 2026-10-17 (#1614): MySQL is in DuckDB's state (#1629).
+A run on MySQL or MariaDB asks for `EXPLAIN FORMAT=JSON` and holds the plan as `mysql-json`, the format the connect probe measures there, and that `ExplainFormat` has no `PLAN_READINGS` arm, so `planRefusal` answers `unverified-dialect` and a ticked run's answer is put in the editor unrun.
+`mysql-text`, the plain plan of a MySQL-wire server that refuses that grammar, is left unread on purpose (#574, the comment above `PLAN_READINGS` in `src/lib/agent/plan-summary.ts`).
+
 ### A7. The agent's byte budget TOTAL is measured after the result exists, on every engine that has one
 
 SQL Server is the engine that makes this visible, because it is the first whose result budget is the
@@ -6741,6 +6887,10 @@ a streaming read that stops at the ceiling - in every provider that implements `
 that the budget bounds memory rather than reporting on it.
 On SQL Server that is the total alone, since `SET TEXTSIZE` already bounds each value; on PostgreSQL,
 SQLite and DuckDB it is both.
+
+Amended 2026-10-17 (#1614): MySQL (#1629) and MongoDB meter the total while the result is read.
+MySQL streams its rows and refuses on the row that crosses the ceiling, and MongoDB adds each document's BSON size before decoding it, except a `distinct`'s one reply, which the driver decodes whole first (D370).
+So the total is post-hoc on PostgreSQL, SQLite, DuckDB and SQL Server, and this entry is theirs; it is also the record of `PostgresProvider.queryReadOnly` measuring its bytes after the result is assembled.
 
 ### A8. SQL Server's admitted SELECT reaches server-level metadata, which is A3 on a third engine
 
@@ -7379,7 +7529,7 @@ Both execution paths guard a statement with SQL readers (`src/lib/db/operations/
 
 Found 2026-10-03 while designing the Neo4j provider (spec 6.4).
 
-**Done when:** `Neo4jProvider` implements `queryReadOnly` through the same policy, gate and READ session as the editor, `AGENT_EXECUTION_ENGINES` and `RUN_READ_QUERY_ENGINES` name Neo4j, and an agent run and an MCP call each drive a `LOAD CSV` and a write to their refusal in a test.
+**Done when:** `Neo4jProvider` implements `queryReadOnly` through the same policy, gate and READ session as the editor, `AGENT_EXECUTION_ENGINES` names Neo4j, MCP serves its Cypher through the non-SQL arm B117 records (`RUN_READ_QUERY_ENGINES` holds SQL engines alone), and an agent run and an MCP call each drive a `LOAD CSV` and a write to their refusal in a test.
 
 ### B94. InfluxDB has no agent execution and no MCP `run_read_query`
 
@@ -7388,7 +7538,7 @@ Both execution paths guard a statement with SQL readers (`src/lib/db/operations/
 
 Found 2026-10-04 while designing the InfluxDB provider (ruling R10).
 
-**Done when:** each type implements `queryReadOnly` under a statement contract of its own (the InfluxQL policy for `influxdb`, the DataFusion policy for `influxdb3`), and agent execution and `run_read_query` serve it, with tests.
+**Done when:** each type implements `queryReadOnly` under a statement contract of its own (the InfluxQL policy for `influxdb`, the DataFusion policy for `influxdb3`), agent execution serves both, and MCP serves `influxdb3` through `run_read_query` and `influxdb`'s InfluxQL through the non-SQL arm B117 records, with tests.
 
 ### B100. Oxia has no agent execution and no MCP surface
 
@@ -7396,21 +7546,9 @@ Found 2026-10-04 while designing the InfluxDB provider (ruling R10).
 
 Found 2026-10-04 while designing the Oxia provider (DECISIONS O14).
 
-**Done when:** an MCP metadata surface that never returns a key value is designed and `run_read_query` serves a read command under the `oxia` grammar, with tests; cited in `docs/AGENT.md` beside B93.
+**Done when:** an MCP metadata surface that never returns a key value is designed and the non-SQL MCP arm B117 records serves a read command under the `oxia` grammar, with tests; cited in `docs/AGENT.md` beside B93.
 
 B100 rather than the next free id: InfluxDB, built at the same time, took B94, and the gap kept the two from racing for an id.
-
-### B101. A refused agent principal is told to narrow its privileges even when it lacks one
-
-The read-only execution profile refuses a database principal two opposite ways: `PROFILE_PRIVILEGES_TOO_BROAD` when it holds a privilege the boundary cannot contain, and `PROFILE_PRIVILEGES_TOO_NARROW` when it lacks one the boundary needs, such as `SHOWPLAN` on SQL Server (`assertAgentPrincipalIsUnprivileged` in `src/lib/db/providers/sql/mssql.ts`).
-`classifyDriveFailure` in `src/lib/agent/runtime.ts` maps both to the one failure reason `agent-principal-refused`, and the rail's sentence for it in `src/components/agent/timeline.ts` ends "Point the connection's agent credential at a least-privilege user", the repair for the too-broad case only.
-The too-narrow advice in `PROFILE_REFUSAL_ADVICE` (`src/lib/agent/context-snapshot.ts`) reaches only the ledger's `context-unavailable` detail, which the rail does not render, so a plan run shows "Schema not captured / CATALOG_READ_REFUSED" and nothing else, and so does a too-broad refusal (a PostgreSQL superuser seed showed the same).
-Measured on a seeded SQL Server login with `db_datareader`, `VIEW DEFINITION` and `VIEW DATABASE STATE` but not `SHOWPLAN`: an Agent-mode run failed with that sentence while `GET /api/agent/runs/<id>/stream` carried "Grant the missing privilege named in the server log to that user; this is the opposite repair to the one above".
-The docblock of `agent-principal-refused` in `src/lib/agent/types.ts` and `docs/providers/mssql.md` still describe the missing-`SHOWPLAN` refusal as `PROFILE_PRIVILEGES_TOO_BROAD`.
-
-Found 2026-10-07 by the browser pass of PR #1570 (Spec A seed sources); pre-existing.
-
-**Done when:** a too-narrow refusal ends a run with a failure reason of its own while `agent-principal-refused` keeps the too-broad meaning, so ledgers already written still read; the rail tells a too-narrow principal to grant the privilege the server log names; a refused grounding read carries the direction on its `context-unavailable` event so plan mode can say it too; a runtime test pins each code to its reason and a timeline test pins each reason to its sentence; and `docs/providers/mssql.md` names which check raises which code.
 
 ### B102. Plan mode's name check warns on statements that run: catalog reads, and a `FROM` inside a function call
 
@@ -7440,14 +7578,14 @@ Found 2026-10-07 while designing the Databend provider (design 5.7).
 
 Found 2026-10-09 while designing the S3 provider.
 
-**Done when:** an MCP metadata surface that lists buckets and never returns an object key is designed; `MCP_EXPOSABLE.s3` turns true for it; and `run_read_query` and agent execution serve a `queryReadOnly` that runs one console read command, with tests; cited in `docs/AGENT.md` beside B103.
+**Done when:** an MCP metadata surface that lists buckets and never returns an object key is designed; `MCP_EXPOSABLE.s3` turns true for it; and agent execution serves a `queryReadOnly` that runs one console read command, which MCP serves through the non-SQL arm B117 records, with tests; cited in `docs/AGENT.md` beside B103.
 
 ### B105. Kubernetes has no MCP surface
 
 `MCP_EXPOSABLE.kubernetes` is false and the MCP fence reads SQL only, so MCP `run_read_query` and `inspect_schema` refuse a Kubernetes connection, while agent mode reads it through `kubectl.query.read` under machine redaction (`docs/providers/kubernetes.md` section 9).
 Found 2026-10-10 while designing the Kubernetes provider; narrowed to its MCP half when agent execution landed.
 
-**Done when:** an MCP surface for kubectl reads is designed that applies the agent's machine redaction to every answer, `MCP_EXPOSABLE.kubernetes` turns true for it, and `run_read_query` serves it with tests; cited in `docs/AGENT.md` beside B104.
+**Done when:** an MCP surface for kubectl reads is designed that applies the agent's machine redaction to every answer, `MCP_EXPOSABLE.kubernetes` turns true for it, and the non-SQL MCP arm B117 records serves it, with tests; cited in `docs/AGENT.md` beside B104.
 
 ### B107. Firestore has no agent execution and no MCP surface
 
@@ -7456,7 +7594,7 @@ Every Firestore read is billed, and no read contract for the query chain under a
 
 Found 2026-10-12 while designing the Firestore provider.
 
-**Done when:** an MCP metadata surface that reads no document is designed, `MCP_EXPOSABLE.firestore` turns true for it, and `run_read_query` and agent execution serve a `queryReadOnly` that runs one console statement under a per-run read bound, with tests; cited in `docs/AGENT.md` beside B105.
+**Done when:** an MCP metadata surface that reads no document is designed, `MCP_EXPOSABLE.firestore` turns true for it, and agent execution serves a `queryReadOnly` that runs one console statement under a per-run read bound, which MCP serves through the non-SQL arm B117 records, with tests; cited in `docs/AGENT.md` beside B105.
 
 ### B108. RabbitMQ has no agent execution and no MCP `run_read_query`
 
@@ -7464,7 +7602,7 @@ Found 2026-10-12 while designing the Firestore provider.
 
 Found 2026-10-12 while designing the RabbitMQ provider.
 
-**Done when:** a stream read request is designed as an agent statement with its own read policy and bounds, `queryReadOnly` serves it, and `run_read_query` and agent execution run it, with tests; cited in `docs/AGENT.md` beside B105.
+**Done when:** a stream read request is designed as an agent statement with its own read policy and bounds, `queryReadOnly` serves it, agent execution runs it and MCP runs it through the non-SQL arm B117 records, with tests; cited in `docs/AGENT.md` beside B105.
 
 ### B109. The schema docs route puts database-written names in the prompt without the untrusted-content fence
 
@@ -7502,13 +7640,16 @@ Found 2026-10-14 while building agent execution on Kubernetes.
 
 **Done when:** a ledger header whose `workflowType` is not an `AgentRunWorkflowType` is refused at read with a named error, with a test that writes such a header and reads it back; cited in `docs/AGENT.md`.
 
-### B113. The agent user guide cites code by line number and carries em dashes
+### B113. The agent user guide and the data-flow page cite code by line number and carry em dashes
 
-`docs/AGENT_GUIDE.md` cites code as `file:line` 46 times, on 41 lines (`timeline.ts:499`, `goal-verifier.ts:349-355` and `AgentRail.tsx:401-447` among them), and those numbers have drifted as the files changed, so a reader following one lands on unrelated code.
-The same page carries 152 lines with an em dash, against the repository's writing rule.
-Found 2026-10-14 while building agent execution on Kubernetes.
+`docs/AGENT_GUIDE.md` cites code as `file:line` 45 times, on 40 lines (`timeline.ts:499`, `goal-verifier.ts:349-355` and `AgentRail.tsx:401-447` among them), and those numbers have drifted as the files changed, so a reader following one lands on unrelated code.
+The same page carries 149 lines with an em dash, against the repository's writing rule.
+Found 2026-10-14 while building agent execution on Kubernetes; counted again on 2026-10-17, after #1790 edited the page.
 
-**Done when:** every code citation in `docs/AGENT_GUIDE.md` names a file and a symbol instead of a line, no em or en dash remains on the page, and a guard test fails on a new `file:line` citation there; cited in `docs/AGENT.md`.
+`docs/AGENT_DATA_FLOW.md` does the same: it cites code as `file:line` 66 times, on 52 lines (`investigation.ts:2540`, `provider-registry.ts:136-150` and `AgentRail.tsx:745-758` among them), and carries 87 lines with an em dash.
+Found 2026-10-17 in the review of #1790 (issue #1614), which moved the page's section 5 table, what each tool result sends to the model, to symbols and left the rest.
+
+**Done when:** every code citation in `docs/AGENT_GUIDE.md` and `docs/AGENT_DATA_FLOW.md` names a file and a symbol instead of a line, no em or en dash remains on either page, and a guard test fails on a new `file:line` citation on either; cited in `docs/AGENT.md`.
 
 ### B114. A cluster health run drops the Warning events of a controller of an unlisted kind that has no pod
 
@@ -7533,6 +7674,56 @@ Found 2026-10-14 while building agent execution on Kubernetes.
 Found 2026-10-14 while building agent execution on Kubernetes.
 
 **Done when:** no em or en dash remains in `docs/FEATURES.md`; cited in `docs/AGENT.md`.
+
+### B117. MongoDB has no MCP run_read_query arm
+
+MCP `run_read_query` takes one SQL statement (`sql` in `RunReadQueryInputSchema`, `src/lib/mcp/tools/run-read-query.ts`) and serves `RUN_READ_QUERY_TYPES` alone: the engines agent mode executes on whose statement language is SQL and that MCP is offered for.
+MongoDB is offered to MCP for `inspect_schema`, and agent mode executes its JSON command, but `runReadQuery` refuses a MongoDB connection as soon as it resolves, before anything is acquired, with "this tool does not serve MongoDB; use inspect_schema there".
+So an MCP client can list a MongoDB database's collections and their fields and cannot read a document.
+What it needs is an arm for a statement language that is not SQL, and the MCP halves of B93, B94, B100, B104, B105, B107 and B108 wait on the same arm.
+
+Filed 2026-10-17 with agent execution on MongoDB (#1790), which kept MCP out of that change (issue #1614, decision 2).
+
+**Done when:** MCP serves a read in a non-SQL statement language through a tool whose input is that language's own, on MongoDB the agent's command envelope under the same admission and execution profile as `mongo.query.read`; its description and its handler gate read one list, as `RUN_READ_QUERY_TYPES` does; and a test drives a MongoDB read and a refused write through it; cited in `docs/AGENT.md`.
+
+### B118. MongoDB auto-execute needs a plan reading and a working replay
+
+No mongo variant offers auto-execute: `canAutoExecute` is false on every `AGENT_WORKFLOW_VARIANTS.mongo` entry (`src/lib/agent/agent-manifest.ts`), so the run route refuses `autoExecute` on a MongoDB connection, the rail raises no consent step, and the run's rules never state `AUTO_EXECUTE_RULE`.
+Three things are missing, and A6 is why they land together.
+No `ExplainFormat` member names a MongoDB plan (`MongoDBProvider.getCapabilities` answers `supportsExplain: false`), and `PLAN_READINGS` in `src/lib/agent/plan-summary.ts` has no arm for one, so `planRefusal` in `src/lib/agent/auto-execute.ts` would answer `unverified-dialect` for every ticked run.
+And the hand-over's replay of a MongoDB answer through `POST /api/agent/runs/{runId}/handover` has never been driven end to end.
+
+Filed 2026-10-17 with agent execution on MongoDB (#1790), which turned the setting off on every mongo variant rather than offer a consent it could not honour; cross-referenced from A6.
+
+**Done when:** one change adds an `ExplainFormat` member for MongoDB's `queryPlanner` explain, a `PLAN_READINGS` arm that reads its winning plan (an `IXSCAN` against a `COLLSCAN`), verified against explain output from the servers `tests/live/mongodb-agent-profile.ts` measures, a `planRefusal` rule for it, and a test that drives the hand-over replay of a MongoDB answer, and turns `canAutoExecute` on for mongo `data-analysis`; cited in `docs/AGENT.md`.
+
+### B119. `compare_plans` is not offered on MongoDB
+
+The mongo `query-optimization` variant offers `inspect_plan` and no `compare_plans` (`AGENT_WORKFLOW_VARIANTS.mongo` in `src/lib/agent/agent-manifest.ts`).
+A comparison's whole value is the structural access reading of `summarisePlan` (`src/lib/agent/plan-summary.ts`), which reads only the plan formats it was verified against and every other plan as `unknown`, so a MongoDB comparison would state that two plans differ in a way nobody has read.
+A run that optimizes a command recommends an index from one inspected plan instead, which `agent-query-optimization.3` accepts.
+
+Filed 2026-10-17 with agent execution on MongoDB (#1790).
+
+**Done when:** `plan-summary.ts` reads a MongoDB `queryPlanner` plan, the same reading B118 needs, the mongo `query-optimization` variant offers `compare_plans`, and a test compares two plans of one command; cited in `docs/AGENT.md`.
+
+### B120. Replica-set secondaries and `mongos` are unmeasured under the MongoDB profile
+
+Every measurement of the MongoDB agent profile is of a standalone server: the compose fixture's and the live check's containers (`docs/providers/mongodb.md` section 12).
+On a direct connection to a replica-set secondary the probe's delete may meet `NotWritablePrimary` (10107) before the server checks authorization, and `probeServerEnforcesAuthorization` in `src/lib/db/providers/document/mongodb/agent-boundary.ts` fails the open as it is on any error but code 13, so a correctly configured read user would be refused with the server's own error and no repair named; through `mongos` the order is not known either.
+Neither shape is measured, and no replica-set fixture exists.
+
+Found 2026-10-16 in the review of #1790 (issue #1614).
+
+**Done when:** a replica-set mode of `tests/live/mongodb-agent-profile.ts` records what the open answers for the read user and for root through the primary, directly to a secondary and through `mongos`, and the profile either admits each or refuses it with its own code and a sentence that names the repair, with a timeline test for that sentence; cited in `docs/AGENT.md`.
+
+### B121. The model evals have no MongoDB preset
+
+`EvalEngine` in `tests/isolated/fixtures/agent-eval-harness.ts` is `postgres`, `sqlite` and `mysql`, so `bun run agent:eval` (`tests/evals/real-model.ts`) cannot measure a real model on a MongoDB run: the command argument, the envelope's refusal sentences and the mongo variants' tools are proved with scripted model turns only.
+
+Found 2026-10-16 in the review of #1790 (issue #1614).
+
+**Done when:** a `mongodb` preset serves the mongo variants' catalog, plan and profile answers, the real-model runner drives the four statement workflows on it, and a measured result for at least one model is recorded; cited in `docs/AGENT.md`.
 
 ## Passkey deferrals (#785)
 

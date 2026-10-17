@@ -387,7 +387,7 @@ jobs:
   # branch, which is the whole point of a test that claims to exercise the real
   # path.
   functional-smoke:
-    name: Functional Smoke (PostgreSQL, RabbitMQ)
+    name: Functional Smoke (PostgreSQL, MongoDB, RabbitMQ)
     needs: [lint-and-build]
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -495,6 +495,22 @@ jobs:
           fi
           bun tests/live/rabbitmq-seed.ts
           bun tests/live/rabbitmq-read-only.ts --dedicated
+
+      - name: MongoDB agent read-only live check
+        # The agent's MongoDB read-only profile against real servers, through the production factory (#1614): the
+        # read user admitted, and root, a matrix of broader roles, an anonymous connection and a server without
+        # authorization refused at open with nothing left behind; each write the editor's envelope can send, and the
+        # escapes the check names, refused before they are sent, and the writes refused by the server around that
+        # fence; each slow read ended at its deadline, by the server and by the provider's own kill; a read past the
+        # byte budget refused within a fixed memory ceiling. The provider suite proves the same rules against a
+        # stand-in driver, which cannot see a driver or server change. The script starts and removes its own
+        # containers. It runs after the other checks for the RabbitMQ step's reason: the steps run in order with no
+        # `if:`, so a red check here cannot hide the results above it. The image is database-compose.yml's `mongodb`
+        # service's and the script's own default; tests/unit/db/mongodb/live-environment.test.ts holds the three
+        # equal.
+        run: bun tests/live/mongodb-agent-profile.ts
+        env:
+          LIBREDB_LIVE_MONGO_IMAGE: mongo:9.0.4@sha256:f90507905ce6e52e4a63d0ff8964fc254fa4d37ccbe56c56f4bc0186eb02edea
 
       - name: Upload Playwright report
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

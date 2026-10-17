@@ -214,8 +214,8 @@ having **no statistics**, never as empty. On SQLite the statistics exist only af
 
 **Every engine, read one of two ways.** On **PostgreSQL and SQLite** the server composes catalog
 statements and reads them through the same audited, read-only path an Agent run uses. On every other
-connection, which is the other thirty-six (MySQL, Oracle, Db2 LUW, SQL Server, libSQL, DuckDB, MongoDB, Redis,
-ClickHouse, Couchbase, Firestore, Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Apache Spark, Cassandra, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, MQTT, RabbitMQ, OPC UA, MTConnect, etcd, Neo4j, Milvus, Qdrant, Oxia, Databend, S3-compatible object storage, Kubernetes and the bundled LibreDB
+connection, which is the other forty (MySQL, Oracle, Db2 LUW, SQL Server, libSQL, DuckDB, MongoDB, Redis,
+ClickHouse, Couchbase, Firestore, Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Apache Spark, Cassandra, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, MQTT, RabbitMQ, OPC UA, MTConnect, etcd, Neo4j, Milvus, Qdrant, Oxia, Databend, S3-compatible object storage, Kubernetes, Modbus, NETCONF, SNMP, Sparkplug B and the bundled LibreDB
 store), it asks that connection's own provider to describe its schema, which is the reading the
 sidebar already performs when it lists your tables, and composes no statement at all. Grounding is
 no longer decided by the engine, and that changed in #414; what decides it now is whether the
@@ -228,21 +228,19 @@ workflow including **Operate**.
 now two different sentences, and the difference is the whole of what changed:
 
 - **Grounding: every engine.** What a Plan run is TOLD about your database. It needs no read-only
-  statement path, because the provider reading sends no statement, so it reaches all thirty-eight engines.
-- **Agent mode: PostgreSQL, SQLite, DuckDB, SQL Server, MySQL and Kubernetes.** What a run may DO by itself. Its tools
-  execute statements and need a read-only path the provider implements, which only those six providers do, so a
-  schema-workflow Agent run on any other engine still ends *"The agent cannot run on this database
-  engine: it offers no read-only execution profile."* — after grounding has succeeded, which is
-  slightly odd to watch and entirely honest: the run knows your schema and still may not read a row.
+  statement path, because the provider reading sends no statement, so it reaches all forty-two engines.
+- **Agent mode: PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes and MongoDB.** What a run may DO by itself.
+  Its tools execute statements and need a read-only path the provider implements, which only those providers do.
+  So a schema-workflow Agent run on any other engine is refused when you press **Start**, before a run is opened and before anything is read, with the reason the rail's amber card shows (`workflowAvailability` in `src/app/api/agent/runs/route.ts`, #512); a Plan run there is still grounded.
   See [What the agent does not do](#what-the-agent-does-not-do).
 
 Two things are worth knowing about the provider reading, because they are not true of the composed
-one. It is **bounded** — MongoDB stops at 200 collections, Redis scans 1000 keys — so it is what the
+one. It can be **bounded**, as Redis's scan of 1000 keys is, so it is what the
 inspection found and not proof that nothing else exists, and the plan is told so. And on the document
 engines it works out a collection's fields from a **sample of your own documents**: no value from
 them is kept, but the existence of a field there is derived from your data rather than read from a
 catalog. The **estimated statistics** below are PostgreSQL's, SQLite's and SQL Server's alone; on the other
-thirty-five the plan is told that this engine holds none it knows how to read, which means it has an
+thirty-nine the plan is told that this engine holds none it knows how to read, which means it has an
 inventory and no sizes — the ordinary case now rather than a rare one.
 
 On an engine that speaks no SQL, a Plan run is asked for one statement or command **in that engine's
@@ -402,9 +400,9 @@ as an ordinary citable result.
 
 Two consequences you will notice:
 
-- **It runs on every engine.** The other workflows need a database-native read-only statement path,
-  which only PostgreSQL, SQLite, DuckDB, SQL Server and MySQL have; this one needs none, so a run opened on
-  Oracle, Cassandra, MongoDB or Redis works rather than ending `engine-unsupported`.
+- **It runs on every engine.** The other workflows need a read-only statement path the provider implements,
+  which only PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes and MongoDB have; this one needs none, so a run opened on
+  Oracle, Cassandra or Redis works rather than ending `engine-unsupported`.
 - **It has no free-form SQL, and its schema is a short list of names.** There is no `inspect_schema`
   and no `run_read_query` here, and the run is told so in its opening message rather than being left
   to discover it. What it is given instead is an inventory of your table names and the indexes on
@@ -439,15 +437,17 @@ report as unanswered.
 
 **Under the header, one line always says what reaches your database.** While a run is open that is
 the *run's* reading, taken from its own record; before one, and once one has ended, it is what
-pressing **Start** would do. It is five readings and not a mood, and the qualifier beside the pill is
-part of the claim rather than a footnote:
+pressing **Start** would do.
+It is one of the readings below and not a mood, and the qualifier beside the pill is part of the claim rather than a footnote:
 
 | The pill says | Beside it | When |
 | --- | --- | --- |
 | *Executes nothing it drafts* | *one schema read grounds it, nothing else reaches the database* | **Plan** mode, on every engine — production included. The one reach is the schema capture that grounds the draft: metadata only, no data rows |
-| *Reads only* | *200 rows and 10 s per statement, enforced by the engine* | **Agent** mode on an engine whose provider implements a database-native read-only statement path |
+| *Reads only* | *200 rows and 10 s per statement, enforced by the engine* | **Agent** mode on one of the SQL engines it executes on |
 | *Reads only, and one statement in your editor* | *500 rows, no time limit, same read-only session* | The same, with **auto-execute** ticked for the run being opened — and it stays that reading while that run is going |
-| *Cannot execute on `<engine>`* | *plan mode drafts here, and the operations workflow still runs* | **Agent** mode on any other engine. The run would end `engine-unsupported` before its first statement |
+| *Reads only* | *200 rows and 10 s per statement, enforced by Studio's request allowlist* | **Agent** mode on Kubernetes, where auto-execute is not offered, so there is nothing to widen |
+| *Reads only* | *200 rows and 10 s per command, enforced by the server* | **Agent** mode on MongoDB, where auto-execute is not offered, so there is nothing to widen |
+| *Cannot execute on `<engine>`* | *plan mode drafts here, and the operations workflow still runs* | **Agent** mode on any other engine. A run whose workflow sends a statement is refused when it is started, before a run is opened |
 | *Cannot execute yet* | *no connection is resolved, so no engine has been established* | **Agent** mode with no connection resolved. Nothing has been read, so the panel does not claim to know which engine you are on |
 
 Those two figures are the ones the server is enforcing, and they are the same on every workflow — the
@@ -465,9 +465,9 @@ The ⓘ at the end of the row opens the whole claim behind whichever of those is
 is readable to a screen reader whether or not the popover is open. On *Cannot execute on `<engine>`*
 an amber card appears above **Start** with the same facts and a **Switch to Plan** button — **and
 Start is not disabled**, because the refusal belongs to the provider factory and the **Operate**
-workflow sends no statement at all, so it runs on those engines exactly as it does anywhere else. Any
-other workflow started there anyway still ends `engine-unsupported` — after a model turn, and before
-its first statement. The strip tells you first; it does not stand in the way.
+workflow sends no statement at all, so it runs on those engines exactly as it does anywhere else.
+Any other workflow started there anyway is refused when it is started, before a run is opened, so no model turn is spent.
+The strip tells you first; it does not stand in the way.
 
 **While a run is open the objective is a line rather than a box.** The question is settled — it is on
 the run's own header, and every entry below was framed with it — so it reads as one line with the
@@ -610,6 +610,13 @@ Analyze is the only workflow that produces one — an Investigate, Optimize, Ass
 finishes with a report, not with a statement it is nominating as the answer, so there would be
 nothing to hand over. (The API refuses `autoExecute: true` on the other workflows outright, rather
 than accepting it and quietly doing nothing.)
+
+**It is not offered on Kubernetes or MongoDB at all.**
+An answer there is never run in your editor, so no consent step is raised and the API refuses `autoExecute: true` on such a connection.
+On MongoDB it waits on a reading of the engine's plans the gate below could weigh and a verified replay of an answer in the editor, which have to land together (B118 in `docs/BACKLOG.md`).
+
+**On SQL Server, DuckDB and MySQL it is offered and never runs anything for you.**
+The gate below weighs only PostgreSQL's and SQLite's plans, so every answer of a ticked run on those engines is put in your editor unrun, with the reason beside it (A6 in `docs/BACKLOG.md`).
 
 **You are asked for it after Start, not before it** (`AgentRail.tsx:847,2305`). Pressing Start on
 an Analyze run in Agent mode — whether you named the workflow or the server read it — raises a
@@ -934,7 +941,7 @@ Stated plainly, because a surface that hides its edges is the one that surprises
   pipeline — the policy decision, the audit event and the budget accounting that
   `executeAuditedOperation` performs before the driver is touched
   (`src/lib/db/operations/execution.ts:129`, reached only from `src/lib/agent/tools.ts:1906`) — under
-  a read-only execution profile whose boundary is database-native rather than a parser: a read-only
+  a read-only execution profile whose boundary on the SQL engines is database-native rather than a parser: a read-only
   transaction on PostgreSQL, `PRAGMA query_only` re-asserted per statement on SQLite, a `READ_ONLY`
   engine handle plus an SQL-level guard on DuckDB, and on SQL Server a verified least-privilege
   principal, an optimizer admission that compiles the statement without running it, a server-side row
@@ -945,27 +952,29 @@ Stated plainly, because a surface that hides its edges is the one that surprises
   it. `/api/db/query` calls the provider directly (`src/app/api/db/query/route.ts:44`), so an editor
   query is neither policy-checked nor written to the agent audit trail. The controls above describe
   what the agent is held to, not a guarantee the whole product enforces.
-- **Agent mode runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL and Kubernetes only.** The read-only profile has to
-  be implemented by the provider, and only six do: `queryReadOnly` exists on `postgres.ts`,
-  `sqlite.ts`, `duckdb/index.ts`, `mssql.ts`, `mysql.ts` and `kubernetes/index.ts`. The six do not draw the boundary the same way.
+- **Agent mode runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes and MongoDB only.** The read-only profile has to
+  be implemented by the provider, and only those providers do: `queryReadOnly` exists on `postgres.ts`,
+  `sqlite.ts`, `duckdb/index.ts`, `mssql.ts`, `mysql.ts`, `kubernetes/index.ts` and `mongodb/index.ts`.
+  They do not draw the boundary the same way.
   Kubernetes has no read-only session at all, so there the boundary is Studio's request allowlist, checked on the
   final method and path of every request before it is sent, together with the RBAC of the identity the agent runs as.
   SQL Server is the SQL engine that could not: it has no read-only transaction and no session-level
   read-only switch, so there the boundary is a session principal verified at open to be unable to
   write, an admission step that asks the optimizer to compile each statement without running it, a
   server-side row bound, and a transaction that is always rolled back.
+  MongoDB has no read-only session or transaction either, so there the boundary is the connection's user: before a run that sends commands reaches its first model turn, the server must report that the user holds only read privileges on the bound database and must refuse a write from it, and a user that can write, a server without authorization or a server that is not MongoDB ends the run there.
+  To give agent mode a MongoDB connection, seed one whose own user holds `read` on one database, on a server with authorization on ([`docs/providers/mongodb.md`](./providers/mongodb.md#setting-up-the-agents-user)).
   Acquiring a profiled provider for any other engine raises `PROFILE_UNSUPPORTED_BY_PROVIDER`
   (`src/lib/db/factory.ts`), which the runtime reports as `engine-unsupported`
   (`src/lib/agent/runtime.ts`) — the rail says so in as many words
-  (`src/components/agent/timeline.ts`). So on the other thirty-two ids in the `DatabaseType` union
-  (`src/lib/types.ts`), an Agent-mode run cannot read anything: Oracle, Db2 LUW, libSQL, MongoDB, Redis,
-  ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Apache Spark, Cassandra, Couchbase, Firestore, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, MQTT, RabbitMQ, OPC UA, MTConnect, etcd, Neo4j, Milvus, Qdrant, Oxia, Databend, S3-compatible object storage and LibreDB. That
-  last id is the bundled **LibreDB sample** connection, whose provider implements no `queryReadOnly`
-  (`src/lib/db/providers/embedded/libredb.ts`) — the bundled **SQLite sample** is the seeded
-  connection to try a run against (`src/lib/seed/sqlite-sample.ts:131`). **Plan** mode still opens on
+  (`src/components/agent/timeline.ts`).
+  So on every other id in the `DatabaseType` union (`src/lib/types.ts`) an Agent-mode run cannot read anything.
+  One of those ids is the bundled **LibreDB sample** connection, whose provider implements no `queryReadOnly`
+  (`src/lib/db/providers/embedded/libredb.ts`), so the bundled **SQLite sample** is the seeded connection to try a run against (`src/lib/seed/sqlite-sample.ts`).
+  **Plan** mode still opens on
   every connection — the model is toolless there, so no profile has to be acquired for it — and since
-  #414 its **grounding** no longer takes this path at all on the other thirty-six: it asks the provider to
-  describe its schema, which needs no read-only statement profile, so a Plan run on MongoDB or Oracle
+  #414 its **grounding** no longer takes this path at all on the other forty: it asks the provider to
+  describe its schema, which needs no read-only statement profile, so a Plan run on Oracle or Redis
   is ordinarily grounded while an Agent run on the same connection still cannot read anything. Where
   the reading does fail — a provider that cannot describe itself, a description that overran its
   time, a refusal — the Plan run starts, says no inventory could be read for it, and is asked to

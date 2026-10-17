@@ -1,8 +1,8 @@
 /**
- * run_read_query (#246) on real SQLite, DuckDB and LibreDB files: the fence and the profile as the
- * boundary, the page one row past max_rows, the offset rule, the provider budgets R and B, the
- * result cap C with byte_size, one deadline over acquisition and execution, the untrusted-content
- * notice, and the decision recorded before anything is acquired.
+ * run_read_query (#246) on real SQLite, DuckDB and LibreDB files: the engine gate, the fence and the
+ * profile as the boundary, the page one row past max_rows, the offset rule, the provider budgets R
+ * and B, the result cap C with byte_size, one deadline over acquisition and execution, the
+ * untrusted-content notice, and the decision recorded before anything is acquired.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -26,6 +26,7 @@ import {
   runReadQuery,
 } from "@/lib/mcp/tools/run-read-query";
 import type { ManagedConnection } from "@/lib/seed";
+import type { DatabaseType } from "@/lib/types";
 import {
   countMethod,
   createDuckdbFile,
@@ -123,6 +124,30 @@ function direct(
   const caller = context ?? new McpConnectionContext({ username: "alice", role: "admin" });
   return runReadQuery(RunReadQueryInputSchema.parse(args), { context: caller, signal });
 }
+
+/** A context over one opted-in connection of the given engine that hands out the given provider. */
+function fakeContext(provider: Partial<DatabaseProvider>, type: DatabaseType = "sqlite"): McpConnectionContext {
+  const connection = {
+    id: "seed:fake",
+    name: "fake",
+    type,
+    seedId: "fake",
+    managed: true,
+    mcp: true,
+    roles: ["*"],
+    createdAt: new Date(),
+  } as ManagedConnection;
+  return {
+    caller: { username: "alice", role: "admin" },
+    visibleConnections: async () => [connection],
+    resolve: async () => connection,
+    acquire: async () => provider as DatabaseProvider,
+  } as unknown as McpConnectionContext;
+}
+
+/** The answer to a call on an engine the tool does not serve. */
+const notServed = (label: string) =>
+  `run_read_query cannot run on this connection: this tool does not serve ${label}; use inspect_schema there. It runs on PostgreSQL, SQLite, DuckDB, SQL Server and MySQL.`;
 
 const mcpEvents = () =>
   getServerAuditBuffer()
@@ -272,25 +297,62 @@ describe("the boundary", () => {
     }
   });
 
-  test("an engine with no read-only statement path answers the profile refusal and no writable method runs", async () => {
+  test("an engine with no read-only statement path is refused before anything is acquired, and no writable method runs", async () => {
+    const acquisitions = countMethod(McpConnectionContext.prototype, "acquire");
     const writes = countMethod(LibreDBProvider.prototype, "query");
     try {
       const result = await direct({ connection_id: "seed:notes", sql: "SELECT 1" });
-      expect(result.content).toEqual([
-        {
-          type: "text",
-          text: 'run_read_query cannot run on this connection: Provider type "libredb" has no database-native read-only execution profile. It runs on PostgreSQL, SQLite, DuckDB, SQL Server and MySQL.',
-        },
-      ]);
+      expect(result).toEqual({ isError: true, content: [{ type: "text", text: notServed("LibreDB") }] });
+      expect(acquisitions.calls).toBe(0);
       expect(writes.calls).toBe(0);
+      expect(mcpEvents()).toEqual([
+        expect.objectContaining({
+          target: "mcp/decision",
+          result: "failure",
+          reason: "mcp_execution_failed",
+          connectionName: "notes",
+        }),
+      ]);
     } finally {
+      acquisitions.restore();
       writes.restore();
     }
   });
 
+  test.each([
+    ["a SELECT", "SELECT 1"],
+    ["its own JSON command", '{"operation":"find","collection":"orders"}'],
+  ])(
+    "a MongoDB connection sent %s is refused before the fence and before anything is acquired (#1614)",
+    async (_sent, sql) => {
+      // Agent mode executes MongoDB, so its provider has a read-only path; this tool's input is SQL,
+      // and the provider handed out here would answer, so only the gate keeps the call off it.
+      const queryReadOnly = mock(async () => ({ rows: [{ one: 1 }], fields: ["one"], rowCount: 1, executionTime: 0 }));
+      const provider = {
+        getCapabilities: () => ({}),
+        prepareQuery: (query: string) => ({ query, wasLimited: false, limit: 0, offset: 0 }),
+        queryReadOnly,
+      };
+      const context = fakeContext(provider as unknown as Partial<DatabaseProvider>, "mongodb");
+      const acquire = spyOn(context, "acquire");
+      const result = await direct({ connection_id: "seed:fake", sql }, undefined, context);
+      expect(result).toEqual({ isError: true, content: [{ type: "text", text: notServed("MongoDB") }] });
+      expect(acquire).not.toHaveBeenCalled();
+      expect(queryReadOnly).not.toHaveBeenCalled();
+      expect(mcpEvents()).toEqual([
+        expect.objectContaining({
+          target: "mcp/decision",
+          result: "failure",
+          reason: "mcp_execution_failed",
+          connectionName: "fake",
+        }),
+      ]);
+    },
+  );
+
   test("a Snowflake connection is listed for inspect_schema, and run_read_query refuses it before connect()", async () => {
-    // A warehouse connection opted in to MCP: listed, so inspect_schema can reach it, while the profile refuses the
-    // statement path before any provider is connected, since Snowflake declares no read-only statement boundary.
+    // A warehouse connection opted in to MCP: listed, so inspect_schema can reach it, while run_read_query refuses it
+    // before any provider is acquired, since Snowflake is not an engine it serves.
     const warehouse = {
       id: "warehouse",
       type: "snowflake",
@@ -313,9 +375,7 @@ describe("the boundary", () => {
     const connects = countMethod(SnowflakeProvider.prototype, "connect");
     try {
       const result = await direct({ connection_id: "seed:warehouse", sql: "SELECT 1" });
-      expect(result.content[0].text).toContain(
-        'run_read_query cannot run on this connection: Provider type "snowflake" has no database-native read-only execution profile.',
-      );
+      expect(result.content).toEqual([{ type: "text", text: notServed("Snowflake") }]);
       expect(connects.calls).toBe(0);
     } finally {
       connects.restore();
@@ -634,24 +694,6 @@ describe("the audit sequence", () => {
 });
 
 describe("a provider the profile seam should never hand out", () => {
-  function fakeContext(provider: Partial<DatabaseProvider>): McpConnectionContext {
-    const connection = {
-      id: "seed:fake",
-      name: "fake",
-      type: "sqlite",
-      seedId: "fake",
-      managed: true,
-      roles: ["*"],
-      createdAt: new Date(),
-    } as ManagedConnection;
-    return {
-      caller: { username: "alice", role: "admin" },
-      visibleConnections: async () => [connection],
-      resolve: async () => connection,
-      acquire: async () => provider as DatabaseProvider,
-    } as unknown as McpConnectionContext;
-  }
-
   test("without queryReadOnly is refused, and query() is never the fallback", async () => {
     const writable = mock(async () => ({ rows: [], fields: [], rowCount: 0, executionTime: 0 }));
     const result = await direct(

@@ -329,6 +329,8 @@ export function ConnectionModal({
     setPrivateKey,
     privateKeyPassphrase,
     setPrivateKeyPassphrase,
+    hostKeyFingerprint,
+    setHostKeyFingerprint,
     role,
     setRole,
     region,
@@ -343,6 +345,8 @@ export function ConnectionModal({
     serverCertificateThumbprint,
     setServerCertificateThumbprint,
     setTlsServerName,
+    registerMap,
+    setRegisterMap,
     amqpPort,
     setAmqpPort,
     connectionString,
@@ -1167,6 +1171,43 @@ export function ConnectionModal({
                       <DeclaredFieldHint config={uiConfig} field="privateKeyPassphrase" />
                     </div>
                   )}
+                  {/*
+                    THE DEVICE'S HOST KEY, and the box that was missing. NETCONF declared this
+                    field in `connectionFields`, the form carried its state, `buildConnection`
+                    saved it, and nothing drew it: the provider refuses every connection without
+                    it ("this connection needs the device's host key fingerprint"), so the engine
+                    could not be reached from this dialog at all. The state side was held by the
+                    compiler - a field added to `connectionFields` with no setter fails the
+                    typecheck - and the drawing side had no such hold, which is why the census in
+                    tests/components/ConnectionModal.test.tsx now derives its field list from the
+                    real table and refuses a declared field no pattern here draws.
+
+                    It sits under the passphrase because it belongs to the same SSH exchange, and
+                    it is monospaced because what goes in it is a pasted digest.
+                  */}
+                  {drawsField("hostKeyFingerprint") && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 mb-1">
+                        <ShieldCheck strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
+                        <Label htmlFor="hostKeyFingerprint" className="text-xs font-medium text-fg-muted">
+                          {connectionFieldLabel(uiConfig, "hostKeyFingerprint", "Host key fingerprint")}
+                        </Label>
+                      </div>
+                      <Input
+                        id="hostKeyFingerprint"
+                        value={hostKeyFingerprint}
+                        onChange={(e) => setHostKeyFingerprint(e.target.value)}
+                        placeholder={connectionFieldPlaceholder(uiConfig, "hostKeyFingerprint", "SHA256:...")}
+                        autoComplete="off"
+                        spellCheck={false}
+                        autoCorrect="off"
+                        autoCapitalize="off"
+                        aria-describedby={describedByHint(uiConfig, "hostKeyFingerprint")}
+                        className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
+                      />
+                      <DeclaredFieldHint config={uiConfig} field="hostKeyFingerprint" />
+                    </div>
+                  )}
                   {credentialFollowsSignIn && drawsField("password") && passwordBlock}
 
                   {warehouseBeforeDatabase && warehouseBlock}
@@ -1385,6 +1426,39 @@ export function ConnectionModal({
                         className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
                       />
                       <DeclaredFieldHint config={uiConfig} field="tlsServerName" />
+                    </div>
+                  )}
+
+                  {/*
+                    Modbus's register map, a text area rather than a box because it is a JSON document
+                    and the engine answers no discovery request: without it a connection can read a
+                    range by address, and no point has a name. Not masked and not a secret - the
+                    protocol defines no authentication at all, and a document nobody can read is a
+                    document nobody can correct. The provider parses it and its refusals quote the
+                    position they name, so the text is sent as written.
+                  */}
+                  {takesConnectionField(type, "registerMap") && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Database strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
+                        <Label htmlFor="registerMap" className="text-xs font-medium text-fg-muted">
+                          {connectionFieldLabel(uiConfig, "registerMap", "Register map")}
+                        </Label>
+                      </div>
+                      <textarea
+                        id="registerMap"
+                        value={registerMap}
+                        onChange={(e) => setRegisterMap(e.target.value)}
+                        placeholder={connectionFieldPlaceholder(uiConfig, "registerMap", "")}
+                        autoComplete="off"
+                        spellCheck={false}
+                        autoCorrect="off"
+                        autoCapitalize="off"
+                        rows={6}
+                        aria-describedby={describedByHint(uiConfig, "registerMap")}
+                        className="w-full rounded-md bg-panel border border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono text-fg p-3"
+                      />
+                      <DeclaredFieldHint config={uiConfig} field="registerMap" />
                     </div>
                   )}
 

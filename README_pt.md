@@ -52,6 +52,7 @@
   <a href="https://aiven.io/docs/products/mysql/howto/connect-libredb-studio">Aiven for MySQL</a>,
   <a href="https://docs.scylladb.com/stable/get-started/gui-clients/libredb-studio.html">ScyllaDB</a>,
   <a href="https://cloudberry.apache.org/docs/ecosystem/sql-clients/libredb-studio/">Apache Cloudberry</a>,
+  <a href="https://doris.apache.org/docs/4.x/connection-integration/data-integration/libredb-studio/">Apache Doris</a>,
   <a href="https://cwiki.apache.org/confluence/display/KAFKA/Ecosystem#:~:text=LibreDB%20Studio">Apache Kafka</a>,
   <a href="https://cassandra.apache.org/_/ecosystem.html">Apache Cassandra</a>
   e
@@ -59,14 +60,30 @@
 </p>
 
 <p align="center">
-  <img src="public/screenshots/hero-demo.gif" alt="LibreDB Studio" width="100%" />
+  <img src="public/screenshots/hero-demo.gif" width="100%" />
 </p>
 
 <p align="center">
+  <a href="https://github.com/libredb/libredb-studio"><img src="https://img.shields.io/github/stars/libredb/libredb-studio?style=social" alt="GitHub stars"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
   <a href="https://sonarcloud.io/project/overview?id=libredb_libredb-studio"><img src="https://sonarcloud.io/api/project_badges/measure?project=libredb_libredb-studio&metric=alert_status" alt="Quality Gate"></a>
   <a href="https://codecov.io/github/libredb/libredb-studio"><img src="https://codecov.io/github/libredb/libredb-studio/graph/badge.svg?token=VA6CO9R7IH" alt="Coverage"></a>
+  <a href="https://deepwiki.com/libredb/libredb-studio"><img src=".github/assets/deepwiki-badge.svg" alt="Ask DeepWiki"></a>
   <a href="https://artifacthub.io/packages/helm/libredb-studio/libredb-studio"><img src="https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/libredb-studio" alt="Artifact Hub"></a>
+</p>
+
+<p align="center">
+  <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/Next.js-16-black?logo=next.js" alt="Next.js 16"></a>
+  <a href="https://react.dev/"><img src="https://img.shields.io/badge/React-19-61DAFB?logo=react" alt="React 19"></a>
+  <a href="https://hub.docker.com/r/libredb/libredb-studio?tag=latest"><img src="https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker" alt="Docker Support"></a>
+  <a href="https://artifacthub.io/packages/helm/libredb-studio/libredb-studio"><img src="https://img.shields.io/badge/Kubernetes-Compatible-326CE5?logo=kubernetes" alt="Kubernetes Compatible"></a>
+</p>
+
+<p align="center">
+  <a href="#início-rápido"><strong>Quick Start</strong></a> •
+  <a href="README.md#live-test"><strong>Live Demo</strong></a> •
+  <a href="#instalação"><strong>Install Options</strong></a> •
+  <a href="README.md#one-click-deploy"><strong>Deploy Your Own</strong></a>
 </p>
 
 > Este README em português é uma tradução da comunidade e pode estar atrás da versão em inglês. Se houver divergência, vale a [versão em inglês](README.md).
@@ -113,9 +130,9 @@ Levada a sério, essa frase deixa de ser preferência e vira especificação.
 
 ## Capacidades principais
 
-### Trinta e sete motores, uma única interface
+### Quarenta e um motores, uma única interface
 
-PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · Firestore · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · BigQuery · Databend · Snowflake · Apache Spark · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j · Milvus · Qdrant · InfluxDB (InfluxQL) · InfluxDB 3 (SQL) · Oxia · S3-compatible object storage · Kubernetes · MQTT · RabbitMQ · OPC UA · MTConnect
+PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · Firestore · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · BigQuery · Databend · Snowflake · Apache Spark · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j · Milvus · Qdrant · InfluxDB (InfluxQL) · InfluxDB 3 (SQL) · Oxia · S3-compatible object storage · Kubernetes · MQTT · RabbitMQ · OPC UA · MTConnect · Modbus · NETCONF · SNMP · Sparkplug B
 
 Todos os motores SQL compartilham o mesmo explorador de esquema, diagramas ER, comparação de esquema e painéis de monitoramento. MongoDB e Redis não são motores SQL: não têm diagrama ER nem comparação de esquema. Druid, Elasticsearch, OpenSearch e Trino são exceções duplas: suas interfaces SQL sobre HTTP não têm uma forma de URI que este build saiba interpretar, então se configuram por host e porta, e as migrações geradas explicam a limitação em vez de inventar DDL para um motor cujo SQL não tem comandos de alteração de coluna. O mesmo vale para coleções sem esquema no Couchbase. O diagrama ER dos clusters de busca tem caixas, mas não linhas: os índices não declaram chaves estrangeiras — e no modelo do motor não há nenhuma para declarar.
 
@@ -157,6 +174,10 @@ Todos os motores SQL compartilham o mesmo explorador de esquema, diagramas ER, c
 | **RabbitMQ** | nenhum: a API HTTP de gerenciamento (porta 15672) e o cliente de leitura AMQP 0-9-1 do próprio Studio (porta 5672) | Apenas leitura por construção: o cliente de leitura não codifica publicações, retiradas nem declarações. Hosts virtuais, streams, filas e exchanges na árvore; uma requisição de leitura JSON lê as mensagens de um stream, nunca as de uma fila |
 | **OPC UA** | `node-opcua-client` (JavaScript puro, `opc.tcp`, porta 4840) | Apenas leitura por construção: a costura do cliente declara oito serviços de leitura (GetEndpoints, CreateSession, ActivateSession, Browse, BrowseNext, Read, HistoryRead e CloseSession) e no provedor não existe Write, Call, HistoryUpdate nem qualquer assinatura. O painel de chaves percorre o espaço de endereços nível a nível, um Browse por nível, com o caminho de navegação escapado, porque um BrowseName pode conter o separador; um nó abre com seu valor, seu status, suas duas marcas de tempo e seu AccessLevel decodificado, e o console lê valores atuais ou histórico bruto como uma única requisição JSON. Cada limite é o do Studio e não o que o servidor publica: dos quatro servidores medidos, dois atendem requisições muito acima do limite que publicam e um o publica como 0. Um nó de método é listado e nunca chamado. Verificado com Microsoft OPC PLC 2.15.10, open62541 1.5.9, Python asyncua 2.1.0 e a demo do Eclipse Milo |
 | **MTConnect** | nenhum: um cliente próprio deste repositório sobre o transporte `node:http(s)` compartilhado (porta 5000) | Apenas leitura por construção: a tabela de rotas tem nove entradas e todas são GET, portanto não há PUT, POST ou stream a enviar. Um dispositivo é um contêiner, um data item e uma condition são relações cujas linhas são valor, timestamp e sequência, e o XML de cada asset abre em uma aba Source |
+| **Modbus** | nenhum: um cliente próprio deste repositório sobre um socket bruto, através da regra de saída compartilhada (porta 502, ou 802 para MODBUS/TCP Security) | Somente leitura por construção: o codificador nomeia quatro códigos de função de leitura e a identificação do dispositivo, nenhuma função constrói uma escrita, e uma válvula reverifica cada byte que sai. Modbus não tem descoberta, então a árvore é construída a partir de um mapa de registradores guardado com a conexão, e uma leitura é uma única requisição JSON sobre os pontos que esse mapa nomeia |
+| **NETCONF** | `ssh2` (apenas o transporte SSH; este repositório abre o socket e o entrega, e o framing, as requisições e a sessão NETCONF são próprios, porta 830) | Apenas leitura por construção: `requests.ts` constrói cinco corpos de requisição e quatro deles são as leituras, `<get-config>`, `<get>`, `<get-data>` e `<get-schema>`, enquanto o quinto encerra a sessão, e nenhuma função constrói um `<edit-config>`, um `<copy-config>`, um `<commit>` ou um `<lock>`. Um datastore é um contêiner e um módulo YANG outro abaixo dele, o contêiner ou a lista de primeiro nível de um módulo é um objeto, e as folhas chave de uma entrada de lista são as colunas do objeto |
+| **SNMP** | nenhum: um cliente próprio deste repositório sobre UDP (porta 161), através da regra de saída compartilhada | Apenas leitura por construção: a válvula de saída recusa qualquer PDU que não seja Get, GetNext ou GetBulk, então um Set nunca chega ao socket. Um grupo de objetos é um contêiner, o percurso de uma subárvore é a leitura e uma tabela é montada com as respostas do GetBulk |
+| **Sparkplug B** | nenhum: uma sessão MQTT limitada própria deste repositório sobre os transportes compartilhados `node:net` e `node:tls` (porta 1883, ou 8883 pelo painel SSL / TLS) | Somente leitura por construção: o codificador não tem nenhuma função que escreva um PUBLISH e o CONNECT não carrega testamento (will), porque 5.4 registra o certificado de óbito de um nó de borda como seu will e um leitor que o definisse publicaria um óbito ao cair o próprio socket. Um grupo e um nó de borda são contêineres, e uma métrica é uma linha cujo valor, timestamp e definição vêm do certificado de nascimento que a declarou |
 | **Redis** | `ioredis` | Editor de comandos, explorador de chaves, monitoramento baseado em INFO |
 
 > **A segurança do transporte é transversal — não depende do motor.** O túnel SSH é estabelecido antes do provider abrir a conexão, e a conexão é reescrita para o endpoint local: por isso não depende do motor e vale para qualquer conexão configurada com host e porta, exceto uma conexão Kafka, que recusa o túnel porque um cliente Kafka chega a cada broker pelo endereço que esse broker anuncia, e um túnel para um único endereço não cobre isso. Conexões preenchidas com connection string (MongoDB, Couchbase e ClickHouse permitem) não têm host nem porta, então não passam pelo túnel; SQLite e DuckDB também não têm nenhum dos dois. O painel SSL/TLS hoje tem efeito em PostgreSQL, MySQL, SQL Server, Couchbase, ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, Prometheus e Apache Kafka; no Trino não é opcional, porque o coordinator rejeita senhas sobre HTTP em texto plano. Oracle, MongoDB e Redis ignoram essa opção — se o tráfego desses três vai cifrado depende de como a connection string está escrita, não do que você escolhe no diálogo.

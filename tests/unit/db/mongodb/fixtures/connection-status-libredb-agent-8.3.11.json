@@ -1,0 +1,69 @@
+{
+  "measured": "2026-10-17",
+  "server": "MongoDB 8.3.11, authorization on",
+  "principal": "libredb_agent, roles [read@app], authSource app",
+  "command": {
+    "connectionStatus": 1,
+    "showPrivileges": true,
+    "maxTimeMS": 5000,
+    "comment": "libredb-studio-agent"
+  },
+  "reply": {
+    "authInfo": {
+      "authenticatedUsers": [
+        {
+          "user": "libredb_agent",
+          "db": "app"
+        }
+      ],
+      "authenticatedUserRoles": [
+        {
+          "role": "read",
+          "db": "app"
+        }
+      ],
+      "authenticatedUserPrivileges": [
+        {
+          "resource": {
+            "db": "app",
+            "collection": "system.js"
+          },
+          "actions": [
+            "changeStream",
+            "collStats",
+            "dbHash",
+            "dbStats",
+            "find",
+            "killCursors",
+            "listCollections",
+            "listIndexes",
+            "listSearchIndexes",
+            "planCacheRead",
+            "performRawDataOperations"
+          ]
+        },
+        {
+          "resource": {
+            "db": "app",
+            "collection": ""
+          },
+          "actions": [
+            "changeStream",
+            "collStats",
+            "dbHash",
+            "dbStats",
+            "find",
+            "killCursors",
+            "listCollections",
+            "listIndexes",
+            "listSearchIndexes",
+            "planCacheRead",
+            "performRawDataOperations"
+          ]
+        }
+      ]
+    },
+    "uuid": "1c73cf9c-ee1b-434c-9e6b-5200df343088",
+    "ok": 1
+  }
+}

@@ -13,6 +13,7 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { parseAllDocuments } from "yaml";
+import { howItFailed } from "../helpers/spawn-outcome";
 
 const CHART_DIR = join(import.meta.dir, "../../charts/libredb-studio");
 
@@ -43,7 +44,7 @@ function helmTemplate(args: string[]): { exitCode: number; stdout: string; stder
 
 function containerEnv(args: string[] = []): EnvVar[] {
   const run = helmTemplate(args);
-  if (run.exitCode !== 0) throw new Error(`helm template failed (exit ${run.exitCode}): ${run.stderr}`);
+  if (run.exitCode !== 0) throw new Error(`helm template ${howItFailed(run)}: ${run.stderr}`);
   const deployment = parseAllDocuments(run.stdout)
     .map((doc) => doc.toJSON() as { kind?: string })
     .find((doc) => doc?.kind === "Deployment") as

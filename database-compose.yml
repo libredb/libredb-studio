@@ -56,7 +56,10 @@ services:
       # recreated before they take effect.
       - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
   mongodb:
-    image: mongo:latest
+    # Pinned by digest: the agent read-only profile's privilege allowlist, plan shapes and memory figures are measured
+    # on this build (docs/providers/mongodb.md), and tests/live/mongodb-agent-profile.ts and its CI step run the same
+    # reference; tests/unit/db/mongodb/live-environment.test.ts holds the three equal.
+    image: mongo:9.0.4@sha256:f90507905ce6e52e4a63d0ff8964fc254fa4d37ccbe56c56f4bc0186eb02edea
     container_name: libredb-mongodb
     restart: unless-stopped
     environment:

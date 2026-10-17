@@ -61,6 +61,7 @@ import { KafkaProvider } from "@/lib/db/providers/stream/kafka";
 import type { KafkaReadClient } from "@/lib/db/providers/stream/kafka/client";
 import type { DatabaseConnection, QueryResult } from "@/lib/types";
 import { sameSnapshot, snapshotDiff, snapshotLines } from "./kafka-snapshot";
+import { howItFailed } from "../helpers/spawn-outcome";
 
 // ============================================================================
 // Fixtures and arguments
@@ -340,7 +341,7 @@ function dockerLogs(container: string, since?: string): string {
   const args = since === undefined ? ["logs", container] : ["logs", "--since", since, container];
   // `docker logs` replays the container's stderr on its own stderr, so both halves are read.
   const answer = spawnSync("docker", args, { encoding: "utf8", maxBuffer: 256 * MIB });
-  if (answer.status !== 0) throw new Error(`docker ${args.join(" ")} exited ${answer.status}: ${answer.stderr}`);
+  if (answer.status !== 0) throw new Error(`docker ${args.join(" ")} ${howItFailed(answer)}: ${answer.stderr}`);
   return `${answer.stdout}${answer.stderr}`;
 }
 

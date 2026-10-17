@@ -10,8 +10,9 @@ import type { DatabaseType } from "@/lib/types";
  * `engine-unsupported`. `queryReadOnly` exists on the providers this list names, each under a
  * boundary it declares (`providers/sql/postgres.ts`, `providers/sql/sqlite.ts`,
  * `providers/sql/duckdb/`, `providers/sql/mssql.ts`, `providers/sql/mysql.ts`,
- * `providers/platform/kubernetes/`), and that probe stays the real rule: replacing it with this
- * list would let the list go stale against the drivers.
+ * `providers/platform/kubernetes/`, `providers/document/mongodb/index.ts`), and that probe
+ * stays the real rule: replacing it with this list would let the list go stale against the
+ * drivers.
  *
  * They do not draw the boundary the same way, and the list deliberately says nothing about that.
  * PostgreSQL, SQLite, DuckDB, SQL Server and MySQL bound a statement with the engine's own
@@ -22,16 +23,17 @@ import type { DatabaseType } from "@/lib/types";
  * two-layer shape: a least-privilege principal, because DDL ends a read-only transaction through
  * its implicit commit, and `START TRANSACTION READ ONLY` for the writes the grants alone would
  * not stop. Kubernetes has no read-only session at all: Studio's request allowlist on the final
- * method and path of every request, plus the identity's RBAC, is the boundary. Each provider's
- * own `queryReadOnly` argues its own case.
+ * method and path of every request, plus the identity's RBAC, is the boundary. MongoDB has none
+ * either: the connection's user is the boundary, proven, when a connection that sends statements
+ * opens, by the server's own account of its privileges and by a write the server must refuse,
+ * with the provider's command reader in front of the engine and `maxTimeMS` plus Studio's kill of
+ * a read's session as its deadline. Each provider's own `queryReadOnly` argues its own case.
  * `tests/unit/lib/agent/engine-support.test.ts` is what keeps the two equal - it walks EVERY
  * id in the `DatabaseType` union, reads `queryReadOnly` off the real provider class the
- * factory would construct (`mongodb` excepted: its module cannot be imported under Bun, so
- * that one id is checked by source scan), and fails if this array and the drivers diverge in
- * either direction.
+ * factory would construct, and fails if this array and the drivers diverge in either direction.
  *
  * Two things it deliberately does NOT say, because user-facing copy that compresses them
- * overclaims (docs/AGENT.md, "How the agent is bounded"):
+ * overclaims (docs/AGENT.md, the "Agent mode requires" paragraph that opens it):
  * - **Plan mode executes nothing, on any engine.** This list has no bearing on it; since #414
  *   a plan run is grounded everywhere and still runs no statement anywhere.
  * - **The `operations` workflow runs on every engine, in both modes**, because it composes no
@@ -47,6 +49,7 @@ export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = [
   "mssql",
   "mysql",
   "kubernetes",
+  "mongodb",
 ];
 
 /**

@@ -260,9 +260,9 @@ describe("PerformanceTab", () => {
     expect(card.className).not.toContain("warning");
   });
 
-  // The pin that keeps absence and zero from being collapsed back together: mongodb.ts:850,
-  // mysql.ts:857 and sqlite.ts:715 report a real measured 0, and that measurement must keep
-  // exactly the rendering it has today.
+  // The pin that keeps absence and zero from being collapsed back together: `getPerformanceMetrics`
+  // in `mongodb/index.ts`, `mysql.ts` and `sqlite.ts` reports a real measured 0, and that measurement
+  // must keep exactly the rendering it has today.
   test("keeps a measured zero rendering as a measured zero", () => {
     const { queryByText } = render(
       <PerformanceTab data={makeData({ bufferPoolUsage: 0, deadlocks: 0 })} loading={false} />,

@@ -1,0 +1,95 @@
+{
+  "measured": "2026-10-17",
+  "server": "MongoDB 9.0.4, authorization on",
+  "principal": "rv_p6_readany, roles [{\"role\":\"readAnyDatabase\",\"db\":\"admin\"}], authSource rv_p6_db",
+  "command": {
+    "connectionStatus": 1,
+    "showPrivileges": true,
+    "maxTimeMS": 5000,
+    "comment": "libredb-studio-agent"
+  },
+  "reply": {
+    "authInfo": {
+      "authenticatedUsers": [
+        {
+          "user": "rv_p6_readany",
+          "db": "rv_p6_db"
+        }
+      ],
+      "authenticatedUserRoles": [
+        {
+          "role": "readAnyDatabase",
+          "db": "admin"
+        }
+      ],
+      "authenticatedUserPrivileges": [
+        {
+          "resource": {
+            "cluster": true
+          },
+          "actions": [
+            "listDatabases"
+          ]
+        },
+        {
+          "resource": {
+            "system_buckets": ""
+          },
+          "actions": [
+            "changeStream",
+            "collStats",
+            "dbHash",
+            "dbStats",
+            "find",
+            "killCursors",
+            "listCollections",
+            "listIndexes",
+            "listSearchIndexes",
+            "planCacheRead",
+            "performRawDataOperations"
+          ]
+        },
+        {
+          "resource": {
+            "db": "",
+            "collection": ""
+          },
+          "actions": [
+            "changeStream",
+            "collStats",
+            "dbHash",
+            "dbStats",
+            "find",
+            "killCursors",
+            "listCollections",
+            "listIndexes",
+            "listSearchIndexes",
+            "planCacheRead",
+            "performRawDataOperations"
+          ]
+        },
+        {
+          "resource": {
+            "db": "",
+            "collection": "system.js"
+          },
+          "actions": [
+            "changeStream",
+            "collStats",
+            "dbHash",
+            "dbStats",
+            "find",
+            "killCursors",
+            "listCollections",
+            "listIndexes",
+            "listSearchIndexes",
+            "planCacheRead",
+            "performRawDataOperations"
+          ]
+        }
+      ]
+    },
+    "uuid": "b1e99d3a-a05e-4d50-8952-52654ec54263",
+    "ok": 1
+  }
+}

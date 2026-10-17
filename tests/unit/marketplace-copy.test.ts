@@ -177,6 +177,26 @@ describe("no listing says the agent runs in a read-only session", () => {
   }
 });
 
+/**
+ * The copy the boundary ban reads: every listing, and the Azure offer's HTML description, which is submitted beside
+ * its listing fields and which once said the database itself enforced the boundary twice in one sentence.
+ */
+const BOUNDARY_COPY = { ...LISTINGS, azureDescription: "deploy/azure/listing/description.html" } as const;
+
+describe("no listing says the database itself refuses the agent's writes", () => {
+  for (const [name, path] of Object.entries(BOUNDARY_COPY)) {
+    test(`${name} states the boundary without making it the database's`, () => {
+      // True of the SQL engines and false of the others agent mode executes on: on Kubernetes Studio's request
+      // allowlist and the identity's RBAC bound a run, and on MongoDB the connection's user does, proven at open,
+      // behind Studio's command fence (docs/AGENT.md). "Under the read-only boundary documented for each engine"
+      // stays true as the list grows. The listings wrap their lines, so a phrase split by a line break is matched too.
+      expect(submittedCopy(path).replace(/\s+/g, " ")).not.toMatch(
+        /the database itself (enforces|proved)|the database, not the IDE/i,
+      );
+    });
+  }
+});
+
 describe("no listing claims the agent never runs what it recommends", () => {
   for (const [name, path] of Object.entries(LISTINGS)) {
     test(`${name} keeps the drafts/recommends distinction`, () => {

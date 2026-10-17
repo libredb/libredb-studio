@@ -250,28 +250,25 @@ async function recordDriveFailure(service: AgentRunService, runId: string, error
 }
 
 /**
- * The profile refusals that are about the connection's agent credential rather than
- * about the engine. Kept beside the classifier that reads them: the set exists only to
- * split one error type into the two things a user can do about it.
- */
-const AGENT_CREDENTIAL_DENY_CODES: ReadonlySet<ExecutionProfileDenyCode> = new Set([
-  "AGENT_CREDENTIAL_UNRESOLVABLE",
-  "AGENT_CREDENTIAL_WITH_CONNECTION_STRING",
-]);
-
-/**
- * The profile refusal that is about the database PRINCIPAL rather than about the
- * engine or the credential field that names it.
+ * The reason a run records for each way the execution profile refuses, keyed by the
+ * error's own code and never by its message. Kept beside the classifier that reads it:
+ * the record exists only to split one error type into the things a user can do about it.
  *
- * Kept beside the other set for the same reason: one error type, three things a user
- * can do about it. This one is raised when the credential resolved and the provider
- * exists, and the profile then refused the user it opened as, so neither of the other
- * two labels is true of it.
+ * Total over `ExecutionProfileDenyCode`, so a code added there does not compile until it
+ * is given the reason whose sentence names its repair. Two codes share a reason only
+ * where their repair is the same: the two credential faults are both the credential
+ * field, and the two engine refusals are both the engine.
  */
-const PROFILE_PRINCIPAL_DENY_CODES: ReadonlySet<ExecutionProfileDenyCode> = new Set<ExecutionProfileDenyCode>([
-  "PROFILE_PRIVILEGES_TOO_BROAD",
-  "PROFILE_PRIVILEGES_TOO_NARROW",
-]);
+const PROFILE_REFUSAL_REASON: Readonly<Record<ExecutionProfileDenyCode, AgentRunFailureReason>> = Object.freeze({
+  UNSUPPORTED_PROFILE: "engine-unsupported",
+  PROFILE_UNSUPPORTED_BY_PROVIDER: "engine-unsupported",
+  PROFILE_UNSUPPORTED_TARGET: "profile-target-unsupported",
+  PROFILE_PRIVILEGES_TOO_BROAD: "agent-principal-refused",
+  PROFILE_PRIVILEGES_TOO_NARROW: "agent-principal-underprivileged",
+  PROFILE_SERVER_UNENFORCED: "server-authorization-off",
+  AGENT_CREDENTIAL_UNRESOLVABLE: "agent-credential-unusable",
+  AGENT_CREDENTIAL_WITH_CONNECTION_STRING: "agent-credential-unusable",
+} satisfies Record<ExecutionProfileDenyCode, AgentRunFailureReason>);
 
 /**
  * Chooses the label a user sees from the error's TYPE.
@@ -304,17 +301,13 @@ function classifyDriveFailure(error: unknown): AgentRunFailureReason {
   // beside it is accepted. Reported as "engine unsupported", that told an operator to
   // change engines when the fix is one CREATE LOGIN.
   //
-  // TWO codes and one label, deliberately. A principal can be refused for holding too
-  // much or for holding too little - SQL Server's admission step needs `SHOWPLAN`, so a
-  // plain reader cannot be admitted - and the REPAIRS are opposite, which is why they are
-  // separate codes carrying opposite advice (`PROFILE_REFUSAL_ADVICE`). What a RUN ended
-  // as is the same fact either way: this connection's user is not one the profile will
-  // run as, which is what this label says and all it says.
-  if (error instanceof ExecutionProfileError) {
-    if (AGENT_CREDENTIAL_DENY_CODES.has(error.reasonCode)) return "agent-credential-unusable";
-    if (PROFILE_PRINCIPAL_DENY_CODES.has(error.reasonCode)) return "agent-principal-refused";
-    return "engine-unsupported";
-  }
+  // A principal refused for holding too much and one refused for holding too little -
+  // SQL Server's admission step needs `SHOWPLAN`, so a plain reader cannot be admitted -
+  // are repaired in opposite directions, so each has its own reason and its own
+  // sentence; so has a server that enforces no authorization at all, where no user is
+  // the repair, and a target the profile is not measured against, where the engine is
+  // not the problem. `PROFILE_REFUSAL_REASON` is the whole mapping.
+  if (error instanceof ExecutionProfileError) return PROFILE_REFUSAL_REASON[error.reasonCode];
 
   /*
     These were one label until 2026-08-12, on the reasoning that the user's next move
