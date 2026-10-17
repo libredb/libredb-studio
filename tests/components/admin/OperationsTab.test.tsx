@@ -41,6 +41,7 @@ const defaultSessions = [
     pid: 1234,
     user: "admin",
     state: "active",
+    activity: "active",
     query: "SELECT 1",
     duration: "00:01:00",
     durationMs: 60000,
@@ -161,16 +162,27 @@ const multiSessions = [
     pid: 100,
     user: "admin",
     state: "active",
+    activity: "active",
     query: "SELECT 1",
     duration: "00:00:05",
     durationMs: 5000,
     database: "dev",
   },
-  { pid: 101, user: "user1", state: "idle", query: "", duration: "00:00:10", durationMs: 10000, database: "dev" },
+  {
+    pid: 101,
+    user: "user1",
+    state: "idle",
+    activity: "idle",
+    query: "",
+    duration: "00:00:10",
+    durationMs: 10000,
+    database: "dev",
+  },
   {
     pid: 102,
     user: "user2",
     state: "idle in transaction",
+    activity: "idle-in-transaction",
     query: "UPDATE users SET x=1",
     duration: "00:02:00",
     durationMs: 120000,
@@ -180,6 +192,7 @@ const multiSessions = [
     pid: 103,
     user: "user3",
     state: "idle in transaction (aborted)",
+    activity: "idle-in-transaction",
     query: "INSERT INTO t",
     duration: "00:00:30",
     durationMs: 30000,
@@ -189,6 +202,7 @@ const multiSessions = [
     pid: 104,
     user: "user4",
     state: "fastpath function call",
+    activity: "other",
     query: "",
     duration: "00:00:01",
     durationMs: 1000,
@@ -744,8 +758,89 @@ describe("OperationsTab", () => {
     const { container } = renderResult!;
     const text = container.textContent || "";
 
-    // multiSessions: 1 active, 1 idle, 2 idle in tx (one normal, one aborted), 1 waiting
+    // multiSessions: 1 active, 1 idle, 2 idle in tx, and the fastpath row is other, so Wait stays 0.
+    // Its Lock wait is not a wait: the session is not active (#1426).
     expect(text).toContain("Sessions (5)");
+    expect(renderResult!.getByTestId("operations-session-stat-active").textContent).toBe("1");
+    expect(renderResult!.getByTestId("operations-session-stat-idle").textContent).toBe("1");
+    expect(renderResult!.getByTestId("operations-session-stat-in-tx").textContent).toBe("2");
+    expect(renderResult!.getByTestId("operations-session-stat-wait").textContent).toBe("0");
+  });
+
+  test("MySQL, Oracle, SQL Server and Redis shaped rows count from activity", async () => {
+    monitoringOverride = {
+      data: {
+        activeSessions: [
+          {
+            pid: 1,
+            user: "u",
+            database: "db",
+            state: "Query",
+            activity: "active",
+            query: "",
+            duration: "1s",
+            durationMs: 1,
+          },
+          {
+            pid: 2,
+            user: "u",
+            database: "db",
+            state: "Sleep",
+            activity: "idle",
+            query: "",
+            duration: "1s",
+            durationMs: 1,
+          },
+          {
+            pid: 3,
+            user: "u",
+            database: "db",
+            state: "ACTIVE",
+            activity: "waiting",
+            query: "",
+            duration: "1s",
+            durationMs: 1,
+          },
+          {
+            pid: 4,
+            user: "u",
+            database: "db",
+            state: "running",
+            activity: "active",
+            query: "",
+            duration: "1s",
+            durationMs: 1,
+          },
+          { pid: 5, user: "u", database: "db", state: "N", activity: "idle", query: "", duration: "1s", durationMs: 1 },
+        ],
+        tables: defaultTables,
+      },
+    };
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    expect(renderResult!.getByTestId("operations-session-stat-active").textContent).toBe("2");
+    expect(renderResult!.getByTestId("operations-session-stat-idle").textContent).toBe("2");
+    expect(renderResult!.getByTestId("operations-session-stat-in-tx").textContent).toBe("0");
+    expect(renderResult!.getByTestId("operations-session-stat-wait").textContent).toBe("1");
+  });
+
+  test("a session list the engine did not classify reads N/A", async () => {
+    monitoringOverride = {
+      data: {
+        activeSessions: [
+          { pid: 1, user: "u", database: "db", state: "Sleep", query: "", duration: "1s", durationMs: 1 },
+        ],
+        tables: defaultTables,
+      },
+    };
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    expect(renderResult!.getByTestId("operations-session-stat-active").textContent).toBe("N/A");
+    expect(renderResult!.getByTestId("operations-session-stat-wait").textContent).toBe("N/A");
   });
 
   // =========================================================================

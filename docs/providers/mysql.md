@@ -1888,7 +1888,7 @@ All monitoring reads from `SHOW STATUS`/`SHOW VARIABLES`, `information_schema`, 
 | `getOverview()` | `VERSION()`, one bare `SHOW STATUS` (`Uptime` and `Threads_connected` out of the same result), `SHOW VARIABLES LIKE 'max_connections'`, `information_schema` | version, uptime, conns, max_conns, size, table/index counts |
 | `getPerformanceMetrics()` | `performance_schema.global_status`, one bare `SHOW STATUS` (`Innodb_deadlocks` picked client-side) | cache-hit %, **queries/sec** (`Queries`/`Uptime`), buffer-pool %, deadlocks. Every field optional — see the degradation note below |
 | `getSlowQueries()` | `performance_schema.events_statements_summary_by_digest` | per-digest stats |
-| `getActiveSessions()` | `information_schema.PROCESSLIST` | pid, user, db, host, command, duration |
+| `getActiveSessions()` | `information_schema.PROCESSLIST` | pid, user, db, host, command, duration. `activity` classifies `COMMAND`: `Query` is `active`, `Sleep` is `idle`, and every other command (`Daemon` included) is `other`. The raw command stays in `state` |
 | `getTableStats()` | `information_schema.TABLES` | sizes; bloat **estimated from `DATA_FREE`** (no live/dead tuples, no last-vacuum/analyze) |
 | `getIndexStats()` | `information_schema.STATISTICS` + `mysql.innodb_index_stats` | columns, unique/primary; **`scans` = `CARDINALITY`** (a proxy, not a real scan counter); per-index size, or **absent** — see the index-size note below |
 | `getStorageStats()` | `information_schema.TABLES`, `SHOW BINARY LOGS` | Data size, Binary Logs (if enabled), InnoDB data file (size `N/A`) |

@@ -2709,9 +2709,50 @@ describe("MySQLProvider", () => {
       expect(typeof first.user).toBe("string");
       expect(first.user).toBe("root");
       expect(typeof first.state).toBe("string");
+      expect(first.state).toBe("Query");
+      expect(first.activity).toBe("active");
+      expect(sessions[1].state).toBe("Sleep");
+      expect(sessions[1].activity).toBe("idle");
       expect(typeof first.query).toBe("string");
       expect(typeof first.duration).toBe("string");
       expect(typeof first.durationMs).toBe("number");
+    });
+
+    test("Daemon and any other command are other, and the match is case-insensitive", async () => {
+      mockExecuteFn = (sql: string) => {
+        if (sql.toLowerCase().includes("processlist")) {
+          return Promise.resolve([
+            [
+              {
+                pid: 1,
+                user: "root",
+                database_name: "testdb",
+                state: "Daemon",
+                query: "",
+                client_addr: "localhost",
+                duration_seconds: "1",
+              },
+              {
+                pid: 2,
+                user: "root",
+                database_name: "testdb",
+                state: "query",
+                query: "SELECT 1",
+                client_addr: "localhost",
+                duration_seconds: "1",
+              },
+              { pid: 3, user: "root", database_name: "testdb", state: null, query: "", duration_seconds: "0" },
+            ],
+            [],
+          ]);
+        }
+        return defaultMockExecute(sql);
+      };
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const sessions = await provider.getActiveSessions();
+      expect(sessions.map((session) => session.activity)).toEqual(["other", "active", "other"]);
+      expect(sessions[2].state).toBe("unknown");
     });
   });
 

@@ -3301,6 +3301,7 @@ describe("PostgresProvider", () => {
       expect(session.database).toBe("testdb");
       expect(session.applicationName).toBe("myapp");
       expect(session.state).toBe("active");
+      expect(session.activity).toBe("active");
       expect(typeof session.query).toBe("string");
       expect(typeof session.duration).toBe("string");
       expect(typeof session.durationMs).toBe("number");
@@ -3312,6 +3313,106 @@ describe("PostgresProvider", () => {
       await provider.connect();
       const sessions = await provider.getActiveSessions({ limit: 10 });
       expect(Array.isArray(sessions)).toBe(true);
+    });
+
+    test("an idle client wait is idle, a lock wait is waiting, and Studio's own connections are filtered out", async () => {
+      let sql = "";
+      mockQueryFn = (query: string) => {
+        if (query.includes("wait_event_type") && query.includes("clock_timestamp()")) {
+          sql = query;
+          return Promise.resolve({
+            rows: [
+              {
+                pid: 1,
+                user: "a",
+                database: "testdb",
+                state: "idle",
+                wait_event_type: "Client",
+                query: "",
+                duration: "N/A",
+                duration_ms: "0",
+              },
+              {
+                pid: 2,
+                user: "a",
+                database: "testdb",
+                state: "active",
+                wait_event_type: "Lock",
+                query: "SELECT 1",
+                duration: "1s",
+                duration_ms: "1000",
+              },
+              {
+                pid: 3,
+                user: "a",
+                database: "testdb",
+                state: "active",
+                wait_event_type: "Client",
+                query: "SELECT 2",
+                duration: "1s",
+                duration_ms: "1000",
+              },
+              {
+                pid: 4,
+                user: "a",
+                database: "testdb",
+                state: "idle in transaction",
+                query: "UPDATE t",
+                duration: "1s",
+                duration_ms: "1000",
+              },
+              {
+                pid: 5,
+                user: "a",
+                database: "testdb",
+                state: "idle in transaction (aborted)",
+                query: "",
+                duration: "1s",
+                duration_ms: "1000",
+              },
+              {
+                pid: 6,
+                user: "a",
+                database: "testdb",
+                state: "fastpath function call",
+                query: "",
+                duration: "N/A",
+                duration_ms: "0",
+              },
+              {
+                pid: 7,
+                user: "a",
+                database: "testdb",
+                state: "active",
+                wait_event_type: "",
+                query: "SELECT 3",
+                duration: "1s",
+                duration_ms: "1000",
+              },
+            ],
+            fields: [],
+            rowCount: 6,
+          });
+        }
+        return defaultMockQuery(query);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const sessions = await provider.getActiveSessions();
+
+      expect(lastPoolConfig.application_name).toBe("libredb-studio");
+      expect(sql).toContain("application_name IS DISTINCT FROM 'libredb-studio'");
+      expect(sql).toContain("clock_timestamp()");
+      expect(sql).not.toContain("now() - query_start");
+      expect(sessions.map((session) => session.activity)).toEqual([
+        "idle",
+        "waiting",
+        "active",
+        "idle-in-transaction",
+        "idle-in-transaction",
+        "other",
+        "active",
+      ]);
     });
   });
 

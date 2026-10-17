@@ -68,6 +68,7 @@ const MOCK_PLAIN_CLUSTER_INFO = ["# Cluster", "cluster_enabled:0", "cluster_stat
 // two used to be conflated in getActiveSessions(), which read `name` for the user column.
 const MOCK_CLIENT_LIST =
   "id=1 addr=127.0.0.1:6379 name= db=0 flags=N cmd=get idle=5 user=studio\nid=2 addr=127.0.0.1:6380 name= db=0 flags=N cmd=set idle=10 user=default";
+let mockClientList = MOCK_CLIENT_LIST;
 
 // SLOWLOG GET entries: [id, timestamp, duration-in-microseconds, args, clientAddr, clientName]
 // The second entry carries a non-array args payload to exercise the String() fallback.
@@ -690,7 +691,7 @@ mock.module("ioredis", () => {
     }
 
     async client(subcommand: string) {
-      if (subcommand === "LIST") return MOCK_CLIENT_LIST;
+      if (subcommand === "LIST") return mockClientList;
       return "OK";
     }
 
@@ -777,6 +778,7 @@ describe("RedisProvider", () => {
   let provider: InstanceType<typeof RedisProvider>;
 
   beforeEach(() => {
+    mockClientList = MOCK_CLIENT_LIST;
     provider = new RedisProvider({ ...baseConfig });
   });
 
@@ -2567,6 +2569,18 @@ describe("RedisProvider", () => {
       const sessions = await provider.getActiveSessions();
       expect(sessions[0].user).toBe("studio");
       expect(sessions[1].user).toBe("default");
+      expect(sessions[0].activity).toBe("idle");
+      expect(sessions[1].activity).toBe("idle");
+    });
+
+    test("a blocked client is waiting, and a line with no flags is the ordinary idle client", async () => {
+      mockClientList =
+        "id=3 addr=127.0.0.1:6379 db=0 flags=bx cmd=blpop idle=0 user=app\nid=4 addr=127.0.0.1:6379 db=0 cmd=ping idle=1";
+      const sessions = await provider.getActiveSessions();
+      expect(sessions.map((session) => [session.state, session.activity])).toEqual([
+        ["bx", "waiting"],
+        ["N", "idle"],
+      ]);
     });
   });
 

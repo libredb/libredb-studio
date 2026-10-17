@@ -21,6 +21,7 @@ import {
   type PerformanceMetrics,
   type SlowQueryStats,
   type ActiveSessionDetails,
+  type SessionActivity,
   type TableStats,
   type IndexStats,
   type StorageStats,
@@ -174,6 +175,22 @@ const ACTIVE_SESSIONS_BODY_SQL = `SELECT * FROM (
           WHERE s.TYPE = 'USER'
           ORDER BY CASE s.STATUS WHEN 'ACTIVE' THEN 0 ELSE 1 END, s.LOGON_TIME DESC
         )`;
+
+/**
+ * `V$SESSION.STATUS`, with a wait counted only while the session is `ACTIVE` and the wait class is
+ * a block. `INACTIVE` sits on an idle wait class (`SQL*Net message from client`), and `CPU` is the
+ * session doing work. Neither is a wait.
+ */
+function oracleSessionActivity(status: string, waitClass: string | undefined): SessionActivity {
+  const word = status.toUpperCase();
+  if (word === "INACTIVE") return "idle";
+  if (word === "ACTIVE") {
+    const wait = (waitClass ?? "").toUpperCase();
+    if (wait !== "" && wait !== "IDLE" && wait !== "CPU") return "waiting";
+    return "active";
+  }
+  return "other";
+}
 
 /**
  * One row per table the connected user owns, with its rows, its storage and its indexes.
@@ -3127,6 +3144,10 @@ export class OracleProvider extends SQLBaseProvider {
           applicationName: String(r.PROGRAM || ""),
           clientAddr: String(r.MACHINE || ""),
           state: String(r.STATUS || "unknown"),
+          activity: oracleSessionActivity(
+            String(r.STATUS || "unknown"),
+            r.WAIT_CLASS ? String(r.WAIT_CLASS) : undefined,
+          ),
           query: String(r.QUERY || r.SQL_ID || ""),
           queryStart: r.LOGON_TIME ? new Date(String(r.LOGON_TIME)) : undefined,
           duration: durationStr,

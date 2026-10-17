@@ -2719,6 +2719,43 @@ describe("OracleProvider", () => {
       expect(typeof first.query).toBe("string");
       expect(typeof first.duration).toBe("string");
       expect(typeof first.durationMs).toBe("number");
+      expect(first.activity).toBe("active");
+    });
+
+    test("INACTIVE is idle even with a wait class, and an ACTIVE block is waiting", async () => {
+      mockExecuteFn = async (sql: string) => {
+        if (sql.toUpperCase().includes("V$SESSION") && sql.toUpperCase().includes("SERIAL#")) {
+          return {
+            rows: [
+              {
+                SID: 1,
+                "SERIAL#": 1,
+                USERNAME: "APP",
+                STATUS: "INACTIVE",
+                WAIT_CLASS: "Idle",
+                EVENT: "SQL*Net message from client",
+                DURATION_SECS: 1,
+              },
+              {
+                SID: 2,
+                "SERIAL#": 2,
+                USERNAME: "APP",
+                STATUS: "ACTIVE",
+                WAIT_CLASS: "Application",
+                EVENT: "enq: TX",
+                DURATION_SECS: 1,
+              },
+              { SID: 3, "SERIAL#": 3, USERNAME: "APP", STATUS: "KILLED", DURATION_SECS: 1 },
+              { SID: 4, "SERIAL#": 4, USERNAME: "APP", STATUS: "active", WAIT_CLASS: "idle", DURATION_SECS: 1 },
+            ],
+            metaData: [{ name: "SID" }],
+          };
+        }
+        return defaultExecute(sql);
+      };
+      await provider.connect();
+      const sessions = await provider.getActiveSessions();
+      expect(sessions.map((session) => session.activity)).toEqual(["idle", "waiting", "other", "active"]);
     });
 
     test("formats hour, minute, and second durations and defaults missing fields", async () => {
@@ -2777,6 +2814,9 @@ describe("OracleProvider", () => {
       expect(sessions[1].queryStart).toBeUndefined();
       expect(sessions[1].waitEventType).toBeUndefined();
       expect(sessions[1].waitEvent).toBeUndefined();
+      expect(sessions[0].activity).toBe("active");
+      expect(sessions[1].activity).toBe("other");
+      expect(sessions[2].activity).toBe("active");
     });
 
     test("returns empty array when V$SESSION is not accessible", async () => {

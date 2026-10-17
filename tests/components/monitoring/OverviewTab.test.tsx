@@ -36,8 +36,26 @@ function makeData(): MonitoringData {
     },
     slowQueries: [{ query: "SELECT 1", calls: 10, totalTime: 100, avgTime: 10, rows: 10 }],
     activeSessions: [
-      { pid: 1, user: "admin", database: "db", state: "active", query: "SELECT 1", duration: "1s", durationMs: 1000 },
-      { pid: 2, user: "app", database: "db", state: "idle", query: "", duration: "2s", durationMs: 2000 },
+      {
+        pid: 1,
+        user: "admin",
+        database: "db",
+        state: "active",
+        activity: "active",
+        query: "SELECT 1",
+        duration: "1s",
+        durationMs: 1000,
+      },
+      {
+        pid: 2,
+        user: "app",
+        database: "db",
+        state: "idle",
+        activity: "idle",
+        query: "",
+        duration: "2s",
+        durationMs: 2000,
+      },
     ],
   } as unknown as MonitoringData;
 }
@@ -419,6 +437,7 @@ function atCap(): MonitoringData {
       user: "app",
       database: "db",
       state: i < 29 ? "active" : "idle",
+      activity: i < 29 ? "active" : "idle",
       query: "SELECT 1",
       duration: "1s",
       durationMs: 1000,
@@ -548,5 +567,52 @@ describe("the Tables card of a count that is a floor", () => {
 
     expect(tablesCard(getByText).textContent).toBe("Tables40144061 indexes");
     expect(queryByTestId("overview-table-count-scope")).toBeNull();
+  });
+});
+
+describe("Quick Stats counts classified sessions", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  test("MySQL-shaped rows count from activity, and the raw command stays off the cards", () => {
+    const data = {
+      ...makeData(),
+      activeSessions: [
+        {
+          pid: 1,
+          user: "u",
+          database: "db",
+          state: "Query",
+          activity: "active",
+          query: "",
+          duration: "1s",
+          durationMs: 1,
+        },
+        {
+          pid: 2,
+          user: "u",
+          database: "db",
+          state: "Sleep",
+          activity: "idle",
+          query: "",
+          duration: "1s",
+          durationMs: 1,
+        },
+      ],
+    } as MonitoringData;
+    const { getByTestId } = render(<OverviewTab data={data} loading={false} />);
+    expect(getByTestId("quick-stat-active").textContent).toBe("1");
+    expect(getByTestId("quick-stat-idle").textContent).toBe("1");
+  });
+
+  test("a list the engine did not classify reads N/A rather than 0", () => {
+    const data = {
+      ...makeData(),
+      activeSessions: [{ pid: 1, user: "u", database: "db", state: "Sleep", query: "", duration: "1s", durationMs: 1 }],
+    } as MonitoringData;
+    const { getByTestId } = render(<OverviewTab data={data} loading={false} />);
+    expect(getByTestId("quick-stat-active").textContent).toBe("N/A");
+    expect(getByTestId("quick-stat-idle").textContent).toBe("N/A");
   });
 });

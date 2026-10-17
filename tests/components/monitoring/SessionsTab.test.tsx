@@ -418,3 +418,79 @@ describe("the session summary never counts a refused read as zero", () => {
     expect(getByText("Sessions (0)")).not.toBeNull();
   });
 });
+
+function listedSession(state: string, activity?: string): MonitoringData["activeSessions"] {
+  return [
+    {
+      pid: 1,
+      user: "u",
+      database: "db",
+      state,
+      ...(activity === undefined ? {} : { activity }),
+      query: "",
+      duration: "1s",
+      durationMs: 1000,
+    },
+  ] as MonitoringData["activeSessions"];
+}
+
+// The cards count `activity`, which each provider sets from its own vocabulary. The State column
+// keeps the engine's word. A list that never sets `activity` is an engine that cannot classify (#1426).
+describe("session cards count the classified activity, not the engine's own word", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  function cards(sessions: MonitoringData["activeSessions"]) {
+    const data = { ...makeData(), activeSessions: sessions } as MonitoringData;
+    const view = render(<SessionsTab data={data} loading={false} onKillSession={async () => true} />);
+    return {
+      active: view.getByTestId("session-stat-active").textContent,
+      idle: view.getByTestId("session-stat-idle").textContent,
+      inTx: view.getByTestId("session-stat-in-tx").textContent,
+      wait: view.getByTestId("session-stat-wait").textContent,
+      text: view.container.textContent ?? "",
+    };
+  }
+
+  test("MySQL Query, Sleep and Daemon count as active, idle and neither", () => {
+    const result = cards([
+      ...listedSession("Query", "active")!,
+      ...listedSession("Sleep", "idle")!,
+      ...listedSession("Daemon", "other")!,
+    ]);
+    expect(result).toMatchObject({ active: "1", idle: "1", inTx: "0", wait: "0" });
+    expect(result.text).toContain("Query");
+    expect(result.text).toContain("Sleep");
+    expect(result.text).toContain("Daemon");
+  });
+
+  test("Oracle ACTIVE and INACTIVE count, and a wait class on an idle session does not", () => {
+    const result = cards([
+      ...listedSession("ACTIVE", "active")!,
+      { ...listedSession("INACTIVE", "idle")![0], waitEventType: "Idle" },
+      { ...listedSession("ACTIVE", "waiting")![0], waitEventType: "Application" },
+    ]);
+    expect(result).toMatchObject({ active: "1", idle: "1", inTx: "0", wait: "1" });
+  });
+
+  test("SQL Server running and sleeping count, and a finished wait on a sleeping session does not", () => {
+    const result = cards([
+      ...listedSession("running", "active")!,
+      { ...listedSession("sleeping", "idle")![0], waitEventType: "ASYNC_NETWORK_IO" },
+      ...listedSession("running", "waiting")!,
+    ]);
+    expect(result).toMatchObject({ active: "1", idle: "1", inTx: "0", wait: "1" });
+  });
+
+  test("Redis flag N counts as idle and a blocked client as waiting", () => {
+    const result = cards([...listedSession("N", "idle")!, ...listedSession("b", "waiting")!]);
+    expect(result).toMatchObject({ active: "0", idle: "1", inTx: "0", wait: "1" });
+  });
+
+  test("a list the engine did not classify reads N/A on every card, above the rows it did return", () => {
+    const result = cards(listedSession("Sleep"));
+    expect(result).toMatchObject({ active: "N/A", idle: "N/A", inTx: "N/A", wait: "N/A" });
+    expect(result.text).toContain("Sleep");
+  });
+});

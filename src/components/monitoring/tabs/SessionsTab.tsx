@@ -26,6 +26,7 @@ import {
   type ProviderCapabilities,
   type ProviderLabels,
 } from "@/lib/db/types";
+import { sessionActivityFigure } from "@/lib/session-activity";
 import { PanelUnavailable } from "../PanelUnavailable";
 
 interface SessionsTabProps {
@@ -68,13 +69,13 @@ export function SessionsTab({ data, loading, onKillSession, isAdmin = true, labe
   // The four summary cards and the card title count the same absent panel, so they read
   // N/A rather than 0 when the engine refused the question. Zero sessions IS a
   // measurement and still reads 0 - the two must not look alike.
-  const count = (of: (session: ActiveSessionDetails) => unknown): string =>
-    sessionsUnavailable ? "N/A" : String(sessions.filter(of).length);
+  const count = (activity: "active" | "idle" | "idle-in-transaction" | "waiting"): string =>
+    sessionActivityFigure(sessions, activity, sessionsUnavailable !== undefined);
 
-  const activeCount = count((s) => s.state === "active");
-  const idleCount = count((s) => s.state === "idle");
-  const idleInTxCount = count((s) => s.state?.includes("idle in transaction"));
-  const waitingCount = count((s) => s.waitEventType);
+  const activeCount = count("active");
+  const idleCount = count("idle");
+  const idleInTxCount = count("idle-in-transaction");
+  const waitingCount = count("waiting");
 
   const handleKillClick = (session: ActiveSessionDetails) => {
     setConfirmKill(session);

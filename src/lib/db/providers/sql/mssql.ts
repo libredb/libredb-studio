@@ -24,6 +24,7 @@ import {
   type PerformanceMetrics,
   type SlowQueryStats,
   type ActiveSessionDetails,
+  type SessionActivity,
   type TableStats,
   type IndexStats,
   type StorageStats,
@@ -290,6 +291,18 @@ const ACTIVE_SESSIONS_BODY_SQL = `
           CASE s.status WHEN 'running' THEN 0 WHEN 'sleeping' THEN 1 ELSE 2 END,
           s.last_request_start_time DESC
       `;
+
+/**
+ * `dm_exec_sessions.status`. `running` with a current `wait_type`, and `suspended`, are blocked.
+ * `sleeping` is idle even when `last_wait_type` still names the wait the request already finished.
+ */
+function mssqlSessionActivity(status: string, waitType: string | undefined): SessionActivity {
+  const word = status.toLowerCase();
+  if (word === "sleeping" || word === "dormant") return "idle";
+  if (word === "suspended") return "waiting";
+  if (word === "running" || word === "runnable") return waitType ? "waiting" : "active";
+  return "other";
+}
 
 const TABLE_STATS_SQL = `
         SELECT
@@ -3613,6 +3626,7 @@ export class MSSQLProvider extends SQLBaseProvider {
         applicationName: r.application_name ? String(r.application_name) : undefined,
         clientAddr: r.client_addr ? String(r.client_addr) : undefined,
         state: String(r.state || "unknown"),
+        activity: mssqlSessionActivity(String(r.state || "unknown"), r.wait_type ? String(r.wait_type) : undefined),
         query: String(r.query || ""),
         queryStart: r.query_start ? new Date(String(r.query_start)) : undefined,
         duration: String(r.duration || "N/A"),

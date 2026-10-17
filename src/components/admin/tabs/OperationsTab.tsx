@@ -64,6 +64,7 @@ import { withConnectedMaintenance } from "@/lib/db/types";
 import { useProviderMetadata } from "@/hooks/use-provider-metadata";
 import { useCatalogs } from "@/hooks/use-catalogs";
 import { catalogOfPath, declaresCatalogSessions } from "@/lib/db/object-kinds";
+import { sessionActivityFigure } from "@/lib/session-activity";
 import { CatalogSelect } from "@/components/catalog-select";
 
 /**
@@ -575,10 +576,14 @@ export function OperationsTab() {
   const maintenanceUnreachable =
     tableActions.length > 0 && filteredTables.length === 0 && (deepLinkRowMissing || tableStatsAbsent);
 
-  const activeCount = sessions.filter((s) => s.state === "active").length;
-  const idleCount = sessions.filter((s) => s.state === "idle").length;
-  const idleInTxCount = sessions.filter((s) => s.state?.includes("idle in transaction")).length;
-  const waitingCount = sessions.filter((s) => s.waitEventType).length;
+  const activeCount = sessionActivityFigure(sessions, "active", sessionsUnavailable !== undefined);
+  const idleCount = sessionActivityFigure(sessions, "idle", sessionsUnavailable !== undefined);
+  const idleInTxCount = sessionActivityFigure(sessions, "idle-in-transaction", sessionsUnavailable !== undefined);
+  const waitingCount = sessionActivityFigure(sessions, "waiting", sessionsUnavailable !== undefined);
+  const highlighted = (figure: string): boolean => {
+    const count = Number(figure);
+    return Number.isFinite(count) && count > 0;
+  };
 
   const getStateBadge = (state: string) => {
     switch (state) {
@@ -955,21 +960,31 @@ export function OperationsTab() {
             </div>
             <div className="grid grid-cols-4 gap-2">
               <div className="rounded-lg bg-fill p-2 text-center">
-                <div className="text-lg font-bold text-fg tabular-nums">{activeCount}</div>
+                <div className="text-lg font-bold text-fg tabular-nums" data-testid="operations-session-stat-active">
+                  {activeCount}
+                </div>
                 <div className="text-[0.625rem] text-fg-muted uppercase font-bold">Active</div>
               </div>
               <div className="rounded-lg bg-fill p-2 text-center">
-                <div className="text-lg font-bold text-fg tabular-nums">{idleCount}</div>
+                <div className="text-lg font-bold text-fg tabular-nums" data-testid="operations-session-stat-idle">
+                  {idleCount}
+                </div>
                 <div className="text-[0.625rem] text-fg-muted uppercase font-bold">Idle</div>
               </div>
               <div className="rounded-lg bg-fill p-2 text-center">
-                <div className={`text-lg font-bold tabular-nums ${idleInTxCount > 0 ? "text-hue-yellow" : "text-fg"}`}>
+                <div
+                  className={`text-lg font-bold tabular-nums ${highlighted(idleInTxCount) ? "text-hue-yellow" : "text-fg"}`}
+                  data-testid="operations-session-stat-in-tx"
+                >
                   {idleInTxCount}
                 </div>
                 <div className="text-[0.625rem] text-fg-muted uppercase font-bold">In TX</div>
               </div>
               <div className="rounded-lg bg-fill p-2 text-center">
-                <div className={`text-lg font-bold tabular-nums ${waitingCount > 0 ? "text-hue-orange" : "text-fg"}`}>
+                <div
+                  className={`text-lg font-bold tabular-nums ${highlighted(waitingCount) ? "text-hue-orange" : "text-fg"}`}
+                  data-testid="operations-session-stat-wait"
+                >
                   {waitingCount}
                 </div>
                 <div className="text-[0.625rem] text-fg-muted uppercase font-bold">Wait</div>

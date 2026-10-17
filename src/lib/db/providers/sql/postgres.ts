@@ -39,6 +39,7 @@ import {
   type PerformanceMetrics,
   type SlowQueryStats,
   type ActiveSessionDetails,
+  type SessionActivity,
   type TableStats,
   type IndexStats,
   type StorageStats,
@@ -2079,6 +2080,25 @@ const SLOW_QUERIES_FALLBACK_SQL = `
         `;
 
 // getActiveSessions: detailed session list ($1 = database, $2 = limit).
+/** The name every pooled connection carries, so the session list can leave Studio's own probes out (#1426). */
+const STUDIO_APPLICATION_NAME = "libredb-studio";
+
+/**
+ * The card a PostgreSQL session belongs on.
+ *
+ * An idle backend waits on `Client` / `ClientRead`, which is the session sitting ready for the next
+ * command. That is idle, not waiting. Waiting is a session that is `active` and blocked on something
+ * else: a lock, I/O, an LWLock.
+ */
+function postgresSessionActivity(state: string, waitEventType: string | null | undefined): SessionActivity {
+  const wait = waitEventType || undefined;
+  if (state === "active" && wait !== undefined && wait !== "Client") return "waiting";
+  if (state === "active") return "active";
+  if (state === "idle") return "idle";
+  if (state.includes("idle in transaction")) return "idle-in-transaction";
+  return "other";
+}
+
 const ACTIVE_SESSIONS_SQL = `
         SELECT
           pid,
@@ -2093,21 +2113,22 @@ const ACTIVE_SESSIONS_SQL = `
           wait_event,
           CASE
             WHEN state = 'active' THEN
-              EXTRACT(EPOCH FROM (now() - query_start))::text || 's'
+              EXTRACT(EPOCH FROM (clock_timestamp() - query_start))::text || 's'
             WHEN xact_start IS NOT NULL THEN
-              EXTRACT(EPOCH FROM (now() - xact_start))::text || 's'
+              EXTRACT(EPOCH FROM (clock_timestamp() - xact_start))::text || 's'
             ELSE 'N/A'
           END as duration,
           CASE
             WHEN state = 'active' THEN
-              EXTRACT(EPOCH FROM (now() - query_start)) * 1000
+              EXTRACT(EPOCH FROM (clock_timestamp() - query_start)) * 1000
             WHEN xact_start IS NOT NULL THEN
-              EXTRACT(EPOCH FROM (now() - xact_start)) * 1000
+              EXTRACT(EPOCH FROM (clock_timestamp() - xact_start)) * 1000
             ELSE 0
           END as duration_ms
         FROM pg_stat_activity
         WHERE datname = $1
           AND pid != pg_backend_pid()
+          AND application_name IS DISTINCT FROM '${STUDIO_APPLICATION_NAME}'
         ORDER BY
           CASE state WHEN 'active' THEN 0 ELSE 1 END,
           query_start DESC NULLS LAST
@@ -3199,6 +3220,7 @@ export class PostgresProvider extends SQLBaseProvider {
       idleTimeoutMillis: this.poolConfig.idleTimeout,
       connectionTimeoutMillis: this.poolConfig.acquireTimeout,
       statement_timeout: this.queryTimeout,
+      application_name: STUDIO_APPLICATION_NAME,
       ssl: sslConfig,
       // In the base so both connection forms below carry it.
       types: POOL_TYPE_PARSERS,
@@ -5679,6 +5701,7 @@ export class PostgresProvider extends SQLBaseProvider {
           applicationName: r.application_name || undefined,
           clientAddr: r.client_addr || undefined,
           state: r.state,
+          activity: postgresSessionActivity(String(r.state), r.wait_event_type),
           query: r.query || "",
           queryStart: r.query_start ? new Date(r.query_start) : undefined,
           duration: r.duration,
