@@ -649,12 +649,13 @@ export function mapDatabaseError(error: unknown, provider: DatabaseType, query?:
   // NJS-138 and its siblings are handled above, before the authentication
   // branch - see describeOracleThinModeRefusal().
 
-  // MSSQL errors
-  if (message.includes("login failed")) {
-    return new AuthenticationError(`Authentication failed: ${error.message}`, provider);
-  }
+  // MSSQL errors. "cannot open database" is read FIRST: the server's own 4060 sentence ends
+  // in "The login failed.", so the broader "login failed" branch would swallow it (#1451).
   if (message.includes("cannot open database")) {
     return new ConnectionError(`Database not found: ${error.message}`, provider);
+  }
+  if (message.includes("login failed")) {
+    return new AuthenticationError(`Authentication failed: ${error.message}`, provider);
   }
 
   // Query errors (PostgreSQL specific)
