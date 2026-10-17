@@ -12,7 +12,7 @@ import { toast } from "sonner";
 import type { DatabaseType } from "@/lib/types";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import { objectPathLabel } from "@/lib/db/object-path";
-import { quoteObjectPath } from "@/lib/query-generators";
+import { quoteIdentifier, quoteObjectPath } from "@/lib/query-generators";
 
 interface ColumnDefinition {
   name: string;
@@ -56,6 +56,13 @@ const AUTO_INCREMENT = "__auto_increment__";
 
 /** No container, so the bare table name. One shared reference rather than a literal per render. */
 const NO_CONTAINER: readonly string[] = [];
+
+/** Ports used by the shared identifier quoter when the modal has no provider capabilities yet. */
+const QUOTING_PORTS: Partial<Record<DatabaseType, number>> = {
+  mysql: 3306,
+  mssql: 1433,
+  oracle: 1521,
+};
 
 /**
  * Per-engine spellings for the two things this form actually offers.
@@ -287,6 +294,35 @@ function defaultColumns(dialect: CreateTableDialect): ColumnDefinition[] {
   ];
 }
 
+/** Reject names an engine cannot store as typed, without changing the user's input. */
+function identifierError(name: string, kind: "Table" | "Column", dbType: DatabaseType | undefined): string {
+  if (!name.trim()) return `${kind} name is required`;
+  if (name.includes("\0")) return `${kind} name cannot contain a null character`;
+
+  switch (dbType ?? "postgres") {
+    case "postgres":
+      // PostgreSQL's default NAMEDATALEN silently truncates identifiers after 63 UTF-8 bytes.
+      if (new TextEncoder().encode(name).length > 63) return `${kind} name must be at most 63 bytes`;
+      break;
+    case "mysql":
+      if (Array.from(name).length > 64) return `${kind} name must be at most 64 characters`;
+      if (name.endsWith(" ")) return `${kind} name cannot end with a space`;
+      if (/[\u{10000}-\u{10ffff}]/u.test(name)) return `${kind} name cannot contain supplementary characters`;
+      break;
+    case "mssql":
+      if (name.length > 128) return `${kind} name must be at most 128 characters`;
+      break;
+    case "oracle":
+      // Oracle 12.2+ permits 128 bytes, but no embedded double quote in a quoted identifier.
+      if (new TextEncoder().encode(name).length > 128) return `${kind} name must be at most 128 bytes`;
+      if (name.includes('"')) return `${kind} name cannot contain a double quote in Oracle`;
+      if (kind === "Column" && name === "ROWID") return "Oracle cannot use ROWID as a column name";
+      break;
+  }
+
+  return "";
+}
+
 /**
  * The modal is mounted for every connection (`StudioOverlays`), so an engine without a
  * dialect renders nothing while closed. OPENING it for one is a caller that skipped the
@@ -313,6 +349,8 @@ function CreateTableForm({
   const [tableName, setTableName] = useState("");
   const [columns, setColumns] = useState<ColumnDefinition[]>(() => defaultColumns(dialect));
   const [isSubmitting] = useState(false);
+  const tableNameError = identifierError(tableName, "Table", dbType);
+  const columnNameErrors = columns.map((col) => identifierError(col.name, "Column", dbType));
 
   // Columns hold dialect text — a type name, and the auto-increment sentinel — so they are
   // re-derived when the engine changes rather than carried across it. Without this the
@@ -352,20 +390,19 @@ function CreateTableForm({
     setColumns(columns.map((col, i) => (i === index ? { ...col, ...updates } : col)));
   };
 
-  // Qualified only when there is a container AND the capabilities to quote it with. The
-  // tree offers the item only once capabilities have loaded, so the second half guards an
-  // imperative caller rather than a reachable state.
-  //
-  // Only the CONTAINER is quoted. The container is a catalog name read back from the engine,
-  // so quoting keeps it exact; the table name is what the user typed, and it stays exactly as
-  // the flat button writes it. Quoting it too would make the two buttons create different
-  // objects on an engine that folds case: on Oracle, `APP."orders"` is a lowercase table a
-  // later `SELECT * FROM orders` does not find.
+  // Capabilities supply the dialect in the connected app; the dbType fallback also lets a
+  // standalone modal generate correct SQL. The quoter only reads these three fields.
+  const quotingCapabilities =
+    capabilities ??
+    ({ queryLanguage: "sql", defaultPort: QUOTING_PORTS[dbType ?? "postgres"] ?? 5432 } as ProviderCapabilities);
+  const quotedName = (name: string) => quoteIdentifier(name, quotingCapabilities, { always: true });
+  // A folder click supplies a container; an unqualified create stays in the default one.
   const qualified = container.length > 0 && capabilities !== undefined;
-  const nameInContainer = (name: string) => (qualified ? `${quoteObjectPath(container, capabilities)}.${name}` : name);
+  const nameInContainer = (name: string) =>
+    qualified ? `${quoteObjectPath(container, capabilities)}.${quotedName(name)}` : quotedName(name);
 
   const generateSQL = () => {
-    if (!tableName.trim()) return "";
+    if (tableNameError || columnNameErrors.some(Boolean)) return "";
 
     // Statements the CREATE TABLE depends on. Only DuckDB has one, and `executeQuery`
     // routes a multi-statement buffer to `/api/db/multi-query`, which splits on the
@@ -381,7 +418,7 @@ function CreateTableForm({
       // that read, unchecking PK on this column left the key in the SQL while the form
       // said it was gone, and the two disagreed with no way back.
       if (col.type === AUTO_INCREMENT && col.isPrimary && dialect.autoIncrement) {
-        let clause = `${col.name} ${dialect.autoIncrement}`;
+        let clause = `${quotedName(col.name)} ${dialect.autoIncrement}`;
         if (dialect.autoIncrementSequence) {
           // `IF NOT EXISTS` because a DuckDB sequence OUTLIVES the table that defaults
           // from it: measured on 1.5.5, `DROP TABLE widgets` leaves `widgets_id_seq`
@@ -390,7 +427,16 @@ function CreateTableForm({
           // guard, creating a table, dropping it and creating it again through this form
           // fails the second time. The surviving sequence resumes its count, which costs
           // a few ids and nothing else.
-          const sequence = `${tableName}_${col.name}_seq`;
+          const naturalSequence = `${tableName}_${col.name}_seq`;
+          // DuckDB's nextval string lookup cannot resolve a sequence whose actual name
+          // contains a double quote. Encode those names; '$' keeps encoded names disjoint
+          // from natural names, so names containing '$' take this path as well.
+          const sequence = /["$]/.test(naturalSequence)
+            ? `libredb$${Array.from(
+                new TextEncoder().encode(`${tableName.length}:${tableName}${col.name.length}:${col.name}`),
+                (byte) => byte.toString(16).padStart(2, "0"),
+              ).join("")}_seq`
+            : naturalSequence;
           // In the table's own container, so the two land side by side.
           const sequenceName = nameInContainer(sequence);
           prelude.push(`CREATE SEQUENCE IF NOT EXISTS ${sequenceName};`);
@@ -407,7 +453,7 @@ function CreateTableForm({
       // has to read it as false here rather than merely skip the PRIMARY KEY line -
       // otherwise a key column silently loses its NOT NULL as well.
       const isPrimary = col.isPrimary && dialect.supportsConstraints;
-      let def = `${col.name} ${type}`;
+      let def = `${quotedName(col.name)} ${type}`;
       if (isPrimary) def += " PRIMARY KEY";
       if (!col.isNullable && !isPrimary) def += " NOT NULL";
       if (col.isUnique && !isPrimary && dialect.supportsConstraints) def += " UNIQUE";
@@ -420,11 +466,9 @@ function CreateTableForm({
   };
 
   const handleCreate = async () => {
-    // The name check is unreachable via the UI (the input sanitizes whitespace
-    // to "_" and the button disables on empty); kept for imperative callers.
-    const nameError = tableName.trim() ? "" : "Table name is required";
+    // The button disables on blank names; keep the guard for imperative callers.
     const columnError = columns.some((c) => !c.name.trim()) ? "All columns must have a name" : "";
-    const validationError = nameError || columnError;
+    const validationError = tableNameError || columnError || columnNameErrors.find(Boolean);
     if (validationError) {
       toast.error(validationError);
       return;
@@ -469,9 +513,16 @@ function CreateTableForm({
                 id="tableName"
                 placeholder="e.g. customers, orders, analytics_logs"
                 value={tableName}
-                onChange={(e) => setTableName(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "_"))}
+                onChange={(e) => setTableName(e.target.value)}
+                aria-invalid={Boolean(tableName && tableNameError)}
+                aria-describedby={tableName && tableNameError ? "tableName-error" : undefined}
                 className="bg-raised border-hairline focus-visible:ring-brand-tint/50"
               />
+              {tableName && tableNameError && (
+                <p id="tableName-error" role="alert" className="text-xs text-danger">
+                  {tableNameError}
+                </p>
+              )}
             </div>
           </div>
 
@@ -502,12 +553,17 @@ function CreateTableForm({
                     <Label className="text-xs text-fg-muted font-medium">Column Name</Label>
                     <Input
                       value={col.name}
-                      onChange={(e) =>
-                        updateColumn(index, { name: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "_") })
-                      }
+                      onChange={(e) => updateColumn(index, { name: e.target.value })}
+                      aria-invalid={Boolean(columnNameErrors[index])}
+                      aria-describedby={columnNameErrors[index] ? `columnName-error-${index}` : undefined}
                       placeholder="column_name"
                       className="h-8 text-xs bg-surface border-hairline"
                     />
+                    {columnNameErrors[index] && (
+                      <p id={`columnName-error-${index}`} role="alert" className="text-xs text-danger">
+                        {columnNameErrors[index]}
+                      </p>
+                    )}
                   </div>
 
                   <div className="w-40 space-y-2">
@@ -601,7 +657,7 @@ function CreateTableForm({
               <span className="text-[0.625rem] text-fg-faint">Auto-generated</span>
             </div>
             <pre className="text-xs text-brand/80 whitespace-pre-wrap leading-relaxed">
-              {generateSQL() || "-- Name your table to see SQL"}
+              {generateSQL() || (tableName ? "-- Correct the names to see SQL" : "-- Name your table to see SQL")}
             </pre>
           </div>
         </div>
@@ -612,7 +668,7 @@ function CreateTableForm({
           </Button>
           <Button
             onClick={handleCreate}
-            disabled={isSubmitting || !tableName}
+            disabled={isSubmitting || !tableName.trim()}
             className="bg-brand-solid hover:bg-brand-solid-hover text-white text-xs font-medium gap-2 px-6"
           >
             {isSubmitting ? (
