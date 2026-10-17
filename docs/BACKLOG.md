@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S9 · 6
-- [Drivers and connections](#drivers-and-connections) — D1-D374, U17 · 271
+- [Drivers and connections](#drivers-and-connections) — D1-D375, U17 · 272
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U145 · 132
@@ -44,7 +44,7 @@ None of it is a GitHub issue.
 - [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B121 · 54
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP3 · 3
-- [Governance follow-ups](#governance-follow-ups) — GOV1-GOV23 · 23
+- [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
 
 ---
 
@@ -3822,6 +3822,19 @@ Measured 2026-10-16 with eight copies of the Prometheus request test at a time, 
 The other side of the same race may be behind a failure seen once in a full run on a loaded machine, where `tests/unit/db/http/node-transport-runtimes.test.ts` counted 6 connections on its keep-alive listener for the 2 its child opened, in both children; 100 runs under load never repeated it.
 
 **Done when:** one helper in `tests/helpers/` reserves a refusing port for the life of a test by holding a connected socket, whose own local port nothing listens on (measured 2026-10-16: a connection to it is refused, and a listen on it fails with `EADDRINUSE` under Bun and under Node), every closed-port helper uses it, and eight copies of the Prometheus file at a time fail none of 300 runs.
+
+### D375. Two requests during a timeout-change disconnect leave one provider connected outside the cache
+
+The query timeout check in `getOrCreateProvider` in `src/lib/db/factory.ts`, and its copy in `acquireExecutionProfileProvider`, awaits the stale provider's `disconnect()` and deletes the cache entry only after it returns, so the stale entry stays in `providerCache` for as long as the disconnect takes.
+A second request in that window finds the same stale entry and calls `disconnect()` again; pg answers "Called end on pool more than once", which the branch logs, and the request deletes the key, builds a provider B and caches it.
+When the first request's disconnect returns, its `providerCache.delete(cacheKey)` removes B's entry and it builds a provider C, so B stays connected where neither `evictIdleProviders` nor `clearProviderCache` can reach it, for the life of the process.
+The disconnect lasts that long whenever the old provider has a client checked out: a running query (D115) or, on PostgreSQL, an open transaction, up to five minutes after its `BEGIN` (GOV12, GOV24).
+Without governance the trigger is D115's, two tabs holding different Query Timeout values for one connection; under governance one `query.timeoutMs` change reaches every user at once.
+Measured on 2026-10-17 with a probe test that held the old provider's disconnect open while a second request arrived: the first request replaced B in the cache, and B was never disconnected.
+
+Found 2026-10-17 while verifying an external review of #1785.
+
+**Done when:** concurrent requests for a stale entry share one retirement and one replacement, for example by taking the entry out of the cache before awaiting its disconnect, no provider is left connected outside the cache, and a test with a disconnect held open and two requests shows one replacement provider and the old one closed.
 
 ## Value interpolation
 
@@ -7839,6 +7852,7 @@ Found 2026-10-12 while designing the RabbitMQ provider.
 
 Defects and open questions found while designing and building the governance mode (`GOVERNANCE_SOURCE=postgres`), in that mode and in the modes it does not cover.
 GOV1 to GOV4 were re-verified against the code on 2026-10-15, and GOV5 to GOV23 on 2026-10-16.
+GOV24 to GOV30 came from an external review of #1785 after it merged, and were verified against the code on 2026-10-17, with a probe test wherever a test could show them.
 
 ### GOV1. Resolving a seed id answers 403 for an existing id and 404 for an unknown one
 
@@ -7959,7 +7973,7 @@ Both providers arm a five-minute timer when an editor transaction begins (`TX_TI
 On PostgreSQL `pool.end()` waits for every checked-out client, so a `disconnect()` with a transaction open returns only when the timer releases the client, up to five minutes after `BEGIN`, and the transaction keeps its locks until then.
 A shared provider is disconnected without a rollback first, by `removeProvider`, by `clearProviderCache` at shutdown, and when a request names another query timeout (D115), so deleting a custom connection that has an open transaction leaves the request waiting.
 On MySQL `end()` closes the held connection, so `disconnect()` returns and the server rolls back, but `txActive` stays true, and five minutes later the timer logs a timeout that never happened and sends a `ROLLBACK` to a closed connection.
-An owned provider is rolled back before it is disconnected (`teardownProvider` in `src/lib/db/factory.ts`), so this is the shared providers' defect.
+An owned provider is rolled back before it is disconnected (`teardownProvider` in `src/lib/db/factory.ts`) on every path but the query timeout change, which disconnects it directly (GOV24), so outside that path this is the shared providers' defect.
 On a server-level PostgreSQL connection the transaction lives on a catalog session, a provider of its own in `catalogSessions`, and the parent's `isInTransaction()` does not report it.
 So a fix inside `PostgresProvider.disconnect()` covers it, because `closeAll()` calls each session's own `disconnect()`, while a fix that checks only the parent's `isInTransaction()` would miss it.
 
@@ -7990,6 +8004,7 @@ The governed branch of `POST /api/db/disconnect` (`src/app/api/db/disconnect/rou
 That record is closed later by `recordTimedOut` in `src/lib/api/transaction-ownership.ts`, from its watch timer about five minutes after `BEGIN`, the caller's next transaction request or the lapsed lease, which records `timed-out` with `status` `cancelled`.
 `docs/GOVERNANCE.md` reserves `timed-out` for the database driver rolling the transaction back at its five-minute limit, so the audit trail names the wrong cause at the wrong time, where the grant loader records `rolled-back` for the same rollback (`endRevokedTransactions` in `src/lib/governance/grant-diff.ts`).
 Only the API reaches it, since the UI disconnects only to delete a custom connection, which governance switches off, and at shutdown `clearProviderCache` rolls transactions back and records no terminal event at all.
+Recording one there is not enough on its own: `registerShutdownHandlers` in `src/lib/db/factory.ts` runs the shutdown hooks, the query event flush among them, before `clearProviderCache`, so a row recorded during that rollback is never sent (GOV10, GOV11).
 The loader's own `rolled-back` is recorded even when the rollback did not finish in time, because `teardownProvider` never rejects, so the rule in `docs/GOVERNANCE.md` that a close that fails records nothing does not hold there either; a fix here should not copy it.
 
 **Done when:** the governed disconnect records `rolled-back`, with `status` `error` when the rollback was not confirmed, and releases the owner record, and a test shows that a `begin` followed by a disconnect records exactly one `rolled-back` and no later `timed-out`.
@@ -8069,3 +8084,74 @@ Measured on 2026-10-15 against the installed `mssql`: after the timer fired duri
 The timer is armed only on owned providers, so this is governance mode only; GOV3 is the question of arming it in every mode.
 
 **Done when:** `expireTransaction` cancels or waits for the running request before it rolls back, so the rollback runs and the connection always returns to the pool; the docblock states what happens; and a unit test with a fake `Transaction` that answers `EREQINPROG` while a request runs shows the rollback sent once the request settles and the connection released.
+
+### GOV24. A `query.timeoutMs` change closes owned providers without a rollback, so an open PostgreSQL transaction holds its owner's next request
+
+The query timeout check in `getOrCreateProvider` in `src/lib/db/factory.ts`, and its copy in `acquireExecutionProfileProvider`, closes a cached provider whose `queryTimeout` differs from the connection's with a plain `disconnect()`, an owned provider too, so `teardownProvider`'s rollback never runs on that path.
+Under governance the timeout is the runtime setting `query.timeoutMs` (`src/lib/governance/visible.ts`), so one change by the control plane reaches every user's next request at once.
+On PostgreSQL `pool.end()` waits for every checked-out client (GOV12), and only `expireTransaction` releases the transaction's client, so a user with an open transaction finds their next request on that connection, on any route, waiting until five minutes after their `BEGIN`.
+The provider's timer then rolls the transaction back, and the route's reconcile or the watch timer records `timed-out` with `status` `cancelled`, so the work is lost although the audit trail does end the transaction.
+A `COMMIT` sent meanwhile waits the same way and then reaches the new provider, which answers that no transaction is active; that was read, not measured.
+On MySQL `end()` closes the held connection, so the server rolls back at once, and the same `timed-out` row names the wrong cause.
+Measured on 2026-10-17 with a probe test that changed the timeout of an owned provider holding a transaction: no rollback ran before the disconnect, and the request was still waiting on the held client.
+
+**Done when:** the timeout change closes an owned provider through `teardownProvider`, or retires it without disconnecting while a transaction is open (D115), the transaction ends with one terminal row that names the cause, and a test with an open transaction shows the next request answered without waiting for the transaction timer.
+
+### GOV25. A statement that ends its own transaction records no terminal event
+
+In `POST` of `src/app/api/db/transaction/route.ts`, a statement after which `provider.isInTransaction()` is false, a typed `COMMIT` or `ROLLBACK` or, on MySQL, DDL with its implicit commit, releases the owner record (`releaseTransaction`) without `endTransactionEvent`, on the single-statement path and the script path alike.
+The watch timer (`watchTransactionTimeout` in `src/lib/api/transaction-ownership.ts`) and the reconcile then find no record, so nothing records the end later either.
+So the control plane sees a transaction that never ends, and under the default `queryLog.statementCapture` of `none` the `open` row carries no statement text to infer the end from; on MySQL, data committed by DDL has no `committed` row at all.
+`docs/GOVERNANCE.md#query-events` states the behaviour ("records only its `open` row") a few lines after "Exactly one terminal row ends a transaction", so the section contradicts itself.
+Measured on 2026-10-17 with a probe test that sent `COMMIT`, `ROLLBACK` and `CREATE TABLE` inside a governed transaction and ran six minutes past the timer and the lease: none of the three recorded a terminal row.
+
+**Done when:** a statement that ends the transaction records one terminal row, `committed` or `rolled-back`, with the outcome an implicit commit maps to stated in `docs/GOVERNANCE.md#query-events`, the section no longer contradicts itself, and a route test pins one terminal row for each of the three statements.
+
+### GOV26. While the sink refuses, `COMMIT` and `ROLLBACK` are refused too, so a user cannot end their own transaction
+
+With `queryLog.onSinkFailure` at `refuse`, `POST /api/db/transaction` calls `admitQueryExecution()` for every action in `STATEMENT_ACTIONS`, `begin`, a statement, `commit` and `rollback`, and answers its refusal, 503 `AUDIT_UNAVAILABLE`.
+`docs/GOVERNANCE.md#query-events` states it and `tests/api/db/transaction.test.ts` pins it, so this is a decision, not a defect.
+Its cost: a user whose transaction holds locks cannot release them while the sink backs off, and the locks stay until the provider's timer rolls the transaction back, up to five minutes after `BEGIN`, while other sessions wait on them.
+A `ROLLBACK` only undoes what the transaction did, so admitting it lowers the risk the refusal guards against, while a `COMMIT` would make the transaction's statements durable while their terminal row cannot be written.
+The default is `continue`, so this applies only where the control plane sets `refuse`.
+Measured on 2026-10-17 with a probe test: under `refuse` with the sink backing off, a `rollback` answered 503 and the transaction stayed open.
+
+**Done when:** the owner decides whether `rollback` passes the gate under `refuse`, and whether `commit` does, `docs/GOVERNANCE.md#query-events` states the rule and its reason, and the route test pins it; GOV16's `refused` row applies to whatever is still refused.
+
+### GOV27. Under OIDC auto-redirect, a logout from an identity provider without an `end_session_endpoint` signs the user straight back in
+
+`buildLogoutUrl` in `src/lib/oidc.ts` returns null when the identity provider publishes no `end_session_endpoint`, because openid-client's `buildEndSessionUrl` throws there, so `POST /api/auth/logout` answers without a `redirectUrl` and clears only Studio's cookie.
+`handleLogout` in `src/hooks/use-auth.ts` then opens `/login`, and with `OIDC_AUTO_REDIRECT=true` the proxy (`oidcAutoRedirect` in `src/proxy.ts`) sends that request straight to `/api/auth/oidc/login`, where the identity provider's live session signs the user in again.
+It takes all three: `OIDC_AUTO_REDIRECT=true`, which is off by default and in the chart; `OIDC_PROMPT=omit`, or an identity provider that ignores `prompt=login`, since the default `login` forces a fresh sign-in; and an identity provider without `end_session_endpoint`, such as Google.
+`docs/OIDC.md` recommends `OIDC_PROMPT=omit` with `OIDC_AUTO_REDIRECT=true` for single sign-on with the control plane and documents each half on its own, but never says that together they leave logout doing nothing on such an identity provider.
+Read from the code, not driven against an identity provider: whether Google honours `prompt=login` needs a live check too.
+
+**Done when:** a logout that has no end-session URL does not land on an auto-redirecting `/login`, for example by showing a signed-out page that offers sign-in instead of starting it, `docs/OIDC.md` states what logout does under each combination, and a live check against an identity provider without `end_session_endpoint` shows the user signed out.
+
+### GOV28. A grant change during a `connect()` leaves that provider cached with the old credential
+
+`getOrCreateProvider` in `src/lib/db/factory.ts` stores a new provider in `providerCache` only after `connectPhase(() => provider.connect())` resolves.
+When the loader tears the owner's providers down meanwhile (`tearDownChangedGrants` in `src/lib/governance/snapshot.ts`, through `removeOwnerProviders`), the provider still connecting is not in the cache yet, so it survives and is cached afterwards under the old credential's key.
+No later request reaches it, because its key frames the old credential's digest, but its pool keeps database sessions signed in with the old credential, a write credential where the grant was lowered to read, until `evictIdleProviders` finds it idle, 30 minutes after its last use, swept every 5 minutes.
+The request that was already connecting finishes under the old grant, which only cancelling it would change.
+Measured on 2026-10-17 with a probe test that removed the owner's providers while a `connect()` was pending: one provider was left in the cache.
+
+**Done when:** a removal of an owner's providers also reaches the providers being connected for that owner, so none is cached after the removal and its pool is closed, and a test pins it.
+
+### GOV29. A session revocation leaves the subject's providers and open transaction in place
+
+A revocation in the snapshot refuses the revoked session's requests with 401 (`sessionRevoked` in `src/lib/governance/snapshot.ts`), but the loader tears providers down only for changed grants (`changedGrants` in `src/lib/governance/grant-diff.ts`).
+So the subject's providers, their pools and an open transaction with its locks stay until the provider's timer, up to five minutes after `BEGIN`, and the idle sweep, and a subject who signs in again gets the same provider and the same transaction back.
+`docs/GOVERNANCE.md` promises a teardown for grant changes only and describes a revocation as a way to make someone sign in again, so this is a gap rather than a broken promise; GOV21 is a different revocation gap.
+Measured on 2026-10-17 with a probe test: after a reload that added a revocation for a subject, `sessionRevoked` was true and none of the subject's providers had been removed.
+
+**Done when:** the owner decides whether a revocation ends the subject's running work; if it does, the loader rolls back and removes the subject's providers when a revocation for that subject appears, recording `rolled-back` for an open transaction as `endRevokedTransactions` does, with a test that pins it; if not, `docs/GOVERNANCE.md` states that a revocation leaves running work alone.
+
+### GOV30. The transaction watch timer keeps every `BEGIN`'s provider reachable for five minutes
+
+`watchTransactionTimeout` in `src/lib/api/transaction-ownership.ts` arms an unref'd timer of `TRANSACTION_TIMEOUT_CHECK_MS`, a little over five minutes, on every governed `BEGIN`, and nothing clears it on `COMMIT` or `ROLLBACK`.
+Its closure holds the owner record and the route's `() => provider.isInTransaction()`, so the request's provider stays reachable until the timer fires, with its pool object, even after it was evicted or torn down.
+Memory held this way grows with the number of `BEGIN`s in five minutes; without governance the timer is not armed.
+Read from the code, not measured.
+
+**Done when:** ending a transaction clears its watch timer, or the timer holds only the connection id and the transaction id and looks the provider up when it fires, and a test shows no timer left pending after a `COMMIT`.
