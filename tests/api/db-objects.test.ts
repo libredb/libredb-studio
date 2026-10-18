@@ -929,7 +929,7 @@ describe("POST /api/db/objects/describe", () => {
   // An object dropped between the listing and the expand has TWO answers in the shipped fleet, and
   // the pair below is pinned so a later reader cannot assume either one is THE behaviour.
   // PostgreSQL checks for a zero-row catalog answer and raises `No detail row for ...`
-  // (`src/lib/db/providers/sql/postgres.ts:3021`); oracle, mysql and couchbase have no such check
+  // (`describeObject` in `src/lib/db/providers/sql/postgres.ts`); oracle, mysql and couchbase have no such check
   // and answer three empty arrays, couchbase because a rejected INFER is deliberately not an error
   // (`src/lib/db/providers/document/couchbase/introspect.ts:206-215`). Both cases are driven
   // through DOUBLES over one missing path and are never asserted as a count of engines.

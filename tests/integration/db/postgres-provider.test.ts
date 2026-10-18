@@ -5988,7 +5988,7 @@ describe("object surface", () => {
         .sort(),
     ).toEqual(["materialized_view", "sequence", "table", "view"]);
     // The other direction. A routine and a trigger have no relation behind them, so
-    // `describeObject` answers them without a round trip at all (`postgres.ts:2969-2972`).
+    // `describeObject` answers them without a round trip at all (its `RELKIND_BY_KIND` check in `postgres.ts`).
     expect(
       kinds
         .filter((kind) => kind.hasColumns !== true)

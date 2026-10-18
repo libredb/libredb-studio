@@ -1948,7 +1948,7 @@ describe("object surface", () => {
    * it and asks `describeObject` when the row is opened, so a kind declaring it and
    * answering nothing opens on an empty list with nothing on screen to say why. It is
    * written literally here and the second half of this test is what makes the literal safe.
-   * `describeObject` gates on `spec.role !== "relation"` (`trino/index.ts:1032`), so
+   * `describeObject` gates on `spec.role !== "relation"` (in `trino/index.ts`), so
    * `function` answers three empty arrays without a round trip and `table`, `view` and
    * `materialized_view` read `information_schema.columns`.
    */
