@@ -115,7 +115,6 @@ describe("the declarations, every member written out", () => {
     for (const flag of [
       "supportsExplain",
       "supportsExternalQueryLimiting",
-      "supportsCreateTable",
       "supportsInlineRowEdit",
       "supportsTestDataGeneration",
       "supportsResultPagination",
@@ -127,6 +126,7 @@ describe("the declarations, every member written out", () => {
     ] as const) {
       expect(capabilities[flag]).toBe(false);
     }
+    expect(capabilities.createTable).toBeUndefined();
     expect(capabilities.maintenanceOperations).toEqual([]);
     expect(capabilities.containerLevels).toEqual([]);
     // A pattern that matches nothing: no read this provider runs changes the tree.

@@ -367,7 +367,6 @@ describe("a refusal is a QueryError, because the product treats it differently",
 describe("every capability this provider does not have, asserted on the real class", () => {
   test.each([
     ["supportsExplain"],
-    ["supportsCreateTable"],
     ["supportsInlineRowEdit"],
     ["supportsTransactions"],
     ["supportsResultPagination"],
@@ -380,6 +379,10 @@ describe("every capability this provider does not have, asserted on the real cla
   ])("%s is declared false", (key) => {
     const caps = provider().getCapabilities() as unknown as Record<string, unknown>;
     expect(caps[key]).toBe(false);
+  });
+
+  test("no create-table grammar is declared, so the form, the tree item and import into a new table stay off", () => {
+    expect(provider().getCapabilities().createTable).toBeUndefined();
   });
 
   test("no key scan is declared, because nothing is walked", () => {

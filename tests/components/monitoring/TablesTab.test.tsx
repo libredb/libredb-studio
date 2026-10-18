@@ -92,7 +92,6 @@ function makeCapabilities(overrides: Partial<ProviderCapabilities> = {}): Provid
     queryLanguage: "sql",
     supportsExplain: false,
     supportsExternalQueryLimiting: true,
-    supportsCreateTable: true,
     supportsInlineRowEdit: true,
     supportsMaintenance: true,
     maintenanceOperations: ["vacuum", "analyze", "reindex", "kill"],

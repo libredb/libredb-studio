@@ -168,7 +168,6 @@ mock.module("@/hooks/use-provider-metadata", () => ({
       capabilities: {
         queryLanguage: "sql",
         supportsExplain: true,
-        supportsCreateTable: true,
         supportsTransactions: true,
         maintenanceOperations: ["vacuum"],
         schemaRefreshPattern: "^(CREATE|DROP)\\b",

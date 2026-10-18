@@ -62,7 +62,6 @@ function capabilitiesOf(overrides: Partial<ProviderCapabilities>): ProviderCapab
     queryLanguage: "json",
     supportsExplain: false,
     supportsExternalQueryLimiting: false,
-    supportsCreateTable: false,
     supportsInlineRowEdit: false,
     supportsMaintenance: false,
     maintenanceOperations: [],

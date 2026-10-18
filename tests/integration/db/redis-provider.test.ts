@@ -1124,7 +1124,7 @@ describe("RedisProvider", () => {
       expect(caps.queryLanguage).toBe("json");
       expect(caps.defaultPort).toBe(6379);
       expect(caps.supportsConnectionString).toBe(false);
-      expect(caps.supportsCreateTable).toBe(false);
+      expect(caps.createTable).toBeUndefined();
       // Redis commands are not SQL, so the inline row editor's `UPDATE ... SET`
       // has nothing to run against (#269).
       expect(caps.supportsInlineRowEdit).toBe(false);

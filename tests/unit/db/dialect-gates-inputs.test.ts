@@ -16,7 +16,6 @@ function makeCaps(overrides: Partial<ProviderCapabilities> = {}): ProviderCapabi
     queryLanguage: "json",
     supportsExplain: false,
     supportsExternalQueryLimiting: false,
-    supportsCreateTable: false,
     supportsInlineRowEdit: false,
     supportsMaintenance: false,
     maintenanceOperations: [],

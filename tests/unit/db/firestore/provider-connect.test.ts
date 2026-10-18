@@ -56,7 +56,6 @@ describe("declarations", () => {
       supportsExplain: true,
       explainFormat: "firestore-explain",
       supportsExternalQueryLimiting: false,
-      supportsCreateTable: false,
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,
       supportsResultPagination: false,

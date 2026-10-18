@@ -116,7 +116,7 @@ describe("the declarations", () => {
     expect(capabilities.supportsResultPagination).toBe(false);
     expect(capabilities.supportsTransactions).toBe(false);
     expect(capabilities.declaresForeignKeys).toBe(false);
-    expect(capabilities.supportsCreateTable).toBe(false);
+    expect(capabilities.createTable).toBeUndefined();
     expect(capabilities.supportsInlineRowEdit).toBe(false);
   });
 

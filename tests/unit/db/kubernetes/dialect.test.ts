@@ -11,7 +11,6 @@ const KUBECTL: ProviderCapabilities = {
   queryDialect: "kubectl",
   supportsExplain: false,
   supportsExternalQueryLimiting: false,
-  supportsCreateTable: false,
   supportsMaintenance: false,
   maintenanceOperations: [],
   supportsConnectionString: false,

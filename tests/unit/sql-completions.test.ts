@@ -896,7 +896,6 @@ describe("Completion of a container name the engine spells itself", () => {
       queryLanguage: "sql",
       supportsExplain: true,
       supportsExternalQueryLimiting: true,
-      supportsCreateTable: false,
       supportsInlineRowEdit: false,
       supportsMaintenance: false,
       maintenanceOperations: [],

@@ -47,7 +47,6 @@ const CAPABILITIES: ProviderCapabilities = {
   queryLanguage: "json",
   supportsExplain: false,
   supportsExternalQueryLimiting: false,
-  supportsCreateTable: false,
   supportsMaintenance: true,
   maintenanceOperations: [...MILVUS_MAINTENANCE_OPERATIONS],
   maintenanceOperationSpecs: MILVUS_MAINTENANCE_SPECS,

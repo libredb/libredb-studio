@@ -63,7 +63,7 @@ describe("what it declares without connecting", () => {
     expect(declared.enforcesReadOnly).toBe(true);
     expect(declared.supportsMaintenance).toBe(false);
     expect(declared.maintenanceOperations).toEqual([]);
-    expect(declared.supportsCreateTable).toBe(false);
+    expect(declared.createTable).toBeUndefined();
     expect(declared.supportsInlineRowEdit).toBe(false);
     expect(declared.supportsTransactions).toBe(false);
   });

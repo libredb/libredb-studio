@@ -442,7 +442,6 @@ describe("ClickHouseProvider metadata", () => {
       supportsExplain: true,
       explainFormat: "clickhouse-json",
       supportsExternalQueryLimiting: true,
-      supportsCreateTable: false,
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,
       // `LIMIT n OFFSET m` from the shared limiter (#816). A statement ending in
@@ -471,13 +470,13 @@ describe("ClickHouseProvider metadata", () => {
     });
   });
 
-  test("keeps supportsCreateTable false because the modal's default output is invalid here", () => {
-    // Live-verified, and the reason the flag is not an oversight: the modal's
+  test("declares no createTable because the modal's default output is invalid here", () => {
+    // Live-verified, and the reason no createTable is declared: the modal's
     // default column emits an auto-increment primary key (measured as `id SERIAL
     // PRIMARY KEY`, code 50, unknown data type family; #648 made that spelling
     // per-engine and added no ClickHouse row) and its UNIQUE checkbox emits `UNIQUE`
     // (code 62, syntax error).
-    expect(new ClickHouseProvider(makeConnection()).getCapabilities().supportsCreateTable).toBe(false);
+    expect(new ClickHouseProvider(makeConnection()).getCapabilities().createTable).toBeUndefined();
   });
 
   test("keeps supportsInlineRowEdit false because a bare UPDATE ... SET is not implemented here", () => {

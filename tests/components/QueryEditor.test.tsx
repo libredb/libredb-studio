@@ -273,7 +273,6 @@ const defaultCapabilities = {
   queryLanguage: "sql" as const,
   supportsExplain: true,
   supportsExternalQueryLimiting: true,
-  supportsCreateTable: true,
   supportsInlineRowEdit: true,
   supportsMaintenance: false,
   maintenanceOperations: [] as MaintenanceType[],

@@ -28,7 +28,6 @@ describe("getCapabilities (SB2-9.1)", () => {
       queryDialect: "oxia",
       supportsExplain: false,
       supportsExternalQueryLimiting: false,
-      supportsCreateTable: false,
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,
       supportsResultPagination: false,

@@ -295,7 +295,6 @@ describe("CouchbaseProvider metadata", () => {
       supportsExplain: true,
       explainFormat: "couchbase-json",
       supportsExternalQueryLimiting: true,
-      supportsCreateTable: false,
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,
       // SQL++ takes `LIMIT n OFFSET m`, and this provider's `prepareQuery` routes

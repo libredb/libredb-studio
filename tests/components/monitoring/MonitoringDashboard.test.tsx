@@ -181,7 +181,6 @@ const mockCapabilities = {
   queryLanguage: "sql",
   supportsExplain: true,
   supportsExternalQueryLimiting: true,
-  supportsCreateTable: true,
   supportsMaintenance: true,
   maintenanceOperations: ["vacuum", "analyze"],
   supportsConnectionString: true,

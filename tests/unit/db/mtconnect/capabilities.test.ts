@@ -32,7 +32,8 @@ describe("every flag by name", () => {
     // Named one at a time on purpose. `[false, false, ...]` would pass with any two swapped.
     expect(capabilities.supportsExplain).toBe(false);
     expect(capabilities.supportsExternalQueryLimiting).toBe(false);
-    expect(capabilities.supportsCreateTable).toBe(false);
+    // A grammar is declared or absent, never false: absent withholds the Create Table form.
+    expect(capabilities.createTable).toBeUndefined();
     expect(capabilities.supportsInlineRowEdit).toBe(false);
     expect(capabilities.supportsTestDataGeneration).toBe(false);
     expect(capabilities.supportsResultPagination).toBe(false);
@@ -118,7 +119,6 @@ describe("the declaration is a closed set", () => {
     "schemaRefreshPattern",
     "statementTerminator",
     "supportsConnectionString",
-    "supportsCreateTable",
     "supportsExplain",
     "supportsExternalQueryLimiting",
     "supportsInlineRowEdit",

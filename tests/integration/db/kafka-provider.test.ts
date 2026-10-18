@@ -1568,7 +1568,6 @@ describe("declarations", () => {
       queryLanguage: "json",
       queryDialect: "kafka",
       supportsExplain: false,
-      supportsCreateTable: false,
       supportsTransactions: false,
       supportsMaintenance: false,
       supportsInlineRowEdit: false,

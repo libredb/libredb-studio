@@ -95,7 +95,6 @@ const SPARK_CAPS: ProviderCapabilities = {
   queryLanguage: "sql",
   supportsExplain: true,
   supportsExternalQueryLimiting: true,
-  supportsCreateTable: false,
   supportsInlineRowEdit: false,
   supportsMaintenance: false,
   maintenanceOperations: [],

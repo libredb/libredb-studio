@@ -9,7 +9,6 @@ const FIRESTORE: ProviderCapabilities = {
   supportsExplain: true,
   explainFormat: "firestore-explain",
   supportsExternalQueryLimiting: false,
-  supportsCreateTable: false,
   supportsInlineRowEdit: false,
   supportsMaintenance: false,
   maintenanceOperations: [],

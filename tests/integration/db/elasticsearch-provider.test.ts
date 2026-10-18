@@ -997,7 +997,6 @@ describe("ElasticsearchProvider metadata", () => {
       queryLanguage: "sql",
       supportsExplain: false,
       supportsExternalQueryLimiting: true,
-      supportsCreateTable: false,
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,
       // Elasticsearch SQL has no `OFFSET` clause: `prepareQuery` THROWS rather than
@@ -1082,13 +1081,13 @@ describe("ElasticsearchProvider metadata", () => {
     expect("explainFormat" in capabilities).toBe(false);
   });
 
-  test("keeps supportsCreateTable false because CREATE is not in the grammar", () => {
+  test("declares no createTable because CREATE is not in the grammar", () => {
     // Measured, and stronger than "unimplemented": `CREATE TABLE t (id BIGINT)`
     // answers HTTP 400 `parsing_exception`, "mismatched input 'CREATE' expecting
     // {'(', 'DEBUG', 'DESC', 'DESCRIBE', 'EXPLAIN', 'SELECT', 'SHOW', 'SYS',
     // 'WITH'}" - the grammar lists everything it accepts and no mutation is among
     // them. Indices are created through the index APIs.
-    expect(new ElasticsearchProvider(makeConnection()).getCapabilities().supportsCreateTable).toBe(false);
+    expect(new ElasticsearchProvider(makeConnection()).getCapabilities().createTable).toBeUndefined();
   });
 
   test("keeps supportsInlineRowEdit false because UPDATE is not in the grammar either", () => {

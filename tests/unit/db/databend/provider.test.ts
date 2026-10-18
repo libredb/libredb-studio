@@ -322,7 +322,6 @@ describe("construction and declarations", () => {
       explainFormat: "databend-text",
       supportsExternalQueryLimiting: true,
       supportsResultPagination: true,
-      supportsCreateTable: false,
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,
       supportsTransactions: false,

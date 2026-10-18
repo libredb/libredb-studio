@@ -685,7 +685,7 @@ describe("MongoDBProvider", () => {
       const caps = provider.getCapabilities();
       expect(caps.queryLanguage).toBe("json");
       expect(caps.defaultPort).toBe(27017);
-      expect(caps.supportsCreateTable).toBe(false);
+      expect(caps.createTable).toBeUndefined();
       // No SQL at all here: the query language is JSON commands, so the inline row
       // editor's `UPDATE ... SET` has nothing to run against (#269).
       expect(caps.supportsInlineRowEdit).toBe(false);

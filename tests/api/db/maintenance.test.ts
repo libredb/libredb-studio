@@ -223,7 +223,6 @@ describe("POST /api/db/maintenance", () => {
       queryLanguage: "sql",
       supportsExplain: true,
       supportsExternalQueryLimiting: true,
-      supportsCreateTable: true,
       supportsMaintenance: true,
       maintenanceOperations: ["vacuum", "analyze", "reindex"],
       supportsConnectionString: true,
@@ -515,7 +514,6 @@ describe("POST /api/db/maintenance", () => {
       queryLanguage: "sql",
       supportsExplain: false,
       supportsExternalQueryLimiting: true,
-      supportsCreateTable: false,
       supportsMaintenance: false,
       maintenanceOperations: [],
       supportsConnectionString: false,
@@ -565,7 +563,6 @@ describe("POST /api/db/maintenance", () => {
     queryLanguage: "sql",
     supportsExplain: true,
     supportsExternalQueryLimiting: true,
-    supportsCreateTable: true,
     supportsMaintenance: true,
     maintenanceOperations: ["vacuum", "analyze", "reindex"],
     maintenanceOperationSpecs: {

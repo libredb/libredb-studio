@@ -984,7 +984,7 @@ describe("generateMigrationSQL: Cassandra spells ADD and DROP without the COLUMN
 
 describe("generateMigrationSQL: Cassandra declines CREATE TABLE rather than guess the partitioning", () => {
   // `src/components/SchemaDiff.tsx` calls this generator with the connection's `type`
-  // and never consults `supportsCreateTable`, so the refusal the provider already
+  // and never consults `createTable`, so the refusal the provider already
   // publishes (`cassandra/index.ts`) has to be repeated on this path or the two
   // contradict each other.
   //

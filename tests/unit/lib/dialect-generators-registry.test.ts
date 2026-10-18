@@ -26,7 +26,6 @@ function makeCaps(overrides: Partial<ProviderCapabilities> = {}): ProviderCapabi
     queryLanguage: "promql",
     supportsExplain: false,
     supportsExternalQueryLimiting: false,
-    supportsCreateTable: false,
     supportsInlineRowEdit: false,
     supportsMaintenance: false,
     maintenanceOperations: [],

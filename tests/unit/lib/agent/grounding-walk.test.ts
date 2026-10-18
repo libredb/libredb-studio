@@ -40,7 +40,6 @@ const BASE: ProviderCapabilities = {
   queryLanguage: "json",
   supportsExplain: false,
   supportsExternalQueryLimiting: false,
-  supportsCreateTable: false,
   supportsInlineRowEdit: false,
   supportsMaintenance: false,
   maintenanceOperations: [],

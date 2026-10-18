@@ -31,7 +31,6 @@ describe("declarations", () => {
       queryDialect: "rabbitmq",
       enforcesReadOnly: true,
       supportsExplain: false,
-      supportsCreateTable: false,
       supportsTransactions: false,
       supportsMaintenance: false,
       supportsInlineRowEdit: false,

@@ -84,7 +84,6 @@ describe("declarations", () => {
       queryLanguage: "json",
       queryDialect: "qdrant",
       supportsExplain: false,
-      supportsCreateTable: false,
       supportsTransactions: false,
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,

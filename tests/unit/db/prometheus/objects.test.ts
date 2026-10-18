@@ -71,7 +71,6 @@ const CAPABILITIES: ProviderCapabilities = {
   queryLanguage: "promql",
   supportsExplain: false,
   supportsExternalQueryLimiting: false,
-  supportsCreateTable: false,
   supportsMaintenance: false,
   maintenanceOperations: [],
   supportsConnectionString: false,

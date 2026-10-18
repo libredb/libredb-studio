@@ -46,7 +46,6 @@ const sqlMetadata: ProviderMetadata = {
     queryLanguage: "sql",
     supportsExplain: true,
     supportsExternalQueryLimiting: true,
-    supportsCreateTable: true,
     supportsInlineRowEdit: true,
     supportsMaintenance: false,
     maintenanceOperations: [],

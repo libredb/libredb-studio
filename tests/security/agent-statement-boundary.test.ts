@@ -82,7 +82,6 @@ const capabilities: ProviderCapabilities = {
   supportsExplain: true,
   explainFormat: "sqlite-queryplan",
   supportsExternalQueryLimiting: true,
-  supportsCreateTable: true,
   supportsInlineRowEdit: true,
   supportsMaintenance: true,
   maintenanceOperations: [],

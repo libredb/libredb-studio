@@ -501,7 +501,7 @@ describe("capabilities", () => {
     // the last two are "Unknown type" - and its NOT NULL, UNIQUE and DEFAULT
     // checkboxes each produce "no viable alternative at input". DDL typed into the
     // editor works normally, which is how a CQL user creates a table.
-    expect(capabilities.supportsCreateTable).toBe(false);
+    expect(capabilities.createTable).toBeUndefined();
   });
 
   test("no maintenance operation is claimed, because none is reachable from CQL", () => {

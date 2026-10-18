@@ -1123,7 +1123,6 @@ describe("a step's identity is the call it makes", () => {
       supportsExplain: true,
       explainFormat: "postgres-json",
       supportsExternalQueryLimiting: true,
-      supportsCreateTable: true,
       supportsInlineRowEdit: true,
       supportsMaintenance: false,
       maintenanceOperations: [],

@@ -209,7 +209,7 @@ describe("docs/providers/spark.md", () => {
     const off: string[] = [];
     if (capabilities.supportsSqlFormat === false) off.push("Format");
     if (capabilities.supportsInlineRowEdit === false) off.push("Inline row edit");
-    if (capabilities.supportsCreateTable === false) off.push("Create Table");
+    if (capabilities.createTable === undefined) off.push("Create Table");
     if (importRefusal(capabilities) !== null) off.push("Import Data");
     if (capabilities.supportsTestDataGeneration === false) off.push("Test data generation");
     if (capabilities.supportsResultPagination === false) off.push("Load More");

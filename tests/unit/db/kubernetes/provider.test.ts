@@ -74,7 +74,6 @@ describe("declarations", () => {
       queryLanguage: "json",
       queryDialect: "kubectl",
       supportsExplain: false,
-      supportsCreateTable: false,
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,
       supportsTransactions: false,

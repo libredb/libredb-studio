@@ -388,7 +388,6 @@ describe("SparkProvider: construction and declarations", () => {
       supportsExplain: true,
       explainFormat: "spark-text",
       supportsExternalQueryLimiting: true,
-      supportsCreateTable: false,
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,
       supportsResultPagination: false,

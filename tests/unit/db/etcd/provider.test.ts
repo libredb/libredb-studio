@@ -356,7 +356,6 @@ describe("the declarations, with no client (spec 3.1, 6.2, 6.3)", () => {
       queryLanguage: "json",
       queryDialect: "etcd",
       supportsExplain: false,
-      supportsCreateTable: false,
       supportsTransactions: false,
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,

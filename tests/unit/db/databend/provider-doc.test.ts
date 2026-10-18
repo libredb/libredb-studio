@@ -1375,7 +1375,6 @@ describe("docs/providers/databend.md quotes what the code says", () => {
       "explainFormat",
       "supportsExternalQueryLimiting",
       "supportsResultPagination",
-      "supportsCreateTable",
       "supportsInlineRowEdit",
       "supportsTestDataGeneration",
       "supportsTransactions",
@@ -1388,6 +1387,8 @@ describe("docs/providers/databend.md quotes what the code says", () => {
     ]) {
       expect(rowOf(section, `\`${key}\``), key).toBe(`| \`${key}\` | \`${JSON.stringify(declared[key])}\` |`);
     }
+    expect(capabilities.createTable).toBeUndefined();
+    expect(rowOf(section, "`createTable`")).toBe("| `createTable` | absent |");
     expect(capabilities.resumesBilledCompute).toBeUndefined();
     expect(new DatabendProvider({ ...CONNECTION, warehouse: "wh" }).getCapabilities().resumesBilledCompute).toBe(true);
     expect(section).toContain("`resumesBilledCompute`");
@@ -1421,11 +1422,11 @@ describe("docs/providers/databend.md quotes what the code says", () => {
   test("section 9 says why Import Data has no target on Databend and quotes the dialog, and 13 lists it (D4)", () => {
     const section = flat(sectionOf(DOC, "## 9. Capabilities & labels"));
     // What the dialog reads from the declaration: no kind takes row writes, and no create-table.
-    expect(capabilities.supportsCreateTable).toBe(false);
+    expect(capabilities.createTable).toBeUndefined();
     expect((capabilities.objectKinds ?? []).some((kind) => kind.acceptsRowWrites === true)).toBe(false);
     expect(importRefusal(capabilities)).toBe(IMPORT_NO_TARGET);
     expect(section).toContain(
-      "Import Data has no target on Databend: Studio draws the IMPORT control for every connection, and its dialog writes only into an existing object of a kind that declares `acceptsRowWrites`, which no Databend kind does (section 6.3), or into a table it creates, which `supportsCreateTable: false` withholds, so it offers only Close and says:",
+      "Import Data has no target on Databend: Studio draws the IMPORT control for every connection, and its dialog writes only into an existing object of a kind that declares `acceptsRowWrites`, which no Databend kind does (section 6.3), or into a table it creates, which the provider withholds by declaring no `createTable`, so it offers only Close and says:",
     );
     expect(section).toContain(`> ${IMPORT_NO_TARGET}`);
     expect(section).toContain("Load rows with `INSERT` or `COPY INTO` in the editor instead.");

@@ -11,7 +11,6 @@ const caps = (overrides: Partial<ProviderCapabilities> = {}): ProviderCapabiliti
   queryLanguage: "json",
   supportsExplain: false,
   supportsExternalQueryLimiting: false,
-  supportsCreateTable: false,
   supportsInlineRowEdit: false,
   supportsMaintenance: false,
   maintenanceOperations: [],

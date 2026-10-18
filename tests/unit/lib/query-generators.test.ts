@@ -55,7 +55,6 @@ function makeCaps(overrides: Partial<ProviderCapabilities> = {}): ProviderCapabi
     queryLanguage: "sql",
     supportsExplain: true,
     supportsExternalQueryLimiting: true,
-    supportsCreateTable: true,
     supportsInlineRowEdit: true,
     supportsMaintenance: true,
     maintenanceOperations: [],
@@ -1840,7 +1839,6 @@ const promqlCaps = makeCaps({
   statementTerminator: "none",
   supportsExplain: false,
   supportsExternalQueryLimiting: false,
-  supportsCreateTable: false,
   supportsInlineRowEdit: false,
   supportsMaintenance: false,
   supportsConnectionString: false,
@@ -1922,7 +1920,6 @@ const kafkaCaps = makeCaps({
   statementTerminator: "none",
   supportsExplain: false,
   supportsExternalQueryLimiting: false,
-  supportsCreateTable: false,
   supportsInlineRowEdit: false,
   supportsMaintenance: false,
   supportsConnectionString: false,
@@ -2465,7 +2462,7 @@ describe("PromQL Generate Query (#1085)", () => {
  * the provider names in `rowActions`; Prometheus declares none (its capability object is pinned in
  * tests/unit/db/prometheus/provider.test.ts), and the function raises for a dialect with no `rowAction`.
  * `quoteTypedName` writes a name typed into the Create Table form, which a PromQL connection never opens:
- * Prometheus declares `supportsCreateTable: false` and the modal throws when opened without a dialect.
+ * Prometheus declares no `createTable` and the modal throws when opened without one.
  * `containerSpellingOf` answers nothing for an engine that does not declare `containerNameSpelling`, and a
  * PromQL connection declares none (the second test below), so completion reads no spelled name there.
  * An export added later has no classification, so this list fails until somebody writes one for it.

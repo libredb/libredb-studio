@@ -982,7 +982,6 @@ describe("the declarations", () => {
       supportsExplain: true,
       explainFormat: "snowflake-json",
       supportsExternalQueryLimiting: true,
-      supportsCreateTable: false,
       supportsResultPagination: false,
       supportsColumnProfiling: false,
       supportsInlineRowEdit: false,

@@ -446,7 +446,6 @@ describe("docs/providers/influxdb3.md quotes what the code says", () => {
       "supportsResultPagination",
       "supportsExternalQueryLimiting",
       "supportsExplain",
-      "supportsCreateTable",
       "supportsInlineRowEdit",
       "supportsTransactions",
       "supportsMaintenance",
@@ -456,6 +455,8 @@ describe("docs/providers/influxdb3.md quotes what the code says", () => {
     ]) {
       expect(rowOf(section, `\`${key}\``)).toBe(`| \`${key}\` | \`${JSON.stringify(declared[key])}\` |`);
     }
+    expect(capabilities.createTable).toBeUndefined();
+    expect(rowOf(section, "`createTable`")).toBe("| `createTable` | absent |");
     expect(capabilities.containerLevels).toBeUndefined();
     expect(capabilities.previewTimeWindow?.since).toBe("now() - INTERVAL '1 hour'");
     expect(rowOf(section, "`READ_ONLY_ENFORCED`")).toBe(

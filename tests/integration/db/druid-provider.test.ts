@@ -504,7 +504,6 @@ describe("DruidProvider metadata", () => {
       supportsExplain: true,
       explainFormat: "druid-native",
       supportsExternalQueryLimiting: true,
-      supportsCreateTable: false,
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,
       // Druid SQL takes both clauses, emitted by the shared limiter (#816).
@@ -524,12 +523,12 @@ describe("DruidProvider metadata", () => {
     });
   });
 
-  test("keeps supportsCreateTable false because CREATE is not in Druid's grammar", () => {
+  test("declares no createTable because CREATE is not in Druid's grammar", () => {
     // Live-verified, and stronger than "unimplemented": `CREATE TABLE t (id
     // BIGINT)` answers HTTP 400 "Incorrect syntax near the keyword 'CREATE' at
     // line 1, column 1" - the parser lists the statements it expected, and no
     // form of CREATE is among them. Datasources are created by ingestion.
-    expect(new DruidProvider(makeConnection()).getCapabilities().supportsCreateTable).toBe(false);
+    expect(new DruidProvider(makeConnection()).getCapabilities().createTable).toBeUndefined();
   });
 
   test("keeps supportsInlineRowEdit false because UPDATE is not in Druid's grammar either", () => {

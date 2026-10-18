@@ -609,13 +609,13 @@ describe("Db2Provider: declaration", () => {
 
   // db2-node 1.0.24 reads non-ASCII text back as written (K1) and refuses a DECIMAL that does not
   // fit (K22), measured on 12.1.0.0 and 11.5.9.0 with an edit and an import read back as HEX, so a
-  // table takes row writes again. Create Table stays off: it needs a Db2 row of column types.
+  // table takes row writes again. Create Table stays off: it needs a Db2 `createTable` spec of measured column types.
   test("only the table kind takes row writes, inline edit is on, and Create Table is off", () => {
     const capabilities = makeProvider().getCapabilities();
 
     expect(capabilities.supportsInlineRowEdit).toBe(true);
     expect(capabilities.supportsTestDataGeneration).toBe(true);
-    expect(capabilities.supportsCreateTable).toBe(false);
+    expect(capabilities.createTable).toBeUndefined();
     expect(capabilities.objectKinds?.filter((kind) => kind.acceptsRowWrites === true).map((kind) => kind.id)).toEqual([
       "table",
     ]);

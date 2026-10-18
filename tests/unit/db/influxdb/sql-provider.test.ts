@@ -221,7 +221,6 @@ describe("declarations (spec 6.3)", () => {
       queryLanguage: "sql",
       supportsExplain: false,
       supportsExternalQueryLimiting: true,
-      supportsCreateTable: false,
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,
       supportsResultPagination: true,

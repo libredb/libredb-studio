@@ -47,7 +47,6 @@ function makeCaps(overrides: Partial<ProviderCapabilities> = {}): ProviderCapabi
     queryLanguage: "sql",
     supportsExplain: false,
     supportsExternalQueryLimiting: false,
-    supportsCreateTable: false,
     supportsInlineRowEdit: false,
     supportsMaintenance: false,
     maintenanceOperations: [],

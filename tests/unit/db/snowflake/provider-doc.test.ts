@@ -343,7 +343,7 @@ describe("docs/providers/snowflake.md", () => {
     if (capabilities.supportsInlineRowEdit === false) off.push("Inline row edit");
     if (capabilities.supportsColumnProfiling === false) off.push("Column profiler");
     if (contract.buildObjectEdit === undefined) off.push("Object edit");
-    if (capabilities.supportsCreateTable === false) off.push("Create table");
+    if (capabilities.createTable === undefined) off.push("Create table");
     if (importRefusal(capabilities) !== null) off.push("Data import");
     if (capabilities.supportsTestDataGeneration === false) off.push("Test data generation");
     if (capabilities.supportsTransactions === false) off.push("Transactions");

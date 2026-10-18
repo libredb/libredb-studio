@@ -90,7 +90,6 @@ const capabilitiesFor = (
   queryLanguage,
   supportsExplain: false,
   supportsExternalQueryLimiting: false,
-  supportsCreateTable: false,
   supportsMaintenance: false,
   maintenanceOperations: [],
   supportsConnectionString: false,
