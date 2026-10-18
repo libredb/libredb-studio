@@ -243,7 +243,9 @@ describe("BaseDatabaseProvider", () => {
       expect(caps.queryLanguage).toBe("sql");
       expect(caps.supportsExplain).toBe(true);
       expect(caps.supportsExternalQueryLimiting).toBe(true);
-      expect(caps.supportsCreateTable).toBe(true);
+      // No grammar by default: a subclass offers the Create Table form only once it declares the grammar the form
+      // writes, rather than inheriting a form in another engine's dialect (#648, #1822).
+      expect(caps.createTable).toBeUndefined();
       expect(caps.supportsInlineRowEdit).toBe(true);
       // The opposite default to the line above, and deliberately: this class
       // implements no transaction methods, so a subclass that does not add them has
@@ -262,7 +264,6 @@ describe("BaseDatabaseProvider", () => {
         queryLanguage: "sql",
         supportsExplain: false,
         supportsExternalQueryLimiting: false,
-        supportsCreateTable: false,
         supportsMaintenance: false,
         maintenanceOperations: [],
         supportsConnectionString: false,
@@ -270,6 +271,7 @@ describe("BaseDatabaseProvider", () => {
         schemaRefreshPattern: "",
       };
       expect(externalImplementer.supportsInlineRowEdit).toBeUndefined();
+      expect(externalImplementer.createTable).toBeUndefined();
       expect(externalImplementer.supportsTransactions).toBeUndefined();
       expect(externalImplementer.supportsTestDataGeneration).toBeUndefined();
       expect(externalImplementer.declaresForeignKeys).toBeUndefined();

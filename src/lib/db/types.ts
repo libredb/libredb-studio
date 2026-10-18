@@ -210,6 +210,27 @@ export interface MaintenanceOperationSpec {
 }
 
 /**
+ * The grammar the Create Table form writes for this engine (`src/components/CreateTableModal.tsx`).
+ * Plain data: `/api/db/provider-meta` sends capabilities to the browser as JSON.
+ * Each engine's measured reasons live in `docs/providers/<type-id>.md`, section "Create Table form".
+ */
+export interface CreateTableSpec {
+  /**
+   * The auto-increment primary key. Absent: the engine cannot express one and the form does not offer it.
+   * `clause` is everything after the column NAME, `PRIMARY KEY` included, stored whole because engines
+   * disagree on where `PRIMARY KEY` sits inside it. `sequence`: the clause defaults from a sequence the
+   * form creates first in the table's own container (`CREATE SEQUENCE IF NOT EXISTS`, `DEFAULT nextval(...)`).
+   */
+  readonly autoIncrement?: { readonly clause: string; readonly sequence?: true };
+  /** Whether `PRIMARY KEY` and `UNIQUE` are column constraints this engine takes. False hides both checkboxes; NOT NULL stays. */
+  readonly columnConstraints: boolean;
+  /** The plain integer type of a key column that is not auto-increment. Must be one of `types`, or the dropdown trigger renders empty. */
+  readonly keyType: string;
+  /** The types the dropdown lists, in order; the first is an added column's default. */
+  readonly types: readonly [string, ...string[]];
+}
+
+/**
  * What one per-row maintenance operation will do, as its provider reads it before an admin confirms (spec 3.11).
  *
  * Answered by `DatabaseProvider.previewMaintenance` through `POST /api/db/maintenance/preview`, and published:
@@ -1003,7 +1024,13 @@ export interface ProviderCapabilities {
    */
   explainFormat?: ExplainFormat;
   supportsExternalQueryLimiting: boolean;
-  supportsCreateTable: boolean;
+  /**
+   * The create-table grammar Studio writes for this engine. Absent: no Create Table button, no
+   * object-tree "Create <kind>" item, and no import into a new table. Optional for the published-
+   * interface reason `maxIdentifierBytes` gives; a provider that declares nothing offers no form
+   * rather than one written in another engine's dialect (#648).
+   */
+  createTable?: CreateTableSpec;
   /**
    * Whether this engine accepts the single-table row update the results grid's
    * inline editor builds — `UPDATE <table> SET <col> = <val> WHERE <pk> = <val>`

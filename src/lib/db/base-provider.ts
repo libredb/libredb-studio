@@ -329,7 +329,8 @@ export abstract class BaseDatabaseProvider implements DatabaseProvider {
       queryLanguage: "sql",
       supportsExplain: true,
       supportsExternalQueryLimiting: true,
-      supportsCreateTable: true,
+      // No `createTable`: a subclass offers the Create Table form only once it declares the
+      // grammar the form writes, never one inherited in another engine's dialect (#648, #1822).
       supportsInlineRowEdit: true,
       // False, and NOT the permissive default the flag above takes: the `prepareQuery`
       // below returns the statement untouched and never applies an offset, so a subclass

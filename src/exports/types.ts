@@ -27,6 +27,7 @@ export type {
 export type {
   ProviderCapabilities,
   ProviderLabels,
+  CreateTableSpec,
   MaintenanceOperationSpec,
   MaintenancePreview,
 } from "../lib/db/types";

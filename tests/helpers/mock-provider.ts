@@ -12,6 +12,7 @@ import type {
   PerformanceMetrics,
   SlowQueryStats,
   ActiveSessionDetails,
+  CreateTableSpec,
   TableStats,
   IndexStats,
   StorageStats,
@@ -57,11 +58,22 @@ const defaultMonitoringData: MonitoringData = {
   activeSessions: [],
 };
 
+/**
+ * A minimal valid Create Table grammar for fixtures whose test reaches a create gate (#1822). Not any engine's: a test
+ * that asserts an engine's emitted SQL imports that engine's own constant instead.
+ */
+export const TEST_CREATE_TABLE_SPEC: CreateTableSpec = {
+  autoIncrement: { clause: "INTEGER PRIMARY KEY" },
+  columnConstraints: true,
+  keyType: "INTEGER",
+  types: ["INTEGER", "TEXT"],
+};
+
 const defaultCapabilities: ProviderCapabilities = {
   queryLanguage: "sql",
   supportsExplain: true,
   supportsExternalQueryLimiting: true,
-  supportsCreateTable: true,
+  createTable: TEST_CREATE_TABLE_SPEC,
   supportsInlineRowEdit: true,
   supportsMaintenance: true,
   maintenanceOperations: ["vacuum", "analyze", "reindex"],
