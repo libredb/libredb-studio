@@ -655,7 +655,7 @@ This is load-bearing for the editing phase rather than cosmetic: any client-side
 `provider-meta`'s answer is, on MariaDB, built on the wrong server's declaration.
 
 One sentence in the tree contradicts this entry, and it is the reason the entry is easy to lose.
-`flavourFor`'s docblock (`src/lib/db/providers/sql/mysql.ts:2118`) says that defaulting to MySQL
+`flavourFor`'s docblock in `src/lib/db/providers/sql/mysql.ts` says that defaulting to MySQL
 "costs two folders a MariaDB user regains the moment the connection is live". Nothing re-reads
 capabilities once a connection opens, which is this entry's whole subject, so a reader who meets that
 sentence first concludes the gap closes itself and stops looking. It is on `origin/main` and
@@ -3938,7 +3938,6 @@ point on the engines whose drivers round - the scale beside the word, or a secon
 it - a whole key is refused only where it can, and a test carries the Oracle and SQL Server pairs
 above beside the fractional ones #969 added.
 
-
 ### R4. Three of the inline editor's value rules are tables keyed by type id
 
 `NO_INSTANT_TYPE_DIALECTS`, `FLOAT64_ONLY_DIALECTS` and `NO_EXACT_DECIMAL_DIALECTS` in `src/hooks/use-inline-editing.ts` are `ReadonlySet<DatabaseConnection["type"]>` tables holding `sqlite` and `libsql`: an engine with no instant type, an engine where `REAL` and `FLOAT` are 64-bit, and an engine with no exact decimal.
@@ -6019,6 +6018,8 @@ Two halves, and the second is what stops it recurring:
 
 DOC4 is the same class in the provider docs.
 More instances, found stale at `8f2fc5c81` during the PR #1575 review (2026-10-07): `tests/integration/db/mssql-provider.test.ts` (`mssql.ts:1798`), `docs/providers/opensearch.md` (`http-transport.ts` `:806`, `:883-935`, `:913`, `:999`, `:1127`, `:1128`, `:1283`), `docs/providers/elasticsearch.md` (`http-transport.ts:1194`), `docs/BACKLOG.md` (`http-transport.ts:1556`), `tests/components/studio/BottomPanel.test.tsx` (`BottomPanel.tsx:574`), `docs/BACKLOG.md` (`BottomPanel.tsx:445`), and the `oracle.ts:1492`, `:2000` and `:2015` citations in `oracle.ts`, `tests/integration/db/oracle-provider.test.ts` and `tests/api/db-objects.test.ts`.
+More instances, already stale at `673dd0599` and found during the #1822 review (2026-10-19): `tests/api/db-objects.test.ts` (`postgres.ts:3021`, for the "No detail row" throw in `describeObject`), `tests/integration/db/postgres-provider.test.ts` (`postgres.ts:2969-2972`, for `describeObject`) and `tests/integration/db/trino-provider.test.ts` (`trino/index.ts:1032`, for the `spec.role !== "relation"` gate in `describeObject`).
+Each should become a symbol anchor rather than a corrected number.
 This entry was first written as a second "D94 (proposed)" block, which reused the id of D94 and was not a heading the structure guard reads.
 
 **Done when:** a test fails on a stale `file.ts:NNNN` anywhere under `src/`, `docs/` and `tests/`,
