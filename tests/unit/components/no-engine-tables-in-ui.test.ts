@@ -26,8 +26,14 @@ const SOURCE_FILE = /\.(c|m)?(t|j)sx?$/;
 const THIS_FILE = "tests/unit/components/no-engine-tables-in-ui.test.ts";
 const CREATE_TABLE_MODAL = "src/components/CreateTableModal.tsx";
 
-/** A `Record` or a `Set` keyed by a type id, the shape of a per-engine table. */
-const ENGINE_TABLE = /(Record|Set)<\s*(DatabaseType|DatabaseConnection\["type"\])/;
+/**
+ * A `Record`, `Set` or `Map` keyed by a type id, or a mapped type over one, the shapes of a per-engine table.
+ * `\s*` spans newlines, so a type argument the formatter wraps onto the next line still matches when the pattern
+ * runs over a whole file. This is wider than design section 6, which named only `Record` and `Set`, on purpose.
+ * A key spelled through a type alias of `DatabaseType` is still not caught.
+ */
+const ENGINE_TABLE =
+  /(Record|Set|Map)<\s*(DatabaseType|DatabaseConnection\["type"\])|\[\s*\w+\s+in\s+(DatabaseType|DatabaseConnection\["type"\])\s*\]/;
 
 /** A per-engine table the UI still keeps, by file and constant name, with the backlog entry that moves it. */
 interface Allowed {
@@ -65,19 +71,25 @@ function withoutComments(text: string): string {
     .replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
 }
 
+/** Each 1-based line on which a per-engine table in `text` starts, once per line, matched over the whole text. */
+function tableLines(text: string): number[] {
+  const all = new RegExp(ENGINE_TABLE.source, "g");
+  return [...new Set([...text.matchAll(all)].map((match) => text.slice(0, match.index).split("\n").length))];
+}
+
 /** Every per-engine table under the UI directories that the closed list does not hold, and every listed one gone. */
 function engineTableFindings(): string[] {
   const unmatched = [...ALLOWED];
   const findings: string[] = [];
   for (const path of listedFiles("src/components", "src/hooks").filter((file) => SOURCE_FILE.test(file))) {
-    withoutComments(readFileSync(join(ROOT, path), "utf8"))
-      .split("\n")
-      .forEach((line, index) => {
-        if (!ENGINE_TABLE.test(line)) return;
-        const at = unmatched.findIndex((allowed) => allowed.path === path && line.includes(`const ${allowed.name}`));
-        if (at === -1) findings.push(`unlisted ${path}:${index + 1} ${line.trim()}`);
-        else unmatched.splice(at, 1);
-      });
+    const text = withoutComments(readFileSync(join(ROOT, path), "utf8"));
+    const lines = text.split("\n");
+    for (const number of tableLines(text)) {
+      const line = lines[number - 1];
+      const at = unmatched.findIndex((allowed) => allowed.path === path && line.includes(`const ${allowed.name}`));
+      if (at === -1) findings.push(`unlisted ${path}:${number} ${line.trim()}`);
+      else unmatched.splice(at, 1);
+    }
   }
   for (const gone of unmatched) findings.push(`listed but absent ${gone.path}: ${gone.name} (${gone.owner})`);
   return findings;
@@ -92,6 +104,15 @@ describe("per-engine tables in the UI (#1822)", () => {
     expect(ENGINE_TABLE.test("const X: Partial<Record<DatabaseType, Y>> = {};")).toBe(true);
     expect(ENGINE_TABLE.test('const X: ReadonlySet<DatabaseConnection["type"]> = new Set();')).toBe(true);
     expect(ENGINE_TABLE.test("const X: ReadonlySet<string> = new Set();")).toBe(false);
+  });
+
+  test("the table pattern matches a Map, a mapped type and a type argument wrapped onto the next line", () => {
+    expect(tableLines("const X: Map<DatabaseType, string> = new Map();")).toEqual([1]);
+    expect(tableLines("const X: { [K in DatabaseType]?: string } = {};")).toEqual([1]);
+    expect(tableLines('const X: { [key in DatabaseConnection["type"]]: string } = {};')).toEqual([1]);
+    expect(tableLines("const a = 1;\nconst X: Record<\n  DatabaseType,\n  string\n> = {};\n")).toEqual([2]);
+    expect(tableLines("const X: Map<string, DatabaseType> = new Map();")).toEqual([]);
+    expect(tableLines("const X: ReadonlySet<DatabaseType> = new Set<DatabaseType>();")).toEqual([1]);
   });
 
   test("a table in a comment is not a table", () => {
