@@ -1784,7 +1784,7 @@ no control offers it.
 | `queryDialect` | `redis` — routes the client-side query generators to Redis command output and types the editor tab `redis` (see 5.3). Checked before `queryLanguage`, which says only "not SQL" and by itself meant MongoDB (#427) |
 | `supportsExplain` | `false` |
 | `supportsExternalQueryLimiting` | `false` |
-| `supportsCreateTable` | `false` |
+| `createTable` | absent |
 | `supportsInlineRowEdit` | `false` — Redis commands are not SQL, so there is no `UPDATE ... SET` for the results grid's inline editor to emit |
 | `supportsTestDataGeneration` | `false` - no kind here declares a row write, and Redis commands have no multi-row insert for the Generate Test Data dialog to emit |
 | `supportsResultPagination` | `false` — `prepareQuery` pins both `limit` and `offset`: a Redis read is a command, not a statement whose bound this layer can advance (#816) |

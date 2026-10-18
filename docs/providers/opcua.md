@@ -938,7 +938,8 @@ than drawn disabled with no explanation.
 | `queryLanguage` / `queryDialect` | `json` / `opcua` |
 | `defaultPort` | 4840 |
 | `supportsResultPagination` | false |
-| `supportsTransactions`, `declaresForeignKeys`, `supportsCreateTable`, `supportsInlineRowEdit`, `supportsTestDataGeneration`, `supportsExplain` | false |
+| `createTable` | absent |
+| `supportsTransactions`, `declaresForeignKeys`, `supportsInlineRowEdit`, `supportsTestDataGeneration`, `supportsExplain` | false |
 | `supportsExternalQueryLimiting` | false |
 | `supportsConnectionString` | false |
 | `schemaRefreshPattern` | `(?!)` |

@@ -624,7 +624,7 @@ it the live cluster disproved, and this is the record of why the code differs.
 
 ### 3.11 The three `false` capabilities are each impossible, not merely unimplemented
 
-- **`supportsCreateTable: false`.** `CREATE TABLE t (id BIGINT)` is not unsupported — it is not in the
+- **No `createTable` declared.** `CREATE TABLE t (id BIGINT)` is not unsupported — it is not in the
   grammar. Live: `400`, *"Incorrect syntax near the keyword 'CREATE' at line 1, column 1."*, and the
   parser then lists what it expected: `"INSERT"`, `"UPSERT"`, `"EXPLAIN"`, `"SET"`, `"RESET"`, … with
   no form of `CREATE` among them. A datasource comes into existence by being ingested into. Per the
@@ -1609,7 +1609,7 @@ Both halves of that are real constraints, not scope cuts made lightly:
 | `supportsExplain` | `true` | `EXPLAIN PLAN FOR` returns a structured native plan ([§3.12](#312-explain-the-native-plan-is-genuinely-a-tree)) |
 | `explainFormat` | `druid-native` | The strategy id in `src/lib/explain/index.ts` |
 | `supportsExternalQueryLimiting` | `true` | `LIMIT n` / `LIMIT n OFFSET m` are both correct Druid SQL |
-| `supportsCreateTable` | **`false`** | `CREATE` is not in the grammar; a datasource is created by ingestion ([§3.11](#311-the-three-false-capabilities-are-each-impossible-not-merely-unimplemented)) |
+| `createTable` | **absent** | `CREATE` is not in the grammar; a datasource is created by ingestion ([§3.11](#311-the-three-false-capabilities-are-each-impossible-not-merely-unimplemented)) |
 | `supportsInlineRowEdit` | **`false`** | `UPDATE t SET ...` answers `Unsupported SQL statement [UPDATE]`; Druid SQL has no row-level DML ([§5.5](#55-druid-sql-cannot-write-and-the-server-says-so-clearly)) |
 | `supportsTestDataGeneration` | **`false`** | Druid SQL has no `INSERT ... VALUES` for the Generate Test Data dialog to emit, and no kind here declares a row write |
 | `supportsResultPagination` | **`true`** | Druid SQL takes both clauses; the shared limiter emits `LIMIT n OFFSET m` (#816) |

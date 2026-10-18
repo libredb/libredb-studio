@@ -469,7 +469,7 @@ None: InfluxDB compacts its own storage and keeps no statistics to update.
 | `queryLanguage` | `"influxql"` |
 | `supportsExplain` | `false` |
 | `supportsExternalQueryLimiting` | `false` |
-| `supportsCreateTable` | `false` |
+| `createTable` | absent |
 | `supportsInlineRowEdit` | `false` |
 | `supportsTestDataGeneration` | `false` |
 | `supportsResultPagination` | `false` |

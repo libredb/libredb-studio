@@ -580,7 +580,7 @@ An operator-seeded connection with `mcp: true` is offered to `list_connections` 
 | Inline row edit | An apply would be several warehouse statements and as many separate commits |
 | Column profiler | Up to 20 full-column scans per click, which cannot be cancelled |
 | Object edit | DDL commits implicitly and `ALTER COLUMN` is limited, so no kind is editable |
-| Create table | The provider declares no create-table (`supportsCreateTable: false`; the Create Table form has no Snowflake dialect), so neither the explorer nor the tree offers Create Table; write the `CREATE TABLE` in the editor |
+| Create table | The provider declares no create-table (it declares no `createTable`; the Create Table form has no Snowflake grammar), so neither the explorer nor the tree offers Create Table; write the `CREATE TABLE` in the editor |
 | Data import | No kind accepts row writes and there is no create-table, so the import dialog opens on `Studio's import has no target on this connection: it offers no existing table here to write into and cannot create one.` |
 | Test data generation | It writes on the warehouse |
 | Transactions | No transaction spans two requests ([section 4](#4-sessions-transactions-and-blocks)) |

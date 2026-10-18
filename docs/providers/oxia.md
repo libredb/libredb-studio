@@ -589,7 +589,7 @@ Every capability is written, since the base's defaults are SQL's:
 | `queryDialect` | `"oxia"` |
 | `supportsExplain` | `false` |
 | `supportsExternalQueryLimiting` | `false` |
-| `supportsCreateTable` | `false` |
+| `createTable` | absent |
 | `supportsInlineRowEdit` | `false` |
 | `supportsTestDataGeneration` | `false` |
 | `supportsResultPagination` | `false` |

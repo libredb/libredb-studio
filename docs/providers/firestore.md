@@ -431,7 +431,8 @@ Health and pulse reuse the connect probe; the overview and the monitoring panels
 | `queryLanguage` / `queryDialect` | `json` / `firestore` |
 | `supportsExplain` / `explainFormat` | true / `firestore-explain`; on an emulator server false, with no format |
 | `supportsResultPagination`, `supportsExternalQueryLimiting` | false |
-| `supportsCreateTable`, `supportsInlineRowEdit`, `supportsTestDataGeneration`, `supportsTransactions`, `supportsMaintenance` | false |
+| `createTable` | absent |
+| `supportsInlineRowEdit`, `supportsTestDataGeneration`, `supportsTransactions`, `supportsMaintenance` | false |
 | `enforcesReadOnly` | true |
 | `containerLevels` | none |
 | `objectKinds` | `collection` (relation), `document` (Keys panel, Source tab, JSON) |

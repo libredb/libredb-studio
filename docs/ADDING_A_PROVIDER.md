@@ -385,7 +385,7 @@ stand in for, because both read the WHOLE fleet at once:
 
 **Override the metadata hooks** so the shared UI renders correctly:
 
-- `getCapabilities()` — query language (one of the five `queryLanguage` values in the table below), `defaultPort`, supported `maintenanceOperations`, the `supportsExplain`/`supportsConnectionString`/`supportsCreateTable` flags, and `schemaRefreshPattern`.
+- `getCapabilities()` — query language (one of the five `queryLanguage` values in the table below), `defaultPort`, supported `maintenanceOperations`, the `supportsExplain`/`supportsConnectionString` flags, the `createTable` grammar if the engine takes the Create Table form's DDL (see [Capability honesty](#capability-honesty)), and `schemaRefreshPattern`.
 - `getLabels()` — only if the generic SQL wording ("Table" / "row" / "Select Top 50" / …) doesn't fit. Non-relational providers relabel it (Redis → "Key Pattern"/"key", MongoDB → "Collection"/"document").
 - `prepareQuery()` — only if your dialect needs non-standard pagination. SQL `LIMIT` injection is inherited from `SQLBaseProvider`; Oracle/SQL Server override it for `FETCH FIRST` / `TOP`; the non-SQL providers make it a metadata-only pass-through.
 
@@ -672,8 +672,11 @@ control that only emits invalid input. That is the defect class
 [#194](https://github.com/libredb/libredb-studio/issues/194) and
 [#201](https://github.com/libredb/libredb-studio/issues/201) were about. Two traps already hit:
 
-- `supportsCreateTable` must be `false` for schemaless engines. `CreateTableModal` builds
-  `CREATE TABLE` from a column list, which a schemaless collection cannot consume.
+- `createTable?: CreateTableSpec` is absent by default, and absent means no Create Table button, no
+  object-tree "Create <kind>" item and no import into a new table. Declare it only when every type
+  in it was measured in a `CREATE TABLE` on the engine. A schemaless engine declares none:
+  `CreateTableModal` builds `CREATE TABLE` from a column list, which a schemaless collection cannot
+  consume. See [The `createTable` grammar](#the-createtable-grammar) below for the shape.
 - `supportsInlineRowEdit` must be `false` unless the engine accepts
   `UPDATE <table> SET <col> = <val> WHERE <pk> = <val>` — the one statement shape
   [`use-inline-editing.ts`](../src/hooks/use-inline-editing.ts) builds. ClickHouse was the trap
@@ -727,8 +730,8 @@ control that only emits invalid input. That is the defect class
 - A capability can be absent because the **grammar** lacks it rather than because nobody implemented
   it, and the flag reads the same either way — so check, and then say so. Druid answers
   `CREATE TABLE t (id BIGINT)` with a syntax error, because `CREATE` is not one of its statements at
-  all (a datasource comes into existence by being ingested into), so `supportsCreateTable` is
-  `false`. Nothing in `MaintenanceType` has a SQL-reachable Druid analogue either — compaction and
+  all (a datasource comes into existence by being ingested into), so it declares no
+  `createTable`. Nothing in `MaintenanceType` has a SQL-reachable Druid analogue either — compaction and
   retention are Coordinator and task concerns, and `kill` has nowhere to get a query id from because
   Druid publishes no catalog of running queries — so `supportsMaintenance` is `false` with an empty
   operation list, rather than true with nothing behind it.
@@ -736,6 +739,36 @@ control that only emits invalid input. That is the defect class
 The same honesty rule governs monitoring: **a source the connected user cannot read returns empty,
 it never throws.** Monitoring catalogs are frequently permission-gated, so a denial is the normal
 case for a restricted user and must not break an otherwise working connection.
+
+### The `createTable` grammar
+
+Until [#648](https://github.com/libredb/libredb-studio/issues/648) the Create Table form wrote one
+PostgreSQL dialect for every engine (`id SERIAL PRIMARY KEY`, `JSONB`), so on any other engine it
+could only emit DDL that engine did not take.
+#648 moved the spellings into a per-engine table inside the component, beside a separate
+boolean capability that said whether to offer the form, and the two could disagree: a provider could say yes with no row and the
+form threw, or wrote PostgreSQL DDL for another engine.
+Since #1822 the provider that can spell a `CREATE TABLE` declares it, and nothing else decides:
+
+```ts
+export interface CreateTableSpec {
+  readonly autoIncrement?: { readonly clause: string; readonly sequence?: true };
+  readonly columnConstraints: boolean;
+  readonly keyType: string;
+  readonly types: readonly [string, ...string[]];
+}
+```
+
+- `autoIncrement.clause` is everything after the column name, `PRIMARY KEY` included; leave
+  `autoIncrement` out where the engine cannot express one. `sequence: true` makes the form create a
+  sequence first and default the column from it (DuckDB).
+- `columnConstraints: false` hides the `PRIMARY KEY` and `UNIQUE` checkboxes (Trino).
+- `keyType` must be one of `types`, and the first entry of `types` is an added column's default.
+- Keep the constant in a driver-free module next to the provider (`sql/postgres-create-table.ts`),
+  so tests read it without loading a native driver, and put the measured reasons in a
+  "Create Table form" section of `docs/providers/<type-id>.md`.
+  `tests/unit/db/create-table-spec-census.test.ts` checks the declaring set, each spec's invariants
+  and that the doc section names every type and the clause.
 
 ---
 
@@ -812,7 +845,7 @@ If it appears in routes, components, or utilities — you're doing it wrong. Use
 | Schema | Sidebar shows tables/collections with columns and indexes |
 | Query execution | Write a query, press Ctrl+Enter, verify results |
 | EXPLAIN | If `supportsExplain: true`, verify EXPLAIN button works |
-| Create Table | If `supportsCreateTable: true`, verify the + button appears |
+| Create Table | If `createTable` is declared, verify the + button, the tree item and the generated DDL |
 | Inline row edit | If `supportsInlineRowEdit: true`, verify the EDIT toggle appears and one edited row runs one statement the engine accepts |
 | Generate Test Data | If `supportsTestDataGeneration: true`, open Generate Test Data from a writable object's row menu, click Execute and verify the rows land |
 | Result pagination | If `supportsResultPagination: true`, open a table with more than 50 rows from the tree, click Load More once and verify the appended rows are ones you had not already seen; if `false`, verify no Load More appears |
@@ -836,7 +869,7 @@ Every field and what it controls:
 | `explainFormat` | `ExplainFormat \| undefined` | **Required whenever `supportsExplain` is true.** Selects the strategy in `src/lib/explain/index.ts`. Setting the flag without the format leaves the control visible and dead — the UI resets out of explain mode when metadata lacks it |
 | `supportsSqlFormat` | `false?` | False where the shared SQL formatter rewrites this engine's valid text: the editor offers no Format for its tabs. Absent: the tab's language decides, as before. |
 | `supportsExternalQueryLimiting` | `boolean` | Whether route applies LIMIT to queries (SQL) or provider handles it (MongoDB) |
-| `supportsCreateTable` | `boolean` | "Create Table" button in SchemaExplorer |
+| `createTable` | `CreateTableSpec?` | The grammar the Create Table form writes: the auto-increment key clause, whether `PRIMARY KEY` and `UNIQUE` exist, the key type and the type list. Absent: no Create Table button in SchemaExplorer, no object-tree "Create <kind>" item and no import into a new table. See [The `createTable` grammar](#the-createtable-grammar) |
 | `maxIdentifierBytes` | `number?` | The longest identifier, in UTF-8 bytes, the engine keeps whole. Declare it only where the engine SHORTENS a longer name instead of refusing it (PostgreSQL truncates to 63 bytes with only a NOTICE): the Create Table form then refuses a longer name under its field. An engine that refuses with an error of its own declares nothing, because that error reaches the user through the normal execute path. Absent: no client-side limit |
 | `supportsInlineRowEdit` | `boolean?` | Whether the results grid offers inline row editing. `false` hides the EDIT toggle and every editable cell — set it where the engine has no `UPDATE <table> SET <col> = <val> WHERE <pk> = <val>` statement, which is what `use-inline-editing.ts` builds. Optional only because the interface is published and a required addition breaks external implementers; every provider here declares it, and an absent flag reads as unsupported |
 | `inlineEditRefusedColumns` | `{ type: string; reason: string }?` | The result columns the inline editor must not write where the engine takes its `UPDATE` for other columns. `type` is a regular expression source matched against the type the result declares for the column (`QueryResult.columnTypes`); each matching cell opens no editor and shows `reason`. Db2 sets it for CLOB, DBCLOB and BLOB, which db2-node does not write when bound (K24). Absent refuses no column |

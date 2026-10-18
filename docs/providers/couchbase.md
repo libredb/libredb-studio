@@ -1239,7 +1239,7 @@ stays absent, and that card never renders either.
 | `supportsExplain` | `true` |
 | `explainFormat` | `couchbase-json` |
 | `supportsExternalQueryLimiting` | `true` |
-| `supportsCreateTable` | `false` |
+| `createTable` | absent |
 | `supportsInlineRowEdit` | `false` — SQL++ has `UPDATE <keyspace> SET ... WHERE ...`, but the shared editor's `WHERE <pk> = <value>` would filter on `__id`, the key **projection alias**, which is not a document field ([§13](#13-known-limitations--future-work)) |
 | `supportsTestDataGeneration` | `false` - a collection takes a document write, but the Generate Test Data dialog's `INSERT INTO ... VALUES` was never measured against SQL++, so the row menus do not offer it (#1468) |
 | `supportsResultPagination` | `true` — SQL++ takes `LIMIT n OFFSET m`, and this provider's `prepareQuery` routes through the shared limiter to emit it (#816) |
@@ -1254,9 +1254,9 @@ stays absent, and that card never renders either.
 | `objectKinds` | `collection`, `function`, `index` ([§6a](#6a-the-object-surface-789)) |
 | `schemaRefreshPattern` | `\b(CREATE\|DROP\|ALTER)\s+(COLLECTION\|SCOPE\|INDEX)\b` |
 
-`supportsCreateTable: false` is deliberate: `CreateTableModal` builds `CREATE TABLE` from a column
-list, while Couchbase collections are schemaless and `CREATE COLLECTION` takes no columns. Leaving
-the flag on would render a control that can only emit invalid SQL++.
+Declaring no `createTable` is deliberate: `CreateTableModal` builds `CREATE TABLE` from a column
+list, while Couchbase collections are schemaless and `CREATE COLLECTION` takes no columns. Declaring
+one would render a control that can only emit invalid SQL++.
 
 ### `getLabels()` ([`index.ts`](../../src/lib/db/providers/document/couchbase/index.ts))
 

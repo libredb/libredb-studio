@@ -549,7 +549,7 @@ because they must never be compared as strings: the query-response `meta` array 
 `Map(String, UInt8)` with a space after the comma, while `system.columns.type` renders the same
 type as `Map(String,String)` with no space.
 
-### 3.10 `supportsCreateTable` is false — live-disproved the issue's own guess
+### 3.10 No `createTable` is declared — live-disproved the issue's own guess
 
 The tracking issue expected `ENGINE` / `ORDER BY` to be the blocker for `CREATE TABLE`. They are
 not: `CREATE TABLE t (id Int32, name String)` succeeds outright on ClickHouse 26.x, because it
@@ -1489,7 +1489,7 @@ rather than silent.
 | `supportsExplain` | `true` |
 | `explainFormat` | `clickhouse-json` |
 | `supportsExternalQueryLimiting` | `true` |
-| `supportsCreateTable` | `false` |
+| `createTable` | absent |
 | `supportsInlineRowEdit` | `false` — a bare `UPDATE ... SET` is code `48` `NOT_IMPLEMENTED` here ([§13](#13-known-limitations--future-work)) |
 | `supportsTestDataGeneration` | `false` - no kind here declares a row write, so the row menus would not offer Generate Test Data either way |
 | `supportsResultPagination` | `true` — `LIMIT n OFFSET m` from the shared limiter. A statement ending in `FORMAT` or `SETTINGS` comes back `wasLimited: false` and is therefore offered no Load More, which is the intended answer and needs no branch of its own (#816) |
@@ -1504,8 +1504,8 @@ rather than silent.
 | `objectKinds` | `table`, `view`, `materialized_view`, `dictionary`, `function` ([§6.1](#61-the-object-surface-789)) |
 | `schemaRefreshPattern` | `\b(CREATE\|DROP\|ALTER\|RENAME\|TRUNCATE\|ATTACH\|DETACH)\b` |
 
-`supportsCreateTable: false` is deliberate, not an oversight — see
-[§3.10](#310-supportscreatetable-is-false--live-disproved-the-issues-own-guess).
+Declaring no `createTable` is deliberate, not an oversight — see
+[§3.10](#310-no-createtable-is-declared--live-disproved-the-issues-own-guess).
 
 ### `getLabels()` ([`index.ts`](../../src/lib/db/providers/sql/clickhouse/index.ts))
 

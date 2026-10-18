@@ -319,7 +319,7 @@ These partial records deliberately have none:
 | `CATALOG_COMPOSERS`, `ESTIMATING_EXPLAIN_PREFIX` | `src/lib/agent/composed-sql.ts` | They serve `AGENT_EXECUTION_ENGINES`, and agent execute mode is out of scope for PromQL (#1085, section 2) |
 | `ESTIMATE_BUILDERS` | `src/lib/agent/schema-stats.ts` | Prometheus holds no table statistics a run knows how to read; its series counts are TSDB top-N figures, not estimates |
 | `ENGINE_URI_SCHEMES` | `src/lib/connection-string-parser.ts` | No connection string ([§4.5](#45-no-connection-string)) |
-| `DIALECTS` | `src/components/CreateTableModal.tsx` | Only engines with `supportsCreateTable: true` reach that form |
+| `createTable` | `src/lib/db/types.ts` (`CreateTableSpec`) | Only engines that declare a `createTable` reach the Create Table form; Prometheus declares none |
 | `SQL_GRAMMARS` | `src/lib/sql/grammar.ts` | PromQL is not SQL, and `prometheus` is in `NON_SQL_DIALECTS`. Nothing on the run path reads PromQL under a SQL grammar: the confirmation gate answers from the `prometheus` row of `NON_SQL_DESTRUCTIVE_VOCABULARY` before any SQL reading ([§5.1](#51-the-call)), the multi-statement route is taken only where `queryLanguage` is `sql`, and the provider's own `prepareQuery` returns the text unchanged |
 | `NO_PORTABLE_INDEX_DDL`, `NO_FOREIGN_KEYS`, `FOREIGN_KEY_ONLY_IN_CREATE_TABLE` | `src/lib/schema-diff/migration-generator.ts` | They qualify index and foreign-key DDL for engines that have table DDL at all; how the generator treats `prometheus` as a whole is recorded in `MODIFIED_COLUMN_COVERAGE` and `TRANSACTION_WRAPPER_COVERAGE` in `tests/unit/schema-diff/migration-generator.test.ts` |
 | `AGENT_EXECUTION_ENGINES` | `src/lib/agent/engine-support.ts` | Agent execute mode is a non-goal; plan mode and the `operations` workflow still reach the server |
@@ -592,7 +592,8 @@ A direct call of `runMaintenance` is refused with a `QueryError` saying that com
 ### `getCapabilities()` ([`index.ts`](../../src/lib/db/providers/timeseries/prometheus/index.ts))
 
 - `queryLanguage: "promql"`, no `queryDialect`.
-- `supportsExplain`, `supportsCreateTable`, `supportsTransactions`, `supportsMaintenance`, `supportsInlineRowEdit`, `supportsTestDataGeneration`, `supportsResultPagination`, `supportsExternalQueryLimiting`, `supportsConnectionString`: all `false`.
+- `createTable`: absent; the provider declares no `createTable`.
+- `supportsExplain`, `supportsTransactions`, `supportsMaintenance`, `supportsInlineRowEdit`, `supportsTestDataGeneration`, `supportsResultPagination`, `supportsExternalQueryLimiting`, `supportsConnectionString`: all `false`.
 - `declaresForeignKeys: false`, `statementTerminator: "none"`, `defaultPort: 9090`, `containerLevels: []`, `maintenanceOperations: []`, and the six object kinds of [§6.1](#61-the-object-surface-789).
 - `schemaRefreshPattern: "(?!)"`, the empty lookahead, which matches nothing: no PromQL statement changes what the tree shows, because the provider calls read endpoints only and the metric catalogue moves with what the server scrapes.
 

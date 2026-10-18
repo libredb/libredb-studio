@@ -28,10 +28,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S9 · 6
-- [Drivers and connections](#drivers-and-connections) — D1-D375, U17 · 272
+- [Drivers and connections](#drivers-and-connections) — D1-D376, U17 · 273
 - [Value interpolation](#value-interpolation) — V1
-- [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U145 · 132
+- [Row editing](#row-editing) — R1–R4 · 4
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U146 · 133
 - [Dependencies](#dependencies) — P1-P9 · 7
 - [Documentation](#documentation) — DOC3-DOC35 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
@@ -655,7 +655,7 @@ This is load-bearing for the editing phase rather than cosmetic: any client-side
 `provider-meta`'s answer is, on MariaDB, built on the wrong server's declaration.
 
 One sentence in the tree contradicts this entry, and it is the reason the entry is easy to lose.
-`flavourFor`'s docblock (`src/lib/db/providers/sql/mysql.ts:1189`) says that defaulting to MySQL
+`flavourFor`'s docblock (`src/lib/db/providers/sql/mysql.ts:2118`) says that defaulting to MySQL
 "costs two folders a MariaDB user regains the moment the connection is live". Nothing re-reads
 capabilities once a connection opens, which is this entry's whole subject, so a reader who meets that
 sentence first concludes the gap closes itself and stops looking. It is on `origin/main` and
@@ -2020,12 +2020,12 @@ Found 2026-10-03 while reviewing the Neo4j provider (PR #1239, review N6).
 ### D145. Db2 Create Table is off until the dialog and the import have Db2 column types
 
 Inline row edit and the import into an existing table came back with `db2-node` 1.0.24, which reads non-ASCII text back as written and refuses a DECIMAL that does not fit its column, measured on Db2 12.1 and 11.5 by `tests/live/db2-live-check.ts` (K1 and K22 in `docs/providers/db2.md`), and 1.0.25 stores a BOOLEAN edit too (K16, fixed).
-`db2Capabilities` (`src/lib/db/providers/sql/db2/capabilities.ts`) still sets `supportsCreateTable` to false, which also withholds an import into a new table, because neither path can spell a Db2 table.
-`CreateTableModal` (`src/components/CreateTableModal.tsx`) has no Db2 row in `DIALECTS` and refuses to open without one, and `inferSqlType` in `src/components/DataImportModal.tsx` writes `TEXT`, which Db2 refuses (SQL0204N), and `NUMERIC`, which Db2 reads as `DECIMAL(5,0)` and so cuts every fraction.
+`db2Capabilities` (`src/lib/db/providers/sql/db2/capabilities.ts`) still declares no `createTable`, which also withholds an import into a new table, because neither path can spell a Db2 table.
+`CreateTableModal` (`src/components/CreateTableModal.tsx`) writes only the grammar a provider declares and refuses to open without one (#1822), and `inferSqlType` in `src/components/DataImportModal.tsx` writes `TEXT`, which Db2 refuses (SQL0204N), and `NUMERIC`, which Db2 reads as `DECIMAL(5,0)` and so cuts every fraction.
 
 Found 2026-10-03 by the Db2 provider's driver spike (#786); narrowed to Create Table 2026-10-04 when writes came back.
 
-**Done when:** `CreateTableModal` carries a Db2 row whose every type was measured in a `CREATE TABLE` on 12.1 and 11.5, an import into a new Db2 table infers Db2 types that keep the imported values exactly, with a round trip of non-ASCII text and a fractional number in the live check, and Db2 declares `supportsCreateTable`.
+**Done when:** Db2 declares a `createTable` whose every type was measured in a `CREATE TABLE` on 12.1 and 11.5, and an import into a new Db2 table infers Db2 types that keep the imported values exactly, with a round trip of non-ASCII text and a fractional number in the live check.
 
 ### D146. Db2 monitoring reads only the version and two catalog counts
 
@@ -3836,6 +3836,16 @@ Found 2026-10-17 while verifying an external review of #1785.
 
 **Done when:** concurrent requests for a stale entry share one retirement and one replacement, for example by taking the entry out of the cache before awaiting its disconnect, no provider is left connected outside the cache, and a test with a disconnect held open and two requests shows one replacement provider and the old one closed.
 
+### D376. The schema-diff migration generator keeps its per-engine rules in tables keyed by type id
+
+`src/lib/schema-diff/migration-generator.ts` decides what it can write per engine from tables keyed by `DatabaseType`: `NO_COLUMN_MODIFICATION`, `NO_DROP_IF_EXISTS`, `NO_TRANSACTION_WRAPPER`, `NO_TABLE_DDL`, `NO_PORTABLE_INDEX_DDL`, `NO_FOREIGN_KEYS`, `NO_PRIMARY_KEY_CONSTRAINT` and `FOREIGN_KEY_ONLY_IN_CREATE_TABLE`, plus `dialect === "<id>"` branches in the column and `ALTER TABLE` writers.
+A new provider gets the generator's default (PostgreSQL-shaped) DDL until someone adds it to the right tables, which is the defect class #648 was for the Create Table form, and the engine's facts live in the generator rather than beside its provider.
+#1822 moved the Create Table form's grammar onto the provider as `createTable` and left these tables alone, because they are a separate surface with their own scope; D147 and D350 are single-engine entries inside it.
+
+Found 2026-10-18 while designing #1822.
+
+**Done when:** each rule the generator reads is a declaration on the provider's capabilities, the generator holds no table or branch keyed by a type id, and `tests/unit/schema-diff/migration-dialects.test.ts` still pins every engine's emitted text unchanged.
+
 ## Value interpolation
 
 ### V1. Query history records the placeholders, not the values that were bound
@@ -3927,6 +3937,17 @@ writes correctly and must keep doing so.
 point on the engines whose drivers round - the scale beside the word, or a second field that says
 it - a whole key is refused only where it can, and a test carries the Oracle and SQL Server pairs
 above beside the fractional ones #969 added.
+
+
+### R4. Three of the inline editor's value rules are tables keyed by type id
+
+`NO_INSTANT_TYPE_DIALECTS`, `FLOAT64_ONLY_DIALECTS` and `NO_EXACT_DECIMAL_DIALECTS` in `src/hooks/use-inline-editing.ts` are `ReadonlySet<DatabaseConnection["type"]>` tables holding `sqlite` and `libsql`: an engine with no instant type, an engine where `REAL` and `FLOAT` are 64-bit, and an engine with no exact decimal.
+Each is a fact about the engine kept in a UI hook, so a new engine that shares one of them (or a third SQLite-family id) is wrong until someone edits the hook.
+`tests/unit/components/no-engine-tables-in-ui.test.ts` (#1822) allows exactly these three by file and constant name, and fails when a listed one no longer exists.
+
+Found 2026-10-18 while designing #1822.
+
+**Done when:** the three facts are declared on the provider's capabilities and read from there, the measurements in their docblocks move to `docs/providers/sqlite.md` and `docs/providers/libsql.md`, the inline-editing tests pass unchanged, and the guard's allowlist is empty.
 
 ---
 
@@ -5489,7 +5510,7 @@ Found 2026-10-12 in a browser pass of the RabbitMQ provider, reproduced with scr
 ### U124. Firestore's Database ID box carries a sentence about Create Table and SHOW SCHEMAS
 
 The connection dialog draws one fixed sentence under the schema box for every engine that takes the field (`src/components/ConnectionModal.tsx:1063`, `:1080-1083`): "Used for unqualified table names in queries and Create Table. Leave empty to qualify names yourself. Run SHOW SCHEMAS to list the catalog's schemas."
-It was written for Trino, and the box is also Firestore's "Database ID" (`src/lib/db-ui-config.ts:987-992`), where the provider declares `supportsCreateTable: false` (`src/lib/db/providers/document/firestore/index.ts:200`) and there is no `SHOW SCHEMAS`.
+It was written for Trino, and the box is also Firestore's "Database ID" (`src/lib/db-ui-config.ts:987-992`), where the provider declares no `createTable` (`src/lib/db/providers/document/firestore/index.ts`) and there is no `SHOW SCHEMAS`.
 So a Firestore user reads, under the engine's own hint ("Empty for the (default) database"), advice about table names and a statement the engine does not have.
 BigQuery's "Default dataset" box (`src/lib/db-ui-config.ts:859`) takes the same sentence, and whether it holds there is not measured.
 The sentence is not a declared field, so an engine entry cannot replace or drop it the way `fieldHints` and `fieldPlaceholders` do.
@@ -5708,6 +5729,16 @@ Measured 2026-10-17 on `main` at 674683b19 with `e2e/opcua-provider.spec.ts`, on
 Found 2026-10-17 while verifying #1790.
 
 **Done when:** the specs open the dialog by the button's own name (`getByRole("button", { name: "New connection" })`, the header's `aria-label`), and no spec under `e2e/` picks a sidebar header button by its position.
+
+### U146. An import into a new table spells types the engine may not have
+
+`inferSqlType` in `src/components/DataImportModal.tsx` writes `TEXT`, `INTEGER`, `NUMERIC` or `BOOLEAN` for every engine that declares a `createTable`.
+By the facts the Create Table form records (`docs/providers/<type-id>.md`, "Create Table form"), Trino and Oracle have no `TEXT` and SQL Server has no `BOOLEAN`; that is inferred from those sections, not measured through the import.
+D145 measured the same class on Db2, where `TEXT` is SQL0204N and `NUMERIC` is `DECIMAL(5,0)`.
+
+Found 2026-10-18 while designing #1822.
+
+**Done when:** each of the eight engines that declare a `createTable` has a live round trip of non-ASCII text, a fractional number, a 64-bit integer and a boolean column through an import into a new table, and the import reads its type spelling from a provider declaration rather than one portable list.
 
 ## Dependencies
 

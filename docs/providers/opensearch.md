@@ -705,7 +705,7 @@ statement form exists and the setting does not permit it.
 
 Consequences elsewhere in the product:
 
-- `supportsCreateTable: false` and `supportsInlineRowEdit: false` are facts about the grammar, not
+- Declaring no `createTable` and `supportsInlineRowEdit: false` are facts about the grammar, not
   unimplemented features, so the EDIT toggle and the editable cell are not offered (#269).
 - The schema-diff migration generator emits, in place of a column change: *"OpenSearch SQL reads only;
   change a field by reindexing into an index whose mapping declares it."*
@@ -1378,7 +1378,7 @@ refusal are the same value and cannot drift apart
 | `queryLanguage` | `sql` | The bundled SQL plugin, present on a stock node ([§3.3](#33-sql-because-there-is-no-esql-here)) |
 | `supportsExplain` | **`false`** | The statement form is refused here and the plan lives behind a second endpoint outside this seam ([§3.10](#310-no-explain-the-statement-form-is-refused)) |
 | `supportsExternalQueryLimiting` | `true` | **Both** limiter forms are correct here, `LIMIT n` and `LIMIT n OFFSET m` |
-| `supportsCreateTable` | **`false`** | Not in the grammar ([§5.6](#56-this-grammar-has-delete-and-it-is-off)) |
+| `createTable` | **absent** | Not in the grammar ([§5.6](#56-this-grammar-has-delete-and-it-is-off)) |
 | `supportsInlineRowEdit` | **`false`** | `UPDATE` is not in the grammar, so the editor's statement could only ever produce an error (#269) |
 | `supportsTestDataGeneration` | **`false`** | An index takes a bulk document write, but the Generate Test Data dialog writes a SQL `INSERT`, which is not in the grammar either, so the row menus do not offer it (#1468) |
 | `supportsResultPagination` | **`true`** | OpenSearch SQL accepts an `OFFSET` clause, which is the one capability where this product diverges from Elasticsearch. Declared as `this.product.acceptsOffsetClause`, so it cannot drift from the refusal the shared `prepareQuery` enforces (#816) |

@@ -764,7 +764,7 @@ Every one of these is HTTP 400 with `parsing_exception`, measured verbatim on 9.
 The grammar's own error message enumerating its accepted statements is the clearest possible statement
 of the fact, which is why nothing is special-cased. Consequences elsewhere in the product:
 
-- `supportsCreateTable: false` and `supportsInlineRowEdit: false` are facts about the grammar, not
+- Declaring no `createTable` and `supportsInlineRowEdit: false` are facts about the grammar, not
   unimplemented features, so the EDIT toggle and the editable cell are not offered (#269).
 - The schema-diff migration generator emits, in place of a column change:
   *"Elasticsearch SQL reads only; change a field by reindexing into an index whose mapping declares
@@ -1413,7 +1413,7 @@ refusal are the same value and cannot drift apart.
 | `queryLanguage` | `sql` | Elasticsearch SQL over the HTTP endpoint, no tier gate ([§3.3](#33-sql-and-not-esql)) |
 | `supportsExplain` | **`false`** | No `explainFormat` is declared either, which hides both button and tab ([§3.10](#310-no-explain-even-though-elasticsearch-answers-one)) |
 | `supportsExternalQueryLimiting` | `true` | `LIMIT n` is correct here; the one form that is not is refused by `prepareQuery()` ([§5.5](#55-the-preparequery-override-there-is-no-second-page)) |
-| `supportsCreateTable` | **`false`** | Not in the grammar ([§5.6](#56-this-grammar-does-not-write)) |
+| `createTable` | **absent** | Not in the grammar ([§5.6](#56-this-grammar-does-not-write)) |
 | `supportsInlineRowEdit` | **`false`** | `UPDATE` is not in the grammar, so the editor's statement could only ever produce an error (#269) |
 | `supportsTestDataGeneration` | **`false`** | An index takes a bulk document write, but the Generate Test Data dialog writes a SQL `INSERT`, which is not in the grammar either, so the row menus do not offer it (#1468) |
 | `supportsResultPagination` | **`false`** | Elasticsearch SQL has no `OFFSET` clause. `prepareQuery` throws rather than answer page two with page one, and this flag hides the control that would provoke it. OpenSearch, the same implementation, declares `true` (#816) |

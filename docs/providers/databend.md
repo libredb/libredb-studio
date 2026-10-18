@@ -778,7 +778,7 @@ The analyze and vacuum cards are never drawn, and are worded true all the same:
 | `explainFormat` | `"databend-text"` |
 | `supportsExternalQueryLimiting` | `true` |
 | `supportsResultPagination` | `true` |
-| `supportsCreateTable` | `false` |
+| `createTable` | absent |
 | `supportsInlineRowEdit` | `false` |
 | `supportsTestDataGeneration` | `false` |
 | `supportsTransactions` | `false` |
@@ -797,7 +797,7 @@ The analyze and vacuum cards are never drawn, and are worded true all the same:
 `resumesBilledCompute` is declared when Warehouse is set or the host is Databend Cloud's (section 4.4).
 `schemaRefreshPattern` re-reads the tree after a statement that leads with `CREATE`, `DROP`, `ALTER`, `RENAME`, `UNDROP`, `TRUNCATE` or `REPLACE`.
 MCP's metadata tools and plan mode work; agent execution and MCP `run_read_query` do not run a statement on this type ([B103](../BACKLOG.md)).
-Import Data has no target on Databend: Studio draws the IMPORT control for every connection, and its dialog writes only into an existing object of a kind that declares `acceptsRowWrites`, which no Databend kind does (section 6.3), or into a table it creates, which `supportsCreateTable: false` withholds, so it offers only Close and says:
+Import Data has no target on Databend: Studio draws the IMPORT control for every connection, and its dialog writes only into an existing object of a kind that declares `acceptsRowWrites`, which no Databend kind does (section 6.3), or into a table it creates, which the provider withholds by declaring no `createTable`, so it offers only Close and says:
 
 > Studio's import has no target on this connection: it offers no existing table here to write into and cannot create one.
 

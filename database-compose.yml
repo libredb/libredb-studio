@@ -9,7 +9,7 @@ x-druid-env: &druid-env
   # druid-multi-stage-query is included on purpose: it is what makes `INSERT INTO ... SELECT`
   # (MSQ) available on /druid/v2/sql/task. The provider does not use that endpoint - the point
   # is that the live pass can prove the *synchronous* endpoint rejects INSERT even when the
-  # engine is fully capable of it, which is the honest reason supportsCreateTable is false.
+  # engine is fully capable of it, which is the honest reason it declares no createTable.
   druid_extensions_loadList: '["druid-histogram", "druid-datasketches", "druid-lookups-cached-global", "postgresql-metadata-storage", "druid-multi-stage-query"]'
   druid_zk_service_host: druid-zookeeper
   druid_metadata_storage_host: ""

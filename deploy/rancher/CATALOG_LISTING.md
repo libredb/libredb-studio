@@ -29,8 +29,9 @@ What gets mailed is `pcsc-listing.html` beside this file, not the sections below
 >
 > **The scope goes with the count.** Browsing and querying reach all forty-one; editing data does
 > not, so "manage data across …" must never be written over the whole list. Read the split from
-> the providers: `supportsInlineRowEdit` and `supportsCreateTable` default to `true` in
-> `src/lib/db/base-provider.ts` and each provider that cannot turns them off, which leaves inline
+> the providers: `supportsInlineRowEdit` defaults to `true` in `src/lib/db/base-provider.ts` and
+> each provider that cannot turns it off, while only a provider that declares a `createTable`
+> grammar offers table creation, which leaves inline
 > row editing on PostgreSQL, MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL and DuckDB, and table
 > creation on the same engines except Db2 LUW, plus Trino. Every other engine (BigQuery, Cassandra, ClickHouse, Couchbase, Databend, Druid,
 > Elasticsearch, Firestore, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, Kubernetes, Milvus, MongoDB, MQTT, Neo4j, OPC UA, OpenSearch, Oxia, Prometheus, Qdrant, RabbitMQ, Redis, S3-compatible object storage, Snowflake, Apache Spark and etcd) reports those controls as unsupported. The

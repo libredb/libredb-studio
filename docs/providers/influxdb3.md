@@ -409,7 +409,7 @@ None: no Admin > Operations card and no tree control is offered, because InfluxD
 | `supportsResultPagination` | `true` |
 | `supportsExternalQueryLimiting` | `true` |
 | `supportsExplain` | `false` |
-| `supportsCreateTable` | `false` |
+| `createTable` | absent |
 | `supportsInlineRowEdit` | `false` |
 | `supportsTestDataGeneration` | `false` |
 | `supportsTransactions` | `false` |

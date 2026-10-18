@@ -533,7 +533,7 @@ Apache Kafka, MQTT, RabbitMQ, OPC UA, etcd, Neo4j, Milvus, Qdrant, Oxia, Databen
 Not every provider has every feature, and the docs record the absences rather than glossing over
 them. Druid is the sharpest case: its SQL has no `UPDATE`, no `DELETE` and no `CREATE TABLE`, no
 maintenance operation is reachable from SQL, it has no user-defined indexes and no foreign keys, and
-it keeps no query log — so `supportsCreateTable` and `supportsMaintenance` are `false`, and
+it keeps no query log — so it declares no `createTable`, `supportsMaintenance` is `false`, and
 `getIndexStats()`, `getSlowQueries()` and `getPerformanceMetrics()` return empty or zeroed values
 that are the truth about the engine rather than a fallback.
 

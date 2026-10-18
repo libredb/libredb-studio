@@ -813,7 +813,7 @@ splits the same three ways Task 20 split it for Redis:
 - **Row writes.** No kind declares `acceptsRowWrites`, so Generate Test Data and the folder's
   create item are withheld by the kinds. That is not a workaround: the grammar is
   `get` / `put` / `delete` / `prefix` / `range` and has no INSERT for the generator to emit, and
-  `supportsCreateTable` is false.
+  the provider declares no `createTable`.
 - **Maintenance.** `supportsMaintenance` is false ([§8](#8-maintenance)), so `maintenanceControl`
   withholds the per-row links by the declaration that already governed them.
 - **Profile** has no kind-level declaration behind it, so `rowActions` reads the engine-wide flag,
@@ -887,8 +887,8 @@ Three measured facts keep it out of the source surface anyway:
   rendering of a panel that already shows it in the form the user wants it in.
 - **Nothing could re-apply an edited one.** #789 is the read half of #778, which is editing a
   definition, and this engine has no statement to submit an edit through: the grammar is
-  `get` / `put` / `delete` / `prefix` / `range` ([§5.1](#51-command-grammar)), `supportsCreateTable`
-  is false, and the package itself refuses the operation - `recordRelational` validates a passed
+  `get` / `put` / `delete` / `prefix` / `range` ([§5.1](#51-command-grammar)), the provider
+  declares no `createTable`, and the package itself refuses the operation - `recordRelational` validates a passed
   schema against the persisted one and **throws on mismatch**, because there is no schema migration
   in 0.2.x. A Source tab that can only ever be read is a worse answer than no tab.
 - **Showing it as a statement would mean inventing one.** There is no `CREATE TABLE` in this engine,
@@ -1042,7 +1042,7 @@ for a second reason: the rows are derived groupings, see 5.3.
 | `queryDialect` | `libredb` (routes the client query generators to LibreDB command output; see 5.3) |
 | `supportsExplain` | `false` |
 | `supportsExternalQueryLimiting` | `false` |
-| `supportsCreateTable` | `false` |
+| `createTable` | absent |
 | `supportsInlineRowEdit` | `false` — the command grammar (`get`/`put`/`delete`/`prefix`/`range`) has no `UPDATE ... SET` for the results grid's inline editor to emit |
 | `supportsTestDataGeneration` | `false` - no kind here declares a row write, and the command grammar has no multi-row insert for the Generate Test Data dialog to emit |
 | `supportsResultPagination` | `false` — this provider adds no `prepareQuery` override, so it inherits the base one, which echoes the requested offset back while applying nothing. A `true` here would render a control whose every click re-reads page one (#816) |

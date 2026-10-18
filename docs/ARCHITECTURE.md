@@ -175,7 +175,7 @@ classDiagram
 ```
 
 Each provider implements:
-- **`getCapabilities()`** - queryLanguage, supportsExplain, supportsCreateTable, maintenanceOperations, etc.
+- **`getCapabilities()`** - queryLanguage, supportsExplain, createTable, maintenanceOperations, etc.
 - **`getLabels()`** - entityName, selectAction, searchPlaceholder, etc. (drives all UI text)
 - **`prepareQuery()`** - handles query limiting per-provider (SQL LIMIT injection vs MongoDB native)
 

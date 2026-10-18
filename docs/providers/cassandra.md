@@ -644,7 +644,7 @@ missing guarantee. The editor builds `UPDATE <table> SET <col> = <val> WHERE <pk
 → `Some partition key parts are missing: pk`, and `UPDATE probe.orders SET amount = 1 WHERE
 customer_id = 3` — a plausible guess on a real table — → `Some partition key parts are missing: id`.
 
-`supportsCreateTable` is `false` for the same class of reason. `CREATE TABLE probe.t (id int PRIMARY
+The provider declares no `createTable` for the same class of reason. `CREATE TABLE probe.t (id int PRIMARY
 KEY, name text)` works, but what `CreateTableModal` emits does not: its default column is an
 auto-increment primary key, which CQL has no spelling of at all (measured as `id SERIAL PRIMARY KEY`,
 `Unknown type probe.serial`; #648 made that spelling per-engine and added no CQL row, so this id
@@ -662,7 +662,7 @@ generators used to write here (#1410), and the provider now declares both away.
 **Test Data Generator** (not offered by the row menus, `supportsTestDataGeneration: false`, BACKLOG U93), write one `INSERT` per row, which the editor sends through `/api/db/multi-query` one statement at a time.
 Measured on 5.0.9 on 2026-10-04 through the provider and the multi-query splitter: the generated
 select on a table runs, and a two-row import inserts both rows. ScyllaDB shares the provider and
-the declaration, and was not re-measured. An import into a **new** table stays withheld by `supportsCreateTable: false`.
+the declaration, and was not re-measured. An import into a **new** table stays withheld because the provider declares no `createTable`.
 
 The **schema-diff migration generator refuses a Cassandra `CREATE TABLE` too**, for a second and
 independent reason. A CQL primary key is two things — the partition key, which places a row, and the
@@ -1228,7 +1228,7 @@ because there are no table statistics to list at all.)
   queryLanguage: "sql",
   supportsExplain: false,            // EXPLAIN is not in the grammar (§5.6)
   supportsExternalQueryLimiting: true,
-  supportsCreateTable: false,        // the modal cannot emit valid CQL, and a diff cannot derive the partition key (§5.5)
+  // createTable: not declared; the modal cannot emit valid CQL, and a diff cannot derive the partition key (§5.5)
   supportsInlineRowEdit: false,      // one guessed key column is not a CQL primary key (§5.5)
   supportsTestDataGeneration: false, // the row menus never offered the generator here; not measured (#1468)
   supportsResultPagination: false,   // CQL has no OFFSET; prepareQuery throws rather than answer page two with page one (#816)
