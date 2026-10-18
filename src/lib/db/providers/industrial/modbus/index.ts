@@ -214,7 +214,6 @@ export class ModbusProvider extends BaseDatabaseProvider {
       queryDialect: "modbus",
       supportsExplain: false,
       supportsExternalQueryLimiting: false,
-      supportsCreateTable: false,
       supportsInlineRowEdit: false,
       // A read answers a column called `address`, which is the register the caller named. The
       // built-in Address rule matches on the name alone, so it would star out the one value the

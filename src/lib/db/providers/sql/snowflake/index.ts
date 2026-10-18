@@ -329,7 +329,6 @@ export class SnowflakeProvider extends SQLBaseProvider {
       explainFormat: "snowflake-json",
       // The inherited prepareQuery appends LIMIT 500, which Snowflake reads natively.
       supportsExternalQueryLimiting: true,
-      supportsCreateTable: false,
       // Explicit, since the base default is true: an apply would be several warehouse statements and commits.
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,

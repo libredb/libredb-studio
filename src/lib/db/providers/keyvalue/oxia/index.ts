@@ -155,7 +155,6 @@ export class OxiaProvider extends BaseDatabaseProvider {
       queryDialect: "oxia",
       supportsExplain: false,
       supportsExternalQueryLimiting: false,
-      supportsCreateTable: false,
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,
       supportsResultPagination: false,

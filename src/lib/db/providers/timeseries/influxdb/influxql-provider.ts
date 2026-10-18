@@ -214,7 +214,6 @@ export class InfluxDBProvider extends BaseDatabaseProvider {
       supportsExplain: false,
       // InfluxQL's LIMIT acts per series, so the shared limiter's LIMIT would not bound a result (I19).
       supportsExternalQueryLimiting: false,
-      supportsCreateTable: false,
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,
       // `prepareQuery` applies no offset, so there is no page two.

@@ -169,7 +169,6 @@ export class NetconfProvider extends BaseDatabaseProvider {
       queryDialect: "netconf",
       supportsExplain: false,
       supportsExternalQueryLimiting: false,
-      supportsCreateTable: false,
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,
       supportsResultPagination: false,

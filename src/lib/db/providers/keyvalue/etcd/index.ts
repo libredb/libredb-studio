@@ -270,7 +270,6 @@ export class EtcdProvider extends BaseDatabaseProvider {
       queryLanguage: "json",
       queryDialect: "etcd",
       supportsExplain: false,
-      supportsCreateTable: false,
       supportsTransactions: false,
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,

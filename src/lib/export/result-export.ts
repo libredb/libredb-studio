@@ -385,7 +385,7 @@ const BARE_TYPE_FAMILY: Record<string, InferredKind> = {
  * measured standing alone there, so each is re-spelled from its family. Druid takes no INSERT at all without the MSQ extension. The two search
  * endpoints and Couchbase parse no CREATE TABLE: a SQL++ collection is schemaless and
  * `CREATE COLLECTION` takes no columns, which is why the Couchbase provider declares
- * `supportsCreateTable: false`. InfluxDB 3 parses SQL, but its 3.12 planner refuses DDL and DML, so
+ * no `createTable`. InfluxDB 3 parses SQL, but its 3.12 planner refuses DDL and DML, so
  * a generated file is for another engine, the search pair's reason. MongoDB, Redis, Kafka, etcd,
  * Milvus, Qdrant, Oxia, S3 and the embedded store declare `queryLanguage: "json"`, `prometheus` declares
  * `"promql"`, `neo4j` declares `"cypher"` and `influxdb` declares `"influxql"`, so no SQL statement

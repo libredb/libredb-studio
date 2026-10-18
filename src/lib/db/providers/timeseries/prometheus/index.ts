@@ -203,7 +203,6 @@ export class PrometheusProvider extends BaseDatabaseProvider {
       // own: the query asks the endpoint for one series more than it, and the shaper enforces it on
       // the answer (#1085 5.4).
       supportsExternalQueryLimiting: false,
-      supportsCreateTable: false,
       // Nothing this product offers writes to Prometheus (#1085 sections 2 and 4.5).
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,

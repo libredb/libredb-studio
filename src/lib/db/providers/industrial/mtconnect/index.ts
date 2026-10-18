@@ -164,7 +164,6 @@ export class MTConnectProvider extends BaseDatabaseProvider {
       queryDialect: MTCONNECT_QUERY_DIALECT,
       supportsExplain: false,
       supportsExternalQueryLimiting: false,
-      supportsCreateTable: false,
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,
       supportsResultPagination: false,

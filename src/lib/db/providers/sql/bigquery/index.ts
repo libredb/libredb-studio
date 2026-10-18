@@ -200,7 +200,6 @@ export class BigQueryProvider extends SQLBaseProvider {
       supportsExplain: true,
       explainFormat: "bigquery-dryrun",
       supportsExternalQueryLimiting: true,
-      supportsCreateTable: false,
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,
       supportsResultPagination: true,

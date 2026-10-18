@@ -61,10 +61,9 @@ export function db2Capabilities(base: ProviderCapabilities): ProviderCapabilitie
     // Db2's EXPLAIN fills the explain tables rather than answering a plan, so the single-statement
     // explain path has nothing to read.
     supportsExplain: false,
-    // The create-table dialog has no Db2 row of column types in this version, and without one it
-    // would emit PostgreSQL DDL in silence; an import into a new table would write `TEXT`, which
+    // Declares no `createTable`: no Db2 grammar of column types was measured in this version, and
+    // the form once emitted PostgreSQL DDL here in silence; an import into a new table would write `TEXT`, which
     // Db2 refuses (SQL0204N), and `NUMERIC`, which Db2 reads as DECIMAL(5,0) (D145).
-    supportsCreateTable: false,
     // The grid's inline editor is a read-then-write-back, which db2-node 1.0.24 carries intact (K1
     // and K22 fixed; see `DB2_OBJECT_KINDS`).
     supportsInlineRowEdit: true,

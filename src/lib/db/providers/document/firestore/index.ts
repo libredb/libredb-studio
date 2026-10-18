@@ -197,7 +197,6 @@ export class FirestoreProvider extends BaseDatabaseProvider {
       queryDialect: "firestore",
       ...explain,
       supportsExternalQueryLimiting: false,
-      supportsCreateTable: false,
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,
       // `prepareQuery` never pages: the statement carries its own limit, and Studio never pages with `offset`.

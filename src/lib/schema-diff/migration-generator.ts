@@ -647,7 +647,7 @@ function generateColumnDef(col: ColumnDiff, dialect: DatabaseType): string {
  * cosmetic error, so this path declines the way the rest of the module declines: a comment naming the
  * limitation, which a human can read, instead of DDL that would run and be wrong.
  *
- * The provider already publishes `supportsCreateTable: false` (`sql/cassandra/index.ts`) for the
+ * The provider already declares no `createTable` (`sql/cassandra/index.ts`) for the
  * neighbouring reason — what `CreateTableModal` emits is not valid CQL — but `SchemaDiff.tsx` calls
  * this generator with the connection's type and never consults capabilities, so the refusal has to be
  * repeated here or the two contradict each other.

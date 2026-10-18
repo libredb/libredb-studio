@@ -212,7 +212,6 @@ export class SparkplugProvider extends BaseDatabaseProvider {
       queryDialect: "sparkplug",
       supportsExplain: false,
       supportsExternalQueryLimiting: false,
-      supportsCreateTable: false,
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,
       // One read returns what it saw and there is no page two: a broker has no cursor.

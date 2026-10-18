@@ -163,7 +163,6 @@ export class MilvusProvider extends BaseDatabaseProvider {
       queryLanguage: "json",
       queryDialect: "milvus",
       supportsExplain: false,
-      supportsCreateTable: false,
       supportsTransactions: false,
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,

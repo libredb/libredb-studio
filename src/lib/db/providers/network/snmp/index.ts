@@ -241,7 +241,6 @@ export class SnmpProvider extends BaseDatabaseProvider {
       queryDialect: "snmp",
       supportsExplain: false,
       supportsExternalQueryLimiting: false,
-      supportsCreateTable: false,
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,
       // One request answers one request. A walk is bounded by the budget and by the agent's own

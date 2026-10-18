@@ -41,9 +41,9 @@
  *    expecting {'(', 'DEBUG', 'DESC', 'DESCRIBE', 'EXPLAIN', 'SELECT', 'SHOW',
  *    'SYS', 'WITH'}" - the grammar lists everything it accepts, and no mutation is
  *    among them) and OpenSearch answers `SQLFeatureNotSupportedException` ("Query
- *    must start with SELECT, DELETE, SHOW or DESCRIBE: ..."). So
- *    `supportsCreateTable` and `supportsInlineRowEdit` are false as a fact about
- *    the grammars, not as an unimplemented feature. Documents change through the
+ *    must start with SELECT, DELETE, SHOW or DESCRIBE: ..."). So the provider
+ *    declares no `createTable` and `supportsInlineRowEdit` is false as a fact
+ *    about the grammars, not as an unimplemented feature. Documents change through the
  *    document APIs, which this provider does not expose.
  * 3. **An index has no schema above it, and both products say so in SQL.**
  *    Elasticsearch's `SHOW TABLES` answers a `catalog` of `docker-cluster` (the
@@ -724,8 +724,7 @@ abstract class SearchProvider extends SQLBaseProvider {
       // so the shared limiter's ordinary output runs everywhere. `prepareQuery`
       // handles the one form that does not.
       supportsExternalQueryLimiting: true,
-      // Not unimplemented - not in either grammar. See the file header, point 2.
-      supportsCreateTable: false,
+      // No `createTable`: not unimplemented, not in either grammar. See the file header, point 2.
       // Same measurement, same conclusion: `UPDATE` is refused by both grammars, so
       // the inline editor's statement could only ever produce an error. False hides
       // the affordance instead of offering it (#269).

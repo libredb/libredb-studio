@@ -40,7 +40,6 @@ export const OPCUA_CAPABILITIES: ProviderCapabilities = Object.freeze({
   /** A server has no transaction, no schema and no table. */
   supportsTransactions: false,
   declaresForeignKeys: false,
-  supportsCreateTable: false,
   supportsInlineRowEdit: false,
   supportsTestDataGeneration: false,
   supportsExplain: false,

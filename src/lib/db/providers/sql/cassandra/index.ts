@@ -229,15 +229,14 @@ export class CassandraProvider extends SQLBaseProvider {
       // - but what `CreateTableModal` EMITS is not: its default column is an
       // auto-increment primary key, a thing CQL has no spelling of at all (measured as
       // `id SERIAL PRIMARY KEY`, "Unknown type probe.serial"; #648 made that spelling
-      // per-engine and added no CQL row, so this id falls back to PostgreSQL's identity
-      // clause, which CQL does not have either), its type list offers
+      // per-engine and added no CQL row, and PostgreSQL's identity clause is not CQL
+      // either), its type list offers
       // `VARCHAR(255)` and `DECIMAL(10,2)` (both syntax errors, CQL types carry no
       // length) and `INTEGER` and `JSONB` (both "Unknown type"), and its NOT NULL,
       // UNIQUE and DEFAULT options are each "no viable alternative at input" - none
       // of the three exists in a CQL column definition. A control that can only
-      // produce invalid input is not a supported capability; DDL typed into the
-      // editor works normally.
-      supportsCreateTable: false,
+      // produce invalid input is not a supported capability, so this provider
+      // declares no `createTable`; DDL typed into the editor works normally.
       // Not a missing feature but a missing GUARANTEE. The inline editor builds
       // `UPDATE <table> SET <col> = <val> WHERE <pk> = <val>` against one column it
       // guessed from the result fields (`id` or `*_id`), and CQL requires the WHOLE

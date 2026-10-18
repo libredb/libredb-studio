@@ -1190,7 +1190,6 @@ export class RedisProvider extends BaseDatabaseProvider {
       queryDialect: "redis",
       supportsExplain: false,
       supportsExternalQueryLimiting: false,
-      supportsCreateTable: false,
       // Redis commands are not SQL, so the inline row editor's `UPDATE ... SET` has
       // nothing here to run against (issue #269).
       supportsInlineRowEdit: false,

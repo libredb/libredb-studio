@@ -171,7 +171,6 @@ export class S3Provider extends BaseDatabaseProvider {
       queryDialect: "s3",
       supportsExplain: false,
       supportsExternalQueryLimiting: false,
-      supportsCreateTable: false,
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,
       supportsResultPagination: false,

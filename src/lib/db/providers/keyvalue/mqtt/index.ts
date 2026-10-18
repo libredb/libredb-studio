@@ -92,7 +92,6 @@ export class MqttProvider extends BaseDatabaseProvider {
       queryDialect: "mqtt",
       supportsExplain: false,
       supportsExternalQueryLimiting: false,
-      supportsCreateTable: false,
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,
       // One read returns what it saw and there is no page two, which the cursor of `MQTT_KEY_SCAN` states.

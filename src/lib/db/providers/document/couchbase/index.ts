@@ -335,8 +335,8 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
       explainFormat: "couchbase-json",
       supportsExternalQueryLimiting: true,
       // Collections are schemaless and CREATE COLLECTION takes no columns, so a
-      // column-list modal could only ever emit invalid SQL++ (decision 7).
-      supportsCreateTable: false,
+      // column-list modal could only ever emit invalid SQL++ (decision 7), so this
+      // provider declares no `createTable`.
       // SQL++ does have `UPDATE <keyspace> SET ... WHERE ...`, but the statement the
       // shared inline row editor builds cannot address a document with it: the
       // collection-open query projects the key as `META(d).id AS __id`

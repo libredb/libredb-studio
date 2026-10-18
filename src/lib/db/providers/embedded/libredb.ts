@@ -208,7 +208,7 @@ export const LIBREDB_TABLE_STATS_TRUNCATED = `LibreDB keeps no row counter, so t
  * No kind declares `acceptsRowWrites`: the query grammar is `get` / `put` / `delete` /
  * `prefix` / `range` and has no INSERT, so Generate Test Data would have nothing to emit
  * and the folder's create item would open a modal this engine cannot serve
- * (`supportsCreateTable: false`). No kind declares `hasSource` either, and the reason is
+ * (the provider declares no `createTable`). No kind declares `hasSource` either, and the reason is
  * per kind rather than one sentence about the package (#789). A document entry records
  * `{ kind: "document" }` and nothing more, and a `keyspace` is a prefix this server derived,
  * so neither has anything authored to show. A relational table's entry DOES persist its
@@ -376,7 +376,6 @@ export class LibreDBProvider extends BaseDatabaseProvider {
       queryDialect: "libredb",
       supportsExplain: false,
       supportsExternalQueryLimiting: false,
-      supportsCreateTable: false,
       // The query language is a small JSON command grammar
       // (get/put/delete/prefix/range), so there is no `UPDATE ... SET` for the
       // inline row editor to emit (issue #269).

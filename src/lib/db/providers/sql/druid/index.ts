@@ -216,8 +216,8 @@ export class DruidProvider extends SQLBaseProvider {
       // Live-verified, `CREATE TABLE t (id BIGINT)` answers 400 "Incorrect syntax
       // near the keyword 'CREATE' at line 1, column 1" and the parser lists the
       // statements it expected, with no form of CREATE among them. A datasource
-      // comes into existence by being ingested into.
-      supportsCreateTable: false,
+      // comes into existence by being ingested into. So this provider declares no
+      // `createTable`.
       // Same class of answer as CREATE, for the same reason: `UPDATE t SET ...` is
       // rejected with `Unsupported SQL statement [UPDATE]`. Druid SQL has no
       // row-level DML at all - a datasource changes through ingestion.

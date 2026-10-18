@@ -323,7 +323,6 @@ export class DatabendProvider extends SQLBaseProvider {
       // `LIMIT n OFFSET m` is native, so the inherited `prepareQuery` runs as written.
       supportsExternalQueryLimiting: true,
       supportsResultPagination: true,
-      supportsCreateTable: false,
       // Databend declares no key, so an edit has no row identity.
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,

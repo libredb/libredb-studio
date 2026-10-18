@@ -139,7 +139,6 @@ export class KubernetesProvider extends BaseDatabaseProvider {
       supportsExplain: false,
       // The list form of a single-type get is paged by a clause the provider owns (console/paging.ts).
       supportsExternalQueryLimiting: true,
-      supportsCreateTable: false,
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,
       supportsResultPagination: true,

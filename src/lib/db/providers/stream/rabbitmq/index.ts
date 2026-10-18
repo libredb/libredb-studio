@@ -157,7 +157,6 @@ export class RabbitMQProvider extends BaseDatabaseProvider {
       queryLanguage: "json",
       queryDialect: "rabbitmq",
       supportsExplain: false,
-      supportsCreateTable: false,
       supportsTransactions: false,
       supportsMaintenance: false,
       supportsInlineRowEdit: false,

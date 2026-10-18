@@ -794,7 +794,6 @@ export class MongoDBProvider extends BaseDatabaseProvider {
       queryLanguage: "json",
       supportsExplain: false,
       supportsExternalQueryLimiting: false,
-      supportsCreateTable: false,
       // The query language is JSON commands, not SQL, so the inline row editor's
       // `UPDATE ... SET` has nothing here to run against (issue #269).
       supportsInlineRowEdit: false,

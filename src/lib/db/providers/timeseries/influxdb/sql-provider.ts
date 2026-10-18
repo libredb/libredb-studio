@@ -226,7 +226,6 @@ export class InfluxDB3Provider extends SQLBaseProvider {
       supportsExplain: false,
       // The inherited limiter's LIMIT and OFFSET are standard SQL here (I19, K17).
       supportsExternalQueryLimiting: true,
-      supportsCreateTable: false,
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,
       supportsResultPagination: true,

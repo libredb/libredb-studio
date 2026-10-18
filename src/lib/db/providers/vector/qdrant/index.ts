@@ -170,7 +170,6 @@ export class QdrantProvider extends BaseDatabaseProvider {
       queryLanguage: "json",
       queryDialect: "qdrant",
       supportsExplain: false,
-      supportsCreateTable: false,
       supportsTransactions: false,
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,

@@ -524,14 +524,14 @@ export class ClickHouseProvider extends SQLBaseProvider {
       // (id Int32, name String)` succeeds on 26.x, but what CreateTableModal
       // EMITS does not. Its default column is an auto-increment primary key (measured
       // as `id SERIAL PRIMARY KEY`, code 50, unknown data type family SERIAL; #648 made
-      // that spelling per-engine and added no ClickHouse row, so this id falls back to
-      // PostgreSQL's identity clause, which is not a ClickHouse type either) and its
+      // that spelling per-engine and added no ClickHouse row, and PostgreSQL's identity
+      // clause is not a ClickHouse type either) and its
       // UNIQUE checkbox emits `UNIQUE`
       // (code 62, syntax error), so the modal's default state produces invalid
       // SQL and it offers no ClickHouse type list. A control that can only
-      // produce invalid input is not a supported capability. DDL typed into the
+      // produce invalid input is not a supported capability, so this provider
+      // declares no `createTable`. DDL typed into the
       // editor works normally, which is how a ClickHouse user creates a table.
-      supportsCreateTable: false,
       // Live-verified against 26.7.1 and the reason issue #269 exists: a bare
       // `UPDATE ... SET`, which is what the inline row editor builds, answers code
       // 48 NOT_IMPLEMENTED (HTTP 501). ClickHouse spells a row mutation
