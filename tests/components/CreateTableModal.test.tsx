@@ -6,27 +6,40 @@ import React from "react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act, cleanup, fireEvent, render, within } from "@testing-library/react";
 import { CreateTableModal } from "@/components/CreateTableModal";
-import type { DatabaseType } from "@/lib/types";
-import type { ProviderCapabilities } from "@/lib/db/types";
+import type { CreateTableSpec, ProviderCapabilities } from "@/lib/db/types";
+import { POSTGRES_CREATE_TABLE } from "@/lib/db/providers/sql/postgres-create-table";
+import { MYSQL_CREATE_TABLE } from "@/lib/db/providers/sql/mysql-create-table";
+import { MSSQL_CREATE_TABLE } from "@/lib/db/providers/sql/mssql-create-table";
+import { ORACLE_CREATE_TABLE } from "@/lib/db/providers/sql/oracle-create-table";
+import { SQLITE_CREATE_TABLE } from "@/lib/db/providers/sql/sqlite-create-table";
+import { DUCKDB_CREATE_TABLE } from "@/lib/db/providers/sql/duckdb/create-table";
+import { TRINO_CREATE_TABLE } from "@/lib/db/providers/sql/trino/create-table";
+
+/** The eight engines whose providers declare a `createTable` grammar, the only ones that reach this form. */
+type Engine = "postgres" | "mysql" | "mssql" | "oracle" | "sqlite" | "libsql" | "duckdb" | "trino";
 
 /**
- * The fields of each engine's capabilities that the form reads: how it quotes, and the identifier
- * limit PostgreSQL truncates at. The values are the providers' own declarations.
+ * The fields of each engine's capabilities that the form reads: its create-table grammar, how it
+ * quotes, and the identifier limit PostgreSQL truncates at. The values are the providers' own
+ * declarations, and the grammars are the very constants each provider returns.
  */
-const CAPS: Partial<Record<DatabaseType, ProviderCapabilities>> = {
-  postgres: { queryLanguage: "sql", defaultPort: 5432, maxIdentifierBytes: 63 },
-  mysql: { queryLanguage: "sql", defaultPort: 3306 },
-  mssql: { queryLanguage: "sql", defaultPort: 1433 },
-  oracle: { queryLanguage: "sql", defaultPort: 1521 },
-  sqlite: { queryLanguage: "sql", defaultPort: null },
-  libsql: { queryLanguage: "sql", defaultPort: 8080 },
-  duckdb: { queryLanguage: "sql", defaultPort: null, identifierQuoting: "double" },
-  trino: { queryLanguage: "sql", defaultPort: 8080, identifierQuoting: "double" },
-} as unknown as Partial<Record<DatabaseType, ProviderCapabilities>>;
+const CAPS = {
+  postgres: { queryLanguage: "sql", defaultPort: 5432, maxIdentifierBytes: 63, createTable: POSTGRES_CREATE_TABLE },
+  mysql: { queryLanguage: "sql", defaultPort: 3306, createTable: MYSQL_CREATE_TABLE },
+  mssql: { queryLanguage: "sql", defaultPort: 1433, createTable: MSSQL_CREATE_TABLE },
+  oracle: { queryLanguage: "sql", defaultPort: 1521, createTable: ORACLE_CREATE_TABLE },
+  sqlite: { queryLanguage: "sql", defaultPort: null, createTable: SQLITE_CREATE_TABLE },
+  libsql: { queryLanguage: "sql", defaultPort: 8080, createTable: SQLITE_CREATE_TABLE },
+  duckdb: { queryLanguage: "sql", defaultPort: null, identifierQuoting: "double", createTable: DUCKDB_CREATE_TABLE },
+  trino: { queryLanguage: "sql", defaultPort: 8080, identifierQuoting: "double", createTable: TRINO_CREATE_TABLE },
+} as unknown as Record<Engine, ProviderCapabilities>;
 
-/** The modal as the app mounts it: with the connection's capabilities, unless a test names its own. */
-function Modal(props: React.ComponentProps<typeof CreateTableModal>) {
-  return <CreateTableModal capabilities={CAPS[props.dbType ?? "postgres"]} {...props} />;
+/**
+ * The modal as the app mounts it: with one engine's capabilities (PostgreSQL unless a test names
+ * another), unless a test passes its own.
+ */
+function Modal({ engine = "postgres", ...props }: React.ComponentProps<typeof CreateTableModal> & { engine?: Engine }) {
+  return <CreateTableModal capabilities={CAPS[engine]} {...props} />;
 }
 
 describe("CreateTableModal", () => {
@@ -125,9 +138,9 @@ describe("CreateTableModal", () => {
   // ── 4. Names are kept as typed (#1435) ────────────────────────────────────
 
   /** Render for one engine, type a table name and the first column's name, return the preview and the page. */
-  function typeNames(dbType: DatabaseType, table: string, column: string, onTableCreated = mock((_sql: string) => {})) {
+  function typeNames(dbType: Engine, table: string, column: string, onTableCreated = mock((_sql: string) => {})) {
     const { baseElement } = render(
-      <Modal isOpen dbType={dbType} onClose={mock(() => {})} onTableCreated={onTableCreated} />,
+      <Modal isOpen engine={dbType} onClose={mock(() => {})} onTableCreated={onTableCreated} />,
     );
     act(() => {
       fireEvent.change(baseElement.querySelector("#tableName") as HTMLInputElement, { target: { value: table } });
@@ -157,7 +170,7 @@ describe("CreateTableModal", () => {
     ["mysql", "`Ürün Tablo`", "`başlık`"],
     ["mssql", "[Ürün Tablo]", "[başlık]"],
     ["oracle", '"Ürün Tablo"', '"başlık"'],
-  ] as Array<[DatabaseType, string, string]>) {
+  ] as Array<[Engine, string, string]>) {
     test(`${dbType}: a name outside the bare ASCII subset is quoted exactly, in the preview and the submitted SQL`, () => {
       const onTableCreated = mock((_sql: string) => {});
       const { baseElement, sql } = typeNames(dbType, "Ürün Tablo", "başlık", onTableCreated);
@@ -176,7 +189,7 @@ describe("CreateTableModal", () => {
     ["mssql", "A]B", "[A]]B]"],
     ["sqlite", 'A"B', '"A""B"'],
     ["trino", 'A"B', '"A""B"'],
-  ] as Array<[DatabaseType, string, string]>) {
+  ] as Array<[Engine, string, string]>) {
     test(`${dbType}: a quote character inside a typed name is escaped`, () => {
       const { sql } = typeNames(dbType, name, name);
       expect(sql).toContain(`CREATE TABLE ${quoted} (\n  ${quoted} `);
@@ -584,9 +597,9 @@ describe("CreateTableModal", () => {
   // ── 16. One dialect per engine (#648) ──────────────────────────────────────
 
   /** Render for one engine, name the table, and return the SQL the preview shows. */
-  function previewFor(dbType: DatabaseType | undefined): string {
+  function previewFor(dbType: Engine): string {
     const { baseElement } = render(
-      <Modal isOpen dbType={dbType} onClose={mock(() => {})} onTableCreated={mock(() => {})} />,
+      <Modal isOpen engine={dbType} onClose={mock(() => {})} onTableCreated={mock(() => {})} />,
     );
     act(() => {
       fireEvent.change(baseElement.querySelector("#tableName") as HTMLInputElement, {
@@ -597,11 +610,11 @@ describe("CreateTableModal", () => {
   }
 
   /**
-   * The eight ids that publish `supportsCreateTable: true` and therefore reach this form,
+   * The eight engines that declare a `createTable` grammar and therefore reach this form,
    * with the default `id` column each one has to produce. Before #648 every row of this
    * table read `id SERIAL PRIMARY KEY`, which parses on two of the eight.
    */
-  const AUTO_INCREMENT_BY_ENGINE: ReadonlyArray<[DatabaseType, string]> = [
+  const AUTO_INCREMENT_BY_ENGINE: ReadonlyArray<[Engine, string]> = [
     ["postgres", "id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY"],
     ["mysql", "id INT AUTO_INCREMENT PRIMARY KEY"],
     ["mssql", "id INT IDENTITY(1,1) PRIMARY KEY"],
@@ -636,7 +649,7 @@ describe("CreateTableModal", () => {
 
   test("trino hides the options its grammar has no place for", () => {
     const { baseElement } = render(
-      <Modal isOpen dbType="trino" onClose={mock(() => {})} onTableCreated={mock(() => {})} />,
+      <Modal isOpen engine="trino" onClose={mock(() => {})} onTableCreated={mock(() => {})} />,
     );
     expect(baseElement.textContent).not.toContain("Auto-Increment");
     // PK and Unq go with it: Trino takes a name, a type and NOT NULL, so those two
@@ -648,15 +661,15 @@ describe("CreateTableModal", () => {
 
   test("every other engine keeps all three column checkboxes", () => {
     const { baseElement } = render(
-      <Modal isOpen dbType="postgres" onClose={mock(() => {})} onTableCreated={mock(() => {})} />,
+      <Modal isOpen engine="postgres" onClose={mock(() => {})} onTableCreated={mock(() => {})} />,
     );
     expect(baseElement.querySelectorAll('button[role="checkbox"]').length).toBe(3);
   });
 
   /** Open the first column's type dropdown and return the type names it lists. */
-  function typeOptionsFor(dbType: DatabaseType): string[] {
+  function typeOptionsFor(dbType: Engine): string[] {
     const { baseElement } = render(
-      <Modal isOpen dbType={dbType} onClose={mock(() => {})} onTableCreated={mock(() => {})} />,
+      <Modal isOpen engine={dbType} onClose={mock(() => {})} onTableCreated={mock(() => {})} />,
     );
     act(() => {
       fireEvent.keyDown(baseElement.querySelectorAll('[role="combobox"]')[0], { key: "ArrowDown" });
@@ -671,7 +684,7 @@ describe("CreateTableModal", () => {
     // name JSONB does not exist", while `JSON` is accepted.
     expect(typeOptionsFor("postgres")).toContain("JSONB");
     cleanup();
-    for (const dbType of ["mysql", "duckdb", "trino"] as DatabaseType[]) {
+    for (const dbType of ["mysql", "duckdb", "trino"] as Engine[]) {
       const options = typeOptionsFor(dbType);
       expect(options).not.toContain("JSONB");
       expect(options).toContain("JSON");
@@ -684,7 +697,7 @@ describe("CreateTableModal", () => {
       ["oracle", "CLOB"],
       ["sqlite", "TEXT"],
       ["libsql", "TEXT"],
-    ] as Array<[DatabaseType, string]>) {
+    ] as Array<[Engine, string]>) {
       const options = typeOptionsFor(dbType);
       expect(options).not.toContain("JSONB");
       expect(options).toContain(textType);
@@ -712,7 +725,7 @@ describe("CreateTableModal", () => {
 
   test("an added column starts on a type the engine has", () => {
     const { baseElement } = render(
-      <Modal isOpen dbType="sqlite" onClose={mock(() => {})} onTableCreated={mock(() => {})} />,
+      <Modal isOpen engine="sqlite" onClose={mock(() => {})} onTableCreated={mock(() => {})} />,
     );
     const body = within(baseElement);
     act(() => {
@@ -729,47 +742,70 @@ describe("CreateTableModal", () => {
     expect(baseElement.querySelector("pre")?.textContent).toContain("body TEXT");
   });
 
-  test("no connection yet keeps the PostgreSQL behaviour the form already had", () => {
-    // The first render the app produces is `dbType={undefined}`; see the mount-shape tests below.
-    expect(previewFor(undefined)).toContain("id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY");
-  });
+  /** Capabilities that quote like PostgreSQL's and declare no create-table grammar, as Db2's and Cassandra's do. */
+  const NO_CREATE_TABLE = { ...CAPS.postgres, createTable: undefined } as ProviderCapabilities;
 
-  test("opening it for an engine without create-table support throws instead of writing PostgreSQL DDL", () => {
-    // Db2 and Cassandra publish `supportsCreateTable: false` and have no dialect row here. Every
-    // entry point gates on that flag; this is the refusal when one does not, so the form never
-    // hands such an engine `CREATE TABLE ... GENERATED BY DEFAULT AS IDENTITY` in silence.
+  test("opening it for an engine that declares no createTable throws instead of writing another engine's DDL", () => {
+    // Every entry point gates on the declaration; this is the refusal when one does not, so the
+    // form never hands such an engine `CREATE TABLE ... GENERATED BY DEFAULT AS IDENTITY` in silence.
     const consoleError = console.error;
     console.error = () => {};
     try {
-      for (const dbType of ["db2", "cassandra"] as DatabaseType[]) {
-        expect(() => previewFor(dbType)).toThrow(`no create-table dialect for "${dbType}"`);
-        cleanup();
-      }
+      expect(() =>
+        render(
+          <Modal isOpen capabilities={NO_CREATE_TABLE} onClose={mock(() => {})} onTableCreated={mock(() => {})} />,
+        ),
+      ).toThrow("CreateTableModal: this connection declares no createTable");
     } finally {
       console.error = consoleError;
     }
   });
 
-  test("closed, it stays mounted for an engine without create-table support and renders nothing", () => {
+  test("closed, it stays mounted for an engine that declares no createTable and renders nothing", () => {
     // `StudioOverlays` mounts this modal for every connection, so the refusal is on OPEN only.
     const { baseElement } = render(
-      <Modal isOpen={false} dbType="db2" onClose={mock(() => {})} onTableCreated={mock(() => {})} />,
+      <Modal isOpen={false} capabilities={NO_CREATE_TABLE} onClose={mock(() => {})} onTableCreated={mock(() => {})} />,
     );
     expect(baseElement.textContent).not.toContain("Create New Table");
+  });
+
+  test("a refetch that answers the same grammar in a new object keeps the draft", () => {
+    // Capabilities arrive as JSON, so a refetch or a second connection to the same engine is a new
+    // object holding an equal grammar; only a different grammar may throw the columns away.
+    const props = { isOpen: true as const, onClose: mock(() => {}), onTableCreated: mock(() => {}) };
+    const { baseElement, rerender } = render(<Modal {...props} />);
+    act(() => {
+      fireEvent.click(within(baseElement).getByText("Add Column"));
+    });
+    const refetched = JSON.parse(JSON.stringify(CAPS.postgres)) as ProviderCapabilities;
+    expect(refetched.createTable).not.toBe(POSTGRES_CREATE_TABLE);
+    rerender(<Modal {...props} capabilities={refetched} />);
+    expect(baseElement.querySelectorAll('input[placeholder="column_name"]').length).toBe(2);
+  });
+
+  test("a different grammar on the same quoting resets the columns", () => {
+    const props = { isOpen: true as const, onClose: mock(() => {}), onTableCreated: mock(() => {}) };
+    const { baseElement, rerender } = render(<Modal {...props} />);
+    act(() => {
+      fireEvent.click(within(baseElement).getByText("Add Column"));
+    });
+    const other: CreateTableSpec = { ...POSTGRES_CREATE_TABLE, types: ["INTEGER", "TEXT"] };
+    rerender(<Modal {...props} capabilities={{ ...CAPS.postgres, createTable: other }} />);
+    expect(baseElement.querySelectorAll('input[placeholder="column_name"]').length).toBe(1);
   });
 
   test("switching engine under a chosen auto-increment column does not leak the sentinel", () => {
     // The modal stays mounted across a connection switch, so a column picked on
     // PostgreSQL can be rendered for Trino, which has no auto-increment clause to use.
     const { baseElement, rerender } = render(
-      <Modal isOpen dbType="postgres" onClose={mock(() => {})} onTableCreated={mock(() => {})} />,
+      <Modal isOpen engine="postgres" onClose={mock(() => {})} onTableCreated={mock(() => {})} />,
     );
     act(() => {
       fireEvent.change(baseElement.querySelector("#tableName") as HTMLInputElement, {
         target: { value: "widgets" },
       });
     });
-    rerender(<Modal isOpen dbType="trino" onClose={mock(() => {})} onTableCreated={mock(() => {})} />);
+    rerender(<Modal isOpen engine="trino" onClose={mock(() => {})} onTableCreated={mock(() => {})} />);
     const sql = baseElement.querySelector("pre")?.textContent || "";
     expect(sql).toContain("id INTEGER NOT NULL");
     expect(sql).not.toContain("__auto_increment__");
@@ -778,15 +814,15 @@ describe("CreateTableModal", () => {
   // ── 17. The mount shape the app actually produces ──────────────────────────
 
   /**
-   * `Studio.tsx` renders this modal unconditionally and passes
-   * `dbType={conn.activeConnection?.type}`, so the first render is always `undefined` and
-   * the engine arrives on a later one. Every test above mounts with the final `dbType`,
-   * which is a shape the app never produces; these mount with none and then hand one over.
+   * `StudioOverlays` renders this modal unconditionally with the active connection's
+   * capabilities, so it stays mounted while the connection, and with it the grammar, changes
+   * under it. Every test above mounts with the final grammar; these mount on PostgreSQL's
+   * and then hand another one over.
    */
-  function mountThenConnect(dbType: DatabaseType) {
+  function mountThenConnect(dbType: Engine) {
     const props = { isOpen: true as const, onClose: mock(() => {}), onTableCreated: mock(() => {}) };
     const view = render(<Modal {...props} />);
-    view.rerender(<Modal {...props} dbType={dbType} />);
+    view.rerender(<Modal {...props} engine={dbType} />);
     return view;
   }
 
@@ -806,7 +842,7 @@ describe("CreateTableModal", () => {
   test("a create on one engine does not fix the form's columns to it", () => {
     const props = { isOpen: true as const, onClose: mock(() => {}), onTableCreated: mock(() => {}) };
     const { baseElement, rerender } = render(<Modal {...props} />);
-    rerender(<Modal {...props} dbType="trino" />);
+    rerender(<Modal {...props} engine="trino" />);
     act(() => {
       fireEvent.change(baseElement.querySelector("#tableName") as HTMLInputElement, {
         target: { value: "widgets" },
@@ -819,7 +855,7 @@ describe("CreateTableModal", () => {
     // Switching to SQLite has to bring SQLite's default key back. Carrying Trino's plain
     // `id INTEGER NOT NULL` over is the silently-broken key this PR set out to close,
     // arriving through the reset instead of through the dialect table.
-    rerender(<Modal {...props} dbType="sqlite" />);
+    rerender(<Modal {...props} engine="sqlite" />);
     act(() => {
       fireEvent.change(baseElement.querySelector("#tableName") as HTMLInputElement, {
         target: { value: "notes" },
@@ -831,7 +867,7 @@ describe("CreateTableModal", () => {
   test("a type chosen on one engine does not survive into the next", () => {
     // JSONB is a PostgreSQL spelling; SQLite takes it silently on NUMERIC affinity.
     const props = { isOpen: true as const, onClose: mock(() => {}), onTableCreated: mock(() => {}) };
-    const { baseElement, rerender } = render(<Modal {...props} dbType="postgres" />);
+    const { baseElement, rerender } = render(<Modal {...props} engine="postgres" />);
     const body = within(baseElement);
     act(() => {
       fireEvent.change(baseElement.querySelector("#tableName") as HTMLInputElement, {
@@ -854,7 +890,7 @@ describe("CreateTableModal", () => {
     });
     expect(baseElement.querySelector("pre")?.textContent).toContain("payload JSONB");
 
-    rerender(<Modal {...props} dbType="sqlite" />);
+    rerender(<Modal {...props} engine="sqlite" />);
     act(() => {
       fireEvent.change(baseElement.querySelector("#tableName") as HTMLInputElement, {
         target: { value: "notes" },
@@ -869,7 +905,7 @@ describe("CreateTableModal", () => {
 
   test("unchecking PK takes the auto-increment column off the key", () => {
     const { baseElement } = render(
-      <Modal isOpen dbType="postgres" onClose={mock(() => {})} onTableCreated={mock(() => {})} />,
+      <Modal isOpen engine="postgres" onClose={mock(() => {})} onTableCreated={mock(() => {})} />,
     );
     act(() => {
       fireEvent.change(baseElement.querySelector("#tableName") as HTMLInputElement, {
@@ -902,9 +938,9 @@ describe("CreateTableModal", () => {
       ["mssql", "INT"],
       ["oracle", "INTEGER"],
       ["duckdb", "INTEGER"],
-    ] as Array<[DatabaseType, string]>) {
+    ] as Array<[Engine, string]>) {
       const { baseElement } = render(
-        <Modal isOpen dbType={dbType} onClose={mock(() => {})} onTableCreated={mock(() => {})} />,
+        <Modal isOpen engine={dbType} onClose={mock(() => {})} onTableCreated={mock(() => {})} />,
       );
       act(() => {
         fireEvent.click(baseElement.querySelectorAll('button[role="checkbox"]')[0]);
@@ -918,7 +954,7 @@ describe("CreateTableModal", () => {
 
   /** Render in a container with the given capabilities, name the table, return the preview and the page. */
   function previewIn(
-    dbType: DatabaseType,
+    dbType: Engine,
     container: readonly string[],
     capabilities: ProviderCapabilities | undefined,
     name = "ct_other",
@@ -926,7 +962,7 @@ describe("CreateTableModal", () => {
     const { baseElement } = render(
       <Modal
         isOpen
-        dbType={dbType}
+        engine={dbType}
         container={container}
         capabilities={capabilities}
         onClose={mock(() => {})}
@@ -1021,7 +1057,7 @@ describe("CreateTableModal", () => {
     console.error = () => {};
     try {
       expect(() => previewIn("mysql", ["e2e_other"], undefined)).toThrow(
-        'CreateTableModal: opened without the capabilities of the "mysql" connection',
+        "CreateTableModal: opened without the connection's capabilities",
       );
     } finally {
       console.error = consoleError;
@@ -1032,7 +1068,7 @@ describe("CreateTableModal", () => {
     const { baseElement } = render(
       <Modal
         isOpen={false}
-        dbType="mysql"
+        engine="mysql"
         capabilities={undefined}
         onClose={mock(() => {})}
         onTableCreated={mock(() => {})}

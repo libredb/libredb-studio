@@ -1827,7 +1827,6 @@ export default function Studio() {
         activeConnection={conn.activeConnection}
         schema={conn.schema}
         capabilities={metadata?.capabilities}
-        databaseType={conn.activeConnection?.type}
         connectionModalOpen={isConnectionModalOpen}
         editingConnection={editingConnection}
         onCloseConnectionModal={closeConnectionModal}

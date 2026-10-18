@@ -11,6 +11,7 @@ import { pathKey } from "@/lib/db/object-path";
 import { INFLUXQL_OBJECT_KINDS } from "@/lib/db/providers/timeseries/influxdb/influxql-objects";
 import { INFLUXDB3_OBJECT_KINDS } from "@/lib/db/providers/timeseries/influxdb/sql-objects";
 import type { ProviderCapabilities } from "@/lib/db/types";
+import { TEST_CREATE_TABLE_SPEC } from "../helpers/mock-provider";
 
 // The insecure-context harness, as in tests/components/copy-button.test.tsx: an absent
 // `navigator.clipboard` is what plain HTTP off loopback actually hands the page, and an
@@ -1206,11 +1207,11 @@ describe("DataImportModal on a PromQL connection (#1085)", () => {
   });
 
   const metricKind = { id: "metric", role: "relation", label: "Metric", labelPlural: "Metrics", hasColumns: true };
-  // `supportsCreateTable` keeps the dialog's target step reachable, so the filter is what is pinned;
+  // A declared `createTable` keeps the dialog's target step reachable, so the filter is what is pinned;
   // the real Prometheus declaration takes no import at all, pinned with the Db2 shape below.
   const promqlCapabilities = {
     queryLanguage: "promql",
-    supportsCreateTable: true,
+    createTable: TEST_CREATE_TABLE_SPEC,
     objectKinds: [metricKind],
   } as unknown as ProviderCapabilities;
   const metrics: DetailedObject[] = [
@@ -1288,7 +1289,11 @@ describe("DataImportModal on an InfluxDB connection (InfluxDB spec I1)", () => {
     ["influxdb", "influxql", INFLUXQL_OBJECT_KINDS],
     ["influxdb3", "sql", INFLUXDB3_OBJECT_KINDS],
   ] as const)("no %s object is offered as an import target", (_type, queryLanguage, objectKinds) => {
-    const capabilities = { queryLanguage, supportsCreateTable: true, objectKinds } as unknown as ProviderCapabilities;
+    const capabilities = {
+      queryLanguage,
+      createTable: TEST_CREATE_TABLE_SPEC,
+      objectKinds,
+    } as unknown as ProviderCapabilities;
     expect(targetNamesOver(capabilities)).toEqual([]);
     // The control: the same objects under kinds that take row writes are offered.
     cleanup();
@@ -1409,7 +1414,6 @@ describe("DataImportModal on an engine that takes no import (#786)", () => {
   // Db2-shaped: no kind accepts a row write and no create-table is declared.
   const noImport = {
     queryLanguage: "sql",
-    supportsCreateTable: false,
     objectKinds: [
       { id: "table", role: "relation", label: "Table", labelPlural: "Tables", hasColumns: true },
       { id: "view", role: "relation", label: "View", labelPlural: "Views", hasColumns: true },

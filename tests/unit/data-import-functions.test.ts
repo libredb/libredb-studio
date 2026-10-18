@@ -13,6 +13,7 @@ import {
   type ParsedData,
 } from "@/components/DataImportModal";
 import type { ProviderCapabilities } from "@/lib/db/types";
+import { TEST_CREATE_TABLE_SPEC } from "../helpers/mock-provider";
 
 // ---------------------------------------------------------------------------
 // parseCSV
@@ -293,7 +294,11 @@ describe("generateImportSQL", () => {
   // The target is an ADDRESS and the statement qualifies it per segment for the connected
   // dialect, which is what keeps an import off the namesake in another container (#789).
   test("qualifies and quotes the target for the connected dialect", () => {
-    const mssql = { queryLanguage: "sql", defaultPort: 1433 } as unknown as ProviderCapabilities;
+    const mssql = {
+      queryLanguage: "sql",
+      defaultPort: 1433,
+      createTable: TEST_CREATE_TABLE_SPEC,
+    } as unknown as ProviderCapabilities;
     const target: ImportTarget = { kind: "existing", path: ["shop", "dbo", "order details"] };
     const sql = generateImportSQL(sampleData, target, { name: "name" }, "mssql", mssql);
     expect(sql).toContain("INSERT INTO shop.dbo.[order details]");
@@ -308,7 +313,6 @@ describe("generateImportSQL", () => {
   test("refuses every target on an engine that declares nothing an import could write into (#786)", () => {
     const db2Shaped = {
       queryLanguage: "sql",
-      supportsCreateTable: false,
       objectKinds: [{ id: "table", role: "relation", label: "Table", labelPlural: "Tables" }],
     } as unknown as ProviderCapabilities;
     expect(() =>
@@ -333,7 +337,6 @@ describe("generateImportSQL", () => {
   test("refuses a new table where the engine declares no create-table, and keeps existing targets (#786)", () => {
     const writableNoCreate = {
       queryLanguage: "sql",
-      supportsCreateTable: false,
       objectKinds: [{ id: "table", role: "relation", label: "Table", labelPlural: "Tables", acceptsRowWrites: true }],
     } as unknown as ProviderCapabilities;
     expect(() => generateImportSQL(sampleData, { kind: "new", name: "T" }, {}, "db2", writableNoCreate)).toThrow(
@@ -362,19 +365,31 @@ describe("generateImportSQL", () => {
     const cases: Array<[string, ProviderCapabilities, string, string]> = [
       [
         "PostgreSQL",
-        { queryLanguage: "sql", defaultPort: 5432 } as unknown as ProviderCapabilities,
+        {
+          queryLanguage: "sql",
+          defaultPort: 5432,
+          createTable: TEST_CREATE_TABLE_SPEC,
+        } as unknown as ProviderCapabilities,
         'CREATE TABLE "imp_csv" (\n  "when" TEXT,\n  "Order Date" TEXT,\n  "user" TEXT\n);',
         'INSERT INTO "imp_csv" ("when", "Order Date", "user")',
       ],
       [
         "MySQL",
-        { queryLanguage: "sql", defaultPort: 3306 } as unknown as ProviderCapabilities,
+        {
+          queryLanguage: "sql",
+          defaultPort: 3306,
+          createTable: TEST_CREATE_TABLE_SPEC,
+        } as unknown as ProviderCapabilities,
         "CREATE TABLE `imp_csv` (\n  `when` TEXT,\n  `Order Date` TEXT,\n  `user` TEXT\n);",
         "INSERT INTO `imp_csv` (`when`, `Order Date`, `user`)",
       ],
       [
         "SQL Server",
-        { queryLanguage: "sql", defaultPort: 1433 } as unknown as ProviderCapabilities,
+        {
+          queryLanguage: "sql",
+          defaultPort: 1433,
+          createTable: TEST_CREATE_TABLE_SPEC,
+        } as unknown as ProviderCapabilities,
         "CREATE TABLE [imp_csv] (\n  [when] TEXT,\n  [Order Date] TEXT,\n  [user] TEXT\n);",
         "INSERT INTO [imp_csv] ([when], [Order Date], [user])",
       ],
@@ -388,13 +403,21 @@ describe("generateImportSQL", () => {
     }
 
     test("a dotted name is a table in a container", () => {
-      const pg = { queryLanguage: "sql", defaultPort: 5432 } as unknown as ProviderCapabilities;
+      const pg = {
+        queryLanguage: "sql",
+        defaultPort: 5432,
+        createTable: TEST_CREATE_TABLE_SPEC,
+      } as unknown as ProviderCapabilities;
       const sql = generateImportSQL(reserved, { kind: "new", name: "sales.imp" }, mapping, undefined, pg);
       expect(sql).toContain('CREATE TABLE "sales"."imp"');
     });
 
     test("an existing table's columns keep the mapping's spelling", () => {
-      const pg = { queryLanguage: "sql", defaultPort: 5432 } as unknown as ProviderCapabilities;
+      const pg = {
+        queryLanguage: "sql",
+        defaultPort: 5432,
+        createTable: TEST_CREATE_TABLE_SPEC,
+      } as unknown as ProviderCapabilities;
       const sql = generateImportSQL(sampleData, existing("users"), { name: "Name" }, undefined, pg);
       expect(sql).toContain("INSERT INTO users (Name, age, active)");
     });
@@ -586,7 +609,6 @@ describe("generateImportSQL", () => {
     const cql = {
       queryLanguage: "sql",
       defaultPort: 9042,
-      supportsCreateTable: false,
       supportsMultiRowInsert: false,
       objectKinds: [{ id: "table", label: "Table", labelPlural: "Tables", acceptsRowWrites: true }],
     } as unknown as ProviderCapabilities;
@@ -611,6 +633,7 @@ describe("generateImportSQL", () => {
     const caps = {
       queryLanguage: "sql",
       defaultPort: 5432,
+      createTable: TEST_CREATE_TABLE_SPEC,
       supportsMultiRowInsert: true,
     } as unknown as ProviderCapabilities;
     const sql = generateImportSQL(data, existing("items"), { id: "id" }, "postgres", caps);

@@ -49,6 +49,7 @@ import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import type { ProviderLabels } from "@/lib/db/types";
 import { mockSchema, emptySchema } from "../../fixtures/schemas";
 import type { DetailedObject } from "@/lib/db/detailed-object";
+import { TEST_CREATE_TABLE_SPEC } from "../../helpers/mock-provider";
 
 // =============================================================================
 // SchemaExplorer Tests
@@ -80,7 +81,7 @@ const defaultMetadata: ProviderMetadata = {
     queryLanguage: "sql",
     supportsExplain: true,
     supportsExternalQueryLimiting: true,
-    supportsCreateTable: true,
+    createTable: TEST_CREATE_TABLE_SPEC,
     supportsInlineRowEdit: true,
     supportsMaintenance: false,
     maintenanceOperations: [],
@@ -159,12 +160,12 @@ describe("SchemaExplorer", () => {
     expect(onCreateTableClick).toHaveBeenCalledTimes(1);
   });
 
-  test("empty state offers no create-table action when supportsCreateTable is false", () => {
+  test("empty state offers no create-table action when the engine declares no createTable", () => {
     const props = createDefaultProps({
       schema: emptySchema,
       metadata: {
         ...defaultMetadata,
-        capabilities: { ...defaultMetadata.capabilities, supportsCreateTable: false },
+        capabilities: { ...defaultMetadata.capabilities, createTable: undefined },
       },
     });
     const { container } = render(<SchemaExplorer {...props} />);
@@ -315,7 +316,7 @@ describe("SchemaExplorer", () => {
 
   // ── Create table button ───────────────────────────────────────────────────
 
-  test("create table button visible when capabilities.supportsCreateTable", () => {
+  test("create table button visible when the engine declares a createTable", () => {
     const onCreateTableClick = mock(() => {});
     const props = createDefaultProps({ onCreateTableClick });
     const { container } = render(<SchemaExplorer {...props} />);
@@ -339,14 +340,13 @@ describe("SchemaExplorer", () => {
 
   // ── Create table button hidden ──────────────────────────────────────────
 
-  test("create table button hidden when supportsCreateTable is false", () => {
+  test("create table button hidden when the engine declares no createTable", () => {
     const props = createDefaultProps({
       metadata: {
         capabilities: {
           queryLanguage: "sql" as const,
           supportsExplain: true,
           supportsExternalQueryLimiting: true,
-          supportsCreateTable: false,
           supportsInlineRowEdit: true,
           supportsMaintenance: false,
           maintenanceOperations: [],
@@ -486,7 +486,6 @@ describe("SchemaExplorer", () => {
           queryLanguage: "json" as const,
           supportsExplain: false,
           supportsExternalQueryLimiting: false,
-          supportsCreateTable: false,
           supportsInlineRowEdit: false,
           supportsMaintenance: false,
           maintenanceOperations: [],
@@ -526,7 +525,7 @@ describe("SchemaExplorer", () => {
           queryLanguage: "json" as const,
           supportsExplain: false,
           supportsExternalQueryLimiting: false,
-          supportsCreateTable: true,
+          createTable: TEST_CREATE_TABLE_SPEC,
           supportsInlineRowEdit: false,
           supportsMaintenance: false,
           maintenanceOperations: [],

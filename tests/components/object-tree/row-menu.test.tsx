@@ -10,6 +10,7 @@ import { Plus } from "lucide-react";
 import type { TreeRowActionHandlers } from "@/components/object-tree/row-actions";
 import type { DatabaseObject, ProviderCapabilities } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
+import { TEST_CREATE_TABLE_SPEC } from "../../helpers/mock-provider";
 
 /**
  * The object tree's row menu (U22, #789).
@@ -44,7 +45,7 @@ const oneLevel = {
   }),
   supportsInlineRowEdit: true,
   supportsTestDataGeneration: true,
-  supportsCreateTable: true,
+  createTable: TEST_CREATE_TABLE_SPEC,
 } as ProviderCapabilities;
 
 function connectionOf(): DatabaseConnection {

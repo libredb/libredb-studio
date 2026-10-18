@@ -207,13 +207,13 @@ function newColumnIdentifier(name: string, capabilities: ProviderCapabilities | 
 }
 
 /**
- * Whether an import may create the table it writes into: only where the engine declares a create-
- * table it can spell (#786). Only an explicit `false` withholds it: unknown capabilities keep the
- * choice, as they keep every target in `rowWritableObjects`, because the declaration has not arrived
- * yet rather than refused anything.
+ * Whether an import may create the table it writes into: only where the engine declares a
+ * `createTable` grammar (#786). Loaded capabilities that declare none withhold it; unknown
+ * capabilities keep the choice, as they keep every target in `rowWritableObjects`, because the
+ * declaration has not arrived yet rather than refused anything.
  */
 export function offersNewTableImport(capabilities: ProviderCapabilities | undefined): boolean {
-  return capabilities?.supportsCreateTable !== false;
+  return capabilities === undefined || capabilities.createTable !== undefined;
 }
 
 /**

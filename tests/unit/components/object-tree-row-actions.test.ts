@@ -9,6 +9,7 @@ import { db2Capabilities } from "@/lib/db/providers/sql/db2/capabilities";
 import type { DatabaseObject, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
 import { Wrench } from "lucide-react";
 import { SYNTHETIC_ENTITY_CAPABILITIES } from "../../fixtures/maintenance-entity-operations";
+import { TEST_CREATE_TABLE_SPEC } from "../../helpers/mock-provider";
 
 /**
  * What one object row may be offered, and why (U22, #789).
@@ -29,7 +30,7 @@ type Model = Partial<
     | "objectKinds"
     | "supportsInlineRowEdit"
     | "supportsTestDataGeneration"
-    | "supportsCreateTable"
+    | "createTable"
     | "supportsMaintenance"
     | "maintenanceOperations"
     | "maintenanceOperationSpecs"
@@ -52,7 +53,7 @@ const postgres = capabilitiesOf({
   objectKinds: [table, view, routine],
   supportsInlineRowEdit: true,
   supportsTestDataGeneration: true,
-  supportsCreateTable: true,
+  createTable: TEST_CREATE_TABLE_SPEC,
   supportsMaintenance: true,
   maintenanceOperations: ["vacuum", "analyze"],
 });
@@ -408,17 +409,17 @@ describe("rowActions on a folder row", () => {
     const noGridEdit = capabilitiesOf({
       objectKinds: [table],
       supportsInlineRowEdit: false,
-      supportsCreateTable: true,
+      createTable: TEST_CREATE_TABLE_SPEC,
     });
     expect(idsFor(folderRow("table"), noGridEdit)).toEqual(["create"]);
   });
 
-  test("an engine that declares no create-table support offers nothing, even on a writable kind", () => {
+  test("an engine that declares no createTable offers nothing, even on a writable kind", () => {
     // `acceptsRowWrites` says the rows of a table can be written; it says nothing about
-    // whether `CreateTableModal` has a dialect for the engine. Db2 is the case that found
-    // this: its tables take row writes and it declares `supportsCreateTable: false`, and the
-    // folder menu offered a modal that wrote PostgreSQL DDL.
-    const noCreate = capabilitiesOf({ objectKinds: [table], supportsInlineRowEdit: true, supportsCreateTable: false });
+    // whether the engine declares a grammar for `CreateTableModal`. Db2 is the case that found
+    // this: its tables take row writes and it declares no `createTable`, and the folder menu
+    // offered a modal that wrote PostgreSQL DDL.
+    const noCreate = capabilitiesOf({ objectKinds: [table], supportsInlineRowEdit: true });
     expect(idsFor(folderRow("table"), noCreate)).toEqual([]);
   });
 

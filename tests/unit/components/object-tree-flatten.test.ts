@@ -688,7 +688,6 @@ describe("flattenTree container levels", () => {
       queryLanguage: "sql",
       supportsExplain: false,
       supportsExternalQueryLimiting: false,
-      supportsCreateTable: false,
       supportsMaintenance: false,
       maintenanceOperations: [],
       supportsConnectionString: false,

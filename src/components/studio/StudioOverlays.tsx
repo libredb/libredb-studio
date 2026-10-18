@@ -41,7 +41,6 @@ interface StudioOverlaysProps {
   activeConnection: DatabaseConnection | null;
   schema: readonly DetailedObject[];
   capabilities?: ProviderCapabilities;
-  databaseType?: DatabaseConnection["type"];
   connectionModalOpen: boolean;
   editingConnection: DatabaseConnection | null;
   onCloseConnectionModal: () => void;
@@ -81,7 +80,6 @@ export function StudioOverlays({
   activeConnection,
   schema,
   capabilities,
-  databaseType,
   connectionModalOpen,
   editingConnection,
   onCloseConnectionModal,
@@ -137,7 +135,6 @@ export function StudioOverlays({
         isOpen={createTableModalOpen}
         onClose={onCloseCreateTable}
         onTableCreated={onTableCreated}
-        dbType={databaseType}
         container={createTableContainer}
         capabilities={capabilities}
       />
