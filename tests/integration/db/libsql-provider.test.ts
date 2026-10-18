@@ -34,6 +34,7 @@ import {
   sourceBoundTruncationReason,
 } from "@/lib/db/object-kinds";
 import { LibSQLProvider } from "@/lib/db/providers/sql/libsql";
+import { SQLITE_CREATE_TABLE } from "@/lib/db/providers/sql/sqlite-create-table";
 import { buildResultExport } from "@/lib/export/result-export";
 import { countLibSQLObjects, type LibSQLObjectReader } from "@/lib/db/providers/sql/libsql/objects";
 import type { DatabaseConnection, DatabaseProvider, ObjectKindSpec } from "@/lib/db/types";
@@ -490,6 +491,11 @@ describe("LibSQLProvider capabilities", () => {
     const pageTwo = provider.prepareQuery("SELECT * FROM t", { limit: 50, offset: 50 });
     expect(pageTwo.query).toBe("SELECT * FROM t LIMIT 50 OFFSET 50");
     expect(pageTwo.wasLimited).toBe(true);
+  });
+
+  test("declares SQLite's create-table grammar, the same object, because it embeds SQLite", () => {
+    // #1822: shared by import, never by a type-id branch; docs/providers/sqlite.md, "Create Table form".
+    expect(new LibSQLProvider(connection()).getCapabilities().createTable).toBe(SQLITE_CREATE_TABLE);
   });
 
   test("declares no transaction, because the stream closes with each statement", () => {

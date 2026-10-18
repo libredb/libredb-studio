@@ -91,6 +91,7 @@ import { ApiErrorCode } from "@/lib/api/error-codes";
 import type { QueryResultSet } from "@/lib/types";
 import { assertReadOnlyBudget, measureResultBytes } from "./read-only-budget";
 import { sendPgCancelRequest, type PgCancelTarget } from "./pg-wire-cancel";
+import { POSTGRES_CREATE_TABLE } from "./postgres-create-table";
 import { type PgFieldMetadata, postgresColumnTypes } from "./column-types";
 import { uniqueFieldNames } from "../../utils/result-fields";
 import { keyRowsByPosition } from "../../utils/positional-rows";
@@ -2791,6 +2792,8 @@ export class PostgresProvider extends SQLBaseProvider {
     return {
       ...super.getCapabilities(),
       defaultPort: 5432,
+      // The Create Table form's grammar; the reasons for each spelling are in `docs/providers/postgres.md` (#1822).
+      createTable: POSTGRES_CREATE_TABLE,
       // Measured at connect, not declared per type id: the PostgreSQL-wire relatives
       // do not all accept the parenthesised JSON form (#597). The key is spread in
       // rather than set to `undefined` because `ProviderCapabilities.explainFormat` is

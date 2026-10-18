@@ -25,6 +25,7 @@ import { asBytes } from "@/lib/export/binary";
 import { buildResultExport } from "@/lib/export/result-export";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { generateTableQuery, generateSelectQuery } from "@/lib/query-generators";
+import { ORACLE_CREATE_TABLE } from "@/lib/db/providers/sql/oracle-create-table";
 
 // ---------------------------------------------------------------------------
 // Mock oracledb BEFORE loading the provider
@@ -1473,6 +1474,11 @@ describe("OracleProvider", () => {
         kill: { label: "Kill Session", perEntity: false, global: false },
       });
       expect(Object.keys(caps.maintenanceOperationSpecs ?? {}).sort()).toEqual([...caps.maintenanceOperations].sort());
+    });
+
+    // #1822: the Create Table form's grammar is the provider's declaration, not a row in the component.
+    test("declares the Oracle Create Table grammar", () => {
+      expect(provider.getCapabilities().createTable).toBe(ORACLE_CREATE_TABLE);
     });
 
     test("declares the DDL and the blocks Oracle can commit inside, so SANDBOX refuses them", () => {

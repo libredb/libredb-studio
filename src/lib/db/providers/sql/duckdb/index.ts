@@ -100,6 +100,7 @@ import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
 import { findCodeWord } from "@/lib/sql/words";
 import { hasUnterminatedSpan } from "@/lib/sql/spans";
 import { type DuckDBClient, MEMORY_TARGET, describeOpenFailure, openDuckDBClient } from "./client";
+import { DUCKDB_CREATE_TABLE } from "./create-table";
 import {
   type DuckDBFileSizes,
   readActiveSessions,
@@ -466,6 +467,9 @@ export class DuckDBProvider extends SQLBaseProvider {
       supportsExplain: true,
       explainFormat: "duckdb-json",
       supportsInlineRowEdit: true,
+      // The Create Table form's grammar: a sequence-backed key, because DuckDB has no `SERIAL`,
+      // identity or `AUTOINCREMENT`. Reasons on the constant and in `docs/providers/duckdb.md`.
+      createTable: DUCKDB_CREATE_TABLE,
       // The Generate Test Data dialog's multi-row `INSERT INTO ... VALUES` (#1468).
       supportsTestDataGeneration: true,
       // `LIMIT n OFFSET m`, applied by the shared limiter in `SQLBaseProvider.prepareQuery`.

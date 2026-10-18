@@ -91,6 +91,7 @@ import { logger } from "@/lib/logger";
 import { unquoteLiteral } from "@/lib/sql/values";
 import type { QueryResultSet } from "@/lib/types";
 import { portableDefaultSql, showCreateColumnDefaults } from "./mysql-show-create";
+import { MYSQL_CREATE_TABLE } from "./mysql-create-table";
 
 /**
  * MySQL's identity for the shared container-path renderer.
@@ -3094,6 +3095,8 @@ export class MySQLProvider extends SQLBaseProvider {
     return {
       ...super.getCapabilities(),
       defaultPort: 3306,
+      // The Create Table form's grammar; the reasons for each spelling are in `docs/providers/mysql.md` (#1822).
+      createTable: MYSQL_CREATE_TABLE,
       // Measured at connect, not declared per type id: the MySQL-wire relatives do
       // not all accept `EXPLAIN FORMAT=JSON` (#574). The key is spread in rather than
       // set to `undefined` because `ProviderCapabilities.explainFormat` is present iff

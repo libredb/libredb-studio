@@ -1432,7 +1432,7 @@ render those words and send an operation SQL Server declares (#496).
 | `queryLanguage` | `sql` |
 | `supportsExplain` | **`false`** (the editor's Explain action only; the agent's estimating plan is [§12.2](#122-admission-by-the-optimizer-which-executes-nothing), see [Known limitations](#15-known-limitations--future-work)) |
 | `supportsExternalQueryLimiting` | `true` (from base) |
-| `supportsCreateTable` | `true` (from base) |
+| `createTable` | declared, see [Create Table form](#create-table-form) |
 | `supportsInlineRowEdit` | `true` — `UPDATE t SET c = v WHERE pk = v` is core T-SQL DML |
 | `supportsTestDataGeneration` | `true` - the row menus offer Generate Test Data on tables, which writes one multi-row `INSERT INTO ... VALUES` |
 | `supportsResultPagination` | `true` — `OFFSET m ROWS FETCH NEXT n ROWS ONLY`, built by this provider's own `prepareQuery` override. Page one is `SELECT TOP n`, so the two pages are structurally different statements, and page two carries the `ORDER BY (SELECT NULL)` T-SQL demands before `OFFSET` — which promises nothing about order (#816) |
@@ -1446,6 +1446,26 @@ render those words and send an operation SQL Server declares (#496).
 | `containerLevels` | **two**: `catalog` (Database) then `schema` - the first two-level engine in #789 ([§7](#the-object-surface-789)) |
 | `containerPathShapes` | `prefixes`: `[database]` and `[database, schema]` both address a container, because a database alone is a true question here ([§7](#the-object-surface-789)); the empty path and a longer path are both refused, by the object routes over HTTP and by this provider for a caller that reaches it directly (#1147) |
 | `objectKinds` | seven: table, view, procedure, function, trigger, synonym, sequence. No `index` kind and no materialized view ([§7](#the-object-surface-789)) |
+
+### Create Table form
+
+`createTable` is `MSSQL_CREATE_TABLE` in [`mssql-create-table.ts`](../../src/lib/db/providers/sql/mssql-create-table.ts), a module that loads no driver, so the Create Table form and its tests read the real declaration (#1822).
+It is the grammar the form writes; the form itself knows no engine.
+
+| Field | Value |
+|-------|-------|
+| Auto-increment clause | `INT IDENTITY(1,1) PRIMARY KEY`, not sequence-backed |
+| Column constraints (`PRIMARY KEY`, `UNIQUE`) | Yes |
+| Key type | `INT` |
+| Types, in dropdown order | `VARCHAR(255)`, `NVARCHAR(MAX)`, `INT`, `BIGINT`, `BIT`, `DATETIME2`, `DATE`, `UNIQUEIDENTIFIER`, `DECIMAL(10,2)` |
+
+The auto-increment clause is the spelling SQL Server documents as the current one, `IDENTITY(seed, increment)`.
+There is no `BOOLEAN` type: a true/false column is `BIT`.
+There is no `UUID` type: a GUID column is `UNIQUEIDENTIFIER`.
+`TIMESTAMP` is a trap rather than a missing name: it is a deprecated synonym for `ROWVERSION`, a row-change counter that holds no date at all, so a column meaning a moment in time is `DATETIME2`.
+JSON is stored in `NVARCHAR(MAX)`, because the native `json` type is SQL Server 2025 and this repo's `database-compose.yml` pins `mssql/server:2022-latest`; the text entry serves both and is listed once.
+The key type is `INT` rather than the `INTEGER` SQL Server would also accept, because the key type has to be one of the listed names or the dropdown trigger renders empty.
+A row that reads like the old shared list is SQL Server agreeing with it, not a row nobody looked at.
 
 ### Labels — overridden (`getLabels()`, [`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts))
 

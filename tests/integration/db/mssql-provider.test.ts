@@ -247,6 +247,7 @@ mock.module("mssql", () => {
 
 // Now import the provider (after mock is in place)
 import { MSSQLProvider } from "@/lib/db/providers/sql/mssql";
+import { MSSQL_CREATE_TABLE } from "@/lib/db/providers/sql/mssql-create-table";
 import {
   AuthenticationError,
   ConnectionError,
@@ -813,6 +814,11 @@ describe("MSSQLProvider", () => {
         kill: { label: "Kill Session", perEntity: false, global: false },
       });
       expect(Object.keys(caps.maintenanceOperationSpecs ?? {}).sort()).toEqual([...caps.maintenanceOperations].sort());
+    });
+
+    // #1822: the Create Table form's grammar is the provider's declaration, not a row in the component.
+    test("declares the SQL Server Create Table grammar", () => {
+      expect(provider.getCapabilities().createTable).toBe(MSSQL_CREATE_TABLE);
     });
 
     test("the vacuum label names the index rebuild, and the surfaces send that", () => {

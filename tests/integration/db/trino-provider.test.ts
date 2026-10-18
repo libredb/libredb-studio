@@ -77,6 +77,7 @@ import {
   trinoSourceStatementFor,
 } from "@/lib/db/providers/sql/trino/objects";
 import { TrinoProvider } from "@/lib/db/providers/sql/trino/index";
+import { TRINO_CREATE_TABLE } from "@/lib/db/providers/sql/trino/create-table";
 import type {
   DatabaseProvider,
   ObjectEditBuild,
@@ -590,6 +591,13 @@ describe("TrinoProvider metadata", () => {
     expect(capabilities.identifierQuoting).toBe("double");
     // Measured: `SELECT 1;` answers "line 1:9: mismatched input ';'".
     expect(capabilities.statementTerminator).toBe("none");
+  });
+
+  test("declares the Create Table form's Trino grammar, the one exported constant", () => {
+    const capabilities = new TrinoProvider(makeConnection()).getCapabilities();
+
+    // No primary key and no sequence in any catalog, so the spec offers neither auto-increment nor constraints (#1822).
+    expect(capabilities.createTable).toBe(TRINO_CREATE_TABLE);
   });
 
   test("declares no foreign keys and no inline row edit, because it declares no keys at all", () => {

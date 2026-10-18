@@ -927,11 +927,26 @@ attached database, exactly as `sqlite.ts` does.
 | `supportsTransactions` | `false` | Stateless request stream closed with each statement; no interactive session held |
 | `maintenanceOperations` | `["reindex", "check"]` | Only `REINDEX` and `PRAGMA integrity_check` are permitted by server allowlist |
 | `maintenanceOperationSpecs` | `reindex` (`perEntity: true`, `global: true`), `check` (`perEntity: false`, `global: true`) | Placement rules for per-table and global maintenance actions |
-| `supportsCreateTable` | `true` | `CREATE TABLE` works as an ordinary SQL statement |
+| `createTable` | declared, see [Create Table form](#create-table-form) | `CREATE TABLE` works as an ordinary SQL statement |
 | `schemaRefreshPattern` | `"(CREATE\|DROP\|ALTER\|TRUNCATE\|REINDEX)\\b"` | Matches statements that modify schema or index metadata |
 | `containerLevels` | `[]` | Zero-container engine; bare object names throughout ([§6.1](#61-the-object-surface-789)) |
 | `containerPathShapes` | `exact` | Only the empty path `[]` addresses a container, so any segment is refused, by the object routes over HTTP and by this provider directly (#1147) |
 | `objectKinds` | `LIBSQL_OBJECT_KINDS` | `table` (relation, `acceptsRowWrites`), `view` (relation), `index` (config), `trigger` (attached) |
+
+### Create Table form
+
+libSQL answers as SQLite because it embeds it: the same engine over a network.
+`createTable` is `SQLITE_CREATE_TABLE` from [`sqlite-create-table.ts`](../../src/lib/db/providers/sql/sqlite-create-table.ts), the same object the SQLite provider returns, shared by import and never by a type-id branch (#1822).
+
+| Field | Value |
+| --- | --- |
+| Auto-increment clause | `INTEGER PRIMARY KEY AUTOINCREMENT`, not sequence-backed |
+| Column constraints | Yes: `PRIMARY KEY` and `UNIQUE` |
+| Key type | `INTEGER` |
+| Types | `TEXT`, `INTEGER`, `REAL`, `BLOB`, `NUMERIC` |
+
+The measured reasons for each value are in [sqlite.md, "Create Table form"](./sqlite.md#create-table-form).
+A row that reads like the old shared list is the engine agreeing with it.
 
 ### Labels — overridden (`getLabels()`, [`src/lib/db/providers/sql/libsql/index.ts`](../../src/lib/db/providers/sql/libsql/index.ts))
 

@@ -27,6 +27,7 @@ import { asBytes, binaryText } from "@/lib/export/binary";
 import { mysqlJsonStrategy } from "@/lib/explain/mysql-json";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { CATALOG_TYPE_RULES } from "@/lib/db/providers/sql/mysql";
+import { MYSQL_CREATE_TABLE } from "@/lib/db/providers/sql/mysql-create-table";
 import { diffSchemas } from "@/lib/schema-diff/diff-engine";
 import type { DetailedObject } from "@/lib/db/detailed-object";
 
@@ -1248,6 +1249,12 @@ describe("MySQLProvider", () => {
       expect(labels.vacuumGlobalTitle).toBe("Optimize Tables");
       expect(labels.vacuumGlobalDesc).toContain("OPTIMIZE TABLE");
     });
+    test("declares the MySQL Create Table grammar (#1822)", () => {
+      // The base declares no grammar, so the provider must hand the form its own; the identity
+      // assertion keeps the spec in one module the component tests import too.
+      expect(new MySQLProvider(makeMySQLConfig()).getCapabilities().createTable).toBe(MYSQL_CREATE_TABLE);
+    });
+
     test("returns correct MySQL capabilities", () => {
       provider = new MySQLProvider(makeMySQLConfig());
       const caps = provider.getCapabilities();

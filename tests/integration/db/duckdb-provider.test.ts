@@ -52,6 +52,7 @@ import {
   seedZeroCounts,
 } from "@/lib/db/providers/sql/duckdb/objects";
 import { openDuckDBClient } from "@/lib/db/providers/sql/duckdb/client";
+import { DUCKDB_CREATE_TABLE } from "@/lib/db/providers/sql/duckdb/create-table";
 import { ConnectionError, DatabaseConfigError, ExecutionProfileError, QueryError } from "@/lib/db/errors";
 import { isSourcePartUnavailable, sourceBoundTruncationReason } from "@/lib/db/object-kinds";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
@@ -191,6 +192,11 @@ describe("DuckDBProvider capabilities", () => {
   test("declares an embedded engine with no port and no connection string", () => {
     expect(capabilities.defaultPort).toBeNull();
     expect(capabilities.supportsConnectionString).toBe(false);
+  });
+
+  test("declares the Create Table form's DuckDB grammar, the one exported constant", () => {
+    // The constant lives in a driver-free module so the modal's tests read it without the native addon (#1822).
+    expect(capabilities.createTable).toBe(DUCKDB_CREATE_TABLE);
   });
 
   test("declares singleWriterFile, because the file admits one operating-system process", () => {

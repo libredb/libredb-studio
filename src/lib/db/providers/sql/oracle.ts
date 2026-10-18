@@ -5,6 +5,7 @@
 
 import oracledb from "oracledb";
 import { SQLBaseProvider } from "./sql-base";
+import { ORACLE_CREATE_TABLE } from "./oracle-create-table";
 import { oracleColumnTypes } from "./column-types";
 import {
   type DatabaseConnection,
@@ -1648,6 +1649,8 @@ export class OracleProvider extends SQLBaseProvider {
       // EXPLAIN PLAN FOR + DBMS_XPLAN, which the single-statement explain path cannot express.
       supportsExplain: false,
       supportsConnectionString: true,
+      // The Create Table form's grammar (#1822); reasons on the constant and in `docs/providers/oracle.md`.
+      createTable: ORACLE_CREATE_TABLE,
       supportsInlineRowEdit: true,
       // The Generate Test Data dialog's multi-row `INSERT INTO ... VALUES` (#1468).
       supportsTestDataGeneration: true,

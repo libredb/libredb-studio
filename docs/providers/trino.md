@@ -620,8 +620,8 @@ See [§3.11](#311-values-are-passed-through-exactly-as-the-wire-encodes-them).
 
 ### 5.5 Writes belong to the connector, not to the engine
 
-`supportsCreateTable: true`, because `CREATE TABLE` is in the grammar and was live-verified working on
-the `memory` connector. Whether it works on **your** catalog is that connector's answer, and no
+The provider declares `createTable` ([Create Table form](#create-table-form)), because `CREATE TABLE`
+is in the grammar and was live-verified working on the `memory` connector. Whether it works on **your** catalog is that connector's answer, and no
 statement is special-cased here: measured, the same connector answers `UPDATE` with
 `This connector does not support modifying table rows`. The connector's own message names the
 boundary better than anything this provider could substitute.
@@ -670,6 +670,25 @@ A composite that does not have its declared shape is skipped with a `-- Row N sk
 Measured 2026-10-04 on Trino 483 (`memory` connector): a table of every type above, nested `array(array(integer))` and `map(varchar, row(x double, y array(varchar)))` included, was exported through the provider and replayed with the `trino` CLI into `CREATE TABLE ... AS SELECT * FROM src WITH NO DATA` and into the exported DDL's own table, and `EXCEPT` both ways answered no row once the one `timestamp(6)` column was left out. A second table of `double` and `real` NaN and infinities, an `array(double)` holding them and a `row(integer, timestamp(3) with time zone)` replayed to the same rows.
 That column differs because the result already carries milliseconds only, and the declared type reads `timestamp` rather than `timestamp(6)`: Trino answers both in that legacy form to a client that does not declare parametric datetime support.
 The DDL is lossless for those millisecond values, since a bare `timestamp` is `timestamp(3)` on Trino.
+
+### Create Table form
+
+The grammar the Create Table form writes is `TRINO_CREATE_TABLE` in [`sql/trino/create-table.ts`](../../src/lib/db/providers/sql/trino/create-table.ts), a driver-free module so a test reads it without the transport (#1822).
+
+| Field | Value |
+|---|---|
+| Auto-increment clause | none: the form does not offer one |
+| Column constraints (`PRIMARY KEY`, `UNIQUE`) | No |
+| Key type | `INTEGER` |
+| Types, in dropdown order | `VARCHAR(255)`, `VARCHAR`, `INTEGER`, `BIGINT`, `BOOLEAN`, `TIMESTAMP`, `DATE`, `JSON`, `UUID`, `DECIMAL(10,2)` |
+
+Trino gets no auto-increment offer at all, the way `migration-generator.ts` declines rather than emitting DDL it knows is wrong.
+It is a query engine over connectors and declares no primary key for any table in any catalog, the same fact that makes `supportsInlineRowEdit: false` ([§3.8](#38-no-keys-no-indexes--and-why-that-is-a-fact-about-the-engine)), so there is no key for a generated value to be, and the engine has no sequence object to default from either.
+Its `CREATE TABLE` column grammar is a name, a type and an optional `NOT NULL`, which takes `PRIMARY KEY` and `UNIQUE` with it: an engine that cannot express what a checkbox means is not offered the checkbox, and `NOT NULL` stays.
+A key column that is not auto-increment carries the plain `INTEGER`.
+`TEXT` is not a Trino type name; an unbounded string is `VARCHAR`.
+
+The type list changes from the shared list only where the engine disagrees; a row that reads like the old shared list is the engine agreeing with it, not a row nobody looked at.
 
 ## 6. Schema introspection
 
@@ -1679,7 +1698,7 @@ are undeclared.
 | `supportsExplain` | `true` | ([§5.6](#56-explain-is-the-planning-form-only)) |
 | `explainFormat` | `"trino-json"` | The planning form only; `EXPLAIN ANALYZE` executes the statement and is never emitted ([§5.6](#56-explain-is-the-planning-form-only)) |
 | `supportsExternalQueryLimiting` | `true` | `LIMIT` is injected by the shared limiter, transposed ([§3.5](#35-offset-comes-before-limit)) |
-| `supportsCreateTable` | `true` | In the grammar, live-verified on `memory` ([§5.5](#55-writes-belong-to-the-connector-not-to-the-engine)) |
+| `createTable` | declared, see [Create Table form](#create-table-form) | In the grammar, live-verified on `memory` ([§5.5](#55-writes-belong-to-the-connector-not-to-the-engine)); no auto-increment and no column constraints |
 | `supportsInlineRowEdit` | `false` | No primary key exists to build a one-row `WHERE` ([§3.8](#38-no-keys-no-indexes--and-why-that-is-a-fact-about-the-engine)) |
 | `supportsTestDataGeneration` | `false` | Not measured against a connector, so the row menus do not offer Generate Test Data (#1468) |
 | `supportsResultPagination` | `true` | `OFFSET m LIMIT n`, transposed by this provider ([§3.5](#35-offset-comes-before-limit)); the results grid offers Load More (#816) |

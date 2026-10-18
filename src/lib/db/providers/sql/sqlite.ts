@@ -55,6 +55,7 @@ import {
 } from "./sqlite-driver";
 import { SQLiteWorkerClient, type SQLiteHandle, type SQLiteRawRead, type SQLiteWorkerOpen } from "./sqlite-worker";
 import { declaredColumnTypes } from "./column-types";
+import { SQLITE_CREATE_TABLE } from "./sqlite-create-table";
 import {
   applySourceBound,
   assertContainerPathShape,
@@ -1215,6 +1216,8 @@ export class SQLiteProvider extends SQLBaseProvider {
       explainFormat: "sqlite-queryplan",
       supportsConnectionString: false,
       supportsInlineRowEdit: true,
+      // The Create Table form's grammar: `INTEGER PRIMARY KEY AUTOINCREMENT` and the five affinities (#1822).
+      createTable: SQLITE_CREATE_TABLE,
       // The Generate Test Data dialog's multi-row `INSERT INTO ... VALUES` (#1468).
       supportsTestDataGeneration: true,
       // `LIMIT n OFFSET m`, applied by the shared limiter in `SQLBaseProvider.prepareQuery`.

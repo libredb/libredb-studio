@@ -100,6 +100,7 @@ import {
   type TableStats,
 } from "@/lib/db/types";
 import { TrinoHttpTransport } from "./http-transport";
+import { TRINO_CREATE_TABLE } from "./create-table";
 import {
   TRINO_CATALOG_LIST_SQL,
   getActiveSessions as readActiveSessions,
@@ -356,8 +357,9 @@ export class TrinoProvider extends SQLBaseProvider {
       supportsExternalQueryLimiting: true,
       // In the grammar and live-verified working on the memory connector. Whether it
       // works on THIS catalog is the connector's answer, not the engine's, and the
-      // connector says so in its own words.
-      supportsCreateTable: true,
+      // connector says so in its own words. No key, no sequence, no column constraints:
+      // reasons on the constant and in `docs/providers/trino.md`.
+      createTable: TRINO_CREATE_TABLE,
       // Not a missing feature but a missing key. The inline editor builds
       // `UPDATE <table> SET <col> = <val> WHERE <pk> = <val>`, and Trino declares no
       // primary key for any table in any catalog, so there is no column that

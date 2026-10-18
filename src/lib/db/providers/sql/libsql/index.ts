@@ -31,6 +31,7 @@
  */
 
 import { SQLBaseProvider } from "../sql-base";
+import { SQLITE_CREATE_TABLE } from "../sqlite-create-table";
 import {
   type DatabaseConnection,
   type ActiveSessionDetails,
@@ -220,8 +221,9 @@ export class LibSQLProvider extends SQLBaseProvider {
         check: { label: "Integrity Check", perEntity: false, global: true },
       },
       // Every statement is a fresh request, so a `CREATE TABLE` typed in the editor
-      // behaves exactly as it does against a file.
-      supportsCreateTable: true,
+      // behaves exactly as it does against a file. libSQL embeds SQLite, so the form
+      // writes SQLite's grammar: the same object, by import (#1822).
+      createTable: SQLITE_CREATE_TABLE,
       schemaRefreshPattern: "(CREATE|DROP|ALTER|TRUNCATE|REINDEX)\\b",
       // Zero container levels (#789). A connection addresses one database and every
       // object in it is addressed by a bare name, so `listContainers()` answers `[]` and

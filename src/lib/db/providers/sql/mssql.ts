@@ -5,6 +5,7 @@
 
 import mssql from "mssql";
 import { SQLBaseProvider } from "./sql-base";
+import { MSSQL_CREATE_TABLE } from "./mssql-create-table";
 import { type MssqlColumnMetadata, mssqlColumnTypes } from "./column-types";
 import {
   type DatabaseConnection,
@@ -1674,6 +1675,8 @@ export class MSSQLProvider extends SQLBaseProvider {
       // session-level SET SHOWPLAN_*, which the single-statement explain path cannot express.
       supportsExplain: false,
       supportsConnectionString: true,
+      // The Create Table form's grammar (#1822); reasons on the constant and in `docs/providers/mssql.md`.
+      createTable: MSSQL_CREATE_TABLE,
       supportsInlineRowEdit: true,
       // The Generate Test Data dialog's multi-row `INSERT INTO ... VALUES` (#1468).
       supportsTestDataGeneration: true,

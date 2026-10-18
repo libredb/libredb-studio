@@ -39,6 +39,7 @@ import {
   readDbstatSizes,
 } from "@/lib/db/providers/sql/sqlite";
 import { resolveSQLiteDriverName } from "@/lib/db/providers/sql/sqlite-driver";
+import { SQLITE_CREATE_TABLE } from "@/lib/db/providers/sql/sqlite-create-table";
 import {
   containerDepth,
   declaredKinds,
@@ -454,6 +455,12 @@ describe("SQLiteProvider", () => {
       expect(caps.maintenanceOperations).toContain("analyze");
       expect(caps.maintenanceOperations).toContain("reindex");
       expect(caps.maintenanceOperations).toContain("check");
+    });
+
+    // The Create Table form writes SQLite's own grammar, read off the driver-free module (#1822):
+    // the measured reasons are in docs/providers/sqlite.md, "Create Table form".
+    test("declares the SQLite create-table grammar, the module's own object", () => {
+      expect(new SQLiteProvider(makeSQLiteConfig()).getCapabilities().createTable).toBe(SQLITE_CREATE_TABLE);
     });
   });
 

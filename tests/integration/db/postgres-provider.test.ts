@@ -35,6 +35,7 @@ import { ApiErrorCode } from "@/lib/api/error-codes";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { renderSegments, userPositionOf } from "@/lib/db/object-edit";
+import { POSTGRES_CREATE_TABLE } from "@/lib/db/providers/sql/postgres-create-table";
 
 // ============================================================================
 // Mock pg BEFORE importing the provider
@@ -3939,6 +3940,12 @@ describe("PostgresProvider", () => {
     // Create Table name past it would land as a different name than the one typed (#1435).
     test("declares the 63-byte identifier limit the engine truncates at", () => {
       expect(new PostgresProvider(makePgConfig()).getCapabilities().maxIdentifierBytes).toBe(63);
+    });
+
+    test("declares the PostgreSQL Create Table grammar (#1822)", () => {
+      // The base declares no grammar, so the provider must hand the form its own; the identity
+      // assertion keeps the spec in one module the component tests import too.
+      expect(new PostgresProvider(makePgConfig()).getCapabilities().createTable).toBe(POSTGRES_CREATE_TABLE);
     });
 
     test("the vacuum label really means vacuum here", () => {
