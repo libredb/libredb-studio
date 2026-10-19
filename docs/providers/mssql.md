@@ -1489,12 +1489,20 @@ is the thing a DBA can act on.
 | Missing `host`/`database` (no connection string) | `DatabaseConfigError` |
 | Operation before `connect()` | `DatabaseConfigError` (via `ensureConnected()`) |
 | `connect()` fails | `ConnectionError` (carries host/port) |
+| Message contains *cannot open database* (`4060`) | `ConnectionError`, matched **before** the access refusals, because the server's sentence ends in *The login failed.* (#1451) |
 | A permission the principal lacks, by the error number `mssql` carries: `229` on an object, `230` on a column, `262` in a database, `297` for an action, `300` on a server-level object, `916` a database the login may not enter | `PermissionDeniedError`, answered `403 PERMISSION_DENIED` with `Permission denied: ` before the server's sentence |
 | Message contains *login failed* | `AuthenticationError`, answered `401 AUTH_ERROR`. tedious raises a refused login as `ELOGIN` without the server's error number (`18456`), so the words decide this one |
-| *Cannot open database* | `ConnectionError` |
 | Cancellation messages (*canceling statement*, *query was cancelled*, *query execution was interrupted*, *kill query*) | `QueryCancelledError` — matched **before** the timeout check |
 | `requestTimeout` exceeded (message contains *timeout*) | `TimeoutError` |
 | Other errors | generic `QueryError` / `DatabaseError` with the original message |
+
+A database that does not exist stays distinguishable from a wrong password in the text Test Connection
+shows. SQL Server answers such a login with **4060** — *Cannot open database "…" requested by the login.
+The login failed.* — and then **18456** (*Login failed for user '…'*), and tedious emits every login
+error token but keeps only the last as `loginError`. `buildConfig()` installs a `beforeConnect` hook
+that watches them, and `connect()` reports the 4060 sentence rather than the 18456 one (#1451). The
+ordering in the table above is the same problem from the other side: the real 4060 text ends in *The
+login failed.*, so testing *login failed* first would classify it as an `AuthenticationError`.
 
 Because `requestTimeout` *is* wired ([§3.5](#35-a-query-timeout-is-wired-driver-enforced)) — even
 though it's driver-enforced rather than server-side — an overrunning query genuinely produces a
