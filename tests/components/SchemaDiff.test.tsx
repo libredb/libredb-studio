@@ -4483,3 +4483,163 @@ describe("SchemaDiff on a session-scoped engine", () => {
     for (const body of cluster.inventoryBodies) expect(body.containers).toBeUndefined();
   });
 });
+
+/**
+ * An engine that declares `schemaDiffScope: "session-container"` reads the database the session is in, not every
+ * database the server holds, and offers the others in a picker (#1791). On MySQL a diff used to pair `app.orders`
+ * with `staging.orders` by name and keep whichever came last.
+ */
+describe("SchemaDiff on a session-container engine", () => {
+  type Container = { path: string[]; name: string; isSessionDefault?: boolean };
+  const shop: Container = { path: ["shop"], name: "shop", isSessionDefault: true };
+  const analytics: Container = { path: ["analytics"], name: "analytics" };
+
+  function mysqlReads(listing: () => { ok: boolean; body: unknown }) {
+    const orig = globalThis.fetch;
+    const inventoryBodies: Record<string, unknown>[] = [];
+    globalThis.fetch = mock((url: string, init?: RequestInit) => {
+      const answer = (ok: boolean, body: unknown) => Promise.resolve({ ok, json: () => Promise.resolve(body) });
+      if (url.includes("provider-meta")) {
+        return answer(true, {
+          capabilities: {
+            schemaDiffScope: "session-container",
+            containerLevels: [{ id: "schema", label: "Database", labelPlural: "Databases" }],
+            objectKinds: [{ id: "table", role: "relation", label: "Table", labelPlural: "Tables" }],
+          },
+        });
+      }
+      if (url.includes("objects/containers")) {
+        const { ok, body } = listing();
+        return answer(ok, body);
+      }
+      inventoryBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return answer(true, { objects: [], details: [] });
+    }) as unknown as typeof fetch;
+    return { inventoryBodies, restore: () => void (globalThis.fetch = orig) };
+  }
+
+  async function open(listing: () => { ok: boolean; body: unknown }) {
+    const reads = mysqlReads(listing);
+    const view = renderDiff();
+    await act(async () => {});
+    return { view, ...reads };
+  }
+
+  /** The picker's Select is registered under its current value, so a pick names where it is coming from. */
+  async function pick(from: string, to: string) {
+    await act(async () => {
+      selectCallbacks.get(from)?.(to);
+    });
+  }
+
+  beforeEach(() => {
+    // Not the neighbouring describes' store, which answers the fixtures alone: a saved snapshot has to be listed.
+    selectCallbacks.clear();
+    mockSaveSchemaSnapshot.mockImplementation((snapshot?: unknown) => {
+      if (snapshot !== undefined) savedSnapshots.push(snapshot);
+    });
+    mockGetSchemaSnapshots.mockImplementation(() => [...mockSnapshots, ...savedSnapshots]);
+  });
+
+  afterEach(() => {
+    cleanup();
+    savedSnapshots.length = 0;
+    mockSaveSchemaSnapshot.mockClear();
+  });
+
+  test("reads the database the session is in, and offers the others beside the whole connection", async () => {
+    const { view, inventoryBodies, restore } = await open(() => ({ ok: true, body: [analytics, shop] }));
+    try {
+      expect(inventoryBodies[0].containers).toEqual([["shop"]]);
+      expect(view.getByTestId("select-db:shop")).toBeTruthy();
+      expect(view.getByTestId("select-item-whole").textContent).toBe("Whole connection");
+      expect(view.getByTestId("select-item-db:analytics").textContent).toBe("analytics");
+    } finally {
+      restore();
+    }
+  });
+
+  test("a pick re-reads: another database, then the whole connection, which sends no containers", async () => {
+    const { view, inventoryBodies, restore } = await open(() => ({ ok: true, body: [analytics, shop] }));
+    try {
+      await pick("db:shop", "db:analytics");
+      expect(inventoryBodies.at(-1)?.containers).toEqual([["analytics"]]);
+      expect(view.getByTestId("select-db:analytics")).toBeTruthy();
+
+      await pick("db:analytics", "whole");
+      expect(inventoryBodies.at(-1)?.containers).toBeUndefined();
+      expect(view.getByTestId("select-whole")).toBeTruthy();
+    } finally {
+      restore();
+    }
+  });
+
+  test("a server that places the session in no database reads the whole connection, as before", async () => {
+    const { view, inventoryBodies, restore } = await open(() => ({
+      ok: true,
+      body: [{ path: ["shop"], name: "shop" }, analytics],
+    }));
+    try {
+      expect(inventoryBodies[0].containers).toBeUndefined();
+      expect(view.getByTestId("select-whole")).toBeTruthy();
+    } finally {
+      restore();
+    }
+  });
+
+  test("a snapshot records the database it was read from, and none for the whole connection", async () => {
+    const { view, restore } = await open(() => ({ ok: true, body: [analytics, shop] }));
+    try {
+      fireEvent.click(view.getByText("Snapshot"));
+      await act(async () => {
+        fireEvent.click(view.getByText("Save"));
+      });
+      expect(mockSaveSchemaSnapshot.mock.calls.at(-1)?.[0]).toMatchObject({ scope: "shop" });
+      expect(view.getAllByText(/\[shop\]/).length).toBeGreaterThan(0);
+
+      await pick("db:shop", "whole");
+      fireEvent.click(view.getByText("Snapshot"));
+      await act(async () => {
+        fireEvent.click(view.getByText("Save"));
+      });
+      const whole = mockSaveSchemaSnapshot.mock.calls.at(-1)?.[0] as { scope?: string } | undefined;
+      expect(whole).toMatchObject({ connectionId: mockPostgresConnection.id });
+      expect(whole?.scope).toBeUndefined();
+    } finally {
+      restore();
+    }
+  });
+
+  test("a connection fetched as the target is read at its own database and says so on the snapshot", async () => {
+    const { restore } = await open(() => ({ ok: true, body: [analytics, shop] }));
+    try {
+      await act(async () => {
+        getTargetCallback()!("conn:remote-1");
+      });
+      expect(mockSaveSchemaSnapshot.mock.calls.at(-1)?.[0]).toMatchObject({ connectionId: "remote-1", scope: "shop" });
+    } finally {
+      restore();
+    }
+  });
+
+  test("a database that is gone says so and keeps the picker, so the pick can be changed", async () => {
+    const { view, restore } = await open(() => ({ ok: true, body: [analytics, shop] }));
+    try {
+      await pick("db:shop", "db:gone");
+      expect(view.getByText(/has no database named gone/)).toBeTruthy();
+      expect(view.getByTestId("select-item-whole")).toBeTruthy();
+    } finally {
+      restore();
+    }
+  });
+
+  test("a refused listing is the reason Current Schema is the explorer's copy", async () => {
+    const { view, restore } = await open(() => ({ ok: false, body: { error: "permission denied to list databases" } }));
+    try {
+      expect(view.getByText(/permission denied to list databases/)).toBeTruthy();
+      expect(view.queryByTestId("select-whole")).toBeNull();
+    } finally {
+      restore();
+    }
+  });
+});

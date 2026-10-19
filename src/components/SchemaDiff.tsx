@@ -163,7 +163,26 @@ async function sessionScopedContainers(
   return scoped;
 }
 
-async function readLiveSchema(conn: DatabaseConnection): Promise<DetailedObject[]> {
+/**
+ * Which container a read of one connection is narrowed to (#1791): a name, or null for the whole connection.
+ * Absent: the engine's own default, which is the container the server says the session is in.
+ */
+interface DiffScope {
+  readonly container: string | null;
+}
+
+/** The picker's values: a database name can be anything, so it is prefixed and the whole connection is not a prefix of one. */
+const WHOLE_CONNECTION = "whole";
+const DATABASE_PREFIX = "db:";
+
+/** What a read of one connection answered, and the scopes it could have been narrowed to (#1791). */
+interface LiveRead {
+  readonly objects: DetailedObject[];
+  /** Present only on an engine that declares `schemaDiffScope: "session-container"`; `selected` null is the whole connection. */
+  readonly scopes?: { readonly names: readonly string[]; readonly selected: string | null };
+}
+
+async function readLiveSchema(conn: DatabaseConnection, requested?: DiffScope): Promise<LiveRead> {
   const payload = readPayload(conn);
   const post = (path: string, body: unknown) =>
     appFetch(path, {
@@ -181,6 +200,7 @@ async function readLiveSchema(conn: DatabaseConnection): Promise<DetailedObject[
   // A server-level connection is compared one database at a time (#1530): its active one, else the
   // first it lists, since a read of every database on the server is refused.
   let scope: { containers?: readonly (readonly string[])[] } = {};
+  let scopes: LiveRead["scopes"];
   const capabilities = meta.capabilities as ProviderCapabilities;
   if (declaresCatalogSessions(capabilities)) {
     const listRes = await post("/api/db/objects/containers", payload);
@@ -208,6 +228,26 @@ async function readLiveSchema(conn: DatabaseConnection): Promise<DetailedObject[
       return listed as Container[];
     });
     scope = { containers };
+  } else if (capabilities.schemaDiffScope === "session-container" && containerDepth(capabilities) === 1) {
+    // A one-level engine whose connection names its container (#1791): the session's own, unless the picker says
+    // otherwise, and the whole connection only when asked for or when the server places the session in none.
+    const listRes = await post("/api/db/objects/containers", payload);
+    const listed = await listRes.json();
+    if (!listRes.ok) throw new Error(listed.error);
+    const level = listed as Container[];
+    const wanted = requested?.container;
+    const path =
+      wanted === undefined
+        ? sessionDefaultOf(level)
+        : wanted === null
+          ? undefined
+          : level.find((c) => c.name === wanted)?.path;
+    if (typeof wanted === "string" && path === undefined) {
+      const label = (capabilities.containerLevels?.[0]?.label ?? "container").toLowerCase();
+      throw new Error(`${conn.name} has no ${label} named ${wanted}`);
+    }
+    if (path !== undefined) scope = { containers: [path] };
+    scopes = { names: level.map((c) => c.name), selected: path?.[0] ?? null };
   }
 
   // `includeDefaultSql`: the SQL a migration pastes after DEFAULT, captured now, while the table
@@ -223,7 +263,7 @@ async function readLiveSchema(conn: DatabaseConnection): Promise<DetailedObject[
   const data = await res.json();
   if (!res.ok) throw new Error(data.error);
 
-  return [...detailedObjects(data.objects ?? [], data.details ?? [])];
+  return { objects: [...detailedObjects(data.objects ?? [], data.details ?? [])], scopes };
 }
 
 export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
@@ -352,6 +392,8 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
   const [liveRead, setLiveRead] = useState<{
     target: string;
     objects: readonly DetailedObject[] | null;
+    /** The containers the picker offers and the one this read used (#1791). Kept across a failed read, or the picker would vanish. */
+    scopes?: LiveRead["scopes"];
     error: string | null;
     /** The error is a `ScopeRefusal`: nothing was read, and Current Schema is not compared at all. */
     refused?: boolean;
@@ -388,6 +430,16 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
    * the same commit - and it is read rather than captured, so a read always goes out with the
    * host's CURRENT object and never a stale copy of it.
    */
+  /**
+   * The container the user picked for this connection's reads (#1791), and which connection the pick was made on.
+   *
+   * Carried with its target for the reason `liveRead` is: a pick made on the connection the user has left must not
+   * narrow the one they are looking at. `null` is "Whole connection"; undefined is no pick, which is the engine's default.
+   * It reaches the reads through `beginRead`, so a change of pick re-runs the effects that depend on it.
+   */
+  const [scopePick, setScopePick] = useState<{ target: string; container: string | null } | null>(null);
+  const pickedContainer = scopePick?.target === readTarget ? scopePick.container : undefined;
+
   const latestConnection = useRef(connection);
   useEffect(() => {
     latestConnection.current = connection;
@@ -396,6 +448,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
   const readForThisConnection = liveRead?.target === readTarget ? liveRead : null;
   const liveSchema = readForThisConnection?.objects ?? null;
   const liveSchemaError = readForThisConnection?.error ?? null;
+  const scopes = readForThisConnection?.scopes;
   /**
    * The sentence a refused read gave (SF-004), or null. Current Schema then has no content to compare: the explorer's
    * copy stood in for it, and on a Snowflake connection with no Database that copy is empty, so a diff listed every
@@ -416,8 +469,11 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
    * back to the explorer's copy and says so; a snapshot saves nothing at all.
    */
   const beginRead = useCallback(
-    (conn: DatabaseConnection) => ({ read: readLiveSchema(conn), isCurrent: reads.begin() }),
-    [reads],
+    (conn: DatabaseConnection) => ({
+      read: readLiveSchema(conn, pickedContainer === undefined ? undefined : { container: pickedContainer }),
+      isCurrent: reads.begin(),
+    }),
+    [reads, pickedContainer],
   );
 
   // Keyed on `readTarget`, not on the connection object. A host that rebuilds the object
@@ -432,9 +488,9 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
     if (!conn) return;
     const { read, isCurrent } = beginRead(conn);
     read
-      .then((objects) => {
+      .then(({ objects, scopes }) => {
         if (!isCurrent()) return;
-        setLiveRead({ target: readTarget, objects, error: null });
+        setLiveRead({ target: readTarget, objects, scopes, error: null });
         // The snapshot report is NOT touched here, and that is the whole of this fix. This
         // write says one thing - Current Schema is fresh - and a snapshot that was not
         // written stays not written however many reads land afterwards. Clearing it here put
@@ -449,7 +505,13 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
       .catch((err) => {
         const reason = err instanceof Error ? err.message : String(err);
         if (isCurrent())
-          setLiveRead({ target: readTarget, objects: null, error: reason, refused: err instanceof ScopeRefusal });
+          setLiveRead((prev) => ({
+            target: readTarget,
+            objects: null,
+            scopes: prev?.target === readTarget ? prev.scopes : undefined,
+            error: reason,
+            refused: err instanceof ScopeRefusal,
+          }));
         logger.warn("Failed to read the current schema for a diff; falling back to the explorer's copy", {
           route: "SchemaDiff",
           error: reason,
@@ -475,9 +537,9 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
     if (sourceId !== "current" && targetId !== "current") return;
     const { read, isCurrent } = beginRead(conn);
     read
-      .then((objects) => {
+      .then(({ objects, scopes }) => {
         if (!isCurrent()) return;
-        setLiveRead({ target: readTarget, objects, error: null });
+        setLiveRead({ target: readTarget, objects, scopes, error: null });
         // Same rule as the read when the panel opens, and this is the call site that did the
         // damage: choosing a target is the commonest way a snapshot in flight gets overtaken,
         // so this read and the snapshot it superseded are two halves of one gesture. It
@@ -488,7 +550,13 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
         // Falling back to the last copy rather than emptying the side, which would report
         // every object as removed; the banner says why it may be out of date.
         if (isCurrent())
-          setLiveRead({ target: readTarget, objects: null, error: reason, refused: err instanceof ScopeRefusal });
+          setLiveRead((prev) => ({
+            target: readTarget,
+            objects: null,
+            scopes: prev?.target === readTarget ? prev.scopes : undefined,
+            error: reason,
+            refused: err instanceof ScopeRefusal,
+          }));
       });
     // On `readTarget` for the reason the effect above is, and it matters here too: a chosen
     // target is the commonest way a snapshot gets overtaken, so a rebuilt object re-running
@@ -539,15 +607,21 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
     const { read, isCurrent } = beginRead(connection);
     setRefreshing(true);
     read
-      .then((objects) => {
-        if (isCurrent()) setLiveRead({ target: readTarget, objects, error: null });
+      .then(({ objects, scopes }) => {
+        if (isCurrent()) setLiveRead({ target: readTarget, objects, scopes, error: null });
       })
       .catch((err) => {
         const reason = err instanceof Error ? err.message : String(err);
         // Same fallback as the other two reads: the last copy rather than an empty side,
         // which would report every object as removed, and a banner saying why.
         if (isCurrent())
-          setLiveRead({ target: readTarget, objects: null, error: reason, refused: err instanceof ScopeRefusal });
+          setLiveRead((prev) => ({
+            target: readTarget,
+            objects: null,
+            scopes: prev?.target === readTarget ? prev.scopes : undefined,
+            error: reason,
+            refused: err instanceof ScopeRefusal,
+          }));
         logger.warn("Failed to re-read the current schema for a diff", {
           route: "SchemaDiff",
           error: reason,
@@ -603,7 +677,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
       // The same read that becomes "Current Schema", so the snapshot and the side it will
       // be compared against are the same instant.
       const { read, isCurrent } = beginRead(connection);
-      const objects = await read;
+      const { objects, scopes } = await read;
       if (!isCurrent()) {
         // Something asked for a newer read while this one was in flight - choosing a target
         // does, and so does this connection being pointed at another database while the read
@@ -629,7 +703,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
         }
         return;
       }
-      setLiveRead({ target: readTarget, objects, error: null });
+      setLiveRead({ target: readTarget, objects, scopes, error: null });
       const snapshot: SchemaSnapshot = {
         // Random, not the clock. `Date.now()` is the id two snapshots taken in the same
         // millisecond SHARE, and every use of a snapshot id keys on it being one snapshot:
@@ -648,6 +722,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
         schema: JSON.parse(JSON.stringify(objects)),
         createdAt: new Date(),
         label: snapshotLabel.trim() || undefined,
+        scope: scopes?.selected ?? undefined,
       };
       // Inside the try as well: snapshots live in localStorage and a snapshot is a whole
       // schema, so a quota refusal is an ordinary outcome rather than an exotic one.
@@ -801,7 +876,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
       // fetch that works leaves nothing of the one that failed behind it.
       setRemoteFailure(null);
       try {
-        const objects = await readLiveSchema(conn);
+        const { objects, scopes } = await readLiveSchema(conn);
         // A superseded fetch writes NOTHING: not the snapshot, which would litter the list
         // with a database the user turned away from, and above all not the target.
         if (!isCurrent()) return;
@@ -817,6 +892,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
           schema: objects,
           createdAt: new Date(),
           label: `Live: ${conn.name}`,
+          scope: scopes?.selected ?? undefined,
         };
         storage.saveSchemaSnapshot(snapshot);
         setSnapshots(storage.getSchemaSnapshots());
@@ -916,7 +992,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
 
   const formatSnapshotLabel = (s: SchemaSnapshot) => {
     const date = new Date(s.createdAt).toLocaleString();
-    return `${s.label || s.connectionName} (${date})`;
+    return `${s.label || s.connectionName}${s.scope === undefined ? "" : ` [${s.scope}]`} (${date})`;
   };
 
   return (
@@ -1006,6 +1082,36 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
           </Select>
           {fetchingRemote && <span className="text-xs text-fg-muted animate-pulse">Fetching...</span>}
         </div>
+
+        {/* Which database the current connection is read from (#1791). Shown only where the engine offers a choice. */}
+        {scopes !== undefined && (
+          <div className="flex items-center gap-1">
+            <span className="text-xs text-fg-subtle">Scope</span>
+            <Select
+              value={scopes.selected === null ? WHOLE_CONNECTION : `${DATABASE_PREFIX}${scopes.selected}`}
+              onValueChange={(v) =>
+                setScopePick({
+                  target: readTarget,
+                  container: v === WHOLE_CONNECTION ? null : v.slice(DATABASE_PREFIX.length),
+                })
+              }
+            >
+              <SelectTrigger aria-label="Scope" className="h-7 w-[150px] text-xs bg-fill border-hairline-strong">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="bg-overlay border-hairline-strong">
+                <SelectItem value={WHOLE_CONNECTION} className="text-xs">
+                  {"Whole connection"}
+                </SelectItem>
+                {scopes.names.map((name) => (
+                  <SelectItem key={name} value={`${DATABASE_PREFIX}${name}`} className="text-xs">
+                    {name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
 
         <div className="flex-1" />
 

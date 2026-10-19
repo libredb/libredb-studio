@@ -3124,6 +3124,8 @@ export class MySQLProvider extends SQLBaseProvider {
       // level here - MySQL has exactly one and `information_schema.SCHEMATA` is what a
       // catalog would contain.
       containerLevels: [{ id: "schema", label: "Database", labelPlural: "Databases" }],
+      // The Diff tab compares the session's own database unless told otherwise (#1791): the connection form names one.
+      schemaDiffScope: "session-container",
       // Only the declared depth is an address: a partial path would leave a level unbound and
       // answer an empty folder. Read through `acceptedContainerShapes()` (#1147).
       containerPathShapes: "exact",

@@ -1139,6 +1139,13 @@ export interface SchemaSnapshot {
   schema: StoredObject[];
   createdAt: Date;
   label?: string;
+  /**
+   * The container the objects were read from, when the read was narrowed to one (#1791).
+   *
+   * Absent means the whole connection, which is also every snapshot taken before this field existed, so an old one
+   * reads as the unscoped snapshot it was.
+   */
+  scope?: string;
 }
 
 export type AggregationType = "none" | "sum" | "avg" | "count" | "min" | "max";
