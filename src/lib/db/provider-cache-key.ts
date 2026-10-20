@@ -134,7 +134,7 @@ export function providerOwner(connection: DatabaseConnection, owner: string | un
  * field ALONE, with the others held equal, makes the connection authenticate as someone else or
  * be trusted differently by the server.
  *
- * Every field `src/lib/storage/connection-secrets.ts` classifies as `secret` has to move this digest
+ * Every field `src/lib/storage/secret-fields.ts` classifies as `secret` has to move this digest
  * or the fingerprint, and `tests/unit/lib/db/provider-cache-key.test.ts` walks those maps to hold it,
  * because this list is hand-kept and the API key pair was once missing from it. The public fields
  * below (the agent user, what TLS presents and trusts, the mechanism, the auth database, the consent,

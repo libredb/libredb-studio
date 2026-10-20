@@ -6816,7 +6816,7 @@ CodeQL's text: "A broken or weak cryptographic algorithm depends on sensitive da
 The line computed the SHA-1 thumbprint of the server's DER certificate, which `session.ts` compares against the operator's pin.
 
 The stated CONSEQUENCE was measured on 2026-10-12 and does not hold, and that is worth recording because it is what the next reader will want.
-The hashed DER is not sensitive: an OPC UA server publishes it to any unauthenticated caller in its `GetEndpoints` reply (Part 4 5.5.4), and this repository already classifies the derived thumbprint as `public` in `src/lib/storage/connection-secrets.ts`.
+The hashed DER is not sensitive: an OPC UA server publishes it to any unauthenticated caller in its `GetEndpoints` reply (Part 4 5.5.4), and this repository already classifies the derived thumbprint as `public` in `src/lib/storage/secret-fields.ts`.
 Nor was the pin defeatable: defeating a pin of a certificate that already exists needs a SECOND PREIMAGE, which SHA-1 still resists, and not the collision resistance that SHAttered 2017 and Leurent and Peyrin 2020 broke.
 The thing actually worth fixing that the audit turned up is U130, which is about which certificate the pin is compared against rather than about the hash.
 

@@ -220,7 +220,7 @@ the Advanced accordion that holds Oracle's service name — a hidden mandatory f
 nobody can open), in the seed schema, and in `validate()`. A stock single-node install reports
 `datacenter1`, which is the form's placeholder.
 
-It is classified `public` in `connection-secrets.ts` (a data-centre name is not a credential) and
+It is classified `public` in `secret-fields.ts` (a data-centre name is not a credential) and
 `resolution` in `use-connection-payload.ts` (it decides which nodes a statement reaches).
 
 ### 3.5 The error class is almost always the same one, so the classifier reads `innerErrors`

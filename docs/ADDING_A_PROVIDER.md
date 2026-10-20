@@ -1290,7 +1290,7 @@ has an established grammar or reads at the default, and whether its query text i
 >
 > Cassandra (#424 Phase 4) found three surfaces the grep over `trino` reached and this list does not
 > name, all of them because it added a connection FIELD (`localDataCenter`) rather than only a
-> type-id: `src/hooks/use-connection-payload.ts` and `src/lib/storage/connection-secrets.ts` both
+> type-id: `src/hooks/use-connection-payload.ts` and `src/lib/storage/secret-fields.ts` both
 > carry an exhaustive `Record<keyof DatabaseConnection, …>` that stops compiling until the new field
 > is classified, and `src/lib/seed/connection-filter.ts` maps seed fields onto a connection BY HAND,
 > so a field omitted there is silently dropped from every managed connection. The first two fail

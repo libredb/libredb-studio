@@ -44,7 +44,7 @@ import { credentialWarningFor } from "@/lib/db/credential-warnings";
  * the connection's main credentials without saying so.
  *
  * A `Record<keyof DatabaseConnection, ...>` rather than a list of names to copy, for
- * the reason `connection-secrets.ts` gives about credentials: the failure mode of a
+ * the reason `secret-fields.ts` gives about credentials: the failure mode of a
  * list is silence, and silence is exactly how this bug survived. A field added to
  * `DatabaseConnection`, `SSLConfig` or `SSHTunnelConfig` now fails `bun run typecheck`
  * until someone decides whether the editor owns it.
