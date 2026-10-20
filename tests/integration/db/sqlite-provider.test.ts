@@ -68,6 +68,12 @@ import { readFixtureStatements } from "../../../docker/sqlite-init/build-fixture
 import { logger } from "@/lib/logger";
 import { MISSING_POSIX_FILE_MODES, describeIf, testIf } from "../../helpers/posix-tools";
 import { howItFailed } from "../../helpers/spawn-outcome";
+import {
+  CHILD_TEST_TIMEOUT_MS,
+  MISSING_POSIX_SPECIAL_FILES,
+  connectInChild,
+  makeFifo,
+} from "../../helpers/special-files";
 
 // ============================================================================
 // Helpers
@@ -295,6 +301,87 @@ describe("SQLiteProvider", () => {
         expect(provider.isConnected()).toBe(false);
       },
     );
+  });
+
+  // --------------------------------------------------------------------------
+  // A database path that exists and is not a regular file
+  // --------------------------------------------------------------------------
+
+  describe("a path that is not a regular file", () => {
+    let specialDir: string;
+
+    beforeEach(() => {
+      specialDir = mkdtempSync(join(tmpdir(), "libredb-sqlite-special-"));
+    });
+
+    afterEach(() => {
+      rmSync(specialDir, { recursive: true, force: true });
+    });
+
+    test("a directory is refused before SQLite opens it, naming the path", async () => {
+      const dir = join(specialDir, "a-directory");
+      mkdirSync(dir);
+      provider = new SQLiteProvider(makeSQLiteConfig({ database: dir }));
+      const error = await provider.connect().then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(error).toBeInstanceOf(ConnectionError);
+      expect((error as Error).message).toBe(
+        `Failed to open SQLite database: ${dir} is a directory, not a regular file`,
+      );
+      expect(provider.isConnected()).toBe(false);
+    });
+
+    // SQLite used to report a connection to a character device: Test Connection said "Connected".
+    testIf(MISSING_POSIX_SPECIAL_FILES, "a character device is refused instead of reported connected", async () => {
+      provider = new SQLiteProvider(makeSQLiteConfig({ database: "/dev/null" }));
+      const error = await provider.connect().then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(error).toBeInstanceOf(ConnectionError);
+      expect((error as Error).message).toBe(
+        "Failed to open SQLite database: /dev/null is a character device, not a regular file",
+      );
+      expect(provider.isConnected()).toBe(false);
+    });
+
+    // A FIFO opened for reading waits for a writer that never comes: the agent's read-only open, and the
+    // editor's read-only open of a file it cannot write, never returned (measured on bun 1.4.2). Each
+    // case connects in a child under a hard limit, so a regression fails here instead of hanging.
+    describeIf(MISSING_POSIX_SPECIAL_FILES, "a FIFO", () => {
+      const sqliteModule = join(REPO_ROOT, "src/lib/db/providers/sql/sqlite.ts");
+
+      test.each([
+        ["the editor", "644", {}],
+        ["the editor, on a FIFO it cannot write and would open read-only", "444", {}],
+        ["the agent read-only profile", "644", { readOnly: true }],
+      ] as const)(
+        "%s refuses it at once, naming the path, and leaves no file beside it",
+        async (_who, mode, execution) => {
+          const fifo = join(specialDir, "nobody-writes.db");
+          makeFifo(fifo, mode);
+          const outcome = await connectInChild(
+            sqliteModule,
+            "SQLiteProvider",
+            { id: "fifo", name: "fifo", type: "sqlite", database: fifo },
+            execution,
+          );
+          expect(outcome).toEqual({
+            report: {
+              connected: false,
+              error: "ConnectionError",
+              message: `Failed to open SQLite database: ${fifo} is a named pipe (FIFO), not a regular file`,
+            },
+            failure: null,
+          });
+          expect(readdirSync(specialDir)).toEqual(["nobody-writes.db"]);
+          expect(statSync(fifo).isFIFO()).toBe(true);
+        },
+        CHILD_TEST_TIMEOUT_MS,
+      );
+    });
   });
 
   // --------------------------------------------------------------------------

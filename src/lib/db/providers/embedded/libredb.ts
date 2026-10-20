@@ -61,6 +61,7 @@ import { comparePaths } from "../../object-path";
 import { DatabaseConfigError, ConnectionError, QueryError } from "../../errors";
 import { formatBytes } from "../../utils/pool-manager";
 import { carriesLossyNumber } from "../../utils/json-integers";
+import { assertRegularFileOrMissing } from "../../utils/regular-file";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import * as fs from "fs";
 import { isReservedStoragePath } from "@/lib/data-dir";
@@ -525,6 +526,9 @@ export class LibreDBProvider extends BaseDatabaseProvider {
     }
     const lib = await loadLibreDB(); // DatabaseConfigError propagates if unavailable
     try {
+      // Before the kernel opens anything, its `.lock` sidecar included: it opened a FIFO and
+      // reported a connection to it.
+      assertRegularFileOrMissing(dbPath);
       this.db = lib.open({ path: dbPath });
       this.kv = lib.kv(this.db);
       this.dbVersion = lib.version;

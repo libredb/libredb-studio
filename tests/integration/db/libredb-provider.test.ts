@@ -14,6 +14,13 @@ import {
 } from "@/lib/db/providers/embedded/libredb";
 import { ConnectionError, QueryError } from "@/lib/db/errors";
 import type { DatabaseConnection } from "@/lib/types";
+import { describeIf } from "../../helpers/posix-tools";
+import {
+  CHILD_TEST_TIMEOUT_MS,
+  MISSING_POSIX_SPECIAL_FILES,
+  connectInChild,
+  makeFifo,
+} from "../../helpers/special-files";
 import type { DatabaseProvider } from "@/lib/db/types";
 import { open, kv, doc, table, CATALOG_PREFIX } from "@libredb/libredb";
 import { buildObjectFixture } from "../../../docker/libredb-init/01-object-fixture";
@@ -137,6 +144,59 @@ describe("LibreDBProvider — lifecycle & metadata", () => {
     expect((error as Error).message).not.toContain(".lock");
     expect(provider.isConnected()).toBe(false);
     expect(fs.existsSync(missingDir)).toBe(false);
+  });
+
+  test("a directory is refused before the kernel opens it, naming the path, and no .lock is taken", async () => {
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "libredb-special-"));
+    try {
+      const dir = path.join(parent, "a-directory");
+      fs.mkdirSync(dir);
+      const provider = new LibreDBProvider(makeConn(dir));
+      const error = await provider.connect().then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(error).toBeInstanceOf(ConnectionError);
+      expect((error as Error).message).toBe(`Failed to open LibreDB file: ${dir} is a directory, not a regular file`);
+      expect(provider.isConnected()).toBe(false);
+      expect(fs.readdirSync(parent)).toEqual(["a-directory"]);
+    } finally {
+      fs.rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  // The kernel opened a FIFO, took a `.lock` beside it, and Test Connection answered "Connected"
+  // (measured on bun 1.4.2). In a child under a hard limit, so a regression to an open that blocks
+  // fails here instead of hanging the suite.
+  describeIf(MISSING_POSIX_SPECIAL_FILES, "a FIFO as the database path", () => {
+    test(
+      "is refused at once, naming the path, and no .lock is taken beside it",
+      async () => {
+        const parent = fs.mkdtempSync(path.join(os.tmpdir(), "libredb-fifo-"));
+        try {
+          const fifo = path.join(parent, "nobody-writes.libredb");
+          makeFifo(fifo);
+          const outcome = await connectInChild(
+            path.join(import.meta.dir, "../../../src/lib/db/providers/embedded/libredb.ts"),
+            "LibreDBProvider",
+            { id: "fifo", name: "fifo", type: "libredb", database: fifo },
+          );
+          expect(outcome).toEqual({
+            report: {
+              connected: false,
+              error: "ConnectionError",
+              message: `Failed to open LibreDB file: ${fifo} is a named pipe (FIFO), not a regular file`,
+            },
+            failure: null,
+          });
+          expect(fs.readdirSync(parent)).toEqual(["nobody-writes.libredb"]);
+          expect(fs.statSync(fifo).isFIFO()).toBe(true);
+        } finally {
+          fs.rmSync(parent, { recursive: true, force: true });
+        }
+      },
+      CHILD_TEST_TIMEOUT_MS,
+    );
   });
 
   // The built-in sample connection lives under the default `./data`, so a relative path must

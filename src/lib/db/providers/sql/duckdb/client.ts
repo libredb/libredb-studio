@@ -49,6 +49,7 @@ import * as os from "os";
 import { join } from "path";
 import { ConnectionError } from "../../../errors";
 import { keyRowsByPosition } from "../../../utils/positional-rows";
+import { assertRegularFileOrMissing } from "../../../utils/regular-file";
 import { uniqueFieldNames } from "../../../utils/result-fields";
 
 // ============================================================================
@@ -303,11 +304,19 @@ function readHeader(path: string): Buffer | null {
  * checkpointing the SQLite WAL into the file, and the connection then reports success on
  * a database that is not DuckDB's. Reading the header first leaves the file untouched.
  *
- * A path that cannot be read here (missing, unreadable, a directory) is left to the
- * engine, which creates the missing file or names the failure in its own words.
+ * Before the header is read, a path that exists and is not a regular file (a FIFO, a socket,
+ * a device, a directory) is refused as an open failure: opening a FIFO for reading waits for
+ * a writer that never comes, and this read is synchronous, so it froze the server
+ * (`assertRegularFileOrMissing`). A path that cannot be read here (missing, unreadable) is
+ * left to the engine, which creates the missing file or names the failure in its own words.
  */
 function assertDuckDBFile(path: string): void {
   if (path === MEMORY_TARGET) return;
+  try {
+    assertRegularFileOrMissing(path);
+  } catch (error) {
+    throw describeOpenFailure(error, path, false);
+  }
   const header = readHeader(path);
   if (header === null) return;
 

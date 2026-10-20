@@ -74,6 +74,7 @@ import { logger } from "@/lib/logger";
 import * as fs from "fs";
 import * as path from "path";
 import { createMissingDirectories } from "@/lib/db/utils/create-directory";
+import { assertRegularFileOrMissing } from "@/lib/db/utils/regular-file";
 import { isUnwritableExistingFile } from "@/lib/db/utils/unwritable-file";
 import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
 import { keyRowsByPosition } from "@/lib/db/utils/positional-rows";
@@ -1303,6 +1304,10 @@ export class SQLiteProvider extends SQLBaseProvider {
 
     try {
       const dbPath = this.getDatabasePath(true);
+
+      // Before any of the three opens below: a read-only open of a FIFO waits for a writer that
+      // never comes, and SQLite reported a connection to a character device.
+      if (dbPath !== ":memory:") assertRegularFileOrMissing(dbPath);
 
       if (this.readOnlyProfile) {
         await this.connectReadOnly(dbPath);
