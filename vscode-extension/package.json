@@ -44,6 +44,7 @@
     "vscode:prepublish": "npm run build"
   },
   "devDependencies": {
+    "@happy-dom/global-registrator": "21.0.3",
     "@sinonjs/fake-timers": "15.4.0",
     "@types/mocha": "10.0.10",
     "@types/node": "24.19.2",

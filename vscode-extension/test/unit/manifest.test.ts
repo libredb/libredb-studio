@@ -75,6 +75,12 @@ describe("the manifest", () => {
     });
   });
 
+  it("pins @happy-dom/global-registrator to the major of the root's happy-dom", () => {
+    const rootHappyDom = /"happy-dom@(\d+)\.\d+\.\d+"/.exec(readFileSync(join(root, "../bun.lock"), "utf8"));
+    assert.ok(rootHappyDom, "the root bun.lock resolves no happy-dom");
+    assert.equal(manifest.devDependencies["@happy-dom/global-registrator"].split(".")[0], rootHappyDom[1]);
+  });
+
   it("is private, MIT, and loads dist/extension.js", () => {
     assert.equal(manifest.private, true);
     assert.equal(manifest.license, "MIT");

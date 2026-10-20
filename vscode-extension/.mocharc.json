@@ -1,6 +1,6 @@
 {
-  "spec": ["test/unit/**/*.test.ts"],
-  "extension": ["ts"],
+  "spec": ["test/unit/**/*.test.ts", "test/unit/**/*.test.tsx"],
+  "extension": ["ts", "tsx"],
   "require": ["test/setup/register.cjs", "test/setup/hooks.ts"],
   "forbid-only": true
 }
