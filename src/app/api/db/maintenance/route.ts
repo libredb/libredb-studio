@@ -62,6 +62,18 @@ export async function POST(request: Request) {
       );
     }
 
+    // `target` is the same kind of field: a string naming the object the operation runs against,
+    // or absent for the whole-database form. A non-string one reached the provider, where a number
+    // failed as `identifier.replace is not a function` and the client read a 500 quoting provider
+    // source, and the audit row below recorded the serialized value. It is refused here, before
+    // any provider opens and before any audit row.
+    if (target !== undefined && typeof target !== "string") {
+      return NextResponse.json(
+        { error: `"target" must be a string naming the object to run against` },
+        { status: 400 },
+      );
+    }
+
     // An EMPTY string reads as the absence of a container, the same way an empty `target` reads
     // as the whole-database form below. Nothing here may hand a provider a value that its own
     // falsy test would have refused anyway, because the audit row below records what arrived.

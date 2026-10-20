@@ -1156,6 +1156,9 @@ Without this the value reached the provider's identifier escaper, where it faile
 empty string is not malformed: it reads as a request that named no container, the same way an empty
 `target` reads as the whole-database form.
 
+`target` gets the same check, before any provider is opened and before any audit row is written: a value that is neither absent nor a string answers `{ "error": "\"target\" must be a string naming the object to run against" }` with `400`.
+Without it a number failed in the provider as `identifier.replace is not a function`, answered `500`, and the audit row recorded the serialized value.
+
 A fifth `400` gates what the operation may be *pointed at*. Each provider declares that separately
 (`maintenanceOperationSpecs`, documented per engine under `docs/providers/`), and `target` selects
 which half of the declaration this request is: absent or empty is a whole-database request, a name
