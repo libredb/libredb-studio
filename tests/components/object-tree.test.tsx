@@ -6,6 +6,7 @@ import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } 
 import userEvent from "@testing-library/user-event";
 import { ObjectTree } from "@/components/object-tree";
 import { treeWindow } from "@/components/object-tree/ObjectTree";
+import { TREE_ROW_HEIGHT } from "@/components/object-tree/TreeRow";
 import { useTreeNodes } from "@/components/object-tree/use-tree-nodes";
 import type { DatabaseObject, ProviderCapabilities } from "@/lib/db/types";
 import type { ColumnSchema, DatabaseConnection } from "@/lib/types";
@@ -1487,5 +1488,96 @@ describe("ObjectTree object expansion", () => {
     expect(document.activeElement?.getAttribute("data-row-id")).toBe("column%3Aapp/orders/table/total");
     await userEvent.keyboard("{ArrowUp}{ArrowUp}");
     expect(document.activeElement?.getAttribute("data-row-id")).toBe("app/orders/table");
+  });
+});
+
+describe("the sticky strip above the object rows", () => {
+  const tables = Array.from({ length: 20 }, (_, index) => ({
+    path: ["app", `t_${index}`],
+    name: `t_${index}`,
+    kind: "table",
+  }));
+
+  beforeEach(() => {
+    installFetch(routesFor({ table: tables }, { table: { count: 20 }, view: { count: 0 } }));
+  });
+
+  /** A measured, scrolled tree box: the only state a strip is drawn in. */
+  function scrolled(top: number): HTMLElement {
+    const tree = screen.getByRole("tree");
+    Object.defineProperty(tree, "clientHeight", { configurable: true, value: 280 });
+    tree.scrollTop = top;
+    fireEvent.scroll(tree);
+    return tree;
+  }
+
+  function stripLabels(): string[] {
+    const strip = screen.getByTestId("object-tree-sticky");
+    return within(strip)
+      .getAllByTestId("object-tree-sticky-row")
+      .map((stripRow) => stripRow.querySelector("span.truncate")?.textContent ?? "");
+  }
+
+  async function openTables(): Promise<void> {
+    await userEvent.click(await screen.findByRole("treeitem", { name: /app/ }));
+    await userEvent.click(await screen.findByRole("treeitem", { name: /Tables/ }));
+    await waitFor(() => expect(screen.getByText("t_0")).toBeTruthy());
+  }
+
+  test("pins the ancestors of the first visible row, root first", async () => {
+    render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
+    await openTables();
+    scrolled(TREE_ROW_HEIGHT * 5);
+
+    const labels = stripLabels();
+    expect(labels).toHaveLength(2);
+    expect(labels[0]).toMatch(/^app/);
+    expect(labels[1]).toMatch(/^Tables/);
+  });
+
+  test("draws nothing until an ancestor is fully scrolled off", async () => {
+    render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
+    await openTables();
+    // The container is the first row: at the top of the list it is still visible, so a strip over
+    // the list would be covering the very row it claims to keep in sight.
+    scrolled(0);
+    expect(screen.queryByTestId("object-tree-sticky")).toBeNull();
+  });
+
+  test("is decorative: hidden from assistive tech, and holds no tab stop", async () => {
+    render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
+    await openTables();
+    scrolled(TREE_ROW_HEIGHT * 5);
+
+    const strip = screen.getByTestId("object-tree-sticky");
+    expect(strip.getAttribute("aria-hidden")).toBe("true");
+    for (const stripRow of within(strip).getAllByTestId("object-tree-sticky-row")) {
+      expect(stripRow.getAttribute("tabindex")).toBe("-1");
+    }
+  });
+
+  test("a press reveals the row it names, marks it, and lets the strip go", async () => {
+    render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
+    await openTables();
+    const tree = scrolled(TREE_ROW_HEIGHT * 5);
+
+    const strip = screen.getByTestId("object-tree-sticky");
+    fireEvent.click(within(strip).getAllByTestId("object-tree-sticky-row")[0]);
+
+    // The strip is a map, not a second surface: the press ends on the row itself.
+    expect(tree.scrollTop).toBe(0);
+    expect(screen.queryByTestId("object-tree-sticky")).toBeNull();
+    expect(row(/app/).className).toContain("bg-brand/20");
+  });
+
+  test("a second press on a deeper row still ends on that row", async () => {
+    render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
+    await openTables();
+    const tree = scrolled(TREE_ROW_HEIGHT * 8);
+
+    const strip = screen.getByTestId("object-tree-sticky");
+    fireEvent.click(within(strip).getAllByTestId("object-tree-sticky-row")[1]);
+
+    expect(tree.scrollTop).toBe(TREE_ROW_HEIGHT);
   });
 });

@@ -52,7 +52,11 @@ const ROW_PADDING_RIGHT = "pr-7";
  * until the fourth row kind is answered, which is the only automatic guard on this side, and it is
  * answered by a narrowing below rather than by a fallback.
  */
-const ROW_ICONS = { container: Database, group: Layers, folder: Folder, object: Table2 } as const;
+/**
+ * The row kind's own glyph, exported because the sticky strip above the tree draws the same rows
+ * from the same models: a second table of icons next door would drift the first time a kind is added.
+ */
+export const ROW_ICONS = { container: Database, group: Layers, folder: Folder, object: Table2 } as const;
 
 /**
  * The non-primary column's mark, carried over from the flat explorer VERBATIM: a 4px dot in a
@@ -180,6 +184,13 @@ export interface TreeRowProps {
   readonly onToggle?: (row: TreeRowModel) => void;
   /** Absolute offset inside the scroll spacer, in pixels. */
   readonly top: number;
+  /**
+   * A strip row just sent the reader here, so the row marks itself for a moment.
+   *
+   * A flash rather than a selection style, because `selected` already means the reader picked this
+   * row and a jump is not a second kind of pick: it is the same pick, drawn where the eye lands.
+   */
+  readonly flashed?: boolean;
 }
 
 export function TreeRow({
@@ -195,6 +206,7 @@ export function TreeRow({
   onOpenMenu,
   onToggle,
   top,
+  flashed = false,
 }: TreeRowProps) {
   // `null` only for a column row, and computed as a narrowing so a fifth row kind is still a
   // compile error on the lookup rather than an undefined component at runtime.
@@ -225,7 +237,7 @@ export function TreeRow({
         row.kind === "column" || row.kind === "constraint" ? "cursor-default" : "cursor-pointer"
       } select-none outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-brand ${
         selected ? "bg-muted" : "hover:bg-muted/60"
-      }${current ? " font-semibold" : ""}`}
+      }${current ? " font-semibold" : ""}${flashed ? " bg-brand/20 ring-2 ring-inset ring-brand/60" : ""}`}
     >
       {/*
         A HIT TARGET, and only where the row's own activation does not already toggle it. A
