@@ -1,0 +1,59 @@
+# A daily run of the VS Code extension against VS Code Insiders, so an Electron
+# or Node bump shows up before stable ships it (stable ships weekly).
+# test/vscode-versions.json is bumped by hand; this run is the early warning.
+#
+# No VS Code cache: Insiders changes daily, so a cached build would be stale.
+name: VS Code Extension Insiders
+
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  insiders:
+    name: VS Code Extension on Insiders
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: vscode-extension
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: vscode-extension/package-lock.json
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.4.2"
+
+      - name: Install the root's dependencies
+        uses: ./.github/actions/bun-install
+
+      - name: Install the extension's dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build the bundles
+        run: npm run build
+
+      - name: Integration leg on the Insiders binary
+        run: npm run test:integration
+        env:
+          LIBREDB_BACKEND_RUNTIME: vscode
+          LIBREDB_VSCODE_VERSION: insiders
+
+      - name: E2e leg on Insiders
+        run: xvfb-run -a npm run test:e2e
+        env:
+          LIBREDB_VSCODE_VERSION: insiders

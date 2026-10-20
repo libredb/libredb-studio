@@ -37,6 +37,8 @@ const EXPECTED_TIMEOUTS: Record<string, Record<string, number>> = {
     aur: 30,
   },
   "update-sponsors.yml": { "update-sponsors": 5 },
+  "vscode-extension.yml": { "vscode-extension": 35, "vscode-extension-smoke": 25 },
+  "vscode-extension-insiders.yml": { insiders: 30 },
 };
 
 interface WorkflowJob {

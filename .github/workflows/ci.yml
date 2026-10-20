@@ -94,6 +94,13 @@ jobs:
       - name: Run TypeScript type check
         run: bun run typecheck
 
+      - name: Install the VS Code extension's dependencies for knip
+        # knip's vscode-extension workspace reads the extension's own manifest:
+        # without vscode-extension/node_modules it reports c8, mocha and
+        # vscode-test as unlisted binaries and c8 and @vscode/test-cli as unused.
+        run: npm ci --ignore-scripts
+        working-directory: vscode-extension
+
       - name: Run knip (unused files, exports, dependencies)
         run: bun run knip
 
@@ -301,6 +308,15 @@ jobs:
           ADMIN_PASSWORD: test-admin
           USER_EMAIL: user@libredb.org
           USER_PASSWORD: test-user
+
+  # The VS Code extension's gates: typecheck, build, the unit leg with its own
+  # 100% line coverage gate, both integration runtimes, the e2e leg, the VSIX,
+  # and a macOS and Windows smoke subset. The steps live in the reusable
+  # workflow, which the release workflow calls too, so the gates cannot drift.
+  # Not a required check until the owner adds it to main's branch protection.
+  vscode-extension:
+    name: VS Code Extension
+    uses: ./.github/workflows/vscode-extension.yml
 
   e2e:
     name: E2E Tests
