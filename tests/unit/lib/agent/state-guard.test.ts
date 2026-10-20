@@ -18,10 +18,9 @@ function captureRefusal(value: unknown, label?: string): AgentStateError {
 
 /**
  * The field names this repository itself classifies as stored secrets. Read from
- * the same exported map list the guard reads (declared in `secret-fields.ts` and
- * read through its re-export in `connection-secrets.ts`), not from a second
- * hand-written list of maps: a fourth secret-bearing map added there has to be
- * covered by the guard or this test fails.
+ * the same exported map list the guard reads (`connection-secrets.ts`), not from
+ * a second hand-written list of maps: a fourth secret-bearing map added there has
+ * to be covered by the guard or this test fails.
  */
 const STORED_SECRET_FIELDS: string[] = SECRET_FIELD_MAPS.flatMap((map) =>
   Object.entries(map as Record<string, FieldClass>)
@@ -360,7 +359,7 @@ describe("assertPersistableState — CREDENTIAL_KEY", () => {
   test("every classification map the storage module exports is registered in SECRET_FIELD_MAPS", () => {
     // The pin above fails when a map is REMOVED from the aggregate. This is the
     // other direction, which is the one that actually loses coverage silently: a
-    // FOURTH classification map added to secret-fields.ts and wired into the
+    // FOURTH classification map added to connection-secrets.ts and wired into the
     // encrypt/decrypt walk, but never registered in `SECRET_FIELD_MAPS`, leaves
     // the storage layer encrypting a field this guard would happily persist. The
     // aggregate is a hand-maintained array with no type-level guarantee (the
