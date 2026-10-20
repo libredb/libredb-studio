@@ -319,6 +319,8 @@ function withCertificate(name: string, extra: Record<string, unknown> = {}): Rec
   return { mode: "verify-full", clientCert: read(`${name}.crt`), clientKey: read(`${name}.key`), ...extra };
 }
 
+// Under its own budget, not bun's five-second default: RSA key generation searches for primes and
+// has no fixed duration, and on a busy CI runner the eighth key alone ran the default out once.
 beforeAll(() => {
   if (Bun.which("openssl") === null) {
     throw new Error(
@@ -349,7 +351,7 @@ beforeAll(() => {
   const { privateKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
   writeKey("ec-reader.key", privateKey, { type: "sec1", format: "pem" });
   certifiedKey("ec-reader", ["CN = etcd-ec-reader"]);
-});
+}, 60_000);
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 

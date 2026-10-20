@@ -1,7 +1,7 @@
 /**
  * Query Limiter Utility
- * SELECT sorgularına otomatik LIMIT ekleyerek büyük result set'lerin
- * sistemi kilitlemesini önler.
+ * Adds an automatic LIMIT to SELECT statements so that a large result set
+ * cannot lock up the system.
  *
  * The statement's type comes from `lib/sql/leading-keyword`, which skips comments
  * as well as whitespace. It used to come from `^\s*KEYWORD\b` tests here, and a
@@ -86,7 +86,7 @@ export interface LimitedQueryResult {
 // ============================================================================
 
 /**
- * SQL sorgusunu analiz eder ve türünü, LIMIT/OFFSET durumunu belirler.
+ * Analyzes a SQL statement and determines its type and its LIMIT/OFFSET state.
  */
 
 /**
@@ -326,8 +326,8 @@ function analyzeUnderGrammar(sql: string, grammar: SqlGrammar): ParsedQueryInfo 
   const typingKeyword = keyword === "WITH" ? readOperativeKeyword(statement, grammar)?.keyword : keyword;
   const type = classifyKeyword(typingKeyword);
 
-  // LIMIT/OFFSET detection - en dıştaki sorgunun LIMIT'ini bul
-  // Regex: Sorgunun sonundaki LIMIT [sayı] [OFFSET sayı] pattern'i
+  // LIMIT/OFFSET detection: find the outermost query's LIMIT, the
+  // LIMIT <count> [OFFSET <offset>] at the end of the statement.
   // A count or an offset is a digit run, or one of the values the dialect declares (Snowflake's `NULL`, `''` and
   // `$$$$`, SF-021); the MySQL `LIMIT x, y` form stays digits only.
   const value = rowBoundValue(grammar);
@@ -449,7 +449,7 @@ function analyzeUnderGrammar(sql: string, grammar: SqlGrammar): ParsedQueryInfo 
 // ============================================================================
 
 /**
- * SELECT sorgusuna LIMIT ekler veya mevcut LIMIT'i günceller.
+ * Adds a LIMIT to a SELECT statement, or updates the LIMIT it already has.
  */
 export function applyQueryLimit(
   sql: string,
@@ -464,7 +464,7 @@ export function applyQueryLimit(
   const grammar = resolveSqlGrammar(type);
   const info = analyzeUnderGrammar(sql, grammar);
 
-  // SELECT değilse, limit ekleme
+  // Not a SELECT: add no limit.
   if (info.type !== "SELECT") {
     return {
       sql,
@@ -474,7 +474,7 @@ export function applyQueryLimit(
     };
   }
 
-  // Mevcut LIMIT varsa ve forceLimit false ise, mevcut limiti koru
+  // Keep an existing LIMIT unless forceLimit is set.
   if (info.hasLimit && !forceLimit) {
     return {
       sql,
@@ -521,7 +521,7 @@ export function applyQueryLimit(
   const { code, midTrivia, clauseRun } = stripTrailingClauses(statement, grammar);
   statement = code;
 
-  // Mevcut LIMIT/OFFSET'i kaldır (eğer forceLimit true ise). These are anchored
+  // Remove the existing LIMIT/OFFSET when forceLimit is set. These are anchored
   // at the end of the STATEMENT, so a trailing comment neither hides the bound
   // from them nor gets torn apart by them.
   if (info.hasLimit && forceLimit) {
@@ -541,7 +541,7 @@ export function applyQueryLimit(
       .trim();
   }
 
-  // LIMIT OFFSET clause'u ekle
+  // Add the LIMIT/OFFSET clause.
   const limitClause = offset > 0 ? `LIMIT ${limit} OFFSET ${offset}` : `LIMIT ${limit}`;
 
   return {
@@ -554,7 +554,7 @@ export function applyQueryLimit(
 }
 
 /**
- * Sorgunun LIMIT'li olup olmadığını hızlıca kontrol eder.
+ * Quickly checks whether the statement has a LIMIT.
  */
 export function hasQueryLimit(sql: string): boolean {
   const info = analyzeQuery(sql);
@@ -562,7 +562,7 @@ export function hasQueryLimit(sql: string): boolean {
 }
 
 /**
- * Sorgunun SELECT türünde olup olmadığını kontrol eder.
+ * Checks whether the statement is a SELECT.
  *
  * `type` is the dialect, as on `analyzeQuery`. The multi-statement route passes
  * its resolved connection's, so the route and the provider that runs the
