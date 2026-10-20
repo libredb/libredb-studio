@@ -89,6 +89,16 @@ export function cursorTarget(
  */
 export function runTarget(input: RunTargetInput): RunTarget {
   const { text, selection, cursor } = input;
+  // Only an integer UTF-16 index is an offset: a fraction, a numeric string, an array or null would be coerced by
+  // the comparisons and by `slice`, which would send a statement cut where no caller asked and echo the raw input back.
+  if (!Number.isInteger(selection.start) || !Number.isInteger(selection.end)) {
+    throw new RangeError(
+      `run target: selection [${selection.start}, ${selection.end}) is not a pair of integer offsets`,
+    );
+  }
+  if (!Number.isInteger(cursor)) {
+    throw new RangeError(`run target: cursor ${cursor} is not an integer offset`);
+  }
   if (!(0 <= selection.start && selection.start <= selection.end && selection.end <= text.length)) {
     throw new RangeError(
       `run target: selection [${selection.start}, ${selection.end}) is not within a text of length ${text.length}`,

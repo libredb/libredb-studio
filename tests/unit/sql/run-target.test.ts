@@ -167,4 +167,17 @@ describe("offsets it cannot honour", () => {
     expect(() => runTarget(sqlAt(TWO, 21, { selection: { start: 0, end: 0 } }))).toThrow(RangeError);
     expect(() => runTarget(sqlAt(TWO, -1, { selection: { start: 0, end: 0 } }))).toThrow(RangeError);
   });
+
+  test("an offset that is not an integer throws RangeError, never a coerced slice", () => {
+    const loose = (value: unknown) => value as number;
+    expect(() => runTarget(sqlAt(TWO, 0, { selection: { start: 0.5, end: 8.5 } }))).toThrow(RangeError);
+    expect(() => runTarget(sqlAt(TWO, 4.7, { selection: { start: 0, end: 0 } }))).toThrow(RangeError);
+    expect(() => runTarget(sqlAt(TWO, 5, { selection: { start: loose("2"), end: loose("9") } }))).toThrow(RangeError);
+    expect(() => runTarget(sqlAt(TWO, loose("5"), { selection: { start: 0, end: 0 } }))).toThrow(RangeError);
+    expect(() => runTarget(sqlAt(TWO, 5, { selection: { start: loose([2]), end: loose([9]) } }))).toThrow(RangeError);
+    expect(() => runTarget(sqlAt(TWO, loose([5]), { selection: { start: 0, end: 0 } }))).toThrow(RangeError);
+    expect(() => runTarget(sqlAt(TWO, 0, { selection: { start: loose(null), end: loose(null) } }))).toThrow(RangeError);
+    expect(() => runTarget(sqlAt(TWO, loose(null), { selection: { start: 0, end: 0 } }))).toThrow(RangeError);
+    expect(() => runTarget(sqlAt(TWO, Number.NaN, { selection: { start: 0, end: 0 } }))).toThrow(RangeError);
+  });
 });
