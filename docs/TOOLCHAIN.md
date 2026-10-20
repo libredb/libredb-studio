@@ -531,6 +531,9 @@ The root's packages (React, the drivers) resolve from the root's `node_modules`,
 tsx loads the TypeScript and honours `tsconfig.test.json`'s `paths`, which send `@/` to the root's `src/` and `vscode` to `test/fakes/vscode.ts`; `test/setup/register.cjs` points tsx at that file.
 Every Mocha configuration sets `forbid-only` (`.mocharc.json`, `test/integration/.mocharc.json` and `.vscode-test.mjs`), and `SCAN_ROOTS` in `scripts/only-check.mjs` reads `vscode-extension/test`, so `bun run lint` refuses a focused test there too.
 `.vscode-test.mjs` also sets `failZero`: `@vscode/test-cli` hands Mocha an empty file list without an error, so an e2e glob that matches no file, a moved `test/e2e/smoke/` for one, would otherwise pass with nothing run.
+The webview's unit files are `.tsx` and register happy-dom per file, through `useDom()` in `test/setup/dom.ts` at the top of a `describe` block, so no host or backend test ever sees a DOM global.
+`tsconfig.test.json` sends `sonner` and `@/components/copy-button` to the webview's shims, so the unit leg renders `ResultsGrid` against what the bundle carries.
+React and `@testing-library/react` resolve from the root's install.
 
 ### The extension's own 100% gate
 
@@ -539,7 +542,7 @@ The root gate, Sonar and Codecov never see these lines, because `scripts/merge-l
 The gate is line-granular: a callback written on the line that registers it counts as covered once the registration runs, so its test alone holds it.
 A callback whose behaviour the gate must hold keeps its body on its own line, as `startBackend` in `src/backend/start.ts` does for its `disconnect` listener; without the case that closes the channel, the gate names that line.
 
-### The four legs
+### The five legs
 
 - Unit: `npm run test:unit`, on Node 24, against the fake `vscode`.
 - Integration: `npm run test:integration` forks the built child from `LIBREDB_BACKEND_RUNTIME=node` (the job's Node) or `LIBREDB_BACKEND_RUNTIME=vscode` (the pinned stable binary of `test/vscode-versions.json`, downloaded into `.vscode-test/` and run in Node mode with `ELECTRON_RUN_AS_NODE=1`), so a child that works on Node but not on VS Code's own runtime fails here (P5).
@@ -554,6 +557,10 @@ A callback whose behaviour the gate must hold keeps its body on its own line, as
   `test/e2e/backend-lifecycle.test.ts` starts PostgreSQL through Docker, so the local e2e container also runs with `--network host` and `-v /var/run/docker.sock:/var/run/docker.sock` and installs `docker.io` beside `xvfb`; the smoke subset needs no Docker access.
   The `node` user reaches the socket through a group with the socket's group id, created in the container and passed to `runuser -G`, as the command below does.
 - Smoke: the e2e leg with `LIBREDB_E2E_SUBSET=smoke`, on macOS and Windows, with no Xvfb and no database.
+- Browser: `npm run test:browser` runs the results webview in Chromium with Playwright, after `npm run build`.
+  `@playwright/test` is pinned to the root's version, because `npm run` finds only the package's own binaries, and the same version shares the root's Chromium.
+  Its `playwright.config.mjs` starts no server: `test/browser/harness.ts` serves `dist/webview/` through `renderResultsHtml` with `page.route` and a fake `acquireVsCodeApi`, so the bundle runs under the view's real CSP.
+  It sets `forbidOnly`, and it does not count toward coverage.
 
 The local e2e run, from the checkout's root after `npm run build` in `vscode-extension/`:
 
@@ -580,6 +587,18 @@ A package that ships no licence file takes its text from `third-party-licenses/<
 `LICENSE_OVERRIDES` records, by exact `name@version`, the reviewed licence of a package whose `package.json` names none, and where that licence is stated.
 A dependency bump that trips one of these rules is a reviewed change to that rule, never a widened pass.
 
+### The webview bundle
+
+The Results webview is built from LibreDB's source, not from the published package: `src/webview/main.tsx` is one IIFE for the browser at `es2022`, `dist/webview/results.js`.
+Three module shims replace what cannot run in a webview, listed in `WEBVIEW_SHIMS` in `scripts/webview-shims.mjs`: `sonner` inserts an un-nonced `<style>` the CSP blocks, so each toast posts `notify` to the host instead; `@/components/copy-button` would write the clipboard itself, so its `writeToClipboard` asks the host to; and `@/lib/storage` throws, since the view keeps its state through `getState` and `setState`.
+React, `react-dom` and `get-nonce` come in one copy each from the root's install, and the extension never declares them: a second copy would put two Reacts in the bundle.
+`webviewViolations` in `scripts/bundle-checks.mjs` holds the metafile to that boundary inside `esbuild.mjs`, as the host's and the child's checks are held, and its unit test reads fixture metafiles, so the unit leg never reads `dist/`.
+
+The stylesheet, `dist/webview/results.css`, is built by `@tailwindcss/cli`, pinned to the root's `tailwindcss`, from `src/webview/results.css`.
+Its `@source` list is explicit, and `sourceCoverageViolations` in `scripts/webview-css.mjs` fails the build when a bundled file under `src/components/` lies under none of them.
+`src/webview/vscode-bridge.css` maps LibreDB's tokens onto the `--vscode-*` variables every webview receives, so one mapping serves every theme.
+`tailwindcss` is in the notices, because its preflight is compiled into the stylesheet.
+
 ### How the root tools cover the directory
 
 - The root `tsc` excludes `vscode-extension` (`tsconfig.json` `exclude`); `npm run typecheck` checks it in its own job, where Mocha's globals and the `vscode` types exist.
@@ -587,7 +606,10 @@ A dependency bump that trips one of these rules is a reviewed change to that rul
 - oxlint (`.oxlintrc.json` `ignorePatterns`) and ESLint (`globalIgnores` in `eslint.config.mjs`) lint it minus the same five build paths.
   `vscode-extension/test/setup/register.cjs` is the repository's first `.cjs` file, so the ESLint block that tunes eslint-config-next's rules names eslint-config-next's own files pattern.
 - knip has a `vscode-extension` workspace in `knip.json` beside the root's `workspaces["."]`.
-  Its entries list neither bundle entry nor `esbuild.mjs`, which knip finds without them (it reports them as redundant entry patterns); an export of the fake `vscode` module that only the code under test reaches, through `tsconfig.test.json`'s alias, which knip does not read, carries `@public` (today `window`).
+  Its entries list neither bundle entry nor `esbuild.mjs`, which knip finds without them (it reports them as redundant entry patterns, `src/webview/main.tsx` among them); an export of the fake `vscode` module that only the code under test reaches, through `tsconfig.test.json`'s alias, which knip does not read, carries `@public` (today `window`).
+  Its `project` and test entries take `.tsx` as well as `.ts`.
+  The workspace turns knip's Playwright plugin off and names `test/browser/**/*.spec.ts` as an entry instead: the plugin loads `playwright.config.mjs`, which requires the extension's `@playwright/test` after knip has loaded the root's, and Playwright refuses a second copy.
+  It ignores exactly `get-nonce` and `@radix-ui/react-use-layout-effect`, which the webview and its tests import from the root's install on purpose; declaring them in the extension would install a second copy beside React's.
   The required `Lint, Typecheck and Build` job installs the extension's packages with `npm ci --ignore-scripts` before knip: measured on a clone with only the root installed, knip otherwise reports `c8`, `mocha` and `vscode-test` as unlisted binaries and `c8` and `@vscode/test-cli` as unused dependencies.
   Its `actions/setup-node` step gives that install npm's cache, keyed on `vscode-extension/package-lock.json`, and runs the job's Node tools on Node 24.
   Biome, oxlint, ESLint and the root `tsc` pass there without them.
@@ -595,7 +617,9 @@ A dependency bump that trips one of these rules is a reviewed change to that rul
 ### The CI job
 
 `.github/workflows/vscode-extension.yml` is a reusable workflow that `ci.yml` calls as the `vscode-extension` job; the extension's release workflow is to call the same file, so the two cannot drift.
-Its Linux job runs the typecheck, the build with its metafile checks, the unit leg and its gate, both integration runtimes, the e2e leg and `npm run package`, and uploads the VSIX, failing when there is none; its smoke job runs on `macos-latest` and `windows-latest`.
+Its Linux job runs the typecheck, the build with its metafile checks, the unit leg and its gate, the browser leg, both integration runtimes, the e2e leg and `npm run package`, and uploads the VSIX, failing when there is none; its smoke job runs on `macos-latest` and `windows-latest`.
+The browser leg's Chromium comes from `bunx playwright install --with-deps chromium` at the repository root, because the job does not run in Playwright's image; the root's Playwright is the extension's version, so the extension's own Playwright finds that browser.
+The smoke and Insiders runs have no browser leg: the webview is the same bytes on every OS and VS Code build.
 It caches Bun's packages through `.github/actions/bun-install`, npm's through `actions/setup-node` keyed on `vscode-extension/package-lock.json`, and the VS Code builds through `actions/cache` keyed on `vscode-extension/test/vscode-versions.json`.
 The VS Code cache holds `.vscode-test/vscode-*` only: the e2e leg's profile in `.vscode-test/user-data` and `.vscode-test/extensions` stays out of it, so no run starts from a profile an earlier run left, and a fork's pull request restores none.
 `.github/workflows/vscode-extension-insiders.yml` runs the build, the `vscode` integration runtime and the e2e leg against VS Code Insiders daily and on demand, so an Electron or Node bump shows up before stable ships it; `test/vscode-versions.json` is bumped by hand.
