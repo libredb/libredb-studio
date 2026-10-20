@@ -515,8 +515,12 @@ profile's):
    it: measured, with both options off, an extension **already installed** on the host is still
    loaded to attach a file it recognises, so the options alone would still have checkpointed the
    SQLite file on any machine that had `sqlite_scanner` installed.
-   Before the header is read, a path that exists and is not a regular file (a FIFO, a socket, a device or a directory) is refused by `assertRegularFileOrMissing` ([`regular-file.ts`](../../src/lib/db/utils/regular-file.ts)), shared with the SQLite and LibreDB providers.
+   Before the header is read, a path that exists and is not a regular file (a FIFO, a socket, a device or a directory) is refused by `assertRegularFilesOrMissing` ([`regular-file.ts`](../../src/lib/db/utils/regular-file.ts)), shared with the SQLite and LibreDB providers.
    It asks `stat`, which never opens the path: opening a FIFO for reading waits for a writer that never comes, and this read is synchronous, so `connect()` on a FIFO never returned and a 1 s timer never fired (measured on bun 1.4.2).
+   The engine's own names beside the file, `.wal`, `.wal.checkpoint` and `.wal.recovery`, are checked the same way: DuckDB replays a `.wal` beside an existing file when it opens it, and on a FIFO `.wal` that open never returned, in the editor and the agent profile alike (measured on bun 1.4.2).
+   That open runs on a libuv threadpool thread rather than the server's own thread, so each such connect held one of the pool's few threads for good.
+   The header read itself opens without waiting and asks the descriptor it opened (`readRegularFileStart`), so a FIFO renamed onto the path after the check is refused the same way instead of read: a loop renaming a file and a FIFO onto the path by turns had blocked that read on the server's own thread for good (measured on bun 1.4.2).
+   The engine's own open still looks the path up again, so a swap at that moment holds a threadpool thread, not the server's own thread.
    A path whose header cannot be read (missing, unreadable) is left to the engine, which creates a missing file or names the failure in its own words.
 3. **`allow_community_extensions: 'false'`** is passed at open. A community extension is third-party
    native code DuckDB does not vet, and with this off `INSTALL <name> FROM community` is refused:
@@ -638,7 +642,8 @@ It walks up to the nearest existing folder and makes each missing one in order, 
 The first folder the filesystem refuses ends the connect at once with the open error in §10, which carries the filesystem's code and the folder.
 
 A path that exists and is not a regular file, a FIFO, a socket, a device or a directory, is refused at once with the open error in §10, naming the path and its kind, in the editor and the agent profile alike (§3.14).
-A regular file and a symlink to one open as before, a symlink to a FIFO is refused like the FIFO, and a missing file is created as before.
+So is such a file at `<path>.wal`, `<path>.wal.checkpoint` or `<path>.wal.recovery`, and the error then names that file.
+The check follows a symlink to its target, so a symlink to a FIFO is refused like the FIFO, and a missing path is left to the engine as before.
 
 ### 4.2 There is no connection string
 
@@ -1433,7 +1438,7 @@ Open-time failures have seven additional provider-specific diagnoses:
 | Any other file without DuckDB's header, an empty one included (§3.14) | `ConnectionError` | `<path> is not a DuckDB database file: a DuckDB file carries "DUCK" at byte 8, and this one does not. DuckDB did not open it, so it is unchanged.` |
 | A handle with file and network access off cannot make its private temp directory (§3.16) | `ConnectionError` | `Could not open DuckDB database <path>: a handle with file and network access off keeps its temporary files in a private directory, and creating one under <temp directory> failed: <system message>. Make that directory writable for the Studio process, or point TMPDIR (TEMP on Windows) at one that is.` |
 | A missing folder the filesystem refuses to create (§4.1) | `ConnectionError` | `Failed to open DuckDB database <path>: <filesystem message>`, for example `ENOENT: no such file or directory, mkdir '/proc/x'` |
-| A path that exists and is not a regular file, refused before anything opens it (§3.14, §4.1) | `ConnectionError` | `Failed to open DuckDB database <path>: <path> is a named pipe (FIFO), not a regular file`, or `a socket`, `a character device`, `a block device` or `a directory` in place of the FIFO |
+| A path, or one of the engine's files beside it, that exists and is not a regular file, refused before anything opens it (§3.14, §4.1) | `ConnectionError` | `Failed to open DuckDB database <path>: <path> is a named pipe (FIFO), not a regular file`, naming `<path>.wal` or the other file when it is the one, or `a socket`, `a character device`, `a block device` or `a directory` in place of the FIFO |
 | Other open failure | `ConnectionError` | `Failed to open DuckDB database <path>: <engine message>` |
 
 The lock and missing-file sentences above are the provider's wrapped messages, not the raw engine
