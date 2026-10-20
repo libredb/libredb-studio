@@ -70,6 +70,81 @@ describe("the copy relay", () => {
     assert.deepEqual(posted, []);
   });
 
+  describe('a copy fired at the body, as VS Code desktop\'s execCommand("copy") fires it with nothing selected', () => {
+    let grid: HTMLDivElement;
+    let fired: number;
+
+    beforeEach(() => {
+      fired = 0;
+      grid = document.createElement("div");
+      grid.tabIndex = 0;
+      grid.addEventListener("copy", (event) => {
+        fired++;
+        if (grid.dataset.text === undefined) return;
+        event.clipboardData?.setData("text/plain", grid.dataset.text);
+        event.preventDefault();
+      });
+      document.body.append(grid);
+    });
+
+    afterEach(() => {
+      grid.remove();
+      document.getSelection()?.removeAllRanges();
+    });
+
+    function copyOnBody(): ClipboardEvent {
+      const event = new ClipboardEvent("copy", { bubbles: true, cancelable: true, clipboardData: new DataTransfer() });
+      document.body.dispatchEvent(event);
+      return event;
+    }
+
+    it("is fired again at the focused element, whose handler builds the text the host writes", () => {
+      grid.dataset.text = "Ada\nLin";
+      grid.focus();
+      const event = copyOnBody();
+      assert.equal(fired, 1);
+      assert.equal(posted.length, 1);
+      assert.deepEqual(posted[0], {
+        v: 1,
+        type: "copy",
+        requestId: (posted[0] as { requestId: number }).requestId,
+        text: "Ada\nLin",
+      });
+      // The browser writes nothing of its own for the original event either.
+      assert.equal(event.defaultPrevented, true);
+    });
+
+    it("stays unhandled when the focused element builds nothing", () => {
+      grid.focus();
+      const event = copyOnBody();
+      assert.equal(fired, 1);
+      assert.deepEqual(posted, []);
+      assert.equal(event.defaultPrevented, false);
+    });
+
+    it("is not fired again when nothing has focus, when it already passed the focused element, or when text is selected", () => {
+      grid.dataset.text = "Ada";
+      copyOnBody();
+      assert.equal(fired, 0);
+
+      grid.focus();
+      delete grid.dataset.text;
+      grid.dispatchEvent(
+        new ClipboardEvent("copy", { bubbles: true, cancelable: true, clipboardData: new DataTransfer() }),
+      );
+      assert.equal(fired, 1);
+
+      // Selected text is the browser's to copy, as a key press would copy it.
+      grid.dataset.text = "Ada";
+      cell.textContent = "selected";
+      document.getSelection()?.selectAllChildren(cell);
+      assert.equal(document.getSelection()?.type, "Range");
+      copyOnBody();
+      assert.equal(fired, 1);
+      assert.deepEqual(posted, []);
+    });
+  });
+
   it("stops relaying once removed", () => {
     remove();
     copyOnCell("a\tb");

@@ -422,6 +422,29 @@ test("criterion 12: Copy Cell, masked and not, and a copied cell range go throug
   expect(await view.violations()).toEqual([]);
 });
 
+test("criterion 12 in VS Code desktop: a cell range copied through execCommand, as the host page delivers Ctrl+C", async ({
+  page,
+}) => {
+  const view = await openResultsView(page);
+  await view.post(init());
+  await postAll(view, LOAD_MORE_ON_POSTGRES.slice(0, 2));
+  await gridCell(page, "Ada").click();
+  await gridCell(page, "Lin").click({ modifiers: ["Shift"] });
+  // The host page prevents the key press and answers it with execCommand("copy") in this document: with the grid
+  // focused and no text selected, Chromium fires that copy event at the body, not at the grid.
+  expect(
+    await page.evaluate(() => [document.activeElement?.getAttribute("role"), document.getSelection()?.type]),
+  ).toEqual(["grid", "None"]);
+  const answer = await postedAfter(view, async () => {
+    expect(await page.evaluate(() => document.execCommand("copy"))).toBe(true);
+  });
+  expect(answer).toEqual([
+    { v: 1, type: "notify", level: "info", message: "2 cells copied to clipboard" },
+    { v: 1, type: "copy", requestId: expect.any(Number), text: "Ada\nLin" },
+  ]);
+  expect(await view.violations()).toEqual([]);
+});
+
 test("the saved state holds the masking switch and the scroll only, and a reload shows the empty state", async ({
   page,
 }) => {
