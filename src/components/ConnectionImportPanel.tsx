@@ -37,11 +37,12 @@ type Reader =
   | { readonly state: "failed" };
 
 /**
- * The connection dialog's import, drawn for a type whose `DB_UI_CONFIG` entry declares `connectionImport`: an action
- * that opens a paste box, loads the declared parser the first time it opens, reads the pasted text in the browser, and
- * lists the entries found, one button each, to fill the form from. Nothing is sent, logged or stored. The pasted text
- * is dropped as soon as it is read, and the entries as soon as one fills the form or the import closes; an entry the
- * form refuses leaves them listed, so another can be chosen without pasting the text again.
+ * The connection dialog's import, drawn for a type whose `CONNECTION_FORM` entry in src/lib/db/connection-form.ts
+ * declares `connectionImport`: an action that opens a paste box, loads the declared parser the first time it opens,
+ * reads the pasted text in the browser, and lists the entries found, one button each, to fill the form from. Nothing
+ * is sent, logged or stored. The pasted text is dropped as soon as it is read, and the entries as soon as one fills the
+ * form or the import closes; an entry the form refuses leaves them listed, so another can be chosen without pasting
+ * the text again.
  */
 export function ConnectionImportPanel({
   declaration,

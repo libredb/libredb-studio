@@ -273,8 +273,8 @@ describe("connectionFingerprint", () => {
  * `DatabaseConnection`, and the whole argument rests on three named maps being exhaustive over
  * `keyof DatabaseConnection`. The argument was right and every one of the three names was wrong:
  * two of them (`CONNECTION_FIELD_RELEVANCE`, `CONNECTION_FIELD_CLASSES`) existed nowhere in the
- * repository, and the third (`connectionFields`) is a per-engine UI field list in
- * `src/lib/db-ui-config.ts`, so a reader who greps the file it is attributed to finds something
+ * repository, and the third (`connectionFields`) is a per-engine UI field list on each
+ * `CONNECTION_FORM` entry in `src/lib/db/connection-form.ts`, so a reader who greps the file it is attributed to finds something
  * that is not a `keyof` map and concludes the argument is unsound.
  *
  * A prose pointer nobody executes rots the moment a map is renamed, so the names are held in one

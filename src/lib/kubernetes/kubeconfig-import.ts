@@ -1,6 +1,7 @@
 /**
  * Reads a pasted kubeconfig, in the browser, into one connection entry per context: the connection dialog's import for
- * Kubernetes (`connectionImport` on its `DB_UI_CONFIG` entry), loaded only when the import opens.
+ * Kubernetes (`connectionImport` on its `CONNECTION_FORM` entry in src/lib/db/connection-form.ts), loaded only when the
+ * import opens.
  *
  * Pure and browser-safe: it imports the `yaml` parser, the import's types and the paste cap, and nothing that reaches a
  * provider's server code or a `node:` module. It sends nothing, logs nothing and stores nothing, and it never throws.

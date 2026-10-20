@@ -206,7 +206,7 @@ A fetch waits at most 250 ms on the broker for new records, so an empty partitio
 | TLS panel | Yes | [§4.3](#43-tls) |
 | SSH tunnel | No | The panel is hidden and a tunnel is refused ([§4.5](#45-no-ssh-tunnel)) |
 
-The select is declared on the `kafka` entry of `DB_UI_CONFIG` (`fieldOptions`, `fieldLabels`, `fieldHints`) rather than chosen by a type test in the dialog.
+The select is declared on the `kafka` entry of `CONNECTION_FORM` in `src/lib/db/connection-form.ts` (`fieldOptions`, `fieldLabels`, `fieldHints`) rather than chosen by a type test in the dialog.
 `saslMechanism` is an optional, non-secret field of `DatabaseConnection`: it names how the password is checked, not a credential, so the connection store keeps it in the clear and a managed seed returns it while it withholds the password.
 It is part of the provider cache key's credential frame (`credentialDigest` in `src/lib/db/provider-cache-key.ts`), because Kafka keeps SCRAM credentials per mechanism, so two connections that differ only in mechanism never share a provider.
 A seed file takes it as a literal name ([`docs/SEED_CONNECTIONS.md`](../SEED_CONNECTIONS.md)).

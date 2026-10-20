@@ -340,7 +340,7 @@ These partial records deliberately have none:
 | `database` | No | No Database box renders: a Prometheus server is one TSDB, so there is nothing to select |
 | TLS panel | Yes | [§4.4](#44-tls) |
 
-The two dialog strings are declared on the `prometheus` entry of `DB_UI_CONFIG` (`fieldLabels`, `fieldHints`) rather than chosen by a type test in the dialog.
+The two dialog strings are declared on the `prometheus` entry of `CONNECTION_FORM` in `src/lib/db/connection-form.ts` (`fieldLabels`, `fieldHints`) rather than chosen by a type test in the dialog.
 Every engine's dialog labels, placeholders and hints come from that declaration.
 No new `DatabaseConnection` field exists, so the bearer token rides `password`, which the connection store already classifies as a secret.
 
