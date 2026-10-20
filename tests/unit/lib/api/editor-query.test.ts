@@ -62,6 +62,13 @@ describe("checkEditorQuery", () => {
     ).toBeNull();
   });
 
+  // The `sql` and `queryId` field checks stay with each caller: a text bound is the only reason this
+  // step reads the statement's type, so a caller that skips its own check gets no gate here.
+  test("a statement that is not a string is not refused on an engine that declares no text bound", () => {
+    expect(checkEditorQuery({ statement: { evil: 1 }, type: "postgres", options: {} })).toBeNull();
+    expect(checkEditorQuery({ statement: 42, type: "postgres", options: {} })).toBeNull();
+  });
+
   test("page bounds that are not non-negative integers are refused with the route's sentences", () => {
     const check = (options: unknown) => checkEditorQuery({ statement: "SELECT 1", type: "postgres", options });
     expect(check("500")).toEqual({ status: 400, error: "options must be an object" });

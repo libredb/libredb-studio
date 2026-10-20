@@ -25,7 +25,11 @@ import type { DatabaseType, QueryPagination, QueryResult } from "@/lib/types";
  * answered.
  */
 
-/** What `checkEditorQuery` reads: the statement as sent, the connection's type, and the page bounds as sent. */
+/**
+ * What `checkEditorQuery` reads: the statement as sent, the connection's type, and the page bounds as sent.
+ * The statement is `unknown` because the route hands over its body field unchecked; the caller still owns
+ * the `sql` and `queryId` field checks.
+ */
 export interface EditorQueryRequest {
   statement: unknown;
   type: DatabaseType;
@@ -39,8 +43,11 @@ export interface EditorQueryRefusal {
 }
 
 /**
- * Why this request cannot run, or null when it can: the page bounds first, then the console text bound
- * of a connection type that declares one.
+ * Why this request is refused, or null when neither check refuses it: the page bounds first, then the
+ * console text bound of a connection type that declares one. Null does not mean the request can run:
+ * only a type with a text bound has its statement held to a string here, so a new caller checks that the
+ * statement and the `queryId` are strings itself before it calls `runEditorQuery`. The route checks only
+ * that `sql` is present and that `queryId` is a string, as it did before this module existed.
  */
 export function checkEditorQuery(request: EditorQueryRequest): EditorQueryRefusal | null {
   const optionError = pageOptionError(request.options);
