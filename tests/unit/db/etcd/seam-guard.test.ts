@@ -52,6 +52,7 @@ import { assessCommand, type CommandAssessment } from "@/lib/db/providers/keyval
 import { ETCD_MAINTENANCE_SPECS } from "@/lib/db/providers/keyvalue/etcd/maintenance";
 import { refuseBeforeSend, refuseReadOnly } from "@/lib/db/providers/keyvalue/etcd/write-policy";
 import { heldByAnotherGuard } from "../../../helpers/grpc-seam-holdings";
+import { platformTimeoutMs } from "../../../helpers/platform-timeout";
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const ETCD_PATH = "src/lib/db/providers/keyvalue/etcd";
@@ -109,9 +110,10 @@ function filesOf(root: string, env?: NodeJS.ProcessEnv): RepositoryFile[] {
 // the result: pay it once here, under its own budget, so the first test that reads the repository
 // does not spend bun's per-test budget on it. Measured under load (eight busy loops on two cores):
 // the first importer test took over 5,000 ms and timed out in 3 runs of 3 before this hook.
+// Under a 15% CPU quota with coverage the hook itself took 73.8s on a busy runner, past the 60s it had.
 beforeAll(() => {
   filesOf(ROOT);
-}, 60_000);
+}, platformTimeoutMs(120_000));
 
 /** How TypeScript resolves a module name in the repository at `root`, with that repository's tsconfig.json. */
 const resolvers = new Map<string, { readonly options: ts.CompilerOptions; readonly cache: ts.ModuleResolutionCache }>();
@@ -926,22 +928,30 @@ function writeCoverageFindings(classes: Readonly<Record<string, RpcClass>>): str
 const read = (path: string) => readFileSync(join(ROOT, path), "utf8");
 
 describe("spec E11: who may import the client packages, the descriptor and its generator", () => {
+  // Resolves every import of the repository: up to 4.5s each under a 15% CPU quota with coverage, and 7.1s
+  // on a busier run, past bun's 5s default, so each carries its own bound.
   test.each(IMPORT_RULES.map((rule) => [rule.name, rule] as const))(
     "%s: exactly the files spec E11 names",
     (_name, rule) => {
       expect(importRuleFindings(rule, ROOT)).toEqual([]);
     },
+    platformTimeoutMs(40_000),
   );
 
-  test("the detector reads real code: each named file holds its rule, and the lists overlap as E11 says", () => {
-    const files = filesOf(ROOT);
-    const holding = (rule: ImportRule) =>
-      files.filter((file) => !heldByAnotherGuard(file.path) && rule.holds(file, ROOT)).map((file) => file.path);
-    expect(holding(IMPORT_RULES[0])).toEqual([...IMPORT_RULES[0].named].sort());
-    expect(files.length).toBeGreaterThan(1000);
-    // The evidence harness builds its definition from the generator, never from an import of the descriptor.
-    expect(IMPORT_RULES[1].named).not.toContain(HARNESS);
-  });
+  // Resolves every import of the repository: 3.0s under a 15% CPU quota with coverage.
+  test(
+    "the detector reads real code: each named file holds its rule, and the lists overlap as E11 says",
+    () => {
+      const files = filesOf(ROOT);
+      const holding = (rule: ImportRule) =>
+        files.filter((file) => !heldByAnotherGuard(file.path) && rule.holds(file, ROOT)).map((file) => file.path);
+      expect(holding(IMPORT_RULES[0])).toEqual([...IMPORT_RULES[0].named].sort());
+      expect(files.length).toBeGreaterThan(1000);
+      // The evidence harness builds its definition from the generator, never from an import of the descriptor.
+      expect(IMPORT_RULES[1].named).not.toContain(HARNESS);
+    },
+    platformTimeoutMs(40_000),
+  );
 });
 
 describe("spec 3.1: the pure set imports only what 3.1 allows", () => {
