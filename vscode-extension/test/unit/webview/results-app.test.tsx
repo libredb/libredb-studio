@@ -75,6 +75,13 @@ describe("the results app", () => {
     // The first load transpiles the grid's whole graph, which takes seconds on a loaded machine.
     this.timeout(30_000);
     ({ ResultsApp, GridErrorBoundary } = await import("../../../src/webview/results-app"));
+    const radix = await import("@radix-ui/react-use-layout-effect");
+    const react = await import("react");
+    assert.equal(
+      radix.useLayoutEffect,
+      react.useLayoutEffect,
+      "A test file loaded a Radix module before useDom registered a document: import it after useDom, as this file does.",
+    );
   });
 
   let posted: unknown[];
