@@ -760,7 +760,8 @@ export function findOpenSingleWriterProvider(
  * through one read-write handle per process, and a second one keeps its own copy of the catalog and
  * checkpoints it over the file when it closes, which loses the other handle's committed rows on Linux
  * and macOS and is refused outright on Windows. Test Connection opens a read-only handle instead,
- * which leaves the writer's file and write-ahead log alone (`src/app/api/db/test-connection/route.ts`).
+ * which leaves the writer's file and write-ahead log alone (`testConnection`,
+ * `src/lib/api/test-connection.ts`).
  */
 export function isSingleWriterFileOpen(connection: DatabaseConnection): boolean {
   const identity = fileIdentity(connection);

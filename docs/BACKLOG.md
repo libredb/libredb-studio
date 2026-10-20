@@ -2908,7 +2908,7 @@ Found 2026-10-10 by the review of the S3 provider; not reached by any shipped fl
 
 ### D276. No deadline bounds a provider's `connect()` as a whole
 
-`src/app/api/db/test-connection/route.ts` awaits `provider.connect()` with no deadline of its own; the `queryTimeout` it passes bounds each request a provider makes, not the sum of them.
+`testConnection` (`src/lib/api/test-connection.ts`), which both Test Connection and the VS Code extension's `connection/test` reach, awaits `provider.connect()` with no deadline of its own; the `queryTimeout` it passes bounds each request a provider makes, not the sum of them.
 A provider whose `connect()` makes several requests in turn (discovery, reviews, a paged list) can therefore hold Test Connection for many query timeouts, and a provider that loops on what a server answers holds it until the loop ends.
 The Kubernetes provider bounds its own walks (one deadline per walk and a count of empty pages), and a `disconnect()` closes a session still being opened, but no rule says every provider must.
 
