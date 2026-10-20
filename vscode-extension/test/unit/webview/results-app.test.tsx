@@ -98,12 +98,15 @@ describe("the results app", () => {
     },
   };
 
-  // The virtualizer reads the scroll element's size, which happy-dom lays out as 0 by 0.
+  // The virtualizer reads the scroll element's size, which happy-dom lays out as 0 by 0: @tanstack/virtual-core reads
+  // clientWidth and clientHeight since 3.19.6, and offsetWidth and offsetHeight before it.
   const sizes: [string, PropertyDescriptor | undefined][] = [];
   beforeEach(() => {
     for (const [name, value] of [
       ["offsetHeight", 600],
       ["offsetWidth", 1000],
+      ["clientHeight", 600],
+      ["clientWidth", 1000],
     ] as const) {
       sizes.push([name, Object.getOwnPropertyDescriptor(HTMLElement.prototype, name)]);
       Object.defineProperty(HTMLElement.prototype, name, { configurable: true, get: () => value });
