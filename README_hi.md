@@ -216,7 +216,7 @@ PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · Du
   rows की सीमा server पर ही लगती है, और statement एक ऐसे transaction के अंदर चलता है जिसे हमेशा rollback किया जाता है।
   Writes और DDL डेटाबेस तक पहुँचने से पहले ही मना कर दिए जाते हैं। `EXPLAIN ANALYZE` statement को सच में चलाता है,
   इसलिए default रूप से बंद है। यह pipeline सिर्फ़ Agent के लिए है: एडिटर में आप जो statements ख़ुद चलाते हैं वे सीधे
-  provider को जाते हैं (`src/app/api/db/query/route.ts:44`), यहाँ की policy से नहीं गुज़रते, और ऐसा audit record नहीं बनाते।
+  provider को जाते हैं (`src/app/api/db/query/route.ts:312`), यहाँ की policy से नहीं गुज़रते, और ऐसा audit record नहीं बनाते।
 - **Agent mode सिर्फ़ PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes और MongoDB पर**: read-only profile सिर्फ़ उन providers पर है
   जिन्होंने इसे implement किया है: `postgres.ts`, `sqlite.ts`, `duckdb/index.ts`, `mssql.ts`, `mysql.ts`, `kubernetes/index.ts` और `mongodb/index.ts`
   का `queryReadOnly`, और कोई नहीं। हर engine की read-only सीमा अलग है, और वह उस engine के docs में लिखी है।
@@ -281,7 +281,7 @@ Guide: [`docs/AGENT_GUIDE.md`](docs/AGENT_GUIDE.md) ·
 
 ### DBA operations tools (सिर्फ़ admin)
 
-7 tabs वाला monitoring dashboard (overview, performance, queries, sessions, tables, storage, connection pool), time-series trend charts, 5-60 सेकंड का adjustable auto-refresh, threshold alerts के रंग, और एक click में `VACUUM` / `ANALYZE` / `REINDEX` / `UPDATE STATISTICS` / `DBCC CHECKDB` / `ALTER INDEX REBUILD`। पूरे organization का query audit log भी साथ में।
+7 tabs वाला monitoring dashboard (overview, performance, queries, sessions, tables, storage, connection pool), time-series trend charts, 5-60 सेकंड का adjustable auto-refresh, threshold alerts के रंग, और एक click में `VACUUM` / `ANALYZE` / `REINDEX` / `UPDATE STATISTICS` / `DBCC CHECKDB` / `ALTER INDEX REBUILD`। Admin Audit tab सर्वर के हाल के audit events दिखाता है, जैसे sign-in, permission denial, maintenance action, object edit और agent तथा MCP की operation, हर एक के साथ वह user जिसके पीछे वह है, और signed-in admin का अपना query history। दोनों current filters का ध्यान रखते हुए CSV या JSON में export होते हैं। [governance](docs/GOVERNANCE.md#query-events) के तहत Studio हर उस statement का एक query event रिकॉर्ड करता है जिसे कोई व्यक्ति चलाता है, और control plane वह organization-wide record रखता है।
 
 ## इंस्टॉल करने के तरीके
 
@@ -332,12 +332,6 @@ export default {
 विकल्प: `reportOnly` लागू होने वाले header की जगह `Content-Security-Policy-Report-Only` भेजता है। `hsts: false` HSTS बंद करता है (object देने पर custom)। `allowEval` `'unsafe-eval'` जोड़ता है, जो React के **development** build को चाहिए। `monacoVsPath` Monaco के assets अलग origin पर हों तो वह origin जोड़ता है। `extra` हर directive में आपके अपने sources मिलाता है। साथ में `studioCspDirectives()` और `HSTS_MAX_AGE_SECONDS` भी export होते हैं, उन configs के लिए जो policy सीधे भेजने के बजाय ख़ुद जोड़ना चाहती हैं।
 
 अपनाने से पहले policy एक बार पढ़ लें: CSP inline scripts की अनुमति देती है, क्योंकि हर document route statically prerender होता है और hydration scripts में nonce नहीं होता। इसलिए यह इस पर रोक लगाती है कि inject हुई script डेटा **कहाँ भेज** सकती है, इस पर नहीं कि वह चल सकती है या नहीं। यह trade-off, और Next.js app के ये headers भेजने के दो रास्ते, [`docs/SECURITY.md`](docs/SECURITY.md) में लिखे हैं।
-
-## पैसे वाली रेखा कहाँ है
-
-Studio MIT है, क्योंकि इसे हर जगह जा सकना चाहिए। पैसे libredb-platform के लगते हैं, जो "कोई और आपके लिए इसे चलाए" बेचता है: hosting, multi-tenancy, billing और support। Paywall के पीछे खिसकाई गई कोई feature नहीं।
-
-**Upgrade का बहाना बनाने के लिए कोई भी क्षमता इस रेखा के उस पार नहीं भेजी गई।** SSO, RBAC, query audit, ER diagram, AI features, और सभी NoSQL engines MIT build में हैं।
 
 ## Testing और quality
 

@@ -198,7 +198,7 @@ Two components are described below and a claim true of one can be false of the o
 *   **Zero-Config First Run:** Missing `JWT_SECRET`/`ADMIN_PASSWORD` are generated at boot and printed once; native channels bind to `127.0.0.1` by default, while Docker/Helm resolve their own address at startup and prefer a dual-stack `::`. Set `AUTH_BOOTSTRAP=off` for strict production mode requiring explicit secrets.
 
 ### 12. Advanced Query History (DBA-Level)
-*   **Full Audit Trail:** Searchable history of every query executed, including SQL content, success status, and error details.
+*   **Personal History:** A searchable history of the queries each person ran, with SQL content, success status and error details, keeping the latest 500.
 *   **Performance Tracking:** Precise execution time measurement (ms) for every query to identify slow operations.
 *   **Metadata Insights:** Automatic tracking of execution timestamps and row counts for historical analysis.
 *   **Instant Restore:** Re-run any previous query with a single click directly from the history panel.
