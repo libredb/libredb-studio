@@ -330,6 +330,17 @@ function pgResultSet(answer: PgArrayAnswer, sql: string): QueryResultSet {
 }
 
 /**
+ * The count `pg` did not read from the command tag: the tag of an EXPLAIN or a SHOW carries
+ * no number, so the driver leaves `rowCount` null while `rows` holds the answer. The count
+ * of what was returned is then the rows themselves; a count the driver did read, including
+ * an explicit 0, keeps its own value.
+ */
+function pgRowCount(answer: PgArrayAnswer): number {
+  if (answer.rowCount !== null && answer.rowCount !== undefined) return answer.rowCount;
+  return answer.rows.length;
+}
+
+/**
  * The result of what `pg` answered a user's text with.
  *
  * One statement answers one result. A text of several statements on the simple protocol answers
@@ -343,13 +354,13 @@ function pgQueryResult(
   answer: PgArrayAnswer | PgArrayAnswer[],
   sql: string,
 ): Pick<QueryResult, "rows" | "fields" | "columnTypes" | "rowCount" | "resultSets"> {
-  if (!Array.isArray(answer)) return { ...pgResultSet(answer, sql), rowCount: answer.rowCount ?? 0 };
+  if (!Array.isArray(answer)) return { ...pgResultSet(answer, sql), rowCount: pgRowCount(answer) };
   const producing = answer.filter((one) => (one.fields ?? []).length > 0);
   const sets = producing.map((one) => pgResultSet(one, sql));
   const [first] = sets;
   return {
     ...(first ?? { rows: [], fields: [] }),
-    rowCount: (producing[0] ?? answer[0])?.rowCount ?? 0,
+    rowCount: pgRowCount(producing[0] ?? answer[0]),
     ...(sets.length > 1 && { resultSets: sets }),
   };
 }

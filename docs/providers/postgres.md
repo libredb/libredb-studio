@@ -1497,6 +1497,8 @@ A text of several statements sent as one simple query (`SELECT 1 AS a; SELECT 2 
 Measured the same day, that text answers `rows` `[{"a":1}]` and two `resultSets`, the second with fields `["b","b (2)"]`.
 Before, such a text answered no `rows` at all, because the list of answers was read as one answer.
 
+A statement whose command tag carries no count (an `EXPLAIN`, a `SHOW`) has its `rowCount` answered from the rows it returned, because `pg` reads the count from the tag alone and leaves it null while `rows` holds the answer; a count the driver did read, including a real 0, keeps its own value (#1839).
+
 #### Server notices (#1401)
 
 The NOTICE and WARNING messages the server sends while a statement that SUCCEEDS runs come back in
