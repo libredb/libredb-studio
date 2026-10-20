@@ -154,8 +154,11 @@ Every cached path passes the server-derived `allowExternalFileAccess` posture, a
 
 `getDatabasePath()` ([`sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts)) resolves the target:
 `connectionString` (stripping a `file:` prefix) → else `database` → else `:memory:`. Non-`:memory:`
-paths are `path.resolve()`-d to an absolute path and **rejected if they contain a NUL byte**. Parent
-directories are created on connect.
+paths are `path.resolve()`-d to an absolute path and **rejected if they contain a NUL byte**.
+
+A missing parent folder is created on connect, one level at a time, by `createMissingDirectories` ([`create-directory.ts`](../../src/lib/db/utils/create-directory.ts)), shared with the DuckDB provider.
+It walks up to the nearest existing folder and makes each missing one in order, never with a recursive mkdir: Node's recursive mkdir never returns for a path under `/proc`, because procfs answers ENOENT for a parent that exists and Node retries it forever (measured on Node v24.14.0), so one Test Connection hung the whole server.
+The first folder the filesystem refuses ends the connect at once with the open failure in [§10](#10-error-handling), `Failed to open SQLite database: <filesystem message>`, which carries the code and the folder.
 
 > **NUL rejection and reserved server files are checked on connect.** `../` segments are legal and simply
 > resolve into the absolute path. This follows the feature's trust model: a connection's
@@ -1378,7 +1381,7 @@ SQLite-specific branches; the provider names the read-only file cases itself
 | Missing `database` and `connectionString` | `DatabaseConfigError` |
 | NUL byte in path | `DatabaseConfigError` ("Invalid database path: NUL bytes are not allowed") |
 | Selected driver unavailable (no `bun:sqlite` / `node:sqlite` on this runtime) | `DatabaseConfigError` ("SQLite driver … is not available…") |
-| Open failure | `ConnectionError` |
+| Open failure, a missing folder the filesystem refuses to create included | `ConnectionError` |
 | Write check on an existing file fails with anything but `EACCES` / `EPERM` / `EROFS` | `ConnectionError` with the filesystem's message |
 | WAL-mode file in a directory this process cannot write | `ConnectionError` naming WAL and the two ways out |
 | Write statement on a file opened read-only because it is not writable | `QueryError` ("SQLite database `<path>` is open read-only because …") |

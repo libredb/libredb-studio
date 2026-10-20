@@ -632,6 +632,10 @@ Pass `{ allowExternalFileAccess: true }` as the third argument for the full reac
 disconnect. It is the zero-configuration way to try the editor, and it is what most of the
 integration tests use.
 
+A missing folder in the path is created on connect, one level at a time, by `createMissingDirectories` ([`create-directory.ts`](../../src/lib/db/utils/create-directory.ts)), shared with the SQLite provider.
+It walks up to the nearest existing folder and makes each missing one in order, never with a recursive mkdir: Node's recursive mkdir never returns for a path under `/proc`, because procfs answers ENOENT for a parent that exists and Node retries it forever (measured on Node v24.14.0), so one Test Connection hung the whole server.
+The first folder the filesystem refuses ends the connect at once with the open error in §10, which carries the filesystem's code and the folder.
+
 ### 4.2 There is no connection string
 
 `supportsConnectionString` is `false`. DuckDB publishes no URI scheme: its own tooling takes a path
@@ -1415,7 +1419,7 @@ A lock conflict uses the same `describeOpenFailure()` path whether it happens wh
 file or later in a session. When DuckDB includes the holder PID, the sentence names
 `process <pid>`; otherwise it says `another process`.
 
-Open-time failures have five additional provider-specific diagnoses:
+Open-time failures have six additional provider-specific diagnoses:
 
 | Condition | Provider error | What the user sees |
 |---|---|---|
@@ -1424,6 +1428,7 @@ Open-time failures have five additional provider-specific diagnoses:
 | A SQLite file, refused before the engine opens it (§3.14) | `ConnectionError` | `<path> is a SQLite database file, not a DuckDB database file. Open it with a SQLite connection. DuckDB did not open it, so it is unchanged.` |
 | Any other file without DuckDB's header, an empty one included (§3.14) | `ConnectionError` | `<path> is not a DuckDB database file: a DuckDB file carries "DUCK" at byte 8, and this one does not. DuckDB did not open it, so it is unchanged.` |
 | A handle with file and network access off cannot make its private temp directory (§3.16) | `ConnectionError` | `Could not open DuckDB database <path>: a handle with file and network access off keeps its temporary files in a private directory, and creating one under <temp directory> failed: <system message>. Make that directory writable for the Studio process, or point TMPDIR (TEMP on Windows) at one that is.` |
+| A missing folder the filesystem refuses to create (§4.1) | `ConnectionError` | `Failed to open DuckDB database <path>: <filesystem message>`, for example `ENOENT: no such file or directory, mkdir '/proc/x'` |
 | Other open failure | `ConnectionError` | `Failed to open DuckDB database <path>: <engine message>` |
 
 The lock and missing-file sentences above are the provider's wrapped messages, not the raw engine
