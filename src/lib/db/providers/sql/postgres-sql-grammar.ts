@@ -61,6 +61,10 @@ const POSTGRES_GRAMMAR: SqlGrammar = {
   // asks whatever the block does; `DO LANGUAGE <name>` writes the language before the body. The `DO` of
   // `ON CONFLICT DO NOTHING | UPDATE` and of `CREATE RULE ... DO INSTEAD | ALSO` is followed by a word and does not ask.
   confirmCodeForms: [{ wordThenBody: "DO" }, ["DO", "LANGUAGE"]],
+  // `EXPLAIN` only plans. `EXPLAIN ANALYZE` (and the British `ANALYSE`) executes the explained statement, and so does
+  // a parenthesised `ANALYZE` whose value is absent or anything other than false, off or 0 (PostgreSQL manual,
+  // EXPLAIN). CockroachDB shares this type-id, so the same statements ask there (#1863).
+  explainExecutesWithAnalyze: true,
 };
 
 /** How PostgreSQL statement text is read: grammar, SQL text, redaction, update target and completion. */

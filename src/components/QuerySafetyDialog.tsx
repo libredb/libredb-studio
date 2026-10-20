@@ -34,7 +34,7 @@ import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
 import { readOperativeKeyword } from "@/lib/sql/operative-keyword";
 import { hasUnterminatedSpan, readSqlSpan } from "@/lib/sql/spans";
 import { splitStatements } from "@/lib/sql/statement-splitter";
-import { findCodeWord } from "@/lib/sql/words";
+import { findCodeWord, readSqlWord } from "@/lib/sql/words";
 import type { DatabaseType } from "@/lib/types";
 
 interface SafetyAnalysis {
@@ -623,6 +623,21 @@ const CONTROL_FLOW_KEYWORDS = new Set([
  */
 const CTE_DATA_MODIFYING = ["INSERT", "DELETE", "MERGE"] as const;
 
+/**
+ * The words the legacy `EXPLAIN [ANALYZE | ANALYSE] [VERBOSE]` spelling takes, in either order.
+ * `ANALYSE` is PostgreSQL's British spelling of the option that executes.
+ */
+const EXPLAIN_KEYWORD_OPTIONS = new Set(["ANALYZE", "ANALYSE", "VERBOSE"]);
+
+/** The option names that execute the explained statement when they are enabled. */
+const ANALYZE_OPTIONS = new Set(["ANALYZE", "ANALYSE"]);
+
+/**
+ * Parenthesised values that turn `ANALYZE` off. No value, and any other value (`true`, `on`, `1`), leaves it on:
+ * PostgreSQL's `defGetBoolean` reads an absent argument as true.
+ */
+const ANALYZE_OFF = new Set(["FALSE", "OFF", "0"]);
+
 /** Whether a `confirmExemptForms` form led by `keyword` starts at the keyword that ends at `end`. */
 function exemptFormAt(text: string, keyword: string, end: number, grammar: SqlGrammar): boolean {
   return (grammar.confirmExemptForms ?? []).some(
@@ -727,6 +742,117 @@ function configKeyAsks(
   });
 }
 
+/** One token of a parenthesised EXPLAIN option list. */
+interface ExplainOptionToken {
+  /** A word is upper-cased; a string is its contents; a number is its digits. */
+  text: string;
+  end: number;
+  kind: "word" | "number" | "comma" | "string" | "other";
+}
+
+/**
+ * The next option-list token at or after `from` and before `limit`, or null at the closing paren.
+ *
+ * Strings and comments are spans, so a word written inside one is not an option: `EXPLAIN ('ANALYZE')` does not
+ * execute, and `ANALYZE 'false'` is the off value rather than the word `false` somewhere later.
+ */
+function readExplainOptionToken(
+  text: string,
+  from: number,
+  limit: number,
+  grammar: SqlGrammar,
+): ExplainOptionToken | null {
+  const i = pastHiddenText(text, from, grammar);
+  if (i >= limit) return null;
+  if (text[i] === ",") return { text: ",", end: i + 1, kind: "comma" };
+  const word = readSqlWord(text, i);
+  if (word !== null) return { text: word.text, end: word.end, kind: "word" };
+  if (text[i] >= "0" && text[i] <= "9") {
+    let end = i;
+    while (end < limit && text[end] >= "0" && text[end] <= "9") end++;
+    return { text: text.slice(i, end), end, kind: "number" };
+  }
+  const span = readSqlSpan(text, i, grammar);
+  if (span?.kind === "string") return { text: text.slice(i + 1, span.end - 1), end: span.end, kind: "string" };
+  const end = span === null ? i + 1 : span.end;
+  return { text: text.slice(i, end), end, kind: "other" };
+}
+
+/**
+ * The index past the `)` that closes the paren at `open`, or `-1` when it never closes.
+ *
+ * Literals and comments are skipped whole, so a `)` inside `EXPLAIN (ANALYZE ')')` cannot end the option list.
+ */
+function endOfParenthesised(text: string, open: number, grammar: SqlGrammar): number {
+  let depth = 0;
+  let i = open;
+  while (i < text.length) {
+    const span = readSqlSpan(text, i, grammar);
+    if (span !== null) {
+      i = span.end;
+      continue;
+    }
+    if (text[i] === "(") depth++;
+    else if (text[i] === ")") {
+      depth--;
+      if (depth === 0) return i + 1;
+    }
+    i++;
+  }
+  return -1;
+}
+
+/**
+ * Whether a parenthesised option list enables ANALYZE.
+ *
+ * `false`, `off` and `0` turn that option off, and an option with no value is on. Any enabled `ANALYZE` executes,
+ * even when another is off, which asks rather than missing a `DELETE`.
+ */
+function explainOptionsExecute(text: string, open: number, close: number, grammar: SqlGrammar): boolean {
+  const limit = close - 1;
+  let execute = false;
+  let i = open + 1;
+  while (i < limit) {
+    const name = readExplainOptionToken(text, i, limit, grammar);
+    if (name === null) break;
+    i = name.end;
+    if (name.kind !== "word") continue;
+    const value = readExplainOptionToken(text, i, limit, grammar);
+    if (value !== null && value.kind !== "comma") i = value.end;
+    if (!ANALYZE_OPTIONS.has(name.text)) continue;
+    const setting = value === null || value.kind === "comma" ? null : value.text.toUpperCase();
+    if (setting === null || !ANALYZE_OFF.has(setting)) execute = true;
+  }
+  return execute;
+}
+
+/**
+ * The statement after `EXPLAIN`'s options when ANALYZE will execute it, or null when ANALYZE is absent or off.
+ *
+ * The legacy spelling is a run of `ANALYZE`/`ANALYSE`/`VERBOSE`. The parenthesised spelling is `EXPLAIN ( … )`.
+ * Anything else — a plain `EXPLAIN`, `EXPLAIN VERBOSE`, `ANALYZE false` — only plans, and null is what tells the
+ * caller not to ask.
+ */
+function stripExplainOptions(text: string, from: number, grammar: SqlGrammar): string | null {
+  const start = pastHiddenText(text, from, grammar);
+  if (text[start] === "(") {
+    const close = endOfParenthesised(text, start, grammar);
+    if (close < 0) return null;
+    return explainOptionsExecute(text, start, close, grammar) ? text.slice(close) : null;
+  }
+
+  let at = start;
+  let analyze = false;
+  for (;;) {
+    const wordAt = pastHiddenText(text, at, grammar);
+    const word = readSqlWord(text, wordAt);
+    if (word === null || !EXPLAIN_KEYWORD_OPTIONS.has(word.text)) break;
+    if (ANALYZE_OPTIONS.has(word.text)) analyze = true;
+    at = word.end;
+  }
+  return analyze ? text.slice(at) : null;
+}
+
 /**
  * Whether ONE statement's own code asks for a confirmation, read under `grammar`.
  *
@@ -741,6 +867,20 @@ function configKeyAsks(
 export function writesUnderGrammar(text: string, grammar: SqlGrammar): boolean {
   const reading = readOperativeKeyword(text, grammar);
   const keyword = reading?.keyword;
+
+  // PostgreSQL's EXPLAIN executes the explained statement only when ANALYZE is on
+  // (`EXPLAIN ANALYZE DELETE`, `EXPLAIN (ANALYZE, BUFFERS) UPDATE`). The operative
+  // keyword is EXPLAIN, which is not itself dangerous, so without this the DELETE
+  // runs unconfirmed (#1863). A plain EXPLAIN, or ANALYZE set to false, off or 0,
+  // only plans: returning here, instead of falling through, is what keeps an
+  // `UPDATE … SET` inside a plan from asking. The remaining text is read as its own
+  // statement, so a data-modifying CTE under the EXPLAIN asks too. CockroachDB
+  // shares this grammar.
+  if (reading !== null && reading.keyword === "EXPLAIN" && grammar.explainExecutesWithAnalyze === true) {
+    const inner = stripExplainOptions(text, reading.end, grammar);
+    return inner !== null && writesUnderGrammar(inner, grammar);
+  }
+
   if (
     reading !== null &&
     DANGEROUS_KEYWORDS.has(reading.keyword) &&

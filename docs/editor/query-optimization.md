@@ -574,6 +574,7 @@ same reading the auto-limiter uses, so the two cannot disagree about where a sta
 | Any of those behind a comment (`-- note`, `/* note */`, MySQL's `# note`, several stacked) | Yes |
 | A `WITH` whose CTE list precedes one (`WITH x AS (…) DELETE FROM …`) | Yes |
 | A `WITH` whose CTE list *contains* an `INSERT`, `UPDATE … SET`, `DELETE` or `MERGE` (PostgreSQL's data-modifying CTE; CockroachDB shares the grammar) | Yes |
+| `EXPLAIN ANALYZE` or `EXPLAIN (ANALYZE, …)` of a statement that asks, on PostgreSQL (CockroachDB shares the grammar). `ANALYZE` set to `false`, `off` or `0`, and a plain `EXPLAIN`, only plan | Yes, the same answer as the explained statement |
 | A statement carrying a run the reader cannot resolve (`SELECT '\';` and anything after it, an unterminated comment, literal, name or array) | Yes, and the dialog says why |
 | Any of those behind a **nested** comment (`/* a /* b */ c */ DROP TABLE users`), on a dialect that nests — PostgreSQL, SQL Server, ClickHouse | Yes: the comment is read whole, so the statement's own keyword is the one that answers |
 | The same text on a dialect that does **not** nest — MySQL, MariaDB, SQLite, Oracle | No, because there the comment closed at the first `*/` and what follows it is text the engine rejects outright |
@@ -595,7 +596,8 @@ Writing a note above a destructive statement is ordinary, and it is exactly wher
 matters most.
 ┌──────────────────────────────────────────────────────────────────────────────┐
 One probe stays deliberately unanchored: a statement whose code contains `UPDATE` followed by
-`SET` asks for confirmation whatever its own keyword is. PostgreSQL's data-modifying CTE is
+`SET` asks for confirmation whatever its own keyword is, except an `EXPLAIN` that will not execute
+it (below). PostgreSQL's data-modifying CTE is
 *operated* by its `SELECT` — which is the honest answer, and the one the limiter needs so it does
 not bound the rows a write commits — so anchoring this probe too would take the last check away
 from a statement that really does write. It reads the statement's **code** rather than its text
@@ -610,6 +612,17 @@ so `WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d` asks, and so do the `
 ask too. A plain `SELECT` whose code names one of those words does not ask, and neither does a
 word that only appears in a string or a comment, or after the statement the list precedes. An
 unclosed list still does not: the shape cannot be typed, and no dialect accepts the text.
+┌──────────────────────────────────────────────────────────────────────────────┐
+On PostgreSQL, `EXPLAIN ANALYZE` executes the statement it explains. Typed into the editor, it used to
+be read as an `EXPLAIN`, which is not a dangerous keyword, so `EXPLAIN ANALYZE DELETE FROM users`
+deleted the rows with no confirmation (#1863). The gate strips a leading run of `ANALYZE`, `ANALYSE`
+and `VERBOSE`, or a parenthesised option list, and when `ANALYZE` is enabled asks about the remaining
+statement the way it would on its own — including a data-modifying CTE written under the `EXPLAIN`.
+`ANALYZE` with no value is on; `true`, `on` and `1` are on; `false`, `off` and `0` are off. A plain
+`EXPLAIN`, `EXPLAIN VERBOSE`, or `ANALYZE` set off only plans, so it does not ask, and an `UPDATE … SET`
+inside that plan does not either. A word inside a string or a comment is not an option and is not the
+statement. CockroachDB connections are the `postgres` type-id and share the grammar, so they ask too.
+The grammar fact is `explainExecutesWithAnalyze`, absent on every other row.
 ┌──────────────────────────────────────────────────────────────────────────────┐
 ### Text the reading cannot resolve asks, and says so
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -690,6 +703,12 @@ only `UPDATE … SET` was looked for inside a read, so
 unanchored pair to those words would have made every read whose code names one of them prompt, so
 the three are read only inside a `WITH` whose list can be typed. That gap is closed (#1862).
 ┌──────────────────────────────────────────────────────────────────────────────┐
+`EXPLAIN ANALYZE` of a write was the same kind of gap: the operative keyword is `EXPLAIN`, so a
+`DELETE` or `DROP` under it never asked, while `EXPLAIN (ANALYZE) UPDATE … SET` asked only because
+the unanchored pair happened to see the `UPDATE`. The explained statement is what runs, so the gate
+reads it as its own statement when `ANALYZE` is on, and stays silent when `ANALYZE` is off or absent
+(#1863). Pinned by `tests/components/QuerySafetyDialog.test.tsx`.
+┌──────────────────────────────────────────────────────────────────────────────┐
 Another gap sat beside them and is closed (S1). A multi-statement script used to be read as one
 statement, so `SELECT 1; DROP TABLE users` did not prompt — its first keyword is the `SELECT` —
 while `SELECT 1; UPDATE t SET x = 1` did, because the unanchored probe happened to find it. The gate
@@ -700,8 +719,9 @@ in a Mongo document or a Redis command separates nothing, so a fragment cut ther
 run").
 ┌──────────────────────────────────────────────────────────────────────────────┐
 Four runs bypass the gate on purpose, all on the standalone path
-(`src/hooks/use-query-execution.ts`): an EXPLAIN run (see below), a Load-More page of a result the
-user already has, a playground run (rolled back rather than committed), and anything carrying
+(`src/hooks/use-query-execution.ts`): an EXPLAIN run built by the Explain button (see below —
+`EXPLAIN ANALYZE` typed in the editor is an ordinary run and reaches the gate), a Load-More page of a
+result the user already has, a playground run (rolled back rather than committed), and anything carrying
 `skipSafety` — which is the dialog's own "Execute Anyway" button and the inline row editor, whose
 `UPDATE` comes from a grid edit the user has already confirmed. The embedded adapter
 (`src/workspace/hooks/use-query-adapter.ts`) has only the force-execute bypass, so every other

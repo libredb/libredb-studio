@@ -371,6 +371,19 @@ export interface SqlGrammar {
    * key. Absent means none.
    */
   readonly confirmConfigKeys?: readonly string[];
+  /**
+   * Whether `EXPLAIN ANALYZE` executes the explained statement.
+   *
+   * True on PostgreSQL: `EXPLAIN` only plans unless `ANALYZE` (or the British `ANALYSE`) is enabled, and then it runs
+   * the statement. CockroachDB connections are the `postgres` type-id and share that grammar. Absent means false, and
+   * a plain `EXPLAIN` describes without running, so the confirmation gate must not treat the word `EXPLAIN` itself as
+   * a write and must not ask about a statement that is only planned.
+   *
+   * It is a fact the text cannot settle: `EXPLAIN ANALYZE DELETE FROM t` deletes the rows where the option executes
+   * and is a plan where it does not, so under the wrong reading the `DELETE` would run with no confirmation, or a
+   * plan would ask.
+   */
+  readonly explainExecutesWithAnalyze?: boolean;
 }
 
 /** A form `SqlGrammar.confirmFormsWhen` looks for: a keyword sequence and the code word that makes it ask. */
