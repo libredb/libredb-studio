@@ -49,7 +49,8 @@ import * as path from "path";
  *   `false`, so called without a context it opens with the trusted reach. An `owner` makes the provider
  *   that user's own (docs/GOVERNANCE.md#per-user-providers): its pool opens with `min: 0` and `max: ownerPoolMax`.
  * @returns Promise<DatabaseProvider> instance
- * @throws DatabaseConfigError if connection type is not supported, if its `readOnly` cannot be
+ * @throws DatabaseConfigError if connection type is not supported or is left out of a set
+ *   `LIBREDB_ENABLED_PROVIDERS` (see assertProviderEnabled), if its `readOnly` cannot be
  *   honoured (see assertReadOnlyHonoured), or if an owner comes without a whole `ownerPoolMax`
  *   from 1 (see assertOwnerPoolHonoured)
  *
@@ -209,11 +210,29 @@ export function enabledProviderTypes(): readonly DatabaseType[] | null {
   return entries as DatabaseType[];
 }
 
+/**
+ * Refuse a connection whose type `LIBREDB_ENABLED_PROVIDERS` leaves out, before anything is built, loaded or dialled.
+ *
+ * It is set membership inside the provider layer and names no type id, so `tests/unit/lib/no-engine-branches.test.ts`
+ * needs no entry for it. It runs before the `switch` of `createDatabaseProvider`, so the provider module of a refused
+ * type, and its driver, is never imported. Unset or blank returns at once; a value that names something other than a
+ * type id raises the reader's `Error`, so every connection fails with that entry named.
+ */
+function assertProviderEnabled(connection: DatabaseConnection): void {
+  const enabled = enabledProviderTypes();
+  if (enabled === null || enabled.includes(connection.type)) return;
+  throw new DatabaseConfigError(
+    `The ${sanitize(connection.type)} provider is not available in this distribution of LibreDB Studio.`,
+    connection.type,
+  );
+}
+
 export async function createDatabaseProvider(
   connection: DatabaseConnection,
   options: ProviderOptions = {},
   execution: ProviderExecutionContext = {},
 ): Promise<DatabaseProvider> {
+  assertProviderEnabled(connection);
   assertReadOnlyHonoured(connection);
   assertOwnerPoolHonoured(connection, execution);
   console.log(`[DB] Creating ${sanitize(connection.type)} provider for "${sanitize(connection.name || "")}"`);

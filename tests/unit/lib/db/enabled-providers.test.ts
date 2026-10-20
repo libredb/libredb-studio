@@ -71,3 +71,51 @@ describe("enabledProviderTypes", () => {
     expect(() => enabledProviderTypes()).toThrow(/LIBREDB_ENABLED_PROVIDERS/);
   });
 });
+
+const conn = (type: string, extra: Partial<DatabaseConnection> = {}): DatabaseConnection =>
+  ({ id: "c1", name: "probe", type, host: "db.internal", port: 5000, database: "d", ...extra }) as DatabaseConnection;
+
+const EXCLUDED = ["sqlite", "duckdb", "db2", "oracle"] as const;
+
+describe("createDatabaseProvider under a set list", () => {
+  for (const type of EXCLUDED) {
+    test(`${type} is refused with CONFIG_ERROR and its module is never evaluated`, async () => {
+      process.env.LIBREDB_ENABLED_PROVIDERS = VSCODE_LIST;
+      const refusal = await createDatabaseProvider(conn(type)).then(
+        () => null,
+        (error: unknown) => error,
+      );
+      expect(refusal).toBeInstanceOf(DatabaseConfigError);
+      expect((refusal as DatabaseConfigError).message).toBe(
+        `The ${type} provider is not available in this distribution of LibreDB Studio.`,
+      );
+      expect((refusal as DatabaseConfigError).code).toBe("CONFIG_ERROR");
+      expect((refusal as DatabaseConfigError).provider).toBe(type);
+      expect(evaluated).not.toContain(type);
+    });
+  }
+
+  test("the refusal comes before the readOnly check", async () => {
+    process.env.LIBREDB_ENABLED_PROVIDERS = VSCODE_LIST;
+    await expect(createDatabaseProvider(conn("sqlite", { readOnly: "yes" as never }))).rejects.toThrow(
+      "The sqlite provider is not available in this distribution of LibreDB Studio.",
+    );
+  });
+
+  test("a listed type is built", async () => {
+    process.env.LIBREDB_ENABLED_PROVIDERS = VSCODE_LIST;
+    const provider = await createDatabaseProvider(conn("postgres"));
+    expect(provider).toBeDefined();
+    expect(evaluated).toContain("postgres");
+  });
+
+  test("a bad value refuses every type, naming the entry", async () => {
+    process.env.LIBREDB_ENABLED_PROVIDERS = "postgres,nosuch";
+    await expect(createDatabaseProvider(conn("postgres"))).rejects.toThrow(/"nosuch"/);
+  });
+
+  test("unset builds a listed type", async () => {
+    const provider = await createDatabaseProvider(conn("postgres"));
+    expect(provider).toBeDefined();
+  });
+});
