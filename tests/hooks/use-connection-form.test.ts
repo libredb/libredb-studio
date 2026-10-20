@@ -179,6 +179,7 @@ import {
   databendNotAppliedNotice,
 } from "@/lib/connection-string-parser";
 import { READ_ONLY_ENFORCED, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { CONNECTION_PICKER_ORDER } from "@/lib/db/connection-form";
 
 // =============================================================================
 // useConnectionForm Tests
@@ -1980,6 +1981,14 @@ describe("useConnectionForm", () => {
     expect(first).toHaveProperty("label");
     expect(first).toHaveProperty("icon");
     expect(first).toHaveProperty("color");
+  });
+
+  test("dbTypes offers every type of the shared picker order, in that order", () => {
+    // The dialog is also the edit form: a type the hook drops leaves its edit dialog with no tile selected (#127).
+    // tests/unit/lib/db/connection-form.test.ts holds CONNECTION_PICKER_ORDER to the DatabaseType union.
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    expect(result.current.dbTypes.map((t: { value: string }) => t.value)).toEqual([...CONNECTION_PICKER_ORDER]);
   });
 
   test("dbTypes includes sqlite so the seeded sample connection can be edited", () => {
