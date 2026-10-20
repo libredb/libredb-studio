@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S9 · 6
-- [Drivers and connections](#drivers-and-connections) — D1-D379, U17 · 274
+- [Drivers and connections](#drivers-and-connections) — D1-D385, U17 · 280
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U148 · 134
@@ -3872,6 +3872,55 @@ The file passed alone on 2026-10-20 on `main` at `6e611bf73` (12 tests, 3.3 s).
 Found on #1818, whose change does not touch the HTTP transport.
 
 **Done when:** the test bounds the named wait by the time it measured itself between sending the request and the deadline, not by the sleep's nominal length, and the file passes repeated runs at the CI job's concurrency.
+
+### D380. An inline connection is not held to `SEED_ONLY_FIELDS`
+
+`SEED_ONLY_FIELDS` in `src/lib/db/connection-fields.ts` names the fields only a seed file may set, but `resolveConnection` in `src/lib/seed/resolve-connection.ts` does not check an inline connection against it.
+For example, OPC UA's `clientCertificatePath` and `clientPrivateKeyPath` are seed-only, and the provider reads them from any config it is given, so a request that carries them inline reaches the provider with them.
+
+Found 2026-10-20 during the VS Code extension work, and deferred because it does not block that work.
+
+**Done when:** `resolveConnection` refuses an inline connection that carries a seed-only field with `400`, with a route test.
+
+### D381. A broken seed file's path reaches the answer to a request by seed id
+
+When the seed file does not load, a request by seed id answers `500` with the seed loader's message, and that message names the seed file's path. Every role gets the same answer.
+
+Found 2026-10-20 during the VS Code extension work, and deferred because it does not block that work.
+
+**Done when:** the answer is a fixed sentence that names no path, and the loader's message, path included, stays in the server log.
+
+### D382. The LibreDB library's stale-lock check blocks on a FIFO
+
+`isStaleLock` in the `@libredb/libredb` library's node-fs adapter reads the lock path with `readFileSync`, which blocks when that path is a FIFO.
+Studio guards against it from outside: it refuses a non-regular database path and the files beside it before the library opens them (`src/lib/db/utils/regular-file.ts`).
+
+Found 2026-10-20 during the VS Code extension work, and deferred because it does not block that work.
+
+**Done when:** the library checks the lock file's type itself before reading it, so the guard does not rest on every caller.
+
+### D383. SQLite's WAL check lets a read error escape as a raw `Error`
+
+`isWalModeFile`, called from the `connect` catch in `src/lib/db/providers/sql/sqlite.ts`, reads the database file's header. A read error on a regular file escapes it as a raw `Error` rather than a `ConnectionError`.
+
+Found 2026-10-20 during the VS Code extension work, and deferred because it does not block that work.
+
+**Done when:** that read error reaches the caller as a `ConnectionError`, with a test.
+
+### D384. `SQLBaseProvider.buildLimitClause` has no caller
+
+`buildLimitClause` in `src/lib/db/providers/sql/sql-base.ts` is not called from anywhere.
+
+Found 2026-10-20 during the VS Code extension work.
+
+**Done when:** the method is removed.
+
+### D385. An etcd certificate test timed out on Windows
+
+`step 4: a certificate whose Common Name etcd does not know is named` in `tests/integration/db/etcd-provider.test.ts` timed out at 60 s on the `windows-latest` job of #1875 on 2026-10-20.
+Whether the cause is the runner or the test was not measured.
+
+**Done when:** the cause is known and the test passes repeated runs on the `windows-latest` job.
 
 ## Value interpolation
 
