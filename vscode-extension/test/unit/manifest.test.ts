@@ -75,6 +75,12 @@ describe("the manifest", () => {
     });
   });
 
+  it("pins @tailwindcss/cli to the root's tailwindcss", () => {
+    const rootTailwind = /"tailwindcss@(\d+\.\d+\.\d+)"/.exec(readFileSync(join(root, "../bun.lock"), "utf8"));
+    assert.ok(rootTailwind, "the root bun.lock resolves no tailwindcss");
+    assert.equal(manifest.devDependencies["@tailwindcss/cli"], rootTailwind[1]);
+  });
+
   it("pins @happy-dom/global-registrator to the major of the root's happy-dom", () => {
     const rootHappyDom = /"happy-dom@(\d+)\.\d+\.\d+"/.exec(readFileSync(join(root, "../bun.lock"), "utf8"));
     assert.ok(rootHappyDom, "the root bun.lock resolves no happy-dom");

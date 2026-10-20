@@ -1,0 +1,195 @@
+/*
+ * LibreDB's tokens in terms of the --vscode-* variables every webview receives (part 4 "The theming bridge").
+ * The selector :root, :root.dark outranks theme.css's .dark block, so one mapping serves every theme: the VS Code
+ * variables already carry the active theme's values. globals.css is not imported (it brings Tailwind with automatic
+ * source detection, the Next font variables and the Monaco rules); the parts the bundled ui components need are copied
+ * here, and test/unit/webview/stylesheet.test.ts holds the copy to globals.css.
+ */
+
+@theme inline {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+}
+
+/* --radius is globals.css's value: the copied shadcn block derives the rounded-* sizes from it. */
+:root,
+:root.dark {
+  --studio-canvas: var(--vscode-panel-background);
+  --studio-sunken: var(--vscode-panel-background);
+  --studio-surface: var(--vscode-panel-background);
+  --background: var(--vscode-panel-background);
+  --studio-raised: var(--vscode-keybindingTable-headerBackground, var(--vscode-editorWidget-background));
+  --studio-overlay: var(--vscode-editorWidget-background);
+  --studio-panel: var(--vscode-editorWidget-background);
+  --muted: var(--vscode-editorWidget-background);
+  --popover: var(--vscode-menu-background);
+  --popover-foreground: var(--vscode-menu-foreground);
+  --accent: var(--vscode-menu-selectionBackground);
+  --accent-foreground: var(--vscode-menu-selectionForeground);
+  --studio-hairline: var(--vscode-panel-border);
+  --border: var(--vscode-panel-border);
+  --studio-hairline-strong: var(--vscode-editorWidget-border);
+  --studio-edge: var(--vscode-editorWidget-border);
+  --input: var(--vscode-input-border);
+  --studio-edge-hover: var(--vscode-focusBorder);
+  --ring: var(--vscode-focusBorder);
+  --studio-brand-tint: var(--vscode-focusBorder);
+  --studio-fill-subtle: var(--vscode-toolbar-hoverBackground);
+  --studio-fill: var(--vscode-list-hoverBackground);
+  --studio-fill-strong: var(--vscode-list-inactiveSelectionBackground);
+  --studio-fg-bright: var(--vscode-foreground);
+  --studio-fg: var(--vscode-foreground);
+  --studio-fg-secondary: var(--vscode-foreground);
+  --foreground: var(--vscode-foreground);
+  --studio-fg-tertiary: var(--vscode-descriptionForeground);
+  --studio-fg-muted: var(--vscode-descriptionForeground);
+  --muted-foreground: var(--vscode-descriptionForeground);
+  --studio-fg-subtle: var(--vscode-disabledForeground);
+  --studio-fg-faint: var(--vscode-disabledForeground);
+  --studio-brand: var(--vscode-textLink-foreground);
+  --studio-brand-bright: var(--vscode-textLink-foreground);
+  --studio-brand-solid: var(--vscode-button-background);
+  --studio-brand-solid-hover: var(--vscode-button-hoverBackground);
+  --studio-brand-solid-active: var(--vscode-button-hoverBackground);
+  --primary: var(--vscode-button-background);
+  --primary-foreground: var(--vscode-button-foreground);
+  --secondary: var(--vscode-button-secondaryBackground);
+  --secondary-foreground: var(--vscode-button-secondaryForeground);
+  --studio-warning: var(--vscode-editorWarning-foreground);
+  --studio-warning-bright: var(--vscode-editorWarning-foreground);
+  --studio-warning-solid: var(--vscode-editorWarning-foreground);
+  --studio-warning-solid-hover: var(--vscode-editorWarning-foreground);
+  --studio-warning-tint: var(--vscode-editorWarning-foreground);
+  --studio-danger: var(--vscode-errorForeground);
+  --studio-danger-bright: var(--vscode-errorForeground);
+  --studio-danger-solid: var(--vscode-errorForeground);
+  --studio-danger-solid-hover: var(--vscode-errorForeground);
+  --studio-danger-tint: var(--vscode-errorForeground);
+  --studio-success: var(--vscode-charts-green);
+  --studio-success-bright: var(--vscode-charts-green);
+  --studio-success-solid: var(--vscode-charts-green);
+  --studio-success-solid-hover: var(--vscode-charts-green);
+  --studio-success-tint: var(--vscode-charts-green);
+  --destructive: var(--vscode-errorForeground);
+  --studio-hue-blue: var(--vscode-charts-blue);
+  --studio-hue-blue-alt: var(--vscode-charts-blue);
+  --studio-hue-blue-tint: var(--vscode-charts-blue);
+  --studio-hue-sky: var(--vscode-charts-blue);
+  --studio-hue-sky-alt: var(--vscode-charts-blue);
+  --studio-hue-indigo: var(--vscode-charts-blue);
+  --studio-hue-indigo-alt: var(--vscode-charts-blue);
+  --studio-hue-indigo-tint: var(--vscode-charts-blue);
+  --studio-hue-violet: var(--vscode-charts-purple);
+  --studio-hue-violet-alt: var(--vscode-charts-purple);
+  --studio-hue-purple: var(--vscode-charts-purple);
+  --studio-hue-purple-alt: var(--vscode-charts-purple);
+  --studio-hue-purple-tint: var(--vscode-charts-purple);
+  --studio-hue-pink: var(--vscode-charts-red);
+  --studio-hue-pink-alt: var(--vscode-charts-red);
+  --studio-hue-rose: var(--vscode-charts-red);
+  --studio-hue-rose-alt: var(--vscode-charts-red);
+  --studio-hue-rose-tint: var(--vscode-charts-red);
+  --studio-hue-red: var(--vscode-charts-red);
+  --studio-hue-red-alt: var(--vscode-charts-red);
+  --studio-hue-red-tint: var(--vscode-charts-red);
+  --studio-hue-orange: var(--vscode-charts-orange);
+  --studio-hue-orange-alt: var(--vscode-charts-orange);
+  --studio-hue-orange-tint: var(--vscode-charts-orange);
+  --studio-hue-amber: var(--vscode-charts-orange);
+  --studio-hue-amber-alt: var(--vscode-charts-orange);
+  --studio-hue-amber-tint: var(--vscode-charts-orange);
+  --studio-hue-yellow: var(--vscode-charts-yellow);
+  --studio-hue-yellow-alt: var(--vscode-charts-yellow);
+  --studio-hue-yellow-tint: var(--vscode-charts-yellow);
+  --studio-hue-green: var(--vscode-charts-green);
+  --studio-hue-green-alt: var(--vscode-charts-green);
+  --studio-hue-green-tint: var(--vscode-charts-green);
+  --studio-hue-emerald: var(--vscode-charts-green);
+  --studio-hue-emerald-alt: var(--vscode-charts-green);
+  --studio-hue-emerald-tint: var(--vscode-charts-green);
+  --studio-hue-teal: var(--vscode-charts-green);
+  --studio-hue-teal-alt: var(--vscode-charts-green);
+  --studio-hue-teal-tint: var(--vscode-charts-green);
+  --studio-hue-cyan: var(--vscode-charts-blue);
+  --studio-hue-cyan-alt: var(--vscode-charts-blue);
+  --studio-hue-cyan-tint: var(--vscode-charts-blue);
+  --studio-hue-teal-solid: var(--vscode-charts-green);
+  --studio-hue-teal-solid-hover: var(--vscode-charts-green);
+  --studio-hue-purple-solid: var(--vscode-charts-purple);
+  --studio-hue-purple-solid-hover: var(--vscode-charts-purple);
+  --studio-hue-fuchsia: var(--vscode-charts-purple);
+  --studio-hue-fuchsia-alt: var(--vscode-charts-purple);
+  --studio-hue-lime: var(--vscode-charts-yellow);
+  --studio-hue-lime-alt: var(--vscode-charts-yellow);
+  --studio-hue-mist: var(--vscode-descriptionForeground);
+  --studio-hue-slate: var(--vscode-descriptionForeground);
+  --studio-hue-stone: var(--vscode-descriptionForeground);
+  --studio-hue-neutral: var(--vscode-descriptionForeground);
+  --studio-hue-slate-alt: var(--vscode-descriptionForeground);
+  --studio-hue-taupe: var(--vscode-descriptionForeground);
+  --studio-hue-mauve: var(--vscode-descriptionForeground);
+  --font-geist-sans: var(--vscode-font-family);
+  --font-geist-mono: var(--vscode-editor-font-family);
+  --radius: 0.5rem;
+}
+
+/* High contrast: the hairlines and the ring take the theme's contrast borders (the webview sets the attribute). */
+:root[data-libredb-contrast="high"],
+:root.dark[data-libredb-contrast="high"] {
+  --studio-hairline: var(--vscode-contrastBorder);
+  --studio-hairline-strong: var(--vscode-contrastBorder);
+  --studio-edge: var(--vscode-contrastBorder);
+  --border: var(--vscode-contrastBorder);
+  --ring: var(--vscode-contrastActiveBorder);
+}
+
+body.vscode-reduce-motion *,
+body.vscode-reduce-motion *::before,
+body.vscode-reduce-motion *::after {
+  animation: none !important;
+  transition: none !important;
+}
+
+/* Unlayered, so it outranks the host page's body padding inside @layer vscode-default whatever those defaults become. */
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--vscode-panel-background);
+}
