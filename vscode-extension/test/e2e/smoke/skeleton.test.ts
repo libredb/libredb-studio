@@ -4,6 +4,7 @@ import { once } from "node:events";
 import { join } from "node:path";
 import * as vscode from "vscode";
 import type { RuntimeAnswer } from "../../../src/backend/start";
+import { firstAnswer } from "../../child-answer";
 import { backendForkOptions } from "../../fork-options";
 import { FLOOR_NODE } from "../../vscode-floor";
 import versions from "../../vscode-versions.json";
@@ -25,7 +26,7 @@ describe("the LibreDB extension in a real extension host", () => {
     assert.ok(extension, `${EXTENSION_ID} is not loaded in the test instance`);
     const root = extension.extensionPath;
     const child = fork(join(root, "dist", "backend.js"), [], backendForkOptions(root));
-    const [answer] = (await once(child, "message")) as [RuntimeAnswer];
+    const answer = (await firstAnswer(child)) as RuntimeAnswer;
     console.log(
       `VS Code ${vscode.version} on ${process.platform}/${process.arch}: host execPath ${process.execPath}, ` +
         `host ELECTRON_RUN_AS_NODE ${process.env.ELECTRON_RUN_AS_NODE ?? "unset"}, child node ${answer.versions.node}, electron ${answer.versions.electron}`,

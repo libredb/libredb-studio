@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import type { RuntimeAnswer } from "../../src/backend/start";
+import { firstAnswer } from "../child-answer";
 import { type BackendRuntime, backendRuntime, forkBackend, runtimeName } from "./runtime";
 
 describe("LIBREDB_BACKEND_RUNTIME", () => {
@@ -23,7 +24,7 @@ describe("the backend child", () => {
 
   it("answers the versions of the runtime it was forked on", async () => {
     const child = forkBackend(runtime);
-    const [answer] = (await once(child, "message")) as [RuntimeAnswer];
+    const answer = (await firstAnswer(child)) as RuntimeAnswer;
     console.log(
       `${runtime.name}: ${runtime.execPath}, node ${answer.versions.node}, electron ${answer.versions.electron ?? "none"}`,
     );
@@ -40,7 +41,7 @@ describe("the backend child", () => {
 
   it("exits 0 within 3 s once its host closes the channel", async () => {
     const child = forkBackend(runtime);
-    await once(child, "message");
+    await firstAnswer(child);
     const started = Date.now();
     child.disconnect();
     const [code] = await once(child, "exit");
