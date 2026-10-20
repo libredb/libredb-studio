@@ -8,7 +8,7 @@
  * parser runs in the browser: it imports no `node:` module and no provider, sends nothing, logs nothing and stores
  * nothing.
  */
-import type { ConnectionField } from "@/lib/db-ui-config";
+import type { ConnectionField } from "@/lib/db/connection-fields";
 import type { SSLConfig } from "@/lib/types";
 
 /**

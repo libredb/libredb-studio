@@ -92,14 +92,20 @@ const PICKER_COVERAGE: Record<DatabaseType, boolean> = {
 /**
  * Every specifier a file loads at run time: value imports and re-exports, never a type-only one, and every
  * `import("<literal>")` call anywhere in it, because a bundler bundles a dynamic import as well.
+ * With `withTypes`, the type-only imports and every `import("<literal>")` type are kept too: the files a
+ * typecheck of the module has to read.
  */
-function runTimeSpecifiers(path: string): string[] {
+function runTimeSpecifiers(path: string, withTypes = false): string[] {
   const file = ts.createSourceFile(path, readFileSync(path, "utf8"), ts.ScriptTarget.Latest, true);
   const found: string[] = [];
   for (const statement of file.statements) {
     if (!ts.isImportDeclaration(statement) && !ts.isExportDeclaration(statement)) continue;
     const specifier = statement.moduleSpecifier;
     if (specifier === undefined || !ts.isStringLiteral(specifier)) continue;
+    if (withTypes) {
+      found.push(specifier.text);
+      continue;
+    }
     if (ts.isImportDeclaration(statement)) {
       const clause = statement.importClause;
       if (clause?.isTypeOnly === true) continue;
@@ -118,6 +124,10 @@ function runTimeSpecifiers(path: string): string[] {
     if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
       const [argument] = node.arguments;
       if (argument !== undefined && ts.isStringLiteral(argument)) found.push(argument.text);
+    }
+    if (withTypes && ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)) {
+      const literal = node.argument.literal;
+      if (ts.isStringLiteral(literal)) found.push(literal.text);
     }
     ts.forEachChild(node, visit);
   };
@@ -139,8 +149,11 @@ function resolveLocal(from: string, specifier: string): string | null {
   throw new Error(`${specifier}, imported by ${from}, resolves to no file`);
 }
 
-/** Every specifier and repository file the module's run-time import graph reaches, dynamic imports included. */
-function reached(entry: string): { specifiers: string[]; files: string[] } {
+/**
+ * Every specifier and repository file the module's run-time import graph reaches, dynamic imports included, or with
+ * `withTypes` its whole type-level graph.
+ */
+function reached(entry: string, withTypes = false): { specifiers: string[]; files: string[] } {
   const seen = new Set<string>();
   const specifiers = new Set<string>();
   const queue = [entry];
@@ -148,7 +161,7 @@ function reached(entry: string): { specifiers: string[]; files: string[] } {
     const path = queue.pop() as string;
     if (seen.has(path)) continue;
     seen.add(path);
-    for (const specifier of runTimeSpecifiers(path)) {
+    for (const specifier of runTimeSpecifiers(path, withTypes)) {
       specifiers.add(specifier);
       const local = resolveLocal(path, specifier);
       if (local !== null) queue.push(local);
@@ -176,6 +189,25 @@ describe("src/lib/db/connection-form.ts", () => {
     expect(files.filter((f) => f.startsWith(join(ROOT, "src/components")))).toEqual([]);
     expect(specifiers).toContain("@/lib/db/connection-fields");
     expect(specifiers).toContain("@/lib/kubernetes/kubeconfig-import");
+  });
+
+  test("its type graph reaches no React, icon, component or dialog-table module either", () => {
+    // The extension typechecks its child with jsx on, so a type-only import of the dialog table would make that
+    // typecheck read every icon component to check one import of CONNECTION_FORM.
+    const { specifiers, files } = reached(MODULE, true);
+    expect(
+      specifiers.filter(
+        (s) =>
+          s === "react" ||
+          s.startsWith("react/") ||
+          s === "lucide-react" ||
+          s.startsWith("lucide-react/") ||
+          s.startsWith("@/components/") ||
+          s === "@/lib/db-ui-config",
+      ),
+    ).toEqual([]);
+    expect(files.filter((f) => f.startsWith(join(ROOT, "src/components")))).toEqual([]);
+    expect(specifiers).toContain("@/lib/connection-import");
   });
 
   test("a fresh process loads it on its own", () => {
