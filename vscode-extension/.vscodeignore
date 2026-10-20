@@ -1,0 +1,8 @@
+**
+!package.json
+!package.nls.json
+!README.md
+!LICENSE
+!THIRD_PARTY_NOTICES.txt
+!dist/extension.js
+!dist/backend.js
