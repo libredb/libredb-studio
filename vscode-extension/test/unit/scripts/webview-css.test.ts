@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { inputPackage } from "../../../scripts/bundle-checks.mjs";
 import { renderNotices } from "../../../scripts/notices.mjs";
 import {
@@ -155,6 +155,24 @@ describe("the webview stylesheet's build", () => {
       assert.deepEqual(sourceCoverageViolations(meta(), sources, wd, missing), [
         "src/components/ui/sheet.tsx: an @source path of results.css that does not exist",
       ]);
+    });
+
+    it("asks for each @source path where the platform's own path functions put it, as the Windows build needs", () => {
+      const windowsDir = "D:\\a\\libredb-studio\\vscode-extension";
+      const asked: string[] = [];
+      const record = (path: string) => {
+        asked.push(path);
+        return true;
+      };
+      assert.deepEqual(sourceCoverageViolations(meta(), sources, windowsDir, record), []);
+      assert.deepEqual(
+        asked,
+        sources.map((source) => join(windowsDir, posix.join(posix.dirname(CSS_INPUT), source))),
+      );
+      assert.equal(
+        asked.some((path) => path.includes(process.cwd())),
+        false,
+      );
     });
   });
 });

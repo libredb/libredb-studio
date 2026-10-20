@@ -78,13 +78,16 @@ export function stylesheetViolations(css) {
  * @param {(path: string) => boolean} [exists] whether a path exists; the file system by default.
  */
 export function sourceCoverageViolations(metafile, sources, workingDir, exists = existsSync) {
-  const from = posix.join(workingDir.split("\\").join("/"), posix.dirname(CSS_INPUT));
   const violations = [];
   const covered = [];
   for (const source of sources) {
-    const absolute = posix.resolve(from, source);
-    const path = repoPath(absolute, workingDir);
-    if (!exists(absolute)) violations.push(`${path}: an @source path of results.css that does not exist`);
+    // The path as esbuild names an input, relative to workingDir; the file system is asked through the platform's own
+    // join, since a posix resolve of a Windows drive path prefixes the current directory and finds nothing.
+    const input = posix.join(posix.dirname(CSS_INPUT), source);
+    const path = repoPath(input, workingDir);
+    if (!exists(join(workingDir, input))) {
+      violations.push(`${path}: an @source path of results.css that does not exist`);
+    }
     covered.push(path.replace(/\/$/, ""));
   }
   for (const input of Object.keys(metafile.inputs)) {
