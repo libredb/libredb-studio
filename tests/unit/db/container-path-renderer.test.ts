@@ -39,6 +39,29 @@ function sourceFiles(dir: string): string[] {
   return found;
 }
 
+const PHRASE = "container path is";
+
+/**
+ * Whether any string in `source` can carry the phrase, decided without parsing it.
+ *
+ * Parsing every provider file was most of this guard's cost, and on a loaded runner (bun's
+ * coverage run with `--jobs=20`, or the file alone under a 15% CPU quota) it took 7.9s
+ * against bun's 5s default. Most files cannot carry the phrase, and that is provable from
+ * the raw text. Each unit of a literal's text comes from one unit of its source: the
+ * character itself, or an escape sequence (`\x63`, `\u0063`, `\u{63}`, a legacy octal
+ * `\143`, or `\c` for a letter with no escape of its own). A line continuation
+ * (a backslash before a line break) contributes nothing, and a template's CR or CRLF
+ * becomes LF, which the phrase does not hold. So a literal whose text holds the phrase sits
+ * on source text where each of its characters is spelled as itself or as an escape, with
+ * only line continuations between them, which is what `MAY_RENDER` matches. A file it does
+ * not match holds no such literal, and only that file skips the parse. The escaped
+ * spellings are pinned by the tests at the end of this file.
+ */
+const ESCAPE = String.raw`\\(?:u\{[0-9A-Fa-f]+\}|u[0-9A-Fa-f]{4}|x[0-9A-Fa-f]{2}|[0-7]{1,3}|[^\r\n\u2028\u2029])`;
+const LINE_CONTINUATION = String.raw`\\(?:\r\n|[\r\n\u2028\u2029])`;
+// The phrase is letters and spaces, so each character is its own pattern.
+const MAY_RENDER = new RegExp([...PHRASE].map((char) => `(?:${char}|${ESCAPE})`).join(`(?:${LINE_CONTINUATION})*`));
+
 /**
  * Every line of CODE that RENDERS the sentence, rather than one that talks about it.
  *
@@ -51,14 +74,15 @@ function sourceFiles(dir: string): string[] {
  * knowing about strings reads one that carries a URL before the phrase as clean.
  */
 function renderingLines(file: string, source: string): string[] {
-  const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  if (!MAY_RENDER.test(source)) return [];
+  const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, false, ts.ScriptKind.TS);
   const lines = source.split("\n");
   // One entry per line: the two arms of a conditional that both carry the phrase would
   // otherwise report their line twice, which reads like two throw sites.
   const found = new Set<number>();
 
   const visit = (node: ts.Node): void => {
-    if ((ts.isStringLiteral(node) || ts.isTemplateLiteralToken(node)) && node.text.includes("container path is")) {
+    if ((ts.isStringLiteral(node) || ts.isTemplateLiteralToken(node)) && node.text.includes(PHRASE)) {
       found.add(sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line);
     }
     ts.forEachChild(node, visit);
@@ -148,5 +172,30 @@ describe("the container-path sentence has one producer under providers/", () => 
       if (/function containerShapes\s*\(/.test(source)) offenders.push(repoRelative(file));
     }
     expect(offenders).toEqual([]);
+  });
+});
+
+describe("skipping the parse for a file that cannot carry the phrase misses nothing the walk finds", () => {
+  // Past the first, each source spells the phrase so that its raw text does not contain it,
+  // which is exactly the case a filter on the raw phrase alone would wave through unparsed.
+  const SPELLINGS: Array<[string, string]> = [
+    ["a plain double-quoted string", 'throw new Error("A Trino container path is [catalog]");\n'],
+    ["a \\u escape", 'const m = "A \\u0063ontainer path is [db]";\n'],
+    ["a \\u{} escape", 'const m = "A container\\u{20}path is [db]";\n'],
+    ["a \\x escape", "const m = 'A container\\x20path is [db]';\n"],
+    ["a legacy octal escape", 'const m = "A \\143ontainer path is [db]";\n'],
+    ["an escaped ordinary letter", 'const m = "A c\\ontainer path is [db]";\n'],
+    ["a line continuation", 'const m = "A container \\\npath is [db]";\n'],
+    ["an escape inside a template", "const m = `A ${engine} container\\x20path is [${shape}]`;\n"],
+  ];
+
+  for (const [spelling, source] of SPELLINGS) {
+    test(`${spelling} is still reported`, () => {
+      expect(renderingLines("planted.ts", source)).toHaveLength(1);
+    });
+  }
+
+  test("a file that only talks about the phrase in a comment is not", () => {
+    expect(renderingLines("planted.ts", "// a container path is refused below\nconst x = 1;\n")).toEqual([]);
   });
 });
