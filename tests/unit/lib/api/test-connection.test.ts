@@ -220,6 +220,60 @@ describe("testConnection", () => {
     await expect(testConnection(connection, execution, route)).rejects.toThrow("refused");
   });
 
+  describe("the caller's signal", () => {
+    /** Lets the core run up to the connect it awaits. */
+    const turn = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    test("an abort during the connect rejects at once with its reason and closes the tunnel, and the provider is closed once the connect settles", async () => {
+      const pending = Promise.withResolvers<void>();
+      built = recording({ connect: () => pending.promise });
+      const stop = new AbortController();
+      const reason = new ConnectionError("The connection test got no answer within 11 seconds.", "postgres");
+      const answer = testConnection(connection, execution, route, stop.signal).catch((error: unknown) => error);
+      await turn();
+      expect(steps).toEqual(["tunnel open", "create", "connect"]);
+      stop.abort(reason);
+      expect(await answer).toBe(reason);
+      expect(steps).toEqual(["tunnel open", "create", "connect", "tunnel close"]);
+      pending.resolve();
+      await turn();
+      expect(steps).toEqual(["tunnel open", "create", "connect", "tunnel close", "disconnect"]);
+      expect(callsOf(built.getHealth)).toHaveLength(0);
+    });
+
+    test("a connect that fails after the abort gets its provider closed too, and its failure goes nowhere", async () => {
+      const pending = Promise.withResolvers<void>();
+      built = recording({ connect: () => pending.promise });
+      const stop = new AbortController();
+      const answer = testConnection(connection, execution, route, stop.signal).catch((error: unknown) => error);
+      await turn();
+      stop.abort(new Error("deadline"));
+      expect(((await answer) as Error).message).toBe("deadline");
+      pending.reject(new Error("refused"));
+      await turn();
+      expect(steps.at(-1)).toBe("disconnect");
+    });
+
+    test("a signal that aborted before the tunnel's callback ran builds nothing", async () => {
+      built = recording();
+      const stop = new AbortController();
+      const reason = new Error("deadline");
+      stop.abort(reason);
+      expect(await testConnection(connection, execution, route, stop.signal).catch((error: unknown) => error)).toBe(
+        reason,
+      );
+      expect(steps).toEqual(["tunnel open", "tunnel close"]);
+      expect(created).toHaveLength(0);
+    });
+
+    test("a signal that never aborts changes nothing", async () => {
+      built = recording();
+      const answer = await testConnection(connection, execution, route, new AbortController().signal);
+      expect(answer.success).toBe(true);
+      expect(steps).toEqual(["tunnel open", "create", "connect", "getHealth", "disconnect", "tunnel close"]);
+    });
+  });
+
   test("a borrowed single-writer handle is read for health and never created, checked or closed", async () => {
     built = recording();
     steps = [];

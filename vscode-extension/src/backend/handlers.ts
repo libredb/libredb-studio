@@ -1,0 +1,414 @@
+// The child's request handlers: each reads its params at the edge, then calls the provider layer as the route it
+// mirrors does (part 1, "The backend interface").
+// The factory functions arrive as one parameter object, which main.ts fills with the real ones and the unit leg with
+// fakes, so this module value-imports neither src/lib/db/factory.ts nor src/lib/api/test-connection.ts.
+import { type CancellationToken, ErrorCodes, type MessageConnection, ResponseError } from "vscode-jsonrpc";
+import { checkEditorQuery, runEditorQuery } from "@/lib/api/editor-query";
+import { databaseErrorBody, internalErrorBody } from "@/lib/api/error-body";
+import { pageOptionError } from "@/lib/api/page-probe";
+import type { testConnection } from "@/lib/api/test-connection";
+import { scopeToCatalog } from "@/lib/db/catalog-scope";
+import { ConnectionError, waitedSeconds } from "@/lib/db/errors";
+import type { clearProviderCache, enabledProviderTypes, getOrCreateProvider } from "@/lib/db/factory";
+import { supportsQueryCancel } from "@/lib/db/query-cancel";
+import type { Container, DatabaseObject, KindCount, ObjectDetail, QueryPrepareOptions } from "@/lib/db/types";
+import type { DatabaseConnection } from "@/lib/types";
+import {
+  type BackendErrorCode,
+  type BackendErrorData,
+  type CancelResult,
+  EXIT_NOTIFICATION,
+  type InitializeResult,
+  METHODS,
+  type OpenResult,
+  PROTOCOL_VERSION,
+  type QueryPage,
+  type TestConnectionResult,
+} from "../protocol";
+import { ConnectionRegistry, notOpenSentence, type OpenRecord } from "./registry";
+
+/** The factory functions the handlers call, as one object. */
+export interface BackendFactory {
+  getOrCreateProvider: typeof getOrCreateProvider;
+  /** Never a scope: the child serves one person's process (part 1). */
+  removeProvider(connectionId: string): Promise<void>;
+  clearProviderCache: typeof clearProviderCache;
+  enabledProviderTypes: typeof enabledProviderTypes;
+  testConnection: typeof testConnection;
+}
+
+/** What initialize reads off the process the child runs in, and the Node floor of the root package.json. */
+export interface BackendRuntime {
+  versions: NodeJS.ProcessVersions;
+  platform: string;
+  arch: string;
+  nodeFloor: string;
+}
+
+/** The route label a test connection is logged under. */
+export const TEST_ROUTE = "vscode/connection/test";
+/** The route label a failed cancel of a run is logged under. */
+export const RUN_ROUTE = "vscode/query/run";
+
+/**
+ * How long connection/test waits for the test connection core: the 10 s queryTimeout the core gives the provider, plus
+ * a second, so a provider that honours that deadline answers in its own words.
+ * PostgreSQL's and SQL Server's connect waits for its pool's 60 s acquireTimeout instead (60,242 ms measured against a
+ * listener that never answers, where MySQL and MongoDB answered at 10.2 s), and the provider layer is not this
+ * channel's to change (D276).
+ */
+export const TEST_DEADLINE_MS = 11_000;
+
+/** Params the child cannot read: InvalidParams, naming the field, with no data. */
+export function invalidParams(message: string): ResponseError<void> {
+  return new ResponseError<void>(ErrorCodes.InvalidParams, message);
+}
+
+/** A refusal of the extension's own, with an HTTP status as its code and a BackendErrorCode as data.code. */
+export function refusal(status: number, code: BackendErrorCode, message: string): ResponseError<BackendErrorData> {
+  return new ResponseError<BackendErrorData>(status, message, { code });
+}
+
+const FLOOR = /^>=(\d+)\.(\d+)\.(\d+)$/;
+
+/** Whether the Node version `found` is at or above `floor`, which must be the `>=X.Y.Z` form of engines.node. */
+export function nodeMeetsFloor(found: string, floor: string): boolean {
+  const match = FLOOR.exec(floor);
+  if (match === null) {
+    throw new Error(`engines.node is "${floor}"; the backend's floor check reads only the ">=X.Y.Z" form.`);
+  }
+  const needed = match.slice(1).map(Number);
+  const have = found.split(".").map(Number);
+  const first = needed.findIndex((part, index) => have[index] !== part);
+  return first === -1 || have[first] > needed[first];
+}
+
+export interface BackendHandlers {
+  initialize(params: unknown): InitializeResult;
+  testConnection(params: unknown): Promise<TestConnectionResult>;
+  openConnection(params: unknown): Promise<OpenResult>;
+  closeConnection(params: unknown): Promise<null>;
+  listContainers(params: unknown): Promise<Container[]>;
+  countObjects(params: unknown): Promise<Record<string, KindCount>>;
+  listObjects(params: unknown): Promise<DatabaseObject[]>;
+  describeObject(params: unknown): Promise<ObjectDetail>;
+  runQuery(params: unknown, token: CancellationToken): Promise<QueryPage>;
+  cancelQuery(params: unknown): Promise<CancelResult>;
+  shutdown(): Promise<null>;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+/** The field `name` of a params object, or undefined when the params are not an object. */
+function fieldOf(params: unknown, name: string): unknown {
+  return isObject(params) ? params[name] : undefined;
+}
+
+function nonEmptyString(value: unknown, field: string): string {
+  if (typeof value !== "string" || value === "") throw invalidParams(`${field} must be a non-empty string`);
+  return value;
+}
+
+function aString(value: unknown, field: string): string {
+  if (typeof value !== "string") throw invalidParams(`${field} must be a string`);
+  return value;
+}
+
+function stringArray(value: unknown, field: string): readonly string[] {
+  if (!Array.isArray(value) || !value.every((part) => typeof part === "string")) {
+    throw invalidParams(`${field} must be an array of strings`);
+  }
+  return value;
+}
+
+/** The connectionId every request after connection/open names its connection by. */
+function connectionIdOf(params: unknown): string {
+  return nonEmptyString(fieldOf(params, "connectionId"), "connectionId");
+}
+
+/** The connection and posture of a connection/test or connection/open, revived and with the posture made explicit. */
+function readConnectionParams(params: unknown): OpenRecord {
+  const wire = fieldOf(params, "connection");
+  if (!isObject(wire)) throw invalidParams("connection must be an object");
+  nonEmptyString(wire.id, "connection.id");
+  aString(wire.type, "connection.type");
+  const createdAt = new Date(typeof wire.createdAt === "string" ? wire.createdAt : Number.NaN);
+  if (Number.isNaN(createdAt.getTime())) throw invalidParams("connection.createdAt must be an ISO date string");
+  const allowExternalFileAccess = fieldOf(fieldOf(params, "posture"), "allowExternalFileAccess");
+  if (typeof allowExternalFileAccess !== "boolean") {
+    throw invalidParams("posture.allowExternalFileAccess must be a boolean");
+  }
+  // The other fields are the provider's to check, as they are behind the routes.
+  const connection = { ...wire, createdAt } as unknown as DatabaseConnection;
+  return { connection, posture: { allowExternalFileAccess } };
+}
+
+export function createHandlers(
+  factory: BackendFactory,
+  runtime: BackendRuntime,
+  registry: ConnectionRegistry = new ConnectionRegistry(),
+): BackendHandlers {
+  /** The record connection/open stored for this id, or the CONNECTION_NOT_OPEN refusal the host reopens on. */
+  const openRecord = (connectionId: string): OpenRecord => {
+    const record = registry.get(connectionId);
+    if (record === undefined) {
+      throw refusal(404, "CONNECTION_NOT_OPEN", notOpenSentence(connectionId));
+    }
+    return record;
+  };
+
+  // As handleObjectRequest (src/lib/api/object-route.ts) resolves it: the cached provider, or a new one opened from
+  // the record after the idle sweep closed the old one. Engine-shape checks of a path stay with the provider.
+  const providerOf = (record: OpenRecord) => factory.getOrCreateProvider(record.connection, {}, record.posture);
+
+  // The factory keeps no in-flight entry per connection (D386), so two opens of one id at once would each connect a
+  // provider and the cache would keep only the second. Each id's connection/open and connection/close therefore run
+  // one at a time, in the order they arrived: a second open finds the first one's provider and record.
+  const turns = new Map<string, Promise<void>>();
+  const inTurn = <T>(connectionId: string, step: () => Promise<T>): Promise<T> => {
+    const run = (turns.get(connectionId) ?? Promise.resolve()).then(step);
+    const done = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    turns.set(connectionId, done);
+    void done.then(() => {
+      if (turns.get(connectionId) === done) turns.delete(connectionId);
+    });
+    return run;
+  };
+
+  return {
+    initialize(params) {
+      const protocolVersion = fieldOf(params, "protocolVersion");
+      if (typeof protocolVersion !== "number") throw invalidParams("protocolVersion must be a number");
+      if (protocolVersion !== PROTOCOL_VERSION) {
+        throw refusal(
+          500,
+          "PROTOCOL_MISMATCH",
+          `The LibreDB backend speaks protocol version ${PROTOCOL_VERSION}, but the extension sent version ${protocolVersion}. Reinstall the LibreDB extension.`,
+        );
+      }
+      const { versions, platform, arch, nodeFloor } = runtime;
+      if (!nodeMeetsFloor(versions.node, nodeFloor)) {
+        throw refusal(
+          500,
+          "RUNTIME_UNSUPPORTED",
+          `The LibreDB backend needs Node ${nodeFloor.slice(2)} or later and was started on Node ${versions.node}.`,
+        );
+      }
+      return {
+        protocolVersion: PROTOCOL_VERSION,
+        runtime: {
+          node: versions.node,
+          electron: versions.electron ?? null,
+          modules: versions.modules,
+          platform,
+          arch,
+        },
+        enabledProviders: factory.enabledProviderTypes(),
+      };
+    },
+
+    // At the deadline the signal the core was handed aborts: the core closes a one-shot tunnel at once and the provider
+    // it built once the driver's connect settles, and the answer waits for neither. The race stays, since the core
+    // cannot stop a tunnel that is still opening.
+    async testConnection(params) {
+      const { connection, posture } = readConnectionParams(params);
+      const stop = new AbortController();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadline = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          const late = new ConnectionError(
+            `The connection test got no answer within ${waitedSeconds(TEST_DEADLINE_MS)}: check the address, the port, the network path and that the server is running.`,
+            connection.type,
+          );
+          stop.abort(late);
+          reject(late);
+        }, TEST_DEADLINE_MS);
+      });
+      try {
+        return await Promise.race([factory.testConnection(connection, posture, TEST_ROUTE, stop.signal), deadline]);
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+
+    async openConnection(params) {
+      const record = readConnectionParams(params);
+      const { id } = record.connection;
+      return await inTurn(id, async () => {
+        // An edited connection closes its old pool now rather than at the idle sweep.
+        if (registry.differs(record)) {
+          registry.delete(id);
+          await factory.removeProvider(id);
+        }
+        const provider = await factory.getOrCreateProvider(record.connection, {}, record.posture);
+        registry.set(record);
+        return {
+          description: {
+            // supportsQueryCancel is computed as POST /api/db/provider-meta computes it.
+            capabilities: { ...provider.getCapabilities(), supportsQueryCancel: supportsQueryCancel(provider) },
+            labels: provider.getLabels(),
+          },
+        };
+      });
+    },
+
+    async closeConnection(params) {
+      const connectionId = connectionIdOf(params);
+      return await inTurn(connectionId, async () => {
+        registry.delete(connectionId);
+        await factory.removeProvider(connectionId);
+        return null;
+      });
+    },
+
+    async listContainers(params) {
+      const connectionId = connectionIdOf(params);
+      const parent = fieldOf(params, "parent");
+      const path = parent === undefined ? undefined : stringArray(parent, "parent");
+      return await (await providerOf(openRecord(connectionId))).listContainers(path);
+    },
+
+    async countObjects(params) {
+      const connectionId = connectionIdOf(params);
+      const container = stringArray(fieldOf(params, "container"), "container");
+      return await (await providerOf(openRecord(connectionId))).countObjects(container);
+    },
+
+    async listObjects(params) {
+      const connectionId = connectionIdOf(params);
+      const container = stringArray(fieldOf(params, "container"), "container");
+      const kind = aString(fieldOf(params, "kind"), "kind");
+      return await (await providerOf(openRecord(connectionId))).listObjects(container, kind);
+    },
+
+    async describeObject(params) {
+      const connectionId = connectionIdOf(params);
+      const path = stringArray(fieldOf(params, "path"), "path");
+      const kind = aString(fieldOf(params, "kind"), "kind");
+      return await (await providerOf(openRecord(connectionId))).describeObject(path, kind);
+    },
+
+    // The steps of POST /api/db/query for one statement, in its order (part 1, "What query/run re-does from the query
+    // route"), through the same functions.
+    async runQuery(params, token) {
+      const connectionId = connectionIdOf(params);
+      const queryId = nonEmptyString(fieldOf(params, "queryId"), "queryId");
+      const statement = aString(fieldOf(params, "statement"), "statement");
+      const catalogField = fieldOf(params, "catalog");
+      const catalog = catalogField === undefined ? undefined : nonEmptyString(catalogField, "catalog");
+      const bounds = { limit: fieldOf(params, "limit"), offset: fieldOf(params, "offset") };
+      // Its sentence names options.limit as the route's body does, so both channels word it once.
+      const boundsError = pageOptionError(bounds);
+      if (boundsError !== null) throw invalidParams(boundsError);
+      // pageOptionError held each bound to a non-negative safe integer when present.
+      const options = bounds as QueryPrepareOptions;
+
+      const record = openRecord(connectionId);
+      // The bounds and the statement were read above, so what refuses here is a console text bound, which the route
+      // answers 413 with no code.
+      const refused = checkEditorQuery({ statement, type: record.connection.type, options });
+      if (refused !== null) {
+        throw refused.status === 413 ? refusal(413, "TEXT_TOO_LARGE", refused.error) : invalidParams(refused.error);
+      }
+
+      // A cancelled request is the caller going away, as a dropped browser request is the route's.
+      const controller = new AbortController();
+      const listener = token.onCancellationRequested(() => controller.abort());
+      if (token.isCancellationRequested) controller.abort();
+      try {
+        const provider = await scopeToCatalog(await providerOf(record), catalog);
+        const { body, resultSetCount } = await runEditorQuery(provider, {
+          statement,
+          options,
+          queryId,
+          signal: controller.signal,
+          route: RUN_ROUTE,
+        });
+        return { ...body, ...(resultSetCount > 1 && { resultSetCount }) };
+      } finally {
+        listener.dispose();
+      }
+    },
+
+    // As POST /api/db/cancel: the whole connection's provider, which finds a statement in whichever session runs it.
+    async cancelQuery(params) {
+      const connectionId = connectionIdOf(params);
+      const queryId = nonEmptyString(fieldOf(params, "queryId"), "queryId");
+      const provider = await providerOf(openRecord(connectionId));
+      if (!supportsQueryCancel(provider)) {
+        throw refusal(400, "CANCEL_UNSUPPORTED", "Query cancellation is not supported for this database type");
+      }
+      return { cancelled: await provider.cancelQuery(queryId) };
+    },
+
+    // The dispatcher refuses every request from here on; this closes every pool the factory holds.
+    async shutdown() {
+      await factory.clearProviderCache();
+      return null;
+    },
+  };
+}
+
+/**
+ * Part 1 "Error classification": a ResponseError passes through; a database error answers P3's status, sentence and
+ * code; anything else is 500 INTERNAL_ERROR.
+ */
+export function toResponseError(error: unknown): ResponseError<BackendErrorData | void> {
+  if (error instanceof ResponseError) return error;
+  const {
+    statusCode,
+    error: message,
+    code,
+    retryable,
+    details,
+    fixStatement,
+  } = databaseErrorBody(error)?.body ?? internalErrorBody(error);
+  return new ResponseError<BackendErrorData>(statusCode, message, {
+    // Both bodies always carry a code; the type leaves it optional for the routes' other answers.
+    code: code as BackendErrorCode,
+    ...(retryable !== undefined && { retryable }),
+    ...(details !== undefined && { details }),
+    ...(fixStatement !== undefined && { fixStatement }),
+  });
+}
+
+/** Registers one request handler per METHODS entry and the exit notification on a connection of any transport. */
+export function registerHandlers(
+  connection: MessageConnection,
+  handlers: BackendHandlers,
+  exit: (code: number) => void,
+): void {
+  let initialized = false;
+  let shuttingDown = false;
+  for (const [name, method] of Object.entries(METHODS) as [keyof BackendHandlers, string][]) {
+    // Every handler takes the params and the token, and shutdown reads neither.
+    const handler = handlers[name] as (params: unknown, token: CancellationToken) => unknown;
+    // vscode-jsonrpc passes the params when the request carries any, then the request's token.
+    connection.onRequest(method, async (...args: unknown[]) => {
+      const token = args.at(-1) as CancellationToken;
+      const params = args.length > 1 ? args[0] : undefined;
+      try {
+        if (shuttingDown) throw refusal(503, "SHUTTING_DOWN", "The LibreDB backend is shutting down.");
+        if (!initialized && name !== "initialize") {
+          throw new ResponseError(ErrorCodes.ServerNotInitialized, "The LibreDB backend has not been initialized.");
+        }
+        if (name === "shutdown") shuttingDown = true;
+        const answer = await handler.call(handlers, params, token);
+        // A value JSON cannot carry fails here, as this request's answer, rather than inside the transport's writer.
+        JSON.stringify(answer);
+        if (name === "initialize") initialized = true;
+        return answer;
+      } catch (error) {
+        throw toResponseError(error);
+      }
+    });
+  }
+  connection.onNotification(EXIT_NOTIFICATION, () => {
+    exit(0);
+  });
+}

@@ -16,6 +16,23 @@ export const CHILD_EXTERNALS = [
   "*.node",
 ];
 
+/**
+ * Optional packages the bundled drivers require inside their own try, none installed: import -> packages allowed to require it.
+ * esbuild leaves such a require() for the runtime, where it throws MODULE_NOT_FOUND into the driver's own catch,
+ * so the driver runs without that feature; the child accepts one only as a require() call from a package named here.
+ */
+export const OPTIONAL_REQUIRES = {
+  "pg-native": ["pg"],
+  cardinal: ["mysql2"],
+  kerberos: ["mongodb", "cassandra-driver"],
+  "@mongodb-js/zstd": ["mongodb"],
+  "@aws-sdk/credential-providers": ["mongodb"],
+  "gcp-metadata": ["mongodb"],
+  snappy: ["mongodb"],
+  socks: ["mongodb"],
+  "mongodb-client-encryption": ["mongodb"],
+};
+
 /** "vscode-extension/src/host/extension.ts", "src/lib/types.ts" or "node_modules/pg/lib/index.js": the input's path from the repository root. */
 export function repoPath(input, workingDir) {
   const root = posix.dirname(toPosix(workingDir));
@@ -42,11 +59,19 @@ export function hostViolations(metafile, workingDir) {
   return violations;
 }
 
+/**
+ * The outputs say which imports stay external, and the inputs say who makes each one and how: an input also lists
+ * as external an import TypeScript elides and esbuild's own <runtime>, though neither reaches the bundle.
+ */
 export function childViolations(metafile, workingDir) {
   const violations = inputViolations(metafile, workingDir, CHILD_INPUT_RULES);
+  const importers = externalImporters(metafile);
   for (const path of externalImports(metafile)) {
     if (path === "vscode") violations.push("vscode: the child never imports vscode");
-    else if (!isChildExternal(path)) violations.push(`${path}: an external import that is not on CHILD_EXTERNALS`);
+    else if (isChildExternal(path)) continue;
+    else if (Object.hasOwn(OPTIONAL_REQUIRES, path)) {
+      violations.push(...optionalRequireViolations(path, importers.get(path) ?? [], workingDir));
+    } else violations.push(`${path}: an external import that is not on CHILD_EXTERNALS or OPTIONAL_REQUIRES`);
   }
   return violations;
 }
@@ -91,6 +116,37 @@ function inputViolations(metafile, workingDir, rules) {
     if (broken) violations.push(`${path}: ${broken[1]}`);
   }
   return violations;
+}
+
+/** Each import an input lists as external, by path: the inputs that make it and esbuild's kind for each. */
+function externalImporters(metafile) {
+  const importers = new Map();
+  for (const [importer, input] of Object.entries(metafile.inputs)) {
+    for (const imported of input.imports) {
+      if (!imported.external) continue;
+      if (!importers.has(imported.path)) importers.set(imported.path, []);
+      importers.get(imported.path).push({ importer, kind: imported.kind });
+    }
+  }
+  return importers;
+}
+
+/** One violation per input that makes this optional import other than as a require() call or from outside its packages. */
+function optionalRequireViolations(path, records, workingDir) {
+  if (records.length === 0) return [`${path}: an output leaves it external, but no input imports it`];
+  const requirers = OPTIONAL_REQUIRES[path];
+  const violations = new Set();
+  for (const { importer, kind } of records) {
+    const from = repoPath(importer, workingDir);
+    if (kind !== "require-call") {
+      violations.add(`${path}: imported by ${kind} from ${from}; an optional require must be a require() call`);
+    } else if (!requirers.includes(inputPackage(importer))) {
+      violations.add(
+        `${path}: required from ${from}, but OPTIONAL_REQUIRES lets only ${requirers.join(", ")} require it`,
+      );
+    }
+  }
+  return [...violations];
 }
 
 /** Every import an output leaves external, once. */

@@ -543,12 +543,42 @@ A callback whose behaviour the gate must hold keeps its body on its own line, as
 
 - Unit: `npm run test:unit`, on Node 24, against the fake `vscode`.
 - Integration: `npm run test:integration` forks the built child from `LIBREDB_BACKEND_RUNTIME=node` (the job's Node) or `LIBREDB_BACKEND_RUNTIME=vscode` (the pinned stable binary of `test/vscode-versions.json`, downloaded into `.vscode-test/` and run in Node mode with `ELECTRON_RUN_AS_NODE=1`), so a child that works on Node but not on VS Code's own runtime fails here (P5).
+  `test/integration/backend-child.test.ts` runs against PostgreSQL, SQL Server, MySQL and MongoDB containers that `test/integration/containers.ts` starts from the images and environment of the same services in `database-compose.yml`, so the leg and the dev stack cannot drift.
+  Each container is capped for a shared machine (`ENGINE_LIMITS`: 1 CPU and `512m` for PostgreSQL, 1 CPU and `1g` for MySQL and MongoDB, 2 CPUs and `2g` for SQL Server, whose `MSSQL_MEMORY_LIMIT_MB=1536` keeps it inside that cap), publishes its port on `127.0.0.1` only, and carries the label `org.libredb.vscode-extension.integration=<pid>-<epoch ms>`.
+  The leg waits up to 180 s for each port, then for a `connection/test` through the child that succeeds, retried every second, because SQL Server opens its port before it accepts a login.
+  It removes each container by its id in `after`, never by label or name, since another checkout's run may be live on the same machine; a killed run's leftovers are listed with `docker ps --filter label=org.libredb.vscode-extension.integration` and removed by hand.
+  A local run therefore needs Docker on the machine.
 - E2e: `npm run test:e2e` runs `@vscode/test-cli` on the floor and stable builds of `test/vscode-versions.json`, under `xvfb-run -a` on Linux.
   The build machine has no Xvfb, so the leg runs locally in a `node:24-bookworm` container that installs `xvfb` and VS Code's libraries and runs `xvfb-run -a npm run test:e2e` as the image's `node` user.
   Mount the checkout at a short path such as `/w`: VS Code listens on a socket under `.vscode-test/user-data/`, and a socket path over the 107-byte Unix limit fails with `listen EINVAL`.
+  `test/e2e/backend-lifecycle.test.ts` starts PostgreSQL through Docker, so the local e2e container also runs with `--network host` and `-v /var/run/docker.sock:/var/run/docker.sock` and installs `docker.io` beside `xvfb`; the smoke subset needs no Docker access.
+  The `node` user reaches the socket through a group with the socket's group id, created in the container and passed to `runuser -G`, as the command below does.
 - Smoke: the e2e leg with `LIBREDB_E2E_SUBSET=smoke`, on macOS and Windows, with no Xvfb and no database.
 
+The local e2e run, from the checkout's root after `npm run build` in `vscode-extension/`:
+
+```bash
+docker run --rm --network host -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/w" -w /w/vscode-extension node:24-bookworm bash -euc '
+  apt-get update -qq
+  apt-get install -y -qq --no-install-recommends xvfb xauth libasound2 libgbm1 libgtk-3-0 libnss3 libxkbfile1 libsecret-1-0 docker.io >/dev/null
+  gid=$(stat -c %g /var/run/docker.sock)
+  getent group "$gid" >/dev/null || groupadd -g "$gid" hostdocker
+  runuser -u node -G "$(getent group "$gid" | cut -d: -f1)" -- env HOME=/tmp/e2e-home xvfb-run -a npm run test:e2e'
+```
+
 `LIBREDB_VSCODE_VERSION` replaces the pinned builds of the integration and e2e legs with one version, which the Insiders run sets to `insiders`.
+
+### Bundles and notices
+
+`vscode-jsonrpc` 9.0.3 is the bundles' one runtime package: the host bundle's metafile check refuses any other `node_modules` input, and `test/unit/manifest.test.ts` holds it as the package's only dependency.
+`CHILD_EXTERNALS` in `scripts/bundle-checks.mjs` names what the child bundle leaves to a runtime `require`: the drivers of the engines outside v0 (`bun:sqlite`, `@duckdb/*`, `db2-node`, `oracledb`), `cpu-features`, `proper-lockfile` and any `*.node` path.
+`OPTIONAL_REQUIRES` names the nine packages the bundled drivers require inside their own `try` and do not install (`pg-native` from `pg`, `cardinal` from `mysql2`, `kerberos` from `mongodb` and `cassandra-driver`, and six more from `mongodb`), each with the packages allowed to require it.
+The child's metafile check accepts such an import only as a `require()` from inside a package its entry names, so the same name required from anywhere else fails the build.
+`renderNotices` in `scripts/notices.mjs` writes `THIRD_PARTY_NOTICES.txt` from every package that contributed an input to a bundle, and refuses a package whose licence it cannot place.
+A package passes with an id on `LICENSE_ALLOWLIST` (`Unlicense` among them), with an `OR` expression one of whose plain ids is on the list, or with npm's legacy `licenses` array when every type in it is on the list; an expression with `AND` or `WITH` stays refused.
+A package that ships no licence file takes its text from `third-party-licenses/<name>@<version>.txt`, whose first line, `Source: <URL>`, names where the text was copied from; a version bump finds no file and fails the build until the text is checked again.
+`LICENSE_OVERRIDES` records, by exact `name@version`, the reviewed licence of a package whose `package.json` names none, and where that licence is stated.
+A dependency bump that trips one of these rules is a reviewed change to that rule, never a widened pass.
 
 ### How the root tools cover the directory
 

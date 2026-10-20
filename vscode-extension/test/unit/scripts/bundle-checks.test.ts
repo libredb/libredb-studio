@@ -4,6 +4,7 @@ import {
   childViolations,
   hostViolations,
   inputPackage,
+  OPTIONAL_REQUIRES,
   repoPath,
 } from "../../../scripts/bundle-checks.mjs";
 
@@ -15,12 +16,23 @@ interface Import {
   external?: boolean;
 }
 
-/** A metafile as esbuild writes it, cut to the fields the checks read. */
+/**
+ * A metafile as esbuild writes it, cut to the fields the checks read: each external import is listed under the
+ * input that makes it (here the first) and under the output that carries it.
+ */
 function metafile(inputs: string[], externals: string[] = []) {
   const imports: Import[] = externals.map((path) => ({ path, kind: "require-call", external: true }));
   return {
-    inputs: Object.fromEntries(inputs.map((path) => [path, {}])),
+    inputs: Object.fromEntries(inputs.map((path, at) => [path, { bytes: 1, imports: at === 0 ? imports : [] }])),
     outputs: { "dist/x.js": { imports } },
+  };
+}
+
+/** One input that leaves one import external, and the output that carries it, as esbuild writes both. */
+function oneExternal(importer: string, path: string, kind: string) {
+  return {
+    inputs: { [importer]: { bytes: 1, imports: [{ path, kind, external: true }] } },
+    outputs: { "dist/backend.js": { bytes: 1, inputs: {}, imports: [{ path, kind, external: true }] } },
   };
 }
 
@@ -93,7 +105,7 @@ describe("childViolations", () => {
       [],
       "node_modules/ssh2/",
     ],
-    ["an external not on CHILD_EXTERNALS", [], ["better-sqlite3"], "better-sqlite3"],
+    ["an external on neither CHILD_EXTERNALS nor OPTIONAL_REQUIRES", [], ["better-sqlite3"], "better-sqlite3"],
   ];
   for (const [label, inputs, externals, prefix] of cases) {
     it(`refuses ${label}`, () => {
@@ -111,10 +123,121 @@ describe("childViolations", () => {
     assert.deepEqual(childViolations(clean, wd), []);
   });
 
-  it("reports an external imported by two outputs once", () => {
-    const twice = metafile(["src/backend/main.ts"], ["vscode"]);
-    const outputs = { ...twice.outputs, "dist/y.js": twice.outputs["dist/x.js"] };
-    assert.equal(childViolations({ ...twice, outputs }, wd).length, 1);
+  it("reports vscode, or an external on neither list, once however many inputs import it", () => {
+    const twice = metafile(["src/backend/main.ts", "src/backend/start.ts"], ["vscode", "left-pad"]);
+    twice.inputs["src/backend/start.ts"].imports = twice.inputs["src/backend/main.ts"].imports;
+    assert.deepEqual(childViolations(twice, wd), [
+      "vscode: the child never imports vscode",
+      "left-pad: an external import that is not on CHILD_EXTERNALS or OPTIONAL_REQUIRES",
+    ]);
+  });
+});
+
+describe("childViolations and OPTIONAL_REQUIRES", () => {
+  it("names the nine optional packages the bundled drivers require inside their own try", () => {
+    assert.deepEqual(Object.keys(OPTIONAL_REQUIRES).sort(), [
+      "@aws-sdk/credential-providers",
+      "@mongodb-js/zstd",
+      "cardinal",
+      "gcp-metadata",
+      "kerberos",
+      "mongodb-client-encryption",
+      "pg-native",
+      "snappy",
+      "socks",
+    ]);
+  });
+
+  it("accepts an optional require() from a package OPTIONAL_REQUIRES names for it", () => {
+    assert.deepEqual(
+      childViolations(oneExternal("../node_modules/mongodb/lib/deps.js", "snappy", "require-call"), wd),
+      [],
+    );
+    assert.deepEqual(
+      childViolations(oneExternal("../node_modules/pg/lib/native/client.js", "pg-native", "require-call"), wd),
+      [],
+    );
+    assert.deepEqual(
+      childViolations(
+        oneExternal("../node_modules/cassandra-driver/lib/insights-client.js", "kerberos", "require-call"),
+        wd,
+      ),
+      [],
+    );
+  });
+
+  it("refuses an optional require from a package OPTIONAL_REQUIRES does not name for it", () => {
+    assert.deepEqual(childViolations(oneExternal("../node_modules/pg/lib/client.js", "snappy", "require-call"), wd), [
+      "snappy: required from node_modules/pg/lib/client.js, but OPTIONAL_REQUIRES lets only mongodb require it",
+    ]);
+  });
+
+  it("refuses an optional require from first-party code, which never makes one", () => {
+    assert.deepEqual(childViolations(oneExternal("../src/lib/db/x.ts", "kerberos", "require-call"), wd), [
+      "kerberos: required from src/lib/db/x.ts, but OPTIONAL_REQUIRES lets only mongodb, cassandra-driver require it",
+    ]);
+  });
+
+  it("refuses an optional package imported other than by a require() call", () => {
+    assert.deepEqual(
+      childViolations(oneExternal("../node_modules/mongodb/lib/deps.js", "snappy", "import-statement"), wd),
+      [
+        "snappy: imported by import-statement from node_modules/mongodb/lib/deps.js; an optional require must be a require() call",
+      ],
+    );
+  });
+
+  it("refuses a require() of a package on neither list, whoever makes it", () => {
+    assert.deepEqual(
+      childViolations(oneExternal("../node_modules/mongodb/lib/deps.js", "left-pad", "require-call"), wd),
+      ["left-pad: an external import that is not on CHILD_EXTERNALS or OPTIONAL_REQUIRES"],
+    );
+  });
+
+  it("ignores what an input lists as external but no output leaves external: an elided type import, esbuild's runtime", () => {
+    const elided = {
+      inputs: {
+        "../src/lib/db/providers/document/mongodb/agent-read.ts": {
+          bytes: 1,
+          imports: [
+            { path: "mongodb", kind: "import-statement", external: true },
+            { path: "<runtime>", kind: "import-statement", external: true },
+            { path: "snappy", kind: "import-statement", external: true },
+          ],
+        },
+      },
+      outputs: { "dist/backend.js": { bytes: 1, inputs: {}, imports: [] } },
+    };
+    assert.deepEqual(childViolations(elided, wd), []);
+  });
+
+  it("refuses an optional package an output leaves external when no input imports it", () => {
+    const orphan = {
+      inputs: { "src/backend/main.ts": { bytes: 1, imports: [] } },
+      outputs: {
+        "dist/backend.js": {
+          bytes: 1,
+          inputs: {},
+          imports: [{ path: "snappy", kind: "require-call", external: true }],
+        },
+      },
+    };
+    assert.deepEqual(childViolations(orphan, wd), ["snappy: an output leaves it external, but no input imports it"]);
+  });
+
+  it("reports an optional require once per offending importer", () => {
+    const record = { path: "snappy", kind: "require-call", external: true };
+    const twice = {
+      inputs: {
+        "../node_modules/pg/lib/client.js": { bytes: 1, imports: [record, record] },
+        "../node_modules/pg/lib/index.js": { bytes: 1, imports: [record] },
+      },
+      outputs: { "dist/backend.js": { bytes: 1, inputs: {}, imports: [record] } },
+    };
+    assert.deepEqual(childViolations(twice, wd), [
+      "snappy: required from node_modules/pg/lib/client.js, but OPTIONAL_REQUIRES lets only mongodb require it",
+      "snappy: required from node_modules/pg/lib/index.js, but OPTIONAL_REQUIRES lets only mongodb require it",
+    ]);
   });
 });
 

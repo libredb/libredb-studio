@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import type { RuntimeAnswer } from "../../src/backend/start";
-import { firstAnswer } from "../child-answer";
+import { type BackendSession, openSession } from "../backend-session";
 import { type BackendRuntime, backendRuntime, forkBackend, runtimeName } from "./runtime";
 
 describe("LIBREDB_BACKEND_RUNTIME", () => {
@@ -15,6 +14,16 @@ describe("LIBREDB_BACKEND_RUNTIME", () => {
   });
 });
 
+/** Closes the channel and resolves the child's exit code, with the milliseconds it took. */
+async function disconnect(session: BackendSession): Promise<{ code: number | null; ms: number }> {
+  const started = Date.now();
+  const exited = once(session.child, "exit");
+  session.connection.dispose();
+  session.child.disconnect();
+  const [code] = (await exited) as [number | null];
+  return { code, ms: Date.now() - started };
+}
+
 describe("the backend child", () => {
   let runtime: BackendRuntime;
 
@@ -22,30 +31,29 @@ describe("the backend child", () => {
     runtime = await backendRuntime();
   });
 
-  it("answers the versions of the runtime it was forked on", async () => {
-    const child = forkBackend(runtime);
-    const answer = (await firstAnswer(child)) as RuntimeAnswer;
+  it("answers initialize with the runtime it was forked on and the four enabled providers", async () => {
+    const session = openSession(forkBackend(runtime));
+    const answer = await session.initialize();
+    const { node, electron, modules } = answer.runtime;
     console.log(
-      `${runtime.name}: ${runtime.execPath}, node ${answer.versions.node}, electron ${answer.versions.electron ?? "none"}`,
+      `${runtime.name}: ${runtime.execPath}, node ${node}, electron ${electron ?? "none"}, modules ${modules}`,
     );
     if (runtime.name === "vscode") {
-      assert.match(answer.versions.electron ?? "", /^\d+\.\d+\.\d+$/);
-      assert.match(answer.versions.node, /^24\./);
+      assert.match(electron ?? "", /^\d+\.\d+\.\d+$/);
+      assert.match(node, /^24\./);
     } else {
-      assert.equal(answer.versions.electron, undefined);
-      assert.equal(answer.versions.node, process.versions.node);
+      assert.equal(electron, null);
+      assert.equal(node, process.versions.node);
     }
-    child.disconnect();
-    await once(child, "exit");
+    assert.deepEqual(answer.enabledProviders, ["postgres", "mssql", "mysql", "mongodb"]);
+    assert.equal((await disconnect(session)).code, 0);
   });
 
   it("exits 0 within 3 s once its host closes the channel", async () => {
-    const child = forkBackend(runtime);
-    await firstAnswer(child);
-    const started = Date.now();
-    child.disconnect();
-    const [code] = await once(child, "exit");
+    const session = openSession(forkBackend(runtime));
+    await session.initialize();
+    const { code, ms } = await disconnect(session);
     assert.equal(code, 0);
-    assert.ok(Date.now() - started < 3000);
+    assert.ok(ms < 3000, `the child took ${ms} ms to exit`);
   });
 });

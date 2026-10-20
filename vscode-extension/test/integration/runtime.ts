@@ -1,7 +1,7 @@
 import { type ChildProcess, fork } from "node:child_process";
 import { join } from "node:path";
 import { downloadAndUnzipVSCode } from "@vscode/test-electron";
-import { backendForkOptions } from "../fork-options";
+import { backendForkOptions } from "../../src/host/fork-options";
 import versions from "../vscode-versions.json";
 
 export type BackendRuntimeName = "node" | "vscode";

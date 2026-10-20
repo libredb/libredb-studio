@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { FLOOR_NODE } from "../vscode-floor";
+import { FLOOR_NODE, STABLE_RUNTIME } from "../vscode-floor";
 
 const root = join(__dirname, "..", "..");
 const read = (path: string) => JSON.parse(readFileSync(join(root, path), "utf8"));
@@ -28,6 +28,15 @@ describe("the manifest", () => {
     assert.ok(atLeast(triple(FLOOR_NODE), triple(floor[1])), `${FLOOR_NODE} is below ${floor[1]}`);
   });
 
+  it("pins the stable build that STABLE_RUNTIME in test/vscode-floor.ts describes, whose Node meets engines.node", () => {
+    // The integration leg's vscode run checks the child's runtime against STABLE_RUNTIME, so a bump of the pin
+    // updates both.
+    assert.equal(versions.stable, "1.142.0");
+    const floor = /^>=(\d+\.\d+\.\d+)$/.exec(rootManifest.engines.node);
+    assert.ok(floor, `engines.node is ${rootManifest.engines.node}, not a >= floor this test can read`);
+    assert.ok(atLeast(triple(STABLE_RUNTIME.node), triple(floor[1])), `${STABLE_RUNTIME.node} is below ${floor[1]}`);
+  });
+
   it("types against @types/vscode 1.120.0, no newer than the floor", () => {
     assert.equal(manifest.devDependencies["@types/vscode"], "1.120.0");
     assert.ok(atLeast(triple(versions.floor), triple(manifest.devDependencies["@types/vscode"])));
@@ -44,6 +53,10 @@ describe("the manifest", () => {
       Object.entries(manifest.devDependencies).filter(([, v]) => !exact.test(String(v))),
       [],
     );
+  });
+
+  it("pins vscode-jsonrpc exactly, as the bundles' one runtime package", () => {
+    assert.deepEqual(manifest.dependencies, { "vscode-jsonrpc": "9.0.3" });
   });
 
   it("contributes libredb.showLog in category LibreDB", () => {
