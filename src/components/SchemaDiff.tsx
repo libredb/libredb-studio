@@ -435,9 +435,12 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
    *
    * Carried with its target for the reason `liveRead` is: a pick made on the connection the user has left must not
    * narrow the one they are looking at. `null` is "Whole connection"; undefined is no pick, which is the engine's default.
-   * It reaches the reads through `beginRead`, so a change of pick re-runs the effects that depend on it.
+   * State is what the picker SHOWS; `pickRef` is what the reads USE. `beginRead` reads the ref, so a pick does not
+   * change its identity and re-run the effects that depend on it: that was two reads for one pick (the open effect and
+   * the target effect), the first superseded but already on the wire. `pickScope` makes the one read itself.
    */
   const [scopePick, setScopePick] = useState<{ target: string; container: string | null } | null>(null);
+  const pickRef = useRef<{ target: string; container: string | null } | null>(null);
   const pickedContainer = scopePick?.target === readTarget ? scopePick.container : undefined;
 
   const latestConnection = useRef(connection);
@@ -477,11 +480,15 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
    * back to the explorer's copy and says so; a snapshot saves nothing at all.
    */
   const beginRead = useCallback(
-    (conn: DatabaseConnection) => ({
-      read: readLiveSchema(conn, pickedContainer === undefined ? undefined : { container: pickedContainer }),
-      isCurrent: reads.begin(),
-    }),
-    [reads, pickedContainer],
+    (conn: DatabaseConnection) => {
+      // A pick made on another connection narrows nothing here.
+      const pick = pickRef.current?.target === readTargetKey(conn) ? pickRef.current : null;
+      return {
+        read: readLiveSchema(conn, pick === null ? undefined : { container: pick.container }),
+        isCurrent: reads.begin(),
+      };
+    },
+    [reads],
   );
 
   // Keyed on `readTarget`, not on the connection object. A host that rebuilds the object
@@ -570,6 +577,45 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
     // target is the commonest way a snapshot gets overtaken, so a rebuilt object re-running
     // THIS one destroys a snapshot just as surely.
   }, [targetId, sourceId, readTarget, beginRead]);
+
+  /**
+   * The picker's change: remember the pick, then read once under it (#1791).
+   *
+   * Not through an effect keyed on the pick, which read twice when a target was chosen. Not through
+   * `refreshCurrentSchema` either: its in-flight guard would drop a pick made while a refresh is out, and the picker
+   * would then show a database nothing was read from. The counter settles the race instead - this read supersedes
+   * whatever is out, and the one it supersedes writes nothing.
+   */
+  const pickScope = useCallback(
+    (container: string | null) => {
+      const conn = latestConnection.current;
+      if (!conn) return;
+      const pick = { target: readTarget, container };
+      pickRef.current = pick;
+      setScopePick(pick);
+      const { read, isCurrent } = beginRead(conn);
+      read
+        .then(({ objects, scopes }) => {
+          if (isCurrent()) setLiveRead({ target: readTarget, objects, scopes, error: null });
+        })
+        .catch((err) => {
+          const reason = err instanceof Error ? err.message : String(err);
+          if (isCurrent())
+            setLiveRead((prev) => ({
+              target: readTarget,
+              objects: null,
+              scopes: prev?.target === readTarget ? prev.scopes : undefined,
+              error: reason,
+              refused: err instanceof ScopeRefusal,
+            }));
+          logger.warn("Failed to read the current schema for a diff after a scope was picked", {
+            route: "SchemaDiff",
+            error: reason,
+          });
+        });
+    },
+    [readTarget, beginRead],
+  );
 
   /** True while the Refresh button's own read is in flight. State, because the button reads it. */
   const [refreshing, setRefreshing] = useState(false);
@@ -1097,12 +1143,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
             <span className="text-xs text-fg-subtle">Scope</span>
             <Select
               value={shownScope === null ? WHOLE_CONNECTION : `${DATABASE_PREFIX}${shownScope}`}
-              onValueChange={(v) =>
-                setScopePick({
-                  target: readTarget,
-                  container: v === WHOLE_CONNECTION ? null : v.slice(DATABASE_PREFIX.length),
-                })
-              }
+              onValueChange={(v) => pickScope(v === WHOLE_CONNECTION ? null : v.slice(DATABASE_PREFIX.length))}
             >
               <SelectTrigger aria-label="Scope" className="h-7 w-[150px] text-xs bg-fill border-hairline-strong">
                 <SelectValue />

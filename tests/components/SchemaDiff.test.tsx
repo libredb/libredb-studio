@@ -4497,7 +4497,7 @@ describe("SchemaDiff on a session-container engine", () => {
   function mysqlReads(listing: () => { ok: boolean; body: unknown }) {
     const orig = globalThis.fetch;
     const inventoryBodies: Record<string, unknown>[] = [];
-    const state = { inventoryFails: false };
+    const state = { inventoryFails: false, gate: null as Promise<void> | null };
     globalThis.fetch = mock((url: string, init?: RequestInit) => {
       const answer = (ok: boolean, body: unknown) => Promise.resolve({ ok, json: () => Promise.resolve(body) });
       if (url.includes("provider-meta")) {
@@ -4515,6 +4515,8 @@ describe("SchemaDiff on a session-container engine", () => {
       }
       inventoryBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
       if (state.inventoryFails) return answer(false, { error: "inventory refused" });
+      // A read parked here has already been counted above, so a test can tell it went out.
+      if (state.gate !== null) return state.gate.then(() => answer(true, { objects: [], details: [] }));
       return answer(true, { objects: [], details: [] });
     }) as unknown as typeof fetch;
     return { inventoryBodies, state, restore: () => void (globalThis.fetch = orig) };
@@ -4713,6 +4715,45 @@ describe("SchemaDiff on a session-container engine", () => {
       await pick("db:gone", "db:shop");
       expect(inventoryBodies.at(-1)?.containers).toEqual([["shop"]]);
       expect(view.getByTestId("select-db:shop")).toBeTruthy();
+    } finally {
+      restore();
+    }
+  });
+
+  test("a pick is one read, with or without a target chosen", async () => {
+    const { inventoryBodies, restore } = await open(() => ({ ok: true, body: [analytics, shop] }));
+    try {
+      let before = inventoryBodies.length;
+      await pick("db:shop", "db:analytics");
+      expect(inventoryBodies.length - before).toBe(1);
+
+      // With Current Schema on one side the target effect also reads; a pick must not set it off a second time.
+      await act(async () => {
+        getTargetCallback()!("snap-1");
+      });
+      before = inventoryBodies.length;
+      await pick("db:analytics", "whole");
+      expect(inventoryBodies.length - before).toBe(1);
+    } finally {
+      restore();
+    }
+  });
+
+  test("a pick made while a Refresh is out still reads, and wins", async () => {
+    const { view, inventoryBodies, state, restore } = await open(() => ({ ok: true, body: [analytics, shop] }));
+    try {
+      let release!: () => void;
+      state.gate = new Promise<void>((resolve) => (release = resolve));
+      await act(async () => {
+        fireEvent.click(refreshButton(view)!);
+      });
+      await pick("db:shop", "db:analytics");
+      expect(inventoryBodies.at(-1)?.containers).toEqual([["analytics"]]);
+
+      await act(async () => {
+        release();
+      });
+      expect(view.getByTestId("select-db:analytics")).toBeTruthy();
     } finally {
       restore();
     }
