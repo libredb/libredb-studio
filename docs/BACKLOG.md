@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S9 · 6
-- [Drivers and connections](#drivers-and-connections) — D1-D379, U17 · 274
+- [Drivers and connections](#drivers-and-connections) — D1-D380, U17 · 275
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U148 · 134
@@ -3872,6 +3872,15 @@ The file passed alone on 2026-10-20 on `main` at `6e611bf73` (12 tests, 3.3 s).
 Found on #1818, whose change does not touch the HTTP transport.
 
 **Done when:** the test bounds the named wait by the time it measured itself between sending the request and the deadline, not by the sleep's nominal length, and the file passes repeated runs at the CI job's concurrency.
+
+### D380. The SQLite boundary guard's provider walk can outrun bun's five-second test timeout
+
+`no provider but sql/sqlite-int64.ts spells the boundary` in `tests/unit/db/sqlite-int64.test.ts` reads and scans every provider source that `providerSources()` finds under `src/lib/db/providers` (729 `.ts` and `.tsx` files on 2026-10-20) inside one test, and passes no timeout, so bun's default of 5000 ms bounds the whole walk.
+In a full `bun run test` at 20 jobs on 2026-10-20, on the VS Code extension skeleton branch, which does not touch that file or the providers, the file failed with 108 pass and 1 fail, and passed alone straight after (109 pass, 1.9 s).
+Forty runs of the file alone, 20 at a time, on the same 20-core machine that day failed 18 times, every time on that one case and every time on the timeout, at 5004 to 7474 ms.
+It is the same shape as D290 and the etcd `descriptor readers` case D379 mentions: a whole-tree read sized for an idle machine.
+
+**Done when:** the walk fits a busy runner, either with a timeout sized for one (bun's `test` takes it as its third argument) or by reading the tree once per file instead of once per case, and the file passes 40 runs at 20 jobs.
 
 ## Value interpolation
 
