@@ -6617,6 +6617,102 @@ describe("PostgreSQL object listing and detail", () => {
     await provider.disconnect();
   });
 
+  /**
+   * The modifier lives beside the base name (#1860).
+   *
+   * `format_type(atttypid, NULL)` stays `type`, which is what a reader that compares types
+   * already matches. `format_type(atttypid, atttypmod)` is `declaredType`, which is what the
+   * tooltip and the object detail show. PostgreSQL prints `varchar(50)` as
+   * `character varying(50)`. `vector(1536)` is the same function: the fixture image has no
+   * pgvector, and the statement does not special-case the type, so the row is what
+   * `format_type` answers for that declaration. A column with no modifier is given the same
+   * string in both fields.
+   */
+  test("object detail keeps the base type and records the declared type with its modifier (#1860)", async () => {
+    const columns = [
+      { name: "id", type: "integer", declaredType: "integer", nullable: false, defaultValue: null },
+      {
+        name: "title",
+        type: "character varying",
+        declaredType: "character varying(50)",
+        nullable: true,
+        defaultValue: null,
+      },
+      { name: "amount", type: "numeric", declaredType: "numeric(12,2)", nullable: false, defaultValue: null },
+      { name: "body", type: "text", declaredType: "text", nullable: true, defaultValue: null },
+      { name: "tags", type: "text[]", declaredType: "text[]", nullable: true, defaultValue: null },
+      { name: "embedding", type: "vector", declaredType: "vector(1536)", nullable: true, defaultValue: null },
+    ];
+    const seen: string[] = [];
+    mockQueryFn = async (sql) => {
+      if (!sql.includes("format_type")) return { rows: [] };
+      seen.push(sql);
+      expect(sql).toContain("'type', format_type(a.atttypid, NULL)");
+      expect(sql).toContain("'declaredType', format_type(a.atttypid, a.atttypmod)");
+      if (sql.includes("described_columns")) {
+        return {
+          rows: [{ name: "articles", pk_columns: ["id"], columns, indexes: null, foreign_keys: null }],
+        };
+      }
+      return { rows: [{ pk_columns: ["id"], columns, indexes: null, foreign_keys: null }] };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    const expected = [
+      {
+        name: "id",
+        type: "integer",
+        declaredType: "integer",
+        nullable: false,
+        isPrimary: true,
+        defaultValue: undefined,
+      },
+      {
+        name: "title",
+        type: "character varying",
+        declaredType: "character varying(50)",
+        nullable: true,
+        isPrimary: false,
+        defaultValue: undefined,
+      },
+      {
+        name: "amount",
+        type: "numeric",
+        declaredType: "numeric(12,2)",
+        nullable: false,
+        isPrimary: false,
+        defaultValue: undefined,
+      },
+      { name: "body", type: "text", declaredType: "text", nullable: true, isPrimary: false, defaultValue: undefined },
+      {
+        name: "tags",
+        type: "text[]",
+        declaredType: "text[]",
+        nullable: true,
+        isPrimary: false,
+        defaultValue: undefined,
+      },
+      {
+        name: "embedding",
+        type: "vector",
+        declaredType: "vector(1536)",
+        nullable: true,
+        isPrimary: false,
+        defaultValue: undefined,
+      },
+    ];
+    const detail = await provider.describeObject(["app", "articles"], "table");
+    expect(detail.columns).toEqual(expected);
+    const batch = await provider.describeObjects(["app"], "table");
+    expect(batch.details).toEqual([{ path: ["app", "articles"], columns: expected, indexes: [], foreignKeys: [] }]);
+    // One statement per read: the single-object CTE and the bulk CTE, both asking for both strings.
+    expect(seen).toHaveLength(2);
+    expect(seen.some((sql) => sql.includes("object_columns"))).toBe(true);
+    expect(seen.some((sql) => sql.includes("described_columns"))).toBe(true);
+    await provider.disconnect();
+  });
+
   test("a kind with no columns describes as three empty lists, not as a failure", async () => {
     mockQueryFn = async (sql) => {
       if (!sql.includes("object_columns")) return { rows: [] };

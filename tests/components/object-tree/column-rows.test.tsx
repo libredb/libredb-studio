@@ -389,6 +389,52 @@ describe("a column row draws the column and nothing of its parent", () => {
     expect(within(row("total NUMERIC(10,2)")).queryByTestId("tree-row-primary")).toBeNull();
   });
 
+  test("a modifier recorded beside the base type reaches the tooltip and the name, and the row still shows the base", async () => {
+    // PostgreSQL keeps `type` as `format_type(atttypid, NULL)` and records the declaration as
+    // `declaredType` (#1860). The row truncates `type`, so `vector` stays `vector`; the hover
+    // and the accessible name are where `vector(1536)` has to be.
+    routesFor(() => ({
+      ...ordersDetail,
+      columns: [
+        {
+          name: "title",
+          type: "character varying",
+          declaredType: "character varying(50)",
+          nullable: true,
+          isPrimary: false,
+        },
+        { name: "amount", type: "numeric", declaredType: "numeric(12,2)", nullable: false, isPrimary: false },
+        { name: "embedding", type: "vector", declaredType: "vector(1536)", nullable: true, isPrimary: false },
+        { name: "body", type: "text", declaredType: "text", nullable: true, isPrimary: false },
+        { name: "tags", type: "text[]", declaredType: "text[]", nullable: true, isPrimary: false },
+      ],
+    }));
+    await openTables();
+    await pressTwisty(/orders/);
+    await screen.findByText("embedding");
+
+    const embedding = within(row("embedding vector(1536)")).getByTestId("tree-row-column-type");
+    expect(embedding.getAttribute("title")).toBe("vector(1536)");
+    expect(embedding.querySelector("[aria-hidden='true']")?.textContent).toBe("vector");
+    expect(embedding.textContent).toContain("vector(1536)");
+
+    const title = within(row("title character varying(50)")).getByTestId("tree-row-column-type");
+    expect(title.getAttribute("title")).toBe("character varying(50)");
+    expect(title.querySelector("[aria-hidden='true']")?.textContent).toBe("character varying");
+
+    const amount = within(row("amount numeric(12,2)")).getByTestId("tree-row-column-type");
+    expect(amount.getAttribute("title")).toBe("numeric(12,2)");
+    expect(amount.querySelector("[aria-hidden='true']")?.textContent).toBe("numeric");
+
+    // No modifier: the same string in both fields, so the row is what it was.
+    const body = within(row("body text")).getByTestId("tree-row-column-type");
+    expect(body.getAttribute("title")).toBe("text");
+    expect(body.querySelector("[aria-hidden='true']")?.textContent).toBe("text");
+    const tags = within(row("tags text[]")).getByTestId("tree-row-column-type");
+    expect(tags.getAttribute("title")).toBe("text[]");
+    expect(tags.querySelector("[aria-hidden='true']")?.textContent).toBe("text[]");
+  });
+
   test("a column row is offered no menu, carries no status and carries no row count", async () => {
     routesFor(() => ordersDetail);
     render(
