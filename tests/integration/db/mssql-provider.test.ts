@@ -277,6 +277,7 @@ import {
   DatabaseError,
   ExecutionProfileError,
   PermissionDeniedError,
+  QueryCancelledError,
   QueryError,
 } from "@/lib/db/errors";
 import { createErrorResponse } from "@/lib/api/errors";
@@ -1816,6 +1817,28 @@ describe("MSSQLProvider", () => {
 
       release?.();
       await pending;
+    });
+
+    test("a statement the user cancelled rejects as QueryCancelledError, so the route answers 499", async () => {
+      await provider.connect();
+
+      let reject: ((error: Error) => void) | undefined;
+      mockQueryFn = () =>
+        new Promise((_resolve, rejectQuery) => {
+          reject = rejectQuery;
+        });
+
+      const pending = provider.query("WAITFOR DELAY '00:00:30'", undefined, "qid-3");
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(await provider.cancelQuery("qid-3")).toBe(true);
+      // What mssql and tedious end a cancelled request with: RequestError('Canceled.', 'ECANCEL').
+      reject?.(Object.assign(new Error("Canceled."), { name: "RequestError", code: "ECANCEL" }));
+
+      const cancelledError = await pending.catch((error: unknown) => error);
+      expect(cancelledError).toBeInstanceOf(QueryCancelledError);
+      expect((cancelledError as Error).message).toBe("Query was cancelled");
+      expect(createErrorResponse(cancelledError, { route: "api/db/query" }).status).toBe(499);
     });
   });
 
@@ -5598,10 +5621,11 @@ class ShowplanSession {
     return new Promise<ReturnType<typeof toResult>>((_resolve, reject) => {
       request.onCancel(() => {
         this.events.push("cancelled");
-        // tedious ends a cancelled request by rejecting it. The wording is this fixture's
-        // own and nothing asserts it; what is asserted is that the await ended because
-        // `cancel()` was called, and that it ended before the rollback.
-        reject(new Error("Canceled."));
+        // tedious ends a cancelled request by rejecting it with RequestError('Canceled.',
+        // 'ECANCEL'), the same shape a user's stop produces. What is asserted is that the await
+        // ended because `cancel()` was called, that it ended before the rollback, and that the
+        // deadline's own budget refusal still names the budget rather than a user cancel.
+        reject(Object.assign(new Error("Canceled."), { name: "RequestError", code: "ECANCEL" }));
       });
     });
   }
