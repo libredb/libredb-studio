@@ -38,7 +38,7 @@ a backup.
 | Repository | https://github.com/libredb/libredb-studio |
 | Website | https://libredb.org |
 | Docker image | `ghcr.io/libredb/libredb-studio` (GHCR, multi-arch) |
-| Pinned tag | `0.16.2` (bump on each release) |
+| Pinned tag | `1.0.0` (bump on each release) |
 | Port | `3000` (HTTP) |
 | Health check | `GET /api/db/health` |
 | Storage default | `local` (browser); `postgres` for persistence |
