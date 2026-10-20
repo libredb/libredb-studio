@@ -136,21 +136,30 @@ testIf(
           "",
         ].join("\n"),
       );
-      const build = await Bun.build({ entrypoints: [child], target: "node", format: "esm", outdir: dir });
+      // `.mjs`, so Node reads the child as ESM without asking a package.json above the temp folder.
+      const build = await Bun.build({
+        entrypoints: [child],
+        target: "node",
+        format: "esm",
+        outdir: dir,
+        naming: "[name].mjs",
+      });
       if (!build.success) throw new Error(`Bun.build could not bundle the child: ${build.logs.join("\n")}`);
       const started = Date.now();
-      const run = Bun.spawnSync([Bun.which("node") as string, join(dir, "child.js")], {
+      const run = Bun.spawnSync([Bun.which("node") as string, join(dir, "child.mjs")], {
         stdout: "pipe",
         stderr: "pipe",
         timeout: NODE_HARD_TIMEOUT_MS,
         killSignal: "SIGKILL",
       });
       const elapsed = Date.now() - started;
-      expect({ exitCode: run.exitCode, signal: run.signalCode ?? null, stderr: run.stderr.toString() }).toEqual({
-        exitCode: 0,
-        signal: null,
-        stderr: "",
-      });
+      const signal = run.signalCode ?? null;
+      // stderr explains a failed run only, as in the other Node-child tests: a clean one may carry a Node warning.
+      if (run.exitCode !== 0 || signal !== null) {
+        throw new Error(
+          `The Node child ended with exit code ${run.exitCode} and signal ${signal}: ${run.stderr.toString()}`,
+        );
+      }
       const outcome = JSON.parse(run.stdout.toString());
       expect(outcome.code).toBe("ENOENT");
       expect(outcome.message).toContain("/proc/libredb-");
