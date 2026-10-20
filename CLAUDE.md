@@ -45,6 +45,11 @@ bun run chart:check              # chart version sync guard (#138; CI sets CHART
 bun run channels:showcase:check  # login channel showcase drift guard (#425)
 bun run readme:check             # localized README drift guard (#317)
 bun run security:check           # security posture drift guard
+# VS Code extension (vscode-extension/, npm; after the root bun install; docs/TOOLCHAIN.md "VS Code extension")
+(cd vscode-extension && npm ci --ignore-scripts && npm run build)   # host and child bundles, metafile checks, notices
+(cd vscode-extension && npm run test:unit && npm run coverage:check) # its own 100% gate, unit leg only
+(cd vscode-extension && LIBREDB_BACKEND_RUNTIME=node npm run test:integration)  # or =vscode (P5)
+(cd vscode-extension && xvfb-run -a npm run test:e2e && npm run package)        # e2e needs a display on Linux
 ```
 
 > **Toolchain rationale (Biome formatter-only, oxlint in front of ESLint, the narrow type-aware layer, attw) lives in [`docs/TOOLCHAIN.md`](docs/TOOLCHAIN.md).** Read it before changing any lint, format or packaging config.
@@ -60,7 +65,8 @@ bun run security:check           # security posture drift guard
 Run the required-check gate set locally before claiming done. [`.github/workflows/ci.yml`](.github/workflows/ci.yml) is the authority — this list mirrors it and can fall behind it:
 
 ```bash
-bun run format && bun run lint && bun run typecheck && bun run knip \
+(cd vscode-extension && npm ci --ignore-scripts) \
+  && bun run format && bun run lint && bun run typecheck && bun run knip \
   && bun run chart:check && bun run channels:showcase:check \
   && bun run readme:check && bun run security:check \
   && bun run test && bun run build
