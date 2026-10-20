@@ -173,8 +173,7 @@ export const SSH_TUNNEL_FIELDS: Record<keyof SSHTunnelConfig, FieldClass> = {
  *
  * That check sees EXPORTED maps only. A fourth map kept module-private and wired straight into
  * `walkSecretFields` is invisible to it, and would be sealed here while a consumer persisted it in
- * the clear. Export any new classification map (all three above are) and the check covers it;
- * recorded in docs/BACKLOG.md so the gap is tracked rather than only described.
+ * the clear. Export any new classification map (all three above are) and the check covers it.
  *
  * Deliberately NOT consumed by this module's own walk. The three maps are not
  * interchangeable there - each applies at a different level of a connection (root, `ssl`,
