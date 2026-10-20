@@ -1,7 +1,11 @@
-import { describe, test, expect } from "bun:test";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
 import { databaseErrorBody, internalErrorBody, TIMEOUT_SENTENCE } from "@/lib/api/error-body";
 import type { ApiErrorResponse, DatabaseErrorLog } from "@/lib/api/error-body";
 import { ApiErrorCode } from "@/lib/api/error-codes";
+import { createErrorResponse } from "@/lib/api/errors";
+import { logger } from "@/lib/logger";
 import { RateLimitError } from "@/lib/api/rate-limit";
 import { LLMAuthError } from "@/lib/llm/types";
 import { SeedConnectionError } from "@/lib/seed/resolve-connection";
@@ -158,5 +162,83 @@ describe("internalErrorBody", () => {
       code: ApiErrorCode.INTERNAL_ERROR,
       statusCode: 500,
     });
+  });
+});
+
+describe("createErrorResponse and databaseErrorBody agree", () => {
+  afterEach(() => {
+    mock.restore();
+  });
+
+  test.each(ROWS.map((row) => [row.name, row] as const))("%s: status, body and log line", async (_name, row) => {
+    const spies = {
+      info: spyOn(logger, "info").mockImplementation(() => {}),
+      warn: spyOn(logger, "warn").mockImplementation(() => {}),
+      error: spyOn(logger, "error").mockImplementation(() => {}),
+    };
+    const answer = databaseErrorBody(row.error)!;
+    const res = createErrorResponse(row.error, { route: "api/db/query" });
+    expect(res.status).toBe(answer.body.statusCode);
+    expect(await res.json()).toEqual(JSON.parse(JSON.stringify(answer.body)));
+    const context = { route: "api/db/query", ...answer.log.context };
+    if (answer.log.level === "error") expect(spies.error).toHaveBeenCalledWith(answer.log.message, row.error, context);
+    else expect(spies[answer.log.level]).toHaveBeenCalledWith(answer.log.message, context);
+    expect(spies.info.mock.calls.length + spies.warn.mock.calls.length + spies.error.mock.calls.length).toBe(1);
+  });
+
+  test.each([
+    ["an Error", new Error("boom")],
+    ["a string", "boom"],
+  ])("%s: the 500 body", async (_name, error) => {
+    const spy = spyOn(logger, "error").mockImplementation(() => {});
+    const res = createErrorResponse(error, { route: "api/db/query" });
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual(internalErrorBody(error));
+    expect(spy).toHaveBeenCalledWith("Unhandled error", error, { route: "api/db/query" });
+  });
+});
+
+const SRC = resolve(import.meta.dir, "../../../../src");
+
+/** The source file a specifier names, or null for a package. */
+function resolveSource(specifier: string, importer: string): string | null {
+  let base: string;
+  if (specifier.startsWith("@/")) base = join(SRC, specifier.slice(2));
+  else if (specifier.startsWith(".")) base = resolve(dirname(importer), specifier);
+  else return null;
+  for (const candidate of [`${base}.ts`, `${base}.tsx`, join(base, "index.ts")]) {
+    if (existsSync(candidate)) return candidate;
+  }
+  throw new Error(`cannot resolve ${specifier} from ${importer}`);
+}
+
+/** Every module reached through value imports from `entry`, source files named as `@/` specifiers, deduplicated. */
+async function reachableModules(entry: string): Promise<string[]> {
+  const transpiler = new Bun.Transpiler({ loader: "ts" });
+  const reached = new Set<string>();
+  const seen = new Set<string>();
+  const queue = [join(SRC, entry.replace(/^src\//, ""))];
+  while (queue.length > 0) {
+    const file = queue.pop()!;
+    if (seen.has(file)) continue;
+    seen.add(file);
+    for (const { path } of transpiler.scanImports(readFileSync(file, "utf8"))) {
+      const target = resolveSource(path, file);
+      if (target === null) {
+        reached.add(path);
+        continue;
+      }
+      reached.add(`@/${relative(SRC, target).replace(/(\/index)?\.tsx?$/, "")}`);
+      queue.push(target);
+    }
+  }
+  return [...reached];
+}
+
+describe("the error body is Next-free", () => {
+  test("no module it reaches imports next or the logger", async () => {
+    const reached = await reachableModules("src/lib/api/error-body.ts");
+    expect(reached.filter((s) => s === "next" || s.startsWith("next/") || s === "@/lib/logger")).toEqual([]);
+    expect(reached.sort()).toEqual(["@/lib/api/error-codes", "@/lib/db/errors"]);
   });
 });

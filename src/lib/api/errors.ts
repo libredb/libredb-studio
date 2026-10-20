@@ -6,17 +6,7 @@
 import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import { ApiErrorCode } from "./error-codes";
-import {
-  DatabaseError,
-  DatabaseConfigError,
-  ConnectionError,
-  AuthenticationError,
-  PermissionDeniedError,
-  PoolExhaustedError,
-  QueryError,
-  QueryCancelledError,
-  TimeoutError,
-} from "@/lib/db/errors";
+import { databaseErrorBody, internalErrorBody, type ApiErrorResponse } from "./error-body";
 import {
   LLMError,
   LLMAuthError,
@@ -36,15 +26,7 @@ import { VaultError } from "@/lib/seed/vault-client";
 
 export type { ApiErrorCode } from "./error-codes";
 
-export interface ApiErrorResponse {
-  error: string;
-  code?: ApiErrorCode;
-  statusCode: number;
-  retryable?: boolean;
-  details?: unknown;
-  /** On a 401 only: a statement the user can copy and run to fix the refusal, when the provider knows one. */
-  fixStatement?: string;
-}
+export type { ApiErrorResponse } from "./error-body";
 
 // ============================================================================
 // Error → HTTP Mapping
@@ -86,123 +68,13 @@ export function createErrorResponse(error: unknown, context?: { route?: string }
     );
   }
 
-  // --- Query Cancelled ---
-  if (error instanceof QueryCancelledError) {
-    logger.info("Query cancelled", { route, provider: error.provider });
-    return NextResponse.json(
-      {
-        error: error.message,
-        code: ApiErrorCode.QUERY_CANCELLED,
-        statusCode: 499,
-      },
-      { status: 499 },
-    );
-  }
-
-  // --- DB: QueryError (syntax / execution) ---
-  if (error instanceof QueryError) {
-    logger.warn("Query error", { route, provider: error.provider });
-    return NextResponse.json(
-      {
-        error: error.message,
-        code: ApiErrorCode.QUERY_ERROR,
-        statusCode: 400,
-        details:
-          error.position !== undefined || error.detail ? { position: error.position, detail: error.detail } : undefined,
-      },
-      { status: 400 },
-    );
-  }
-
-  // --- DB: DatabaseConfigError ---
-  if (error instanceof DatabaseConfigError) {
-    logger.warn("Database config error", { route, provider: error.provider });
-    return NextResponse.json(
-      { error: error.message, code: ApiErrorCode.CONFIG_ERROR, statusCode: 400 },
-      { status: 400 },
-    );
-  }
-
-  // --- DB: AuthenticationError ---
-  if (error instanceof AuthenticationError) {
-    logger.warn("Database auth error", { route, provider: error.provider });
-    return NextResponse.json(
-      {
-        error: error.message,
-        code: ApiErrorCode.AUTH_ERROR,
-        statusCode: 401,
-        ...(error.fixStatement === undefined ? {} : { fixStatement: error.fixStatement }),
-      },
-      { status: 401 },
-    );
-  }
-
-  // --- DB: PermissionDeniedError ---
-  // The database accepted the credential and refused the statement for a privilege it lacks: 403, so no client reads
-  // it as a refused credential or an ended session (the browser signs in again only for AUTH_REQUIRED).
-  if (error instanceof PermissionDeniedError) {
-    logger.warn("Database permission denied", { route, provider: error.provider });
-    return NextResponse.json(
-      { error: error.message, code: ApiErrorCode.PERMISSION_DENIED, statusCode: 403 },
-      { status: 403 },
-    );
-  }
-
-  // --- DB: TimeoutError ---
-  // 504: Chromium sends a POST answered Request Timeout on a reused connection again, so the statement ran again
-  // on the database. `retryable` is a hint for the person; no client resends on it.
-  if (error instanceof TimeoutError) {
-    logger.warn("Query timeout", { route, provider: error.provider, duration: error.timeout });
-    return NextResponse.json(
-      {
-        error: "Query timed out. Please try a simpler query or increase timeout.",
-        code: ApiErrorCode.TIMEOUT_ERROR,
-        statusCode: 504,
-        retryable: true,
-      },
-      { status: 504 },
-    );
-  }
-
-  // --- DB: ConnectionError ---
-  if (error instanceof ConnectionError) {
-    logger.error("Connection error", error, { route, provider: error.provider });
-    return NextResponse.json(
-      {
-        error: error.message,
-        code: ApiErrorCode.CONNECTION_ERROR,
-        statusCode: 503,
-        retryable: true,
-      },
-      { status: 503 },
-    );
-  }
-
-  // --- DB: PoolExhaustedError ---
-  if (error instanceof PoolExhaustedError) {
-    logger.error("Pool exhausted", error, { route, provider: error.provider });
-    return NextResponse.json(
-      {
-        error: error.message,
-        code: ApiErrorCode.POOL_EXHAUSTED,
-        statusCode: 503,
-        retryable: true,
-      },
-      { status: 503 },
-    );
-  }
-
-  // --- DB: generic DatabaseError (base class catch-all) ---
-  if (error instanceof DatabaseError) {
-    logger.error("Database error", error, { route, provider: error.provider });
-    return NextResponse.json(
-      {
-        error: error.message,
-        code: (error.code as ApiErrorCode) ?? ApiErrorCode.DATABASE_ERROR,
-        statusCode: 500,
-      },
-      { status: 500 },
-    );
+  // --- DB: every DatabaseError class, answered by the Next-free error body ---
+  const answer = databaseErrorBody(error);
+  if (answer !== null) {
+    const { level, message, context: logContext } = answer.log;
+    if (level === "error") logger.error(message, error, { route, ...logContext });
+    else logger[level](message, { route, ...logContext });
+    return NextResponse.json(answer.body, { status: answer.body.statusCode });
   }
 
   // --- LLM: Safety ---
@@ -296,7 +168,6 @@ export function createErrorResponse(error: unknown, context?: { route?: string }
   }
 
   // --- Generic Error ---
-  const message = error instanceof Error ? error.message : "Internal server error";
   logger.error("Unhandled error", error, { route });
-  return NextResponse.json({ error: message, code: ApiErrorCode.INTERNAL_ERROR, statusCode: 500 }, { status: 500 });
+  return NextResponse.json(internalErrorBody(error), { status: 500 });
 }
