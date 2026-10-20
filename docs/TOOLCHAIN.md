@@ -559,13 +559,15 @@ A callback whose behaviour the gate must hold keeps its body on its own line, as
 - knip has a `vscode-extension` workspace in `knip.json` beside the root's `workspaces["."]`.
   Its entries list neither bundle entry nor `esbuild.mjs`, which knip finds without them (it reports them as redundant entry patterns); an export of the fake `vscode` module that only the code under test reaches, through `tsconfig.test.json`'s alias, which knip does not read, carries `@public` (today `window`).
   The required `Lint, Typecheck and Build` job installs the extension's packages with `npm ci --ignore-scripts` before knip: measured on a clone with only the root installed, knip otherwise reports `c8`, `mocha` and `vscode-test` as unlisted binaries and `c8` and `@vscode/test-cli` as unused dependencies.
+  Its `actions/setup-node` step gives that install npm's cache, keyed on `vscode-extension/package-lock.json`, and runs the job's Node tools on Node 24.
   Biome, oxlint, ESLint and the root `tsc` pass there without them.
 
 ### The CI job
 
 `.github/workflows/vscode-extension.yml` is a reusable workflow that `ci.yml` calls as the `vscode-extension` job; the extension's release workflow is to call the same file, so the two cannot drift.
-Its Linux job runs the typecheck, the build with its metafile checks, the unit leg and its gate, both integration runtimes, the e2e leg and `npm run package`, and uploads the VSIX; its smoke job runs on `macos-latest` and `windows-latest`.
+Its Linux job runs the typecheck, the build with its metafile checks, the unit leg and its gate, both integration runtimes, the e2e leg and `npm run package`, and uploads the VSIX, failing when there is none; its smoke job runs on `macos-latest` and `windows-latest`.
 It caches Bun's packages through `.github/actions/bun-install`, npm's through `actions/setup-node` keyed on `vscode-extension/package-lock.json`, and the VS Code builds through `actions/cache` keyed on `vscode-extension/test/vscode-versions.json`.
+The VS Code cache holds `.vscode-test/vscode-*` only: the e2e leg's profile in `.vscode-test/user-data` and `.vscode-test/extensions` stays out of it, so no run starts from a profile an earlier run left, and a fork's pull request restores none.
 `.github/workflows/vscode-extension-insiders.yml` runs the build, the `vscode` integration runtime and the e2e leg against VS Code Insiders daily and on demand, so an Electron or Node bump shows up before stable ships it; `test/vscode-versions.json` is bumped by hand.
 Dependabot watches `vscode-extension/` through its own `npm` entry, with `@types/vscode` held at the `engines.vscode` floor.
 The job is not a required check until the owner adds it to `main`'s branch protection.

@@ -1,6 +1,7 @@
 # The VS Code extension's gates (docs/TOOLCHAIN.md, "VS Code extension").
 # A reusable workflow: ci.yml calls it on every push and pull request, and the
-# release workflow calls the same file, so the two cannot drift.
+# extension's release workflow is to call the same file, so the two cannot
+# drift.
 #
 # vscode-extension/ is its own npm package beside the Bun root. Its bundles and
 # tests resolve React, the drivers and the provider layer from the root's
@@ -59,7 +60,10 @@ jobs:
       - name: Restore the pinned VS Code builds
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
-          path: vscode-extension/.vscode-test
+          # The builds only: the e2e leg keeps its VS Code profile in
+          # .vscode-test/user-data and .vscode-test/extensions, and a cached
+          # profile would reach every later run, fork pull requests included.
+          path: vscode-extension/.vscode-test/vscode-*
           key: vscode-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vscode-extension/test/vscode-versions.json') }}
 
       - name: Integration leg on the job's Node
@@ -83,6 +87,7 @@ jobs:
         with:
           name: vscode-extension-vsix
           path: vscode-extension/dist-vsix/*.vsix
+          if-no-files-found: error
 
   # Hosted macOS and Windows runners cannot start the Linux database containers,
   # so these two run the e2e leg's smoke subset only: activation, the child forked
@@ -127,7 +132,10 @@ jobs:
       - name: Restore the pinned VS Code builds
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
-          path: vscode-extension/.vscode-test
+          # The builds only: the e2e leg keeps its VS Code profile in
+          # .vscode-test/user-data and .vscode-test/extensions, and a cached
+          # profile would reach every later run, fork pull requests included.
+          path: vscode-extension/.vscode-test/vscode-*
           key: vscode-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vscode-extension/test/vscode-versions.json') }}
 
       - name: E2e smoke subset on the floor and stable builds
