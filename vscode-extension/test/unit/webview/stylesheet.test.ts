@@ -144,6 +144,10 @@ describe("the VS Code theming bridge", () => {
     assert.equal(high.get("--ring"), "var(--vscode-contrastActiveBorder)");
   });
 
+  it("bounds the document to the view, so the grid scrolls in the page's place", () => {
+    assert.ok(bridge.includes("html,\nbody,\n#root {\n  height: 100%;\n}"));
+  });
+
   it("turns motion off under reduce motion, and meets the view's edges with an unlayered body rule", () => {
     assert.ok(
       bridge.includes(

@@ -187,6 +187,16 @@ body.vscode-reduce-motion *::after {
   transition: none !important;
 }
 
+/*
+ * The host page sets no height on this document, so without this the page grows with the rows and scrolls in the
+ * grid's place: the grid would render every row, lose its sticky header and never save its scroll.
+ */
+html,
+body,
+#root {
+  height: 100%;
+}
+
 /* Unlayered, so it outranks the host page's body padding inside @layer vscode-default whatever those defaults become. */
 body {
   margin: 0;

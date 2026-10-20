@@ -197,37 +197,104 @@ test("Review Focus 2: a 10 MB cell renders, the grid stays responsive, and the n
   await expect(rowCount(page)).toHaveText(/^2 rows/);
 });
 
+/** Posts runStarted and a runSucceeded whose one page holds `rows` rows { n, text: "row n" }, built in the page. */
+async function postGeneratedRun(page: Page, runId: string, rows: number): Promise<void> {
+  await page.evaluate(
+    ({ runId, grid, rows }) => {
+      window.postMessage({ v: 1, type: "runStarted", runId, statement: "select n, text from t", startedAt: 1 }, "*");
+      window.postMessage(
+        {
+          v: 1,
+          type: "runSucceeded",
+          runId,
+          page: {
+            rows: Array.from({ length: rows }, (_, i) => ({ n: i + 1, text: `row ${i + 1}` })),
+            fields: ["n", "text"],
+            rowCount: rows,
+            executionTime: 20,
+            pagination: { limit: rows, offset: 0, hasMore: false, totalReturned: rows, wasLimited: false },
+          },
+          grid,
+        },
+        "*",
+      );
+    },
+    { runId, grid: POSTGRES_GRID, rows },
+  );
+}
+
 test("U12: a 500-row and a 10,000-row page, each timed from postMessage to the strip", async ({ page }) => {
   const view = await openResultsView(page);
   await view.post(init());
   for (const [index, rows] of [500, 10_000].entries()) {
-    const runId = index === 0 ? RUN_A : RUN_B;
     const start = Date.now();
-    await page.evaluate(
-      ({ runId, grid, rows }) => {
-        window.postMessage({ v: 1, type: "runStarted", runId, statement: "select n, text from t", startedAt: 1 }, "*");
-        window.postMessage(
-          {
-            v: 1,
-            type: "runSucceeded",
-            runId,
-            page: {
-              rows: Array.from({ length: rows }, (_, i) => ({ n: i + 1, text: `row ${i + 1}` })),
-              fields: ["n", "text"],
-              rowCount: rows,
-              executionTime: 20,
-              pagination: { limit: rows, offset: 0, hasMore: false, totalReturned: rows, wasLimited: false },
-            },
-            grid,
-          },
-          "*",
-        );
-      },
-      { runId, grid: POSTGRES_GRID, rows },
-    );
+    await postGeneratedRun(page, index === 0 ? RUN_A : RUN_B, rows);
     await expect(rowCount(page)).toHaveText(new RegExp(`^${rows} rows`));
     annotate(`${rows}-row round trip ms`, String(Date.now() - start));
   }
+});
+
+test("the grid fills the view and scrolls itself: its rows are virtualized, its header stays, its scroll is saved", async ({
+  page,
+}) => {
+  const view = await openResultsView(page);
+  await view.post(init());
+  await postGeneratedRun(page, RUN_B, 10_000);
+  await expect(rowCount(page)).toHaveText(/^10000 rows/);
+  const grid = desktopGrid(page);
+  const measure = () =>
+    grid.evaluate((element) => {
+      const header = element.querySelector('[role="row"]') as HTMLElement;
+      return {
+        gridHeight: element.clientHeight,
+        gridBottom: element.getBoundingClientRect().bottom,
+        rendered: element.querySelectorAll('[role="row"]').length,
+        documentHeight: document.documentElement.scrollHeight,
+        headerOffset: header.getBoundingClientRect().top - element.getBoundingClientRect().top,
+      };
+    });
+  const before = await measure();
+  expect(before.gridHeight).toBeGreaterThan(0);
+  expect(before.gridBottom).toBeLessThanOrEqual(800);
+  expect(before.documentHeight).toBeLessThanOrEqual(800);
+  expect(before.rendered).toBeLessThan(100);
+
+  await grid.evaluate((element) => {
+    element.scrollTop = 2_000;
+  });
+  await expect
+    .poll(() => view.state())
+    .toEqual({ v: 1, maskingEnabled: false, scroll: { runId: RUN_B, top: 2_000, left: 0 } });
+  const after = await measure();
+  expect(after.headerOffset).toBe(0);
+  expect(after.rendered).toBeLessThan(100);
+
+  // A notice line above the grid takes its height from the grid's, not from the page's.
+  await view.post({ v: 1, type: "pageFailed", runId: RUN_B, failure: { kind: "error", message: "timeout" } });
+  await expect(page.getByText("Load More Error")).toBeVisible();
+  const withNotice = await measure();
+  expect(withNotice.gridBottom).toBeLessThanOrEqual(800);
+  expect(withNotice.documentHeight).toBeLessThanOrEqual(800);
+});
+
+test("a failure taller than the view scrolls the page and keeps its first line in reach", async ({ page }) => {
+  const view = await openResultsView(page);
+  await view.post(init());
+  await view.post({ v: 1, type: "runStarted", runId: RUN_A, statement: "select 1", startedAt: 1 });
+  await view.post({
+    v: 1,
+    type: "runFailed",
+    runId: RUN_A,
+    failure: {
+      kind: "error",
+      message: "first line",
+      detail: Array.from({ length: 200 }, (_, i) => `line ${i}`).join("\n"),
+    },
+  });
+  const title = page.getByText("The query failed.");
+  await expect(title).toBeVisible();
+  expect(await title.evaluate((element) => element.getBoundingClientRect().top)).toBeGreaterThanOrEqual(0);
+  expect(await page.evaluate(() => document.documentElement.scrollHeight > window.innerHeight)).toBe(true);
 });
 
 test("criterion 8: Load More on PostgreSQL, from the recorded sequence", async ({ page }) => {

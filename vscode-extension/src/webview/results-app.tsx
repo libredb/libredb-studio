@@ -53,7 +53,7 @@ export class GridErrorBoundary extends Component<{ children: ReactNode }, { mess
 
 function EmptyView() {
   return (
-    <div className="flex h-full items-center justify-center p-4 text-center text-xs text-fg-tertiary">
+    <div className="flex min-h-full items-center justify-center p-4 text-center text-xs text-fg-tertiary">
       <p>{EMPTY_SENTENCE}</p>
     </div>
   );
@@ -67,7 +67,7 @@ function RunningView({ view }: { view: View<"running"> }) {
   }, []);
   const seconds = Math.max(0, Math.floor((now - view.startedAt) / 1000));
   return (
-    <output className="flex h-full flex-col items-center justify-center p-4 text-center text-xs">
+    <output className="flex min-h-full flex-col items-center justify-center p-4 text-center text-xs">
       <p className="font-medium text-fg-secondary">
         {RUNNING_SENTENCE} <span data-elapsed="">{seconds}</span>s
       </p>
@@ -114,7 +114,10 @@ function FailureBody({ failure }: { failure: RunFailure }) {
 
 function FailedView({ view }: { view: View<"failed"> }) {
   return (
-    <div role="alert" className="flex h-full flex-col items-center justify-center p-4 text-center text-xs text-danger">
+    <div
+      role="alert"
+      className="flex min-h-full flex-col items-center justify-center p-4 text-center text-xs text-danger"
+    >
       <FailureBody failure={view.failure} />
     </div>
   );
@@ -177,20 +180,23 @@ function RowsView({ view, store, maskingEnabled, onToggleMasking }: RowsProps) {
           <p className="whitespace-pre-wrap break-words">{notice.text}</p>
         </div>
       ))}
-      <GridErrorBoundary>
-        <ResultsGrid
-          result={view.result}
-          onLoadMore={() => store.post({ v: 1, type: "loadMore", runId })}
-          isLoadingMore={view.loadingMore}
-          supportsResultPagination={view.grid.supportsResultPagination}
-          resultQuery={view.statement}
-          databaseType={view.grid.databaseType}
-          maskingConfig={EXTENSION_MASKING_CONFIG}
-          maskingEnabled={maskingEnabled}
-          onToggleMasking={onToggleMasking}
-          maskingExemptColumns={view.grid.maskingExemptColumns}
-        />
-      </GridErrorBoundary>
+      {/* The grid takes the height the notices leave, so its own scroll, not the page's, moves its rows. */}
+      <div className="min-h-0 flex-1">
+        <GridErrorBoundary>
+          <ResultsGrid
+            result={view.result}
+            onLoadMore={() => store.post({ v: 1, type: "loadMore", runId })}
+            isLoadingMore={view.loadingMore}
+            supportsResultPagination={view.grid.supportsResultPagination}
+            resultQuery={view.statement}
+            databaseType={view.grid.databaseType}
+            maskingConfig={EXTENSION_MASKING_CONFIG}
+            maskingEnabled={maskingEnabled}
+            onToggleMasking={onToggleMasking}
+            maskingExemptColumns={view.grid.maskingExemptColumns}
+          />
+        </GridErrorBoundary>
+      </div>
     </div>
   );
 }
