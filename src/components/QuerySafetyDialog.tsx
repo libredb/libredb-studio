@@ -30,6 +30,7 @@ import {
   wordsFollow,
 } from "@/lib/sql/confirm-forms";
 import { readsSqlText, resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
+import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
 import { readOperativeKeyword } from "@/lib/sql/operative-keyword";
 import { hasUnterminatedSpan, readSqlSpan } from "@/lib/sql/spans";
 import { splitStatements } from "@/lib/sql/statement-splitter";
@@ -612,6 +613,16 @@ const CONTROL_FLOW_KEYWORDS = new Set([
   "WHEN",
 ]);
 
+/**
+ * The data-modifying words a CTE body can carry besides `UPDATE`.
+ *
+ * The same set `DATA_MODIFYING` names in `src/lib/explain/select-prefix.ts`
+ * (`INSERT`, `UPDATE`, `DELETE`, `MERGE`), minus `UPDATE`: that one stays the
+ * `UPDATE … SET` pair below, because a bare `UPDATE` is a cursor lock as often
+ * as it is a write. These three need no following word.
+ */
+const CTE_DATA_MODIFYING = ["INSERT", "DELETE", "MERGE"] as const;
+
 /** Whether a `confirmExemptForms` form led by `keyword` starts at the keyword that ends at `end`. */
 function exemptFormAt(text: string, keyword: string, end: number, grammar: SqlGrammar): boolean {
   return (grammar.confirmExemptForms ?? []).some(
@@ -772,11 +783,27 @@ export function writesUnderGrammar(text: string, grammar: SqlGrammar): boolean {
     return true;
   }
 
-  // A write the statement's own keyword does not report: PostgreSQL's data-modifying
-  // CTE is OPERATED by its SELECT (`WITH x AS (UPDATE … SET …) SELECT * FROM x`), so
-  // this probe stays unanchored deliberately. It reads the statement's CODE rather
-  // than its text, so a read that merely quotes or comments the two words - which
-  // the pattern before it treated as a write - no longer asks for a confirmation.
+  // A write the statement's own keyword does not report. PostgreSQL's data-modifying
+  // CTE is OPERATED by its SELECT (`WITH x AS (DELETE FROM t RETURNING *) SELECT * FROM x`),
+  // so the keyword test above answers for the SELECT and the write sits in the list.
+  // The words that can ride there are `DATA_MODIFYING` in `src/lib/explain/select-prefix.ts`:
+  // INSERT, UPDATE, DELETE and MERGE. UPDATE is the unanchored `UPDATE … SET` pair, which
+  // already asks for that form and for a later statement in a script. DELETE, MERGE and
+  // INSERT count only when the statement leads with WITH, its list can be typed, and the
+  // word sits in that list — before the keyword that operates the statement. A plain
+  // SELECT whose code names one of them does not ask. An unclosed list
+  // (`WITH t AS (DELETE FROM x`) stays silent: the shape cannot be crossed and no dialect
+  // accepts the text. A `#` the dialect-less reader cannot place stays silent too, which
+  // is the pinned reading of `WITH t AS ( #- … ) SELECT … ) DELETE`; naming MySQL makes
+  // the `DELETE` the operative keyword instead. Both probes read CODE (`findCodeWord`),
+  // so a quoted or commented word does not ask. CockroachDB connections are the postgres
+  // type-id and share this grammar, so the same statements ask there too (#1862).
+  if (readLeadingKeyword(text, grammar)?.keyword === "WITH" && reading !== null) {
+    for (const word of CTE_DATA_MODIFYING) {
+      const found = findCodeWord(text, word, 0, grammar);
+      if (found !== null && found.start < reading.start) return true;
+    }
+  }
   const update = findCodeWord(text, "UPDATE", 0, grammar);
   return update !== null && findCodeWord(text, "SET", update.end, grammar) !== null;
 }

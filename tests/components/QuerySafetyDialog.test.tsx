@@ -1511,6 +1511,43 @@ describe("isDangerousQuery", () => {
     expect(isDangerousQuery("WITH moved AS (UPDATE t SET a = 1 RETURNING *) SELECT * FROM moved")).toBe(true);
   });
 
+  /**
+   * `DELETE`, `MERGE` and `INSERT` are the rest of the data-modifying set the
+   * `UPDATE … SET` probe above already covers for `UPDATE` (#1862). They are read
+   * from the statement's code, and only when it leads with `WITH`, so the same
+   * words inside a string or a comment do not ask and a plain `WITH … SELECT` does
+   * not either. CockroachDB is the postgres type-id, so it shares the grammar.
+   */
+  test.each<[string, string]>([
+    ["a DELETE", "WITH d AS (DELETE FROM users RETURNING *) SELECT count(*) FROM d"],
+    [
+      "a MERGE that deletes",
+      "WITH m AS (MERGE INTO users u USING (SELECT 1 id) s ON u.id=s.id WHEN MATCHED THEN DELETE RETURNING u.id) SELECT * FROM m",
+    ],
+    ["an INSERT", "WITH i AS (INSERT INTO users(id) VALUES (1) RETURNING id) SELECT * FROM i"],
+  ])("prompts for a data-modifying CTE that carries %s", (_label, query) => {
+    expect(isDangerousQuery(query, "postgres")).toBe(true);
+  });
+
+  test("prompts for a data-modifying CTE on cockroachdb, which shares the PostgreSQL grammar", () => {
+    expect(isDangerousQuery("WITH d AS (DELETE FROM users RETURNING *) SELECT count(*) FROM d", "postgres")).toBe(true);
+  });
+
+  test.each<[string, string]>([
+    ["DELETE inside a string", "WITH d AS (SELECT 'DELETE FROM users') SELECT count(*) FROM d"],
+    [
+      "MERGE and DELETE inside a comment",
+      "WITH m AS (SELECT 1 /* MERGE INTO users WHEN MATCHED THEN DELETE */) SELECT * FROM m",
+    ],
+    ["INSERT inside a line comment", "WITH i AS (SELECT 1) SELECT * FROM i -- INSERT INTO users VALUES (1)"],
+  ])("does not prompt for a WITH that only names %s", (_label, query) => {
+    expect(isDangerousQuery(query, "postgres")).toBe(false);
+  });
+
+  test("does not prompt for a plain WITH … SELECT", () => {
+    expect(isDangerousQuery("WITH cte AS (SELECT 1) SELECT * FROM cte", "postgres")).toBe(false);
+  });
+
   test("prompts for a destructive statement a CTE list only precedes", () => {
     expect(isDangerousQuery("WITH x AS (SELECT id FROM t) DELETE FROM t USING x WHERE t.id = x.id")).toBe(true);
   });
@@ -1534,32 +1571,29 @@ describe("isDangerousQuery", () => {
    *
    * This is the boundary of #297's rule, which is about text no reader can RESOLVE:
    * here every character was read, and the shape it spells is an incomplete
-   * statement rather than a run hiding what is written inside it. The keyword inside
-   * the unclosed list is a CTE-body write, which the row above pins as not prompting
-   * even when the list DOES close - so the answer is inherited from that gap, not
-   * from the reading stopping early.
+   * statement rather than a run hiding what is written inside it. The same keyword
+   * inside a list that DOES close asks (#1862). This one does not, because the list
+   * cannot be crossed and the probe refuses to guess.
    */
   test("does not prompt when the statement's shape cannot be typed", () => {
     expect(isDangerousQuery("WITH t AS (DELETE FROM x")).toBe(false);
   });
 
   /**
-   * The gaps this predicate does NOT close, pinned so each stays a decision and so
-   * `docs/editor/query-optimization.md` cannot drift from them.
+   * Answers pinned so a regression is silence, and so `docs/editor/query-optimization.md`
+   * cannot drift from them.
    *
-   * The write-inside-a-read probe looks for `UPDATE … SET` only, because widening it
-   * to the other write keywords would make every read whose code names one of them
-   * prompt.
+   * A `DELETE`, `MERGE` or `INSERT` inside a `WITH` whose list can be read asks
+   * (#1862). Those words stay out of the unanchored `UPDATE … SET` pair: widening
+   * that pair would make every read whose code names one of them prompt.
    *
-   * The gap this list used to record beside it - "the whole editor text is read as one
-   * statement, so a destructive statement later in a script is only caught by that same
-   * unanchored probe" - is closed (S1): the predicate now reads the SAME fragments
-   * `/api/db/multi-query` will run, so a later `DROP` is answered by its own fragment's
-   * keyword rather than by luck. The row below is kept, with the answer it now has,
-   * because a regression there is silence on a script's second statement.
+   * The multi-statement rows closed an older gap (S1): the predicate reads the SAME
+   * fragments `/api/db/multi-query` will run, so a later `DROP` is answered by its
+   * own fragment's keyword rather than by luck. A regression there is silence on a
+   * script's second statement.
    */
   test.each<[string, string, boolean]>([
-    ["a DELETE hidden in a CTE body", "WITH gone AS (DELETE FROM t RETURNING *) SELECT * FROM gone", false],
+    ["a DELETE hidden in a CTE body", "WITH gone AS (DELETE FROM t RETURNING *) SELECT * FROM gone", true],
     ["a DROP after a leading SELECT", "SELECT 1; DROP TABLE users", true],
     ["an UPDATE after a leading SELECT", "SELECT 1;\nUPDATE t SET x = 1", true],
   ])("answers %s with %p", (_label, query, expected) => {
