@@ -40,7 +40,7 @@ const MOVED_READERS = [
 // form: a type missing here renders the edit dialog with no tile selected. Keyed by
 // DatabaseType, so adding a provider to the union fails `typecheck` on the missing key
 // instead of silently dropping it from the UI. Set an entry to false only to hide a type
-// on purpose — and say why.
+// on purpose, and say why.
 const PICKER_COVERAGE: Record<DatabaseType, boolean> = {
   postgres: true,
   mysql: true,
