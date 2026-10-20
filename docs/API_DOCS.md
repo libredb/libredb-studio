@@ -439,6 +439,8 @@ Detailed health check for a specific database connection.
 > a document other people build clients against: the route's failure path is
 > `createErrorResponse` (`src/lib/api/errors.ts`) and it never composes a reading.
 
+A body that is not a JSON object answers `400 { "error": "Invalid request body" }`, as on [`POST /api/db/query`](#post-apidbquery).
+
 ---
 
 #### POST /api/db/query
@@ -560,6 +562,13 @@ answers `503 POOL_EXHAUSTED`.
 A `sql` that is present but not a string (a number, `0` included, an object, an array, `true` or `false`) answers `400 { "error": "sql must be a string" }` on every connection type, before any provider resolves or any connection opens.
 `POST /api/db/multi-query` and the `query` action of `POST /api/db/transaction` answer it the same way.
 A missing, `null` or empty `sql` keeps its own answer: `400 { "error": "Connection and query are required" }` here and on `POST /api/db/multi-query`, and `400 { "error": "SQL query is required for transaction query" }` on the transaction route.
+
+**A body that is not a JSON object:**
+
+A body that is not JSON, or JSON that is not an object (`null`, an array, a number, a string, a boolean), answers `400 { "error": "Invalid request body" }` before any connection resolves.
+The same answer comes from `POST /api/db/multi-query`, `/api/db/transaction`, `/api/db/cancel`, `/api/db/profile`, `/api/db/health`, `/api/db/pool-stats` and both maintenance routes.
+`POST /api/db/disconnect` and `POST /api/db/test-connection` answer it in their own envelope, `400 { "success": false, "error": "Invalid request body" }`.
+`POST /api/db/monitoring` answers JSON that is not an object the same way, and keeps `400 { "error": "Invalid JSON in request body" }` for text that is not JSON.
 
 **A connection type's console text bound:**
 
