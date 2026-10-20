@@ -198,29 +198,29 @@ test("Review Focus 2: a 10 MB cell renders, the grid stays responsive, and the n
   await expect(rowCount(page)).toHaveText(/^2 rows/);
 });
 
-/** Posts runStarted and a runSucceeded whose one page holds `rows` rows { n, text: "row n" }, built in the page. */
-async function postGeneratedRun(page: Page, runId: string, rows: number): Promise<void> {
+/**
+ * Posts runStarted and a runSucceeded whose page holds `rows` rows { n, text: "row n" }, built in the page; from an
+ * `offset`, posts pageStarted and a pageAppended instead, the rows numbered on from it.
+ */
+async function postGeneratedRun(page: Page, runId: string, rows: number, offset = 0, hasMore = false): Promise<void> {
   await page.evaluate(
-    ({ runId, grid, rows }) => {
-      window.postMessage({ v: 1, type: "runStarted", runId, statement: "select n, text from t", startedAt: 1 }, "*");
-      window.postMessage(
-        {
-          v: 1,
-          type: "runSucceeded",
-          runId,
-          page: {
-            rows: Array.from({ length: rows }, (_, i) => ({ n: i + 1, text: `row ${i + 1}` })),
-            fields: ["n", "text"],
-            rowCount: rows,
-            executionTime: 20,
-            pagination: { limit: rows, offset: 0, hasMore: false, totalReturned: rows, wasLimited: false },
-          },
-          grid,
-        },
-        "*",
-      );
+    ({ runId, grid, rows, offset, hasMore }) => {
+      const generated = {
+        rows: Array.from({ length: rows }, (_, i) => ({ n: offset + i + 1, text: `row ${offset + i + 1}` })),
+        fields: ["n", "text"],
+        rowCount: rows,
+        executionTime: 20,
+        pagination: { limit: rows, offset, hasMore, totalReturned: rows, wasLimited: hasMore },
+      };
+      if (offset === 0) {
+        window.postMessage({ v: 1, type: "runStarted", runId, statement: "select n, text from t", startedAt: 1 }, "*");
+        window.postMessage({ v: 1, type: "runSucceeded", runId, page: generated, grid }, "*");
+      } else {
+        window.postMessage({ v: 1, type: "pageStarted", runId }, "*");
+        window.postMessage({ v: 1, type: "pageAppended", runId, page: generated }, "*");
+      }
     },
-    { runId, grid: POSTGRES_GRID, rows },
+    { runId, grid: POSTGRES_GRID, rows, offset, hasMore },
   );
 }
 
@@ -276,6 +276,39 @@ test("the grid fills the view and scrolls itself: its rows are virtualized, its 
   const withNotice = await measure();
   expect(withNotice.gridBottom).toBeLessThanOrEqual(800);
   expect(withNotice.documentHeight).toBeLessThanOrEqual(800);
+});
+
+test("criterion 13 in the page: a rebuilt document's replay restores a scroll position inside a later page", async ({
+  page,
+}) => {
+  const view = await openResultsView(page);
+  await view.post(init());
+  const grid = desktopGrid(page);
+  const replay = async () => {
+    await postGeneratedRun(page, RUN_A, 100, 0, true);
+    await postGeneratedRun(page, RUN_A, 100, 100);
+    await expect(rowCount(page)).toHaveText(/^200 rows/);
+  };
+  await postGeneratedRun(page, RUN_A, 100, 0, true);
+  await expect(rowCount(page)).toHaveText(/^100 rows/);
+  const firstPageEnd = await grid.evaluate((element) => element.scrollHeight - element.clientHeight);
+  await postGeneratedRun(page, RUN_A, 100, 100);
+  await expect(rowCount(page)).toHaveText(/^200 rows/);
+  const top = await grid.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+    return element.scrollTop;
+  });
+  expect(top).toBeGreaterThan(firstPageEnd);
+  await expect
+    .poll(() => view.state())
+    .toEqual({ v: 1, maskingEnabled: false, scroll: { runId: RUN_A, top, left: 0 } });
+
+  // VS Code rebuilds the document when the Panel collapses or switches tabs; the host answers ready with the replay,
+  // the first page in runSucceeded and the next in pageAppended.
+  const rebuilt = await view.reload();
+  await rebuilt.post(init());
+  await replay();
+  await expect.poll(() => grid.evaluate((element) => element.scrollTop)).toBe(top);
 });
 
 test("a failure taller than the view scrolls the page and keeps its first line in reach", async ({ page }) => {

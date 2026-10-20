@@ -26,6 +26,8 @@ type View<K extends ResultsView["kind"]> = Extract<ResultsView, { kind: K }>;
 const DESKTOP_GRID = "[data-desktop-grid]";
 /** The scroll is saved this long after the last scroll event. */
 const SCROLL_SAVE_DELAY_MS = 200;
+/** What the person does in the view that ends a scroll restore still waiting for its rows. */
+const PERSON_INPUT = ["pointerdown", "wheel", "keydown"] as const;
 
 /** Shows DISPLAY_FAILED_TITLE with the error's message and posts reportError with it. */
 export class GridErrorBoundary extends Component<{ children: ReactNode }, { message: string | null }> {
@@ -130,18 +132,40 @@ interface RowsProps {
   onToggleMasking: () => void;
 }
 
-/** Mounted once per run (keyed by runId), so the scroll is restored once and a new run never inherits it. */
+/**
+ * Mounted once per run (keyed by runId), so a new run never inherits an old scroll. The saved scroll is read once, at
+ * mount; a replay brings the first page in runSucceeded and each later one in pageAppended, so a position inside a
+ * later page is reachable only once that page arrives. The restore is therefore retried as rows arrive, until the grid
+ * reaches the saved position or the person acts in the view.
+ */
 function RowsView({ view, store, maskingEnabled, onToggleMasking }: RowsProps) {
   const container = useRef<HTMLDivElement>(null);
   const { runId } = view;
+  const [saved] = useState(() => store.viewState().scroll);
+  const restoring = useRef(true);
 
+  // After every render while restoring: each page the replay appends arrives as a render with more rows.
   useEffect(() => {
-    const saved = store.viewState().scroll;
     const grid = container.current?.querySelector<HTMLElement>(DESKTOP_GRID);
-    if (!saved || saved.runId !== runId || !grid) return;
+    if (!restoring.current || !saved || saved.runId !== runId || !grid) return;
     grid.scrollTop = saved.top;
     grid.scrollLeft = saved.left;
-  }, [store, runId]);
+    if (Math.abs(grid.scrollTop - saved.top) < 1 && Math.abs(grid.scrollLeft - saved.left) < 1) {
+      restoring.current = false;
+    }
+  });
+
+  useEffect(() => {
+    const root = container.current;
+    if (!root) return;
+    const stop = () => {
+      restoring.current = false;
+    };
+    for (const type of PERSON_INPUT) root.addEventListener(type, stop, true);
+    return () => {
+      for (const type of PERSON_INPUT) root.removeEventListener(type, stop, true);
+    };
+  }, []);
 
   useEffect(() => {
     const root = container.current;

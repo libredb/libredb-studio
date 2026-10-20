@@ -376,6 +376,57 @@ describe("the results app", () => {
     assert.equal(desktopGrid().scrollTop, 0);
   });
 
+  it("retries the restore as a replay's pages arrive, until the grid reaches the saved position or the person acts", () => {
+    // happy-dom has no layout, so scrollTop is clamped here as a grid holding only its first page clamps it.
+    let scrollMax = 300;
+    const tops = new WeakMap<object, number>();
+    const own = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollTop");
+    Object.defineProperty(HTMLElement.prototype, "scrollTop", {
+      configurable: true,
+      get() {
+        return tops.get(this) ?? 0;
+      },
+      set(value: number) {
+        tops.set(this, Math.min(value, scrollMax));
+      },
+    });
+    const rows = Array.from({ length: 40 }, (_, n) => ({ n }));
+    const firstPage = page(rows, { pagination: pagination(40, true) });
+    const appended: HostToWebview[] = [
+      { v: 1, type: "pageStarted", runId: A },
+      { v: 1, type: "pageAppended", runId: A, page: page(rows) },
+    ];
+    try {
+      stored = { v: 1, maskingEnabled: false, scroll: { runId: A, top: 500, left: 0 } };
+      const store = mount();
+      receive(store, started(), succeeded(A, firstPage));
+      assert.equal(desktopGrid().scrollTop, 300);
+      scrollMax = 1000;
+      receive(store, ...appended);
+      assert.equal(desktopGrid().scrollTop, 500);
+      // Reached, so a later page leaves the grid where the person put it.
+      desktopGrid().scrollTop = 50;
+      receive(store, ...appended);
+      assert.equal(desktopGrid().scrollTop, 50);
+
+      cleanup();
+      connectHost(undefined);
+      scrollMax = 300;
+      const rebuilt = mount();
+      receive(rebuilt, started(), succeeded(A, firstPage));
+      assert.equal(desktopGrid().scrollTop, 300);
+      // The person scrolls before the saved position can be reached: their scroll wins.
+      fireEvent.wheel(desktopGrid());
+      desktopGrid().scrollTop = 20;
+      scrollMax = 1000;
+      receive(rebuilt, ...appended);
+      assert.equal(desktopGrid().scrollTop, 20);
+    } finally {
+      if (own) Object.defineProperty(HTMLElement.prototype, "scrollTop", own);
+      else delete (HTMLElement.prototype as unknown as Record<string, unknown>).scrollTop;
+    }
+  });
+
   it("puts the theme kind on <html>", () => {
     const store = mount();
     receive(store, { v: 1, type: "init", theme: "highContrast" });
