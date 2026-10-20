@@ -3226,11 +3226,11 @@ Found 2026-10-12 while designing the RabbitMQ provider.
 
 ### D315. The API replaces every provider's timeout sentence with one shared sentence
 
-`createErrorResponse` in `src/lib/api/errors.ts` answers every `TimeoutError` with "Query timed out. Please try a simpler query or increase timeout.", so a provider's phase-specific sentence, such as RabbitMQ's "No answer from {host}:{port} within {n} s.", never reaches the user; 19 provider files write such sentences today.
+`createErrorResponse` in `src/lib/api/errors.ts` answers every `TimeoutError` through `databaseErrorBody` in `src/lib/api/error-body.ts`, whose `TIMEOUT_SENTENCE` is "Query timed out. Please try a simpler query or increase timeout.", so a provider's phase-specific sentence, such as RabbitMQ's "No answer from {host}:{port} within {n} s.", never reaches the user; 19 provider files write such sentences today.
 
 Found 2026-10-12 while designing the RabbitMQ provider.
 
-**Done when:** the route passes a provider's own `TimeoutError` message through for every provider, in a shared PR with a route test per class.
+**Done when:** `databaseErrorBody` passes a provider's own `TimeoutError` message through for every provider, in a shared PR with a route test per class.
 
 ### D316. The package does not export the object source part predicates
 
@@ -6609,13 +6609,14 @@ the reason, distinct from a missing token, with the row 1.4 residual in `docs/SE
 
 ### H14. A 500 hands the caller the raw error message, including a storage database address
 
-The generic branch at the end of `createErrorResponse()` in `src/lib/api/errors.ts` returns `error.message` verbatim for any error it does not classify.
+The generic branch at the end of `createErrorResponse()` in `src/lib/api/errors.ts` answers with `internalErrorBody` in `src/lib/api/error-body.ts`, which returns `error.message` verbatim for any error it does not classify.
+`internalErrorBody` is the shared body every caller of `error-body.ts` answers an unclassified error with, so its fix covers each of them, not only the route.
 With `STORAGE_PROVIDER=postgres` and the database unreachable, `POST /api/auth/login` and the account routes answer `{"error":"connect ECONNREFUSED 127.0.0.1:55432"}` (measured against a local container), which tells an unauthenticated caller the internal address of the store.
 Found by the red-team pass on #1122, where the account registry made the login route depend on the store; the branch itself predates that PR and serves every route.
 
 Not fixed there because the branch is shared: some routes rely on the message reaching the caller, and changing it is a behaviour change across the API surface that needs its own audit of which errors are meant to be shown.
 
-**Done when:** an unclassified error answers a fixed message with its detail in the log only, each route that must show a driver's own message classifies that error first, and a test pins that an `ECONNREFUSED` from the store does not reach the response body.
+**Done when:** `internalErrorBody` answers an unclassified error with a fixed message and its detail in the log only, each route that must show a driver's own message classifies that error first, and a test pins that an `ECONNREFUSED` from the store does not reach the response body.
 
 ---
 
