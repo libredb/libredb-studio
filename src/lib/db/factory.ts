@@ -17,8 +17,8 @@ import type { TunnelInfo } from "@/lib/ssh/tunnel";
 import { readSecret } from "@/lib/storage/encryption";
 import { providerCacheKey, providerOwner } from "./provider-cache-key";
 import { registerOwnerRemoval } from "./owner-removal";
-import { READ_ONLY_ENFORCED, READS_FILE_ACCESS_POSTURE } from "./compatibility";
-import { TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
+import { EXTERNAL_DATABASE_TYPES, READ_ONLY_ENFORCED, READS_FILE_ACCESS_POSTURE } from "./compatibility";
+import { TUNNEL_FAR_END, type DatabaseType, type WithTunnelFarEnd } from "@/lib/types";
 import { logger } from "@/lib/logger";
 import { runShutdownHooks } from "@/lib/shutdown";
 import * as path from "path";
@@ -167,6 +167,46 @@ function assertOwnerPoolHonoured(connection: DatabaseConnection, execution: Prov
       connection.type,
     );
   }
+}
+
+// ============================================================================
+// Enabled providers (LIBREDB_ENABLED_PROVIDERS)
+// ============================================================================
+
+/** Every connection type id: the external engines plus the embedded LibreDB store. */
+const CONNECTION_TYPE_IDS: ReadonlySet<string> = new Set<string>([...EXTERNAL_DATABASE_TYPES, "libredb"]);
+
+/**
+ * The connection types this server may open: `LIBREDB_ENABLED_PROVIDERS` as a comma list, trimmed, with empty
+ * entries dropped and each type kept once in first-seen order, or `null` when the variable is unset or blank, which
+ * enables every provider. The VS Code extension is the one channel that sets it, in its backend process; the web app,
+ * Docker, Helm, npx and the desktop launchers leave it unset. Read on every call, never cached.
+ *
+ * @throws Error naming the entry when an entry is not a connection type id, or when a set value lists none.
+ */
+export function enabledProviderTypes(): readonly DatabaseType[] | null {
+  const raw = process.env.LIBREDB_ENABLED_PROVIDERS;
+  if (raw === undefined || raw.trim() === "") return null;
+  const entries = [
+    ...new Set(
+      raw
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter((entry) => entry !== ""),
+    ),
+  ];
+  if (entries.length === 0) {
+    throw new Error(
+      "LIBREDB_ENABLED_PROVIDERS is set but lists no connection type id. Leave it unset to enable every provider.",
+    );
+  }
+  const unknown = entries.find((entry) => !CONNECTION_TYPE_IDS.has(entry));
+  if (unknown !== undefined) {
+    throw new Error(
+      `LIBREDB_ENABLED_PROVIDERS names ${JSON.stringify(unknown)}, which is not a connection type id. List type ids such as postgres, separated by commas.`,
+    );
+  }
+  return entries as DatabaseType[];
 }
 
 export async function createDatabaseProvider(
