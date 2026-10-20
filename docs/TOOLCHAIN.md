@@ -530,6 +530,7 @@ The root's packages (React, the drivers) resolve from the root's `node_modules`,
 `@vscode/test-cli` runs Mocha only, so one framework serves the unit, integration and e2e legs.
 tsx loads the TypeScript and honours `tsconfig.test.json`'s `paths`, which send `@/` to the root's `src/` and `vscode` to `test/fakes/vscode.ts`; `test/setup/register.cjs` points tsx at that file.
 Every Mocha configuration sets `forbid-only` (`.mocharc.json`, `test/integration/.mocharc.json` and `.vscode-test.mjs`), and `SCAN_ROOTS` in `scripts/only-check.mjs` reads `vscode-extension/test`, so `bun run lint` refuses a focused test there too.
+`.vscode-test.mjs` also sets `failZero`: `@vscode/test-cli` hands Mocha an empty file list without an error, so an e2e glob that matches no file, a moved `test/e2e/smoke/` for one, would otherwise pass with nothing run.
 
 ### The extension's own 100% gate
 

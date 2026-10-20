@@ -16,5 +16,6 @@ export default builds.map((version) => ({
   label: `vscode-${version}`,
   version,
   files,
-  mocha: { ui: "bdd", forbidOnly: true, timeout: 60000 },
+  // failZero: test-cli hands Mocha an empty file list without an error, so a glob that matches nothing would pass.
+  mocha: { ui: "bdd", forbidOnly: true, failZero: true, timeout: 60000 },
 }));
