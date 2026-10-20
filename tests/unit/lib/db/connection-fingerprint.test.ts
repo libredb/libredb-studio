@@ -285,7 +285,7 @@ describe("connectionFingerprint", () => {
 const KEYOF_CONNECTION_READERS: { identifier: string; file: string }[] = [
   { identifier: "FIELD_OWNERSHIP", file: "src/hooks/use-connection-form.ts" },
   { identifier: "CONNECTION_RELEVANCE", file: "src/hooks/use-connection-payload.ts" },
-  { identifier: "CONNECTION_FIELDS", file: "src/lib/storage/connection-secrets.ts" },
+  { identifier: "CONNECTION_FIELDS", file: "src/lib/storage/secret-fields.ts" },
 ];
 
 describe("the maps the WithTunnelFarEnd docblock calls exhaustive over keyof DatabaseConnection", () => {
