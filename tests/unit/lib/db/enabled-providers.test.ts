@@ -119,3 +119,49 @@ describe("createDatabaseProvider under a set list", () => {
     expect(provider).toBeDefined();
   });
 });
+
+const tunnelled = (type: string) =>
+  conn(type, {
+    sshTunnel: {
+      enabled: true,
+      host: "bastion.internal",
+      port: 22,
+      username: "u",
+      authMethod: "password",
+      password: "p",
+    },
+  });
+const REFUSAL = "The oracle provider is not available in this distribution of LibreDB Studio.";
+
+describe("the cached and tunnelled entry points refuse before the cache and the tunnel", () => {
+  test("getOrCreateProvider", async () => {
+    process.env.LIBREDB_ENABLED_PROVIDERS = VSCODE_LIST;
+    await expect(getOrCreateProvider(tunnelled("oracle"))).rejects.toThrow(REFUSAL);
+    expect(createSSHTunnel).not.toHaveBeenCalled();
+    expect(evaluated).not.toContain("oracle");
+  });
+
+  test("acquireExecutionProfileProvider", async () => {
+    process.env.LIBREDB_ENABLED_PROVIDERS = VSCODE_LIST;
+    await expect(acquireExecutionProfileProvider(tunnelled("oracle"), "agent-read-only")).rejects.toThrow(REFUSAL);
+    expect(createSSHTunnel).not.toHaveBeenCalled();
+    expect(evaluated).not.toContain("oracle");
+  });
+
+  test("withOneShotTunnel", async () => {
+    process.env.LIBREDB_ENABLED_PROVIDERS = VSCODE_LIST;
+    const run = mock(async () => "ran");
+    await expect(withOneShotTunnel(tunnelled("oracle"), run)).rejects.toThrow(REFUSAL);
+    expect(run).not.toHaveBeenCalled();
+    expect(createSSHTunnel).not.toHaveBeenCalled();
+  });
+});
+
+// Last in the file: it loads the sqlite module, which no later case could then prove unloaded.
+describe("unset changes nothing", () => {
+  test("an excluded type of the VS Code list is built when the variable is unset", async () => {
+    const provider = await createDatabaseProvider(conn("sqlite", { database: ":memory:" }));
+    expect(provider).toBeDefined();
+    expect(evaluated).toContain("sqlite");
+  });
+});

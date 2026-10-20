@@ -131,8 +131,9 @@ function assertConnectionIdPresent(connection: DatabaseConnection): void {
  * try that closes a fresh one, so a refusal raised only inside the factory would dial the bastion and
  * leave the pooled tunnel open. Ahead of the lookup too, because a mode that is not a boolean keys as
  * `read-write` (`providerCacheKey`), so the lookup would hand it the connection's cached read-write
- * provider without refusing it. Exported for the tests; the published factory's three entry points
- * raise it (`src/exports/providers.ts`).
+ * provider without refusing it. `assertProviderEnabled` stands beside it in all four places for the same
+ * reason: a type `LIBREDB_ENABLED_PROVIDERS` leaves out must never reach a cache lookup or dial a bastion.
+ * Exported for the tests; the published factory's three entry points raise it (`src/exports/providers.ts`).
  */
 export function assertReadOnlyHonoured(connection: DatabaseConnection): void {
   const readOnly: unknown = connection.readOnly;
@@ -655,6 +656,7 @@ export async function withOneShotTunnel<T>(
   connection: DatabaseConnection,
   run: (effective: DatabaseConnection) => Promise<T>,
 ): Promise<T> {
+  assertProviderEnabled(connection);
   assertReadOnlyHonoured(connection);
   if (!connection.sshTunnel?.enabled || !connection.host || !connection.port) {
     return await run(connection);
@@ -1157,6 +1159,7 @@ export async function getOrCreateProvider(
   // refusal shares the place: the cache key length-frames connection.id, so a missing id must be
   // refused before the key is computed, as the DatabaseConfigError the provider would have raised (#1539).
   assertConnectionIdPresent(connection);
+  assertProviderEnabled(connection);
   assertReadOnlyHonoured(connection);
   assertOwnerPoolHonoured(connection, execution);
   // The writable cache never holds a read-only handle, and its key frames no such mode for an
@@ -1519,6 +1522,7 @@ export async function acquireExecutionProfileProvider(
   // First, ahead of the profiled cache lookup and of any tunnel (#1089): see assertReadOnlyHonoured.
   // The id refusal shares the place for the same reason: the profiled key frames connection.id (#1539).
   assertConnectionIdPresent(connection);
+  assertProviderEnabled(connection);
   assertReadOnlyHonoured(connection);
   assertOwnerPoolHonoured(connection, requester);
   // Refuses an unknown profile ahead of the cache key, which frames the profile.
