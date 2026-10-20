@@ -135,9 +135,35 @@ describe("withSecretFieldValues refuses a path it must not write", () => {
     );
   });
 
-  test("every path is checked before any is written", () => {
-    expect(() => withSecretFieldValues(bare, { password: "x", "ssl.clientKey": "x" })).toThrow();
-    expect(bare).not.toHaveProperty("password");
+  test("a container that is not an object, as a hand-edited settings entry can hold", () => {
+    const notObjects = [
+      { ...bare, ssl: "require" },
+      { ...bare, ssl: ["ck"] },
+      { ...bare, sshTunnel: true },
+      { ...bare, sshTunnel: null },
+    ] as unknown as SecretFieldRecord[];
+    for (const connection of notObjects) {
+      const container = "ssl" in connection ? "ssl" : "sshTunnel";
+      const path = container === "ssl" ? "ssl.clientKey" : "sshTunnel.password";
+      expect(() => withSecretFieldValues(connection, { [path]: "x" })).toThrow(
+        `"${path}" belongs in the connection's ${container} object, which this connection does not have.`,
+      );
+    }
+  });
+
+  test("a container no path writes into is left exactly as it was", () => {
+    const connection = { ...bare, ssl: "require" } as unknown as SecretFieldRecord;
+    expect(withSecretFieldValues(connection, { password: "x" })).toEqual({
+      ...bare,
+      ssl: "require",
+      password: "x",
+    } as unknown as SecretFieldRecord);
+  });
+
+  test("the input is unchanged after a throw", () => {
+    const connection = { ...bare };
+    expect(() => withSecretFieldValues(connection, { password: "x", "ssl.clientKey": "x" })).toThrow();
+    expect(connection).toEqual(bare);
   });
 });
 

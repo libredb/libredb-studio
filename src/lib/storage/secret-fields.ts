@@ -286,35 +286,44 @@ const SECRET_PATHS = new Map<string, { container?: "ssl" | "sshTunnel"; key: str
   ...SSH_TUNNEL_SECRET_KEYS.map((key) => [`sshTunnel.${key}`, { container: "sshTunnel", key }] as const),
 ]);
 
+/** A container a path can be written into: an object, and not an array. */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /**
  * A copy of `connection` with each value of `values` written at its path, the inverse of
- * `secretFieldValues`. Every path is checked before any is written, and the call throws on a path
- * the classification does not call secret (a public field, a container, `__proto__`) or on one
- * whose container the connection does not have: writing anything else would let a stored secret
- * overwrite a field nobody stored as one. The thrown message names the path, never the value.
- * The input is not changed; the record and each container written to are copies.
+ * `secretFieldValues`. The call throws on a path the classification does not call secret (a public
+ * field, a container, `__proto__`) or on one whose container the connection does not have as an
+ * object, which a hand-edited settings entry can hold as a string or a boolean: writing anything
+ * else would let a stored secret overwrite a field nobody stored as one. The thrown message names
+ * the path, never the value. The input is not changed; the record and each container written to
+ * are copies, and a container no path writes into is left as it was.
  */
 export function withSecretFieldValues<T extends SecretFieldRecord>(
   connection: T,
   values: Readonly<Record<string, string>>,
 ): T {
-  const writes = Object.keys(values).map((path) => {
+  const copy: Record<string, unknown> = { ...connection };
+  const copied = new Set<string>();
+  for (const path of Object.keys(values)) {
     const target = SECRET_PATHS.get(path);
     if (!target) throw new Error(`"${path}" is not a secret field of a connection.`);
-    if (target.container && !connection[target.container]) {
-      throw new Error(
-        `"${path}" belongs in the connection's ${target.container} object, which this connection does not have.`,
-      );
+    let record = copy;
+    if (target.container) {
+      const container = copy[target.container];
+      if (!isPlainObject(container)) {
+        throw new Error(
+          `"${path}" belongs in the connection's ${target.container} object, which this connection does not have.`,
+        );
+      }
+      if (!copied.has(target.container)) {
+        copy[target.container] = { ...container };
+        copied.add(target.container);
+      }
+      record = copy[target.container] as Record<string, unknown>;
     }
-    return { container: target.container, key: target.key, value: values[path] };
-  });
-
-  const copy: Record<string, unknown> = { ...connection };
-  if (copy.ssl) copy.ssl = { ...(copy.ssl as Record<string, unknown>) };
-  if (copy.sshTunnel) copy.sshTunnel = { ...(copy.sshTunnel as Record<string, unknown>) };
-  for (const { container, key, value } of writes) {
-    const target = container ? (copy[container] as Record<string, unknown>) : copy;
-    target[key] = value;
+    record[target.key] = values[path];
   }
   return copy as unknown as T;
 }
