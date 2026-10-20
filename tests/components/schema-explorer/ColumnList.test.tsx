@@ -173,3 +173,30 @@ describe("ColumnList and a column the engine only inferred from sampled data", (
     expect(getByText("KEYWORD").getAttribute("title")).toBe("KEYWORD");
   });
 });
+
+describe("ColumnList and EXCLUDE constraints (#1778)", () => {
+  afterEach(cleanup);
+
+  const exclusion = [
+    {
+      name: "reservations_no_overlapping_active",
+      definition: "EXCLUDE USING gist (table_id WITH =, tsrange(starts_at, ends_at, '[)'::text) WITH &&)",
+    },
+  ];
+
+  test("shows the constraint name, with its definition as a muted second line", () => {
+    const { getByText, getByTitle } = render(
+      <ColumnList columns={columnsWithPrimary} indexes={[]} exclusionConstraints={exclusion} />,
+    );
+    expect(getByText("Exclusion constraints")).toBeTruthy();
+    expect(getByText("reservations_no_overlapping_active")).toBeTruthy();
+    // Mobile has no title tooltip, so the definition is a visible truncated line under the name.
+    expect(getByText(exclusion[0].definition)).toBeTruthy();
+    expect(getByTitle(exclusion[0].definition)).toBeTruthy();
+  });
+
+  test("draws no section when there are none", () => {
+    const { queryByText } = render(<ColumnList columns={columnsWithPrimary} indexes={[]} />);
+    expect(queryByText("Exclusion constraints")).toBeNull();
+  });
+});

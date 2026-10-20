@@ -20,7 +20,7 @@ import { declaredKinds, findKind, kindAcceptsRowWrites } from "@/lib/db/object-k
 import { pathKey } from "@/lib/db/object-path";
 import type { DatabaseObject, ObjectDetail, ObjectReadRange, ProviderCapabilities } from "@/lib/db/types";
 import { formatBytes } from "@/lib/db/utils/pool-manager";
-import type { ColumnSchema, ForeignKeySchema, IndexSchema } from "@/lib/types";
+import type { ColumnSchema, ExclusionConstraintSchema, ForeignKeySchema, IndexSchema } from "@/lib/types";
 
 export interface DetailedObject {
   /** The display label, which is NOT required to equal the last path segment. */
@@ -32,6 +32,7 @@ export interface DetailedObject {
   readonly columns: readonly ColumnSchema[];
   readonly indexes: readonly IndexSchema[] | { readonly unavailable: string };
   readonly foreignKeys?: readonly ForeignKeySchema[];
+  readonly exclusionConstraints?: readonly ExclusionConstraintSchema[];
   /** Only where the engine counts. */
   readonly rowCount?: number;
   /** The engine's own rendering of the object's size, where it publishes one. */
@@ -166,6 +167,7 @@ export function detailedObjects(
       columns: detail?.columns ?? [],
       indexes: detail?.indexes ?? [],
       foreignKeys: detail?.foreignKeys ?? [],
+      ...(detail?.exclusionConstraints?.length ? { exclusionConstraints: detail.exclusionConstraints } : {}),
       ...(object.rowCount === undefined ? {} : { rowCount: object.rowCount }),
       ...(object.sizeBytes === undefined ? {} : { size: formatBytes(object.sizeBytes) }),
       ...(object.readRanges === undefined ? {} : { readRanges: object.readRanges }),

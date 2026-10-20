@@ -18,7 +18,7 @@ import {
   kindHasColumns,
 } from "@/lib/db/object-kinds";
 import type { Container, DatabaseObject, KindCount, ObjectDetail, ObjectKindSpec } from "@/lib/db/types";
-import type { ColumnSchema } from "@/lib/types";
+import type { ColumnSchema, ExclusionConstraintSchema } from "@/lib/types";
 
 /**
  * One visible row.
@@ -36,7 +36,7 @@ export interface TreeRowModel {
    * A `group` row is a folder of kind folders (`ObjectKindSpec.group`): it opens and closes, reads
    * nothing, carries no badge and offers no menu. Its id sits outside `pathKey`'s image, see `groupRowId`.
    */
-  readonly kind: "container" | "group" | "folder" | "object" | "column";
+  readonly kind: "container" | "group" | "folder" | "object" | "column" | "constraint";
   /**
    * What a person reads. A container's own name, the group's label for a group, the engine's plural for a folder,
    * `DatabaseObject.name` for an object, which is NOT the last path segment (an
@@ -104,6 +104,11 @@ export interface TreeRowModel {
    * itself instead.
    */
   readonly column?: ColumnSchema;
+  /**
+   * The EXCLUDE constraint this row IS, on a constraint row and nowhere else (#1778). Like a column
+   * row it addresses nothing a listing named, so it carries no kind id and has no menu.
+   */
+  readonly constraint?: ExclusionConstraintSchema;
   /**
    * The half-open range of `label` that a filter matched, on a filtered OBJECT row and nowhere else.
    *
@@ -622,6 +627,44 @@ function appendColumns(
 ): void {
   const columns = state.details[objectId]?.columns ?? [];
   columns.forEach((column, index) => appendColumn(rows, object, column, objectDepth + 1, columns.length, index + 1));
+  // The constraints follow the columns as a second sibling group, so each group's own
+  // `aria-setsize` still describes that group.
+  const constraints = state.details[objectId]?.exclusionConstraints ?? [];
+  constraints.forEach((constraint, index) =>
+    appendConstraint(rows, object, constraint, objectDepth + 1, constraints.length, index + 1),
+  );
+}
+
+/**
+ * A constraint row's id. It reuses the column prefix's reasoning: `%` followed by anything but
+ * the two `pathKey` openers cannot equal a container, folder or object id, and a different word
+ * after it keeps a constraint apart from a column that carries the same name.
+ */
+const CONSTRAINT_ROW_PREFIX = "constraint%3A";
+
+function constraintRowId(object: DatabaseObject, constraintName: string): string {
+  return `${CONSTRAINT_ROW_PREFIX}${pathKey([...object.path, object.kind, constraintName])}`;
+}
+
+/** A constraint row is a leaf with no menu: its definition is the tooltip, as a column's type is. */
+function appendConstraint(
+  rows: TreeRowModel[],
+  object: DatabaseObject,
+  constraint: ExclusionConstraintSchema,
+  depth: number,
+  setSize: number,
+  posInSet: number,
+): void {
+  rows.push({
+    id: constraintRowId(object, constraint.name),
+    kind: "constraint",
+    label: constraint.name,
+    depth,
+    setSize,
+    posInSet,
+    path: [...object.path, constraint.name],
+    constraint,
+  });
 }
 
 /** A column row is a leaf in every sense: no `expanded`, no badge, no kind id, no menu. */

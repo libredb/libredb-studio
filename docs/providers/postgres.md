@@ -579,6 +579,18 @@ one address. The path builder reads this off the ROW - a `parent` column adds a 
 `identity` column replaces the last one - so the three listings share one rule and no code branches
 on a kind id.
 
+**`EXCLUDE` constraints are listed beside the indexes (#1778).** The GiST index that backs an exclusion
+constraint was already listed, but the constraint itself, which is the rule a person is looking for, was
+not. `CTE_EXCLUDE_INFO` reads `pg_constraint` where `contype = 'x'` and takes the definition from
+`pg_get_constraintdef(oid)`, so the text is PostgreSQL's own rendering, `WHERE` predicate included. It is
+joined into both `describeObject()` and `describeObjects()` and surfaces as the optional
+`exclusionConstraints` (`{ name, definition }`) on `ObjectDetail` and `DetailedObject`; a table with none
+carries no key. The desktop tree draws it as a row under the table's columns, marked `EXCLUDE`, and the mobile
+schema list as an "Exclusion constraints" group, each with the definition as the tooltip. An engine that refuses `pg_constraint` or `pg_get_constraintdef()` is retried with
+the CTE emptied, like `fk_info`, so the list is absent there and every other column still arrives.
+Verified against PostgreSQL through PGlite with `EXCLUDE USING gist (table_id WITH =, tsrange(starts_at,
+ends_at, '[)') WITH &&) WHERE (...)`: both reads return the constraint, and a table without one returns none.
+
 **`describeObject()` takes the kind, and branches on it rather than on the name.** Only the kinds
 resolved in `pg_class` have columns, indexes or foreign keys, so a routine and a trigger answer three
 empty lists with no round trip. That was already the OUTPUT before the kind was passed, but by
@@ -1859,8 +1871,8 @@ Five more methods answer the container-aware object model (#789) and are documen
 | `listContainers()` | `CONTAINERS_SQL` | the schemas, through the same exclusion set as the three above, with the session's own marked from `current_schema()`; on a server-level connection the databases first, then one database's schemas ([§3.1.4](#314-what-the-object-surface-declares-and-which-catalog-answers-for-it)) |
 | `countObjects(container)` | `COUNTS_SQL` | one `KindCount` per declared kind, seeded at `{ count: 0 }` |
 | `listObjects(container, kind)` | `LIST_RELATIONS_SQL[kind]`, `LIST_ROUTINES_SQL`, `LIST_TRIGGERS_SQL` | names, plus `reltuples` and size for relations |
-| `describeObject(path, kind)` | `OBJECT_DETAIL_SQL` | columns, indexes and foreign keys for one object; the KIND decides whether there is a relation to read, so nothing infers it from the name |
-| `describeObjects(container, kind, limit?)` | `BULK_DETAIL_SQL[kind]`, `BULK_DETAIL_SQL_BOUNDED[kind]` | the same four aggregates for EVERY object of that kind in that container, in one round trip, keyed by path, with `truncated` when the caller's `limit` bit |
+| `describeObject(path, kind)` | `OBJECT_DETAIL_SQL` | columns, indexes, foreign keys and `EXCLUDE` constraints for one object; the KIND decides whether there is a relation to read, so nothing infers it from the name |
+| `describeObjects(container, kind, limit?)` | `BULK_DETAIL_SQL[kind]`, `BULK_DETAIL_SQL_BOUNDED[kind]` | the same five aggregates for EVERY object of that kind in that container, in one round trip, keyed by path, with `truncated` when the caller's `limit` bit |
 
 ---
 

@@ -132,6 +132,16 @@ describe("detailedObjects", () => {
     ]);
   });
 
+  test("EXCLUDE constraints are carried when the detail has them and absent when it has none (#1778)", () => {
+    const exclusion = { name: "no_overlap", definition: "EXCLUDE USING gist (table_id WITH =)" };
+    const [withOne, without] = detailedObjects(
+      [listed("table", "app", "reservations"), listed("table", "app", "orders")],
+      [{ ...detail("app", "reservations"), exclusionConstraints: [exclusion] }, detail("app", "orders")],
+    );
+    expect(withOne.exclusionConstraints).toEqual([exclusion]);
+    expect("exclusionConstraints" in without).toBe(false);
+  });
+
   test("a name containing a dot still finds its detail, because the key is the path", () => {
     // The defect the old join had: `a.b` in `public` was indistinguishable from `b` in `a`
     // once either side had been reduced to one string. Neither side is reduced here.

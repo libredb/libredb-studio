@@ -1282,7 +1282,7 @@ Naming fewer kinds brings the search under the bound; a search under it still an
 
 #### POST /api/db/objects/describe
 
-Read the columns, indexes and foreign keys of ONE object.
+Read the columns, indexes, foreign keys and (on PostgreSQL) exclusion constraints of ONE object.
 
 This is the object tree's per-row read: one request when a reader expands an object row, and none
 before that.
@@ -1312,8 +1312,10 @@ How deep a kind nests is a per-kind fact the provider declares (a trigger nests 
 and the provider validates the path against that declaration.
 
 **Response (200 OK):** one `ObjectDetail`, exactly as the provider answered it.
-`ColumnSchema`, `IndexSchema` and `ForeignKeySchema` are defined under
+`ColumnSchema`, `IndexSchema`, `ForeignKeySchema` and `ExclusionConstraintSchema` are defined under
 [DatabaseObject](#databaseobject).
+`exclusionConstraints` is optional: PostgreSQL publishes it (empty when the table has none);
+engines that never create exclusion constraints omit the key.
 
 ```json
 {
@@ -1323,7 +1325,13 @@ and the provider validates the path against that declaration.
     { "name": "total", "type": "numeric(12,2)", "nullable": true, "isPrimary": false, "defaultValue": "0" }
   ],
   "indexes": [{ "name": "orders_pkey", "columns": ["id"], "unique": true }],
-  "foreignKeys": [{ "columnName": "customer_id", "referencedTable": "customers", "referencedColumn": "id" }]
+  "foreignKeys": [{ "columnName": "customer_id", "referencedTable": "customers", "referencedColumn": "id" }],
+  "exclusionConstraints": [
+    {
+      "name": "reservations_no_overlapping_active",
+      "definition": "EXCLUDE USING gist (table_id WITH =, tsrange(starts_at, ends_at) WITH &&)"
+    }
+  ]
 }
 ```
 
@@ -2452,6 +2460,11 @@ interface ForeignKeySchema {
   columnName: string;      // Local column
   referencedTable: string; // Foreign table
   referencedColumn: string; // Foreign column
+}
+
+interface ExclusionConstraintSchema {
+  name: string;            // Constraint name
+  definition: string;      // As `pg_get_constraintdef` spells it (EXCLUDE USING ...)
 }
 ```
 

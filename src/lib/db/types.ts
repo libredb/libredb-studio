@@ -12,6 +12,7 @@ export type {
   // `describeObject` needs them from here rather than reaching past this module (#789).
   IndexSchema,
   ForeignKeySchema,
+  ExclusionConstraintSchema,
   QueryResult,
   QueryWarning,
 } from "../types";
@@ -24,6 +25,7 @@ import type {
   ColumnSchema,
   IndexSchema,
   ForeignKeySchema,
+  ExclusionConstraintSchema,
 } from "../types";
 import { declaresDialect, dialectSpec } from "./query-dialects";
 
@@ -3371,6 +3373,8 @@ export interface ObjectDetail {
   readonly columns: readonly ColumnSchema[];
   readonly indexes: readonly IndexSchema[] | { readonly unavailable: string };
   readonly foreignKeys: readonly ForeignKeySchema[];
+  /** Only where the engine has EXCLUDE constraints (PostgreSQL). Absent elsewhere. */
+  readonly exclusionConstraints?: readonly ExclusionConstraintSchema[];
 }
 
 /**

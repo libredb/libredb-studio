@@ -374,7 +374,7 @@ export function ObjectTree({
       // effect than any other row's activation. Stated as an arm rather than left to the
       // `expanded !== undefined` fall-through below, so giving a column children later cannot
       // make this silently wrong.
-      if (row.kind === "column") return;
+      if (row.kind === "column" || row.kind === "constraint") return;
       if (row.kind === "object") {
         const object = tree.objectFor(row);
         if (object !== undefined) onObjectClick?.(object);

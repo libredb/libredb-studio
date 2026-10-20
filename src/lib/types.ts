@@ -763,6 +763,12 @@ export interface IndexSchema {
   unique: boolean;
 }
 
+/** A PostgreSQL EXCLUDE constraint: its name and `pg_get_constraintdef()` definition. */
+export interface ExclusionConstraintSchema {
+  name: string;
+  definition: string;
+}
+
 export interface QueryPagination {
   limit: number;
   offset: number;

@@ -55,8 +55,21 @@ mock.module("@/components/ui/context-menu", () => ({
 }));
 
 mock.module("@/components/schema-explorer/ColumnList", () => ({
-  ColumnList: ({ columns, indexes }: { columns: unknown[]; indexes: unknown[] }) =>
-    React.createElement("div", { "data-testid": "column-list" }, `${columns.length} cols, ${indexes.length} idx`),
+  ColumnList: ({
+    columns,
+    indexes,
+    exclusionConstraints = [],
+  }: {
+    columns: unknown[];
+    indexes: unknown[];
+    exclusionConstraints?: unknown[];
+  }) =>
+    React.createElement(
+      "div",
+      { "data-testid": "column-list" },
+      `${columns.length} cols, ${Array.isArray(indexes) ? indexes.length : 0} idx` +
+        (exclusionConstraints.length > 0 ? `, ${exclusionConstraints.length} exclude` : ""),
+    ),
 }));
 
 // ── Imports after mocks ─────────────────────────────────────────────────────
@@ -409,6 +422,24 @@ describe("TableItem", () => {
     expect(columnList).not.toBeNull();
     expect(columnList!.textContent).toContain("2 cols");
     expect(columnList!.textContent).toContain("1 idx");
+  });
+
+  test("passes exclusionConstraints through to ColumnList when expanded (#1778)", () => {
+    const withExclude: DetailedObject = {
+      ...largeTable,
+      exclusionConstraints: [
+        {
+          name: "reservations_no_overlapping_active",
+          definition: "EXCLUDE USING gist (table_id WITH =, tsrange(starts_at, ends_at) WITH &&)",
+        },
+      ],
+    };
+    const { queryByTestId } = render(
+      <TableItem table={withExclude} isExpanded onToggle={mock(() => {})} isAdmin={false} />,
+    );
+    const columnList = queryByTestId("column-list");
+    expect(columnList).not.toBeNull();
+    expect(columnList!.textContent).toContain("1 exclude");
   });
 
   test("applies bg-accent/50 class when expanded", () => {

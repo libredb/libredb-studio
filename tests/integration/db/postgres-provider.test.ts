@@ -6617,6 +6617,120 @@ describe("PostgreSQL object listing and detail", () => {
     await provider.disconnect();
   });
 
+  describe("EXCLUDE constraints (#1778)", () => {
+    const RESERVATIONS_EXCLUSION = {
+      name: "reservations_no_overlapping_active",
+      definition:
+        "EXCLUDE USING gist (table_id WITH =, tsrange(starts_at, ends_at, '[)'::text) WITH &&) " +
+        "WHERE (table_id IS NOT NULL AND status = ANY (ARRAY['PENDING'::text, 'CONFIRMED'::text]))",
+    };
+    const baseRow = { pk_columns: [], columns: [], indexes: [], foreign_keys: [] };
+
+    test("describeObject() maps the constraint's name and definition", async () => {
+      mockQueryFn = async (sql) =>
+        sql.includes("object_columns")
+          ? { rows: [{ ...baseRow, exclusion_constraints: [RESERVATIONS_EXCLUSION] }] }
+          : { rows: [] };
+      const provider = makeProvider();
+      await provider.connect();
+
+      const detail = await provider.describeObject(["app", "reservations"], "table");
+      expect(detail.exclusionConstraints).toEqual([RESERVATIONS_EXCLUSION]);
+      await provider.disconnect();
+    });
+
+    test("a table with none carries no exclusionConstraints key at all", async () => {
+      mockQueryFn = async (sql) =>
+        sql.includes("object_columns") ? { rows: [{ ...baseRow, exclusion_constraints: [] }] } : { rows: [] };
+      const provider = makeProvider();
+      await provider.connect();
+
+      const detail = await provider.describeObject(["app", "orders"], "table");
+      expect("exclusionConstraints" in detail).toBe(false);
+      await provider.disconnect();
+    });
+
+    test("both detail statements read pg_constraint with contype 'x' through pg_get_constraintdef", async () => {
+      const sent: string[] = [];
+      mockQueryFn = async (sql) => {
+        sent.push(sql);
+        if (sql.includes("object_columns")) return { rows: [baseRow] };
+        return defaultMockQuery(sql);
+      };
+      const provider = makeProvider();
+      await provider.connect();
+
+      await provider.describeObject(["app", "reservations"], "table");
+      await provider.describeObjects(["app"], "table");
+
+      const reads = sent.filter((sql) => sql.includes("object_columns") || sql.includes("described_columns"));
+      expect(reads).toHaveLength(2);
+      for (const sql of reads) {
+        expect(sql).toContain("c.contype = 'x'");
+        expect(sql).toContain("pg_get_constraintdef(c.oid)");
+        expect(sql).toContain("exclusion_constraints");
+        // jsonb only, for the reason the other object CTEs are (#1075).
+        expect(sql).not.toMatch(/\bjson_agg\(|\bjson_build_object\(|::json\b/);
+      }
+      await provider.disconnect();
+    });
+
+    test("describeObjects() maps each relation's constraints", async () => {
+      mockQueryFn = async (sql) =>
+        sql.includes("described_columns")
+          ? { rows: [{ name: "reservations", ...baseRow, exclusion_constraints: [RESERVATIONS_EXCLUSION] }] }
+          : defaultMockQuery(sql);
+      const provider = makeProvider();
+      await provider.connect();
+
+      const batch = await provider.describeObjects(["app"], "table");
+      expect(batch.details[0].exclusionConstraints).toEqual([RESERVATIONS_EXCLUSION]);
+      await provider.disconnect();
+    });
+
+    test("an engine without pg_get_constraintdef() is retried with the CTE emptied", async () => {
+      const sent: string[] = [];
+      mockQueryFn = async (sql) => {
+        sent.push(sql);
+        if (!sql.includes("object_columns")) return { rows: [] };
+        if (sql.includes("pg_get_constraintdef")) {
+          return Promise.reject(new Error('function "pg_get_constraintdef" does not exist'));
+        }
+        return { rows: [baseRow] };
+      };
+      const provider = makeProvider();
+      await provider.connect();
+
+      const detail = await provider.describeObject(["app", "orders"], "table");
+      const attempts = sent.filter((sql) => sql.includes("object_columns"));
+      expect(attempts).toHaveLength(2);
+      expect(attempts[1]).not.toContain("pg_get_constraintdef");
+      expect(attempts[1]).toContain("WHERE false");
+      // The columns, indexes and foreign keys the engine could answer still arrive.
+      expect(detail.exclusionConstraints).toBeUndefined();
+      expect(detail.indexes).toEqual([]);
+      await provider.disconnect();
+    });
+
+    test("a missing pg_constraint is recognised the same way", async () => {
+      const sent: string[] = [];
+      mockQueryFn = async (sql) => {
+        sent.push(sql);
+        if (!sql.includes("object_columns")) return { rows: [] };
+        if (sql.includes("FROM pg_constraint c")) {
+          return Promise.reject(new Error('relation "pg_constraint" does not exist'));
+        }
+        return { rows: [baseRow] };
+      };
+      const provider = makeProvider();
+      await provider.connect();
+
+      await provider.describeObject(["app", "orders"], "table");
+      expect(sent.filter((sql) => sql.includes("object_columns"))).toHaveLength(2);
+      await provider.disconnect();
+    });
+  });
+
   test("a kind with no columns describes as three empty lists, not as a failure", async () => {
     mockQueryFn = async (sql) => {
       if (!sql.includes("object_columns")) return { rows: [] };

@@ -1,11 +1,12 @@
 import React from "react";
 import { sampledMark, type DetailedObject } from "@/lib/db/detailed-object";
 import { isIndexesUnavailable } from "@/lib/db/object-kinds";
-import { Key, Hash } from "lucide-react";
+import { Key, Hash, Ban } from "lucide-react";
 
 interface ColumnListProps {
   columns: DetailedObject["columns"];
   indexes: DetailedObject["indexes"];
+  exclusionConstraints?: DetailedObject["exclusionConstraints"];
 }
 
 // Static marker for non-primary columns, hoisted to module scope: the element
@@ -16,7 +17,11 @@ const nonPrimaryDot = (
   </div>
 );
 
-export const ColumnList = React.memo(function ColumnList({ columns, indexes }: ColumnListProps) {
+export const ColumnList = React.memo(function ColumnList({
+  columns,
+  indexes,
+  exclusionConstraints = [],
+}: ColumnListProps) {
   return (
     <div className="pl-6 pr-2 py-1 space-y-0.5 border-l border-border/30 ml-3.5 mt-0.5 mb-1">
       {columns.map((column) => (
@@ -70,6 +75,28 @@ export const ColumnList = React.memo(function ColumnList({ columns, indexes }: C
           >
             {indexes.unavailable}
           </div>
+        </div>
+      )}
+      {exclusionConstraints.length > 0 && (
+        <div className="pt-2 pb-1" data-testid="exclusion-constraints">
+          <div className="flex items-center gap-1.5 px-2 mb-1">
+            <Ban strokeWidth={1.5} className="w-2.5 h-2.5 text-hue-purple/40" />
+            <span className="text-[0.625rem] font-medium text-muted-foreground">Exclusion constraints</span>
+          </div>
+          {exclusionConstraints.map((c) => (
+            <div key={c.name} className="py-0.5 px-2 space-y-0.5">
+              <div className="flex items-center gap-2">
+                <div className="w-2.5 h-2.5" />
+                <span className="text-xs text-muted-foreground italic truncate">{c.name}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-2.5 h-2.5" />
+                <span className="text-[0.625rem] font-mono text-muted-foreground/60 truncate" title={c.definition}>
+                  {c.definition}
+                </span>
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>

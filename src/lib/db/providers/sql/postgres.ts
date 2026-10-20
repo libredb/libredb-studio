@@ -415,6 +415,7 @@ interface SchemaRow {
     referencedTable: string;
     referencedColumn: string;
   }>;
+  exclusion_constraints?: Array<{ name: string; definition: string }>;
 }
 
 /** One row of `CONTAINERS_SQL`. */
@@ -446,9 +447,9 @@ interface ObjectRow {
 }
 
 /** The single row `OBJECT_DETAIL_SQL` always returns. */
-type ObjectDetailRow = Pick<SchemaRow, "pk_columns" | "columns" | "indexes" | "foreign_keys">;
+type ObjectDetailRow = Pick<SchemaRow, "pk_columns" | "columns" | "indexes" | "foreign_keys" | "exclusion_constraints">;
 
-/** One row of a bulk detail read: the same four aggregates, plus the relation's own name. */
+/** One row of a bulk detail read: the same five aggregates, plus the relation's own name. */
 type BulkDetailRow = ObjectDetailRow & { name: string };
 
 // ============================================================================
@@ -677,6 +678,47 @@ const CTE_INDEX_INFO = `
           WHERE ${schemaExclusion("n.nspname")}
           GROUP BY n.nspname, t.relname
         )`;
+
+// EXCLUDE constraints (pg_constraint.contype 'x') are listed beside the indexes, because only
+// the GiST index backing one was visible before (#1778). The object detail reads use it; the
+// schema queries do not. An engine without pg_constraint or pg_get_constraintdef() retries
+// with the empty body below, which leaves the list empty instead of failing the read.
+const CTE_EXCLUDE_INFO = `
+        exclude_info AS MATERIALIZED (
+          SELECT
+            n.nspname as table_schema,
+            t.relname as table_name,
+            jsonb_agg(
+              jsonb_build_object(
+                'name', c.conname,
+                'definition', pg_get_constraintdef(c.oid)
+              ) ORDER BY c.conname
+            ) as exclusion_constraints
+          FROM pg_constraint c
+          JOIN pg_class t ON t.oid = c.conrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+          WHERE c.contype = 'x'
+          AND ${schemaExclusion("n.nspname")}
+          GROUP BY n.nspname, t.relname
+        )`;
+
+const EMPTY_EXCLUDE_INFO_BODY = `
+          SELECT
+            NULL::text AS table_schema,
+            NULL::text AS table_name,
+            NULL::jsonb AS exclusion_constraints
+          WHERE false
+        `;
+
+function withoutExclusionConstraintCatalog(sql: string): string {
+  return replaceCteBody(sql, "exclude_info", EMPTY_EXCLUDE_INFO_BODY);
+}
+
+function isMissingExclusionConstraintCatalogError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return message.includes("pg_get_constraintdef") || message.includes("pg_constraint");
+}
 
 // Materialize and RisingWave reserve MATERIALIZED as a keyword (it's part of
 // their own CREATE MATERIALIZED VIEW grammar), so they reject the CTE modifier
@@ -1592,16 +1634,18 @@ const CTE_OBJECT_COLUMNS = `
 // the object has no columns at all. That is what makes a sequence, a routine and a
 // trigger answer `{ columns: [], indexes: [], foreignKeys: [] }` instead of no row.
 const OBJECT_DETAIL_SQL = withoutMaterializedHint(`
-        WITH ${CTE_OBJECT_COLUMNS},${CTE_PK_INFO},${CTE_FK_INFO},${CTE_INDEX_INFO}
+        WITH ${CTE_OBJECT_COLUMNS},${CTE_PK_INFO},${CTE_FK_INFO},${CTE_INDEX_INFO},${CTE_EXCLUDE_INFO}
         SELECT
           COALESCE(oc.columns, '[]'::jsonb) as columns,
           COALESCE(pk.pk_columns, ARRAY[]::text[]) as pk_columns,
           COALESCE(fk.foreign_keys, '[]'::jsonb) as foreign_keys,
-          COALESCE(ii.indexes, '[]'::jsonb) as indexes
+          COALESCE(ii.indexes, '[]'::jsonb) as indexes,
+          COALESCE(ei.exclusion_constraints, '[]'::jsonb) as exclusion_constraints
         FROM object_columns oc
         LEFT JOIN pk_info pk ON pk.table_schema = $1 AND pk.table_name = $2
         LEFT JOIN fk_info fk ON fk.table_schema = $1 AND fk.table_name = $2
-        LEFT JOIN index_info ii ON ii.table_schema = $1 AND ii.table_name = $2;
+        LEFT JOIN index_info ii ON ii.table_schema = $1 AND ii.table_name = $2
+        LEFT JOIN exclude_info ei ON ei.table_schema = $1 AND ei.table_name = $2;
       `);
 
 /**
@@ -1678,18 +1722,20 @@ function bulkDetailSql(relkinds: string, bound?: number): string {
           LEFT JOIN pg_catalog.pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum
           WHERE a.attnum > 0 AND NOT a.attisdropped
           GROUP BY d.relname
-        ),${CTE_PK_INFO},${CTE_FK_INFO},${CTE_INDEX_INFO}
+        ),${CTE_PK_INFO},${CTE_FK_INFO},${CTE_INDEX_INFO},${CTE_EXCLUDE_INFO}
         SELECT
           d.relname AS name,
           COALESCE(dc.columns, '[]'::jsonb) as columns,
           COALESCE(pk.pk_columns, ARRAY[]::text[]) as pk_columns,
           COALESCE(fk.foreign_keys, '[]'::jsonb) as foreign_keys,
-          COALESCE(ii.indexes, '[]'::jsonb) as indexes
+          COALESCE(ii.indexes, '[]'::jsonb) as indexes,
+          COALESCE(ei.exclusion_constraints, '[]'::jsonb) as exclusion_constraints
         FROM described d
         LEFT JOIN described_columns dc ON dc.relname = d.relname
         LEFT JOIN pk_info pk ON pk.table_schema = $1 AND pk.table_name = d.relname
         LEFT JOIN fk_info fk ON fk.table_schema = $1 AND fk.table_name = d.relname
-        LEFT JOIN index_info ii ON ii.table_schema = $1 AND ii.table_name = d.relname;
+        LEFT JOIN index_info ii ON ii.table_schema = $1 AND ii.table_name = d.relname
+        LEFT JOIN exclude_info ei ON ei.table_schema = $1 AND ei.table_name = d.relname;
       `);
 }
 
@@ -1845,7 +1891,7 @@ function objectPath(container: readonly string[], row: ObjectRow): string[] {
 /**
  * One catalog row turned into one `ObjectDetail`, shared by the single and the bulk read.
  *
- * One function because the two statements select the same four aggregates and a caller
+ * One function because the two statements select the same five aggregates and a caller
  * joins their results together: two copies of this mapping would be two chances for the
  * bulk read to spell a foreign key differently from the single read of the same table.
  *
@@ -1873,6 +1919,9 @@ function objectDetailFromRow(path: readonly string[], row: ObjectDetailRow): Obj
       columns: Array.isArray(idx.columns) ? idx.columns : [],
       unique: idx.unique,
     })),
+    ...(row.exclusion_constraints?.length
+      ? { exclusionConstraints: row.exclusion_constraints.map((c) => ({ name: c.name, definition: c.definition })) }
+      : {}),
     foreignKeys: (row.foreign_keys || []).map((fk) => ({
       columnName: fk.columnName,
       referencedTable:
@@ -3803,6 +3852,7 @@ export class PostgresProvider extends SQLBaseProvider {
       { matches: isMissingConstraintColumnUsageError, apply: withoutForeignKeyCatalog },
       { matches: isMissingExtensionCatalogError, apply: withoutExtensionOwnershipTest },
       { matches: isMissingToRegclassError, apply: withoutToRegclass },
+      { matches: isMissingExclusionConstraintCatalogError, apply: withoutExclusionConstraintCatalog },
     ];
     let currentSql = sql;
     for (;;) {
