@@ -4,8 +4,9 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDirectExecution } from "./check-vsix.mjs";
 
 /** vsce's arguments: package --no-dependencies --out dist-vsix/libredb-studio-<version>.vsix, plus --pre-release on an odd minor. */
 export function vscePackageArgs(version) {
@@ -15,7 +16,7 @@ export function vscePackageArgs(version) {
   return Number(match[2]) % 2 === 1 ? [...args, "--pre-release"] : args;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isDirectExecution(process.argv[1], import.meta.url)) {
   const root = dirname(dirname(fileURLToPath(import.meta.url)));
   const { version } = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
   const args = vscePackageArgs(version);
