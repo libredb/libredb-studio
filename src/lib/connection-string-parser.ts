@@ -609,7 +609,10 @@ function parseGenericURL(uri: string, type: DatabaseType, defaultPort: string): 
       port: url.port || defaultPort,
       user: url.username ? decodeURIComponent(url.username) : undefined,
       password: url.password ? decodeURIComponent(url.password) : undefined,
-      database: url.pathname.slice(1) || undefined, // remove leading /
+      // The pathname keeps a space, non-ASCII letter or reserved character percent-encoded.
+      // Decode it the way the user, the password and the MongoDB database already are, and
+      // keep a broken escape as written. An empty path is no database.
+      database: url.pathname.length > 1 ? safeDecodeURIComponent(url.pathname.slice(1)) : undefined,
       ...readQueryTLS(url, type),
     };
   } catch {
@@ -692,8 +695,8 @@ const DATABEND_SIGN_IN_PARAMETERS = new Set([
  * password as the database or a parameter, and since an `@` past the address part can also be a path's or a
  * parameter's, and a password can hold an unencoded `@` before its `/`, every such `@` is refused, naming each
  * encoding; and BendSQL's token and key-pair sign-in have no field here. Unlike BendSQL, which decodes the password
- * only, the user is percent-decoded too, as every other scheme here does. With no `warehouse=`, the warehouse an older Databend Cloud host names
- * (`<tenant>--<warehouse>.gw...`) fills Warehouse.
+ * only, the user and the database path are percent-decoded too, as every other scheme here does. With no
+ * `warehouse=`, the warehouse an older Databend Cloud host names (`<tenant>--<warehouse>.gw...`) fills Warehouse.
  */
 function parseDatabendDSN(uri: string): ParsedConnection | null {
   if (uri.includes("#")) return databendRefusal("fragment");
@@ -742,7 +745,7 @@ function parseDatabendDSN(uri: string): ParsedConnection | null {
     port: url.port || (plain ? "80" : "443"),
     user: url.username ? safeDecodeURIComponent(url.username) : undefined,
     password: url.password ? safeDecodeURIComponent(url.password) : undefined,
-    database: url.pathname.slice(1) || undefined,
+    database: url.pathname.length > 1 ? safeDecodeURIComponent(url.pathname.slice(1)) : undefined,
     ...(warehouse ? { warehouse } : {}),
     ...tls,
     allowInsecureAuth: false,

@@ -62,6 +62,13 @@ describe("parseConnectionString", () => {
       expect(result!.user).toBe("user@name");
       expect(result!.password).toBe("p@ss#word");
     });
+
+    test("percent-decodes the database name, and keeps a broken escape as written", () => {
+      expect(parseConnectionString("postgres://us%3Aer:pw@host:5432/my%20db")!.database).toBe("my db");
+      expect(parseConnectionString("postgres://u:pw@h:5432/%E5%9C%A8")!.database).toBe("在");
+      expect(parseConnectionString("postgres://u:pw@h:5432/my%ZZdb")!.database).toBe("my%ZZdb");
+      expect(parseConnectionString("postgres://u:pw@host:5432/")!.database).toBeUndefined();
+    });
   });
 
   // ── MySQL ───────────────────────────────────────────────────────────────
@@ -87,6 +94,11 @@ describe("parseConnectionString", () => {
       expect(result!.user).toBeUndefined();
       expect(result!.password).toBeUndefined();
       expect(result!.port).toBe("3307");
+    });
+
+    test("percent-decodes a non-ASCII database name", () => {
+      const result = parseConnectionString("mysql://u:pw@h:3306/caf%C3%A9");
+      expect(result!.database).toBe("café");
     });
   });
 
@@ -1335,6 +1347,13 @@ describe("parseConnectionString: databend:// DSNs", () => {
     expect(result.user).toBe("us@er");
     expect(result.password).toBe("p:w/d");
     expect(parseConnectionString("databend://u:100%25%zz@host/db")!.password).toBe("100%25%zz");
+  });
+
+  test("the database path is percent-decoded, and a broken escape is kept as written", () => {
+    expect(parseConnectionString("databend://u:p@host/my%20db")!.database).toBe("my db");
+    expect(parseConnectionString("databend://u:p@host/caf%C3%A9")!.database).toBe("café");
+    expect(parseConnectionString("databend://u:p@host/%E5%9C%A8")!.database).toBe("在");
+    expect(parseConnectionString("databend://u:p@host/my%ZZdb")!.database).toBe("my%ZZdb");
   });
 
   test("a # anywhere is refused, because it ends the URL", () => {
