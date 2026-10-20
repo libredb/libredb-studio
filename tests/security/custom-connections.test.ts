@@ -94,7 +94,7 @@ const PROVIDER_MODULES_IN_LIB: Record<string, string> = {
     "handleObjectRequest resolves through resolveConnection before it builds; every db/objects route and db/keys/scan reach it, and the census sends each of them a caller's connection",
   "mcp/context.ts": "opens only seeds that opted in with mcp: true, read from getManagedConnections",
   "api/test-connection.ts":
-    "testConnection builds for the connection its caller hands it, and its one caller in src is POST /api/db/test-connection, which resolved it through resolveConnection first",
+    "testConnection builds for the connection its caller hands it, and its one caller in src is POST /api/db/test-connection (pinned by the caller test below), which resolved it through resolveConnection first",
 };
 
 const PROVIDER_BUILDERS = [
@@ -106,10 +106,11 @@ const PROVIDER_BUILDERS = [
 
 /**
  * In a route, `handleObjectRequest` builds too: it is the shared body of the object routes. So does
- * `editorProvider`, which every editor route opens its provider through (#1530).
+ * `editorProvider`, which every editor route opens its provider through (#1530), and so does
+ * `testConnection`, the Test Connection core, which builds a provider for the connection it is handed.
  */
 const ROUTE_BUILDS = new RegExp(
-  `\\b(${[...PROVIDER_BUILDERS, "handleObjectRequest", "editorProvider"].join("|")})\\s*\\(`,
+  `\\b(${[...PROVIDER_BUILDERS, "handleObjectRequest", "editorProvider", "testConnection"].join("|")})\\s*\\(`,
 );
 
 /** In src/lib, where `handleObjectRequest` is declared, only the factory's entry points count. */
@@ -269,6 +270,24 @@ describe("the census reaches the whole API tree, not only src/app/api/db", () =>
 
     // A new name here is a module that builds a provider from a connection nobody has classified.
     expect(builders).toEqual(Object.keys(PROVIDER_MODULES_IN_LIB).sort());
+  });
+
+  test("the route detector sees a route that builds only through testConnection", () => {
+    const route = 'return Response.json(await testConnection(body.connection, context, "api/x"));';
+
+    expect(ROUTE_BUILDS.test(withoutComments(route))).toBe(true);
+  });
+
+  test("testConnection has one caller in src, the db/test-connection route its exemption names", () => {
+    const callers = readdirSync(SRC_DIR, { recursive: true })
+      .map((path) => String(path).split(sep).join("/"))
+      .filter((path) => /\.tsx?$/.test(path) && path !== "lib/api/test-connection.ts")
+      .filter((path) => calls(join(SRC_DIR, path), /\btestConnection\s*\(/))
+      .sort();
+
+    // A new caller hands testConnection a connection the census has not seen resolved: route it
+    // through resolveConnection, add a case that sends it a caller's connection, and say so above.
+    expect(callers).toEqual(["app/api/db/test-connection/route.ts"]);
   });
 });
 
