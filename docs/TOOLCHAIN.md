@@ -512,3 +512,57 @@ Holding 100% honestly requires knowing how bun measures:
 
 `src/exports/index.js` (one-line CJS shim) is the single `sonar.coverage.exclusions` entry — it is
 smoke-tested functionally in `tests/isolated/exports-shim.test.ts`.
+
+## VS Code extension (vscode-extension/)
+
+`vscode-extension/` is a second package beside the Bun root, with its own toolchain and its own CI job.
+It bundles LibreDB's provider layer from the root's `src/`, but it is not a workspace of the root's package manager, so the root's `bun install` does not install its packages.
+
+### npm beside Bun
+
+The extension's package manager is npm, because `vsce` reads a package's dependencies only through npm or Yarn 1.
+`vscode-extension/package-lock.json` is its lockfile; a dependency is added with `npm install --save-exact` (or `--save-dev`) inside the directory, never by editing the lockfile.
+CI installs it with `npm ci --ignore-scripts`.
+The root's packages (React, the drivers) resolve from the root's `node_modules`, so `bun install` at the root runs first.
+
+### Mocha with tsx
+
+`@vscode/test-cli` runs Mocha only, so one framework serves the unit, integration and e2e legs.
+tsx loads the TypeScript and honours `tsconfig.test.json`'s `paths`, which send `@/` to the root's `src/` and `vscode` to `test/fakes/vscode.ts`; `test/setup/register.cjs` points tsx at that file.
+Every Mocha configuration sets `forbid-only` (`.mocharc.json`, `test/integration/.mocharc.json` and `.vscode-test.mjs`), and `SCAN_ROOTS` in `scripts/only-check.mjs` reads `vscode-extension/test`, so `bun run lint` refuses a focused test there too.
+
+### The extension's own 100% gate
+
+c8 measures the unit leg only (`.c8rc.json`: `all: true` over `src/**`), and the root's `scripts/check-coverage.mjs` holds `coverage/lcov.info` to 100% lines: `npm run test:unit && npm run coverage:check`.
+The root gate, Sonar and Codecov never see these lines, because `scripts/merge-lcov.mjs` keeps the root's `src/` records only.
+
+### The four legs
+
+- Unit: `npm run test:unit`, on Node 24, against the fake `vscode`.
+- Integration: `npm run test:integration` forks the built child from `LIBREDB_BACKEND_RUNTIME=node` (the job's Node) or `LIBREDB_BACKEND_RUNTIME=vscode` (the pinned stable binary of `test/vscode-versions.json`, downloaded into `.vscode-test/` and run in Node mode with `ELECTRON_RUN_AS_NODE=1`), so a child that works on Node but not on VS Code's own runtime fails here (P5).
+- E2e: `npm run test:e2e` runs `@vscode/test-cli` on the floor and stable builds of `test/vscode-versions.json`, under `xvfb-run -a` on Linux.
+  The build machine has no Xvfb, so the leg runs locally in a `node:24-bookworm` container that installs `xvfb` and VS Code's libraries and runs `xvfb-run -a npm run test:e2e` as the image's `node` user.
+  Mount the checkout at a short path such as `/w`: VS Code listens on a socket under `.vscode-test/user-data/`, and a socket path over the 107-byte Unix limit fails with `listen EINVAL`.
+- Smoke: the e2e leg with `LIBREDB_E2E_SUBSET=smoke`, on macOS and Windows, with no Xvfb and no database.
+
+`LIBREDB_VSCODE_VERSION` replaces the pinned builds of the integration and e2e legs with one version, which the Insiders run sets to `insiders`.
+
+### How the root tools cover the directory
+
+- The root `tsc` excludes `vscode-extension` (`tsconfig.json` `exclude`); `npm run typecheck` checks it in its own job, where Mocha's globals and the `vscode` types exist.
+- Biome formats `vscode-extension/**` minus `dist`, `out`, `dist-vsix`, `.vscode-test` and `coverage` (`biome.json` `files.includes`).
+- oxlint (`.oxlintrc.json` `ignorePatterns`) and ESLint (`globalIgnores` in `eslint.config.mjs`) lint it minus the same five build paths.
+  `vscode-extension/test/setup/register.cjs` is the repository's first `.cjs` file, so the ESLint block that tunes eslint-config-next's rules names eslint-config-next's own files pattern.
+- knip has a `vscode-extension` workspace in `knip.json` beside the root's `workspaces["."]`.
+  Its entries list neither bundle entry nor `esbuild.mjs`, which knip finds without them (it reports them as redundant entry patterns); an export of the fake `vscode` module that only the code under test reaches, through `tsconfig.test.json`'s alias, which knip does not read, carries `@public` (today `window`).
+  The required `Lint, Typecheck and Build` job installs the extension's packages with `npm ci --ignore-scripts` before knip: measured on a clone with only the root installed, knip otherwise reports `c8`, `mocha` and `vscode-test` as unlisted binaries and `c8` and `@vscode/test-cli` as unused dependencies.
+  Biome, oxlint, ESLint and the root `tsc` pass there without them.
+
+### The CI job
+
+`.github/workflows/vscode-extension.yml` is a reusable workflow that `ci.yml` calls as the `vscode-extension` job; the extension's release workflow is to call the same file, so the two cannot drift.
+Its Linux job runs the typecheck, the build with its metafile checks, the unit leg and its gate, both integration runtimes, the e2e leg and `npm run package`, and uploads the VSIX; its smoke job runs on `macos-latest` and `windows-latest`.
+It caches Bun's packages through `.github/actions/bun-install`, npm's through `actions/setup-node` keyed on `vscode-extension/package-lock.json`, and the VS Code builds through `actions/cache` keyed on `vscode-extension/test/vscode-versions.json`.
+`.github/workflows/vscode-extension-insiders.yml` runs the build, the `vscode` integration runtime and the e2e leg against VS Code Insiders daily and on demand, so an Electron or Node bump shows up before stable ships it; `test/vscode-versions.json` is bumped by hand.
+Dependabot watches `vscode-extension/` through its own `npm` entry, with `@types/vscode` held at the `engines.vscode` floor.
+The job is not a required check until the owner adds it to `main`'s branch protection.
