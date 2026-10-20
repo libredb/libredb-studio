@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import * as connectionSecrets from "@/lib/storage/connection-secrets";
 import * as secretFields from "@/lib/storage/secret-fields";
 import {
@@ -186,9 +186,18 @@ describe("one classification, reached through connection-secrets too", () => {
     expect(connectionSecrets.withoutSecretFields).toBe(withoutSecretFields);
   });
 
+  const leafPath = join(import.meta.dir, "../../../../src/lib/storage/secret-fields.ts");
+
   test("the leaf's imports are type-only and it re-exports nothing", () => {
-    const source = readFileSync(join(import.meta.dir, "../../../../src/lib/storage/secret-fields.ts"), "utf8");
+    const source = readFileSync(leafPath, "utf8");
     expect(source).not.toMatch(/^import(?!\s+type\s)/m);
     expect(source).not.toMatch(/^export\s+(\*|\{)[^;]*\bfrom\s/m);
+  });
+
+  test("a bundle of the leaf holds the leaf alone, whatever form an import takes", async () => {
+    // The source check above cannot see an import() or a require() inside a function body; the bundler resolves both.
+    const { metafile } = await Bun.build({ entrypoints: [leafPath], target: "node", metafile: true });
+    const inputs = Object.entries(metafile!.inputs).map(([input, { imports }]) => ({ input: resolve(input), imports }));
+    expect(inputs).toEqual([{ input: leafPath, imports: [] }]);
   });
 });
