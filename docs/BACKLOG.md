@@ -4252,7 +4252,7 @@ first 10MB will be available unless configured.`
 
 So one condition gets two wrong answers. The five existing object routes that go through
 `handleObjectRequest`'s body-parse arm answer HTTP 400 `{ "error": "Empty request body" }` for a body that
-was neither empty nor malformed, and `POST /api/db/query` answers HTTP 500 with a JSON parser's sentence.
+was neither empty nor malformed, and `POST /api/db/query` answers HTTP 400 `{ "error": "Invalid request body" }`.
 Neither tells the caller their request was too large.
 
 The two routes added by #789 Phase 3 do NOT inherit this: `readObjectRouteBody` reads `content-length` and
