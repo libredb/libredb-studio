@@ -2,12 +2,12 @@
  * Outside the provider layer, no source file branches on a database type id, apart from a closed list (engine
  * contract spec 6.4).
  *
- * It reads every source file under `src/` that git lists (tracked, and untracked but not ignored), outside
- * `src/lib/db/**` and `src/lib/agent/languages/**`, and finds each branch shape `./no-engine-branches/scan.ts`
- * names: a table keyed by a type id, an array of type ids, a comparison or `case` label with one, and one in default
- * position. Every finding is held, by file and declaration name, to exactly one of three lists, and each entry names
- * how many findings its declaration holds, so a branch added inside a listed declaration fails as one added anywhere
- * else does:
+ * It reads every source file under `src/` and `vscode-extension/src/` that git lists (tracked, and untracked but not
+ * ignored), outside `src/lib/db/**` and `src/lib/agent/languages/**`, and finds each branch shape
+ * `./no-engine-branches/scan.ts` names: a table keyed by a type id, an array of type ids, a comparison or `case` label
+ * with one, and one in default position. Every finding is held, by file and declaration name, to exactly one of three
+ * lists, and each entry names how many findings its declaration holds, so a branch added inside a listed declaration
+ * fails as one added anywhere else does:
  *
  * 1. `REGISTRIES`, the mappings of spec 5.6 that stay, because their job is the mapping;
  * 2. `FALSE_POSITIVES`, a word spelled like a type id that names something else, each with what it names;
@@ -107,6 +107,12 @@ export const REGISTRIES: readonly Listed[] = [
     declaration: "ALLOWED_ENGINES_DEFAULT",
     count: 1,
     reason: "a policy default, not engine behaviour",
+  },
+  {
+    path: "vscode-extension/src/host/channel.ts",
+    declaration: "ENABLED_PROVIDERS",
+    count: 1,
+    reason: "the VS Code channel's provider allowlist, a policy default, not engine behaviour",
   },
 ];
 
@@ -232,11 +238,18 @@ const readModule = (path: string): string | undefined => {
   }
 };
 
+/** The source files the guard reads: those outside the provider layer. */
+function scannedFiles(): string[] {
+  return listedFiles("src", "vscode-extension/src").filter(
+    (path) => SOURCE_FILE.test(path) && !PROVIDER_LAYER.some((layer) => path.startsWith(layer)),
+  );
+}
+
 /** Every branch on a type id in the source files outside the provider layer. */
 function branches(): BranchFinding[] {
-  return listedFiles("src")
-    .filter((path) => SOURCE_FILE.test(path) && !PROVIDER_LAYER.some((layer) => path.startsWith(layer)))
-    .flatMap((path) => findEngineBranches(path, readFileSync(join(ROOT, path), "utf8"), TYPE_IDS, readModule));
+  return scannedFiles().flatMap((path) =>
+    findEngineBranches(path, readFileSync(join(ROOT, path), "utf8"), TYPE_IDS, readModule),
+  );
 }
 
 const LISTS: Readonly<Record<string, readonly Listed[]>> = { REGISTRIES, FALSE_POSITIVES, DEBT };
@@ -244,6 +257,10 @@ const key = ({ path, declaration }: { path: string; declaration: string }): stri
 
 describe("type-id branches outside the provider layer", () => {
   const found = branches();
+
+  test("scan the VS Code extension's sources as well as src/", () => {
+    expect(scannedFiles().filter((path) => path.startsWith("vscode-extension/src/")).length).toBeGreaterThan(0);
+  });
 
   test("are each held by exactly one list", () => {
     const unheld = found
