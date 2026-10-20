@@ -34,6 +34,15 @@ describe("vsixViolations", () => {
     assert.equal(REQUIRED.length, 5);
   });
 
+  it("passes a VSIX, its unpacked content and its child bundle at exactly their budgets", () => {
+    const base = passing();
+    const others = base.entries.filter((entry) => entry.path !== "extension/dist/backend.js");
+    const used = others.reduce((sum, entry) => sum + entry.size, 0);
+    const atBackend = [...others, { path: "extension/dist/backend.js", size: BUDGET.backendBytes }];
+    const filler = { path: "extension/README.md", size: BUDGET.unpackedBytes - used - BUDGET.backendBytes };
+    assert.deepEqual(vsixViolations({ ...base, vsixBytes: BUDGET.vsixBytes, entries: [...atBackend, filler] }), []);
+  });
+
   it("refuses a VSIX above its budget", () => {
     assert.match(one({ ...passing(), vsixBytes: BUDGET.vsixBytes + 1 }), /VSIX/);
   });
