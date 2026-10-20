@@ -112,7 +112,8 @@ can correct it.
 |---|---|
 | `src/lib/types.ts` | `"cassandra"` in `DatabaseType`, plus the `localDataCenter` field |
 | `src/lib/db/factory.ts` | `case "cassandra"`, dynamic `import("./providers/sql/cassandra/index")` |
-| `src/lib/db-ui-config.ts` | Icon, `text-sky-300`, "Apache Cassandra", port 9042, the `localDataCenter` field |
+| `src/lib/db/connection-form.ts` | "Apache Cassandra", port 9042, the `localDataCenter` field |
+| `src/lib/db-ui-config.ts` | Icon, `text-sky-300` |
 | `src/lib/db/providers/sql/cassandra/sql-grammar.ts` | `CASSANDRA_GRAMMAR`: all four facts probed ([§5.4](#54-dialect-traps-a-user-will-hit)) |
 | `src/lib/db/providers/sql/cassandra/sql-writing.ts` | `literalStandard` literal escaping: doubling, backslash is data (measured) |
 | `src/lib/db/compatibility.ts` | `SHIPPED.cassandra` |

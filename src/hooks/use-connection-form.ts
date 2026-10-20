@@ -1660,7 +1660,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
   }, [pasteInput, name, type, host, sslMode, applyAuthMethod, chooseType, startNewTarget]);
 
   /**
-   * Fills the form from one entry of the import the type declares (`connectionImport` in db-ui-config.ts). The entry
+   * Fills the form from one entry of the import the type declares (`connectionImport` in connection-form.ts). The entry
    * replaces every connection-scoped field, so nothing typed for another server, a password, a certificate, an SSH
    * tunnel or a connection string left in the paste box, is sent to this one: the form is reset, as a save resets it,
    * and then filled. The type, the environment, a name already typed and the choices about how to connect (read-only,

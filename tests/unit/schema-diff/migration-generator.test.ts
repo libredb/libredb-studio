@@ -1185,7 +1185,7 @@ describe("generateMigrationSQL: SQLite's grammar declares a foreign key only ins
 
 /**
  * Exhaustive by construction, in the spirit of `PICKER_COVERAGE` in
- * `tests/hooks/use-connection-form.test.ts`: a new `DatabaseType` fails typecheck here until it is
+ * `tests/unit/lib/db/connection-form.test.ts`: a new `DatabaseType` fails typecheck here until it is
  * classified, so it cannot silently re-inherit the generator's PostgreSQL branch — which is the whole
  * of #269. `"has-own-branch"` means the modified-column chain answers that id in its own dialect.
  */

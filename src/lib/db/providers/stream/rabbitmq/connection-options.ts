@@ -6,7 +6,7 @@
  *
  * A connection sent to the API arrives as the caller wrote it, so every field is checked for its type before it is
  * read. The dialog checks Path prefix and AMQP port with copies of these rules (`RABBITMQ_FIELD_RULES` in
- * src/lib/db-ui-config.ts), which tests/unit/lib/db-ui-config.test.ts holds to this module.
+ * src/lib/db/connection-form.ts), which tests/unit/lib/db-ui-config.test.ts holds to this module.
  *
  * The parameter is named `config` on purpose: tests/unit/lib/db-ui-config.test.ts finds which addressing fields a
  * provider reads by the `config.<field>` pattern.

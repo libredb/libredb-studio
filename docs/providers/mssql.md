@@ -1498,7 +1498,7 @@ A row that reads like the old shared list is SQL Server agreeing with it, not a 
 ### Labels — overridden (`getLabels()`, [`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts))
 
 `analyzeAction` → *"Update Statistics"*, `vacuumAction` → *"Rebuild Indexes"*, plus the matching
-global labels. The UI display name for the database type is *"SQL Server"* (`db-ui-config.ts`).
+global labels. The UI display name for the database type is *"SQL Server"* (`connection-form.ts`).
 
 `slowQueriesEmptyState` → *"Query stats come from sys.dm_exec_query_stats, which needs the VIEW
 SERVER STATE permission."* The monitoring Queries panel's empty state was hardcoded to PostgreSQL's

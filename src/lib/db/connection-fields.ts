@@ -2,9 +2,10 @@
  * Each connection type's connection fields and the fields only its provider reads, declared as data.
  *
  * `CONNECTION_FIELDS` names the fields the connection dialog draws for a type and `buildConnection` saves, in the
- * order the dialog draws them; `DB_UI_CONFIG` takes each type's array from here by reference, so the list exists
- * once, and the reason a list holds what it does stays beside that type's entry there. `SEED_ONLY_FIELDS` names, per
- * type, the fields a seed of any other type is refused for, with the sentence it is refused with.
+ * order the dialog draws them; `CONNECTION_FORM` (src/lib/db/connection-form.ts) takes each type's array from here by
+ * reference, so the list exists once, and the reason a list holds what it does stays beside that type's entry there.
+ * `SEED_ONLY_FIELDS` names, per type, the fields a seed of any other type is refused for, with the sentence it is
+ * refused with.
  *
  * Pure, browser-safe and UI-free: it imports types only. It is not in src/lib/db-ui-config.ts because that module
  * imports React icon components, which the seed loader must not load, the reason src/lib/db/credential-warnings.ts
@@ -34,7 +35,7 @@ export type ConnectionField =
   | "apiKeyId"
   | "apiKeySecret"
   // Kafka only (#1088): which SASL mechanism checks the user and password, drawn as the select
-  // `fieldOptions` in src/lib/db-ui-config.ts declares.
+  // `fieldOptions` in src/lib/db/connection-form.ts declares.
   | "saslMechanism"
   // Db2 (#786), both InfluxDB types (InfluxDB spec I7), Oxia for its token, Databend for its password, and
   // S3-compatible object storage for the connection itself, and MQTT and RabbitMQ for their passwords: the consent
@@ -82,7 +83,8 @@ export type SeedOnlyField = "securityPolicyUri" | "clientCertificatePath" | "cli
 
 /**
  * The fields the connection dialog draws either in the open or behind its Advanced accordion, as the engine's
- * `fieldPlacement` in src/lib/db-ui-config.ts says. Every other field is drawn in the open by the dialog's own layout.
+ * `fieldPlacement` in src/lib/db/connection-form.ts says. Every other field is drawn in the open by the dialog's own
+ * layout.
  */
 export const PLACEABLE_FIELDS = ["authSource", "localDataCenter", "serviceName", "instanceName"] as const;
 export type PlaceableField = (typeof PLACEABLE_FIELDS)[number];

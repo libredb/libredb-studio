@@ -5515,9 +5515,9 @@ Found 2026-10-12 in a browser pass of the RabbitMQ provider, reproduced with scr
 ### U124. Firestore's Database ID box carries a sentence about Create Table and SHOW SCHEMAS
 
 The connection dialog draws one fixed sentence under the schema box for every engine that takes the field (`src/components/ConnectionModal.tsx:1063`, `:1080-1083`): "Used for unqualified table names in queries and Create Table. Leave empty to qualify names yourself. Run SHOW SCHEMAS to list the catalog's schemas."
-It was written for Trino, and the box is also Firestore's "Database ID" (`src/lib/db-ui-config.ts:987-992`), where the provider declares no `createTable` (`src/lib/db/providers/document/firestore/index.ts`) and there is no `SHOW SCHEMAS`.
+It was written for Trino, and the box is also Firestore's "Database ID" (the `firestore` entry of `CONNECTION_FORM` in `src/lib/db/connection-form.ts`), where the provider declares no `createTable` (`src/lib/db/providers/document/firestore/index.ts`) and there is no `SHOW SCHEMAS`.
 So a Firestore user reads, under the engine's own hint ("Empty for the (default) database"), advice about table names and a statement the engine does not have.
-BigQuery's "Default dataset" box (`src/lib/db-ui-config.ts:859`) takes the same sentence, and whether it holds there is not measured.
+BigQuery's "Default dataset" box (the `bigquery` entry of `CONNECTION_FORM` in `src/lib/db/connection-form.ts`) takes the same sentence, and whether it holds there is not measured.
 The sentence is not a declared field, so an engine entry cannot replace or drop it the way `fieldHints` and `fieldPlaceholders` do.
 
 Found 2026-10-12 while reading the connection dialog for a new provider.
@@ -5673,7 +5673,7 @@ A window narrowed by a vertical scrollbar (1265 wide) wraps more of the hero and
 ### U140. The connection dialog's field census leaves six shipped types out
 
 The docblock of the "declared connection-field copy (#1085)" block in `tests/components/ConnectionModal.test.tsx` says its `SHIPPED` table holds "every shipped type", but the table has no row for BigQuery, Snowflake, Neo4j, MQTT, Firestore or OPC UA, six of the thirty-seven in `SHIPPED_DATABASE_TYPES` (counted 2026-10-14 on `main` at 59cdfd09b, where #1759 added Apache Spark's row).
-The same docblock calls Prometheus and Kafka "the shipped entries that declare either" label or hint, while `src/lib/db-ui-config.ts` now declares field copy for libSQL, Db2, etcd, Neo4j, Milvus, Qdrant, InfluxDB and InfluxDB 3 as well.
+The same docblock calls Prometheus and Kafka "the shipped entries that declare either" label or hint, while `src/lib/db/connection-form.ts` now declares field copy for libSQL, Db2, etcd, Neo4j, Milvus, Qdrant, InfluxDB and InfluxDB 3 as well.
 So a change to the labels or hints of those six types reaches no census row.
 
 Found 2026-10-13 while building the Apache Spark provider (#1759); pre-existing.
@@ -5747,7 +5747,7 @@ Found 2026-10-18 while designing #1822.
 
 ### U147. The ClickHouse connection-URI box shows a MongoDB example
 
-The `clickhouse` entry of `DB_UI_CONFIG` in `src/lib/db-ui-config.ts` declares `fieldPlaceholders.connectionString` as `mongodb://localhost:27017/mydb  or  mongodb+srv://...`, so a ClickHouse dialog switched to its connection string mode offers a MongoDB URI as the example.
+The `clickhouse` entry of `CONNECTION_FORM` in `src/lib/db/connection-form.ts` declares `fieldPlaceholders.connectionString` as `mongodb://localhost:27017/mydb  or  mongodb+srv://...`, so a ClickHouse dialog switched to its connection string mode offers a MongoDB URI as the example.
 That is the dialog's old fall-through for every toggle engine that was not Couchbase or libSQL, moved onto the declaration unchanged so the engine contract refactor changed no rendered text; `tests/unit/db/connection-form/golden/clickhouse.txt` and `tests/unit/lib/db-ui-config-placement.test.ts` pin it.
 The schemes the parser reads for ClickHouse are `clickhouse://`, `http://` and `https://`.
 
