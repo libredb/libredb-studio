@@ -47,8 +47,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: INVALID_REQUEST_BODY }, { status: 400 });
     }
 
-    const connection = await resolveConnection(body, guard.session);
+    // A present `options` that is not an object is refused in the query route's words: a `null` one reached the
+    // provider's destructuring and answered 500 with the runtime's own text.
     const { options } = body as { options?: MonitoringOptions };
+    if (options !== undefined && !isJsonObject(options)) {
+      return NextResponse.json({ error: "options must be an object" }, { status: 400 });
+    }
+    const connection = await resolveConnection(body, guard.session);
 
     if (!connection.type) {
       return NextResponse.json({ error: "Valid connection configuration is required" }, { status: 400 });

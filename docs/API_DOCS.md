@@ -569,6 +569,7 @@ A body that is not JSON, or JSON that is not an object (`null`, an array, a numb
 The same answer comes from `POST /api/db/multi-query`, `/api/db/transaction`, `/api/db/cancel`, `/api/db/profile`, `/api/db/health`, `/api/db/pool-stats` and both maintenance routes.
 `POST /api/db/disconnect` and `POST /api/db/test-connection` answer it in their own envelope, `400 { "success": false, "error": "Invalid request body" }`.
 `POST /api/db/monitoring` answers JSON that is not an object the same way, and keeps `400 { "error": "Invalid JSON in request body" }` for text that is not JSON.
+Its `options`, when sent, must be an object as well: anything else (`null`, a number, an array) answers `400 { "error": "options must be an object" }` before any connection resolves.
 
 **A connection type's console text bound:**
 

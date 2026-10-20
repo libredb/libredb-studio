@@ -457,3 +457,24 @@ describe("POST /api/db/monitoring: a body that is not a JSON object", () => {
     expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
   });
 });
+
+// A present `options` that is not an object answered 500 INTERNAL_ERROR with the runtime's own text ("Cannot destructure property 'includeTables' ...").
+describe("POST /api/db/monitoring: options that are not an object", () => {
+  test.each<[string, unknown]>([
+    ["null", null],
+    ["a number", 5],
+    ["an array", []],
+  ])("options that are %s answer 400 and open no provider", async (_label, options) => {
+    mockGetOrCreateProvider.mockClear();
+    const res = await POST(
+      createMockRequest("/api/db/monitoring", {
+        method: "POST",
+        body: { connection: validConnection, options },
+      }) as never,
+    );
+
+    expect(res.status).toBe(400);
+    expect(await parseResponseJSON(res)).toEqual({ error: "options must be an object" });
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+  });
+});
