@@ -24,8 +24,6 @@ import { VaultError } from "@/lib/seed/vault-client";
 // Types
 // ============================================================================
 
-export type { ApiErrorCode } from "./error-codes";
-
 export type { ApiErrorResponse } from "./error-body";
 
 // ============================================================================
