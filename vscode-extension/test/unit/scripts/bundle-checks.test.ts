@@ -6,6 +6,10 @@ import {
   inputPackage,
   OPTIONAL_REQUIRES,
   repoPath,
+  WEBVIEW_FORBIDDEN_PACKAGES,
+  WEBVIEW_SINGLE_COPY,
+  webviewOutputViolations,
+  webviewViolations,
 } from "../../../scripts/bundle-checks.mjs";
 
 const wd = "/repo/vscode-extension";
@@ -248,5 +252,147 @@ describe("assertNoViolations", () => {
 
   it("returns nothing on an empty list", () => {
     assert.equal(assertNoViolations("child", []), undefined);
+  });
+});
+
+describe("webviewViolations", () => {
+  const grammar = "../src/lib/db/sql-grammar/index.ts";
+  const postgresGrammar = "../src/lib/db/providers/sql/postgres/grammar.ts";
+  const redisText = "../src/lib/db/providers/keyvalue/redis-command-text.ts";
+  const singles = [
+    "../node_modules/react/index.js",
+    "../node_modules/react-dom/client.js",
+    "../node_modules/get-nonce/dist/es5/index.js",
+  ];
+
+  /** A clean webview metafile, with `extra` inputs added and `imports` edges ([importer, imported]) on the inputs. */
+  function webview(extra: string[] = [], options: { drop?: string[]; externals?: string[] } = {}) {
+    const edges: [string, string][] = [
+      [grammar, postgresGrammar],
+      [postgresGrammar, redisText],
+    ];
+    const inputs = [
+      "src/webview/main.tsx",
+      "../src/components/ResultsGrid.tsx",
+      grammar,
+      postgresGrammar,
+      redisText,
+      ...singles,
+      ...extra,
+    ].filter((input) => !options.drop?.includes(input));
+    const externals = (options.externals ?? []).map((path) => ({ path, kind: "import-statement", external: true }));
+    return {
+      inputs: Object.fromEntries(
+        inputs.map((input) => [
+          input,
+          {
+            bytes: 1,
+            imports: edges.filter(([from]) => from === input).map(([, path]) => ({ path, kind: "import-statement" })),
+          },
+        ]),
+      ),
+      outputs: { "dist/webview/results.js": { imports: externals } },
+    };
+  }
+
+  it("keeps a webview of its sources, the grid, the sql-grammar rows and one React, React DOM and get-nonce", () => {
+    assert.deepEqual(webviewViolations(webview(), wd), []);
+  });
+
+  it("names the packages it refuses and the ones it needs exactly once", () => {
+    assert.deepEqual(WEBVIEW_FORBIDDEN_PACKAGES, [
+      "next",
+      "monaco-editor",
+      "@monaco-editor/react",
+      "@monaco-editor/loader",
+      "sonner",
+      "pg",
+      "mysql2",
+      "mssql",
+      "tedious",
+      "mongodb",
+    ]);
+    assert.deepEqual(WEBVIEW_SINGLE_COPY, ["react", "react-dom", "get-nonce"]);
+  });
+
+  it("refuses an external import", () => {
+    assert.deepEqual(webviewViolations(webview([], { externals: ["vscode"] }), wd), [
+      "vscode: the webview leaves nothing external",
+    ]);
+  });
+
+  for (const input of [
+    "../node_modules/next/dist/x.js",
+    "../node_modules/monaco-editor/esm/x.js",
+    "../node_modules/sonner/dist/index.mjs",
+    "../node_modules/pg/lib/index.js",
+  ]) {
+    it(`refuses ${input}`, () => {
+      assert.deepEqual(webviewViolations(webview([input]), wd), [
+        `${repoPath(input, wd)}: the webview never bundles ${inputPackage(input)}`,
+      ]);
+    });
+  }
+
+  it("refuses a provider file no sql-grammar row reaches", () => {
+    assert.deepEqual(webviewViolations(webview(["../src/lib/db/providers/sql/postgres.ts"]), wd), [
+      "src/lib/db/providers/sql/postgres.ts: the webview bundles a provider file that no sql-grammar row reaches",
+    ]);
+  });
+
+  it("refuses host and backend code", () => {
+    for (const input of ["src/host/results/html.ts", "src/backend/main.ts"]) {
+      assert.deepEqual(webviewViolations(webview([input]), wd), [
+        `vscode-extension/${input}: the webview never bundles host or backend code`,
+      ]);
+    }
+  });
+
+  it("refuses a second React directory", () => {
+    assert.deepEqual(webviewViolations(webview(["../node_modules/@radix-ui/x/node_modules/react/index.js"]), wd), [
+      "react: react is bundled from 2 directories",
+    ]);
+  });
+
+  it("refuses a webview without get-nonce", () => {
+    assert.deepEqual(webviewViolations(webview([], { drop: ["../node_modules/get-nonce/dist/es5/index.js"] }), wd), [
+      "get-nonce: get-nonce is bundled from 0 directories",
+    ]);
+  });
+});
+
+describe("webviewOutputViolations", () => {
+  const meta = (...outputs: string[]) => ({
+    inputs: {},
+    outputs: Object.fromEntries(outputs.map((output) => [output, { imports: [] }])),
+  });
+  const one = meta("dist/webview/results.js");
+
+  it("keeps one IIFE script with no eval and no new Function, minified or not", () => {
+    assert.deepEqual(webviewOutputViolations(one, "(()=>{var a=1;})();\n"), []);
+    assert.deepEqual(webviewOutputViolations(one, '"use strict";(()=>{var a=1;})();\n'), []);
+    assert.deepEqual(
+      webviewOutputViolations(
+        meta("dist/webview/results.js", "dist/webview/results.js.map"),
+        '"use strict";\n(() => {\n})();\n',
+      ),
+      [],
+    );
+  });
+
+  it("refuses a webview with other than one script output", () => {
+    assert.deepEqual(webviewOutputViolations(meta("dist/webview/results.js", "dist/webview/chunk.js"), "(()=>{})();"), [
+      "dist/webview: the webview is one script, results.js, and esbuild wrote 2",
+    ]);
+  });
+
+  it("refuses a script that is not an IIFE, or that evaluates text", () => {
+    assert.deepEqual(webviewOutputViolations(one, "export const a=1;"), [
+      "dist/webview/results.js: the webview script is not an IIFE",
+    ]);
+    assert.deepEqual(webviewOutputViolations(one, "(()=>{eval(x);new Function(y)})();"), [
+      "dist/webview/results.js: the webview script calls eval(",
+      "dist/webview/results.js: the webview script calls new Function",
+    ]);
   });
 });

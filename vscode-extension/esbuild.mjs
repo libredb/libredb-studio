@@ -1,13 +1,21 @@
-// The extension's single build entry (part 5, "Builds"): the LICENSE copy, the host and child bundles,
+// The extension's single build entry (part 5, "Builds"): the LICENSE copy, the host, child and webview bundles,
 // their metafile checks and THIRD_PARTY_NOTICES.txt. Production is the default; --watch builds unminified.
 // --e2e-tests bundles the e2e leg's test files into out/ and builds nothing else: the leg runs against the dist/ that ships.
 
-import { copyFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
-import { assertNoViolations, CHILD_EXTERNALS, childViolations, hostViolations } from "./scripts/bundle-checks.mjs";
+import {
+  assertNoViolations,
+  CHILD_EXTERNALS,
+  childViolations,
+  hostViolations,
+  webviewOutputViolations,
+  webviewViolations,
+} from "./scripts/bundle-checks.mjs";
 import { renderNotices } from "./scripts/notices.mjs";
+import { shimPlugin } from "./scripts/webview-shims.mjs";
 
 const root = dirname(fileURLToPath(import.meta.url));
 
@@ -43,6 +51,28 @@ const bundles = [
     options: { entryPoints: ["src/backend/main.ts"], outfile: "dist/backend.js", external: CHILD_EXTERNALS },
     metafilePath: "dist/backend.meta.json",
     violations: childViolations,
+  },
+  {
+    // The Results webview (part 4 "Bundling ResultsGrid for the webview"): a classic script for the browser, since the
+    // entry reads its nonce from document.currentScript; React and the grid come from the root's install.
+    label: "webview",
+    options: {
+      entryPoints: ["src/webview/main.tsx"],
+      outfile: "dist/webview/results.js",
+      platform: "browser",
+      format: "iife",
+      target: "es2022",
+      jsx: "automatic",
+      define: { "process.env.NODE_ENV": '"production"' },
+      keepNames: false,
+      sourcemap: watch ? "linked" : false,
+      plugins: [shimPlugin(root)],
+    },
+    metafilePath: "dist/webview/meta.json",
+    violations: (metafile, workingDir) => [
+      ...webviewViolations(metafile, workingDir),
+      ...webviewOutputViolations(metafile, readFileSync(join(workingDir, "dist/webview/results.js"), "utf8")),
+    ],
   },
 ];
 
@@ -90,7 +120,8 @@ if (e2eTests) {
           });
         },
       };
-      const context = await esbuild.context({ ...shared, ...bundle.options, plugins: [checks] });
+      const plugins = [...(bundle.options.plugins ?? []), checks];
+      const context = await esbuild.context({ ...shared, ...bundle.options, plugins });
       await context.watch();
     }
   } else {

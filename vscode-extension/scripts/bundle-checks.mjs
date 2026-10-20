@@ -76,6 +76,88 @@ export function childViolations(metafile, workingDir) {
   return violations;
 }
 
+/** Packages the webview must never carry: next, Monaco, the replaced sonner, and the v0 drivers. */
+export const WEBVIEW_FORBIDDEN_PACKAGES = [
+  "next",
+  "monaco-editor",
+  "@monaco-editor/react",
+  "@monaco-editor/loader",
+  "sonner",
+  "pg",
+  "mysql2",
+  "mssql",
+  "tedious",
+  "mongodb",
+];
+
+/** Packages the webview must carry from exactly one directory: two Reacts break hooks, two get-nonce copies lose the nonce. */
+export const WEBVIEW_SINGLE_COPY = ["react", "react-dom", "get-nonce"];
+
+const SQL_GRAMMAR_INDEX = "src/lib/db/sql-grammar/index.ts";
+const PROVIDERS_DIR = "src/lib/db/providers/";
+
+/**
+ * The webview's input rules (part 4 criterion 3). Drivers reach a bundle only through a provider module, which the
+ * closure rule refuses; the driver names are kept beside it because pg is also imported outside the providers.
+ */
+export function webviewViolations(metafile, workingDir) {
+  const violations = externalImports(metafile).map((path) => `${path}: the webview leaves nothing external`);
+  const reached = providersReachedFromSqlGrammar(metafile, workingDir);
+  const directories = new Map(WEBVIEW_SINGLE_COPY.map((name) => [name, new Set()]));
+  for (const input of Object.keys(metafile.inputs)) {
+    const path = repoPath(input, workingDir);
+    const pkg = inputPackage(input);
+    if (directories.has(pkg)) directories.get(pkg).add(packageDirectory(input, pkg));
+    if (WEBVIEW_FORBIDDEN_PACKAGES.includes(pkg)) violations.push(`${path}: the webview never bundles ${pkg}`);
+    else if (path.startsWith(PROVIDERS_DIR) && !reached.has(path)) {
+      violations.push(`${path}: the webview bundles a provider file that no sql-grammar row reaches`);
+    } else if (path.startsWith("vscode-extension/src/host/") || path.startsWith("vscode-extension/src/backend/")) {
+      violations.push(`${path}: the webview never bundles host or backend code`);
+    }
+  }
+  for (const [name, found] of directories) {
+    if (found.size !== 1) violations.push(`${name}: ${name} is bundled from ${found.size} directories`);
+  }
+  return violations;
+}
+
+/** The webview's output rules: one script, results.js, an IIFE (the entry reads document.currentScript), no eval. */
+export function webviewOutputViolations(metafile, code) {
+  const scripts = Object.keys(metafile.outputs).filter((output) => output.endsWith(".js"));
+  if (scripts.length !== 1 || !scripts[0].endsWith("/results.js")) {
+    return [`dist/webview: the webview is one script, results.js, and esbuild wrote ${scripts.length}`];
+  }
+  const violations = [];
+  if (!/^(?:"use strict";\s*)?\(\(\)\s*=>\s*\{/.test(code))
+    violations.push(`${scripts[0]}: the webview script is not an IIFE`);
+  for (const call of ["eval(", "new Function"]) {
+    if (code.includes(call)) violations.push(`${scripts[0]}: the webview script calls ${call}`);
+  }
+  return violations;
+}
+
+/** The provider files the sql-grammar index reaches, following imports among inputs under the providers directory only. */
+function providersReachedFromSqlGrammar(metafile, workingDir) {
+  const reached = new Set();
+  const index = Object.keys(metafile.inputs).find((input) => repoPath(input, workingDir) === SQL_GRAMMAR_INDEX);
+  const queue = index === undefined ? [] : [index];
+  while (queue.length > 0) {
+    for (const imported of metafile.inputs[queue.shift()]?.imports ?? []) {
+      const path = repoPath(imported.path, workingDir);
+      if (!path.startsWith(PROVIDERS_DIR) || reached.has(path)) continue;
+      reached.add(path);
+      queue.push(imported.path);
+    }
+  }
+  return reached;
+}
+
+/** "../node_modules/a/node_modules/react/index.js" -> "../node_modules/a/node_modules/react/". */
+function packageDirectory(input, pkg) {
+  const marker = `node_modules/${pkg}/`;
+  return input.slice(0, input.lastIndexOf(marker) + marker.length);
+}
+
 /** Throws Error("<label> bundle crosses its boundary:\n<one violation per line>") on a non-empty list. */
 export function assertNoViolations(label, violations) {
   if (violations.length > 0) throw new Error(`${label} bundle crosses its boundary:\n${violations.join("\n")}`);
