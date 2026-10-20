@@ -17,7 +17,7 @@ const HOST_DEFAULTS_CSS = "@layer vscode-default { body { padding: 0 20px; } }";
  * The --vscode-* values the leg sets on <html>, as the host page sets them: the six the spec reads, and the rest of
  * the bridge's variables at distinct values it does not read.
  */
-export const VSCODE_VARIABLES: Record<string, string> = {
+const VSCODE_VARIABLES: Record<string, string> = {
   "--vscode-panel-background": "rgb(10, 20, 30)",
   "--vscode-keybindingTable-headerBackground": "rgb(40, 50, 60)",
   "--vscode-editorWidget-background": "rgb(70, 80, 90)",

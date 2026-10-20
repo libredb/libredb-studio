@@ -135,9 +135,9 @@ test("criterion 16: under 768 px the grid shows its cards and the page does not 
   await postAll(view, LOAD_MORE_ON_POSTGRES.slice(0, 2));
   await expect(page.getByRole("button").filter({ hasText: "ada@example.com" }).first()).toBeVisible();
   await expect(desktopGrid(page)).toBeHidden();
-  expect(
-    await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth),
-  ).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(
+    true,
+  );
 });
 
 test("Review Focus 2: a 10 MB cell renders, the grid stays responsive, and the next page is not lost", async ({
@@ -296,7 +296,10 @@ test("criterion 11: MongoDB documents, from the recorded page", async ({ page })
   expect(
     await page
       .getByRole("dialog")
-      .evaluate((dialog, text) => [...dialog.querySelectorAll("*")].some((node) => node.textContent === text), indented),
+      .evaluate(
+        (dialog, text) => [...dialog.querySelectorAll("*")].some((node) => node.textContent === text),
+        indented,
+      ),
   ).toBe(true);
 });
 
@@ -327,12 +330,7 @@ test("criterion 12: Copy Cell, masked and not, and a copied cell range go throug
   ]);
 
   await page.getByTitle("Mask sensitive data").click();
-  const masked = desktopGrid(page)
-    .getByRole("row")
-    .nth(1)
-    .getByRole("gridcell")
-    .filter({ hasText: /\*/ })
-    .first();
+  const masked = desktopGrid(page).getByRole("row").nth(1).getByRole("gridcell").filter({ hasText: /\*/ }).first();
   const shown = (await masked.textContent()) ?? "";
   expect(shown).not.toContain("ada@example.com");
   const maskedCopy = await copyCell(shown);
@@ -344,7 +342,9 @@ test("criterion 12: Copy Cell, masked and not, and a copied cell range go throug
   await gridCell(page, "Lin").click({ modifiers: ["Shift"] });
   const answer = await postedAfter(view, async () => {
     await page.keyboard.press("Control+C");
-    await expect.poll(async () => (await view.posted()).some((m) => (m as { type: string }).type === "copy")).toBe(true);
+    await expect
+      .poll(async () => (await view.posted()).some((m) => (m as { type: string }).type === "copy"))
+      .toBe(true);
   });
   const range = answer.find((m) => (m as { type: string }).type === "copy") as { requestId: number; text: string };
   expect(range.text).toBe("Ada\nLin");

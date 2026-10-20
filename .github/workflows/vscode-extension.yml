@@ -57,6 +57,13 @@ jobs:
       - name: Unit leg and its 100% line coverage gate
         run: npm run test:unit && npm run coverage:check
 
+      - name: Install Chromium for the browser leg, through the root's Playwright
+        working-directory: .
+        run: bunx playwright install --with-deps chromium
+
+      - name: Browser leg, the results webview in Chromium
+        run: npm run test:browser
+
       - name: Restore the pinned VS Code builds
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:

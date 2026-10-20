@@ -22,13 +22,19 @@
       "entry": [
         ".vscode-test.mjs",
         "scripts/*.mjs",
-        "test/**/*.test.ts",
+        "test/**/*.test.{ts,tsx}",
+        "test/browser/**/*.spec.ts",
         "test/setup/*"
       ],
       "project": [
-        "src/**/*.ts",
-        "test/**/*.ts",
+        "src/**/*.{ts,tsx}",
+        "test/**/*.{ts,tsx}",
         "scripts/*.mjs"
+      ],
+      "playwright": false,
+      "ignoreDependencies": [
+        "get-nonce",
+        "@radix-ui/react-use-layout-effect"
       ]
     }
   },
