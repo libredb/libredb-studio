@@ -6,3 +6,5 @@
 !THIRD_PARTY_NOTICES.txt
 !dist/extension.js
 !dist/backend.js
+!dist/webview/results.js
+!dist/webview/results.css

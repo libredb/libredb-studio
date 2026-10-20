@@ -12,6 +12,8 @@ const REQUIRED_PATHS = [
   "extension/package.json",
   "extension/dist/extension.js",
   "extension/dist/backend.js",
+  "extension/dist/webview/results.js",
+  "extension/dist/webview/results.css",
   "extension/THIRD_PARTY_NOTICES.txt",
   "extension/LICENSE.txt",
 ];
@@ -50,8 +52,10 @@ describe("vsixViolations", () => {
     assert.deepEqual(vsixViolations(passing()), []);
   });
 
-  it("requires the package manifest, both bundles, the notices and the licence", () => {
-    assert.equal(REQUIRED.length, 5);
+  it("requires the package manifest, both bundles, the webview's script and stylesheet, the notices and the licence", () => {
+    assert.equal(REQUIRED.length, 7);
+    assert.ok(REQUIRED.includes("extension/dist/webview/results.js"));
+    assert.ok(REQUIRED.includes("extension/dist/webview/results.css"));
   });
 
   it("passes a VSIX, its unpacked content and its child bundle at exactly their budgets", () => {
@@ -95,6 +99,7 @@ describe("vsixViolations", () => {
   for (const path of [
     "extension/out/test/e2e/smoke/skeleton.test.js",
     "extension/dist/backend.meta.json",
+    "extension/dist/webview/meta.json",
     "extension/.env.test",
     "extension/coverage/lcov.info",
     "extension/dist/backend.js.MAP",

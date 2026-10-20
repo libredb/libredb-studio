@@ -9,11 +9,13 @@ const MIB = 1024 * 1024;
 
 export const BUDGET = { vsixBytes: 8 * MIB, unpackedBytes: 24 * MIB, backendBytes: 16 * MIB };
 
-/** Entries every VSIX must hold; LICENSE matches with or without the .txt vsce appends. */
+/** Entries every VSIX must hold, the results webview's script and stylesheet among them; LICENSE matches with or without the .txt vsce appends. */
 export const REQUIRED = [
   "extension/package.json",
   "extension/dist/extension.js",
   "extension/dist/backend.js",
+  "extension/dist/webview/results.js",
+  "extension/dist/webview/results.css",
   "extension/THIRD_PARTY_NOTICES.txt",
   /^extension\/LICENSE(\.txt)?$/,
 ];
