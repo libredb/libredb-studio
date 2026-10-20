@@ -450,6 +450,14 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
   const liveSchemaError = readForThisConnection?.error ?? null;
   const scopes = readForThisConnection?.scopes;
   /**
+   * What the picker shows: the pick the user made, else what the last read used.
+   *
+   * The pick and not the read, because after a pick that failed the read still answers the previous database. The
+   * Select reports a choice only when its value changes, so showing the previous one made choosing it again a no-op
+   * and left the user with no way back but another database.
+   */
+  const shownScope = pickedContainer === undefined ? (scopes?.selected ?? null) : pickedContainer;
+  /**
    * The sentence a refused read gave (SF-004), or null. Current Schema then has no content to compare: the explorer's
    * copy stood in for it, and on a Snowflake connection with no Database that copy is empty, so a diff listed every
    * object of the other side as added and offered a migration that recreated them there.
@@ -1088,7 +1096,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
           <div className="flex items-center gap-1">
             <span className="text-xs text-fg-subtle">Scope</span>
             <Select
-              value={scopes.selected === null ? WHOLE_CONNECTION : `${DATABASE_PREFIX}${scopes.selected}`}
+              value={shownScope === null ? WHOLE_CONNECTION : `${DATABASE_PREFIX}${shownScope}`}
               onValueChange={(v) =>
                 setScopePick({
                   target: readTarget,

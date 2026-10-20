@@ -152,13 +152,14 @@ surfaces are live through Phase 1 of #789.
 
 **The Diff tab is narrower than the browser** (#1791). It declares `schemaDiffScope: "session-container"`, so it
 reads the database the server says the session is in (`SELECT DATABASE()`, published as `isSessionDefault` on that
-container) and not every database the server holds. The diff pairs objects by name, so two same-named tables in
-different databases would otherwise collapse into one entry. A **Scope** picker in the tab offers every other database
-and **Whole connection**, which sends no `containers` to the inventory route; a connection the server places in no
-database (`DATABASE()` is NULL) reads whole, as it did before. A snapshot records the database it was read from
-(`SchemaSnapshot.scope`) and the picker lists it as `[name]`; one without a scope is a whole-connection snapshot,
-which is also every snapshot saved before the field existed. A connection fetched as the target is read at its own
-default database.
+container) and not every database the server holds. A live read is keyed by path below the containers it shares, so
+`app.orders` and `staging.orders` stay apart even in a whole-connection read; what the narrower read gains is a
+smaller snapshot and a key without the database, so two differently named databases (`app` and `app_copy`) pair
+table by table. A **Scope** picker in the tab offers every other database and **Whole connection**, which sends no
+`containers` to the inventory route; a connection the server places in no database (`DATABASE()` is NULL) reads
+whole, as it did before. A snapshot records the database it was read from (`SchemaSnapshot.scope`) and the picker
+lists it as `[name]`; one without a scope is a whole-connection snapshot, which is also every snapshot saved before
+the field existed. A connection fetched as the target is read at its own default database.
 
 ### 3.3 BLOB / binary values reach every surface AS BYTES
 

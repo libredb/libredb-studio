@@ -4497,6 +4497,7 @@ describe("SchemaDiff on a session-container engine", () => {
   function mysqlReads(listing: () => { ok: boolean; body: unknown }) {
     const orig = globalThis.fetch;
     const inventoryBodies: Record<string, unknown>[] = [];
+    const state = { inventoryFails: false };
     globalThis.fetch = mock((url: string, init?: RequestInit) => {
       const answer = (ok: boolean, body: unknown) => Promise.resolve({ ok, json: () => Promise.resolve(body) });
       if (url.includes("provider-meta")) {
@@ -4513,9 +4514,10 @@ describe("SchemaDiff on a session-container engine", () => {
         return answer(ok, body);
       }
       inventoryBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      if (state.inventoryFails) return answer(false, { error: "inventory refused" });
       return answer(true, { objects: [], details: [] });
     }) as unknown as typeof fetch;
-    return { inventoryBodies, restore: () => void (globalThis.fetch = orig) };
+    return { inventoryBodies, state, restore: () => void (globalThis.fetch = orig) };
   }
 
   async function open(listing: () => { ok: boolean; body: unknown }) {
@@ -4638,6 +4640,79 @@ describe("SchemaDiff on a session-container engine", () => {
     try {
       expect(view.getByText(/permission denied to list databases/)).toBeTruthy();
       expect(view.queryByTestId("select-whole")).toBeNull();
+    } finally {
+      restore();
+    }
+  });
+
+  test("a failed read after choosing a target keeps the picker", async () => {
+    const { view, state, restore } = await open(() => ({ ok: true, body: [analytics, shop] }));
+    try {
+      state.inventoryFails = true;
+      await act(async () => {
+        getTargetCallback()!("snap-1");
+      });
+      expect(view.getByText(/inventory refused/)).toBeTruthy();
+      expect(view.getByTestId("select-item-whole")).toBeTruthy();
+    } finally {
+      restore();
+    }
+  });
+
+  test("a failed Refresh keeps the picker", async () => {
+    const { view, state, restore } = await open(() => ({ ok: true, body: [analytics, shop] }));
+    try {
+      state.inventoryFails = true;
+      await act(async () => {
+        fireEvent.click(refreshButton(view)!);
+      });
+      expect(view.getByText(/inventory refused/)).toBeTruthy();
+      expect(view.getByTestId("select-item-whole")).toBeTruthy();
+    } finally {
+      restore();
+    }
+  });
+
+  test("a pick narrows this connection only, never a connection fetched as the target", async () => {
+    const { inventoryBodies, restore } = await open(() => ({ ok: true, body: [analytics, shop] }));
+    try {
+      await pick("db:shop", "db:analytics");
+      await act(async () => {
+        getTargetCallback()!("conn:remote-1");
+      });
+      const remote = inventoryBodies.filter((b) => (b.connection as { id: string }).id === "remote-1");
+      expect(remote.at(-1)?.containers).toEqual([["shop"]]);
+    } finally {
+      restore();
+    }
+  });
+
+  test("a pick belongs to the connection it was made on", async () => {
+    const { view, inventoryBodies, restore } = await open(() => ({ ok: true, body: [analytics, shop] }));
+    try {
+      await pick("db:shop", "db:analytics");
+      expect(inventoryBodies.at(-1)?.containers).toEqual([["analytics"]]);
+
+      await act(async () => {
+        view.rerender(<SchemaDiff schema={mockSchema} connection={mockMySQLConnection} />);
+      });
+      const last = inventoryBodies.at(-1) as { connection: { id: string }; containers: unknown };
+      expect(last.connection.id).toBe(mockMySQLConnection.id);
+      expect(last.containers).toEqual([["shop"]]);
+    } finally {
+      restore();
+    }
+  });
+
+  test("after a pick that failed, the picker shows it, so the database before it can be chosen again", async () => {
+    const { view, inventoryBodies, restore } = await open(() => ({ ok: true, body: [analytics, shop] }));
+    try {
+      await pick("db:shop", "db:gone");
+      expect(view.getByTestId("select-db:gone")).toBeTruthy();
+
+      await pick("db:gone", "db:shop");
+      expect(inventoryBodies.at(-1)?.containers).toEqual([["shop"]]);
+      expect(view.getByTestId("select-db:shop")).toBeTruthy();
     } finally {
       restore();
     }
