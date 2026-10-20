@@ -1,6 +1,7 @@
 import { type ChildProcess, fork } from "node:child_process";
 import { join } from "node:path";
 import { downloadAndUnzipVSCode } from "@vscode/test-electron";
+import { backendForkOptions } from "../fork-options";
 import versions from "../vscode-versions.json";
 
 export type BackendRuntimeName = "node" | "vscode";
@@ -31,13 +32,5 @@ export async function backendRuntime(): Promise<BackendRuntime> {
 
 /** Forks dist/backend.js on the runtime with the supervisor's options (part 1, "Starting the child"). */
 export function forkBackend(runtime: BackendRuntime): ChildProcess {
-  return fork(join(EXTENSION_ROOT, "dist", "backend.js"), [], {
-    execPath: runtime.execPath,
-    execArgv: [],
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", ELECTRON_NO_ASAR: "1", NODE_ENV: "production" },
-    cwd: EXTENSION_ROOT,
-    stdio: ["ignore", "pipe", "pipe", "ipc"],
-    serialization: "json",
-    windowsHide: true,
-  });
+  return fork(join(EXTENSION_ROOT, "dist", "backend.js"), [], backendForkOptions(EXTENSION_ROOT, runtime.execPath));
 }

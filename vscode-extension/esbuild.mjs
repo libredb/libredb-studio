@@ -1,7 +1,8 @@
 // The extension's single build entry (part 5, "Builds"): the LICENSE copy, the host and child bundles,
 // their metafile checks and THIRD_PARTY_NOTICES.txt. Production is the default; --watch builds unminified.
+// --e2e-tests bundles the e2e leg's test files into out/ and builds nothing else: the leg runs against the dist/ that ships.
 
-import { copyFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
@@ -16,8 +17,10 @@ import { renderNotices } from "./scripts/notices.mjs";
 const root = dirname(fileURLToPath(import.meta.url));
 
 const args = process.argv.slice(2);
-for (const arg of args) if (arg !== "--watch") throw new Error(`Unknown argument: ${arg}`);
+for (const arg of args) if (arg !== "--watch" && arg !== "--e2e-tests") throw new Error(`Unknown argument: ${arg}`);
 const watch = args.includes("--watch");
+const e2eTests = args.includes("--e2e-tests");
+if (watch && e2eTests) throw new Error("--e2e-tests builds once and does not take --watch.");
 
 const shared = {
   absWorkingDir: root,
@@ -60,29 +63,45 @@ function finish(bundle, metafile) {
   }
 }
 
-copyFileSync(join(root, "..", "LICENSE"), join(root, "LICENSE"));
-
-if (watch) {
-  for (const bundle of bundles) {
-    const checks = {
-      name: "libredb-bundle-checks",
-      setup(build) {
-        build.onEnd((result) => {
-          if (result.errors.length > 0) return;
-          try {
-            finish(bundle, result.metafile);
-          } catch (error) {
-            console.error(error.message);
-          }
-        });
-      },
-    };
-    const context = await esbuild.context({ ...shared, ...bundle.options, plugins: [checks] });
-    await context.watch();
-  }
+if (e2eTests) {
+  rmSync(join(root, "out", "test", "e2e"), { recursive: true, force: true });
+  await esbuild.build({
+    absWorkingDir: root,
+    entryPoints: ["test/e2e/**/*.test.ts"],
+    outbase: ".",
+    outdir: "out",
+    bundle: true,
+    tsconfig: "tsconfig.json",
+    platform: "node",
+    format: "cjs",
+    target: "node24",
+    external: ["vscode", "mocha"],
+    logLevel: "info",
+  });
 } else {
-  for (const bundle of bundles) {
-    const result = await esbuild.build({ ...shared, ...bundle.options });
-    finish(bundle, result.metafile);
+  copyFileSync(join(root, "..", "LICENSE"), join(root, "LICENSE"));
+  if (watch) {
+    for (const bundle of bundles) {
+      const checks = {
+        name: "libredb-bundle-checks",
+        setup(build) {
+          build.onEnd((result) => {
+            if (result.errors.length > 0) return;
+            try {
+              finish(bundle, result.metafile);
+            } catch (error) {
+              console.error(error.message);
+            }
+          });
+        },
+      };
+      const context = await esbuild.context({ ...shared, ...bundle.options, plugins: [checks] });
+      await context.watch();
+    }
+  } else {
+    for (const bundle of bundles) {
+      const result = await esbuild.build({ ...shared, ...bundle.options });
+      finish(bundle, result.metafile);
+    }
   }
 }
