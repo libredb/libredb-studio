@@ -33,7 +33,13 @@ export function inputPackage(path) {
 
 /** Each returns ["<repo path or import>: <rule>"], empty when the bundle keeps its boundary. */
 export function hostViolations(metafile, workingDir) {
-  return inputViolations(metafile, workingDir, HOST_INPUT_RULES);
+  const violations = inputViolations(metafile, workingDir, HOST_INPUT_RULES);
+  for (const path of externalImports(metafile)) {
+    if (path !== "vscode" && !isBuiltin(path)) {
+      violations.push(`${path}: an external import other than vscode or a Node builtin`);
+    }
+  }
+  return violations;
 }
 
 export function childViolations(metafile, workingDir) {
@@ -96,8 +102,12 @@ function externalImports(metafile) {
   return [...paths];
 }
 
+function isBuiltin(path) {
+  return path.startsWith("node:") || builtinModules.includes(path);
+}
+
 function isChildExternal(path) {
-  if (path.startsWith("node:") || builtinModules.includes(path)) return true;
+  if (isBuiltin(path)) return true;
   return CHILD_EXTERNALS.some((entry) => {
     if (entry.startsWith("*")) return path.endsWith(entry.slice(1));
     if (entry.endsWith("/*")) return path.startsWith(entry.slice(0, -1));

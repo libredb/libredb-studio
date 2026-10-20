@@ -57,6 +57,18 @@ describe("hostViolations", () => {
     });
   }
 
+  for (const external of ["pg", "../src/lib/db/factory"]) {
+    it(`refuses an external import of ${external}`, () => {
+      const violations = hostViolations(metafile(["src/host/extension.ts"], ["vscode", external]), wd);
+      assert.deepEqual(violations, [`${external}: an external import other than vscode or a Node builtin`]);
+    });
+  }
+
+  it("leaves vscode and Node builtins external, with or without the node: prefix", () => {
+    const clean = metafile(["src/host/extension.ts"], ["vscode", "node:child_process", "path"]);
+    assert.deepEqual(hostViolations(clean, wd), []);
+  });
+
   it("keeps a host of its own sources, LibreDB types, vscode-jsonrpc and an external vscode", () => {
     const clean = metafile(
       ["src/host/extension.ts", "../src/lib/types.ts", "../node_modules/vscode-jsonrpc/lib/node/main.js"],
