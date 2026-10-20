@@ -1384,6 +1384,61 @@ for (const type of Object.keys(CONNECTION_FORM) as DatabaseType[]) {
   });
 }
 
+/**
+ * The order the connection dialog's engine picker offers the engines in, for display (the dialog renders them as a
+ * two-column grid).
+ *
+ * It covers the whole `DatabaseType` union, because the same form edits saved connections, so an omitted type leaves
+ * the picker with nothing selected. An engine missing from this list cannot be created at all, and the compiler cannot
+ * see the omission: the array is typed `readonly DatabaseType[]`, and every subset of a union satisfies that. So
+ * registering an engine everywhere else is not enough; it has to be named here too.
+ * tests/unit/lib/db/connection-form.test.ts enforces the coverage.
+ */
+export const CONNECTION_PICKER_ORDER: readonly DatabaseType[] = Object.freeze([
+  "postgres",
+  "mysql",
+  "sqlite",
+  "oracle",
+  "mssql",
+  "mongodb",
+  "couchbase",
+  "redis",
+  "libredb",
+  "clickhouse",
+  "druid",
+  "elasticsearch",
+  "opensearch",
+  "trino",
+  "cassandra",
+  "libsql",
+  "duckdb",
+  "prometheus",
+  "kafka",
+  "etcd",
+  "db2",
+  "neo4j",
+  "milvus",
+  "qdrant",
+  "influxdb",
+  "influxdb3",
+  "oxia",
+  "databend",
+  "bigquery",
+  "s3",
+  "kubernetes",
+  "mqtt",
+  "firestore",
+  "rabbitmq",
+  "snowflake",
+  "opcua",
+  "snmp",
+  "sparkplug",
+  "spark",
+  "mtconnect",
+  "modbus",
+  "netconf",
+]);
+
 /** Whether the dialog offers the SSL / TLS panel: false only where the entry declares `showSslPanel: false`. */
 export function offersSslPanel(type: DatabaseType): boolean {
   return CONNECTION_FORM[type].showSslPanel !== false;

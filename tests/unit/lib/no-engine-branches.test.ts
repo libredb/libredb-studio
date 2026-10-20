@@ -66,7 +66,6 @@ export const REGISTRIES: readonly Listed[] = [
     count: 1,
     reason: DISPLAY_ORDER,
   },
-  { path: "src/hooks/use-connection-form.ts", declaration: "selectableTypes", count: 1, reason: DISPLAY_ORDER },
   { path: "src/lib/db-showcase.ts", declaration: "SHOWCASE_RANK", count: 1, reason: DISPLAY_ORDER },
   {
     path: "src/lib/db-ui-config.ts",

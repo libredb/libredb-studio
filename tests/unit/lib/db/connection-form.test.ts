@@ -14,6 +14,7 @@ import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import * as form from "@/lib/db/connection-form";
 import {
   CONNECTION_FORM,
+  CONNECTION_PICKER_ORDER,
   connectionFieldHint,
   connectionFieldPlaceholder,
   connectionFieldPlacement,
@@ -34,6 +35,59 @@ const MOVED_READERS = [
   "connectionFieldRefusal",
   "readOnlyHint",
 ] as const;
+
+// The picker order must cover the whole DatabaseType union, because this form is also the EDIT
+// form: a type missing here renders the edit dialog with no tile selected. Keyed by
+// DatabaseType, so adding a provider to the union fails `typecheck` on the missing key
+// instead of silently dropping it from the UI. Set an entry to false only to hide a type
+// on purpose — and say why.
+const PICKER_COVERAGE: Record<DatabaseType, boolean> = {
+  postgres: true,
+  mysql: true,
+  sqlite: true,
+  oracle: true,
+  db2: true,
+  mssql: true,
+  mongodb: true,
+  redis: true,
+  libredb: true,
+  couchbase: true,
+  clickhouse: true,
+  druid: true,
+  // Both search ids are selectable: the same form EDITS an existing connection, so
+  // an omitted type leaves the picker with nothing selected for a connection the
+  // product can otherwise open (issue #424 Phase 1).
+  elasticsearch: true,
+  opensearch: true,
+  trino: true,
+  cassandra: true,
+  libsql: true,
+  duckdb: true,
+  prometheus: true,
+  kafka: true,
+  etcd: true,
+  neo4j: true,
+  milvus: true,
+  qdrant: true,
+  influxdb: true,
+  influxdb3: true,
+  oxia: true,
+  databend: true,
+  bigquery: true,
+  s3: true,
+  kubernetes: true,
+  mqtt: true,
+  firestore: true,
+  rabbitmq: true,
+  snowflake: true,
+  spark: true,
+  opcua: true,
+  mtconnect: true,
+  modbus: true,
+  netconf: true,
+  snmp: true,
+  sparkplug: true,
+};
 
 /**
  * Every specifier a file loads at run time: value imports and re-exports, never a type-only one, and every
@@ -205,5 +259,75 @@ describe("src/lib/db/connection-form.ts", () => {
     expect(connectionFieldPlaceholder(CONNECTION_FORM.mongodb, "connectionString", "")).toBe(
       "mongodb://localhost:27017/mydb  or  mongodb+srv://...",
     );
+  });
+});
+
+describe("CONNECTION_PICKER_ORDER", () => {
+  test("offers every database type a connection can carry, each once", () => {
+    const expected = Object.entries(PICKER_COVERAGE)
+      .filter(([, selectable]) => selectable)
+      .map(([type]) => type)
+      .sort();
+    const offered: string[] = [...CONNECTION_PICKER_ORDER].sort();
+    expect(offered).toEqual(expected);
+    expect(new Set(CONNECTION_PICKER_ORDER).size).toBe(CONNECTION_PICKER_ORDER.length);
+    expect(Object.isFrozen(CONNECTION_PICKER_ORDER)).toBe(true);
+  });
+
+  test("keeps the picker's shipped order", () => {
+    expect(CONNECTION_PICKER_ORDER).toEqual([
+      "postgres",
+      "mysql",
+      "sqlite",
+      "oracle",
+      "mssql",
+      "mongodb",
+      "couchbase",
+      "redis",
+      "libredb",
+      "clickhouse",
+      "druid",
+      "elasticsearch",
+      "opensearch",
+      "trino",
+      "cassandra",
+      "libsql",
+      "duckdb",
+      "prometheus",
+      "kafka",
+      "etcd",
+      "db2",
+      "neo4j",
+      "milvus",
+      "qdrant",
+      "influxdb",
+      "influxdb3",
+      "oxia",
+      "databend",
+      "bigquery",
+      "s3",
+      "kubernetes",
+      "mqtt",
+      "firestore",
+      "rabbitmq",
+      "snowflake",
+      "opcua",
+      "snmp",
+      "sparkplug",
+      "spark",
+      "mtconnect",
+      "modbus",
+      "netconf",
+    ]);
+  });
+
+  test("puts the four v0 engines in part 2 criterion 2's order", () => {
+    const v0 = ["postgres", "mssql", "mysql", "mongodb"];
+    expect(CONNECTION_PICKER_ORDER.filter((type) => v0.includes(type))).toEqual([
+      "postgres",
+      "mysql",
+      "mssql",
+      "mongodb",
+    ]);
   });
 });

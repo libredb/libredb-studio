@@ -23,6 +23,7 @@ import {
   offersSslPanel,
   type ConnectionField,
 } from "@/lib/db-ui-config";
+import { CONNECTION_PICKER_ORDER } from "@/lib/db/connection-form";
 import type { ImportedContext, ImportedField, ImportedSsl } from "@/lib/connection-import";
 import { databendNotAppliedNotice, parseConnectionString } from "@/lib/connection-string-parser";
 import { PASTE_FORMATS_TEXT } from "@/lib/connection-paste-formats";
@@ -1713,57 +1714,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     [isEditMode, type, environment, name, readOnly, skipObjectScan, queryTimeout, resetConnectionFields, importSetters],
   );
 
-  // Ordered for display (the modal renders these as a 2-column grid), and covering the whole
-  // DatabaseType union — the same form edits existing connections, so an omitted type leaves the
-  // picker with nothing selected. tests/hooks/use-connection-form.test.ts enforces the coverage.
-  const selectableTypes: DatabaseType[] = [
-    "postgres",
-    "mysql",
-    "sqlite",
-    "oracle",
-    "mssql",
-    "mongodb",
-    "couchbase",
-    "redis",
-    "libredb",
-    "clickhouse",
-    "druid",
-    "elasticsearch",
-    "opensearch",
-    "trino",
-    "cassandra",
-    "libsql",
-    "duckdb",
-    "prometheus",
-    "kafka",
-    "etcd",
-    "db2",
-    "neo4j",
-    "milvus",
-    "qdrant",
-    "influxdb",
-    "influxdb3",
-    "oxia",
-    "databend",
-    "bigquery",
-    "s3",
-    "kubernetes",
-    "mqtt",
-    "firestore",
-    "rabbitmq",
-    "snowflake",
-    "opcua",
-    "snmp",
-    "sparkplug",
-    "spark",
-    "mtconnect",
-    "modbus",
-    // An engine missing from this list cannot be created at all, and the compiler cannot see the
-    // omission: the array is typed `DatabaseType[]`, and every subset of a union satisfies that.
-    // So registering an engine everywhere else is not enough; it has to be named here too.
-    "netconf",
-  ];
-  const dbTypes = selectableTypes.map((t) => {
+  const dbTypes = CONNECTION_PICKER_ORDER.map((t) => {
     const cfg = getDBConfig(t);
     return { value: t, label: cfg.label, icon: cfg.icon, color: cfg.color };
   });
