@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runPool, separatingGroups } from "../isolation-children";
 import { type EngineModule, ENGINE_MODULES, ROOT } from "./engine-modules";
@@ -100,13 +101,32 @@ interface Run {
 const membersOf = (group: readonly string[]): EngineModule[] => ENGINE_MODULES.filter(({ id }) => group.includes(id));
 
 async function render(group: readonly string[]): Promise<Run> {
-  const child = Bun.spawn(["bun", "-e", scriptFor(membersOf(group))], { cwd: ROOT, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-    child.exited,
-  ]);
-  return { exitCode, stderr, rendered: exitCode === 0 ? (JSON.parse(stdout) as Record<string, string>) : {} };
+  // THE SCRIPT GOES IN A FILE, NOT IN ARGV, AND THAT IS MEASURED RATHER THAN
+  // PREFERRED. `bun -e <script>` passes the whole generated module as one
+  // command-line argument, and that argument grows with every engine this suite
+  // covers. On 19 October 2026 it crossed Windows's command-line limit: the
+  // `Cross-platform Tests (windows-latest)` job went red with `ENAMETOOLONG` out
+  // of `uv_spawn`, and main stayed red from that commit onwards (runs for
+  // 6e611bf7, 3220eb60, 9c983bb5) while macOS and Linux passed, because only
+  // Windows caps the command line this low. A file has no such ceiling, so the
+  // suite can keep gaining engines without this coming back.
+  const dir = mkdtempSync(join(tmpdir(), "libredb-isolation-"));
+  const file = join(dir, "child.ts");
+  writeFileSync(file, scriptFor(membersOf(group)), "utf8");
+  try {
+    const child = Bun.spawn(["bun", file], { cwd: ROOT, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]);
+    return { exitCode, stderr, rendered: exitCode === 0 ? (JSON.parse(stdout) as Record<string, string>) : {} };
+  } finally {
+    // `finally`, not a last line: a child that fails leaves the directory behind
+    // exactly on the runs where the suite is already failing, and a runner that
+    // keeps those is the one that runs out of disk.
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 const runs = new Map<number, Run>();
