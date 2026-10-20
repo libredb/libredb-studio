@@ -1,0 +1,3 @@
+{
+  "untrustedWorkspaces.description": "In Restricted Mode, LibreDB opens every connection with external file access denied."
+}

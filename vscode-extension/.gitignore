@@ -1,0 +1,9 @@
+node_modules/
+dist/
+out/
+dist-vsix/
+.vscode-test/
+coverage/
+media/engines/
+LICENSE
+THIRD_PARTY_NOTICES.txt

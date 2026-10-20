@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["../src/*"],
+      "vscode": ["./test/fakes/vscode.ts"]
+    }
+  }
+}
