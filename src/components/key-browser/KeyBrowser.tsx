@@ -27,7 +27,7 @@
  * such level: its tree starts at the keys' first segments, and a key that begins with the separator
  * hangs under the separator's own root row (spec 4.6).
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronRight,
   Database,
@@ -58,6 +58,8 @@ import {
   type KeyTreeNode,
   type KeyTreeRow,
 } from "./tree";
+import { parentIndices, revealOffset, stickyCap, stickyEntries } from "@/components/sticky-rows";
+import { StickyStrip, type StickyStripSlot } from "@/components/StickyStrip";
 import { useKeyDatabases } from "./use-key-databases";
 import { HELD_KEY_LIMIT, useKeyScan } from "./use-key-scan";
 
@@ -180,6 +182,15 @@ function scopeChain(scope: readonly string[]): ReadonlySet<string> {
  * branch below is told apart the way the tree's own rows are.
  */
 type PanelRow = KeyTreeRow | { readonly kind: "database"; readonly name: string; readonly label: string };
+
+/** One painted slot of the strip: which row it names and how that row is drawn. */
+interface StickyRowItem {
+  readonly index: number;
+  readonly id: string;
+  readonly label: string;
+  readonly depth: number;
+  readonly folder: boolean;
+}
 
 export function KeyBrowser({ connection, capability, databaseLevel, request, onOpenKey }: KeyBrowserProps) {
   const [pattern, setPattern] = useState(request?.pattern ?? "");
@@ -550,7 +561,11 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
   const [viewportHeight, setViewportHeight] = useState(0);
   const [focusedRow, setFocusedRow] = useState(-1);
   const [pinned, setPinned] = useState(false);
+  // The box, for the one gesture that moves it: a press on the strip. Its height is measured by the
+  // same callback rather than in an effect, for the reason the windowing comment below states.
+  const treeRef = useRef<HTMLDivElement | null>(null);
   const attach = useCallback((element: HTMLDivElement | null) => {
+    treeRef.current = element;
     if (element !== null) setViewportHeight(element.clientHeight);
   }, []);
   const onScroll = useCallback((event: { currentTarget: HTMLDivElement }) => {
@@ -569,6 +584,71 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
     return [{ kind: "database", name: databaseRow.name, label: databaseRow.label }, ...keyRows];
   }, [databaseRow, databaseOpen, rows]);
   const [windowStart, windowEnd] = keyTreeWindow(panelRows.length, scrollTop, viewportHeight, pinned ? focusedRow : -1);
+
+  /*
+   * THE STRIP ABOVE THE ROWS: the ancestors of the first visible row, so a reader who has scrolled
+   * deep into one prefix keeps the database and the folders in sight. Built from the FLAT list
+   * rather than from mounted rows, because the window is exactly what unmounts the ancestors the
+   * strip needs to draw.
+   *
+   * The depth it reads is the VISUAL one, which is what `indent` adds: the database row pushes
+   * everything under it down one level, so the strip's chain and the rows' indentation agree.
+   */
+  const stripDepths = useMemo(() => {
+    // The database row, when there is one, is the first of the panel's rows, and it pushes every
+    // row under it down one visual level. These are therefore VISUAL depths, the ones `indent`
+    // draws, which is also why the strip's own render adds no offset of its own.
+    const shifted = panelRows[0]?.kind === "database";
+    return panelRows.map((row) => ({
+      depth: row.kind === "database" ? 0 : row.depth + (shifted ? 1 : 0),
+    }));
+  }, [panelRows]);
+  const stripRows = useMemo<readonly StickyStripSlot<StickyRowItem>[]>(
+    () =>
+      stickyEntries(
+        stripDepths,
+        parentIndices(stripDepths),
+        scrollTop,
+        viewportHeight,
+        KEY_ROW_HEIGHT,
+        stickyCap(viewportHeight, KEY_ROW_HEIGHT),
+      ).flatMap((entry, slot): StickyStripSlot<StickyRowItem>[] => {
+        if (entry.kind === "gap") return [{ kind: "gap" as const, slot }];
+        // A load-more row is a leaf under its folder, so it is never an ancestor of the first
+        // visible row: the union is narrowed by that fact rather than by a branch nothing reaches.
+        const row = panelRows[entry.index] as Exclude<PanelRow, { readonly kind: "loadMore" }>;
+        const item: StickyRowItem = {
+          index: entry.index,
+          id: row.kind === "database" ? "database" : pathKey(row.node.path),
+          label: row.kind === "database" ? row.name : keyRowNames(row.node, row.folder, shape, levels).label,
+          depth: stripDepths[entry.index].depth,
+          folder: row.kind === "database" || row.folder,
+        };
+        return [{ kind: "row" as const, slot, item }];
+      }),
+    [stripDepths, panelRows, scrollTop, viewportHeight, shape, levels],
+  );
+  const [flashKey, setFlashKey] = useState<string | null>(null);
+  // A flash is a moment, not a state. Every jump replaces the key and the effect tears its timer down.
+  useEffect(() => {
+    if (flashKey === null) return;
+    const timer = setTimeout(() => setFlashKey(null), 900);
+    return () => clearTimeout(timer);
+  }, [flashKey]);
+
+  /**
+   * A press on a strip row: reveal it at the top edge, mark it, and keep the window pinned to it.
+   * The strip is a map back into the list, so the press ends on the row rather than opening a second
+   * surface beside it.
+   */
+  const revealKeyRow = useCallback((index: number, id: string) => {
+    const top = revealOffset(index, KEY_ROW_HEIGHT);
+    if (treeRef.current !== null) treeRef.current.scrollTop = top;
+    setScrollTop(top);
+    setFocusedRow(index);
+    setPinned(true);
+    setFlashKey(id);
+  }, []);
 
   /*
    * WHAT THE TWO NUMBERS OF THE PROGRESS LINE ARE, because they are not the same kind of number and
@@ -955,6 +1035,10 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
         recipe `ObjectTree` already uses: a measured box, flat rows at a fixed height, and the ARIA
         pair taken from the FULL level — `aria-setsize` is the whole set, so a screen reader is told
         how long the list really is while the window hides most of it.
+
+        THE STRIP ABOVE IS NOT THAT ROW. It takes no height, holds no tab stop and is built from the
+        same flat list, so it changes neither the window's arithmetic nor where the slice starts; it
+        repeats the ancestors' names so a reader can tell which database and prefix they are under.
       */}
       <div
         ref={attach}
@@ -962,8 +1046,32 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
         aria-label="Keys"
         tabIndex={-1}
         onScroll={onScroll}
-        className="min-h-0 flex-1 overflow-auto outline-none"
+        className="relative min-h-0 flex-1 overflow-auto outline-none"
       >
+        <StickyStrip
+          testId="key-browser-sticky"
+          rowHeight={KEY_ROW_HEIGHT}
+          entries={stripRows}
+          renderRow={(item, slot) => (
+            <button
+              key={`${slot}-${item.id}`}
+              type="button"
+              tabIndex={-1}
+              data-testid="key-browser-sticky-row"
+              title={`Jump to ${item.label}`}
+              onClick={() => revealKeyRow(item.index, item.id)}
+              style={{ top: slot * KEY_ROW_HEIGHT, height: KEY_ROW_HEIGHT, paddingLeft: 8 + item.depth * 12 }}
+              className="absolute inset-x-0 flex w-full items-center gap-1 bg-transparent pr-7 text-left outline-none hover:bg-accent"
+            >
+              {item.folder ? (
+                <Folder strokeWidth={1.5} className="h-3.5 w-3.5 shrink-0 text-hue-yellow/70" />
+              ) : (
+                <KeyRound strokeWidth={1.5} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              )}
+              <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground">{item.label}</span>
+            </button>
+          )}
+        />
         <div role="presentation" className="relative" style={{ height: panelRows.length * KEY_ROW_HEIGHT }}>
           {panelRows.slice(windowStart, windowEnd).map((row, offset) => {
             const index = windowStart + offset;
@@ -1008,7 +1116,10 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
                   }}
                   onFocus={focus}
                   style={{ top, paddingLeft: 8 }}
-                  className="absolute inset-x-0 flex h-6 cursor-pointer select-none items-center gap-1 rounded pr-7 outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-brand"
+                  className={cn(
+                    "absolute inset-x-0 flex h-6 cursor-pointer select-none items-center gap-1 rounded pr-7 outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-brand",
+                    flashKey === "database" && "bg-brand/20 ring-2 ring-inset ring-brand/60",
+                  )}
                 >
                   <ChevronRight
                     strokeWidth={1.5}
@@ -1171,6 +1282,8 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
                   // A leaf is actionable only when somebody will act on it, so the pointer follows the
                   // wiring rather than the row's kind.
                   (readable || folder) && "cursor-pointer",
+                  // A strip row just sent the reader here: same pick, drawn where the eye landed.
+                  flashKey === key && "bg-brand/20 ring-2 ring-inset ring-brand/60",
                 )}
               >
                 {folder ? (
