@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S9 · 6
-- [Drivers and connections](#drivers-and-connections) — D1-D379, U17 · 275
+- [Drivers and connections](#drivers-and-connections) — D1-D379, U17 · 274
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U148 · 134
@@ -2087,23 +2087,6 @@ Measured 2026-10-03: no `provenance:` assignment exists in either provider, and 
 
 **Done when:** the owner has decided whether MongoDB's and Couchbase's sampled fields stay visible to models, and for each engine either its column builder sets `provenance: "sampled"` with a test that `inspect_schema` and the agent inventory hold none of them, or its provider doc (`docs/providers/mongodb.md`, `docs/providers/couchbase.md`) states that its sampled fields reach those surfaces; then this entry is deleted.
 
-### D153. The etcd connection-options test can outrun bun's five-second hook timeout
-
-The file-level `beforeAll` in `tests/unit/db/etcd/connection-options.test.ts` makes its certificates at test time with `openssl`, eight of them over a new RSA-2048 key, and passes no timeout, so bun's default of 5000 ms bounds the whole setup.
-On the `Unit & Integration Tests` run of #1246 on 2026-10-03 (12:03 UTC) the hook timed out after 5001 ms while `openssl req` made the eighth key, the one for `etcd-server`, and the file failed with no test run; later runs of the same job passed.
-The same eight keys took 14 to 88 ms each on a development machine the same day, so the setup normally ends far inside the limit, but RSA key generation searches for primes and has no fixed duration, and a busy runner stretches it further.
-
-Found on #1246, whose change does not touch etcd.
-Not fixed there: the test is etcd's, and that PR touched no other provider.
-
-Amended 2026-10-04: the same default bounds each test of `tests/unit/db/etcd/seam-guard.test.ts`, and `descriptor readers: exactly the files spec E11 names` ran out of it in one full coverage run on `main` at `6dcc67fd6` at a load average of about 40.
-That file's `beforeAll` already parses the repository once under a 60-second budget, so what ran out was the rule's own walk over the parsed files.
-The file passed alone (59 tests in 6.3 s there, and 60 tests in 3.9 s on `main` at `d994ad72f`), in every full run after that one, and in three runs beside 40 busy loops on a 20-core machine (7 to 10 s each, on `main` at `6dcc67fd6`), so it needs more load than that to fail again.
-This entry is done only when that test also passes repeated runs at the CI job's concurrency, through a timeout of its own or a cheaper walk.
-Amended 2026-10-20: it failed that way again on the `Cross-platform Tests (macos-latest)` job of #1818 on 2026-10-19 (attempt 1 of run 39288327751, 6028 ms), beside D379's failure; attempt 2 passed.
-
-**Done when:** the hook carries a timeout sized for a busy runner (bun's `beforeAll` takes one as its second argument), or makes RSA keys only where a test needs RSA, and the file passes repeated runs at the CI job's concurrency.
-
 ### D154. Qdrant Cloud is not claimed
 
 Qdrant Cloud speaks the Qdrant REST API and connects as a `qdrant` connection: its address pasted into the Host box, SSL mode `verify-system`, and a key in API key or JWT.
@@ -3043,7 +3026,7 @@ Found 2026-10-10 while planning the Kubernetes provider.
 The file-level `beforeAll` in `tests/unit/lib/agent/composed-sql.test.ts` loads the DuckDB native addon, creates a database file and its fixture tables, and passes no timeout, so bun's default of 5000 ms bounds the whole setup.
 In one full coverage run on 2026-10-11, on the Kubernetes provider's branch, which does not touch that file, the hook timed out and the file failed with no test run.
 The file passed alone and alone with coverage three times that day, and 16 parallel coverage runs of it passed the same day, so it needs more load than that to fail again.
-It is the same shape as D153.
+It is the same shape as the etcd `connection-options.test.ts` hook, which #1855 gave a 60-second budget.
 
 **Done when:** the hook carries a timeout sized for a busy runner (bun's `beforeAll` takes one as its second argument), and the file passes repeated runs at the CI job's concurrency.
 
@@ -3853,7 +3836,7 @@ Each ran out of that default under load on a 20-core development machine during 
   Its slowest without a timeout of its own is `the real sources pass all three rules`, an import-graph walk from every file under `src/lib/db/operations` and `src/lib/agent`, read from disk in the body.
 
 Re-measured alone on 2026-10-20 on `main` at `6e611bf73`, three runs each through bun's JUnit reporter: 0.88 to 1.13 s, 0.52 to 0.53 s, 0.39 to 0.40 s and 0.38 to 0.39 s, in the order above.
-D153 is the same class in the etcd files.
+The etcd `seam-guard.test.ts` and `connection-options.test.ts` were the same class; #1855 made the one's slowest rule cheaper and gave the other's hook a budget.
 
 Found on #1847, #1849 and #1850, none of which touches these tests.
 
@@ -3883,7 +3866,7 @@ Found on #1850, which moved the spec's quoting beside each provider and left the
 `the seconds are the wait this request made, never a limit it was not given` in `tests/unit/db/http/node-transport-connect-timeout.test.ts` makes a 700 ms deadline, sleeps 400 ms with `setTimeout`, then sends a request to a host whose connect never completes, and expects the failure to name a wait of 0.2 to 0.4 seconds.
 The transport counts that wait from the request's own start (`queuedAt` in `createNodeTransport`, `src/lib/db/http/node-transport.ts`), and `waitedSeconds` in `src/lib/db/errors.ts` names 0.2 only from 150 ms up, so the test holds only while the sleep ends no more than 150 ms late.
 On the `Cross-platform Tests (macos-latest)` job of #1818, attempt 1 of run 39288327751 on 2026-10-19, it failed at line 108 with `expect(received).toBeGreaterThanOrEqual(expected)`, "Expected: >= 0.2", "Received: 0.1", after 704 ms, so the request started with under 150 ms of the deadline left; attempt 2 passed.
-The same attempt also ran D153's etcd `descriptor readers` test out of the default timeout (6028 ms), so the runner was busy, and nothing points at the transport.
+The same attempt also ran the etcd `descriptor readers` test of `tests/unit/db/etcd/seam-guard.test.ts` out of the default timeout (6028 ms), so the runner was busy, and nothing points at the transport.
 The file passed alone on 2026-10-20 on `main` at `6e611bf73` (12 tests, 3.3 s).
 
 Found on #1818, whose change does not touch the HTTP transport.

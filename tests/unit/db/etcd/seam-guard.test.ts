@@ -283,12 +283,32 @@ const importsFile =
       ({ specifier }) => specifier !== undefined && resolvesTo(specifier, join(root, path), root, target),
     );
 
-/** A string, other than a module name, whose last path segment is the descriptor's file name. */
+const DESCRIPTOR_FILE_NAME = /(?:^|[/\\])descriptor\.ts$/;
+
+/**
+ * A string, other than a module name, whose last path segment is the descriptor's file name.
+ *
+ * Its own walk rather than `spellings`: this rule runs over every file of the repository and
+ * reads string nodes alone, and `spellings` also collects every identifier and computes a line
+ * for each, which made this the slowest rule of the file and ran it out of bun's five-second
+ * default on busy CI runners. The text compared is the node's own `text`, so an escaped spelling
+ * is caught as before, and the module-name set is built only for a file holding a match.
+ */
 function namesDescriptorFile({ sf }: RepositoryFile): boolean {
+  const matches: ts.Node[] = [];
+  const visit = (node: ts.Node) => {
+    if (
+      (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateLiteralToken(node)) &&
+      DESCRIPTOR_FILE_NAME.test(node.text)
+    ) {
+      matches.push(node);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  if (matches.length === 0) return false;
   const moduleNames = moduleNameNodes(sf);
-  return spellings(sf).some(
-    ({ node, text, isString }) => isString && !moduleNames.has(node) && /(?:^|[/\\])descriptor\.ts$/.test(text),
-  );
+  return matches.some((node) => !moduleNames.has(node));
 }
 
 /** Spec E11 and the plan's Global Constraints, list by list. */

@@ -51,6 +51,24 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
     ],
   },
   {
+    // Display-only, same reasoning as the object tree below: the grid's own `onKeyDown`
+    // (`src/components/results-grid/keyboard.ts`) and the browser's copy event implement these,
+    // and only while the grid has focus.
+    heading: "Results grid",
+    shortcuts: [
+      { keys: "Click / drag", description: "Select a cell / a range of cells" },
+      { keys: "Shift+Click / Ctrl+Click", description: "Extend the selection / add another range" },
+      { keys: "Click a column name / row number", description: "Select the column / the row" },
+      { keys: "Ctrl+C", description: "Copy the selected cells, pastes into a spreadsheet" },
+      { keys: "Ctrl+A", description: "Select every cell" },
+      { keys: "Arrow keys", description: "Move the active cell" },
+      { keys: "Shift+Arrow keys", description: "Extend the selection" },
+      { keys: "Ctrl+Arrow / Ctrl+Home / Ctrl+End", description: "Jump to an edge / the first / the last cell" },
+      { keys: "Shift+Space / Ctrl+Space", description: "Select the rows / the columns of the selection" },
+      { keys: "Enter / F2", description: "Edit the active cell, where editing is on" },
+    ],
+  },
+  {
     heading: "Data profiler",
     shortcuts: [{ keys: "Escape", description: "Close the data profiler" }],
   },

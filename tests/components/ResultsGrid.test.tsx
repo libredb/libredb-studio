@@ -240,6 +240,7 @@ mock.module("@tanstack/react-virtual", () => ({
     getTotalSize: () => opts.count * 36,
     measureElement: () => {},
     measure: mockVirtualizerMeasure,
+    scrollToIndex: () => {},
   }),
 }));
 
@@ -259,9 +260,13 @@ mock.module("lucide-react", () => {
 
 // ── Imports AFTER mocks ─────────────────────────────────────────────────────
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { render, fireEvent, cleanup, act, waitFor, within } from "@testing-library/react";
+import { render, fireEvent, createEvent, cleanup, act, waitFor, within } from "@testing-library/react";
 import { ResultsGrid, type CellChange } from "@/components/ResultsGrid";
-import { getHeaderFitColumnSize } from "@/components/results-grid/column-sizing";
+import {
+  getContentFitColumnSize,
+  getHeaderFitColumnSize,
+  RESULT_COLUMN_RESIZE_MAX_SIZE,
+} from "@/components/results-grid/column-sizing";
 import type { QueryResult } from "@/lib/types";
 
 // ── Test data ───────────────────────────────────────────────────────────────
@@ -341,6 +346,14 @@ function findDesktopRow(container: HTMLElement, text: string): HTMLElement | und
   return Array.from(
     container.querySelectorAll<HTMLElement>("[data-desktop-grid] [data-index]:not([data-testid])"),
   ).find((row) => row.textContent?.includes(text));
+}
+
+/**
+ * What a column header reads as on screen. The name and type sit beside the sort control that
+ * carries the header's accessible name, not inside it, so the text is read off the header cell.
+ */
+function headerText(sortControl: HTMLElement): string | null | undefined {
+  return sortControl.closest('[role="columnheader"]')?.textContent;
 }
 
 function findDesktopHeader(container: HTMLElement, field: string): HTMLElement {
@@ -442,16 +455,19 @@ describe("ResultsGrid", () => {
     expect(getAllByRole("button", { name: "email" }).length).toBeGreaterThan(0);
   });
 
-  test("sizes desktop result columns from field names, not cell values", () => {
+  test("sizes desktop result columns from their header, widened only by a value longer than it", () => {
+    const longValue = "a value long enough to widen its two-letter column";
     const result: QueryResult = {
-      rows: [{ id: "a very long value that must not affect the initial width", name: "x" }],
+      rows: [{ id: longValue, name: "x" }],
       fields: ["id", "name"],
       rowCount: 1,
       executionTime: 1,
     };
     const { container } = render(React.createElement(ResultsGrid, { result }));
 
-    expect(findDesktopHeader(container, "id").style.width).toBe(`${getHeaderFitColumnSize("id")}px`);
+    expect(findDesktopHeader(container, "id").style.width).toBe(
+      `${getContentFitColumnSize("id", undefined, false, [longValue])}px`,
+    );
     expect(findDesktopHeader(container, "name").style.width).toBe(`${getHeaderFitColumnSize("name")}px`);
 
     cleanup();
@@ -2353,7 +2369,7 @@ describe("ResultsGrid", () => {
 
       // The type is part of the header's accessible name, not sighted-only.
       const header = getAllByRole("button", { name: "name, Nullable(String)" })[0];
-      expect(header.textContent).toContain("Nullable(String)");
+      expect(headerText(header)).toContain("Nullable(String)");
       // Reachable in both headers: the desktop span and the compact mobile one,
       // which carries the type as a tooltip only (its columns are content-width).
       expect(container.querySelectorAll('[title="Nullable(String)"]').length).toBe(2);
@@ -2364,7 +2380,7 @@ describe("ResultsGrid", () => {
       const { getAllByRole, getByTestId } = render(React.createElement(ResultsGrid, { result }));
       fireEvent.click(getByTestId("view-table"));
 
-      expect(getAllByRole("button", { name: "id" })[0].textContent).toBe("id");
+      expect(headerText(getAllByRole("button", { name: "id" })[0])).toBe("id");
     });
 
     test("does not read a declared type off the prototype chain", () => {
@@ -2382,12 +2398,12 @@ describe("ResultsGrid", () => {
       fireEvent.click(getByTestId("view-table"));
 
       // Accessible name is the bare field, and no inherited value is rendered.
-      expect(getAllByRole("button", { name: "constructor" })[0].textContent).toBe("constructor");
-      expect(getAllByRole("button", { name: "toString" })[0].textContent).toBe("toString");
+      expect(headerText(getAllByRole("button", { name: "constructor" })[0])).toBe("constructor");
+      expect(headerText(getAllByRole("button", { name: "toString" })[0])).toBe("toString");
       expect(container.textContent).not.toContain("function");
       expect(container.textContent).not.toContain("[object");
       // The column that DOES declare a type is unaffected.
-      expect(getAllByRole("button", { name: "id, BIGINT" })[0].textContent).toContain("BIGINT");
+      expect(headerText(getAllByRole("button", { name: "id, BIGINT" })[0])).toContain("BIGINT");
     });
 
     test("renders a dotted column name as one key, not as a path into the row", () => {
@@ -2451,13 +2467,17 @@ describe("ResultsGrid", () => {
       const { getAllByRole, getByTestId, container } = render(React.createElement(ResultsGrid, { result: mockResult }));
       fireEvent.click(getByTestId("view-table"));
 
-      expect(getAllByRole("button", { name: "name" })[0].textContent).toBe("name");
+      expect(headerText(getAllByRole("button", { name: "name" })[0])).toBe("name");
       expect(container.querySelector('span.truncate[title="name"]')).not.toBeNull();
       const unexpectedTooltips = Array.from(container.querySelectorAll<HTMLElement>("[title]")).filter(
         (element) =>
           element.title !== "Filter column" &&
+          element.title !== "Sort" &&
+          element.title !== "Select all cells" &&
           !mockResult.fields.includes(element.title) &&
-          !element.hasAttribute("data-row-detail"),
+          !element.hasAttribute("data-row-detail") &&
+          // A cell's tooltip is its own value, not a type.
+          element.closest('[role="gridcell"]') === null,
       );
       expect(unexpectedTooltips.length).toBe(0);
     });
@@ -2652,7 +2672,7 @@ describe("ResultsGrid", () => {
   });
 
   describe("column sizing", () => {
-    test("keeps manual resizing and restores only the selected column on double-click", () => {
+    test("keeps manual resizing and fits only the double-clicked column to its content", () => {
       const result: QueryResult = {
         rows: [{ name: "Ada", email: "ada@example.com" }],
         fields: ["name", "email"],
@@ -2673,13 +2693,15 @@ describe("ResultsGrid", () => {
       fireEvent.mouseMove(document, { clientX: 260 });
       fireEvent.mouseUp(document, { clientX: 260 });
 
+      // `name` opens at its header ("Ada" is shorter), `email` at its value.
+      const emailFit = getContentFitColumnSize("email", undefined, false, ["ada@example.com"]);
       expect(nameHeader.style.width).toBe(`${getHeaderFitColumnSize("name") + 50}px`);
-      expect(emailHeader.style.width).toBe(`${getHeaderFitColumnSize("email") + 60}px`);
+      expect(emailHeader.style.width).toBe(`${emailFit + 60}px`);
 
       fireEvent.doubleClick(nameHandle);
 
       expect(nameHeader.style.width).toBe(`${getHeaderFitColumnSize("name")}px`);
-      expect(emailHeader.style.width).toBe(`${getHeaderFitColumnSize("email") + 60}px`);
+      expect(emailHeader.style.width).toBe(`${emailFit + 60}px`);
     });
 
     test("sizes a typed masked header for all of its visible markers", () => {
@@ -2899,6 +2921,427 @@ describe("ResultsGrid", () => {
       const valueCell = Array.from(desktop.querySelectorAll("span")).find((el) => el.textContent === "value");
       expect(valueCell).toBeDefined();
       expect(valueCell!.closest("[style*='width']")!.getAttribute("class")).not.toContain("sticky");
+    });
+  });
+  // ═══════════════════════════════════════════════════════════════════════
+  // Cell selection and copy: the spreadsheet behaviour users bring from
+  // Excel, DataGrip and SQL Server Management Studio
+  // ═══════════════════════════════════════════════════════════════════════
+
+  describe("Cell selection and copy", () => {
+    const selectionResult: QueryResult = {
+      rows: [
+        { id: 1, name: "Alice", email: "alice@example.com" },
+        { id: 2, name: "Bob", email: "bob@example.com" },
+        { id: 3, name: "Charlie", email: "charlie@example.com" },
+      ],
+      fields: ["id", "name", "email"],
+      rowCount: 3,
+      executionTime: 1,
+    };
+
+    const desktopGrid = (container: HTMLElement) => container.querySelector<HTMLElement>("[data-desktop-grid]")!;
+
+    function gridCell(container: HTMLElement, text: string): HTMLElement {
+      const cell = Array.from(desktopGrid(container).querySelectorAll<HTMLElement>('[role="gridcell"]')).find(
+        (candidate) => candidate.textContent === text,
+      );
+      if (!cell) throw new Error(`No desktop grid cell reads ${text}`);
+      return cell;
+    }
+
+    const selectedTexts = (container: HTMLElement) =>
+      Array.from(desktopGrid(container).querySelectorAll('[role="gridcell"][aria-selected="true"]')).map(
+        (cell) => cell.textContent,
+      );
+
+    const columnHeader = (container: HTMLElement, field: string) =>
+      Array.from(desktopGrid(container).querySelectorAll<HTMLElement>('[role="columnheader"]')).find(
+        (header) => header.querySelector("span.truncate")?.textContent === field,
+      )!;
+
+    const rowHeader = (container: HTMLElement, rowNumber: number) =>
+      Array.from(desktopGrid(container).querySelectorAll<HTMLElement>('[role="rowheader"]')).find(
+        (header) => header.querySelector("[data-row-number]")?.textContent === String(rowNumber),
+      )!;
+
+    function copyFrom(target: HTMLElement) {
+      const setData = mock((_format: string, _text: string) => {});
+      const event = createEvent.copy(target, { clipboardData: { setData } });
+      fireEvent(target, event);
+      return { setData, event };
+    }
+
+    const press = (container: HTMLElement, key: string, modifiers: Record<string, boolean> = {}) =>
+      fireEvent.keyDown(desktopGrid(container), { key, ...modifiers });
+
+    test("the grid is one keyboard stop that names itself and its size", () => {
+      const { container } = render(React.createElement(ResultsGrid, { result: selectionResult }));
+      const grid = desktopGrid(container);
+      expect(grid.getAttribute("role")).toBe("grid");
+      expect(grid.getAttribute("tabindex")).toBe("0");
+      expect(grid.getAttribute("aria-multiselectable")).toBe("true");
+      expect(grid.getAttribute("aria-rowcount")).toBe("4");
+      expect(grid.getAttribute("aria-colcount")).toBe("4");
+    });
+
+    test("pressing a cell selects that cell alone", () => {
+      const { container } = render(React.createElement(ResultsGrid, { result: selectionResult }));
+      expect(selectedTexts(container)).toEqual([]);
+
+      fireEvent.mouseDown(gridCell(container, "Bob"), { button: 0 });
+      expect(selectedTexts(container)).toEqual(["Bob"]);
+
+      fireEvent.mouseUp(document);
+      fireEvent.mouseDown(gridCell(container, "alice@example.com"), { button: 0 });
+      expect(selectedTexts(container)).toEqual(["alice@example.com"]);
+    });
+
+    test("Shift with a press extends the selection to a rectangle", () => {
+      const { container } = render(React.createElement(ResultsGrid, { result: selectionResult }));
+      fireEvent.mouseDown(gridCell(container, "1"), { button: 0 });
+      fireEvent.mouseUp(document);
+      fireEvent.mouseDown(gridCell(container, "Bob"), { button: 0, shiftKey: true });
+      expect(selectedTexts(container)).toEqual(["1", "Alice", "2", "Bob"]);
+    });
+
+    test("dragging across cells selects the rectangle the pointer covered", () => {
+      const { container } = render(React.createElement(ResultsGrid, { result: selectionResult }));
+      fireEvent.mouseDown(gridCell(container, "Alice"), { button: 0 });
+      fireEvent.mouseEnter(gridCell(container, "bob@example.com"));
+      fireEvent.mouseUp(document);
+      // Released, so passing over another cell no longer moves the selection.
+      fireEvent.mouseEnter(gridCell(container, "Charlie"));
+      expect(selectedTexts(container)).toEqual(["Alice", "alice@example.com", "Bob", "bob@example.com"]);
+    });
+
+    test("Ctrl with a press adds a second rectangle", () => {
+      const { container } = render(React.createElement(ResultsGrid, { result: selectionResult }));
+      fireEvent.mouseDown(gridCell(container, "1"), { button: 0 });
+      fireEvent.mouseUp(document);
+      fireEvent.mouseDown(gridCell(container, "Charlie"), { button: 0, ctrlKey: true });
+      fireEvent.mouseUp(document);
+      expect(selectedTexts(container)).toEqual(["1", "Charlie"]);
+    });
+
+    test("a right or middle press does not move the selection", () => {
+      const { container } = render(React.createElement(ResultsGrid, { result: selectionResult }));
+      fireEvent.mouseDown(gridCell(container, "Alice"), { button: 0 });
+      fireEvent.mouseUp(document);
+      fireEvent.mouseDown(gridCell(container, "Bob"), { button: 2 });
+      fireEvent.mouseDown(gridCell(container, "Charlie"), { button: 1 });
+      expect(selectedTexts(container)).toEqual(["Alice"]);
+    });
+
+    test("copy writes the selected rectangle as tab-separated rows, in the order on screen", () => {
+      const { container, getAllByRole } = render(React.createElement(ResultsGrid, { result: selectionResult }));
+      // Descending on name: Charlie, Bob, Alice.
+      fireEvent.click(getAllByRole("button", { name: "name" })[0]);
+      fireEvent.click(getAllByRole("button", { name: "name, sorted ascending" })[0]);
+      fireEvent.mouseDown(gridCell(container, "3"), { button: 0 });
+      fireEvent.mouseUp(document);
+      fireEvent.mouseDown(gridCell(container, "Bob"), { button: 0, shiftKey: true });
+
+      const { setData, event } = copyFrom(desktopGrid(container));
+      expect(event.defaultPrevented).toBe(true);
+      expect(setData).toHaveBeenCalledWith("text/plain", "3\tCharlie\n2\tBob");
+      expect(mockToastSuccess).toHaveBeenCalledWith("4 cells copied to clipboard");
+    });
+
+    test("copying one cell copies its whole value, raw", () => {
+      const result: QueryResult = {
+        rows: [{ id: 1, note: "first line\nsecond line" }],
+        fields: ["id", "note"],
+        rowCount: 1,
+        executionTime: 1,
+      };
+      const { container } = render(React.createElement(ResultsGrid, { result }));
+      const noteCell = Array.from(desktopGrid(container).querySelectorAll<HTMLElement>('[role="gridcell"]'))[1];
+      fireEvent.mouseDown(noteCell, { button: 0 });
+
+      const { setData } = copyFrom(desktopGrid(container));
+      expect(setData).toHaveBeenCalledWith("text/plain", "first line\nsecond line");
+      expect(mockToastSuccess).toHaveBeenCalledWith("Cell copied to clipboard");
+    });
+
+    test("copy with nothing selected, or from a text box inside the grid, is left to the browser", () => {
+      const { container, getAllByTitle } = render(React.createElement(ResultsGrid, { result: selectionResult }));
+      const nothing = copyFrom(desktopGrid(container));
+      expect(nothing.event.defaultPrevented).toBe(false);
+      expect(nothing.setData).not.toHaveBeenCalled();
+
+      fireEvent.mouseDown(gridCell(container, "Bob"), { button: 0 });
+      fireEvent.click(getAllByTitle("Filter column")[0]);
+      const filterInput = desktopGrid(container).querySelector<HTMLInputElement>("input")!;
+      const fromInput = copyFrom(filterInput);
+      expect(fromInput.event.defaultPrevented).toBe(false);
+      expect(fromInput.setData).not.toHaveBeenCalled();
+    });
+
+    test("a masked cell copies as its mask, never the value under it", () => {
+      mockShouldMask.mockReturnValue(true);
+      mockDetectSensitiveColumnsFromConfig.mockReturnValue(new Map([["email", "email"]]));
+      const { container } = render(React.createElement(ResultsGrid, { result: selectionResult, maskingEnabled: true }));
+      fireEvent.mouseDown(gridCell(container, "Alice"), { button: 0 });
+      fireEvent.mouseUp(document);
+      fireEvent.mouseDown(gridCell(container, "***"), { button: 0, shiftKey: true });
+
+      const { setData } = copyFrom(desktopGrid(container));
+      expect(setData).toHaveBeenCalledWith("text/plain", "Alice\t***");
+    });
+
+    test("a hidden column is neither selected nor copied", () => {
+      const { container } = render(React.createElement(ResultsGrid, { result: selectionResult }));
+      press(container, "a", { ctrlKey: true });
+      expect(selectedTexts(container)).toHaveLength(9);
+      cleanup();
+
+      const hiddenRender = render(React.createElement(ResultsGrid, { result: selectionResult }));
+      // The mocked strip hides `name`.
+      fireEvent.click(hiddenRender.getByTestId("toggle-column"));
+      press(hiddenRender.container, "a", { ctrlKey: true });
+      const { setData } = copyFrom(desktopGrid(hiddenRender.container));
+      expect(setData).toHaveBeenCalledWith(
+        "text/plain",
+        "1\talice@example.com\n2\tbob@example.com\n3\tcharlie@example.com",
+      );
+    });
+
+    test("pressing a column's name selects the whole column, and Shift extends across columns", () => {
+      const { container } = render(React.createElement(ResultsGrid, { result: selectionResult }));
+      fireEvent.mouseDown(columnHeader(container, "name").querySelector("span.truncate")!, { button: 0 });
+      expect(selectedTexts(container)).toEqual(["Alice", "Bob", "Charlie"]);
+
+      fireEvent.mouseDown(columnHeader(container, "email").querySelector("span.truncate")!, {
+        button: 0,
+        shiftKey: true,
+      });
+      expect(selectedTexts(container)).toEqual([
+        "Alice",
+        "alice@example.com",
+        "Bob",
+        "bob@example.com",
+        "Charlie",
+        "charlie@example.com",
+      ]);
+      expect(columnHeader(container, "name").getAttribute("aria-selected")).toBe("true");
+      expect(columnHeader(container, "id").getAttribute("aria-selected")).toBe("false");
+    });
+
+    test("pressing a column's name does not sort it; the sort control does", () => {
+      const { container, getAllByRole } = render(React.createElement(ResultsGrid, { result: selectionResult }));
+      fireEvent.mouseDown(columnHeader(container, "name").querySelector("span.truncate")!, { button: 0 });
+      fireEvent.click(columnHeader(container, "name").querySelector("span.truncate")!);
+      expect(getAllByRole("button", { name: "name" }).length).toBeGreaterThan(0);
+      expect(within(desktopGrid(container)).queryAllByRole("button", { name: "name, sorted ascending" })).toEqual([]);
+    });
+
+    test("pressing a row number selects the row, and Shift extends across rows", () => {
+      const { container } = render(React.createElement(ResultsGrid, { result: selectionResult }));
+      fireEvent.mouseDown(rowHeader(container, 1), { button: 0 });
+      expect(selectedTexts(container)).toEqual(["1", "Alice", "alice@example.com"]);
+
+      fireEvent.mouseDown(rowHeader(container, 2), { button: 0, shiftKey: true });
+      expect(selectedTexts(container)).toHaveLength(6);
+      expect(rowHeader(container, 2).getAttribute("aria-selected")).toBe("true");
+      expect(rowHeader(container, 3).getAttribute("aria-selected")).toBe("false");
+    });
+
+    test("pressing the row-number cell's detail control still opens the row, without starting a selection", () => {
+      const { container, getByRole, queryByTestId } = render(
+        React.createElement(ResultsGrid, { result: selectionResult }),
+      );
+      const control = getByRole("button", { name: "Show row 2 field by field" });
+      fireEvent.mouseDown(control, { button: 0 });
+      fireEvent.click(control);
+      expect(queryByTestId("row-detail-sheet")!.getAttribute("data-row-index")).toBe("1");
+      expect(selectedTexts(container)).toEqual([]);
+    });
+
+    test("the corner control selects every cell", () => {
+      const { container, getByRole } = render(React.createElement(ResultsGrid, { result: selectionResult }));
+      fireEvent.click(getByRole("button", { name: "Select all cells" }));
+      expect(selectedTexts(container)).toHaveLength(9);
+    });
+
+    test("arrows move the active cell and Shift with an arrow extends from it", () => {
+      const { container } = render(React.createElement(ResultsGrid, { result: selectionResult }));
+      // With nothing selected, the first arrow lands on the first cell.
+      press(container, "ArrowDown");
+      expect(selectedTexts(container)).toEqual(["1"]);
+      press(container, "ArrowRight");
+      press(container, "ArrowDown");
+      expect(selectedTexts(container)).toEqual(["Bob"]);
+      press(container, "ArrowRight", { shiftKey: true });
+      press(container, "ArrowDown", { shiftKey: true });
+      expect(selectedTexts(container)).toEqual(["Bob", "bob@example.com", "Charlie", "charlie@example.com"]);
+      press(container, "Home", { ctrlKey: true });
+      expect(selectedTexts(container)).toEqual(["1"]);
+      press(container, "End", { ctrlKey: true, shiftKey: true });
+      expect(selectedTexts(container)).toHaveLength(9);
+    });
+
+    test("Shift+Space selects the rows of the selection, Ctrl+Space its columns, Escape clears it", () => {
+      const { container } = render(React.createElement(ResultsGrid, { result: selectionResult }));
+      fireEvent.mouseDown(gridCell(container, "Bob"), { button: 0 });
+      fireEvent.mouseUp(document);
+      press(container, " ", { shiftKey: true });
+      expect(selectedTexts(container)).toEqual(["2", "Bob", "bob@example.com"]);
+      fireEvent.mouseDown(gridCell(container, "Bob"), { button: 0 });
+      fireEvent.mouseUp(document);
+      press(container, " ", { ctrlKey: true });
+      expect(selectedTexts(container)).toEqual(["Alice", "Bob", "Charlie"]);
+      press(container, "Escape");
+      expect(selectedTexts(container)).toEqual([]);
+    });
+
+    test("a key typed into a text box inside the grid does not move the selection", () => {
+      const { container, getAllByTitle } = render(React.createElement(ResultsGrid, { result: selectionResult }));
+      fireEvent.mouseDown(gridCell(container, "Bob"), { button: 0 });
+      fireEvent.click(getAllByTitle("Filter column")[0]);
+      const filterInput = desktopGrid(container).querySelector<HTMLInputElement>("input")!;
+      fireEvent.keyDown(filterInput, { key: "ArrowDown" });
+      expect(selectedTexts(container)).toEqual(["Bob"]);
+    });
+
+    test("Enter edits the active cell where editing is on, and nowhere else", () => {
+      const editable = render(
+        React.createElement(ResultsGrid, { result: selectionResult, editingEnabled: true, onCellChange: () => {} }),
+      );
+      fireEvent.mouseDown(gridCell(editable.container, "Bob"), { button: 0 });
+      press(editable.container, "Enter");
+      expect(desktopGrid(editable.container).querySelector<HTMLInputElement>("input")?.value).toBe("Bob");
+      cleanup();
+
+      const readOnly = render(React.createElement(ResultsGrid, { result: selectionResult }));
+      fireEvent.mouseDown(gridCell(readOnly.container, "Bob"), { button: 0 });
+      press(readOnly.container, "F2");
+      expect(desktopGrid(readOnly.container).querySelector("input")).toBeNull();
+    });
+
+    test("committing an edit with Enter hands the keyboard back to the grid", () => {
+      const onCellChange = mock((_change: CellChange) => {});
+      const { container } = render(
+        React.createElement(ResultsGrid, { result: selectionResult, editingEnabled: true, onCellChange }),
+      );
+      fireEvent.mouseDown(gridCell(container, "Bob"), { button: 0 });
+      press(container, "Enter");
+      fireEvent.change(desktopGrid(container).querySelector<HTMLInputElement>("input")!, {
+        target: { value: "Robert" },
+      });
+      // Re-queried: the columns memo recomputes on every edit keystroke and remounts the input.
+      fireEvent.keyDown(desktopGrid(container).querySelector<HTMLInputElement>("input")!, { key: "Enter" });
+      expect(onCellChange).toHaveBeenCalledTimes(1);
+      expect(document.activeElement).toBe(desktopGrid(container));
+      expect(desktopGrid(container).querySelector("input")).toBeNull();
+    });
+
+    test("right-clicking a cell outside the selection selects it, inside keeps the selection", () => {
+      const { container } = render(React.createElement(ResultsGrid, { result: selectionResult }));
+      fireEvent.mouseDown(gridCell(container, "1"), { button: 0 });
+      fireEvent.mouseUp(document);
+      fireEvent.mouseDown(gridCell(container, "Bob"), { button: 0, shiftKey: true });
+      fireEvent.contextMenu(gridCell(container, "Alice"));
+      expect(selectedTexts(container)).toEqual(["1", "Alice", "2", "Bob"]);
+
+      fireEvent.contextMenu(gridCell(container, "Charlie"));
+      expect(selectedTexts(container)).toEqual(["Charlie"]);
+    });
+
+    test("the context menu copies the selection, with or without its headers", async () => {
+      const { container } = render(React.createElement(ResultsGrid, { result: selectionResult }));
+      fireEvent.mouseDown(gridCell(container, "1"), { button: 0 });
+      fireEvent.mouseUp(document);
+      fireEvent.mouseDown(gridCell(container, "Bob"), { button: 0, shiftKey: true });
+      fireEvent.contextMenu(gridCell(container, "Bob"));
+      const menu = findContextMenuForMode(container, "Bob", "desktop");
+
+      fireEvent.click(within(menu).getByRole("menuitem", { name: "Copy Selection" }));
+      await waitFor(() => expect(mockClipboardWriteText).toHaveBeenCalledWith("1\tAlice\n2\tBob"));
+      expect(mockToastSuccess).toHaveBeenCalledWith("Selection copied to clipboard");
+
+      fireEvent.click(within(menu).getByRole("menuitem", { name: "Copy Selection with Headers" }));
+      await waitFor(() => expect(mockClipboardWriteText).toHaveBeenCalledWith("id\tname\n1\tAlice\n2\tBob"));
+    });
+
+    test("a single selected cell offers Copy with Headers, not Copy Selection", () => {
+      const { container } = render(React.createElement(ResultsGrid, { result: selectionResult }));
+      fireEvent.contextMenu(gridCell(container, "Bob"));
+      const menu = findContextMenuForMode(container, "Bob", "desktop");
+      expect(within(menu).queryByRole("menuitem", { name: "Copy Selection" })).toBeNull();
+      expect(within(menu).getByRole("menuitem", { name: "Copy Cell" })).not.toBeNull();
+      expect(within(menu).getByRole("menuitem", { name: "Copy with Headers" })).not.toBeNull();
+    });
+
+    test("a sort or a new result clears the selection", () => {
+      const { container, getAllByRole, rerender } = render(
+        React.createElement(ResultsGrid, { result: selectionResult }),
+      );
+      fireEvent.mouseDown(gridCell(container, "Bob"), { button: 0 });
+      fireEvent.mouseUp(document);
+      fireEvent.click(getAllByRole("button", { name: "name" })[0]);
+      expect(selectedTexts(container)).toEqual([]);
+
+      fireEvent.mouseDown(gridCell(container, "Bob"), { button: 0 });
+      fireEvent.mouseUp(document);
+      rerender(React.createElement(ResultsGrid, { result: { ...selectionResult, rows: [...selectionResult.rows] } }));
+      expect(selectedTexts(container)).toEqual([]);
+    });
+
+    test("a cell's full value is its tooltip, so a cut-off value can be read in place", () => {
+      const long = "x".repeat(80);
+      const result: QueryResult = {
+        rows: [{ id: 1, note: long }],
+        fields: ["id", "note"],
+        rowCount: 1,
+        executionTime: 1,
+      };
+      const { container } = render(React.createElement(ResultsGrid, { result }));
+      expect(desktopGrid(container).querySelector(`[title="${long}"]`)).not.toBeNull();
+    });
+  });
+
+  describe("column sizing from content", () => {
+    test("a column opens wide enough for the values it shows, not only its name", () => {
+      const result: QueryResult = {
+        rows: [{ id: "a value far longer than the two-letter header above it", n: 1 }],
+        fields: ["id", "n"],
+        rowCount: 1,
+        executionTime: 1,
+      };
+      const { container } = render(React.createElement(ResultsGrid, { result }));
+      expect(findDesktopHeader(container, "id").style.width).toBe(
+        `${getContentFitColumnSize("id", undefined, false, ["a value far longer than the two-letter header above it"])}px`,
+      );
+      expect(findDesktopHeader(container, "n").style.width).toBe(`${getHeaderFitColumnSize("n")}px`);
+    });
+
+    test("a masked column is sized by its mask, so the width does not tell the hidden value's length", () => {
+      mockShouldMask.mockReturnValue(true);
+      mockDetectSensitiveColumnsFromConfig.mockReturnValue(new Map([["secret", "sensitive"]]));
+      const result: QueryResult = {
+        rows: [{ secret: "a secret value that is much longer than its mask" }],
+        fields: ["secret"],
+        rowCount: 1,
+        executionTime: 1,
+      };
+      const { container } = render(React.createElement(ResultsGrid, { result, maskingEnabled: true }));
+      expect(findDesktopHeader(container, "secret").style.width).toBe(
+        `${getContentFitColumnSize("secret", undefined, true, ["***"])}px`,
+      );
+    });
+
+    test("double-clicking a resize handle fits the column to its content, past the initial cap", () => {
+      const long = "y".repeat(120);
+      const result: QueryResult = { rows: [{ doc: long }], fields: ["doc"], rowCount: 1, executionTime: 1 };
+      const { container } = render(React.createElement(ResultsGrid, { result }));
+      const header = findDesktopHeader(container, "doc");
+      expect(header.style.width).toBe(`${getContentFitColumnSize("doc", undefined, false, [long])}px`);
+
+      fireEvent.doubleClick(header.querySelector<HTMLElement>(".cursor-col-resize")!);
+      expect(header.style.width).toBe(
+        `${getContentFitColumnSize("doc", undefined, false, [long], RESULT_COLUMN_RESIZE_MAX_SIZE)}px`,
+      );
     });
   });
 });
