@@ -289,7 +289,9 @@ describe("SQLiteProvider", () => {
         );
         expect(error).toBeInstanceOf(ConnectionError);
         expect((error as Error).message).toStartWith("Failed to open SQLite database: ENOENT");
-        expect((error as Error).message).toContain(folder);
+        // The first missing level, not the deepest one: Bun's recursive mkdir also throws ENOENT here,
+        // but names the full path, so this is what tells the one-level-at-a-time walk apart.
+        expect((error as Error).message).toContain(`mkdir '${folder}'`);
         expect(provider.isConnected()).toBe(false);
       },
     );
