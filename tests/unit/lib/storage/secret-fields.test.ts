@@ -4,8 +4,12 @@ import { join, resolve } from "node:path";
 import * as connectionSecrets from "@/lib/storage/connection-secrets";
 import * as secretFields from "@/lib/storage/secret-fields";
 import {
+  CONNECTION_FIELDS,
+  type FieldClass,
   SECRET_FIELD_MAPS,
   type SecretFieldRecord,
+  SSH_TUNNEL_FIELDS,
+  SSL_FIELDS,
   secretFieldValues,
   withoutSecretFields,
   withSecretFieldValues,
@@ -164,6 +168,75 @@ describe("withSecretFieldValues refuses a path it must not write", () => {
     const connection = { ...bare };
     expect(() => withSecretFieldValues(connection, { password: "x", "ssl.clientKey": "x" })).toThrow();
     expect(connection).toEqual(bare);
+  });
+});
+
+/**
+ * The cases above are samples. These read every field of every map instead, so the paths the join writes cannot
+ * drift from the paths the walk visits in either direction: a path written but never walked lets a stored secret
+ * overwrite a public field, and a path walked but refused splits a connection that cannot be joined back.
+ */
+describe("withSecretFieldValues writes exactly the paths walkSecretFields visits, for every field of every map", () => {
+  /** Where the fields of each map sit on a connection: at its root (""), or in the container of that name. */
+  const placements = new Map<Readonly<Record<string, FieldClass>>, string>([
+    [CONNECTION_FIELDS, ""],
+    [SSL_FIELDS, "ssl"],
+    [SSH_TUNNEL_FIELDS, "sshTunnel"],
+  ]);
+  const fields = SECRET_FIELD_MAPS.flatMap((map) => {
+    const container = placements.get(map);
+    if (container === undefined) return [];
+    return Object.entries(map).map(([key, fieldClass]) => ({
+      key,
+      fieldClass,
+      container,
+      path: container === "" ? key : `${container}.${key}`,
+    }));
+  });
+  const secretPaths = fields.filter(({ fieldClass }) => fieldClass === "secret").map(({ path }) => path);
+  const otherPaths = fields.filter(({ fieldClass }) => fieldClass !== "secret").map(({ path }) => path);
+
+  /** Every field that is not a container holds a value of its own, so a value written at the wrong path shows. */
+  const valueOf = (path: string) => `value of ${path}`;
+  const record: Record<string, unknown> = {};
+  for (const { key, fieldClass, container, path } of fields) {
+    if (fieldClass === "nested") continue;
+    const target = container === "" ? record : ((record[container] ??= {}) as Record<string, unknown>);
+    target[key] = valueOf(path);
+  }
+  const everyField = record as unknown as SecretFieldRecord;
+
+  test("every classification map has a placement here, and every container CONNECTION_FIELDS names is one", () => {
+    expect(SECRET_FIELD_MAPS.filter((map) => !placements.has(map))).toEqual([]);
+    const containers = Object.entries(CONNECTION_FIELDS)
+      .filter(([, fieldClass]) => fieldClass === "nested")
+      .map(([key]) => key);
+    expect(containers.sort()).toEqual([...placements.values()].filter((container) => container !== "").sort());
+  });
+
+  test("the walk collects exactly the secret paths of a connection that sets every field", () => {
+    expect(secretPaths).toEqual(expect.arrayContaining(["password", "ssl.clientKey", "sshTunnel.passphrase"]));
+    expect(secretFieldValues(everyField)).toEqual(Object.fromEntries(secretPaths.map((path) => [path, valueOf(path)])));
+  });
+
+  test("the join writes every one of them back", () => {
+    expect(withSecretFieldValues(withoutSecretFields(everyField), secretFieldValues(everyField))).toEqual(everyField);
+  });
+
+  test("the join refuses the path of every field the maps do not call secret", () => {
+    expect(otherPaths).toEqual(expect.arrayContaining(["host", "ssl", "ssl.caCert", "sshTunnel.hostKeyFingerprint"]));
+    const stripped = withoutSecretFields(everyField);
+    const outcome = (path: string): string => {
+      try {
+        withSecretFieldValues(stripped, { [path]: "x" });
+        return "written";
+      } catch (error) {
+        return (error as Error).message;
+      }
+    };
+    expect(Object.fromEntries(otherPaths.map((path) => [path, outcome(path)]))).toEqual(
+      Object.fromEntries(otherPaths.map((path) => [path, `"${path}" is not a secret field of a connection.`])),
+    );
   });
 });
 
