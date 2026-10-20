@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createErrorResponse } from "@/lib/api/errors";
+import { INVALID_REQUEST_BODY, readJsonObject } from "@/lib/api/json-object-body";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { editorExecutionContext } from "@/lib/api/execution-context";
@@ -12,7 +13,11 @@ export async function POST(req: NextRequest) {
   if ("response" in guard) return guard.response;
 
   try {
-    const body = await req.json();
+    // A body that is not a JSON object is a malformed request, refused before any connection resolves.
+    const body = await readJsonObject(req);
+    if (body === null) {
+      return NextResponse.json({ success: false, error: INVALID_REQUEST_BODY }, { status: 400 });
+    }
 
     // Support both formats: { connectionId: "seed:X" }, { connection: {...} }, or bare connection object
     const connection = await resolveConnection(

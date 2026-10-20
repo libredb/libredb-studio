@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { INVALID_REQUEST_BODY, readJsonObject } from "@/lib/api/json-object-body";
 import { getOrCreateProvider } from "@/lib/db";
 import { splitExecutionUnits, unitIsModuleBody, type ExecutionUnit } from "@/lib/sql/statement-splitter";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
@@ -223,8 +224,13 @@ export async function POST(req: NextRequest) {
   let admitting = false;
 
   try {
-    const body = await req.json();
-    const { sql, options = {}, queryId } = body;
+    // A body that is not a JSON object is a malformed request, refused before any connection resolves.
+    const body = await readJsonObject(req);
+    if (body === null) {
+      return NextResponse.json({ error: INVALID_REQUEST_BODY }, { status: 400 });
+    }
+    // `options` is handed on as the options record it names, as it was when the body was read untyped.
+    const { sql, options = {}, queryId } = body as { options?: Record<string, unknown> } & Record<string, unknown>;
     requestedId = requestedConnectionId(body);
     submitted = typeof sql === "string" ? sql : null;
 

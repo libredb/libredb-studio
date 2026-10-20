@@ -1,9 +1,16 @@
 import { firstResultSet } from "@/lib/api/first-result-set";
+import { INVALID_REQUEST_BODY, readJsonObject } from "@/lib/api/json-object-body";
 import { pageOfProbe, pageOptionError, probePastPage } from "@/lib/api/page-probe";
 import { NextRequest, NextResponse } from "next/server";
 import { getOrCreateProvider } from "@/lib/db";
 import { editorCacheKey } from "@/lib/db/factory";
-import type { BeginTransactionOptions, BeginTransactionResult, DatabaseProvider, QueryResult } from "@/lib/db/types";
+import type {
+  BeginTransactionOptions,
+  BeginTransactionResult,
+  DatabaseProvider,
+  QueryPrepareOptions,
+  QueryResult,
+} from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 import { createErrorResponse } from "@/lib/api/errors";
 import { ApiErrorCode } from "@/lib/api/error-codes";
@@ -246,8 +253,19 @@ export async function POST(req: NextRequest) {
   if ("response" in guard) return guard.response;
 
   try {
-    const body = await req.json();
-    const { action, sql, options = {} } = body;
+    // A body that is not a JSON object is a malformed request, refused before any connection resolves.
+    const body = await readJsonObject(req);
+    if (body === null) {
+      return NextResponse.json({ error: INVALID_REQUEST_BODY }, { status: 400 });
+    }
+    // `options` is handed on as the page options it names, as it was when the body was read untyped.
+    const {
+      action,
+      sql,
+      options = {},
+    } = body as {
+      options?: QueryPrepareOptions & Record<string, unknown>;
+    } & Record<string, unknown>;
 
     const connection = await resolveConnection(body, guard.session);
 
@@ -413,7 +431,7 @@ export async function POST(req: NextRequest) {
       }
 
       case "query": {
-        if (!sql) {
+        if (!sql || typeof sql !== "string") {
           return NextResponse.json({ error: "SQL query is required for transaction query" }, { status: 400 });
         }
 

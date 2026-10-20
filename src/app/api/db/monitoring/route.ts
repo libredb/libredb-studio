@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getOrCreateProvider } from "@/lib/db";
 import type { MonitoringOptions } from "@/lib/db/types";
 import { createErrorResponse } from "@/lib/api/errors";
+import { INVALID_REQUEST_BODY, isJsonObject } from "@/lib/api/json-object-body";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { auditRoleDenial, guardRoute } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
@@ -39,6 +40,11 @@ export async function POST(req: NextRequest) {
       body = JSON.parse(text);
     } catch {
       return NextResponse.json({ error: "Invalid JSON in request body" }, { status: 400 });
+    }
+    // JSON that is not an object (`null`, an array, a number) is a malformed request as well, refused before any
+    // connection resolves: a `null` one answered 500 with the runtime's own destructuring error.
+    if (!isJsonObject(body)) {
+      return NextResponse.json({ error: INVALID_REQUEST_BODY }, { status: 400 });
     }
 
     const connection = await resolveConnection(body, guard.session);
