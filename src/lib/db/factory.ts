@@ -17,7 +17,7 @@ import type { TunnelInfo } from "@/lib/ssh/tunnel";
 import { readSecret } from "@/lib/storage/encryption";
 import { providerCacheKey, providerOwner } from "./provider-cache-key";
 import { registerOwnerRemoval } from "./owner-removal";
-import { EXTERNAL_DATABASE_TYPES, READ_ONLY_ENFORCED, READS_FILE_ACCESS_POSTURE } from "./compatibility";
+import { READ_ONLY_ENFORCED, READS_FILE_ACCESS_POSTURE, SHIPPED_DATABASE_TYPES } from "./compatibility";
 import { TUNNEL_FAR_END, type DatabaseType, type WithTunnelFarEnd } from "@/lib/types";
 import { logger } from "@/lib/logger";
 import { runShutdownHooks } from "@/lib/shutdown";
@@ -175,8 +175,8 @@ function assertOwnerPoolHonoured(connection: DatabaseConnection, execution: Prov
 // Enabled providers (LIBREDB_ENABLED_PROVIDERS)
 // ============================================================================
 
-/** Every connection type id: the external engines plus the embedded LibreDB store. */
-const CONNECTION_TYPE_IDS: ReadonlySet<string> = new Set<string>([...EXTERNAL_DATABASE_TYPES, "libredb"]);
+/** Every connection type id, the embedded LibreDB store included: the exhaustive shipped set. */
+const CONNECTION_TYPE_IDS: ReadonlySet<string> = new Set<string>(SHIPPED_DATABASE_TYPES);
 
 /**
  * The connection types this server may open: `LIBREDB_ENABLED_PROVIDERS` as a comma list, trimmed, with empty

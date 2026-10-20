@@ -5,6 +5,7 @@
  */
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { createErrorResponse } from "@/lib/api/errors";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import type { DatabaseConnection } from "@/lib/db/types";
 
@@ -66,6 +67,10 @@ describe("enabledProviderTypes", () => {
   test("an entry that is not a type id throws naming it", () => {
     process.env.LIBREDB_ENABLED_PROVIDERS = "postgres,postgresql";
     expect(() => enabledProviderTypes()).toThrow(/LIBREDB_ENABLED_PROVIDERS.*"postgresql"/);
+  });
+  test("every shipped type id is accepted, the embedded store included", () => {
+    process.env.LIBREDB_ENABLED_PROVIDERS = SHIPPED_DATABASE_TYPES.join(",");
+    expect(enabledProviderTypes()).toEqual([...SHIPPED_DATABASE_TYPES]);
   });
   test("a set value with no entry throws", () => {
     process.env.LIBREDB_ENABLED_PROVIDERS = " , ,";
