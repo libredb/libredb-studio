@@ -172,8 +172,9 @@ export const SSH_TUNNEL_FIELDS: Record<keyof SSHTunnelConfig, FieldClass> = {
  * (tests/unit/lib/storage/secret-fields.test.ts) fails when the re-export is missing.
  *
  * That check sees EXPORTED maps only. A fourth map kept module-private and wired straight into
- * `walkSecretFields` is invisible to it, and would be sealed here while a consumer persisted it in
- * the clear. Export any new classification map (all three above are) and the check covers it.
+ * `walkSecretFields` is invisible to it, and would be sealed by connection-secrets.ts through this
+ * walk while a consumer persisted it in the clear. Export any new classification map (all three
+ * above are) and the check covers it.
  *
  * Deliberately NOT consumed by this module's own walk. The three maps are not
  * interchangeable there - each applies at a different level of a connection (root, `ssl`,
