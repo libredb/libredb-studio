@@ -15,8 +15,22 @@ interface Entry {
   size: number;
 }
 
-function passing(entries: Entry[] = REQUIRED_PATHS.map((path) => ({ path, size: KIB }))) {
+/** The entries vsce adds beside the required ones, as the packed 0.1.0 VSIX lists them. */
+const VSCE_EXTRAS = [
+  "extension.vsixmanifest",
+  "[Content_Types].xml",
+  "extension/readme.md",
+  "extension/package.nls.json",
+];
+
+function passing(entries: Entry[] = [...REQUIRED_PATHS, ...VSCE_EXTRAS].map((path) => ({ path, size: KIB }))) {
   return { entries, vsixBytes: KIB * KIB, version: "0.1.0", preRelease: true };
+}
+
+/** The entries with the one at `path` resized so that all of them total `total` bytes. */
+function totalling(entries: Entry[], path: string, total: number): Entry[] {
+  const rest = entries.filter((entry) => entry.path !== path).reduce((sum, entry) => sum + entry.size, 0);
+  return entries.map((entry) => (entry.path === path ? { path, size: total - rest } : entry));
 }
 
 const one = (vsix: ReturnType<typeof passing>) => {
@@ -36,11 +50,11 @@ describe("vsixViolations", () => {
 
   it("passes a VSIX, its unpacked content and its child bundle at exactly their budgets", () => {
     const base = passing();
-    const others = base.entries.filter((entry) => entry.path !== "extension/dist/backend.js");
-    const used = others.reduce((sum, entry) => sum + entry.size, 0);
-    const atBackend = [...others, { path: "extension/dist/backend.js", size: BUDGET.backendBytes }];
-    const filler = { path: "extension/README.md", size: BUDGET.unpackedBytes - used - BUDGET.backendBytes };
-    assert.deepEqual(vsixViolations({ ...base, vsixBytes: BUDGET.vsixBytes, entries: [...atBackend, filler] }), []);
+    const atBackend = base.entries.map((entry) =>
+      entry.path === "extension/dist/backend.js" ? { path: entry.path, size: BUDGET.backendBytes } : entry,
+    );
+    const entries = totalling(atBackend, "extension/readme.md", BUDGET.unpackedBytes);
+    assert.deepEqual(vsixViolations({ ...base, vsixBytes: BUDGET.vsixBytes, entries }), []);
   });
 
   it("refuses a VSIX above its budget", () => {
@@ -48,10 +62,8 @@ describe("vsixViolations", () => {
   });
 
   it("refuses unpacked content above its budget", () => {
-    const base = passing();
-    const used = base.entries.reduce((sum, entry) => sum + entry.size, 0);
-    const entries = [...base.entries, { path: "extension/README.md", size: BUDGET.unpackedBytes + 1 - used }];
-    assert.match(one({ ...base, entries }), /unpacked/);
+    const entries = totalling(passing().entries, "extension/readme.md", BUDGET.unpackedBytes + 1);
+    assert.match(one(passing(entries)), /unpacked/);
   });
 
   it("refuses a child bundle above its budget", () => {
@@ -71,6 +83,21 @@ describe("vsixViolations", () => {
     it(`refuses the entry ${path}`, () => {
       const entries = [...passing().entries, { path, size: KIB }];
       assert.ok(one(passing(entries)).startsWith(`${path}: `));
+    });
+  }
+
+  for (const path of [
+    "extension/out/test/e2e/smoke/skeleton.test.js",
+    "extension/dist/backend.meta.json",
+    "extension/.env.test",
+    "extension/coverage/lcov.info",
+    "extension/dist/backend.js.MAP",
+    "extension/tsconfig.json",
+    "extension/CHANGELOG.md",
+  ]) {
+    it(`refuses the entry ${path}, which is not on the allowlist`, () => {
+      const entries = [...passing().entries, { path, size: KIB }];
+      assert.equal(one(passing(entries)), `${path}: not on the VSIX allowlist.`);
     });
   }
 

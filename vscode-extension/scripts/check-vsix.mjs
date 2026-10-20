@@ -19,7 +19,20 @@ export const REQUIRED = [
   /^extension\/LICENSE(\.txt)?$/,
 ];
 
-/** [test on an entry's path, rule]; an entry reports the first rule it breaks. */
+/**
+ * Every entry a VSIX may hold, mirroring .vscodeignore's allowlist plus what vsce adds:
+ * its manifest, [Content_Types].xml, README.md renamed readme.md and LICENSE renamed LICENSE.txt.
+ * A file that .vscodeignore lets through but this list does not name still fails, so a widened .vscodeignore needs a second reviewed line here.
+ */
+export const ALLOWED = [
+  ...REQUIRED,
+  "extension.vsixmanifest",
+  "[Content_Types].xml",
+  "extension/readme.md",
+  "extension/package.nls.json",
+];
+
+/** [test on an entry's path, rule]; an entry reports the first rule it breaks, and one on none of them is held to ALLOWED. */
 const FORBIDDEN = [
   [(path) => path.split("/").includes("node_modules"), "a node_modules entry ships"],
   [(path) => path.startsWith("extension/src/"), "a source file ships"],
@@ -45,11 +58,12 @@ export function vsixViolations(vsix) {
   for (const entry of vsix.entries) {
     const broken = FORBIDDEN.find(([test]) => test(entry.path));
     if (broken) violations.push(`${entry.path}: ${broken[1]}.`);
+    else if (!ALLOWED.some((allowed) => matches(allowed, entry.path))) {
+      violations.push(`${entry.path}: not on the VSIX allowlist.`);
+    }
   }
   for (const required of REQUIRED) {
-    const present = vsix.entries.some((entry) =>
-      typeof required === "string" ? entry.path === required : required.test(entry.path),
-    );
+    const present = vsix.entries.some((entry) => matches(required, entry.path));
     if (!present) violations.push(`${typeof required === "string" ? required : required.source} is missing.`);
   }
   const oddMinor = Number(vsix.version.split(".")[1]) % 2 === 1;
@@ -59,6 +73,10 @@ export function vsixViolations(vsix) {
     );
   }
   return violations;
+}
+
+function matches(rule, path) {
+  return typeof rule === "string" ? path === rule : rule.test(path);
 }
 
 /** The shape vsixViolations takes, read from the zip; version and preRelease from extension.vsixmanifest. */
