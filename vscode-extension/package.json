@@ -40,11 +40,13 @@
     "coverage:check": "node ../scripts/check-coverage.mjs coverage/lcov.info",
     "test:integration": "mocha --config test/integration/.mocharc.json --require test/setup/register.cjs",
     "test:e2e": "node esbuild.mjs --e2e-tests && vscode-test",
+    "test:browser": "playwright test -c playwright.config.mjs",
     "package": "node scripts/package.mjs",
     "vscode:prepublish": "npm run build"
   },
   "devDependencies": {
     "@happy-dom/global-registrator": "21.0.3",
+    "@playwright/test": "1.64.1",
     "@sinonjs/fake-timers": "15.4.0",
     "@tailwindcss/cli": "4.3.3",
     "@types/mocha": "10.0.10",

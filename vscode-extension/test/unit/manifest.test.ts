@@ -81,6 +81,16 @@ describe("the manifest", () => {
     assert.equal(manifest.devDependencies["@tailwindcss/cli"], rootTailwind[1]);
   });
 
+  it("pins @playwright/test to the root's, so the browser leg shares the root's Chromium", () => {
+    const rootPlaywright = /"@playwright\/test@(\d+\.\d+\.\d+)"/.exec(readFileSync(join(root, "../bun.lock"), "utf8"));
+    assert.ok(rootPlaywright, "the root bun.lock resolves no @playwright/test");
+    assert.equal(manifest.devDependencies["@playwright/test"], rootPlaywright[1]);
+  });
+
+  it("runs the browser leg through its own Playwright config", () => {
+    assert.equal(manifest.scripts["test:browser"], "playwright test -c playwright.config.mjs");
+  });
+
   it("pins @happy-dom/global-registrator to the major of the root's happy-dom", () => {
     const rootHappyDom = /"happy-dom@(\d+)\.\d+\.\d+"/.exec(readFileSync(join(root, "../bun.lock"), "utf8"));
     assert.ok(rootHappyDom, "the root bun.lock resolves no happy-dom");
