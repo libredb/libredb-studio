@@ -3,6 +3,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 import ts from "typescript";
+import { platformTimeoutMs } from "../helpers/platform-timeout";
 
 /**
  * Threat: a new route that opens a provider WITHOUT the server-derived file-access posture. A handle
@@ -120,15 +121,21 @@ const UNPOSTURED_ALLOWLIST: Record<string, { calls: number; reason: string }> = 
 const UNPOSTURED = findUnposturedCalls(SRC_DIR);
 
 describe("every provider factory call opens under the server-derived file-access posture", () => {
-  test("the scan found the real call sites, so it is not vacuously green", () => {
-    // A path or parse bug that found nothing would pass every assertion below. The routes do call
-    // the factories, so the total number of calls (postured and not) must be well above zero.
-    const total = listSources(SRC_DIR).reduce(
-      (sum, file) => sum + factoryCalls(file, readFileSync(join(SRC_DIR, file), "utf8")).length,
-      0,
-    );
-    expect(total).toBeGreaterThan(10);
-  });
+  // Parses every file under src/, which is 1.1s to 1.3s alone with coverage and 9.7s to 13.6s
+  // under a 15% CPU quota, past bun's 5s default, so it carries its own bound.
+  test(
+    "the scan found the real call sites, so it is not vacuously green",
+    () => {
+      // A path or parse bug that found nothing would pass every assertion below. The routes do call
+      // the factories, so the total number of calls (postured and not) must be well above zero.
+      const total = listSources(SRC_DIR).reduce(
+        (sum, file) => sum + factoryCalls(file, readFileSync(join(SRC_DIR, file), "utf8")).length,
+        0,
+      );
+      expect(total).toBeGreaterThan(10);
+    },
+    platformTimeoutMs(40_000),
+  );
 
   test("no file outside the allowlist calls a factory without the posture", () => {
     const offenders = UNPOSTURED.filter((call) => UNPOSTURED_ALLOWLIST[call.file] === undefined).map(
