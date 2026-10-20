@@ -67,6 +67,7 @@ import {
   MISSING_POSIX_SPECIAL_FILES,
   connectInChild,
   makeFifo,
+  runInChild,
 } from "../../helpers/special-files";
 import {
   WAREHOUSE_PLACEHOLDER,
@@ -376,6 +377,86 @@ describe("connect / disconnect", () => {
           failure: null,
         });
         expect(readdirSync(dir)).toEqual(["nobody-writes.duckdb"]);
+        expect(statSync(fifo).isFIFO()).toBe(true);
+      },
+      CHILD_TEST_TIMEOUT_MS,
+    );
+
+    // DuckDB replays a `.wal` beside an existing database when it opens it, and that open of a FIFO never
+    // returned: it blocks a libuv threadpool thread, and four such connects left every async file and DNS
+    // call in the server pending (measured on Node v24.14.0). `.wal.checkpoint` and `.wal.recovery` are
+    // the engine's other names beside the file, and are refused the same way.
+    test.each([
+      ["the editor", ".wal", {}],
+      ["the editor", ".wal.checkpoint", {}],
+      ["the editor", ".wal.recovery", {}],
+      ["the agent read-only profile", ".wal", { readOnly: true }],
+    ] as const)(
+      "%s refuses a FIFO at the database's %s at once, naming it",
+      async (_who, suffix, execution) => {
+        const dir = mkdtempSync(join(workDir, "fifo-sidecar-"));
+        const dbPath = join(dir, "beside-a-fifo.duckdb");
+        const seed = new DuckDBProvider(makeConfig({ database: dbPath }));
+        await seed.connect();
+        await seed.disconnect();
+        makeFifo(`${dbPath}${suffix}`);
+        const outcome = await connectInChild(
+          duckdbModule,
+          "DuckDBProvider",
+          { id: "fifo", name: "fifo", type: "duckdb", database: dbPath },
+          execution,
+        );
+        expect(outcome).toEqual({
+          report: {
+            connected: false,
+            error: "ConnectionError",
+            message: `Failed to open DuckDB database ${dbPath}: ${dbPath}${suffix} is a named pipe (FIFO), not a regular file`,
+          },
+          failure: null,
+        });
+        expect(readdirSync(dir).sort()).toEqual(["beside-a-fifo.duckdb", `beside-a-fifo.duckdb${suffix}`]);
+      },
+      CHILD_TEST_TIMEOUT_MS,
+    );
+
+    // A regular file when it is checked and a FIFO when it is read: a loop renaming an empty file and a
+    // FIFO onto the path by turns blocked the header read on the server's own thread for good (measured
+    // on bun 1.4.2). The child stands that swap in deterministically, answering stat for the FIFO with
+    // the regular file's answer, so the header read is what meets the FIFO.
+    test(
+      "a FIFO swapped in after the check is refused from what the header read opened",
+      async () => {
+        const dir = mkdtempSync(join(workDir, "swap-"));
+        const fifo = join(dir, "swapped.duckdb");
+        const standIn = join(dir, "stand-in");
+        writeFileSync(standIn, "");
+        makeFifo(fifo);
+        const outcome = await runInChild(
+          [
+            'const fs = await import("node:fs");',
+            'const { spyOn } = await import("bun:test");',
+            "const statSync = fs.statSync;",
+            `const regular = statSync(${JSON.stringify(standIn)});`,
+            `spyOn(fs, "statSync").mockImplementation((target, options) => (target === ${JSON.stringify(fifo)} ? regular : statSync(target, options)));`,
+            `const { DuckDBProvider: Provider } = await import(${JSON.stringify(duckdbModule)});`,
+            `const provider = new Provider(${JSON.stringify({ id: "swap", name: "swap", type: "duckdb", database: fifo })}, {}, {});`,
+            "try {",
+            "  await provider.connect();",
+            "  await provider.disconnect();",
+            "  report({ connected: true });",
+            "} catch (error) {",
+            "  report({ connected: false, error: error.constructor.name, message: error.message });",
+            "}",
+          ].join("\n"),
+        );
+        expect(outcome).toEqual({
+          report: {
+            connected: false,
+            error: "ConnectionError",
+            message: `Failed to open DuckDB database ${fifo}: ${fifo} is a named pipe (FIFO), not a regular file`,
+          },
+          failure: null,
+        });
         expect(statSync(fifo).isFIFO()).toBe(true);
       },
       CHILD_TEST_TIMEOUT_MS,

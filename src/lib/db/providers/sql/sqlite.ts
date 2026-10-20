@@ -74,7 +74,7 @@ import { logger } from "@/lib/logger";
 import * as fs from "fs";
 import * as path from "path";
 import { createMissingDirectories } from "@/lib/db/utils/create-directory";
-import { assertRegularFileOrMissing } from "@/lib/db/utils/regular-file";
+import { assertRegularFilesOrMissing, readRegularFileStart } from "@/lib/db/utils/regular-file";
 import { isUnwritableExistingFile } from "@/lib/db/utils/unwritable-file";
 import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
 import { keyRowsByPosition } from "@/lib/db/utils/positional-rows";
@@ -892,6 +892,9 @@ function objectDetailFromRows(path: readonly string[], rows: ObjectDetailRows): 
 // ============================================================================
 
 /** SQLite's SQLITE_READONLY refusal, in the words both drivers raise it with. */
+/** The files SQLite keeps beside a database file: its rollback journal and its WAL pair. */
+const SQLITE_SIDECAR_SUFFIXES = ["-journal", "-wal", "-shm"] as const;
+
 function isReadOnlyWriteError(error: unknown): boolean {
   return error instanceof Error && error.message.includes("attempt to write a readonly database");
 }
@@ -904,21 +907,12 @@ function isReadOnlyWriteError(error: unknown): boolean {
  * on Linux, SQLITE_CANTOPEN from Apple's, or with a `-wal` left and no `-shm`), so the
  * header is what says the refusal is about WAL. It is read only to explain a refusal
  * already raised: a file this process cannot read answers false, and that refusal keeps
- * SQLite's words alone.
+ * SQLite's words alone. The read never waits: a FIFO renamed onto the path since connect()
+ * checked it is refused rather than read on the server's own thread (`readRegularFileStart`).
  */
 function isWalModeFile(dbPath: string): boolean {
-  let fd: number;
-  try {
-    fd = fs.openSync(dbPath, "r");
-  } catch {
-    return false;
-  }
-  try {
-    const header = Buffer.alloc(20);
-    return fs.readSync(fd, header, 0, 20, 0) === 20 && header[18] === 2 && header[19] === 2;
-  } finally {
-    fs.closeSync(fd);
-  }
+  const header = readRegularFileStart(dbPath, 20);
+  return header !== null && header.length === 20 && header[18] === 2 && header[19] === 2;
 }
 
 // ============================================================================
@@ -1306,8 +1300,9 @@ export class SQLiteProvider extends SQLBaseProvider {
       const dbPath = this.getDatabasePath(true);
 
       // Before any of the three opens below: a read-only open of a FIFO waits for a writer that
-      // never comes, and SQLite reported a connection to a character device.
-      if (dbPath !== ":memory:") assertRegularFileOrMissing(dbPath);
+      // never comes, and SQLite reported a connection to a character device. Its sidecars too:
+      // SQLite opens a `-journal` beside the database read-only to see whether it is hot.
+      if (dbPath !== ":memory:") assertRegularFilesOrMissing(dbPath, SQLITE_SIDECAR_SUFFIXES);
 
       if (this.readOnlyProfile) {
         await this.connectReadOnly(dbPath);
@@ -1637,6 +1632,13 @@ export class SQLiteProvider extends SQLBaseProvider {
       throw new DatabaseConfigError("Provider is not connected. Call connect() first.", "sqlite");
     }
     if (this.worker !== null && !this.worker.isAlive()) {
+      // The restarted worker opens the path again, and it may have been replaced since connect()
+      // checked it: a FIFO there held the read-only open, and this statement with it, for good.
+      try {
+        assertRegularFilesOrMissing(this.workerOpen!.dbPath, SQLITE_SIDECAR_SUFFIXES);
+      } catch (error) {
+        throw new ConnectionError(`Failed to open SQLite database: ${(error as Error).message}`, "sqlite");
+      }
       // Single-flight: two statements racing to restart after a kill share one child,
       // so a cancel followed by parallel queries leaves exactly one process (#1623).
       this.startingWorker ??= SQLiteWorkerClient.start(this.workerOpen!);

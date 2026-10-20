@@ -12,7 +12,12 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, writ
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assertRegularFileOrMissing, type FileKind } from "@/lib/db/utils/regular-file";
+import {
+  assertRegularFileOrMissing,
+  assertRegularFilesOrMissing,
+  readRegularFileStart,
+  type FileKind,
+} from "@/lib/db/utils/regular-file";
 import { describeIf, testIf } from "../../helpers/posix-tools";
 import { CHILD_TEST_TIMEOUT_MS, MISSING_POSIX_SPECIAL_FILES, makeFifo, runInChild } from "../../helpers/special-files";
 
@@ -136,6 +141,93 @@ describe("on the real filesystem", () => {
   );
 });
 
+// The engine opens the files it keeps beside the database by name too, and a FIFO at one hung the
+// server the way a FIFO at the path did (measured on bun 1.4.2 and Node v24.14.0). A directory stands in
+// for the FIFO here: it is refused the same way and cannot block this process.
+describe("assertRegularFilesOrMissing, the database path and the files beside it", () => {
+  let scratch: string;
+
+  beforeAll(() => {
+    scratch = mkdtempSync(join(tmpdir(), "regular-files-"));
+  });
+
+  afterAll(() => {
+    rmSync(scratch, { recursive: true, force: true });
+  });
+
+  test("a missing database and missing sidecars pass, and nothing is created", () => {
+    const dbPath = join(scratch, "missing.db");
+    expect(refusal(() => assertRegularFilesOrMissing(dbPath, ["-journal", "-wal"]))).toBeNull();
+    expect(existsSync(dbPath)).toBe(false);
+  });
+
+  test("a regular database beside regular sidecars passes", () => {
+    const dbPath = join(scratch, "regular.db");
+    writeFileSync(dbPath, "");
+    writeFileSync(`${dbPath}-journal`, "");
+    expect(refusal(() => assertRegularFilesOrMissing(dbPath, ["-journal", "-wal"]))).toBeNull();
+  });
+
+  test("a sidecar that is not a regular file is refused, naming the sidecar", () => {
+    const dbPath = join(scratch, "beside-a-directory.db");
+    writeFileSync(dbPath, "");
+    mkdirSync(`${dbPath}-wal`);
+    expect(refusal(() => assertRegularFilesOrMissing(dbPath, ["-journal", "-wal"]))).toBe(
+      `${dbPath}-wal is a directory, not a regular file`,
+    );
+  });
+
+  test("the database path is asked first, so a refused path is the one named", () => {
+    const dbPath = join(scratch, "both.db");
+    mkdirSync(dbPath);
+    mkdirSync(`${dbPath}.lock`);
+    expect(refusal(() => assertRegularFilesOrMissing(dbPath, [".lock"]))).toBe(
+      `${dbPath} is a directory, not a regular file`,
+    );
+  });
+});
+
+/**
+ * Null where a directory opens for reading, as on Linux and macOS. Windows refuses that open (EISDIR), so
+ * the read has no descriptor to refuse and answers null, as for any path it cannot open; the stat check
+ * before it refuses the directory on every platform.
+ */
+const MISSING_DIRECTORY_OPEN: string | null =
+  process.platform === "win32"
+    ? "Windows refuses to open a directory for reading, so there is no descriptor to refuse"
+    : null;
+
+describe("readRegularFileStart, on the real filesystem", () => {
+  let scratch: string;
+
+  beforeAll(() => {
+    scratch = mkdtempSync(join(tmpdir(), "regular-file-start-"));
+  });
+
+  afterAll(() => {
+    rmSync(scratch, { recursive: true, force: true });
+  });
+
+  test("a regular file answers its first bytes, and a shorter one what it has", () => {
+    const file = join(scratch, "header.db");
+    writeFileSync(file, "SQLite format 3\0and more");
+    expect(readRegularFileStart(file, 6)?.toString("latin1")).toBe("SQLite");
+    const short = join(scratch, "short.db");
+    writeFileSync(short, "abc");
+    expect(readRegularFileStart(short, 16)?.toString("latin1")).toBe("abc");
+  });
+
+  test("a path that cannot be opened answers null, so the caller leaves it to the engine", () => {
+    expect(readRegularFileStart(join(scratch, "missing.db"), 16)).toBeNull();
+  });
+
+  testIf(MISSING_DIRECTORY_OPEN, "a directory is refused from what opened, naming the path", () => {
+    const dir = join(scratch, "a-directory");
+    mkdirSync(dir);
+    expect(refusal(() => readRegularFileStart(dir, 16))).toBe(`${dir} is a directory, not a regular file`);
+  });
+});
+
 // Its own timeout, above the child's hard limit, so a regression is reported by the kill rather than
 // by bun's 5 s default with the child still blocked.
 describeIf(MISSING_POSIX_SPECIAL_FILES, "a FIFO, checked in a child under a hard limit", () => {
@@ -163,6 +255,39 @@ describeIf(MISSING_POSIX_SPECIAL_FILES, "a FIFO, checked in a child under a hard
           "const refusals = [];",
           `for (const target of ${JSON.stringify([fifo, link])}) {`,
           "  try { assertRegularFileOrMissing(target); refusals.push(null); }",
+          "  catch (error) { refusals.push(error.message); }",
+          "}",
+          "report(refusals);",
+        ].join("\n"),
+      );
+      expect(outcome).toEqual({
+        report: [
+          `${fifo} is a named pipe (FIFO), not a regular file`,
+          `${link} is a named pipe (FIFO), not a regular file`,
+        ],
+        failure: null,
+      });
+      expect(statSync(fifo).isFIFO()).toBe(true);
+    },
+    CHILD_TEST_TIMEOUT_MS,
+  );
+
+  // The read a caller makes after the check passed: a FIFO swapped in between the two is opened
+  // without waiting for a writer and refused from the descriptor, so it never blocks.
+  test(
+    "readRegularFileStart refuses a FIFO and a symlink to one at once, from what it opened",
+    async () => {
+      const fifo = join(scratch, "swapped-in");
+      makeFifo(fifo);
+      const link = join(scratch, "link-to-swapped-in");
+      symlinkSync(fifo, link);
+      const read = JSON.stringify(join(import.meta.dir, "../../../src/lib/db/utils/regular-file.ts"));
+      const outcome = await runInChild(
+        [
+          `const { readRegularFileStart } = await import(${read});`,
+          "const refusals = [];",
+          `for (const target of ${JSON.stringify([fifo, link])}) {`,
+          "  try { readRegularFileStart(target, 16); refusals.push(null); }",
           "  catch (error) { refusals.push(error.message); }",
           "}",
           "report(refusals);",

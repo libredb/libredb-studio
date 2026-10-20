@@ -73,6 +73,7 @@ import {
   MISSING_POSIX_SPECIAL_FILES,
   connectInChild,
   makeFifo,
+  runInChild,
 } from "../../helpers/special-files";
 
 // ============================================================================
@@ -378,6 +379,87 @@ describe("SQLiteProvider", () => {
           });
           expect(readdirSync(specialDir)).toEqual(["nobody-writes.db"]);
           expect(statSync(fifo).isFIFO()).toBe(true);
+        },
+        CHILD_TEST_TIMEOUT_MS,
+      );
+
+      // SQLite opens a `-journal` beside the database read-only to see whether it is hot, and that open of
+      // a FIFO never returned, in the worker and in-process alike. A FIFO `-wal` or `-shm` let the connect
+      // through, and the first write then failed with "disk I/O error" (measured on bun 1.4.2).
+      test.each([
+        ["the editor", "-journal", {}],
+        ["the editor", "-wal", {}],
+        ["the editor", "-shm", {}],
+        ["the agent read-only profile", "-journal", { readOnly: true }],
+      ] as const)(
+        "%s refuses a FIFO at the database's %s at once, naming it",
+        async (_who, suffix, execution) => {
+          const dbPath = join(specialDir, "beside-a-fifo.db");
+          const seed = new BunDatabase(dbPath, { create: true });
+          seed.exec("PRAGMA journal_mode = DELETE; CREATE TABLE t (a INTEGER); INSERT INTO t VALUES (1);");
+          seed.close();
+          makeFifo(`${dbPath}${suffix}`);
+          const outcome = await connectInChild(
+            sqliteModule,
+            "SQLiteProvider",
+            { id: "fifo", name: "fifo", type: "sqlite", database: dbPath },
+            execution,
+          );
+          expect(outcome).toEqual({
+            report: {
+              connected: false,
+              error: "ConnectionError",
+              message: `Failed to open SQLite database: ${dbPath}${suffix} is a named pipe (FIFO), not a regular file`,
+            },
+            failure: null,
+          });
+          expect(readdirSync(specialDir).sort()).toEqual(["beside-a-fifo.db", `beside-a-fifo.db${suffix}`]);
+        },
+        CHILD_TEST_TIMEOUT_MS,
+      );
+
+      // A worker that a cancel or a deadline killed is started again on the same path, which may have been
+      // replaced since connect() checked it. On a FIFO the agent's restarted read-only open never returned,
+      // and the statement waiting on it never answered; the editor's answered "disk I/O error" (measured on
+      // bun 1.4.2). The child runs the worker, which is what restarts.
+      test.each([
+        ["the editor", {}],
+        ["the agent read-only profile", { readOnly: true }],
+      ] as const)(
+        "%s checks the path again when it restarts a killed worker, refusing a FIFO renamed onto it",
+        async (_who, execution) => {
+          const dbPath = join(specialDir, "replaced.db");
+          const seed = new BunDatabase(dbPath, { create: true });
+          seed.exec("CREATE TABLE t (a INTEGER)");
+          seed.close();
+          const fifo = join(specialDir, "stand-in");
+          makeFifo(fifo);
+          const outcome = await runInChild(
+            [
+              "delete process.env.LIBREDB_SQLITE_DRIVER;",
+              'process.env.LIBREDB_SQLITE_WORKER = "1";',
+              'const fs = await import("node:fs");',
+              `const { SQLiteProvider: Provider } = await import(${JSON.stringify(sqliteModule)});`,
+              `const provider = new Provider(${JSON.stringify({ id: "r", name: "r", type: "sqlite", database: dbPath })}, {}, ${JSON.stringify(execution)});`,
+              "await provider.connect();",
+              `fs.renameSync(${JSON.stringify(fifo)}, ${JSON.stringify(dbPath)});`,
+              "provider.worker.terminate();",
+              "try {",
+              '  await provider.query("SELECT 1 AS one");',
+              "  report({ answered: true });",
+              "} catch (error) {",
+              "  report({ answered: false, error: error.constructor.name, message: error.message });",
+              "}",
+            ].join("\n"),
+          );
+          expect(outcome).toEqual({
+            report: {
+              answered: false,
+              error: "ConnectionError",
+              message: `Failed to open SQLite database: ${dbPath} is a named pipe (FIFO), not a regular file`,
+            },
+            failure: null,
+          });
         },
         CHILD_TEST_TIMEOUT_MS,
       );

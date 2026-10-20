@@ -13,6 +13,15 @@
  * engine creates the file where it always did. Any other kind is refused with an error naming the path
  * and what it is, and a stat failure that is not a missing entry is raised as it came. It names no
  * engine: each provider raises the refusal as its own open failure.
+ *
+ * The engines also open the files they keep beside the database by name, and a FIFO at one of those
+ * hung the server the same way: LibreDB's `.lock`, SQLite's `-journal` and DuckDB's `.wal` (measured on
+ * bun 1.4.2 and Node v24.14.0). So each provider passes its sidecar suffixes too
+ * (`assertRegularFilesOrMissing`).
+ *
+ * `stat` and a later open are two looks at the path, and a FIFO renamed onto it between them is opened.
+ * The engines' own opens cannot be told to look at what they opened, but a read the server makes on its
+ * own thread can: `readRegularFileStart` opens without waiting and asks the descriptor, not the path.
  */
 import * as fs from "node:fs";
 
@@ -57,7 +66,52 @@ export function assertRegularFileOrMissing(
   stat: (target: string) => FileKind | undefined = statOrMissing,
 ): void {
   const kind = stat(filePath);
-  if (kind === undefined || kind.isFile()) return;
+  if (kind !== undefined) refuseUnlessRegular(filePath, kind);
+}
+
+/** Raise the refusal unless `kind` is a regular file. */
+function refuseUnlessRegular(filePath: string, kind: FileKind): void {
+  if (kind.isFile()) return;
   const name = KIND_NAMES.find(([is]) => kind[is]())?.[1] ?? "a special file";
   throw new Error(`${filePath} is ${name}, not a regular file`);
+}
+
+/**
+ * `assertRegularFileOrMissing` for the database path, then for each file the engine keeps beside it,
+ * named by its suffix (`.lock`, `-journal`, `.wal`). The first that is not a regular file is the one
+ * named, so a refused database path is reported before its sidecars.
+ */
+export function assertRegularFilesOrMissing(dbPath: string, sidecarSuffixes: readonly string[]): void {
+  for (const filePath of [dbPath, ...sidecarSuffixes.map((suffix) => `${dbPath}${suffix}`)]) {
+    assertRegularFileOrMissing(filePath);
+  }
+}
+
+/**
+ * Read-only, and O_NONBLOCK so that opening a FIFO returns at once instead of waiting for a writer.
+ * Windows defines no O_NONBLOCK and has no FIFO in its filesystem, and OR-ing its `undefined` adds nothing.
+ */
+const READ_WITHOUT_WAITING = fs.constants.O_RDONLY | fs.constants.O_NONBLOCK;
+
+/**
+ * The first `length` bytes of the file at `filePath`, or fewer when it is shorter, read on the caller's
+ * thread without ever waiting: the open does not wait for a FIFO's writer, and the refusal is raised
+ * from what was opened (`fstat` of the descriptor), so a FIFO renamed onto the path after
+ * `assertRegularFileOrMissing` passed is refused here instead of read. Null when the path cannot be
+ * opened (missing, unreadable), which the caller leaves to the engine.
+ */
+export function readRegularFileStart(filePath: string, length: number): Buffer | null {
+  let fd: number;
+  try {
+    fd = fs.openSync(filePath, READ_WITHOUT_WAITING);
+  } catch {
+    return null;
+  }
+  try {
+    refuseUnlessRegular(filePath, fs.fstatSync(fd));
+    const start = Buffer.alloc(length);
+    return start.subarray(0, fs.readSync(fd, start, 0, length, 0));
+  } finally {
+    fs.closeSync(fd);
+  }
 }

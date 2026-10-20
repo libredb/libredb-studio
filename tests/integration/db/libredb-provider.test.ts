@@ -168,7 +168,7 @@ describe("LibreDBProvider — lifecycle & metadata", () => {
   // The kernel opened a FIFO, took a `.lock` beside it, and Test Connection answered "Connected"
   // (measured on bun 1.4.2). In a child under a hard limit, so a regression to an open that blocks
   // fails here instead of hanging the suite.
-  describeIf(MISSING_POSIX_SPECIAL_FILES, "a FIFO as the database path", () => {
+  describeIf(MISSING_POSIX_SPECIAL_FILES, "a FIFO as the database path or its .lock", () => {
     test(
       "is refused at once, naming the path, and no .lock is taken beside it",
       async () => {
@@ -191,6 +191,37 @@ describe("LibreDBProvider — lifecycle & metadata", () => {
           });
           expect(fs.readdirSync(parent)).toEqual(["nobody-writes.libredb"]);
           expect(fs.statSync(fifo).isFIFO()).toBe(true);
+        } finally {
+          fs.rmSync(parent, { recursive: true, force: true });
+        }
+      },
+      CHILD_TEST_TIMEOUT_MS,
+    );
+
+    // The kernel's lock() finds the `.lock` taken and reads it to judge whether it is stale, and that
+    // read of a FIFO waited for a writer on the server's own thread: no tick for 8 s (measured on
+    // bun 1.4.2 and Node v24.14.0), with the database itself missing.
+    test(
+      "a FIFO at its .lock is refused at once, naming the .lock, and the database is not created",
+      async () => {
+        const parent = fs.mkdtempSync(path.join(os.tmpdir(), "libredb-fifo-lock-"));
+        try {
+          const dbPath = path.join(parent, "app.libredb");
+          makeFifo(`${dbPath}.lock`);
+          const outcome = await connectInChild(
+            path.join(import.meta.dir, "../../../src/lib/db/providers/embedded/libredb.ts"),
+            "LibreDBProvider",
+            { id: "fifo", name: "fifo", type: "libredb", database: dbPath },
+          );
+          expect(outcome).toEqual({
+            report: {
+              connected: false,
+              error: "ConnectionError",
+              message: `Failed to open LibreDB file: ${dbPath}.lock is a named pipe (FIFO), not a regular file`,
+            },
+            failure: null,
+          });
+          expect(fs.readdirSync(parent)).toEqual(["app.libredb.lock"]);
         } finally {
           fs.rmSync(parent, { recursive: true, force: true });
         }
