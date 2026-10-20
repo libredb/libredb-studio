@@ -160,6 +160,11 @@ A missing parent folder is created on connect, one level at a time, by `createMi
 It walks up to the nearest existing folder and makes each missing one in order, never with a recursive mkdir: Node's recursive mkdir never returns for a path under `/proc`, because procfs answers ENOENT for a parent that exists and Node retries it forever (measured on Node v24.14.0), so one Test Connection hung the whole server.
 The first folder the filesystem refuses ends the connect at once with the open failure in [§10](#10-error-handling), `Failed to open SQLite database: <filesystem message>`, which carries the code and the folder.
 
+A path that exists and is not a regular file is refused on connect before anything opens or reads it, by `assertRegularFileOrMissing` ([`regular-file.ts`](../../src/lib/db/utils/regular-file.ts)), shared with the DuckDB and LibreDB providers.
+It asks `stat`, which never opens the path and follows a symlink: a read-only open of a FIFO waits for a writer that never comes, so the agent profile, and the editor on a FIFO it cannot write, never returned (measured on bun 1.4.2), and SQLite reported a connection to `/dev/null` and `/dev/zero`.
+The answer is the open failure in [§10](#10-error-handling), for example `Failed to open SQLite database: /data/app.db is a named pipe (FIFO), not a regular file`, or `a socket`, `a character device`, `a block device` or `a directory` in place of the FIFO.
+A regular file and a symlink to one open as before, and a missing file is created as before.
+
 > **NUL rejection and reserved server files are checked on connect.** `../` segments are legal and simply
 > resolve into the absolute path. This follows the feature's trust model: a connection's
 > `database`/`connectionString` path is set by whoever configures the connection (an
@@ -1381,7 +1386,7 @@ SQLite-specific branches; the provider names the read-only file cases itself
 | Missing `database` and `connectionString` | `DatabaseConfigError` |
 | NUL byte in path | `DatabaseConfigError` ("Invalid database path: NUL bytes are not allowed") |
 | Selected driver unavailable (no `bun:sqlite` / `node:sqlite` on this runtime) | `DatabaseConfigError` ("SQLite driver … is not available…") |
-| Open failure, a missing folder the filesystem refuses to create included | `ConnectionError` |
+| Open failure, a missing folder the filesystem refuses to create and a path that is not a regular file included | `ConnectionError` |
 | Write check on an existing file fails with anything but `EACCES` / `EPERM` / `EROFS` | `ConnectionError` with the filesystem's message |
 | WAL-mode file in a directory this process cannot write | `ConnectionError` naming WAL and the two ways out |
 | Write statement on a file opened read-only because it is not writable | `QueryError` ("SQLite database `<path>` is open read-only because …") |
