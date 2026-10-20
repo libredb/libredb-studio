@@ -205,10 +205,16 @@ describe("renderNotices", () => {
 });
 
 describe("the committed third-party-licenses/", () => {
-  it("holds the four reviewed texts, each starting with the GitHub URL it was copied from", () => {
+  it("holds the five reviewed texts, each starting with the GitHub URL it was copied from", () => {
     const dir = join(__dirname, "..", "..", "..", "third-party-licenses");
     const files = readdirSync(dir).sort();
-    assert.deepEqual(files, ["assert-plus@1.0.0.txt", "pg-types@2.2.0.txt", "pgpass@1.0.5.txt", "precond@0.2.3.txt"]);
+    assert.deepEqual(files, [
+      "assert-plus@1.0.0.txt",
+      "pg-types@2.2.0.txt",
+      "pgpass@1.0.5.txt",
+      "precond@0.2.3.txt",
+      "react-remove-scroll-bar@2.3.8.txt",
+    ]);
     for (const file of files) {
       assert.match(readFileSync(join(dir, file), "utf8"), /^Source: https:\/\/github\.com\/\S+\n\n\S/, file);
     }
