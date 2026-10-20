@@ -101,7 +101,10 @@ describe("on the real filesystem", () => {
   test("a file where a folder should be is refused by the filesystem, and nothing is made below it", () => {
     const file = join(scratch, "blocker");
     writeFileSync(file, "");
-    expect(() => createMissingDirectories(join(file, "below"))).toThrow("ENOTDIR");
+    // Windows names it a missing path: a file mid-path fails the open with STATUS_OBJECT_PATH_NOT_FOUND
+    // (MS-FSA 2.1.5.1), and libuv, which carries a plain mkdir there for Bun and Node alike, reports ENOENT.
+    const refusal = process.platform === "win32" ? "ENOENT" : "ENOTDIR";
+    expect(() => createMissingDirectories(join(file, "below"))).toThrow(refusal);
     expect(existsSync(join(file, "below"))).toBe(false);
   });
 });
