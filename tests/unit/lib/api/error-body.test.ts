@@ -1,0 +1,162 @@
+import { describe, test, expect } from "bun:test";
+import { databaseErrorBody, internalErrorBody, TIMEOUT_SENTENCE } from "@/lib/api/error-body";
+import type { ApiErrorResponse, DatabaseErrorLog } from "@/lib/api/error-body";
+import { ApiErrorCode } from "@/lib/api/error-codes";
+import { RateLimitError } from "@/lib/api/rate-limit";
+import { LLMAuthError } from "@/lib/llm/types";
+import { SeedConnectionError } from "@/lib/seed/resolve-connection";
+import { VaultError } from "@/lib/seed/vault-client";
+import {
+  AuthenticationError,
+  ConnectionError,
+  DatabaseConfigError,
+  DatabaseError,
+  PermissionDeniedError,
+  PoolExhaustedError,
+  QueryCancelledError,
+  QueryError,
+  TimeoutError,
+} from "@/lib/db/errors";
+
+interface Row {
+  readonly name: string;
+  readonly error: unknown;
+  readonly body: ApiErrorResponse;
+  readonly log: DatabaseErrorLog;
+}
+
+const ROWS: readonly Row[] = [
+  {
+    name: "QueryCancelledError",
+    error: new QueryCancelledError("Query was cancelled", "postgres", "SELECT 1"),
+    body: { error: "Query was cancelled", code: ApiErrorCode.QUERY_CANCELLED, statusCode: 499 },
+    log: { level: "info", message: "Query cancelled", context: { provider: "postgres" } },
+  },
+  {
+    name: "QueryError with a position and a detail",
+    error: new QueryError('syntax error at or near "SELEC"', "postgres", "SELEC 1", 1, "the detail"),
+    body: {
+      error: 'syntax error at or near "SELEC"',
+      code: ApiErrorCode.QUERY_ERROR,
+      statusCode: 400,
+      details: { position: 1, detail: "the detail" },
+    },
+    log: { level: "warn", message: "Query error", context: { provider: "postgres" } },
+  },
+  {
+    name: "QueryError with neither",
+    error: new QueryError("Incorrect syntax near 'FROM'.", "mssql"),
+    body: { error: "Incorrect syntax near 'FROM'.", code: ApiErrorCode.QUERY_ERROR, statusCode: 400 },
+    log: { level: "warn", message: "Query error", context: { provider: "mssql" } },
+  },
+  {
+    name: "DatabaseConfigError",
+    error: new DatabaseConfigError("Host is required", "mysql"),
+    body: { error: "Host is required", code: ApiErrorCode.CONFIG_ERROR, statusCode: 400 },
+    log: { level: "warn", message: "Database config error", context: { provider: "mysql" } },
+  },
+  {
+    name: "AuthenticationError with a fix statement",
+    error: new AuthenticationError("refused", "postgres", {
+      fixStatement: "ALTER USER ADD KEY PAIR k PUBLIC_KEY = 'b'",
+    }),
+    body: {
+      error: "refused",
+      code: ApiErrorCode.AUTH_ERROR,
+      statusCode: 401,
+      fixStatement: "ALTER USER ADD KEY PAIR k PUBLIC_KEY = 'b'",
+    },
+    log: { level: "warn", message: "Database auth error", context: { provider: "postgres" } },
+  },
+  {
+    name: "AuthenticationError without one",
+    error: new AuthenticationError("bad password", "mongodb"),
+    body: { error: "bad password", code: ApiErrorCode.AUTH_ERROR, statusCode: 401 },
+    log: { level: "warn", message: "Database auth error", context: { provider: "mongodb" } },
+  },
+  {
+    name: "PermissionDeniedError",
+    error: new PermissionDeniedError("permission denied for table orders", "postgres"),
+    body: { error: "permission denied for table orders", code: ApiErrorCode.PERMISSION_DENIED, statusCode: 403 },
+    log: { level: "warn", message: "Database permission denied", context: { provider: "postgres" } },
+  },
+  {
+    name: "TimeoutError",
+    error: new TimeoutError("query took too long", "postgres", 30000),
+    body: { error: TIMEOUT_SENTENCE, code: ApiErrorCode.TIMEOUT_ERROR, statusCode: 504, retryable: true },
+    log: { level: "warn", message: "Query timeout", context: { provider: "postgres", duration: 30000 } },
+  },
+  {
+    name: "ConnectionError",
+    error: new ConnectionError("connect ECONNREFUSED 127.0.0.1:5432", "postgres"),
+    body: {
+      error: "connect ECONNREFUSED 127.0.0.1:5432",
+      code: ApiErrorCode.CONNECTION_ERROR,
+      statusCode: 503,
+      retryable: true,
+    },
+    log: { level: "error", message: "Connection error", context: { provider: "postgres" } },
+  },
+  {
+    name: "PoolExhaustedError",
+    error: new PoolExhaustedError("no connections available", "mssql", 10),
+    body: { error: "no connections available", code: ApiErrorCode.POOL_EXHAUSTED, statusCode: 503, retryable: true },
+    log: { level: "error", message: "Pool exhausted", context: { provider: "mssql" } },
+  },
+  {
+    name: "DatabaseError without a code",
+    error: new DatabaseError("could not roll back", "postgres"),
+    body: { error: "could not roll back", code: ApiErrorCode.DATABASE_ERROR, statusCode: 500 },
+    log: { level: "error", message: "Database error", context: { provider: "postgres" } },
+  },
+  {
+    name: "DatabaseError with a code of its own",
+    error: new DatabaseError("odd", "mysql", ApiErrorCode.QUERY_ERROR),
+    body: { error: "odd", code: ApiErrorCode.QUERY_ERROR, statusCode: 500 },
+    log: { level: "error", message: "Database error", context: { provider: "mysql" } },
+  },
+];
+
+describe("databaseErrorBody", () => {
+  test.each(ROWS.map((row) => [row.name, row] as const))("%s", (_name, row) => {
+    expect(JSON.parse(JSON.stringify(databaseErrorBody(row.error)))).toEqual(
+      JSON.parse(JSON.stringify({ body: row.body, log: row.log })),
+    );
+  });
+
+  test("a refusal with no fix statement carries no fixStatement key", () => {
+    expect(Object.hasOwn(databaseErrorBody(new AuthenticationError("refused"))!.body, "fixStatement")).toBe(false);
+  });
+
+  test.each([
+    ["a plain Error", new Error("boom")],
+    ["a string", "boom"],
+    ["an LLM error", new LLMAuthError("invalid key", "openai")],
+    ["a Vault error", new VaultError('Vault is unreachable for "secret/data/prod/postgres"')],
+    [
+      "a seed refusal",
+      new SeedConnectionError("Custom connections are disabled on this server", 403, "CUSTOM_CONNECTIONS_DISABLED"),
+    ],
+    ["a rate-limit rejection", new RateLimitError(47)],
+  ])("%s is not a database error", (_name, error) => {
+    expect(databaseErrorBody(error)).toBeNull();
+  });
+});
+
+describe("internalErrorBody", () => {
+  test("an Error answers 500 INTERNAL_ERROR with its message", () => {
+    expect(internalErrorBody(new Error("boom"))).toEqual({
+      error: "boom",
+      code: ApiErrorCode.INTERNAL_ERROR,
+      statusCode: 500,
+    });
+  });
+
+  test("anything else answers the fixed sentence", () => {
+    expect(internalErrorBody("boom")).toEqual({
+      error: "Internal server error",
+      code: ApiErrorCode.INTERNAL_ERROR,
+      statusCode: 500,
+    });
+  });
+});
