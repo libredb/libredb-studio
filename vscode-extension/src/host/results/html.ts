@@ -16,15 +16,30 @@ export function newNonce(): string {
 }
 
 const NONCE = /^[0-9a-f]{32}$/;
-/** What could leave an attribute value or a CSP directive: a quote, a tag bracket, a directive separator, whitespace. */
-const BREAKOUT = /["'<>;\s]/;
+/**
+ * What could leave an attribute value or a CSP directive: a quote, a tag bracket, a directive or policy separator, an
+ * ampersand (the parser decodes a character reference such as &#59 inside the attribute), whitespace, a control character.
+ */
+const BREAKOUT_CHARACTERS = String.raw`"'<>;,&\s\p{Cc}`;
+const BREAKOUT = new RegExp(`[${BREAKOUT_CHARACTERS}]`, "u");
+/** One CSP source expression: a quoted keyword such as 'self', or a scheme or host source with no breakout character. */
+const SOURCE_EXPRESSION = new RegExp(`^(?:'[a-z-]+'|[^${BREAKOUT_CHARACTERS}]+)$`, "u");
+
+/**
+ * The input that could break out of its attribute or directive, if any. webview.cspSource is source expressions
+ * separated by single spaces (VS Code 1.120's is 'self' https://*.vscode-cdn.net, and a web extension's begins with
+ * its location), so it alone may hold a space between sources and a quote around a keyword.
+ */
+function unsafeInput(inputs: ResultsHtmlInputs): keyof ResultsHtmlInputs | undefined {
+  if (!NONCE.test(inputs.nonce)) return "nonce";
+  if (!inputs.cspSource.split(" ").every((source) => SOURCE_EXPRESSION.test(source))) return "cspSource";
+  return (["scriptUri", "styleUri"] as const).find((name) => BREAKOUT.test(inputs[name]));
+}
 
 /** Part 4's document, byte for byte, with the four inputs and the hash as its only interpolations. */
 export function renderResultsHtml(inputs: ResultsHtmlInputs): string {
   const { cspSource, nonce, scriptUri, styleUri } = inputs;
-  const unsafe = !NONCE.test(nonce)
-    ? "nonce"
-    : (["cspSource", "scriptUri", "styleUri"] as const).find((name) => BREAKOUT.test(inputs[name]));
+  const unsafe = unsafeInput(inputs);
   if (unsafe) throw new Error(`renderResultsHtml was given an unsafe ${unsafe}.`);
   return `<!DOCTYPE html>
 <html lang="en">

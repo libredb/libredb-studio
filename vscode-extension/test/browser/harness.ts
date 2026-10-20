@@ -102,7 +102,8 @@ async function route(page: Page): Promise<void> {
     const path = new URL(request.request().url()).pathname;
     if (path === "/index.html") {
       const body = renderResultsHtml({
-        cspSource: ORIGIN,
+        // The shape VS Code's webview.cspSource has: 'self', then a host source.
+        cspSource: `'self' ${ORIGIN}`,
         nonce: newNonce(),
         scriptUri: `${ORIGIN}/results.js`,
         styleUri: `${ORIGIN}/results.css`,

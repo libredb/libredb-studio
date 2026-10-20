@@ -6,8 +6,13 @@ import { RADIX_SCROLL_AREA_STYLE_HASH } from "../../../src/host/results/csp";
 import { newNonce, renderResultsHtml } from "../../../src/host/results/html";
 import { useDom } from "../../setup/dom";
 
+/** VS Code 1.120's webview.cspSource for a desktop extension, the getter's literal value. */
+const DESKTOP_CSP_SOURCE = "'self' https://*.vscode-cdn.net";
+/** A web extension's: its https location, then the desktop value. */
+const WEB_CSP_SOURCE = "https://cdn.example/ext/ 'self' https://*.vscode-cdn.net";
+
 const inputs = {
-  cspSource: "https://file+.vscode-resource.vscode-cdn.net",
+  cspSource: DESKTOP_CSP_SOURCE,
   nonce: "0123456789abcdef0123456789abcdef",
   scriptUri: "https://file+.vscode-resource.vscode-cdn.net/x/dist/webview/results.js",
   styleUri: "https://file+.vscode-resource.vscode-cdn.net/x/dist/webview/results.css",
@@ -19,7 +24,16 @@ describe("the results view's HTML", () => {
     const csp = /http-equiv="Content-Security-Policy" content="([^"]*)"/.exec(html)?.[1];
     assert.equal(
       csp,
-      `default-src 'none'; script-src 'nonce-${inputs.nonce}'; style-src ${inputs.cspSource} 'nonce-${inputs.nonce}' '${RADIX_SCROLL_AREA_STYLE_HASH}';`,
+      `default-src 'none'; script-src 'nonce-${inputs.nonce}'; style-src 'self' https://*.vscode-cdn.net 'nonce-${inputs.nonce}' '${RADIX_SCROLL_AREA_STYLE_HASH}';`,
+    );
+  });
+
+  it("takes a web extension's cspSource, which begins with the extension's location", () => {
+    const html = renderResultsHtml({ ...inputs, cspSource: WEB_CSP_SOURCE });
+    const csp = /http-equiv="Content-Security-Policy" content="([^"]*)"/.exec(html)?.[1];
+    assert.equal(
+      csp,
+      `default-src 'none'; script-src 'nonce-${inputs.nonce}'; style-src https://cdn.example/ext/ 'self' https://*.vscode-cdn.net 'nonce-${inputs.nonce}' '${RADIX_SCROLL_AREA_STYLE_HASH}';`,
     );
   });
 
@@ -30,7 +44,7 @@ describe("the results view's HTML", () => {
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-0123456789abcdef0123456789abcdef'; style-src https://file+.vscode-resource.vscode-cdn.net 'nonce-0123456789abcdef0123456789abcdef' '${RADIX_SCROLL_AREA_STYLE_HASH}';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-0123456789abcdef0123456789abcdef'; style-src 'self' https://*.vscode-cdn.net 'nonce-0123456789abcdef0123456789abcdef' '${RADIX_SCROLL_AREA_STYLE_HASH}';">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="https://file+.vscode-resource.vscode-cdn.net/x/dist/webview/results.css">
   <title>LibreDB Results</title>
@@ -59,8 +73,24 @@ describe("the results view's HTML", () => {
       ["nonce", "abc"],
       ["nonce", `${inputs.nonce}"`],
     ];
-    for (const name of ["cspSource", "scriptUri", "styleUri"] as const) {
-      for (const bad of ['"', "<", ">", "'", ";", " ", "\n", "\t"]) unsafe.push([name, `${inputs[name]}${bad}x`]);
+    // A quote, a tag bracket, a directive or policy separator, an ampersand (the parser decodes a character reference
+    // such as &#59 inside the attribute), whitespace and a control character.
+    const breakout = ['"', "'", "<", ">", ";", ",", "&", " ", "\n", "\t", "\r", "\f", "\u00a0", "\u0000", "\u007f"];
+    for (const name of ["scriptUri", "styleUri"] as const) {
+      for (const bad of breakout) unsafe.push([name, `${inputs[name]}${bad}x`]);
+    }
+    // The cspSource is source expressions separated by single spaces, so there a lone space is the one allowed.
+    for (const bad of breakout.filter((c) => c !== " ")) unsafe.push(["cspSource", `${inputs.cspSource}${bad}x`]);
+    for (const value of [
+      "",
+      ` ${DESKTOP_CSP_SOURCE}`,
+      `${DESKTOP_CSP_SOURCE} `,
+      `${DESKTOP_CSP_SOURCE}  https://x.test`,
+      "'self https://*.vscode-cdn.net",
+      "https://x.test/a'b 'self'",
+      "https://webview.test&#59img-src&#32*",
+    ]) {
+      unsafe.push(["cspSource", value]);
     }
     for (const [name, value] of unsafe) {
       assert.throws(() => renderResultsHtml({ ...inputs, [name]: value }), {
