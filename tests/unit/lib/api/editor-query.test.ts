@@ -204,6 +204,27 @@ describe("runEditorQuery", () => {
     expect(callsOf(provider.query)[0][2]).toBe("q-1");
   });
 
+  test("an abort after the run answered cancels nothing", async () => {
+    const controller = new AbortController();
+    const cancelQuery = mock(async () => true);
+    const provider = fake(resultOf(rowsOf(1)), { cancelQuery });
+    await runEditorQuery(provider, runOf({ queryId: "q-1", signal: controller.signal }));
+    controller.abort();
+    expect(callsOf(provider.query)[0][2]).toBe("q-1");
+    expect(callsOf(cancelQuery)).toEqual([]);
+  });
+
+  test("an abort after the run failed cancels nothing", async () => {
+    const controller = new AbortController();
+    const boom = new Error("boom");
+    const cancelQuery = mock(async () => true);
+    const provider = fake(boom, { cancelQuery });
+    await expect(runEditorQuery(provider, runOf({ queryId: "q-1", signal: controller.signal }))).rejects.toBe(boom);
+    controller.abort();
+    expect(callsOf(provider.query)[0][2]).toBe("q-1");
+    expect(callsOf(cancelQuery)).toEqual([]);
+  });
+
   test("a request already aborted starts nothing", async () => {
     const controller = new AbortController();
     controller.abort();
