@@ -1,27 +1,19 @@
-import { firstResultSet } from "@/lib/api/first-result-set";
-import { pageOfProbe, pageOptionError, probePastPage } from "@/lib/api/page-probe";
 import { NextRequest, NextResponse } from "next/server";
 import { createDatabaseProvider, getOrCreateProvider } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
-import { bridgeAbortToCancel } from "@/lib/api/abort-cancel";
-import { QueryCancelledError } from "@/lib/db/errors";
 import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
 import { editorProvider } from "@/lib/api/editor-provider";
 import { readBoundParams } from "@/lib/api/bound-params";
-import { consoleTextByteLimit, consoleTextOverLimit } from "@/lib/db/destructive-commands";
+import { checkEditorQuery, runEditorQuery } from "@/lib/api/editor-query";
 import { ObjectRouteError, objectRouteErrorBody, optionalDatabase } from "@/lib/api/object-route";
 import { containerDepth } from "@/lib/db/object-kinds";
 import { getExplainStrategy, type ExplainMode } from "@/lib/explain";
 import { countCodeStatements } from "@/lib/sql/statement-splitter";
 import { hasUnterminatedSpan } from "@/lib/sql/spans";
 import { readsSqlText, resolveSqlGrammar } from "@/lib/sql/grammar";
-import { endsOpenQueryTransactions, newQueryCallScope } from "@/lib/db/types";
-import { supportsQueryCancel } from "@/lib/db/query-cancel";
-import type { ExplainFormat, OpenQueryTransactionOutcome } from "@/lib/db/types";
-import { rowsWithNonFiniteWords } from "@/lib/non-finite";
-import { noteAppendedBound } from "@/lib/db/utils/query-limiter";
+import type { ExplainFormat } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 import { admitQueryExecution } from "@/lib/query-events/admission";
 import { queryEventStart } from "@/lib/query-events/build";
@@ -100,24 +92,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "queryId must be a string" }, { status: 400 });
     }
 
-    const optionError = pageOptionError(options);
-    if (optionError !== null) {
-      return NextResponse.json({ error: optionError }, { status: 400 });
-    }
-
-    // A connection type that declares a console text bound is held to it here, before the bound parameters, the
-    // provider and the statement cache are reached, so an oversize text opens no socket. The answer names the size
-    // and the bound and never repeats the text. The bound is read from the type in the body, after the JSON has been
-    // parsed: a streamed bound on the request itself would change every engine and is a separate decision.
-    const textLimit = consoleTextByteLimit(connection.type);
-    if (textLimit !== undefined) {
-      if (typeof sql !== "string") {
-        return NextResponse.json({ error: "sql must be a string" }, { status: 400 });
-      }
-      const over = consoleTextOverLimit(sql, textLimit);
-      if (over !== undefined) {
-        return NextResponse.json({ error: over }, { status: 413 });
-      }
+    // The page bounds and the console text bound, before any provider resolves (`src/lib/api/editor-query.ts`).
+    const refusal = checkEditorQuery({ statement: sql, type: connection.type, options });
+    if (refusal !== null) {
+      return NextResponse.json({ error: refusal.error }, { status: refusal.status });
     }
 
     // A generated statement sends its values here rather than writing them into the
@@ -271,109 +249,23 @@ export async function POST(req: NextRequest) {
       explainFormat = strategy.format;
     }
 
-    const prepared = provider.prepareQuery(statement, options);
-
-    // The statement that runs asks for a row past the page (#1440); see `probePastPage`.
-    const probe = probePastPage(provider, statement, options, prepared);
-
-    // A SINGLE STATEMENT CAN LEAVE A TRANSACTION OPEN, SO THIS ROUTE ENDS IT (D74).
-    //
-    // MEASURED 2026-09-15 against PostgreSQL 18.4 through this handler with the real
-    // provider and the real process-wide cache: a lone `BEGIN` answered 200 and released
-    // its pooled client in status `T`, and the next request on the same cached provider —
-    // which is any other signed-in user of that stored connection — ran its `CREATE TABLE`
-    // inside that stranger's transaction, answered 200, and an independent reader saw no
-    // such table. Driven the other way the loss is loud: a `BEGIN` followed by a statement
-    // naming a missing relation leaves the client in `E` and the next request answers 500.
-    //
-    // This `finally` was tried once before and REVERTED, because the ender it calls named
-    // one shared pointer: it rolled back whichever client anybody had recorded last, which
-    // cost a concurrent `/api/db/multi-query` script its committed `CREATE TABLE` and an
-    // interactive `POST /api/db/transaction` session its own. D87 fixed that in the
-    // provider, where the borrowed client is in scope, and the `scope` minted here is what
-    // names this request's own session: nothing this handler did not run on can be ended.
-    //
-    // It is a `finally` and not a line after the call because the statement that poisons a
-    // client is usually the one that threw, and the response must not be able to leave by
-    // a path that skips this.
-    const scope = newQueryCallScope();
-    let openTransaction: OpenQueryTransactionOutcome = "none";
-
-    // Pass queryId to provider for cancellation tracking, and cancel it if the request goes away while it runs.
-    // A cancel is idempotent, and the bridge cancels only the id this request bound, so it needs no owner check;
-    // the multi-query route's docblock (`src/app/api/db/multi-query/route.ts`) gives both rules in full.
-    const supportsCancel = supportsQueryCancel(provider);
-    const cancelId = supportsCancel ? queryId : undefined;
-    // A request already gone starts nothing.
-    if (req.signal.aborted) throw new QueryCancelledError("The query was cancelled.");
-    const release = bridgeAbortToCancel(req.signal, provider, cancelId, "api/db/query");
-    let result: Awaited<ReturnType<typeof provider.query>>;
-    try {
-      result = await provider.query(probe.query, bound.params, cancelId, scope);
-    } catch (error) {
-      // An error that names the bound the limiter added says so, rather than pointing into text the user never wrote.
-      throw noteAppendedBound(error, statement, probe.query);
-    } finally {
-      release();
-      if (endsOpenQueryTransactions(provider)) {
-        openTransaction = await provider.endOpenQueryTransaction(scope);
-      }
-    }
-
-    // PAGE TWO IS ONLY OFFERED FOR A BOUND THIS LAYER APPLIED (#816).
-    //
-    // `wasLimited` is the limiter saying it rewrote the statement, and it is the only
-    // thing that makes advancing the bound meaningful: a statement returned untouched —
-    // one carrying the user's own `LIMIT 50`, or a ClickHouse query whose trailing
-    // `FORMAT`/`SETTINGS` clause the limiter declines to cut into — runs the same way at
-    // every offset. Without this conjunct such a statement, answering with exactly
-    // `prepared.limit` rows, offered a Load More whose click re-ran it unchanged and
-    // appended the rows already on screen, which the user cannot tell from new ones.
-    //
-    // One rule, per statement, with no branching on database type: if the bound is ours,
-    // pagination is offered; if it is the user's, or the statement could not be
-    // rewritten, it is not.
-    //
-    // The probe row is the proof (#1440): more than `prepared.limit` rows came back, so a next
-    // page exists, and the page itself is cut back to the limit asked for.
-    const { hasMore, rows: pageRows } = pageOfProbe(prepared, result.rows);
-    const answered = firstResultSet(result);
+    // The run itself, the steps the VS Code extension's backend child runs too (`src/lib/api/editor-query.ts`).
+    const { body: answered } = await runEditorQuery(provider, {
+      statement,
+      options,
+      params: bound.params,
+      queryId,
+      signal: req.signal,
+      route: "api/db/query",
+    });
     recordExecutedUnit(events, {
       connection,
       statement: submitted,
       started,
       explain: explainMode,
-      ended: { rowCount: hasMore ? pageRows.length : answered.rowCount },
+      ended: { rowCount: answered.rowCount },
     });
-    return NextResponse.json({
-      ...answered,
-      // The probe row is not part of the answer, so the count that names the rows is the page's.
-      ...(hasMore && { rowCount: pageRows.length }),
-      // NaN and the infinities as words: `JSON.stringify` would write each as null, which
-      // the grid and every export then show as SQL NULL (`src/lib/non-finite.ts`).
-      rows: rowsWithNonFiniteWords(pageRows),
-      ...(explainFormat !== undefined && { explainFormat }),
-      // Present only when there was a transaction to end, the way `/api/db/multi-query`
-      // reports it, so an always-present "none" would announce something that did not happen.
-      // `use-query-execution.ts` raises the notice off this field on BOTH paths; it used to raise
-      // it only inside its `multiStatement` branch, which a lone statement never sets, so this
-      // field was answered and never rendered for its whole first commit.
-      ...(openTransaction === "rolled-back" && { openTransaction }),
-      pagination: {
-        limit: prepared.limit,
-        offset: prepared.offset,
-        hasMore,
-        totalReturned: pageRows.length,
-        // A bound the PROVIDER applied is reported too (#1085, section 5.4). A provider that cuts
-        // its own result, as the Prometheus provider cuts a vector at its series cap, says so on
-        // the result's own `pagination`, and the badge this field drives says "Studio bounded this
-        // result", which is as true of that bound as of the limiter's. Only a `true` crosses, so a
-        // provider cannot clear a filled bound this layer applied. A short page does not show
-        // the limiter badge; `hasMore` above stays on
-        // `prepared.wasLimited` alone, because an offset can only advance a bound this layer wrote.
-        wasLimited: hasMore || result.pagination?.wasLimited === true,
-      },
-    });
+    return NextResponse.json({ ...answered, ...(explainFormat !== undefined && { explainFormat }) });
   } catch (error) {
     if (stage === "execution") {
       recordExecutedUnit(events, {
