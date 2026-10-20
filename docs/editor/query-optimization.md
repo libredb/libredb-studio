@@ -1011,9 +1011,11 @@ src/
 ├── lib/sql/
 │   └── result-order.ts       # Whether a statement orders its OWN result
 ├── lib/query-generators.ts   # The tree click's statement — no row bound of its own
+├── lib/results/
+│   └── append-page.ts        # appendResultPage: the Load More append rule (standalone hook; type-only imports so the VS Code webview can share it)
 ├── hooks/
 │   ├── use-tab-manager.ts    # PREVIEW_PAGE_SIZE, sent as an execution option
-│   └── use-query-execution.ts # Append, currentOffset, Load More (standalone)
+│   └── use-query-execution.ts # currentOffset, Load More (standalone)
 ├── workspace/hooks/
 │   └── use-query-adapter.ts  # The same, for the embedded shell
 ├── app/api/db/
