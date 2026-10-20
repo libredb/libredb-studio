@@ -1,0 +1,7 @@
+{
+  "spec": ["test/integration/**/*.test.ts"],
+  "extension": ["ts"],
+  "require": ["test/setup/register.cjs"],
+  "forbid-only": true,
+  "timeout": 300000
+}
