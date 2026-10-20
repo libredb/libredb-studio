@@ -1,20 +1,37 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "entry": [
-    "src/exports/index.js",
-    "src/components/ui/**/*.{ts,tsx}",
-    "tests/**/*.{ts,tsx}",
-    "e2e/**/*.ts",
-    "scripts/*.mjs",
-    "scripts/*.ts"
-  ],
-  "project": [
-    "src/**/*.{ts,tsx}",
-    "tests/**/*.{ts,tsx}",
-    "e2e/**/*.ts",
-    "scripts/*.mjs",
-    "scripts/*.ts"
-  ],
+  "workspaces": {
+    ".": {
+      "entry": [
+        "src/exports/index.js",
+        "src/components/ui/**/*.{ts,tsx}",
+        "tests/**/*.{ts,tsx}",
+        "e2e/**/*.ts",
+        "scripts/*.mjs",
+        "scripts/*.ts"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx}",
+        "tests/**/*.{ts,tsx}",
+        "e2e/**/*.ts",
+        "scripts/*.mjs",
+        "scripts/*.ts"
+      ]
+    },
+    "vscode-extension": {
+      "entry": [
+        ".vscode-test.mjs",
+        "scripts/*.mjs",
+        "test/**/*.test.ts",
+        "test/setup/*"
+      ],
+      "project": [
+        "src/**/*.ts",
+        "test/**/*.ts",
+        "scripts/*.mjs"
+      ]
+    }
+  },
   "ignoreDependencies": [
     "tailwindcss",
     "@workflow/world-postgres",

@@ -2,7 +2,22 @@
   "$schema": "https://biomejs.dev/schemas/2.5.1/schema.json",
   "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
   "files": {
-    "includes": ["src/**", "tests/**", "e2e/**", "scripts/**", "bin/**", "*.ts", "*.mts", "*.mjs"]
+    "includes": [
+      "src/**",
+      "tests/**",
+      "e2e/**",
+      "scripts/**",
+      "bin/**",
+      "*.ts",
+      "*.mts",
+      "*.mjs",
+      "vscode-extension/**",
+      "!vscode-extension/dist",
+      "!vscode-extension/out",
+      "!vscode-extension/dist-vsix",
+      "!vscode-extension/.vscode-test",
+      "!vscode-extension/coverage"
+    ]
   },
   "formatter": {
     "enabled": true,

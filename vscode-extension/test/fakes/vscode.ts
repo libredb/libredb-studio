@@ -61,6 +61,10 @@ class LogChannel implements FakeLogOutputChannel {
   }
 }
 
+/**
+ * The code under test reaches this through tsconfig.test.json's "vscode" alias, which knip does not read.
+ * @public
+ */
 export const window = {
   createOutputChannel(name: string, options?: unknown): FakeLogOutputChannel {
     const channel = new LogChannel(name, options);

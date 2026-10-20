@@ -6,12 +6,7 @@ import { copyFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
-import {
-  assertNoViolations,
-  CHILD_EXTERNALS,
-  childViolations,
-  hostViolations,
-} from "./scripts/bundle-checks.mjs";
+import { assertNoViolations, CHILD_EXTERNALS, childViolations, hostViolations } from "./scripts/bundle-checks.mjs";
 import { renderNotices } from "./scripts/notices.mjs";
 
 const root = dirname(fileURLToPath(import.meta.url));

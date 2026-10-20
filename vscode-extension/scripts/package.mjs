@@ -19,7 +19,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const root = dirname(dirname(fileURLToPath(import.meta.url)));
   const { version } = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
   const args = vscePackageArgs(version);
-  const vsce = createRequire(import.meta.url).resolve("@vscode/vsce/vsce");
+  // A plain require.resolve call, which knip reads as the use of @vscode/vsce.
+  const require = createRequire(import.meta.url);
+  const vsce = require.resolve("@vscode/vsce/vsce");
   const run = (command) => {
     const result = spawnSync(process.execPath, command, { cwd: root, stdio: "inherit" });
     if (result.error) throw result.error;

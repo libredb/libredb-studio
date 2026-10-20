@@ -36,7 +36,9 @@ export function renderNotices(metafiles, workingDir) {
     }
   }
   if (packageDirs.size === 0) return `${HEADER}\nNo third-party package is bundled.\n`;
-  const entries = [...packageDirs].map(readPackage).sort((a, b) => compare(a.name, b.name) || compare(a.title, b.title));
+  const entries = [...packageDirs]
+    .map(readPackage)
+    .sort((a, b) => compare(a.name, b.name) || compare(a.title, b.title));
   return `${HEADER}${entries.map((entry) => `\n${"-".repeat(80)}\n${entry.title}\n${entry.texts}`).join("")}`;
 }
 

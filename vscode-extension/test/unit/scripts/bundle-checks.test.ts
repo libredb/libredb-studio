@@ -75,7 +75,12 @@ describe("childViolations", () => {
     ["the governance start", ["../src/lib/governance/start.ts"], [], "src/lib/governance/start.ts"],
     ["the query-events sink", ["../src/lib/query-events/sink.ts"], [], "src/lib/query-events/sink.ts"],
     ["a component", ["../src/components/x.tsx"], [], "src/components/x.tsx"],
-    ["a native addon input", ["../node_modules/ssh2/lib/protocol/crypto/build/Release/sshcrypto.node"], [], "node_modules/ssh2/"],
+    [
+      "a native addon input",
+      ["../node_modules/ssh2/lib/protocol/crypto/build/Release/sshcrypto.node"],
+      [],
+      "node_modules/ssh2/",
+    ],
     ["an external not on CHILD_EXTERNALS", [], ["better-sqlite3"], "better-sqlite3"],
   ];
   for (const [label, inputs, externals, prefix] of cases) {
