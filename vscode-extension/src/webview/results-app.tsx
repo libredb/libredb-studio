@@ -4,7 +4,7 @@
 import { Component, type ReactNode, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ResultsGrid } from "@/components/ResultsGrid";
 import { RESULTS_LIMITS, type RunFailure } from "../results-protocol";
-import { requestCopy } from "./clipboard";
+import { copyOrReport } from "./clipboard";
 import { postToHost } from "./host-channel";
 import { EXTENSION_MASKING_CONFIG } from "./masking";
 import {
@@ -100,7 +100,7 @@ function FailureBody({ failure }: { failure: RunFailure }) {
               <button
                 type="button"
                 className="rounded border border-hairline px-2 py-0.5 text-fg-secondary hover:bg-fill"
-                onClick={() => void requestCopy(fixStatement)}
+                onClick={() => copyOrReport(fixStatement)}
               >
                 Copy
               </button>

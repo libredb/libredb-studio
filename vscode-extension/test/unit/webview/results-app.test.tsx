@@ -10,6 +10,7 @@ import {
   backendStoppedSentence,
   CANCELLED_SENTENCE,
   CANCELLED_TITLE,
+  COPY_FAILED_SENTENCE,
   DISPLAY_FAILED_TITLE,
   EMPTY_SENTENCE,
   PAGE_FAILED_TITLE,
@@ -246,7 +247,7 @@ describe("the results app", () => {
     );
   });
 
-  it("shows each run failure", () => {
+  it("shows each run failure", async () => {
     const store = mount();
     receive(
       store,
@@ -269,6 +270,9 @@ describe("the results app", () => {
       requestId: (posted.at(-1) as { requestId: number }).requestId,
       text: "CREATE TABLE nope ();",
     });
+    receive(store, { v: 1, type: "copied", requestId: (posted.at(-1) as { requestId: number }).requestId, ok: false });
+    await flush();
+    assert.deepEqual(posted.at(-1), { v: 1, type: "notify", level: "error", message: COPY_FAILED_SENTENCE });
 
     receive(store, started(B), failed({ kind: "cancelled" }, B));
     page_().getByText(CANCELLED_TITLE);

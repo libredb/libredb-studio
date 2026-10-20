@@ -11,6 +11,8 @@ export const CANCELLED_SENTENCE = "Query execution was cancelled.";
 export const PAGE_FAILED_TITLE = "Load More Error";
 export const PAGE_CANCELLED_SENTENCE = "Loading more rows was cancelled.";
 export const DISPLAY_FAILED_TITLE = "This result could not be displayed.";
+/** Follows the grid's own "copied" notice, which goes out before the host answers, when the host did not write. */
+export const COPY_FAILED_SENTENCE = "Could not copy to the clipboard.";
 
 /** One line above the grid: an optional title over its text. */
 export interface Notice {

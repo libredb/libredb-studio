@@ -11,6 +11,7 @@ import {
   RUN_A,
   RUN_B,
 } from "../fixtures/results-sequences";
+import { COPY_FAILED_SENTENCE } from "../../src/webview/notices";
 import { openResultsView, type ResultsPage } from "./harness";
 
 /** The bounds the Review Focus 2 case holds the 10 MB cell to, from a local measurement with a margin (decision 12). */
@@ -407,18 +408,21 @@ test("criterion 12: Copy Cell, masked and not, and a copied cell range go throug
   await page.getByTitle("Show sensitive data").click();
   await gridCell(page, "Ada").click();
   await gridCell(page, "Lin").click({ modifiers: ["Shift"] });
-  const answer = await postedAfter(view, async () => {
-    await page.keyboard.press("Control+C");
-    await expect
-      .poll(async () => (await view.posted()).some((m) => (m as { type: string }).type === "copy"))
-      .toBe(true);
-  });
-  const range = answer.find((m) => (m as { type: string }).type === "copy") as { requestId: number; text: string };
-  expect(range.text).toBe("Ada\nLin");
-  await view.post({ v: 1, type: "copied", requestId: range.requestId, ok: true });
+  const before = (await view.posted()).length;
+  await page.keyboard.press("Control+C");
+  // The grid's own notice goes out with the copy, before the host has answered.
   await expect
-    .poll(async () => (await view.posted()).filter((m) => (m as { type: string }).type === "notify").at(-1))
-    .toEqual({ v: 1, type: "notify", level: "info", message: "2 cells copied to clipboard" });
+    .poll(async () => (await view.posted()).slice(before))
+    .toEqual([
+      { v: 1, type: "notify", level: "info", message: "2 cells copied to clipboard" },
+      { v: 1, type: "copy", requestId: expect.any(Number), text: "Ada\nLin" },
+    ]);
+  const range = (await view.posted()).at(-1) as { requestId: number };
+  // So a write the host could not make is said after it.
+  await view.post({ v: 1, type: "copied", requestId: range.requestId, ok: false });
+  await expect
+    .poll(async () => (await view.posted()).slice(before + 2))
+    .toEqual([{ v: 1, type: "notify", level: "error", message: COPY_FAILED_SENTENCE }]);
   expect(await view.violations()).toEqual([]);
 });
 

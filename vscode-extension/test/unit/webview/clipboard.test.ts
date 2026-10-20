@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import type { WebviewToHost } from "../../../src/results-protocol";
+import { RESULTS_LIMITS, type WebviewToHost } from "../../../src/results-protocol";
 import { installCopyRelay, settleCopy } from "../../../src/webview/clipboard";
 import { connectHost } from "../../../src/webview/host-channel";
+import { COPY_FAILED_SENTENCE } from "../../../src/webview/notices";
 import { useDom } from "../../setup/dom";
 
 describe("the copy relay", () => {
@@ -52,6 +53,22 @@ describe("the copy relay", () => {
     settleCopy(request.requestId, true);
     await Promise.resolve();
     assert.equal(posted.length, 1);
+  });
+
+  // The grid's own notice, "N cells copied to clipboard", went out before the host answered, so a failure corrects it.
+  it("tells the person when the host could not write the text", async () => {
+    copyOnCell("a\tb");
+    const request = posted[0] as { requestId: number };
+    settleCopy(request.requestId, false);
+    await Promise.resolve();
+    assert.deepEqual(posted.slice(1), [{ v: 1, type: "notify", level: "error", message: COPY_FAILED_SENTENCE }]);
+  });
+
+  it("tells the person when the text is longer than the host takes, and posts no copy", async () => {
+    const event = copyOnCell("x".repeat(RESULTS_LIMITS.copyTextChars + 1));
+    await Promise.resolve();
+    assert.deepEqual(posted, [{ v: 1, type: "notify", level: "error", message: COPY_FAILED_SENTENCE }]);
+    assert.equal(event.defaultPrevented, true);
   });
 
   it("posts nothing for a copy nobody prevented, or one with no text", () => {

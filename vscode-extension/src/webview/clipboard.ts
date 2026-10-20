@@ -3,6 +3,7 @@
 // so a copy event the grid built is relayed with its data cleared, and the browser writes nothing of its own.
 import { RESULTS_LIMITS } from "../results-protocol";
 import { postToHost } from "./host-channel";
+import { COPY_FAILED_SENTENCE } from "./notices";
 
 let nextRequestId = 0;
 const pending = new Map<number, (ok: boolean) => void>();
@@ -16,6 +17,13 @@ export function requestCopy(text: string): Promise<boolean> {
   const requestId = nextRequestId++;
   postToHost({ v: 1, type: "copy", requestId, text });
   return new Promise((resolve) => pending.set(requestId, resolve));
+}
+
+/** Copies through requestCopy and, when the host did not write the text, says so with notify at level error. */
+export function copyOrReport(text: string): void {
+  void requestCopy(text).then((ok) => {
+    if (!ok) postToHost({ v: 1, type: "notify", level: "error", message: COPY_FAILED_SENTENCE });
+  });
 }
 
 /** Resolves the pending request; an unknown requestId is reported through reportError, never thrown into the page. */
@@ -65,7 +73,7 @@ export function installCopyRelay(document: Document): () => void {
     if (!text) return;
     data.clearData();
     event.preventDefault();
-    void requestCopy(text);
+    copyOrReport(text);
   };
   document.addEventListener("copy", relay);
   return () => document.removeEventListener("copy", relay);
