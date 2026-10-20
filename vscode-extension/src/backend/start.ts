@@ -19,5 +19,8 @@ export function startBackend(proc: BackendProcess): void {
   if (proc.send === undefined) throw new Error(NO_IPC_CHANNEL);
   const answer: RuntimeAnswer = { versions: proc.versions };
   proc.send(answer);
-  proc.once("disconnect", () => proc.exit(0));
+  // The body sits on its own line so the line-granular coverage gate sees whether a test closes the channel.
+  proc.once("disconnect", () => {
+    proc.exit(0);
+  });
 }

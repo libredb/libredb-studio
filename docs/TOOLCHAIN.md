@@ -535,6 +535,8 @@ Every Mocha configuration sets `forbid-only` (`.mocharc.json`, `test/integration
 
 c8 measures the unit leg only (`.c8rc.json`: `all: true` over `src/**`), and the root's `scripts/check-coverage.mjs` holds `coverage/lcov.info` to 100% lines: `npm run test:unit && npm run coverage:check`.
 The root gate, Sonar and Codecov never see these lines, because `scripts/merge-lcov.mjs` keeps the root's `src/` records only.
+The gate is line-granular: a callback written on the line that registers it counts as covered once the registration runs, so its test alone holds it.
+A callback whose behaviour the gate must hold keeps its body on its own line, as `startBackend` in `src/backend/start.ts` does for its `disconnect` listener; without the case that closes the channel, the gate names that line.
 
 ### The four legs
 
