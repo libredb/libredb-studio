@@ -6,6 +6,7 @@ import { appendedBoundNote } from "@/lib/db/utils/query-limiter";
 import type { QueryResult } from "@/lib/types";
 import { createMockProvider } from "../../../helpers/mock-provider";
 import { installStandInVocabulary, STAND_IN_TYPE } from "../../../helpers/stand-in-vocabulary";
+import { serverOnlyReach, valueImportClosure } from "../../../helpers/value-import-closure";
 
 /** The limiter's rule as a SQL provider applies it: a bound of ours, unless the text carries its own LIMIT. */
 function limiter(sql: string, options: QueryPrepareOptions = {}): PreparedQuery {
@@ -273,5 +274,35 @@ describe("runEditorQuery", () => {
     const answer = await runEditorQuery(provider, runOf());
     expect(answer.resultSetCount).toBe(2);
     expect("resultSets" in answer.body).toBe(false);
+  });
+});
+
+describe("the core's import closure stays free of Next", () => {
+  // The VS Code extension's backend child runs this module outside Next, so no value import anywhere
+  // in what it reaches may pull in Next, query events or governance.
+  test("no value import in the closure reaches next, query events or governance", () => {
+    const closure = valueImportClosure("src/lib/api/editor-query.ts");
+    expect(closure.unresolved).toEqual([]);
+    expect(serverOnlyReach(closure)).toEqual([]);
+    // A control on the walk: every module this core imports by value is in it.
+    expect(closure.modules).toEqual(
+      expect.arrayContaining([
+        "src/lib/api/abort-cancel.ts",
+        "src/lib/api/first-result-set.ts",
+        "src/lib/api/page-probe.ts",
+        "src/lib/db/destructive-commands.ts",
+        "src/lib/db/errors.ts",
+        "src/lib/db/query-cancel.ts",
+        "src/lib/db/types.ts",
+        "src/lib/db/utils/query-limiter.ts",
+        "src/lib/non-finite.ts",
+      ]),
+    );
+  });
+
+  test("a control: the same walk over the query route finds Next and governance", () => {
+    expect(serverOnlyReach(valueImportClosure("src/app/api/db/query/route.ts"))).toEqual(
+      expect.arrayContaining(["next/server", "src/lib/governance/config.ts"]),
+    );
   });
 });

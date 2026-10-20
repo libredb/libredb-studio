@@ -4,6 +4,7 @@ import type { DatabaseProvider, EditorExecutionContext } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
 import type { DatabaseConnection, QueryWarning } from "@/lib/types";
 import { createMockProvider } from "../../../helpers/mock-provider";
+import { serverOnlyReach, valueImportClosure } from "../../../helpers/value-import-closure";
 
 /** Every step the core takes, in the order it took them, across the tunnel, the factory and the provider. */
 let steps: string[] = [];
@@ -234,5 +235,28 @@ describe("testConnection", () => {
     fileOpen = true;
     await testConnection(connection, execution, route);
     expect(created[0][2]).toEqual({ readOnly: true });
+  });
+});
+
+describe("the core's import closure stays free of Next", () => {
+  // The VS Code extension's backend child runs this module outside Next. It reaches the drivers through
+  // the factory, so packages are allowed; Next, query events and governance are not.
+  test("no value import in the closure reaches next, query events or governance", () => {
+    const closure = valueImportClosure("src/lib/api/test-connection.ts");
+    expect(closure.unresolved).toEqual([]);
+    expect(serverOnlyReach(closure)).toEqual([]);
+    // A control on the walk: the modules this core imports by value, and the providers behind the factory.
+    expect(closure.modules).toEqual(
+      expect.arrayContaining([
+        "src/lib/db/factory.ts",
+        "src/lib/db/errors.ts",
+        "src/lib/logger.ts",
+        "src/lib/db/providers/sql/postgres.ts",
+      ]),
+    );
+  });
+
+  test("a control: the same walk over the Test Connection route finds Next", () => {
+    expect(serverOnlyReach(valueImportClosure("src/app/api/db/test-connection/route.ts"))).toContain("next/server");
   });
 });
