@@ -258,6 +258,41 @@ describe("SQLiteProvider", () => {
       expect(provider.isConnected()).toBe(true);
       expect(existsSync(dbPath)).toBe(true);
     });
+
+    test("a missing parent folder is created one level at a time, never with a recursive mkdir", async () => {
+      // Node's recursive mkdir never returns for a path under /proc, so the provider must not ask for one.
+      const dbPath = join(pathTmpDir, "nested", "deeper", "created.db");
+      const mkdirSpy = spyOn(fsNode, "mkdirSync");
+      try {
+        provider = new SQLiteProvider(makeSQLiteConfig({ database: dbPath }));
+        await provider.connect();
+        expect(provider.isConnected()).toBe(true);
+        expect(existsSync(dbPath)).toBe(true);
+        expect(mkdirSpy.mock.calls.map(([dir, options]) => [String(dir), options])).toEqual([
+          [join(pathTmpDir, "nested"), undefined],
+          [join(pathTmpDir, "nested", "deeper"), undefined],
+        ]);
+      } finally {
+        mkdirSpy.mockRestore();
+      }
+    });
+
+    testIf(
+      existsSync("/proc/self") ? null : "no /proc on this platform: the folder procfs refuses is Linux-only",
+      "a folder under /proc fails at once with the open error, naming ENOENT and the folder",
+      async () => {
+        const folder = `/proc/libredb-${process.pid}-${Date.now()}`;
+        provider = new SQLiteProvider(makeSQLiteConfig({ database: join(folder, "x", "app.db") }));
+        const error = await provider.connect().then(
+          () => null,
+          (e: unknown) => e,
+        );
+        expect(error).toBeInstanceOf(ConnectionError);
+        expect((error as Error).message).toStartWith("Failed to open SQLite database: ENOENT");
+        expect((error as Error).message).toContain(folder);
+        expect(provider.isConnected()).toBe(false);
+      },
+    );
   });
 
   // --------------------------------------------------------------------------

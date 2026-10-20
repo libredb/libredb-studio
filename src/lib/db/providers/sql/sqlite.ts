@@ -73,6 +73,7 @@ import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { logger } from "@/lib/logger";
 import * as fs from "fs";
 import * as path from "path";
+import { createMissingDirectories } from "@/lib/db/utils/create-directory";
 import { isUnwritableExistingFile } from "@/lib/db/utils/unwritable-file";
 import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
 import { keyRowsByPosition } from "@/lib/db/utils/positional-rows";
@@ -1325,10 +1326,8 @@ export class SQLiteProvider extends SQLBaseProvider {
         return;
       }
 
-      const dir = path.dirname(dbPath);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
+      // One level at a time: Node's recursive mkdir never returns for a folder under /proc.
+      createMissingDirectories(path.dirname(dbPath));
 
       if (this.shouldUseWorker()) {
         this.workerOpen = { dbPath, readonly: false, queryOnly: false };

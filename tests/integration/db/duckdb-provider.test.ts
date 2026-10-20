@@ -34,6 +34,8 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+/** A namespace import for `spyOn`, the same module object the provider's `import * as fs from "fs"` reads. */
+import * as fsNode from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { DuckDBProvider, assertReadOnlyStatementIsBounded } from "@/lib/db/providers/sql/duckdb";
@@ -303,12 +305,40 @@ describe("connect / disconnect", () => {
     const dbPath = join(workDir, "nested", "deeper", "created.duckdb");
     provider = new DuckDBProvider(makeConfig({ database: dbPath }));
 
-    await provider.connect();
+    const mkdirSpy = spyOn(fsNode, "mkdirSync");
+    try {
+      await provider.connect();
+      // One level at a time, never recursive: Node's recursive mkdir never returns for a folder under /proc.
+      expect(mkdirSpy.mock.calls.map(([dir, options]) => [String(dir), options])).toEqual([
+        [join(workDir, "nested"), undefined],
+        [join(workDir, "nested", "deeper"), undefined],
+      ]);
+    } finally {
+      mkdirSpy.mockRestore();
+    }
     await provider.query("CREATE TABLE t (a INTEGER)");
     await provider.query("CHECKPOINT");
 
     expect(existsSync(dbPath)).toBe(true);
   });
+
+  testIf(
+    existsSync("/proc/self") ? null : "no /proc on this platform: the folder procfs refuses is Linux-only",
+    "a folder under /proc fails at once with the open error, naming ENOENT and the folder",
+    async () => {
+      const folder = `/proc/libredb-${process.pid}-${Date.now()}`;
+      const dbPath = join(folder, "x", "app.duckdb");
+      provider = new DuckDBProvider(makeConfig({ database: dbPath }));
+      const error = await provider.connect().then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(error).toBeInstanceOf(ConnectionError);
+      expect((error as Error).message).toStartWith(`Failed to open DuckDB database ${dbPath}: ENOENT`);
+      expect((error as Error).message).toContain(`'${folder}'`);
+      expect(provider.isConnected()).toBe(false);
+    },
+  );
 
   test("a relative path is resolved against the process directory, matching factory.ts's fileIdentity", async () => {
     // `findOpenSingleWriterProvider` keys off `path.resolve(connection.database)`, so a
