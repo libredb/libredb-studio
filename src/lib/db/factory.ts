@@ -184,7 +184,7 @@ const CONNECTION_TYPE_IDS: ReadonlySet<string> = new Set<string>([...EXTERNAL_DA
  * enables every provider. The VS Code extension is the one channel that sets it, in its backend process; the web app,
  * Docker, Helm, npx and the desktop launchers leave it unset. Read on every call, never cached.
  *
- * @throws Error naming the entry when an entry is not a connection type id, or when a set value lists none.
+ * @throws DatabaseConfigError naming the entry when an entry is not a connection type id, or when a set value lists none.
  */
 export function enabledProviderTypes(): readonly DatabaseType[] | null {
   const raw = process.env.LIBREDB_ENABLED_PROVIDERS;
@@ -198,13 +198,13 @@ export function enabledProviderTypes(): readonly DatabaseType[] | null {
     ),
   ];
   if (entries.length === 0) {
-    throw new Error(
+    throw new DatabaseConfigError(
       "LIBREDB_ENABLED_PROVIDERS is set but lists no connection type id. Leave it unset to enable every provider.",
     );
   }
   const unknown = entries.find((entry) => !CONNECTION_TYPE_IDS.has(entry));
   if (unknown !== undefined) {
-    throw new Error(
+    throw new DatabaseConfigError(
       `LIBREDB_ENABLED_PROVIDERS names ${JSON.stringify(unknown)}, which is not a connection type id. List type ids such as postgres, separated by commas.`,
     );
   }
@@ -217,7 +217,7 @@ export function enabledProviderTypes(): readonly DatabaseType[] | null {
  * It is set membership inside the provider layer and names no type id, so `tests/unit/lib/no-engine-branches.test.ts`
  * needs no entry for it. It runs before the `switch` of `createDatabaseProvider`, so the provider module of a refused
  * type, and its driver, is never imported. Unset or blank returns at once; a value that names something other than a
- * type id raises the reader's `Error`, so every connection fails with that entry named.
+ * type id raises the reader's `DatabaseConfigError`, so every connection fails with that entry named.
  */
 function assertProviderEnabled(connection: DatabaseConnection): void {
   const enabled = enabledProviderTypes();

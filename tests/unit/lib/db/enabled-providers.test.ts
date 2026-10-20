@@ -4,6 +4,7 @@
  * Runs in its own process, as the runner gives every file: the provider modules below are mocked process-wide.
  */
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { createErrorResponse } from "@/lib/api/errors";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import type { DatabaseConnection } from "@/lib/db/types";
 
@@ -113,6 +114,24 @@ describe("createDatabaseProvider under a set list", () => {
     process.env.LIBREDB_ENABLED_PROVIDERS = "postgres,nosuch";
     await expect(createDatabaseProvider(conn("postgres"))).rejects.toThrow(/"nosuch"/);
   });
+
+  for (const [label, value] of [
+    ["an entry that is not a type id", "postgres,PostgreSQL"],
+    ["a set value with no entry", " , ,"],
+  ] as const) {
+    test(`${label} answers 400 CONFIG_ERROR, an operator fault rather than an internal one`, async () => {
+      process.env.LIBREDB_ENABLED_PROVIDERS = value;
+      const refusal = await createDatabaseProvider(conn("postgres")).then(
+        () => null,
+        (error: unknown) => error,
+      );
+      expect(refusal).toBeInstanceOf(DatabaseConfigError);
+      expect((refusal as DatabaseConfigError).code).toBe("CONFIG_ERROR");
+      const response = createErrorResponse(refusal);
+      expect(response.status).toBe(400);
+      expect((await response.json()).code).toBe("CONFIG_ERROR");
+    });
+  }
 
   test("unset builds a listed type", async () => {
     const provider = await createDatabaseProvider(conn("postgres"));
