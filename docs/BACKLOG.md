@@ -2540,7 +2540,7 @@ Not fixed there: that change touches the transport's `Authorization` header, not
 
 **Done when:** a `connectionString` that does not parse is refused with a `DatabaseConfigError` that names the field before any request is sent, and a test pins it.
 
-### D233. Six test files leave their temporary directories in `TMPDIR`
+### D233. Seven test files leave their temporary directories in `TMPDIR`
 
 Six test files make directories under `os.tmpdir()` with `mkdtempSync` and leave them there.
 `tests/unit/lib/agent/model-tuning.test.ts` (line 83) and `tests/unit/lib/agent/model-profiles.test.ts` (line 52) make `libredb-tuning-*`, and `tests/api/agent/config.test.ts` (line 344) makes `libredb-tuning-route-*`.
@@ -2549,11 +2549,13 @@ Six test files make directories under `os.tmpdir()` with `mkdtempSync` and leave
 Measured 2026-10-05 on `main` at `d994ad72f`, each file run alone through `bun tests/run-tests.ts` with `TMPDIR` pointed at an empty directory: they left 14, 1, 2, 7, 7 and 5 directories, in that order, 36 in all.
 One passing run of the whole suite on `main` at `6dcc67fd6`, measured 2026-10-04 the same way, left the same 36 and none from any other file.
 Nothing removes them, so every run on a developer machine or a self-hosted runner adds as many again.
+The VS Code extension's unit leg does the same: `vscode-extension/test/unit/backend-session.test.ts` makes a `libredb-backend-session-*` directory per case with `mkdtempSync` and removes none.
+On the maintainer's machine on 2026-10-21, `/tmp` held 8,368 `libredb-tuning-*`, 1,066 `libredb-tuning-route-*` and 790 `libredb-backend-session-*` directories.
 
 Found 2026-10-04 while planning the platform integration, whose local gates kept `TMPDIR` in a scratch directory.
 Not fixed there: none of the six files is part of that work.
 
-**Done when:** each of the six files removes the directories it makes, for example with `rmSync(path, { recursive: true, force: true })` in an `afterEach` or `afterAll`, and a run of `bun run test` with `TMPDIR` pointed at an empty directory leaves it empty.
+**Done when:** each of the six files removes the directories it makes, for example with `rmSync(path, { recursive: true, force: true })` in an `afterEach` or `afterAll`, and a run of `bun run test`, and of the extension's `npm run test:unit`, with `TMPDIR` pointed at an empty directory leaves it empty.
 
 ### D240. Two connection records naming one DuckDB file get two read-write handles in one process
 

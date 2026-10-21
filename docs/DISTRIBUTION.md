@@ -1311,7 +1311,8 @@ bash scripts/build-standalone-payload.sh dist --smoke
 
 ## VS Code extension (Marketplace)
 
-LibreDB Studio for VS Code lives in [`vscode-extension/`](../vscode-extension), an npm package of its own with a version line of its own, and nothing of it is published yet.
+LibreDB Studio for VS Code lives in [`vscode-extension/`](../vscode-extension), an npm package of its own with a version line of its own.
+Its 0.1.0 pre-release has been on the [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=libredb.libredb-studio) since 21 October 2026, under the publisher `libredb`.
 This section is its release runbook.
 Its build, tests and CI job are in [docs/TOOLCHAIN.md, "VS Code extension"](TOOLCHAIN.md#vs-code-extension-vscode-extension).
 
@@ -1335,28 +1336,43 @@ So every 0.1.x is a pre-release, 0.1.0 included, and the first release is 0.2.0.
 [`vscode-extension-release.yml`](../.github/workflows/vscode-extension-release.yml) runs on a pushed `vscode-extension-*` tag.
 Its `verify` job runs `vscode-extension/scripts/release-tag.mjs`, which refuses a tag that is not `vscode-extension-` plus the manifest's `version`, and refuses a tag whose commit is not on `main`.
 Its `gates` job then calls [`vscode-extension.yml`](../.github/workflows/vscode-extension.yml), the same reusable workflow every pull request runs, smoke matrix included, which uploads the tested VSIX as the `vscode-extension-vsix` workflow artifact and the packaged build's `dist/*.js.map` as `vscode-extension-sourcemaps`.
-Nothing is published: the workflow has no publish job and no environment, and `tests/unit/vscode-extension-workflow.test.ts` holds that until the publishing PR changes it.
+It publishes nothing: the workflow has no publish job and no environment, and `tests/unit/vscode-extension-workflow.test.ts` holds that until a PR adds one.
 No GitHub Release is created either.
 `npm-publish.yml`, `docker-build-push.yml` and `aws-ami-build.yml` run on every `release: published` and skip only the chart's `libredb-studio-` prefix, so a GitHub Release for the extension would start a product publish and, while the `aws-marketplace` channel is live, an AMI build from the root `package.json` version.
 `operator-release.yml` runs on it too, but already skips a tag that is not an app semver.
 
-### The owner's decisions before the first publish
+### Publishing a version by hand
 
-None of these is taken here; each is the owner's, and the publishing PR records the answer.
+Until a publish job exists, the owner uploads the VSIX the gates tested; nothing is rebuilt for the upload.
 
-- The Marketplace publisher id, which cannot change after the first publish (`libredb` in the manifest is a placeholder), the Open VSX namespace, and who owns each account.
-- The Marketplace authentication, before global Azure DevOps PATs retire on 2026-12-01: trusted publishing (`vsce publish --oidc` with `id-token: write`) or Entra ID (`--azure-credential`).
+1. Download the `vscode-extension-vsix` artifact of the tag's `vscode-extension-release.yml` run, or of `main`'s `vscode-extension.yml` run at the tagged commit, and check that its manifest names `Publisher="libredb"`, the version, and, on an odd minor, the `PreRelease` property.
+2. Install it into a fresh VS Code profile (`code --user-data-dir <dir> --extensions-dir <dir> --install-extension <file>`) and run one query on each v0 engine.
+3. On https://marketplace.visualstudio.com/manage/publishers/libredb, upload it as a new version of LibreDB Studio, or through **New extension** > **Visual Studio Code** for a new extension.
+4. When the Marketplace has verified it, check that `code --install-extension libredb.libredb-studio --pre-release` installs that version in another fresh profile.
+
+A version number can be uploaded once, so a fix to a published version is the next patch.
+The listing's text and images come from the packed `README.md`; the management page has no field for them, so changing them is a new version.
+
+### Decisions taken for the first publish
+
+- The Marketplace publisher id is `libredb`, display name LibreDB; it cannot change, and the extension's id is `libredb.libredb-studio`.
+- The publisher is owned by named members' Microsoft accounts, added by User ID on the publisher's Members page, so no single account holds it.
+- 0.1.0 was uploaded by hand from `main` at 15fff4b04 (the `vscode-extension-vsix` artifact of run 39575773660), with no token, after a check on the four v0 engines in a fresh VS Code profile.
+- The tag namespace is `vscode-extension-<version>`, as in "Cutting a version" above and `CLAUDE.md`'s "Tag namespace" paragraph.
+
+### Still open
+
+- The Marketplace authentication for a publish job, before global Azure DevOps PATs retire on 2026-12-01: trusted publishing (`vsce publish --oidc` with `id-token: write`) or Entra ID (`--azure-credential`).
 - The publish job: `vsce publish --pre-release --packagePath <file>` of the VSIX the gates tested, from a GitHub environment that requires a reviewer, and who that reviewer is.
 - When the `VS Code Extension` job and its macOS and Windows smoke matrix become required checks.
-- The version line and the tag namespace above, and the matching line in `CLAUDE.md`'s "Tag namespace" paragraph.
 - Whether the extension ever gets GitHub Releases; if it does, `npm-publish.yml`, `docker-build-push.yml` and `aws-ami-build.yml` must first learn to skip `vscode-extension-` tags.
-- When to publish to Open VSX (`ovsx publish --pre-release`) for Cursor, Windsurf and VSCodium, after their extension host runtimes are measured.
+- The Open VSX namespace `libredb`, and when to publish there (`ovsx publish --pre-release`) for Cursor, Windsurf and VSCodium, after their extension host runtimes are measured.
 
-### After the first publish
+### Its channel row
 
-The extension has no row in [`distribution/channels.yaml`](../distribution/channels.yaml) until it is published.
-The publishing PR adds a `vscode-marketplace` row with `kind: marketplace` and `runtime: channel_supplied`, regenerates `docs/CHANNELS.md` with `bun run distribution:matrix` and the login page's showcase with `bun run channels:showcase`, and adds the matching lines here.
-`evaluateChannel` in `scripts/distribution-check.mjs` compares a live row with the root `package.json` version, which is not the extension's, so the row goes live only with a pin read from the listing against `vscode-extension/package.json`, and its test.
+The extension is the `vscode-marketplace` row of [`distribution/channels.yaml`](../distribution/channels.yaml): `kind: marketplace`, `runtime: channel_supplied`, `method: manual_ui`.
+`evaluateChannel` in `scripts/distribution-check.mjs` compares a pinned row with the root `package.json` version, which is not the extension's, so the row has `strategy: none` and the listed version is checked by hand, as Azure's and AWS's are.
+A pin that reads the listing's version against `vscode-extension/package.json` would need its own comparison in the checker, and its test.
 
 ## Maintainer notes
 
