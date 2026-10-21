@@ -225,6 +225,7 @@ Details, probed versions and each caveat: [`docs/providers/README.md`](https://g
 | `OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | ❌ | OIDC SSO (required when `oidc`) |
 | `OIDC_ROLE_CLAIM` / `OIDC_ADMIN_ROLES` / `OIDC_SCOPE` | ❌ | OIDC role mapping & scope |
 | `LLM_PROVIDER` / `LLM_API_KEY` / `LLM_MODEL` / `LLM_API_URL` | ❌ | AI: `gemini`, `openai`, `ollama`, `custom` |
+| `LLM_MODEL_EFFORT` | No | Reasoning effort, `openai` only: `none`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max` |
 | `STORAGE_PROVIDER` | ❌ | `local` (default), `sqlite`, or `postgres` |
 | `STORAGE_SQLITE_PATH` | ❌ | SQLite file path (e.g. `/app/data/libredb-storage.db`) |
 | `STORAGE_POSTGRES_URL` | ❌ | PostgreSQL URL (when `STORAGE_PROVIDER=postgres`) |

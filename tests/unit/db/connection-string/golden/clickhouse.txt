@@ -1,0 +1,4 @@
+scheme => "clickhouse"
+parse(clickhouse://h:8123/d?sslmode=require) => {"type":"clickhouse","host":"h","port":"8123","database":"d"}
+seed => []
+seed => []

@@ -535,6 +535,18 @@ The TLS path uses `node:https`, which does not follow a redirect on its own; a t
 there is reported as an HTTP failure, `Couchbase request failed with HTTP 302`, rather than as the
 `ConnectionError` above.
 
+### Connection string
+
+The scheme shown for Couchbase is `couchbase://`, and the parser also accepts `couchbases://`.
+Its row in `CONNECTION_STRING` is declared in [`connection-string.ts`](../../src/lib/db/providers/document/couchbase/connection-string.ts).
+It has no `readTls`: the scheme itself is the TLS, so `couchbases://` sets `require` and `couchbase://` sets `disable`.
+It runs no seed load check.
+
+### Execution UI
+
+The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `couchbase` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
+Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/document/couchbase/execution-ui.ts).
+
 ---
 
 ## 5. Query interface
@@ -644,6 +656,13 @@ engine feature. Until it exists the absence is a declared boundary rather than a
 caller shape-checks for the method and this provider does not answer it.
 
 ---
+
+### 5.6 SQL grammar
+
+How this engine's statement text is read is declared once, in [`src/lib/db/providers/document/couchbase/sql-grammar.ts`](../../src/lib/db/providers/document/couchbase/sql-grammar.ts), the `couchbase` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, because no rule was established for SQL++, not because SQL++ agrees with the default.
+`readsSqlText` is `true`: the editor text is SQL++, which the SQL readers read under that default.
+Redaction is `none`, since the engine has no grammar of its own: a redacted statement is stored as `?`, because a reader guessing where a literal ends can store the literal.
 
 ## 6. Schema introspection
 
@@ -1181,11 +1200,18 @@ than a `0`.
 **require** a target.
 
 A `container` is the row's `schemaName` (#772), and the keyspace it addresses is decided from it:
-the bucket's own name (the only Tables row this provider has, `getTableStats()`) means the
-bucket's default collection, so the row's Analyze button addresses `` `bucket`.`_default`.`_default` ``
+the bucket's own name (the only statistics row `getTableStats()` returns) means the
+bucket's default collection, so that row's Analyze button addresses `` `bucket`.`_default`.`_default` ``
 rather than a scope that does not exist; any other container is the SCOPE the collection sits in,
 used as one instead of being parsed back out of the display name. Without a container the
 display-name rule stands: `scope.collection`, or the default scope for a bare name.
+
+The collection menu does not click that bucket row. It opens the admin Operations page on the
+collection's own path (`?path=<bucket>&path=<scope>&path=<collection>`). The page's list is still
+`getTableStats()`, which does not name the collection, so where the provider declares the
+operation per object the page offers a row for the path itself (#1412). That row's schema is the
+scope segment and its button sends `(collection, scope)`, the "any other container" arm above.
+The row is not a measurement: item counts stay on the bucket row.
 
 | Type | Couchbase action | Notes |
 |------|------------------|-------|
@@ -1222,7 +1248,7 @@ placement unavailable while the other one is available - a targetless `{type:"an
 Both global cards are withheld rather than synthesised from a keyspace list this provider
 does not enumerate for maintenance. Before #U9 the global Reindex card rendered for every
 provider that declared `reindex`, so on Couchbase every click answered *"The reindex
-operation requires a target"*; the per-collection control carries the keyspace and runs.
+operation requires a target"*; the per-collection control carries the keyspace and runs, on the row the Operations page offers for that path.
 `vacuumAction` (*"Compact"*) names nothing this provider can run - its own description says
 the server compacts automatically - so `vacuum` stays undeclared, `vacuumActionOperation`
 stays absent, and that card never renders either.
@@ -1290,6 +1316,21 @@ withdrawing the card rather than by rewording it — `maintenanceOperationSpecs.
 control is the only one on this provider, which is what the operation itself requires. The three
 `reindexGlobal*` labels above are consequently read by nobody today; they are the wording the card
 would carry if it ever returns.
+
+### SQL writing
+
+[`couchbase/sql-writing.ts`](../../src/lib/db/providers/document/couchbase/sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+A literal is written by `literalBackslash` and read back by `unquoteBackslash`: every escape, the quote's included, is spelled with a backslash, and doubling is not part of the grammar.
+A name is quoted by `identifierDoubleQuoted`, the SQL standard form: a double-quoted name with an inner double quote doubled.
+A bind is spelled by `placeholderDollar`, as `$1`, `$2`.
+SQL++ spells its literals the way JSON does: `char ::= unicode-character | '\' ( '\' | '"' | "'" | 'b' | 'f' | 'n' | 'r' | 't' | 'u' hex hex hex hex )`.
+Doubling is not in that grammar, so a doubled quote is not one literal there.
+The name gets the SQL standard form, which this engine's generators fall back to.
+SQL++ takes its values in `args`, which the statement reads as `$1`, `$2`.
+Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+
+The module's `export` field writes a result export's CREATE TABLE and INSERT from the shared building blocks alone: `STANDARD_DDL_TYPES` for the column types, `NOTHING_STANDS_ALONE` and `NO_BARE_SPELLING`, so every bare declared name is re-spelled from its family, `NULL_NON_FINITE` for NaN and the infinities, and `binaryTextBackslash` for a binary cell, the `\x…` text every other surface shows, quoted with `literalBackslash`.
+SQL++ parses no CREATE TABLE (a collection is schemaless and `CREATE COLLECTION` takes no columns, which is why the provider declares no `createTable`), so a file written from it is meant to run somewhere else, and every bare name in it is re-spelled from its family, portably.
 
 ---
 
@@ -1493,6 +1534,19 @@ Everything else:
   sessions are `[]`, index scan counts read `0`, and the performance metrics whose sources are denied
   are omitted rather than reported as zeroes — by design
   ([§3.9](#39-monitoring-degrades-to-empty-never-throws), [§7.1](#71-an-unread-metric-is-absent-not-zero)).
+
+---
+
+## Migration DDL
+
+[`COUCHBASE_MIGRATION_DDL`](../../src/lib/db/providers/document/couchbase/migration-ddl.ts) is what the schema-diff migration generator writes for `couchbase`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
+Couchbase has index and collection DDL, but no `CREATE` or `ALTER TABLE` column grammar.
+Couchbase does have distributed ACID transactions, but spells one `BEGIN TRANSACTION` and answers with a `txid` every following statement has to carry as a request parameter, a shape a flat migration file cannot express (#284).
+
+The refusal reason it prints, verbatim:
+
+- "Collections hold schemaless JSON documents, so there is no column definition to change."
 
 ---
 

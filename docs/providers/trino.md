@@ -578,6 +578,17 @@ request's own `Host` header, so a direct connection always gets links on the ori
 reverse proxy that rewrites `Host` would make the coordinator advertise its own address, and that
 is what the refusal message points at.
 
+### Connection string
+
+Trino has no connection string scheme, no `readTls` and no seed load check ([`connection-string.ts`](../../src/lib/db/providers/sql/trino/connection-string.ts)).
+Trino is the sharpest version of the scheme gap: it has a canonical URL, `jdbc:trino://host:port/catalog/schema`, but that is a JDBC URL and not a URI, since `new URL()` reads its scheme as `jdbc:`.
+Stripping the prefix would invent a `trino://` form no Trino tool emits, so the scheme is `null`, its capabilities say `supportsConnectionString: false`, and its form offers no paste toggle.
+
+### Execution UI
+
+The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `trino` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
+Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/sql/trino/execution-ui.ts).
+
 ---
 
 ## 5. Query interface
@@ -656,7 +667,7 @@ it — the same reading the SQLite, Couchbase, ClickHouse and Druid strategies t
 ### 5.7 What the SQL INSERT and DDL exports write
 
 Trino's INSERT coerces almost nothing from a quoted string: a `bigint`, `decimal`, `date`, `timestamp`, `json`, `array`, `map`, `uuid`, `varbinary` or `row` written as one is `Insert query has mismatched column types`.
-The SQL INSERT export reads each cell's declared type (#1386, [`typed-literals.ts`](../../src/lib/export/typed-literals.ts)) and writes:
+The SQL INSERT export reads each cell's declared type (#1386, [`trino/typed-literals.ts`](../../src/lib/db/providers/sql/trino/typed-literals.ts)) and writes:
 
 | Declared | Written as |
 |---|---|
@@ -689,6 +700,19 @@ A key column that is not auto-increment carries the plain `INTEGER`.
 `TEXT` is not a Trino type name; an unbounded string is `VARCHAR`.
 
 The type list changes from the shared list only where the engine disagrees; a row that reads like the old shared list is the engine agreeing with it, not a row nobody looked at.
+
+### 5.8 SQL grammar
+
+How this engine's statement text is read is declared once, in [`src/lib/db/providers/sql/trino/sql-grammar.ts`](../../src/lib/db/providers/sql/trino/sql-grammar.ts), the `trino` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+Its grammar is `TRINO_GRAMMAR`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
+Every fact was a statement Trino 476 answered through `POST /v1/statement` on 2026-08-20.
+`#` opens nothing: `SELECT 1 AS a # trailing` is "line 1:15: mismatched input '#'" and `SELECT # x` is "line 1:8: mismatched input '#'".
+`[` is a subscript that nests and no name quote: `SELECT ARRAY[1,2][1]` answers 1, `SELECT ARRAY[ARRAY[1,2],ARRAY[3,4]][1][2]` answers 2, and `SELECT [customer] FROM tpch.sf1.nation` fails with "Column 'customer' cannot be resolved".
+Block comments are flat: `SELECT /* a /* b */ 1 AS a` returns the column.
+`SELECT q'{it''s}'` is "Unknown resolvedType: q", so there is no alternate quoting.
+`//` is code, probed 2026-08-25: `SELECT 1 AS a // note` is "line 1:15: mismatched input '/'", and the same text with a newline before a second column is the same error at the same offset.
+`readsSqlText` is `true`, deliberately: the editor text is the exact bytes `POST /v1/statement` receives, and the provider extends `SQLBaseProvider`.
+Redaction is `sql` with no name quote: a redacted statement keeps its words, and every literal and quoted run becomes `?`.
 
 ## 6. Schema introspection
 
@@ -1425,7 +1449,7 @@ the engine never named.
 #### A timeout is `interrupted` and never a `TimeoutError`
 
 `mapTrinoError` mints a `TimeoutError` for the `timeout` category and
-[`src/lib/api/errors.ts`](../../src/lib/api/errors.ts) answers that HTTP 504 with `retryable: true`.
+`databaseErrorBody` in [`src/lib/api/error-body.ts`](../../src/lib/api/error-body.ts), reached through `createErrorResponse`, answers that HTTP 504 with `retryable: true`.
 A client that retried an apply whose disposition is unknown would apply twice, so a timeout, a
 cancellation and an unreachable coordinator are all `interrupted` with `committed: "unknown"`.
 
@@ -1734,6 +1758,27 @@ The last one is about the monitoring tab rather than maintenance: the Queries pa
 hardcoded to PostgreSQL's `pg_stat_statements` advice on every engine (#463), and
 what Trino has instead is the coordinator's own bounded history ([§7](#7-monitoring--health)).
 
+### SQL writing
+
+[`trino/sql-writing.ts`](../../src/lib/db/providers/sql/trino/sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+A literal is written by `literalStandard` and read back by `unquoteStandard`: the quote is doubled and a backslash is data.
+A name is quoted by `identifierDoubleQuoted`, the SQL standard form: a double-quoted name with an inner double quote doubled.
+There is no placeholder (`placeholder: null`), so a generator quotes the value with `quoteLiteral` instead of emitting a bind.
+Measured on Trino 476 (2026-08-20), both directions: `SELECT 'O''Brien' AS a` answers `O'Brien`, so doubling is the escape; `SELECT 'a\\b' AS a` answers the two characters `a\\b`, so a backslash is data and doubling it would add a second one to the value.
+Trino spells its backslash escapes in the separate `U&'fo\\+0000F6'` form, exactly as Druid does.
+The name quote is measured on 476: `SELECT "nationkey" FROM tpch.sf1.nation LIMIT 1` returns the column, `SELECT 1 AS "a""b"` names it `a"b`, and a backtick is refused in the engine's own words, "backquoted identifiers are not supported; use double quotes to quote identifiers".
+Trino does bind, through `PREPARE`/`EXECUTE` plus an `X-Trino-Prepared-Statement` header, but the provider's transport seam carries the statement alone, so `TrinoProvider.query()` refuses a non-empty params array outright.
+Emitting `?` would build a statement whose placeholder the provider then declines to fill.
+Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+
+The module's `export` field spells a result export's column types through `ddlTypes`, the standard spelling with `VARCHAR` for text and `VARBINARY` for a binary column: `text` is `Unknown type 'text'` on Trino 476, and `DOUBLE PRECISION`, `BIGINT`, `BOOLEAN` and `TIMESTAMP` are all accepted as they are (`DOUBLE PRECISION` is stored as `double`, measured).
+Each name in `standsAlone` was measured, one `CREATE TABLE probe (c <name>)` per name on Trino 476, read back out of `information_schema.columns`, and is listed only because Trino both accepted it and stored it unnarrowed.
+Trino's `char` and `decimal` are absent, stored as `char(1)` and `decimal(38,0)`.
+Trino is why a bare name cannot simply be re-spelled whenever the target is unmeasured: its own `varchar` is legal and unbounded, and would have become a `TEXT` it answers `Unknown type 'text'` to.
+A binary cell is written by `binaryStandardHex`: measured on 476, `SELECT typeof(X'0102')` answers `varbinary`, `to_hex(X'0102deadbeef')` answers `0102DEADBEEF`, `length(X'')` answers 0, and the whole generated pair replays into the memory connector.
+`typedLiteral` writes the cells whose generic form Trino refuses, from the engine's own [`trino/typed-literals.ts`](../../src/lib/db/providers/sql/trino/typed-literals.ts).
+`NO_BARE_SPELLING` and `NULL_NON_FINITE` complete it.
+
 ---
 
 ## 10. Error handling
@@ -1915,6 +1960,23 @@ See [`docs/API_DOCS.md`](../API_DOCS.md) for the full request/response contract.
 - **The spooled result protocol is refused, not read.** This client never advertises an encoding, and
   a server that sends segments anyway gets an honest refusal rather than rows silently read out of a
   segment index.
+
+---
+
+## Migration DDL
+
+[`TRINO_MIGRATION_DDL`](../../src/lib/db/providers/sql/trino/migration-ddl.ts) is what the schema-diff migration generator writes for `trino`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+Trino's transactional semantics are the connector's answer, so no portable `BEGIN;` or `COMMIT;` exists and `transactionWrapper` is `null` (#284).
+Trino has no index or foreign-key grammar, and its `CREATE TABLE` has no primary-key constraint, so an added table's key is declined in a comment after the statement; Trino was the first engine declined that way.
+A modified column is a comment, measured 2026-08-20 on Trino 476: `ALTER TABLE ... ALTER COLUMN id TYPE varchar` is "line 1:50: mismatched input 'TYPE'. Expecting: '.', 'DROP', 'SET'", and `ALTER COLUMN id SET DATA TYPE varchar` parses and then the catalog answers "This connector does not support setting column types".
+The fields it takes unchanged from `src/lib/db/migration-ddl/shared.ts` are `standardAddColumn`, `standardColumnDef`, `standardDropColumn` and `standardDropTable`.
+
+Every refusal reason it can print, verbatim:
+
+- "Whether a column can be retyped is the connector's answer, not Trino's; run the change in the system the catalog points at."
+- "Trino: Cannot generate index DDL. Indexes belong to the connector's underlying system, not Trino SQL."
+- "The engine has no foreign-key constraint."
+- "Trino SQL has no primary-key constraint."
 
 ---
 

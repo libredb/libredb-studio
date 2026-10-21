@@ -38,7 +38,8 @@
   <a href="https://valkey.io/participants/#:~:text=LibreDB%20Studio%20connects%20to%20Valkey">Valkey</a>,
   <a href="https://clickhouse.com/docs/integrations/connectors/tools/gui#libredb-studio">ClickHouse Visual Interfaces</a>,
   <a href="https://clickhouse.com/docs/integrations/connectors/sql-clients/libredb-studio">ClickHouse SQL Clients</a>,
-  <a href="https://mariadb.com/docs/server/clients-and-utilities/graphical-and-enhanced-clients/libredb-studio">MariaDB</a>,
+  <a href="https://mariadb.com/docs/server/clients-and-utilities/graphical-and-enhanced-clients/libredb-studio">MariaDB Graphical Clients</a>,
+  <a href="https://ecohub.mariadb.org/database-management/libredb-studio">MariaDB Ecosystem Hub</a>,
   <a href="https://trino.io/ecosystem/client-application#libredb-studio">Trino</a>,
   <a href="https://docs.yugabyte.com/stable/integrations/tools/libredb-studio/">YugabyteDB</a>,
   <a href="https://www.tigerdata.com/docs/integrate/query-administration/libredb-studio">TimescaleDB</a>,
@@ -51,6 +52,7 @@
   <a href="https://aiven.io/docs/products/postgresql/howto/connect-libredb-studio">Aiven for PostgreSQL</a>,
   <a href="https://aiven.io/docs/products/mysql/howto/connect-libredb-studio">Aiven for MySQL</a>,
   <a href="https://docs.scylladb.com/stable/get-started/gui-clients/libredb-studio.html">ScyllaDB</a>,
+  <a href="https://docs.couchbase.com/server/current/third-party/integrations.html#standalone-query-and-admin-tools">Couchbase</a>,
   <a href="https://cloudberry.apache.org/docs/ecosystem/sql-clients/libredb-studio/">Apache Cloudberry</a>,
   <a href="https://doris.apache.org/docs/4.x/connection-integration/data-integration/libredb-studio/">Apache Doris</a>,
   <a href="https://cwiki.apache.org/confluence/display/KAFKA/Ecosystem#:~:text=LibreDB%20Studio">Apache Kafka</a>,
@@ -203,7 +205,7 @@ ER-диаграмма для Elasticsearch и OpenSearch показывает и
 
 Главная функция ИИ в Studio — **панель агента** рядом с редактором. Вы пишете вопрос, например *«в каком отделе больше всего сотрудников?»* или *«почему этот запрос медленный?»*, и нажимаете Start. Агент составляет SQL-запросы к подключённой базе, читает результаты и пишет отчёт, **в котором каждое утверждение ссылается на результат, из которого оно получено**.
 
-- **Только чтение, и это гарантирует сама база.** Все запросы агента выполняются в режиме только для чтения средствами СУБД: в PostgreSQL это транзакция только для чтения, в SQLite `PRAGMA query_only`, в DuckDB подключение `READ_ONLY` с дополнительной проверкой на уровне SQL. В SQL Server таких транзакций нет, поэтому Studio проверяет, что у учётной записи нет прав на запись, ограничивает число строк и всегда откатывает транзакцию. Запись и DDL отклоняются ещё до обращения к базе. `EXPLAIN ANALYZE` по умолчанию запрещён, потому что он выполняет запрос. Каждый запрос агента проверяется политикой и записывается в аудит (`executeAuditedOperation`, `src/lib/db/operations/execution.ts:129`). На запросы, которые вы сами запускаете в редакторе, эти проверки не распространяются (`src/app/api/db/query/route.ts:44`).
+- **Только чтение, и это гарантирует сама база.** Все запросы агента выполняются в режиме только для чтения средствами СУБД: в PostgreSQL это транзакция только для чтения, в SQLite `PRAGMA query_only`, в DuckDB подключение `READ_ONLY` с дополнительной проверкой на уровне SQL. В SQL Server таких транзакций нет, поэтому Studio проверяет, что у учётной записи нет прав на запись, ограничивает число строк и всегда откатывает транзакцию. Запись и DDL отклоняются ещё до обращения к базе. `EXPLAIN ANALYZE` по умолчанию запрещён, потому что он выполняет запрос. Каждый запрос агента проверяется политикой и записывается в аудит (`executeAuditedOperation`, `src/lib/db/operations/execution.ts:129`). На запросы, которые вы сами запускаете в редакторе, эти проверки не распространяются (`src/app/api/db/query/route.ts:312`).
 - **Режим Agent работает только с PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes и MongoDB.** Только для них реализован режим только для чтения (`queryReadOnly`); у каждой из них своя граница, и она описана в её документации. Для остальных СУБД запуск в режиме Agent отклоняется ещё до начала работы. Режим **Plan** доступен для любого подключения: в нём модель ничего не выполняет и не записывает, а только готовит запрос, который вы запустите сами. Схему базы для подсказок (GROUNDING) Studio читает для всех СУБД. Если прочитать схему не удалось, агент прямо об этом сообщает и не выдумывает таблицы.
 - **Три сценария**: **Investigate** (ответить на вопрос), **Optimize** (сравнить планы выполнения, предложить индекс или переписать запрос), **Assess** (оценить таблицы: только подсчёт строк, сами значения не читаются).
 - **Ничего не запускается само.** Агент не начинает работу без вас, не пишет в редактор и не выполняет то, что сам рекомендует. Запустить предложенный запрос можете только вы.
@@ -253,7 +255,7 @@ ER-диаграмма для Elasticsearch и OpenSearch показывает и
 - **Графики метрик**: соединения, доля попаданий в кэш, буферный пул, взаимоблокировки. Обновляются автоматически, интервал от 5 до 60 секунд.
 - **Индикаторы состояния**: цвет показывает, в норме ли показатель (норма, предупреждение, критично). Отслеживаются доля попаданий в кэш, занятость соединений, взаимоблокировки и буферный пул.
 - **Обслуживание в один щелчок**: `VACUUM`, `ANALYZE`, `REINDEX`, `UPDATE STATISTICS`, `DBCC CHECKDB` и `ALTER INDEX REBUILD`, в зависимости от СУБД.
-- **Журнал аудита**: полная история всех запросов, выполненных в организации.
+- **Журнал аудита**: вкладка «Аудит» администратора показывает недавние события аудита сервера, такие как входы, отказы в правах, действия по обслуживанию, правки объектов и операции агента и MCP, каждое с пользователем, который за ним стоит, и собственную историю запросов вошедшего администратора. И то и другое выгружается в CSV или JSON с учётом текущих фильтров. При [governance](docs/GOVERNANCE.md#query-events) Studio записывает событие запроса для каждой инструкции, которую выполняет человек, а плоскость управления хранит эту запись по всей организации.
 
 ## Установка
 
@@ -331,12 +333,6 @@ export default {
 Если политику нужно собрать самостоятельно, используйте `studioCspDirectives()` и `HSTS_MAX_AGE_SECONDS`.
 
 Перед использованием прочитайте саму политику. Она разрешает встроенные скрипты (inline), потому что страницы Studio отрисовываются заранее и их скрипты не содержат nonce. Поэтому политика не мешает внедрённому скрипту выполниться, но ограничивает адреса, на которые он может отправить данные. Подробности и два способа подключения заголовков в Next.js описаны в [`docs/SECURITY.md`](docs/SECURITY.md).
-
-## Что платно, а что нет
-
-Studio распространяется под лицензией MIT, чтобы его можно было установить где угодно. Платный продукт называется libredb-platform. В нём вы платите за то, что эксплуатацию берёт на себя кто-то другой: хостинг, работу с несколькими клиентами (multi-tenancy), биллинг и поддержку. Все функции самого редактора остаются бесплатными.
-
-**В бесплатной версии нет искусственных ограничений.** Единый вход (SSO), управление ролями (RBAC), аудит запросов, ER-диаграммы, функции ИИ и все NoSQL-СУБД входят в версию под MIT.
 
 ## Тесты и качество
 

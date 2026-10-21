@@ -192,6 +192,11 @@
           "type": "string",
           "description": "LLM API URL"
         },
+        "llmModelEffort": {
+          "type": "string",
+          "enum": ["", "none", "minimal", "low", "medium", "high", "xhigh", "max"],
+          "description": "LLM_MODEL_EFFORT, the reasoning effort for llmProvider openai only. Empty (default) writes nothing and the model keeps its own default. Which values a model takes is the model's own (GPT-6.1 Sol has no none), and the app refuses the variable with any other provider. Needs an application image after 1.0.0; 1.0.0 does not read it"
+        },
         "oidcIssuer": {
           "type": "string",
           "description": "OIDC issuer URL"

@@ -75,7 +75,8 @@ variables**) to extend the deployment:
 - **PostgreSQL storage backend** — `STORAGE_PROVIDER=postgres`,
   `STORAGE_POSTGRES_URL=...`.
 - **AI** — `LLM_PROVIDER` (`gemini` | `openai` | `ollama` | `custom`),
-  `LLM_API_KEY`, `LLM_MODEL`, `LLM_API_URL`.
+  `LLM_API_KEY`, `LLM_MODEL`, `LLM_API_URL`, and for `openai` only
+  `LLM_MODEL_EFFORT` (`none` through `max`; unset keeps the model's default).
 
 ## Version bumps
 

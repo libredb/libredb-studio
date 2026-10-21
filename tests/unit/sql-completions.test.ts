@@ -805,6 +805,16 @@ describe("Completion addresses outside the default container (#1397)", () => {
     expect(applied(line, customers)).toBe('SELECT * FROM libredb_objects.app."Customers"');
   });
 
+  test("a postgres type that is not a primitive string gets no PostgreSQL quoting", () => {
+    // The quoting rule was an identity comparison, so a String object from plain JavaScript never named PostgreSQL.
+    const line = "SELECT * FROM Cus";
+    const boxed = new String("postgres") as unknown as Parameters<typeof registerSQLCompletionProvider>[2];
+    const customers = complete(line, boxed).find((item) => item.label === "Customers")!;
+    const plain = complete(line).find((item) => item.label === "Customers")!;
+    expect(applied(line, customers)).toBe(applied(line, plain));
+    expect(applied(line, customers)).not.toBe('SELECT * FROM libredb_objects.app."Customers"');
+  });
+
   test("a schema qualifier and a dot offer that schema's tables, by their own name", () => {
     const line = "SELECT * FROM sales.";
     const suggestions = complete(line, "postgres");

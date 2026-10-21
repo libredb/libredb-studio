@@ -186,6 +186,15 @@ To try it, paste the cluster's `https://` endpoint into the Host box and its key
 Its keys are JWTs with manage access to the whole cluster and an expiry of 90 days by default, and a key whose expiry is left empty never expires, which the dialog's warning names: prefer a read-only or collection-scoped key with an expiry.
 Its strict mode answers "Limit exceeded", "Index required but not found", "Exact search disabled" and HTTP 429 with `Retry-After` in normal use; Studio shows each after its own sentence (section 10).
 
+### Connection string
+
+`qdrant` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/vector/qdrant/connection-string.ts)).
+
+### Execution UI
+
+The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `qdrant` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
+Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/vector/qdrant/execution-ui.ts).
+
 ## 5. Query interface
 
 ### 5.1 The request
@@ -336,6 +345,14 @@ On the eight routes that take `timeout`, Studio sends the remaining deadline in 
 Stop cancels the request in Studio and on the socket; the server stops a scroll, a facet, a query and a grouped query within a fifth of a second of its timeout, but an exact count keeps working after its timeout, and after a cancel, until it completes, so add `"exact": false` to a slow count.
 The confirmation gate asks about nothing, because every request reads, and it never sends a Qdrant request for an AI analysis.
 
+### 5.9 SQL grammar
+
+How this engine's statement text is read is declared once, in [`src/lib/db/providers/vector/qdrant/sql-grammar.ts`](../../src/lib/db/providers/vector/qdrant/sql-grammar.ts), the `qdrant` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+`readsSqlText` is `false`: `qdrant` takes one Qdrant console request, a `METHOD /path` line and one JSON body, whose strings escape with a backslash and where `//` opens a comment outside a string; the provider parses it with the shared console parser.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` in `src/lib/db/destructive-commands.ts` instead of a SQL reading.
+Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
+Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
+
 ## 6. Schema introspection
 
 ### 6.1 The object surface
@@ -392,6 +409,18 @@ None: Qdrant has no maintenance operation in v1, so no Admin > Operations card a
 
 `queryLanguage: "json"` with `queryDialect: "qdrant"`, `containerLevels: []`, `defaultPort: 6333`, `enforcesReadOnly: true`, `statementTerminator: "none"`, and `false` for explain, table creation, transactions, inline row edits, result pagination, external query limiting, maintenance and the connection string.
 A collection is labelled "Collection"; the password field "API key or JWT"; the export menu offers no SQL INSERT or DDL for a Qdrant result.
+
+### SQL writing
+
+[`qdrant/sql-writing.ts`](../../src/lib/db/providers/vector/qdrant/sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+A literal is written by `literalStandard` and read back by `unquoteStandard`: the quote is doubled and a backslash is data.
+A name is quoted by `identifierDoubleQuoted`, the SQL standard form: a double-quoted name with an inner double quote doubled.
+There is no placeholder (`placeholder: null`), so a generator quotes the value with `quoteLiteral` instead of emitting a bind.
+This engine declares `queryLanguage: "json"`, so no statement is ever built for it to read; what a generator emits for such a connection is portable SQL meant to run elsewhere, and the standard form is the only thing it can claim.
+Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+
+The module's `export` field writes a result export's CREATE TABLE and INSERT from the shared building blocks alone: `STANDARD_DDL_TYPES` for the column types, `NOTHING_STANDS_ALONE` and `NO_BARE_SPELLING`, so every bare declared name is re-spelled from its family, `NULL_NON_FINITE` for NaN and the infinities, and `binaryStandardHex` for a binary cell (`X'0102'`).
+The engine declares `queryLanguage: "json"`, so no SQL statement is ever built for it to read, and a file exported from it is meant to run somewhere else: every bare name in it is re-spelled portably rather than kept as one engine's private word.
 
 ## 10. Error handling
 
@@ -455,6 +484,16 @@ Set `telemetry_disabled` if the server should not report to the vendor, and note
 - An empty tree is what a scoped token, an alias-only token and an empty server all produce.
 - A vendor address pasted into the connection-string box instead of the Host box still selects ClickHouse.
 - A hostile or impersonated endpoint holds the key it receives and can return it in an encoding Studio does not list, so Studio withholds only the forms it sends.
+
+## Migration DDL
+
+[`QDRANT_MIGRATION_DDL`](../../src/lib/db/providers/vector/qdrant/migration-ddl.ts) is what the schema-diff migration generator writes for `qdrant`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
+`qdrant` text is a Qdrant console request, not SQL, so there is no table DDL to wrap (#284).
+
+The refusal reason it prints, verbatim:
+
+- "A collection's payloads are schemaless and its vectors are declared through Qdrant's own collection API, not SQL DDL, so there is no column definition to change."
 
 ## 14. References
 

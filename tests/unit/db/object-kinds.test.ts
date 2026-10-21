@@ -19,6 +19,7 @@ import {
   relationKindIds,
   isCountSampled,
   isCountUnavailable,
+  isIndexesUnavailable,
   kindHasColumns,
   kindHasSource,
   isSourcePartUnavailable,
@@ -281,6 +282,15 @@ describe("isCountUnavailable", () => {
     // refusal (no number at all) or treating a refusal as a floor. Both predicates are
     // asked about both shapes here so neither can start answering the other's question.
     expect(isCountUnavailable({ count: 4, sampledFrom: "one 1,000-key SCAN walk" })).toBe(false);
+  });
+});
+
+describe("isIndexesUnavailable", () => {
+  test("a refused index read is a refusal, empty array and populated array are not", () => {
+    expect(isIndexesUnavailable({ unavailable: "permission denied for system.data_skipping_indices" })).toBe(true);
+    expect(isIndexesUnavailable([])).toBe(false);
+    expect(isIndexesUnavailable([{ name: "idx_1", columns: ["id"], unique: false }])).toBe(false);
+    expect(isIndexesUnavailable(undefined)).toBe(false);
   });
 });
 

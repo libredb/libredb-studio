@@ -48,7 +48,7 @@ grammar (`src/lib/db/console/`).
 
 | File | What it is |
 |---|---|
-| `xml.ts` | The reader: attributes and namespace prefixes preserved, CDATA and an optional prolog accepted, DOCTYPE and ENTITY refused before parsing, plus a streaming walker over observations |
+| `xml.ts` | The reader: attributes and namespace prefixes preserved, CDATA and an optional prolog accepted, DOCTYPE and ENTITY refused before parsing, plus a streaming walker over observations that reports the root it opened |
 | `xml-bounds.ts` | The reader's bounds, each beside the measurement it was sized from |
 | `model.ts` | The `probe` answer indexed by `dataItemId`, with the freshness test on `instanceId` |
 | `rows.ts` | One observation to one row, joined with the model for category, type and units |
@@ -151,6 +151,8 @@ whether or not authentication is ever offered, because a proxy can answer with H
 An `MTConnectError` answer is the agent's own refusal, and it reaches the reader as the agent's sentence and code on every route, `current` and `sample` included.
 A `path` that matches nothing (`INVALID_XPATH`) or a `from` that has left the buffer (`OUT_OF_RANGE`) is an error the reader sees, never an empty grid.
 
+On `current` and `sample` the root is learned in the same pass that reads the observations: the walker reports the root element it opened and walks only an `MTConnectStreams` document, so an answer is parsed once and never also held as a whole tree (#1787). An `MTConnectError` answer is small and is then read as a tree for the agent's sentence, and any other root gets the sentence above.
+
 A refusal from the reader says WHO refused, and that was a defect first. Eleven of the reader's
 sixteen refusals are Studio's own rule applied to a document that is well-formed XML and often
 perfectly good MTConnect: a DOCTYPE or an entity declaration, refused before parsing so no DTD is
@@ -208,6 +210,15 @@ Through an SSH tunnel the certificate is checked against the agent the user name
 The Path prefix is put in front of every route, so `/mtc` reads `/mtc/probe`, `/mtc/current` and so on.
 It is a path only: a query, a fragment, percent-encoding, a space or an empty, `.` or `..` segment is refused before any request.
 
+### Connection string
+
+`mtconnect` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/industrial/mtconnect/connection-string.ts)).
+
+### Execution UI
+
+The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `mtconnect` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
+Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/industrial/mtconnect/execution-ui.ts).
+
 ## 5. Query interface
 
 ### 5.1 The request line
@@ -260,6 +271,14 @@ unsigned decimal and text order puts `100000000` before `99999999`.
 MEASURED on the demo: 38 observations carry an empty value, and only 31 of them are conditions. The
 other 7 are EVENT items, so an empty value is a third state, distinct from `UNAVAILABLE`, which is
 shown as the word the agent printed rather than as an empty cell.
+
+### 5.6 SQL grammar
+
+How this engine's statement text is read is declared once, in [`src/lib/db/providers/industrial/mtconnect/sql-grammar.ts`](../../src/lib/db/providers/industrial/mtconnect/sql-grammar.ts), the `mtconnect` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+`readsSqlText` is `false`: the console takes one request line in the agent's own URL grammar, so no span of it is SQL (#1722).
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` in `src/lib/db/destructive-commands.ts` instead of a SQL reading.
+Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
+Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
 
 ## 6. Schema introspection
 
@@ -316,6 +335,17 @@ the default port, a schema refresh pattern that matches nothing, and `enforcesRe
 Not declared, each for a measured reason: `keyScan` (6.3), `agentWalkScope` (10.2),
 `explainFormat`, `identifierQuoting`, `readsFileAccessPosture`, `rowActions`, `supportsSchemas`,
 `machineNames` and `implicitCommitStatements`.
+
+### SQL writing
+
+[`mtconnect/sql-writing.ts`](../../src/lib/db/providers/industrial/mtconnect/sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+A literal is written by `literalStandard` and read back by `unquoteStandard`: the quote is doubled and a backslash is data.
+A name is quoted by `identifierDoubleQuoted`, the SQL standard form: a double-quoted name with an inner double quote doubled.
+There is no placeholder (`placeholder: null`), so a generator quotes the value with `quoteLiteral` instead of emitting a bind.
+No generator calls `quoteLiteral` for MTConnect: a request line writes its names into a URL.
+Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+
+The module's `export` field writes a result export's CREATE TABLE and INSERT from the shared building blocks alone: `STANDARD_DDL_TYPES` for the column types, `NOTHING_STANDS_ALONE` and `NO_BARE_SPELLING`, so every bare declared name is re-spelled from its family, `NULL_NON_FINITE` for NaN and the infinities, and `binaryStandardHex` for a binary cell (`X'0102'`).
 
 ## 10. Error handling
 
@@ -377,6 +407,16 @@ stand-in, and no local copy of a rule the shared modules own.
   preference (5.2).
 - The Agent device's adapter addresses are visible to an MCP client (10.2).
 - A composition's own name is carried where the observation has one; MEASURED on 6 of 478.
+
+## Migration DDL
+
+[`MTCONNECT_MIGRATION_DDL`](../../src/lib/db/providers/industrial/mtconnect/migration-ddl.ts) is what the schema-diff migration generator writes for `mtconnect`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
+An agent's device model is the agent's own and every route this provider sends is a GET, so there is no table DDL to wrap either (#1722).
+
+The refusal reason it prints, verbatim:
+
+- "An MTConnect data item's shape is declared in the agent's own device model, not in columns a client can change, and every request this provider sends is a GET, so there is no column definition to change."
 
 ## 13. References
 

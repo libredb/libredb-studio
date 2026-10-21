@@ -7,7 +7,7 @@ import { LLMConfigError } from "@/lib/llm/types";
 
 let savedEnv: Record<string, string | undefined>;
 
-const LLM_ENV_KEYS = ["LLM_PROVIDER", "LLM_API_KEY", "LLM_MODEL", "LLM_API_URL"];
+const LLM_ENV_KEYS = ["LLM_PROVIDER", "LLM_API_KEY", "LLM_MODEL", "LLM_API_URL", "LLM_MODEL_EFFORT"];
 
 // ============================================================================
 // Module Mocks (must be before await import)

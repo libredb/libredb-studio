@@ -38,7 +38,8 @@
   <a href="https://valkey.io/participants/#:~:text=LibreDB%20Studio%20connects%20to%20Valkey">Valkey</a>،
   <a href="https://clickhouse.com/docs/integrations/connectors/tools/gui#libredb-studio">ClickHouse Visual Interfaces</a>،
   <a href="https://clickhouse.com/docs/integrations/connectors/sql-clients/libredb-studio">ClickHouse SQL Clients</a>،
-  <a href="https://mariadb.com/docs/server/clients-and-utilities/graphical-and-enhanced-clients/libredb-studio">MariaDB</a>،
+  <a href="https://mariadb.com/docs/server/clients-and-utilities/graphical-and-enhanced-clients/libredb-studio">MariaDB Graphical Clients</a>،
+  <a href="https://ecohub.mariadb.org/database-management/libredb-studio">MariaDB Ecosystem Hub</a>،
   <a href="https://trino.io/ecosystem/client-application#libredb-studio">Trino</a>،
   <a href="https://docs.yugabyte.com/stable/integrations/tools/libredb-studio/">YugabyteDB</a>،
   <a href="https://www.tigerdata.com/docs/integrate/query-administration/libredb-studio">TimescaleDB</a>،
@@ -51,6 +52,7 @@
   <a href="https://aiven.io/docs/products/postgresql/howto/connect-libredb-studio">Aiven for PostgreSQL</a>،
   <a href="https://aiven.io/docs/products/mysql/howto/connect-libredb-studio">Aiven for MySQL</a>،
   <a href="https://docs.scylladb.com/stable/get-started/gui-clients/libredb-studio.html">ScyllaDB</a>،
+  <a href="https://docs.couchbase.com/server/current/third-party/integrations.html#standalone-query-and-admin-tools">Couchbase</a>،
   <a href="https://cloudberry.apache.org/docs/ecosystem/sql-clients/libredb-studio/">Apache Cloudberry</a>،
   <a href="https://doris.apache.org/docs/4.x/connection-integration/data-integration/libredb-studio/">Apache Doris</a>،
   <a href="https://cwiki.apache.org/confluence/display/KAFKA/Ecosystem#:~:text=LibreDB%20Studio">Apache Kafka</a>،
@@ -264,7 +266,7 @@ PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · Du
 <li><span dir="rtl"><strong><span dir="ltr">Trend charts</span></strong>: real-time metrics (connections، cache hit rate، buffer pool، deadlocks) circular-buffer history کے ساتھ، اور 5 سے 60 seconds کے درمیان configurable automatic refresh۔</span></li>
 <li><span dir="rtl"><strong><span dir="ltr">Threshold alerts</span></strong>: cache hit rate، connection usage، deadlocks اور buffer-pool usage کے لیے رنگ دار health indicators (healthy، warning، critical)۔</span></li>
 <li><span dir="rtl"><strong><span dir="ltr">One-click maintenance</span></strong>: engine کے مطابق <code dir="ltr">VACUUM</code>، <code dir="ltr">ANALYZE</code>، <code dir="ltr">REINDEX</code>، <code dir="ltr">UPDATE STATISTICS</code>، <code dir="ltr">DBCC CHECKDB</code> اور <code dir="ltr">ALTER INDEX REBUILD</code>۔</span></li>
-<li><span dir="rtl"><strong><span dir="ltr">Audit log</span></strong>: organization میں چلنے والی ہر query کی مکمل history۔</span></li>
+<li><span dir="rtl"><strong><span dir="ltr">Audit log</span></strong>: admin Audit tab سرور کے حالیہ audit events دکھاتا ہے، جیسے sign-in، permission denial، maintenance action، object edit اور agent و MCP کی operation، ہر ایک کے ساتھ وہ user جو اس کے پیچھے ہے، اور signed-in admin کی اپنی query history۔ دونوں current filters کا لحاظ رکھتے ہوئے CSV یا JSON میں export ہوتے ہیں۔ [governance](docs/GOVERNANCE.md#query-events) کے تحت Studio ہر اس statement کا query event ریکارڈ کرتا ہے جسے کوئی شخص چلاتا ہے، اور control plane وہ organization-wide record رکھتا ہے۔</span></li>
 </ul>
 
 ## <span dir="rtl">انسٹالیشن</span>
@@ -302,12 +304,6 @@ npm i @libredb/studio
 <div dir="rtl" align="right">
 
 <span dir="rtl">Studio npm package کے طور پر بھی شائع ہوتا ہے، اس لیے اسے براہِ راست آپ کی application میں embed کیا جا سکتا ہے۔ اگر آپ کا product اپنے users کے لیے databases بناتا ہے تو editor کے لیے یہی سب سے مفید جگہ ہے۔</span>
-
-## <span dir="rtl">کیا مفت ہے اور کیا بامعاوضہ ہے؟</span>
-
-<span dir="rtl">Studio MIT ہے کیونکہ اسے ہر جگہ جانے کے قابل ہونا چاہیے۔ جس چیز کی قیمت لی جاتی ہے وہ libredb-platform ہے، اور اس میں دوسرا فریق اسے operate کرنے کی ذمہ داری لیتا ہے: hosting، multi-tenancy، billing اور support۔ یہ کوئی feature نہیں جسے دیوار کے پیچھے منتقل کر دیا گیا ہو۔</span>
-
-<span dir="rtl">**Upgrade کی وجہ بنانے کے لیے کسی صلاحیت کو اس لکیر کے دوسری طرف نہیں لے جایا گیا۔** Single sign-on، RBAC، query auditing، ER diagrams، AI features اور تمام NoSQL engines MIT version میں موجود ہیں۔</span>
 
 ## <span dir="rtl">Tests اور quality</span>
 

@@ -45,7 +45,8 @@ const read = (relative: string): string => readFileSync(path.join(ROOT, relative
 
 const SEARCH_PROVIDER = "src/lib/db/providers/sql/search/index.ts";
 const BASE_PROVIDER = "src/lib/db/base-provider.ts";
-const MIGRATION_GENERATOR = "src/lib/schema-diff/migration-generator.ts";
+const ELASTICSEARCH_MIGRATION_DDL_FILE = "src/lib/db/providers/sql/search/elasticsearch-migration-ddl.ts";
+const OPENSEARCH_MIGRATION_DDL_FILE = "src/lib/db/providers/sql/search/opensearch-migration-ddl.ts";
 const FACTORY = "src/lib/db/factory.ts";
 
 /** Sorted: `readdirSync` returns filesystem order — green here, red on the next machine. */
@@ -651,15 +652,19 @@ describe("search provider docs: the monitoring seam table", () => {
     test(`${doc} names runMaintenance() and the refusal table rather than their lines`, () => {
       const text = read(doc);
       expect(text).toContain("`runMaintenance(type)` ([`search/index.ts`]");
+      const id = path.basename(doc, ".md");
       // The prose wraps, so the name and the un-numbered link are pinned separately.
-      expect(text).toContain("`NO_COLUMN_MODIFICATION` table in");
-      expect(text).toContain("[`migration-generator.ts`](../../src/lib/schema-diff/migration-generator.ts)");
-      expect(text).not.toMatch(/migration-generator\.ts:\d/);
+      expect(text).toContain(`\`${id.toUpperCase()}_MIGRATION_DDL\` refusal in`);
+      expect(text).toContain(
+        `[\`${id}-migration-ddl.ts\`](../../src/lib/db/providers/sql/search/${id}-migration-ddl.ts)`,
+      );
+      expect(text).not.toMatch(/migration-ddl\.ts:\d/);
     });
   }
 
-  test("NO_COLUMN_MODIFICATION is the real name of the refusal table", () => {
-    expect(read(MIGRATION_GENERATOR)).toMatch(/^const NO_COLUMN_MODIFICATION\b/m);
+  test("each search module declares its migration row", () => {
+    expect(read(ELASTICSEARCH_MIGRATION_DDL_FILE)).toMatch(/^export const ELASTICSEARCH_MIGRATION_DDL\b/m);
+    expect(read(OPENSEARCH_MIGRATION_DDL_FILE)).toMatch(/^export const OPENSEARCH_MIGRATION_DDL\b/m);
   });
 });
 
@@ -802,9 +807,13 @@ const SEARCH_MODULE_CITATIONS = [
   { name: "validateHost", source: "src/lib/db/http/endpoint.ts" },
   { name: "httpOrigin", source: "src/lib/db/http/endpoint.ts" },
   { name: "quoteIdentifier", source: "src/lib/sql/identifier.ts" },
-  { name: "LITERAL_ESCAPE", source: "src/lib/sql/values.ts" },
-  { name: "ELASTICSEARCH_GRAMMAR", source: "src/lib/sql/grammar.ts" },
-  { name: "OPENSEARCH_GRAMMAR", source: "src/lib/sql/grammar.ts" },
+  { name: "SQL_WRITING", source: "src/lib/db/sql-writing/index.ts" },
+  { name: "ELASTICSEARCH_SQL_WRITING", source: "src/lib/db/providers/sql/search/elasticsearch-sql-writing.ts" },
+  { name: "OPENSEARCH_SQL_WRITING", source: "src/lib/db/providers/sql/search/opensearch-sql-writing.ts" },
+  { name: "ELASTICSEARCH_GRAMMAR", source: "src/lib/db/providers/sql/search/elasticsearch-sql-grammar.ts" },
+  { name: "OPENSEARCH_GRAMMAR", source: "src/lib/db/providers/sql/search/opensearch-sql-grammar.ts" },
+  { name: "ELASTICSEARCH_MIGRATION_DDL", source: "src/lib/db/providers/sql/search/elasticsearch-migration-ddl.ts" },
+  { name: "OPENSEARCH_MIGRATION_DDL", source: "src/lib/db/providers/sql/search/opensearch-migration-ddl.ts" },
 ] as const;
 
 /** Members of the dialect table rather than top-level declarations, so matched as object keys. */

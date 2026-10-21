@@ -96,6 +96,15 @@ A monitoring panel whose read is refused stays empty rather than failing.
 
 Do not set `DB_HTTP_BLOCK_PRIVATE_HOSTS=true` on such a deployment: it blocks the metadata server's link-local address `169.254.169.254`.
 
+### Connection string
+
+`bigquery` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/sql/bigquery/connection-string.ts)).
+
+### Execution UI
+
+The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `bigquery` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
+Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/sql/bigquery/execution-ui.ts).
+
 ## 4. Seeding
 
 A BigQuery connection is seeded like any other ([SEED_CONNECTIONS.md](../SEED_CONNECTIONS.md)).
@@ -169,7 +178,7 @@ In a project with datasets in several regions, set `location` to the region you 
 
 ### 5.4 SQL grammar
 
-The statement reader that decides where a statement ends, whether a keyword is real and whether a run needs a confirmation prompt has a BigQuery grammar (`BIGQUERY_GRAMMAR` in `src/lib/sql/grammar.ts`), every fact of it measured with `jobs.query` dry runs:
+The statement reader that decides where a statement ends, whether a keyword is real and whether a run needs a confirmation prompt has a BigQuery grammar (`BIGQUERY_GRAMMAR` in [`src/lib/db/providers/sql/bigquery/sql-grammar.ts`](../../src/lib/db/providers/sql/bigquery/sql-grammar.ts), the `bigquery` row of the SQL grammar registry in `src/lib/db/sql-grammar/`), every fact of it measured with `jobs.query` dry runs on 2026-10-11:
 
 - `#` and `--` start a line comment, `//` does not, and `/* … */` does not nest.
 - A backslash escapes the next character in `'…'` and `"…"`; a doubled quote is not an escape (BigQuery answers "concatenated string literals must be separated by whitespace or comments").
@@ -178,6 +187,21 @@ The statement reader that decides where a statement ends, whether a keyword is r
 - `[…]` is an array literal or a subscript, never a name.
 
 A script (`BEGIN … END`) is not split: the shared splitter does not model it.
+
+`readsSqlText` is `true`: the editor text is GoogleSQL, and the provider extends `SQLBaseProvider`.
+Redaction is `sql` with no name quote: a redacted statement keeps its words, and every literal and quoted run becomes `?`.
+
+### 5.5 SQL writing
+
+[`bigquery/sql-writing.ts`](../../src/lib/db/providers/sql/bigquery/sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+A literal is written by `literalBackslash` and read back by `unquoteBackslash`: every escape, the quote's included, is spelled with a backslash, and doubling is not part of the grammar.
+A name is quoted by `identifierBacktickBackslash`: a backtick name escaped inside with a backslash, where a doubled backtick is not an escape but ends the name.
+There is no placeholder (`placeholder: null`), so a generator quotes the value with `quoteLiteral` instead of emitting a bind.
+GoogleSQL escapes the quote as `\'` and does not accept doubling.
+GoogleSQL quotes a name in backticks and escapes inside it with a backslash; a doubled backtick is not an escape there, it ends the name.
+Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+
+The module's `export` field writes a result export's CREATE TABLE and INSERT from the shared building blocks alone: `STANDARD_DDL_TYPES` for the column types, `NOTHING_STANDS_ALONE` and `NO_BARE_SPELLING`, so every bare declared name is re-spelled from its family, `NULL_NON_FINITE` for NaN and the infinities, and `binaryTextBackslash` for a binary cell, the `\x…` text every other surface shows, quoted with `literalBackslash`.
 
 ## 6. Dry run and cost estimate
 
@@ -277,3 +301,19 @@ It covers connect, `datasets.list`, `tables.list` and `tables.get` (tables, view
 The emulator's `jobs.query` answers every row and no `pageToken` (it ignores `maxResults`, `server/handler.go` at v0.8.1), so for the paging check the script puts a pass-through proxy in front of it that cuts the first answer at `maxResults` as BigQuery does; every later page is the emulator's own `getQueryResults` answer.
 
 It does not cover, so these stay covered by the replayed captures only: dry runs and bytes processed (the emulator runs a `dryRun` query and reports no bytes), region-level `INFORMATION_SCHEMA` (refused, so the catalog comes from the REST fallback there), monitoring, job cancel, locations, and authentication (the emulator checks none, so none is sent).
+
+## Migration DDL
+
+[`BIGQUERY_MIGRATION_DDL`](../../src/lib/db/providers/sql/bigquery/migration-ddl.ts) is what the schema-diff migration generator writes for `bigquery`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+BigQuery runs each statement as its own job, and `BEGIN TRANSACTION` exists only inside a multi-statement script, so `transactionWrapper` is `null` (#284).
+It has no foreign-key constraint this generator could write, so an added or dropped foreign key is a comment.
+An added table declines its primary key in a comment after the `CREATE TABLE`, and a modified column is a comment naming the column.
+Index changes are a comment too, because BigQuery's only indexes are search and vector indexes.
+The fields it takes unchanged from `src/lib/db/migration-ddl/shared.ts` are `standardAddColumn`, `standardColumnDef`, `standardDropColumn` and `standardDropTable`.
+
+Every refusal reason it can print, verbatim:
+
+- "BigQuery widens a column with ALTER COLUMN ... SET DATA TYPE only along its coercion rules, and nothing else; write the change by hand."
+- "BigQuery: Cannot generate index DDL. BigQuery has search and vector indexes only; write the index change by hand."
+- "The engine has no foreign-key constraint."
+- "BigQuery accepts a primary key only as PRIMARY KEY (...) NOT ENFORCED."

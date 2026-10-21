@@ -117,11 +117,50 @@ describe("the plan-draft reader stays reachable from a browser", () => {
       "./operative-keyword",
       "./spans",
       "./words",
+      "@/lib/db/sql-grammar",
       "@/lib/types",
     ]);
-    // The one non-relative member, and it is erased at build time: a VALUE import of the shared
-    // type module would pull the whole type barrel into the browser bundle.
+    // The non-relative members. The type module is erased at build time: a VALUE import of it
+    // would pull the whole type barrel into the browser bundle. The shared grammar constants are
+    // a leaf whose only import is that same kind of erased, type-only one.
     expect(read("./grammar")).toContain('import type { DatabaseType } from "@/lib/types"');
+    const shared = fs.readFileSync(path.join(ROOT, "src/lib/db/sql-grammar/shared.ts"), "utf8");
+    expect(specifiers(shared)).toEqual(["./types"]);
+    expect(shared).toContain('import type { SqlGrammar } from "./types"');
+
+    // The SQL grammar registry joined the closure when `grammar.ts` started reading each engine's row from it
+    // (engine contract spec 5.3). Its own closure is walked here, re-exports included and type-only lines left out:
+    // every module it reaches is the registry, an engine's `sql-grammar` module, or one of the two leaves an engine
+    // module may import, and those leaves import nothing at all.
+    const valueSpecifiers = (source: string): readonly string[] =>
+      [...source.matchAll(/^(?:import|export)\s(?!type\s)[^;]*?from\s+"([^"]+)"/gm)].map((match) => match[1]);
+    const resolve = (specifier: string, from: string): string => {
+      const base = specifier.startsWith("@/")
+        ? `src/${specifier.slice(2)}`
+        : path.posix.join(path.posix.dirname(from), specifier);
+      return fs.existsSync(path.join(ROOT, `${base}.ts`)) ? `${base}.ts` : `${base}/index.ts`;
+    };
+    const LEAVES = new Set(["src/lib/is-record.ts", "src/lib/db/providers/keyvalue/redis-command-text.ts"]);
+    const registry = new Set<string>();
+    const walk = ["src/lib/db/sql-grammar/index.ts"];
+    while (walk.length > 0) {
+      const file = walk.pop() as string;
+      if (registry.has(file)) continue;
+      registry.add(file);
+      const source = fs.readFileSync(path.join(ROOT, file), "utf8");
+      for (const specifier of valueSpecifiers(source)) walk.push(resolve(specifier, file));
+    }
+    const outside = [...registry].filter(
+      (file) =>
+        !file.startsWith("src/lib/db/sql-grammar/") &&
+        !(file.startsWith("src/lib/db/providers/") && /(?:^|[/-])sql-grammar\.ts$/.test(file)) &&
+        !LEAVES.has(file),
+    );
+    expect(outside).toEqual([]);
+    expect(registry.size).toBeGreaterThan(42);
+    for (const leaf of LEAVES) {
+      expect(valueSpecifiers(fs.readFileSync(path.join(ROOT, leaf), "utf8"))).toEqual([]);
+    }
   });
 
   test("it does not reach the statement guard, which is where zod enters", () => {

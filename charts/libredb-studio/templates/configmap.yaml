@@ -54,6 +54,9 @@ data:
   {{- if .Values.config.llmApiUrl }}
   LLM_API_URL: {{ .Values.config.llmApiUrl | quote }}
   {{- end }}
+  {{- if .Values.config.llmModelEffort }}
+  LLM_MODEL_EFFORT: {{ .Values.config.llmModelEffort | quote }}
+  {{- end }}
   {{- if eq .Values.authProvider "oidc" }}
   {{- if .Values.config.oidcIssuer }}
   OIDC_ISSUER: {{ .Values.config.oidcIssuer | quote }}

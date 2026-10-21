@@ -7,7 +7,7 @@ import { BaseLLMProvider } from "../base-provider";
 import type { RetryOptions } from "../utils/retry";
 import { type LLMConfig, type LLMStreamOptions, LLMStreamError, LLMConfigError } from "../types";
 import { createStreamFromSSEResponse } from "../utils/streaming";
-import { DEFAULT_API_URLS } from "../utils/config";
+import { DEFAULT_API_URLS, validModelEffort } from "../utils/config";
 import { logger } from "@/lib/logger";
 
 // ============================================================================
@@ -20,6 +20,9 @@ export class OllamaProvider extends BaseLLMProvider {
   constructor(config: LLMConfig, retryOptions?: RetryOptions) {
     super(config, retryOptions);
     this.baseUrl = config.apiUrl ?? DEFAULT_API_URLS.ollama;
+    // Here as well as in validate(), because nothing on the chat surface calls validate() for this
+    // provider: a reasoning effort it never sends must not be accepted in silence.
+    validModelEffort(config);
   }
 
   /**
@@ -29,6 +32,7 @@ export class OllamaProvider extends BaseLLMProvider {
     if (!this.config.model || this.config.model.trim() === "") {
       throw new LLMConfigError("Model name is required for Ollama provider.", "ollama");
     }
+    validModelEffort(this.config);
   }
 
   /**

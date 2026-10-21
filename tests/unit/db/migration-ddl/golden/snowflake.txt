@@ -1,0 +1,45 @@
+-- fixture: full
+-- Migration generated at 2026-10-19T12:00:00.000Z
+-- Dialect: snowflake
+-- Changes: 1 added, 1 removed, 2 modified
+
+-- Objects that are not tables
+-- Skipped v_orders (view): only tables are created, altered or dropped here; change it by hand. If it reads a table changed below, drop it before this script and recreate it after.
+
+-- Drop removed tables
+DROP TABLE IF EXISTS "app"."legacy";
+
+-- Create new tables
+CREATE TABLE "app"."users" (
+  "id" integer NOT NULL,
+  "note" varchar(20) DEFAULT 'abc',
+  "bare" TEXT,
+  "y" Int32 DEFAULT MATERIALIZED toYear(d),
+  "empty" text DEFAULT 
+,  PRIMARY KEY ("id")
+);
+-- Snowflake: Cannot generate index DDL. Snowflake has indexes only on hybrid tables; write the index change by hand.
+ALTER TABLE "app"."users" ADD CONSTRAINT "fk_users_dept_id" FOREIGN KEY ("dept_id") REFERENCES "departments"("id");
+
+-- Modify existing tables
+-- Alter table: orders
+ALTER TABLE "app"."orders" DROP CONSTRAINT IF EXISTS "fk_orders_customer_id";
+-- Snowflake: Cannot generate index DDL. Snowflake has indexes only on hybrid tables; write the index change by hand.
+-- Snowflake: Cannot generate index DDL. Snowflake has indexes only on hybrid tables; write the index change by hand.
+ALTER TABLE "app"."orders" ADD COLUMN "extra" integer;
+ALTER TABLE "app"."orders" ADD COLUMN "bare2" TEXT;
+ALTER TABLE "app"."orders" DROP COLUMN "old";
+ALTER TABLE "app"."orders" ALTER COLUMN "status" SET DATA TYPE varchar(20);
+ALTER TABLE "app"."orders" ALTER COLUMN "status" SET NOT NULL;
+-- Snowflake: Cannot set the default of column "status". ALTER COLUMN sets a default only to a sequence's NEXTVAL; recreate the column with its default.
+ALTER TABLE "app"."orders" ALTER COLUMN "amount" DROP NOT NULL;
+ALTER TABLE "app"."orders" ALTER COLUMN "amount" DROP DEFAULT;
+ALTER TABLE "app"."orders" ALTER COLUMN "calc" SET DATA TYPE Int64;
+ALTER TABLE "app"."orders" ALTER COLUMN "calc" DROP DEFAULT;
+-- Snowflake: Cannot set the default of column "line break". ALTER COLUMN sets a default only to a sequence's NEXTVAL; recreate the column with its default.
+-- Snowflake: Cannot generate index DDL. Snowflake has indexes only on hybrid tables; write the index change by hand.
+-- Snowflake: Cannot generate index DDL. Snowflake has indexes only on hybrid tables; write the index change by hand.
+ALTER TABLE "app"."orders" ADD CONSTRAINT "fk_orders_region_id" FOREIGN KEY ("region_id") REFERENCES "regions"("id");
+
+-- fixture: none
+-- No schema changes detected.

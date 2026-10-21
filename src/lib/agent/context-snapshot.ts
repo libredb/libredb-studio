@@ -94,7 +94,7 @@ import type {
 } from "./types";
 import { fenceUntrustedContent, quoteIdentifierForPrompt } from "./untrusted-content";
 import { DatabaseError, ExecutionProfileError, type ExecutionProfileDenyCode } from "@/lib/db/errors";
-import { declaredKinds } from "@/lib/db/object-kinds";
+import { declaredKinds, isIndexesUnavailable } from "@/lib/db/object-kinds";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import { quoteObjectPath } from "@/lib/query-generators";
 import type { ColumnSchema, DatabaseConnection, DatabaseType } from "@/lib/types";
@@ -375,7 +375,9 @@ export function fingerprintInventory(inventory: AgentInventory): string {
       // unchanged (#789).
       table.kind ?? null,
       table.columns.map((column) => [column.name, column.type, column.nullable, column.isPrimary]),
-      table.indexes.map((index) => [index.name, index.unique, index.columns]),
+      isIndexesUnavailable(table.indexes)
+        ? { unavailable: table.indexes.unavailable }
+        : table.indexes.map((index) => [index.name, index.unique, index.columns]),
       (table.foreignKeys ?? []).map((key) => [key.columnName, key.referencedTable, key.referencedColumn]),
     ]),
   );
@@ -1295,14 +1297,20 @@ function renderTable(table: AgentInventoryObject, inventory: AgentInventory, sam
   const hidden = table.columns.length - shown.length;
   if (hidden > 0) shown.push(`+${hidden} more column(s)`);
 
-  const indexes = table.indexes
-    .slice(0, MAX_INDEXES_PER_TABLE)
-    .map((index) => `${index.name}${index.unique ? " unique" : ""} (${index.columns.join(", ")})`);
-  const hiddenIndexes = table.indexes.length - indexes.length;
+  const indexes = Array.isArray(table.indexes)
+    ? table.indexes
+        .slice(0, MAX_INDEXES_PER_TABLE)
+        .map((index) => `${index.name}${index.unique ? " unique" : ""} (${index.columns.join(", ")})`)
+    : [];
+  const hiddenIndexes = Array.isArray(table.indexes) ? table.indexes.length - indexes.length : 0;
   if (hiddenIndexes > 0) indexes.push(`+${hiddenIndexes} more`);
 
   const head = `${displayName(table)}${kindLabel(table, inventory)}${readMark(table)}`;
-  const indexText = indexes.length === 0 ? "" : `; indexes: ${indexes.join(", ")}`;
+  const indexText = !Array.isArray(table.indexes)
+    ? "; indexes: unavailable"
+    : indexes.length === 0
+      ? ""
+      : `; indexes: ${indexes.join(", ")}`;
   // The sentence about a stored definition is about a relation; an object of a kind that is not one, such as a
   // Kubernetes resource or an etcd group, has no columns to derive, so its line says nothing about columns.
   const role = (inventory.kinds ?? []).find((kind) => kind.id === table.kind)?.role;
@@ -1508,12 +1516,15 @@ export function packOperationsInventory(
  * fingerprint. Found by review on #411; `untrusted-content.ts` holds the rule.
  */
 function renderOperationsTable(table: AgentInventoryObject, inventory: AgentInventory): string {
+  const name = `${quoteIdentifierForPrompt(displayName(table))}${kindLabel(table, inventory)}${readMark(table)}`;
+  if (isIndexesUnavailable(table.indexes)) {
+    return `${name}: indexes unavailable (${table.indexes.unavailable})`;
+  }
   const shown = table.indexes
     .slice(0, MAX_INDEXES_PER_TABLE)
     .map((index) => `${quoteIdentifierForPrompt(index.name)}${index.unique ? " unique" : ""}`);
   const hidden = table.indexes.length - shown.length;
   if (hidden > 0) shown.push(`+${hidden} more`);
-  const name = `${quoteIdentifierForPrompt(displayName(table))}${kindLabel(table, inventory)}${readMark(table)}`;
   // Absence is stated rather than left blank: a table listed with nothing after it
   // reads as a table whose indexes were not captured, and an operations run asked to
   // reason about an unused index would not know which of the two it was looking at.

@@ -38,7 +38,8 @@
   <a href="https://valkey.io/participants/#:~:text=LibreDB%20Studio%20connects%20to%20Valkey">Valkey</a>,
   <a href="https://clickhouse.com/docs/integrations/connectors/tools/gui#libredb-studio">ClickHouse Visual Interfaces</a>,
   <a href="https://clickhouse.com/docs/integrations/connectors/sql-clients/libredb-studio">ClickHouse SQL Clients</a>,
-  <a href="https://mariadb.com/docs/server/clients-and-utilities/graphical-and-enhanced-clients/libredb-studio">MariaDB</a>,
+  <a href="https://mariadb.com/docs/server/clients-and-utilities/graphical-and-enhanced-clients/libredb-studio">MariaDB Graphical Clients</a>,
+  <a href="https://ecohub.mariadb.org/database-management/libredb-studio">MariaDB Ecosystem Hub</a>,
   <a href="https://trino.io/ecosystem/client-application#libredb-studio">Trino</a>,
   <a href="https://docs.yugabyte.com/stable/integrations/tools/libredb-studio/">YugabyteDB</a>,
   <a href="https://www.tigerdata.com/docs/integrate/query-administration/libredb-studio">TimescaleDB</a>,
@@ -51,6 +52,7 @@
   <a href="https://aiven.io/docs/products/postgresql/howto/connect-libredb-studio">Aiven for PostgreSQL</a>,
   <a href="https://aiven.io/docs/products/mysql/howto/connect-libredb-studio">Aiven for MySQL</a>,
   <a href="https://docs.scylladb.com/stable/get-started/gui-clients/libredb-studio.html">ScyllaDB</a>,
+  <a href="https://docs.couchbase.com/server/current/third-party/integrations.html#standalone-query-and-admin-tools">Couchbase</a>,
   <a href="https://cloudberry.apache.org/docs/ecosystem/sql-clients/libredb-studio/">Apache Cloudberry</a>,
   <a href="https://doris.apache.org/docs/4.x/connection-integration/data-integration/libredb-studio/">Apache Doris</a>,
   <a href="https://cwiki.apache.org/confluence/display/KAFKA/Ecosystem#:~:text=LibreDB%20Studio">Apache Kafka</a>,
@@ -162,7 +164,7 @@ And nothing is held back. Single sign-on, ER diagrams, the AI features and the N
 - **Forty-one engines, one interface**: PostgreSQL, MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase, Firestore, ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Databend, Snowflake, Apache Spark, Cassandra, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Oxia, S3-compatible object storage, Kubernetes, MQTT, RabbitMQ, OPC UA, MTConnect, Modbus, NETCONF, SNMP, Sparkplug B.
 - **Runs where you are**: browser, phone, Windows, MacOS, Linux desktop.
 - **A read-only agent, with your own model**: state a question, and the run drafts SQL, reads the results, and writes a report whose claims cite them. Gemini, OpenAI, or a local Ollama with open-source models.
-- **Nothing behind a wall**: RBAC, OIDC single sign-on, query audit trail, and ER diagrams all ship under MIT.
+- **Nothing behind a wall**: RBAC, OIDC single sign-on, the audit log, and ER diagrams all ship under MIT.
 
 <p align="center">
   <img src="public/screenshots/connection-modal.png" alt="Multi-Database Connection Manager" width="100%" />
@@ -213,7 +215,7 @@ what comes back, and finishes by composing a report whose every claim cites the 
   always rolled back. Writes and DDL are refused before the database is reached,
   and `EXPLAIN ANALYZE` is default-denied because it would run the statement. This pipeline is the
   agent's alone: statements you run yourself in the editor call the provider directly
-  (`src/app/api/db/query/route.ts:44`) and are neither policy-checked nor audited this way.
+  (`src/app/api/db/query/route.ts:312`) and are neither policy-checked nor audited this way.
 - **Agent mode reads PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes and MongoDB.** The read-only profile
   exists only where a provider implements it: `queryReadOnly` on
   `postgres.ts`, `sqlite.ts`, `duckdb/index.ts`, `mssql.ts`, `mysql.ts`, `kubernetes/index.ts` and `mongodb/index.ts`, and nowhere else.
@@ -316,7 +318,7 @@ Standalone application only: the embedded `@libredb/studio` package carries no a
 - **Threshold Alerting**: Color-coded health indicators (healthy/warning/critical) for cache hit ratio, connection usage, deadlocks, and buffer pool utilization.
 - **Connection Pool Stats**: Live total/active/idle/waiting pool metrics with utilization progress bars.
 - **One-Click Maintenance**: Trigger `VACUUM`, `ANALYZE`, `REINDEX`, `UPDATE STATISTICS`, `DBCC CHECKDB`, and `ALTER INDEX REBUILD` per database engine.
-- **Audit Trail**: Full history of every query executed across the organization. The admin Audit tab exports loaded operations and query history as CSV or JSON, respecting the current filters.
+- **Audit Trail**: The admin Audit tab shows the server's recent audit events, such as sign-ins, permission denials, maintenance actions, object edits and agent and MCP operations, each with the user behind it, and the signed-in admin's own query history. Both export as CSV or JSON, respecting the current filters. Under [governance](docs/GOVERNANCE.md#query-events), Studio records a query event for each statement a person runs, and the control plane keeps that organization-wide record.
 
 ---
 
@@ -767,6 +769,7 @@ Deploy your own instance of LibreDB Studio with a single click on DigitalOcean, 
 | `LLM_API_KEY` | ❌ | API key for AI features |
 | `LLM_MODEL` | ❌ | Model name (e.g., `gemini-2.5-flash`) |
 | `LLM_API_URL` | ❌ | API URL for `ollama` and `custom`; required for `custom`, defaults to `http://localhost:11434/v1` for `ollama` |
+| `LLM_MODEL_EFFORT` | No | Reasoning effort, `openai` only: `none`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`; unset leaves the model's default, and any other provider refuses it |
 | `STORAGE_PROVIDER` | ❌ | Storage provider: `local` (default), `sqlite`, or `postgres` |
 | `STORAGE_SQLITE_PATH` | ❌ | SQLite file path (e.g. `/app/data/libredb-storage.db`) |
 | `STORAGE_POSTGRES_URL` | ❌ | PostgreSQL connection URL (required when `STORAGE_PROVIDER=postgres`) |

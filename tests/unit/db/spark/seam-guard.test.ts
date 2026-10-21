@@ -8,7 +8,9 @@
  * imports the generator, and which provider files import the shared transport under src/lib/db/grpc/ (the registry
  * row's transportImporters, which the shared guard's G5 holds too). Two isolation rules hold over the repository: no
  * Spark file imports a module under src/lib/db/providers/ outside its directory but the base class ../sql-base, and no
- * file under src/ outside the directory but the factory and the connection-string parser imports a Spark module.
+ * file under src/ outside the directory but the factory, the connection-string parser and the SQL grammar registry
+ * imports a Spark module, except that a per-engine contract's registry imports the one Spark module that declares
+ * that contract.
  * Every rule is proven both ways: the real sources pass it and a planted file fails it by name.
  *
  * The pure modules (PURE_MODULES) import no I/O, no logger and no transport, and write nothing to the console
@@ -48,7 +50,18 @@ const GENERATOR_IMPORTERS: readonly string[] = [DESCRIPTOR_TEST, HARNESS];
 /** The provider files that import src/lib/db/grpc/, type-only imports included, as the shared guard's G5 counts them. */
 const TRANSPORT_IMPORTERS: readonly string[] = [`${SPARK}/connection-options.ts`, ADAPTER];
 /** The only files under src/ outside the provider directory that may import a Spark module. */
-const OUTSIDE_IMPORTERS_ALLOWED: readonly string[] = ["src/lib/db/factory.ts", "src/lib/connection-string-parser.ts"];
+const OUTSIDE_IMPORTERS_ALLOWED: readonly string[] = [
+  "src/lib/db/factory.ts",
+  "src/lib/connection-string-parser.ts",
+  "src/lib/db/sql-grammar/index.ts",
+];
+/** Each per-engine contract's registry, with the one Spark module, the engine's declaration, it may import. */
+const CONTRACT_REGISTRIES: Readonly<Record<string, string>> = {
+  "src/lib/db/connection-string/index.ts": `${SPARK}/connection-string`,
+  "src/lib/db/execution-ui/index.ts": `${SPARK}/execution-ui`,
+  "src/lib/db/migration-ddl/index.ts": `${SPARK}/migration-ddl`,
+  "src/lib/db/sql-writing/index.ts": `${SPARK}/sql-writing`,
+};
 /** The one module under src/lib/db/providers/ outside the directory a Spark file may import. */
 const SQL_BASE = "src/lib/db/providers/sql/sql-base";
 /** The pure modules: no I/O, no logger, no transport and no console. */
@@ -218,7 +231,11 @@ function outsideImportFindings(files: readonly RepositoryFile[]): string[] {
       moduleNames(file.sf)
         .filter((specifier) => {
           const target = reached(specifier, file.path);
-          return target !== undefined && inSpark(target);
+          if (target === undefined || !inSpark(target)) return false;
+          const declaration = Object.hasOwn(CONTRACT_REGISTRIES, file.path)
+            ? CONTRACT_REGISTRIES[file.path]
+            : undefined;
+          return target.replace(/\.(ts|tsx|js|mjs)$/, "") !== declaration;
         })
         .map((specifier) => `${file.path} imports ${specifier}, a Spark module`),
     );
@@ -325,6 +342,26 @@ describe("isolation", () => {
     ]);
     const factory = 'const load = () => import("./providers/sql/spark");\n';
     expect(outsideImportFindings(replaced(SOURCES, "src/lib/db/factory.ts", factory))).toEqual([]);
+  });
+
+  test("a contract registry may import the Spark module that declares its contract, and no other", () => {
+    const registry = "src/lib/db/migration-ddl/index.ts";
+    const own = 'import { SPARK_MIGRATION_DDL } from "@/lib/db/providers/sql/spark/migration-ddl";\n';
+    expect(outsideImportFindings(replaced(SOURCES, registry, own))).toEqual([]);
+    const other = 'import { quoteSparkName } from "@/lib/db/providers/sql/spark/namespace";\n';
+    expect(outsideImportFindings(replaced(SOURCES, registry, other))).toEqual([
+      `${registry} imports @/lib/db/providers/sql/spark/namespace, a Spark module`,
+    ]);
+  });
+
+  test("the SQL writing registry may import the Spark SQL writing row, and not another contract's", () => {
+    const registry = "src/lib/db/sql-writing/index.ts";
+    const own = 'import { SPARK_SQL_WRITING } from "@/lib/db/providers/sql/spark/sql-writing";\n';
+    expect(outsideImportFindings(replaced(SOURCES, registry, own))).toEqual([]);
+    const other = 'import { SPARK_MIGRATION_DDL } from "@/lib/db/providers/sql/spark/migration-ddl";\n';
+    expect(outsideImportFindings(replaced(SOURCES, registry, other))).toEqual([
+      `${registry} imports @/lib/db/providers/sql/spark/migration-ddl, a Spark module`,
+    ]);
   });
 });
 

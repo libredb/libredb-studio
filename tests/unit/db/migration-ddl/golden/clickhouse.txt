@@ -1,0 +1,44 @@
+-- fixture: full
+-- Migration generated at 2026-10-19T12:00:00.000Z
+-- Dialect: clickhouse
+-- Changes: 1 added, 1 removed, 2 modified
+
+-- Objects that are not tables
+-- Skipped v_orders (view): only tables are created, altered or dropped here; change it by hand. If it reads a table changed below, drop it before this script and recreate it after.
+
+-- Drop removed tables
+DROP TABLE IF EXISTS "app"."legacy";
+
+-- Create new tables
+CREATE TABLE "app"."users" (
+  "id" integer NOT NULL,
+  "note" varchar(20) DEFAULT 'abc',
+  "bare" TEXT,
+  "y" Int32 MATERIALIZED toYear(d),
+  "empty" text DEFAULT 
+,  PRIMARY KEY ("id")
+);
+-- ClickHouse: Cannot generate index DDL. The diff does not record the index kind, expression or granularity; write the index change by hand.
+-- ClickHouse: Cannot add a foreign key. The engine has no foreign-key constraint.
+
+-- Modify existing tables
+-- Alter table: orders
+-- ClickHouse: Cannot drop a foreign key. The engine has no foreign-key constraint.
+-- ClickHouse: Cannot generate index DDL. The diff does not record the index kind, expression or granularity; write the index change by hand.
+-- ClickHouse: Cannot generate index DDL. The diff does not record the index kind, expression or granularity; write the index change by hand.
+ALTER TABLE "app"."orders" ADD COLUMN "extra" integer;
+ALTER TABLE "app"."orders" ADD COLUMN "bare2" TEXT;
+ALTER TABLE "app"."orders" DROP COLUMN "old";
+ALTER TABLE "app"."orders" MODIFY COLUMN "status" varchar(20) DEFAULT 'new';
+ALTER TABLE "app"."orders" MODIFY COLUMN "amount" integer;
+ALTER TABLE "app"."orders" MODIFY COLUMN "amount" REMOVE DEFAULT;
+ALTER TABLE "app"."orders" MODIFY COLUMN "calc" Int64;
+-- ClickHouse: Cannot remove the EPHEMERAL property of column "calc". REMOVE accepts DEFAULT, MATERIALIZED or ALIAS only; recreate the column.
+ALTER TABLE "app"."orders" MODIFY COLUMN "line
+break" text DEFAULT x;
+-- ClickHouse: Cannot generate index DDL. The diff does not record the index kind, expression or granularity; write the index change by hand.
+-- ClickHouse: Cannot generate index DDL. The diff does not record the index kind, expression or granularity; write the index change by hand.
+-- ClickHouse: Cannot add a foreign key. The engine has no foreign-key constraint.
+
+-- fixture: none
+-- No schema changes detected.

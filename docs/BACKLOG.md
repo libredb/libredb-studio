@@ -28,10 +28,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S9 · 6
-- [Drivers and connections](#drivers-and-connections) — D1-D376, U17 · 273
+- [Drivers and connections](#drivers-and-connections) — D1-D390, U17 · 285
 - [Value interpolation](#value-interpolation) — V1
-- [Row editing](#row-editing) — R1–R4 · 4
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U146 · 133
+- [Row editing](#row-editing) — R1–R3 · 3
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U148 · 134
 - [Dependencies](#dependencies) — P1-P9 · 7
 - [Documentation](#documentation) — DOC3-DOC35 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
@@ -96,8 +96,8 @@ it writes `DEFAULT_SQL_GRAMMAR.<fact>`. Three such sites remain, all on the same
 `#` and block-comment nesting are now established for every dialect that has a grammar row.
 ClickHouse's three facts were established after this entry was first written.
 
-**A different state, not an undecided fact:** couchbase, druid and libredb have no row in
-`SQL_GRAMMARS` at all, so they fall to the whole default. Nobody has probed them.
+**A different state, not an undecided fact:** couchbase, druid and libredb declare `grammar: DEFAULT_SQL_GRAMMAR` in
+their modules (`src/lib/db/providers/document/couchbase/sql-grammar.ts`, `src/lib/db/providers/sql/druid/sql-grammar.ts`, `src/lib/db/providers/embedded/libredb-sql-grammar.ts`), so they read the whole default. Nobody has probed them.
 
 Leaving a bracket row undecided costs nothing while the dialect does not use the syntax — `[` carries
 no meaning in ordinary MySQL or Oracle SQL, and Elasticsearch refuses it outright. It costs something
@@ -134,7 +134,7 @@ MySQL's `BEGIN` alone is a transaction, as SQLite's is, so its rule is not Oracl
 ### S9. A CQL `BEGIN BATCH … APPLY BATCH` is cut at its inner `;`
 
 CQL's batch is one statement whose body holds a `;` after each inner write (`docs/providers/cassandra.md`, "`BEGIN BATCH … APPLY BATCH` is a single statement").
-The `cassandra` grammar row declares no body rule, `script: DEFAULT_SQL_GRAMMAR.script` (`src/lib/sql/grammar.ts:663`), so `splitExecutionUnits` in `src/lib/sql/statement-splitter.ts` ends a unit at every code `;`.
+The `cassandra` grammar row declares no body rule, `script: DEFAULT_SQL_GRAMMAR.script` (`src/lib/db/providers/sql/cassandra/sql-grammar.ts`), so `splitExecutionUnits` in `src/lib/sql/statement-splitter.ts` ends a unit at every code `;`.
 On this tree a two-insert batch comes back as three units: `BEGIN BATCH` with the first `INSERT`, the second `INSERT`, and `APPLY BATCH`.
 The multi-statement route runs those units one by one (`src/app/api/db/multi-query/route.ts:213`), so the first fails with "line 0:-1 mismatched input <EOF> expecting K_APPLY" and the editor reports "Executed 0/81 statements" for a batch the splitter cut into 81 units, where the batch should have run as one statement.
 Neither `blocks` value fits: `pl-sql` and `trigger-body` read `BEGIN … END`, and a CQL batch closes with `APPLY BATCH`.
@@ -269,8 +269,9 @@ one over as text of its own accord - and rounds only its decimal family. Oracle'
 five that reaches the grid already wrong, and that is D18, not a sixth thing. What the rounding
 costs the row editor is now one case rather than two: a FRACTIONAL key out of a column declared
 `NUMBER`, `decimal`, `numeric` or `money` is refused before the engine is asked, because the
-declaration says the driver rounded it - `describeFraction` and `EXACT_DECIMAL_TYPE_NAMES` in
-`src/hooks/use-inline-editing.ts`, measured 2026-09-19 on Oracle 26ai Free and SQL Server 2022 CU27.
+declaration says the driver rounded it - `describeFraction` in `src/hooks/use-inline-editing.ts` and
+`EXACT_DECIMAL_TYPE_NAMES` in `src/lib/db/sql-writing/shared.ts`, measured 2026-09-19 on Oracle 26ai
+Free and SQL Server 2022 CU27.
 The key whose digits round to a WHOLE number is still open, and that is R3.
 
 **What is new is that one sentence in the tree is false.** `docs/providers/mssql.md` §5.3 says
@@ -2038,12 +2039,12 @@ Found 2026-10-03 while scoping the Db2 provider's first version (#786).
 
 ### D147. The Db2 schema diff writes a column modification as a comment
 
-`NO_COLUMN_MODIFICATION` in `src/lib/schema-diff/migration-generator.ts` holds `db2`, because Db2 changes a column with `ALTER TABLE ... ALTER COLUMN ... SET DATA TYPE` and may leave the table REORG-pending, after which most statements on it fail with SQL0668N until a REORG.
+`DB2_MIGRATION_DDL` in `src/lib/db/providers/sql/db2/migration-ddl.ts` writes a modified column as its `NO_COLUMN_MODIFICATION` comment, because Db2 changes a column with `ALTER TABLE ... ALTER COLUMN ... SET DATA TYPE` and may leave the table REORG-pending, after which most statements on it fail with SQL0668N until a REORG.
 The #787 branch drafted a branch that emits `SET DATA TYPE`, `SET`/`DROP NOT NULL` and `SET`/`DROP DEFAULT` with a REORG advisory comment, never measured live.
 
 Found 2026-10-03 while scoping the Db2 provider's first version (#786).
 
-**Done when:** the column modification is expressed through a declared capability rather than a `dialect === "db2"` branch, each statement it emits runs on Db2 12.1 against the fixture, the REORG-pending advisory names the table, and `tests/unit/schema-diff/migration-generator.test.ts` moves `db2` out of the comment-only coverage.
+**Done when:** `DB2_MIGRATION_DDL`'s `modifyColumn` emits `SET DATA TYPE`, `SET`/`DROP NOT NULL` and `SET`/`DROP DEFAULT` with the REORG advisory, each statement it emits runs on Db2 12.1 against the fixture, the REORG-pending advisory names the table, and `tests/unit/schema-diff/migration-generator.test.ts` moves `db2` out of the comment-only coverage.
 
 ### D148. Db2 has no transactions, SANDBOX or query cancel
 
@@ -2085,22 +2086,6 @@ That trade needs the owner's decision before anyone makes it, once for both engi
 Measured 2026-10-03: no `provenance:` assignment exists in either provider, and MongoDB's `OBJECT_SAMPLE_SIZE` is 100.
 
 **Done when:** the owner has decided whether MongoDB's and Couchbase's sampled fields stay visible to models, and for each engine either its column builder sets `provenance: "sampled"` with a test that `inspect_schema` and the agent inventory hold none of them, or its provider doc (`docs/providers/mongodb.md`, `docs/providers/couchbase.md`) states that its sampled fields reach those surfaces; then this entry is deleted.
-
-### D153. The etcd connection-options test can outrun bun's five-second hook timeout
-
-The file-level `beforeAll` in `tests/unit/db/etcd/connection-options.test.ts` makes its certificates at test time with `openssl`, eight of them over a new RSA-2048 key, and passes no timeout, so bun's default of 5000 ms bounds the whole setup.
-On the `Unit & Integration Tests` run of #1246 on 2026-10-03 (12:03 UTC) the hook timed out after 5001 ms while `openssl req` made the eighth key, the one for `etcd-server`, and the file failed with no test run; later runs of the same job passed.
-The same eight keys took 14 to 88 ms each on a development machine the same day, so the setup normally ends far inside the limit, but RSA key generation searches for primes and has no fixed duration, and a busy runner stretches it further.
-
-Found on #1246, whose change does not touch etcd.
-Not fixed there: the test is etcd's, and that PR touched no other provider.
-
-Amended 2026-10-04: the same default bounds each test of `tests/unit/db/etcd/seam-guard.test.ts`, and `descriptor readers: exactly the files spec E11 names` ran out of it in one full coverage run on `main` at `6dcc67fd6` at a load average of about 40.
-That file's `beforeAll` already parses the repository once under a 60-second budget, so what ran out was the rule's own walk over the parsed files.
-The file passed alone (59 tests in 6.3 s there, and 60 tests in 3.9 s on `main` at `d994ad72f`), in every full run after that one, and in three runs beside 40 busy loops on a 20-core machine (7 to 10 s each, on `main` at `6dcc67fd6`), so it needs more load than that to fail again.
-This entry is done only when that test also passes repeated runs at the CI job's concurrency, through a timeout of its own or a cheaper walk.
-
-**Done when:** the hook carries a timeout sized for a busy runner (bun's `beforeAll` takes one as its second argument), or makes RSA keys only where a test needs RSA, and the file passes repeated runs at the CI job's concurrency.
 
 ### D154. Qdrant Cloud is not claimed
 
@@ -2555,7 +2540,7 @@ Not fixed there: that change touches the transport's `Authorization` header, not
 
 **Done when:** a `connectionString` that does not parse is refused with a `DatabaseConfigError` that names the field before any request is sent, and a test pins it.
 
-### D233. Six test files leave their temporary directories in `TMPDIR`
+### D233. Seven test files leave their temporary directories in `TMPDIR`
 
 Six test files make directories under `os.tmpdir()` with `mkdtempSync` and leave them there.
 `tests/unit/lib/agent/model-tuning.test.ts` (line 83) and `tests/unit/lib/agent/model-profiles.test.ts` (line 52) make `libredb-tuning-*`, and `tests/api/agent/config.test.ts` (line 344) makes `libredb-tuning-route-*`.
@@ -2564,11 +2549,13 @@ Six test files make directories under `os.tmpdir()` with `mkdtempSync` and leave
 Measured 2026-10-05 on `main` at `d994ad72f`, each file run alone through `bun tests/run-tests.ts` with `TMPDIR` pointed at an empty directory: they left 14, 1, 2, 7, 7 and 5 directories, in that order, 36 in all.
 One passing run of the whole suite on `main` at `6dcc67fd6`, measured 2026-10-04 the same way, left the same 36 and none from any other file.
 Nothing removes them, so every run on a developer machine or a self-hosted runner adds as many again.
+The VS Code extension's unit leg does the same: `vscode-extension/test/unit/backend-session.test.ts` makes a `libredb-backend-session-*` directory per case with `mkdtempSync` and removes none.
+On the maintainer's machine on 2026-10-21, `/tmp` held 8,368 `libredb-tuning-*`, 1,066 `libredb-tuning-route-*` and 790 `libredb-backend-session-*` directories.
 
 Found 2026-10-04 while planning the platform integration, whose local gates kept `TMPDIR` in a scratch directory.
 Not fixed there: none of the six files is part of that work.
 
-**Done when:** each of the six files removes the directories it makes, for example with `rmSync(path, { recursive: true, force: true })` in an `afterEach` or `afterAll`, and a run of `bun run test` with `TMPDIR` pointed at an empty directory leaves it empty.
+**Done when:** each of the six files removes the directories it makes, for example with `rmSync(path, { recursive: true, force: true })` in an `afterEach` or `afterAll`, and a run of `bun run test`, and of the extension's `npm run test:unit`, with `TMPDIR` pointed at an empty directory leaves it empty.
 
 ### D240. Two connection records naming one DuckDB file get two read-write handles in one process
 
@@ -2923,13 +2910,16 @@ Found 2026-10-10 by the review of the S3 provider; not reached by any shipped fl
 
 ### D276. No deadline bounds a provider's `connect()` as a whole
 
-`src/app/api/db/test-connection/route.ts` awaits `provider.connect()` with no deadline of its own; the `queryTimeout` it passes bounds each request a provider makes, not the sum of them.
+`testConnection` (`src/lib/api/test-connection.ts`), which both Test Connection and the VS Code extension's `connection/test` reach, awaits `provider.connect()` with no deadline of its own; the `queryTimeout` it passes bounds each request a provider makes, not the sum of them.
 A provider whose `connect()` makes several requests in turn (discovery, reviews, a paged list) can therefore hold Test Connection for many query timeouts, and a provider that loops on what a server answers holds it until the loop ends.
 The Kubernetes provider bounds its own walks (one deadline per walk and a count of empty pages), and a `disconnect()` closes a session still being opened, but no rule says every provider must.
+Measured 2026-10-21 for the VS Code extension's backend, against a listener on 127.0.0.1 that accepts TCP and never answers, with four engines tested through `testConnection` at once: MongoDB settled at 10,232 ms and MySQL at 10,249 ms on deadlines of their own, while PostgreSQL ("Connection terminated due to connection timeout") and SQL Server ("Failed to connect to 127.0.0.1:<port> in 60000ms") both settled at 60,242 ms, on the 60 s `acquireTimeout` their pools are built with rather than the 10 s `queryTimeout` the test passes.
+A `disconnect()` during that pending connect frees nothing sooner: PostgreSQL's `pool.end()` waited for the pending client until 60,153 ms, and SQL Server's `pool.close()` returned at once while tedious held its socket until its own 60 s connect timeout.
+The extension's `connection/test` answers `CONNECTION_ERROR` after 11 s instead (`TEST_DEADLINE_MS` in `vscode-extension/src/backend/handlers.ts`) and has `testConnection` close the provider when its connect settles, so a PostgreSQL or SQL Server server that takes between 11 and 60 seconds to accept a connection fails that channel's test and passes the web route's.
 
 Found 2026-10-11 by the review of the Kubernetes provider.
 
-**Done when:** the Test Connection route, or `BaseDatabaseProvider`, gives `connect()` one deadline derived from the query timeout, a connect past it is answered with a timeout sentence and its provider disconnected, and a test holds a connect open and expects the sentence and the disconnect.
+**Done when:** the Test Connection route, or `BaseDatabaseProvider`, gives `connect()` one deadline derived from the query timeout, a connect past it is answered with a timeout sentence and its provider disconnected, a test holds a connect open and expects the sentence and the disconnect, and the extension's own `TEST_DEADLINE_MS` race is removed in favour of it.
 
 ### D277. Kubernetes watch and logs are bounded snapshots, never a live stream
 
@@ -3041,7 +3031,7 @@ Found 2026-10-10 while planning the Kubernetes provider.
 The file-level `beforeAll` in `tests/unit/lib/agent/composed-sql.test.ts` loads the DuckDB native addon, creates a database file and its fixture tables, and passes no timeout, so bun's default of 5000 ms bounds the whole setup.
 In one full coverage run on 2026-10-11, on the Kubernetes provider's branch, which does not touch that file, the hook timed out and the file failed with no test run.
 The file passed alone and alone with coverage three times that day, and 16 parallel coverage runs of it passed the same day, so it needs more load than that to fail again.
-It is the same shape as D153.
+It is the same shape as the etcd `connection-options.test.ts` hook, which #1855 gave a 60-second budget.
 
 **Done when:** the hook carries a timeout sized for a busy runner (bun's `beforeAll` takes one as its second argument), and the file passes repeated runs at the CI job's concurrency.
 
@@ -3241,11 +3231,11 @@ Found 2026-10-12 while designing the RabbitMQ provider.
 
 ### D315. The API replaces every provider's timeout sentence with one shared sentence
 
-`createErrorResponse` in `src/lib/api/errors.ts` answers every `TimeoutError` with "Query timed out. Please try a simpler query or increase timeout.", so a provider's phase-specific sentence, such as RabbitMQ's "No answer from {host}:{port} within {n} s.", never reaches the user; 19 provider files write such sentences today.
+`createErrorResponse` in `src/lib/api/errors.ts` answers every `TimeoutError` through `databaseErrorBody` in `src/lib/api/error-body.ts`, whose `TIMEOUT_SENTENCE` is "Query timed out. Please try a simpler query or increase timeout.", so a provider's phase-specific sentence, such as RabbitMQ's "No answer from {host}:{port} within {n} s.", never reaches the user; 19 provider files write such sentences today.
 
 Found 2026-10-12 while designing the RabbitMQ provider.
 
-**Done when:** the route passes a provider's own `TimeoutError` message through for every provider, in a shared PR with a route test per class.
+**Done when:** `databaseErrorBody` passes a provider's own `TimeoutError` message through for every provider, in a shared PR with a route test per class.
 
 ### D316. The package does not export the object source part predicates
 
@@ -3297,7 +3287,7 @@ Found 2026-10-12 while designing the Snowflake provider.
 
 ### D321. Snowflake's grammar row has no Scripting block member
 
-The Snowflake row in `src/lib/sql/grammar.ts` reads `script.blocks` as `"none"`, so a bare `BEGIN ... END` block splits at its first `;` and Snowflake refuses the fragment; the doc tells the user to wrap it in `EXECUTE IMMEDIATE $$ ... $$`.
+The Snowflake grammar in `src/lib/db/providers/sql/snowflake/sql-grammar.ts` reads `script.blocks` as `"none"`, so a bare `BEGIN ... END` block splits at its first `;` and Snowflake refuses the fragment; the doc tells the user to wrap it in `EXECUTE IMMEDIATE $$ ... $$`.
 The trial capture measured that the SQL API takes a bare block (M58).
 
 Found 2026-10-12 while designing the Snowflake provider.
@@ -3552,8 +3542,8 @@ Found 2026-10-13 while reviewing the Apache Spark provider (#1759); pre-existing
 
 ### D350. The schema-diff migration says BigQuery has no foreign-key constraint
 
-`NO_FOREIGN_KEYS` in `src/lib/schema-diff/migration-generator.ts` names BigQuery, so an added or dropped foreign key is declined with `-- BigQuery: Cannot add a foreign key. The engine has no foreign-key constraint.` (and the `Cannot drop` twin).
-BigQuery does have foreign keys, declared `NOT ENFORCED`, as it has primary keys, and the same file's `NO_PRIMARY_KEY_CONSTRAINT` row for BigQuery already says so for the primary key: "BigQuery accepts a primary key only as PRIMARY KEY (...) NOT ENFORCED."
+`BIGQUERY_MIGRATION_DDL` in `src/lib/db/providers/sql/bigquery/migration-ddl.ts` declines a foreign key with the shared `NO_FOREIGN_KEY_CONSTRAINT`, so an added or dropped foreign key is declined with `-- BigQuery: Cannot add a foreign key. The engine has no foreign-key constraint.` (and the `Cannot drop` twin).
+BigQuery does have foreign keys, declared `NOT ENFORCED`, as it has primary keys, and the same module's `NO_PRIMARY_KEY_CONSTRAINT` already says so for the primary key: "BigQuery accepts a primary key only as PRIMARY KEY (...) NOT ENFORCED."
 The decline itself may stay; its reason is false.
 
 Found 2026-10-13 while reviewing the Apache Spark provider (#1759); pre-existing.
@@ -3836,15 +3826,161 @@ Found 2026-10-17 while verifying an external review of #1785.
 
 **Done when:** concurrent requests for a stale entry share one retirement and one replacement, for example by taking the entry out of the cache before awaiting its disconnect, no provider is left connected outside the cache, and a test with a disconnect held open and two requests shows one replacement provider and the old one closed.
 
-### D376. The schema-diff migration generator keeps its per-engine rules in tables keyed by type id
+### D377. Four test files do seconds of work inside bun's default five-second test timeout
 
-`src/lib/schema-diff/migration-generator.ts` decides what it can write per engine from tables keyed by `DatabaseType`: `NO_COLUMN_MODIFICATION`, `NO_DROP_IF_EXISTS`, `NO_TRANSACTION_WRAPPER`, `NO_TABLE_DDL`, `NO_PORTABLE_INDEX_DDL`, `NO_FOREIGN_KEYS`, `NO_PRIMARY_KEY_CONSTRAINT` and `FOREIGN_KEY_ONLY_IN_CREATE_TABLE`, plus `dialect === "<id>"` branches in the column and `ALTER TABLE` writers.
-A new provider gets the generator's default (PostgreSQL-shaped) DDL until someone adds it to the right tables, which is the defect class #648 was for the Create Table form, and the engine's facts live in the generator rather than beside its provider.
-#1822 moved the Create Table form's grammar onto the provider as `createTable` and left these tables alone, because they are a separate surface with their own scope; D147 and D350 are single-engine entries inside it.
+Each test below does its expensive work in the test body and passes no timeout of its own, so bun's default of 5000 ms bounds it.
+Each ran out of that default under load on a 20-core development machine during the engine contract series (#1845 to #1850), and each passes alone in under 2 s.
 
-Found 2026-10-18 while designing #1822.
+- `tests/unit/db/snowflake/key-runtimes.test.ts`, `in this Bun process > the passphrase codes, the PBKDF2 PRFs and scrypt`, makes an RSA key and decrypts every passphrase form with PBKDF2 and scrypt in the body; the file's `beforeAll` hooks carry 60-second budgets and this test does not.
+  5114 ms in a `test:coverage` run on the SQL grammar branch of #1847 on 2026-10-19, while other worktrees ran tests too.
+- `tests/security/duckdb-posture-callsites.test.ts`, `the scan found the real call sites, so it is not vacuously green`, parses every file under `src/` with the TypeScript compiler a second time to count the factory calls, after the module scope parsed them once for `UNPOSTURED`.
+  6345 ms in a `test:coverage` run of the connection form branch of #1849 at `3dc61662d` on 2026-10-19.
+- `tests/unit/db/create-table-spec-census.test.ts`, `exactly the eight ids with a measured grammar declare one`, builds every provider through `createDatabaseProvider`, which imports every provider module.
+  7268 ms in the same run as the DuckDB test.
+- `tests/unit/db/mongodb/seam-guard.test.ts` ran a test out of the default under 20 parallel jobs on the SQL writing branch of #1850 on 2026-10-19; which test was not recorded.
+  Its slowest without a timeout of its own is `the real sources pass all three rules`, an import-graph walk from every file under `src/lib/db/operations` and `src/lib/agent`, read from disk in the body.
 
-**Done when:** each rule the generator reads is a declaration on the provider's capabilities, the generator holds no table or branch keyed by a type id, and `tests/unit/schema-diff/migration-dialects.test.ts` still pins every engine's emitted text unchanged.
+Re-measured alone on 2026-10-20 on `main` at `6e611bf73`, three runs each through bun's JUnit reporter: 0.88 to 1.13 s, 0.52 to 0.53 s, 0.39 to 0.40 s and 0.38 to 0.39 s, in the order above.
+The etcd `seam-guard.test.ts` and `connection-options.test.ts` were the same class; #1855 made the one's slowest rule cheaper and gave the other's hook a budget.
+
+Found on #1847, #1849 and #1850, none of which touches these tests.
+
+**Done when:** each test above either carries a timeout of its own sized from a measured busy-runner time, or does its expensive work once in a `beforeAll` with a budget, and each file passes repeated runs at the CI job's concurrency.
+
+### D378. Two declarations answer how an engine quotes a name, and four engines get two different answers
+
+`SqlWritingSpec.quoteIdentifier`, declared beside each provider and read through `sqlWritingFor` (`src/lib/db/sql-writing/index.ts`), answers for all 42 type-ids; `quoteIdentifier` in `src/lib/sql/identifier.ts` reads it for inline editing, result export, the pivot table, table profiles, migration DDL and Databend's objects.
+`quoteIdentifier` in `src/lib/query-generators.ts` answers from the capabilities instead: `ProviderCapabilities.identifierQuoting` through `DECLARED_QUOTING` where an engine declares one (BigQuery and OpenSearch `backtick`, Db2, DuckDB, Elasticsearch and Trino `double`, InfluxDB 3 and Snowflake `double-always`, Databend and Spark `backtick-always`), the query language for the JSON, Cypher and InfluxQL engines, and the default port for the rest.
+Probed on 2026-10-20 on `main` at `6e611bf73` with eight names through both answers for every type-id, comparing the spec with the generators' `always` form, since the spec always quotes:
+
+- BigQuery: the spec writes a backtick inside a name as a backslash and a backtick, the generators double it, and the spec module says a doubled backtick ends the name in GoogleSQL.
+- Couchbase: double quotes in the spec, backticks in the generators.
+- Neo4j: double quotes in the spec, backticks in the generators.
+- InfluxDB (InfluxQL): a double quote inside a name is doubled in the spec and backslash-escaped in the generators.
+
+Every other engine outside the JSON languages gets the same answer from both, and the JSON-language engines' specs answer a double-quoted name where the generators answer it bare.
+Whether a caller of the spec reaches the Couchbase, Neo4j or InfluxDB row with a name was not traced.
+D329's upper-fold member belongs in whichever home this settles.
+
+Found on #1850, which moved the spec's quoting beside each provider and left the capability where it was; which of the two the query generators should read is a behaviour question, so that change did not merge them.
+
+**Done when:** one of the two is the only home of the identifier quoting fact and the other reads it, each of the four disagreements above is settled by a measurement on its engine, and a test holds the result for every type-id.
+
+### D379. The connect-timeout test's waited-seconds case assumes its own 400 ms sleep ends on time
+
+`the seconds are the wait this request made, never a limit it was not given` in `tests/unit/db/http/node-transport-connect-timeout.test.ts` makes a 700 ms deadline, sleeps 400 ms with `setTimeout`, then sends a request to a host whose connect never completes, and expects the failure to name a wait of 0.2 to 0.4 seconds.
+The transport counts that wait from the request's own start (`queuedAt` in `createNodeTransport`, `src/lib/db/http/node-transport.ts`), and `waitedSeconds` in `src/lib/db/errors.ts` names 0.2 only from 150 ms up, so the test holds only while the sleep ends no more than 150 ms late.
+On the `Cross-platform Tests (macos-latest)` job of #1818, attempt 1 of run 39288327751 on 2026-10-19, it failed at line 108 with `expect(received).toBeGreaterThanOrEqual(expected)`, "Expected: >= 0.2", "Received: 0.1", after 704 ms, so the request started with under 150 ms of the deadline left; attempt 2 passed.
+The same attempt also ran the etcd `descriptor readers` test of `tests/unit/db/etcd/seam-guard.test.ts` out of the default timeout (6028 ms), so the runner was busy, and nothing points at the transport.
+The file passed alone on 2026-10-20 on `main` at `6e611bf73` (12 tests, 3.3 s).
+
+Found on #1818, whose change does not touch the HTTP transport.
+
+**Done when:** the test bounds the named wait by the time it measured itself between sending the request and the deadline, not by the sleep's nominal length, and the file passes repeated runs at the CI job's concurrency.
+
+### D380. An inline connection is not held to `SEED_ONLY_FIELDS`
+
+`SEED_ONLY_FIELDS` in `src/lib/db/connection-fields.ts` names the fields only a seed file may set, but `resolveConnection` in `src/lib/seed/resolve-connection.ts` does not check an inline connection against it.
+For example, OPC UA's `clientCertificatePath` and `clientPrivateKeyPath` are seed-only, and the provider reads them from any config it is given, so a request that carries them inline reaches the provider with them.
+
+Found 2026-10-20 during the VS Code extension work, and deferred because it does not block that work.
+
+**Done when:** `resolveConnection` refuses an inline connection that carries a seed-only field with `400`, with a route test.
+
+### D381. A broken seed file's path reaches the answer to a request by seed id
+
+When the seed file does not load, a request by seed id answers `500` with the seed loader's message, and that message names the seed file's path. Every role gets the same answer.
+
+Found 2026-10-20 during the VS Code extension work, and deferred because it does not block that work.
+
+**Done when:** the answer is a fixed sentence that names no path, and the loader's message, path included, stays in the server log.
+
+### D382. The LibreDB library's stale-lock check blocks on a FIFO
+
+`isStaleLock` in the `@libredb/libredb` library's node-fs adapter reads the lock path with `readFileSync`, which blocks when that path is a FIFO.
+Studio guards against it from outside: it refuses a non-regular database path and the files beside it before the library opens them (`src/lib/db/utils/regular-file.ts`).
+
+Found 2026-10-20 during the VS Code extension work, and deferred because it does not block that work.
+
+**Done when:** the library checks the lock file's type itself before reading it, so the guard does not rest on every caller.
+
+### D383. SQLite's WAL check lets a read error escape as a raw `Error`
+
+`isWalModeFile`, called from the `connect` catch in `src/lib/db/providers/sql/sqlite.ts`, reads the database file's header. A read error on a regular file escapes it as a raw `Error` rather than a `ConnectionError`.
+
+Found 2026-10-20 during the VS Code extension work, and deferred because it does not block that work.
+
+**Done when:** that read error reaches the caller as a `ConnectionError`, with a test.
+
+### D384. `SQLBaseProvider.buildLimitClause` has no caller
+
+`buildLimitClause` in `src/lib/db/providers/sql/sql-base.ts` is not called from anywhere.
+
+Found 2026-10-20 during the VS Code extension work.
+
+**Done when:** the method is removed.
+
+### D385. An etcd certificate test timed out on Windows
+
+`step 4: a certificate whose Common Name etcd does not know is named` in `tests/integration/db/etcd-provider.test.ts` timed out at 60 s on the `windows-latest` job of #1875 on 2026-10-20.
+Whether the cause is the runner or the test was not measured.
+
+**Done when:** the cause is known and the test passes repeated runs on the `windows-latest` job.
+
+### D386. Two first requests for one connection at once each open a provider, and the cache keeps only the second
+
+`getOrCreateProvider` (`src/lib/db/factory.ts`) looks its key up in `providerCache`, then awaits `createDatabaseProvider` and `connectPhase(() => provider.connect())`, and only then calls `providerCache.set`, with no in-flight entry for the key.
+Two requests that miss the cache at once therefore each build and connect a provider, and the later `set` replaces the earlier entry, whose provider no `removeProvider`, idle sweep or `clearProviderCache` can reach any more: its pool and its server sessions stay open until the process exits.
+Measured 2026-10-21 on `postgres:18` (1 CPU, `512m`) through the VS Code extension's backend child as its first review found it: two concurrent `connection/open` requests with the same params logged `[DB] Creating postgres provider` twice and left 2 client sessions in `pg_stat_activity`, and 1 of them stayed after `connection/close` and after `shutdown` had answered `null`.
+The child now runs one `connection/open` or `connection/close` of an id at a time and the extension shares one reopen per connection, generation and profile revision, starting a reopen at a newer revision only once the one under way has settled, so that channel no longer sends two at once: the same probe then counts 1 provider, 1 session, and none after the close.
+Nothing in `getOrCreateProvider` keeps the web routes from doing the same when two requests for one connection both miss the cache, after the idle sweep closed its provider, say; that path was not measured.
+
+Found by the review of the VS Code extension's backend (PR 5).
+
+**Done when:** `getOrCreateProvider` keeps one in-flight promise per cache key that concurrent callers share and a failed connect removes, and a test sends two concurrent first calls for one key and expects one `createDatabaseProvider`, one `connect()` and one cached provider.
+
+### D387. A wrong password answers `CONNECTION_ERROR`, not `AUTH_ERROR`, on the four v0 engines
+
+The `connect` of the PostgreSQL, MySQL, SQL Server and MongoDB providers raises `ConnectionError` for a refused login, so the db routes and the VS Code extension's backend both answer 503 `CONNECTION_ERROR` for a wrong password, the same answer as an unreachable server.
+Measured 2026-10-21 by the VS Code extension's wrong-password walk against all four engines' containers, on both backend runtimes.
+The extension therefore offers Enter Credentials on `CONNECTION_ERROR` too (`CREDENTIALS_OFFER_CODES` in `vscode-extension/src/host/backend-client.ts`), still decided by `data.code` alone; the offer is harmless when the server is unreachable.
+
+Found 2026-10-21 during the VS Code extension work (PR 8), and deferred because changing the provider layer's mapping is not that PR's to do.
+
+**Done when:** each of the four providers maps its login refusal (PostgreSQL SQLSTATE `28P01` and `28000`, MySQL `1045`, SQL Server `18456`, MongoDB code `18`) to `AuthenticationError`, after checking how the web client treats a 401 from the db routes; a test per engine pins `AUTH_ERROR` for a wrong password; and the extension's offer narrows back to `AUTH_ERROR`.
+
+### D388. Select Rows writes a SQL Server reserved word bare, which the server refuses
+
+`quoteIdentifier` in `src/lib/query-generators.ts` brackets a SQL Server name only when it holds a special character, so a table named `order` gives `SELECT * FROM master.dbo.order;`, and SQL Server answers "Incorrect syntax near the keyword 'order'.".
+The web's tree click and the VS Code extension's Select Rows both build that text through `generateTableQuery`.
+PostgreSQL and MySQL accept a reserved word after a qualifier, so `public.order` and `libredb_it.order` run.
+Measured 2026-10-21 by the VS Code extension's integration leg against its SQL Server container.
+
+Found 2026-10-21 during the VS Code extension work (PR 11), and deferred because it changes the SQL generated for SQL Server on the web too.
+
+**Done when:** `quoteIdentifier` brackets a T-SQL reserved word, with the word list declared where the repository keeps per-engine SQL facts rather than as a new type-id branch, and the skipped case "Select Rows runs on mssql's table named order" in `vscode-extension/test/integration/tree-editor.test.ts` runs again.
+
+### D389. A failed query reaches no client with the driver's detail
+
+`mapDatabaseError` in `src/lib/db/errors.ts` builds `QueryError` from the driver's message and position only, so the detail a driver gives is dropped before any route answers.
+PostgreSQL's detail for a unique violation, "Key (id)=(1) already exists.", reaches neither the web routes' error body nor the VS Code extension.
+Measured 2026-10-21 by the VS Code extension's integration leg against its PostgreSQL container: the unique violation answered only "duplicate key value violates unique constraint" and the constraint name.
+The extension's Results view renders a detail when one arrives, so its tests show one through `SYNTHETIC_RUN_FAILED_WITH_DETAIL` in `vscode-extension/test/fixtures/results-sequences.ts`, which the comparison with live runs leaves out by name.
+
+Found 2026-10-21 during the VS Code extension work (PR 13), and deferred because it changes the error body of the web's db routes.
+
+**Done when:** `mapDatabaseError` carries the driver's detail into `QueryError` where the driver gives one, a test per SQL engine pins it, and the extension's synthetic detail case is replaced by a recorded live one.
+
+### D390. A MongoDB run has no deadline, and the VS Code extension offers it no Cancel
+
+The MongoDB provider's `queryTimeout` bounds only its connect, the race between the client's connect and a deadline in `connect` of `src/lib/db/providers/document/mongodb/index.ts`.
+No `maxTimeMS` is set on the query path, so a MongoDB statement runs as long as the server lets it, in the db routes and in the VS Code extension's backend alike; only the agent's reads set one.
+Once a MongoDB statement is sent, the extension offers no Cancel either, because `supportsQueryCancel` is false for MongoDB.
+Measured 2026-10-21 by the VS Code extension's e2e leg (PR 14): a find with `$where: 'sleep(3000) || true'` held the run for 25 to 26 s, with no Cancel offered.
+
+Found 2026-10-21 during the VS Code extension work (PR 14), and deferred because it changes the MongoDB provider's query path for the web too.
+
+**Done when:** the provider passes the connection's `queryTimeout` as `maxTimeMS` on every query operation, a test per operation pins it, and the extension's MongoDB run ends with `TIMEOUT_ERROR` at that bound.
 
 ## Value interpolation
 
@@ -3909,9 +4045,10 @@ the LIMIT case in `tests/unit/sql/update-target.test.ts`, with the engine each s
 
 #969 closed the fractional half of this: a number read out of a column the engine declares `NUMBER`,
 `decimal`, `numeric` or `money` is refused before the engine is asked, because the declaration says
-the driver rounded it - `describeFraction` and `EXACT_DECIMAL_TYPE_NAMES` in
-`src/hooks/use-inline-editing.ts`. Measured 2026-09-19 on Oracle AI Database 26ai Free 23.26.3.0.0
-and SQL Server 2022 CU27: the `NUMBER(20,4)` pair that used to write to `the-neighbour` is refused
+the driver rounded it - `describeFraction` in `src/hooks/use-inline-editing.ts` and
+`EXACT_DECIMAL_TYPE_NAMES` in `src/lib/db/sql-writing/shared.ts`. Measured 2026-09-19 on Oracle AI
+Database 26ai Free 23.26.3.0.0 and SQL Server 2022 CU27: the `NUMBER(20,4)` pair that used to write
+to `the-neighbour` is refused
 with nothing asked of the engine, while `BINARY_DOUBLE`, a whole `NUMBER(10)` key, a SQLite
 `DECIMAL` (that engine has no exact decimal - it stores a double) and the STRING a `numeric` takes
 over `pg`, mysql2 and DuckDB all still write.
@@ -3937,16 +4074,6 @@ writes correctly and must keep doing so.
 point on the engines whose drivers round - the scale beside the word, or a second field that says
 it - a whole key is refused only where it can, and a test carries the Oracle and SQL Server pairs
 above beside the fractional ones #969 added.
-
-### R4. Three of the inline editor's value rules are tables keyed by type id
-
-`NO_INSTANT_TYPE_DIALECTS`, `FLOAT64_ONLY_DIALECTS` and `NO_EXACT_DECIMAL_DIALECTS` in `src/hooks/use-inline-editing.ts` are `ReadonlySet<DatabaseConnection["type"]>` tables holding `sqlite` and `libsql`: an engine with no instant type, an engine where `REAL` and `FLOAT` are 64-bit, and an engine with no exact decimal.
-Each is a fact about the engine kept in a UI hook, so a new engine that shares one of them (or a third SQLite-family id) is wrong until someone edits the hook.
-`tests/unit/components/no-engine-tables-in-ui.test.ts` (#1822) allows exactly these three by file and constant name, and fails when a listed one no longer exists.
-
-Found 2026-10-18 while designing #1822.
-
-**Done when:** the three facts are declared on the provider's capabilities and read from there, the measurements in their docblocks move to `docs/providers/sqlite.md` and `docs/providers/libsql.md`, the inline-editing tests pass unchanged, and the guard's allowlist is empty.
 
 ---
 
@@ -4007,7 +4134,7 @@ likely to meet.
 ### X12. A declared type the export cannot map still reaches every target verbatim
 
 `completeDeclaredType` re-spells a bare declared type the target dialect does not stand behind, and it
-can only re-spell a name that is in `BARE_TYPE_FAMILY` - the four families whose parameters the wire
+can only re-spell a name that is in `BARE_TYPE_FAMILY` (`src/lib/db/sql-writing/shared.ts`) - the four families whose parameters the wire
 drops. Everything else goes through as the declaring engine wrote it, which is fine for a target that
 happens to know the word and fatal for one that does not. Measured 2026-08-24, a Postgres result under
 each target after the stands-alone work landed:
@@ -4234,7 +4361,7 @@ first 10MB will be available unless configured.`
 
 So one condition gets two wrong answers. The five existing object routes that go through
 `handleObjectRequest`'s body-parse arm answer HTTP 400 `{ "error": "Empty request body" }` for a body that
-was neither empty nor malformed, and `POST /api/db/query` answers HTTP 500 with a JSON parser's sentence.
+was neither empty nor malformed, and `POST /api/db/query` answers HTTP 400 `{ "error": "Invalid request body" }`.
 Neither tells the caller their request was too large.
 
 The two routes added by #789 Phase 3 do NOT inherit this: `readObjectRouteBody` reads `content-length` and
@@ -4609,18 +4736,6 @@ object tree. The right-hand slot reads `NULLABLE`.
 driven off what the provider publishes rather than off the shape of the string and without branching
 on a database type id in a component, and the tree slot and the flat explorer's column list take the
 same answer from one place.
-
-### U36. The connection dialog picks field labels by testing the type id, beside a declaration that does the same job
-
-`src/components/ConnectionModal.tsx` tests the type id in five booleans.
-Four of them (`isCouchbase`, `isTrino`, `isCassandra`, `isLibSQL`) choose `passwordFieldLabel`, `databaseFieldLabel`, `databaseFieldPlaceholder`, `connectionUriPlaceholder` and four hint paragraphs; `isMongoDB` and `isCassandra` also gate the `authSource` and `localDataCenter` field blocks, which `takesConnectionField` could decide because `connectionFields` in `src/lib/db-ui-config.ts` declares both.
-Since the Prometheus provider (#1085, section 3.3), `DatabaseUIConfig` carries optional `fieldLabels` and `fieldHints`, read through `connectionFieldLabel` and `connectionFieldHint` before those fallbacks, and only the `prometheus` entry declares them.
-So the same fact now has two mechanisms, and a sixth engine that follows the older one extends a chain the component should not own.
-
-Found 2026-09-23 while adding the declaration for #1085.
-Not fixed in #1085, on purpose: moving the older engines onto the declaration changes what five dialogs render, and each has its own E2E or component assertions that would move with it.
-
-**Done when:** no label, placeholder or hint in the dialog is chosen by a type-id boolean, each comes from `DatabaseUIConfig`, and the existing assertions for Couchbase, Trino, Cassandra, MongoDB and libSQL pass unchanged.
 
 ### U37. Monaco's bundled `redis` language shadows the Redis tokenizer this repository registers
 
@@ -5509,9 +5624,9 @@ Found 2026-10-12 in a browser pass of the RabbitMQ provider, reproduced with scr
 ### U124. Firestore's Database ID box carries a sentence about Create Table and SHOW SCHEMAS
 
 The connection dialog draws one fixed sentence under the schema box for every engine that takes the field (`src/components/ConnectionModal.tsx:1063`, `:1080-1083`): "Used for unqualified table names in queries and Create Table. Leave empty to qualify names yourself. Run SHOW SCHEMAS to list the catalog's schemas."
-It was written for Trino, and the box is also Firestore's "Database ID" (`src/lib/db-ui-config.ts:987-992`), where the provider declares no `createTable` (`src/lib/db/providers/document/firestore/index.ts`) and there is no `SHOW SCHEMAS`.
+It was written for Trino, and the box is also Firestore's "Database ID" (the `firestore` entry of `CONNECTION_FORM` in `src/lib/db/connection-form.ts`), where the provider declares no `createTable` (`src/lib/db/providers/document/firestore/index.ts`) and there is no `SHOW SCHEMAS`.
 So a Firestore user reads, under the engine's own hint ("Empty for the (default) database"), advice about table names and a statement the engine does not have.
-BigQuery's "Default dataset" box (`src/lib/db-ui-config.ts:859`) takes the same sentence, and whether it holds there is not measured.
+BigQuery's "Default dataset" box (the `bigquery` entry of `CONNECTION_FORM` in `src/lib/db/connection-form.ts`) takes the same sentence, and whether it holds there is not measured.
 The sentence is not a declared field, so an engine entry cannot replace or drop it the way `fieldHints` and `fieldPlaceholders` do.
 
 Found 2026-10-12 while reading the connection dialog for a new provider.
@@ -5667,7 +5782,7 @@ A window narrowed by a vertical scrollbar (1265 wide) wraps more of the hero and
 ### U140. The connection dialog's field census leaves six shipped types out
 
 The docblock of the "declared connection-field copy (#1085)" block in `tests/components/ConnectionModal.test.tsx` says its `SHIPPED` table holds "every shipped type", but the table has no row for BigQuery, Snowflake, Neo4j, MQTT, Firestore or OPC UA, six of the thirty-seven in `SHIPPED_DATABASE_TYPES` (counted 2026-10-14 on `main` at 59cdfd09b, where #1759 added Apache Spark's row).
-The same docblock calls Prometheus and Kafka "the shipped entries that declare either" label or hint, while `src/lib/db-ui-config.ts` now declares field copy for libSQL, Db2, etcd, Neo4j, Milvus, Qdrant, InfluxDB and InfluxDB 3 as well.
+The same docblock calls Prometheus and Kafka "the shipped entries that declare either" label or hint, while `src/lib/db/connection-form.ts` now declares field copy for libSQL, Db2, etcd, Neo4j, Milvus, Qdrant, InfluxDB and InfluxDB 3 as well.
 So a change to the labels or hints of those six types reaches no census row.
 
 Found 2026-10-13 while building the Apache Spark provider (#1759); pre-existing.
@@ -5700,7 +5815,7 @@ Found 2026-10-13 while building the Apache Spark provider (#1759); a known upcom
 
 When a cell has no literal in the target dialect, the SQL INSERT export writes `-- Row N skipped: column X holds <held>, which <dialect> has no literal for.` (`skippedRow` in `src/lib/export/result-export.ts`).
 `<dialect>` is the `DatabaseType` id, so the file reads "which snowflake has no literal for", "which trino ...", "which cassandra ...", where every other sentence a user reads names the engine by its display label ("Snowflake", "Trino", "Apache Cassandra").
-On `main` no held phrase (`UnwritableValue` in `src/lib/export/typed-literals.ts`) ends in a "which" clause of its own, so the line does not yet read "which" twice; a held phrase that adds one would.
+On `main` no held phrase (`UnwritableValue` in `src/lib/db/sql-writing/export-shared.ts`) ends in a "which" clause of its own, so the line does not yet read "which" twice; a held phrase that adds one would.
 
 Found 2026-10-13 while building the Apache Spark provider (#1759); pre-existing.
 
@@ -5708,7 +5823,7 @@ Found 2026-10-13 while building the Apache Spark provider (#1759); pre-existing.
 
 ### U144. Nothing ties the SQL export's Spark literal shapes to the text forms Spark's decoder writes
 
-`SPARK_TEMPORAL` and `SPARK_ANSI_INTERVAL` in `src/lib/export/typed-literals.ts` accept a Spark temporal or ANSI interval cell only in the text form that `dateText`, `timestampText`, `timeText`, `yearMonthText` and `dayTimeText` in `src/lib/db/providers/sql/spark/temporal.ts` write, and refuse any other as `UnwritableValue`, which skips the row.
+`SPARK_TEMPORAL` and `SPARK_ANSI_INTERVAL` in `src/lib/db/providers/sql/spark/typed-literals.ts` accept a Spark temporal or ANSI interval cell only in the text form that `dateText`, `timestampText`, `timeText`, `yearMonthText` and `dayTimeText` in `src/lib/db/providers/sql/spark/temporal.ts` write, and refuse any other as `UnwritableValue`, which skips the row.
 `tests/unit/lib/export/typed-literals.test.ts` imports only `@/lib/export/typed-literals` and uses hand-typed strings, and no test under `tests/` feeds the decoder's output to `typedLiteral`.
 So a change to one form in `temporal.ts` (for example `Z` for `+00:00`) would make the SQL INSERT export skip every row holding such a cell, with every test green.
 The two agree today: the review passed decoder output for years 0, -1 and +10000, a zoned timestamp at year 0, `timeText` at 23:59:59.999999999 and negative intervals through `typedLiteral(..., "spark")`, and each came back as a literal.
@@ -5738,6 +5853,29 @@ D145 measured the same class on Db2, where `TEXT` is SQL0204N and `NUMERIC` is `
 Found 2026-10-18 while designing #1822.
 
 **Done when:** each of the eight engines that declare a `createTable` has a live round trip of non-ASCII text, a fractional number, a 64-bit integer and a boolean column through an import into a new table, and the import reads its type spelling from a provider declaration rather than one portable list.
+
+### U147. The ClickHouse connection-URI box shows a MongoDB example
+
+The `clickhouse` entry of `CONNECTION_FORM` in `src/lib/db/connection-form.ts` declares `fieldPlaceholders.connectionString` as `mongodb://localhost:27017/mydb  or  mongodb+srv://...`, so a ClickHouse dialog switched to its connection string mode offers a MongoDB URI as the example.
+That is the dialog's old fall-through for every toggle engine that was not Couchbase or libSQL, moved onto the declaration unchanged so the engine contract refactor changed no rendered text; `tests/unit/db/connection-form/golden/clickhouse.txt` and `tests/unit/lib/db-ui-config-placement.test.ts` pin it.
+The schemes the parser reads for ClickHouse are `clickhouse://`, `http://` and `https://`.
+
+Found 2026-10-19 by the connection form golden capture of the engine contract refactor; pre-existing.
+
+**Done when:** the ClickHouse connection string placeholder names a URL the parser reads as ClickHouse, the golden file and the placement test are regenerated and updated with it, and the dialog's E2E or component assertions for ClickHouse still pass.
+
+### U148. The connection form golden holds the whole dialog for each engine, so a new engine rewrites all 42 files
+
+`tests/unit/db/connection-form/golden.test.tsx` renders `ConnectionModal` for each type-id (`renderFormGolden` in `tests/unit/db/connection-form/fixtures.tsx`) and holds every line of the dialog to `golden/<type-id>.txt`, the engine picker and the shared chrome included.
+Measured on 2026-10-20 on `main` at `6e611bf73`: the 42 files hold 3930 lines, and 2016 of them are the picker's 42 buttons, once per dialog state a file captures (36 files once, 6 twice).
+Another 23 lines are the same in all 42 files: the description, Paste URL, the name, query timeout and object-scan fields, the five environment buttons, Cancel, Test Connection, Establish Connection and the section markers.
+What is the engine's own runs from 6 lines (DuckDB, LibreDB) to 51 (SQL Server, Oracle), so a new engine's picker button changes every file for a line none of them is about.
+Engine counts are written as the literal 42 in nine tests: `connection-form/isolation.test.ts`, `connection-string/isolation.test.ts`, `connection-string/docs.test.ts`, `execution-ui/isolation.test.ts` and `execution-ui/docs.test.ts` (all five added by #1849), `object-edit-expectation.test.ts` and `maintenance-surface-census.test.ts` under `tests/unit/db/`, and `object-source-declarations.test.ts` and `object-column-declarations.test.ts` under `tests/isolated/`.
+The maintenance census test's own title reads "11 of 4041 type-ids".
+
+Found on #1849, whose golden capture this is.
+
+**Done when:** each golden holds only the engine's own fields, with the picker and the shared chrome pinned once elsewhere, and each count above derives from the type-id list (`EXTERNAL_DATABASE_TYPES` in `src/lib/db/compatibility.ts` with LibreDB) instead of a literal.
 
 ## Dependencies
 
@@ -6121,14 +6259,14 @@ Not fixed there: that work runs the scan with those two mounts and counts `0 com
 
 **Done when:** `CONTRIBUTING.md` gives a command that scans the branch from a git worktree as well as from a clone, for example by mounting the worktree and the main checkout's `.git` at their own absolute paths, and says that a scan reporting `0 commits scanned.` checked nothing.
 
-### DOC19. CLAUDE.md names a mongodb branch that moved and a Redis method that no longer exists
+### DOC19. CLAUDE.md names a Redis method that no longer exists
 
-`CLAUDE.md` (Architecture) lists `src/lib/editor/tab-language.ts` among the three UI files that keep a `=== "mongodb"` branch, but that file has none; the branches are in `src/hooks/use-connection-form.ts` (`type === "mongodb" && authSource`) and `src/components/ConnectionModal.tsx` (`isMongoDB`).
 `CLAUDE.md` (Database Connections) says Redis `getSchema()` uses a non-blocking `SCAN`, but `getSchema` left the provider contract in #789 (`src/lib/db/base-provider.ts`), and comments in `src/lib/db/providers/keyvalue/redis.ts` still name it.
 
 Found 2026-10-09 while designing the S3 provider; pre-existing.
+Amended 2026-10-19: its mongodb half closed when the connection dialog's two `=== "mongodb"` branches left `src/hooks/use-connection-form.ts` and `src/components/ConnectionModal.tsx`, and `CLAUDE.md` stopped naming them.
 
-**Done when:** `CLAUDE.md` names the files that hold the branches today and describes the Redis key walk by the method that exists, and the Redis comments name it too.
+**Done when:** `CLAUDE.md` describes the Redis key walk by the method that exists, and the Redis comments name it too.
 
 ### DOC20. docs/ADDING_A_PROVIDER.md carries stale counts and an incomplete label table
 
@@ -6243,7 +6381,7 @@ Found 2026-10-13 while building the Apache Spark provider (#1759); pre-existing.
 ### DOC31. A composed-sql.ts comment says every shipped grammar row declares backslashAlwaysEscapes false
 
 The docblock above `assertSelector` in `src/lib/agent/composed-sql-primitives.ts` says the per-dialect fact `backslashAlwaysEscapes` is one "that every shipped row declares false".
-In `src/lib/sql/grammar.ts`, `DATABEND_GRAMMAR`, `BIGQUERY_GRAMMAR` and `SNOWFLAKE_GRAMMAR` declare it `true`.
+`DATABEND_GRAMMAR`, `BIGQUERY_GRAMMAR` and `SNOWFLAKE_GRAMMAR`, in `src/lib/db/providers/sql/<type-id>/sql-grammar.ts`, declare it `true`.
 The function's rule, refusing any backslash in a selector, is unaffected: the docblock already says it is correct whichever way a row declares the fact, so only the sentence is stale.
 S2's heading and its "Every shipped row but Databend's" sentence in this file are stale the same way.
 
@@ -6580,13 +6718,14 @@ the reason, distinct from a missing token, with the row 1.4 residual in `docs/SE
 
 ### H14. A 500 hands the caller the raw error message, including a storage database address
 
-The generic branch at the end of `createErrorResponse()` in `src/lib/api/errors.ts` returns `error.message` verbatim for any error it does not classify.
+The generic branch at the end of `createErrorResponse()` in `src/lib/api/errors.ts` answers with `internalErrorBody` in `src/lib/api/error-body.ts`, which returns `error.message` verbatim for any error it does not classify.
+`internalErrorBody` is the shared body every caller of `error-body.ts` answers an unclassified error with, so its fix covers each of them, not only the route.
 With `STORAGE_PROVIDER=postgres` and the database unreachable, `POST /api/auth/login` and the account routes answer `{"error":"connect ECONNREFUSED 127.0.0.1:55432"}` (measured against a local container), which tells an unauthenticated caller the internal address of the store.
 Found by the red-team pass on #1122, where the account registry made the login route depend on the store; the branch itself predates that PR and serves every route.
 
 Not fixed there because the branch is shared: some routes rely on the message reaching the caller, and changing it is a behaviour change across the API surface that needs its own audit of which errors are meant to be shown.
 
-**Done when:** an unclassified error answers a fixed message with its detail in the log only, each route that must show a driver's own message classifies that error first, and a test pins that an `ECONNREFUSED` from the store does not reach the response body.
+**Done when:** `internalErrorBody` answers an unclassified error with a fixed message and its detail in the log only, each route that must show a driver's own message classifies that error first, and a test pins that an `ECONNREFUSED` from the store does not reach the response body.
 
 ---
 
@@ -6786,7 +6925,7 @@ CodeQL's text: "A broken or weak cryptographic algorithm depends on sensitive da
 The line computed the SHA-1 thumbprint of the server's DER certificate, which `session.ts` compares against the operator's pin.
 
 The stated CONSEQUENCE was measured on 2026-10-12 and does not hold, and that is worth recording because it is what the next reader will want.
-The hashed DER is not sensitive: an OPC UA server publishes it to any unauthenticated caller in its `GetEndpoints` reply (Part 4 5.5.4), and this repository already classifies the derived thumbprint as `public` in `src/lib/storage/connection-secrets.ts`.
+The hashed DER is not sensitive: an OPC UA server publishes it to any unauthenticated caller in its `GetEndpoints` reply (Part 4 5.5.4), and this repository already classifies the derived thumbprint as `public` in `src/lib/storage/secret-fields.ts`.
 Nor was the pin defeatable: defeating a pin of a certificate that already exists needs a SECOND PREIMAGE, which SHA-1 still resists, and not the collision resistance that SHAttered 2017 and Leurent and Peyrin 2020 broke.
 The thing actually worth fixing that the audit turned up is U130, which is about which certificate the pin is compared against rather than about the hash.
 

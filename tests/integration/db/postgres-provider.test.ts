@@ -49,7 +49,8 @@ let mockQueryFn: (
   // `dataTypeID` is a pg_type OID and the ONLY thing pg says about a column's type:
   // there is no name on the wire at all.
   fields?: { name: string; dataTypeID?: number }[];
-  rowCount?: number;
+  // `null` is what the driver answers when the command tag carries no count (#1839).
+  rowCount?: number | null;
 }>;
 
 /**
@@ -5156,6 +5157,114 @@ describe("PostgresProvider result columns", () => {
     expect((refused as QueryError).query).toBe("SELECT a, b FROM t");
     await provider.disconnect();
   });
+
+  test("a command tag without a count answers the rows it returned, not 0", async () => {
+    // `pg` reads rowCount from the command tag only (node_modules/pg/lib/result.js:
+    // addCommandComplete parses "COMMAND ROWS" and leaves null when the tag carries no
+    // number), so EXPLAIN answers rows and a null count. Measured on PostgreSQL 18
+    // (issue #1839): the agent's ledger recorded rowCount 0 for every plan.
+    mockQueryFn = () =>
+      Promise.resolve({
+        rows: [["Seq Scan on t  (cost=0.00..1.01 rows=1 width=4)"], ["  Filter: (a = 1)"]],
+        fields: [{ name: "QUERY PLAN", dataTypeID: 25 }],
+        rowCount: null,
+      });
+    const provider = await connected();
+    const result = await provider.query("EXPLAIN SELECT * FROM t WHERE a = 1");
+    expect(result.rows.length).toBe(2);
+    expect(result.rowCount).toBe(2);
+    await provider.disconnect();
+  });
+
+  test("EXPLAIN (FORMAT JSON) answers the rows it returned too", async () => {
+    // FORMAT JSON answers one row holding the plan document; the column is `json`
+    // (OID 114), not jsonb: that is what PostgreSQL 18's explain.c publishes.
+    mockQueryFn = () =>
+      Promise.resolve({
+        rows: [[{ Plan: { "Node Type": "Seq Scan", "Relation Name": "t" } }]],
+        fields: [{ name: "QUERY PLAN", dataTypeID: 114 }],
+        rowCount: null,
+      });
+    const provider = await connected();
+    const result = await provider.query("EXPLAIN (FORMAT JSON) SELECT 1");
+    expect(result.rows.length).toBe(1);
+    expect(result.rowCount).toBe(1);
+    await provider.disconnect();
+  });
+
+  test("SHOW answers the rows it returned, on the single-answer branch", async () => {
+    // SHOW names the one column after the parameter, so `SHOW work_mem` answers
+    // one `work_mem` column, and the SHOW tag carries no count.
+    mockQueryFn = () =>
+      Promise.resolve({
+        rows: [["4MB"]],
+        fields: [{ name: "work_mem", dataTypeID: 25 }],
+        rowCount: null,
+      });
+    const provider = await connected();
+    const result = await provider.query("SHOW work_mem");
+    expect(result.rows).toEqual([{ work_mem: "4MB" }]);
+    expect(result.rowCount).toBe(1);
+    await provider.disconnect();
+  });
+
+  test("a SHOW inside a multi-statement text counts on the array branch too", async () => {
+    // The array branch reads the count of the statement that produced the first
+    // set, which here is the SHOW: its tag carries no count, its rows are the set.
+    mockQueryFn = () =>
+      Promise.resolve([
+        { rows: [], fields: [], rowCount: null },
+        { rows: [["4MB"]], fields: [{ name: "work_mem", dataTypeID: 25 }], rowCount: null },
+      ] as never);
+    const provider = await connected();
+    const result = await provider.query("SET statement_timeout = 0; SHOW work_mem");
+    expect(result.rows).toEqual([{ work_mem: "4MB" }]);
+    expect(result.rowCount).toBe(1);
+    await provider.disconnect();
+  });
+
+  test("a multi-statement text counts the statement that produced the first set", async () => {
+    // SET carries no count and no columns; the EXPLAIN after it produced the rows the
+    // result answers, so its row count is the plan's, not the SET's null.
+    mockQueryFn = () =>
+      Promise.resolve([
+        { rows: [], fields: [], rowCount: null },
+        { rows: [["Seq Scan on t"]], fields: [{ name: "QUERY PLAN", dataTypeID: 25 }], rowCount: null },
+      ] as never);
+    const provider = await connected();
+    const result = await provider.query("SET statement_timeout = 0; EXPLAIN SELECT 1");
+    expect(result.rows).toEqual([{ "QUERY PLAN": "Seq Scan on t" }]);
+    expect(result.rowCount).toBe(1);
+    await provider.disconnect();
+  });
+
+  test("a command that answers no result set keeps its own count", async () => {
+    // CREATE INDEX answers no row description at all, and its command tag carries
+    // no count either, so the driver leaves null: the result keeps reporting 0.
+    mockQueryFn = () => Promise.resolve({ rows: [], fields: [], rowCount: null });
+    const provider = await connected();
+    const result = await provider.query("CREATE INDEX idx ON t (a)");
+    expect(result.rows).toEqual([]);
+    expect(result.rowCount).toBe(0);
+    await provider.disconnect();
+  });
+
+  test("an explicit zero count is not replaced by the row count", async () => {
+    // A driver that counted the rows answers 0 with rows to match, and that zero
+    // must survive: only a null count falls back to the rows, so a `rowCount || 0`
+    // slip the other way is caught here by the rows being non-empty.
+    mockQueryFn = () =>
+      Promise.resolve({
+        rows: [["counted"], ["anyway"]],
+        fields: [{ name: "x", dataTypeID: 23 }],
+        rowCount: 0,
+      });
+    const provider = await connected();
+    const result = await provider.query("SELECT x FROM t");
+    expect(result.rows.length).toBe(2);
+    expect(result.rowCount).toBe(0);
+    await provider.disconnect();
+  });
 });
 
 // ============================================================================
@@ -6614,6 +6723,102 @@ describe("PostgreSQL object listing and detail", () => {
       { columnName: "customer_id", referencedTable: "app.customers", referencedColumn: "id" },
       { columnName: "owner_id", referencedTable: "users", referencedColumn: "id" },
     ]);
+    await provider.disconnect();
+  });
+
+  /**
+   * The modifier lives beside the base name (#1860).
+   *
+   * `format_type(atttypid, NULL)` stays `type`, which is what a reader that compares types
+   * already matches. `format_type(atttypid, atttypmod)` is `declaredType`, which is what the
+   * tooltip and the object detail show. PostgreSQL prints `varchar(50)` as
+   * `character varying(50)`. `vector(1536)` is the same function: the fixture image has no
+   * pgvector, and the statement does not special-case the type, so the row is what
+   * `format_type` answers for that declaration. A column with no modifier is given the same
+   * string in both fields.
+   */
+  test("object detail keeps the base type and records the declared type with its modifier (#1860)", async () => {
+    const columns = [
+      { name: "id", type: "integer", declaredType: "integer", nullable: false, defaultValue: null },
+      {
+        name: "title",
+        type: "character varying",
+        declaredType: "character varying(50)",
+        nullable: true,
+        defaultValue: null,
+      },
+      { name: "amount", type: "numeric", declaredType: "numeric(12,2)", nullable: false, defaultValue: null },
+      { name: "body", type: "text", declaredType: "text", nullable: true, defaultValue: null },
+      { name: "tags", type: "text[]", declaredType: "text[]", nullable: true, defaultValue: null },
+      { name: "embedding", type: "vector", declaredType: "vector(1536)", nullable: true, defaultValue: null },
+    ];
+    const seen: string[] = [];
+    mockQueryFn = async (sql) => {
+      if (!sql.includes("format_type")) return { rows: [] };
+      seen.push(sql);
+      expect(sql).toContain("'type', format_type(a.atttypid, NULL)");
+      expect(sql).toContain("'declaredType', format_type(a.atttypid, a.atttypmod)");
+      if (sql.includes("described_columns")) {
+        return {
+          rows: [{ name: "articles", pk_columns: ["id"], columns, indexes: null, foreign_keys: null }],
+        };
+      }
+      return { rows: [{ pk_columns: ["id"], columns, indexes: null, foreign_keys: null }] };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    const expected = [
+      {
+        name: "id",
+        type: "integer",
+        declaredType: "integer",
+        nullable: false,
+        isPrimary: true,
+        defaultValue: undefined,
+      },
+      {
+        name: "title",
+        type: "character varying",
+        declaredType: "character varying(50)",
+        nullable: true,
+        isPrimary: false,
+        defaultValue: undefined,
+      },
+      {
+        name: "amount",
+        type: "numeric",
+        declaredType: "numeric(12,2)",
+        nullable: false,
+        isPrimary: false,
+        defaultValue: undefined,
+      },
+      { name: "body", type: "text", declaredType: "text", nullable: true, isPrimary: false, defaultValue: undefined },
+      {
+        name: "tags",
+        type: "text[]",
+        declaredType: "text[]",
+        nullable: true,
+        isPrimary: false,
+        defaultValue: undefined,
+      },
+      {
+        name: "embedding",
+        type: "vector",
+        declaredType: "vector(1536)",
+        nullable: true,
+        isPrimary: false,
+        defaultValue: undefined,
+      },
+    ];
+    const detail = await provider.describeObject(["app", "articles"], "table");
+    expect(detail.columns).toEqual(expected);
+    const batch = await provider.describeObjects(["app"], "table");
+    expect(batch.details).toEqual([{ path: ["app", "articles"], columns: expected, indexes: [], foreignKeys: [] }]);
+    // One statement per read: the single-object CTE and the bulk CTE, both asking for both strings.
+    expect(seen).toHaveLength(2);
+    expect(seen.some((sql) => sql.includes("object_columns"))).toBe(true);
+    expect(seen.some((sql) => sql.includes("described_columns"))).toBe(true);
     await provider.disconnect();
   });
 

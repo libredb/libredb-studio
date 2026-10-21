@@ -54,7 +54,7 @@ import {
   requiredVariant,
 } from "./agent-manifest";
 import { logger } from "@/lib/logger";
-import { isRetryableError, isToolCallParseError } from "@/lib/llm/types";
+import { isRetryableError, isToolCallParseError, LLMConfigError } from "@/lib/llm/types";
 import { type AssistantModelMessage, type ModelMessage, Output, type ToolSet, streamText, tool } from "ai";
 import { z } from "zod";
 import {
@@ -109,7 +109,13 @@ import {
   AGENT_REPORT_RESERVE_TURNS,
   AGENT_WORKFLOW_BUDGETS,
 } from "./execution-policy";
-import { type AgentModel, mapAgentModelError } from "./model-adapter";
+import {
+  type AgentModel,
+  agentProviderOptions,
+  agentSamplingFor,
+  mapAgentModelError,
+  refusedEffortError,
+} from "./model-adapter";
 import { modelToolSchema } from "./model-tool-schema";
 import {
   type AgentRunInvocation,
@@ -2406,15 +2412,6 @@ function toolSetOf(definitions: readonly AgentToolDefinition[]): ToolSet | undef
 }
 
 /**
- * What a plan turn asks for when this model's thinking is the thing that loses the cell.
- *
- * A REQUEST FIELD and not a word in the prompt, which is the whole reason it is acceptable:
- * every planning rule above is wording a measured cell depends on, and nothing here touches
- * it. The in-prompt `/no_think` marker was tried first and abandoned - see the model's entry.
- */
-export const PLAN_NO_REASONING_EFFORT = "none";
-
-/**
  * One turn. The stream is read part by part rather than awaited as a result, for
  * the reason `capability-probe.ts` records: after a failed request the result
  * promises reject with the SDK's own wrapper, which hides the error this
@@ -2478,21 +2475,30 @@ async function takeTurn(
   */
   const sampling = samplingFor(agentModel.modelId, workflow);
   /*
-    Keyed `openai`, whatever this provider is called.
-
-    `provider-registry.ts` builds ollama, openai and custom through one `@ai-sdk/openai`
-    adapter, and that adapter reads its options under its OWN key. Keying them by the
-    provider's name passed the unit test - the scripted model is configured as `openai` - and
-    sent nothing at all on the first real ollama run, which then timed out at 94 seconds.
+    The options every call to a model sends come from one place, `agentProviderOptions`, so
+    the capability probe and the classifier send what a turn sends: `store: false` and the
+    configured effort on the `openai` kind, and on the three OpenAI-compatible kinds the quiet
+    switch below, which yields to `LLM_MODEL_EFFORT` on `openai`. Keyed `openai` whatever the
+    provider is called, for the reason that function records.
   */
   // Two switches, one per mode, and neither implies the other: a model measured needing quiet on
   // its plan turn was not measured needing it while holding tools. See both fields in `profile.ts`.
   const quiet =
     mode === "agent" ? suppressesAgentReasoning(agentModel.modelId) : suppressesPlanReasoning(agentModel.modelId);
+  const providerOptions = agentProviderOptions(agentModel, quiet);
+  // The `openai` kind's SDK drops `temperature`/`topP` for reasoning models and logs a warning; a
+  // call sends only what the SDK would keep, asked from its own offline `prepareRequest`. Every
+  // other kind keeps its sampling byte-identical.
+  const turnSampling = await agentSamplingFor(agentModel, providerOptions, sampling).catch((error: unknown) => {
+    // The build-time path raises an LLMConfigError for the same preparation failure, so a turn does
+    // too: a preparation that broke is a configuration refusal, not a transport retry.
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new LLMConfigError(`Cannot decide the ${agentModel.provider} sampling: ${detail}`, agentModel.provider);
+  });
   const stream = streamText({
     model: agentModel.model,
-    ...(sampling.temperature !== undefined ? { temperature: sampling.temperature } : {}),
-    ...(sampling.topP !== undefined ? { topP: sampling.topP } : {}),
+    ...(turnSampling.temperature !== undefined ? { temperature: turnSampling.temperature } : {}),
+    ...(turnSampling.topP !== undefined ? { topP: turnSampling.topP } : {}),
     // Constrained decoding, where a shape was asked for. `Output.object` is what makes the
     // SDK send `response_format`, and it composes here precisely because this branch offers
     // no tools.
@@ -2503,7 +2509,7 @@ async function takeTurn(
     instructions,
     messages: [...messages],
     ...(tools === undefined ? {} : { tools }),
-    ...(quiet ? { providerOptions: { openai: { reasoningEffort: PLAN_NO_REASONING_EFFORT } } } : {}),
+    providerOptions,
     maxRetries: 0,
     // Real-time backstop for ONE call, sized by what the run has left. The
     // deadline object remains the authority — it is what the loop reads between
@@ -2522,7 +2528,15 @@ async function takeTurn(
 
   try {
     for await (const part of stream.fullStream) {
-      if (part.type === "text-delta") text += part.text;
+      if (part.type === "start-step") {
+        // The SDK drops an effort this model does not take and sends the turn at another one.
+        // Stopped here, before a word of that answer is read, and raised.
+        const refused = refusedEffortError(part.warnings, agentModel);
+        if (refused !== undefined) {
+          failure = refused;
+          break;
+        }
+      } else if (part.type === "text-delta") text += part.text;
       else if (part.type === "tool-call") {
         toolCalls.push({ toolCallId: part.toolCallId, toolName: part.toolName, input: part.input });
       } else if (part.type === "error") failure ??= part.error;

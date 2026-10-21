@@ -110,6 +110,12 @@ describe("CustomProvider", () => {
         LLMConfigError,
       );
     });
+
+    test("refuses LLM_MODEL_EFFORT, which only the openai provider sends", () => {
+      expect(() => new CustomProvider(makeConfig({ modelEffort: "low" }), NO_BACKOFF)).toThrow(
+        "LLM_MODEL_EFFORT applies to LLM_PROVIDER=openai only; unset it for the custom provider.",
+      );
+    });
   });
 
   // --------------------------------------------------------------------------

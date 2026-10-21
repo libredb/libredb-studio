@@ -3505,7 +3505,7 @@ describe("the bulk column read", () => {
     // names it. So neither kind needs a second catalog at all.
     expect(indexAsked).toEqual([cassandraObjectListCql(KEYSPACE, "index")!]);
     expect(session.asked).toEqual([cassandraKeyspaceTypesCql(KEYSPACE)]);
-    expect(indexes.details.map((detail) => detail.indexes[0]!.name)).toEqual([
+    expect(indexes.details.map((detail) => (Array.isArray(detail.indexes) ? detail.indexes[0]!.name : ""))).toEqual([
       "customers_by_city",
       "customers_by_tag",
       "orders_by_amount",

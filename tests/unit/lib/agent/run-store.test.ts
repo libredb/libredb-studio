@@ -816,6 +816,7 @@ const WORLD_ENV_KEYS = [
   "LLM_API_KEY",
   "LLM_MODEL",
   "LLM_API_URL",
+  "LLM_MODEL_EFFORT",
 ] as const;
 
 /** The model configuration that makes the runtime available. */

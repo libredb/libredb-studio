@@ -11,7 +11,8 @@ import { positionalPlaceholder, quoteLiteral } from "@/lib/sql/values";
 import { appFetch } from "@/lib/config/base-path";
 import { buildConnectionPayload } from "@/hooks/use-connection-payload";
 import { asBytes } from "@/lib/export/binary";
-import { MSSQL_DATETIME_TEXT } from "@/lib/export/typed-literals";
+import { sqlWritingFor } from "@/lib/db/sql-writing";
+import { firstWord, unwrappedType } from "@/lib/db/sql-writing/shared";
 import { generatedFieldNames } from "@/components/results-grid/utils";
 
 interface UseInlineEditingParams {
@@ -69,296 +70,28 @@ const updates = (count: number) => `${count} UPDATE statement${count === 1 ? "" 
 type KeyColumnKind = "date-time" | "float64" | "decimal" | "declared" | "undeclared";
 
 /**
- * The declared types whose value is an INSTANT, matched on the type's own first word.
- *
- * Every driver here spells the type the way its engine's catalog does, so the set is the
- * union of those spellings and nothing else: `timestamp without time zone` and `timestamp
- * with time zone` (`pg`), `datetime`/`timestamp`/`date` (mysql2), `DATE` and `TIMESTAMP
- * WITH TIME ZONE` (oracledb, uppercase), `datetime2`/`smalldatetime`/`datetimeoffset`
- * (mssql), `DateTime64(6, 'UTC')` and `Date32` (ClickHouse), `timestamp(3) with time zone`
- * (Trino).
- *
- * The SQLite and libsql spellings — `DATE`, `DATETIME`, `TIMESTAMP` — are in this set too,
- * and are read only on the dialects where they mean an instant. See
- * `NO_INSTANT_TYPE_DIALECTS` below, which is the same shape, and the same reason, as
- * `FLOAT64_ONLY_DIALECTS`.
- *
- * The FIRST WORD of the type and not a substring of it, which is the whole reason this is
- * a set rather than a `.includes("date")`: PostgreSQL's `daterange`, `tsrange` and
- * `tstzrange` are ranges rendered as text, `'[2024-01-01,2024-02-01)'`, whose text is
- * exactly their identity — a substring test would refuse three perfectly good keys to
- * catch one bad one.
- *
- * `time` and `time with time zone` are deliberately ABSENT. `pg` and `mysql2` both hand a
- * time-of-day back as the string the engine prints (`'10:00:00'`), which is its own
- * identity and matches when sent back, so refusing one would take away a key that works.
- * A date or a timestamp is the opposite: `pg` hands back a JavaScript `Date` for `timestamp
- * with time zone`, and that is the value this whole check exists for. `pg`'s `date` and
- * `timestamp without time zone` arrive as the engine's own text since the provider's per-pool
- * parsers, and so do mysql2's `date`, `datetime` and `timestamp` since the MySQL pool's
- * `dateStrings` (#1388). They are still refused here: the refusal reads the declaration,
- * which is conservative for those rather than wrong.
- */
-const INSTANT_TYPE_NAMES: ReadonlySet<string> = new Set([
-  "date",
-  "date32",
-  "datetime",
-  "datetime2",
-  "datetime64",
-  "datetimeoffset",
-  "smalldatetime",
-  "timestamp",
-  "timestamptz",
-]);
-
-/**
- * The engines with NO instant type at all, where those same words therefore state nothing.
- *
- * SQLITE HAS NO DATE TYPE. A column declared `DATE`, `DATETIME` or `TIMESTAMP` picks no
- * storage class from its declaration: it holds the TEXT somebody put in it, or the integer,
- * and `sqlite3_column_decltype` reports the declaration back verbatim beside it. So the
- * value the driver hands over IS the value the row holds, it is its own identity, and it
- * matches when it is sent back — which is the opposite of what the word means everywhere
- * else, where the driver hands over a `Date` or a rendering of one.
- *
- * MEASURED 2026-09-19 on bun:sqlite (Bun 1.4.0) and on libSQL server v0.24.33 over its HTTP
- * pipeline, `zz_<decl>(k <decl> PRIMARY KEY, note TEXT)` for each of `DATE`, `DATETIME` and
- * `TIMESTAMP` against `'2024-01-15'`, `'2026-01-01 10:00:00.123'`, the ISO text
- * `'2026-01-01T07:00:00.123Z'` and the integer epoch 1705276800 — three declarations by
- * four value shapes by two engines, 24 combinations. Every one reported the declaration
- * back verbatim, answered `text` (or `integer`, for the epoch) to `typeof()`, handed the
- * value back unchanged, matched ONE group holding ONE row for `WHERE k IN (?)`, and changed
- * exactly one row on the `UPDATE` that followed.
- *
- * `libsql` is here for the reason it is in `FLOAT64_ONLY_DIALECTS`: it embeds the same
- * engine and reports the same declarations — measured over the wire rather than reasoned
- * from that, and identical to bun:sqlite on all twelve of its combinations.
- *
- * NO OTHER DIALECT IS, and the closed side is the safe side here as everywhere else in this
- * file. MEASURED the same day: PostgreSQL 16.15 `zz_m1_ts(ts_id timestamp PRIMARY KEY)`
- * holding 10:00:00.123456 and .654321 answered ZERO rows for the
- * `'2026-01-01T07:00:00.123Z'` the browser holds and zero for `'2026-01-01 10:00:00.123'`,
- * with both rows still in the table; MySQL 8.4.11 `zz_m1_dt(d_id DATETIME(6) PRIMARY KEY)`
- * answered zero for both of the same two. Those engines really do store something the value
- * in front of us is only a rendering of, so they keep the refusal.
- *
- * A `Date` is refused on every dialect including these two, because `String(date)` is a
- * rendering whatever holds it: neither driver ever produces one, so it can only have come
- * from the host application the embeddable shell runs inside.
- */
-const NO_INSTANT_TYPE_DIALECTS: ReadonlySet<DatabaseConnection["type"]> = new Set(["sqlite", "libsql"]);
-
-/**
- * The declared types that ARE a 64-bit IEEE float, matched on the type's own first word.
- *
- * A JavaScript number is a 64-bit IEEE float, and `String()` of one is the shortest decimal
- * that parses back to the same double — so a value read out of a column of this width is
- * the value the row holds, and the decimal sent back is read by the engine as that same
- * value. MEASURED 2026-09-18: PostgreSQL 16.15 `double precision` and MySQL 8.4.11 `DOUBLE`
- * both answered one row for every one of 0.30000000000000004, 1.5, 0.1, 1e-7 and 1e21 sent
- * back through this hook's own bound-parameter path.
- *
- * The spellings are the engines' own, which is what `QueryResult.columnTypes` carries:
- * `double precision` (`pg`, first word `double`), `double` (mysql2, mssql's `float` is NOT
- * here — see below), `Float64` (ClickHouse), `BINARY_DOUBLE` (oracledb, uppercase),
- * `double` (Trino, DuckDB).
- *
- * TWO WORDS ARE DELIBERATELY ABSENT, because one word means two widths across engines and
- * a key that is refused is only inconvenient while a key that is waved through is wrong:
- *
- * - `float`. MySQL's `FLOAT` is 32 bits; T-SQL's `float` is 64. MEASURED on MySQL 8.4.11,
- *   `zz40_f(k FLOAT)` holding 0.1: mysql2's text protocol hands over the double 0.1, and
- *   `WHERE k IN (0.1)` matched NOTHING — the row holds the 32-bit 0.100000001490116…, and
- *   0.1 is a different number to it. So `float` falls through to the digit rule below.
- * - `real`. PostgreSQL's and Trino's are 32 bits; SQLite's is 64. (PostgreSQL happens to
- *   match a `real` key anyway — it infers the parameter's type from the column and re-reads
- *   the decimal at 32-bit precision — but that is `pg`'s doing, not the value's.)
- *
- * Which is why the two words are absent from THIS set and not from the rule: on an engine
- * that has no 32-bit float at all they mean 64 bits and nothing else, and that is what
- * `FLOAT64_ONLY_NAMES` below adds back, for those engines only.
- */
-const FLOAT64_TYPE_NAMES: ReadonlySet<string> = new Set(["double", "float8", "float64", "binary_double"]);
-
-/**
- * The engines with only ONE float width, and the words that therefore state it there.
- *
- * SQLite has no 32-bit float: `REAL`, `FLOAT`, `DOUBLE` and `DOUBLE PRECISION` are four
- * spellings of one storage class, 8 bytes of IEEE double, which is exactly as wide as the
- * JavaScript number in front of us. So on these dialects the declaration DOES say the
- * width, and the refusal's sentence — "nothing here says the column holds it as a 64-bit
- * float" — is false about them.
- *
- * MEASURED 2026-09-18 through the real provider path, on bun:sqlite (Bun 1.4.0) and on
- * libSQL server v0.24.33 over its HTTP pipeline: `zz_real(r REAL, f FLOAT, d DOUBLE, dp
- * DOUBLE PRECISION)` reported those four decltypes and answered `real` to `typeof()` for
- * every one of them; 0.30000000000000004 was written and read back identical, which no
- * 32-bit column can do; and `WHERE r = 1.5`, `WHERE f = 0.1`, `WHERE d =
- * 0.30000000000000004` and `WHERE dp = 0.1` each matched exactly one row on both.
- *
- * `libsql` is here for the reason `sqlite` is: it embeds the same engine and reports the
- * same `sqlite3_column_decltype` declarations.
- *
- * NO OTHER DIALECT IS, and each was measured rather than assumed. PostgreSQL 16.15:
- * `real` and `float4` are both spelled `real` by `pg`, both `pg_column_size` 4, and
- * `0.1::real::float8` is 0.10000000149011612 — a different number to the double 0.1.
- * MySQL 8.4.11: one row holding 0.1 in a `FLOAT` and a `DOUBLE` answered `f = 0.1` FALSE
- * and `d = 0.1` TRUE. DuckDB: `REAL` and `FLOAT` are one 32-bit type, handed over as
- * 0.10000000149011612, and `r::DOUBLE = 0.1` is false. Trino was not reachable to measure,
- * so it keeps the refusal — the closed side is the safe side, which is what this rule
- * already chose.
- */
-const FLOAT64_ONLY_DIALECTS: ReadonlySet<DatabaseConnection["type"]> = new Set(["sqlite", "libsql"]);
-
-/** The words that mean 64 bits ONLY on the dialects above, and 32 elsewhere. */
-const FLOAT64_ONLY_NAMES: ReadonlySet<string> = new Set(["real", "float"]);
-
-/**
- * The declared types that are an EXACT DECIMAL, matched on the type's own first word.
- *
- * A column of one of these holds a decimal of up to 38 digits, and the two drivers that
- * reach this hook with one hand it over as a JavaScript number — a 64-bit IEEE float, which
- * carries 15 to 17 significant decimal digits. So the number in front of the user is a
- * RENDERING of the row's value, the same way a `Date` string is a rendering of an instant,
- * and the decimal it prints can be the key of a DIFFERENT row.
- *
- * MEASURED 2026-09-19 through this hook's own path, on Oracle AI Database 26ai Free
- * 23.26.3.0.0 and SQL Server 2022 CU27 (16.0.4295.3):
- *  - Oracle `zz969_frac(id NUMBER(20,4) PRIMARY KEY)` holding 1234567890123456.7891 and
- *    1234567890123456.8: oracledb hands BOTH rows over as 1234567890123456.8. With only
- *    the first row edited, the check asked the engine, Oracle answered ONE group holding
- *    ONE row, `UPDATE ... WHERE "ID" = :2` went out against `the-neighbour` — the row
- *    nobody edited — and the apply reported "Changes Applied".
- *  - Oracle `NUMBER` with no precision holding .10000000000000000001 and .1: both arrive as
- *    the ONE-digit 0.1, and the UPDATE lands on the row holding .1. So the wrong-row write
- *    happens at one printed digit as readily as at seventeen, which is why no count of
- *    digits can separate these from a value that is its own, and the declaration decides.
- *  - SQL Server `zz969_num(id decimal(20,4) PRIMARY KEY, cash money)` over the same pair:
- *    both rows arrive as 1234567890123456.8, and `922337203685477.5807` in the `money`
- *    column arrives as 922337203685477.6. tedious computes every `decimal`/`numeric` as
- *    `value / 10^scale` and every `money` as an int64 over 10000 (`readNumeric`,
- *    `readMoney`), so the rounding is the driver's arithmetic, not one column's width.
- *    Sent back, that one key UPDATEd BOTH rows: `float` outranks `decimal` in T-SQL, so the
- *    column is widened to meet the parameter `mssql` infers for a fractional number, and
- *    both rows are equal to it. Driven through this hook the count check SAW those two
- *    groups and refused, so SQL Server was not writing a wrong row — it was writing the
- *    right one wherever a rounding happened to be unique, and this rule costs it those
- *    writes. They go anyway: which of the two cases is in front of the user cannot be read
- *    off the value, the safety rests on a type `mssql` infers rather than on anything the
- *    engine promises, and the closed side is the safe side here as in the two sets above.
- *
- * The words are the engines' own, which is what `QueryResult.columnTypes` carries. Oracle
- * spells all of `NUMBER`, `DECIMAL`, `NUMERIC`, `DEC` and `FLOAT` as `NUMBER` in
- * `dbTypeName` — measured on the five declarations in one table — so the one word covers
- * that engine. T-SQL reports `decimal`, `numeric`, `money` and `smallmoney` as themselves.
- *
- * A driver that hands the same column back as a STRING is untouched by this: the string is
- * its own digits and takes the string path above. MEASURED the same day — PostgreSQL 16.15
- * `numeric(20,4)` over `pg`, MySQL 8.4.11 `DECIMAL(20,4)` over mysql2's text AND binary
- * protocols, and DuckDB 1.5.5 `DECIMAL(20,4)` through the `getRowObjectsJson()` the
- * provider reads — all four hand "1234567890123456.7891" over as text, exact to the digit.
- *
- * AND THE COST IS REAL, so it is written down rather than implied: a fractional key that
- * happens to be exactly what the row holds is refused with the rest. MEASURED on the same
- * Oracle, `zz969_ten(id NUMBER(20,4))` holding 123456.7891 and 123456.7892 — two values a
- * double carries exactly — used to be asked about and written to its own row, and now is
- * not. It is refused because nothing in front of the editor tells it apart from the case
- * above: the same column, the same driver, the same shape of decimal, and the difference
- * lives only in digits that never left the engine. A key the editor cannot tell apart from
- * a wrong-row write is the one this file has always closed, and the whole-number rule two
- * screens down refuses a `bigint` past 2^53 for exactly the same reason.
- */
-const EXACT_DECIMAL_TYPE_NAMES: ReadonlySet<string> = new Set([
-  "number",
-  "numeric",
-  "decimal",
-  "dec",
-  "money",
-  "smallmoney",
-]);
-
-/**
- * The engines where those words are an AFFINITY and not an exact decimal type at all.
- *
- * SQLITE HAS NO DECIMAL TYPE, the way it has no date type (`NO_INSTANT_TYPE_DIALECTS`) and
- * no 32-bit float (`FLOAT64_ONLY_DIALECTS`). A column declared `DECIMAL(20,4)` or
- * `NUMERIC(20,4)` takes NUMERIC affinity and stores an integer or an 8-byte double — so
- * what the driver hands over IS the value the row holds, and "the driver rounded it to fit"
- * would be false about it.
- *
- * MEASURED 2026-09-19 on bun:sqlite (Bun 1.4.0), `zz(k DECIMAL(20,4), n NUMERIC(20,4))`:
- * `pragma_table_info` reports both declarations back verbatim, `typeof()` answers `real`
- * for both, 1234567890123456.7891 comes back as the double 1234567890123456.8 — which is
- * exactly what the file now holds, not a rounding of it — and `WHERE k = 1234567890123456.8`
- * matched ONE row, its own.
- *
- * `libsql` is here for the reason it is in the other two sets: it embeds the same engine and
- * reports the same `sqlite3_column_decltype` declarations.
- */
-const NO_EXACT_DECIMAL_DIALECTS: ReadonlySet<DatabaseConnection["type"]> = new Set(["sqlite", "libsql"]);
-
-/**
- * One declared type in lower case with its wrappers off.
- *
- * ClickHouse spells a nullable or dictionary-encoded column by WRAPPING the real type —
- * `Nullable(DateTime64(6, 'UTC'))`, `LowCardinality(Nullable(String))` — so the wrappers
- * come off before anything else is read.
- */
-function unwrappedType(declaredType: string): string {
-  let name = declaredType.trim().toLowerCase();
-  for (;;) {
-    // Each turn strips a whole `wrapper(` and its `)`, so the name shortens every time and
-    // this cannot spin on a type it fails to unwrap.
-    const wrapper = /^(?:nullable|lowcardinality)\((.*)\)$/.exec(name);
-    if (wrapper === null) break;
-    name = wrapper[1].trim();
-  }
-  return name;
-}
-
-/**
- * The first word of an unwrapped declared type, its parameters off: `DateTime64(6, 'UTC')`
- * is `datetime64`, Trino's `timestamp(3) with time zone` is `timestamp`, and `character
- * varying` is `character`, which is in no set here.
- */
-function firstWord(name: string): string {
-  return name.split("(")[0].trim().split(/\s+/)[0];
-}
-
-/**
  * Reads one declared type down to its first word, and that word down to a kind.
  *
  * The DIALECT is read alongside the word, because one word is two widths across engines:
  * `REAL` is 64 bits on SQLite and 32 on PostgreSQL, and the same declaration therefore
- * settles the question on one and settles nothing on the other.
+ * settles the question on one and settles nothing on the other. The engine's own SQL writing
+ * module answers which words mean what (`inlineEdit`), with the measurements behind each.
  */
 function keyColumnKind(declaredType: string | undefined, dialect: DatabaseConnection["type"]): KeyColumnKind {
   if (declaredType === undefined) return "undeclared";
+  const { instantTypeNames, float64TypeNames, exactDecimalTypeNames } = sqlWritingFor(dialect).inlineEdit;
   const name = unwrappedType(declaredType);
   const first = firstWord(name);
-  if (!NO_INSTANT_TYPE_DIALECTS.has(dialect) && INSTANT_TYPE_NAMES.has(first)) return "date-time";
-  if (FLOAT64_TYPE_NAMES.has(first)) return "float64";
-  if (!NO_EXACT_DECIMAL_DIALECTS.has(dialect) && EXACT_DECIMAL_TYPE_NAMES.has(first)) {
+  if (instantTypeNames.has(first)) return "date-time";
+  if (float64TypeNames === "all" || float64TypeNames.has(first)) return "float64";
+  if (exactDecimalTypeNames.has(first)) {
     // `float64` and not `declared`: the kind means "the declaration settles it", and a
     // declared width a double carries settles it as surely as the word `double` does. Left
     // as `declared` the value would fall to the 32-bit-float length rule below and a
     // `Decimal(9, 2)` would be refused for maybe being a float it is declared not to be.
     return declaredPrecision(name) <= DOUBLE_EXACT_DIGITS ? "float64" : "decimal";
   }
-  // On an engine with no 32-bit float, the DECLARATION does not narrow anything: whatever a
-  // column is called, a fractional value in it is the 8-byte double the file holds, so it is
-  // its own identity and the length rule below - which exists to catch the printed form of a
-  // 32-bit float - has nothing to catch.
-  //
-  // MEASURED 2026-09-19 on bun:sqlite (Bun 1.4.0), one row per declaration: `DATE` holding
-  // `julianday('2024-01-15 06:00:00')` (2460324.75, `typeof` real), `REAL`, `INTEGER`, `TEXT`,
-  // `BLOB`, no declaration at all, and `NUMERIC` holding 0.30000000000000004. Every one came
-  // back as the value the file holds and `WHERE k = <value>` matched ONE row, its own.
-  //
-  // Reading only `FLOAT64_ONLY_NAMES` here refused the rest of them: a `DATE` column holding a
-  // julian day is nine digits, which the length rule reads as "could be a 32-bit float", and
-  // the sentence it showed was the one this set exists to say is false on SQLite.
-  return FLOAT64_ONLY_DIALECTS.has(dialect) ? "float64" : "declared";
+  return "declared";
 }
 
 /**
@@ -380,8 +113,8 @@ const FRACTIONAL = "a fractional number";
  * missing is any statement of how the engine will read it back. This one is the opposite
  * fact — the column says exactly what it is, an exact decimal, and says at the same time
  * that the number in front of the user is a rounding of digits it can hold and a double
- * cannot. Two different reasons, so two different sentences: see `EXACT_DECIMAL_TYPE_NAMES`
- * for what each engine hands over.
+ * cannot. Two different reasons, so two different sentences: see `EXACT_DECIMAL_TYPE_NAMES` in
+ * `@/lib/db/sql-writing/shared` for what each engine hands over.
  */
 const ROUNDED_DECIMAL = "a fractional number the driver rounded to fit";
 
@@ -812,34 +545,6 @@ function declaredTypeOf(result: QueryResult, field: string): string | undefined 
   return typeof declared === "string" ? declared : undefined;
 }
 
-/**
- * The SQL Server types that read `yyyy-mm-dd hh:mi:ss` through the session's DATEFORMAT.
- * `datetime2` and `date` read it the same under every DATEFORMAT, so they are not here.
- */
-const MSSQL_DATEFORMAT_TYPES: ReadonlySet<string> = new Set(["datetime", "smalldatetime"]);
-
-/**
- * The edited text as it is bound: as typed, except the one form SQL Server reads by DATEFORMAT.
- *
- * The provider reads a `datetime` and a `smalldatetime` as the engine's own
- * `yyyy-mm-dd hh:mi:ss[.mmm]` text (#1452), and the grid opens its editor on that text. Bound
- * as it is, the nvarchar parameter reaches those two columns through the session's DATEFORMAT.
- * MEASURED 2026-10-12 on SQL Server 2022 CU27 (16.0.4295.3), this hook's own `UPDATE ... SET
- * [dt] = @p1` in a session under `british`: `2026-10-04 12:34:57.123` was stored as April 10th
- * and `2026-10-25 23:59:58.997` was refused as out of range, while the same text with a `T`
- * was stored as written, and a `smalldatetime` the same. This provider's own sessions read
- * `mdy` today - tedious opens each one with `set dateformat mdy` and `set language
- * us_english`, and a `SET LANGUAGE` a user runs ends with its own `sp_executesql` call - so the
- * `T` keeps the edit from leaning on that driver default, the way the SQL INSERT export does
- * (`typed-literals.ts`). Text in any other shape is bound as typed.
- */
-function boundEditText(text: string, declaredType: string | undefined, dialect: DatabaseConnection["type"]): string {
-  if (dialect !== "mssql" || declaredType === undefined) return text;
-  return MSSQL_DATEFORMAT_TYPES.has(firstWord(unwrappedType(declaredType))) && MSSQL_DATETIME_TEXT.test(text)
-    ? text.replace(" ", "T")
-    : text;
-}
-
 export function useInlineEditing({
   activeConnection,
   currentTab,
@@ -1022,7 +727,10 @@ export function useInlineEditing({
         // what the engine reports and can be quoted: that keeps a name holding a
         // space or a reserved word legal, and keeps one that spells SQL inert.
         // NULL stays a keyword: it is not a value, so it takes no parameter.
-        const value = isNull ? "NULL" : emit(boundEditText(c.newValue, declaredTypeOf(result, c.columnId), dialect));
+        const value = isNull
+          ? "NULL"
+          : (sqlWritingFor(dialect).inlineEdit.boundEdit?.(c.newValue, declaredTypeOf(result, c.columnId), emit) ??
+            emit(c.newValue));
         return `${quote(c.columnId)} = ${value}`;
       });
       // The key keeps the number/text split it always had — a number goes to the

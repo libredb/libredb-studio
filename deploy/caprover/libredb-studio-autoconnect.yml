@@ -37,6 +37,7 @@ services:
             LLM_API_KEY: $$cap_llm_api_key
             LLM_MODEL: $$cap_llm_model
             LLM_API_URL: $$cap_llm_api_url
+            LLM_MODEL_EFFORT: $$cap_llm_model_effort
         volumes:
             - $$cap_appname-data:/app/data
             - $$cap_appname-discovered:/app/discovery
@@ -114,6 +115,10 @@ caproverOneClickApp:
           label: AI API URL (optional)
           defaultValue: ''
           description: OPTIONAL - base URL override, honoured by every provider (required for ollama/custom, optional for gemini/openai). Example for an Ollama app on this same CapRover - http://srv-captain--ollama:11434/v1
+        - id: $$cap_llm_model_effort
+          label: AI Reasoning Effort (optional)
+          defaultValue: ''
+          description: OPTIONAL - reasoning effort, for the openai provider only. One of - none | minimal | low | medium | high | xhigh | max. Which values a model takes is the model's own (gpt-6.1-sol has no none). Leave blank for the model's default. Example - low
     instructions:
         start: |-
             This variant adds a second app, named after this one with

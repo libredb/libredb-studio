@@ -54,9 +54,10 @@ export interface SpawnFailure {
   readonly exitCode?: number | null;
   /** node:child_process calls it `status`. */
   readonly status?: number | null;
-  readonly signalCode?: string | null;
+  /** bun gives a signal with no name (a Linux real-time one) as its number. */
+  readonly signalCode?: string | number | null;
   /** node:child_process calls it `signal`. */
-  readonly signal?: string | null;
+  readonly signal?: string | number | null;
   /** node:child_process sets this instead of a status when it could not run or timed out. */
   readonly error?: Error | undefined;
 }

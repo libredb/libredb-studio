@@ -1,3 +1,6 @@
+import { connectionStringFor } from "@/lib/db/connection-string";
+import { readADONetTLS, readBooleanTLS } from "@/lib/db/connection-string/shared";
+import type { RawParam, TLSIntent } from "@/lib/db/connection-string/types";
 import { databendCloudHostWarehouse } from "@/lib/db/providers/sql/databend/cloud-host";
 import {
   isAccountIdentifier,
@@ -141,52 +144,11 @@ export interface ParsedConnection {
 }
 
 /**
- * The canonical URI scheme each engine is reachable by, for the engines that HAVE one.
- *
- * Deliberately partial, and the gaps are the point: SQLite is a file path, LibreDB is
- * embedded in the process, and Druid is reached over plain HTTP through the form. Inventing
- * `sqlite://` or `druid://` to make the map look complete would put a scheme on the login
- * page that `parseConnectionString` below rejects - a claim the product does not honour,
- * which is the class of defect issue #425 exists to remove.
- *
- * Cassandra is absent for a different reason again, and a stronger one: its driver needs
- * a REQUIRED `localDataCenter` alongside the contact points (measured on 4.9.0 - it
- * refuses to construct a client without one), and no URI convention in use carries that
- * field. A `cassandra://host:9042/keyspace` form would therefore parse into a connection
- * that cannot open, which is worse than no paste at all.
- *
- * Trino is the sharpest version of that gap, and worth naming because it looks like it
- * belongs here: it HAS a canonical URL, `jdbc:trino://host:port/catalog/schema`. That is
- * a JDBC URL and not a URI - `new URL()` reads its scheme as `jdbc:` - and stripping the
- * prefix to make one would invent a `trino://` form no Trino tool emits. So the id is
- * absent, its capabilities say `supportsConnectionString: false`, and its form offers no
- * paste toggle. Pinned by tests/unit/lib/connection-string-parser.test.ts.
- *
- * Apache Spark is absent on purpose too, though its `sc://` address is pasted and decomposed (`parseSparkConnectUri`):
- * the login signature prints every scheme here with the tail `user@db.internal:<port>/app`, and Spark's grammar
- * refuses both a user part and a path, so the hero would show an address the product refuses.
- *
- * Aliases the parser also accepts (`postgresql://`, `mongodb+srv://`, `rediss://`,
- * `sqlserver://`, `couchbases://`, and ClickHouse's `http(s)://`) are not listed: this map
- * answers "what is the one scheme to show a reader for this engine", not "what will parse".
- *
- * `tests/unit/lib/connection-string-parser.test.ts` pins the entries against the parser
- * itself - every scheme here must round-trip to its own `DatabaseType` - so the map cannot
- * drift away from the `startsWith` checks below without failing CI.
+ * The canonical URI scheme each engine is reachable by, for the engines that HAVE one. Derived inside the connection
+ * string registry (src/lib/db/connection-string), where the reasons each gap is deliberate live, and re-exported here
+ * so the login signature and the parser tests keep one import.
  */
-export const ENGINE_URI_SCHEMES: Partial<Record<DatabaseType, string>> = {
-  postgres: "postgres",
-  mysql: "mysql",
-  mongodb: "mongodb",
-  redis: "redis",
-  oracle: "oracle",
-  mssql: "mssql",
-  db2: "db2",
-  couchbase: "couchbase",
-  clickhouse: "clickhouse",
-  libsql: "libsql",
-  databend: "databend",
-};
+export { ENGINE_URI_SCHEMES } from "@/lib/db/connection-string";
 
 /**
  * The sentences a refused Databend paste shows (design 6.2), one per refusal. Each refusal fills no field, so the
@@ -280,7 +242,7 @@ export function parseConnectionString(input: string): ParsedConnection | null {
 
   // PostgreSQL
   if (trimmed.startsWith("postgres://") || trimmed.startsWith("postgresql://")) {
-    return parseGenericURL(trimmed, "postgres", "5432");
+    return parsePostgresURL(trimmed);
   }
 
   // MySQL
@@ -373,105 +335,6 @@ export function parseConnectionString(input: string): ParsedConnection | null {
 }
 
 /**
- * What a TLS parameter resolved to: a mode the form can hold, or the parameter itself when
- * it has no representation. Never both, and never a fallback to "disable".
- */
-interface TLSIntent {
-  sslMode?: SSLMode;
-  unmappedTLSParam?: string;
-}
-
-/**
- * libpq's sslmode, minus `prefer` and `allow`. Those two are absent on purpose (see the
- * `unmappedTLSParam` note): they mean "encrypt if the server offers it", which no SSLMode
- * value describes. `verify-system` is not in the table either - it is this form's own mode
- * name and not a libpq one, so a string carrying it is a string we cannot honour.
- */
-const POSTGRES_SSLMODE: Record<string, SSLMode> = {
-  disable: "disable",
-  require: "require",
-  "verify-ca": "verify-ca",
-  "verify-full": "verify-full",
-};
-
-/**
- * MySQL's --ssl-mode, minus PREFERRED for the same reason. VERIFY_IDENTITY checks the
- * hostname as well as the chain, which is what verify-full means here.
- */
-const MYSQL_SSL_MODE: Record<string, SSLMode> = {
-  disabled: "disable",
-  required: "require",
-  verify_ca: "verify-ca",
-  verify_identity: "verify-full",
-};
-
-/**
- * Db2's `security=` keyword: `SSL` is the one value that names a TLS transport (#786). It maps to
- * a VERIFYING mode, by D26's rule and because the Db2 provider fails closed on unverified
- * transport: without TLS the password crosses the network in cleartext.
- */
-const DB2_SECURITY: Record<string, SSLMode> = { ssl: "verify-system" };
-
-/** Db2's boolean `ssl=`, both ends mappable, onto the mode `security=SSL` reads as (#786). */
-const DB2_SSL: Record<string, SSLMode> = {
-  true: "verify-system",
-  "1": "verify-system",
-  false: "disable",
-  "0": "disable",
-};
-
-/**
- * One query parameter kept in the spelling it was pasted in. The lookup is
- * case-insensitive, but the banner quotes the parameter back at the user, so what it echoes
- * has to be their text and not a normalised form of it.
- */
-interface RawParam {
-  name: string;
-  value: string;
-}
-
-/**
- * Map a documented value case-insensitively, or hand back the parameter verbatim.
- *
- * `Object.hasOwn` rather than a bare lookup: the tables are object literals, so an
- * all-lowercase Object.prototype key reaches them. `?sslmode=constructor` resolved to the
- * Object constructor FUNCTION - truthy, so it was written into `sslMode` and set as the
- * form's SSLMode, smuggling a non-SSLMode value past the banner this function exists to
- * raise. Pinned by tests/unit/lib/connection-string-parser.test.ts.
- */
-function mapTLSValue(param: RawParam, table: Record<string, SSLMode>): TLSIntent {
-  const key = param.value.toLowerCase();
-  return Object.hasOwn(table, key) ? { sslMode: table[key] } : { unmappedTLSParam: `${param.name}=${param.value}` };
-}
-
-/**
- * The boolean TLS spellings: postgres's JDBC/Heroku `ssl=true`, MySQL's `ssl` / `useSSL`
- * (Connector/J's pre-`sslMode` switch, still written by several ORMs) and MongoDB's `tls` /
- * `ssl`. A boolean has no opportunistic value, so unlike `sslmode`/`ssl-mode` both ends of it
- * are mappable.
- *
- * THE RULE (D26): a boolean TLS spelling is mapped onto the mode that matches what the
- * engine's OWN driver does with it, and never onto a weaker one. `true` therefore maps to
- * `verify-system`, because that is what the drivers do: `pg` given `ssl=true` and mysql2 given
- * `ssl: {}` both connect with Node's default `rejectUnauthorized: true`, and the mongodb
- * driver reads `tls=true` as TLS with chain verification. `false` maps to `disable`, which is
- * the same rule read the other way.
- *
- * `require` used to be the answer for `true`, and was wrong in one direction while the mongodb
- * refusal was wrong in the other: `require` is `rejectUnauthorized: false` in every provider
- * that has the knob, so a paste that asked for a verified connection got an unverified one,
- * and there was no mode to map onto that did not also demand a CA PEM the user does not have.
- * `verify-system` (src/lib/types.ts) is that mode, so the rule above no longer has to trade
- * security against completability.
- */
-function readBooleanTLS(param: RawParam): TLSIntent {
-  const flag = param.value.toLowerCase();
-  if (flag === "true" || flag === "1") return { sslMode: "verify-system" };
-  if (flag === "false" || flag === "0") return { sslMode: "disable" };
-  return { unmappedTLSParam: `${param.name}=${param.value}` };
-}
-
-/**
  * The MongoDB URI's TLS options, read for both schemes.
  *
  * `tls=true` (and the driver's deprecated `ssl=` alias) goes through the boolean rule above,
@@ -527,79 +390,19 @@ function readMongoTLSFileParam(uri: string): string | undefined {
 }
 
 /**
- * ADO.NET's Encrypt/TrustServerCertificate pair, from either the keyword string or an
- * mssql:// query. Encrypt on with TrustServerCertificate on is `require`: encrypted, chain
- * unchecked. Encrypt on with it off - including absent, which is the documented default -
- * validates the chain AND the name, so verify-full. `Strict` is TDS 8.0, where the driver
- * ignores TrustServerCertificate entirely and always validates.
- *
- * An absent Encrypt says nothing rather than "disable": System.Data.SqlClient defaults it to
- * false and Microsoft.Data.SqlClient 4.0+ to true, so the string alone does not carry the answer.
- */
-function readADONetTLS(get: (key: string) => string | undefined): TLSIntent {
-  const encrypt = get("encrypt");
-  if (encrypt === undefined) return {};
-  const value = encrypt.toLowerCase();
-  if (value === "false" || value === "no") return { sslMode: "disable" };
-  if (value === "strict") return { sslMode: "verify-full" };
-  if (value !== "true" && value !== "yes") return { unmappedTLSParam: `Encrypt=${encrypt}` };
-
-  const trust = get("trustservercertificate");
-  if (trust === undefined) return { sslMode: "verify-full" };
-  const trusted = trust.toLowerCase();
-  if (trusted === "true" || trusted === "yes") return { sslMode: "require" };
-  if (trusted === "false" || trusted === "no") return { sslMode: "verify-full" };
-  return { unmappedTLSParam: `TrustServerCertificate=${trust}` };
-}
-
-/**
  * The TLS a URL carries in its QUERY STRING, for the engines that put it there.
  *
- * Only postgres, mysql, mssql and db2 are read here: for `rediss://`, `couchbases://` and
- * ClickHouse's `http(s)://` the scheme IS the transport and already decided, and MongoDB's
- * URI is read by `readMongoTLS`, which parses it by hand because `mongodb+srv://` is not a
- * URL this function's caller can build.
- *
- * Postgres's sslrootcert/sslcert/sslkey are read by nobody here on purpose: they name files on
- * the machine that wrote the string, while the form holds PEM text and the process that opens
- * the connection is the server, which cannot read that path.
+ * Each engine's reader is the `readTls` of its row in `CONNECTION_STRING`
+ * (src/lib/db/connection-string), declared beside its provider; postgres, mysql, mssql and db2
+ * have one. For `rediss://`, `couchbases://` and ClickHouse's `http(s)://` the scheme IS the
+ * transport and already decided, and MongoDB's URI is read by `readMongoTLS`, which parses it
+ * by hand because `mongodb+srv://` is not a URL this function's caller can build.
  */
 function readQueryTLS(url: URL, type: DatabaseType): TLSIntent {
   const params = new Map<string, RawParam>();
   for (const [name, value] of url.searchParams) params.set(name.toLowerCase(), { name, value });
-
-  if (type === "postgres") {
-    // The explicit mode wins over the boolean: a string carrying both said the specific
-    // thing on purpose.
-    const sslmode = params.get("sslmode");
-    if (sslmode) return mapTLSValue(sslmode, POSTGRES_SSLMODE);
-    const ssl = params.get("ssl");
-    return ssl ? readBooleanTLS(ssl) : {};
-  }
-
-  if (type === "mysql") {
-    const mode = params.get("ssl-mode") ?? params.get("sslmode");
-    if (mode) return mapTLSValue(mode, MYSQL_SSL_MODE);
-    // Reading only ssl-mode dropped `?ssl=true` and `?useSSL=true` with no mode and no
-    // banner - the silent downgrade the whole TLS read exists to prevent. mysql2 also
-    // accepts an OBJECT here (`ssl={"rejectUnauthorized":true}`); that is not a boolean, so
-    // it falls through to the banner rather than being guessed at.
-    const flag = params.get("ssl") ?? params.get("usessl");
-    return flag ? readBooleanTLS(flag) : {};
-  }
-
-  if (type === "mssql") return readADONetTLS((key) => params.get(key)?.value);
-
-  if (type === "db2") {
-    // `security=SSL` is the keyword Db2's own CLI and JDBC drivers read; `ssl` is the boolean
-    // spelling other URLs carry. Both ask for a verifying mode: see `DB2_SECURITY`.
-    const security = params.get("security");
-    if (security) return mapTLSValue(security, DB2_SECURITY);
-    const ssl = params.get("ssl");
-    return ssl ? mapTLSValue(ssl, DB2_SSL) : {};
-  }
-
-  return {};
+  const read = connectionStringFor(type).readTls;
+  return read === null ? {} : read(params);
 }
 
 /**
@@ -796,6 +599,66 @@ function parseLibSQLURL(uri: string): ParsedConnection | null {
   }
 }
 
+/**
+ * The libpq connection keywords a postgres URL may carry as query parameters
+ * (PostgreSQL docs, "Connection Strings": every keyword is accepted in the
+ * query part, e.g. postgresql:///mydb?host=db.example.com&port=5433).
+ * Mapped onto the field each one fills; `dbname` is handled separately because
+ * libpq lets it disagree with the path.
+ */
+const POSTGRES_QUERY_PARAMETERS: Readonly<Record<string, "host" | "port" | "user" | "password">> = {
+  host: "host",
+  port: "port",
+  user: "user",
+  password: "password",
+};
+
+/**
+ * The postgres URL query string, split and decoded the way libpq splits it
+ * (fe-connect.c, `conninfo_uri_parse_params`): each pair on its first `=`,
+ * one percent-decode pass (a `+` is a literal plus, since libpq's
+ * `conninfo_uri_decode` only handles `%XX`), and a later occurrence of a
+ * keyword replaces an earlier one, because libpq stores each value as it
+ * walks the pairs. Malformed escapes are kept verbatim rather than rejecting
+ * the URL, the way the rest of this parser treats them.
+ */
+function postgresQueryParameter(url: URL): (name: string) => string | null {
+  const values = new Map<string, string>();
+  for (const pair of url.search.slice(1).split("&")) {
+    if (pair === "") continue;
+    const equals = pair.indexOf("=");
+    if (equals === -1) continue;
+    values.set(safeDecodeURIComponent(pair.slice(0, equals)), safeDecodeURIComponent(pair.slice(equals + 1)));
+  }
+  return (name: string) => values.get(name) ?? null;
+}
+
+/** An authority that is only a userinfo (`postgresql://@/db`): valid for libpq, rejected by the URL constructor. */
+const EMPTY_HOST_AUTHORITY = /^(postgres(?:ql)?:\/\/[^/?#]*@)(?=[/?])/;
+
+function parsePostgresURL(uri: string): ParsedConnection | null {
+  // `postgresql://@/db` and `postgresql://user@/db` carry only a userinfo and
+  // no host; libpq accepts them, the URL constructor does not. The empty host
+  // becomes `localhost` first, the same host the plain `postgresql:///db`
+  // form reads as, and a query `host=` still replaces it.
+  const normalized = uri.replace(EMPTY_HOST_AUTHORITY, "$1localhost");
+  const parsed = parseGenericURL(normalized, "postgres", "5432");
+  if (parsed === null) return null;
+  const url = new URL(normalized);
+  const queryValue = postgresQueryParameter(url);
+  for (const [name, field] of Object.entries(POSTGRES_QUERY_PARAMETERS)) {
+    const value = queryValue(name);
+    if (value !== null) {
+      parsed[field] = value;
+    }
+  }
+  const dbname = queryValue("dbname");
+  if (dbname !== null) {
+    parsed.database = dbname;
+  }
+  return parsed;
+}
+
 function parseGenericURL(uri: string, type: DatabaseType, defaultPort: string): ParsedConnection | null {
   try {
     const url = new URL(uri);
@@ -806,7 +669,10 @@ function parseGenericURL(uri: string, type: DatabaseType, defaultPort: string): 
       port: url.port || defaultPort,
       user: url.username ? decodeURIComponent(url.username) : undefined,
       password: url.password ? decodeURIComponent(url.password) : undefined,
-      database: url.pathname.slice(1) || undefined, // remove leading /
+      // The pathname keeps a space, non-ASCII letter or reserved character percent-encoded.
+      // Decode it the way the user, the password and the MongoDB database already are, and
+      // keep a broken escape as written. An empty path is no database.
+      database: url.pathname.length > 1 ? safeDecodeURIComponent(url.pathname.slice(1)) : undefined,
       ...readQueryTLS(url, type),
     };
   } catch {
@@ -889,8 +755,8 @@ const DATABEND_SIGN_IN_PARAMETERS = new Set([
  * password as the database or a parameter, and since an `@` past the address part can also be a path's or a
  * parameter's, and a password can hold an unencoded `@` before its `/`, every such `@` is refused, naming each
  * encoding; and BendSQL's token and key-pair sign-in have no field here. Unlike BendSQL, which decodes the password
- * only, the user is percent-decoded too, as every other scheme here does. With no `warehouse=`, the warehouse an older Databend Cloud host names
- * (`<tenant>--<warehouse>.gw...`) fills Warehouse.
+ * only, the user and the database path are percent-decoded too, as every other scheme here does. With no
+ * `warehouse=`, the warehouse an older Databend Cloud host names (`<tenant>--<warehouse>.gw...`) fills Warehouse.
  */
 function parseDatabendDSN(uri: string): ParsedConnection | null {
   if (uri.includes("#")) return databendRefusal("fragment");
@@ -939,7 +805,7 @@ function parseDatabendDSN(uri: string): ParsedConnection | null {
     port: url.port || (plain ? "80" : "443"),
     user: url.username ? safeDecodeURIComponent(url.username) : undefined,
     password: url.password ? safeDecodeURIComponent(url.password) : undefined,
-    database: url.pathname.slice(1) || undefined,
+    database: url.pathname.length > 1 ? safeDecodeURIComponent(url.pathname.slice(1)) : undefined,
     ...(warehouse ? { warehouse } : {}),
     ...tls,
     allowInsecureAuth: false,

@@ -2,8 +2,8 @@
  * The connection's address as the provider dials it: the scheme and TLS material from the SSL / TLS
  * panel, and the path prefix from the dialog's Path prefix field (MT-S6, MT-S7).
  *
- * Both fields are offered by the dialog (`connectionFields` and the SSL / TLS panel in
- * `src/lib/db-ui-config.ts`), so a value the provider ignores is a value the reader typed for nothing.
+ * Both fields are offered by the dialog (`connectionFields` and the SSL / TLS panel on the `mtconnect` entry of
+ * `CONNECTION_FORM` in `src/lib/db/connection-form.ts`), so a value the provider ignores is a value the reader typed for nothing.
  */
 import { describe, expect, test } from "bun:test";
 import { DatabaseConfigError } from "@/lib/db/errors";

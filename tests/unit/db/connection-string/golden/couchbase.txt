@@ -1,0 +1,4 @@
+scheme => "couchbase"
+parse(couchbase://h/b?ssl=true) => {"type":"couchbase","host":"h","port":"8091","database":"b","connectionString":"couchbase://h/b?ssl=true","sslMode":"disable"}
+seed => []
+seed => []

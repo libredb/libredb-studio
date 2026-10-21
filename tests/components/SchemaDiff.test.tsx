@@ -248,6 +248,7 @@ import { SchemaDiff } from "@/components/SchemaDiff";
 import { logger } from "@/lib/logger";
 import { mockSchema } from "../fixtures/schemas";
 import { mockMySQLConnection, mockPostgresConnection } from "../fixtures/connections";
+import path from "node:path";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -2545,13 +2546,27 @@ describe("SchemaDiff", () => {
       }
     });
 
+    // With no connection the panel hands the generator no dialect, and the migration DDL registry
+    // answers with its no-connection row. What the user sees is unchanged: the generator is mocked in
+    // this file, so the real one runs in a fresh process on the diff and dialect the panel passed.
     test("defaults to postgres dialect when connection is null", () => {
       renderDiff({ connection: null });
       changeTarget("snap-1");
-      if (mockGenerateMigrationSQL.mock.calls.length > 0) {
-        const dialect = (mockGenerateMigrationSQL.mock.calls as unknown[][])[0][1];
-        expect(dialect).toBe("postgres");
-      }
+      expect(mockGenerateMigrationSQL).toHaveBeenCalled();
+      const [diff, dialect] = (mockGenerateMigrationSQL.mock.calls as unknown[][])[0];
+      expect(dialect).toBeUndefined();
+
+      const script =
+        'import { generateMigrationSQL } from "@/lib/schema-diff/migration-generator";' +
+        ` process.stdout.write(generateMigrationSQL(${JSON.stringify(diff)}, undefined));`;
+      const child = Bun.spawnSync([process.execPath, "-e", script], {
+        cwd: path.resolve(import.meta.dir, "../.."),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(child.stderr.toString()).toBe("");
+      expect(child.exitCode).toBe(0);
+      expect(child.stdout.toString()).toContain("-- Dialect: postgres");
     });
 
     test("schema-diff-migration-copy button renders and copies migration SQL", () => {

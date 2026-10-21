@@ -2454,7 +2454,11 @@ describe("Trino bulk column read", () => {
     // No index and no foreign key anywhere, in any catalog of any connector: Trino's
     // `information_schema` holds eight views and neither `table_constraints` nor
     // `key_column_usage` is among them.
-    expect(batch.details.every((detail) => detail.indexes.length === 0 && detail.foreignKeys.length === 0)).toBe(true);
+    expect(
+      batch.details.every(
+        (detail) => Array.isArray(detail.indexes) && detail.indexes.length === 0 && detail.foreignKeys.length === 0,
+      ),
+    ).toBe(true);
   });
 
   test("every described path is one listObjects produced, for both relation sources", async () => {

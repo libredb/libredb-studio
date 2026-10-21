@@ -58,6 +58,7 @@ const HEADINGS = [
   "## 11. Errors",
   "## 12. Embedded package",
   "## 13. Testing and evidence",
+  "## Migration DDL",
 ];
 
 /** The section under the heading line `heading`, up to the next heading of its level or above. */
@@ -160,7 +161,7 @@ function firstBytes(value: unknown, key: string): Uint8Array | undefined {
 }
 
 describe("docs/providers/spark.md", () => {
-  test("has the thirteen sections in order", () => {
+  test("has the thirteen sections and the Migration DDL section in order", () => {
     expect(DOC.split("\n").filter((line) => line.startsWith("## "))).toEqual(HEADINGS);
   });
 

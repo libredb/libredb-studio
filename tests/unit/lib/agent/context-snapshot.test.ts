@@ -1535,6 +1535,24 @@ describe("packContextForTask", () => {
     expect(packed).toContain("omitted");
   });
 
+  test("a table whose indexes are unavailable renders '; indexes: unavailable'", () => {
+    const snapshot: AgentContextSnapshot = {
+      connectionId: "conn-1",
+      fingerprint: "ctx_" + "1".repeat(32),
+      capturedAtMs: 1_000,
+      objects: [
+        {
+          name: "public.users",
+          columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
+          indexes: { unavailable: "ACCESS_DENIED" },
+          foreignKeys: [],
+        },
+      ],
+    };
+    const packed = packContextForTask(snapshot, "list users");
+    expect(packed).toContain("public.users: id integer NOT NULL PK; indexes: unavailable");
+  });
+
   /*
     A preface is the server's own voice ahead of the fence — the sentence telling the
     model how to cite the inventory cannot live INSIDE a region the model is told to
@@ -3289,6 +3307,17 @@ describe("packOperationsInventory", () => {
     // A blank right-hand side would read as "the indexes were not captured", and a run
     // asked about an unused index cannot tell those two apart.
     expect(packed).toContain('"public.events": no indexes');
+  });
+
+  test("a table whose indexes are unavailable states the refusal sentence", () => {
+    const packed = packOperationsInventory({
+      connectionId: "conn-1",
+      fingerprint: "ctx_" + "3".repeat(32),
+      capturedAtMs: 1_000,
+      objects: [{ name: "public.events", columns: [], indexes: { unavailable: "permission denied" }, foreignKeys: [] }],
+    });
+
+    expect(packed).toContain('"public.events": indexes unavailable (permission denied)');
   });
 
   /*

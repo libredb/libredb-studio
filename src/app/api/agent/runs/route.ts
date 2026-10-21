@@ -429,7 +429,9 @@ export async function POST(req: Request) {
       probe positively ESTABLISHED, so nothing that merely went wrong (a quota, a bad
       key, an unreachable endpoint) reaches here as a refusal; those still start, and
       the drive reports them in its own vocabulary. 422 rather than 400: the request is
-      well-formed, and it is the server's configuration that cannot honour it.
+      well-formed, and it is the server's configuration that cannot honour it. A
+      configuration the model refused (a reasoning effort it does not take) is thrown
+      instead, and the catch below answers it as the configuration error it is.
     */
     const gate = await admitAgentModel(mode as AgentRunMode);
     if (gate.kind === "refused") {

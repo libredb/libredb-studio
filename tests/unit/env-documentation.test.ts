@@ -188,7 +188,7 @@ describe("environment variable documentation", () => {
 
   test("LLM configuration reads are visible to the documentation guard", () => {
     const names = new Set(readNames());
-    for (const name of ["LLM_PROVIDER", "LLM_API_KEY", "LLM_MODEL", "LLM_API_URL"]) {
+    for (const name of ["LLM_PROVIDER", "LLM_API_KEY", "LLM_MODEL", "LLM_API_URL", "LLM_MODEL_EFFORT"]) {
       expect(names.has(name), name).toBe(true);
     }
   });

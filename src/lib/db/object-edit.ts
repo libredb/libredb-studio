@@ -62,8 +62,8 @@ export const EDIT_PLAN_EXECUTABLE_LIMIT = 1_200_000;
  * The inbound bound on the whole request body, in BYTES, read before the JSON parse (#789).
  *
  * The arithmetic, done rather than asserted. MEASURED: Next 16.3.4 clones every request body for
- * middleware at exactly 10,485,760 bytes and TRUNCATES above it, which surfaces as HTTP 500 with
- * a JSON parser's sentence on `/api/db/query` and as HTTP 400 "Empty request body" on
+ * middleware at exactly 10,485,760 bytes and TRUNCATES above it, which surfaces as HTTP 400
+ * "Invalid request body" on `/api/db/query` and as HTTP 400 "Empty request body" on
  * `/api/db/objects/source`: one condition reported two wrong ways. One maximal part is 1,000,000
  * UTF-16 code units, up to 4 MB as UTF-8 and up to 6 MB once JSON-escaped. The plan body carries
  * the reader's text once and the apply body carries the plan, whose unit contains that text once

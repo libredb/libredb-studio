@@ -1,14 +1,8 @@
 import { describe, test, expect } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { ALLOWED_OPERATIONS } from "@/lib/db/providers/network/netconf/requests";
 import { diffSchemas } from "@/lib/schema-diff/diff-engine";
-import {
-  DATABEND_COLUMN_MODIFICATION_REASON,
-  DATABEND_INDEX_REFUSAL,
-  DATABEND_PRIMARY_KEY_REASON,
-  generateMigrationSQL,
-} from "@/lib/schema-diff/migration-generator";
+import { MIGRATION_DDL } from "@/lib/db/migration-ddl";
+import { generateMigrationSQL } from "@/lib/schema-diff/migration-generator";
 import type { StoredObject } from "@/lib/db/detailed-object";
 import type { ColumnDiff, SchemaDiff } from "@/lib/schema-diff/types";
 import type { DatabaseType } from "@/lib/types";
@@ -16,6 +10,17 @@ import type { DatabaseType } from "@/lib/types";
 // ============================================================================
 // Helpers
 // ============================================================================
+
+/** The one Databend refusal reason that starts with `opening`, read from the spec's `reasons` as the docs test reads them. */
+function databendReason(opening: string): string {
+  const matches = MIGRATION_DDL.databend.reasons.filter((reason) => reason.startsWith(opening));
+  if (matches.length !== 1) throw new Error(`${matches.length} Databend reasons start with "${opening}"`);
+  return matches[0];
+}
+
+const DATABEND_COLUMN_MODIFICATION_REASON = databendReason("Databend has ALTER TABLE ... MODIFY COLUMN");
+const DATABEND_INDEX_REFUSAL = databendReason("Databend: Cannot generate index DDL.");
+const DATABEND_PRIMARY_KEY_REASON = databendReason("Databend's CREATE TABLE has no primary-key constraint.");
 
 const noChangesDiff: SchemaDiff = {
   tables: [],
@@ -1180,7 +1185,7 @@ describe("generateMigrationSQL: SQLite's grammar declares a foreign key only ins
 
 /**
  * Exhaustive by construction, in the spirit of `PICKER_COVERAGE` in
- * `tests/hooks/use-connection-form.test.ts`: a new `DatabaseType` fails typecheck here until it is
+ * `tests/unit/lib/db/connection-form.test.ts`: a new `DatabaseType` fails typecheck here until it is
  * classified, so it cannot silently re-inherit the generator's PostgreSQL branch — which is the whole
  * of #269. `"has-own-branch"` means the modified-column chain answers that id in its own dialect.
  */
@@ -1193,7 +1198,7 @@ const MODIFIED_COLUMN_COVERAGE: Record<
   sqlite: "has-own-branch",
   // NOT "has-own-branch": libSQL accepts DROP COLUMN and RENAME COLUMN (measured on
   // sqld 0.24.33), so it takes the generic branch for those and only the column
-  // MODIFICATION is inexpressible - which is what NO_COLUMN_MODIFICATION records.
+  // MODIFICATION is inexpressible - which is what `libsql/migration-ddl.ts` `NO_COLUMN_MODIFICATION` records.
   libsql: {
     label: "libSQL",
     reason: "SQLite cannot retype a column; recreate the table and copy the rows.",
@@ -1691,46 +1696,46 @@ const TRANSACTION_WRAPPER_COVERAGE: Record<DatabaseType, "BEGIN;" | "BEGIN TRANS
   sqlite: false, // runs its own transaction (module docstring)
   libsql: false, // SQLite fork, same reasoning, plus its own Hrana-stream note (module docstring)
   cassandra: false, // CQL has no BEGIN/COMMIT — measured on 5.0.9 (module docstring)
-  // The remaining twenty-four each have a recorded reason for having no `BEGIN;` to emit, in this
-  // same module (`NO_COLUMN_MODIFICATION`), in `src/lib/sql/grammar.ts` (`NON_SQL_DIALECTS`)
-  // or in the provider doc named on the line — this table applies those established facts to
-  // the wrapper fallback rather than asserting fresh ones, so none of the twenty-four needs a new
-  // live probe. What none of them means is "the wrapper bracketed nothing": see the
-  // added-table fixture below.
-  mongodb: false, // not SQL text at all (`NON_SQL_DIALECTS`); wrapping non-SQL in SQL statements is wrong regardless of Mongo's own transaction API
-  redis: false, // same: command-line grammar, not SQL (`NON_SQL_DIALECTS`)
-  libredb: false, // "a JSON command grammar, not SQL DDL" (NO_COLUMN_MODIFICATION's own words)
+  // The remaining twenty-four each have a recorded reason for having no `BEGIN;` to emit, in the
+  // engine's migration DDL module (its `refusal`, or a const such as `NO_COLUMN_MODIFICATION`), in
+  // each engine's `sql-grammar` module (`readsSqlText: false`) or in the provider doc named on the line — this
+  // table applies those established facts to the wrapper fallback rather than asserting fresh ones,
+  // so none of the twenty-four needs a new live probe. What none of them means is "the wrapper
+  // bracketed nothing": see the added-table fixture below.
+  mongodb: false, // not SQL text at all (`readsSqlText: false`); wrapping non-SQL in SQL statements is wrong regardless of Mongo's own transaction API
+  redis: false, // same: command-line grammar, not SQL (`readsSqlText: false`)
+  libredb: false, // "a JSON command grammar, not SQL DDL" (the libredb module's `refusal`, in its own words)
   couchbase: false, // has transactions, but spells them `BEGIN TRANSACTION` + a txid every later statement must carry — not something a flat file expresses (docs/providers/couchbase.md §13)
-  druid: false, // "Druid SQL has no ALTER TABLE" and no transaction concept at all (NO_COLUMN_MODIFICATION)
+  druid: false, // "Druid SQL has no ALTER TABLE" and no transaction concept at all (the druid module's `refusal`)
   clickhouse: false, // ClickHouse's transaction support is experimental and setting-gated, not a safe default; today's code wraps it anyway, which this fixes
-  elasticsearch: false, // `BEGIN` is not in the grammar (NO_COLUMN_MODIFICATION's measured statement list; docs/providers/elasticsearch.md §9)
+  elasticsearch: false, // `BEGIN` is not in the grammar (the measured statement list in `elasticsearch-migration-ddl.ts`; docs/providers/elasticsearch.md §9)
   opensearch: false, // same, measured separately on OpenSearch 3.8.0 (docs/providers/opensearch.md §9)
-  trino: false, // connector-dependent at best; no portable BEGIN/COMMIT (NO_COLUMN_MODIFICATION)
-  prometheus: false, // not SQL text at all (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
-  kafka: false, // a JSON read request, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
-  etcd: false, // an etcdctl command, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
-  neo4j: false, // a Cypher statement, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
-  milvus: false, // a Milvus console request, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
-  qdrant: false, // a Qdrant console request, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
-  influxdb: false, // an InfluxQL statement, not SQL text at all (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
-  influxdb3: false, // SQL, but the 3.x planner takes no DDL, so there is no table DDL to wrap (`NO_TABLE_DDL`)
-  oxia: false, // an `oxia client` read command, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
+  trino: false, // connector-dependent at best; no portable BEGIN/COMMIT (`trino/migration-ddl.ts` `NO_COLUMN_MODIFICATION`)
+  prometheus: false, // not SQL text at all (`readsSqlText: false`), and no table DDL to wrap (the module's `tableDdl: "refused"`)
+  kafka: false, // a JSON read request, not SQL text (`readsSqlText: false`), and no table DDL to wrap (the module's `tableDdl: "refused"`)
+  etcd: false, // an etcdctl command, not SQL text (`readsSqlText: false`), and no table DDL to wrap (the module's `tableDdl: "refused"`)
+  neo4j: false, // a Cypher statement, not SQL text (`readsSqlText: false`), and no table DDL to wrap (the module's `tableDdl: "refused"`)
+  milvus: false, // a Milvus console request, not SQL text (`readsSqlText: false`), and no table DDL to wrap (the module's `tableDdl: "refused"`)
+  qdrant: false, // a Qdrant console request, not SQL text (`readsSqlText: false`), and no table DDL to wrap (the module's `tableDdl: "refused"`)
+  influxdb: false, // an InfluxQL statement, not SQL text at all (`readsSqlText: false`), and no table DDL to wrap (the module's `tableDdl: "refused"`)
+  influxdb3: false, // SQL, but the 3.x planner takes no DDL, so there is no table DDL to wrap (the module's `tableDdl: "refused"`)
+  oxia: false, // an `oxia client` read command, not SQL text (`readsSqlText: false`), and no table DDL to wrap (the module's `tableDdl: "refused"`)
   databend: false, // a DDL statement commits the open transaction, so BEGIN; brackets nothing, the Oracle reason (module docstring)
   bigquery: false, // the provider declares no transactions
   snowflake: false, // DDL commits implicitly, and each statement runs in its own session
   spark: false, // no transaction spans two statements (supportsTransactions: false)
-  s3: false, // one AWS CLI subset command, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
-  kubernetes: false, // one kubectl statement, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
-  mqtt: false, // one JSON read request, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
-  firestore: false, // one read-only query chain, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
-  rabbitmq: false, // one JSON read request, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
-  opcua: false, // one JSON read request, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
+  s3: false, // one AWS CLI subset command, not SQL text (`readsSqlText: false`), and no table DDL to wrap (the module's `tableDdl: "refused"`)
+  kubernetes: false, // one kubectl statement, not SQL text (`readsSqlText: false`), and no table DDL to wrap (the module's `tableDdl: "refused"`)
+  mqtt: false, // one JSON read request, not SQL text (`readsSqlText: false`), and no table DDL to wrap (the module's `tableDdl: "refused"`)
+  firestore: false, // one read-only query chain, not SQL text (`readsSqlText: false`), and no table DDL to wrap (the module's `tableDdl: "refused"`)
+  rabbitmq: false, // one JSON read request, not SQL text (`readsSqlText: false`), and no table DDL to wrap (the module's `tableDdl: "refused"`)
+  opcua: false, // one JSON read request, not SQL text (`readsSqlText: false`), and no table DDL to wrap (the module's `tableDdl: "refused"`)
   // No wrapper: every request this provider sends is a GET, so there is no statement to wrap (#1722).
-  mtconnect: false, // one JSON read request, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
-  modbus: false, // one JSON read request, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
-  netconf: false, // one JSON read request, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
+  mtconnect: false, // one JSON read request, not SQL text (`readsSqlText: false`), and no table DDL to wrap (the module's `tableDdl: "refused"`)
+  modbus: false, // one JSON read request, not SQL text (`readsSqlText: false`), and no table DDL to wrap (the module's `tableDdl: "refused"`)
+  netconf: false, // one JSON read request, not SQL text (`readsSqlText: false`), and no table DDL to wrap (the module's `tableDdl: "refused"`)
   snmp: false, // a Get is not SQL text and there is no table DDL to wrap
-  sparkplug: false, // one JSON read request, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
+  sparkplug: false, // one JSON read request, not SQL text (`readsSqlText: false`), and no table DDL to wrap (the module's `tableDdl: "refused"`)
 };
 
 // Both creation and modification paths must use the same wrapper policy.
@@ -1794,27 +1799,18 @@ describe("generateMigrationSQL: transaction wrapper by dialect", () => {
 });
 
 /*
-  `NO_TABLE_DDL` and `NO_TRANSACTION_WRAPPER` agree, which the wrapper set's docblock claims for
-  `prometheus` and `kafka` and which no output can show: `NO_TABLE_DDL` declines the whole diff before
-  a wrapper is written, so an id missing from the wrapper set changes no text. Measured: dropping
-  either id from the wrapper set left every test above green. So the agreement is read from the
-  module's own declarations, the one place it exists.
+  A declined table DDL and an absent transaction wrapper agree, which no output can show: a declined
+  table DDL refuses the whole diff before a wrapper is written, so an id that kept a wrapper would
+  change no text. Measured: dropping either id from the old wrapper set left every test above green.
+  So the agreement is read from the registry rows, the one place it is declared.
 */
 describe("the engines whose table DDL is declined take no wrapper either", () => {
-  const source = readFileSync(join(import.meta.dir, "../../../src/lib/schema-diff/migration-generator.ts"), "utf8");
-  const setMembers = (name: string): string[] => {
-    const declaration = new RegExp(
-      `const ${name}: ReadonlySet<DatabaseType> = new Set<DatabaseType>\\(\\[([^\\]]*)\\]\\);`,
-    );
-    const match = declaration.exec(source);
-    if (match === null) throw new Error(`${name} is not declared as a Set literal in migration-generator.ts`);
-    return [...match[1].matchAll(/"([a-z0-9]+)"/g)].map((member) => member[1]);
-  };
+  const ids = Object.keys(MIGRATION_DDL) as DatabaseType[];
 
-  test("every id NO_TABLE_DDL declines is one NO_TRANSACTION_WRAPPER leaves unwrapped", () => {
-    const declined = setMembers("NO_TABLE_DDL");
-    const unwrapped = setMembers("NO_TRANSACTION_WRAPPER");
-    // The control that both literals were read: each names an id this file classifies above.
+  test("every id whose table DDL is refused is one whose transaction wrapper is null", () => {
+    const declined = ids.filter((id) => MIGRATION_DDL[id].tableDdl === "refused");
+    const unwrapped = ids.filter((id) => MIGRATION_DDL[id].transactionWrapper === null);
+    // The control that both lists were read: each names an id this file classifies above.
     expect(declined).toContain("kafka");
     expect(unwrapped).toContain("oracle");
     expect(declined.filter((id) => !unwrapped.includes(id))).toEqual([]);

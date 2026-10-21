@@ -396,7 +396,7 @@ ioredis only authenticates as `default` when `username` is absent. A pasted
 userinfo into `user` / `password` ([§4.2](#42-connection-string-nuance)).
 
 **A connection saved before the field was writable keeps authenticating as `default`, and there is
-nothing to migrate.** `connectionFields` in [`src/lib/db-ui-config.ts`](../../src/lib/db-ui-config.ts)
+nothing to migrate.** `connectionFields` in [`src/lib/db/connection-form.ts`](../../src/lib/db/connection-form.ts)
 decides what a save WRITES, and it omitted `user` for `redis` until the settlement round of
 2026-08-27 — so the ACL user a person typed was discarded between the box and the driver, and the
 value simply was never captured. No migration can restore a credential that was never stored: an
@@ -526,6 +526,21 @@ connects (`verify-full`, host `localhost`).
 The listener stays attached after the connect settles, and from then on logs each event as a
 warning, `[Redis] <message>` with `provider: "redis"`, so a dropped socket and the reconnects after
 it stay visible in the server log. The message only, for the same reason as above.
+
+### Connection string
+
+The scheme shown for Redis is `redis://`, and the parser also accepts `rediss://`.
+Its row in `CONNECTION_STRING` is declared in [`redis-connection-string.ts`](../../src/lib/db/providers/keyvalue/redis-connection-string.ts).
+It has no `readTls`: the scheme itself is the TLS, so `rediss://` sets `require` and `redis://` sets `disable`.
+It runs no seed load check.
+
+### Execution UI
+
+An open Redis transaction is a `MULTI`, and the keyword that keeps it is `EXEC`, so the rolled-back notice names `EXEC` where every other engine's names `COMMIT`.
+D74 gave the single-statement route the same `finally` as the script route, and `redis` implements the surface, so the notice reaches a reader whose open transaction is a `MULTI`.
+Naming `COMMIT` would tell them to type a command their engine does not have.
+Its row in `EXECUTION_UI` is declared in [`redis-execution-ui.ts`](../../src/lib/db/providers/keyvalue/redis-execution-ui.ts).
+The agent's consent card has no consent deadline chip or sentence for it.
 
 ---
 
@@ -845,6 +860,15 @@ prefixes rather than objects — so it is offered here and nowhere else: a catal
 `orders` row is an object, not a glob.
 
 ---
+
+### 5.4 SQL grammar
+
+How this engine's statement text is read is declared once, in [`src/lib/db/providers/keyvalue/redis-sql-grammar.ts`](../../src/lib/db/providers/keyvalue/redis-sql-grammar.ts), the `redis` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+`readsSqlText` is `false`: Redis takes a command line, which never reaches the SQL readers on the query path, since the provider extends `BaseDatabaseProvider` and never calls `prepareQuery`; it reaches the confirmation gate because both execution paths ask about whatever is in the editor before running it (#297).
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` in `src/lib/db/destructive-commands.ts` instead of a SQL reading.
+Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
+Redaction is `command`, read by the module's own reader over the one command `readRedisCommandText()` reads for the provider: a redacted statement keeps that command's name, upper-cased as the provider sends it, and one `?` for every argument, keys and values alike.
+A text that sends nothing (blank, only comments, a second command or an unclosed quote) keeps nothing (`?`), and so does a JSON command the provider would refuse.
 
 ## 6. Schema introspection
 
@@ -1845,6 +1869,18 @@ but reach no screen: the admin Operations tab's vacuum card and per-table button
 #282 and unchanged here), and the schema explorer's row item is hidden because the rows are derived
 groupings (§5.3). They stay so the map is complete if a vacuum-shaped operation is ever added.
 
+### SQL writing
+
+[`keyvalue/redis-sql-writing.ts`](../../src/lib/db/providers/keyvalue/redis-sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+A literal is written by `literalStandard` and read back by `unquoteStandard`: the quote is doubled and a backslash is data.
+A name is quoted by `identifierDoubleQuoted`, the SQL standard form: a double-quoted name with an inner double quote doubled.
+There is no placeholder (`placeholder: null`), so a generator quotes the value with `quoteLiteral` instead of emitting a bind.
+This engine declares `queryLanguage: "json"`, so no statement is ever built for it to read; what a generator emits for such a connection is portable SQL meant to run elsewhere, and the standard form is the only thing it can claim.
+Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+
+The module's `export` field writes a result export's CREATE TABLE and INSERT from the shared building blocks alone: `STANDARD_DDL_TYPES` for the column types, `NOTHING_STANDS_ALONE` and `NO_BARE_SPELLING`, so every bare declared name is re-spelled from its family, `NULL_NON_FINITE` for NaN and the infinities, and `binaryStandardHex` for a binary cell (`X'0102'`).
+The engine declares `queryLanguage: "json"`, so no SQL statement is ever built for it to read, and a file exported from it is meant to run somewhere else: every bare name in it is re-spelled portably rather than kept as one engine's private word.
+
 ---
 
 ## 10. Error handling
@@ -2084,6 +2120,18 @@ request/response contract.
   answers a modified column per dialect; keys are not tables and carry no column definitions, so it
   emits `-- Redis: Cannot alter column "<name>". ...` where it previously emitted PostgreSQL
   `ALTER TABLE ... ALTER COLUMN` DDL that means nothing here.
+
+---
+
+## Migration DDL
+
+[`REDIS_MIGRATION_DDL`](../../src/lib/db/providers/keyvalue/redis-migration-ddl.ts) is what the schema-diff migration generator writes for `redis`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
+`redis` writes no SQL text at all (`readsSqlText: false`), so there is no table DDL to wrap (#284).
+
+The refusal reason it prints, verbatim:
+
+- "Keys are not tables and have no column definitions to change."
 
 ---
 

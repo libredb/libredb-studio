@@ -40,7 +40,7 @@ helm install libredb libredb/libredb-studio \
 
 ```bash
 helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
-  --version 0.1.100 \
+  --version 0.1.101 \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123
 ```
@@ -275,6 +275,9 @@ helm install libredb libredb/libredb-studio \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123
 ```
+
+With `config.llmProvider=openai`, `config.llmModelEffort` sets the model's reasoning effort, for example `--set config.llmModelEffort=low`.
+Leave it empty for the model's own default; the values table below lists the accepted values.
 
 ## Agent Runtime
 
@@ -744,6 +747,7 @@ helm uninstall libredb
 | `secrets.governancePrivateKeys` | Keyring document, stored in the chart's Secret under `governance-private-keys` and mounted as a file | `""` |
 | `stickySessions.enabled` | Records that cookie affinity is configured at the ingress; under governance, more than one replica or autoscaling renders only with it. Renders nothing itself | `false` |
 | `config.llmProvider` | AI provider | `""` |
+| `config.llmModelEffort` | `LLM_MODEL_EFFORT`, the reasoning effort for `config.llmProvider=openai` only: `none`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`. Empty writes nothing and the model keeps its own default. Which values a model takes is the model's own (GPT-6.1 Sol has no `none`). Needs an application image after 1.0.0 | `""` |
 | `agent.enabled` | Explicit off-switch for the agent runtime. Unset writes nothing and the app derives availability (a configured model plus a writable ledger); `false` writes `LIBREDB_AGENT_ENABLED=false`; `true` declines the off-switch but cannot conjure a model. Rendering fails when an agent could run above one replica | unset |
 | `agent.modelTuning.existingConfigMap` | A ConfigMap holding measured per-model settings to layer over the ones the image ships with. Naming a source is what enables the feature — there is no separate flag — and this one is the natural home for a document you were handed: `kubectl create configmap my-tuning --from-file=model-tuning.json`. Mounted read-only at `/app/model-tuning` and named to the app through `AGENT_MODEL_TUNING_PATH` | `""` |
 | `agent.modelTuning.document` | The same document inline, rendered into a ConfigMap by this chart and converted to JSON. For a short overlay; `existingConfigMap` wins when both are given | `{}` |

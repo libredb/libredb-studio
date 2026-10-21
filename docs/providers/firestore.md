@@ -211,6 +211,15 @@ Every request carries `x-goog-request-params` (`project_id`, and `database_id` f
 The API, token and emulator lanes refuse link-local addresses; the metadata lane cannot, because the metadata server is one.
 The shared transport has no HTTPS proxy support, so a Studio whose egress goes through a proxy cannot reach Google.
 
+### Connection string
+
+`firestore` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/document/firestore/connection-string.ts)).
+
+### Execution UI
+
+The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `firestore` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
+Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/document/firestore/execution-ui.ts).
+
 ## 5. Query interface
 
 ### 5.1 The statement
@@ -323,6 +332,14 @@ A field a document lacks and a stored null both show as NULL in the grid, so `wh
 ### 5.7 Cancellation
 
 Cancel aborts the in-flight request.
+
+### 5.8 SQL grammar
+
+How this engine's statement text is read is declared once, in [`src/lib/db/providers/document/firestore/sql-grammar.ts`](../../src/lib/db/providers/document/firestore/sql-grammar.ts), the `firestore` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+`readsSqlText` is `false`: the console takes one Firestore read statement in its own grammar ([§5.2](#52-grammar)), which the provider parses itself.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` in `src/lib/db/destructive-commands.ts` instead of a SQL reading.
+Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
+Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
 
 ## 6. Schema introspection
 
@@ -440,6 +457,17 @@ Health and pulse reuse the connect probe; the overview and the monitoring panels
 
 `READ_ONLY_ENFORCED.firestore` is true and `MCP_EXPOSABLE.firestore` is false; agent and MCP execution are BACKLOG B107.
 
+### SQL writing
+
+[`firestore/sql-writing.ts`](../../src/lib/db/providers/document/firestore/sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+A literal is written by `literalStandard` and read back by `unquoteStandard`: the quote is doubled and a backslash is data.
+A name is quoted by `identifierDoubleQuoted`, the SQL standard form: a double-quoted name with an inner double quote doubled.
+There is no placeholder (`placeholder: null`), so a generator quotes the value with `quoteLiteral` instead of emitting a bind.
+No generator calls `quoteLiteral` for Firestore: a statement spells its strings through the console's own `jsString`, so the row is the inert answer Oxia's is.
+Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+
+The module's `export` field writes a result export's CREATE TABLE and INSERT from the shared building blocks alone: `STANDARD_DDL_TYPES` for the column types, `NOTHING_STANDS_ALONE` and `NO_BARE_SPELLING`, so every bare declared name is re-spelled from its family, `NULL_NON_FINITE` for NaN and the infinities, and `binaryStandardHex` for a binary cell (`X'0102'`).
+
 ## 11. Limits
 
 | Limit | Value |
@@ -520,6 +548,16 @@ On 2026-10-12 a real project's `(default)` database answered as those built answ
 
 Not supported in this version, each a BACKLOG entry: writes of any kind, Pipelines, Datastore mode, the MongoDB-compatible API (use the `mongodb` type), Firebase Auth user sign-in under Security Rules, service-account impersonation, regional endpoints, real-time listeners, agent statement execution and MCP, collection export, point-in-time reads, `limitToLast`, bytes literals in the console, a read budget meter, an absent-cell marker in the grid, full support for the Enterprise BSON types, and a CI job running the emulator.
 An egress HTTPS proxy is not supported.
+
+## Migration DDL
+
+[`FIRESTORE_MIGRATION_DDL`](../../src/lib/db/providers/document/firestore/migration-ddl.ts) is what the schema-diff migration generator writes for `firestore`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
+A document store keeps no schema and no catalog, so there is no table DDL to decline or to wrap.
+
+The refusal reason it prints, verbatim:
+
+- "A document store keeps no schema, so there is no column definition to change."
 
 ## 15. References
 

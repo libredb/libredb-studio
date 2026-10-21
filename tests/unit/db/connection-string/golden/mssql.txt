@@ -1,0 +1,9 @@
+scheme => "mssql"
+parse(mssql://u:p@h:1433/d?encrypt=true&trustServerCertificate=true) => {"type":"mssql","host":"h","port":"1433","user":"u","password":"p","database":"d","sslMode":"require"}
+parse(mssql://h/d?encrypt=true) => {"type":"mssql","host":"h","port":"1433","database":"d","sslMode":"verify-full"}
+parse(mssql://h/d?encrypt=yes&trustServerCertificate=no) => {"type":"mssql","host":"h","port":"1433","database":"d","sslMode":"verify-full"}
+parse(mssql://h/d?encrypt=strict) => {"type":"mssql","host":"h","port":"1433","database":"d","sslMode":"verify-full"}
+parse(mssql://h/d?encrypt=false) => {"type":"mssql","host":"h","port":"1433","database":"d","sslMode":"disable"}
+parse(Server=h,1433;Database=d;User Id=u;Password=p;Encrypt=true;TrustServerCertificate=false) => {"type":"mssql","host":"h","port":"1433","user":"u","password":"p","database":"d","sslMode":"verify-full"}
+seed => []
+seed => []

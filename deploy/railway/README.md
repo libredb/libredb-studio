@@ -128,6 +128,7 @@ Add these variables on the Studio service to extend the deployment:
 - **PostgreSQL storage backend** (multi-node) — `STORAGE_PROVIDER=postgres`,
   `STORAGE_POSTGRES_URL=...`.
 - **AI** — `LLM_PROVIDER` (`gemini` | `openai` | `ollama` | `custom`),
-  `LLM_API_KEY`, `LLM_MODEL`, `LLM_API_URL`.
+  `LLM_API_KEY`, `LLM_MODEL`, `LLM_API_URL`, and for `openai` only
+  `LLM_MODEL_EFFORT` (`none` through `max`; unset keeps the model's default).
 
 More details and docs: https://github.com/libredb/libredb-studio

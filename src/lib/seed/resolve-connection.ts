@@ -101,6 +101,11 @@ export async function resolveConnection(
   if (connectionId != null && (typeof connectionId !== "string" || connectionId === "")) {
     throw new SeedConnectionError("Invalid connection ID format", 400);
   }
+  // A present inline id must be a string too: a number or an array reached `startsWith` below and
+  // answered 500 with the runtime's own TypeError.
+  if (connection?.id != null && typeof connection.id !== "string") {
+    throw new SeedConnectionError("Invalid connection ID format", 400);
+  }
   const claimedSeedId = connection?.id?.startsWith("seed:") ? connection.id : undefined;
   const effectiveId = connectionId ?? claimedSeedId;
 

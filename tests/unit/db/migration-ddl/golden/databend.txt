@@ -1,0 +1,42 @@
+-- fixture: full
+-- Migration generated at 2026-10-19T12:00:00.000Z
+-- Dialect: databend
+-- Changes: 1 added, 1 removed, 2 modified
+
+-- Objects that are not tables
+-- Skipped v_orders (view): only tables are created, altered or dropped here; change it by hand. If it reads a table changed below, drop it before this script and recreate it after.
+
+-- Drop removed tables
+DROP TABLE IF EXISTS `app`.`legacy`;
+
+-- Create new tables
+CREATE TABLE `app`.`users` (
+  `id` integer NOT NULL,
+  `note` varchar(20) DEFAULT 'abc',
+  `bare` TEXT,
+  `y` Int32 DEFAULT MATERIALIZED toYear(d),
+  `empty` text DEFAULT 
+);
+-- Databend: Cannot declare a primary key. Databend's CREATE TABLE has no primary-key constraint.
+-- Databend: Cannot generate index DDL. Its indexes are inverted, ngram, vector and spatial search indexes, which the diff does not record; write the index change by hand.
+-- Databend: Cannot generate index DDL. Its indexes are inverted, ngram, vector and spatial search indexes, which the diff does not record; write the index change by hand.
+-- Databend: Cannot add a foreign key. The engine has no foreign-key constraint.
+
+-- Modify existing tables
+-- Alter table: orders
+-- Databend: Cannot drop a foreign key. The engine has no foreign-key constraint.
+-- Databend: Cannot generate index DDL. Its indexes are inverted, ngram, vector and spatial search indexes, which the diff does not record; write the index change by hand.
+-- Databend: Cannot generate index DDL. Its indexes are inverted, ngram, vector and spatial search indexes, which the diff does not record; write the index change by hand.
+ALTER TABLE `app`.`orders` ADD COLUMN `extra` integer;
+ALTER TABLE `app`.`orders` ADD COLUMN `bare2` TEXT;
+ALTER TABLE `app`.`orders` DROP COLUMN `old`;
+-- Databend: Cannot alter column "status". Databend has ALTER TABLE ... MODIFY COLUMN, but the MySQL spelling this generator writes fails NOT NULL on an empty table and silently drops an existing default it does not restate; write the change by hand.
+-- Databend: Cannot alter column "amount". Databend has ALTER TABLE ... MODIFY COLUMN, but the MySQL spelling this generator writes fails NOT NULL on an empty table and silently drops an existing default it does not restate; write the change by hand.
+-- Databend: Cannot alter column "calc". Databend has ALTER TABLE ... MODIFY COLUMN, but the MySQL spelling this generator writes fails NOT NULL on an empty table and silently drops an existing default it does not restate; write the change by hand.
+-- Databend: Cannot alter column "line break". Databend has ALTER TABLE ... MODIFY COLUMN, but the MySQL spelling this generator writes fails NOT NULL on an empty table and silently drops an existing default it does not restate; write the change by hand.
+-- Databend: Cannot generate index DDL. Its indexes are inverted, ngram, vector and spatial search indexes, which the diff does not record; write the index change by hand.
+-- Databend: Cannot generate index DDL. Its indexes are inverted, ngram, vector and spatial search indexes, which the diff does not record; write the index change by hand.
+-- Databend: Cannot add a foreign key. The engine has no foreign-key constraint.
+
+-- fixture: none
+-- No schema changes detected.

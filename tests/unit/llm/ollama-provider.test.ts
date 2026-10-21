@@ -119,6 +119,18 @@ describe("OllamaProvider", () => {
       const provider = new OllamaProvider(makeConfig({ model: "" }), NO_BACKOFF);
       expect(() => provider.validate()).toThrow(LLMConfigError);
     });
+
+    test("refuses LLM_MODEL_EFFORT, which only the openai provider sends", () => {
+      // Refused in the constructor as well as here: nothing on the chat surface calls this
+      // provider's validate(), so a check only here would leave the setting silently unsent.
+      const config = makeConfig({ modelEffort: "low" });
+      expect(() => new OllamaProvider(config, NO_BACKOFF)).toThrow(
+        "LLM_MODEL_EFFORT applies to LLM_PROVIDER=openai only; unset it for the ollama provider.",
+      );
+      const built = new OllamaProvider(makeConfig(), NO_BACKOFF);
+      Object.assign(built.config, { modelEffort: "low" });
+      expect(() => built.validate()).toThrow(LLMConfigError);
+    });
   });
 
   // --------------------------------------------------------------------------

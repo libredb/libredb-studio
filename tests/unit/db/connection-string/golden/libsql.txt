@@ -1,0 +1,4 @@
+scheme => "libsql"
+parse(libsql://db-org.turso.io?authToken=x&sslmode=require) => {"type":"libsql","host":"db-org.turso.io","port":"443","password":"x","sslMode":"require"}
+seed => []
+seed => []

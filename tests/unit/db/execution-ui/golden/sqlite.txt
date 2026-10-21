@@ -1,0 +1,4 @@
+commit => "This left a transaction open and it was rolled back, so its changes were discarded. Add COMMIT to keep them."
+consent ticked => {"chips":["same read-only session","500 rows","no time limit","SQLite: killed at its timeout"],"sentence":"On SQLite a read that runs past its timeout is now killed mid-flight; the in-memory database is the exception and still blocks this application until the read finishes."}
+consent unticked => {"sentence":"On SQLite a read that runs past its timeout is now killed mid-flight; the in-memory database is the exception and still blocks this application until the read finishes."}
+explain => "sqlite"

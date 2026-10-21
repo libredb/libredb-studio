@@ -11,14 +11,17 @@
  * were a name:
  *
  * - SQL is read by the span reader every statement reader in Studio shares (`src/lib/sql/spans.ts`), under the
- *   engine's row of `src/lib/sql/grammar.ts`, so a literal, a comment and a quoted name end here where the
- *   confirmation gate and the statement splitter end them. A quoted run the reader cannot close, such as one whose
+ *   engine's grammar in the SQL grammar registry (`src/lib/db/sql-grammar/`), so a literal, a comment and a quoted
+ *   name end here where the confirmation gate and the statement splitter end them. A quoted run the reader cannot close, such as one whose
  *   closing quote stands behind a backslash that some sessions read as an escape, runs to the end of the text, so
  *   nothing after its opening quote is kept under either reading.
  * - A MongoDB command is the JSON document the provider parses, and a Redis command is the one command
- *   `readRedisCommandText()` reads for the provider.
- * - Every other engine, and a SQL engine `grammar.ts` has no row for, keeps nothing: its statement is stored as
+ *   `readRedisCommandText()` reads for the provider; each engine's module carries its reader.
+ * - Every other engine, and a SQL engine with no grammar of its own, keeps nothing: its statement is stored as
  *   `?`, because a reader guessing where a literal ends can store the literal.
+ *
+ * Which of the three an engine is, and the quote it writes a name with, is its `redaction` fact in the registry
+ * (`src/lib/db/sql-grammar/`).
  *
  * The userinfo of a URI is masked in both modes by the rule the audit log applies to its fields
  * (`redactUriCredentials()` in `src/lib/audit.ts`). The cases are pinned in
@@ -27,8 +30,9 @@
 
 import { createHash } from "node:crypto";
 import { CREDENTIAL_REDACTION, redactUriCredentials } from "@/lib/audit";
-import { readRedisCommandText } from "@/lib/db/providers/keyvalue/redis-command-text";
-import { isRecord } from "@/lib/is-record";
+import { sqlGrammarFor } from "@/lib/db/sql-grammar";
+import { REDACTED_VALUE } from "@/lib/db/sql-grammar/shared";
+import type { SqlRedaction } from "@/lib/db/sql-grammar/types";
 import { DEFAULT_SQL_GRAMMAR, readsSqlText, resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
 import { IDENTIFIER_PART, readSqlSpan } from "@/lib/sql/spans";
 import { readSqlWord } from "@/lib/sql/words";
@@ -39,34 +43,6 @@ export interface RedactedStatement {
   readonly statement: string;
   readonly statement_fingerprint: string;
 }
-
-/** What replaces a value in a redacted statement, and the whole statement when nothing of it can be kept. */
-const VALUE = "?";
-
-/**
- * The quote each engine writes a NAME with under every session setting, the one quoted run a redacted statement
- * keeps. A double quote is a name in PostgreSQL and Oracle, but a string in MySQL unless `ANSI_QUOTES` is set and in
- * SQL Server while `QUOTED_IDENTIFIER` is off, so on those two it is masked like any literal. An engine absent here
- * keeps no quoted run at all, which costs its quoted names and never stores a literal.
- */
-const NAME_QUOTES: Partial<Record<DatabaseType, string>> = {
-  postgres: '"',
-  oracle: '"',
-  mysql: "`",
-  mssql: "[",
-};
-
-/** The engines whose statement is no SQL text, each with a reader that mirrors its provider's own parse. */
-const COMMAND_READERS: Partial<Record<DatabaseType, (text: string) => string>> = {
-  mongodb: redactMongoCommand,
-  redis: redactRedisCommand,
-};
-
-/**
- * The fields of a MongoDB command whose top-level string values say what it runs on, kept as SQL keeps table names.
- * Anywhere else, and as any other type, a value is data.
- */
-const MONGODB_NAME_FIELDS: ReadonlySet<string> = new Set(["collection", "operation", "database"]);
 
 /**
  * A word written against a literal's opening quote that belongs to the literal: `E'…'`, `N'…'`, `B'…'`, `X'…'` and
@@ -98,12 +74,6 @@ interface Token {
   readonly opener: string;
   /** Whether a quoted run reached its closing quote; true for every other kind. */
   readonly terminated: boolean;
-}
-
-/** The JSON command form of a Redis statement, before the provider checks it. */
-interface RedisJsonCommand {
-  readonly command?: unknown;
-  readonly args?: unknown;
 }
 
 function plainToken(kind: TokenKind, start: number, end: number): Token {
@@ -268,9 +238,10 @@ function passwordTokens(tokens: readonly Token[], text: string): Set<number> {
  * A SQL statement with every literal, number and comment replaced by `?`, the names and keywords around them kept,
  * and white space collapsed to one space between tokens. A comment separates the tokens around it as white space
  * does. A quoted run is kept only when it is a closed name in `nameQuote`, and a password written as a bare word or
- * as a name is masked too.
+ * as a name is masked too. A null `nameQuote` keeps no quoted run at all, which costs the engine its quoted names and
+ * never stores a literal.
  */
-function redactSql(text: string, grammar: SqlGrammar, nameQuote: string | undefined): string {
+function redactSql(text: string, grammar: SqlGrammar, nameQuote: string | null): string {
   const tokens = readTokens(text, grammar);
   const passwords = passwordTokens(tokens, text);
   const pieces: string[] = [];
@@ -289,108 +260,38 @@ function redactSql(text: string, grammar: SqlGrammar, nameQuote: string | undefi
       separated = true;
     } else if (token.kind === "comment") {
       separated = true;
-      emit(VALUE);
+      emit(REDACTED_VALUE);
       separated = true;
     } else {
-      emit(keeps(token, index) ? text.slice(token.start, token.end) : VALUE);
+      emit(keeps(token, index) ? text.slice(token.start, token.end) : REDACTED_VALUE);
     }
   });
   return pieces.join("");
 }
 
-/**
- * A MongoDB command's shape: its keys and its top-level `collection`, `operation` and `database` names, every other
- * value replaced by `?`, as compact JSON. Text that is not one JSON document keeps nothing, since the provider does
- * not run it either.
- *
- * The document is walked with a stack of its own rather than by recursion: the text is the caller's, and `JSON.parse`
- * reads a document nested far deeper than a recursive walk can follow.
- */
-function redactMongoCommand(text: string): string {
-  let command: unknown;
-  try {
-    command = JSON.parse(text.trim());
-  } catch {
-    return VALUE;
-  }
-  const pieces: string[] = [];
-  const pending: (string | { readonly value: unknown; readonly top: boolean })[] = [{ value: command, top: true }];
-  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
-    if (typeof next === "string") {
-      pieces.push(next);
-      continue;
-    }
-    const { value, top } = next;
-    if (Array.isArray(value)) {
-      pending.push("]");
-      for (let i = value.length - 1; i >= 0; i--) {
-        pending.push({ value: value[i], top: false });
-        if (i > 0) pending.push(",");
-      }
-      pending.push("[");
-    } else if (isRecord(value)) {
-      const fields = Object.entries(value);
-      pending.push("}");
-      for (let i = fields.length - 1; i >= 0; i--) {
-        const [key, field] = fields[i];
-        const named = top && MONGODB_NAME_FIELDS.has(key) && typeof field === "string";
-        pending.push(named ? JSON.stringify(field) : { value: field, top: false });
-        pending.push(`${JSON.stringify(key)}:`);
-        if (i > 0) pending.push(",");
-      }
-      pending.push("{");
-    } else {
-      pieces.push(VALUE);
-    }
-  }
-  return pieces.join("");
-}
-
-/** A Redis command's name, upper-cased as the provider sends it, and one `?` for each of its arguments. */
-function commandShape(command: string, argumentCount: number): string {
-  return [command.toUpperCase(), ...Array.from({ length: argumentCount }, () => VALUE)].join(" ");
-}
-
-/**
- * A Redis command's shape: the name of the one command the provider would send, and a `?` for every argument, which
- * holds keys and values alike. A text that sends nothing (blank, only comments, a second command or an unclosed
- * quote) keeps nothing, and so does a JSON command the provider would refuse.
- */
-function redactRedisCommand(text: string): string {
-  const read = readRedisCommandText(text);
-  if (read.kind === "plain") return commandShape(read.words[0], read.words.length - 1);
-  if (read.kind !== "json") return VALUE;
-  let parsed: RedisJsonCommand;
-  try {
-    // A JSON command is read only when its first character is `{`, so a body that parses is an object.
-    parsed = JSON.parse(read.body) as RedisJsonCommand;
-  } catch {
-    return VALUE;
-  }
-  const { command, args } = parsed;
-  if (typeof command !== "string" || command === "") return VALUE;
-  if (args !== undefined && !Array.isArray(args)) return VALUE;
-  return commandShape(command, args?.length ?? 0);
-}
-
 function keepNothing(): string {
-  return VALUE;
+  return REDACTED_VALUE;
 }
 
-/**
- * The reader that redacts this engine's statements: its own command reader, its SQL grammar, or none.
- *
- * `resolveSqlGrammar()` answers the compatibility default for an engine without a row, an id Studio does not know
- * included, and that default is no engine's own reading, so a statement it would read keeps nothing.
- */
+/** The reader that redacts this engine's statements: its own command reader, its SQL grammar, or none. */
 function readerOf(engine: DatabaseType): (text: string) => string {
-  const commandReader = Object.hasOwn(COMMAND_READERS, engine) ? COMMAND_READERS[engine] : undefined;
-  if (commandReader !== undefined) return commandReader;
-  const grammar = resolveSqlGrammar(engine);
-  if (!readsSqlText(engine) || grammar === DEFAULT_SQL_GRAMMAR) return keepNothing;
-  const nameQuote = Object.hasOwn(NAME_QUOTES, engine) ? NAME_QUOTES[engine] : undefined;
-  return (text) => redactSql(text, grammar, nameQuote);
+  const { grammar, redaction } = sqlGrammarFor(engine);
+  switch (redaction.kind) {
+    case "command":
+      return redaction.read;
+    case "sql": {
+      const { nameQuote } = redaction;
+      return (text) => redactSql(text, grammar, nameQuote);
+    }
+    case "none":
+      return keepNothing;
+  }
 }
+
+/** Fails to compile when `SqlRedaction` gains a kind `readerOf()` has no case for. */
+type UnreadRedaction = Exclude<SqlRedaction["kind"], "command" | "sql" | "none">;
+const everyRedactionRead: [UnreadRedaction] extends [never] ? true : UnreadRedaction = true;
+void everyRedactionRead;
 
 /**
  * The redacted text of a statement `engine` runs, and its fingerprint, for `queryLog.statementCapture` `redacted`.

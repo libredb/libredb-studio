@@ -17,6 +17,7 @@ import {
 } from "../../helpers/provider-directory-map";
 
 const INFLUX = path.join(PROVIDERS_ROOT, "timeseries/influxdb");
+const SEARCH = path.join(PROVIDERS_ROOT, "sql/search");
 
 describe("PROVIDER_DIRECTORY_MAP", () => {
   for (const [directory, entry] of Object.entries(PROVIDER_DIRECTORY_MAP)) {
@@ -38,10 +39,12 @@ describe("PROVIDER_DIRECTORY_MAP", () => {
     });
   }
 
-  test("the InfluxDB directory maps influxql-* to influxdb and sql-* to influxdb3", () => {
+  test("the InfluxDB directory maps influxql-* and influxdb-* to influxdb, sql-* and influxdb3-* to influxdb3", () => {
     expect(PROVIDER_DIRECTORY_MAP["timeseries/influxdb"].byPrefix).toEqual({
       "influxql-": "influxdb",
       "sql-": "influxdb3",
+      "influxdb-": "influxdb",
+      "influxdb3-": "influxdb3",
     });
   });
 });
@@ -50,6 +53,17 @@ describe("typeIdsOfProviderFile", () => {
   test("a prefixed file serves the one type-id its prefix names", () => {
     expect(typeIdsOfProviderFile(path.join(INFLUX, "influxql-objects.ts"))).toEqual(["influxdb"]);
     expect(typeIdsOfProviderFile(path.join(INFLUX, "sql-provider.ts"))).toEqual(["influxdb3"]);
+  });
+
+  test("a per-engine contract module is named after its type-id and serves that one type-id", () => {
+    expect(typeIdsOfProviderFile(path.join(INFLUX, "influxdb-migration-ddl.ts"))).toEqual(["influxdb"]);
+    expect(typeIdsOfProviderFile(path.join(INFLUX, "influxdb3-migration-ddl.ts"))).toEqual(["influxdb3"]);
+  });
+
+  test("a search contract module serves the one type-id it is named after", () => {
+    expect(typeIdsOfProviderFile(path.join(SEARCH, "elasticsearch-migration-ddl.ts"))).toEqual(["elasticsearch"]);
+    expect(typeIdsOfProviderFile(path.join(SEARCH, "opensearch-migration-ddl.ts"))).toEqual(["opensearch"]);
+    expect(typeIdsOfProviderFile(path.join(SEARCH, "transport.ts"))).toEqual(["elasticsearch", "opensearch"]);
   });
 
   test("a shared file serves every type-id of its directory", () => {

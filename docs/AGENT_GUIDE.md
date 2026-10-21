@@ -865,14 +865,15 @@ start the run and are reported by the drive as `model-unauthorized`, `model-rate
 ## Running the agent on a local model (Ollama)
 
 Ollama is a first-class path: `LLM_PROVIDER=ollama` with `LLM_API_URL=http://localhost:11434/v1`
-reaches the OpenAI-compatible endpoint through the same adapter as the `openai` and `custom` kinds
-(`src/lib/agent/provider-registry.ts:123-134,156-161`), and no key is required — the adapter sends a
+reaches the OpenAI-compatible Chat Completions endpoint through the same adapter as the `custom` kind
+(`src/lib/agent/provider-registry.ts:131-145,168-173`); the `openai` kind shares the adapter but
+calls OpenAI's Responses API. No key is required: the adapter sends a
 placeholder rather than leaving `apiKey` undefined, so an ambient `OPENAI_API_KEY` cannot leak in
-(`provider-registry.ts:88,109,112`).
+(`provider-registry.ts:96,117,120`).
 
 **The model decides whether a local deployment can run the agent — not the endpoint.** This is
 worth stating precisely, because it is the opposite of what the mechanism suggests. The capability
-probe sends `toolChoice: "required"` (`capability-probe.ts:253`), which the OpenAI-compatible
+probe sends `toolChoice: "required"` (`capability-probe.ts:259`), which the OpenAI-compatible
 provider serializes as `tool_choice` — and **Ollama documents `tool_choice` as an unsupported
 field** on `/v1/chat/completions` (<https://docs.ollama.com/openai>), with forcing a tool call
 listed under future improvements in its own tool-support announcement
@@ -951,9 +952,10 @@ Stated plainly, because a surface that hides its edges is the one that surprises
   are refused before the database is reached. See [`docs/SECURITY.md`](./SECURITY.md) row 3.4.
 - **That pipeline is the agent's, not the application's.** It is worth saying plainly, because the
   wording used to imply otherwise: a statement you run yourself in the editor does not pass through
-  it. `/api/db/query` calls the provider directly (`src/app/api/db/query/route.ts:44`), so an editor
-  query is neither policy-checked nor written to the agent audit trail. The controls above describe
-  what the agent is held to, not a guarantee the whole product enforces.
+  it. `/api/db/query` runs the statement through `runEditorQuery` (`src/lib/api/editor-query.ts`),
+  which calls the provider directly, so an editor query is neither policy-checked nor written to the
+  agent audit trail. The controls above describe what the agent is held to, not a guarantee the whole
+  product enforces.
 - **Agent mode runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes and MongoDB only.** The read-only profile has to
   be implemented by the provider, and only those providers do: `queryReadOnly` exists on `postgres.ts`,
   `sqlite.ts`, `duckdb/index.ts`, `mssql.ts`, `mysql.ts`, `kubernetes/index.ts` and `mongodb/index.ts`.

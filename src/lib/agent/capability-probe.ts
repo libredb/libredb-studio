@@ -25,8 +25,11 @@
  *    than returning a refusal — none of them is evidence about the MODEL, and a
  *    refusal here says "configure a different model", which is the one change that
  *    would not have helped. Only a completed answer that fell short, or one of the
- *    `REQUEST_REFUSED_STATUSES` below, produces a verdict. Same discipline as the
- *    deadline's two deny codes: separate causes get separate vocabularies.
+ *    `REQUEST_REFUSED_STATUSES` below, produces a verdict. A reasoning effort the SDK
+ *    refused for this model throws too, as an `LLMConfigError`: it is established, but
+ *    it is the configuration's fault and the remedy is the configuration, not a model.
+ *    Same discipline as the deadline's two deny codes: separate causes get separate
+ *    vocabularies.
  *  - **One round trip, no retries.** A preflight that costs several calls is a
  *    preflight users turn off. `maxRetries: 0`; a transient failure surfaces as
  *    inconclusive and it is the caller's call whether to start the run later.
@@ -49,13 +52,13 @@
  * actually do — and refuses to guess at the rest.
  */
 
-import { APICallError, streamText, tool } from "ai";
+import { APICallError, streamText, ToolChoiceViolationError, tool } from "ai";
 import { z } from "zod";
-import { type LLMProviderType, LLMError, LLMStreamError } from "@/lib/llm/types";
+import { type LLMConfigError, type LLMProviderType, LLMError, LLMStreamError } from "@/lib/llm/types";
 // The labels moved out so the rail can name a missing capability without importing
 // this module — and with it the AI SDK — into the browser (#331 T4).
 import { describeAgentCapability } from "./capability-labels";
-import { type AgentModel, mapAgentModelError } from "./model-adapter";
+import { type AgentModel, agentProviderOptions, mapAgentModelError, refusedEffortError } from "./model-adapter";
 
 /** What one probe established. Every field is an observation, not a vendor claim. */
 export interface AgentModelCapabilities {
@@ -211,6 +214,11 @@ interface ProbeObservation {
   unknownToolName?: string;
   aborted: boolean;
   failure?: unknown;
+  /**
+   * The SDK dropped the reasoning effort this model was sent, so the request went out at another
+   * one; the error's sentence says which effort and which model. The probe stops reading there.
+   */
+  effortRefused?: LLMConfigError;
 }
 
 /**
@@ -252,6 +260,9 @@ async function observeProbe(agentModel: AgentModel, abortSignal?: AbortSignal): 
     tools: { [PROBE_TOOL_NAME]: PROBE_TOOL },
     toolChoice: "required",
     prompt: PROBE_PROMPT,
+    // A run's own options, so the probe establishes what the run will be sent rather than what a
+    // bare request would get. No quiet switch: that is per run mode, and the probe has no mode.
+    providerOptions: agentProviderOptions(agentModel),
     maxRetries: 0,
     abortSignal,
     onError: () => {
@@ -261,6 +272,14 @@ async function observeProbe(agentModel: AgentModel, abortSignal?: AbortSignal): 
 
   for await (const part of streamParts(stream.fullStream, agentModel.provider)) {
     switch (part.type) {
+      case "start-step": {
+        // Read before anything the model sends: an answer at an effort nobody configured is not
+        // evidence about the run that would be sent the configured one.
+        const refused = refusedEffortError(part.warnings, agentModel);
+        if (refused === undefined) break;
+        observation.effortRefused = refused;
+        return observation;
+      }
       case "text-delta":
       case "tool-input-delta":
       case "tool-input-start":
@@ -282,6 +301,11 @@ async function observeProbe(agentModel: AgentModel, abortSignal?: AbortSignal): 
         }
         break;
       case "error":
+        // The SDK enforces `toolChoice: "required"` itself (since `ai` 7.0.94) and reports an
+        // answer that finished without a tool call as an error part. That is not a failure of the
+        // request: it is the very observation the probe exists to make, and it is already recorded
+        // above as a probe tool that was never called.
+        if (ToolChoiceViolationError.isInstance(part.error)) break;
         // First failure wins: later parts describe the aftermath, not the cause.
         observation.failure = observation.failure ?? part.error;
         break;
@@ -386,6 +410,9 @@ function refuse(
  * @returns a verdict: the established capabilities, or a refusal naming what the
  *          probe could not establish. A `supported: false` result carries no model
  *          and no continuation — there is nothing for a caller to run with.
+ * @throws LLMConfigError when the model refuses the configured reasoning effort. That is
+ *         established, but it is a fault of the configuration rather than of the model, and
+ *         every mode sends the same effort.
  * @throws LLMError when the probe could not reach a verdict at all (auth, quota,
  *         a server failure, a broken stream, an abort). Inconclusive is not a
  *         refusal: the model may be perfectly capable.
@@ -403,6 +430,11 @@ export async function probeAgentModel(
     structuredOutput: observation.calledProbeTool && observation.argumentsValidated,
     streaming: observation.streamed,
   };
+
+  // The configuration's error, not a capability refusal. The probe stopped before the model said a
+  // word, so it established nothing about tools or streaming, and a refusal would name all three as
+  // missing, send the operator to another model and offer plan mode, which sends the same effort.
+  if (observation.effortRefused !== undefined) throw observation.effortRefused;
 
   if (observation.failure !== undefined) {
     const verdict = classifyProbeFailure(observation.failure, agentModel.provider);

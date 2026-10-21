@@ -147,9 +147,11 @@ export interface AgentModelProfile {
    * It reaches the OPENAI-COMPATIBLE adapter only. `providerOptions` is keyed `openai`, which
    * is right for the three kinds `provider-registry.ts` builds through `@ai-sdk/openai`
    * (`openai`, `ollama`, `custom`) and reaches nothing on `gemini`, which is `@ai-sdk/google`
-   * and reads its own key. So this is a no-op on the one hosted provider Studio ships an
-   * adapter for, silently — stated here because every model measured with it is local, and
-   * an operator who sets it on a Gemini model is owed the sentence rather than the silence.
+   * and reads its own key. So this is a no-op on Gemini, silently, and it is stated here
+   * because every model measured with it is local, and an operator who sets it on a Gemini
+   * model is owed the sentence rather than the silence. On the `openai` kind an operator's `LLM_MODEL_EFFORT`
+   * wins over it, and an effort the SDK will not send for the model is raised as an error
+   * rather than dropped (`agentProviderOptions` and `refusedEffortError` in `model-adapter.ts`).
    */
   readonly suppressPlanReasoning?: boolean;
   /**
@@ -167,8 +169,8 @@ export interface AgentModelProfile {
    * either answers at once or thinks until the wall — which is the shape this addresses and
    * `turnTimeoutMs` does not: a turn spent thinking finds the new wall too.
    *
-   * Reaches the OPENAI-COMPATIBLE adapter only, exactly as its sibling does, and is silently a
-   * no-op on `gemini`.
+   * Reaches the OPENAI-COMPATIBLE adapter only, exactly as its sibling does, is silently a
+   * no-op on `gemini`, and yields to `LLM_MODEL_EFFORT` on the `openai` kind.
    */
   readonly suppressAgentReasoning?: boolean;
   /**

@@ -143,6 +143,20 @@ db2stop && db2start
 Then paste `ca.arm` (it is PEM) into the SSL panel's CA certificate field, set the port to 50001, and choose Verify full.
 `DB2COMM=SSL,TCPIP` keeps the plaintext port open beside the TLS one; drop `TCPIP` once every client uses TLS.
 
+### Connection string
+
+The scheme shown for Db2 is `db2://`.
+Its row in `CONNECTION_STRING` is declared in [`connection-string.ts`](../../src/lib/db/providers/sql/db2/connection-string.ts).
+Its `readTls` reads `security` first and the boolean `ssl` only without it (#786).
+`security=SSL` is the keyword Db2's own CLI and JDBC drivers read, and it maps to `verify-system`, a verifying mode, because the Db2 provider fails closed on unverified transport: without TLS the password crosses the network in cleartext.
+`ssl` maps `true` and `1` onto that same mode, and `false` and `0` onto `disable`.
+It runs no seed load check.
+
+### Execution UI
+
+The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `db2` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
+Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/sql/db2/execution-ui.ts).
+
 ## 4. Known issues (db2-node 1.0.25)
 
 The live script `tests/live/db2-known-issues.ts` probes the row below and every row fixed in 1.0.24 and 1.0.25 against a running Db2 and prints `PRESENT` or `GONE`, so a driver bump starts by running it.
@@ -220,6 +234,23 @@ These were measured on 1.0.22, reported upstream at [gurungabit/db2-node#12](htt
 | Preview projection | Yes | `previewProjection` is `DB2_PREVIEW_PROJECTION`: the object browser's preview names each column and leaves CLOB, DBCLOB and BLOB columns out, named in a comment above the statement, because the grid does not edit them (K24); XML is read; a preview whose column list is not loaded yet still reads `SELECT *`, under a comment that says so |
 
 The application's query timeout is not forwarded to Db2: on 1.0.22 the driver's own timeout left the statement running on the server (K14), and on 1.0.24 it cancels it through a second session that needs privileges this version does not ask a user to hold.
+
+### SQL writing
+
+[`db2/sql-writing.ts`](../../src/lib/db/providers/sql/db2/sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+A literal is written by `literalStandard` and read back by `unquoteStandard`: the quote is doubled and a backslash is data.
+A name is quoted by `identifierDoubleQuoted`, the SQL standard form: a double-quoted name with an inner double quote doubled.
+A bind is spelled by `placeholderQuestion`, as `?` at every position.
+Measured on Db2 LUW 12.1.0.0 through db2-node 1.0.22 (#786), both directions: `VALUES 'O''Brien'` answers `O'Brien`, and `VALUES 'a\b'` answers the three characters `a\b` with `LENGTH` 3, so a backslash is data.
+db2-node binds a params array against `?`, measured on the same server (#786).
+Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+
+The module's `export` field spells a result export's column types through `ddlTypes`, the standard spelling with `CLOB` for text: Db2 has no TEXT, and measured on 12.1.0.0, `CREATE TABLE ... (c TEXT)` is SQL0204N `"TEXT" is an undefined name`, while BIGINT, DOUBLE PRECISION, BOOLEAN, TIMESTAMP and BLOB are whole types.
+`CLOB` is the unbounded character type, chosen over a VARCHAR whose bound a cell could pass (#786).
+No name was measured standing alone on Db2 in its first version (#786), so it holds `NOTHING_STANDS_ALONE` and every bare name is re-spelled from its family.
+A binary cell is written by `binaryBinaryHex`, `BX'0102'`: measured on Db2 LUW 12.1.0.0 (#786), `INSERT … VALUES (X'0102deadbeef')` into a `BLOB` or a `VARBINARY` column is SQL0408N, "a value is not compatible with the data type of its assignment target", because `X'…'` is a character string here.
+`BX'0102deadbeef'` goes into `BLOB`, `VARBINARY` and `VARCHAR FOR BIT DATA` alike, reading back as `HEX(…)` = `0102DEADBEEF`, and `BX''` inserts the zero-length value into all three.
+`NO_BARE_SPELLING` and `NULL_NON_FINITE` complete it.
 
 ## 6. Object surface
 
@@ -334,6 +365,7 @@ A privilege the user lacks, SQLSTATE `42501` (SQL0551N) or `42502` (SQL0552N), o
 
 A SELECT without its own limit is paged on the server: the first page gets `FETCH FIRST n ROWS ONLY`, a later one `OFFSET m ROWS FETCH NEXT n ROWS ONLY`, placed between the statement and its trailing `;` or comment.
 A statement that already carries `FETCH FIRST` or `LIMIT` is left as written, and so is any statement that is not a SELECT.
+A `limit` or an `offset` that is not a non-negative safe integer is refused with a `QueryError` before any of this, by the check the shared limiter runs first (`assertRowBounds` in [`query-limiter.ts`](../../src/lib/db/utils/query-limiter.ts)).
 
 ### 7.3 Values
 
@@ -374,6 +406,18 @@ Measured through 1.0.24 on 12.1.0.0 and 11.5.9.0 (`tests/live/db2-live-check.ts`
 Measured through 1.0.25 on 12.1.0.0 and 11.5.9.0: a BOOLEAN edited from the grid, which binds the text `true` or `false`, is stored as that boolean (K16, fixed; 1.0.24 refused the text with "expected boolean-compatible parameter").
 A value bound to a CLOB, DBCLOB or BLOB column declared 32768 bytes or longer is not written and no error is reported (K24), so the inline editor offers no edit of any such column and says why on the cell, the preview leaves those columns out, and a result holding one carries a warning.
 An import writes its values as literals, so K24 does not reach it.
+
+### 7.6 SQL grammar
+
+How this engine's statement text is read is declared once, in [`src/lib/db/providers/sql/db2/sql-grammar.ts`](../../src/lib/db/providers/sql/db2/sql-grammar.ts), the `db2` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+Its grammar is `DB2_GRAMMAR`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
+Every fact was probed on 2026-10-03 on DB2/LINUXX8664 12.1.0.0 through db2-node 1.0.22, the driver the provider sends statements with (#786).
+`#` is code: `SELECT 1 AS a FROM SYSIBM.SYSDUMMY1 # note` and `SELECT 1 # 2 AS a FROM SYSIBM.SYSDUMMY1` are both SQLCODE -104 at the `#`.
+`[` is not established: `SELECT 1 AS [a] FROM SYSIBM.SYSDUMMY1` is SQLCODE -104, so it is no name quote, but SQL PL writes an array element as `a[1]` and no subscript reading was measured in plain SQL, so the fail-safe default stays.
+Block comments nest: `SELECT 1 AS a /* a /* b */ FROM SYSIBM.SYSDUMMY1 */ FROM SYSIBM.SYSDUMMY1` answers the row, and the same text without the outer closer is SQLCODE -104.
+`q'[x]'` and `// note` are each SQLCODE -104, so there is no alternate quoting and no `//` comment.
+`readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.
+Redaction is `sql` with no name quote: a redacted statement keeps its words, and every literal and quoted run becomes `?`.
 
 ## 8. Maintenance
 
@@ -459,6 +503,19 @@ DB2_CA_FILE=<ca.pem> DB2_TLS_HOST=<host> bun tests/live/db2-live-check.ts
 Both scripts connect as the compose service's `db2inst1` / `Password123` unless `DB2_USER` and `DB2_PASSWORD` say otherwise.
 The K23 probe and the live check's password check need `DB2_K23_USER` and `DB2_K23_PASSWORD`, a user whose password holds all of `!`, `^`, `[`, `]` and `|`; without them the probe prints `PRESENT (not probed)` and the check prints `SKIP`.
 The 2026-10-04 runs on 1.0.25 made that user in the container with `useradd` and `chpasswd` from a file, so no shell read the password, granted it `CONNECT`, enabled TLS as section 3.3 shows, and loaded the fixture by hand after the image skipped it on a fresh volume (D160).
+
+## Migration DDL
+
+[`DB2_MIGRATION_DDL`](../../src/lib/db/providers/sql/db2/migration-ddl.ts) is what the schema-diff migration generator writes for `db2`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+Db2 (#786) has no standalone `BEGIN;`, and `BEGIN` opens a compound SQL block, so `transactionWrapper` is `null`.
+A dropped foreign key or index is written without `IF EXISTS`, measured on Db2 LUW 12.1.0.0: `ALTER TABLE "C" DROP CONSTRAINT IF EXISTS "fk_c"` and `DROP INDEX IF EXISTS "ix_c"` are both SQL0104N at `EXISTS`, while the bare statements run.
+`DROP TABLE` keeps `IF EXISTS`, and `ADD COLUMN` and `DROP COLUMN` take the standard spelling, both measured on 12.1.0.0.
+A modified column is a comment: Db2 retypes a column with `ALTER COLUMN ... SET DATA TYPE`, and several such changes leave the table REORG-pending until a REORG runs, which a flat migration file cannot schedule.
+The fields it takes unchanged from `src/lib/db/migration-ddl/shared.ts` are `standardAddColumn`, `standardAddForeignKey`, `standardColumnDef`, `standardCreateIndex`, `standardCreateTableForeignKey`, `standardDropColumn`, `standardDropTable` and `standardPrimaryKey`.
+
+The refusal reason it prints, verbatim:
+
+- "Db2 changes a column with ALTER COLUMN ... SET DATA TYPE and may leave the table REORG-pending; write the change by hand."
 
 ## 14. References
 

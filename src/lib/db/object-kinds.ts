@@ -15,6 +15,7 @@ import type {
   ObjectSourcePart,
   ProviderCapabilities,
 } from "@/lib/db/types";
+import type { IndexSchema } from "@/lib/types";
 
 /**
  * How many container levels this engine declares, as the tree models them.
@@ -465,6 +466,18 @@ export function relationKindIds(capabilities: ProviderCapabilities): readonly st
  */
 export function isCountUnavailable(count: KindCount): count is { readonly unavailable: string } {
   return "unavailable" in count;
+}
+
+/**
+ * Whether an index list is a REFUSAL rather than an array of index schemas (#1768).
+ *
+ * Follows the `isCountUnavailable` precedent: a union between the successful reading
+ * and `{ readonly unavailable: string }` carries the refusal sentence directly.
+ */
+export function isIndexesUnavailable(
+  indexes: readonly IndexSchema[] | { readonly unavailable: string } | undefined,
+): indexes is { readonly unavailable: string } {
+  return indexes !== undefined && !Array.isArray(indexes) && "unavailable" in indexes;
 }
 
 /**

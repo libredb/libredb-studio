@@ -13,7 +13,8 @@
  * **Planning mode is not probed.** It is toolless by contract (`types.ts`), so tool
  * calling is not among the capabilities it needs, and probing would spend a model round
  * trip answering a question the mode does not ask. The probe's own docblock leaves this
- * choice to the caller; this is the caller making it.
+ * choice to the caller; this is the caller making it. Its model is still built, which
+ * costs no round trip, because building is where a refused reasoning effort is caught.
  *
  * **Only an ESTABLISHED incapability refuses.** The probe throws — in this
  * repository's `LLMError` vocabulary — for a bad key, a quota, an unpaid account, a
@@ -23,7 +24,11 @@
  * no new way to fail, because the only new refusal is one the probe positively
  * established. What happens to those runs is no longer a mystery either — since Phase A
  * a drive reports `model-rate-limited`, `model-unauthorized` or `model-unavailable`
- * rather than sitting at `queued`.
+ * rather than sitting at `queued`. The one throw that is passed on is an
+ * `LLMConfigError`, a configuration the model refused (a reasoning effort it does not
+ * take), raised when the model is built or, failing that, by the probe: the run's first
+ * turn would raise the same error, so the start answers it as the configuration error
+ * it is.
  *
  * **Positive verdicts are cached, and nothing else is.** A model that called a tool
  * will keep calling tools, so that round trip is worth paying once — the alternative is
@@ -33,8 +38,9 @@
  * case the probe's docblock already warns about), so a cached refusal would outlive the
  * problem. Re-probing costs a round trip to someone whose runs are already failing.
  *
- * **The cache key is the model's identity**, so a configuration change misses by
- * construction. There is no invalidation hook to forget to call, and no TTL to tune:
+ * **The cache key is the model's identity**, its reasoning effort included, so a
+ * configuration change misses by construction. There is no invalidation hook to
+ * forget to call, and no TTL to tune:
  * the thing that would change the answer also changes the key. The one case it cannot
  * see is a server swapped behind an unchanged id, which is exactly why refusals are not
  * cached.
@@ -44,6 +50,7 @@ import type { AgentRunMode, AgentToolProtocol } from "./types";
 import type { AgentCapabilityRefusal } from "./capability-probe";
 import { probeAgentModel } from "./capability-probe";
 import { type AgentModel, createAgentModel } from "./model-adapter";
+import { LLMConfigError } from "@/lib/llm/types";
 import { logger } from "@/lib/logger";
 
 export type AgentCapabilityGateVerdict =
@@ -79,7 +86,9 @@ function onlyLacksToolCalling(refusal: AgentCapabilityRefusal): boolean {
  */
 const established = new Set<string>();
 
-const identityOf = (model: AgentModel): string => `${model.provider}:${model.modelId}`;
+// The reasoning effort is part of the identity because the probe sends it and a model can refuse
+// one effort while taking another (GPT-6.1 Sol has no "none").
+const identityOf = (model: AgentModel): string => `${model.provider}:${model.modelId}:${model.effort ?? ""}`;
 
 /** Test seam. A process-wide cache is exactly the state a suite must be able to clear. */
 export function resetAgentCapabilityCache(): void {
@@ -91,20 +100,29 @@ export function resetAgentCapabilityCache(): void {
  * is swallowed for the same reason a probe failure is: an unconfigured provider is not
  * a statement about a model's capabilities, and the start path must not gain a new way
  * to fail. The drive builds its own model moments later and reports that honestly.
+ *
+ * The one construction failure passed on is an `LLM_MODEL_EFFORT` the model does not take
+ * (`effort_refused`), and it is checked in every mode, planning included. Building sends
+ * nothing: `createAgentModel` asks the SDK's own request preparation, offline. Every mode
+ * sends that effort, so a plan run would otherwise open, pay for a first turn the SDK sent at
+ * another effort, and fail as `model-unavailable`; the route answers this error with its
+ * sentence instead (503 `LLM_CONFIG`).
  */
 export async function admitAgentModel(mode: AgentRunMode): Promise<AgentCapabilityGateVerdict> {
-  if (mode === "planning") return { kind: "allowed", protocol: "native" };
-
   let model: AgentModel;
   try {
     model = await createAgentModel();
   } catch (error) {
+    if (error instanceof LLMConfigError && error.reason === "effort_refused") throw error;
     logger.warn("Model could not be built for the capability gate; starting the run anyway", {
       route: "agent/capability-gate",
       error: error instanceof Error ? error.name : "unknown",
     });
     return { kind: "allowed", protocol: "native" };
   }
+
+  // Planning is offered no tools, so there is nothing to probe for.
+  if (mode === "planning") return { kind: "allowed", protocol: "native" };
 
   const identity = identityOf(model);
   if (established.has(identity)) return { kind: "allowed", protocol: "native" };
@@ -113,6 +131,11 @@ export async function admitAgentModel(mode: AgentRunMode): Promise<AgentCapabili
   try {
     result = await probeAgentModel(model);
   } catch (error) {
+    // A configuration error is not inconclusive: the model refused what the configuration
+    // sends (an `LLM_MODEL_EFFORT` it does not take), and the run's first turn would raise the
+    // same error. It goes to the route, which answers it as a configuration error; a capability
+    // refusal would blame the model and offer plan mode, which sends the same configuration.
+    if (error instanceof LLMConfigError) throw error;
     // Not a verdict about the model. Logged rather than surfaced, because the run is
     // about to be started and its own failure will carry the reason.
     logger.warn("Model capability probe was inconclusive; starting the run anyway", {

@@ -330,6 +330,17 @@ function pgResultSet(answer: PgArrayAnswer, sql: string): QueryResultSet {
 }
 
 /**
+ * The count `pg` did not read from the command tag: the tag of an EXPLAIN or a SHOW carries
+ * no number, so the driver leaves `rowCount` null while `rows` holds the answer. The count
+ * of what was returned is then the rows themselves; a count the driver did read, including
+ * an explicit 0, keeps its own value.
+ */
+function pgRowCount(answer: PgArrayAnswer): number {
+  if (answer.rowCount !== null && answer.rowCount !== undefined) return answer.rowCount;
+  return answer.rows.length;
+}
+
+/**
  * The result of what `pg` answered a user's text with.
  *
  * One statement answers one result. A text of several statements on the simple protocol answers
@@ -343,13 +354,13 @@ function pgQueryResult(
   answer: PgArrayAnswer | PgArrayAnswer[],
   sql: string,
 ): Pick<QueryResult, "rows" | "fields" | "columnTypes" | "rowCount" | "resultSets"> {
-  if (!Array.isArray(answer)) return { ...pgResultSet(answer, sql), rowCount: answer.rowCount ?? 0 };
+  if (!Array.isArray(answer)) return { ...pgResultSet(answer, sql), rowCount: pgRowCount(answer) };
   const producing = answer.filter((one) => (one.fields ?? []).length > 0);
   const sets = producing.map((one) => pgResultSet(one, sql));
   const [first] = sets;
   return {
     ...(first ?? { rows: [], fields: [] }),
-    rowCount: (producing[0] ?? answer[0])?.rowCount ?? 0,
+    rowCount: pgRowCount(producing[0] ?? answer[0]),
     ...(sets.length > 1 && { resultSets: sets }),
   };
 }
@@ -407,7 +418,14 @@ interface SchemaRow {
   row_count: string | null;
   total_size: string;
   pk_columns: string[];
-  columns?: Array<{ name: string; type: string; nullable: boolean; defaultValue?: string | null }>;
+  columns?: Array<{
+    name: string;
+    type: string;
+    /** `format_type(atttypid, atttypmod)`. Absent when the row was not asked for it. */
+    declaredType?: string | null;
+    nullable: boolean;
+    defaultValue?: string | null;
+  }>;
   indexes?: Array<{ name: string; columns: string[]; unique: boolean }>;
   foreign_keys?: Array<{
     columnName: string;
@@ -1539,19 +1557,30 @@ function routineEditAffordance(row: SourceRow, schema: string, name: string): Ob
 // and 3. Reusing it would have shipped the object browser's headline new folder - the
 // materialized view #710 is about - with an empty column list.
 //
-// `format_type(a.atttypid, NULL)` is the second argument deliberately: passing
-// `a.atttypmod` yields `character varying(50)` and `numeric(12,2)`, while NULL yields the
-// unqualified base type. NULL is used because that is nearly always what
-// `information_schema.columns.data_type` says, so this surface and the flat schema tree
-// name a column's type identically while both are live. Verified column by column on
-// `app.orders`.
+// `type` is `format_type(a.atttypid, NULL)` and `declaredType` is
+// `format_type(a.atttypid, a.atttypmod)` (#1860). NULL is the unqualified base name
+// (`character varying`, `numeric`, `vector`). The column's own typmod is the declaration
+// PostgreSQL prints (`character varying(50)`, `numeric(12,2)`, `vector(1536)`).
 //
-// ONE measured exception, found while reshaping this statement into the bulk read (#789):
-// an ARRAY column. `app.products.tags` is `text[]`, which is what `format_type` answers and
-// what both object-model surfaces show, while `information_schema.columns.data_type` says
-// the bare word `ARRAY` and hides the element type in `element_types`. The two surfaces
-// disagree on exactly those columns, and the object model has the better half of the
-// disagreement, so this is recorded rather than repaired.
+// NULL used to be the whole answer. It was chosen because that is nearly always what
+// `information_schema.columns.data_type` says, so this surface and the flat schema tree
+// would name a column's type identically while both were live. Re-measured on this tree:
+// that reading is gone. `getSchema` is no longer on the provider (`src/lib/db/types.ts`),
+// `SCHEMA_FULL_SQL` and `CTE_COLUMNS_INFO` are gone with it, and nothing in this file reads
+// `information_schema.columns`. The parity those two surfaces were held to does not hold,
+// because one of them is not live. `type` stays the base name anyway: the diagram, the
+// completions and the migration DDL read it, and a modifier inside it would change what
+// they show and what they match. The agent's grounding capture reads
+// `information_schema.columns.data_type`, the same base name, and is unchanged.
+// `declaredType` is what the column tooltip and this object detail show. A column with no
+// modifier (`text`, `integer`, `text[]`) is given the same string in both fields, so it
+// renders as it did.
+//
+// ONE measured exception, found while reshaping this statement into the bulk read (#789)
+// and kept because it is still the better half: an ARRAY column. `app.products.tags` is
+// `text[]`, which is what `format_type` answers in both fields. `information_schema.columns.data_type`
+// said the bare word `ARRAY` and hid the element type in `element_types`. That second
+// answer has no reader left.
 //
 // `pg_get_expr()` is asked only when `pg_attrdef` has a row for the column. PostgreSQL
 // answers NULL for a NULL expression anyway, but RisingWave 3.0.4 answers '' - and its
@@ -1564,6 +1593,7 @@ const CTE_OBJECT_COLUMNS = `
               jsonb_build_object(
                 'name', a.attname,
                 'type', format_type(a.atttypid, NULL),
+                'declaredType', format_type(a.atttypid, a.atttypmod),
                 'nullable', NOT a.attnotnull,
                 'defaultValue', CASE WHEN ad.adbin IS NOT NULL THEN pg_get_expr(ad.adbin, ad.adrelid) END
               ) ORDER BY a.attnum
@@ -1669,6 +1699,7 @@ function bulkDetailSql(relkinds: string, bound?: number): string {
               jsonb_build_object(
                 'name', a.attname,
                 'type', format_type(a.atttypid, NULL),
+                'declaredType', format_type(a.atttypid, a.atttypmod),
                 'nullable', NOT a.attnotnull,
                 'defaultValue', CASE WHEN ad.adbin IS NOT NULL THEN pg_get_expr(ad.adbin, ad.adrelid) END
               ) ORDER BY a.attnum
@@ -1864,6 +1895,10 @@ function objectDetailFromRow(path: readonly string[], row: ObjectDetailRow): Obj
     columns: (row.columns || []).map((col) => ({
       name: col.name,
       type: col.type,
+      // Copied only when the catalog row carried it. A string equal to `type` is still
+      // copied: `text` and `text[]` are declarations, and dropping them would make "no
+      // modifier" look like "this read never asked".
+      ...(typeof col.declaredType === "string" ? { declaredType: col.declaredType } : {}),
       nullable: col.nullable,
       isPrimary: pkColumns.includes(col.name),
       defaultValue: col.defaultValue ?? undefined,

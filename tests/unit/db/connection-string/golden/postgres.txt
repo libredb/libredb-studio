@@ -1,0 +1,7 @@
+scheme => "postgres"
+parse(postgres://u:p@h:5432/d?sslmode=verify-full) => {"type":"postgres","host":"h","port":"5432","user":"u","password":"p","database":"d","sslMode":"verify-full"}
+parse(postgres://u:p@h/d?ssl=true) => {"type":"postgres","host":"h","port":"5432","user":"u","password":"p","database":"d","sslMode":"verify-system"}
+parse(postgres://u:p@h/d?sslmode=disable&ssl=true) => {"type":"postgres","host":"h","port":"5432","user":"u","password":"p","database":"d","sslMode":"disable"}
+parse(postgresql://h/d?SSLMODE=require) => {"type":"postgres","host":"h","port":"5432","database":"d","sslMode":"require"}
+seed => []
+seed => []

@@ -1,0 +1,7 @@
+scheme => "mysql"
+parse(mysql://u:p@h:3306/d?ssl-mode=REQUIRED) => {"type":"mysql","host":"h","port":"3306","user":"u","password":"p","database":"d","sslMode":"require"}
+parse(mysql://h/d?sslmode=VERIFY_IDENTITY) => {"type":"mysql","host":"h","port":"3306","database":"d","sslMode":"verify-full"}
+parse(mysql://h/d?useSSL=true) => {"type":"mysql","host":"h","port":"3306","database":"d","sslMode":"verify-system"}
+parse(mysql://h/d?ssl=0) => {"type":"mysql","host":"h","port":"3306","database":"d","sslMode":"disable"}
+seed => []
+seed => []

@@ -385,9 +385,11 @@ export interface AgentModelRefusal {
    * The mode the refused start asked for, and the only mode this verdict is about.
    *
    * The gate probes a model because an AGENT run needs tools; planning is toolless by
-   * contract and returns `allowed` on its first line (`capability-gate.ts`), so it is
-   * never probed and never refused. A verdict left standing over a mode it was never
-   * about would be a false statement, which is why it is recorded rather than assumed.
+   * contract and is never probed (`capability-gate.ts`), so it never gets this verdict.
+   * Its model is still built, and an `LLM_MODEL_EFFORT` the model refuses answers 503 in
+   * either mode, a configuration error rather than this verdict. A verdict left standing
+   * over a mode it was never about would be a false statement, which is why it is
+   * recorded rather than assumed.
    */
   readonly mode: AgentRunMode;
 }

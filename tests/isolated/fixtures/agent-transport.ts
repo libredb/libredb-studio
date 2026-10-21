@@ -3,13 +3,14 @@
  *
  * The agent's provider registry and capability probe both drive the ratified AI
  * SDK provider packages over an injected `fetch`, so their tests need wire-level
- * fixtures in the two shapes those packages speak: OpenAI-compatible chat
- * completions (the `openai`, `ollama` and `custom` kinds) and Google's
- * `streamGenerateContent` SSE (the `gemini` kind, the repository's default).
+ * fixtures in the three shapes those packages speak: OpenAI-compatible chat
+ * completions (the `ollama` and `custom` kinds), OpenAI's Responses API events
+ * (the `openai` kind) and Google's `streamGenerateContent` SSE (the `gemini`
+ * kind, the repository's default).
  *
  * Every fixture below was checked against the installed packages rather than
  * written from the vendors' documentation — the frame shapes here are the ones
- * `@ai-sdk/openai@4.0.37` and `@ai-sdk/google@4.0.40` actually parse.
+ * `@ai-sdk/openai@4.0.96` and `@ai-sdk/google@4.0.99` actually parse.
  *
  * `tests/isolated/agent-model-adapter.test.ts` (T4) keeps its own local copies of
  * the doubles it needs: rewriting a reviewed test file to import from here would
@@ -168,6 +169,77 @@ export function chatBufferedCompletion(content: string): Response {
     choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }],
     usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
   });
+}
+
+/** A reasoning item as a stateless (`store: false`) Responses call returns it: opaque, encrypted. */
+export interface ResponsesReasoning {
+  readonly id: string;
+  readonly encryptedContent: string;
+}
+
+const responseCreated = { type: "response.created", response: { id: "resp_1", created_at: 1, model: "test-model" } };
+
+const responseCompleted = {
+  type: "response.completed",
+  response: {
+    incomplete_details: null,
+    usage: {
+      input_tokens: 1,
+      input_tokens_details: { cached_tokens: 0 },
+      output_tokens: 1,
+      output_tokens_details: { reasoning_tokens: 1 },
+    },
+  },
+};
+
+/** The reasoning item's two events, at output index 0, or none when the turn carries no reasoning. */
+function reasoningEvents(reasoning: ResponsesReasoning | undefined): Record<string, unknown>[] {
+  if (reasoning === undefined) return [];
+  const item = { type: "reasoning", id: reasoning.id, encrypted_content: reasoning.encryptedContent, summary: [] };
+  return [
+    { type: "response.output_item.added", output_index: 0, item },
+    { type: "response.output_item.done", output_index: 0, item },
+  ];
+}
+
+/**
+ * A Responses API stream carrying one function call, optionally after a reasoning item, in the
+ * event shapes `@ai-sdk/openai@4.0.96` parses for its `responses()` model.
+ */
+export function responsesToolCallStream(
+  name: string,
+  argumentsJson: string,
+  options: { readonly callId?: string; readonly reasoning?: ResponsesReasoning } = {},
+): Response {
+  const callId = options.callId ?? "call_1";
+  const index = options.reasoning === undefined ? 0 : 1;
+  const item = { type: "function_call", id: `fc_${callId}`, call_id: callId, name };
+  return sseResponse(
+    responseCreated,
+    ...reasoningEvents(options.reasoning),
+    { type: "response.output_item.added", output_index: index, item: { ...item, arguments: "" } },
+    { type: "response.function_call_arguments.delta", item_id: item.id, output_index: index, delta: argumentsJson },
+    {
+      type: "response.output_item.done",
+      output_index: index,
+      item: { ...item, arguments: argumentsJson, status: "completed" },
+    },
+    responseCompleted,
+  );
+}
+
+/** A Responses API stream that answers in prose, optionally after a reasoning item. */
+export function responsesTextStream(text: string, options: { readonly reasoning?: ResponsesReasoning } = {}): Response {
+  const index = options.reasoning === undefined ? 0 : 1;
+  const item = { type: "message", id: "msg_1", role: "assistant", status: "completed", content: [] };
+  return sseResponse(
+    responseCreated,
+    ...reasoningEvents(options.reasoning),
+    { type: "response.output_item.added", output_index: index, item },
+    { type: "response.output_text.delta", item_id: item.id, output_index: index, delta: text },
+    { type: "response.output_item.done", output_index: index, item },
+    responseCompleted,
+  );
 }
 
 /** A Google `streamGenerateContent` SSE stream carrying prose. */

@@ -736,8 +736,8 @@ This is a declared boundary, not a default: `endOpenQueryTransaction` is optiona
 
 ### 4.1 Configuration fields
 
-The form offers exactly four fields (`connectionFields` under `DB_UI_CONFIG.druid`,
-[`db-ui-config.ts`](../../src/lib/db-ui-config.ts)): `host`, `port`, `user`, `password`.
+The form offers exactly four fields (`connectionFields` under `CONNECTION_FORM.druid`,
+[`connection-form.ts`](../../src/lib/db/connection-form.ts)): `host`, `port`, `user`, `password`.
 
 | Field | Required | Notes |
 |---|---|---|
@@ -831,6 +831,16 @@ sent, so no value can move a request to another path or another server. A scheme
 Redirects are not followed. Every request sets `redirect: "manual"`, and a 3xx answer becomes a
 `ConnectionError` naming the status and only the origin of its `Location`, since a followed
 redirect would take the Basic credential and the statement to wherever the server pointed.
+
+### Connection string
+
+`druid` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/sql/druid/connection-string.ts)).
+Druid is reached over plain HTTP through the form, so inventing `druid://` would put a scheme on the login page that `parseConnectionString` rejects.
+
+### Execution UI
+
+The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `druid` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
+Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/sql/druid/execution-ui.ts).
 
 ---
 
@@ -986,6 +996,13 @@ action and the background pre-warm show the same plan — with no cost and no ro
 Druid's planner publishes none.
 
 ---
+
+### 5.7 SQL grammar
+
+How this engine's statement text is read is declared once, in [`src/lib/db/providers/sql/druid/sql-grammar.ts`](../../src/lib/db/providers/sql/druid/sql-grammar.ts), the `druid` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, because no rule was established for Druid SQL, not because Druid SQL agrees with the default.
+`readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.
+Redaction is `none`, since the engine has no grammar of its own: a redacted statement is stored as `?`, because a reader guessing where a literal ends can store the literal.
 
 ## 6. Schema introspection
 
@@ -1641,6 +1658,19 @@ grid speak a dialect the cluster does not. The maintenance labels are irrelevant
 stay as inherited rather than naming operations that do not exist. `selectAction` ("Select Top 50")
 and the generate action are inherited unchanged and are correct for Druid.
 
+### SQL writing
+
+[`druid/sql-writing.ts`](../../src/lib/db/providers/sql/druid/sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+A literal is written by `literalStandard` and read back by `unquoteStandard`: the quote is doubled and a backslash is data.
+A name is quoted by `identifierDoubleQuoted`, the SQL standard form: a double-quoted name with an inner double quote doubled.
+A bind is spelled by `placeholderQuestion`, as `?` at every position.
+Druid quotes a string with single quotes and puts its backslash escapes in the separate `U&'fo\00F6'` form, so a backslash in a plain literal is data.
+Druid binds a `parameters` array against `?`, live-verified when the provider was written ([`index.ts`](../../src/lib/db/providers/sql/druid/index.ts)).
+Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+
+The module's `export` field writes a result export's CREATE TABLE and INSERT from the shared building blocks alone: `STANDARD_DDL_TYPES` for the column types, `NOTHING_STANDS_ALONE` and `NO_BARE_SPELLING`, so every bare declared name is re-spelled from its family, `NULL_NON_FINITE` for NaN and the infinities, and `binaryStandardHex` for a binary cell (`X'0102'`).
+Druid takes no INSERT at all without the MSQ extension, so every bare name in a file written from it is re-spelled from its family, portably.
+
 ---
 
 ## 10. Error handling
@@ -1986,6 +2016,18 @@ cancellation as unsupported because the provider exposes no `cancelQuery`
 
 ---
 
+## Migration DDL
+
+[`DRUID_MIGRATION_DDL`](../../src/lib/db/providers/sql/druid/migration-ddl.ts) is what the schema-diff migration generator writes for `druid`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
+Druid has no transaction concept to translate the wrapper into: a datasource is rewritten by an MSQ task, not by a bracketed statement list (#284).
+
+The refusal reason it prints, verbatim:
+
+- "Druid SQL has no ALTER TABLE; rewrite the datasource with REPLACE INTO through an MSQ task."
+
+---
+
 ## 14. References
 
 - Source: [`src/lib/db/providers/sql/druid/`](../../src/lib/db/providers/sql/druid/)
@@ -1994,7 +2036,7 @@ cancellation as unsupported because the provider exposes no `cancelQuery`
 - Base class: [`src/lib/db/base-provider.ts`](../../src/lib/db/base-provider.ts)
 - Interface & DTOs: [`src/lib/db/types.ts`](../../src/lib/db/types.ts)
 - Errors: [`src/lib/db/errors.ts`](../../src/lib/db/errors.ts)
-- Connection form config: [`src/lib/db-ui-config.ts`](../../src/lib/db-ui-config.ts)
+- Connection form config: [`src/lib/db/connection-form.ts`](../../src/lib/db/connection-form.ts)
 - Local cluster: [`database-compose.yml`](../../database-compose.yml) (`--profile druid`)
 - Tests: [`tests/integration/db/druid-provider.test.ts`](../../tests/integration/db/druid-provider.test.ts) · [`tests/unit/db/druid/`](../../tests/unit/db/druid/) · [`tests/unit/lib/explain/druid-native.test.ts`](../../tests/unit/lib/explain/druid-native.test.ts)
 - API contract: [`docs/API_DOCS.md`](../API_DOCS.md)

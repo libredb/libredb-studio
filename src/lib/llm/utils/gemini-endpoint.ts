@@ -12,7 +12,7 @@
  *  - `@ai-sdk/google` (the agent adapter) takes a `baseURL` that already CARRIES
  *    the version path, defaulting to
  *    `https://generativelanguage.googleapis.com/v1beta`
- *    (`node_modules/@ai-sdk/google/dist/index.js:7855`).
+ *    (`DEFAULT_BASE_URL` in `node_modules/@ai-sdk/google/dist/index.js`).
  *
  * The value the operator enters is the versioned one, because that is the form
  * Google's own documentation and every proxy's configuration print, and because it

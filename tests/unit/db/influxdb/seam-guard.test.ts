@@ -12,8 +12,16 @@
  * 5. No file outside `routes.ts` holds a string literal whose whole value starts with `/api/` or equals `/query`,
  *    `/ping` or `/health`; a sentence that mentions a path inside longer text is not a path literal.
  * 6. Each layer value-imports only what contract section 1 lets it (types are free): `connection-options.ts` may take
- *    the value `TUNNEL_FAR_END` from `@/lib/types` (the Qdrant shape, architect amendment from T09), and a file of
- *    no layer fails, so a new file is placed in one on purpose.
+ *    the value `TUNNEL_FAR_END` from `@/lib/types` (the Qdrant shape, architect amendment from T09), the two execution
+ *    UI contract modules may take values from `@/lib/db/execution-ui/shared`, their contract's shared building block,
+ *    and a file of no layer fails, so a new file is placed in one on purpose. The two SQL grammar modules (engine
+ *    contract spec 5.3) are a layer of their own, which value-imports only the contract's building blocks under
+ *    `src/lib/db/sql-grammar/`. Each type-id's migration DDL module (`<type-id>-migration-ddl.ts`) is a contract layer
+ *    of its own: it may import values only from `@/lib/db/migration-ddl/*`, its contract's shared building blocks,
+ *    and from none of this directory's modules.
+ *    Each type-id's SQL writing module (`<type-id>-sql-writing.ts`) is a layer of its own in the same way: it may
+ *    import values only from `@/lib/db/sql-writing/*`, its contract's shared building blocks, and from none of this
+ *    directory's modules.
  *
  * Rules 1 to 3 count a type-only import too: they keep modules apart, not values. Module names are resolved as
  * TypeScript resolves them, so an alias counts; a planted module that does not exist yet resolves by its spelling.
@@ -31,11 +39,29 @@ const DIR = "src/lib/db/providers/timeseries/influxdb";
 const PROVIDERS = "src/lib/db/providers/";
 const SQL_BASE = "@/lib/db/providers/sql/sql-base";
 
-const SHARED = ["connection-options", "routes", "client", "versions", "errors", "run-database", "monitoring", "labels"];
+const SHARED = [
+  "connection-options",
+  "routes",
+  "client",
+  "versions",
+  "errors",
+  "run-database",
+  "monitoring",
+  "labels",
+  "influxdb-connection-string",
+  "influxdb3-connection-string",
+  "influxdb-execution-ui",
+  "influxdb3-execution-ui",
+];
 const BROWSER = ["influxql-lexer", "influxql-policy", "influxql-quote", "influxql-generators"];
 const INFLUXQL_SERVER = ["influxql-results", "influxql-objects", "influxql-provider"];
+const GRAMMAR = ["influxdb-sql-grammar", "influxdb3-sql-grammar"];
+/** Each type-id's declaration of a per-engine contract, which reads its contract and nothing of this directory. */
+const CONTRACT = ["influxdb-migration-ddl", "influxdb3-migration-ddl"];
+/** Each type-id's SQL writing row, which reads its contract's building blocks and nothing of this directory. */
+const WRITING = ["influxdb-sql-writing", "influxdb3-sql-writing"];
 
-type Layer = "connection" | "browser" | "influxql-server" | "sql";
+type Layer = "connection" | "browser" | "influxql-server" | "sql" | "grammar" | "contract" | "writing";
 
 const canonical = (path: string): string => realpathSync.native(path).split("\\").join("/");
 const relative = (path: string): string => path.slice(canonical(ROOT).length + 1);
@@ -46,13 +72,25 @@ function layerOf(file: string): Layer | undefined {
   if (SHARED.includes(name) || name === "index") return "connection";
   if (BROWSER.includes(name)) return "browser";
   if (INFLUXQL_SERVER.includes(name)) return "influxql-server";
+  if (GRAMMAR.includes(name)) return "grammar";
+  if (WRITING.includes(name)) return "writing";
   if (name.startsWith("sql-")) return "sql";
+  if (CONTRACT.includes(name)) return "contract";
   return undefined;
 }
 
 const inDirectory = (target: string): boolean => target.startsWith(`${DIR}/`);
 const isInfluxql = (target: string): boolean => inDirectory(target) && stem(target).startsWith("influxql-");
 const isSql = (target: string): boolean => inDirectory(target) && stem(target).startsWith("sql-");
+
+/**
+ * The per-engine contract modules, each with the contract module whose shared building blocks it may import as values
+ * (rule 6). No other file of this directory may.
+ */
+const CONTRACT_VALUES: Readonly<Record<string, string>> = {
+  "influxdb-execution-ui": "src/lib/db/execution-ui/shared.ts",
+  "influxdb3-execution-ui": "src/lib/db/execution-ui/shared.ts",
+};
 
 /** What the connection layer may import a value from outside this directory. */
 const CONNECTION_OUTSIDE = [
@@ -91,6 +129,9 @@ const OUTSIDE_VALUES: Readonly<Record<Layer, readonly string[]>> = {
     "src/lib/db/object-kinds.ts",
     "src/lib/db/providers/sql/sql-base.ts",
   ],
+  grammar: ["src/lib/db/sql-grammar/"],
+  contract: ["src/lib/db/migration-ddl/"],
+  writing: ["src/lib/db/sql-writing/"],
 };
 
 /** Which of this directory's modules each layer may import a value from. */
@@ -106,6 +147,10 @@ function insideAllowed(file: string, layer: Layer, target: string): boolean {
       return shared || name.startsWith("influxql-");
     case "sql":
       return shared || name.startsWith("sql-");
+    case "grammar":
+    case "contract":
+    case "writing":
+      return false;
   }
 }
 
@@ -237,7 +282,8 @@ function seamFindings(file: string, text: string): string[] {
     if (layer === undefined || typeOnly) continue;
     const allowed = inDirectory(target)
       ? insideAllowed(file, layer, target)
-      : OUTSIDE_VALUES[layer].some((prefix) => target.startsWith(prefix)) ||
+      : (Object.hasOwn(CONTRACT_VALUES, name) && target.startsWith(CONTRACT_VALUES[name])) ||
+        OUTSIDE_VALUES[layer].some((prefix) => target.startsWith(prefix)) ||
         (name === "connection-options" &&
           target === "src/lib/types.ts" &&
           names.length > 0 &&
@@ -403,6 +449,12 @@ describe("planted violations fail by name", () => {
       `layer: ${DIR}/labels.ts imports a value from @/lib/types, which its layer may not`,
     ],
     [
+      "labels.ts",
+      "labels.ts",
+      'import { SQL_COMMIT_KEYWORD } from "@/lib/db/execution-ui/shared";\n',
+      `layer: ${DIR}/labels.ts imports a value from @/lib/db/execution-ui/shared, which its layer may not`,
+    ],
+    [
       "connection-options.ts",
       "connection-options.ts",
       'import { isTunnelled } from "@/lib/types";\n',
@@ -439,6 +491,42 @@ describe("planted violations fail by name", () => {
       `seam: ${DIR}/sql-results.ts loads a module whose name is not a plain string`,
     ],
     ["stray.ts", "labels.ts", "", `layer: ${DIR}/stray.ts belongs to no layer of contract section 1`],
+    [
+      "influxdb-migration-ddl.ts",
+      "influxdb-migration-ddl.ts",
+      'import { DatabaseConfigError } from "@/lib/db/errors";\n',
+      `layer: ${DIR}/influxdb-migration-ddl.ts imports a value from @/lib/db/errors, which its layer may not`,
+    ],
+    [
+      "influxdb3-migration-ddl.ts",
+      "influxdb3-migration-ddl.ts",
+      'import { INFLUX_LIST_CAP } from "./connection-options";\n',
+      `layer: ${DIR}/influxdb3-migration-ddl.ts imports a value from ./connection-options, which its layer may not`,
+    ],
+    [
+      "sql-objects.ts",
+      "sql-policy.ts",
+      'import { standardDropTable } from "@/lib/db/migration-ddl/shared";\n',
+      `layer: ${DIR}/sql-objects.ts imports a value from @/lib/db/migration-ddl/shared, which its layer may not`,
+    ],
+    [
+      "sql-objects.ts",
+      "sql-policy.ts",
+      'import { literalStandard } from "@/lib/db/sql-writing/shared";\n',
+      `layer: ${DIR}/sql-objects.ts imports a value from @/lib/db/sql-writing/shared, which its layer may not`,
+    ],
+    [
+      "influxdb-sql-writing.ts",
+      "influxdb-sql-writing.ts",
+      'import { INFLUX_LIST_CAP } from "./connection-options";\n',
+      `layer: ${DIR}/influxdb-sql-writing.ts imports a value from ./connection-options, which its layer may not`,
+    ],
+    [
+      "influxdb3-sql-writing.ts",
+      "influxdb3-sql-writing.ts",
+      'import { standardDropTable } from "@/lib/db/migration-ddl/shared";\n',
+      `layer: ${DIR}/influxdb3-sql-writing.ts imports a value from @/lib/db/migration-ddl/shared, which its layer may not`,
+    ],
   ])("%s (from %s) with %p fails", (as, from, line, finding) => {
     expect(plant(as, from, line)).toContain(finding);
   });
@@ -455,6 +543,26 @@ describe("planted violations fail by name", () => {
     ["errors.ts", "errors.ts", 'const sentence = "This server has no InfluxDB /query endpoint.";\n'],
     ["monitoring.ts", "monitoring.ts", 'const notAPath = "/api";\n'],
     ["sql-results.ts", "sql-policy.ts", 'import type { Readable } from "node:stream";\n'],
+    [
+      "influxdb-execution-ui.ts",
+      "influxdb-execution-ui.ts",
+      'import { SQL_COMMIT_KEYWORD } from "@/lib/db/execution-ui/shared";\n',
+    ],
+    [
+      "influxdb3-execution-ui.ts",
+      "influxdb3-execution-ui.ts",
+      'import { SQL_COMMIT_KEYWORD } from "@/lib/db/execution-ui/shared";\n',
+    ],
+    [
+      "influxdb3-migration-ddl.ts",
+      "influxdb3-migration-ddl.ts",
+      'import { standardDropTable } from "@/lib/db/migration-ddl/shared";\n',
+    ],
+    [
+      "influxdb3-sql-writing.ts",
+      "influxdb3-sql-writing.ts",
+      'import { binaryStandardHex } from "@/lib/db/sql-writing/export-shared";\n',
+    ],
   ])("%s (from %s) with %p passes", (as, from, line) => {
     expect(plant(as, from, line)).toEqual([]);
   });

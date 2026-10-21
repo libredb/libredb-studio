@@ -17,7 +17,8 @@
  *     quota, a 5xx or a dropped socket — none of which say anything about the model —
  *     and the gate lets those through rather than adding a failure mode to the start
  *     path. The drive then reports them honestly (`model-rate-limited`,
- *     `model-unavailable`), which it did not do before Phase A and does now.
+ *     `model-unavailable`), which it did not do before Phase A and does now. The one
+ *     throw passed on is a configuration error the run's first turn would raise too.
  *  3. **Positive verdicts are cached; nothing else is.** A model that called a tool
  *     will keep calling tools, so paying for that round trip once is enough. A refusal
  *     is not cached because an operator can fix the server without changing the model
@@ -84,6 +85,8 @@ describe("the model gate on the start path", () => {
 
     expect(verdict.kind).toBe("allowed");
     expect(probeAgentModel).not.toHaveBeenCalled();
+    // Built, which sends nothing, so a configuration the model refuses is caught here too.
+    expect(createAgentModel).toHaveBeenCalledTimes(1);
   });
 
   test("an agent run is probed, and admitted when the model can drive one", async () => {
@@ -174,6 +177,29 @@ describe("the model gate on the start path", () => {
     expect(verdict.kind).toBe("allowed");
   });
 
+  test("a configuration the model refuses refuses the start, because the run would hit it on turn one", async () => {
+    // Not inconclusive: the probe established that the configured effort is refused, and
+    // a run sends the same one. Thrown rather than returned as a capability refusal so the
+    // route answers with a configuration error, which offers no other mode and blames no model.
+    const refused = new LLMConfigError(
+      'LLM_MODEL_EFFORT "none" was refused for the model "gpt-6.1-sol" (openai).',
+      "openai",
+    );
+    probeAgentModel.mockImplementation(async () => {
+      throw refused;
+    });
+
+    await expect(admitAgentModel("agent")).rejects.toBe(refused);
+
+    // Not cached either way: the next start asks again, so a fixed setting is seen at once.
+    probeAgentModel.mockImplementation(async () => ({
+      supported: true,
+      capabilities: { toolCalling: true, structuredOutput: true, streaming: true },
+    }));
+    expect((await admitAgentModel("agent")).kind).toBe("allowed");
+    expect(probeAgentModel).toHaveBeenCalledTimes(2);
+  });
+
   test("a capable model is probed once, however many runs follow", async () => {
     await admitAgentModel("agent");
     await admitAgentModel("agent");
@@ -212,6 +238,19 @@ describe("the model gate on the start path", () => {
     expect(probeAgentModel).toHaveBeenCalledTimes(2);
   });
 
+  test("a different reasoning effort on the same model is a different question", async () => {
+    // GPT-6.1 Sol takes "low" and refuses "none": a pass cached for one effort must not admit
+    // the other, which the probe would refuse.
+    const openai = (effort: "low" | "none"): AgentModel =>
+      ({ provider: "openai", modelId: "gpt-6.1-sol", model: {}, effort }) as unknown as AgentModel;
+    createAgentModel.mockImplementationOnce(async () => openai("low"));
+    await admitAgentModel("agent");
+    createAgentModel.mockImplementationOnce(async () => openai("none"));
+    await admitAgentModel("agent");
+
+    expect(probeAgentModel).toHaveBeenCalledTimes(2);
+  });
+
   test("a model that cannot even be built admits the run", async () => {
     // An unconfigured provider says nothing about a model's capabilities, and the start
     // path must not gain a way to fail that it did not have.
@@ -224,4 +263,32 @@ describe("the model gate on the start path", () => {
     expect(verdict.kind).toBe("allowed");
     expect(probeAgentModel).not.toHaveBeenCalled();
   });
+
+  test("a planning run whose model cannot be built is admitted the same way", async () => {
+    createAgentModel.mockImplementationOnce(async () => {
+      throw new LLMConfigError("Gemini API key is required", "gemini");
+    });
+
+    expect(await admitAgentModel("planning")).toEqual({ kind: "allowed", protocol: "native" });
+  });
+
+  test.each(["planning", "agent"] as const)(
+    "a start in %s mode on an effort the model refuses is refused at the build, before any model call",
+    async (mode) => {
+      // `createAgentModel` asks the SDK's request preparation, offline, whether the model takes the
+      // configured effort. Every mode sends that effort, so every mode's start answers the
+      // configuration error; a plan run used to open, spend a turn and fail as model-unavailable.
+      const refused = new LLMConfigError(
+        'LLM_MODEL_EFFORT "none" was refused for the model "gpt-6.1-sol" (openai).',
+        "openai",
+        "effort_refused",
+      );
+      createAgentModel.mockImplementationOnce(async () => {
+        throw refused;
+      });
+
+      await expect(admitAgentModel(mode)).rejects.toBe(refused);
+      expect(probeAgentModel).not.toHaveBeenCalled();
+    },
+  );
 });

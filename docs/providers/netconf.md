@@ -223,6 +223,15 @@ reason is measured rather than assumed: there is no documented vendor default ac
 about, no JWT, and the "no secret" case is unreachable because a missing, empty or wrong
 credential all end in the same refusal.
 
+### Connection string
+
+`netconf` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/network/netconf/connection-string.ts)).
+
+### Execution UI
+
+The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `netconf` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
+Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/network/netconf/execution-ui.ts).
+
 ## 5. Query interface
 
 ### 5.1 The request
@@ -267,6 +276,14 @@ list with keys. `ietf-keystore`'s `keystore` is the control and a real one: it a
 one child name, and that name is a container rather than a keyed list, so it keeps the old reading.
 A keyless list (RFC 8040 section 3.5.3) is left alone rather than handled, because no measurement
 of this fixture reaches one.
+
+### 5.6 SQL grammar
+
+How this engine's statement text is read is declared once, in [`src/lib/db/providers/network/netconf/sql-grammar.ts`](../../src/lib/db/providers/network/netconf/sql-grammar.ts), the `netconf` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+`readsSqlText` is `false`: the console takes one JSON read request naming a datastore and a path, so no span of it is SQL (#1724).
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` in `src/lib/db/destructive-commands.ts` instead of a SQL reading.
+Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
+Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
 
 ## 6. Schema introspection
 
@@ -353,6 +370,17 @@ This engine is not in `AGENT_EXECUTION_ENGINES` and has no engine overlay supply
 first takes an engine whose provider implements a read-only statement path (`queryReadOnly`), which
 this one does not; the second and third take an engine that answers catalog statistics through SQL, and
 this engine answers no SQL at all.
+
+### SQL writing
+
+[`netconf/sql-writing.ts`](../../src/lib/db/providers/network/netconf/sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+A literal is written by `literalStandard` and read back by `unquoteStandard`: the quote is doubled and a backslash is data.
+A name is quoted by `identifierDoubleQuoted`, the SQL standard form: a double-quoted name with an inner double quote doubled.
+There is no placeholder (`placeholder: null`), so a generator quotes the value with `quoteLiteral` instead of emitting a bind.
+No measurement stands behind this row; it uses the standard building blocks named above.
+Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+
+The module's `export` field writes a result export's CREATE TABLE and INSERT from the shared building blocks alone: `STANDARD_DDL_TYPES` for the column types, `NOTHING_STANDS_ALONE` and `NO_BARE_SPELLING`, so every bare declared name is re-spelled from its family, `NULL_NON_FINITE` for NaN and the infinities, and `binaryStandardHex` for a binary cell (`X'0102'`).
 
 ## 10. Error handling
 
@@ -444,6 +472,16 @@ measured: neither captured reply carries one. A device that does send one gets a
 instead of silence.
 
 **Phase 2, `gnmi`, is not started.**
+
+## Migration DDL
+
+[`NETCONF_MIGRATION_DDL`](../../src/lib/db/providers/network/netconf/migration-ddl.ts) is what the schema-diff migration generator writes for `netconf`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
+A node's shape is the device's YANG module, and this provider builds four read operations and a close, so there is no table DDL to wrap either (#1724).
+
+The refusal reason it prints, verbatim:
+
+- "A NETCONF node's shape is declared in the device's YANG module, which the device serves and a client reads, and this provider builds four read operations and a close, and nothing else, so there is no column definition here for anything to change."
 
 ## 13. References
 

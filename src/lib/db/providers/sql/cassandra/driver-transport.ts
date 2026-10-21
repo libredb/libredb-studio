@@ -270,7 +270,7 @@ function durationText(duration: DurationFields): string {
  *   the SQL export writes. The grid spelled it `0x4c69…` while Postgres spelled the
  *   same bytes `\x4c69…`, and the export wrote that text into a `blob` column
  *   instead of the bytes. The CQL literal is still `0x…`, but the export builds
- *   it from the bytes now (`BINARY_LITERAL` has cassandra as `zero-x`), which is what
+ *   it from the bytes now (`CASSANDRA_SQL_WRITING.export.binaryLiteral` is `binaryZeroX`), which is what
  *   keeps one spelling on the screen and the right one in the file.
  * - Anything whose exact value is longer than a double keeps its digits AS A
  *   STRING. `Long`, `Integer` and `BigDecimal` all stringify losslessly and all

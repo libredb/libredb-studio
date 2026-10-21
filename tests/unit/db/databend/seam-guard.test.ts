@@ -15,7 +15,13 @@
  * 6. `index.ts` holds no `system.` SQL: every statement it sends comes from `objects.ts` or `introspect.ts`.
  * 7. A value is imported from outside this directory only from `@/lib/db/http/*`, `@/lib/db/errors`,
  *    `@/lib/db/utils/*`, `@/lib/sql/*`, `@/lib/types`, the base classes, `@/lib/db/object-kinds`, `tunnelRoute` of
- *    `@/lib/db/connection-fingerprint`, `@/lib/app-version` (I15) and the runtime's `node:crypto`; types are free.
+ *    `@/lib/db/connection-fingerprint`, `@/lib/app-version` (I15), `@/lib/db/sql-grammar/shared` (the SQL grammar
+ *    contract's building blocks, for `sql-grammar.ts`) and the runtime's `node:crypto`; types are free.
+ *    `execution-ui.ts`, the engine's execution UI contract module, may also import values from
+ *    `@/lib/db/execution-ui/shared`, its contract's shared building block, `migration-ddl.ts`, the engine's
+ *    migration DDL contract module, from `@/lib/db/migration-ddl/*`, its contract's shared building blocks, and
+ *    `sql-writing.ts` and its `typed-literals.ts` sibling, the engine's SQL writing contract modules, from
+ *    `@/lib/db/sql-writing/*`.
  * 8. Every value export has an importer other than its own file, so nothing is exported only for a test [12 #15].
  *    An importer is a module under `src/`, or `tests/unit/db/databend/provider-doc.test.ts`, which reads back what
  *    `docs/providers/databend.md` quotes (design section 10); no other test file counts. The doc test reaches only
@@ -32,6 +38,7 @@ import { readdirSync, readFileSync, realpathSync } from "node:fs";
 import { isBuiltin } from "node:module";
 import { join, posix } from "node:path";
 import ts from "typescript";
+import { platformTimeoutMs } from "../../../helpers/platform-timeout";
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const DIR = "src/lib/db/providers/sql/databend";
@@ -49,10 +56,21 @@ const OUTSIDE_VALUES = [
   SQL_BASE,
   "src/lib/db/object-kinds.ts",
   "src/lib/app-version.ts",
+  "src/lib/db/sql-grammar/shared.ts",
 ];
 /** A module a value may come from only under the names listed. */
 const OUTSIDE_NAMED: Readonly<Record<string, readonly string[]>> = {
   "src/lib/db/connection-fingerprint.ts": ["tunnelRoute"],
+};
+/**
+ * The per-engine contract modules, each with the contract module or directory whose shared building blocks it may
+ * import as values (rule 7). No other file of this directory may.
+ */
+const CONTRACT_VALUES: Readonly<Record<string, string>> = {
+  "execution-ui": "src/lib/db/execution-ui/shared.ts",
+  "migration-ddl": "src/lib/db/migration-ddl/",
+  "sql-writing": "src/lib/db/sql-writing/",
+  "typed-literals": "src/lib/db/sql-writing/",
 };
 const BUILTIN_VALUES = new Set(["node:crypto"]);
 const HEADER_FILES = new Set(["connection-options", "session", "http-transport"]);
@@ -216,6 +234,7 @@ function seamFindings(file: string, text: string): string[] {
     if (typeOnly || inDirectory(target)) continue;
     const named = OUTSIDE_NAMED[target];
     const allowed =
+      (Object.hasOwn(CONTRACT_VALUES, name) && target.startsWith(CONTRACT_VALUES[name])) ||
       OUTSIDE_VALUES.some((prefix) => target.startsWith(prefix)) ||
       (named !== undefined && names.length > 0 && names.every((bound) => named.includes(bound)));
     if (!allowed) findings.push(`rule 7: ${file} imports a value from ${specifier}, which this directory may not`);
@@ -338,14 +357,25 @@ const SOURCES = readdirSync(join(ROOT, DIR))
   .map((entry) => `${DIR}/${entry}`);
 
 describe("the Databend directory holds its seams", () => {
-  test("every source passes rules 1 to 7", () => {
-    expect(SOURCES).toContain(`${DIR}/index.ts`);
-    expect(SOURCES.flatMap((file) => seamFindings(file, read(file)))).toEqual([]);
-  });
+  // The first parse of the directory pays the parser's warm-up: 0.5s alone with coverage and 4.5s under a
+  // 15% CPU quota.
+  test(
+    "every source passes rules 1 to 7",
+    () => {
+      expect(SOURCES).toContain(`${DIR}/index.ts`);
+      expect(SOURCES.flatMap((file) => seamFindings(file, read(file)))).toEqual([]);
+    },
+    platformTimeoutMs(40_000),
+  );
 
-  test("every value export has an importer under src/ or the doc test (rule 8)", () => {
-    expect(unimportedExports(SOURCES.map((file) => ({ file, text: read(file) })))).toEqual([]);
-  });
+  // Reads every file under src/: 0.5s alone with coverage and 4.5s under a 15% CPU quota.
+  test(
+    "every value export has an importer under src/ or the doc test (rule 8)",
+    () => {
+      expect(unimportedExports(SOURCES.map((file) => ({ file, text: read(file) })))).toEqual([]);
+    },
+    platformTimeoutMs(40_000),
+  );
 
   test("the detector reads real code", () => {
     const transport = references(`${DIR}/http-transport.ts`, read(`${DIR}/http-transport.ts`));
@@ -487,6 +517,30 @@ describe("planted violations fail by name", () => {
       `rule 7: ${DIR}/index.ts imports a value from @/lib/db/factory, which this directory may not`,
     ],
     [
+      "objects.ts",
+      "objects.ts",
+      'import { SQL_COMMIT_KEYWORD } from "@/lib/db/execution-ui/shared";\n',
+      `rule 7: ${DIR}/objects.ts imports a value from @/lib/db/execution-ui/shared, which this directory may not`,
+    ],
+    [
+      "objects.ts",
+      "objects.ts",
+      'import { standardDropTable } from "@/lib/db/migration-ddl/shared";\n',
+      `rule 7: ${DIR}/objects.ts imports a value from @/lib/db/migration-ddl/shared, which this directory may not`,
+    ],
+    [
+      "objects.ts",
+      "objects.ts",
+      'import { literalStandard } from "@/lib/db/sql-writing/shared";\n',
+      `rule 7: ${DIR}/objects.ts imports a value from @/lib/db/sql-writing/shared, which this directory may not`,
+    ],
+    [
+      "sql-writing.ts",
+      "sql-writing.ts",
+      'import { standardDropTable } from "@/lib/db/migration-ddl/shared";\n',
+      `rule 7: ${DIR}/sql-writing.ts imports a value from @/lib/db/migration-ddl/shared, which this directory may not`,
+    ],
+    [
       "decode.ts",
       "decode.ts",
       'import { readFileSync } from "node:fs";\n',
@@ -518,6 +572,14 @@ describe("planted violations fail by name", () => {
     ["decode.ts", "decode.ts", 'import type { Readable } from "node:stream";\n'],
     ["errors.ts", "errors.ts", 'const sentence = "Databend refused POST /v1/query before it ran.";\n'],
     ["session.ts", "session.ts", 'const header = "x-databend-session";\n'],
+    ["execution-ui.ts", "execution-ui.ts", 'import { SQL_COMMIT_KEYWORD } from "@/lib/db/execution-ui/shared";\n'],
+    ["migration-ddl.ts", "migration-ddl.ts", 'import { standardDropTable } from "@/lib/db/migration-ddl/shared";\n'],
+    ["sql-writing.ts", "sql-writing.ts", 'import { binaryUnhex } from "@/lib/db/sql-writing/export-shared";\n'],
+    [
+      "typed-literals.ts",
+      "typed-literals.ts",
+      'import { literalDoubleAndBackslash } from "@/lib/db/sql-writing/shared";\n',
+    ],
   ])("%s (from %s) with %p passes", (as, from, line) => {
     expect(plant(as, from, line)).toEqual([]);
   });
@@ -560,15 +622,20 @@ describe("rule 8 fails by name", () => {
     expect(unimportedExports(sources("decode.ts", extra))).toEqual([]);
   });
 
-  test("a bound only the doc test reads passes, and fails once the doc test is no reader", () => {
-    const real = sources("auth-latch.ts", "");
-    expect(unimportedExports(real)).toEqual([]);
-    const srcOnly = importers().filter((importer) => importer.file !== DOC_TEST);
-    expect(unimportedExports(real, srcOnly)).toEqual([
-      finding("auth-latch.ts", "AUTH_LATCH_TTL_MS"),
-      finding("auth-latch.ts", "AUTH_LATCH_MAX_ENTRIES"),
-    ]);
-  });
+  // Reads every file under src/ twice: 0.8s alone with coverage and 2.8s under a 15% CPU quota.
+  test(
+    "a bound only the doc test reads passes, and fails once the doc test is no reader",
+    () => {
+      const real = sources("auth-latch.ts", "");
+      expect(unimportedExports(real)).toEqual([]);
+      const srcOnly = importers().filter((importer) => importer.file !== DOC_TEST);
+      expect(unimportedExports(real, srcOnly)).toEqual([
+        finding("auth-latch.ts", "AUTH_LATCH_TTL_MS"),
+        finding("auth-latch.ts", "AUTH_LATCH_MAX_ENTRIES"),
+      ]);
+    },
+    platformTimeoutMs(40_000),
+  );
 
   test("a function planted in sql-text.ts fails by name", () => {
     expect(unimportedExports(sources("sql-text.ts", ONLY_FOR_A_TEST))).toEqual([
@@ -585,11 +652,16 @@ describe("rule 8 fails by name", () => {
     expect(unimportedExports(planted, [...importers(), namespace])).toEqual([finding("decode.ts", "onlyForATest")]);
   });
 
-  test("the doc test counts as an importer, and no other test file does", () => {
-    const planted = sources("decode.ts", ONLY_FOR_A_TEST);
-    expect(unimportedExports(planted, [...importers(), readerOf(DOC_TEST)])).toEqual([]);
-    expect(unimportedExports(planted, [...importers(), readerOf("tests/unit/db/databend/decode.test.ts")])).toEqual([
-      finding("decode.ts", "onlyForATest"),
-    ]);
-  });
+  // Reads every file under src/ twice: 0.7s alone with coverage and 2.6s under a 15% CPU quota.
+  test(
+    "the doc test counts as an importer, and no other test file does",
+    () => {
+      const planted = sources("decode.ts", ONLY_FOR_A_TEST);
+      expect(unimportedExports(planted, [...importers(), readerOf(DOC_TEST)])).toEqual([]);
+      expect(unimportedExports(planted, [...importers(), readerOf("tests/unit/db/databend/decode.test.ts")])).toEqual([
+        finding("decode.ts", "onlyForATest"),
+      ]);
+    },
+    platformTimeoutMs(40_000),
+  );
 });

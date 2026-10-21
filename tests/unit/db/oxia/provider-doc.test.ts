@@ -183,6 +183,8 @@ const OUTLINE: readonly string[] = [
   "### 4.6 A token needs TLS off this machine",
   "### 4.7 Server versions",
   "### 4.8 Pulsar's oxia:// URL",
+  "### Connection string",
+  "### Execution UI",
   "## 5. Query interface",
   "### 5.1 The command",
   "### 5.2 Commands and flags",
@@ -192,6 +194,7 @@ const OUTLINE: readonly string[] = [
   "### 5.6 Bounds",
   "### 5.7 Cancellation and the confirmation gate",
   "### 5.8 Natural-order notice",
+  "### 5.9 SQL grammar",
   "## 6. Schema introspection",
   "### 6.1 The object surface",
   "### 6.2 Object source",
@@ -201,6 +204,7 @@ const OUTLINE: readonly string[] = [
   "## 7. Monitoring & health",
   "## 8. Maintenance",
   "## 9. Capabilities & labels",
+  "### 9.1 SQL writing",
   "## 10. Error handling",
   "## 11. Testing",
   "### 11.1 How the tests work",
@@ -209,6 +213,7 @@ const OUTLINE: readonly string[] = [
   "### 11.4 The raw seeder, the evidence harness and the live check",
   "## 12. Running Oxia for Studio",
   "## 13. Known limitations",
+  "## Migration DDL",
   "## 14. References",
 ];
 
@@ -222,6 +227,11 @@ const BROWSER_SET: ReadonlySet<string> = new Set([
   "generators.ts",
   "order.ts",
   "cursor.ts",
+  "sql-writing.ts",
+  "connection-string.ts",
+  "execution-ui.ts",
+  "migration-ddl.ts",
+  "sql-grammar.ts",
 ]);
 
 /** The version note of contract section 23 (SB1-6.6), the one text three files hold identically. */
@@ -410,7 +420,7 @@ async function healthFailure(snapshotError: Error | undefined, status: string): 
 }
 
 describe("docs/providers/oxia.md quotes what the provider's modules say", () => {
-  test("1. the doc has the header and the 14 sections, in order, and every subsection the outline names", () => {
+  test("1. the doc has the header, the 14 sections and the Migration DDL section, in order, and every subsection the outline names", () => {
     expect(headings(DOC)).toEqual([...OUTLINE]);
     expect(DOC).toContain(
       "The `oxia` type-id: read-only browsing, key lookups, lists and range scans over Oxia's gRPC client API, tested against Oxia 0.16.10 and 0.17.1.",

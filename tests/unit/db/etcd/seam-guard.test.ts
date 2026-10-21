@@ -52,6 +52,7 @@ import { assessCommand, type CommandAssessment } from "@/lib/db/providers/keyval
 import { ETCD_MAINTENANCE_SPECS } from "@/lib/db/providers/keyvalue/etcd/maintenance";
 import { refuseBeforeSend, refuseReadOnly } from "@/lib/db/providers/keyvalue/etcd/write-policy";
 import { heldByAnotherGuard } from "../../../helpers/grpc-seam-holdings";
+import { platformTimeoutMs } from "../../../helpers/platform-timeout";
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const ETCD_PATH = "src/lib/db/providers/keyvalue/etcd";
@@ -109,9 +110,10 @@ function filesOf(root: string, env?: NodeJS.ProcessEnv): RepositoryFile[] {
 // the result: pay it once here, under its own budget, so the first test that reads the repository
 // does not spend bun's per-test budget on it. Measured under load (eight busy loops on two cores):
 // the first importer test took over 5,000 ms and timed out in 3 runs of 3 before this hook.
+// Under a 15% CPU quota with coverage the hook itself took 73.8s on a busy runner, past the 60s it had.
 beforeAll(() => {
   filesOf(ROOT);
-}, 60_000);
+}, platformTimeoutMs(120_000));
 
 /** How TypeScript resolves a module name in the repository at `root`, with that repository's tsconfig.json. */
 const resolvers = new Map<string, { readonly options: ts.CompilerOptions; readonly cache: ts.ModuleResolutionCache }>();
@@ -283,12 +285,32 @@ const importsFile =
       ({ specifier }) => specifier !== undefined && resolvesTo(specifier, join(root, path), root, target),
     );
 
-/** A string, other than a module name, whose last path segment is the descriptor's file name. */
+const DESCRIPTOR_FILE_NAME = /(?:^|[/\\])descriptor\.ts$/;
+
+/**
+ * A string, other than a module name, whose last path segment is the descriptor's file name.
+ *
+ * Its own walk rather than `spellings`: this rule runs over every file of the repository and
+ * reads string nodes alone, and `spellings` also collects every identifier and computes a line
+ * for each, which made this the slowest rule of the file and ran it out of bun's five-second
+ * default on busy CI runners. The text compared is the node's own `text`, so an escaped spelling
+ * is caught as before, and the module-name set is built only for a file holding a match.
+ */
 function namesDescriptorFile({ sf }: RepositoryFile): boolean {
+  const matches: ts.Node[] = [];
+  const visit = (node: ts.Node) => {
+    if (
+      (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateLiteralToken(node)) &&
+      DESCRIPTOR_FILE_NAME.test(node.text)
+    ) {
+      matches.push(node);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  if (matches.length === 0) return false;
   const moduleNames = moduleNameNodes(sf);
-  return spellings(sf).some(
-    ({ node, text, isString }) => isString && !moduleNames.has(node) && /(?:^|[/\\])descriptor\.ts$/.test(text),
-  );
+  return matches.some((node) => !moduleNames.has(node));
 }
 
 /** Spec E11 and the plan's Global Constraints, list by list. */
@@ -906,22 +928,30 @@ function writeCoverageFindings(classes: Readonly<Record<string, RpcClass>>): str
 const read = (path: string) => readFileSync(join(ROOT, path), "utf8");
 
 describe("spec E11: who may import the client packages, the descriptor and its generator", () => {
+  // Resolves every import of the repository: up to 4.5s each under a 15% CPU quota with coverage, and 7.1s
+  // on a busier run, past bun's 5s default, so each carries its own bound.
   test.each(IMPORT_RULES.map((rule) => [rule.name, rule] as const))(
     "%s: exactly the files spec E11 names",
     (_name, rule) => {
       expect(importRuleFindings(rule, ROOT)).toEqual([]);
     },
+    platformTimeoutMs(40_000),
   );
 
-  test("the detector reads real code: each named file holds its rule, and the lists overlap as E11 says", () => {
-    const files = filesOf(ROOT);
-    const holding = (rule: ImportRule) =>
-      files.filter((file) => !heldByAnotherGuard(file.path) && rule.holds(file, ROOT)).map((file) => file.path);
-    expect(holding(IMPORT_RULES[0])).toEqual([...IMPORT_RULES[0].named].sort());
-    expect(files.length).toBeGreaterThan(1000);
-    // The evidence harness builds its definition from the generator, never from an import of the descriptor.
-    expect(IMPORT_RULES[1].named).not.toContain(HARNESS);
-  });
+  // Resolves every import of the repository: 3.0s under a 15% CPU quota with coverage.
+  test(
+    "the detector reads real code: each named file holds its rule, and the lists overlap as E11 says",
+    () => {
+      const files = filesOf(ROOT);
+      const holding = (rule: ImportRule) =>
+        files.filter((file) => !heldByAnotherGuard(file.path) && rule.holds(file, ROOT)).map((file) => file.path);
+      expect(holding(IMPORT_RULES[0])).toEqual([...IMPORT_RULES[0].named].sort());
+      expect(files.length).toBeGreaterThan(1000);
+      // The evidence harness builds its definition from the generator, never from an import of the descriptor.
+      expect(IMPORT_RULES[1].named).not.toContain(HARNESS);
+    },
+    platformTimeoutMs(40_000),
+  );
 });
 
 describe("spec 3.1: the pure set imports only what 3.1 allows", () => {
@@ -1559,6 +1589,17 @@ const SPEC_3_1_MODULES: readonly string[] = [
   "errors.ts",
   "labels.ts",
   "index.ts",
+  // The engine contract's connection string and execution UI rows (engine-contract spec 5.3), declared beside the provider.
+  "connection-string.ts",
+  "execution-ui.ts",
+  // The engine's migration DDL contract module (engine contract, migration DDL), which the registry under
+  // src/lib/db/migration-ddl/ reads.
+  "migration-ddl.ts",
+  // The SQL grammar contract's module (engine contract spec 5.3), which every provider directory holds.
+  "sql-grammar.ts",
+  // The SQL writing contract's module (engine contract, SQL writing), which the registry under
+  // src/lib/db/sql-writing/ reads.
+  "sql-writing.ts",
 ];
 
 const SPEC_3_1_DIRECTORY = join(import.meta.dir, "../../../../src/lib/db/providers/keyvalue/etcd");

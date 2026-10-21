@@ -152,6 +152,12 @@ does not exist": the kernel opens its `.lock` sidecar first, so that case used t
 about a `<file>.libredb.lock` the user never named. The directory is not created, unlike the SQLite
 provider, because a connection setting should not make directories on the server.
 
+A path that exists and is not a regular file is refused before the kernel opens anything, by `assertRegularFilesOrMissing` ([`regular-file.ts`](../../src/lib/db/utils/regular-file.ts)), shared with the SQLite and DuckDB providers.
+It asks `stat`, which never opens the path and follows a symlink: the kernel opened a FIFO, took a `.lock` beside it and Test Connection answered "Connected" (measured on bun 1.4.2), while the same FIFO froze the DuckDB provider.
+The kernel's `<path>.lock` is checked the same way, and the error then names the `.lock`: `lock()` reads a lock it finds taken to judge whether it is stale, and that read of a FIFO `.lock` waited for a writer on the server's own thread, so the connect never returned (measured on bun 1.4.2).
+The answer is the open failure in [§10](#10-error-handling), for example `Failed to open LibreDB file: /data/app.libredb is a named pipe (FIFO), not a regular file`, or `a socket`, `a character device`, `a block device` or `a directory` in place of the FIFO.
+A regular file and a symlink to one open as before, and a missing file is created as before.
+
 ### 3.3 Catalog-aware schema, with key-prefix grouping as the raw-kv fallback
 
 Since `@libredb/libredb` 0.0.2 a `.libredb` file carries a persisted **catalog**: the lenses
@@ -352,6 +358,16 @@ package inside libredb-platform.
 | `LIBREDB_EMBEDDED_SAMPLE` | `true` | Set to `"false"` to disable the sample connection entirely. |
 | `LIBREDB_EMBEDDED_SAMPLE_PATH` | `<data dir>/sample.libredb` | Optional override for the path of the generated sample file. |
 
+### Connection string
+
+`libredb` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`libredb-connection-string.ts`](../../src/lib/db/providers/embedded/libredb-connection-string.ts)).
+LibreDB is embedded in the process, so there is no address to write a scheme for.
+
+### Execution UI
+
+The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `libredb` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
+Its row in `EXECUTION_UI` is declared in [`libredb-execution-ui.ts`](../../src/lib/db/providers/embedded/libredb-execution-ui.ts).
+
 ---
 
 ## 5. Query interface
@@ -494,6 +510,14 @@ So the surface would have nothing to report, and the absence is a declared bound
 fallback: the caller shape-checks for the method and this provider does not answer it.
 
 ---
+
+### 5.5 SQL grammar
+
+How this engine's statement text is read is declared once, in [`src/lib/db/providers/embedded/libredb-sql-grammar.ts`](../../src/lib/db/providers/embedded/libredb-sql-grammar.ts), the `libredb` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, because no rule was established for the command grammar, not because it agrees with the default.
+`readsSqlText` is `true` although the provider declares `queryLanguage: "json"`: the store was never listed as an engine whose text is not SQL, so its text reaches the SQL readers under that default.
+This is the one exception `tests/isolated/sql-grammar-reads-sql-text.test.ts` records between the two facts, and the test fails if a second engine splits them.
+Redaction is `none`, since the engine has no grammar of its own: a redacted statement is stored as `?`, because a reader guessing where a literal ends can store the literal.
 
 ## 6. Schema introspection
 
@@ -1091,6 +1115,18 @@ Queries panel is always empty here — and this label is why that emptiness is a
 the Sessions and Indexes panels refuse instead. Its sentence was hardcoded to PostgreSQL's
 `pg_stat_statements` advice (#463).
 
+### SQL writing
+
+[`embedded/libredb-sql-writing.ts`](../../src/lib/db/providers/embedded/libredb-sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+A literal is written by `literalStandard` and read back by `unquoteStandard`: the quote is doubled and a backslash is data.
+A name is quoted by `identifierDoubleQuoted`, the SQL standard form: a double-quoted name with an inner double quote doubled.
+There is no placeholder (`placeholder: null`), so a generator quotes the value with `quoteLiteral` instead of emitting a bind.
+This engine declares `queryLanguage: "json"`, so no statement is ever built for it to read; what a generator emits for such a connection is portable SQL meant to run elsewhere, and the standard form is the only thing it can claim.
+Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+
+The module's `export` field writes a result export's CREATE TABLE and INSERT from the shared building blocks alone: `STANDARD_DDL_TYPES` for the column types, `NOTHING_STANDS_ALONE` and `NO_BARE_SPELLING`, so every bare declared name is re-spelled from its family, `NULL_NON_FINITE` for NaN and the infinities, and `binaryStandardHex` for a binary cell (`X'0102'`).
+The engine declares `queryLanguage: "json"`, so no SQL statement is ever built for it to read, and a file exported from it is meant to run somewhere else: every bare name in it is re-spelled portably rather than kept as one engine's private word.
+
 ---
 
 ## 10. Error handling
@@ -1104,6 +1140,7 @@ The provider raises the shared error classes from
 | `@libredb/libredb` package not installed | `DatabaseConfigError` — install instructions in message |
 | Operation before `connect()` | `DatabaseConfigError` (via `ensureConnected()`) |
 | `connect()` fails to open the file | `ConnectionError` |
+| `connect()` on a path, or a `<path>.lock`, that exists and is not a regular file ([§3.2](#32-no-in-memory-connections)) | `ConnectionError`: *"Failed to open LibreDB file: <path> is a named pipe (FIFO), not a regular file"*, naming the `.lock` when it is the one, or the file's other kind |
 | Empty command | `QueryError` — *"Empty command"* |
 | Unknown verb | `QueryError` — lists supported verbs |
 | Wrong argument count for a verb | `QueryError` — usage hint (e.g. *"Usage: get <key>"*) |
@@ -1339,6 +1376,18 @@ await provider.disconnect();
   answers a modified column per dialect; this engine speaks a JSON command grammar rather than SQL DDL,
   so it emits `-- LibreDB: Cannot alter column "<name>". ...` where it previously emitted PostgreSQL
   `ALTER TABLE ... ALTER COLUMN` DDL the command parser would reject.
+
+---
+
+## Migration DDL
+
+[`LIBREDB_MIGRATION_DDL`](../../src/lib/db/providers/embedded/libredb-migration-ddl.ts) is what the schema-diff migration generator writes for `libredb`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
+The embedded engine speaks a JSON command grammar, so there is no table DDL to wrap (#284).
+
+The refusal reason it prints, verbatim:
+
+- "The embedded engine speaks a JSON command grammar, not SQL DDL."
 
 ---
 

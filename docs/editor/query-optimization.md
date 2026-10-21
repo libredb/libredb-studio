@@ -87,6 +87,7 @@ const info = analyzeQuery('SELECT * FROM users WHERE active = true');
 const result = applyQueryLimit('SELECT * FROM users', 500, 0);
 // Returns: { sql: 'SELECT * FROM users LIMIT 500', wasLimited: true, ... }
 // (OFFSET is only appended when offset > 0, e.g. applyQueryLimit(sql, 500, 500) -> '... LIMIT 500 OFFSET 500')
+// A limit or offset that is not a non-negative safe integer (isRowBound) throws a QueryError
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
 ### Supported Query Types
@@ -156,8 +157,9 @@ the keyword that types the statement.
 The dialect was always available at the callers: every provider knows its own `type`, the
 multi-statement route resolves its provider before it asks, and both client-side execution paths hold
 the active connection. It is now passed down (`src/lib/sql/grammar.ts`), and **exactly one place**
-maps a database type to grammar facts — the readers receive the resolved record and never see a type
-id, so no reader can grow a dialect test of its own.
+maps a database type to grammar facts: the registry in `src/lib/db/sql-grammar/`, whose row for each
+type is the grammar module beside that engine's provider. The readers receive the resolved record and
+never see a type id, so no reader can grow a dialect test of its own.
 ┌──────────────────────────────────────────────────────────────────────────────┐
 | Character | Established reading | Dialects |
 |-----------|--------------------|----------|
@@ -192,7 +194,7 @@ A rule that could **not** be established is not guessed from a neighbouring dial
 at the compatibility default below, and it is listed here rather than left implicit. The default is per
 **fact**, not per dialect: a dialect whose `#` rule is known can still be undecided about its brackets.
 ┌──────────────────────────────────────────────────────────────────────────────┐
-**MongoDB, Firestore, Redis, Prometheus, InfluxDB (InfluxQL), Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, Oxia, S3-compatible object storage, Kubernetes, OPC UA, MTConnect, Modbus, NETCONF, SNMP and Sparkplug B are the twenty-one types whose query text is not SQL at all**: `NON_SQL_DIALECTS` in `src/lib/sql/grammar.ts` holds exactly those twenty-one, which is what `readsSqlText()` reports on.
+**MongoDB, Firestore, Redis, Prometheus, InfluxDB (InfluxQL), Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, Oxia, S3-compatible object storage, Kubernetes, OPC UA, MTConnect, Modbus, NETCONF, SNMP and Sparkplug B are the twenty-one types whose query text is not SQL at all**: `readsSqlText: false`, declared in each engine's grammar module in the registry in `src/lib/db/sql-grammar/`, holds exactly those twenty-one, which is what `readsSqlText()` reports on.
 Their providers never reach these readers on the query path, and the confirmation gate, which reads whatever is in the editor, asks `readsSqlText()` before applying any span-based rule to their text, so a JSON document, a Redis command, a PromQL expression, an InfluxQL statement, a Kafka read request, an etcdctl command, a Cypher statement, a Milvus request, a Qdrant request, an `oxia client` read command, an AWS CLI read command, a kubectl statement, a NETCONF read request, a Sparkplug read request or an SNMP walk is not judged by a SQL reader that cannot parse it.
 ┌──────────────────────────────────────────────────────────────────────────────┐
 The gate's SQL keyword test still reads MongoDB and Redis text first, as a backstop, which on Redis also asks about a read whose arguments include `update` and then `set` (`docs/BACKLOG.md` U43).
@@ -202,7 +204,7 @@ Text it cannot read as a command at all is not treated as safe: mongosh syntax, 
 Before that table existed the answer for both types was a bare `false`, so a `FLUSHALL` and a `deleteMany` ran with no confirmation while a `DELETE FROM` on every SQL engine asked.
 The Prometheus and Kafka rows name no operation, the etcd row names what `guard.ts` classifies, the Neo4j row is a fourth that names no operation and decides alone, and each of the four is the gate's whole answer, the rows the keyword test does not read in front of: PromQL has no statement that writes, its editor text only ever reaches `POST /api/v1/query`, and a metric may legally be named `update`, `delete` or `drop`, which the keyword test read as a write; a Kafka read request only reads, and a topic may be named any of those too; etcd's text is read by `guard.ts` over `commands.ts`, the provider's own parser, so a key named `update` or `drop` is data and never a SQL keyword; and Neo4j's provider refuses every write before it is sent - its read policy denies every word that writes and its statement gate classifies the statement through `EXPLAIN`, failing closed - so there is no write left that an operation name would have to catch.
 The InfluxDB (InfluxQL) row is read by the InfluxQL policy the provider runs (`src/lib/db/providers/timeseries/influxdb/influxql-policy.ts`), so what asks and what runs are one reading: an allowed statement only reads, so nothing asks, and what the policy refuses the editor refuses before anything is sent.
-InfluxDB 3 (SQL) is not in that set: its text is SQL, read under the DataFusion row of `SQL_GRAMMARS`.
+InfluxDB 3 (SQL) is not in that set: its text is SQL, read under `DATAFUSION_GRAMMAR`, the grammar of its module in the registry.
 The Oxia row names no operation and, like the etcd row, is the gate's whole answer: Oxia's text is read by `guard.ts` over `commands.ts`, the provider's own parser, so a key named `update` or `drop` is data and never a SQL keyword.
 The S3 row names no operation and, like the Oxia row, is the gate's whole answer: S3's text is read by `console/guard.ts` over `console/commands.ts`, the provider's own parser, so a key named `delete` or `drop` is data and never a SQL keyword, and a command is never posted for an AI safety analysis, because it names buckets and keys.
 The Kubernetes row names no operation and, like the S3 row, is the gate's whole answer: kubectl text is read by `console/guard.ts` over `console/commands.ts`, the provider's own parser, so an object named `delete` or `drop` is data and never a SQL keyword, and a statement is never posted for an AI safety analysis, because it names namespaces and objects.
@@ -216,8 +218,9 @@ The embedded LibreDB is not in that set: its text is read as SQL, and its undeci
 | `/* … */` nesting | Couchbase, Druid, LibreDB | MySQL, SQLite, libSQL, Oracle, Elasticsearch, OpenSearch, Trino and Databend, whose flat rule the default already applied — each established from its own source rather than assumed to agree |
 | `//` | Elasticsearch, OpenSearch, Couchbase, Druid, LibreDB | PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server and Trino, each refused on a live server: `SELECT 1 // note` is an error there, so "not a comment" is the reading the default already applied; Databend, whose lexer has `//` as an operator token; Apache Spark, whose lexer reads `/` as division |
 ┌──────────────────────────────────────────────────────────────────────────────┐
-The distinction is visible in `src/lib/sql/grammar.ts` too: an established fact is written out in that
-dialect's row, an undecided one is written `DEFAULT_SQL_GRAMMAR.<fact>`.
+The distinction is visible in each engine's grammar module too: an established fact is written out
+in that dialect's grammar constant, an undecided one is written `DEFAULT_SQL_GRAMMAR.<fact>`, and an
+engine with no fact established at all names `DEFAULT_SQL_GRAMMAR` itself.
 ┌──────────────────────────────────────────────────────────────────────────────┐
 The bracket row is the one where a default costs something, and PostgreSQL is why it is worth
 establishing rather than accepting: left at the name reading, a nested array or a subscript key
@@ -1009,9 +1012,11 @@ src/
 ├── lib/sql/
 │   └── result-order.ts       # Whether a statement orders its OWN result
 ├── lib/query-generators.ts   # The tree click's statement — no row bound of its own
+├── lib/results/
+│   └── append-page.ts        # appendResultPage: the Load More append rule (standalone hook; type-only imports so the VS Code webview can share it)
 ├── hooks/
 │   ├── use-tab-manager.ts    # PREVIEW_PAGE_SIZE, sent as an execution option
-│   └── use-query-execution.ts # Append, currentOffset, Load More (standalone)
+│   └── use-query-execution.ts # currentOffset, Load More (standalone)
 ├── workspace/hooks/
 │   └── use-query-adapter.ts  # The same, for the embedded shell
 ├── app/api/db/

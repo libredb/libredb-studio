@@ -1,0 +1,42 @@
+-- fixture: full
+-- Migration generated at 2026-10-19T12:00:00.000Z
+-- Dialect: bigquery
+-- Changes: 1 added, 1 removed, 2 modified
+
+-- Objects that are not tables
+-- Skipped v_orders (view): only tables are created, altered or dropped here; change it by hand. If it reads a table changed below, drop it before this script and recreate it after.
+
+-- Drop removed tables
+DROP TABLE IF EXISTS `app`.`legacy`;
+
+-- Create new tables
+CREATE TABLE `app`.`users` (
+  `id` integer NOT NULL,
+  `note` varchar(20) DEFAULT 'abc',
+  `bare` TEXT,
+  `y` Int32 DEFAULT MATERIALIZED toYear(d),
+  `empty` text DEFAULT 
+);
+-- BigQuery: Cannot declare a primary key. BigQuery accepts a primary key only as PRIMARY KEY (...) NOT ENFORCED.
+-- BigQuery: Cannot generate index DDL. BigQuery has search and vector indexes only; write the index change by hand.
+-- BigQuery: Cannot generate index DDL. BigQuery has search and vector indexes only; write the index change by hand.
+-- BigQuery: Cannot add a foreign key. The engine has no foreign-key constraint.
+
+-- Modify existing tables
+-- Alter table: orders
+-- BigQuery: Cannot drop a foreign key. The engine has no foreign-key constraint.
+-- BigQuery: Cannot generate index DDL. BigQuery has search and vector indexes only; write the index change by hand.
+-- BigQuery: Cannot generate index DDL. BigQuery has search and vector indexes only; write the index change by hand.
+ALTER TABLE `app`.`orders` ADD COLUMN `extra` integer;
+ALTER TABLE `app`.`orders` ADD COLUMN `bare2` TEXT;
+ALTER TABLE `app`.`orders` DROP COLUMN `old`;
+-- BigQuery: Cannot alter column "status". BigQuery widens a column with ALTER COLUMN ... SET DATA TYPE only along its coercion rules, and nothing else; write the change by hand.
+-- BigQuery: Cannot alter column "amount". BigQuery widens a column with ALTER COLUMN ... SET DATA TYPE only along its coercion rules, and nothing else; write the change by hand.
+-- BigQuery: Cannot alter column "calc". BigQuery widens a column with ALTER COLUMN ... SET DATA TYPE only along its coercion rules, and nothing else; write the change by hand.
+-- BigQuery: Cannot alter column "line break". BigQuery widens a column with ALTER COLUMN ... SET DATA TYPE only along its coercion rules, and nothing else; write the change by hand.
+-- BigQuery: Cannot generate index DDL. BigQuery has search and vector indexes only; write the index change by hand.
+-- BigQuery: Cannot generate index DDL. BigQuery has search and vector indexes only; write the index change by hand.
+-- BigQuery: Cannot add a foreign key. The engine has no foreign-key constraint.
+
+-- fixture: none
+-- No schema changes detected.

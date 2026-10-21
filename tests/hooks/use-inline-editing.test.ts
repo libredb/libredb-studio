@@ -878,6 +878,193 @@ describe("useInlineEditing", () => {
     expect(params).toEqual([1]);
   });
 
+  // ── Oracle DATE and TIMESTAMP text ──────────────────────────────────────
+  //
+  // The provider reads DATE and TIMESTAMP as their wall clock (#1131), and TIMESTAMP WITH
+  // [LOCAL] TIME ZONE arrives over HTTP as its Date#toISOString text (#1224). Bound as a bare
+  // VARCHAR2 parameter, Oracle reads each through the session's NLS format and refuses all
+  // three (ORA-01861, ORA-01843), so an edit still in the column's form binds `:n` through
+  // TO_DATE, TO_TIMESTAMP, or FROM_TZ(TO_TIMESTAMP(:n, ...), 'UTC').
+
+  /** Edits one row of an Oracle result and returns the one UPDATE and its parameters. */
+  async function applyOracleEdits(
+    columnTypes: Record<string, string> | undefined,
+    edits: Array<{ columnId: string; newValue: string }>,
+    type: DatabaseConnection["type"] = "oracle",
+  ) {
+    const row = {
+      ID: 1,
+      D: "2026-09-01 00:00:00",
+      TS: "2026-09-01 10:30:00.345",
+      TTZ: "2026-08-24T07:11:12.345Z",
+      TLTZ: "2026-08-24T07:11:12.345Z",
+    };
+    const { result } = renderHook(() =>
+      useInlineEditing({
+        activeConnection: makeConnection({ type }),
+        currentTab: makeTab({
+          query: "SELECT * FROM events",
+          result: makeResult({
+            fields: ["ID", "D", "TS", "TTZ", "TLTZ"],
+            rows: [row],
+            rowCount: 1,
+            ...(columnTypes !== undefined && { columnTypes }),
+          }),
+        }),
+        executeQuery: mockExecuteQuery as (sql: string) => void,
+      }),
+    );
+    act(() => {
+      for (const { columnId, newValue } of edits) {
+        result.current.handleCellChange(
+          makeChange({ columnId, originalValue: row[columnId as keyof typeof row], newValue }),
+        );
+      }
+    });
+    await act(async () => {
+      await result.current.handleApplyChanges();
+    });
+    expect(updateCalls()).toHaveLength(1);
+    const [sql, , , options] = updateCalls()[0];
+    return { sql: String(sql), params: (options as { params: unknown[] }).params };
+  }
+
+  const ORACLE_TYPES = {
+    ID: "NUMBER",
+    D: "DATE",
+    TS: "TIMESTAMP",
+    TTZ: "TIMESTAMP WITH TIME ZONE",
+    TLTZ: "TIMESTAMP WITH LOCAL TIME ZONE",
+  };
+
+  test("an edit of an Oracle DATE or TIMESTAMP cell binds through TO_DATE, TO_TIMESTAMP, or FROM_TZ", async () => {
+    const { sql, params } = await applyOracleEdits(ORACLE_TYPES, [
+      { columnId: "D", newValue: "2026-09-02 00:00:00" },
+      { columnId: "TS", newValue: "2026-09-02 10:30:00.345" },
+      { columnId: "TTZ", newValue: "2026-08-24T17:11:12.345Z" },
+      { columnId: "TLTZ", newValue: "1999-01-01T18:04:05.006Z" },
+    ]);
+
+    expect(sql).toBe(
+      "UPDATE events SET \"D\" = TO_DATE(:1, 'YYYY-MM-DD HH24:MI:SS'), " +
+        "\"TS\" = TO_TIMESTAMP(:2, 'YYYY-MM-DD HH24:MI:SS.FF'), " +
+        "\"TTZ\" = FROM_TZ(TO_TIMESTAMP(:3, 'YYYY-MM-DD HH24:MI:SS.FF3'), 'UTC'), " +
+        "\"TLTZ\" = FROM_TZ(TO_TIMESTAMP(:4, 'YYYY-MM-DD HH24:MI:SS.FF3'), 'UTC') " +
+        'WHERE "ID" = :5',
+    );
+    expect(params).toEqual([
+      "2026-09-02 00:00:00",
+      "2026-09-02 10:30:00.345",
+      "2026-08-24 17:11:12.345",
+      "1999-01-01 18:04:05.006",
+      1,
+    ]);
+  });
+
+  test.each([
+    [
+      "a BC DATE takes SYYYY",
+      ORACLE_TYPES,
+      "D",
+      "-0044-03-15 00:00:00",
+      'UPDATE events SET "D" = TO_DATE(:1, \'SYYYY-MM-DD HH24:MI:SS\') WHERE "ID" = :2',
+      "-0044-03-15 00:00:00",
+    ],
+    [
+      "a TIMESTAMP with no fraction omits .FF",
+      ORACLE_TYPES,
+      "TS",
+      "2026-09-02 10:30:00",
+      'UPDATE events SET "TS" = TO_TIMESTAMP(:1, \'YYYY-MM-DD HH24:MI:SS\') WHERE "ID" = :2',
+      "2026-09-02 10:30:00",
+    ],
+    [
+      "a BC TIMESTAMP with nanosecond fraction takes SYYYY and .FF",
+      ORACLE_TYPES,
+      "TS",
+      "-0044-03-15 10:30:00.123456789",
+      'UPDATE events SET "TS" = TO_TIMESTAMP(:1, \'SYYYY-MM-DD HH24:MI:SS.FF\') WHERE "ID" = :2',
+      "-0044-03-15 10:30:00.123456789",
+    ],
+    [
+      "a parameterized TIMESTAMP(6) declaration",
+      { ...ORACLE_TYPES, TS: "TIMESTAMP(6)" },
+      "TS",
+      "2026-09-02 10:30:00.5",
+      'UPDATE events SET "TS" = TO_TIMESTAMP(:1, \'YYYY-MM-DD HH24:MI:SS.FF\') WHERE "ID" = :2',
+      "2026-09-02 10:30:00.5",
+    ],
+    [
+      "a parameterized TIMESTAMP(3) WITH TIME ZONE declaration",
+      { ...ORACLE_TYPES, TTZ: "TIMESTAMP(3) WITH TIME ZONE" },
+      "TTZ",
+      "2026-08-24T17:11:12.345Z",
+      "UPDATE events SET \"TTZ\" = FROM_TZ(TO_TIMESTAMP(:1, 'YYYY-MM-DD HH24:MI:SS.FF3'), 'UTC') WHERE \"ID\" = :2",
+      "2026-08-24 17:11:12.345",
+    ],
+    [
+      "a lowercase padded declaration",
+      { ...ORACLE_TYPES, D: " date " },
+      "D",
+      "2026-09-02 00:00:00",
+      'UPDATE events SET "D" = TO_DATE(:1, \'YYYY-MM-DD HH24:MI:SS\') WHERE "ID" = :2',
+      "2026-09-02 00:00:00",
+    ],
+  ])(
+    "an Oracle temporal edit matches the column and value shape: %s",
+    async (_name, columnTypes, columnId, newValue, expectedSql, bound) => {
+      const { sql, params } = await applyOracleEdits(columnTypes, [{ columnId, newValue }]);
+
+      expect(sql).toBe(expectedSql);
+      expect(params).toEqual([bound, 1]);
+    },
+  );
+
+  test.each([
+    ["a DATE with a fractional second", ORACLE_TYPES, "D", "2026-09-02 00:00:00.123"],
+    ["a bare date without time", ORACLE_TYPES, "D", "2026-09-02"],
+    ["a session NLS date spelling", ORACLE_TYPES, "D", "02-SEP-26"],
+    ["a zoned column with a numeric offset", ORACLE_TYPES, "TTZ", "2026-08-24 07:11:12.345 +00:00"],
+    ["a zoned column with an impossible calendar date", ORACLE_TYPES, "TTZ", "2026-02-30T00:00:00.000Z"],
+    ["a zoned column with an out-of-range month", ORACLE_TYPES, "TTZ", "2026-13-01T00:00:00.000Z"],
+    ["a zoned column with a signed six-digit year", ORACLE_TYPES, "TTZ", "-000044-03-15T10:30:00.000Z"],
+    ["a VARCHAR2 column holding date text", { ...ORACLE_TYPES, D: "VARCHAR2" }, "D", "2026-09-02 00:00:00"],
+    ["a column the result declared nothing for", { ID: "NUMBER" }, "D", "2026-09-02 00:00:00"],
+  ])(
+    "an Oracle edit outside those forms binds as a plain parameter: %s",
+    async (_name, columnTypes, columnId, newValue) => {
+      const { sql, params } = await applyOracleEdits(columnTypes, [{ columnId, newValue }]);
+
+      expect(sql).toBe(`UPDATE events SET "${columnId}" = :1 WHERE "ID" = :2`);
+      expect(params).toEqual([newValue, 1]);
+    },
+  );
+
+  test("an Oracle edit binds as a plain parameter where the result carries no column types", async () => {
+    const { sql, params } = await applyOracleEdits(undefined, [{ columnId: "D", newValue: "2026-09-02 00:00:00" }]);
+
+    expect(sql).toBe('UPDATE events SET "D" = :1 WHERE "ID" = :2');
+    expect(params).toEqual(["2026-09-02 00:00:00", 1]);
+  });
+
+  test("an Oracle DATE column on another dialect binds the text untouched", async () => {
+    const { sql, params } = await applyOracleEdits(
+      ORACLE_TYPES,
+      [{ columnId: "D", newValue: "2026-09-02 00:00:00" }],
+      "postgres",
+    );
+
+    expect(sql).toBe('UPDATE events SET "D" = $1 WHERE "ID" = $2');
+    expect(params).toEqual(["2026-09-02 00:00:00", 1]);
+  });
+
+  test("an Oracle DATE set to NULL stays the keyword and takes no parameter", async () => {
+    const { sql, params } = await applyOracleEdits(ORACLE_TYPES, [{ columnId: "D", newValue: "NULL" }]);
+
+    expect(sql).toBe('UPDATE events SET "D" = NULL WHERE "ID" = :1');
+    expect(params).toEqual([1]);
+  });
+
   test("a backslash-escaping dialect cannot read the edited value as SQL", async () => {
     // The issue #290 payload: interpolated into a MySQL statement it closed the
     // literal early and `WHERE 1=1` became the real predicate, so every row in the

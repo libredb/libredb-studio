@@ -103,6 +103,8 @@ overrides the base and appends `FETCH FIRST n ROWS ONLY` (or `OFFSET m ROWS FETC
 when an offset is set) to bare `SELECT`s that don't already have a limit. Default page size
 `DEFAULT_QUERY_LIMIT = 500`; unlimited caps at `MAX_UNLIMITED_ROWS = 100000`.
 
+A `limit` or an `offset` that is not a non-negative safe integer is refused with a `QueryError` before either branch runs, by the check the shared limiter runs first (`assertRowBounds` in [`query-limiter.ts`](../../src/lib/db/utils/query-limiter.ts)).
+
 Both branches append at the **end of the statement**, which `src/lib/sql/statement-end.ts` delimits —
 before any trailing comment and before the terminating `;`, both of which are then re-attached
 verbatim. Appending after them instead put the clause inside a trailing `-- note` while this method
@@ -495,6 +497,17 @@ or the container has to run as root long enough to create it, which is why the d
 the supported path. A first-class, separately-published Thick-mode image variant is a possible future
 addition.
 
+### Connection string
+
+The scheme shown for Oracle is `oracle://`.
+Its row in `CONNECTION_STRING` is declared in [`oracle-connection-string.ts`](../../src/lib/db/providers/sql/oracle-connection-string.ts).
+It has no `readTls`, so a pasted `oracle://` URL carries no SSL mode into the form, and it runs no seed load check.
+
+### Execution UI
+
+The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `oracle` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
+Its row in `EXECUTION_UI` is declared in [`oracle-execution-ui.ts`](../../src/lib/db/providers/sql/oracle-execution-ui.ts).
+
 ---
 
 ## 5. Query interface
@@ -558,7 +571,7 @@ the pool. Bind parameters use Oracle's `:1`-style placeholders.
 Native errors are normalised through `mapDatabaseError()` (see [§11](#11-error-handling)).
 
 **PL/SQL from the editor (#1312).** The grammar's `script` fact for this dialect
-(`src/lib/sql/grammar.ts`) makes the editor's statement reader treat a PL/SQL unit as ONE statement:
+(`src/lib/db/providers/sql/oracle-sql-grammar.ts`) makes the editor's statement reader treat a PL/SQL unit as ONE statement:
 an anonymous block that starts with `DECLARE` or `BEGIN`, and `CREATE [OR REPLACE]
 [EDITIONABLE | NONEDITIONABLE] PROCEDURE | FUNCTION | PACKAGE [BODY] | TRIGGER | TYPE BODY`. The unit
 is read to the `END` that closes its outermost block, and the `;` after that `END` is kept, because
@@ -733,8 +746,8 @@ script ([§12.4](#124-optional-verifying-against-a-live-oracle)) holds it agains
 
   `TO_CHAR` in the query is exact for all three.
 - **Library surface:** an in-process consumer now receives strings, not `Date` objects, for these two
-  types. The SQL export reads the text back into an Oracle literal
-  ([§5.5](#the-sql-export-writes-an-oracle-date-literal-not-an-iso-string)).
+  types. The SQL export reads the text back into an Oracle literal, and inline row editing binds `:n`
+  through the same conversion functions ([§5.5](#the-sql-export-writes-an-oracle-date-literal-not-an-iso-string)).
 
 #### `NUMBER` still loses digits, and that is a separate defect
 
@@ -923,7 +936,7 @@ TLTZ  REFUSED  ORA-01843: An invalid month was specified.
 ```
 
 So a DDL+INSERT export of any ordinary Oracle table with a date column was unreplayable. The fix is
-in the shared export (`src/lib/export/result-export.ts`), not in this provider, and the conversion
+in this engine's SQL writing module ([`oracle-sql-writing.ts`](../../src/lib/db/providers/sql/oracle-sql-writing.ts), `export.columnWriters`), not in this provider, and the conversion
 function IS the literal — the way `HEXTORAW` already is for a `RAW`. Which function comes from the
 **declared** type (`columnTypes`, [§5.4](#54-declared-column-types)), because the two shapes disagree
 about which fields of the `Date` are the value:
@@ -1003,6 +1016,21 @@ about which fields of the `Date` are the value:
   fractional second at all. Both were measured: a `TO_TIMESTAMP` literal inserted into a `DATE`
   column is accepted and silently truncated to the whole second, so the explicit function only says
   what the column already is.
+- **Inline grid editing** ([`use-inline-editing.ts`](../../src/hooks/use-inline-editing.ts), #1807)
+  opens its editor on those same three text forms: the wall-clock text of a `DATE` or `TIMESTAMP`
+  (#1131) and the ISO instant text of a `TIMESTAMP WITH [LOCAL] TIME ZONE` over HTTP (#1224). And
+  `oracledb` binds a string parameter as `DB_TYPE_VARCHAR`, which Oracle reads into a date or
+  timestamp column through the session's `NLS_DATE_FORMAT` (`DD-MON-RR`), `NLS_TIMESTAMP_FORMAT`
+  (`DD-MON-RR HH.MI.SSXFF AM`), or `NLS_TIMESTAMP_TZ_FORMAT` (`DD-MON-RR HH.MI.SSXFF AM TZR`).
+  Measured on 26ai Free 23.26.3.0.0 (`oracledb` 26.0.0, `TZ=Europe/Istanbul`): a bare `SET "COL" = :1`
+  is refused with `ORA-01861: literal does not match format string` on `DATE` and `ORA-01843: An
+  invalid month was specified.` on `TIMESTAMP` and both zoned timestamp types. So an edit still in the
+  column's form (`inlineEdit.boundEdit` in
+  [`oracle-sql-writing.ts`](../../src/lib/db/providers/sql/oracle-sql-writing.ts), sharing the
+  masks and regexes the SQL INSERT export reads there) binds `:n` inside `TO_DATE(:n,
+  '[S]YYYY-MM-DD HH24:MI:SS')`, `TO_TIMESTAMP(:n, '[S]YYYY-MM-DD HH24:MI:SS[.FF]')`, or
+  `FROM_TZ(TO_TIMESTAMP(:n, 'YYYY-MM-DD HH24:MI:SS.FF3'), 'UTC')` (binding `YYYY-MM-DD HH:MM:SS.sss`).
+  Text in any other shape, or in a column declared as another type, is bound as `:n` untouched.
 
 Verified end to end — read through the provider, exported, replayed into a fresh table, compared **by
 the server**. This run predates #1131, so `D` and `TS` are still the driver's `Date` in it, read by a
@@ -1033,6 +1061,20 @@ microseconds the driver dropped (`TO_CHAR(s."TS" - r."TS")` → `+000000000 00:0
 survive an export, because it did not survive the driver.**
 
 ---
+
+### 5.6 SQL grammar
+
+How this engine's statement text is read is declared once, in [`src/lib/db/providers/sql/oracle-sql-grammar.ts`](../../src/lib/db/providers/sql/oracle-sql-grammar.ts), the `oracle` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+Its grammar is `ORACLE_GRAMMAR`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
+`#` is an identifier character and comments open on `--` and `/*` only, from node-oracledb's own SQL tokenizer (`lib/thin/statement.js`).
+Alternate quoting is on, and Oracle is the only row with it: the same tokenizer's `_parseQstring` opens a q-string at a `'` after `q` or `Q`, `nq'...'` included, with `[ ] { } ( ) < >` as paired delimiters, as Oracle's SQL Language Reference (checked 2026-08-05) gives it.
+Block comments are flat: the tokenizer stops at the first `*/`, and the PL/SQL Language Reference says one multiline comment cannot contain another.
+`//` is code, probed 2026-08-25 on Oracle Free through sqlplus: `SELECT 1 AS a // note FROM dual` is ORA-00923.
+A PL/SQL unit is one statement, ended by SQL*Plus's `/` line: measured on 26ai Free 23.26.3, a procedure cut at its inner `;` was stored INVALID with PLS-00103, and the unit is refused without the `;` after its `END`, so the splitter keeps that one.
+`[...]` is not established and stays at the fail-safe default.
+The update-target reader takes `MINUS` as a set operator here alone, since it is an ordinary column name on every other engine.
+`readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.
+Redaction is `sql` with `"` as its name quote: a redacted statement keeps its words and every name in that quote, and every literal becomes `?`.
 
 ## 6. Transactions
 
@@ -2221,7 +2263,7 @@ is what lets the Operations tab render those words and send an operation Oracle 
 | `supportsExplain` | **`false`** (intentionally disabled — see [Known limitations](#14-known-limitations--future-work)) |
 | `supportsExternalQueryLimiting` | `true` (from base) |
 | `createTable` | declared, see [Create Table form](#create-table-form) |
-| `supportsInlineRowEdit` | `true` — `UPDATE t SET c = v WHERE pk = v` is core Oracle DML |
+| `supportsInlineRowEdit` | `true` — `UPDATE t SET c = v WHERE pk = v` is core Oracle DML; an edit of a `DATE`, `TIMESTAMP`, or `TIMESTAMP WITH [LOCAL] TIME ZONE` cell still in the provider's text form binds `:n` through `TO_DATE`, `TO_TIMESTAMP`, or `FROM_TZ(TO_TIMESTAMP(:n, …), 'UTC')` ([§5.5](#the-sql-export-writes-an-oracle-date-literal-not-an-iso-string)) |
 | `supportsTestDataGeneration` | `true` - the row menus offer Generate Test Data on tables, which writes one multi-row `INSERT INTO ... VALUES`. A `DATE` value is written as `TO_DATE('2026-01-27', 'YYYY-MM-DD')` and a `TIMESTAMP` value as `TO_TIMESTAMP('2026-01-27 14:30:00', 'YYYY-MM-DD HH24:MI:SS')`, the form the SQL export writes, because the quoted ISO text is read through `NLS_DATE_FORMAT` and refused with `ORA-01861`; a `NUMBER` column is generated as an integer and written unquoted (#1400) |
 | `supportsResultPagination` | `true` — `OFFSET m ROWS FETCH NEXT n ROWS ONLY` from this provider's own `prepareQuery` override; page one is `FETCH FIRST n ROWS ONLY` (#816) |
 | `supportsTransactions` | `true` — Oracle is always in a transaction and the held connection commits or rolls back, so the trio and the SANDBOX toggle are offered (#464) |
@@ -2268,6 +2310,35 @@ The monitoring Queries panel's empty state was hardcoded to PostgreSQL's `pg_sta
 on every engine (#463); `getSlowQueries()` here reads `V$SQL`
 ([§8](#8-monitoring--health)) and returns `[]` when that read is refused, so the grant is the thing a
 DBA can act on.
+
+### SQL writing
+
+[`sql/oracle-sql-writing.ts`](../../src/lib/db/providers/sql/oracle-sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+A literal is written by `literalStandard` and read back by `unquoteStandard`: the quote is doubled and a backslash is data.
+A name is quoted by `identifierDoubleQuoted`, the SQL standard form: a double-quoted name with an inner double quote doubled.
+A bind is spelled by `placeholderColon`, as `:1`, `:2`.
+`oracledb` binds an array to `:n`.
+The module also declares a `temporalLiteral` form.
+Oracle reads a quoted string in a date position through the session's `NLS_DATE_FORMAT`, `DD-MON-RR` by default, and refuses the ISO text with `ORA-01861: literal does not match format string` (#1400, on Oracle 23.26.3.0.0; the SQL export measured the same refusal for all four date types).
+So a `YYYY-MM-DD` date goes through `TO_DATE` and a `YYYY-MM-DD HH24:MI:SS` timestamp through `TO_TIMESTAMP`, with a mask that spells the text's own form, as the export writes the same types, and the session's format moves nothing.
+Text that is not in that form is quoted as it is: the mask would refuse it, and a plain literal says what the caller had.
+Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`.
+Its `boundEdit` wraps the `:n` bind of a `DATE`, `TIMESTAMP` or `TIMESTAMP WITH [LOCAL] TIME ZONE` edit still in the provider's text in `TO_DATE`, `TO_TIMESTAMP` or `FROM_TZ(TO_TIMESTAMP(…), 'UTC')`, with the masks the SQL INSERT export uses (#1818).
+`oracledb` binds a string as `DB_TYPE_VARCHAR`, which Oracle reads into those columns through the session's `NLS_DATE_FORMAT`, `NLS_TIMESTAMP_FORMAT` or `NLS_TIMESTAMP_TZ_FORMAT`.
+Measured 2026-10-18 on Oracle AI Database 26ai Free 23.26.3.0.0 (`oracledb` 26.0.0, `TZ=Europe/Istanbul`): a bare `:1` was refused with `ORA-01861: literal does not match format string` on `DATE` and `ORA-01843: An invalid month was specified.` on the three timestamp types, while the wrapped bind stored each value equal on the server, BC dates included.
+Every other edit is bound as `:n` untouched.
+
+The module's `export` field spells a result export's column types through `ddlTypes`: `VARCHAR2(4000)`, `NUMBER(19)`, `BINARY_DOUBLE`, `NUMBER(1)`, `TIMESTAMP` and `BLOB`, since Oracle has no `TEXT` and no `BOOLEAN` before 23c.
+Each name in `standsAlone` was measured, one `CREATE TABLE probe (c <name>)` per name on Oracle Free 23ai, read back out of `USER_TAB_COLUMNS`, and is listed only because Oracle both accepted it and stored it unnarrowed.
+`NUMBER` there is the full 38 digits.
+A binary cell is written by `binaryHexToRaw`, because Oracle parses neither `X'…'` nor `0x…` as a binary literal (`SELECT rawtohex(x'0102') FROM dual` is `ORA-00907`), so the conversion function is the literal.
+`HEXTORAW('')` is NULL, which is also what Oracle stores for a zero-length RAW, so the empty case needs no special spelling.
+`nonFinite` writes `BINARY_DOUBLE_NAN`, `BINARY_DOUBLE_INFINITY` and `-BINARY_DOUBLE_INFINITY`: replayed into Oracle AI Database 23.26.3 (2026-10-04), its own constants read back into `BINARY_DOUBLE` and `BINARY_FLOAT`.
+`columnWriters` writes a date or timestamp cell through a conversion function chosen by the column's declared type, because Oracle parses none of the literal forms a `Date` stringifies to.
+Measured through the real export path on Oracle AI Database 26ai Free 23.26.2.0.0, an exported `'2026-08-24T07:11:12.345Z'` is `ORA-01843: An invalid month was specified` for all three timestamp types and `ORA-01861: literal does not match format string` for a `DATE`.
+A naive `DATE` or `TIMESTAMP` is written from the local fields of the `Date`: a `DATE` holding `2026-08-24 10:11:12` arrived as `2026-08-24T07:11:12.000Z` from a process at `+03:00`, so writing the ISO text would move every such value by the exporter's own offset.
+A zoned column is written through `FROM_TZ(..., 'UTC')`, which keeps the instant whatever zone the replaying session runs in, and a declared `DATE` through `TO_DATE`, since a `TO_TIMESTAMP` literal inserted into a `DATE` is accepted and silently truncated to the whole second.
+`NO_BARE_SPELLING` completes it.
 
 ---
 
@@ -2553,6 +2624,20 @@ the object tree's own routes under `POST /api/db/objects/*`
 - **A package's members are not browsable.** The `package` kind declares
   `childKinds: ['procedure', 'function']`, which is true of the engine, but Phase 1's provider
   surface is container-scoped end to end and nothing lists an object's children. Phase 2 owns it.
+
+---
+
+## Migration DDL
+
+[`ORACLE_MIGRATION_DDL`](../../src/lib/db/providers/sql/oracle-migration-ddl.ts) is what the schema-diff migration generator writes for `oracle`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+Oracle DDL commits implicitly and `BEGIN` opens a PL/SQL block, not a transaction, so `transactionWrapper` is `null`.
+Oracle has no `IF EXISTS` on `DROP CONSTRAINT` or `DROP INDEX`, so a dropped foreign key, index or table is written bare.
+A column definition puts `DEFAULT` before `NOT NULL`, falls back to `VARCHAR2(255)`, and is added with `ADD (...)`.
+A modified column writes its nullability only when it changes, because restating ` NULL` on a nullable column is ORA-01451 and the column keeps its old type (#1240).
+The live regression probe is `tests/live/schema-diff-dialects.ts`.
+The fields it takes unchanged from `src/lib/db/migration-ddl/shared.ts` are `standardAddForeignKey`, `standardCreateIndex`, `standardCreateTableForeignKey`, `standardDropColumn` and `standardPrimaryKey`.
+
+It prints no refusal reason.
 
 ---
 

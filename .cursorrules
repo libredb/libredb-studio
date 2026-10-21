@@ -386,6 +386,7 @@ refactor(components): extract query editor logic to hook
 - `LLM_API_KEY` - API key for LLM provider
 - `LLM_MODEL` - Model name (e.g., `gemini-2.5-flash`)
 - `LLM_API_URL` - Custom API URL (for local LLMs)
+- `LLM_MODEL_EFFORT` - Reasoning effort, `openai` only: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`
 
 ## Common Pitfalls to Avoid
 

@@ -415,6 +415,18 @@ far end and dialled at the local pair: `opc.tcp://plc.example.net:4840/milo` thr
 address at the REMOTE port, and the unit test agreed with it because its fixture inverted the pair
 too. A tunnel the factory has not opened is refused rather than dialled.
 
+### Connection string
+
+`opcua` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/industrial/opcua/connection-string.ts)).
+`securityMode`, `serverCertificateThumbprint`, `securityPolicyUri`, `clientCertificatePath` and `clientPrivateKeyPath` are its seed-only fields, declared in `SEED_ONLY_FIELDS` in `src/lib/db/connection-fields.ts` (#1677): on any other engine the provider never reads them, so a seed of another engine that carries one would be listed as pinned or as encrypted and be neither, and is refused by name.
+The last three are the fields the dialog has no box for, because they are deployment facts: the policy to insist on, and the client certificate and key to present.
+A server with a trust list of its own has to be given a stable client certificate before it will accept a secured channel, and a file path is how a deployment names one, which is the seed file's job and not a text box's.
+
+### Execution UI
+
+The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `opcua` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
+Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/industrial/opcua/execution-ui.ts).
+
 ## 5. Query interface
 
 ### 5.1 The request
@@ -615,6 +627,14 @@ A read in flight is bounded by the chunk sizes and the value cap rather than by 
 request is at most 200 nodes or 500 values, and a history read stops at its cap, handing the
 server's continuation point back at that point — every earlier page's point is consumed by the
 request that follows it, which is the other way a slot is not left held.
+
+### 5.7 SQL grammar
+
+How this engine's statement text is read is declared once, in [`src/lib/db/providers/industrial/opcua/sql-grammar.ts`](../../src/lib/db/providers/industrial/opcua/sql-grammar.ts), the `opcua` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+`readsSqlText` is `false`: the console takes one JSON read request naming node ids, so no span of it is SQL (#1677).
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` in `src/lib/db/destructive-commands.ts` instead of a SQL reading.
+Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
+Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
 
 ## 6. Schema introspection
 
@@ -952,6 +972,17 @@ case-insensitively, would match a read of a node named `drop` and reload the tre
 Labels: entity **Node**/**Nodes**, row **Value**/**Values**, select action **Read**. Generate,
 analyze and vacuum read `Not available`, each with its reason.
 
+### SQL writing
+
+[`opcua/sql-writing.ts`](../../src/lib/db/providers/industrial/opcua/sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+A literal is written by `literalStandard` and read back by `unquoteStandard`: the quote is doubled and a backslash is data.
+A name is quoted by `identifierDoubleQuoted`, the SQL standard form: a double-quoted name with an inner double quote doubled.
+There is no placeholder (`placeholder: null`), so a generator quotes the value with `quoteLiteral` instead of emitting a bind.
+No measurement stands behind this row; it uses the standard building blocks named above.
+Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+
+The module's `export` field writes a result export's CREATE TABLE and INSERT from the shared building blocks alone: `STANDARD_DDL_TYPES` for the column types, `NOTHING_STANDS_ALONE` and `NO_BARE_SPELLING`, so every bare declared name is re-spelled from its family, `NULL_NON_FINITE` for NaN and the infinities, and `binaryStandardHex` for a binary cell (`X'0102'`).
+
 ## 10. Error handling
 
 A status code becomes a sentence a reader can act on, and the code always travels with it. The table
@@ -1198,6 +1229,16 @@ and the ones that disagreed with it were replaced ([3.3](#33-more-rows-than-node
     already handles (it falls back to `os.hostname()`), and the factory imports the library when a
     session is opened rather than when a provider is built, so nothing that merely constructs a
     connection loads it.
+
+## Migration DDL
+
+[`OPCUA_MIGRATION_DDL`](../../src/lib/db/providers/industrial/opcua/migration-ddl.ts) is what the schema-diff migration generator writes for `opcua`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
+A node's attributes are defined by its type in the server's own model, and this provider has no code that writes to a server (#1677).
+
+The refusal reason it prints, verbatim:
+
+- "An OPC UA node has attributes defined by its type in the server's own model, not columns, and this provider has no code that can write to a server, so there is no column definition to change."
 
 ## 13. References
 

@@ -205,6 +205,15 @@ Lists are filtered by Milvus's grants: a database or collection list reads "visi
 In the console that is the list column's type, and a list with no row says it in a warning, since the grid shows no column for an empty result.
 A search that names no metric and no search parameter runs without the IndexDetail privilege, and its score column says the metric is not readable; a request that names either needs IndexDetail, because its checks read the index.
 
+### Connection string
+
+`milvus` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/vector/milvus/connection-string.ts)).
+
+### Execution UI
+
+The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `milvus` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
+Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/vector/milvus/execution-ui.ts).
+
 ## 5. Query interface
 
 ### 5.1 The request
@@ -379,6 +388,14 @@ Cancel stops a running call and the server stops the search; a queued request le
 The server keeps parsing a large filter after a cancel, which is why the filter bound is summed over the request.
 The confirmation gate reads a Milvus request with the provider's own guard, so what asks and what runs are one parse: every request of this version reads, so none asks, and a request the guard refuses is refused in the editor, before anything is sent and with nothing written to history.
 
+### 5.8 SQL grammar
+
+How this engine's statement text is read is declared once, in [`src/lib/db/providers/vector/milvus/sql-grammar.ts`](../../src/lib/db/providers/vector/milvus/sql-grammar.ts), the `milvus` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+`readsSqlText` is `false`: `milvus` takes one Milvus console request, a `POST /v2/vectordb/<route>` line and one JSON body, whose strings escape with a backslash and whose filter is a Milvus expression the server parses; the provider extends `BaseDatabaseProvider` and parses the text itself.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` in `src/lib/db/destructive-commands.ts` instead of a SQL reading.
+Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
+Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
+
 ## 6. Schema introspection
 
 ### 6.1 The object surface
@@ -441,6 +458,18 @@ Both also need the Milvus user's own Load or Release privilege, which the server
 
 `queryLanguage: "json"` with `queryDialect: "milvus"`, one container level labelled Database, the kind Collection, `defaultPort: 19530`, `enforcesReadOnly: true`, `supportsMaintenance: true` with `load` and `release`, and `false` or absent for explain, table creation, transactions, inline row edits, result pagination, external query limiting and connection strings.
 The password field is labelled "Password or token".
+
+### SQL writing
+
+[`milvus/sql-writing.ts`](../../src/lib/db/providers/vector/milvus/sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+A literal is written by `literalStandard` and read back by `unquoteStandard`: the quote is doubled and a backslash is data.
+A name is quoted by `identifierDoubleQuoted`, the SQL standard form: a double-quoted name with an inner double quote doubled.
+There is no placeholder (`placeholder: null`), so a generator quotes the value with `quoteLiteral` instead of emitting a bind.
+This engine declares `queryLanguage: "json"`, so no statement is ever built for it to read; what a generator emits for such a connection is portable SQL meant to run elsewhere, and the standard form is the only thing it can claim.
+Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+
+The module's `export` field writes a result export's CREATE TABLE and INSERT from the shared building blocks alone: `STANDARD_DDL_TYPES` for the column types, `NOTHING_STANDS_ALONE` and `NO_BARE_SPELLING`, so every bare declared name is re-spelled from its family, `NULL_NON_FINITE` for NaN and the infinities, and `binaryStandardHex` for a binary cell (`X'0102'`).
+The engine declares `queryLanguage: "json"`, so no SQL statement is ever built for it to read, and a file exported from it is meant to run somewhere else: every bare name in it is re-spelled portably rather than kept as one engine's private word.
 
 ## 10. Error handling
 
@@ -509,6 +538,16 @@ Milvus's RBAC hides neither the topology nor other databases' row counts from an
 - The management port 9091 answers without authentication on 3.0.2, so the operator keeps it off the network.
 - A load the server continues after Load's 10-second poll is not covered by the one-load lock.
 - Clusters, Milvus Lite and 2.6 and older are not claimed.
+
+## Migration DDL
+
+[`MILVUS_MIGRATION_DDL`](../../src/lib/db/providers/vector/milvus/migration-ddl.ts) is what the schema-diff migration generator writes for `milvus`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
+`milvus` text is a Milvus console request, not SQL, so there is no table DDL to wrap (#284).
+
+The refusal reason it prints, verbatim:
+
+- "A collection's schema is declared through Milvus's own collection API, not SQL DDL, so there is no column definition to change."
 
 ## 14. References
 

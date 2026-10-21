@@ -1,0 +1,5 @@
+scheme => "redis"
+parse(redis://h:6379/0?sslmode=require) => {"type":"redis","host":"h","port":"6379","database":"0","sslMode":"disable"}
+parse(rediss://h:6379/0) => {"type":"redis","host":"h","port":"6379","database":"0","sslMode":"require"}
+seed => []
+seed => []

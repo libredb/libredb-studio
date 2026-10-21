@@ -2,8 +2,9 @@ import { z } from "zod";
 import { CONNECTION_STRING_ACCEPTED, MCP_EXPOSABLE, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import { readOnlySeedRefusal } from "@/lib/db/credential-warnings";
+import { SEED_ONLY_FIELDS, type SeedOnlyFields } from "@/lib/db/connection-fields";
 import { isCredentialReference } from "./credential-resolver";
-import { checkSnowflakeAccount, SNOWFLAKE_FIELD_SENTENCES } from "@/lib/db/providers/sql/snowflake/account-host";
+import { connectionStringFor } from "@/lib/db/connection-string";
 
 // SSLMode matches the union in src/lib/types.ts — NO 'prefer'. Kept in step BY HAND: a zod
 // enum is a value, so a mode missing here is not a compile error, it is a seed file the
@@ -26,6 +27,30 @@ const ConnectionEnvironmentSchema = z.enum(["production", "staging", "developmen
 const AllowedRoleSchema = z.enum(["*", "admin", "user"]);
 
 /**
+ * One issue per present field of every "each" row, then one issue per "set" row with any field present, at the first
+ * present field. The "each" pass runs first so the OPC UA issues keep their place before the API-key issue.
+ */
+function refuseSeedOnlyFields(conn: { readonly type: DatabaseType }, ctx: z.RefinementCtx): void {
+  const rows = Object.entries(SEED_ONLY_FIELDS).filter(
+    (entry): entry is [string, SeedOnlyFields] => entry[1] !== null && entry[0] !== conn.type,
+  );
+  const fields = conn as Readonly<Record<string, unknown>>;
+  for (const [, row] of rows) {
+    if (row.kind !== "each") continue;
+    for (const field of row.fields) {
+      if (fields[field] === undefined) continue;
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: row.refusal(field), path: [field] });
+    }
+  }
+  for (const [, row] of rows) {
+    if (row.kind !== "set") continue;
+    const present = row.fields.find((field) => fields[field] !== undefined);
+    if (present === undefined) continue;
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: row.refusal(present), path: [present] });
+  }
+}
+
+/**
  * The load's refusal of an MCP opt-in on an engine MCP is not offered for (#1089). Read from the record
  * it is handed, `MCP_EXPOSABLE` in `SeedConnectionSchema`, never a type-id branch, so an engine is
  * admitted by its own entry. Refused rather than stripped, because a stripped opt-in would load a file
@@ -43,58 +68,6 @@ export function refuseMcpWhereNotOffered(exposable: Readonly<Record<DatabaseType
     });
   };
 }
-
-/** One field a type's load check refuses, and the sentence it is refused with. */
-interface SeedFieldRefusal {
-  readonly field: string;
-  readonly sentence: string;
-}
-
-/** The fields a load check reads, as the file writes them: every one may be absent or a `${...}` reference. */
-type SeedCheckedFields = Readonly<
-  Partial<Record<"host" | "user" | "authMethod" | "privateKey" | "password" | "role", string>>
->;
-
-/** Whether a value cannot be judged at load: a reference, resolved only after the file is validated. */
-const judgeable = (value: string | undefined): boolean => !isCredentialReference(value);
-const blank = (value: string | undefined): boolean => value === undefined || value.trim() === "";
-
-/**
- * Snowflake's checks before any socket, as `connect()` makes them (the account by `checkSnowflakeAccount`, then the
- * user, the sign-in method, the credential that method needs and the role), each skipped for a field holding a
- * reference. Every refusal is the provider's own sentence.
- */
-function snowflakeLoadRefusals(conn: SeedCheckedFields): SeedFieldRefusal[] {
-  const found: SeedFieldRefusal[] = [];
-  if (judgeable(conn.host)) {
-    const reading = checkSnowflakeAccount(conn.host ?? "");
-    if (!reading.ok) found.push({ field: "host", sentence: reading.refusal });
-  }
-  if (judgeable(conn.user) && blank(conn.user))
-    found.push({ field: "user", sentence: SNOWFLAKE_FIELD_SENTENCES.userEmpty });
-  const method = conn.authMethod ?? "keypair";
-  if (judgeable(method)) {
-    if (method !== "keypair" && method !== "pat") {
-      found.push({ field: "authMethod", sentence: SNOWFLAKE_FIELD_SENTENCES.method });
-    } else if (method === "keypair" && blank(conn.privateKey)) {
-      found.push({ field: "privateKey", sentence: SNOWFLAKE_FIELD_SENTENCES.keyEmpty });
-    } else if (method === "pat" && blank(conn.password)) {
-      found.push({ field: "password", sentence: SNOWFLAKE_FIELD_SENTENCES.tokenEmpty });
-    }
-  }
-  if (judgeable(conn.role) && blank(conn.role))
-    found.push({ field: "role", sentence: SNOWFLAKE_FIELD_SENTENCES.roleEmpty });
-  return found;
-}
-
-/**
- * The checks a type's provider makes before any socket, run at load on the fields the file writes (SF-038), so an
- * entry that can never open is refused with the file, by name, instead of loading and failing only when it is
- * opened. Keyed by type and read as a record, never a type-id branch; a type without an entry is not checked here.
- */
-const SEED_LOAD_CHECKS: Readonly<Partial<Record<DatabaseType, (conn: SeedCheckedFields) => SeedFieldRefusal[]>>> = {
-  snowflake: snowflakeLoadRefusals,
-};
 
 /** A provider sentence as a load refusal: the "Nothing was sent." ending is a connect's, not a file's. */
 const atLoad = (sentence: string): string => sentence.replace(/ Nothing was sent\.$/, "");
@@ -224,7 +197,7 @@ export const SeedConnectionSchema = z
     // Read no catalog when this connection opens (#765). Declarable in the seed file
     // because the deployment that ships a 40,000-object owner is the one that knows, and
     // a managed connection is read-only in the UI, so nobody could tick the box there.
-    // Unlike the maps in `connection-secrets.ts` and `use-connection-payload.ts`, this
+    // Unlike the maps in `secret-fields.ts` and `use-connection-payload.ts`, this
     // schema fails SILENTLY when a field is missing: zod strips an unknown key, so a seed
     // file setting it would round-trip as `undefined` with no error anywhere.
     skipObjectScan: z.boolean().optional(),
@@ -300,51 +273,21 @@ export const SeedConnectionSchema = z
      */
     securityMode: z.enum(["None", "Sign", "SignAndEncrypt"]).optional(),
     serverCertificateThumbprint: z.string().optional(),
-    /*
-     * And the three OPC UA fields the dialog has no box for, because they are deployment facts: the
-     * policy to insist on, and the client certificate and key to present. A server with a trust
-     * list of its own has to be given a STABLE client certificate before it will accept a secured
-     * channel, and a file path is how a deployment names one - which is this file's job and not a
-     * text box's. Supplied together or not at all; the provider refuses one without the other.
-     */
+    // And the three OPC UA fields the dialog has no box for: why, at SEED_ONLY_FIELDS.opcua in src/lib/db/connection-fields.ts.
     securityPolicyUri: z.string().optional(),
     clientCertificatePath: z.string().optional(),
     clientPrivateKeyPath: z.string().optional(),
   })
-  // Every OPC UA field here is OPC UA's own: on any other engine the provider never reads them, so
-  // a seed that carries one would be listed as pinned or as encrypted and be neither. Refused at
-  // load by name, as the Elasticsearch API-key pair is.
+  // A field only one engine's provider reads, refused at load on every other type: why, at that engine's row of
+  // SEED_ONLY_FIELDS in src/lib/db/connection-fields.ts.
+  .superRefine(refuseSeedOnlyFields)
+  // The type's own checks before any socket (SF-038), from the validateSeed of its row in CONNECTION_STRING, so an entry
+  // that can never open is refused with the file, by name, instead of loading and failing only when it is opened. A
+  // type without one is not checked here. The message names the connection and the field, never the value, since a
+  // refused account URL may carry a token.
   .superRefine((conn, ctx) => {
-    if (conn.type === "opcua") return;
-    for (const field of [
-      "securityMode",
-      "serverCertificateThumbprint",
-      "securityPolicyUri",
-      "clientCertificatePath",
-      "clientPrivateKeyPath",
-    ] as const) {
-      if (conn[field] === undefined) continue;
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: `${field} is OPC UA only: no other engine's provider reads it, so this connection would be listed as carrying it and would not. Remove ${field} from this connection.`,
-        path: [field],
-      });
-    }
-  })
-  .superRefine((conn, ctx) => {
-    if (conn.type === "elasticsearch") return;
-    if (conn.apiKeyId === undefined && conn.apiKeySecret === undefined) return;
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message:
-        "apiKeyId and apiKeySecret are Elasticsearch-only. OpenSearch (and every other engine) refuses the pair: nothing here has measured whether OpenSearch's security plugin accepts Authorization: ApiKey, so a seed that carries it is rejected rather than listed as a connection that silently falls back to user/password.",
-      path: conn.apiKeyId !== undefined ? ["apiKeyId"] : ["apiKeySecret"],
-    });
-  })
-  // The type's own checks before any socket (SF-038), from SEED_LOAD_CHECKS. The message names the connection and the
-  // field, never the value, since a refused account URL may carry a token.
-  .superRefine((conn, ctx) => {
-    for (const { field, sentence } of SEED_LOAD_CHECKS[conn.type]?.(conn) ?? []) {
+    for (const { field, sentence } of connectionStringFor(conn.type).validateSeed?.(conn, isCredentialReference) ??
+      []) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: `Seed connection "${conn.id}": ${field} is refused: ${atLoad(sentence)}`,

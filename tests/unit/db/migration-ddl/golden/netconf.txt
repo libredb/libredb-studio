@@ -1,0 +1,8 @@
+-- fixture: full
+-- Migration generated at 2026-10-19T12:00:00.000Z
+-- Dialect: netconf
+-- Changes: 1 added, 1 removed, 2 modified
+
+-- NETCONF: Cannot generate table DDL. A NETCONF node's shape is declared in the device's YANG module, which the device serves and a client reads, and this provider builds four read operations and a close, and nothing else, so there is no column definition here for anything to change.
+-- fixture: none
+-- No schema changes detected.

@@ -317,12 +317,21 @@ function scriptedModel(...turns: readonly ((turn: Turn) => Response)[]): { fetch
   return { fetch: fetchImpl, turns: seen };
 }
 
+/**
+ * An OpenAI-compatible endpoint on the Chat Completions wire, which the script below speaks; the
+ * `openai` kind answers on the Responses API instead, and `ollama` and `custom` stay here.
+ */
 async function modelOver(fetchImpl: FetchDouble): Promise<AgentModel> {
-  const config = { provider: "openai", apiKey: "sk-test", model: "gpt-4o-mini" } as const;
+  const config = {
+    provider: "custom",
+    apiKey: "sk-test",
+    model: "gpt-4o-mini",
+    apiUrl: "https://llm.internal/v1",
+  } as const;
   return {
-    provider: "openai",
+    provider: "custom",
     modelId: config.model,
-    model: await resolveAgentProviderAdapter("openai").createModel(config, fetchImpl),
+    model: await resolveAgentProviderAdapter("custom").createModel(config, fetchImpl),
   };
 }
 

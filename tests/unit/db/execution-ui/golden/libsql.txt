@@ -1,0 +1,4 @@
+commit => "This left a transaction open and it was rolled back, so its changes were discarded. Add COMMIT to keep them."
+consent ticked => {"chips":["same read-only session","500 rows","no time limit"],"sentence":null}
+consent unticked => {"sentence":null}
+explain => "libsql"

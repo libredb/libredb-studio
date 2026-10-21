@@ -177,7 +177,7 @@ const PORTABLE_BARE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
  * A reserved word passes the bare test and reaches the engine bare, where it is refused with
  * the engine's own error, as it would be from the editor. There is no per-engine reserved-word
  * list to consult: the one reserved-word list in the repo is PostgreSQL's alone
- * (`src/lib/editor/postgres-identifiers.ts`).
+ * (`src/lib/db/providers/sql/postgres-sql-grammar.ts`).
  */
 export function quoteTypedName(name: string, capabilities: ProviderCapabilities): string {
   return PORTABLE_BARE_NAME.test(name) ? name : quoteIdentifier(name, capabilities, { always: true });

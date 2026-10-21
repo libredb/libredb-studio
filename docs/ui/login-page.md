@@ -247,7 +247,7 @@ both read from a single source:
 |---|---|---|
 | Supported Databases | `src/components/login/database-showcase.tsx` | `DB_UI_CONFIG` via `listShowcaseDatabases()` (`src/lib/db-showcase.ts`) — label, brand icon and accent colour all come from the provider's own UI config |
 | Proof row (engine / channel / agent-mode counts) | `src/components/login/hero-proof.tsx` | `src/lib/distribution/channels.generated.ts`, generated from `distribution/channels.yaml` by `bun run channels:showcase` and gated in CI; group names from `src/lib/distribution/deploy-groups.ts`; agent-mode engines from `src/lib/agent/engine-support.ts` |
-| Connection signature | `src/components/login/connection-signature.tsx` | `ENGINE_URI_SCHEMES` in `src/lib/connection-string-parser.ts`, paired with each engine's own `defaultPort` — it can only show a URI the parser accepts, which is why SQLite, Druid and LibreDB never appear there |
+| Connection signature | `src/components/login/connection-signature.tsx` | `ENGINE_URI_SCHEMES` in `src/lib/db/connection-string/index.ts`, paired with each engine's own `defaultPort` — it can only show a URI the parser accepts, which is why SQLite, Druid and LibreDB never appear there |
 | Wire-compatible line | `src/components/login/wire-compatible-line.tsx` | `WIRE_COMPATIBLE_ENGINES` in `src/lib/db/compatibility.ts` — names the engines that connect through a driver of their own name's making; the per-engine tier stays in the docs table, not on this line |
 
 So **adding a provider publishes it on this page**, and **flipping a channel to `live` in

@@ -508,17 +508,25 @@ refuses any subquery among an aggregate call's arguments, *subquery inside aggre
 index CTE used to build each index's column list that way. The `LATERAL` form is the same per-index
 read, and an index over expressions alone still answers NULL, which the provider reads as `[]` (#1075).
 
-The type text matches on every column but one shape. `format_type(a.atttypid, NULL)` is passed NULL
-rather than `a.atttypmod` because that is what `information_schema.columns.data_type` says:
-`character varying` and `numeric`, not `character varying(50)` and `numeric(12,2)`. Verified column
-by column on `app.orders`, so `describeObject()` and `describeObjects()` name a column's type
-identically.
+**A column carries two type strings.** `type` is `format_type(a.atttypid, NULL)`, the unqualified
+base name: `character varying`, `numeric`, `vector`, `text`, `integer`, `text[]`. `declaredType` is
+`format_type(a.atttypid, a.atttypmod)`, the declaration PostgreSQL itself prints:
+`character varying(50)`, `numeric(12,2)`, `vector(1536)`. `describeObject()` and `describeObjects()`
+select both, from the same `pg_attribute` row, so the two object-model reads agree.
 
-One measurement is kept from the deleted flat reading, because it is why the type text is read this
-way. `app.products.tags` is `text[]`: `format_type` answers `text[]` and both object-model surfaces
-show that, while `information_schema.columns.data_type` answered the bare word `ARRAY` and put the
-element type in `information_schema.element_types`. The object model had the better half of that
-disagreement, and it is the only reading left.
+`type` used to be the only string, and NULL was passed on purpose so this surface would match
+`information_schema.columns.data_type`, which is what the deleted flat schema tree showed. That
+reading is gone (#789): the provider no longer implements `getSchema`, and this file does not read
+`information_schema.columns`. The modifier is recorded beside the base name rather than inside it
+(#1860). The diagram, completions and migration DDL read `type` and are unchanged. The agent's
+grounding capture reads `information_schema.columns.data_type`, the same base name, and is unchanged.
+The column tooltip and the object detail show `declaredType`. A column with no modifier is given the
+same string in both fields, so `text`, `integer` and `text[]` render as they did.
+
+One measurement is kept from the deleted flat reading. `app.products.tags` is `text[]`:
+`format_type` answers `text[]` in both fields, while `information_schema.columns.data_type` answered
+the bare word `ARRAY` and put the element type in `information_schema.element_types`. That second
+answer has no reader left.
 
 `OBJECT_DETAIL_SQL` also strips the `AS MATERIALIZED` hints, which is the opposite of what
 [§3.1](#31-materialized-ctes-for-schema-introspection) wants and for the opposite reason. There the
@@ -1444,6 +1452,22 @@ this precedence:
 3. **`options.ssl === false`** → no SSL.
 4. Otherwise `undefined` (driver default).
 
+### Connection string
+
+The scheme shown for PostgreSQL is `postgres://`, and the parser also accepts `postgresql://`.
+Its row in `CONNECTION_STRING` is declared in [`postgres-connection-string.ts`](../../src/lib/db/providers/sql/postgres-connection-string.ts).
+Its `readTls` reads `sslmode` first, and the boolean `ssl` only when no `sslmode` is present: a string carrying both said the specific thing on purpose.
+`sslmode` maps libpq's `disable`, `require`, `verify-ca` and `verify-full`, and leaves `prefer` and `allow` unmapped: they mean "encrypt if the server offers it", which no SSL mode describes.
+`verify-system` is not in that table either, since it is this form's own mode name and not a libpq one.
+`ssl=true` maps to `verify-system` and `ssl=false` to `disable`, by the boolean rule (D26) in `src/lib/db/connection-string/shared.ts`.
+`sslrootcert`, `sslcert` and `sslkey` are read by nobody on purpose: they name files on the machine that wrote the string, and the server that opens the connection cannot read that path.
+It runs no seed load check.
+
+### Execution UI
+
+The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `postgres` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
+Its row in `EXECUTION_UI` is declared in [`postgres-execution-ui.ts`](../../src/lib/db/providers/sql/postgres-execution-ui.ts).
+
 ---
 
 ## 5. Query interface
@@ -1480,6 +1504,8 @@ A text of several statements sent as one simple query (`SELECT 1 AS a; SELECT 2 
 `rows`, `fields` and `columnTypes` are the first result set's, `rowCount` is the count of the statement that produced it (or of the first statement when none produced one), and `resultSets` lists every set when there are several; a statement that answers no column (an INSERT, a COMMIT, or a `SELECT` of no columns) is not a set.
 Measured the same day, that text answers `rows` `[{"a":1}]` and two `resultSets`, the second with fields `["b","b (2)"]`.
 Before, such a text answered no `rows` at all, because the list of answers was read as one answer.
+
+A statement whose command tag carries no count (an `EXPLAIN`, a `SHOW`) has its `rowCount` answered from the rows it returned, because `pg` reads the count from the tag alone and leaves it null while `rows` holds the answer; a count the driver did read, including a real 0, keeps its own value (#1839).
 
 #### Server notices (#1401)
 
@@ -1547,7 +1573,7 @@ and, **only for `SELECT`/CTE-`SELECT` queries that don't already have a `LIMIT`*
   annotated `SELECT` classified as an unknown statement type and returned **every** row while the
   UI badge reported it as not limited (#275).
 - The statement's characters are read under **PostgreSQL's** grammar, which the provider passes down
-  from its own `type` ([`grammar.ts`](../../src/lib/sql/grammar.ts)). PostgreSQL has exactly two
+  from its own `type` ([`postgres-sql-grammar.ts`](../../src/lib/db/providers/sql/postgres-sql-grammar.ts)). PostgreSQL has exactly two
   comment forms, `--` and `/* … */`; `#` is an operator character (`#>` and `#>>` walk a jsonb path,
   `#-` deletes one, `##` is geometric, `#` is integer XOR). The shared reader used to approximate
   that with "a comment unless the next character makes an operator", which kept everyday jsonb queries
@@ -1705,10 +1731,12 @@ paths do it: `query()`, `queryInTransaction()` and the agent's `queryReadOnly()`
 | >= 16384 | *absent* |
 
 The names are the base type's, without the type modifier: `character varying`, not
-`character varying(40)`. That is what `information_schema.columns.data_type` — the same source the
-schema tree shows — answers for the same column, and the modifier is not on the wire in a form worth
-reconstructing. `columnTypes` is consumed by the results grid's column labels, by the SQL-DDL export
-(which prefers a declared type over its value-shaped guess) and by the agent's state summary.
+`character varying(40)`. The modifier is not on the wire in a form worth reconstructing. This is
+`QueryResult.columnTypes`, the result grid's column labels. The schema tree's `type` is the same
+base name, and the modifier a person needs there is `declaredType` on the object detail
+([§3.1.4](#314-what-the-object-surface-declares-and-which-catalog-answers-for-it)). `columnTypes` is
+consumed by the results grid's column labels, by the SQL-DDL export (which prefers a declared type
+over its value-shaped guess) and by the agent's state summary.
 
 ### 5.5 The types read as the engine's text
 
@@ -1783,7 +1811,7 @@ The SQL INSERT export writes them as quoted literals, `'NaN'`, which PostgreSQL 
 
 ### 5.7 What the SQL INSERT and DDL exports write
 
-The result export reads each cell's declared type ([§5.4](#54-declared-column-types)) for the values whose generic form PostgreSQL refuses (#1386, [`typed-literals.ts`](../../src/lib/export/typed-literals.ts)):
+The result export reads each cell's declared type ([§5.4](#54-declared-column-types)) for the values whose generic form PostgreSQL refuses (#1386, [`postgres-typed-literals.ts`](../../src/lib/db/providers/sql/postgres-typed-literals.ts)):
 
 | Declared | Arrives as | Written as |
 |---|---|---|
@@ -1803,9 +1831,23 @@ Before this, the same file stopped at its first row with `ERROR: malformed array
 
 The editor's confirmation gate asks before the shared destructive keywords, `MERGE` among them ([query-optimization.md](../editor/query-optimization.md#destructive-statement-confirmation)).
 On this dialect it also asks before a `DO` block, whatever the block does: the block's code is a literal, `$$ ... $$` or `'...'`, which the gate does not read.
-The grammar row's `confirmCodeForms` names `DO` followed by a body and `DO LANGUAGE` ([`grammar.ts`](../../src/lib/sql/grammar.ts)), so the `DO` of `INSERT ... ON CONFLICT DO NOTHING` and of `CREATE RULE ... DO INSTEAD`, which a word follows, does not ask.
+The grammar row's `confirmCodeForms` names `DO` followed by a body and `DO LANGUAGE` ([`postgres-sql-grammar.ts`](../../src/lib/db/providers/sql/postgres-sql-grammar.ts)), so the `DO` of `INSERT ... ON CONFLICT DO NOTHING` and of `CREATE RULE ... DO INSTEAD`, which a word follows, does not ask.
 
 ---
+
+### 5.9 SQL grammar
+
+How this engine's statement text is read is declared once, in [`src/lib/db/providers/sql/postgres-sql-grammar.ts`](../../src/lib/db/providers/sql/postgres-sql-grammar.ts), the `postgres` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+Its grammar is `POSTGRES_GRAMMAR`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
+`#` is an operator character (`#>`, `#>>` and `#-` walk or delete a jsonb path), and the only comment forms are `--` and the block form.
+Block comments nest, per the PostgreSQL manual (4.1.5 Comments, checked 2026-08-05).
+`[...]` is a subscript and array constructors nest (manual 4.2.3 and 4.2.12), established from the manual because the undeterminable reading prompted on `ARRAY[[1,2],[3,4]]` and `j['a]b']`, everyday reads in this dialect.
+`//` is code on 18, and the most explicit of the refusals: `SELECT 1 // 2` is "operator does not exist: integer // integer", so `//` is an operator name here.
+The row bound goes before Materialize's `AS OF [AT LEAST] <t>`, which shares this type id (E2E pass of 2026-10-03/04, #1398): `SELECT * FROM ui_mv AS OF AT LEAST 0` with the bound appended is `Expected end of statement, found LIMIT`, and with the bound before the clause it returns rows.
+Completion quotes a catalog name by PostgreSQL's `quote_ident` rule, with the keyword set taken from PostgreSQL 18's `kwlist.h`: a name stays bare only when it is lower case and not a keyword other than an unreserved one, and a qualifier written in double quotes before the dot is read back with its doubled quotes undone.
+Only PostgreSQL completions introduce quoted table names; every other dialect quotes through the connection's capabilities.
+`readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.
+Redaction is `sql` with `"` as its name quote: a redacted statement keeps its words and every name in that quote, and every literal becomes `?`.
 
 ## 6. Schema introspection
 
@@ -2075,7 +2117,7 @@ Ten apparent losses in the first run of that probe were `HTTP 429` from the rout
 **A ROLLBACK THIS PROVIDER COULD NOT ISSUE RAISES, and the raise takes the response with it.**
 Every client the scope recorded is attempted inside its own `try`, so one dead socket cannot strand the clients behind it in the loop, and the held failures are raised together once the loop is done: `Could not roll back the transaction this request left open on N of M pooled clients: ...`, where `M` counts the clients ASKED and not the clients recorded, because a client a later statement of the same scope already returned to `I` was never sent anything.
 Neither arm of the outcome type is true of a client still sitting in `T`: `"none"` denies the transaction and `"rolled-back"` certifies a rollback that did not happen.
-The class raised is the base `DatabaseError` with `code: "DATABASE_ERROR"` and NOT the `QueryError` the rest of this provider raises, because [`errors.ts`](../../src/lib/api/errors.ts) maps `QueryError` to HTTP 400 `QUERY_ERROR`, which would report a rollback this server could not issue on a client of its own pool as a fault in the SQL the caller sent; the `DatabaseError` arm answers HTTP 500 `DATABASE_ERROR`, which is what it is.
+The class raised is the base `DatabaseError` with `code: "DATABASE_ERROR"` and NOT the `QueryError` the rest of this provider raises, because `databaseErrorBody` in [`error-body.ts`](../../src/lib/api/error-body.ts), reached through `createErrorResponse`, maps `QueryError` to HTTP 400 `QUERY_ERROR`, which would report a rollback this server could not issue on a client of its own pool as a fault in the SQL the caller sent; the `DatabaseError` arm answers HTTP 500 `DATABASE_ERROR`, which is what it is.
 The cost is two losses and both are deliberate: the throw is inside the route's `finally`, so it replaces the response the request had already produced, a script's per-statement results included, and a `finally` that throws also DISCARDS the exception the body was leaving with, so a dead socket that killed the statement AND the ROLLBACK costs the engine's own message with its `position` and `detail`.
 A pooled client left `idle in transaction` poisons every later user of that stored connection, which is the failure this whole surface exists for, so it is raised rather than reported quietly.
 
@@ -2339,6 +2381,25 @@ other providers that offer `reindex`, such as SQLite, libSQL and Couchbase, say 
 | `reindexGlobalLabel` | *Run Reindex* |
 | `reindexGlobalTitle` | *Rebuild Indexes* |
 | `reindexGlobalDesc` | *Runs REINDEX DATABASE, reconstructing every index in the database.* |
+
+### SQL writing
+
+[`sql/postgres-sql-writing.ts`](../../src/lib/db/providers/sql/postgres-sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+A literal is written by `literalStandard` and read back by `unquoteStandard`: the quote is doubled and a backslash is data.
+A name is quoted by `identifierDoubleQuoted`, the SQL standard form: a double-quoted name with an inner double quote doubled.
+A bind is spelled by `placeholderDollar`, as `$1`, `$2`.
+`standard_conforming_strings` has been on by default since PostgreSQL 9.1, so a backslash in a plain literal is data.
+`pg` takes `$n`.
+Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+
+The module's `export` field spells a result export's column types through `ddlTypes`, the standard spelling with `BYTEA` for a binary column, and writes a binary cell with `binaryPgBytea`, `'\x0102'::bytea`.
+PostgreSQL's `X'…'` is a bit string, not `bytea`, and there is no cast between the two: measured on 18.4, `SELECT pg_typeof(X'0102')` answers `bit` and `SELECT X'0102'::bytea` is `ERROR: cannot cast type bit to bytea`.
+The hex-input form is written as a plain literal rather than `E'\\x…'` because it survives `standard_conforming_strings` in both positions: with the setting `off`, `SELECT length('\x0102deadbeef'::bytea)` still answers 6.
+Each name in `standsAlone` was measured, one `CREATE TABLE probe (c <name>)` per name on PostgreSQL 18.4, read back out of `format_type`, and is listed only because PostgreSQL both accepted it and stored it unnarrowed.
+`character varying` is unbounded there.
+`bareSpelling` writes a bare `bit` as `bit varying`: `pg` hands a bit string back as text such as `1010`, which a bare `bit` (`bit(1)`) refuses with `bit string length 4 does not match type bit(1)`, and `bit varying` takes at any length (#1386).
+`nonFinite` is `QUOTED_WORD_NON_FINITE`, which writes NaN and the infinities as the quoted words `'NaN'`, `'Infinity'` and `'-Infinity'`: replayed into PostgreSQL 18.6 (2026-10-04), they read back into `real`, `double precision` and `timestamptz`.
+`typedLiteral` writes the cells whose generic form PostgreSQL refuses, arrays and intervals among them, from the engine's own [`postgres-typed-literals.ts`](../../src/lib/db/providers/sql/postgres-typed-literals.ts).
 
 ---
 
@@ -2730,6 +2791,16 @@ await server.disconnect();                                 // closes every datab
   checks the chain, which is what a managed provider's certificate needs) or `verify-ca`/`verify-full`
   with a `caCert`. *Future:* prefer verifying modes by default and treat the heuristic as
   encryption-only opportunistic TLS.
+
+---
+
+## Migration DDL
+
+[`POSTGRES_MIGRATION_DDL`](../../src/lib/db/providers/sql/postgres-migration-ddl.ts) is what the schema-diff migration generator writes for `postgres`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+PostgreSQL is the shape the shared building blocks were written from, so every statement is the shared one and the migration is wrapped in `BEGIN;` and `COMMIT;`.
+The fields it takes unchanged from `src/lib/db/migration-ddl/shared.ts` are `BEGIN_COMMIT`, `standardAddColumn`, `standardAddForeignKey`, `standardColumnDef`, `standardCreateIndex`, `standardCreateTableForeignKey`, `standardDropColumn`, `standardDropForeignKey`, `standardDropIndex`, `standardDropTable`, `standardModifyColumn` and `standardPrimaryKey`.
+
+It prints no refusal reason.
 
 ---
 

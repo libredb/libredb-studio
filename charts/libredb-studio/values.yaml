@@ -195,6 +195,11 @@ config:
   llmModel: ""
   # -- LLM API URL for ollama/custom providers (optional)
   llmApiUrl: ""
+  # -- LLM_MODEL_EFFORT, the reasoning effort for llmProvider openai only (optional):
+  # none, minimal, low, medium, high, xhigh or max. Empty writes nothing and the model keeps its
+  # own default. Which values a model takes is the model's own (GPT-6.1 Sol has no none), and the
+  # app refuses the variable with any other provider. Needs an application image after 1.0.0.
+  llmModelEffort: ""
   # -- OIDC issuer URL (required when authProvider=oidc)
   oidcIssuer: ""
   # -- OIDC scopes (space-separated)

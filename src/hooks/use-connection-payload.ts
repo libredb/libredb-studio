@@ -70,7 +70,7 @@ export function catalogField(catalog: string | undefined): { catalog?: string } 
  * how the connection is presented.
  *
  * `Record<keyof T, ...>` rather than a list of names, for the reason
- * `connection-secrets.ts` gives about credentials: a list fails silently. Add a field
+ * `secret-fields.ts` gives about credentials: a list fails silently. Add a field
  * to `DatabaseConnection`, `SSLConfig` or `SSHTunnelConfig` and these literals stop
  * satisfying their type until it is classified, so the failure mode is `bun run
  * typecheck`, not a run that quietly investigates the wrong database.

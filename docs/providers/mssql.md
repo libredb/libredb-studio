@@ -96,6 +96,8 @@ limit-less `SELECT`: with no offset it injects `TOP n` right after `SELECT [DIST
 offset it appends `OFFSET m ROWS FETCH NEXT n ROWS ONLY` — and because T-SQL requires an `ORDER BY`
 for `OFFSET … FETCH`, it injects `ORDER BY (SELECT NULL)` when the query has none.
 
+A `limit` or an `offset` that is not a non-negative safe integer is refused with a `QueryError` before either branch runs, by the check the shared limiter runs first (`assertRowBounds` in [`query-limiter.ts`](../../src/lib/db/utils/query-limiter.ts)).
+
 The two branches differ in where a **trailing** comment can reach them. `TOP` is spliced into the
 head, so `SELECT * FROM t -- note` has always come back as `SELECT TOP n * FROM t -- note` and is
 unchanged. The `OFFSET … FETCH` branch appends at the tail, so a trailing `-- note` used to swallow
@@ -339,6 +341,22 @@ as it was and the paste banner says the server was not applied.
 `verify-full` already, and since all three verifying modes build the same tedious call, translating it
 to the newer name would change the wording on the form without changing a single option on the wire.
 
+### Connection string
+
+The scheme shown for SQL Server is `mssql://`, and the parser also accepts `sqlserver://` and the ADO.NET `Server=...;` form.
+Its row in `CONNECTION_STRING` is declared in [`mssql-connection-string.ts`](../../src/lib/db/providers/sql/mssql-connection-string.ts).
+Its `readTls` reads the ADO.NET pair `Encrypt` and `TrustServerCertificate` from the URL query, by the same `readADONetTLS` the ADO.NET form is read with.
+`Encrypt` on with `TrustServerCertificate` on is `require`: encrypted, chain unchecked.
+`Encrypt` on with `TrustServerCertificate` off or absent, the documented default, validates the chain and the name, so `verify-full`.
+`Encrypt=Strict` is TDS 8.0, where the driver ignores `TrustServerCertificate` and always validates, so `verify-full` too.
+An absent `Encrypt` says nothing rather than `disable`: System.Data.SqlClient defaults it to false and Microsoft.Data.SqlClient 4.0+ to true, so the string alone does not carry the answer.
+It runs no seed load check.
+
+### Execution UI
+
+The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `mssql` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
+Its row in `EXECUTION_UI` is declared in [`mssql-execution-ui.ts`](../../src/lib/db/providers/sql/mssql-execution-ui.ts).
+
 ---
 
 ## 5. Query interface
@@ -379,7 +397,7 @@ did, and carries every set in `resultSets` (#1312). `POST /api/db/query` and `PO
 multi-statement route reads it to show a batch's last result with rows.
 
 **The editor sends a T-SQL batch whole.** The grammar's `script` fact for this dialect makes the unit
-of one request the batch between `GO` lines (`src/lib/sql/grammar.ts`), so `DECLARE @x INT = 5;
+of one request the batch between `GO` lines (`src/lib/db/providers/sql/mssql-sql-grammar.ts`), so `DECLARE @x INT = 5;
 SELECT @x * 2` reaches the server as one request and answers 10, a `#temp` table created in a batch is
 there for the batch's next statement, and `CREATE PROCEDURE … AS BEGIN …; …; END` is created as written.
 A line holding only `GO` (any case, optionally followed by a `--` comment) separates batches and is
@@ -409,6 +427,10 @@ A query issued with a `queryId` stores its `Request`. `cancelQuery(queryId)`
 ([`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts)) returns `false` if no `Request` is tracked
 for that id; otherwise it calls `request.cancel()` and returns `true` as long as that call doesn't
 throw — it does **not** confirm the cancellation actually took effect. Exposed via `POST /api/db/cancel`.
+
+The cancelled statement's own `POST /api/db/query` then answers `499` *Query was cancelled*, the same as every other engine.
+tedious ends the request with `RequestError('Canceled.', 'ECANCEL')`, and `mapDatabaseError()` reads that code as a `QueryCancelledError` ([§11](#11-error-handling)).
+Before that mapping the route answered `500` *Canceled.*, measured on SQL Server 2022 with `WAITFOR DELAY '00:00:30'` cancelled after 2 s, and the editor's grid reset to "Ready to query" where PostgreSQL keeps the previous result.
 
 ### 5.3 Data-type & parameter handling
 
@@ -522,13 +544,13 @@ round, a string exporting as text and a number as a float. All three execution p
 ### 5.5 What the SQL INSERT export writes for a BIT
 
 `mssql` returns a BIT as a JS boolean, and T-SQL has no boolean literal: an exported `true` is `Msg 207: Invalid column name 'true'`, and that fails the whole batch.
-The SQL INSERT export writes a boolean as `1` / `0` for this dialect (#1386, [`typed-literals.ts`](../../src/lib/export/typed-literals.ts)).
+The SQL INSERT export writes a boolean as `1` / `0` for this dialect (#1386, `typedLiteral` in [`mssql-sql-writing.ts`](../../src/lib/db/providers/sql/mssql-sql-writing.ts)).
 Dates need nothing: the ISO text a `Date` becomes (`2024-12-31T23:59:59.997Z`) replays into `datetime`, `datetime2`, `smalldatetime`, `datetimeoffset` and `date`.
 The one exception is the engine text `datetime` and `smalldatetime` are read as since #1452 ([§5.3](#53-data-type--parameter-handling)): those two types read `yyyy-mm-dd hh:mi:ss` through the session's DATEFORMAT, so the export writes that text with its space as a `T` (`N'2026-10-04T12:34:56.123'`), the ISO 8601 form every DATEFORMAT reads the same.
 Measured 2026-10-08 on SQL Server 2022 CU27 (16.0.4295.3), the same two rows read through the provider, exported and replayed under `SET LANGUAGE us_english` and `british`: written with the space, `2026-10-04 12:34:56.123` came back as `2026-04-10` under `british` and `2026-10-25 23:59:59.997` was refused as out of range; written with the `T`, both came back equal under both languages, as they did under `Deutsch`, `Français` and `Japanese` in a direct `CAST`.
 A `datetime2` and a `date` text are written as they are, since those two read `yyyy-mm-dd` the same under every DATEFORMAT.
 
-The inline grid edit opens its editor on that same text and binds the edit as an nvarchar parameter, which those two types also read through DATEFORMAT, so [`use-inline-editing.ts`](../../src/hooks/use-inline-editing.ts) binds an edit still in that form with its space as a `T` too, by the same `MSSQL_DATETIME_TEXT`. A `datetime2` edit, and text in any other shape, is bound as typed.
+The inline grid edit opens its editor on that same text and binds the edit as an nvarchar parameter, which those two types also read through DATEFORMAT, so the inline edit's `boundEdit` in [`sql/mssql-sql-writing.ts`](../../src/lib/db/providers/sql/mssql-sql-writing.ts) binds an edit still in that form with its space as a `T` too, by the same `MSSQL_DATETIME_TEXT`. A `datetime2` edit, and text in any other shape, is bound as typed.
 Measured 2026-10-12 on SQL Server 2022 CU27 (16.0.4295.3), the hook's own `UPDATE … SET [dt] = @p1 WHERE [id] = @p2` with `SET LANGUAGE british` in the same call: `2026-10-04 12:34:57.123` was stored as `2026-04-10` and `2026-10-25 23:59:58.997` was refused as out of range, a `smalldatetime` the same, and each of them with the `T` was stored as written.
 This provider's own sessions read `mdy` today whatever the login's default language: tedious opens every connection with `set dateformat mdy` and `set language us_english`, and `query()` runs each statement through `sp_executesql`, so a `SET LANGUAGE` a user runs ends with that statement (measured on the same server with a login whose default language is `british`). The `T` keeps the edit correct without leaning on that driver default.
 
@@ -536,6 +558,18 @@ Measured 2026-10-04 on SQL Server 2025 (17.0.5005.3): a table of `bit`, the five
 Two cells read back differently, both lost by the driver before the export sees them: a `datetimeoffset` keeps its instant but not its offset or its digits past the millisecond, and a `decimal` past 15 significant digits arrives as a rounded JS number.
 
 ---
+
+### 5.6 SQL grammar
+
+How this engine's statement text is read is declared once, in [`src/lib/db/providers/sql/mssql-sql-grammar.ts`](../../src/lib/db/providers/sql/mssql-sql-grammar.ts), the `mssql` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+Its grammar is `MSSQL_GRAMMAR`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
+`#name` and `##name` are temp tables, ordinary T-SQL, so `#` is code; `[name]` is a delimited identifier with a doubled `]` inside, which this repository's own quoter emits for the dialect.
+Block comments nest, per "Slash Star (Block Comment) (Transact-SQL)" on learn.microsoft.com (checked 2026-08-05), the row the report on #300 got wrong.
+`//` is code, probed 2026-08-25 on 2022 through sqlcmd: `SELECT 1 AS a // note` is Msg 102, "Incorrect syntax near '/'".
+The batch is the unit, cut at `GO` lines: measured on 2025 RTM-CU9, `DECLARE @x INT = 5; SELECT @x * 2` sent as two requests is `Must declare the scalar variable "@x"`, and as one batch answers 10, and a `MERGE` keeps its `;` because the server refuses one without it (Msg 10713).
+`readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.
+Redaction is `sql` with `[` as its name quote: a redacted statement keeps its words and every name in that quote, and every literal becomes `?`.
+A double quote is a string while `QUOTED_IDENTIFIER` is off, so it is masked like any literal.
 
 ## 6. Transactions
 
@@ -1470,13 +1504,39 @@ A row that reads like the old shared list is SQL Server agreeing with it, not a 
 ### Labels — overridden (`getLabels()`, [`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts))
 
 `analyzeAction` → *"Update Statistics"*, `vacuumAction` → *"Rebuild Indexes"*, plus the matching
-global labels. The UI display name for the database type is *"SQL Server"* (`db-ui-config.ts`).
+global labels. The UI display name for the database type is *"SQL Server"* (`connection-form.ts`).
 
 `slowQueriesEmptyState` → *"Query stats come from sys.dm_exec_query_stats, which needs the VIEW
 SERVER STATE permission."* The monitoring Queries panel's empty state was hardcoded to PostgreSQL's
 `pg_stat_statements` advice on every engine (#463); `getSlowQueries()` here reads
 that DMV ([§8](#8-monitoring--health)) and returns `[]` when the read is refused, so the permission
 is the thing a DBA can act on.
+
+### SQL writing
+
+[`sql/mssql-sql-writing.ts`](../../src/lib/db/providers/sql/mssql-sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+A literal is written by `literalUnicode` and read back by `unquoteUnicode`: the quote is doubled, a backslash is data, and the `N` prefix decides that the server reads the text as Unicode.
+A name is quoted by `identifierBracket`: a bracketed name with an inner `]` doubled.
+A bind is spelled by `placeholderAtP`, as `@p1`, `@p2`.
+SQL Server parses a bare literal in the database's collation code page and only an `N`-prefixed one as Unicode, so the prefix is not decoration: every catalog name in `sys` is `sysname`, which is `nvarchar(128)`.
+Measured on SQL Server 2022 CU26, database AdventureWorks2022, collation `SQL_Latin1_General_CP1_CI_AS` (code page 1252), with schemas `Müşteri` and `Müsteri` both present: `SELECT 'Müşteri'` answers `Müsteri`, because `ş` (U+015F) is not in 1252 and the server best-fits it to `s`.
+So `… WHERE s.name = 'Müşteri'` matched `Müsteri.Siparis`, the wrong object, while `… WHERE s.name = N'Müşteri'` matched `Müşteri.Sipariş`.
+With no `Müsteri` present the bare form matched nothing at all.
+Both failures are silent, which is why this dialect does not share the standard literal: the escaping is the same, the code page is not.
+The mssql provider registers its inputs as `p1`, `p2`, … which the statement spells `@p1`, `@p2`.
+Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`.
+Its `boundEdit` binds a `datetime` or `smalldatetime` edit still in the provider's `yyyy-mm-dd hh:mi:ss[.mmm]` text (#1452) with its space as a `T`, because the nvarchar parameter reaches those two types through the session's DATEFORMAT.
+Measured 2026-10-12 on SQL Server 2022 CU27 (16.0.4295.3), the inline edit's own `UPDATE … SET [dt] = @p1` under `british`: `2026-10-04 12:34:57.123` was stored as April 10th and `2026-10-25 23:59:58.997` was refused as out of range, while the same text with a `T` was stored as written, and a `smalldatetime` the same ([§5.5](#55-what-the-sql-insert-export-writes-for-a-bit)).
+Every other edit is bound as typed.
+
+The module's `export` field spells a result export's column types through `ddlTypes`: `NVARCHAR(MAX)`, `BIGINT`, `FLOAT`, `BIT`, `DATETIME2` and `VARBINARY(MAX)`, since SQL Server has no `BOOLEAN`, `BLOB` is not a T-SQL type name at all, and `IMAGE` has been deprecated since 2005.
+Each name in `standsAlone` was measured, one `CREATE TABLE probe (c <name>)` per name on SQL Server 2022 CU26, read back out of `INFORMATION_SCHEMA.COLUMNS`, and is listed only because SQL Server both accepted it and stored it unnarrowed.
+`nvarchar` is absent because it came back as length 1.
+SQL Server's `timestamp` is absent because it is not a moment in time at all: measured, `CREATE TABLE t (c timestamp)` on 2022 CU26 creates a `rowversion`, which no INSERT may name, so keeping a foreign engine's `timestamp` would produce a file that parses and then fails on its own INSERT.
+A binary cell is written by `binaryZeroX`: measured on SQL Server 2022, `SELECT CONVERT(varchar(64), 0x0102deadbeef, 2)` answers `0102DEADBEEF`, `DATALENGTH(0x)` answers 0, so the empty case is spelled, and `SELECT X'0102'` is `Msg 207 … Invalid column name 'X'`.
+`typedLiteral` writes a boolean as `1` / `0`, because T-SQL has no boolean literal: `true` parses as a column name (`Msg 207: Invalid column name 'true'`, measured on SQL Server 2025 17.0.5005.3) and fails the whole batch.
+It writes a `datetime` or `smalldatetime` cell's `yyyy-mm-dd hh:mi:ss[.mmm]` text with a `T` for the space (#1452), because those two types read the space form through the session's DATEFORMAT: measured on SQL Server 2022 CU27 (16.0.4295.3), under `british`, `Deutsch` and `Français` `'2026-10-04 12:34:56.123'` is stored as April 10th and `'2026-10-25 …'` is refused, while the `T` form is October 4th under those and under `us_english` and `Japanese`.
+`NO_BARE_SPELLING` and `NULL_NON_FINITE` complete it.
 
 ---
 
@@ -1489,12 +1549,20 @@ is the thing a DBA can act on.
 | Missing `host`/`database` (no connection string) | `DatabaseConfigError` |
 | Operation before `connect()` | `DatabaseConfigError` (via `ensureConnected()`) |
 | `connect()` fails | `ConnectionError` (carries host/port) |
+| Message contains *cannot open database* (`4060`) | `ConnectionError`, matched **before** the access refusals, because the server's sentence ends in *The login failed.* (#1451) |
 | A permission the principal lacks, by the error number `mssql` carries: `229` on an object, `230` on a column, `262` in a database, `297` for an action, `300` on a server-level object, `916` a database the login may not enter | `PermissionDeniedError`, answered `403 PERMISSION_DENIED` with `Permission denied: ` before the server's sentence |
 | Message contains *login failed* | `AuthenticationError`, answered `401 AUTH_ERROR`. tedious raises a refused login as `ELOGIN` without the server's error number (`18456`), so the words decide this one |
-| *Cannot open database* | `ConnectionError` |
-| Cancellation messages (*canceling statement*, *query was cancelled*, *query execution was interrupted*, *kill query*) | `QueryCancelledError` — matched **before** the timeout check |
+| A cancelled request, which `mssql` and tedious end as `RequestError('Canceled.', 'ECANCEL')`, read from the driver code `ECANCEL` because the sentence holds none of the cancellation words; also the cancellation messages (*canceling statement*, *query was cancelled*, *query execution was interrupted*, *kill query*) | `QueryCancelledError`, answered `499` with *Query was cancelled*, matched **before** the timeout check. A cancel the read-only profile's own deadline made is answered by `runWithDeadline` first, as its time-budget `QueryError` |
 | `requestTimeout` exceeded (message contains *timeout*) | `TimeoutError` |
 | Other errors | generic `QueryError` / `DatabaseError` with the original message |
+
+A database that does not exist stays distinguishable from a wrong password in the text Test Connection
+shows. SQL Server answers such a login with **4060** — *Cannot open database "…" requested by the login.
+The login failed.* — and then **18456** (*Login failed for user '…'*), and tedious emits every login
+error token but keeps only the last as `loginError`. `buildConfig()` installs a `beforeConnect` hook
+that watches them, and `connect()` reports the 4060 sentence rather than the 18456 one (#1451). The
+ordering in the table above is the same problem from the other side: the real 4060 text ends in *The
+login failed.*, so testing *login failed* first would classify it as an `AuthenticationError`.
 
 Because `requestTimeout` *is* wired ([§3.5](#35-a-query-timeout-is-wired-driver-enforced)) — even
 though it's driver-enforced rather than server-side — an overrunning query genuinely produces a
@@ -1968,6 +2036,17 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
   `getPerformanceMetrics()` reports only the cache-hit ratio (no QPS, deadlocks, or buffer-pool
   usage), and **omits even that** when `dm_os_performance_counters` is unreadable rather than
   substituting a figure — [§8.1](#81-when-the-cache-hit-ratio-is-not-measurable).
+
+---
+
+## Migration DDL
+
+[`MSSQL_MIGRATION_DDL`](../../src/lib/db/providers/sql/mssql-migration-ddl.ts) is what the schema-diff migration generator writes for `mssql`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+SQL Server wraps the migration in `BEGIN TRANSACTION;` and `COMMIT;`, adds a column with a bare `ADD`, and drops an index with `ON <table>`.
+A modified column restates its type and nullability in one `ALTER COLUMN`, falling back to `NVARCHAR(MAX)`, and a changed default is a separate `ADD DEFAULT ... FOR <column>`.
+The fields it takes unchanged from `src/lib/db/migration-ddl/shared.ts` are `standardAddForeignKey`, `standardColumnDef`, `standardCreateIndex`, `standardCreateTableForeignKey`, `standardDropColumn`, `standardDropForeignKey`, `standardDropTable` and `standardPrimaryKey`.
+
+It prints no refusal reason.
 
 ---
 

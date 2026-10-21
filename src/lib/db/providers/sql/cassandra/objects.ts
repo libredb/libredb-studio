@@ -321,7 +321,7 @@ function isScyllaPaxosTable(kind: string, name: string): boolean {
 
 /**
  * A keyspace or object name as a CQL string literal, through the shared quoter, so the
- * dialect's escape rule is the one recorded in `lib/sql/values.ts`: CQL doubles the
+ * dialect's escape rule is the one recorded in `lib/db/providers/sql/cassandra/sql-writing.ts`: CQL doubles the
  * quote and reads a backslash as data, both measured.
  */
 function literal(value: string): string {

@@ -1,0 +1,48 @@
+-- fixture: full
+-- Migration generated at 2026-10-19T12:00:00.000Z
+-- Dialect: mssql
+-- Changes: 1 added, 1 removed, 2 modified
+
+BEGIN TRANSACTION;
+
+-- Objects that are not tables
+-- Skipped v_orders (view): only tables are created, altered or dropped here; change it by hand. If it reads a table changed below, drop it before this script and recreate it after.
+
+-- Drop removed tables
+DROP TABLE IF EXISTS [app].[legacy];
+
+-- Create new tables
+CREATE TABLE [app].[users] (
+  [id] integer NOT NULL,
+  [note] varchar(20) DEFAULT 'abc',
+  [bare] TEXT,
+  [y] Int32 DEFAULT MATERIALIZED toYear(d),
+  [empty] text DEFAULT 
+,  PRIMARY KEY ([id])
+);
+CREATE INDEX [ix_users_note] ON [app].[users] ([note]);
+ALTER TABLE [app].[users] ADD CONSTRAINT [fk_users_dept_id] FOREIGN KEY ([dept_id]) REFERENCES [departments]([id]);
+
+-- Modify existing tables
+-- Alter table: orders
+ALTER TABLE [app].[orders] DROP CONSTRAINT IF EXISTS [fk_orders_customer_id];
+DROP INDEX IF EXISTS [ix_old] ON [app].[orders];
+DROP INDEX IF EXISTS [ix_mod] ON [app].[orders];
+ALTER TABLE [app].[orders] ADD [extra] integer;
+ALTER TABLE [app].[orders] ADD [bare2] TEXT;
+ALTER TABLE [app].[orders] DROP COLUMN [old];
+ALTER TABLE [app].[orders] ALTER COLUMN [status] varchar(20) NOT NULL;
+ALTER TABLE [app].[orders] ADD DEFAULT 'new' FOR [status];
+ALTER TABLE [app].[orders] ALTER COLUMN [amount] integer NULL;
+ALTER TABLE [app].[orders] ALTER COLUMN [calc] Int64 NULL;
+ALTER TABLE [app].[orders] ALTER COLUMN [line
+break] text NULL;
+ALTER TABLE [app].[orders] ADD DEFAULT x FOR [line
+break];
+CREATE UNIQUE INDEX [ix_mod] ON [app].[orders] ([status]);
+CREATE INDEX [ix_new] ON [app].[orders] ([extra], [status]);
+ALTER TABLE [app].[orders] ADD CONSTRAINT [fk_orders_region_id] FOREIGN KEY ([region_id]) REFERENCES [regions]([id]);
+
+COMMIT;
+-- fixture: none
+-- No schema changes detected.

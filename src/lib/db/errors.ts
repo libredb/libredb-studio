@@ -767,6 +767,12 @@ function mapNativeError(error: Error, provider: DatabaseType, query?: string): D
     return new DatabaseConfigError(`${thinModeRefusal}: ${error.message}. ${ORACLE_THICK_MODE_REMEDY}`, provider);
   }
 
+  // SQL Server's 4060, a database the login cannot open. Read before the access refusals: its own sentence ends in
+  // "The login failed.", so the credential words would answer a missing database as a wrong password (#1451).
+  if (message.includes("cannot open database")) {
+    return new ConnectionError(`Database not found: ${error.message}`, provider);
+  }
+
   // Access refusals, read from the driver's code wherever the error carries one (`accessRefusalOf`): a privilege the
   // credential lacks is not a refused credential, and answering it 401 "Authentication failed" sent a user whose
   // password is right to re-enter it. The words decide only an error with no code: "permission denied" names a
@@ -801,8 +807,13 @@ function mapNativeError(error: Error, provider: DatabaseType, query?: string): D
     return new TimeoutError(error.message, provider, undefined, query);
   }
 
-  // Query cancellation (must check before timeout — 'canceling statement' is cancellation, not timeout)
+  // Query cancellation, checked before timeout: 'canceling statement' is cancellation, not timeout.
+  // `mssql` and `tedious` end a cancelled request with `RequestError('Canceled.', 'ECANCEL')`, whose sentence
+  // holds none of the words below, so it is read from the driver's code. No other installed driver raises
+  // `ECANCEL`; the POSIX `ECANCELED` is a different string. A cancel the SQL Server provider's own deadline
+  // made never reaches here: `runWithDeadline` answers it as its time-budget QueryError first.
   if (
+    (error as { code?: unknown }).code === "ECANCEL" ||
     message.includes("canceling statement") ||
     message.includes("query execution was interrupted") ||
     message.includes("query was cancelled") ||
@@ -825,11 +836,6 @@ function mapNativeError(error: Error, provider: DatabaseType, query?: string): D
   }
   // NJS-138 and its siblings are handled above, before the access refusals -
   // see describeOracleThinModeRefusal().
-
-  // MSSQL errors. A refused login is an access refusal, decided above with the others.
-  if (message.includes("cannot open database")) {
-    return new ConnectionError(`Database not found: ${error.message}`, provider);
-  }
 
   // Query errors (PostgreSQL specific)
   if (message.includes("syntax error") || message.includes("column") || message.includes("relation")) {

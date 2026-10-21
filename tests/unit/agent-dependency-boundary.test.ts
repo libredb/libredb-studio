@@ -34,9 +34,9 @@ const manifest: PackageManifest = JSON.parse(
   fs.readFileSync(path.join(ROOT, "package.json"), "utf8"),
 ) as PackageManifest;
 
-/** Exact versions ratified by the owner when the runtime spike closed. */
+/** Exact versions ratified by the owner when the runtime spike closed; `ai` was raised on 2026-10-19 with the providers below. */
 const RATIFIED_RUNTIME: Readonly<Record<string, string>> = {
-  ai: "7.0.59",
+  ai: "7.0.143",
   workflow: "4.8.1",
   "@workflow/world-local": "4.2.4",
   "@workflow/world-postgres": "4.3.3",
@@ -44,14 +44,15 @@ const RATIFIED_RUNTIME: Readonly<Record<string, string>> = {
 
 /**
  * Exact versions of the three model providers the owner ratified separately, on
- * 2026-08-11, after planning had already run. They sit on the same
+ * 2026-08-11, after planning had already run, and raised with `ai` on 2026-10-19
+ * when the owner asked for the AI SDK upgrade. They sit on the same
  * `@ai-sdk/provider` + `@ai-sdk/provider-utils` pair the pinned `ai` release
  * resolves, which is the evidence the decision was taken on.
  */
 const RATIFIED_MODEL_PROVIDERS: Readonly<Record<string, string>> = {
-  "@ai-sdk/openai": "4.0.37",
-  "@ai-sdk/google": "4.0.40",
-  "@ai-sdk/anthropic": "4.0.37",
+  "@ai-sdk/openai": "4.0.96",
+  "@ai-sdk/google": "4.0.99",
+  "@ai-sdk/anthropic": "4.0.82",
 };
 
 /** Every field npm installs on a consumer of the published package. */

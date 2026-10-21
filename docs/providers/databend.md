@@ -442,6 +442,18 @@ When the first answer's echoed settings do not hold `http_json_result_mode` equa
 
 The live check passed on v1.2.881 for everything it covers except materialized views, which v1.2.881 does not have (`DROP MATERIALIZED VIEW` is a parse error there).
 
+### Connection string
+
+The scheme shown for Databend is `databend://`, and the parser also accepts `databend+http://` and `databend+https://`.
+Its row in `CONNECTION_STRING` is declared in [`connection-string.ts`](../../src/lib/db/providers/sql/databend/connection-string.ts).
+It has no `readTls`: `parseDatabendDSN` in `src/lib/connection-string-parser.ts` reads a DSN's `sslmode` itself, by BendSQL's own rules.
+It runs no seed load check.
+
+### Execution UI
+
+The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `databend` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
+Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/sql/databend/execution-ui.ts).
+
 ## 5. Query interface
 
 ### 5.1 The request
@@ -496,7 +508,7 @@ Databend's backslash escapes are a fact of the grammar row (`backslashAlwaysEsca
 
 ### 5.3 The Databend grammar
 
-The statement splitter, the row limiter, the confirmation gate, the guard and the EXPLAIN screen read text under one grammar row, `DATABEND_GRAMMAR` in `src/lib/sql/grammar.ts`.
+The statement splitter, the row limiter, the confirmation gate, the guard and the EXPLAIN screen read text under one grammar row, `DATABEND_GRAMMAR` in `src/lib/db/providers/sql/databend/sql-grammar.ts`.
 
 | Field | Value | Why |
 |---|---|---|
@@ -640,6 +652,20 @@ A statement that waits for a statement slot longer than its deadline sends nothi
 > Studio's Databend statement slots stayed busy for [seconds] seconds, so nothing was sent. Try again when a running statement finishes.
 
 The resuming sentence of section 4.4 and the slot wait above are no statement's timeout: each is a `ConnectionError`, which Studio's routes answer with HTTP 503 and the sentence itself.
+
+### 5.9 SQL grammar
+
+How this engine's statement text is read is declared once, in [`src/lib/db/providers/sql/databend/sql-grammar.ts`](../../src/lib/db/providers/sql/databend/sql-grammar.ts), the `databend` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+Its grammar is `DATABEND_GRAMMAR`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
+Every fact was read off the server's own lexer (`src/query/ast/src/parser/token.rs`) and parser, since there is no driver package to ask; [§5.3](#53-the-databend-grammar) describes the five readings the statement guard refuses instead.
+`#` is code: `#`, `#>`, `#>>` and `#-` are operator tokens, and the only comment forms are `--` and the block form.
+`[` is a subscript and an array literal, and names are quoted with `"` or a backtick.
+Block comments are flat: `lex_comment_block` scans for the first `*/` with no depth count.
+`//` is an operator token.
+A backslash always escapes: the string token is `'([^'\\]|\\.|'')*'` and its `"` twin, and no setting turns the escape off.
+The row bound goes before a trailing `FORMAT` clause, measured on the pinned image over `POST /v1/query`: `SELECT 1 FORMAT JSON LIMIT 5` is 1005 "unexpected `LIMIT`", and `SELECT 1 LIMIT 5 FORMAT JSON` succeeds.
+`readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.
+Redaction is `sql` with no name quote: a redacted statement keeps its words, and every literal and quoted run becomes `?`.
 
 ## 6. Schema introspection
 
@@ -813,6 +839,27 @@ Load rows with `INSERT` or `COPY INTO` in the editor instead.
 | `analyzeGlobalTitle` | Not Run from Studio |
 | `vacuumGlobalTitle` | Not Run from Studio |
 
+### SQL writing
+
+[`databend/sql-writing.ts`](../../src/lib/db/providers/sql/databend/sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+A literal is written by `literalDoubleAndBackslash` and read back by `unquoteDoubleAndBackslash`: the quote is doubled and a backslash escapes, so the backslash is doubled first.
+A name is quoted by `identifierBacktickDoubled`: a backtick name with an inner backtick doubled and a backslash as data.
+There is no placeholder (`placeholder: null`), so a generator quotes the value with `quoteLiteral` instead of emitting a bind.
+Databend reads both escapes in a single-quoted string in every one of its five `sql_dialect`s: a doubled quote is one quote and a backslash escapes the next character, so it is doubled first.
+The live round trip of the escaping corpus, `INSERT ... VALUES` included, passed on the pinned image (probe L4).
+Databend reads a backtick name in all five of its `sql_dialect`s, the default PostgreSQL one included, and a doubled backtick is the only escape inside it: the lexer rule has no backslash form, so `x\` is the name `x\`.
+Measured on the pinned image (probe L4): names holding a backtick, a backslash, a quote, `;`, `--`, a newline or a NUL round-trip byte-equal through CREATE TABLE, INSERT and SELECT under both dialects.
+A bare name would be folded to lower case there, which is why the provider quotes every name rather than only the ones that need it.
+Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+
+The module's `export` field spells a result export's column types through `ddlTypes`: `VARCHAR`, `DOUBLE` and `BINARY` are Databend's measured spellings (design 7.2, X01), created by M08a on the pinned image and read back by M08c as `String`, `Float64` and `Binary`, unbounded.
+The standard `TEXT`, `DOUBLE PRECISION` and `BLOB` were not measured there; `BIGINT`, `BOOLEAN` and `TIMESTAMP` were, as they are.
+`standsAlone` holds `varchar`, `timestamp` and `binary`, each created by M08a and read back by M08c unbounded (`String`, `Timestamp` with microseconds, `Binary`); every other bare name is re-spelled from its family.
+`NO_BARE_SPELLING`, because Databend's `Timestamp` keeps microseconds without a precision and its `Decimal` always carries its own, so no bare name it reports narrows the value its INSERT writes back.
+A binary cell is written by `binaryUnhex`, not the standard `X'…'`: Databend reads a quoted string into BINARY through `binary_input_format`, utf-8 by default, and M08b inserted `unhex('00ff10')` on the pinned image, which M08c read back as the three bytes `00FF10`.
+`nonFinite` writes `'NaN'::FLOAT`, `'inf'::DOUBLE` and `'-inf'::FLOAT`, which M08b inserted into Databend's `FLOAT` and `DOUBLE` columns and read back as NaN, Infinity and -Infinity.
+`typedLiteral` writes the cells whose generic form Databend refuses, from the engine's own [`databend/typed-literals.ts`](../../src/lib/db/providers/sql/databend/typed-literals.ts); there is no `rewriteDeclared`, since a declared type is written as the query schema spells it (`Nullable(Array(Int32 NULL))`) and the provider's every-type replay is what proves or refutes that spelling.
+
 ## 10. Error handling
 
 Classification reads Databend's code, the gateway's kind, the HTTP status, the transport's failure kind and Studio's own cancel and deadline state, never message text.
@@ -976,6 +1023,23 @@ A seed takes the same fields, as [SEED_CONNECTIONS.md](../SEED_CONNECTIONS.md) s
 - A seed edited to add a Warehouse while it is open keeps its pulse until the page is reloaded ([U97](../BACKLOG.md)).
 - The sign-in latch is one Studio process's: several replicas each send a refused password once per 15 minutes, so five or more can still lock a user under a password policy ([D252](../BACKLOG.md)).
 - Driver-based SQL providers hold a whole result with no cell or byte budget, which Databend's provider has ([D247](../BACKLOG.md)), and the pulse of other engines resends a refused password, which the latch prevents here within one Studio process ([D248](../BACKLOG.md)).
+
+## Migration DDL
+
+[`DATABEND_MIGRATION_DDL`](../../src/lib/db/providers/sql/databend/migration-ddl.ts) is what the schema-diff migration generator writes for `databend`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+Databend has `BEGIN`, `COMMIT` and `ROLLBACK`, but a DDL statement commits the open transaction, so `transactionWrapper` is `null`.
+Its constraints are `CHECK` only, so a foreign key is a comment.
+An added table declines its primary key in a comment after the statement: probe L11 found every `PRIMARY KEY` form refused with 1005.
+A modified column is a comment (probe L8): Databend has `ALTER TABLE ... MODIFY COLUMN`, measured changing type, nullability and comment with the data kept, but the MySQL spelling's `NOT NULL` form is refused on an empty table (1058, "Cannot find statistics for column"), a change that does not restate the default drops it, and the PostgreSQL `ALTER COLUMN` is a parse error (1005).
+Its `CREATE INDEX` always names an inverted, ngram, vector or spatial kind, with no plain or `UNIQUE` index to carry the diff's columns, so index changes are a comment.
+The fields it takes unchanged from `src/lib/db/migration-ddl/shared.ts` are `standardAddColumn`, `standardColumnDef`, `standardDropColumn` and `standardDropTable`.
+
+Every refusal reason it can print, verbatim:
+
+- "Databend has ALTER TABLE ... MODIFY COLUMN, but the MySQL spelling this generator writes fails NOT NULL on an empty table and silently drops an existing default it does not restate; write the change by hand."
+- "Databend: Cannot generate index DDL. Its indexes are inverted, ngram, vector and spatial search indexes, which the diff does not record; write the index change by hand."
+- "The engine has no foreign-key constraint."
+- "Databend's CREATE TABLE has no primary-key constraint."
 
 ## 14. References
 

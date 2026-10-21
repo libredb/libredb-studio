@@ -1,0 +1,41 @@
+-- fixture: full
+-- Migration generated at 2026-10-19T12:00:00.000Z
+-- Dialect: libsql
+-- Changes: 1 added, 1 removed, 2 modified
+
+-- Objects that are not tables
+-- Skipped v_orders (view): only tables are created, altered or dropped here; change it by hand. If it reads a table changed below, drop it before this script and recreate it after.
+
+-- Drop removed tables
+DROP TABLE IF EXISTS "app"."legacy";
+
+-- Create new tables
+CREATE TABLE "app"."users" (
+  "id" integer NOT NULL,
+  "note" varchar(20) DEFAULT 'abc',
+  "bare" TEXT,
+  "y" Int32 DEFAULT MATERIALIZED toYear(d),
+  "empty" text DEFAULT 
+,  PRIMARY KEY ("id")
+,  FOREIGN KEY ("dept_id") REFERENCES "departments"("id")
+);
+CREATE INDEX "ix_users_note" ON "app"."users" ("note");
+
+-- Modify existing tables
+-- Alter table: orders
+-- libSQL: Cannot drop a foreign key directly. Requires table recreation.
+DROP INDEX IF EXISTS "app"."ix_old";
+DROP INDEX IF EXISTS "app"."ix_mod";
+ALTER TABLE "app"."orders" ADD COLUMN "extra" integer;
+ALTER TABLE "app"."orders" ADD COLUMN "bare2" TEXT;
+ALTER TABLE "app"."orders" DROP COLUMN "old";
+-- libSQL: Cannot alter column "status". SQLite cannot retype a column; recreate the table and copy the rows.
+-- libSQL: Cannot alter column "amount". SQLite cannot retype a column; recreate the table and copy the rows.
+-- libSQL: Cannot alter column "calc". SQLite cannot retype a column; recreate the table and copy the rows.
+-- libSQL: Cannot alter column "line break". SQLite cannot retype a column; recreate the table and copy the rows.
+CREATE UNIQUE INDEX "ix_mod" ON "app"."orders" ("status");
+CREATE INDEX "ix_new" ON "app"."orders" ("extra", "status");
+-- libSQL: Cannot add a foreign key on "region_id". SQLite declares one only in CREATE TABLE; recreate the table and copy the rows.
+
+-- fixture: none
+-- No schema changes detected.

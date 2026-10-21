@@ -12,13 +12,19 @@
  * 5. A SQL statement literal (a literal whose whole value starts with an upper-case statement keyword and a space)
  *    appears only in `introspect.ts`, which also holds what `connect()` and `getHealth()` send, `monitoring.ts` and
  *    `statements.ts`, so `index.ts` sends none of its own. `errors.ts` may hold the `ALTER USER ... ADD KEY PAIR`
- *    statement its sentences print for the user to run; it never sends one.
+ *    statement its sentences print for the user to run; it never sends one. `migration-ddl.ts` may hold the
+ *    `ALTER`, `CREATE` and `DROP` text it writes for the user to review; it never sends one either.
  * 6. The wire envelope's field names (`statementHandle`, `resultSetMetaData`, `rowType`, `partitionInfo`), as names
  *    or literals, appear only in `statements.ts`, `rows.ts` and `decode.ts`.
  * 7. A value is imported from outside this directory only from `@/lib/db/http/*`, `@/lib/db/errors`,
  *    `@/lib/db/types`, `@/lib/db/utils/*`, `@/lib/db/object-kinds`, `@/lib/db/inventory-bounds`, `@/lib/sql/*`,
- *    `@/lib/types`, `@/lib/app-version`, `@/lib/logger`, `../sql-base`, `jose`, `node:crypto` and `node:zlib`; types
- *    are free.
+ *    `@/lib/types`, `@/lib/app-version`, `@/lib/logger`, `../sql-base`, `@/lib/db/sql-grammar/shared` (the SQL
+ *    grammar contract's building blocks, for `sql-grammar.ts`), `jose`, `node:crypto` and `node:zlib`; types are
+ *    free. `execution-ui.ts`, the engine's execution UI contract module, may also import values from
+ *    `@/lib/db/execution-ui/shared`, its contract's shared building block, `migration-ddl.ts`, the engine's
+ *    migration DDL contract module, from `@/lib/db/migration-ddl/*`, its contract's shared building blocks, and
+ *    `sql-writing.ts` and its `typed-literals.ts` sibling, the engine's SQL writing contract modules, from
+ *    `@/lib/db/sql-writing/*`.
  * 8. Only `account.ts` builds an origin: outside it, the only values imported from `@/lib/db/http/endpoint` are
  *    `endpointUrl` and `rejectForeignLink`, which act on an origin already built; and `account-host.ts`, which the
  *    browser bundles, imports nothing.
@@ -38,6 +44,7 @@ import { readdirSync, readFileSync, realpathSync } from "node:fs";
 import { isBuiltin } from "node:module";
 import { join, posix } from "node:path";
 import ts from "typescript";
+import { platformTimeoutMs } from "../../../helpers/platform-timeout";
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const DIR = "src/lib/db/providers/sql/snowflake";
@@ -58,7 +65,18 @@ const OUTSIDE_VALUES = [
   "src/lib/app-version.ts",
   "src/lib/logger.ts",
   SQL_BASE,
+  "src/lib/db/sql-grammar/shared.ts",
 ];
+/**
+ * The per-engine contract modules, each with the contract module or directory whose shared building blocks it may
+ * import as values (rule 7). No other file of this directory may.
+ */
+const CONTRACT_VALUES: Readonly<Record<string, string>> = {
+  "execution-ui": "src/lib/db/execution-ui/shared.ts",
+  "migration-ddl": "src/lib/db/migration-ddl/",
+  "sql-writing": "src/lib/db/sql-writing/",
+  "typed-literals": "src/lib/db/sql-writing/",
+};
 const PACKAGE_VALUES = new Set(["jose"]);
 const BUILTIN_VALUES = new Set(["node:crypto", "node:zlib"]);
 const SOCKET_FACTORIES = ["createNodeTransport", "createNodeByteTransport"];
@@ -72,6 +90,8 @@ const SQL_STATEMENT =
   /^(?:SELECT|SHOW|DESCRIBE|DESC|EXPLAIN|ALTER|CREATE|DROP|INSERT|UPDATE|DELETE|MERGE|CALL|USE|GRANT|REVOKE|TRUNCATE|UNDROP|COPY|PUT|GET|LIST|REMOVE|EXECUTE|SET|UNSET|WITH) /;
 /** The one statement errors.ts may hold: the key registration its sentences print. */
 const PRINTED_STATEMENT = /^ALTER USER (?:ADD KEY PAIR |<name> ADD KEY PAIR )/;
+/** The statements migration-ddl.ts may hold: the DDL it writes for the user to review. */
+const WRITTEN_DDL = /^(?:ALTER|CREATE|DROP) /;
 
 const canonical = (path: string): string => realpathSync.native(path).split("\\").join("/");
 const relative = (path: string): string => path.slice(canonical(ROOT).length + 1);
@@ -267,9 +287,10 @@ function seamFindings(file: string, text: string): string[] {
       findings.push(`rule 8: ${file} imports an origin builder from ${specifier}, which only account.ts imports`);
     }
     if (typeOnly || inDirectory(target)) continue;
+    const contract = Object.hasOwn(CONTRACT_VALUES, name) && target.startsWith(CONTRACT_VALUES[name]);
     const allowed = target.startsWith("package:")
       ? PACKAGE_VALUES.has(target.slice("package:".length))
-      : OUTSIDE_VALUES.some((prefix) => target.startsWith(prefix));
+      : contract || OUTSIDE_VALUES.some((prefix) => target.startsWith(prefix));
     if (!allowed) findings.push(`rule 7: ${file} imports a value from ${specifier}, which this directory may not`);
   }
 
@@ -294,7 +315,8 @@ function seamFindings(file: string, text: string): string[] {
       findings.push(`rule 4: ${file} holds the header name "${literal}", which only transport.ts may hold`);
     }
     const printed = name === "errors" && PRINTED_STATEMENT.test(literal);
-    if (!SQL_FILES.has(name) && SQL_STATEMENT.test(literal) && !printed) {
+    const written = name === "migration-ddl" && WRITTEN_DDL.test(literal);
+    if (!SQL_FILES.has(name) && SQL_STATEMENT.test(literal) && !printed && !written) {
       findings.push(`rule 5: ${file} holds the SQL statement literal "${literal.slice(0, 40)}"`);
     }
     if (!ENVELOPE_FILES.has(name) && ENVELOPE_FIELDS.includes(literal)) {
@@ -407,15 +429,26 @@ const SOURCES = readdirSync(join(ROOT, DIR))
   .map((entry) => `${DIR}/${entry}`);
 
 describe("the Snowflake directory holds its seams", () => {
-  test("every source passes rules 1 to 9", () => {
-    expect(SOURCES).toContain(`${DIR}/index.ts`);
-    expect(SOURCES).toContain(`${DIR}/account-host.ts`);
-    expect(SOURCES.flatMap((file) => seamFindings(file, read(file)))).toEqual([]);
-  });
+  // The first parse of the directory pays the parser's warm-up: 0.7s alone with coverage and 5.4s under a
+  // 15% CPU quota, past bun's 5s default, so it carries its own bound.
+  test(
+    "every source passes rules 1 to 9",
+    () => {
+      expect(SOURCES).toContain(`${DIR}/index.ts`);
+      expect(SOURCES).toContain(`${DIR}/account-host.ts`);
+      expect(SOURCES.flatMap((file) => seamFindings(file, read(file)))).toEqual([]);
+    },
+    platformTimeoutMs(40_000),
+  );
 
-  test("every value export has an importer under src/ or the doc test (rule 10)", () => {
-    expect(unimportedExports(SOURCES.map((file) => ({ file, text: read(file) })))).toEqual([]);
-  });
+  // Reads every file under src/: 0.5s alone with coverage and 3.1s under a 15% CPU quota.
+  test(
+    "every value export has an importer under src/ or the doc test (rule 10)",
+    () => {
+      expect(unimportedExports(SOURCES.map((file) => ({ file, text: read(file) })))).toEqual([]);
+    },
+    platformTimeoutMs(40_000),
+  );
 
   test("the detector reads real code", () => {
     const transport = references(`${DIR}/transport.ts`, read(`${DIR}/transport.ts`));
@@ -529,6 +562,18 @@ describe("planted violations fail by name", () => {
       'const sql = "SHOW USERS";\n',
       `rule 5: ${DIR}/errors.ts holds the SQL statement literal "SHOW USERS"`,
     ],
+    [
+      "index.ts",
+      "index.ts",
+      'const ddl = "ALTER TABLE t DROP COLUMN c";\n',
+      `rule 5: ${DIR}/index.ts holds the SQL statement literal "ALTER TABLE t DROP COLUMN c"`,
+    ],
+    [
+      "migration-ddl.ts",
+      "migration-ddl.ts",
+      'const sql = "SELECT CURRENT_VERSION()";\n',
+      `rule 5: ${DIR}/migration-ddl.ts holds the SQL statement literal "SELECT CURRENT_VERSION()"`,
+    ],
     // rule 6
     [
       "index.ts",
@@ -556,6 +601,12 @@ describe("planted violations fail by name", () => {
       `rule 7: ${DIR}/index.ts imports a value from @/lib/db/factory, which this directory may not`,
     ],
     [
+      "introspect.ts",
+      "introspect.ts",
+      'import { SQL_COMMIT_KEYWORD } from "@/lib/db/execution-ui/shared";\n',
+      `rule 7: ${DIR}/introspect.ts imports a value from @/lib/db/execution-ui/shared, which this directory may not`,
+    ],
+    [
       "decode.ts",
       "decode.ts",
       'import { readFileSync } from "node:fs";\n',
@@ -566,6 +617,24 @@ describe("planted violations fail by name", () => {
       "auth.ts",
       'import { sign } from "jsonwebtoken";\n',
       `rule 7: ${DIR}/auth.ts imports a value from jsonwebtoken, which this directory may not`,
+    ],
+    [
+      "introspect.ts",
+      "introspect.ts",
+      'import { standardDropTable } from "@/lib/db/migration-ddl/shared";\n',
+      `rule 7: ${DIR}/introspect.ts imports a value from @/lib/db/migration-ddl/shared, which this directory may not`,
+    ],
+    [
+      "introspect.ts",
+      "introspect.ts",
+      'import { literalStandard } from "@/lib/db/sql-writing/shared";\n',
+      `rule 7: ${DIR}/introspect.ts imports a value from @/lib/db/sql-writing/shared, which this directory may not`,
+    ],
+    [
+      "sql-writing.ts",
+      "sql-writing.ts",
+      'import { standardDropTable } from "@/lib/db/migration-ddl/shared";\n',
+      `rule 7: ${DIR}/sql-writing.ts imports a value from @/lib/db/migration-ddl/shared, which this directory may not`,
     ],
     [
       "decode.ts",
@@ -611,9 +680,18 @@ describe("planted violations fail by name", () => {
     ["errors.ts", "errors.ts", 'import type { HttpOrigin } from "@/lib/db/http/endpoint";\n'],
     ["account.ts", "account.ts", 'import { httpOrigin } from "@/lib/db/http/endpoint";\n'],
     ["introspect.ts", "introspect.ts", 'const sql = "SHOW DATABASES LIMIT 1";\n'],
+    ["migration-ddl.ts", "migration-ddl.ts", 'import { standardDropTable } from "@/lib/db/migration-ddl/shared";\n'],
+    ["migration-ddl.ts", "migration-ddl.ts", "const drop = (table: string) => `DROP TABLE ${table};`;\n"],
+    ["sql-writing.ts", "sql-writing.ts", 'import { binaryStandardHex } from "@/lib/db/sql-writing/export-shared";\n'],
+    [
+      "typed-literals.ts",
+      "typed-literals.ts",
+      'import { literalDoubleAndBackslash } from "@/lib/db/sql-writing/shared";\n',
+    ],
     ["errors.ts", "errors.ts", "const fix = (body: string) => `ALTER USER ADD KEY PAIR k PUBLIC_KEY = '${body}'`;\n"],
     ["index.ts", "index.ts", 'const sentence = "Set Warehouse on the connection to run statements.";\n'],
     ["errors.ts", "errors.ts", 'const sentence = "Snowflake refused POST /api/v2/statements before it ran.";\n'],
+    ["execution-ui.ts", "execution-ui.ts", 'import { SQL_COMMIT_KEYWORD } from "@/lib/db/execution-ui/shared";\n'],
   ])("%s (from %s) with %p passes", (as, from, line) => {
     expect(plant(as, from, line)).toEqual([]);
   });
@@ -658,11 +736,16 @@ describe("rule 10 fails by name", () => {
     expect(unimportedExports(planted, [...importers(), namespace])).toEqual([finding("decode.ts", "onlyForATest")]);
   });
 
-  test("the doc test counts as an importer, and no other test file does", () => {
-    const planted = sources("decode.ts", ONLY_FOR_A_TEST);
-    expect(unimportedExports(planted, [...importers(), readerOf(DOC_TEST)])).toEqual([]);
-    expect(unimportedExports(planted, [...importers(), readerOf("tests/unit/db/snowflake/decode.test.ts")])).toEqual([
-      finding("decode.ts", "onlyForATest"),
-    ]);
-  });
+  // Reads every file under src/ twice: 0.5s alone with coverage and 2.8s under a 15% CPU quota.
+  test(
+    "the doc test counts as an importer, and no other test file does",
+    () => {
+      const planted = sources("decode.ts", ONLY_FOR_A_TEST);
+      expect(unimportedExports(planted, [...importers(), readerOf(DOC_TEST)])).toEqual([]);
+      expect(unimportedExports(planted, [...importers(), readerOf("tests/unit/db/snowflake/decode.test.ts")])).toEqual([
+        finding("decode.ts", "onlyForATest"),
+      ]);
+    },
+    platformTimeoutMs(40_000),
+  );
 });

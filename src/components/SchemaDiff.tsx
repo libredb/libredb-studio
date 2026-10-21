@@ -23,7 +23,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { CopyButton } from "@/components/copy-button";
 import { cn } from "@/lib/utils";
-import type { SchemaSnapshot, DatabaseType, DatabaseConnection } from "@/lib/types";
+import type { SchemaSnapshot, DatabaseConnection } from "@/lib/types";
 import { detailedObjects, type DetailedObject } from "@/lib/db/detailed-object";
 import { containerDepth, declaresCatalogSessions, relationKindIds } from "@/lib/db/object-kinds";
 import type { Container, ProviderCapabilities } from "@/lib/db/types";
@@ -879,8 +879,8 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
   // Generate migration SQL
   const migrationSQL = useMemo(() => {
     if (!diff || !diff.hasChanges) return "";
-    const dialect = connection?.type || "postgres";
-    return generateMigrationSQL(diff, dialect as DatabaseType);
+    // An empty type counted as no connection before; the no-connection dialect is NO_CONNECTION_MIGRATION_DDL's.
+    return generateMigrationSQL(diff, connection?.type || undefined);
   }, [diff, connection]);
 
   // Get all connections for cross-connection comparison

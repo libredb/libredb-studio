@@ -198,9 +198,8 @@ function keyColumns(snapshot: AgentContextSnapshot, tableName: string): string {
   const table = snapshot.objects.find((candidate) => candidate.name === tableName);
   if (table === undefined) return "";
   const primary = table.columns.filter((column) => column.isPrimary).map((column) => column.name);
-  // The LEADING column of each index: an index leads on one column, and that is the
-  // one a lookup on this relation can use.
-  const leading = table.indexes.map((index) => index.columns[0]).filter((name): name is string => name !== undefined);
+  const indexes = Array.isArray(table.indexes) ? table.indexes : [];
+  const leading = indexes.map((index) => index.columns[0]).filter((name): name is string => name !== undefined);
   const parts = [
     primary.length === 0 ? null : `primary key ${primary.map(quote).join(", ")}`,
     leading.length === 0 ? null : `indexed on ${[...new Set(leading)].map(quote).join(", ")}`,

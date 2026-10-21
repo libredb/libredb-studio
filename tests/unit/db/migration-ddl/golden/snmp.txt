@@ -1,0 +1,8 @@
+-- fixture: full
+-- Migration generated at 2026-10-19T12:00:00.000Z
+-- Dialect: snmp
+-- Changes: 1 added, 1 removed, 2 modified
+
+-- SNMP: Cannot generate table DDL. An SNMP object's type is declared in the MIB module the device was built with, not in columns a client can change, and this provider's valve refuses any PDU that is not a Get, GetNext or GetBulk, so there is no column definition to change.
+-- fixture: none
+-- No schema changes detected.

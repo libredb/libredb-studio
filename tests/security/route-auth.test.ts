@@ -84,6 +84,10 @@ mock.module("@/lib/llm", () => ({
   LLMSafetyError: MockLLMSafetyError,
 }));
 
+// Read from the real module before it is replaced, so this mock carries the one list the SDK pin
+// in `tests/unit/llm/config.test.ts` keeps in step, not a copy that could drift from it.
+const { LLM_MODEL_EFFORTS } = await import("@/lib/llm/types");
+
 mock.module("@/lib/llm/types", () => ({
   LLMError: MockLLMError,
   LLMConfigError: MockLLMConfigError,
@@ -124,6 +128,8 @@ mock.module("@/lib/llm/types", () => ({
     (error instanceof MockLLMStreamError || error instanceof Error) &&
     error.message.includes("exceeds the available context size"),
   MAX_SCHEMA_CONTEXT_CHARS: 30_000,
+  // Same whole-module requirement: `utils/config.ts` validates `LLM_MODEL_EFFORT` against it.
+  LLM_MODEL_EFFORTS,
 }));
 
 const { guardRoute } = await import("@/lib/api/require-session");

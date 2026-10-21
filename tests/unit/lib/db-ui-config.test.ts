@@ -646,7 +646,7 @@ describe("db-ui-config", () => {
     });
   });
 
-  test("libsql declares when its Username box is filled, and keeps the token box's own label", () => {
+  test("libsql declares when its Username box is filled, and labels and explains its token box", () => {
     const libsql = getDBConfig("libsql");
     expect(libsql).toMatchObject({
       label: "libSQL",
@@ -656,9 +656,11 @@ describe("db-ui-config", () => {
     });
     expect(libsql.fieldHints).toEqual({
       user: "Only for a self-hosted libSQL server started with SQLD_HTTP_AUTH, which checks a user name and password as HTTP Basic: the Auth Token box then takes the password. Leave it empty for Turso Cloud and for a server that checks tokens.",
+      password:
+        "Turso Cloud mints this per database (`turso db tokens create`). A self-hosted libSQL server started without authentication takes none - leave it empty.",
     });
-    // "Auth Token" stays the per-type word in ConnectionModal.tsx, so nothing relabels the password box here.
-    expect(libsql.fieldLabels).toBeUndefined();
+    // The words the dialog chose by type id before the entry declared them (engine contract, row 8).
+    expect(libsql.fieldLabels).toEqual({ password: "Auth Token" });
   });
 
   test("db2 declares its label, DRDA port and fields, the consent box's hint and no password hint (#786)", () => {
@@ -1048,13 +1050,20 @@ describe("declared connection-field copy (#1085)", () => {
     }
   });
 
-  test("only libsql, db2, prometheus, kafka, etcd, neo4j, milvus, qdrant, the two InfluxDB types, oxia, databend, bigquery, snowflake, spark, s3, kubernetes, mqtt, firestore, rabbitmq, opcua, mtconnect and modbus declare field copy, so every other engine draws every label and hint it drew before", () => {
+  test("only libsql, mongodb, oracle, db2, mssql, couchbase, trino, cassandra, prometheus, kafka, etcd, neo4j, milvus, qdrant, the two InfluxDB types, oxia, databend, bigquery, snowflake, spark, s3, kubernetes, mqtt, firestore, rabbitmq, opcua, mtconnect and modbus declare field copy, so every other engine draws every label and hint it drew before", () => {
     const declared = Object.entries(DB_UI_CONFIG)
       .filter(([, config]) => config.fieldLabels !== undefined || config.fieldHints !== undefined)
       .map(([type]) => type);
     expect(declared).toEqual([
       "libsql",
+      // The labels and hints the dialog chose by type id until these entries declared them (engine contract, row 8).
+      "mongodb",
+      "oracle",
       "db2",
+      "mssql",
+      "couchbase",
+      "trino",
+      "cassandra",
       "prometheus",
       "kafka",
       "etcd",

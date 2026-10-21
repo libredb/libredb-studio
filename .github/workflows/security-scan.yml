@@ -280,10 +280,14 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/trivy-cache" "$RUNNER_TEMP/trivy-out"
           # No severity filter and nothing that can fail the job: this run only
-          # reports. Trivy finds three lockfiles here - bun.lock,
-          # packaging/windows/launcher/go.mod and desktop/src-tauri/Cargo.lock -
-          # so one scan covers the npm closure, the Windows launcher and the
-          # desktop shell.
+          # reports. Trivy reads six dependency files here - bun.lock,
+          # packaging/windows/launcher/go.mod, desktop/src-tauri/Cargo.lock,
+          # docker/milvus/requirements.txt, docker/qdrant/requirements.txt and
+          # vscode-extension/package-lock.json - so one scan covers the npm
+          # closure, the Windows launcher, the desktop shell and the seed
+          # images. The VS Code extension's lockfile adds no package today:
+          # every package in it is a devDependency, which Trivy leaves out
+          # without --include-dev-deps.
           docker run --rm \
             -e TRIVY_USERNAME -e TRIVY_PASSWORD \
             -v "$GITHUB_WORKSPACE:/repo:ro" \
@@ -319,7 +323,7 @@ jobs:
           {
             echo "## Dependency findings"
             echo
-            echo "Source: \`bun.lock\`, \`packaging/windows/launcher/go.mod\`, \`desktop/src-tauri/Cargo.lock\`."
+            echo "Source: \`bun.lock\`, \`packaging/windows/launcher/go.mod\`, \`desktop/src-tauri/Cargo.lock\`, \`docker/milvus/requirements.txt\`, \`docker/qdrant/requirements.txt\` and \`vscode-extension/package-lock.json\` (devDependencies only, so no findings)."
             echo "Suppressions: \`.trivyignore.yaml\`."
             echo
             echo '```'

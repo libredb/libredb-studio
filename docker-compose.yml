@@ -12,6 +12,7 @@ services:
       - LLM_API_KEY=${LLM_API_KEY}
       - LLM_MODEL=${LLM_MODEL:-gemini-2.5-flash}
       - LLM_API_URL=${LLM_API_URL}
+      - LLM_MODEL_EFFORT=${LLM_MODEL_EFFORT}
       - STORAGE_PROVIDER=${STORAGE_PROVIDER:-local}
       - STORAGE_SQLITE_PATH=${STORAGE_SQLITE_PATH:-/app/data/libredb-storage.db}
       - STORAGE_POSTGRES_URL=${STORAGE_POSTGRES_URL}

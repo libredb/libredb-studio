@@ -187,7 +187,7 @@ describe.each(TEMPLATES)("$name: what caprover/one-click-apps validate_apps.js e
 });
 
 describe.each(TEMPLATES)("$name: what this repository requires of the template", ({ file }) => {
-  const { raw: RAW, template, environment, instructionsEnd, versionVariable } = loadTemplate(file);
+  const { raw: RAW, template, environment, instructionsEnd, variables, versionVariable } = loadTemplate(file);
 
   test("the version variable offers a pinned tag, never latest", () => {
     expect(versionVariable?.defaultValue).toMatch(/^\d+\.\d+\.\d+$/);
@@ -220,6 +220,18 @@ describe.each(TEMPLATES)("$name: what this repository requires of the template",
     // a text match passing, so the test read green while the deployed app had no such
     // variable at all.
     expect(environment.AUTH_COOKIE_SECURE).toBe("false");
+  });
+
+  test("every LLM variable the AI fields stand for is offered, each blank by default", () => {
+    // The four the AI fields have always set, plus LLM_MODEL_EFFORT, so the reasoning effort is a
+    // field like the model and not an env line the operator has to know to add afterwards.
+    const llm = Object.keys(environment).filter((name) => name.startsWith("LLM_"));
+    expect(llm.sort()).toEqual(["LLM_API_KEY", "LLM_API_URL", "LLM_MODEL", "LLM_MODEL_EFFORT", "LLM_PROVIDER"]);
+    for (const name of llm) {
+      const id = String(environment[name]);
+      const offered = variables.find((variable) => variable.id === id);
+      expect(offered?.defaultValue).toBe("");
+    }
   });
 
   test("the login rate limiter keys on the address CapRover's nginx saw", () => {

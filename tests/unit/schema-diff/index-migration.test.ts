@@ -40,8 +40,8 @@ describe("schema comparison through index migration", () => {
     const target = table(["a", "b"], ["b", "a"]);
     const diff = diffSchemas([source], [target]);
     expect(diff.hasChanges).toBe(true);
-    expect(source.indexes[0].columns).toEqual(["a", "b"]);
-    expect(target.indexes[0].columns).toEqual(["b", "a"]);
+    expect(Array.isArray(source.indexes) && source.indexes[0].columns).toEqual(["a", "b"]);
+    expect(Array.isArray(target.indexes) && target.indexes[0].columns).toEqual(["b", "a"]);
     const db = new Database(":memory:");
     try {
       db.exec("CREATE TABLE items (a INTEGER, b INTEGER); CREATE INDEX idx_items ON items (a, b)");

@@ -6,11 +6,11 @@
  */
 
 import type * as Monaco from "monaco-editor";
+import { sqlGrammarForExactType } from "@/lib/db/sql-grammar";
 import { extractAliases, resolveAlias } from "@/lib/sql";
 import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
 import { readSqlSpan, type SqlSpanKind } from "@/lib/sql/spans";
 import { statementScope, type DerivedSource, type ScopeSource } from "./sql-scope";
-import { formatPostgresIdentifier } from "./postgres-identifiers";
 import type { ContainerSpelling } from "@/lib/query-generators";
 import type { DatabaseType } from "@/lib/types";
 
@@ -422,6 +422,7 @@ export function registerSQLCompletionProvider(
   databaseType?: DatabaseType,
 ): Monaco.IDisposable {
   const grammar = resolveSqlGrammar(databaseType);
+  const { completion } = sqlGrammarForExactType(databaseType);
   // The shared lists, then the dialect's own words (SF-042); the same lists on every dialect that declares none.
   const dialect = dialectItems(grammar);
   const keywordItems = [...KEYWORD_ITEMS, ...dialect.keywords];
@@ -453,16 +454,13 @@ export function registerSQLCompletionProvider(
       const typedQualifier = typed.text;
       // Preserve ordinary identifiers; quote catalog names only when needed
       // to preserve case, escape special characters, or avoid keywords.
-      // PostgreSQL keeps its keyword-aware quoting; every other dialect quotes through the
-      // connection's capabilities, so a MySQL `e2e-other` or a SQL Server segment with a space
-      // is written in a form the engine parses.
+      // A dialect with its own quoting rule (PostgreSQL's keyword-aware one) keeps it; every other
+      // dialect quotes through the connection's capabilities, so a MySQL `e2e-other` or a SQL Server
+      // segment with a space is written in a form the engine parses.
       const quoteSegment = schemaCompletionCache.quoteSegment;
+      const ownFormat = completion.formatSegment;
       const formatSegment = (segment: string) =>
-        databaseType === "postgres"
-          ? formatPostgresIdentifier(segment)
-          : quoteSegment === undefined
-            ? segment
-            : quoteSegment(segment);
+        ownFormat !== null ? ownFormat(segment) : quoteSegment === undefined ? segment : quoteSegment(segment);
       // An address is written whole where the engine spells a container segment itself: Spark's
       // namespace `a.b` is `a`.`b` there, and one quoted segment would name a namespace `a.b`.
       const formatPath = (path: readonly string[]) =>
@@ -529,8 +527,8 @@ export function registerSQLCompletionProvider(
                   // engine resolves; inside it the label is, as it always was.
                   table.qualify && table.container && table.segment !== undefined
                     ? formatPath([...table.container, table.segment])
-                    : databaseType === "postgres"
-                      ? table.label.split(".").map(formatPostgresIdentifier).join(".")
+                    : ownFormat !== null
+                      ? table.label.split(".").map(ownFormat).join(".")
                       : table.label,
                   { ...range, startColumn: range.startColumn - qualifier.length },
                 ),
@@ -557,10 +555,9 @@ export function registerSQLCompletionProvider(
       // Dot-triggered: Show columns for specific table or alias
       if (lastChar === ".") {
         const textToDot = line.substring(0, position.column - 1);
-        // Only PostgreSQL completions introduce quoted table names in this PR.
+        // Only a dialect whose completions introduce quoted table names reads one back (PostgreSQL's).
         // Other dialects retain their existing bare-identifier lookup.
-        const quotedIdentifier =
-          databaseType === "postgres" ? textToDot.match(/"((?:[^"]|"")+)"\.$/)?.[1].replace(/""/g, '"') : undefined;
+        const quotedIdentifier = completion.readQuotedQualifier?.(textToDot);
         const identifier = (quotedIdentifier ?? textToDot.match(/(\w+)\.$/)?.[1])?.toLowerCase();
         if (identifier) {
           // Helper to find columns by table name (handles schema.table format)

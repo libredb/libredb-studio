@@ -1,0 +1,32 @@
+-- fixture: full
+-- Migration generated at 2026-10-19T12:00:00.000Z
+-- Dialect: cassandra
+-- Changes: 1 added, 1 removed, 2 modified
+
+-- Objects that are not tables
+-- Skipped v_orders (view): only tables are created, altered or dropped here; change it by hand. If it reads a table changed below, drop it before this script and recreate it after.
+
+-- Drop removed tables
+DROP TABLE IF EXISTS "app"."legacy";
+
+-- Create new tables
+-- Apache Cassandra: Cannot generate CREATE TABLE for "app"."users". A CQL primary key splits into a partition key and clustering columns, and a schema diff records neither role, so the partitioning cannot be derived; write the CREATE TABLE by hand.
+
+-- Modify existing tables
+-- Alter table: orders
+-- Apache Cassandra: Cannot drop a foreign key. CQL never declared one.
+DROP INDEX IF EXISTS "app"."ix_old";
+DROP INDEX IF EXISTS "app"."ix_mod";
+ALTER TABLE "app"."orders" ADD "extra" integer;
+ALTER TABLE "app"."orders" ADD "bare2" TEXT;
+ALTER TABLE "app"."orders" DROP "old";
+-- Apache Cassandra: Cannot alter column "status". Cassandra no longer supports altering a column's type; add a new column and migrate the values, or recreate the table.
+-- Apache Cassandra: Cannot alter column "amount". Cassandra no longer supports altering a column's type; add a new column and migrate the values, or recreate the table.
+-- Apache Cassandra: Cannot alter column "calc". Cassandra no longer supports altering a column's type; add a new column and migrate the values, or recreate the table.
+-- Apache Cassandra: Cannot alter column "line break". Cassandra no longer supports altering a column's type; add a new column and migrate the values, or recreate the table.
+CREATE UNIQUE INDEX "ix_mod" ON "app"."orders" ("status");
+CREATE INDEX "ix_new" ON "app"."orders" ("extra", "status");
+-- Apache Cassandra: Cannot add a foreign key on "region_id". The clause is not in CQL's grammar; enforce the relationship in the application.
+
+-- fixture: none
+-- No schema changes detected.

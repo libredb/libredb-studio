@@ -2,7 +2,7 @@ apiVersion: v2
 name: libredb-studio
 description: Web-based SQL IDE for cloud-native teams supporting forty-one engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Apache Spark, Apache Cassandra, libSQL, Prometheus, Apache Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, InfluxDB, InfluxDB 3, Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA, MTConnect, Modbus, NETCONF, SNMP and Sparkplug B
 type: application
-version: 0.1.100
+version: 0.1.101
 appVersion: "1.0.0"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
@@ -296,7 +296,10 @@ annotations:
   # release that reads the governance values 0.1.99 added; under 0.1.99's default image, 0.18.3,
   # governance.enabled points readiness at /api/ready, which that image does not serve. No
   # template, value or default moves, so the upgrade is the image.
-  artifacthub.io/containsSecurityUpdates: "true"
+  # False: 0.1.101 adds config.llmModelEffort, written as LLM_MODEL_EFFORT, the reasoning effort for
+  # the openai provider. It is empty by default, so an install that does not set it renders exactly
+  # as before; the default image, 1.0.0, does not read it.
+  artifacthub.io/containsSecurityUpdates: "false"
   artifacthub.io/images: |
     - name: libredb-studio
       image: ghcr.io/libredb/libredb-studio:1.0.0
@@ -311,9 +314,7 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - "Default image 1.0.0, the first app release that reads the governance values added in chart 0.1.99; set governance.enabled only with this chart version or later, or with an image of 1.0.0 or later"
-    - "Security: app 1.0.0 scopes POST /api/db/disconnect to the caller's own providers, so a signed-in user can no longer close the connections and SSH tunnels other users have open"
-    - "Track app release 1.0.0 (appVersion bump; default image tag follows)"
+    - "Add config.llmModelEffort, written as LLM_MODEL_EFFORT: the reasoning effort for the openai provider, empty by default and read by application images after 1.0.0"
 dependencies:
   - name: postgresql
     version: "16.x.x"

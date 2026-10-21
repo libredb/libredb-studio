@@ -348,6 +348,46 @@ describe("diffSchemas: indexes", () => {
     expect(table.indexes[0].action).toBe("removed");
   });
 
+  test("skips index comparison when target indexes are refused", () => {
+    const source: StoredObject[] = [
+      makeTable({
+        name: "users",
+        columns: [{ name: "email", type: "varchar(255)", nullable: false, isPrimary: false }],
+        indexes: [{ name: "idx_email", columns: ["email"], unique: true }],
+      }),
+    ];
+    const target: StoredObject[] = [
+      makeTable({
+        name: "users",
+        columns: [{ name: "email", type: "varchar(255)", nullable: false, isPrimary: false }],
+        indexes: { unavailable: "ACCESS_DENIED" },
+      }),
+    ];
+    const result = diffSchemas(source, target);
+    expect(result.hasChanges).toBe(false);
+    expect(result.tables).toHaveLength(0);
+  });
+
+  test("skips index comparison when source indexes are refused", () => {
+    const source: StoredObject[] = [
+      makeTable({
+        name: "users",
+        columns: [{ name: "email", type: "varchar(255)", nullable: false, isPrimary: false }],
+        indexes: { unavailable: "ACCESS_DENIED" },
+      }),
+    ];
+    const target: StoredObject[] = [
+      makeTable({
+        name: "users",
+        columns: [{ name: "email", type: "varchar(255)", nullable: false, isPrimary: false }],
+        indexes: [{ name: "idx_email", columns: ["email"], unique: true }],
+      }),
+    ];
+    const result = diffSchemas(source, target);
+    expect(result.hasChanges).toBe(false);
+    expect(result.tables).toHaveLength(0);
+  });
+
   test("index columns changed is detected as modified", () => {
     const source: StoredObject[] = [
       makeTable({

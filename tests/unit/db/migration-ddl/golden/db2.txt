@@ -1,0 +1,41 @@
+-- fixture: full
+-- Migration generated at 2026-10-19T12:00:00.000Z
+-- Dialect: db2
+-- Changes: 1 added, 1 removed, 2 modified
+
+-- Objects that are not tables
+-- Skipped v_orders (view): only tables are created, altered or dropped here; change it by hand. If it reads a table changed below, drop it before this script and recreate it after.
+
+-- Drop removed tables
+DROP TABLE IF EXISTS "app"."legacy";
+
+-- Create new tables
+CREATE TABLE "app"."users" (
+  "id" integer NOT NULL,
+  "note" varchar(20) DEFAULT 'abc',
+  "bare" TEXT,
+  "y" Int32 DEFAULT MATERIALIZED toYear(d),
+  "empty" text DEFAULT 
+,  PRIMARY KEY ("id")
+);
+CREATE INDEX "ix_users_note" ON "app"."users" ("note");
+ALTER TABLE "app"."users" ADD CONSTRAINT "fk_users_dept_id" FOREIGN KEY ("dept_id") REFERENCES "departments"("id");
+
+-- Modify existing tables
+-- Alter table: orders
+ALTER TABLE "app"."orders" DROP CONSTRAINT "fk_orders_customer_id";
+DROP INDEX "app"."ix_old";
+DROP INDEX "app"."ix_mod";
+ALTER TABLE "app"."orders" ADD COLUMN "extra" integer;
+ALTER TABLE "app"."orders" ADD COLUMN "bare2" TEXT;
+ALTER TABLE "app"."orders" DROP COLUMN "old";
+-- Db2 LUW: Cannot alter column "status". Db2 changes a column with ALTER COLUMN ... SET DATA TYPE and may leave the table REORG-pending; write the change by hand.
+-- Db2 LUW: Cannot alter column "amount". Db2 changes a column with ALTER COLUMN ... SET DATA TYPE and may leave the table REORG-pending; write the change by hand.
+-- Db2 LUW: Cannot alter column "calc". Db2 changes a column with ALTER COLUMN ... SET DATA TYPE and may leave the table REORG-pending; write the change by hand.
+-- Db2 LUW: Cannot alter column "line break". Db2 changes a column with ALTER COLUMN ... SET DATA TYPE and may leave the table REORG-pending; write the change by hand.
+CREATE UNIQUE INDEX "ix_mod" ON "app"."orders" ("status");
+CREATE INDEX "ix_new" ON "app"."orders" ("extra", "status");
+ALTER TABLE "app"."orders" ADD CONSTRAINT "fk_orders_region_id" FOREIGN KEY ("region_id") REFERENCES "regions"("id");
+
+-- fixture: none
+-- No schema changes detected.

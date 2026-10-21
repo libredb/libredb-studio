@@ -3,6 +3,7 @@
  * plan and profile arms, the index card and the answer, each in this engine's own words.
  */
 import { z } from "zod";
+import type { IndexSchema } from "@/lib/types";
 import { resolveProfileTarget } from "../../inventory-address";
 import {
   AGENT_ANSWER_CONTRACT,
@@ -183,10 +184,10 @@ function indexExists(
   const target = snapshot.objects.find(
     (object) => object.path?.at(-1) === collection && (database === undefined || object.path?.at(-2) === database),
   );
-  return (
-    target?.indexes.some(
-      (index) => index.columns.length === keys.length && index.columns.every((column, at) => column === keys[at]),
-    ) ?? false
+  const indexes: readonly IndexSchema[] = Array.isArray(target?.indexes) ? target.indexes : [];
+  return indexes.some(
+    (index) =>
+      index.columns.length === keys.length && index.columns.every((column: string, at: number) => column === keys[at]),
   );
 }
 

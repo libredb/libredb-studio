@@ -206,7 +206,7 @@ A fetch waits at most 250 ms on the broker for new records, so an empty partitio
 | TLS panel | Yes | [§4.3](#43-tls) |
 | SSH tunnel | No | The panel is hidden and a tunnel is refused ([§4.5](#45-no-ssh-tunnel)) |
 
-The select is declared on the `kafka` entry of `DB_UI_CONFIG` (`fieldOptions`, `fieldLabels`, `fieldHints`) rather than chosen by a type test in the dialog.
+The select is declared on the `kafka` entry of `CONNECTION_FORM` in `src/lib/db/connection-form.ts` (`fieldOptions`, `fieldLabels`, `fieldHints`) rather than chosen by a type test in the dialog.
 `saslMechanism` is an optional, non-secret field of `DatabaseConnection`: it names how the password is checked, not a credential, so the connection store keeps it in the clear and a managed seed returns it while it withholds the password.
 It is part of the provider cache key's credential frame (`credentialDigest` in `src/lib/db/provider-cache-key.ts`), because Kafka keeps SCRAM credentials per mechanism, so two connections that differ only in mechanism never share a provider.
 A seed file takes it as a literal name ([`docs/SEED_CONNECTIONS.md`](../SEED_CONNECTIONS.md)).
@@ -281,6 +281,15 @@ A tunnelled connection that arrives another way, from a seed or the API, is refu
 There the server opens the tunnel before the provider runs, so an unreachable bastion answers with its SSH error first.
 The server opens a tunnel for any `sshTunnel.enabled` that JavaScript reads as true, such as the string `"true"`, so an `enabled` that is not a boolean is refused too, naming the field, rather than read as no tunnel.
 An `sshTunnel` that is not an object, such as `true`, is refused the same way, as an `ssl` that is not one is, though the server opens no tunnel for it.
+
+### Connection string
+
+`kafka` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/stream/kafka/connection-string.ts)).
+
+### Execution UI
+
+The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `kafka` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
+Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/stream/kafka/execution-ui.ts).
 
 ---
 
@@ -412,6 +421,14 @@ There is no `cancelQuery`: both routes detect cancellation by presence, a presen
 None: `supportsExplain` is `false`, and the plan view is not offered.
 
 ---
+
+### 5.7 SQL grammar
+
+How this engine's statement text is read is declared once, in [`src/lib/db/providers/stream/kafka/sql-grammar.ts`](../../src/lib/db/providers/stream/kafka/sql-grammar.ts), the `kafka` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+`readsSqlText` is `false`: `kafka` takes a JSON read request (#1088), one object naming a topic and where to read it from, whose strings escape with a backslash as a MongoDB document's do; the provider extends `BaseDatabaseProvider` and parses the text itself.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` in `src/lib/db/destructive-commands.ts` instead of a SQL reading.
+Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
+Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
 
 ## 6. Schema introspection
 
@@ -546,6 +563,18 @@ A direct call of `runMaintenance` is refused with a `QueryError`.
 `entityName` "Topic" and "Topics", `rowName` "Message" and "Messages", `selectAction` "Read Latest 50", `generateAction` "Generate Read Request", and the two empty-state sentences of [§7](#7-monitoring--health).
 `statementLanguage` carries the read request's schema, because plan mode states it verbatim and it is the only fact about how a statement is written that plan mode's prompt carries per engine: the four keys, the `from` forms, the defaults, two examples, and that no other key is taken, that `offset` and `timestamp` go inside `from`, that the inventory's other columns are fields each message comes back with and not keys of the request, and that a read request reads one topic's messages, never a group's lag.
 The integration test parses each example in it with the provider's own parser.
+
+### SQL writing
+
+[`kafka/sql-writing.ts`](../../src/lib/db/providers/stream/kafka/sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+A literal is written by `literalStandard` and read back by `unquoteStandard`: the quote is doubled and a backslash is data.
+A name is quoted by `identifierDoubleQuoted`, the SQL standard form: a double-quoted name with an inner double quote doubled.
+There is no placeholder (`placeholder: null`), so a generator quotes the value with `quoteLiteral` instead of emitting a bind.
+This engine declares `queryLanguage: "json"`, so no statement is ever built for it to read; what a generator emits for such a connection is portable SQL meant to run elsewhere, and the standard form is the only thing it can claim.
+Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+
+The module's `export` field writes a result export's CREATE TABLE and INSERT from the shared building blocks alone: `STANDARD_DDL_TYPES` for the column types, `NOTHING_STANDS_ALONE` and `NO_BARE_SPELLING`, so every bare declared name is re-spelled from its family, `NULL_NON_FINITE` for NaN and the infinities, and `binaryStandardHex` for a binary cell (`X'0102'`).
+The engine declares `queryLanguage: "json"`, so no SQL statement is ever built for it to read, and a file exported from it is meant to run somewhere else: every bare name in it is re-spelled portably rather than kept as one engine's private word.
 
 ---
 
@@ -734,6 +763,18 @@ See [`docs/API_DOCS.md`](../API_DOCS.md) for the full request and response contr
 - **No agent execute mode for read requests**, out of scope for the whole #424 epic; plan mode grounds through the object surface and drafts a read request for the user to run.
 - **A client certificate the broker refuses reads as a lost connection** ([§4.3](#43-tls)).
 - **A broker with a failed log directory fails the overview, health and storage panels** with `KAFKA_STORAGE_ERROR`, where the rest of the object surface keeps working ([§11.4](#114-the-live-read-only-check), `docs/BACKLOG.md` D125).
+
+---
+
+## Migration DDL
+
+[`KAFKA_MIGRATION_DDL`](../../src/lib/db/providers/stream/kafka/migration-ddl.ts) is what the schema-diff migration generator writes for `kafka`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
+`kafka` text is a JSON read request, not SQL, so there is no table DDL to wrap (#284, #1088).
+
+The refusal reason it prints, verbatim:
+
+- "A topic holds messages, not rows with declared columns, so there is no column definition to change."
 
 ---
 

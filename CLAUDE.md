@@ -13,7 +13,7 @@ It runs **two ways**, as a standalone Next.js app and as a published npm package
 
 > **Trunk-based: feature branch → `main` → tag.** Open every PR with `gh pr create --base main`; there is no `dev` branch and no long-lived `release/*` branches. `main` is protected: PRs required, and `Lint, Typecheck and Build`, `Unit & Integration Tests` and `Secret Scan` must pass (SonarCloud runs but is not required — fork PRs cannot produce it).
 >
-> **Tag namespace.** Product releases are bare semver tags on `main` — **no `v` prefix**; the `v`-prefixed tags below 0.9.28 are frozen history, and chart releases use a separate `libredb-studio-<chart version>` namespace. So `git tag | tail` is not "the latest release". Cutting one is the user-invoked `/cut-release` skill ([`.claude/skills/cut-release/SKILL.md`](.claude/skills/cut-release/SKILL.md)) — ask for it, never improvise.
+> **Tag namespace.** Product releases are bare semver tags on `main` — **no `v` prefix**; the `v`-prefixed tags below 0.9.28 are frozen history, and chart releases use a separate `libredb-studio-<chart version>` namespace, and the VS Code extension `vscode-extension-<version>` ([`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md), "VS Code extension (Marketplace)"). So `git tag | tail` is not "the latest release". Cutting one is the user-invoked `/cut-release` skill ([`.claude/skills/cut-release/SKILL.md`](.claude/skills/cut-release/SKILL.md)) — ask for it, never improvise.
 >
 > **Two version gates, both enforced by the required check.** A PR bumping the `package.json` version must also run `bun run chart:bump` **and `make -C operator bundle`** and commit both (#138; the OLM CSV takes its version and controller image tag from `package.json`) — tag only once both are on `main`, since the tag ref is what the operator image and bundle build from. A PR changing any packaged file under `charts/libredb-studio/` must ALSO bump `Chart.yaml version` **by hand** when the current chart version is already released (#167) — `chart:bump` skips it while `appVersion` is in sync — plus the README `--version` examples.
 
@@ -45,6 +45,11 @@ bun run chart:check              # chart version sync guard (#138; CI sets CHART
 bun run channels:showcase:check  # login channel showcase drift guard (#425)
 bun run readme:check             # localized README drift guard (#317)
 bun run security:check           # security posture drift guard
+# VS Code extension (vscode-extension/, npm; after the root bun install; docs/TOOLCHAIN.md "VS Code extension")
+(cd vscode-extension && npm ci --ignore-scripts && npm run build)   # host and child bundles, metafile checks, notices
+(cd vscode-extension && npm run test:unit && npm run coverage:check) # its own 100% gate, unit leg only
+(cd vscode-extension && LIBREDB_BACKEND_RUNTIME=node npm run test:integration)  # or =vscode (P5)
+(cd vscode-extension && xvfb-run -a npm run test:e2e && npm run package)        # e2e needs a display on Linux
 ```
 
 > **Toolchain rationale (Biome formatter-only, oxlint in front of ESLint, the narrow type-aware layer, attw) lives in [`docs/TOOLCHAIN.md`](docs/TOOLCHAIN.md).** Read it before changing any lint, format or packaging config.
@@ -60,7 +65,8 @@ bun run security:check           # security posture drift guard
 Run the required-check gate set locally before claiming done. [`.github/workflows/ci.yml`](.github/workflows/ci.yml) is the authority — this list mirrors it and can fall behind it:
 
 ```bash
-bun run format && bun run lint && bun run typecheck && bun run knip \
+(cd vscode-extension && npm ci --ignore-scripts) \
+  && bun run format && bun run lint && bun run typecheck && bun run knip \
   && bun run chart:check && bun run channels:showcase:check \
   && bun run readme:check && bun run security:check \
   && bun run test && bun run build
@@ -84,10 +90,10 @@ A clean local pass is still not a guarantee: the same job also runs `build:lib` 
 > - **Agent leg.** A type-id whose `AGENT_STATEMENT_LANGUAGE` row is non-null also keeps, in the same PR: Code: `src/lib/agent/languages/<statement-language>/engines/<type-id>.ts` plus its client row in `languages/<statement-language>/engines/client.ts` · Docs: the `Agent language pack` subsection of `docs/providers/<type-id>.md`, naming the statement-language family and every overlay member · Tests: `tests/unit/lib/agent/engine-docs.test.ts`, which holds that subsection to the overlay, plus the engine's cases in `engine-overlays.test.ts` and `engine-pack-contract.test.ts`.
 > - Any change to one side MUST sync the others **in the same PR**. The doc mirrors the code and the code mirrors the doc — never let them drift.
 
-- **DB abstraction:** Strategy Pattern. SQL-dialect providers extend `SQLBaseProvider`; the non-SQL ones (`mongodb`, `redis`, `couchbase`, `firestore`, `prometheus`, `influxdb`, `kafka`, `mqtt`, `etcd`, `oxia`, `milvus`, `qdrant`, `s3`, `kubernetes`, `rabbitmq`, `libredb`) extend `BaseDatabaseProvider` directly, `neo4j` extends `GraphBaseProvider` (`src/lib/db/graph/`), and `SQLBaseProvider` and `GraphBaseProvider` themselves extend it. Inside `src/lib/db`, never branch on the type id; drive behaviour through capabilities/labels. Three `=== "mongodb"` branches survive in the UI layer as known debt (`src/hooks/use-connection-form.ts`, `src/lib/editor/tab-language.ts`, `src/components/ConnectionModal.tsx`); do not add a fourth.
+- **DB abstraction:** Strategy Pattern. SQL-dialect providers extend `SQLBaseProvider`; the non-SQL ones (`mongodb`, `redis`, `couchbase`, `firestore`, `prometheus`, `influxdb`, `kafka`, `mqtt`, `etcd`, `oxia`, `milvus`, `qdrant`, `s3`, `kubernetes`, `rabbitmq`, `libredb`) extend `BaseDatabaseProvider` directly, `neo4j` extends `GraphBaseProvider` (`src/lib/db/graph/`), and `SQLBaseProvider` and `GraphBaseProvider` themselves extend it. Inside `src/lib/db`, never branch on the type id; drive behaviour through capabilities/labels. Outside the provider layer, a per-engine fact is a row of a contract registry, never a type-id branch: the `src/lib/db/connection-string/`, `src/lib/db/execution-ui/`, `src/lib/db/sql-grammar/`, `src/lib/db/migration-ddl/` and `src/lib/db/sql-writing/` rows are declared beside each provider, and `CONNECTION_FIELDS` and `SEED_ONLY_FIELDS` are central UI-free tables in `src/lib/db/connection-fields.ts`; `tests/unit/lib/no-engine-branches.test.ts` fails on any other type-id branch, and its debt list is empty, so a new branch is moved into a contract rather than listed.
 - **Auth:** `NEXT_PUBLIC_AUTH_PROVIDER` = `local` (email/password) or `oidc` (PKCE → the same JWT cookie); `src/proxy.ts` enforces RBAC (admin vs user). [`docs/OIDC.md`](docs/OIDC.md).
 - **Storage:** write-through cache — localStorage serves reads, `useStorageSync` pushes mutations to the server (debounced). `STORAGE_PROVIDER` (server-side only) = `local` | `sqlite` | `postgres`. [`docs/STORAGE.md`](docs/STORAGE.md).
-- **API routes:** all backend in `src/app/api/`, except `/health`, which is a route at the app root so the plainest liveness path exists; JWT-protected except the public set in [`src/proxy.ts`](src/proxy.ts) — `/login`, `/launch`, `/api/auth/*`, `/health`, `/api/health`, `/api/db/health`, `/api/storage/config`, `/_next`, `/favicon.ico` and static assets — plus two machine paths gated by bearer credentials of their own instead of the JWT: the agent drive callback and /api/mcp. `src/proxy.ts` is the authority; do not restate the list elsewhere.
+- **API routes:** all backend in `src/app/api/`, except `/health`, which is a route at the app root so the plainest liveness path exists; JWT-protected except the public set in [`src/proxy.ts`](src/proxy.ts) — `/login`, `/launch`, `/api/auth/*`, `/health`, `/api/health`, `/api/db/health`, `/api/ready`, `/api/storage/config`, `/_next`, `/favicon.ico` and static assets — plus two machine paths gated by bearer credentials of their own instead of the JWT: the agent drive callback and /api/mcp. `src/proxy.ts` is the authority; do not restate the list elsewhere.
 
 ## Configuration
 

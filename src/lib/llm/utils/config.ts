@@ -3,7 +3,7 @@
  * Environment variable resolution and default configuration
  */
 
-import { type LLMConfig, type LLMProviderType, LLMConfigError } from "../types";
+import { type LLMConfig, type LLMModelEffort, type LLMProviderType, LLM_MODEL_EFFORTS, LLMConfigError } from "../types";
 
 // ============================================================================
 // Default Configuration
@@ -92,6 +92,12 @@ function resolveApiUrl(provider: LLMProviderType): string | undefined {
   return undefined;
 }
 
+/** `LLM_MODEL_EFFORT`, trimmed and lower-cased; unset or blank leaves the provider's default. */
+function resolveModelEffort(): string | undefined {
+  const effort = (process.env.LLM_MODEL_EFFORT ?? "").trim().toLowerCase();
+  return effort === "" ? undefined : effort;
+}
+
 // ============================================================================
 // Configuration Resolution
 // ============================================================================
@@ -101,6 +107,7 @@ function resolveApiUrl(provider: LLMProviderType): string | undefined {
  */
 export function resolveConfig(overrides?: Partial<LLMConfig>): LLMConfig {
   const provider = overrides?.provider ?? resolveProvider();
+  const modelEffort = overrides?.modelEffort ?? resolveModelEffort();
 
   return {
     provider,
@@ -108,6 +115,9 @@ export function resolveConfig(overrides?: Partial<LLMConfig>): LLMConfig {
     apiKey: overrides?.apiKey ?? resolveApiKey(provider),
     model: overrides?.model ?? resolveModel(provider),
     apiUrl: overrides?.apiUrl ?? resolveApiUrl(provider),
+    // Absent rather than undefined when unset, so a configuration without it is the same object
+    // it was before the variable existed.
+    ...(modelEffort === undefined ? {} : { modelEffort }),
   };
 }
 
@@ -122,6 +132,40 @@ export function resolveConfig(overrides?: Partial<LLMConfig>): LLMConfig {
 export function unconfiguredReason(config: LLMConfig): "missing_credentials" | undefined {
   return config.providerExplicit ? undefined : "missing_credentials";
 }
+
+/**
+ * The configured reasoning effort, narrowed, or undefined when none is configured.
+ *
+ * OpenAI only, because it is the one provider whose every surface sends the value: its chat
+ * surface as `reasoning_effort`, its agent surface as the Responses API's `reasoning.effort`.
+ * Gemini, Ollama and a custom endpoint have no such field on either surface, so accepting the
+ * variable for them would be a setting that silently does nothing.
+ *
+ * Exported separately from `validateConfig` because the Ollama and custom chat providers replace
+ * the base validation with their own and must still refuse it.
+ *
+ * @throws LLMConfigError for a value outside `LLM_MODEL_EFFORTS`, or any value with a provider
+ *         other than openai
+ */
+export function validModelEffort(config: LLMConfig): LLMModelEffort | undefined {
+  const effort = config.modelEffort;
+  if (effort === undefined) return undefined;
+  if (!isModelEffort(effort)) throw new LLMConfigError(unknownEffortMessage(effort), config.provider);
+  if (config.provider !== "openai") throw new LLMConfigError(effortProviderMessage(config.provider), config.provider);
+  return effort;
+}
+
+function isModelEffort(value: string): value is LLMModelEffort {
+  return (LLM_MODEL_EFFORTS as readonly string[]).includes(value);
+}
+
+// Built on one line each: bun's line coverage under-counts the continuation lines of multi-line
+// string concatenation.
+const unknownEffortMessage = (effort: string): string =>
+  `Unknown LLM_MODEL_EFFORT "${effort}". Allowed values: ${LLM_MODEL_EFFORTS.join(", ")}.`;
+
+const effortProviderMessage = (provider: string): string =>
+  `LLM_MODEL_EFFORT applies to LLM_PROVIDER=openai only; unset it for the ${provider} provider.`;
 
 /**
  * Validate LLM configuration
@@ -162,6 +206,8 @@ export function validateConfig(config: LLMConfig): void {
   if (!config.model || config.model.trim() === "") {
     throw new LLMConfigError(`Model name is required for ${config.provider} provider.`, config.provider);
   }
+
+  validModelEffort(config);
 }
 
 // ============================================================================
@@ -191,5 +237,6 @@ export function getSafeConfigForLogging(config: LLMConfig): Record<string, strin
     model: config.model,
     apiUrl: config.apiUrl,
     apiKey: config.apiKey ? "***" : undefined,
+    modelEffort: config.modelEffort,
   };
 }

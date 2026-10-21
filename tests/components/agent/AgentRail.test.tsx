@@ -1205,6 +1205,32 @@ describe("AgentRail", () => {
   });
 
   /**
+   * A reasoning effort the model refuses is the configuration's fault, not the model's: the
+   * route answers it as a configuration error (503), never as the capability gate's 422. The
+   * rail shows the sentence, names no missing capability and offers no Plan mode, because
+   * Plan mode sends the same effort and would fail the same way.
+   */
+  test("a refused reasoning effort is a configuration error, with no capability chips and no Plan mode offer", async () => {
+    const said =
+      'LLM_MODEL_EFFORT "none" was refused for the model "gpt-6.1-sol" (openai): gpt-6.1-sol only supports the following reasoning efforts: low, medium, high, xhigh, max. Change LLM_MODEL_EFFORT or unset it.';
+    globalThis.fetch = mock(async () =>
+      jsonResponse({ error: said, code: "LLM_CONFIG", statusCode: 503 }, 503),
+    ) as unknown as typeof fetch;
+    const { getByTestId, findByTestId, queryByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+
+    fireEvent.click(getByTestId("agent-mode-agent"));
+    fireEvent.change(getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+    await act(async () => {
+      fireEvent.click(getByTestId("agent-start"));
+    });
+
+    expect((await findByTestId("agent-error")).textContent).toContain(said);
+    expect(queryByTestId("agent-model-refusal")).toBeNull();
+    expect(queryByTestId("agent-model-refusal-missing")).toBeNull();
+    expect(queryByTestId("agent-model-refusal-use-planning")).toBeNull();
+  });
+
+  /**
    * The refused model (#331 T4).
    *
    * A `422` is the one start failure that is a verdict about the MODEL: the capability

@@ -1,0 +1,42 @@
+-- fixture: full
+-- Migration generated at 2026-10-19T12:00:00.000Z
+-- Dialect: spark
+-- Changes: 1 added, 1 removed, 2 modified
+
+-- Objects that are not tables
+-- Skipped v_orders (view): only tables are created, altered or dropped here; change it by hand. If it reads a table changed below, drop it before this script and recreate it after.
+
+-- Drop removed tables
+DROP TABLE IF EXISTS `app`.`legacy`;
+
+-- Create new tables
+CREATE TABLE `app`.`users` (
+  `id` integer NOT NULL,
+  `note` varchar(20) DEFAULT 'abc',
+  `bare` TEXT,
+  `y` Int32 DEFAULT MATERIALIZED toYear(d),
+  `empty` text DEFAULT 
+);
+-- Apache Spark: Cannot declare a primary key. Spark accepts a primary key only as an informational NOT ENFORCED constraint, in a catalog that implements constraints.
+-- Apache Spark: Cannot generate index DDL. Spark SQL's index statements work only in a catalog whose tables support indexes; write the index change by hand.
+-- Apache Spark: Cannot generate index DDL. Spark SQL's index statements work only in a catalog whose tables support indexes; write the index change by hand.
+-- Apache Spark: Cannot add a foreign key. Spark accepts a foreign key only as an informational NOT ENFORCED constraint, in a catalog that implements constraints.
+
+-- Modify existing tables
+-- Alter table: orders
+-- Apache Spark: Cannot drop a foreign key. Spark accepts a foreign key only as an informational NOT ENFORCED constraint, in a catalog that implements constraints.
+-- Apache Spark: Cannot generate index DDL. Spark SQL's index statements work only in a catalog whose tables support indexes; write the index change by hand.
+-- Apache Spark: Cannot generate index DDL. Spark SQL's index statements work only in a catalog whose tables support indexes; write the index change by hand.
+ALTER TABLE `app`.`orders` ADD COLUMN `extra` integer;
+ALTER TABLE `app`.`orders` ADD COLUMN `bare2` TEXT;
+ALTER TABLE `app`.`orders` DROP COLUMN `old`;
+-- Apache Spark: Cannot alter column "status". Whether a column's type, nullability or default can change depends on the catalog and the table format; write the change by hand.
+-- Apache Spark: Cannot alter column "amount". Whether a column's type, nullability or default can change depends on the catalog and the table format; write the change by hand.
+-- Apache Spark: Cannot alter column "calc". Whether a column's type, nullability or default can change depends on the catalog and the table format; write the change by hand.
+-- Apache Spark: Cannot alter column "line break". Whether a column's type, nullability or default can change depends on the catalog and the table format; write the change by hand.
+-- Apache Spark: Cannot generate index DDL. Spark SQL's index statements work only in a catalog whose tables support indexes; write the index change by hand.
+-- Apache Spark: Cannot generate index DDL. Spark SQL's index statements work only in a catalog whose tables support indexes; write the index change by hand.
+-- Apache Spark: Cannot add a foreign key. Spark accepts a foreign key only as an informational NOT ENFORCED constraint, in a catalog that implements constraints.
+
+-- fixture: none
+-- No schema changes detected.

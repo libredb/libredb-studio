@@ -314,20 +314,31 @@ const reportOnInventory = (claim: string): ScriptedTurn =>
 
 // ─── the surface ────────────────────────────────────────────────────────────
 
+/**
+ * A chat-wire endpoint, because the request this records is read as Chat Completions `messages`; the `openai` kind
+ * sends the Responses API's `input` instead. Only the system prompt is recorded, so which kind carries it does not
+ * reach the golden.
+ */
 const CLASSIFIER_ENV = {
-  LLM_PROVIDER: "openai",
+  LLM_PROVIDER: "custom",
   LLM_API_KEY: "sk-test",
   LLM_MODEL: "gpt-4o-mini",
-  LLM_API_URL: "https://api.openai.com/v1",
+  LLM_API_URL: "https://llm.internal/v1",
 } as const;
+
+/** Model keys cleared for the call rather than set: only the openai provider may carry an effort. */
+const CLASSIFIER_ENV_CLEARED = ["LLM_MODEL_EFFORT"] as const;
 
 /**
  * The system prompt the workflow classifier sends for one language, read off a transport that records the request
- * and then fails. The four model keys are saved and put back as `tests/helpers/agent-model-env.ts` does.
+ * and then fails. The model keys are saved and put back as `tests/helpers/agent-model-env.ts` does.
  */
 async function classifierPrompt(statementLanguage: "kubectl" | "mongo"): Promise<string> {
-  const saved = new Map(Object.keys(CLASSIFIER_ENV).map((key) => [key, process.env[key]]));
+  const saved = new Map(
+    [...Object.keys(CLASSIFIER_ENV), ...CLASSIFIER_ENV_CLEARED].map((key) => [key, process.env[key]]),
+  );
   Object.assign(process.env, CLASSIFIER_ENV);
+  for (const key of CLASSIFIER_ENV_CLEARED) delete process.env[key];
   let sent: { role?: unknown; content?: unknown }[] | undefined;
   try {
     await classifyAgentWorkflow("Which customer placed the larger order?", {

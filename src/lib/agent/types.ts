@@ -569,7 +569,7 @@ export interface AgentInventoryObject {
   /** The ADDRESS a statement can be written against, qualified wherever segments were read. */
   readonly name: string;
   readonly columns: readonly ColumnSchema[];
-  readonly indexes: readonly IndexSchema[];
+  readonly indexes: readonly IndexSchema[] | { readonly unavailable: string };
   /** Absent where the reading carries no relations at all, which is not the same as none. */
   readonly foreignKeys?: readonly ForeignKeySchema[];
   /** Only where the engine counts, and never a number this server derived. */

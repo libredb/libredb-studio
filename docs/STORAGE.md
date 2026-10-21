@@ -488,7 +488,7 @@ nothing to switch on and nothing to configure.
 
 ### What is encrypted
 
-Eleven fields, all on a saved connection (`src/lib/storage/connection-secrets.ts` is the authority):
+Eleven fields, all on a saved connection (`src/lib/storage/secret-fields.ts` is the authority):
 
 | Field | What it is |
 |-------|------------|

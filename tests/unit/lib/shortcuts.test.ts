@@ -51,4 +51,17 @@ describe("SHORTCUT_GROUPS", () => {
       expect(listedKeys).toContain(shortcutLabel(shortcut));
     }
   });
+
+  // The grid's keys are its own `onKeyDown` (`src/components/results-grid/keyboard.ts`) plus the
+  // browser's copy event, none of them a Monaco command, so they are listed by hand like the
+  // object tree's. This pins the ones a reader of the dialog most needs to find.
+  test("the results grid lists how to select and copy cells", () => {
+    const gridGroup = SHORTCUT_GROUPS.find((g) => g.heading === "Results grid");
+    expect(gridGroup).toBeDefined();
+    const descriptions = gridGroup!.shortcuts.map((s) => s.description).join("\n");
+    expect(descriptions).toContain("Copy the selected cells");
+    expect(descriptions).toContain("Select every cell");
+    expect(descriptions).toContain("Extend the selection");
+    expect(descriptions).toContain("Edit the active cell");
+  });
 });

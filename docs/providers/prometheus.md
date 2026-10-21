@@ -314,14 +314,13 @@ These partial records deliberately have none:
 
 | Record | Where | Why there is no entry |
 |---|---|---|
-| `DIALECT_TYPES` | `src/lib/export/result-export.ts` | An export's column types map SQL DDL spellings; PromQL has no DDL, so the standard spellings stand |
+| `export.ddlTypes` (`STANDARD_DDL_TYPES`) | `src/lib/db/providers/timeseries/prometheus/sql-writing.ts` | An export's column types map SQL DDL spellings; PromQL has no DDL, so the standard spellings stand |
 | The engine overlays' `catalogCapture` | `src/lib/agent/languages/sql/engines/` | Plan mode grounds Prometheus through the provider's own object surface, not through composed catalog statements |
 | The engine overlays' `catalogRead`, `planEstimate` | `src/lib/agent/languages/sql/engines/` | They serve `AGENT_EXECUTION_ENGINES`, and agent execute mode is out of scope for PromQL (#1085, section 2) |
 | The engine overlays' `statistics` | `src/lib/agent/languages/sql/engines/` | Prometheus holds no table statistics a run knows how to read; its series counts are TSDB top-N figures, not estimates |
-| `ENGINE_URI_SCHEMES` | `src/lib/connection-string-parser.ts` | No connection string ([§4.5](#45-no-connection-string)) |
+| `ENGINE_URI_SCHEMES` | `src/lib/db/connection-string/index.ts` | No connection string ([§4.5](#45-no-connection-string)) |
 | `createTable` | `src/lib/db/types.ts` (`CreateTableSpec`) | Only engines that declare a `createTable` reach the Create Table form; Prometheus declares none |
-| `SQL_GRAMMARS` | `src/lib/sql/grammar.ts` | PromQL is not SQL, and `prometheus` is in `NON_SQL_DIALECTS`. Nothing on the run path reads PromQL under a SQL grammar: the confirmation gate answers from the `prometheus` row of `NON_SQL_DESTRUCTIVE_VOCABULARY` before any SQL reading ([§5.1](#51-the-call)), the multi-statement route is taken only where `queryLanguage` is `sql`, and the provider's own `prepareQuery` returns the text unchanged |
-| `NO_PORTABLE_INDEX_DDL`, `NO_FOREIGN_KEYS`, `FOREIGN_KEY_ONLY_IN_CREATE_TABLE` | `src/lib/schema-diff/migration-generator.ts` | They qualify index and foreign-key DDL for engines that have table DDL at all; how the generator treats `prometheus` as a whole is recorded in `MODIFIED_COLUMN_COVERAGE` and `TRANSACTION_WRAPPER_COVERAGE` in `tests/unit/schema-diff/migration-generator.test.ts` |
+| `SQL_GRAMMAR` | `src/lib/db/sql-grammar/` | PromQL is not SQL, and the `prometheus` row declares `readsSqlText: false` ([§5.7](#57-sql-grammar)). Nothing on the run path reads PromQL under a SQL grammar: the confirmation gate answers from the `prometheus` row of `NON_SQL_DESTRUCTIVE_VOCABULARY` before any SQL reading ([§5.1](#51-the-call)), the multi-statement route is taken only where `queryLanguage` is `sql`, and the provider's own `prepareQuery` returns the text unchanged |
 | `AGENT_EXECUTION_ENGINES` | `src/lib/agent/engine-support.ts` | Agent execute mode is a non-goal; plan mode and the `operations` workflow still reach the server |
 
 `src/lib/sql/identifier.ts` is a `switch` with a `default` and needs no case.
@@ -341,7 +340,8 @@ These partial records deliberately have none:
 | `database` | No | No Database box renders: a Prometheus server is one TSDB, so there is nothing to select |
 | TLS panel | Yes | [§4.4](#44-tls) |
 
-The two dialog strings are declared on the `prometheus` entry of `DB_UI_CONFIG` (`fieldLabels`, `fieldHints`) rather than chosen by a type test in the dialog; `docs/BACKLOG.md` U36 records moving the older engines onto the same declaration.
+The two dialog strings are declared on the `prometheus` entry of `CONNECTION_FORM` in `src/lib/db/connection-form.ts` (`fieldLabels`, `fieldHints`) rather than chosen by a type test in the dialog.
+Every engine's dialog labels, placeholders and hints come from that declaration.
 No new `DatabaseConnection` field exists, so the bearer token rides `password`, which the connection store already classifies as a secret.
 
 ### 4.2 Authentication
@@ -381,6 +381,15 @@ Each case is exercised by a real handshake against a local `node:https` server i
 `showConnectionStringToggle: false`: `http://` and `https://` already parse as ClickHouse in `src/lib/connection-string-parser.ts`, and two engines cannot own one scheme.
 There is no path-prefix field either, so Grafana Mimir (`/prometheus`), Grafana Cloud's hosted Prometheus (its query URL ends in `/api/prom` or `/prometheus`), GreptimeDB (`/v1/prometheus`) and proxies that mount the API under a prefix are not reachable in this version (maintainer decision, 2026-09-23).
 The host field cannot carry the prefix instead: a host holding `/` is refused before any request is sent.
+
+### Connection string
+
+`prometheus` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/timeseries/prometheus/connection-string.ts)).
+
+### Execution UI
+
+The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `prometheus` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
+Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/timeseries/prometheus/execution-ui.ts).
 
 ---
 
@@ -463,6 +472,14 @@ Both the cancel route and the query route detect cancellation by presence (`supp
 None: `supportsExplain` is `false`, and the plan view is not offered.
 
 ---
+
+### 5.7 SQL grammar
+
+How this engine's statement text is read is declared once, in [`src/lib/db/providers/timeseries/prometheus/sql-grammar.ts`](../../src/lib/db/providers/timeseries/prometheus/sql-grammar.ts), the `prometheus` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+`readsSqlText` is `false`: `prometheus` takes a PromQL expression (#1085), whose strings escape with a backslash, so a SQL span reader reads `'it\'s'` as a literal that never closes, the false prompt #297 measured on Redis; the provider extends `BaseDatabaseProvider`.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` in `src/lib/db/destructive-commands.ts` instead of a SQL reading.
+Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
+Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
 
 ## 6. Schema introspection
 
@@ -602,6 +619,19 @@ A direct call of `runMaintenance` is refused with a `QueryError` saying that com
 `entityName` "Metric" and "Metrics", `rowName` and `rowNamePlural` "series" and "series", `selectAction` "Run Instant Query", `generateAction` "Generate Query", `statementLanguage` "PromQL", and the two empty-state sentences of [§7](#7-monitoring--health).
 The maintenance labels carry PromQL-true wording although they are never rendered.
 
+### SQL writing
+
+[`prometheus/sql-writing.ts`](../../src/lib/db/providers/timeseries/prometheus/sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+A literal is written by `literalStandard` and read back by `unquoteStandard`: the quote is doubled and a backslash is data.
+A name is quoted by `identifierDoubleQuoted`, the SQL standard form: a double-quoted name with an inner double quote doubled.
+There is no placeholder (`placeholder: null`), so a generator quotes the value with `quoteLiteral` instead of emitting a bind.
+PromQL is not SQL (#1085), so this is the same reading as the engines that declare `queryLanguage: "json"`.
+A PromQL string escapes with a backslash, but that is not a SQL literal and nothing here builds one.
+Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+
+The module's `export` field writes a result export's CREATE TABLE and INSERT from the shared building blocks alone: `STANDARD_DDL_TYPES` for the column types, `NOTHING_STANDS_ALONE` and `NO_BARE_SPELLING`, so every bare declared name is re-spelled from its family, `NULL_NON_FINITE` for NaN and the infinities, and `binaryStandardHex` for a binary cell (`X'0102'`).
+The engine declares `queryLanguage: "promql"`, so no SQL statement is ever built for it to read, and a file exported from it is meant to run somewhere else: every bare name in it is re-spelled portably rather than kept as one engine's private word.
+
 ---
 
 ## 10. Error handling
@@ -719,6 +749,18 @@ See [`docs/API_DOCS.md`](../API_DOCS.md) for the full request and response contr
 - **The overview's metric count is unavailable only when a full list of `TSDB_LABEL_SCAN_LIMIT` label names omits the `__name__` entry** (M2), and a listed entry is the full count at any length of that list.
 - **The chart tab draws a missing sample, and a `NaN` or `Inf` among numbers, at 0**, so a raw range over targets scraped at their own offsets charts false zeros, while a stepped subquery charts correctly as long as every series has a sample at every step; a column 20% or more `NaN` or `Inf` is not drawn as a series, and becomes the default x axis only while it holds at most 50 distinct values ([§3.7](#37-nan-and-inf-stay-strings-and-what-the-chart-does-with-them), [§5.2](#52-result-shaping), `docs/BACKLOG.md` U44).
 - **Queries compete with the server's own rule evaluation** ([§3.4](#34-the-servers-query-slots-are-shared)).
+
+---
+
+## Migration DDL
+
+[`PROMETHEUS_MIGRATION_DDL`](../../src/lib/db/providers/timeseries/prometheus/migration-ddl.ts) is what the schema-diff migration generator writes for `prometheus`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
+`prometheus` text is PromQL, not SQL (`readsSqlText: false`, [§5.7](#57-sql-grammar)), so there is no table DDL to wrap (#284, #1085).
+
+The refusal reason it prints, verbatim:
+
+- "A metric is written by scrapes and recording rules, not declared with columns, so there is no column definition to change."
 
 ---
 

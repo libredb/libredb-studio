@@ -154,6 +154,15 @@ from a connection yet, and this provider declares only the three fields it reads
 collected and dropped is worse than one that is absent. Declaring credentials without TLS would be
 worse still: it would carry a password in cleartext, and half an authentication is worse than none.
 
+### Connection string
+
+`sparkplug` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/industrial/sparkplug/connection-string.ts)).
+
+### Execution UI
+
+The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `sparkplug` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
+Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/industrial/sparkplug/execution-ui.ts).
+
 ## 5. Query interface
 
 A read request is a JSON object and every field in it is optional: the window in seconds and the row
@@ -165,6 +174,14 @@ exist.
 The window travels to the reader rather than being echoed back: an earlier version accepted `seconds`
 up to 300, printed it in the result's own sentence, and served rows from the read the connect had
 already done, so a user who asked for 42 seconds was told they got 42 and got 3.
+
+### 5.1 SQL grammar
+
+How this engine's statement text is read is declared once, in [`src/lib/db/providers/industrial/sparkplug/sql-grammar.ts`](../../src/lib/db/providers/industrial/sparkplug/sql-grammar.ts), the `sparkplug` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+`readsSqlText` is `false`: the console takes one JSON read request naming a group, an edge node and a window, so no span of it is SQL (#1720).
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` in `src/lib/db/destructive-commands.ts` instead of a SQL reading.
+Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
+Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
 
 ## 6. Schema introspection
 
@@ -225,6 +242,17 @@ which is a field of the connection rather than a catalog chosen per request.
 The panel never says "Sparkplug Compatible" or "Host Application". A Host Application MUST publish
 STATE (1.4.1, 10.1.2), and this provider publishes nothing.
 
+### SQL writing
+
+[`sparkplug/sql-writing.ts`](../../src/lib/db/providers/industrial/sparkplug/sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+A literal is written by `literalStandard` and read back by `unquoteStandard`: the quote is doubled and a backslash is data.
+A name is quoted by `identifierDoubleQuoted`, the SQL standard form: a double-quoted name with an inner double quote doubled.
+There is no placeholder (`placeholder: null`), so a generator quotes the value with `quoteLiteral` instead of emitting a bind.
+No generator calls `quoteLiteral` for Sparkplug: a read request writes its names into JSON.
+Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+
+The module's `export` field writes a result export's CREATE TABLE and INSERT from the shared building blocks alone: `STANDARD_DDL_TYPES` for the column types, `NOTHING_STANDS_ALONE` and `NO_BARE_SPELLING`, so every bare declared name is re-spelled from its family, `NULL_NON_FINITE` for NaN and the infinities, and `binaryStandardHex` for a binary cell (`X'0102'`).
+
 ## 10. Error handling
 
 ### 10.1 Every refusal leaves as a `QueryError`
@@ -264,6 +292,16 @@ reporting every mutation caught looks identical to a run that measured nothing.
 - How often a window of 3, 10 or 60 seconds actually catches a certificate is unmeasured. A birth is
   published at QoS 0 and not retained, so on a broker that does not store certificates a reader sees
   one only while an edge node connects or answers somebody else's rebirth.
+
+## Migration DDL
+
+[`SPARKPLUG_MIGRATION_DDL`](../../src/lib/db/providers/industrial/sparkplug/migration-ddl.ts) is what the schema-diff migration generator writes for `sparkplug`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
+A metric's shape is the birth certificate its edge node publishes, and the encoder has no function that writes a PUBLISH, so there is no table DDL to wrap either (#1720).
+
+The refusal reason it prints, verbatim:
+
+- "A Sparkplug metric's shape is declared in the birth certificate its edge node publishes, not in columns a client can change, and this provider's encoder has no function that writes a PUBLISH, so there is no column definition to change."
 
 ## 13. References
 

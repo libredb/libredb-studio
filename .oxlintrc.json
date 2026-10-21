@@ -64,5 +64,5 @@
       }
     }
   ],
-  "ignorePatterns": ["dist/**", ".next/**", "public/monaco/**", "out/**", "build/**", "coverage/**", "node_modules/**", "snap-payload/**", "desktop/src-tauri/payload/**", "desktop/src-tauri/target/**", "desktop/src-tauri/bin/**", ".claude/**", "next-env.d.ts"]
+  "ignorePatterns": ["dist/**", ".next/**", "public/monaco/**", "out/**", "build/**", "coverage/**", "node_modules/**", "snap-payload/**", "desktop/src-tauri/payload/**", "desktop/src-tauri/target/**", "desktop/src-tauri/bin/**", ".claude/**", "next-env.d.ts", "vscode-extension/dist/**", "vscode-extension/out/**", "vscode-extension/dist-vsix/**", "vscode-extension/.vscode-test/**", "vscode-extension/coverage/**", "vscode-extension/node_modules/**"]
 }

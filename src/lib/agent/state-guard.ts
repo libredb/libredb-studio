@@ -56,8 +56,8 @@
  * them.
  *
  * Neither key set is written out by hand. The credential NAMES are derived from
- * the field classifications in `src/lib/storage/connection-secrets.ts` — the
- * repository's single answer to "which stored fields are credentials" — plus one
+ * the field classifications in `src/lib/storage/secret-fields.ts`, the
+ * repository's single answer to "which stored fields are credentials", plus one
  * map for the LLM settings, which had none. The result names are derived from
  * `QueryResult`'s own keys the same way.
  *
@@ -151,6 +151,7 @@ const LLM_CONFIG_FIELDS: Record<keyof LLMConfig, FieldClass> = {
   model: "public",
   apiUrl: "public",
   providerExplicit: "public",
+  modelEffort: "public",
 };
 
 type ResultFieldClass = "payload" | "summary";

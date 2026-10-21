@@ -46,6 +46,7 @@ import { LibSQLHranaTransport } from "@/lib/db/providers/sql/libsql/hrana-transp
 import { normalizeSQLiteBigInt, toSQLiteBindValue } from "@/lib/db/providers/sql/sqlite-driver";
 import { fitsJavaScriptNumber, isSQLiteInt64Digits } from "@/lib/db/providers/sql/sqlite-int64";
 import type { DatabaseConnection, DatabaseType } from "@/lib/db/types";
+import { platformTimeoutMs } from "../../helpers/platform-timeout";
 
 // ============================================================================
 // The shapes, once
@@ -497,13 +498,19 @@ describe("SQLite's 64-bit bind boundary is stated once", () => {
     expect(tokens).toContain(token);
   });
 
-  test(`no provider but ${HOME_FILE} spells the boundary`, () => {
-    const found = sources
-      .filter((file) => file !== HOME_FILE)
-      .flatMap((file) => findDuplications(file, readProviderSource(file)));
+  // Parses every provider file, which is 0.8s alone with coverage and 6.4s to 8.3s under a
+  // 15% CPU quota, past bun's 5s default, so it carries its own bound.
+  test(
+    `no provider but ${HOME_FILE} spells the boundary`,
+    () => {
+      const found = sources
+        .filter((file) => file !== HOME_FILE)
+        .flatMap((file) => findDuplications(file, readProviderSource(file)));
 
-    expect(violationReport(found)).toBe("");
-  });
+      expect(violationReport(found)).toBe("");
+    },
+    platformTimeoutMs(40_000),
+  );
 
   // The guard reads numbers, so a copy spelled `2n ** 63n - 1n` would slip past it.
   // These two assertions close the likeliest version of that: the providers that must

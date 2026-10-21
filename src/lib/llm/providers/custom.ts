@@ -14,6 +14,7 @@ import {
   LLMConfigError,
 } from "../types";
 import { createStreamFromSSEResponse } from "../utils/streaming";
+import { validModelEffort } from "../utils/config";
 import { logger } from "@/lib/logger";
 
 // ============================================================================
@@ -40,6 +41,8 @@ export class CustomProvider extends BaseLLMProvider {
     if (!this.config.model || this.config.model.trim() === "") {
       throw new LLMConfigError("Model name is required for Custom provider.", "custom");
     }
+
+    validModelEffort(this.config);
   }
 
   /**

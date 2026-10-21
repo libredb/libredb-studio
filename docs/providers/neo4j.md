@@ -239,6 +239,15 @@ The calendar releases, 2025.x and 2026.x, are not refused and connect untested: 
 The overview's version reads `5.26.31 community` on the tested series, `2026.01.0 enterprise (untested)` outside it, and `unknown` when the read at connect failed.
 Enterprise connects too; the monitoring differences are in section 7.
 
+### Connection string
+
+`neo4j` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/graph/neo4j/connection-string.ts)).
+
+### Execution UI
+
+The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `neo4j` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
+Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/graph/neo4j/execution-ui.ts).
+
 ## 5. Query interface
 
 ### 5.1 One statement per run
@@ -317,6 +326,14 @@ Export PNG draws the whole graph on the theme's background, and Export JSON writ
 Masking follows the grid's rule: when the grid would mask, a property whose key the masking config flags is masked in the captions, the inspector and both exports.
 A node or relationship found under a column the grid masks by name has every property masked with that column's pattern, as the grid masks the whole cell; its labels, type and elementId stay.
 
+### 5.7 SQL grammar
+
+How this engine's statement text is read is declared once, in [`src/lib/db/providers/graph/neo4j/sql-grammar.ts`](../../src/lib/db/providers/graph/neo4j/sql-grammar.ts), the `neo4j` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+`readsSqlText` is `false`: `neo4j` takes one Cypher statement, whose strings escape with a backslash, where `//` opens a comment and a backtick quotes a name, so a SQL span reader would misread where a literal ends; the provider reads it with the graph lexer (`src/lib/db/graph/cypher/lexer.ts`) and refuses every write before sending it.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` in `src/lib/db/destructive-commands.ts` instead of a SQL reading.
+Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
+Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
+
 ## 6. Schema introspection
 
 ### 6.1 The object surface (#789)
@@ -380,6 +397,19 @@ None: `supportsMaintenance` is false, no operation is declared, and a maintenanc
 `queryLanguage: "cypher"` with no `queryDialect`, `defaultPort: 7687`, `enforcesReadOnly: true`, `supportsMaintenance: false`, `statementTerminator: "none"`, one container level (`Database`), the four kinds of section 6.1, `schemaRefreshPattern: "(?!)"`, which no statement matches, and `false` for explain, external query limiting, table creation, inline row edits, result pagination, transactions, connection strings, foreign keys and derived groupings.
 Each object of the tree is a "graph object", the noun plan mode counts the whole inventory under, and a label's rows are each a "node"; its read is "Match Nodes" and its generator "Generate Cypher".
 The editor's Cypher language is the shared lexer as a Monaco tokens provider, with completion of the schema's labels and relationship types, the allowlisted procedures after `CALL` and the allowed forms after `SHOW`; there is no Cypher formatter, so the SQL Format action does not apply to a Cypher tab.
+
+### SQL writing
+
+[`neo4j/sql-writing.ts`](../../src/lib/db/providers/graph/neo4j/sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+A literal is written by `literalBackslash` and read back by `unquoteBackslash`: every escape, the quote's included, is spelled with a backslash, and doubling is not part of the grammar.
+A name is quoted by `identifierDoubleQuoted`, the SQL standard form: a double-quoted name with an inner double quote doubled.
+There is no placeholder (`placeholder: null`), so a generator quotes the value with `quoteLiteral` instead of emitting a bind.
+Cypher spells its escapes with a backslash (`\'`, `\"`, `\\`, `\n`, `\uXXXX`), and a doubled quote is not one of them: it closes one string and opens the next.
+The graph lexer ([`src/lib/db/graph/cypher/lexer.ts`](../../src/lib/db/graph/cypher/lexer.ts)) decodes the same set, so the two read a literal alike.
+Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+
+The module's `export` field writes a result export's CREATE TABLE and INSERT from the shared building blocks alone: `STANDARD_DDL_TYPES` for the column types, `NOTHING_STANDS_ALONE` and `NO_BARE_SPELLING`, so every bare declared name is re-spelled from its family, `NULL_NON_FINITE` for NaN and the infinities, and `binaryStandardHex` for a binary cell (`X'0102'`).
+The engine declares `queryLanguage: "cypher"`, so no SQL statement is ever built for it to read, and a file exported from it is meant to run somewhere else: every bare name in it is re-spelled portably rather than kept as one engine's private word.
 
 ## 10. Error handling
 
@@ -478,6 +508,16 @@ Each line is one run.
 - No verified TLS through an SSH tunnel, filed as D142.
 - No client certificate, no routing `neo4j://` URI, no cluster routing and no Aura in this version.
 - The UI shows the plain name "Neo4j" and a generic graph icon, never Neo4j's logo.
+
+## Migration DDL
+
+[`NEO4J_MIGRATION_DDL`](../../src/lib/db/providers/graph/neo4j/migration-ddl.ts) is what the schema-diff migration generator writes for `neo4j`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
+`neo4j` text is a Cypher statement, not SQL, and the provider is read-only, so there is no table DDL to wrap (#284).
+
+The refusal reason it prints, verbatim:
+
+- "A node label groups nodes whose properties are not declared columns, so there is no column definition to change."
 
 ## 14. References
 

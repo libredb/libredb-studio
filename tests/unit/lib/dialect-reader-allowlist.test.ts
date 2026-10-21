@@ -133,7 +133,7 @@ const ALLOWED: readonly Reader[] = [
 const NOT_DIALECT_READERS: readonly Reader[] = [
   {
     path: "src/hooks/use-query-execution.ts",
-    text: 'const keepKeyword = activeConnection.type === "redis" ? "EXEC" : "COMMIT";',
+    text: "const keepKeyword = executionUiFor(activeConnection.type).commitKeyword;",
     owner: "picks the keyword that keeps an open transaction, an engine fact and not a dialect reader",
   },
 ];

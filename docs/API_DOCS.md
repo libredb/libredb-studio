@@ -439,6 +439,8 @@ Detailed health check for a specific database connection.
 > a document other people build clients against: the route's failure path is
 > `createErrorResponse` (`src/lib/api/errors.ts`) and it never composes a reading.
 
+A body that is not a JSON object answers `400 { "error": "Invalid request body" }`, as on [`POST /api/db/query`](#post-apidbquery).
+
 ---
 
 #### POST /api/db/query
@@ -502,7 +504,8 @@ A value the etcd provider's cell bound cut sets no `wasLimited`: its encoding ga
 A shorter result under an injected cap has `wasLimited: false`.
 Under that cap, a result of exactly `limit` rows has `wasLimited: false` and `hasMore: false`: the statement that runs asks for `limit + 1` rows, the extra row is never answered, and only its arrival makes `hasMore` and `wasLimited` true (#1440).
 `POST /api/db/transaction` answers a query inside a transaction by the same rule. Because the statement that runs asks for one row more, a `SELECT ... FOR UPDATE` without its own `LIMIT` in a held transaction now locks `limit + 1` rows.
-`options.limit` and `options.offset` must be non-negative integers when sent; anything else is answered `400` before a provider is reached.
+`options.limit` and `options.offset` must be non-negative integers below `Number.MAX_SAFE_INTEGER` (9007199254740991) when sent, which keeps the `limit + 1` above a safe integer too; anything else is answered `400` before a provider is reached.
+`POST /api/db/multi-query` holds a script's `options` to the same rule, with the same `400` and sentence, before it splits anything.
 
 `hasMore` is `wasLimited && rows.length > limit` over the probed statement, with `wasLimited` read from the server's own limiter alone, and both halves matter.
 A bound the provider reported sets `wasLimited` and never `hasMore`, because no `offset` can advance a bound the server did not write.
@@ -555,6 +558,20 @@ and a request that runs somewhere names the database by name in `catalog`, besid
 connection for a statement, transaction or maintenance. Five databases already open and all busy
 answers `503 POOL_EXHAUSTED`.
 
+**A `sql` that is not a string:**
+
+A `sql` that is present but not a string (a number, `0` included, an object, an array, `true` or `false`) answers `400 { "error": "sql must be a string" }` on every connection type, before any provider resolves or any connection opens.
+`POST /api/db/multi-query` and the `query` action of `POST /api/db/transaction` answer it the same way.
+A missing, `null` or empty `sql` keeps its own answer: `400 { "error": "Connection and query are required" }` here and on `POST /api/db/multi-query`, and `400 { "error": "SQL query is required for transaction query" }` on the transaction route.
+
+**A body that is not a JSON object:**
+
+A body that is not JSON, or JSON that is not an object (`null`, an array, a number, a string, a boolean), answers `400 { "error": "Invalid request body" }` before any connection resolves.
+The same answer comes from `POST /api/db/multi-query`, `/api/db/transaction`, `/api/db/cancel`, `/api/db/profile`, `/api/db/health`, `/api/db/pool-stats` and both maintenance routes.
+`POST /api/db/disconnect` and `POST /api/db/test-connection` answer it in their own envelope, `400 { "success": false, "error": "Invalid request body" }`.
+`POST /api/db/monitoring` answers JSON that is not an object the same way, and keeps `400 { "error": "Invalid JSON in request body" }` for text that is not JSON.
+Its `options`, when sent, must be an object as well: anything else (`null`, a number, an array) answers `400 { "error": "options must be an object" }` before any connection resolves.
+
 **A connection type's console text bound:**
 
 A connection type can declare a bound on its statement text in UTF-8 bytes, on its row in `src/lib/db/destructive-commands.ts`.
@@ -564,7 +581,6 @@ The bound is read after the request body is parsed, because the type that select
 | Condition | Status | Body |
 |-----------|--------|------|
 | `sql` is over the declared bound | `413` | `{ "error": "The statement is <n> bytes in UTF-8, over the <limit>-byte limit for this connection type. Shorten it to run it." }`, which never repeats the text |
-| `sql` is not a string | `400` | `{ "error": "sql must be a string" }` |
 
 `POST /api/db/multi-query` refuses every connection whose type declares such a bound with `400 { "error": "This connection type runs one statement per request: send it to POST /api/db/query, because this route would split its text into several requests." }`, before it splits anything.
 Milvus and Qdrant each declare a bound of 1,048,576 bytes and InfluxDB (InfluxQL), Oxia, S3-compatible object storage, Kubernetes and Firestore one of 65,536 bytes each, and no other shipped engine declares one, so neither answer changes anything for a connection of another type.
@@ -1142,6 +1158,9 @@ Without this the value reached the provider's identifier escaper, where it faile
 empty string is not malformed: it reads as a request that named no container, the same way an empty
 `target` reads as the whole-database form.
 
+`target` gets the same check, before any provider is opened and before any audit row is written: a value that is neither absent nor a string answers `{ "error": "\"target\" must be a string naming the object to run against" }` with `400`.
+Without it a number failed in the provider as `identifier.replace is not a function`, answered `500`, and the audit row recorded the serialized value.
+
 A fifth `400` gates what the operation may be *pointed at*. Each provider declares that separately
 (`maintenanceOperationSpecs`, documented per engine under `docs/providers/`), and `target` selects
 which half of the declaration this request is: absent or empty is a whole-database request, a name
@@ -1334,6 +1353,22 @@ A kind that has no columns is a `200` carrying three empty arrays and never a re
 Oracle answers that shape for every kind whose role is not `relation`, MySQL for every kind its own
 column predicate rejects, and a caller is expected to render "nothing to show" rather than treat the
 engine as broken.
+
+**Unavailable indexes (`{ unavailable: string }`):**
+When the underlying engine refuses permission to read index metadata (such as ClickHouse answering code `497 ACCESS_DENIED` on `system.data_skipping_indices` for a restricted user), `indexes` is returned as `{ "unavailable": "<reason>" }` rather than an array:
+
+```json
+{
+  "path": ["analytics", "events"],
+  "columns": [
+    { "name": "id", "type": "UInt64", "nullable": false, "isPrimary": true }
+  ],
+  "indexes": { "unavailable": "Not enough privileges. To execute this query, it's necessary to have grant SELECT on system.data_skipping_indices" },
+  "foreignKeys": []
+}
+```
+
+This preserves readable columns while honestly informing clients and the schema browser why indexes are absent, without falsely asserting that the object has no indexes.
 
 **Statuses:**
 
@@ -1682,6 +1717,7 @@ LLM_PROVIDER=gemini          # gemini, openai, ollama, custom
 LLM_API_KEY=your-api-key
 LLM_MODEL=gemini-2.5-flash   # Model name
 LLM_API_URL=http://localhost:11434/v1  # For ollama/custom
+LLM_MODEL_EFFORT=low         # openai only: none, minimal, low, medium, high, xhigh, max
 ```
 
 ---
@@ -2887,6 +2923,7 @@ async function streamAIExplanation(query: string, explainPlan: string) {
 | `LLM_API_KEY` | No | AI provider API key |
 | `LLM_MODEL` | No | AI model name |
 | `LLM_API_URL` | No | Custom AI endpoint URL. Read for every kind, on the chat surface and in the agent alike. For `gemini` give the versioned URL (`https://host/v1beta`); a bare origin also works, the version segment is composed for it (`src/lib/llm/utils/gemini-endpoint.ts`) |
+| `LLM_MODEL_EFFORT` | No | Reasoning effort, `LLM_PROVIDER=openai` only: `none`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`. Unset sends nothing and leaves the model's default. Sent as `reasoning.effort` by the agent (the Responses API) and as `reasoning_effort` by the chat surface. Any other provider, or any other value, is refused as a configuration error on both surfaces. A value the configured model does not take (GPT-6.1 Sol has no `none`) is refused as a configuration error by the agent only, and only where the AI SDK knows the model's efforts (GPT-6 and later, and non-reasoning models); for GPT-5.x and the o-series, and on the chat surface, the value is sent as it is and OpenAI's own error is reported |
 | `LIBREDB_AGENT_ENABLED` | No | The agent's explicit **off**-switch. Availability is otherwise derived from the AI configuration and a writable ledger — see [`docs/AGENT.md`](AGENT.md) |
 | `WORKFLOW_TARGET_WORLD` | No | Durable backend for agent run state: `local` (default, single instance) or `@workflow/world-postgres` |
 | `WORKFLOW_LOCAL_DATA_DIR` | No | Where the `local` backend keeps run state (`/app/data/workflow` in the container image) |

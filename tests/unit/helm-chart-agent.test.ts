@@ -36,6 +36,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseAllDocuments } from "yaml";
 import { howItFailed } from "../helpers/spawn-outcome";
+import { LLM_MODEL_EFFORTS } from "@/lib/llm/types";
 
 const ROOT = join(import.meta.dir, "../..");
 const CHART_DIR = join(ROOT, "charts/libredb-studio");
@@ -564,5 +565,37 @@ describe("the chart mounts an operator's model-tuning document", () => {
 
     const written = env.filter((entry) => entry.name === "AGENT_MODEL_TUNING_PATH");
     expect(written.at(-1)?.value).toBe("/app/data/mine.json");
+  });
+});
+
+/**
+ * `LLM_MODEL_EFFORT` is one of the LLM variables the chart writes by name, beside `LLM_PROVIDER`,
+ * `LLM_MODEL` and `LLM_API_URL`, so an operator does not need an `extraEnv` recipe for it. The
+ * schema's enum is the app's own list, so a value the app would refuse at startup fails the render.
+ */
+describe("the reasoning effort is a typed value", () => {
+  function configMapData(args: string[]): Record<string, string> {
+    const run = helmTemplate([...JWT, ...args]);
+    if (run.exitCode !== 0) throw new Error(`helm template ${howItFailed(run)}: ${run.stderr}`);
+    const docs = parseAllDocuments(run.stdout).map((doc) => doc.toJSON() as { kind?: string });
+    const configMaps = docs.filter((doc) => doc?.kind === "ConfigMap") as Array<{ data?: Record<string, string> }>;
+    return Object.assign({}, ...configMaps.map((configMap) => configMap.data ?? {}));
+  }
+
+  test("unset writes nothing, so the model keeps its own default", () => {
+    expect(configMapData(["--set", "config.llmProvider=openai"])).not.toHaveProperty("LLM_MODEL_EFFORT");
+  });
+
+  test("a set value is written as LLM_MODEL_EFFORT", () => {
+    const data = configMapData(["--set", "config.llmProvider=openai", "--set", "config.llmModelEffort=low"]);
+    expect(data.LLM_MODEL_EFFORT).toBe("low");
+  });
+
+  test("the schema enum is the app's list plus empty, and a value outside it fails the render", () => {
+    const schema = JSON.parse(read("charts/libredb-studio/values.schema.json"));
+    expect(schema.properties.config.properties.llmModelEffort.enum).toEqual(["", ...LLM_MODEL_EFFORTS]);
+    const run = helmTemplate([...JWT, "--set", "config.llmProvider=openai", "--set", "config.llmModelEffort=extreme"]);
+    expect(run.exitCode).not.toBe(0);
+    expect(run.stderr).toContain("llmModelEffort");
   });
 });

@@ -2017,9 +2017,18 @@ const OBJECT_ROWS = [
  * can give: change a row in `OBJECT_ROWS` and the fake server cannot disagree with
  * itself.
  */
-function groupedCountRows(): { objectKind: string; objectCount: string }[] {
+function groupedCountRows(sql?: string): { objectKind: string; objectCount: string }[] {
   const counts = new Map<string, number>();
-  for (const row of OBJECT_ROWS) counts.set(row.objectKind, (counts.get(row.objectKind) ?? 0) + 1);
+  const dictionaryKnown = sql?.includes("t.name IN");
+  for (const row of OBJECT_ROWS) {
+    let kind = row.objectKind;
+    // With system.tables alone, a table whose engine is Dictionary stays a table (dict_users has a table row;
+    // dict_regions_config is config-only and not in system.tables at all).
+    if (!dictionaryKnown && row.objectName === "dict_users") kind = "table";
+    else if (!dictionaryKnown && row.objectName === "dict_regions_config") continue;
+    if (sql?.includes("objectKind != 'dictionary'") && kind === "dictionary") continue;
+    counts.set(kind, (counts.get(kind) ?? 0) + 1);
+  }
   return [...counts.entries()]
     .map(([objectKind, count]) => ({ objectKind, objectCount: String(count) }))
     .sort((left, right) => (left.objectKind < right.objectKind ? -1 : 1));
@@ -2163,7 +2172,12 @@ function bulkObjectReply(sql: string): Reply | null {
   const kind = /objectKind = '([a-z_]+)'/.exec(sql)?.[1];
   if (kind === undefined) return null;
   const limit = /LIMIT (\d+)/.exec(sql)?.[1];
-  const named = OBJECT_ROWS.filter((row) => row.objectKind === kind).map((row) => row.objectName);
+  const dictionaryKnown = sql.includes("t.name IN");
+  const named = OBJECT_ROWS.filter((row) => {
+    let rowKind = row.objectKind;
+    if (kind === "table" && !dictionaryKnown && row.objectName === "dict_users") rowKind = "table";
+    return rowKind === kind;
+  }).map((row) => row.objectName);
   const ordered = /ORDER BY objectName ASC/.test(sql) ? [...named].sort(byteOrder) : named;
   const targets = limit === undefined ? ordered : ordered.slice(0, Number(limit));
 
@@ -2193,14 +2207,43 @@ function objectReply(sql: string): Reply {
   const bulk = bulkObjectReply(sql);
   if (bulk !== null) return bulk;
   if (sql.includes("containerName")) return jsonReply(CONTAINER_ROWS);
-  if (sql.includes("objectCount")) return jsonReply(groupedCountRows());
+  if (sql.includes("FROM system.dictionaries") && !sql.includes("isKeyColumn") && !sql.includes("objectSource")) {
+    const dictRows = [
+      {
+        objectDatabase: OBJECT_DATABASE,
+        objectName: "dict_users",
+        objectKind: "dictionary",
+        objectRows: null,
+        objectBytes: null,
+      },
+      {
+        objectDatabase: "",
+        objectName: "dict_regions_config",
+        objectKind: "dictionary",
+        objectRows: null,
+        objectBytes: null,
+      },
+    ];
+    if (sql.includes(`WHERE database = '${OBJECT_DATABASE}'`) && !sql.includes("OR database = ''")) {
+      return jsonReply(dictRows.filter((row) => row.objectDatabase === OBJECT_DATABASE));
+    }
+    return jsonReply(dictRows);
+  }
+  if (sql.includes("objectCount")) return jsonReply(groupedCountRows(sql));
   if (sql.includes("objectKind")) {
     // The listing filters the same subquery the count grouped, so the fake server
     // applies the same filter rather than carrying a second fixture. Ruling 5f holds
     // in the fixture for the same reason it holds in the provider.
     const match = /objectKind = '([a-z_]+)'/.exec(sql);
     if (match === null) return jsonReply(OBJECT_ROWS);
-    return jsonReply(OBJECT_ROWS.filter((row) => row.objectKind === match[1]));
+    const dictionaryKnown = sql.includes("t.name IN");
+    return jsonReply(
+      OBJECT_ROWS.filter((row) => {
+        let kind = row.objectKind;
+        if (!dictionaryKnown && row.objectName === "dict_users") kind = "table";
+        return kind === match[1];
+      }),
+    );
   }
   // Each keyed by the name the statement filters on, so a detail read of one object cannot
   // be satisfied by another object's rows.
@@ -2495,7 +2538,8 @@ describe("object surface internals", () => {
     // `system.tables.engine` is an OPEN set - 129 distinct values on a bare server - and
     // an inclusion list would make every engine this code has never heard of invisible.
     const counting = sqlWith("objectCount");
-    expect(counting).toContain("(t.database, t.name) IN (SELECT dd.database, dd.name FROM system.dictionaries AS dd)");
+    expect(counting).toContain("t.name IN ('dict_users')");
+    expect(counting).not.toContain("dict_regions_config");
     expect(counting).not.toContain("t.engine = 'Dictionary'");
     expect(counting).toContain("'table')");
     await provider.disconnect();
@@ -2515,8 +2559,7 @@ describe("object surface internals", () => {
     // Sourcing dictionaries from `system.tables` alone therefore lost it from the count
     // AND the listing together, which is standing ruling 5a's exact absence: invisible in
     // the tree while the badge keeps agreeing with the folder, so 5f holds and nothing
-    // detects it. The union is written INTO the same subquery the count groups and the
-    // listing filters, so no 5f seam comes back with it.
+    // detects it. Reading `system.dictionaries` separately reaches both flavours.
     installObjectReplies();
     const provider = await connectProvider({ database: OBJECT_DATABASE });
 
@@ -2524,13 +2567,13 @@ describe("object surface internals", () => {
 
     expect(dictionaries.map((object) => object.name)).toEqual(["dict_regions_config", "dict_users"]);
     const listing = sqlWith("objectKind = 'dictionary'");
-    expect(listing).toContain("FROM system.dictionaries AS d");
+    expect(listing).toContain("FROM system.dictionaries");
     // The empty database IS the config-file dictionary's address: a database cannot be
     // named the empty string, so this arm can never duplicate a DDL dictionary, which
     // always carries its own database (measured). Like a function, it is server-global,
     // so it is listed under every database and its path records the container it was
     // reached through.
-    expect(listing).toContain("WHERE d.database = ''");
+    expect(listing).toContain("database = ''");
     expect(dictionaries.map((object) => object.path)).toEqual([
       [OBJECT_DATABASE, "dict_regions_config"],
       [OBJECT_DATABASE, "dict_users"],
@@ -2542,8 +2585,11 @@ describe("object surface internals", () => {
     // Seeded before the read. Building the record from the GROUP BY rows alone would
     // leave the kind out, and an absent kind means something else and stronger: the
     // engine has no such concept, so the tree draws no folder at all.
-    replyFor = (sql) =>
-      sql.includes("objectCount") ? jsonReply([{ objectKind: "table", objectCount: "2" }]) : objectReply(sql);
+    replyFor = (sql) => {
+      if (sql.includes("system.dictionaries")) return jsonReply([]);
+      if (sql.includes("objectCount")) return jsonReply([{ objectKind: "table", objectCount: "2" }]);
+      return objectReply(sql);
+    };
     const provider = await connectProvider({ database: OBJECT_DATABASE });
 
     const counts = await provider.countObjects([OBJECT_DATABASE]);
@@ -2567,6 +2613,90 @@ describe("object surface internals", () => {
       // person as the reason a folder has no number.
       expect((counts[kind] as { unavailable: string }).unavailable).toContain("Not enough privileges");
     }
+    await provider.disconnect();
+  });
+
+  test("a refused system.dictionaries read marks only dictionary as unavailable, leaving tables intact", async () => {
+    replyFor = (sql) => (sql.includes("system.dictionaries") ? DENIED() : objectReply(sql));
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    // countObjects survives:
+    const counts = await provider.countObjects([OBJECT_DATABASE]);
+    expect(counts.dictionary).toEqual({ unavailable: expect.stringMatching(/Not enough privileges/) });
+    // Without system.dictionaries, dict_users (which has a system.tables row) stays under table:
+    expect(counts.table).toEqual({ count: 4 });
+    expect(counts.view).toEqual({ count: 1 });
+    expect(counts.materialized_view).toEqual({ count: 2 });
+    expect(counts.function).toEqual({ count: 1 });
+
+    // listObjects("table") survives:
+    const tables = await provider.listObjects([OBJECT_DATABASE], "table");
+    expect(tables.map((t) => t.name)).toEqual([".inner_id.fake", "dict_users", "events", "mv_target"]);
+
+    // listObjects("dictionary") propagates the denial:
+    await expect(provider.listObjects([OBJECT_DATABASE], "dictionary")).rejects.toBeInstanceOf(AuthenticationError);
+
+    // describeObjects("table") survives:
+    const batch = await provider.describeObjects([OBJECT_DATABASE], "table");
+    expect(batch.details.length).toBeGreaterThan(0);
+
+    await provider.disconnect();
+  });
+
+  test("a table sharing a name with a config-file dictionary is not pulled out of the table folder", async () => {
+    // A config-file dictionary has database = '' in system.dictionaries and no row in system.tables.
+    // If a normal table in the browsed database happens to share its name, matching only the browsed
+    // database's rows (where database = {database}) prevents the table from being pulled out into
+    // the dictionary folder.
+    const COLLISION_NAME = "dict_regions_config";
+    replyFor = (sql) => {
+      if (sql.includes("FROM system.tables") && sql.includes("AS objectKind")) {
+        return jsonReply([
+          { objectName: COLLISION_NAME, objectKind: "table", objectRows: "10", objectBytes: "1024" },
+          { objectName: "events", objectKind: "table", objectRows: "3", objectBytes: "1024" },
+        ]);
+      }
+      if (sql.includes("FROM system.dictionaries") && !sql.includes("isKeyColumn")) {
+        const dictRows = [
+          {
+            objectDatabase: "",
+            objectName: COLLISION_NAME,
+            objectKind: "dictionary",
+            objectRows: null,
+            objectBytes: null,
+          },
+        ];
+        if (sql.includes(`WHERE database = '${OBJECT_DATABASE}'`) && !sql.includes("OR database = ''")) {
+          return jsonReply(dictRows.filter((row) => row.objectDatabase === OBJECT_DATABASE));
+        }
+        return jsonReply(dictRows);
+      }
+      return objectReply(sql);
+    };
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    // In the table listing, the table dict_regions_config is present:
+    const tables = await provider.listObjects([OBJECT_DATABASE], "table");
+    expect(tables.map((t) => t.name)).toContain(COLLISION_NAME);
+
+    // In the dictionary listing, the config-file dictionary is also present:
+    const dicts = await provider.listObjects([OBJECT_DATABASE], "dictionary");
+    expect(dicts.map((d) => d.name)).toContain(COLLISION_NAME);
+
+    await provider.disconnect();
+  });
+
+  test("a non-497 error on system.dictionaries rejects across counts, listObjects and describeObjects", async () => {
+    installObjectReplies();
+    replyFor = (sql) =>
+      sql.includes("FROM system.dictionaries")
+        ? exceptionReply(TIMEOUT_EXCEEDED, "TIMEOUT_EXCEEDED", "Timeout exceeded: elapsed 30 s", 500)
+        : objectReply(sql);
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    await expect(provider.countObjects([OBJECT_DATABASE])).rejects.toThrow(/Timeout exceeded/);
+    await expect(provider.listObjects([OBJECT_DATABASE], "table")).rejects.toThrow(/Timeout exceeded/);
+    await expect(provider.describeObjects([OBJECT_DATABASE], "table")).rejects.toThrow(/Timeout exceeded/);
     await provider.disconnect();
   });
 
@@ -2851,17 +2981,29 @@ describe("object surface internals", () => {
     await provider.disconnect();
   });
 
-  test("a refused index read propagates instead of reporting an object with no indexes", async () => {
+  test("a refused index read reports columns with indexes unavailable instead of throwing", async () => {
     // `system.data_skipping_indices` needs its own grant and answers code 497 without
     // it. "This object has no skipping index" is a different fact from "you may not
-    // see its indexes", and a detail panel showing the first when the second is true
-    // is a claim nobody measured. `getSchema()` degrades here; this does not.
+    // see its indexes", but throwing away the readable columns is wrong.
+    // The detail preserves columns and reports indexes as unavailable.
     replyFor = (sql) => (sql.includes("indexName") ? DENIED() : objectReply(sql));
     const provider = await connectProvider({ database: OBJECT_DATABASE });
 
-    await expect(provider.describeObject([OBJECT_DATABASE, "events"], "table")).rejects.toBeInstanceOf(
-      AuthenticationError,
-    );
+    const detail = await provider.describeObject([OBJECT_DATABASE, "events"], "table");
+    expect(detail.columns.length).toBeGreaterThan(0);
+    expect(detail.indexes).toEqual({ unavailable: expect.stringMatching(/Not enough privileges/) });
+    await provider.disconnect();
+  });
+
+  test("a non-497 error on single index read rejects rather than reporting unavailable", async () => {
+    installObjectReplies();
+    replyFor = (sql) =>
+      sql.includes("FROM system.data_skipping_indices")
+        ? exceptionReply(TIMEOUT_EXCEEDED, "TIMEOUT_EXCEEDED", "Timeout exceeded: elapsed 30 s", 500)
+        : objectReply(sql);
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    await expect(provider.describeObject([OBJECT_DATABASE, "events"], "table")).rejects.toThrow(/Timeout exceeded/);
     await provider.disconnect();
   });
 
@@ -3040,15 +3182,15 @@ describe("ClickHouse bulk column read", () => {
     await provider.disconnect();
   });
 
-  test("a whole folder of tables costs three statements, and a folder of dictionaries two", async () => {
+  test("a whole folder of tables costs four statements, and a folder of dictionaries two", async () => {
     installObjectReplies();
     const provider = await connectProvider({ database: OBJECT_DATABASE });
     sentSql.length = 0;
 
     await provider.describeObjects([OBJECT_DATABASE], "table");
-    // The target read, the column read and the index read. The single read is two
-    // statements PER OBJECT, so the alternative for these three objects was six.
-    expect(sentSql).toHaveLength(3);
+    // Reading known dictionaries, the target read, the column read and the index read.
+    // The single read is two statements PER OBJECT, so the alternative for these three objects was six.
+    expect(sentSql).toHaveLength(4);
 
     sentSql.length = 0;
     await provider.describeObjects([OBJECT_DATABASE], "dictionary");
@@ -3072,7 +3214,7 @@ describe("ClickHouse bulk column read", () => {
     ]);
     expect(batch.details[0]!.columns.map((column) => column.name)).toEqual(["id", "name"]);
     expect(batch.details[1]!.columns.map((column) => column.name)).toEqual(["id", "label"]);
-    expect(batch.details.every((detail) => detail.indexes.length === 0)).toBe(true);
+    expect(batch.details.every((detail) => Array.isArray(detail.indexes) && detail.indexes.length === 0)).toBe(true);
     // The control: `system.columns` was never read for a dictionary folder.
     expect(sentSql.filter((sql) => sql.includes("FROM system.columns"))).toEqual([]);
     await provider.disconnect();
@@ -3286,14 +3428,50 @@ describe("ClickHouse bulk column read", () => {
     await provider.disconnect();
   });
 
-  test("a refused index read propagates instead of reporting a folder with no indexes", async () => {
+  test("a refused index read reports columns with indexes unavailable instead of throwing on bulk", async () => {
     // The same rule the single read carries: `system.data_skipping_indices` needs its own
-    // grant and answers code 497 without it, and "these objects have no skipping index" is
-    // a different fact from "you may not see their indexes".
+    // grant and answers code 497 without it. The bulk read preserves columns and reports
+    // indexes as unavailable.
     replyFor = (sql) => (sql.includes("AS indexName") ? DENIED() : objectReply(sql));
     const provider = await connectProvider({ database: OBJECT_DATABASE });
 
-    await expect(provider.describeObjects([OBJECT_DATABASE], "table")).rejects.toBeInstanceOf(AuthenticationError);
+    const batch = await provider.describeObjects([OBJECT_DATABASE], "table");
+    expect(batch.details.length).toBeGreaterThan(0);
+    for (const detail of batch.details) {
+      expect(detail.columns.length).toBeGreaterThan(0);
+      expect(detail.indexes).toEqual({ unavailable: expect.stringMatching(/Not enough privileges/) });
+    }
+    await provider.disconnect();
+  });
+
+  test("a non-497 error on bulk index read rejects rather than reporting unavailable", async () => {
+    installObjectReplies();
+    replyFor = (sql) =>
+      sql.includes("FROM system.data_skipping_indices")
+        ? exceptionReply(TIMEOUT_EXCEEDED, "TIMEOUT_EXCEEDED", "Timeout exceeded: elapsed 30 s", 500)
+        : objectReply(sql);
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    await expect(provider.describeObjects([OBJECT_DATABASE], "table")).rejects.toThrow(/Timeout exceeded/);
+    await provider.disconnect();
+  });
+
+  test("describeObjects paths equal listObjects paths with full grants and when system.dictionaries is denied", async () => {
+    installObjectReplies();
+    const provider = await connectProvider({ database: OBJECT_DATABASE });
+
+    // With full grants:
+    const fullBatch = await provider.describeObjects([OBJECT_DATABASE], "table");
+    const fullListed = await provider.listObjects([OBJECT_DATABASE], "table");
+    expect(fullBatch.details.map((d) => d.path)).toEqual(fullListed.map((o) => o.path));
+
+    // When system.dictionaries is denied: dict_users stays in the table folder for both
+    replyFor = (sql) => (sql.includes("FROM system.dictionaries") ? DENIED() : objectReply(sql));
+    const deniedBatch = await provider.describeObjects([OBJECT_DATABASE], "table");
+    const deniedListed = await provider.listObjects([OBJECT_DATABASE], "table");
+    expect(deniedBatch.details.map((d) => d.path)).toEqual(deniedListed.map((o) => o.path));
+    expect(deniedBatch.details.map((d) => d.path)).toContainEqual([OBJECT_DATABASE, "dict_users"]);
+
     await provider.disconnect();
   });
 

@@ -1,0 +1,8 @@
+-- fixture: full
+-- Migration generated at 2026-10-19T12:00:00.000Z
+-- Dialect: modbus
+-- Changes: 1 added, 1 removed, 2 modified
+
+-- Modbus: Cannot generate table DDL. A Modbus register has no column definition anywhere: the device holds 16-bit words and single bits with no name, no type and no unit, and what gives them meaning is the register map the user wrote, so there is nothing a client could change here.
+-- fixture: none
+-- No schema changes detected.

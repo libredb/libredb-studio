@@ -1,0 +1,8 @@
+-- fixture: full
+-- Migration generated at 2026-10-19T12:00:00.000Z
+-- Dialect: redis
+-- Changes: 1 added, 1 removed, 2 modified
+
+-- Redis: Cannot generate table DDL. Keys are not tables and have no column definitions to change.
+-- fixture: none
+-- No schema changes detected.

@@ -142,6 +142,15 @@ A proxy that decodes `%2F` answers its own 404 for `/`, which Studio cannot tell
 
 A `readOnly: true` seed with the `guest`/`guest` pair is refused, as the dialog warns: guest/guest is RabbitMQ's default administrator, which the official Docker image accepts from any host; create a user for Studio (studio-reader) instead.
 
+### Connection string
+
+`rabbitmq` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/stream/rabbitmq/connection-string.ts)).
+
+### Execution UI
+
+The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `rabbitmq` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
+Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/stream/rabbitmq/execution-ui.ts).
+
 ## 5. Query interface
 
 ### 5.1 The read request
@@ -210,6 +219,25 @@ Studio never presents such a read as complete:
 - with no row, the read fails with a sentence that says how to find the message: from a numeric start, step forward with `"limit": 1`; from a keyword or time start, read `"first"` with `"limit": 1` to learn the first offset, then halve numeric ranges of 500.
 
 From 4.3.7 such messages are delivered with those values removed ([§5.3](#53-rendering-rules)); the handling stays on every version, because a development build reports `4.3.0+<sha>`.
+
+### 5.7 SQL grammar
+
+How this engine's statement text is read is declared once, in [`src/lib/db/providers/stream/rabbitmq/sql-grammar.ts`](../../src/lib/db/providers/stream/rabbitmq/sql-grammar.ts), the `rabbitmq` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+`readsSqlText` is `false`: the console takes one JSON read request naming a vhost and a stream ([§5.1](#51-the-read-request)), which the provider parses itself, so no span of it is SQL.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` in `src/lib/db/destructive-commands.ts` instead of a SQL reading.
+Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
+Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
+
+### 5.8 SQL writing
+
+[`rabbitmq/sql-writing.ts`](../../src/lib/db/providers/stream/rabbitmq/sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+A literal is written by `literalStandard` and read back by `unquoteStandard`: the quote is doubled and a backslash is data.
+A name is quoted by `identifierDoubleQuoted`, the SQL standard form: a double-quoted name with an inner double quote doubled.
+There is no placeholder (`placeholder: null`), so a generator quotes the value with `quoteLiteral` instead of emitting a bind.
+No generator calls `quoteLiteral` for RabbitMQ: a read request writes its names with `JSON.stringify`.
+Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+
+The module's `export` field writes a result export's CREATE TABLE and INSERT from the shared building blocks alone: `STANDARD_DDL_TYPES` for the column types, `NOTHING_STANDS_ALONE` and `NO_BARE_SPELLING`, so every bare declared name is re-spelled from its family, `NULL_NON_FINITE` for NaN and the infinities, and `binaryStandardHex` for a binary cell (`X'0102'`).
 
 ## 6. Schema introspection
 
@@ -516,6 +544,16 @@ CI runs it in the Functional Smoke job against a fresh 4.3.6 broker; 4.2.9 is ru
 - Compressed sub-entry batches published over the stream protocol are not delivered to an AMQP 0-9-1 reader, and offsets inside them are skipped.
 - On 4.2.x and 4.3.0 to 4.3.6 a message the broker cannot convert ends every read that reaches it ([§5.6](#56-messages-the-broker-cannot-convert-541)).
 - Managed services are not claimed: none was tested.
+
+## Migration DDL
+
+[`RABBITMQ_MIGRATION_DDL`](../../src/lib/db/providers/stream/rabbitmq/migration-ddl.ts) is what the schema-diff migration generator writes for `rabbitmq`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
+A broker keeps no schema and no catalog, so there is no table DDL to decline or to wrap (#1656).
+
+The refusal reason it prints, verbatim:
+
+- "A stream holds messages, not rows with declared columns, so there is no column definition to change."
 
 ## 16. References
 

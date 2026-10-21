@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { machineColumns } from "@/lib/db/detailed-object";
 import { ExecutionProfileError } from "@/lib/db/errors";
-import { containerDepth, relationKindIds } from "@/lib/db/object-kinds";
+import { containerDepth, isIndexesUnavailable, relationKindIds } from "@/lib/db/object-kinds";
 import type { Container, DatabaseObject, DatabaseProvider } from "@/lib/db/types";
 import {
   newMcpCorrelationId,
@@ -75,7 +75,12 @@ const InspectedTableSchema = z.object({
     )
     .optional(),
   columns_omitted: z.number().int(),
-  indexes: z.array(z.object({ name: z.string(), columns: z.array(z.string()), is_unique: z.boolean() })).optional(),
+  indexes: z
+    .union([
+      z.array(z.object({ name: z.string(), columns: z.array(z.string()), is_unique: z.boolean() })),
+      z.object({ unavailable: z.string() }),
+    ])
+    .optional(),
   indexes_omitted: z.number().int(),
 });
 
@@ -154,7 +159,8 @@ async function inspectTable(
   // Before the cap and the count: a column the engine only inferred from sampled data is named by the data, so it
   // never reaches a client, and `columns_omitted` keeps meaning "beyond the 50-column cap".
   const columns = machineColumns(detail?.columns ?? []);
-  const indexes = detail?.indexes ?? [];
+  const indexesUnavailable = isIndexesUnavailable(detail?.indexes);
+  const indexes = Array.isArray(detail?.indexes) ? detail.indexes : [];
   return {
     name: object.name,
     kind: object.kind,
@@ -174,12 +180,14 @@ async function inspectTable(
     columns_omitted: args.include_columns ? Math.max(0, columns.length - MAX_COLUMNS) : 0,
     ...(args.include_indexes
       ? {
-          indexes: indexes
-            .slice(0, MAX_INDEXES)
-            .map((index) => ({ name: index.name, columns: [...index.columns], is_unique: index.unique })),
+          indexes: indexesUnavailable
+            ? { unavailable: detail.indexes.unavailable }
+            : indexes
+                .slice(0, MAX_INDEXES)
+                .map((index) => ({ name: index.name, columns: [...index.columns], is_unique: index.unique })),
         }
       : {}),
-    indexes_omitted: args.include_indexes ? Math.max(0, indexes.length - MAX_INDEXES) : 0,
+    indexes_omitted: args.include_indexes && !indexesUnavailable ? Math.max(0, indexes.length - MAX_INDEXES) : 0,
   };
 }
 

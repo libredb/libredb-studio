@@ -154,8 +154,20 @@ Every cached path passes the server-derived `allowExternalFileAccess` posture, a
 
 `getDatabasePath()` ([`sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts)) resolves the target:
 `connectionString` (stripping a `file:` prefix) → else `database` → else `:memory:`. Non-`:memory:`
-paths are `path.resolve()`-d to an absolute path and **rejected if they contain a NUL byte**. Parent
-directories are created on connect.
+paths are `path.resolve()`-d to an absolute path and **rejected if they contain a NUL byte**.
+
+A missing parent folder is created on connect, one level at a time, by `createMissingDirectories` ([`create-directory.ts`](../../src/lib/db/utils/create-directory.ts)), shared with the DuckDB provider.
+It walks up to the nearest existing folder and makes each missing one in order, never with a recursive mkdir: Node's recursive mkdir never returns for a path under `/proc`, because procfs answers ENOENT for a parent that exists and Node retries it forever (measured on Node v24.14.0), so one Test Connection hung the whole server.
+The first folder the filesystem refuses ends the connect at once with the open failure in [§10](#10-error-handling), `Failed to open SQLite database: <filesystem message>`, which carries the code and the folder.
+
+A path that exists and is not a regular file is refused on connect before anything opens or reads it, by `assertRegularFilesOrMissing` ([`regular-file.ts`](../../src/lib/db/utils/regular-file.ts)), shared with the DuckDB and LibreDB providers.
+It asks `stat`, which never opens the path and follows a symlink: a read-only open of a FIFO waits for a writer that never comes, so the agent profile, and the editor on a FIFO it cannot write, never returned (measured on bun 1.4.2), and SQLite reported a connection to `/dev/null` and `/dev/zero`.
+The files SQLite keeps beside the database, `<path>-journal`, `<path>-wal` and `<path>-shm`, are checked the same way, and the error then names that file.
+SQLite opens a `-journal` read-only to see whether it is hot: on a FIFO `-journal` the editor's connect never returned, and the agent profile connected and then never answered its first statement, in the worker and in-process alike; on a FIFO `-wal` or `-shm` the connect answered and the first write failed with `disk I/O error` (measured on bun 1.4.2).
+A worker that a cancel or a deadline killed is restarted on the same path, which may have been replaced since connect, so the path and those files are checked again first: on a FIFO the agent's restarted worker never answered.
+The header read that explains a refused WAL-mode file (`isWalModeFile`) opens without waiting and asks the descriptor it opened (`readRegularFileStart`), so a FIFO renamed onto the path is never read on the server's own thread.
+The answer is the open failure in [§10](#10-error-handling), for example `Failed to open SQLite database: /data/app.db is a named pipe (FIFO), not a regular file`, or `a socket`, `a character device`, `a block device` or `a directory` in place of the FIFO.
+A regular file and a symlink to one open as before, and a missing path is left to the open as before: the editor creates the file, and the agent profile refuses it.
 
 > **NUL rejection and reserved server files are checked on connect.** `../` segments are legal and simply
 > resolve into the absolute path. This follows the feature's trust model: a connection's
@@ -494,6 +506,21 @@ Homebrew). Each channel is browser-verified by
 [`scripts/channel-embedded-sample-e2e.sh`](../../scripts/channel-embedded-sample-e2e.sh)
 (see [`docs/DISTRIBUTION.md`](../DISTRIBUTION.md)).
 
+### Connection string
+
+`sqlite` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`sqlite-connection-string.ts`](../../src/lib/db/providers/sql/sqlite-connection-string.ts)).
+SQLite is a file path, so inventing `sqlite://` would put a scheme on the login page that `parseConnectionString` rejects.
+
+### Execution UI
+
+The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction.
+Its row in `EXECUTION_UI` is declared in [`sqlite-execution-ui.ts`](../../src/lib/db/providers/sql/sqlite-execution-ui.ts).
+SQLite is the one engine with a consent deadline: an on-disk SQLite read that overruns its timeout is now killed mid-flight, so only the in-memory database keeps the old blocking behaviour.
+The agent's consent card says so in the words the budget meter already uses for the same fact, true of SQLite and of nothing else.
+Its ticked bounds row carries the chip `SQLite: killed at its timeout`, and the paragraph under the box, shown ticked or not, reads:
+
+> On SQLite a read that runs past its timeout is now killed mid-flight; the in-memory database is the exception and still blocks this application until the read finishes.
+
 ---
 
 ## 5. Query interface
@@ -503,7 +530,7 @@ Homebrew). Each channel is browser-verified by
 (`DEFAULT_QUERY_LIMIT = 500`). No transactions, no cancellation ([§3.4](#34-no-transactions-api-no-cancellation-no-pool)).
 
 The inherited path reads the statement under **SQLite's** grammar, which the base passes down from the
-provider's own `type` ([`grammar.ts`](../../src/lib/sql/grammar.ts)). SQLite has two comment forms,
+provider's own `type` ([`sqlite-sql-grammar.ts`](../../src/lib/db/providers/sql/sqlite-sql-grammar.ts)). SQLite has two comment forms,
 `--` and `/* … */`; `#` opens neither. Its own tokenizer (the amalgamation bundled with
 `better-sqlite3` classifies `#` as `CC_VARALPHA`) reads `#name` as a bind variable, i.e. code. The
 shared reader used to guess MySQL's rule here, which swallowed the rest of the line and cost the
@@ -626,6 +653,18 @@ than the `Buffer` form the response carries (#1381); that is the same for every 
 hands back bytes.
 
 ---
+
+### SQL grammar
+
+How this engine's statement text is read is declared once, in [`src/lib/db/providers/sql/sqlite-sql-grammar.ts`](../../src/lib/db/providers/sql/sqlite-sql-grammar.ts), the `sqlite` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+Its grammar is `SQLITE_GRAMMAR`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
+`SQLITE_GRAMMAR` lives in `src/lib/db/sql-grammar/shared.ts`, the one grammar two engines share, since libSQL reads SQLite's grammar.
+`#` is code and `[...]` a quoted identifier, from the amalgamation bundled with `better-sqlite3`: `#` is `CC_VARALPHA`, a bind-variable prefix, comments open on `--` and `/*` only, and `[` is `CC_QUOTE2`, scanned to the first `]`.
+Block comments are flat: `case CC_SLASH` scans for the first `*/` with no depth count.
+`//` is code, probed 2026-08-25 through the bundled driver: `SELECT 1 AS a // note` and `SELECT 1 // 2` are both 'near "/": syntax error'.
+`CREATE TRIGGER ... BEGIN ... END` is the one statement with a body: measured through node:sqlite 3.50.4, the trigger cut at its inner `;` was `incomplete input`.
+`readsSqlText` is `true`: the editor text is SQL.
+Redaction is `sql` with no name quote: a redacted statement keeps its words, and every literal and quoted run becomes `?`.
 
 ## 6. Schema introspection
 
@@ -868,7 +907,7 @@ expression arrive bare. Measured 2026-09-21 on SQLite 3.53.2 through `bun:sqlite
 | no default | none | SQL NULL |
 
 Each column carries both readings. `defaultValue` is the value, decoded by `unquoteLiteral()`
-(`src/lib/sql/values.ts`) with this dialect's `"standard"` escaping, so `'it''s'` reads as
+(`src/lib/sql/values.ts`) with the `unquoteStandard` reader this engine's SQL writing module names, so `'it''s'` reads as
 `it's` and a backslash stays ordinary data. Text that is not exactly one complete literal,
 a number or an expression, passes through unchanged. `defaultExpression` is the
 catalog text itself, which is always valid SQL here and is what the schema-diff migration
@@ -1312,6 +1351,32 @@ sends no target, so `runMaintenance('reindex')` here runs a bare `REINDEX`
 | `reindexGlobalTitle` | *Rebuild Indexes* |
 | `reindexGlobalDesc` | *Runs bare REINDEX, rebuilding every index in the database file.* |
 
+### SQL writing
+
+[`sql/sqlite-sql-writing.ts`](../../src/lib/db/providers/sql/sqlite-sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+A literal is written by `literalStandard` and read back by `unquoteStandard`: the quote is doubled and a backslash is data.
+A name is quoted by `identifierDoubleQuoted`, the SQL standard form: a double-quoted name with an inner double quote doubled.
+A bind is spelled by `placeholderQuestion`, as `?` at every position.
+The SQLite drivers take `?`.
+Inline row editing reads a key column's kind through the module's own `inlineEdit`, because SQLite's type words name an affinity and not a storage width.
+`instantTypeNames` is the empty `NO_INSTANT_TYPE_NAMES`: SQLite has no date type, so a `DATE`, `DATETIME` or `TIMESTAMP` column holds the text or integer somebody put in it, and that value is its own identity.
+Measured 2026-09-19 on bun:sqlite (Bun 1.4.0) and libSQL server v0.24.33, `zz_<decl>(k <decl> PRIMARY KEY, note TEXT)` for each of the three declarations against `'2024-01-15'`, `'2026-01-01 10:00:00.123'`, `'2026-01-01T07:00:00.123Z'` and the epoch 1705276800, 24 combinations: every value came back unchanged, `WHERE k IN (?)` matched one group holding one row, and the `UPDATE` changed exactly one row.
+`float64TypeNames` is `EVERY_TYPE_IS_FLOAT64`, `"all"`: SQLite has one float width, so `REAL`, `FLOAT`, `DOUBLE` and `DOUBLE PRECISION` are four spellings of one 8-byte double.
+Measured 2026-09-18 on the same two engines, `zz_real(r REAL, f FLOAT, d DOUBLE, dp DOUBLE PRECISION)` answered `real` to `typeof()` for all four, read 0.30000000000000004 back identical, and `WHERE r = 1.5`, `WHERE f = 0.1`, `WHERE d = 0.30000000000000004` and `WHERE dp = 0.1` each matched exactly one row.
+Every declaration and not only `real` and `float`: measured 2026-09-19 on bun:sqlite, a `DATE` column holding the julian day 2460324.75, and `REAL`, `INTEGER`, `TEXT`, `BLOB`, undeclared and `NUMERIC` columns, each matched one row, its own, on the value it handed back.
+`exactDecimalTypeNames` is the empty `NO_EXACT_DECIMAL_TYPE_NAMES`: SQLite has no decimal type, so `DECIMAL(20,4)` takes NUMERIC affinity and stores an integer or an 8-byte double.
+Measured 2026-09-19 on bun:sqlite (Bun 1.4.0), `zz(k DECIMAL(20,4), n NUMERIC(20,4))`: `typeof()` answered `real` for both, 1234567890123456.7891 came back as 1234567890123456.8, which is what the file holds, and `WHERE k = 1234567890123456.8` matched one row, its own.
+Every edit is bound as typed.
+
+The module's `export` field writes a result export's column types from `STANDARD_DDL_TYPES`, SQLite's column types being advisory affinities anyway.
+Each name in `standsAlone`, the shared `VERBATIM_DECLARED_TYPES_STAND_ALONE`, was measured, one `CREATE TABLE probe (c <name>)` per name on SQLite through `bun:sqlite`, read back out of `pragma_table_info`, and is listed only because SQLite both accepted it and stored it unnarrowed.
+SQLite keeps a declared type as the exact string it was given (`pragma_table_info` answers `varchar2` for `varchar2`), so the spelling the source engine used is the one that survives.
+SQLite's `enum`, `uniqueidentifier` and `rowid` are absent: SQLite parses any type name, so the narrowing is in the affinity, and these three match none of its keywords, so the column is NUMERIC and `INSERT INTO p (c) VALUES ('007')` reads back as the integer 7 (measured), where the same insert into `varchar2` reads back as the text `007`.
+`set` is not in SQLite's grammar as a type name at all (`near "set": syntax error`).
+A binary cell is written by `binaryStandardHex`: measured through `bun:sqlite`, `select hex(X'0102deadbeef')` answers `0102DEADBEEF`, and `typeof(X'')` answers `blob` with `length(X'')` 0.
+`nonFinite` writes the infinities as `9e999` and `-9e999` and NaN as NULL: replayed (2026-10-04), SQLite reads `9e999` and `-9e999` as its infinities in a `REAL` column, where a quoted `'Infinity'` is stored as TEXT, and it has no NaN at all (it stores one as NULL).
+`NO_BARE_SPELLING` completes it.
+
 ---
 
 ## 10. Error handling
@@ -1325,7 +1390,7 @@ SQLite-specific branches; the provider names the read-only file cases itself
 | Missing `database` and `connectionString` | `DatabaseConfigError` |
 | NUL byte in path | `DatabaseConfigError` ("Invalid database path: NUL bytes are not allowed") |
 | Selected driver unavailable (no `bun:sqlite` / `node:sqlite` on this runtime) | `DatabaseConfigError` ("SQLite driver … is not available…") |
-| Open failure | `ConnectionError` |
+| Open failure, a missing folder the filesystem refuses to create and a path or a file beside it that is not a regular file included, on connect and on a worker restart | `ConnectionError` |
 | Write check on an existing file fails with anything but `EACCES` / `EPERM` / `EROFS` | `ConnectionError` with the filesystem's message |
 | WAL-mode file in a directory this process cannot write | `ConnectionError` naming WAL and the two ways out |
 | Write statement on a file opened read-only because it is not writable | `QueryError` ("SQLite database `<path>` is open read-only because …") |
@@ -1625,6 +1690,25 @@ not apply to SQLite ([§3.4](#34-no-transactions-api-no-cancellation-no-pool)).
   base-dir allowlist restricting resolvable paths (proposed in
   [issue #125](https://github.com/libredb/libredb-studio/issues/125)) was deliberately left out of
   this honesty fix — new security-configuration surface needs its own issue.
+
+---
+
+## Migration DDL
+
+[`SQLITE_MIGRATION_DDL`](../../src/lib/db/providers/sql/sqlite-migration-ddl.ts) is what the schema-diff migration generator writes for `sqlite`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+SQLite runs its own transaction, so `transactionWrapper` is `null` (#284).
+Its ALTER TABLE page enumerates rename table, rename column, add column, drop column, and SET/DROP NOT NULL since 3.53.0, and adding a constraint is not among them.
+Measured on sqlite3 3.53.3: `ALTER TABLE "users" ADD CONSTRAINT "fk_users_dept_id" FOREIGN KEY ("dept_id") REFERENCES "departments"("id")` is `near "FOREIGN": syntax error`.
+So an added table takes the key inside `CREATE TABLE`, after the columns and the `PRIMARY KEY` line, where 3.53.3 accepts it and `PRAGMA foreign_key_list` reports it, and an added foreign key on an existing table is a comment (#515).
+The key carries no `CONSTRAINT` name, because SQLite never reads a foreign key's name back.
+A dropped column and a dropped foreign key are comments naming the table recreation.
+A modified column is a comment too, though SQLite gained `ALTER COLUMN ... SET/DROP NOT NULL` in 3.53.0: the provider runs on whichever SQLite `bun:sqlite` or `node:sqlite` bundles, chosen at runtime with `LIBREDB_SQLITE_DRIVER` as an override, so the statement would write a migration that succeeds on one deployment and fails on another.
+The fields it takes unchanged from `src/lib/db/migration-ddl/shared.ts` are `standardAddColumn`, `standardColumnDef`, `standardCreateIndex`, `standardDropIndex`, `standardDropTable` and `standardPrimaryKey`.
+
+Every refusal reason it can print, verbatim:
+
+- "A foreign key is declarable only as a CREATE TABLE constraint; recreate the table and copy the rows."
+- "Requires table recreation."
 
 ---
 

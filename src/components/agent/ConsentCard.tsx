@@ -5,6 +5,7 @@ import { Info, Play } from "lucide-react";
 import type { AgentStatementLanguageId } from "@/lib/agent/agent-manifest";
 import { AGENT_HANDOVER_BUDGET } from "@/lib/agent/execution-policy";
 import { autoExecuteTerms } from "@/lib/agent/posture";
+import { executionUiFor } from "@/lib/db/execution-ui";
 import type { AgentRunWorkflowType } from "@/lib/agent/types";
 import type { DatabaseType } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -113,14 +114,6 @@ const HANDOVER_CHIPS: Readonly<Record<AgentStatementLanguageId, readonly Handove
   mongo: [],
 };
 
-/**
- * The one sentence that is true of SQLite and of nothing else, in the words the budget meter
- * already uses for the same fact: an on-disk SQLite read that overruns its timeout is now
- * killed mid-flight, so only the in-memory database keeps the old blocking behaviour.
- */
-const SQLITE_COST =
-  "On SQLite a read that runs past its timeout is now killed mid-flight; the in-memory database is the exception and still blocks this application until the read finishes.";
-
 export function ConsentCard({
   workflowType,
   workflowLabel,
@@ -134,7 +127,7 @@ export function ConsentCard({
   regionRef,
 }: ConsentCardProps): React.JSX.Element {
   const [termsOpen, setTermsOpen] = useState(false);
-  const isSqlite = engine === "sqlite";
+  const consentDeadline = executionUiFor(engine ?? undefined).consentDeadline;
 
   /*
     Raised, therefore announced. Mount is the moment the step appears, and focusing the
@@ -245,7 +238,7 @@ export function ConsentCard({
                 The SQLite chip is the label of the sentence below it, not a second opinion:
                 the two are adjacent, so nothing can show the compressed form alone.
               */
-              ...(isSqlite ? ([{ text: "SQLite: killed at its timeout", tone: "warn" }] as const) : []),
+              ...(consentDeadline === null ? [] : [{ text: consentDeadline.chip, tone: "warn" as const }]),
             ].map((chip) => (
               <span
                 key={chip.text}
@@ -267,9 +260,9 @@ export function ConsentCard({
           Ungated by the tick, because it is true of the run either way — the tick only
           decides whether a second, unbounded read joins the run's own.
         */}
-        {isSqlite && (
+        {consentDeadline !== null && (
           <p data-testid="agent-auto-execute-sqlite" className="ml-5 text-[0.625rem] text-warning/70">
-            {SQLITE_COST}
+            {consentDeadline.sentence}
           </p>
         )}
       </div>

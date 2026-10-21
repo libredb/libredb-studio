@@ -91,6 +91,9 @@ const EXTRA_DIRS = [
   "src",
   "testdb",
   "tests",
+  // The VS Code extension: its own node_modules, its bundles and the VS Code builds its test legs download into
+  // .vscode-test/. None of it is server runtime.
+  "vscode-extension",
 ];
 
 /** Root files on the deny-list, including one instance per glob pattern

@@ -1,0 +1,8 @@
+-- fixture: full
+-- Migration generated at 2026-10-19T12:00:00.000Z
+-- Dialect: opcua
+-- Changes: 1 added, 1 removed, 2 modified
+
+-- OPC UA: Cannot generate table DDL. An OPC UA node has attributes defined by its type in the server's own model, not columns, and this provider has no code that can write to a server, so there is no column definition to change.
+-- fixture: none
+-- No schema changes detected.

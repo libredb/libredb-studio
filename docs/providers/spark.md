@@ -198,6 +198,16 @@ connections:
 
 A seed that sets `connectionString` or `readOnly: true` for `spark` is refused when the file loads; one that sets `user` loads, and its connection is refused at connect with the User sentence of [section 2.1](#21-fields).
 
+### Connection string
+
+Apache Spark has no connection string scheme, no `readTls` and no seed load check ([`connection-string.ts`](../../src/lib/db/providers/sql/spark/connection-string.ts)).
+It has no scheme on purpose, though its `sc://` address is pasted and decomposed by `parseSparkConnectUri`: the login signature prints every scheme with the tail `user@db.internal:<port>/app`, and Spark's grammar refuses both a user part and a path, so the hero would show an address the product refuses.
+
+### Execution UI
+
+The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `spark` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
+Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/sql/spark/execution-ui.ts).
+
 ## 3. The recommended Spark setup
 
 Set `spark.connect.authenticate.token` on the server (Spark 4.0 and later), or `SPARK_CONNECT_AUTHENTICATE_TOKEN` in its environment, and put the same value in Token.
@@ -295,6 +305,20 @@ A run whose statement Studio has not sent before, and whose deadline passes befo
 A deadline that passes between the two steps sends no second ExecutePlan call, and the run's Interrupt follows, with the first of these two sentences.
 A metadata statement whose deadline passes before Studio sends it again, on a new session after the server closed the one it was first sent on, is not sent again, and ends with the lost-session sentence of [section 4](#4-sessions-and-scripts).
 A dropped connection reads `The connection to Spark dropped while the statement ran. Studio asked Spark to stop it; run it again.`, and any other failure of the stream `The connection to Spark failed while the statement ran (<status text>). Studio asked Spark to stop it; run it again.`
+
+### 5.1 SQL grammar
+
+How this engine's statement text is read is declared once, in [`src/lib/db/providers/sql/spark/sql-grammar.ts`](../../src/lib/db/providers/sql/spark/sql-grammar.ts), the `spark` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+Its grammar is `SPARK_GRAMMAR`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
+The lexical facts are read off Spark's lexer and parser at tag v4.2.0 (`SqlBaseLexer.g4`, `SqlBaseParser.g4`), and the comment facts were measured on Spark 4.2.0.
+`#` is no token outside a literal, `[` is a subscript (`arr[0]`, `m['k']`), names are quoted with backticks, and `/` is division with no `//` comment.
+Block comments nest at every level, and `/*+` opens a hint Spark lexes as code that opens no level inside a comment (both measured on 4.2.0).
+A backslash escapes inside `'...'` and `"..."` under every setting, and `r'C:\'` is a raw literal that takes none.
+A backslash right before a line feed continues a `--` comment, and a lone carriage return ends one as a line feed does; the reader follows both.
+Three readings the shared reader does not follow: a backslash before a line feed continues a literal, Unicode spaces count as white space, and an unquoted address (`a://b`) is one token; the provider refuses the last two before any call.
+The row bound goes before a trailing `OFFSET`, since `LIMIT` must precede it.
+`readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.
+Redaction is `sql` with no name quote: a redacted statement keeps its words, and every literal and quoted run becomes `?`.
 
 ## 6. Results
 
@@ -521,6 +545,24 @@ The DDL of an export names Spark's types: `STRING`, `DOUBLE` and `BINARY`.
 
 Object edit is not in this version: no Spark kind accepts definition edits, and a view's or a table's definition is read only.
 
+### 8.8 SQL writing
+
+[`spark/sql-writing.ts`](../../src/lib/db/providers/sql/spark/sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+A literal is written by `literalBackslash` and read back by `unquoteBackslash`: every escape, the quote's included, is spelled with a backslash, and doubling is not part of the grammar.
+A name is quoted by `identifierBacktickDoubled`: a backtick name with an inner backtick doubled and a backslash as data.
+There is no placeholder (`placeholder: null`), so a generator quotes the value with `quoteLiteral` instead of emitting a bind.
+Spark's lexer pairs a backslash with the next character inside `'...'` under every setting, so the quote is written `\'` as Spark's own `Literal.sql` writes it; a doubled quote is an escape only from 4.1, so it is not used.
+Spark SQL (4.1 and 4.2) quotes a name in backticks and doubles a backtick inside it, the form its own `quoteIfNeeded` writes; a double-quoted text is a string literal in Spark, so the standard form would turn a name into a string.
+Names are case-insensitive there, so quoting never changes which object a name means.
+Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+
+The module's `export` field spells a result export's column types through `ddlTypes`: Spark SQL has no TEXT, DOUBLE PRECISION or BLOB, and its spellings are `STRING`, `DOUBLE` and `BINARY`.
+No Spark server read a probe column back, so it holds `NOTHING_STANDS_ALONE` and every bare name is re-spelled portably until one does.
+A binary cell is written by `binaryStandardHex`, which Spark reads as a BINARY literal.
+`nonFinite` writes `CAST('NaN' AS DOUBLE)`, `CAST('Infinity' AS DOUBLE)` and `CAST('-Infinity' AS DOUBLE)`, Spark's documented special floating-point values.
+`typedLiteral` writes the temporal, interval and nested cells, from the engine's own [`spark/typed-literals.ts`](../../src/lib/db/providers/sql/spark/typed-literals.ts).
+`NO_BARE_SPELLING` completes it.
+
 ## 9. The confirmation gate
 
 The gate asks before every DELETE, DROP, TRUNCATE, ALTER, GRANT, REVOKE, UPDATE and MERGE as for every SQL engine, and the Spark grammar row adds these forms.
@@ -673,3 +715,21 @@ The render-only `bun tests/live/spark-evidence.ts --surfaces` contacts no server
 - Spark SQL reference: https://spark.apache.org/docs/4.2.0/sql-ref.html
 - Spark Connect protos at tag v4.2.0, commit `32f7299601108917fb01920a54e084595b7b3bf8`: https://github.com/apache/spark/tree/v4.2.0/sql/connect/common/src/main/protobuf/spark/connect
 - Variant encoding spec: https://github.com/apache/parquet-format/blob/master/VariantEncoding.md
+
+## Migration DDL
+
+[`SPARK_MIGRATION_DDL`](../../src/lib/db/providers/sql/spark/migration-ddl.ts) is what the schema-diff migration generator writes for `spark`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+No transaction spans two Spark SQL statements (the provider declares `supportsTransactions: false`), so `transactionWrapper` is `null` (#284).
+A modified column is a comment: on Spark 4.1.3 and 4.2.0 a session-catalog parquet column's type change fails with NOT_SUPPORTED_CHANGE_COLUMN (0A000) while a comment change succeeds, and on 4.2.0 the same table refuses `SET` and `DROP NOT NULL` with UNSUPPORTED_FEATURE.TABLE_OPERATION (0A000) and takes `SET` and `DROP DEFAULT`.
+A DSv2 catalog decides for itself, so the answer is the catalog's and the table format's.
+Spark 4.1 and later parse `FOREIGN KEY ... REFERENCES` (SPARK-51207) as an informational `NOT ENFORCED` constraint, kept only by a DSv2 catalog that implements constraints.
+A session-catalog table refuses every constraint operation (SPARK-54761): on 4.2.0 a parquet table refuses `ADD CONSTRAINT ... FOREIGN KEY`, with or without `NOT ENFORCED`, `DROP CONSTRAINT` and a `CREATE TABLE` that declares one, each with UNSUPPORTED_FEATURE.TABLE_OPERATION (0A000).
+So keys, foreign keys and index changes are comments.
+The fields it takes unchanged from `src/lib/db/migration-ddl/shared.ts` are `standardAddColumn`, `standardColumnDef`, `standardDropColumn` and `standardDropTable`.
+
+Every refusal reason it can print, verbatim:
+
+- "Whether a column's type, nullability or default can change depends on the catalog and the table format; write the change by hand."
+- "Apache Spark: Cannot generate index DDL. Spark SQL's index statements work only in a catalog whose tables support indexes; write the index change by hand."
+- "Spark accepts a foreign key only as an informational NOT ENFORCED constraint, in a catalog that implements constraints."
+- "Spark accepts a primary key only as an informational NOT ENFORCED constraint, in a catalog that implements constraints."

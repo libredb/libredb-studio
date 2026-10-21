@@ -1,0 +1,4 @@
+scheme => "mongodb"
+parse(mongodb://u:p@h:27017/d?tls=true) => {"type":"mongodb","connectionString":"mongodb://u:p@h:27017/d?tls=true","sslMode":"verify-system","database":"d","user":"u","password":"p","host":"h","port":"27017"}
+seed => []
+seed => []

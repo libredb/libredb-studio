@@ -199,7 +199,7 @@ export function cassandraIndexCountCql(keyspace: string): string {
  * A keyspace name as a CQL string literal.
  *
  * Through the shared quoter rather than by hand, so the dialect's escape rule is the
- * one recorded in `lib/sql/values.ts` - CQL doubles the quote and reads a backslash
+ * one recorded in `lib/db/providers/sql/cassandra/sql-writing.ts` - CQL doubles the quote and reads a backslash
  * as data, both measured. A keyspace name cannot contain a quote today, and that is
  * exactly the kind of assumption this function exists to not depend on.
  */

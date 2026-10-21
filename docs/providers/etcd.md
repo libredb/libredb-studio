@@ -227,6 +227,15 @@ With authentication on, an etcd below 3.7 answers `AuthStatus` and `Status` to t
 A user who is not root cannot connect to such an etcd: a client certificate is refused with "etcd refused the auth status: this connection's etcd user is not granted all of it. (etcd: permission denied)", and a password with the same sentence naming "the endpoint status".
 Typed commands and the surfaces that walk no key (the member, lease, user and role listings and their Source tabs, health, the Storage tab, the maintenance cards and a value edit's apply) send nothing before their own requests and use the grants as they were last read, so a refusal they meet after such a change can name a range the user has lost, or leave out one it gained, until the next walk.
 
+### Connection string
+
+`etcd` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/keyvalue/etcd/connection-string.ts)).
+
+### Execution UI
+
+The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `etcd` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
+Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/keyvalue/etcd/execution-ui.ts).
+
 ## 5. Query interface
 
 ### 5.1 The grammar
@@ -325,6 +334,14 @@ Bound `params` are refused with a `DatabaseConfigError` before any request, and 
 Cancelling a read or a watch stops it; a write already sent is not stopped and the cancel answers false, because aborting the call cannot undo a request etcd may have applied, so its outcome is unknown until the key is read again.
 The confirmation gate reads the provider's own parser, so what runs and what asks are one parse, and it never sends an etcd statement to the model provider.
 A prefix delete asks for the prefix typed exactly, `/app/` and `/App/` being different prefixes; a key holding a newline is typed in Go's quoted form.
+
+### 5.6 SQL grammar
+
+How this engine's statement text is read is declared once, in [`src/lib/db/providers/keyvalue/etcd/sql-grammar.ts`](../../src/lib/db/providers/keyvalue/etcd/sql-grammar.ts), the `etcd` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+`readsSqlText` is `false`: `etcd` takes an etcdctl command line (#1089), whose words are read by the shell's quoting rules and a txn body by etcdctl's own, and a key may be spelled like any SQL keyword; the provider extends `BaseDatabaseProvider` and parses the text itself.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` in `src/lib/db/destructive-commands.ts` instead of a SQL reading.
+Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
+Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
 
 ## 6. Schema introspection
 
@@ -438,6 +455,18 @@ It also declares `supportsMaintenance: true`, with `maintenanceOperations: ["com
 A key-prefix row is labelled "Key Prefix", its rows "Key", its read "Get Keys" and its generator "Generate Command"; a click on a group runs `get <group> --prefix --limit=50`, and Generate Command writes that read with the other forms commented below it, or the read alone on a read-only connection.
 A group whose prefix holds a carriage return, a line separator (U+2028) or a paragraph separator (U+2029), which the editor does not keep as the command line spells them, is read through a `txn` whose `get` names the prefix in Go quoting, and Generate Command's one other form for it is the commented `txn` template.
 
+### SQL writing
+
+[`etcd/sql-writing.ts`](../../src/lib/db/providers/keyvalue/etcd/sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+A literal is written by `literalStandard` and read back by `unquoteStandard`: the quote is doubled and a backslash is data.
+A name is quoted by `identifierDoubleQuoted`, the SQL standard form: a double-quoted name with an inner double quote doubled.
+There is no placeholder (`placeholder: null`), so a generator quotes the value with `quoteLiteral` instead of emitting a bind.
+This engine declares `queryLanguage: "json"`, so no statement is ever built for it to read; what a generator emits for such a connection is portable SQL meant to run elsewhere, and the standard form is the only thing it can claim.
+Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+
+The module's `export` field writes a result export's CREATE TABLE and INSERT from the shared building blocks alone: `STANDARD_DDL_TYPES` for the column types, `NOTHING_STANDS_ALONE` and `NO_BARE_SPELLING`, so every bare declared name is re-spelled from its family, `NULL_NON_FINITE` for NaN and the infinities, and `binaryStandardHex` for a binary cell (`X'0102'`).
+The engine declares `queryLanguage: "json"`, so no SQL statement is ever built for it to read, and a file exported from it is meant to run somewhere else: every bare name in it is re-spelled portably rather than kept as one engine's private word.
+
 ## 10. Error handling
 
 A failure before the request left Studio is a connection error; "etcdserver: no leader" is a lost quorum with nothing applied; a write that met a failure after it was sent says that it may have been applied and that the key should be read again before the command is run again; a read's deadline is a timeout; a permission refusal names the command, the range and what the user may read, "etcd user reader may read: /app/ (prefix), /config/a"; and every other answer is etcd's own words after Studio's.
@@ -514,6 +543,16 @@ kube-apiserver compacts etcd every 5 minutes, so Compact history is for a NOSPAC
 - The watch is bounded; a live watch panel is filed as U56.
 - A watch whose member goes silent after etcd answered its create, with the connection left open, reports a quiet window, since nothing on the client tells a silent member from a quiet key range; a window that runs on for about 16 seconds after the member went silent lets the keepalive drop the connection (a ping every 10 seconds, unanswered for 6) and ends the watch as an error.
 - The connection dialog sends a client certificate the current SSL mode no longer draws, filed as U60.
+
+## Migration DDL
+
+[`ETCD_MIGRATION_DDL`](../../src/lib/db/providers/keyvalue/etcd/migration-ddl.ts) is what the schema-diff migration generator writes for `etcd`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
+`etcd` text is an etcdctl command line, not SQL, so there is no table DDL to wrap (#284, #1089).
+
+The refusal reason it prints, verbatim:
+
+- "A key-prefix group holds keys whose values are bytes, not rows with declared columns, so there is no column definition to change."
 
 ## 14. References
 

@@ -170,6 +170,8 @@ const OUTLINE: readonly string[] = [
   "### 4.7 Pasting an address",
   "### 4.8 Server versions",
   "### 4.9 What is not verified",
+  "### Connection string",
+  "### Execution UI",
   "## 5. Query interface",
   "### 5.1 The command",
   "### 5.2 Commands and flags",
@@ -179,6 +181,7 @@ const OUTLINE: readonly string[] = [
   "### 5.6 Bounds",
   "### 5.7 Pagination and the starting token",
   "### 5.8 Cancellation and the confirmation gate",
+  "### 5.9 SQL grammar",
   "## 6. Schema introspection",
   "### 6.1 The object surface",
   "### 6.2 Object source",
@@ -189,6 +192,7 @@ const OUTLINE: readonly string[] = [
   "## 7. Monitoring & health",
   "## 8. Maintenance",
   "## 9. Capabilities & labels",
+  "### 9.1 SQL writing",
   "## 10. Error handling",
   "## 11. Testing",
   "### 11.1 How the tests work",
@@ -198,6 +202,7 @@ const OUTLINE: readonly string[] = [
   "### 11.5 The acceptance matrix",
   "## 12. Running an S3-compatible server for Studio",
   "## 13. Known limitations",
+  "## Migration DDL",
   "## 14. References",
 ];
 
@@ -647,11 +652,14 @@ const provider = new S3Provider(
 /** The client, console and preview modules a browser bundle may import. */
 const BROWSER_SET: ReadonlySet<string> = new Set([
   "constants.ts",
+  "connection-string.ts",
+  "execution-ui.ts",
   "names.ts",
   "xml.ts",
   "shapes.ts",
   "headers.ts",
   "labels.ts",
+  "sql-grammar.ts",
   "console/constants.ts",
   "console/lexer.ts",
   "console/paths.ts",
@@ -666,9 +674,11 @@ const BROWSER_SET: ReadonlySet<string> = new Set([
   "preview-csv.ts",
   "preview-json.ts",
   "parquet-schema.ts",
+  "migration-ddl.ts",
   "parquet-thrift-guard.ts",
   "preview-cells.ts",
   "preview-render.ts",
+  "sql-writing.ts",
 ]);
 
 /** Every `.ts` file under `directory`, as a path relative to it. */

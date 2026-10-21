@@ -404,6 +404,18 @@ before the mode reached the driver `require` failed the same way `disable` does.
 > driver reads — and the connection dialog shows the SSL panel in connection-string mode too, so a
 > selection made there has to mean something.
 
+### Connection string
+
+The scheme shown for MongoDB is `mongodb://`, and the parser also accepts `mongodb+srv://`.
+Its row in `CONNECTION_STRING` is declared in [`connection-string.ts`](../../src/lib/db/providers/document/mongodb/connection-string.ts).
+It has no `readTls`: the URI's `tls`, `ssl`, `tlsInsecure`, `tlsAllowInvalidCertificates` and `tlsCAFile` options are read by `readMongoTLS` in `src/lib/connection-string-parser.ts` instead, as described under `tls=true` in a pasted URI (D26).
+It runs no seed load check.
+
+### Execution UI
+
+The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `mongodb` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
+Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/document/mongodb/execution-ui.ts).
+
 ---
 
 ## 5. Query interface
@@ -472,6 +484,15 @@ So the surface would have nothing to report, and the absence is a declared bound
 fallback: the caller shape-checks for the method and this provider does not answer it.
 
 ---
+
+### SQL grammar
+
+How this engine's statement text is read is declared once, in [`src/lib/db/providers/document/mongodb/sql-grammar.ts`](../../src/lib/db/providers/document/mongodb/sql-grammar.ts), the `mongodb` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+`readsSqlText` is `false`: MongoDB takes a JSON document, which never reaches the SQL readers on the query path, since the provider extends `BaseDatabaseProvider` and never calls `prepareQuery`; it reaches the confirmation gate because both execution paths ask about whatever is in the editor before running it (#297).
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` in `src/lib/db/destructive-commands.ts` instead of a SQL reading.
+Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
+Redaction is `command`, read by the module's own reader: a redacted statement keeps the document's keys and its top-level `collection`, `operation` and `database` names as SQL keeps table names, replaces every other value with `?` as compact JSON, and keeps nothing (`?`) of text that is not one JSON document, since the provider does not run it either.
+The document is walked with a stack of its own rather than by recursion, because `JSON.parse` reads a document nested far deeper than a recursive walk can follow.
 
 ## 6. Schema introspection
 
@@ -1219,6 +1240,18 @@ sentence was hardcoded to PostgreSQL's `pg_stat_statements` advice on every engi
 (#463); here `getSlowQueries()` reads `system.profile`
 ([§7](#7-monitoring--health)), which does not exist until the profiler is switched on.
 
+### SQL writing
+
+[`mongodb/sql-writing.ts`](../../src/lib/db/providers/document/mongodb/sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+A literal is written by `literalStandard` and read back by `unquoteStandard`: the quote is doubled and a backslash is data.
+A name is quoted by `identifierDoubleQuoted`, the SQL standard form: a double-quoted name with an inner double quote doubled.
+There is no placeholder (`placeholder: null`), so a generator quotes the value with `quoteLiteral` instead of emitting a bind.
+This engine declares `queryLanguage: "json"`, so no statement is ever built for it to read; what a generator emits for such a connection is portable SQL meant to run elsewhere, and the standard form is the only thing it can claim.
+Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+
+The module's `export` field writes a result export's CREATE TABLE and INSERT from the shared building blocks alone: `STANDARD_DDL_TYPES` for the column types, `NOTHING_STANDS_ALONE` and `NO_BARE_SPELLING`, so every bare declared name is re-spelled from its family, `NULL_NON_FINITE` for NaN and the infinities, and `binaryStandardHex` for a binary cell (`X'0102'`).
+The engine declares `queryLanguage: "json"`, so no SQL statement is ever built for it to read, and a file exported from it is meant to run somewhere else: every bare name in it is re-spelled portably rather than kept as one engine's private word.
+
 ---
 
 ## 10. Error handling
@@ -1608,6 +1641,18 @@ A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES`
   outgrow MongoDB's own pipeline-length ceiling. So the round trips grow as the folder divided by
   100, not with it. What the read still cannot tell you is a field no sampled document carried
   ([§6](#6-schema-introspection)).
+
+---
+
+## Migration DDL
+
+[`MONGODB_MIGRATION_DDL`](../../src/lib/db/providers/document/mongodb/migration-ddl.ts) is what the schema-diff migration generator writes for `mongodb`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
+`mongodb` writes no SQL text at all (`readsSqlText: false`), so there is no table DDL to wrap, whatever the driver's own transaction API offers (#284).
+
+The refusal reason it prints, verbatim:
+
+- "Collections are schemaless, so there is no column definition to change."
 
 ---
 

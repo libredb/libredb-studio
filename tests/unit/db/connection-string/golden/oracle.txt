@@ -1,0 +1,4 @@
+scheme => "oracle"
+parse(oracle://u:p@h:1521/d?sslmode=require&ssl=true) => {"type":"oracle","host":"h","port":"1521","user":"u","password":"p","database":"d"}
+seed => []
+seed => []

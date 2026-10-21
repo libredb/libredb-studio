@@ -463,7 +463,9 @@ describe("a foreign key covered by a constraint-created index (#502)", () => {
     const table = inventory(SCHEMA, "covered");
 
     expect(findUnindexedForeignKeys(table)).toEqual([]);
-    expect(table.indexes.map((index) => index.name)).toEqual(["(unique constraint)"]);
+    expect(Array.isArray(table.indexes) ? table.indexes.map((index) => index.name) : []).toEqual([
+      "(unique constraint)",
+    ]);
   });
 
   test("a composite UNIQUE covers the key it LEADS on, and not one it merely mentions", () => {

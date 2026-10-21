@@ -342,6 +342,11 @@ const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
   // Modbus takes no credential at all - the protocol defines none - and takes the register map,
   // the only thing that can name a point on an engine that answers no discovery request.
   modbus: ["host", "port", "registerMap"],
+  // The four engines with a field of their own that the dialog drew by type id until it read these lists.
+  oracle: ["host", "port", "user", "password", "database", "serviceName"],
+  mssql: ["host", "port", "user", "password", "database", "instanceName"],
+  cassandra: ["host", "port", "user", "password", "database", "localDataCenter"],
+  mongodb: ["host", "port", "user", "password", "database", "connectionString", "authSource"],
 };
 /**
  * A field list one test declares on top of the mirrored table, reset before every test. The dataServers cases
@@ -360,6 +365,7 @@ interface MockFieldCopy {
   readonly fieldLabels?: Readonly<Record<string, string>>;
   readonly fieldHints?: Readonly<Record<string, string>>;
   readonly fieldPlaceholders?: Readonly<Record<string, string>>;
+  readonly fieldPlacement?: Readonly<Record<string, "open" | "advanced">>;
   readonly fieldOptions?: Readonly<Record<string, readonly { readonly value: string; readonly label: string }[]>>;
   readonly showSshTunnel?: false;
   readonly showSslPanel?: false;
@@ -376,9 +382,60 @@ interface MockFieldCopy {
 const MOCK_FIELD_COPY: Record<string, MockFieldCopy> = {
   // Mirrored from the real entry; tests/unit/lib/db-ui-config.test.ts pins the real one.
   libsql: {
+    fieldLabels: { password: "Auth Token" },
+    fieldPlaceholders: { connectionString: "libsql://<database>-<org>.turso.io?authToken=<jwt>" },
     fieldHints: {
       user: "Only for a self-hosted libSQL server started with SQLD_HTTP_AUTH, which checks a user name and password as HTTP Basic: the Auth Token box then takes the password. Leave it empty for Turso Cloud and for a server that checks tokens.",
+      password:
+        "Turso Cloud mints this per database (`turso db tokens create`). A self-hosted libSQL server started without authentication takes none - leave it empty.",
     },
+  },
+  // Mirrored from the real entries (engine contract, row 8): the words the dialog chose by type id before these
+  // entries declared them. tests/unit/lib/db-ui-config.test.ts pins the real ones.
+  mongodb: {
+    fieldPlacement: { authSource: "open" },
+    fieldPlaceholders: { connectionString: "mongodb://localhost:27017/mydb  or  mongodb+srv://..." },
+    fieldHints: {
+      authSource:
+        "The database the user was created in, usually admin. Leave empty when the credentials live in the database above.",
+    },
+  },
+  clickhouse: {
+    fieldPlaceholders: { connectionString: "mongodb://localhost:27017/mydb  or  mongodb+srv://..." },
+  },
+  couchbase: {
+    fieldLabels: { database: "Bucket Name" },
+    fieldPlaceholders: {
+      connectionString: "couchbase://localhost:8091/travel-sample  or  couchbases://cb.<id>.cloud.couchbase.com/...",
+    },
+  },
+  trino: {
+    fieldLabels: { database: "Catalog Name" },
+    fieldPlaceholders: { database: "tpch" },
+    fieldHints: {
+      password:
+        "Trino refuses a password over plain HTTP. Enable TLS below, or leave this empty to connect as an unauthenticated user.",
+      database: "The Trino catalog to open, such as tpch or hive. Its schemas are the level below.",
+    },
+  },
+  cassandra: {
+    fieldPlacement: { localDataCenter: "open" },
+    fieldLabels: { database: "Keyspace Name" },
+    fieldPlaceholders: { database: "probe" },
+    fieldHints: {
+      database:
+        "The keyspace to open. Tables inside it are the level below; statements can still name any keyspace in full.",
+      localDataCenter:
+        "Required: the Cassandra driver refuses to connect without it. A stock single-node install reports datacenter1; the server lists the ones it has if this is wrong.",
+    },
+  },
+  oracle: {
+    fieldPlacement: { serviceName: "advanced" },
+    fieldHints: { serviceName: "If empty, the Database Name field is used as the service name." },
+  },
+  mssql: {
+    fieldPlacement: { instanceName: "advanced" },
+    fieldHints: { instanceName: "For named instances (e.g. SQLEXPRESS). Leave empty for default instance." },
   },
   prometheus: {
     fieldLabels: { user: "User", password: "Password or token" },
@@ -657,6 +714,11 @@ mock.module("@/lib/db-ui-config", () => ({
   connectionFieldHint: (config: MockFieldCopy, field: string) => config.fieldHints?.[field],
   connectionFieldPlaceholder: (config: MockFieldCopy, field: string, fallback: string) =>
     config.fieldPlaceholders?.[field] ?? fallback,
+  connectionFieldPlacement: (config: MockFieldCopy & { readonly label: string }, field: string) => {
+    const placement = config.fieldPlacement?.[field];
+    if (placement === undefined) throw new Error(`${config.label} declares no placement for ${field}`);
+    return placement;
+  },
   // The real reader's rule: an unset controlling field reads as its first option.
   connectionFieldShown: (
     config: MockFieldCopy & { readonly fieldOptions?: MockFieldCopy["fieldOptions"] },
@@ -1863,9 +1925,11 @@ describe("ConnectionModal", () => {
      * by the first case below, which fails if it stops matching.
      */
     const EVERY_FIELD: readonly string[] = (() => {
-      const table = readFileSync(join(import.meta.dir, "../../src/lib/db-ui-config.ts"), "utf8");
+      const source = readFileSync(join(import.meta.dir, "../../src/lib/db/connection-fields.ts"), "utf8");
+      const start = source.indexOf("const CONNECTION_FIELD_ROWS");
+      const table = source.slice(start, source.indexOf("\n} as const", start));
       const seen: string[] = [];
-      for (const declaration of table.matchAll(/connectionFields: \[([^\]]*)\]/g)) {
+      for (const declaration of table.matchAll(/^\s+\w+: \[([^\]]*)\]/gm)) {
         for (const [, field] of (declaration[1] ?? "").matchAll(/"(\w+)"/g)) {
           if (field !== undefined && !seen.includes(field)) seen.push(field);
         }
@@ -1956,7 +2020,13 @@ describe("ConnectionModal", () => {
       ["db2", "db2", {}, NETWORKED, MOCK_FIELD_COPY.db2.fieldHints ?? {}],
       ["mssql", "mssql", {}, NETWORKED, {}],
       ["clickhouse", "clickhouse", {}, NETWORKED, {}],
-      ["mongodb", "mongodb", {}, { ...NETWORKED, authSource: "Authentication Database" }, {}],
+      [
+        "mongodb",
+        "mongodb",
+        {},
+        { ...NETWORKED, authSource: "Authentication Database" },
+        MOCK_FIELD_COPY.mongodb.fieldHints ?? {},
+      ],
       [
         "mongodb in connection-string mode",
         "mongodb",
@@ -1972,13 +2042,19 @@ describe("ConnectionModal", () => {
         { connectionString: "Connection URI", database: "Bucket Name (optional override)" },
         {},
       ],
-      ["trino", "trino", {}, { ...NETWORKED, database: "Catalog Name", schema: "Schema Name" }, {}],
+      [
+        "trino",
+        "trino",
+        {},
+        { ...NETWORKED, database: "Catalog Name", schema: "Schema Name" },
+        MOCK_FIELD_COPY.trino.fieldHints ?? {},
+      ],
       [
         "cassandra",
         "cassandra",
         {},
         { ...NETWORKED, database: "Keyspace Name", localDataCenter: "Local Data Center" },
-        {},
+        MOCK_FIELD_COPY.cassandra.fieldHints ?? {},
       ],
       [
         "libsql",
@@ -2247,6 +2323,8 @@ describe("ConnectionModal", () => {
 
     test("the control: with nothing declared, an Advanced field keeps its own word and points at no hint", () => {
       mockFormOverrides = { type: "oracle", showAdvanced: true };
+      // Oracle's entry declares a service-name hint, so the control declares none in its place.
+      mockDeclaredCopy = { fieldHints: {} };
       const { container, queryByText, queryByTestId } = render(
         React.createElement(ConnectionModal, createDefaultProps()),
       );
@@ -2258,16 +2336,15 @@ describe("ConnectionModal", () => {
       );
     });
 
-    test("a declared password hint joins libSQL's own sentence rather than replacing it", () => {
-      // The per-type branches stay as they are (#1085); moving them onto the declaration is a
-      // backlog item, so a declaration adds to what they draw, and a label left undeclared keeps
-      // the branch's word.
+    test("libSQL's token sentence is its declared password hint, so a declaration in its place replaces it", () => {
+      // The dialog drew this sentence by type id until the entry declared it (engine contract, row 8), so it is
+      // drawn by the one hint paragraph a field has, and a label left undeclared keeps the entry's word.
       mockFormOverrides = { type: "libsql" };
       mockDeclaredCopy = { fieldHints: { password: "Declared hint for password." } };
       const { getByTestId, queryByText } = render(React.createElement(ConnectionModal, createDefaultProps()));
 
       expect(getByTestId("password-hint").textContent).toBe("Declared hint for password.");
-      expect(queryByText(/turso db tokens create/)).not.toBeNull();
+      expect(queryByText(/turso db tokens create/)).toBeNull();
       expect(queryByText("Auth Token")).not.toBeNull();
     });
 
@@ -2821,4 +2898,45 @@ describe("ConnectionModal: the Snowflake fields, the account-only host row and t
       expect(queryByRole("button", { name: "Copy" })).toBeNull();
     });
   });
+});
+
+describe("ConnectionModal: a field is drawn where its declared placement says", () => {
+  afterEach(() => {
+    cleanup();
+    mockFormOverrides = {};
+    mockDeclaredCopy = {};
+  });
+
+  const FIELDS = [
+    ["mongodb", "authSource", "#authSource"],
+    ["cassandra", "localDataCenter", "#localDataCenter"],
+    ["oracle", "serviceName", 'input[placeholder="ORCL or XEPDB1"]'],
+    ["mssql", "instanceName", 'input[placeholder="SQLEXPRESS"]'],
+  ] as const;
+
+  test.each(FIELDS)("%s's %s declared open is drawn in the open, with no Advanced button", (type, field, selector) => {
+    mockFormOverrides = { type, showAdvanced: false };
+    mockDeclaredCopy = { fieldPlacement: { [field]: "open" } };
+    const { container, queryByRole } = render(React.createElement(ConnectionModal, createDefaultProps()));
+
+    expect(container.querySelector(selector)).not.toBeNull();
+    expect(queryByRole("button", { name: /Advanced/ })).toBeNull();
+  });
+
+  test.each(FIELDS)(
+    "%s's %s declared advanced is drawn inside the Advanced accordion only",
+    (type, field, selector) => {
+      mockFormOverrides = { type, showAdvanced: false };
+      mockDeclaredCopy = { fieldPlacement: { [field]: "advanced" } };
+      const { container, getByRole, rerender } = render(React.createElement(ConnectionModal, createDefaultProps()));
+
+      expect(container.querySelector(selector)).toBeNull();
+
+      mockFormOverrides = { type, showAdvanced: true };
+      rerender(React.createElement(ConnectionModal, createDefaultProps()));
+      const accordion = getByRole("button", { name: /Advanced/ }).parentElement;
+      expect(container.querySelectorAll(selector)).toHaveLength(1);
+      expect(accordion?.contains(container.querySelector(selector))).toBe(true);
+    },
+  );
 });

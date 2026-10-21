@@ -698,6 +698,20 @@ encrypted: measured over TCP against MySQL with its default self-signed certific
 holds is left alone and the paste banner names the parameter it declined to act on; choose SSL Mode
 yourself in the SSL / TLS panel.
 
+### Connection string
+
+The scheme shown for MySQL is `mysql://`.
+Its row in `CONNECTION_STRING` is declared in [`mysql-connection-string.ts`](../../src/lib/db/providers/sql/mysql-connection-string.ts).
+Its `readTls` reads `ssl-mode` (or `sslmode`) first, mapping `DISABLED`, `REQUIRED`, `VERIFY_CA` and `VERIFY_IDENTITY` onto `disable`, `require`, `verify-ca` and `verify-full`, and leaving `PREFERRED` unmapped for the reason postgres leaves `prefer` unmapped.
+Without a mode it reads the boolean `ssl` or `useSSL`: reading only `ssl-mode` dropped `?ssl=true` and `?useSSL=true` with no mode and no banner, the silent downgrade the TLS read exists to prevent.
+mysql2 also accepts an object there (`ssl={"rejectUnauthorized":true}`), which is not a boolean, so it falls through to the banner rather than being guessed at.
+It runs no seed load check.
+
+### Execution UI
+
+The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `mysql` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
+Its row in `EXECUTION_UI` is declared in [`mysql-execution-ui.ts`](../../src/lib/db/providers/sql/mysql-execution-ui.ts).
+
 ---
 
 ## 5. Query interface
@@ -930,6 +944,20 @@ The fix belongs at the source: once the provider returns the server's own date t
 A `bigint unsigned` past the signed range still fails the DDL form, because the declared type is `bigint` ([§5.4](#54-declared-column-types) says why `unsigned` is not part of it).
 
 ---
+
+### 5.7 SQL grammar
+
+How this engine's statement text is read is declared once, in [`src/lib/db/providers/sql/mysql-sql-grammar.ts`](../../src/lib/db/providers/sql/mysql-sql-grammar.ts), the `mysql` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+Its grammar is `MYSQL_GRAMMAR`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
+`#` to end of line is MySQL's and MariaDB's second comment form, pinned in the MySQL provider suite (#275).
+Block comments are flat: the MySQL reference manual (11.7 Comments, checked 2026-08-05) states nested comments are not supported and are deprecated.
+`//` is code, probed 2026-08-25 on 26.7.0: `SELECT 1 AS a // note` is ERROR 1064.
+A backslash does not always escape, because `NO_BACKSLASH_ESCAPES` in `sql_mode` turns the escape off per session.
+`[...]` and compound statements (`CREATE PROCEDURE ... BEGIN ... END`, cut with `DELIMITER` by MySQL's own client) are not established and stay at the fail-safe default; the second gap is BACKLOG S7.
+The update-target reader takes `--` as a comment only before a space or a control character, as MySQL and MariaDB do; its measurement on MariaDB 11.8.9 sits beside its regex in `src/lib/sql/update-target.ts`.
+`readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.
+Redaction is `sql` with a backtick as its name quote: a redacted statement keeps its words and every name in that quote, and every literal becomes `?`.
+A double quote is a string unless `ANSI_QUOTES` is set, so it is masked like any literal.
 
 ## 6. Transactions
 
@@ -2378,6 +2406,27 @@ on every engine (#463) — an extension MySQL does not have under any name, whil
 digest table this provider actually reads ([§8](#8-monitoring--health)) is a server switch a DBA can
 act on.
 
+### SQL writing
+
+[`sql/mysql-sql-writing.ts`](../../src/lib/db/providers/sql/mysql-sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+A literal is written by `literalDoubleAndBackslash` and read back by `unquoteDoubleAndBackslash`: the quote is doubled and a backslash escapes, so the backslash is doubled first.
+A name is quoted by `identifierBacktickDoubled`: a backtick name with an inner backtick doubled and a backslash as data.
+A bind is spelled by `placeholderQuestion`, as `?` at every position.
+The literal form assumes the default `sql_mode`.
+A server running with `NO_BACKSLASH_ESCAPES` reads the doubled backslash as two characters, which is why binding the value beats quoting it wherever a bind form exists.
+`mysql2` takes `?`.
+Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+
+The module's `export` field spells a result export's column types through `ddlTypes`, the standard spelling with `DOUBLE` for a float and `DATETIME` for a timestamp, because a bare `NUMERIC` on MySQL is `DECIMAL(10,0)`, which silently truncates every decimal it was chosen for.
+Each name in `standsAlone` was measured, one `CREATE TABLE probe (c <name>)` per name on MySQL 26.7.0, read back out of `information_schema.COLUMNS.COLUMN_TYPE`, and is listed only because MySQL both accepted it and stored it unnarrowed.
+`text` and `longtext` are whole types already.
+MySQL's `varchar` is absent because MySQL refuses it outright, unlike PostgreSQL's.
+`bareSpelling` writes a bare `bit` as `bit(64)`, MySQL's widest, because `mysql2` hands a bit string back as bytes, which `bit(64)` takes for every width.
+It writes a bare `datetime`, `timestamp` and `time` at precision 6, because MySQL's bare forms have fractional precision 0, which rounds a `.999` replayed into them up to the next second (#1386).
+A binary cell is written by `binaryStandardHex`: measured on MySQL 26.7.0, `SELECT HEX(X'0102deadbeef')` answers `0102DEADBEEF` and `SELECT LENGTH(X'')` answers 0.
+MySQL accepts `0x0102deadbeef` too, but a zero-length value has no `0x` spelling (`SELECT LENGTH(0x)` is `ERROR 1054 … Unknown column '0x'`), and an empty cell is not a case an export gets to refuse.
+NaN and the infinities are written as NULL, `NULL_NON_FINITE`.
+
 ---
 
 ## 11. Error handling
@@ -2887,6 +2936,17 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
   (MITM-exposed). For verified TLS, set an explicit `connection.ssl` with mode `verify-system` (nothing
   to paste) or `verify-ca`/`verify-full`
   and a `caCert`.
+
+---
+
+## Migration DDL
+
+[`MYSQL_MIGRATION_DDL`](../../src/lib/db/providers/sql/mysql-migration-ddl.ts) is what the schema-diff migration generator writes for `mysql`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+MySQL drops an index with `ON <table>` and a foreign key with `DROP FOREIGN KEY`, and restates the whole column in `MODIFY COLUMN`.
+Everything else is the shared statement, wrapped in `BEGIN;` and `COMMIT;`.
+The fields it takes unchanged from `src/lib/db/migration-ddl/shared.ts` are `BEGIN_COMMIT`, `standardAddColumn`, `standardAddForeignKey`, `standardColumnDef`, `standardCreateIndex`, `standardCreateTableForeignKey`, `standardDropColumn`, `standardDropTable` and `standardPrimaryKey`.
+
+It prints no refusal reason.
 
 ---
 

@@ -1,0 +1,8 @@
+-- fixture: full
+-- Migration generated at 2026-10-19T12:00:00.000Z
+-- Dialect: mtconnect
+-- Changes: 1 added, 1 removed, 2 modified
+
+-- MTConnect: Cannot generate table DDL. An MTConnect data item's shape is declared in the agent's own device model, not in columns a client can change, and every request this provider sends is a GET, so there is no column definition to change.
+-- fixture: none
+-- No schema changes detected.

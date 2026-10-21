@@ -1,0 +1,5 @@
+scheme => "db2"
+parse(db2://u:p@h:50000/d?security=SSL) => {"type":"db2","host":"h","port":"50000","user":"u","password":"p","database":"d","sslMode":"verify-system"}
+parse(db2://h/d?ssl=true) => {"type":"db2","host":"h","port":"50000","database":"d","sslMode":"verify-system"}
+seed => []
+seed => []

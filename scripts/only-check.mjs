@@ -23,8 +23,8 @@
  * rather than as a rule id, and because `docs/TOOLCHAIN.md` records why the lint
  * pipeline is layered the way it is.
  *
- * Scope is the two directories the runner and Playwright read: `tests/` and
- * `e2e/`. Enumeration is `git ls-files`, for the reason #980 gives from the other
+ * Scope is the directories the runner, Playwright and the extension's Mocha legs
+ * read: `tests/`, `e2e/` and `vscode-extension/test/`. Enumeration is `git ls-files`, for the reason #980 gives from the other
  * side - a glob walks whatever is on disk, so an untracked draft in the working
  * tree would red a gate that CI, which checks out tracked files only, cannot see.
  *
@@ -35,7 +35,7 @@
  * matches `only` in every sentence of every comment. Either would red the whole
  * gate on a clean checkout. A call has a parenthesis and the prose does not.
  *
- * Nothing is excluded: the guard reads every tracked file under `tests/` and `e2e/`,
+ * Nothing is excluded: the guard reads every tracked file under `SCAN_ROOTS`,
  * its own test included. That test has to hold the string this guard searches for, so
  * it assembles the call from pieces rather than spelling one out beside its own
  * parenthesis.
@@ -46,8 +46,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** The two directories the runner and Playwright read. */
-export const SCAN_ROOTS = ["tests", "e2e"];
+/**
+ * The directories the runner, Playwright and the extension's Mocha legs read:
+ * `tests/`, `e2e/` and `vscode-extension/test/`.
+ */
+export const SCAN_ROOTS = ["tests", "e2e", "vscode-extension/test"];
 
 /**
  * Extensions a focused test can be written in. The `.d.ts` guard is separate

@@ -1,0 +1,8 @@
+-- fixture: full
+-- Migration generated at 2026-10-19T12:00:00.000Z
+-- Dialect: s3
+-- Changes: 1 added, 1 removed, 2 modified
+
+-- S3-compatible object storage: Cannot generate table DDL. S3 stores objects under keys with no schema, so there is no column definition to change.
+-- fixture: none
+-- No schema changes detected.

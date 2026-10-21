@@ -30,7 +30,7 @@ export interface DetailedObject {
   /** The object's segments, as the object surface addressed it. Never split from `name`. */
   readonly path: readonly string[];
   readonly columns: readonly ColumnSchema[];
-  readonly indexes: readonly IndexSchema[];
+  readonly indexes: readonly IndexSchema[] | { readonly unavailable: string };
   readonly foreignKeys?: readonly ForeignKeySchema[];
   /** Only where the engine counts. */
   readonly rowCount?: number;
@@ -192,6 +192,18 @@ export function machineColumns(columns: readonly ColumnSchema[]): readonly Colum
 /** What a human view adds to a column's type text: " (sampled)" for a sampled column, nothing for a declared one. */
 export function sampledMark(column: Pick<ColumnSchema, "provenance">): string {
   return column.provenance === "sampled" ? " (sampled)" : "";
+}
+
+/**
+ * The type text a person is shown for one column.
+ *
+ * `declaredType` is the engine's own declaration, modifier included. `type` stays
+ * the base name where a provider records the two apart, so a reader that compares
+ * types is unchanged. An engine that already puts the modifier in `type` leaves
+ * `declaredType` absent, and this answers `type`.
+ */
+export function displayedColumnType(column: Pick<ColumnSchema, "type" | "declaredType">): string {
+  return column.declaredType ?? column.type;
 }
 
 /**

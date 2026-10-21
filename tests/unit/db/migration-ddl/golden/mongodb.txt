@@ -1,0 +1,8 @@
+-- fixture: full
+-- Migration generated at 2026-10-19T12:00:00.000Z
+-- Dialect: mongodb
+-- Changes: 1 added, 1 removed, 2 modified
+
+-- MongoDB: Cannot generate table DDL. Collections are schemaless, so there is no column definition to change.
+-- fixture: none
+-- No schema changes detected.

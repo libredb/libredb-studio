@@ -33,7 +33,9 @@ const eslintConfig = defineConfig([
   // gitignored agent scratch (maintainer-loop live state and its archives);
   // public/monaco/** is the Monaco AMD bundle staged from node_modules by
   // scripts/copy-monaco.mjs (issue #247) — 16 MB of minified vendor JS that
-  // exhausts ESLint's heap, and it only appears once something has built
+  // exhausts ESLint's heap, and it only appears once something has built;
+  // vscode-extension/{dist,out,dist-vsix,.vscode-test,coverage}/ are the extension's
+  // bundles, e2e bundles, packages, downloaded VS Code builds and coverage.
   globalIgnores([
     ".next/**",
     "public/monaco/**",
@@ -47,8 +49,18 @@ const eslintConfig = defineConfig([
     ".claude/**",
     ".loop/**",
     "next-env.d.ts",
+    "vscode-extension/dist/**",
+    "vscode-extension/out/**",
+    "vscode-extension/dist-vsix/**",
+    "vscode-extension/.vscode-test/**",
+    "vscode-extension/coverage/**",
   ]),
+  // eslint-config-next registers the react and react-hooks plugins for its own
+  // files pattern only, which leaves out .cjs; without the same pattern here, a
+  // .cjs file (vscode-extension/test/setup/register.cjs) stops ESLint with
+  // "could not find plugin react".
   {
+    files: ["**/*.{js,jsx,mjs,ts,tsx,mts,cts}"],
     rules: {
       "@typescript-eslint/no-explicit-any": "warn",
       "@typescript-eslint/no-unused-vars": "warn",

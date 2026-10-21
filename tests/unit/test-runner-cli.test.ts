@@ -195,7 +195,7 @@ async function signalTheRun(
   { sandbox, markers, scratchParent }: WaitingRun,
   signal: NodeJS.Signals,
   beforeSignalling?: () => void,
-): Promise<{ exitCode: number | null; signalCode: string | null; stdout: string; stderr: string }> {
+): Promise<{ exitCode: number | null; signalCode: string | number | null; stdout: string; stderr: string }> {
   const runner = Bun.spawn([process.execPath, "tests/run-tests.ts", "--jobs=1", "tests/unit"], {
     cwd: sandbox,
     env: { ...withoutRequirements(), TMPDIR: scratchParent, RUNNER_MARKERS: markers },
@@ -233,7 +233,7 @@ async function signalTheStuckRun(
   { sandbox, markers, scratchParent }: WaitingRun,
   signals: NodeJS.Signals[],
   gapMs = 500,
-): Promise<{ exitCode: number | null; signalCode: string | null; elapsedMs: number }> {
+): Promise<{ exitCode: number | null; signalCode: string | number | null; elapsedMs: number }> {
   const runner = spawn(process.execPath, ["tests/run-tests.ts", "--jobs=1", "tests/unit"], {
     cwd: sandbox,
     env: { ...withoutRequirements(), TMPDIR: scratchParent, RUNNER_MARKERS: markers },
@@ -245,7 +245,7 @@ async function signalTheStuckRun(
   await waitForFile(path.join(markers, "second.started"));
 
   const startedAt = Date.now();
-  const ended = new Promise<{ exitCode: number | null; signalCode: string | null }>((resolve) => {
+  const ended = new Promise<{ exitCode: number | null; signalCode: string | number | null }>((resolve) => {
     runner.once("exit", (exitCode, signalCode) => resolve({ exitCode, signalCode }));
   });
   for (const [index, signal] of signals.entries()) {

@@ -3,6 +3,7 @@
 `generateMigrationSQL` in `src/lib/schema-diff/migration-generator.ts` converts a schema diff into
 reviewable SQL. Its dialect coverage is pinned by the exhaustive tables in
 `tests/unit/schema-diff/migration-generator.test.ts` and `migration-dialects.test.ts`.
+Per-engine DDL is read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, from a module beside each provider that its provider doc's `Migration DDL` section describes.
 
 For SQL Server, migrations use `BEGIN TRANSACTION` and `COMMIT`; added columns use `ADD`, and
 index drops include `ON <table>`. Oracle uses `ADD (<definition>)`, places `DEFAULT` before

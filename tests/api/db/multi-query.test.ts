@@ -411,6 +411,58 @@ describe("POST /api/db/multi-query", () => {
     expect(data.error).toContain("required");
   });
 
+  // A `sql` that is present but not a string reached the splitter and answered 500 with its own TypeError
+  // ("input.slice is not a function"). It is refused in words before any provider resolves, a falsy one (0, false) included.
+  for (const [label, sql] of [
+    ["a number", 123],
+    ["an object", { text: "SELECT 1" }],
+    ["an array", ["SELECT 1"]],
+    ["true", true],
+    ["zero", 0],
+    ["false", false],
+  ] as const) {
+    test(`answers 400 when sql is ${label}, before any provider resolves`, async () => {
+      mockGetOrCreateProvider.mockClear();
+      const req = createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: { connection: validConnection, sql },
+      });
+
+      const res = await POST(req as never);
+      const data = await parseResponseJSON<{ error: string }>(res);
+
+      expect(res.status).toBe(400);
+      expect(data.error).toBe("sql must be a string");
+      expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    });
+  }
+
+  test("an empty sql keeps the answer of a missing one", async () => {
+    const req = createMockRequest("/api/db/multi-query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "" },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(data.error).toBe("Connection and query are required");
+  });
+
+  test("a null sql keeps the answer of a missing one", async () => {
+    const req = createMockRequest("/api/db/multi-query", {
+      method: "POST",
+      body: { connection: validConnection, sql: null },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(data.error).toBe("Connection and query are required");
+  });
+
   test("missing sql returns 400", async () => {
     const req = createMockRequest("/api/db/multi-query", {
       method: "POST",
@@ -435,6 +487,88 @@ describe("POST /api/db/multi-query", () => {
 
     expect(res.status).toBe(400);
     expect(data.error).toContain("No valid SQL statements found");
+  });
+
+  // ─── The page options, held to the rule POST /api/db/query holds them to ───
+  describe("page options", () => {
+    const send = (options: unknown, sql = "SELECT * FROM users") =>
+      POST(
+        createMockRequest("/api/db/multi-query", {
+          method: "POST",
+          body: { connection: validConnection, sql, options },
+        }) as never,
+      );
+
+    const refused: Array<[string, unknown, string]> = [
+      ["a numeric string limit", { limit: "10" }, "options.limit must be a non-negative integer"],
+      ["a fractional limit", { limit: 1.5 }, "options.limit must be a non-negative integer"],
+      ["a negative limit", { limit: -1 }, "options.limit must be a non-negative integer"],
+      ["an array limit", { limit: [10] }, "options.limit must be a non-negative integer"],
+      [
+        "a limit of Number.MAX_SAFE_INTEGER",
+        { limit: Number.MAX_SAFE_INTEGER },
+        "options.limit must be a non-negative integer",
+      ],
+      ["a limit of 1e21", { limit: 1e21 }, "options.limit must be a non-negative integer"],
+      ["a numeric string offset", { offset: "10" }, "options.offset must be a non-negative integer"],
+      ["a fractional offset", { offset: 1.5 }, "options.offset must be a non-negative integer"],
+      ["a negative offset", { offset: -1 }, "options.offset must be a non-negative integer"],
+      ["an array offset", { offset: [10] }, "options.offset must be a non-negative integer"],
+      [
+        "an offset of Number.MAX_SAFE_INTEGER",
+        { offset: Number.MAX_SAFE_INTEGER },
+        "options.offset must be a non-negative integer",
+      ],
+      ["an offset of 1e21", { offset: 1e21 }, "options.offset must be a non-negative integer"],
+      ["null options", null, "options must be an object"],
+      ["string options", "500", "options must be an object"],
+    ];
+
+    test.each(refused)("refuses %s with 400 before any provider resolves", async (_name, options, error) => {
+      const res = await send(options);
+
+      expect(res.status).toBe(400);
+      expect((await parseResponseJSON<{ error: string }>(res)).error).toBe(error);
+      expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+      expect(mockProvider.prepareQuery).not.toHaveBeenCalled();
+      expect(mockProvider.query).not.toHaveBeenCalled();
+    });
+
+    // `;;;` splits into nothing to run, which the route refuses with its own sentence when the split runs first.
+    test("refuses the options before the text is split", async () => {
+      const res = await send({ limit: "10" }, ";;;");
+
+      expect(res.status).toBe(400);
+      expect((await parseResponseJSON<{ error: string }>(res)).error).toBe(
+        "options.limit must be a non-negative integer",
+      );
+    });
+
+    const accepted: Array<[string, unknown, Record<string, unknown>]> = [
+      ["no options", undefined, {}],
+      ["empty options", {}, {}],
+      ["an integer limit and offset", { limit: 50, offset: 100 }, { limit: 50, offset: 100 }],
+      ["a zero limit", { limit: 0 }, { limit: 0 }],
+      [
+        "one below Number.MAX_SAFE_INTEGER as limit and offset",
+        { limit: Number.MAX_SAFE_INTEGER - 1, offset: Number.MAX_SAFE_INTEGER - 1 },
+        { limit: Number.MAX_SAFE_INTEGER - 1, offset: Number.MAX_SAFE_INTEGER - 1 },
+      ],
+      ["an unlimited run", { unlimited: true }, { unlimited: true }],
+    ];
+
+    test.each(accepted)("runs %s as before", async (_name, options, prepared) => {
+      const res = await send(options);
+
+      expect(res.status).toBe(200);
+      expect(mockProvider.prepareQuery).toHaveBeenCalledWith("SELECT * FROM users", prepared);
+      expect(mockProvider.query).toHaveBeenCalledWith(
+        "SELECT * FROM users LIMIT 50",
+        undefined,
+        undefined,
+        expect.any(String),
+      );
+    });
   });
 
   test("last SELECT gets prepareQuery applied", async () => {
@@ -1444,5 +1578,30 @@ describe("POST /api/db/multi-query: query events under governance", () => {
     expect(res.status).toBe(200);
     expect(queryEventSinkState().queued).toBe(0);
     expect(await recordedEvents()).toEqual([]);
+  });
+});
+
+// A JSON `null` body or one that is not JSON at all answered 500 INTERNAL_ERROR with the runtime's own text ("Cannot destructure property 'sql' ...").
+// Any body that is not a JSON object is the caller's malformed request, answered before any connection resolves.
+describe("POST /api/db/multi-query: a body that is not a JSON object", () => {
+  test.each<[string, string]>([
+    ["null", "null"],
+    ["an array", "[]"],
+    ["a number", "7"],
+    ["a string", '"x"'],
+    ["text that is not JSON", "{not json"],
+  ])("a body that is %s answers 400 and opens no provider", async (_label, raw) => {
+    mockGetOrCreateProvider.mockClear();
+    const res = await POST(
+      new Request("http://localhost:3000/api/db/multi-query", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: raw,
+      }) as never,
+    );
+
+    expect(res.status).toBe(400);
+    expect(await parseResponseJSON(res)).toEqual({ error: "Invalid request body" });
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
   });
 });

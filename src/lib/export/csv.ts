@@ -82,6 +82,15 @@ const FORMULA_LEAD = /^[=+\-@\t\r]/;
 const PLAIN_NUMBER = /^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/;
 
 /**
+ * Whether a spreadsheet would read `text` as a formula: a `FORMULA_LEAD` that is not a plain
+ * number. Shared with the grid's clipboard (`src/components/results-grid/clipboard.ts`), whose
+ * range copy is pasted into the same spreadsheets and is guarded the same way.
+ */
+export function readsAsFormula(text: string): boolean {
+  return FORMULA_LEAD.test(text) && !PLAIN_NUMBER.test(text);
+}
+
+/**
  * Whether `value` is a number the formula guard must let through although its text is not a
  * `PLAIN_NUMBER`: negative infinity, the one non-finite word that opens with a formula lead.
  *
@@ -104,7 +113,7 @@ function csvField(value: unknown, delimiter: CsvDelimiter, numericColumn = false
   // 24.2: `=1+1` imports as a live formula, and with the apostrophe it imports as the
   // string `'=1+1`. The apostrophe stays visible in the cell; that cost is paid on
   // every value a spreadsheet would evaluate, and on no other.
-  if (FORMULA_LEAD.test(text) && !PLAIN_NUMBER.test(text) && !isNegativeInfinity(value, numericColumn)) {
+  if (readsAsFormula(text) && !isNegativeInfinity(value, numericColumn)) {
     return `"'${text.replace(/"/g, '""')}"`;
   }
   return NEEDS_QUOTING.test(text) || text.includes(delimiter) ? `"${text.replace(/"/g, '""')}"` : text;

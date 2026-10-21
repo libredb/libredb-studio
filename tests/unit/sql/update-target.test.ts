@@ -648,3 +648,32 @@ describe("selectsPlainColumn", () => {
     expect(selectsPlainColumn("UPDATE products SET sku = 'x'", "product_id")).toBe(false);
   });
 });
+
+// A host calling from plain JavaScript can pass a type that is not a primitive string but converts to a type id.
+// The comment, opener and set-operator rules were identity comparisons, so such a value never named an engine for them:
+// it is read with no engine's own rule, while the span grammar keeps the row its property key names.
+describe("a type that is not a primitive string", () => {
+  test.each<[string, string, string]>([
+    ["mysql", "SELECT id FROM products --x", "products"],
+    [
+      "mysql",
+      "SELECT a FROM t --c\n, u",
+      "REFUSED: A comma in this query could separate two tables, so the row's table cannot be told apart",
+    ],
+    [
+      "oracle",
+      "SELECT id FROM products MINUS SELECT id FROM orders",
+      "REFUSED: This query reads from more than one place, so the row's table cannot be told apart",
+    ],
+    ["duckdb", "SELECT id, (PIVOT orders ON k USING max(note)) FROM products", "products"],
+  ])("new String(%s) applies none of that engine's own rules to %j", (id, sql, expected) => {
+    const boxed = new String(id) as unknown as Parameters<typeof resolveUpdateTarget>[1];
+    expect(table(sql, boxed)).toBe(expected);
+    expect(table(sql, boxed)).toBe(table(sql));
+  });
+
+  test("selectsPlainColumn reads a boxed mysql without its comment rule", () => {
+    const boxed = new String("mysql") as unknown as Parameters<typeof selectsPlainColumn>[2];
+    expect(selectsPlainColumn("SELECT a FROM t --c\n, u", "a", boxed)).toBe(true);
+  });
+});

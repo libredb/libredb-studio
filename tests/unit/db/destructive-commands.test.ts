@@ -772,8 +772,8 @@ describe("the oxia row", () => {
   test("never reads a key spelled like SQL as SQL", () => {
     expect(isDangerousQuery("get /delete/from", "oxia")).toBe(false);
     expect(isDangerousQuery("list --key-min /drop/table --key-max /drop/tablf", "oxia")).toBe(false);
-    // A shell-escaped quote a SQL span reader would read as an unterminated string, and prompt on (grammar.ts's
-    // NON_SQL_DIALECTS entry): the SQL half answers true, the oxia row false.
+    // A shell-escaped quote a SQL span reader would read as an unterminated string, and prompt on (the oxia
+    // module's `readsSqlText: false`): the SQL half answers true, the oxia row false.
     const escapedQuote = "get /it\\'s";
     expect(isDangerousQuery(escapedQuote, "postgres")).toBe(true);
     expect(isDangerousQuery(escapedQuote, "oxia")).toBe(false);

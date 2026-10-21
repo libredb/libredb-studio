@@ -15,7 +15,7 @@
  * environment variables, which each suite already saves and restores itself.
  */
 
-const MODEL_ENV_KEYS = ["LLM_PROVIDER", "LLM_API_KEY", "LLM_MODEL", "LLM_API_URL"] as const;
+const MODEL_ENV_KEYS = ["LLM_PROVIDER", "LLM_API_KEY", "LLM_MODEL", "LLM_API_URL", "LLM_MODEL_EFFORT"] as const;
 
 let saved: Map<string, string | undefined> | null = null;
 

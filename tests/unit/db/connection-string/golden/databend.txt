@@ -1,0 +1,4 @@
+scheme => "databend"
+parse(databend://u:p@h:8000/d?sslmode=disable) => {"type":"databend","host":"h","port":"8000","user":"u","password":"p","database":"d","sslMode":"disable","allowInsecureAuth":false}
+seed => []
+seed => []

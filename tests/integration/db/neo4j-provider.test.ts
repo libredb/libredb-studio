@@ -140,7 +140,7 @@ describe("the object surface (spec 4)", () => {
     expect((await provider.describeObject(["neo4j", "(:Marker)"], "label")).columns).toEqual([]);
     const person = await provider.describeObject(["neo4j", "(:Person)"], "label");
     expect(person.columns.length).toBeGreaterThan(0);
-    expect(person.indexes.map((index) => index.name)).toEqual(["person_name"]);
+    expect((Array.isArray(person.indexes) ? person.indexes : []).map((index) => index.name)).toEqual(["person_name"]);
     await provider.disconnect();
   });
 });

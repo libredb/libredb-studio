@@ -3373,7 +3373,7 @@ export type KindCount =
 export interface ObjectDetail {
   readonly path: readonly string[];
   readonly columns: readonly ColumnSchema[];
-  readonly indexes: readonly IndexSchema[];
+  readonly indexes: readonly IndexSchema[] | { readonly unavailable: string };
   readonly foreignKeys: readonly ForeignKeySchema[];
 }
 

@@ -142,6 +142,33 @@ describe("OpenAIProvider", () => {
       expect(body.messages[0].role).toBe("user");
     });
 
+    test("sends LLM_MODEL_EFFORT as reasoning_effort when one is configured", async () => {
+      fetchSpy.mockResolvedValueOnce(createSSEResponse([makeSSEChunk("Hi"), "data: [DONE]\n\n"]));
+
+      const provider = new OpenAIProvider(makeConfig({ modelEffort: "high" }), NO_BACKOFF);
+      await provider.stream(makeStreamOptions());
+
+      const [url, opts] = fetchSpy.mock.calls[0] as [string, RequestInit];
+      // Still Chat Completions: this surface offers no tools, so nothing about it needs Responses.
+      expect(url).toContain("/chat/completions");
+      expect(JSON.parse(opts.body as string).reasoning_effort).toBe("high");
+    });
+
+    test("sends no reasoning_effort at all when none is configured", async () => {
+      fetchSpy.mockResolvedValueOnce(createSSEResponse([makeSSEChunk("Hi"), "data: [DONE]\n\n"]));
+
+      const provider = new OpenAIProvider(makeConfig(), NO_BACKOFF);
+      await provider.stream(makeStreamOptions());
+
+      const [, opts] = fetchSpy.mock.calls[0] as [string, RequestInit];
+      expect(Object.keys(JSON.parse(opts.body as string))).not.toContain("reasoning_effort");
+    });
+
+    test("an unknown effort is refused when the provider is built, before any request", () => {
+      expect(() => new OpenAIProvider(makeConfig({ modelEffort: "turbo" }), NO_BACKOFF)).toThrow(LLMConfigError);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
     test("returns ReadableStream with SSE parsed content", async () => {
       const sseData = [makeSSEChunk("Hello"), makeSSEChunk(" World"), "data: [DONE]\n\n"];
       fetchSpy.mockResolvedValueOnce(createSSEResponse(sseData));

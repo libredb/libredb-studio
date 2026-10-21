@@ -368,10 +368,10 @@ describe("hashRunIsAmbiguous", () => {
  * `MODIFIED_COLUMN_COVERAGE`): a `Record<DatabaseType, …>` the compiler refuses to
  * accept until the new id is listed.
  *
- * Neither table in `grammar.ts` can enforce this on its own - `SQL_GRAMMARS` is a
- * `Partial<Record<…>>` because "absent" is a meaningful answer, and the non-SQL set
- * is a set. So a provider added without touching that file silently inherits the
- * compatibility grammar and is silently declared to write SQL, and nothing fails.
+ * When this table was written, neither table in `grammar.ts` could enforce this on its own - `SQL_GRAMMARS` was a
+ * `Partial<Record<…>>` because "absent" was a meaningful answer, and the non-SQL set
+ * was a set. So a provider added without touching that file silently inherited the
+ * compatibility grammar and was silently declared to write SQL, and nothing failed.
  * Deciding is mandatory; deciding "leave it at the default" is a fine decision.
  */
 const GRAMMAR_COVERAGE: Record<DatabaseType, "established" | "default"> = {
@@ -385,12 +385,12 @@ const GRAMMAR_COVERAGE: Record<DatabaseType, "established" | "default"> = {
   // Five facts probed 2026-08-27 against DuckDB v1.5.5 through `@duckdb/node-api`,
   // and NOT inherited from either neighbour: the SQLite row's `[…]` reading is wrong
   // here (a list literal, not a name quote) and the PostgreSQL object is not shared
-  // even though the five values coincide. See DUCKDB_GRAMMAR in `grammar.ts` for the
+  // even though the five values coincide. See DUCKDB_GRAMMAR in `providers/sql/duckdb/sql-grammar.ts` for the
   // statement behind each one.
   duckdb: "established",
   oracle: "established",
   // Probed 2026-10-03 on Db2 LUW 12.1.0.0 through db2-node 1.0.22 (#786); see the db2 block above
-  // and DB2_GRAMMAR in `grammar.ts` for the statement behind each fact.
+  // and DB2_GRAMMAR in `providers/sql/db2/sql-grammar.ts` for the statement behind each fact.
   db2: "established",
   mssql: "established",
   clickhouse: "established",
@@ -436,13 +436,13 @@ const GRAMMAR_COVERAGE: Record<DatabaseType, "established" | "default"> = {
   // InfluxQL, not SQL: the provider's own lexer reads it, so no SQL grammar is established for it, and none is read.
   influxdb: "default",
   // Five facts probed on InfluxDB 3.12.0 Core through `POST /api/v3/query_sql`, the route the provider
-  // sends on; see the influxdb3 block below and DATAFUSION_GRAMMAR in `grammar.ts` for the statement
+  // sends on; see the influxdb3 block below and DATAFUSION_GRAMMAR in `influxdb3-sql-grammar.ts` for the statement
   // behind each one.
   influxdb3: "established",
   // One `oxia client` read command, not SQL (SB2-4.3): no SQL grammar is established for it, and none is read.
   oxia: "default",
   // Read off Databend's own lexer (`token.rs`) and parser, and the trailing clause measured on the pinned image (L3);
-  // see the databend block below and DATABEND_GRAMMAR in `grammar.ts` for the source behind each fact.
+  // see the databend block below and DATABEND_GRAMMAR in `providers/sql/databend/sql-grammar.ts` for the source behind each fact.
   databend: "established",
   bigquery: "established",
   // The Snowflake grammar row lands with the gate and the explain format, which flip this to established.
@@ -808,5 +808,16 @@ describe("readsSqlText", () => {
     // the SQL checks off.
     expect(readsSqlText()).toBe(true);
     expect(readsSqlText("not-a-database" as DatabaseType)).toBe(true);
+  });
+
+  // A host calling from plain JavaScript can pass a value that is not a string but converts to a non-SQL type id.
+  // Such a value was never a member of the non-SQL set, so it reads as SQL, while `resolveSqlGrammar` keeps the row
+  // its property key names.
+  test.each<[string, unknown]>([
+    ["a String object", new String("mongodb")],
+    ["an array", ["mongodb"]],
+    ["an object with toString", { toString: () => "redis" }],
+  ])("%s naming a non-SQL type is read as SQL", (_label, value) => {
+    expect(readsSqlText(value as DatabaseType)).toBe(true);
   });
 });

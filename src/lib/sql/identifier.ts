@@ -1,3 +1,4 @@
+import { sqlWritingFor } from "@/lib/db/sql-writing";
 import type { DatabaseType } from "@/lib/types";
 
 /**
@@ -13,67 +14,15 @@ import type { DatabaseType } from "@/lib/types";
  * (upper on Oracle, lower on PostgreSQL) while a quoted one is exact. Only quote a
  * name you have exactly as the engine reports it — a result field name is such a
  * name; a table name guessed from a tab title is not.
+ *
+ * Which quote character a dialect uses, and how it escapes it, is declared in the engine's
+ * module beside its provider, with the measurement behind it; `SQL_WRITING` in
+ * `src/lib/db/sql-writing/index.ts` is the total record of those modules. An undefined
+ * dialect gets the SQL standard double quote: a generator with no connection to name one
+ * can claim only the standard.
  */
 export function quoteIdentifier(name: string, dialect: DatabaseType | undefined): string {
-  switch (dialect) {
-    // OpenSearch shares MySQL's backtick, and it is NOT a stylistic choice: measured
-    // 2026-08-19 on 3.8.0, its SQL plugin reads a DOUBLE-quoted name as a string
-    // literal, so `SELECT customer FROM "probe_orders"` is `IndexNotFoundException[no
-    // such index ["probe_orders"]]` - quotes and all - while ``FROM `probe_orders``` is
-    // HTTP 200. Worse in a predicate, where nothing fails: `WHERE "customer" = 'acme'`
-    // compares two literals and answers 0 rows. Backticks work for both a table and a
-    // field there. Elasticsearch 9.1.4 is the exact opposite - it answers a backtick
-    // with "backquoted identifiers not supported; please use double quotes instead" -
-    // so the two search ids cannot share a branch, and `elasticsearch` belongs in the
-    // standard-form default below.
-    //
-    // The doubling is this repo's own convention carried over from MySQL and is NOT
-    // measured: an index or field name containing a backtick would be needed to probe
-    // it, and creating one on the probe cluster to find out was judged not worth
-    // polluting the fixtures. It is the fail-safe direction either way - a doubled
-    // backtick can only make the engine refuse a name, never make it read one it
-    // should not.
-    //
-    // Databend reads a backtick name in all five of its `sql_dialect`s, the default
-    // PostgreSQL one included, and a doubled backtick is the only escape inside it: the
-    // lexer rule has no backslash form, so `x\` is the name `x\`. Measured on the pinned
-    // image (probe L4): names holding a backtick, a backslash, a quote, `;`, `--`, a
-    // newline or a NUL round-trip byte-equal through CREATE TABLE, INSERT and SELECT
-    // under both dialects. A bare name would be folded to lower case there, which is why
-    // the provider quotes every name rather than only the ones that need it.
-    // Spark SQL (4.1 and 4.2) quotes a name in backticks and doubles a backtick inside it, the form its own
-    // quoteIfNeeded writes; a double-quoted text is a string literal in Spark, so the standard form below would
-    // turn a name into a string. Names are case-insensitive there, so quoting never changes which object a
-    // name means.
-    // GoogleSQL quotes a name in backticks and escapes inside it with a backslash; a doubled
-    // backtick is not an escape there, it ends the name.
-    case "bigquery":
-      return `\`${name.replace(/\\/g, "\\\\").replace(/`/g, "\\`")}\``;
-    case "databend":
-    case "opensearch":
-    case "mysql":
-    case "spark":
-      return `\`${name.replace(/`/g, "``")}\``;
-    case "mssql":
-      return `[${name.replace(/]/g, "]]")}]`;
-    default:
-      // The SQL standard form, and what the remaining dialects use: PostgreSQL,
-      // SQLite, Oracle, ClickHouse, Druid, Elasticsearch (measured: `FROM
-      // "probe_orders"` and `SELECT "note.keyword"` both answer 200, and a backtick is
-      // refused outright), Trino (measured on 476: `SELECT "nationkey" FROM
-      // tpch.sf1.nation LIMIT 1` returns the column, `SELECT 1 AS "a""b"` names it
-      // `a"b`, and a backtick is refused in the engine's own words - "backquoted
-      // identifiers are not supported; use double quotes to quote identifiers"),
-      // Cassandra (measured on 5.0.9: `SELECT "id" FROM probe.customers` returns the
-      // column, a backtick is "no viable alternative at character '`'", and a
-      // double-quoted STRING is a syntax error - so `"` is the name quote and nothing
-      // else), DuckDB (measured on v1.5.5: `"quoted identifier"` works, and `[…]` is a
-      // LIST literal here rather than a name quote, so the bracket branch above would
-      // be wrong for it), and the document/key-value providers
-      // whose generators fall back to it. An undefined dialect lands here too —
-      // a generator with no connection to name one can claim only the standard.
-      return `"${name.replace(/"/g, '""')}"`;
-  }
+  return sqlWritingFor(dialect).quoteIdentifier(name);
 }
 
 /**

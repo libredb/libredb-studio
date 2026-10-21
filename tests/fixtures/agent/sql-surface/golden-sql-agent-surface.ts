@@ -166,23 +166,34 @@ async function surfaceOf(
   return { mode, workflowType, engine, system, messages, ...(tools === undefined ? {} : { tools }), request };
 }
 
+/**
+ * A chat-wire endpoint, because the request this records is read as Chat Completions `messages`; the `openai` kind
+ * sends the Responses API's `input` instead. Only the system prompt is recorded, so which kind carries it does not
+ * reach the golden.
+ */
 const CLASSIFIER_ENV = {
-  LLM_PROVIDER: "openai",
+  LLM_PROVIDER: "custom",
   LLM_API_KEY: "sk-test",
   LLM_MODEL: "gpt-4o-mini",
-  LLM_API_URL: "https://api.openai.com/v1",
+  LLM_API_URL: "https://llm.internal/v1",
 } as const;
+
+/** Model keys cleared for the call rather than set: only the openai provider may carry an effort. */
+const CLASSIFIER_ENV_CLEARED = ["LLM_MODEL_EFFORT"] as const;
 
 /**
  * The system prompt the workflow classifier sends, read off a transport that records the request and then fails.
  *
- * The classification itself comes back `unclassified`, which is not what is recorded: only the prompt is. The four
- * model keys are saved and put back exactly as `tests/helpers/agent-model-env.ts` does, because bun loads a
+ * The classification itself comes back `unclassified`, which is not what is recorded: only the prompt is. The model
+ * keys are saved and put back exactly as `tests/helpers/agent-model-env.ts` does, because bun loads a
  * checkout's `.env` and a developer's real key must neither leak into this nor be lost by it.
  */
 async function classifierPrompt(): Promise<string> {
-  const saved = new Map(Object.keys(CLASSIFIER_ENV).map((key) => [key, process.env[key]]));
+  const saved = new Map(
+    [...Object.keys(CLASSIFIER_ENV), ...CLASSIFIER_ENV_CLEARED].map((key) => [key, process.env[key]]),
+  );
   Object.assign(process.env, CLASSIFIER_ENV);
+  for (const key of CLASSIFIER_ENV_CLEARED) delete process.env[key];
   let sent: { role?: unknown; content?: unknown }[] | undefined;
   try {
     await classifyAgentWorkflow("Which customers ordered most?", {

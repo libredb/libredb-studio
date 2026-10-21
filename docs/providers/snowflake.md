@@ -246,6 +246,17 @@ A seed that sets `connectionString` for `snowflake` is refused.
 The file load also checks, on every field that is not a reference, what `connect()` checks first: the account as `connect()` reads it, that User, Role and the key or token the method needs are not empty, and that the method is `keypair` or `pat`.
 It refuses the file with `Seed connection "<id>": <field> is refused: <sentence>`, the sentence without its closing `Nothing was sent.`, so an entry that could never open is named in the Seed sources card instead of loading and failing when it is opened; the key's and the token's contents are read only when the connection opens.
 
+### Connection string
+
+Snowflake has no connection string scheme and no `readTls` ([`connection-string.ts`](../../src/lib/db/providers/sql/snowflake/connection-string.ts)); a pasted URL is read as section 2.6 describes.
+Its `validateSeed` runs at seed load the checks its provider makes in `connect()` before any socket, each skipped for a field that holds a `${...}` reference, and every refusal is the provider's own sentence.
+The checks are, in order: `host`, the account, by `checkSnowflakeAccount`; `user`, which may not be empty; `authMethod`, which must be `keypair` (the default) or `pat`; `privateKey`, which a key pair needs; `password`, which holds the token `pat` needs; and `role`, which may not be empty.
+
+### Execution UI
+
+The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `snowflake` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
+Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/sql/snowflake/execution-ui.ts).
+
 ## 3. The recommended Snowflake setup
 
 Studio runs every statement as Role and stops nothing a role may do.
@@ -339,6 +350,21 @@ A bare block, as Snowsight runs it, fails at its first fragment with Snowflake's
 The editor splits a script with Snowflake's grammar, `//` comments included, and sends each statement as its own request with a statement count of 1.
 In that grammar `$` is a name character and only `$$` opens a string, as Snowflake's reference gives it, so a `$t$` run is code and `a$b$c` is one name, as the trial capture measured.
 A backslash inside `"..."` is part of the name, so `"a\b"` names the column `a\b`.
+
+### 4.1 SQL grammar
+
+How this engine's statement text is read is declared once, in [`src/lib/db/providers/sql/snowflake/sql-grammar.ts`](../../src/lib/db/providers/sql/snowflake/sql-grammar.ts), the `snowflake` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+Its grammar is `SNOWFLAKE_GRAMMAR`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
+The lexical facts were measured on the trial capture of 2026-10-12 (Snowflake 10.37.100), each recorded in `tests/fixtures/snowflake/trial-2026-10-12-v10.37.100/`; the rest are read off Snowflake's SQL reference.
+`#` is code: the trial refused `SELECT 3 # 2` at the `#`.
+`[` is a subscript into a semi-structured value, and names are quoted with `"` only.
+Block comments are flat: the trial ran `SELECT /* a /* b */ 1` and refused the same text with a second `*/`.
+`//` is a line comment: the trial ran `SELECT 1 AS c // a comment`.
+A backslash escapes inside `'...'` but not inside `"..."` (a column named from `"a\b"` is `a\b`), and a `$` that would open a tagged run is code (`SELECT 1 AS a$b$c` ran as the name `A$B$C`).
+The trial also ran `'a\<line feed>b'` as a three-character string, which the shared reader leaves unterminated, the fail-safe direction.
+`NULL`, `''` and `$$$$` are unlimited row bounds, each measured on the trial on 2026-10-14 to return every row with a `LIMIT` appended after one a syntax error, and the bound goes before `FOR UPDATE [NOWAIT | WAIT <n>]`.
+`readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.
+Redaction is `sql` with no name quote: a redacted statement keeps its words, and every literal and quoted run becomes `?`.
 
 ## 5. What runs on a warehouse
 
@@ -599,6 +625,24 @@ The absence is `snowflake`'s entry in `EXPECTED_EDIT_ABSTAINERS` (`tests/helpers
 Format uses sql-formatter's Snowflake language (the grammar's `formatterLanguage`), so `QUALIFY` stays a clause on its own line; text that language cannot read, such as a `@stage` reference, is left as written.
 Completion offers Snowflake's own clauses and functions (the grammar's `completionWords`, among them `QUALIFY`, `ARRAY_AGG`, `PARSE_JSON`, `FLATTEN`, `CURRENT_ROLE` and `CURRENT_WAREHOUSE`) beside the shared SQL lists, a function inserted as a call; no `SYSTEM$` function is offered.
 
+### 8.8 SQL writing
+
+[`snowflake/sql-writing.ts`](../../src/lib/db/providers/sql/snowflake/sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+A literal is written by `literalDoubleAndBackslash` and read back by `unquoteDoubleAndBackslash`: the quote is doubled and a backslash escapes, so the backslash is doubled first.
+A name is quoted by `identifierDoubleQuoted`, the SQL standard form: a double-quoted name with an inner double quote doubled.
+There is no placeholder (`placeholder: null`), so a generator quotes the value with `quoteLiteral` instead of emitting a bind.
+Snowflake reads both escapes in a single-quoted string constant: a doubled quote is one quote, and a backslash escapes the next character, so it is doubled first, as Databend's is.
+Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+
+The module's `export` field spells a result export's column types through `ddlTypes`, the standard spelling with `FLOAT` for a float and `BINARY` for a binary column, since Snowflake has no BLOB; provisional until a replay on an account.
+No Snowflake account read a probe column back, so it holds `NOTHING_STANDS_ALONE` and every bare name is re-spelled portably until one does.
+A binary cell is written by `binaryStandardHex`, which Snowflake reads as a BINARY constant; not yet measured on an account.
+`nonFinite` writes `'NaN'::FLOAT`, `'inf'::FLOAT` and `'-inf'::FLOAT`: Snowflake's trial setup (2026-10-12) created its FLOAT infinities with the last two, and the first is the same documented form.
+`insertForm` is `"select"`: Snowflake's `INSERT ... VALUES` refuses `PARSE_JSON`, which its semi-structured cells are written with, so every Snowflake row takes the `INSERT ... SELECT` form; provisional until a replay on an account confirms it.
+`declareFromSample` declares a VECTOR column from its first value: Snowflake reports a VECTOR result column as `vector` with no element type and no dimension, and `CREATE TABLE t (v VECTOR)` is a syntax error (001003).
+`typedLiteral` writes the semi-structured, structured, VECTOR and temporal cells, from the engine's own [`snowflake/typed-literals.ts`](../../src/lib/db/providers/sql/snowflake/typed-literals.ts).
+`NO_BARE_SPELLING` completes it.
+
 ## 9. The confirmation gate
 
 The gate is a browser confirmation, not a boundary: it asks before a statement runs from the editor, and the role decides what can happen.
@@ -698,3 +742,16 @@ What the capture could not ask, such as a 403 from an address a network policy r
 - Programmatic access tokens: https://docs.snowflake.com/en/user-guide/programmatic-access-tokens
 - Account identifiers: https://docs.snowflake.com/en/user-guide/admin-account-identifier
 - Warehouse billing: https://docs.snowflake.com/en/user-guide/cost-understanding-compute
+
+## Migration DDL
+
+[`SNOWFLAKE_MIGRATION_DDL`](../../src/lib/db/providers/sql/snowflake/migration-ddl.ts) is what the schema-diff migration generator writes for `snowflake`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+A Snowflake DDL statement commits the open transaction, and each SQL API statement runs in its own session, so `transactionWrapper` is `null` (#284).
+A type change is spelled `SET DATA TYPE`, and `ALTER COLUMN` sets a default only to a sequence's `NEXTVAL`, so any other default change is a comment while dropping one is plain.
+Index changes are a comment, because Snowflake has indexes only on hybrid tables.
+The fields it takes unchanged from `src/lib/db/migration-ddl/shared.ts` are `standardAddColumn`, `standardAddForeignKey`, `standardColumnDef`, `standardCreateTableForeignKey`, `standardDropColumn`, `standardDropForeignKey`, `standardDropTable` and `standardPrimaryKey`.
+
+Every refusal reason it can print, verbatim:
+
+- "Snowflake: Cannot generate index DDL. Snowflake has indexes only on hybrid tables; write the index change by hand."
+- "ALTER COLUMN sets a default only to a sequence's NEXTVAL; recreate the column with its default."

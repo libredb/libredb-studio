@@ -34,6 +34,7 @@ import { cn } from "@/lib/utils";
 import {
   connectionFieldHint,
   connectionFieldLabel,
+  connectionFieldPlacement,
   connectionFieldPlaceholder,
   connectionFieldShown,
   getDBConfig,
@@ -45,6 +46,7 @@ import {
   type ConnectionField,
   type DatabaseUIConfig,
 } from "@/lib/db-ui-config";
+import { type FieldPlacement, PLACEABLE_FIELDS, type PlaceableField } from "@/lib/db/connection-fields";
 import { motion, AnimatePresence } from "framer-motion";
 import { CONNECTION_FORM_DEFAULTS, useConnectionForm } from "@/hooks/use-connection-form";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -92,9 +94,7 @@ const HOST_ERROR_ID = "host-error";
 /**
  * The hint an engine DECLARES for one connection field (#1085), drawn under that field in this
  * panel's hint idiom: the muted paragraph `ssl-mode-hint` is, with a test id, and an id the field's
- * input names. Nothing is drawn where the engine declares none. The per-type hints the `isLibSQL`,
- * `isTrino` and `isCassandra` branches write stay beside it untouched; moving them onto
- * `DatabaseUIConfig.fieldHints` is a backlog item.
+ * input names. Nothing is drawn where the engine declares none.
  */
 function DeclaredFieldHint({ config, field }: { readonly config: DatabaseUIConfig; readonly field: ConnectionField }) {
   const hint = connectionFieldHint(config, field);
@@ -435,51 +435,16 @@ export function ConnectionModal({
     onTestConnection,
   });
 
-  // Couchbase pins one bucket per connection (issue #262, decision 4), so the shared
-  // `database` field holds a bucket name and the form must say so.
-  const isCouchbase = type === "couchbase";
-  // Trino pins one CATALOG the same way (issue #424 Phase 2). "Database" would be the
-  // wrong word twice over: a Trino catalog is a whole external system (`hive`,
-  // `iceberg`, `tpch`), and the field is the one thing a user cannot guess - a
-  // coordinator with no catalog selected resolves no table at all.
-  const isTrino = type === "trino";
-  // Cassandra pins one KEYSPACE the same way (issue #424 Phase 4). "Database" is the
-  // wrong word here too: a keyspace carries the replication settings, not just a
-  // namespace, and without one pinned an unqualified table name resolves to nothing
-  // at all - measured on 5.0.9, "No keyspace has been specified. USE a keyspace, or
-  // explicitly specify keyspace.tablename".
-  const isCassandra = type === "cassandra";
-  // MongoDB keeps its users in a database of their own, and the driver checks the
-  // credentials against whichever database the URI names when nothing says otherwise.
-  // So the ordinary deployment - users in `admin`, data elsewhere - had no way through
-  // the discrete fields at all, and failed as a credentials error.
-  const isMongoDB = type === "mongodb";
-  // libSQL's usual credential is a TOKEN its server minted (Turso prints one per
-  // database), so the shared `password` field holds a JWT here and is relabelled
-  // rather than left to be guessed at. A self-hosted server started with
-  // SQLD_HTTP_AUTH checks a user name and password instead, and the Username box's
-  // declared hint (db-ui-config.ts) says when this box takes the password.
-  const isLibSQL = type === "libsql";
-  const passwordFieldLabel = isLibSQL ? "Auth Token" : "Password";
-  const databaseFieldLabel = isCouchbase ? "Bucket" : isTrino ? "Catalog" : isCassandra ? "Keyspace" : "Database";
-  const databaseFieldPlaceholder = isTrino ? "tpch" : isCassandra ? "probe" : "db";
-  const connectionUriPlaceholder = isCouchbase
-    ? "couchbase://localhost:8091/travel-sample  or  couchbases://cb.<id>.cloud.couchbase.com/..."
-    : isLibSQL
-      ? "libsql://<database>-<org>.turso.io?authToken=<jwt>"
-      : "mongodb://localhost:27017/mydb  or  mongodb+srv://...";
-
   // What an engine DECLARES for a connection field wins over this dialog's own words (#1085): an
-  // engine that names a field differently says so on `DatabaseUIConfig` instead of growing another
-  // `isX` branch above. The branches above stay the fallback, so an engine that declares nothing
-  // reads below exactly as it did before the declaration existed.
+  // engine that names a field differently says so on `DatabaseUIConfig` instead of growing an
+  // `isX` branch here. An engine that declares nothing reads the dialog's own words below.
   const uiConfig = getDBConfig(type);
   const takesInsecureAuthConsent = takesConnectionField(type, "allowInsecureAuth");
   /** Whether this engine's address has a port of its own, beside the host box. */
   const takesPort = takesConnectionField(type, "port");
   /** The answer panel, so the press that produced it can bring it on screen (below). */
   const testResultRef = useRef<HTMLDivElement | null>(null);
-  const databaseLabel = connectionFieldLabel(uiConfig, "database", `${databaseFieldLabel} Name`);
+  const databaseLabel = connectionFieldLabel(uiConfig, "database", "Database Name");
   // The port box shares the Host row's label; an engine that declares a port label of its own gets it drawn above the
   // box, and every other engine's row stays as it was.
   const portLabel = connectionFieldLabel(uiConfig, "port", "");
@@ -545,7 +510,7 @@ export function ConnectionModal({
       <div className="flex items-center gap-2 mb-1">
         <ShieldCheck strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
         <Label htmlFor="password" className={labelClass("password")}>
-          {connectionFieldLabel(uiConfig, "password", passwordFieldLabel)}
+          {connectionFieldLabel(uiConfig, "password", "Password")}
         </Label>
       </div>
       <Input
@@ -582,27 +547,86 @@ export function ConnectionModal({
           <span>{credentialWarning}</span>
         </output>
       )}
-      {/*
-        Measured on Trino 476 with authentication DISABLED: a request
-        carrying `Authorization: Basic` over plain HTTP is answered 401,
-        "Password not allowed for insecure authentication". So a
-        password is a TLS-only credential here, and typing one into an
-        http:// connection BREAKS a connection that would otherwise
-        work. The provider refuses the combination outright; this says
-        so before the user reaches that error.
-      */}
-      {isLibSQL && (
-        <p className="text-xs text-fg-muted">
-          Turso Cloud mints this per database (`turso db tokens create`). A self-hosted libSQL server started without
-          authentication takes none - leave it empty.
-        </p>
-      )}
-      {isTrino && (
-        <p className="text-xs text-fg-muted">
-          Trino refuses a password over plain HTTP. Enable TLS below, or leave this empty to connect as an
-          unauthenticated user.
-        </p>
-      )}
+    </div>
+  );
+
+  /**
+   * Whether the engine takes `field` and its entry places it `where` (`fieldPlacement`): each of the four blocks below
+   * is drawn in the open or inside the Advanced accordion by that fact alone, so the declaration and the drawn place
+   * cannot disagree.
+   */
+  const placedIn = (field: PlaceableField, where: FieldPlacement): boolean =>
+    takesConnectionField(type, field) && connectionFieldPlacement(uiConfig, field) === where;
+
+  const authSourceBlock = (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2 mb-1">
+        <Key strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
+        <Label htmlFor="authSource" className="text-xs font-medium text-fg-muted">
+          {connectionFieldLabel(uiConfig, "authSource", "Authentication Database")}
+        </Label>
+      </div>
+      <Input
+        id="authSource"
+        value={authSource}
+        onChange={(e) => setAuthSource(e.target.value)}
+        placeholder="admin"
+        aria-describedby={describedByHint(uiConfig, "authSource")}
+        className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
+      />
+      <DeclaredFieldHint config={uiConfig} field="authSource" />
+    </div>
+  );
+
+  const localDataCenterBlock = (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2 mb-1">
+        <Server strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
+        <Label htmlFor="localDataCenter" className="text-xs font-medium text-fg-muted">
+          {connectionFieldLabel(uiConfig, "localDataCenter", "Local Data Center")}
+        </Label>
+      </div>
+      <Input
+        id="localDataCenter"
+        value={localDataCenter}
+        onChange={(e) => setLocalDataCenter(e.target.value)}
+        placeholder="datacenter1"
+        aria-describedby={describedByHint(uiConfig, "localDataCenter")}
+        className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
+      />
+      <DeclaredFieldHint config={uiConfig} field="localDataCenter" />
+    </div>
+  );
+
+  const serviceNameBlock = (
+    <div className="space-y-1.5">
+      <Label className="text-xs font-medium text-fg-muted">
+        {connectionFieldLabel(uiConfig, "serviceName", "Service Name")}
+      </Label>
+      <Input
+        value={serviceName}
+        onChange={(e) => setServiceName(e.target.value)}
+        placeholder="ORCL or XEPDB1"
+        aria-describedby={describedByHint(uiConfig, "serviceName")}
+        className="h-9 bg-panel border-hairline focus:border-hue-orange-tint/50 text-xs"
+      />
+      <DeclaredFieldHint config={uiConfig} field="serviceName" />
+    </div>
+  );
+
+  const instanceNameBlock = (
+    <div className="space-y-1.5">
+      <Label className="text-xs font-medium text-fg-muted">
+        {connectionFieldLabel(uiConfig, "instanceName", "Instance Name")}
+      </Label>
+      <Input
+        value={instanceName}
+        onChange={(e) => setInstanceName(e.target.value)}
+        placeholder="SQLEXPRESS"
+        aria-describedby={describedByHint(uiConfig, "instanceName")}
+        className="h-9 bg-panel border-hairline focus:border-hue-orange-tint/50 text-xs"
+      />
+      <DeclaredFieldHint config={uiConfig} field="instanceName" />
     </div>
   );
 
@@ -934,7 +958,7 @@ export function ConnectionModal({
                       id="connectionString"
                       value={connectionString}
                       onChange={(e) => setConnectionString(e.target.value)}
-                      placeholder={connectionUriPlaceholder}
+                      placeholder={connectionFieldPlaceholder(uiConfig, "connectionString", "")}
                       autoComplete="off"
                       spellCheck={false}
                       autoCorrect="off"
@@ -1231,7 +1255,7 @@ export function ConnectionModal({
                         id="database"
                         value={database}
                         onChange={(e) => setDatabase(e.target.value)}
-                        placeholder={connectionFieldPlaceholder(uiConfig, "database", databaseFieldPlaceholder)}
+                        placeholder={connectionFieldPlaceholder(uiConfig, "database", "db")}
                         // An object name, not prose (SF-043).
                         autoComplete="off"
                         spellCheck={false}
@@ -1241,17 +1265,6 @@ export function ConnectionModal({
                         className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
                       />
                       <DeclaredFieldHint config={uiConfig} field="database" />
-                      {isTrino && (
-                        <p className="text-xs text-fg-muted">
-                          The Trino catalog to open, such as tpch or hive. Its schemas are the level below.
-                        </p>
-                      )}
-                      {isCassandra && (
-                        <p className="text-xs text-fg-muted">
-                          The keyspace to open. Tables inside it are the level below; statements can still name any
-                          keyspace in full.
-                        </p>
-                      )}
                     </div>
                   )}
 
@@ -1592,36 +1605,7 @@ export function ConnectionModal({
                     </div>
                   )}
 
-                  {/*
-                    In the open rather than behind the Advanced accordion for the
-                    reason Cassandra's field below is: the deployment that needs it is
-                    the ordinary one, and the failure without it is a credentials error
-                    that names nothing. The connection-string mode has no such field -
-                    a pasted URI carries `?authSource=` itself.
-                  */}
-                  {isMongoDB && (
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2 mb-1">
-                        <Key strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
-                        <Label htmlFor="authSource" className="text-xs font-medium text-fg-muted">
-                          {connectionFieldLabel(uiConfig, "authSource", "Authentication Database")}
-                        </Label>
-                      </div>
-                      <Input
-                        id="authSource"
-                        value={authSource}
-                        onChange={(e) => setAuthSource(e.target.value)}
-                        placeholder="admin"
-                        aria-describedby={describedByHint(uiConfig, "authSource")}
-                        className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
-                      />
-                      <DeclaredFieldHint config={uiConfig} field="authSource" />
-                      <p className="text-xs text-fg-muted">
-                        The database the user was created in, usually admin. Leave empty when the credentials live in
-                        the database above.
-                      </p>
-                    </div>
-                  )}
+                  {placedIn("authSource", "open") && authSourceBlock}
 
                   {/*
                     In the open for the same reason as MongoDB's field above: this is the
@@ -1682,43 +1666,16 @@ export function ConnectionModal({
                     </div>
                   )}
 
-                  {/*
-                    Rendered in the open, not behind the Advanced accordion that holds
-                    Oracle's service name and SQL Server's instance name. Those two are
-                    refinements; this one is mandatory - `cassandra-driver` refuses to
-                    build a load-balancing policy without it, so a connection with this
-                    empty cannot open at all.
-                  */}
-                  {isCassandra && (
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2 mb-1">
-                        <Server strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
-                        <Label htmlFor="localDataCenter" className="text-xs font-medium text-fg-muted">
-                          {connectionFieldLabel(uiConfig, "localDataCenter", "Local Data Center")}
-                        </Label>
-                      </div>
-                      <Input
-                        id="localDataCenter"
-                        value={localDataCenter}
-                        onChange={(e) => setLocalDataCenter(e.target.value)}
-                        placeholder="datacenter1"
-                        aria-describedby={describedByHint(uiConfig, "localDataCenter")}
-                        className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
-                      />
-                      <DeclaredFieldHint config={uiConfig} field="localDataCenter" />
-                      <p className="text-xs text-fg-muted">
-                        Required: the Cassandra driver refuses to connect without it. A stock single-node install
-                        reports datacenter1; the server lists the ones it has if this is wrong.
-                      </p>
-                    </div>
-                  )}
+                  {placedIn("localDataCenter", "open") && localDataCenterBlock}
+                  {placedIn("serviceName", "open") && serviceNameBlock}
+                  {placedIn("instanceName", "open") && instanceNameBlock}
                 </>
               )}
             </>
           </div>
 
-          {/* Advanced Settings (Oracle/MSSQL) */}
-          {(type === "oracle" || type === "mssql") && (
+          {/* Advanced Settings: drawn for an engine that places a field behind it (`fieldPlacement`). */}
+          {PLACEABLE_FIELDS.some((f) => placedIn(f, "advanced")) && (
             <div className="space-y-2">
               <button
                 type="button"
@@ -1743,42 +1700,10 @@ export function ConnectionModal({
                     className="overflow-hidden"
                   >
                     <div className="p-3 rounded-lg border border-hue-orange-tint/10 bg-hue-orange-tint/5 space-y-3">
-                      {type === "oracle" && (
-                        <div className="space-y-1.5">
-                          <Label className="text-xs font-medium text-fg-muted">
-                            {connectionFieldLabel(uiConfig, "serviceName", "Service Name")}
-                          </Label>
-                          <Input
-                            value={serviceName}
-                            onChange={(e) => setServiceName(e.target.value)}
-                            placeholder="ORCL or XEPDB1"
-                            aria-describedby={describedByHint(uiConfig, "serviceName")}
-                            className="h-9 bg-panel border-hairline focus:border-hue-orange-tint/50 text-xs"
-                          />
-                          <DeclaredFieldHint config={uiConfig} field="serviceName" />
-                          <p className="text-xs text-fg-muted">
-                            If empty, the Database Name field is used as the service name.
-                          </p>
-                        </div>
-                      )}
-                      {type === "mssql" && (
-                        <div className="space-y-1.5">
-                          <Label className="text-xs font-medium text-fg-muted">
-                            {connectionFieldLabel(uiConfig, "instanceName", "Instance Name")}
-                          </Label>
-                          <Input
-                            value={instanceName}
-                            onChange={(e) => setInstanceName(e.target.value)}
-                            placeholder="SQLEXPRESS"
-                            aria-describedby={describedByHint(uiConfig, "instanceName")}
-                            className="h-9 bg-panel border-hairline focus:border-hue-orange-tint/50 text-xs"
-                          />
-                          <DeclaredFieldHint config={uiConfig} field="instanceName" />
-                          <p className="text-xs text-fg-muted">
-                            For named instances (e.g. SQLEXPRESS). Leave empty for default instance.
-                          </p>
-                        </div>
-                      )}
+                      {placedIn("serviceName", "advanced") && serviceNameBlock}
+                      {placedIn("instanceName", "advanced") && instanceNameBlock}
+                      {placedIn("authSource", "advanced") && authSourceBlock}
+                      {placedIn("localDataCenter", "advanced") && localDataCenterBlock}
                     </div>
                   </motion.div>
                 )}

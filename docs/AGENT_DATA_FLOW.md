@@ -70,14 +70,15 @@ if it only lists the good news.
 ## Where a request goes
 
 Exactly one place: the model provider **you** configured through `LLM_PROVIDER`, `LLM_MODEL`,
-`LLM_API_KEY` and `LLM_API_URL`. The agent resolves that configuration through `src/lib/llm`'s own
+`LLM_API_KEY`, `LLM_API_URL` and, for `openai` only, `LLM_MODEL_EFFORT`. The agent resolves that configuration through `src/lib/llm`'s own
 resolution — the same one the remaining AI features use — so there is one answer rather than two
 that can disagree (`src/lib/agent/model-adapter.ts`).
 
 | Kind | Endpoint | Call site |
 | --- | --- | --- |
-| `gemini` | `{LLM_API_URL}` when you set one, Google's own Generative AI endpoint otherwise. The variable is read on both Gemini surfaces, so a proxy configured for the chat surface is also where a run goes — nothing routes to a host you did not name, and nothing silently keeps talking to Google either | `src/lib/agent/provider-registry.ts:136-150`, `src/lib/llm/utils/gemini-endpoint.ts` |
-| `openai`, `ollama`, `custom` | `{LLM_API_URL}/chat/completions` — whatever host you named | `src/lib/agent/provider-registry.ts:123-134` |
+| `gemini` | `{LLM_API_URL}` when you set one, Google's own Generative AI endpoint otherwise. The variable is read on both Gemini surfaces, so a proxy configured for the chat surface is also where a run goes: nothing routes to a host you did not name, and nothing silently keeps talking to Google either | `src/lib/agent/provider-registry.ts:147-161`, `src/lib/llm/utils/gemini-endpoint.ts` |
+| `openai` | `{LLM_API_URL}/responses`, the Responses API, at `https://api.openai.com/v1` unless you set another base URL. Every call is sent `store: false` | `src/lib/agent/provider-registry.ts:131-145`, `agentProviderOptions` in `src/lib/agent/model-adapter.ts` |
+| `ollama`, `custom` | `{LLM_API_URL}/chat/completions`, whatever host you named | `src/lib/agent/provider-registry.ts:131-145` |
 
 Two properties of that seam are enforced rather than assumed:
 
@@ -85,11 +86,15 @@ Two properties of that seam are enforced rather than assumed:
   `OPENAI_BASE_URL` when they are undefined, and `@ai-sdk/google` reads
   `GOOGLE_GENERATIVE_AI_API_KEY`. Every setting is therefore passed explicitly, so none of those
   reads can happen — a keyless Ollama gets a placeholder token and a keyless custom endpoint gets no
-  `Authorization` header at all (`provider-registry.ts:83-113`, asserted on the wire in
+  `Authorization` header at all (`provider-registry.ts:91-121`, asserted on the wire in
   `tests/isolated/agent-model-adapter.test.ts`).
 - **The SDK's hosted gateway is unreachable by construction.** The AI SDK also accepts a bare model
   id, which it resolves through its own gateway — a third party nothing in this repository
-  configures. The type excludes that arm (`AgentLanguageModel`, `provider-registry.ts:55-63`).
+  configures. The type excludes that arm (`AgentLanguageModel`, `provider-registry.ts:63-71`).
+- **OpenAI keeps nothing a run sends.**
+  Every call of the `openai` kind, the run's turns, the capability probe and the workflow classification alike, is a Responses API request with `store: false`, so OpenAI does not store the response or the schemas and rows the request carried.
+  Stateless mode is also why each turn's reasoning comes back as an encrypted item that the next turn sends back unread; Studio cannot read it and holds it only in the drive's in-memory transcript.
+  `LLM_MODEL_EFFORT`, when set, is sent as `reasoning.effort`, and a value the SDK will not send for the configured model is raised as a configuration error when the model is built, before any request leaves, rather than sent at another effort (`agentProviderOptions`, `refusedEffortError` and `createAgentModel` in `src/lib/agent/model-adapter.ts`, asserted on the wire in `tests/isolated/agent-model-adapter.test.ts`).
 
 `LLM_API_URL` reaches the `gemini` kind on the agent path exactly as on the chat surface, so a Gemini
 deployment behind an egress proxy or on a regional endpoint is configurable from the one variable. The
@@ -106,7 +111,7 @@ spellings in `src/lib/llm/utils/gemini-endpoint.ts`. Give the versioned URL; a b
   not render, and every run-reaching agent route answers `404` (`src/lib/agent/config.ts`,
   `docs/AGENT.md`, "Turning it on"). **The test is a configuration that validates, not a key.**
   `validateConfig` demands `LLM_API_KEY` for the `gemini` and `openai` kinds only
-  (`src/lib/llm/utils/config.ts:127-134`): `LLM_PROVIDER=ollama` validates with no key at all, and so
+  (`src/lib/llm/utils/config.ts:184-191`): `LLM_PROVIDER=ollama` validates with no key at all, and so
   does `custom` with an `LLM_API_URL`, and on either of those the agent is available and everything
   on this page is sent to that endpoint. What has no AI is a deployment carrying **no `LLM_*`
   configuration at all** — the provider then defaults to `gemini` (`config.ts:12`), which is refused
@@ -147,7 +152,7 @@ carries nothing of yours:
 
 - the **capability probe**, one round trip asking the model to call a trivial tool. Its prompt is a
   fixed server-written string and carries nothing of yours (`PROBE_PROMPT`,
-  `src/lib/agent/capability-probe.ts:134`). A positive verdict is cached for the life of the
+  `src/lib/agent/capability-probe.ts:135`). A positive verdict is cached for the life of the
   process, so it is paid once (`src/lib/agent/capability-gate.ts`);
 - the **classification**, which sends your objective. It is the section below.
 
@@ -178,6 +183,7 @@ Four bounds, all of them properties of the code rather than of intent:
 - **One call, no tools, no streaming, no retries.** `generateText` with `maxRetries: 0`.
 - **At most 16 output tokens** (`CLASSIFY_MAX_OUTPUT_TOKENS`), because the answer is one
   identifier.
+  The `openai` kind gets 1024 (`CLASSIFY_MAX_OUTPUT_TOKENS_RESPONSES`), because the Responses API counts a reasoning model's thinking against that cap: at 16, `gpt-6-luna` spent all of it reasoning and every run opened unclassified.
 - **Eight seconds** (`AGENT_WORKFLOW_CLASSIFY_TIMEOUT_MS`), after which the run opens unclassified;
   the browser holds a longer ceiling of its own so it never preempts the server's.
 - **It is skipped entirely when you name the workflow yourself** under **Advanced**. That is not an
@@ -197,7 +203,7 @@ routes for that reason.
 
 ## One agent run, message by message
 
-The transcript is assembled in `runInvestigation` (`src/lib/agent/investigation.ts:2540`) and is
+The transcript is assembled in `runInvestigation` (`src/lib/agent/investigation.ts:2537`) and is
 sent by `takeTurn` through `streamText` (`investigation.ts:575-592`). Nothing else in the runtime
 sends anything.
 
@@ -596,11 +602,11 @@ output cap, and what it sends is one objective — see
   **One credential does leave, necessarily: your `LLM_API_KEY`.** It is not in a prompt — it is in
   the request's authentication metadata, because that is how the provider authenticates you. The
   OpenAI-compatible kinds send it as the `Authorization` header
-  (`src/lib/agent/provider-registry.ts:108,125-128`) and Gemini passes it to the Google provider
-  (`:143`). Two consequences worth stating: a keyless Ollama gets a placeholder token and a keyless
-  custom endpoint gets no `Authorization` header at all (`:109,112`), so neither invents a
+  (`src/lib/agent/provider-registry.ts:116,133-136`) and Gemini passes it to the Google provider
+  (`:154`). Two consequences worth stating: a keyless Ollama gets a placeholder token and a keyless
+  custom endpoint gets no `Authorization` header at all (`:117,120`), so neither invents a
   credential; and Gemini's `baseURL` comes from `LLM_API_URL` — the host you configured for the chat
-  surface and no other (`:136-150`). "No credentials leave" would be the wrong claim
+  surface and no other (`:147-161`). "No credentials leave" would be the wrong claim
   here — the accurate one is that **no database credential** reaches the model, while the model
   provider's own key reaches the model provider and nothing else.
 - **Cell values from a table's own columns.** No agent path reads a row out of a user table and
@@ -638,7 +644,7 @@ output cap, and what it sends is one objective — see
 - **Not into the server log.** `streamText`'s default `onError` writes the raw provider error to the
   console, and an `APICallError` carries `requestBodyValues` — the entire prompt. It is silenced
   deliberately in both places that call the SDK, and the error is read off the stream instead
-  (`investigation.ts:588-591`, `capability-probe.ts:36-40,257-259`).
+  (`investigation.ts:588-591`, `capability-probe.ts:37-41,266-268`).
 - **Not into the audit trail.** Agent audit events carry the operation id, an `agent:<role>` actor,
   the outcome, a reason code, elapsed time and a correlation id — never the statement, the session
   identifier or the driver's message (`docs/SECURITY.md`, control 3.5).

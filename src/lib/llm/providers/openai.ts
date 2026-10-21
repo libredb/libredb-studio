@@ -1,13 +1,18 @@
 /**
  * OpenAI LLM Provider
  * OpenAI Chat Completions API with SSE streaming
+ *
+ * Stays on Chat Completions although the agent's `openai` kind moved to the Responses API: this
+ * surface sends no tools, and tool calling is what GPT-6 models restrict on Chat Completions.
+ * `LLM_MODEL_EFFORT` is forwarded as `reasoning_effort`, so the variable means one thing for
+ * openai on every surface.
  */
 
 import { BaseLLMProvider } from "../base-provider";
 import type { RetryOptions } from "../utils/retry";
 import { type LLMConfig, type LLMStreamOptions, LLMAuthError, LLMRateLimitError, LLMStreamError } from "../types";
 import { createStreamFromSSEResponse } from "../utils/streaming";
-import { DEFAULT_API_URLS } from "../utils/config";
+import { DEFAULT_API_URLS, validModelEffort } from "../utils/config";
 import { logger } from "@/lib/logger";
 
 // ============================================================================
@@ -16,11 +21,13 @@ import { logger } from "@/lib/logger";
 
 export class OpenAIProvider extends BaseLLMProvider {
   protected baseUrl: string;
+  private readonly effort: string | undefined;
 
   constructor(config: LLMConfig, retryOptions?: RetryOptions) {
     super(config, retryOptions);
     this.validate();
     this.baseUrl = config.apiUrl ?? DEFAULT_API_URLS.openai;
+    this.effort = validModelEffort(config);
   }
 
   /**
@@ -80,6 +87,7 @@ export class OpenAIProvider extends BaseLLMProvider {
         stream: true,
         ...(options.temperature !== undefined && { temperature: options.temperature }),
         ...(options.maxTokens !== undefined && { max_tokens: options.maxTokens }),
+        ...(this.effort !== undefined && { reasoning_effort: this.effort }),
       }),
       signal: options.signal,
     });

@@ -514,9 +514,14 @@ profile's):
    and its `-wal` are left byte for byte as they were. This is needed beside step 1, not instead of
    it: measured, with both options off, an extension **already installed** on the host is still
    loaded to attach a file it recognises, so the options alone would still have checkpointed the
-   SQLite file on any machine that had `sqlite_scanner` installed. A path whose header cannot be
-   read (missing, unreadable, a directory) is left to the engine, which creates a missing file or
-   names the failure in its own words.
+   SQLite file on any machine that had `sqlite_scanner` installed.
+   Before the header is read, a path that exists and is not a regular file (a FIFO, a socket, a device or a directory) is refused by `assertRegularFilesOrMissing` ([`regular-file.ts`](../../src/lib/db/utils/regular-file.ts)), shared with the SQLite and LibreDB providers.
+   It asks `stat`, which never opens the path: opening a FIFO for reading waits for a writer that never comes, and this read is synchronous, so `connect()` on a FIFO never returned and a 1 s timer never fired (measured on bun 1.4.2).
+   The engine's own names beside the file, `.wal`, `.wal.checkpoint` and `.wal.recovery`, are checked the same way: DuckDB replays a `.wal` beside an existing file when it opens it, and on a FIFO `.wal` that open never returned, in the editor and the agent profile alike (measured on bun 1.4.2).
+   That open runs on a libuv threadpool thread rather than the server's own thread, so each such connect held one of the pool's few threads for good.
+   The header read itself opens without waiting and asks the descriptor it opened (`readRegularFileStart`), so a FIFO renamed onto the path after the check is refused the same way instead of read: a loop renaming a file and a FIFO onto the path by turns had blocked that read on the server's own thread for good (measured on bun 1.4.2).
+   The engine's own open still looks the path up again, so a swap at that moment holds a threadpool thread, not the server's own thread.
+   A path whose header cannot be read (missing, unreadable) is left to the engine, which creates a missing file or names the failure in its own words.
 3. **`allow_community_extensions: 'false'`** is passed at open. A community extension is third-party
    native code DuckDB does not vet, and with this off `INSTALL <name> FROM community` is refused:
    `IO Error: Attempting to install an extension file that doesn't have a valid signature`
@@ -632,6 +637,14 @@ Pass `{ allowExternalFileAccess: true }` as the third argument for the full reac
 disconnect. It is the zero-configuration way to try the editor, and it is what most of the
 integration tests use.
 
+A missing folder in the path is created on connect, one level at a time, by `createMissingDirectories` ([`create-directory.ts`](../../src/lib/db/utils/create-directory.ts)), shared with the SQLite provider.
+It walks up to the nearest existing folder and makes each missing one in order, never with a recursive mkdir: Node's recursive mkdir never returns for a path under `/proc`, because procfs answers ENOENT for a parent that exists and Node retries it forever (measured on Node v24.14.0), so one Test Connection hung the whole server.
+The first folder the filesystem refuses ends the connect at once with the open error in §10, which carries the filesystem's code and the folder.
+
+A path that exists and is not a regular file, a FIFO, a socket, a device or a directory, is refused at once with the open error in §10, naming the path and its kind, in the editor and the agent profile alike (§3.14).
+So is such a file at `<path>.wal`, `<path>.wal.checkpoint` or `<path>.wal.recovery`, and the error then names that file.
+The check follows a symlink to its target, so a symlink to a FIFO is refused like the FIFO, and a missing path is left to the engine as before.
+
 ### 4.2 There is no connection string
 
 `supportsConnectionString` is `false`. DuckDB publishes no URI scheme: its own tooling takes a path
@@ -651,6 +664,15 @@ Explicitly **not** supported, so that a reader does not go looking:
 - **`ATTACH`-ed catalogs in the object browser.** Every catalog statement is scoped
   `database_name = current_database()` (§3.1, §3.3), so a database attached inside a session is
   queryable but is not enumerated in the tree.
+
+### Connection string
+
+`duckdb` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/sql/duckdb/connection-string.ts)).
+
+### Execution UI
+
+The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `duckdb` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
+Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/sql/duckdb/execution-ui.ts).
 
 ---
 
@@ -739,7 +761,7 @@ form; the strategy publishes no timings and fabricates none. See §3.6 for the f
 ### What the SQL INSERT and DDL exports write
 
 `@duckdb/node-api` answers an INTERVAL as `{months, days, micros}`, a MAP as a list of `{key, value}` entries and a STRUCT as an object.
-Written as JSON, the INTERVAL and the MAP were `Conversion Error` on replay, so the SQL INSERT export reads the declared type (#1386, [`typed-literals.ts`](../../src/lib/export/typed-literals.ts)) and writes `INTERVAL '14 months 3 days 14706000001 microseconds'`, `MAP {'k': 1}` (`MAP {}` when empty), `{'a': 7, 'b': ['p']}` and `[1, 2, 3]`, recursing through the element types, with a number inside a container written bare.
+Written as JSON, the INTERVAL and the MAP were `Conversion Error` on replay, so the SQL INSERT export reads the declared type (#1386, [`duckdb/typed-literals.ts`](../../src/lib/db/providers/sql/duckdb/typed-literals.ts)) and writes `INTERVAL '14 months 3 days 14706000001 microseconds'`, `MAP {'k': 1}` (`MAP {}` when empty), `{'a': 7, 'b': ['p']}` and `[1, 2, 3]`, recursing through the element types, with a number inside a container written bare.
 A quoted scalar (`'170141183460469231731687303715884105727'` into a `HUGEINT`) is left as it was, since DuckDB reads it back.
 The DDL keeps `STRUCT("a" INTEGER, "b" VARCHAR[])`, `INTEGER[3]`, `INTEGER[][]` and `MAP(INTEGER, VARCHAR[])` instead of writing `TEXT`.
 A composite that does not have its declared shape is skipped with a `-- Row N skipped` comment naming the column.
@@ -771,6 +793,19 @@ Two facts decide that text, and the modal's sequence code carries them too:
   Measured on 1.5.5: a typed name holding a double quote makes `nextval` resolve a different sequence name, and the `CREATE TABLE` fails with DuckDB's own Catalog Error.
 
 The type list changes from the shared list only where the engine disagrees (`JSON`, not `JSONB`); a row that reads like the old shared list is the engine agreeing with it, not a row nobody looked at.
+
+### SQL grammar
+
+How this engine's statement text is read is declared once, in [`src/lib/db/providers/sql/duckdb/sql-grammar.ts`](../../src/lib/db/providers/sql/duckdb/sql-grammar.ts), the `duckdb` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+Its grammar is `DUCKDB_GRAMMAR`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
+Every fact was measured on v1.5.5 through `@duckdb/node-api` 1.5.5-r.4, and the object is separate from `POSTGRES_GRAMMAR` although the values coincide: DuckDB's dialect is Postgres-shaped rather than PostgreSQL's, and a divergence should be a value changing here rather than a split.
+`#` is code: `SELECT 1 # x` is `Parser Error: syntax error at or near "#"`.
+`[` is a subscript, not a name quote: `SELECT [1,2][1]` answers 1, a list literal followed by a 1-based index.
+Block comments nest: `/* a /* b */ still */ SELECT 1` runs.
+`SELECT q'[x]' AS a` is `Catalog Error: Type with name q does not exist!`, and `SELECT 1 AS a // note` is `Parser Error: syntax error at or near "//"`.
+The update-target reader takes `PIVOT`, `UNPIVOT`, `UNNEST`, `SUMMARIZE`, `DESCRIBE` and `SHOW` as words that open a query here alone: on DuckDB 1.5.5 `(PIVOT orders ON k USING max(note))` is a scalar subquery that answers with another table's value, and asking about them on every engine cost PostgreSQL a refusal for `coalesce(show, '')`.
+`readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.
+Redaction is `sql` with no name quote: a redacted statement keeps its words, and every literal and quoted run becomes `?`.
 
 ## 6. Schema introspection
 
@@ -1043,7 +1078,7 @@ expression arrive bare. Measured 2026-09-21 on DuckDB v1.5.5 through `@duckdb/no
 | no default | none | SQL NULL |
 
 Each column carries both readings. `defaultValue` is the value, decoded by `unquoteLiteral()`
-(`src/lib/sql/values.ts`) with this dialect's `"standard"` escaping, so `'it''s'` reads as
+(`src/lib/sql/values.ts`) with the `unquoteStandard` reader this engine's SQL writing module names, so `'it''s'` reads as
 `it's` and a backslash stays ordinary data. Text that is not exactly one complete literal,
 a number or an expression such as a generated column's `CAST((id * 2) AS INTEGER)`, passes through unchanged. `defaultExpression` is the
 catalog text itself, which is always valid SQL here and is what the schema-diff migration
@@ -1346,6 +1381,27 @@ This overlay overrides no Shared member, so every Shared member is the `sql` sta
 `profile_table` is still offered here and answers `UNSUPPORTED_DIALECT` (B111).
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
 
+### 9.4 SQL writing
+
+[`duckdb/sql-writing.ts`](../../src/lib/db/providers/sql/duckdb/sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+A literal is written by `literalStandard` and read back by `unquoteStandard`: the quote is doubled and a backslash is data.
+A name is quoted by `identifierDoubleQuoted`, the SQL standard form: a double-quoted name with an inner double quote doubled.
+A bind is spelled by `placeholderQuestion`, as `?` at every position.
+Measured on DuckDB v1.5.5, both directions: `SELECT 'it''s'` answers `it's`, and `SELECT 'a\b', length('a\b')` answers the three characters `a\b`, so a backslash is data, and doubling it would add a second one to the value.
+The name quote is measured on v1.5.5 too: `"quoted identifier"` works, and `[…]` is a LIST literal here rather than a name quote, so the bracket form would be wrong for it.
+DuckDB binds both forms, measured on v1.5.5: `runAndReadAll("SELECT ?::INTEGER AS a, ?::VARCHAR AS b", [7, "x"])` and `runAndReadAll("SELECT $1::INTEGER AS a", [9])` each answer, so `?` is a choice rather than a reading.
+`$` is overloaded in this dialect: `$tag$…$tag$` is a dollar-quoted string literal (measured), so a `$1` written into a generated statement sits one character away from a form the readers have to tell apart, while `?` has no second meaning anywhere in DuckDB's grammar.
+`?` also matches the positional order the driver binds by, which is the array's, not the digit's.
+Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+
+The module's `export` field writes a result export's column types from `STANDARD_DDL_TYPES`.
+Each name in `standsAlone` was measured on DuckDB v1.5.5, one `CREATE TABLE probe (c <name>)` per name read back out of `duckdb_columns().data_type`, and resolved to an unnarrowed type: the seven text spellings to `VARCHAR`, the four byte ones to `BLOB`, the four moment ones to `TIMESTAMP` (and `TIMESTAMP WITH TIME ZONE` to itself).
+`numeric` and `decimal` are the absences that matter: DuckDB accepts both and stores `DECIMAL(18,3)`, which rounds away every value past the third decimal, so they are re-spelled from their family.
+A binary cell is written by `binaryUnhex`, not the standard hex: measured on v1.5.5, `SELECT typeof(X'0102')` answers `VARCHAR` and `SELECT X'0102'` answers the five characters `x0102`, while `unhex('0102deadbeef')` answers a real `BLOB` that reads back as `hex(payload)` = `0102DEADBEEF` with `octet_length(payload)` 6, `unhex('')` inserts the zero-length blob, and `0x0102` is a parser error.
+`nonFinite` is `QUOTED_WORD_NON_FINITE`, which writes the quoted words `'NaN'`, `'Infinity'` and `'-Infinity'`, which DuckDB read back into `DOUBLE` and `FLOAT` when replayed (2026-10-04).
+`typedLiteral` writes intervals, maps, structs and the other cells whose JSON form DuckDB refuses, from the engine's own [`duckdb/typed-literals.ts`](../../src/lib/db/providers/sql/duckdb/typed-literals.ts).
+`NO_BARE_SPELLING` completes it.
+
 
 
 ---
@@ -1372,7 +1428,7 @@ A lock conflict uses the same `describeOpenFailure()` path whether it happens wh
 file or later in a session. When DuckDB includes the holder PID, the sentence names
 `process <pid>`; otherwise it says `another process`.
 
-Open-time failures have five additional provider-specific diagnoses:
+Open-time failures have seven additional provider-specific diagnoses:
 
 | Condition | Provider error | What the user sees |
 |---|---|---|
@@ -1381,6 +1437,8 @@ Open-time failures have five additional provider-specific diagnoses:
 | A SQLite file, refused before the engine opens it (§3.14) | `ConnectionError` | `<path> is a SQLite database file, not a DuckDB database file. Open it with a SQLite connection. DuckDB did not open it, so it is unchanged.` |
 | Any other file without DuckDB's header, an empty one included (§3.14) | `ConnectionError` | `<path> is not a DuckDB database file: a DuckDB file carries "DUCK" at byte 8, and this one does not. DuckDB did not open it, so it is unchanged.` |
 | A handle with file and network access off cannot make its private temp directory (§3.16) | `ConnectionError` | `Could not open DuckDB database <path>: a handle with file and network access off keeps its temporary files in a private directory, and creating one under <temp directory> failed: <system message>. Make that directory writable for the Studio process, or point TMPDIR (TEMP on Windows) at one that is.` |
+| A missing folder the filesystem refuses to create (§4.1) | `ConnectionError` | `Failed to open DuckDB database <path>: <filesystem message>`, for example `ENOENT: no such file or directory, mkdir '/proc/x'` |
+| A path, or one of the engine's files beside it, that exists and is not a regular file, refused before anything opens it (§3.14, §4.1) | `ConnectionError` | `Failed to open DuckDB database <path>: <path> is a named pipe (FIFO), not a regular file`, naming `<path>.wal` or the other file when it is the one, or `a socket`, `a character device`, `a block device` or `a directory` in place of the FIFO |
 | Other open failure | `ConnectionError` | `Failed to open DuckDB database <path>: <engine message>` |
 
 The lock and missing-file sentences above are the provider's wrapped messages, not the raw engine
@@ -1653,6 +1711,22 @@ The reach described in this section is an admin editor's on an inline connection
 | A listed object carries no row count | `estimated_size` is an estimate, and `count(*)` per object is an N+1 | Ours, §6 and §3.5 |
 | A macro's Source pane shows a BODY, not a `CREATE MACRO` statement | `duckdb_functions().macro_definition` is the only text the engine publishes, and there is no `duckdb_macros()` | The engine's; ours to assemble in a later phase, and the pane says `form: partial` meanwhile (§6, Object source) |
 | Every definition text is a regeneration, never the author's bytes | The catalog stores a parsed object, not the submitted statement | The engine's (§6, Object source) |
+
+---
+
+## Migration DDL
+
+[`DUCKDB_MIGRATION_DDL`](../../src/lib/db/providers/sql/duckdb/migration-ddl.ts) is what the schema-diff migration generator writes for `duckdb`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+DuckDB writes the shared statements wrapped in `BEGIN;` and `COMMIT;`, except for foreign keys, which it declares only as a `CREATE TABLE` table constraint.
+Measured on DuckDB v1.5.5: `CREATE TABLE "users" (..., PRIMARY KEY ("id"), FOREIGN KEY ("dept_id") REFERENCES "departments"("id"))` lands and `duckdb_constraints()` reports the key, so an added table takes the key inside the statement.
+`ALTER TABLE t ADD CONSTRAINT fk FOREIGN KEY (a) REFERENCES u(id)` parses and then answers "Not implemented Error: No support for that ALTER TABLE option yet!" on v1.5.5, as does the `UNIQUE` form, so an added foreign key on an existing table is a comment.
+`ALTER TABLE t DROP CONSTRAINT IF EXISTS fk_x` answers the same "Not implemented" error, which is not an `IF EXISTS` no-op, so a dropped foreign key is a comment too.
+The fields it takes unchanged from `src/lib/db/migration-ddl/shared.ts` are `BEGIN_COMMIT`, `standardAddColumn`, `standardColumnDef`, `standardCreateIndex`, `standardDropColumn`, `standardDropIndex`, `standardDropTable`, `standardModifyColumn` and `standardPrimaryKey`.
+
+Every refusal reason it can print, verbatim:
+
+- "ALTER TABLE cannot add one yet; recreate the table and copy the rows."
+- "Requires table recreation."
 
 ---
 

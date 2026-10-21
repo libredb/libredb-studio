@@ -21,7 +21,7 @@ export type TestCounts = { pass: number; fail: number; skip: number; todo: numbe
 
 export type SpawnOutcome = {
   exitCode: number | null;
-  signal: string | null;
+  signal: string | number | null;
   /** Everything the child printed, for a reader. Nothing is decided from it. */
   output: string;
   durationMs: number;
@@ -34,7 +34,7 @@ export type FileOutcome = {
   file: string;
   status: "passed" | "failed" | "timed-out";
   exitCode: number | null;
-  signal: string | null;
+  signal: string | number | null;
   durationMs: number;
   output: string;
   counts: TestCounts | null;

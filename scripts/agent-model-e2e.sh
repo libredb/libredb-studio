@@ -95,8 +95,8 @@ do
       exit 1
     fi
     # The hosted one: provider, key and model all change together, so its own file is swapped in
-    # whole rather than one line being rewritten.
-    grep -vE '^(LLM_PROVIDER|LLM_MODEL|LLM_API_KEY|LLM_API_URL)=' "$BACKUP" > .env.local
+    # whole rather than one line being rewritten. LLM_MODEL_EFFORT goes too: Gemini refuses it.
+    grep -vE '^(LLM_PROVIDER|LLM_MODEL|LLM_API_KEY|LLM_API_URL|LLM_MODEL_EFFORT)=' "$BACKUP" > .env.local
     grep -E '^(LLM_PROVIDER|LLM_MODEL|LLM_API_KEY)=' .env.gemini.local >> .env.local
   else
     cp "$BACKUP" .env.local

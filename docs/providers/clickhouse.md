@@ -246,7 +246,7 @@ Verified with a purpose-made restricted user granted `SELECT` on one table only:
 
 | Surface as a restricted user | Status | Code |
 |---|---|---|
-| `system.query_log`, `system.processes`, `system.metrics`, `system.data_skipping_indices` | **`500`** | `497` `ACCESS_DENIED` |
+| `system.query_log`, `system.processes`, `system.metrics`, `system.data_skipping_indices`, `system.dictionaries` | **`500`** | `497` `ACCESS_DENIED` |
 | `OPTIMIZE TABLE`, `KILL QUERY` | **`500`** | `497` |
 | `system.tables`, `system.columns` | `200` | — implicitly filtered to what the user may see |
 | `uptime()`, `version()` | `200` | — needs no grant |
@@ -262,6 +262,24 @@ miss every real denial.
 The upside is real: **the schema tree and the overview panel survive a restricted user** — only the
 monitoring panels and maintenance operations that need their own grant degrade
 ([§7](#7-monitoring--health)).
+
+#### Privileges and grants for schema inspection (#1768)
+
+Restricted users without server-wide administrative privileges can browse databases and inspect tables safely. Three grants govern what is unlocked in the object tree and schema explorer:
+
+1. **`GRANT SELECT ON system.dictionaries TO <user>`**
+   - **What it unlocks:** Querying the `system.dictionaries` catalog.
+   - When granted, Studio queries `system.dictionaries` to count dictionaries and check dictionary names for the folder split.
+   - When denied (code `497`), only the Dictionaries folder count is marked `{ unavailable: "<refusal reason>" }`, while `listObjects(..., "dictionary")` rejects with `AuthenticationError` (because it queries `system.dictionaries` directly). Tables, views, materialized views, and user-defined functions remain fully usable, and DDL dictionaries (or tables with `ENGINE = Dictionary(...)`) remain listed under the Tables folder rather than breaking the tree or crashing the provider.
+
+2. **`GRANT dictGet ON <database>.* TO <user>`** (or `GRANT SHOW DICTIONARIES ON <database>.* TO <user>`)
+   - **What it unlocks:** The table / dictionary folder split.
+   - **Why this grant is needed for the split:** Measured in #1768, `SELECT ON system.dictionaries` alone returns 0 rows (`dictionary: 0`) for dictionaries in `<database>` if the user lacks dictionary access privileges, so DDL dictionaries still list under the Tables folder. Granting `dictGet ON <database>.*` (or `SHOW DICTIONARIES`) allows ClickHouse to return the database's dictionary rows from `system.dictionaries`, which enables Studio to pull DDL dictionaries out of the Tables folder and list them in the Dictionaries folder.
+
+3. **`GRANT SELECT ON system.data_skipping_indices TO <user>`**
+   - **What it unlocks:** Data-skipping index details on tables.
+   - When granted, skipping indexes defined on MergeTree tables are read and rendered under the Indexes section.
+   - When denied (code `497`), Studio does not fail table description or falsely assert that the table has 0 indexes: visible columns are returned intact with `indexes: { readonly unavailable: string }`, displaying a refusal notice in the UI and preserving the refusal shape across schema diffs, Agent inventories, and MCP tools.
 
 ### 3.4 `default_format=JSONCompact` as a URL parameter, never appended to the SQL
 
@@ -443,7 +461,7 @@ favour not rewriting: rewriting wrongly turns a working statement into a syntax 
 it alone at worst returns more rows than the page size.
 
 Both the detection and the inherited limiter read the statement under **ClickHouse's** grammar, which
-this provider passes down from its own `type` ([`grammar.ts`](../../src/lib/sql/grammar.ts)).
+this provider passes down from its own `type` ([`sql-grammar.ts`](../../src/lib/db/providers/sql/clickhouse/sql-grammar.ts)).
 ClickHouse's syntax reference lists `#` and `#!` beside `--` as single-line comment forms, and the
 shared reader used to guess PostgreSQL's rule instead — a hash followed by `>`, `-` or `#` is an
 operator — so a comment written that way was read as SQL, and an ordinary one at the end of a
@@ -632,7 +650,7 @@ This is a declared boundary, not a default: `endOpenQueryTransaction` is optiona
 ### 3.14 What the SQL INSERT and DDL exports write for composite types
 
 A result reaches the export through JSON, where an `Array` is a JS array, a `Map` an object, an unnamed `Tuple` an array and a named one an object.
-Written as quoted JSON those were `Code: 26 ... Cannot parse quoted string` on replay, so the SQL INSERT export reads the declared type ([§3.9](#39-column-types-are-the-declared-strings-verbatim)) and writes `[1, 2, 3]`, `map('k', 1)` and `tuple(7, ['p', 'q'])`, recursing through the element types, `Nullable` and `LowCardinality` included (#1386, [`typed-literals.ts`](../../src/lib/export/typed-literals.ts)).
+Written as quoted JSON those were `Code: 26 ... Cannot parse quoted string` on replay, so the SQL INSERT export reads the declared type ([§3.9](#39-column-types-are-the-declared-strings-verbatim)) and writes `[1, 2, 3]`, `map('k', 1)` and `tuple(7, ['p', 'q'])`, recursing through the element types, `Nullable` and `LowCardinality` included (#1386, [`clickhouse/typed-literals.ts`](../../src/lib/db/providers/sql/clickhouse/typed-literals.ts)).
 A named tuple's elements are written in the declared order, and a 64-bit integer or a decimal that `output_format_json_quote_64bit_integers` / `output_format_json_quote_decimals` turned into a string is written bare inside a container (a scalar column takes the quoted form as it is).
 
 A composite that does not have its declared shape (a tuple of the wrong length, a scalar where an `Array` belongs) is skipped with a `-- Row N skipped` comment naming the column, and a non-finite word in a `Float` column or inside a `Float` element is written as `nan`, `inf` or `-inf`.
@@ -758,6 +776,18 @@ Redirects are not followed. Every request sets `redirect: "manual"`, and a 3xx a
 `ConnectionError` naming the status and only the origin of its `Location`, since a followed
 redirect would take the Basic credential and the statement to wherever the server pointed.
 
+### Connection string
+
+The scheme shown for ClickHouse is `clickhouse://`, and the parser also accepts `http://` and `https://`.
+Its row in `CONNECTION_STRING` is declared in [`connection-string.ts`](../../src/lib/db/providers/sql/clickhouse/connection-string.ts).
+It has no `readTls`: `clickhouse://` names no transport and leaves the form's SSL mode alone, while for `http(s)://` the scheme is the transport and already decided, `disable` for `http://` and `require` for `https://`.
+It runs no seed load check.
+
+### Execution UI
+
+The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `clickhouse` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
+Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/sql/clickhouse/execution-ui.ts).
+
 ---
 
 ## 5. Query interface
@@ -842,6 +872,18 @@ used to kill another session's statement by guessing its id.
 
 ---
 
+### 5.5 SQL grammar
+
+How this engine's statement text is read is declared once, in [`src/lib/db/providers/sql/clickhouse/sql-grammar.ts`](../../src/lib/db/providers/sql/clickhouse/sql-grammar.ts), the `clickhouse` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+Its grammar is `CLICKHOUSE_GRAMMAR`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
+`#` and `#!` open a line comment beside `--`, and `[...]` is an array literal or a subscript that nests, both from the ClickHouse SQL syntax reference (checked 2026-08-05), since ClickHouse is reached over HTTP and has no driver artifact to check them against.
+That `[...]` is not a name quote is corroborated inside this repository: `identifier.ts` quotes this dialect's names with `"..."`.
+Block comments nest, as the same reference states with a nested example.
+`//` is a line comment, the one fact established by probe, on 26.7.1 over HTTP: `SELECT 1 AS a // note; SELECT 999` answers 1 with no error, while two statements are otherwise refused as multi-statements, so the `;` was hidden, and `SELECT 1 AS a // note` followed by `, 2 AS b` on the next line answers two columns, so the run ends at the newline.
+Read as code, `SELECT number FROM numbers(1000) // note` was bounded as `... // note LIMIT 5` and returned 1000 rows while reporting `wasLimited: true`; with the fact carried it is `... LIMIT 5 // note` and returns 5 (both measured).
+`readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.
+Redaction is `sql` with no name quote: a redacted statement keeps its words, and every literal and quoted run becomes `?`.
+
 ## 6. Schema introspection
 
 Everything this provider knows about a database's contents is read through the OBJECT SURFACE, in
@@ -899,7 +941,7 @@ the engine's own word, Database.
 | `table` | `relation` | `system.tables`, the DEFAULT arm |
 | `view` | `relation` | `system.tables`, `engine = 'View'` |
 | `materialized_view` | `relation` | `system.tables`, `engine = 'MaterializedView'` |
-| `dictionary` | `config` | `system.tables` joined to `system.dictionaries`, plus a union arm for the config-file ones |
+| `dictionary` | `config` | `system.dictionaries`, covering both DDL and config-file ones |
 | `function` | `routine` | `system.functions`, `origin != 'System'` |
 
 Two kinds are **absent rather than declared and zero**: ClickHouse has no trigger and no stored
@@ -943,11 +985,9 @@ So sourcing dictionaries from `system.tables` alone loses every config-file dict
 and the listing **together**. That is standing ruling 5a's exact absence: invisible in the tree while
 the badge keeps agreeing with its own folder, so ruling 5f still holds and nothing detects it.
 
-`system.dictionaries` is therefore unioned into the same kind-tagged subquery, on the arm
-`WHERE d.database = ''`, which is the config-file dictionary's whole address: a database cannot be
-named the empty string, so that arm can never duplicate a DDL dictionary, and the count and the
-listing still read **one text**. Like a function, such a dictionary is server-global: it appears under
-every database, and its path records the container it was reached through.
+`system.dictionaries` is therefore read in its own statement for the dictionary kind (`WHERE database = {database} OR database = ''`),
+which captures both DDL dictionaries and server-global config-file ones without joining `system.dictionaries` into the
+`system.tables` query.
 
 The engine name is not what identifies a dictionary either. Measured:
 
@@ -957,10 +997,12 @@ The engine name is not what identifies a dictionary either. Measured:
 
 That produces a `system.tables` row with engine `Dictionary` and **no** `system.dictionaries` row. It
 is a table that reads a dictionary, and `engine = 'Dictionary'` would file it under Dictionaries,
-where its detail read would then find nothing. So the kind expression asks `system.dictionaries` for
-**membership**, `(t.database, t.name) IN (SELECT database, name FROM system.dictionaries)`, and that
-proxy table stays a table. `docker/clickhouse-init/01-object-fixture.sql` carries all three shapes, so
-the rule can be re-measured rather than re-argued.
+where its detail read would then find nothing. So the kind expression checks `system.dictionaries` for
+**membership**, filtering out only tables whose names match verified dictionaries in the database, so that
+proxy table stays a table. Crucially, querying `system.dictionaries` separately ensures that a restricted user
+without grants on `system.dictionaries` only sees `dictionary` marked unavailable: `table` and other kinds
+proceed against `system.tables`, keeping tables (including dictionary-engine tables) intact under `table`.
+`docker/clickhouse-init/01-object-fixture.sql` carries all three shapes, so the rule can be re-measured rather than re-argued.
 
 #### The implicit inner table, and why the obvious rule is wrong
 
@@ -1006,8 +1048,8 @@ never coerced to zero.
 
 A refused count is reported per kind as `{ unavailable }` carrying **the server's own sentence**,
 verbatim and unprefixed, because that text is rendered to a person as the reason a folder has no
-number. It is a live case rather than a defensive arm: `system.functions` needs its own grant and a
-restricted user sees `500` / code `497`.
+number. It is a live case rather than a defensive arm: `system.dictionaries` needs its own grant and a
+restricted user sees code `497` (while `system.functions` needs no catalog grant, measured in the `src_probe` table below).
 
 #### What the last path segment carries
 
@@ -1070,13 +1112,15 @@ has at least one column and an empty answer means the object is not there under 
 
 The index read here **does not degrade to empty**, unlike the object surface's.
 `system.data_skipping_indices` needs its own grant and answers code `497` without it, and "this
-object has no skipping index" is a different fact from "you may not see its indexes". A detail panel
-showing the first when the second is true is a claim nobody measured.
+object has no skipping index" is a different fact from "you may not see its indexes". On refusal,
+`describeObject()` and `describeObjects()` preserve the visible columns and report `indexes: { unavailable: message }`
+instead of failing the entire table detail or claiming the object has no indexes.
 
-#### `describeObjects()` describes a whole folder in three statements (#789)
+#### `describeObjects()` describes a whole folder in four statements (#789)
 
 `describeObjects(container, kind, limit?)` answers columns and indexes for EVERY object of one kind in
-one database, in THREE round trips for a table-backed folder and TWO for a dictionary folder, whatever
+one database, in FOUR round trips for a table folder (dictionary preflight, target tables, columns, and data skipping indexes),
+THREE for views or materialized views, and TWO for a dictionary folder, whatever
 the folder holds. The single read is two statements per table-backed object and one per dictionary, so a
 folder of 200 tables cost 400. Measured on clickhouse-server 26.7.1.1315 against a 200-table database:
 **42 ms for one `describeObjects()` against 614 ms for 200 `describeObject()` calls**, the same 600
@@ -1525,6 +1569,26 @@ log_queries is off."* The Queries panel's empty state was hardcoded to PostgreSQ
 `pg_stat_statements` advice for every engine (#463), and `system.query_log`
 ([§7](#7-monitoring--health)) is what an operator here can actually act on.
 
+### SQL writing
+
+[`clickhouse/sql-writing.ts`](../../src/lib/db/providers/sql/clickhouse/sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+A literal is written by `literalDoubleAndBackslash` and read back by `unquoteDoubleAndBackslash`: the quote is doubled and a backslash escapes, so the backslash is doubled first.
+A name is quoted by `identifierDoubleQuoted`, the SQL standard form: a double-quoted name with an inner double quote doubled.
+There is no placeholder (`placeholder: null`), so a generator quotes the value with `quoteLiteral` instead of emitting a bind.
+This matches what the ClickHouse provider already does when it builds its own literals ([`index.ts`](../../src/lib/db/providers/sql/clickhouse/index.ts)).
+ClickHouse binds named parameters only, and its provider refuses positional ones outright.
+Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+
+The module's `export` field spells a result export's column types through `ddlTypes`, the standard spelling with `String` for a binary column: ClickHouse has no BLOB, and its byte container is `String`, a byte sequence rather than a text encoding.
+Measured on 26.7.1, the other standard spellings all resolve to a whole type (`TEXT` to `String`, `BIGINT` to `Int64`, `DOUBLE PRECISION` to `Float64`, `TIMESTAMP` to `DateTime`).
+Each name in `standsAlone` was measured, one `CREATE TABLE probe (c <name>)` per name on ClickHouse 26.7.1, read back out of `system.columns`, and is listed only because ClickHouse both accepted it and stored it unnarrowed.
+ClickHouse resolves every character and byte alias it knows to `String`.
+ClickHouse's `decimal` is absent because it is stored as `Decimal(10, 0)`, the MySQL narrowing again, and so is `set`: MySQL's SET is a character type, while ClickHouse accepts the word and stores `UInt64`, the widest silent mistranslation measured.
+A binary cell is written by `binaryUnhex`: measured on 26.7.1, `unhex('0102deadbeef')` into a `String` column reads back as `hex(payload)` = `0102DEADBEEF` with `length(payload)` 6, and `length(unhex(''))` is 0.
+`nonFinite` writes the bare `nan`, `inf` and `-inf`, which ClickHouse 26.9.18.11 read back into `Float64` and `Float32` (2026-10-14).
+`typedLiteral` writes arrays, maps, tuples and the other cells whose quoted JSON form ClickHouse refuses, from the engine's own [`clickhouse/typed-literals.ts`](../../src/lib/db/providers/sql/clickhouse/typed-literals.ts).
+`NO_BARE_SPELLING` completes it.
+
 ---
 
 ## 10. Error handling
@@ -1748,6 +1812,25 @@ under a `queryId` ([§5.4](#54-cancellation)); the transaction routes do not app
   `postgres.ts` carries for schema-qualified names; removing it means giving the object shape structured
   segments instead of one string, which is a cross-provider change rather than a ClickHouse one.
   Dotted database names are vanishingly rare in practice.
+
+---
+
+## Migration DDL
+
+[`CLICKHOUSE_MIGRATION_DDL`](../../src/lib/db/providers/sql/clickhouse/migration-ddl.ts) is what the schema-diff migration generator writes for `clickhouse`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+ClickHouse's transaction support is experimental and setting-gated, so `transactionWrapper` is `null` (#284).
+It has no foreign-key constraint, and its index changes are a comment, because the diff records column names and uniqueness, not the index kind, expression or granularity.
+A default whose value starts with `MATERIALIZED`, `ALIAS` or `EPHEMERAL` (`CLICKHOUSE_DEFAULT_KINDS`) already names its own clause and is written without `DEFAULT` in front of it.
+Live-probed on `clickhouse-server:26.7.1.1315`: `MODIFY COLUMN "y" Int32 DEFAULT MATERIALIZED toYear(d)` is a syntax error (code 62), while `MODIFY COLUMN "y" Int32 MATERIALIZED toYear(d)` is accepted.
+A dropped default is written as `REMOVE <kind>`, because omitting the clause leaves the old default in place; `REMOVE` takes `DEFAULT`, `MATERIALIZED` or `ALIAS` only (`CLICKHOUSE_REMOVABLE_KINDS`), `REMOVE EPHEMERAL` is code 62, and `REMOVE DEFAULT` on a column with no default is code 36.
+Nullability is part of the type (`Nullable(T)`), so a modified column restates its declared type and there is no `SET NOT NULL`.
+The fields it takes unchanged from `src/lib/db/migration-ddl/shared.ts` are `standardAddColumn`, `standardDropColumn`, `standardDropTable` and `standardPrimaryKey`.
+
+Every refusal reason it can print, verbatim:
+
+- "ClickHouse: Cannot generate index DDL. The diff does not record the index kind, expression or granularity; write the index change by hand."
+- "The engine has no foreign-key constraint."
+- "REMOVE accepts DEFAULT, MATERIALIZED or ALIAS only; recreate the column."
 
 ---
 

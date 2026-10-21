@@ -245,9 +245,6 @@
                 "properties": {
                   "command": {
                     "type": "object",
-                    "propertyNames": {
-                      "type": "string"
-                    },
                     "additionalProperties": {}
                   },
                   "rationale": {
@@ -272,9 +269,6 @@
                 "properties": {
                   "command": {
                     "type": "object",
-                    "propertyNames": {
-                      "type": "string"
-                    },
                     "additionalProperties": {}
                   },
                   "rationale": {
@@ -446,9 +440,6 @@
                 "properties": {
                   "command": {
                     "type": "object",
-                    "propertyNames": {
-                      "type": "string"
-                    },
                     "additionalProperties": {}
                   },
                   "rationale": {
@@ -473,9 +464,6 @@
                 "properties": {
                   "command": {
                     "type": "object",
-                    "propertyNames": {
-                      "type": "string"
-                    },
                     "additionalProperties": {}
                   },
                   "rationale": {
@@ -508,9 +496,6 @@
                   },
                   "keys": {
                     "type": "object",
-                    "propertyNames": {
-                      "type": "string"
-                    },
                     "additionalProperties": {
                       "type": [
                         "number",
@@ -520,9 +505,6 @@
                   },
                   "options": {
                     "type": "object",
-                    "propertyNames": {
-                      "type": "string"
-                    },
                     "additionalProperties": {}
                   },
                   "rationale": {
@@ -749,9 +731,6 @@
                 "properties": {
                   "command": {
                     "type": "object",
-                    "propertyNames": {
-                      "type": "string"
-                    },
                     "additionalProperties": {}
                   },
                   "rationale": {
@@ -776,9 +755,6 @@
                 "properties": {
                   "command": {
                     "type": "object",
-                    "propertyNames": {
-                      "type": "string"
-                    },
                     "additionalProperties": {}
                   },
                   "rationale": {
@@ -1238,9 +1214,6 @@
                 "properties": {
                   "command": {
                     "type": "object",
-                    "propertyNames": {
-                      "type": "string"
-                    },
                     "additionalProperties": {}
                   },
                   "rationale": {
@@ -1265,9 +1238,6 @@
                 "properties": {
                   "command": {
                     "type": "object",
-                    "propertyNames": {
-                      "type": "string"
-                    },
                     "additionalProperties": {}
                   },
                   "rationale": {

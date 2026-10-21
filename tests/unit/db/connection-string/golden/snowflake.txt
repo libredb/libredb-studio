@@ -1,0 +1,3 @@
+scheme => undefined
+seed => [{"path":["host"],"message":"Seed connection \"test-pg\": host is refused: Enter Account: an account identifier such as myorg-myaccount, or its URL."},{"path":["user"],"message":"Seed connection \"test-pg\": user is refused: Enter the user's login name."},{"path":["authMethod"],"message":"Seed connection \"test-pg\": authMethod is refused: Choose Key pair or Programmatic access token for Sign-in."},{"path":["role"],"message":"Seed connection \"test-pg\": role is refused: Enter the role every statement runs as."}]
+seed => [{"path":["password"],"message":"Seed connection \"test-pg\": password is refused: Enter the programmatic access token."}]

@@ -267,6 +267,15 @@ InfluxDB Cloud Serverless answers InfluxQL only for a bucket with an explicit DB
 
 Create the mapping with `influx v1 dbrp create --bucket-id <bucket-id> --db <database> --rp <policy> --default`.
 
+### Connection string
+
+`influxdb` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`influxdb-connection-string.ts`](../../src/lib/db/providers/timeseries/influxdb/influxdb-connection-string.ts)).
+
+### Execution UI
+
+The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `influxdb` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
+Its row in `EXECUTION_UI` is declared in [`influxdb-execution-ui.ts`](../../src/lib/db/providers/timeseries/influxdb/influxdb-execution-ui.ts).
+
 ## 5. Query interface
 
 ### 5.1 The request
@@ -418,6 +427,14 @@ SELECT last("hum") FROM "home".."home" GROUP BY "room"
 EXPLAIN SELECT count("co") FROM "home".."home"
 ```
 
+### 5.11 SQL grammar
+
+How this engine's statement text is read is declared once, in [`src/lib/db/providers/timeseries/influxdb/influxdb-sql-grammar.ts`](../../src/lib/db/providers/timeseries/influxdb/influxdb-sql-grammar.ts), the `influxdb` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+`readsSqlText` is `false`: `influxdb` takes one InfluxQL statement, whose strings escape with a backslash, where `/.../` is a regex where the parser asks for one and a `--` comment ends at a lone `\r`, so a SQL span reader misreads where a literal ends; the provider reads it with its own lexer (`src/lib/db/providers/timeseries/influxdb/influxql-lexer.ts`) and refuses every write before sending it.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` in `src/lib/db/destructive-commands.ts` instead of a SQL reading.
+Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
+Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
+
 ## 6. Schema introspection
 
 ### 6.1 The object surface
@@ -514,6 +531,20 @@ None: InfluxDB compacts its own storage and keeps no statistics to update.
 | `vacuumGlobalLabel` | Compact |
 | `vacuumGlobalTitle` | Compaction Is the Server's Own |
 | `vacuumGlobalDesc` | InfluxDB compacts its storage on its own schedule, and a connection in Studio is read-only. Nothing runs from here. |
+
+### SQL writing
+
+[`influxdb/influxdb-sql-writing.ts`](../../src/lib/db/providers/timeseries/influxdb/influxdb-sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+A literal is written by `literalBackslash` and read back by `unquoteBackslash`: every escape, the quote's included, is spelled with a backslash, and doubling is not part of the grammar.
+A name is quoted by `identifierDoubleQuoted`, the SQL standard form: a double-quoted name with an inner double quote doubled.
+There is no placeholder (`placeholder: null`), so a generator quotes the value with `quoteLiteral` instead of emitting a bind.
+Measured on InfluxDB 1.13.1: `... WHERE room = 'it\'s'` parses and `... WHERE room = 'it''s'` is `error parsing query: found s, expected ;`; the scanner's string escapes are exactly `\n`, `\\`, `\"` and `\'`.
+No generator calls `quoteLiteral` for InfluxQL: the provider's `influxql-quote.ts` builds every literal and refuses a newline, which a backslash form cannot carry, so the row is the true answer for any future caller.
+InfluxQL is not SQL, and nothing binds there.
+Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+
+The module's `export` field writes a result export's CREATE TABLE and INSERT from the shared building blocks alone: `STANDARD_DDL_TYPES` for the column types, `NOTHING_STANDS_ALONE` and `NO_BARE_SPELLING`, so every bare declared name is re-spelled from its family, `NULL_NON_FINITE` for NaN and the infinities, and `binaryStandardHex` for a binary cell (`X'0102'`).
+The engine declares `queryLanguage: "influxql"`, so no SQL statement is ever built for it to read, and a file exported from it is meant to run somewhere else: every bare name in it is re-spelled portably rather than kept as one engine's private word.
 
 ## 10. Error handling
 
@@ -641,6 +672,16 @@ readOnly: true
 - The plaintext consent survives a Host or Port change in the dialog (D204).
 - No agent execution and no MCP `run_read_query` (B94).
 - The Charts tab defects of section 5.8 (U79, U80).
+
+## Migration DDL
+
+[`INFLUXDB_MIGRATION_DDL`](../../src/lib/db/providers/timeseries/influxdb/influxdb-migration-ddl.ts) is what the schema-diff migration generator writes for `influxdb`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
+`influxdb` text is an InfluxQL statement, not SQL, and the provider is read-only, so there is no table DDL to wrap (#284).
+
+The refusal reason it prints, verbatim:
+
+- "A measurement's tags and fields are created by the points written to it, not declared with columns, so there is no column definition to change."
 
 ## 14. References
 

@@ -49,6 +49,24 @@ LLM_API_KEY=<your key>
 The key is read server-side only. It is never sent to the browser and never written to a run's
 ledger, so a key configured here does not travel with the artefacts a run produces.
 
+OpenAI is configured the same way, and it is the one provider that also takes a reasoning effort:
+
+```bash
+LLM_PROVIDER=openai
+LLM_MODEL=gpt-6-luna
+LLM_API_KEY=<your key>
+LLM_MODEL_EFFORT=low    # optional: none, minimal, low, medium, high, xhigh, max
+```
+
+Agent mode calls OpenAI through the Responses API with `store: false`, because GPT-6 tool calling needs that API and OpenAI then keeps nothing a run sends.
+Which efforts a model takes is the model's own: GPT-6.1 Sol and GPT-6 Astra have no `none`, and a model that does not reason (`gpt-4o`) takes none at all.
+A value the model does not take is never sent at another effort.
+For GPT-6 and later, and for a model that does not reason, the AI SDK knows which efforts the model takes, so Agent and Plan mode both refuse to start the run with a configuration error naming them, before any request reaches OpenAI.
+For other reasoning models (GPT-5.x, the o-series) it does not, so the value is sent and the run's first turn ends with OpenAI's own error.
+The chat surface sends the value as it is, so there the refusal is always OpenAI's own error.
+Automatic workflow selection works on GPT-6 Luna and Sol as on any other model: its one call leaves a reasoning model room to think before it answers.
+Leave the variable unset for the model's default; set with any other provider it is refused as a configuration error.
+
 Restart the server after editing the file: these are read at startup, so an edit under a running
 server changes nothing until it restarts.
 

@@ -24,12 +24,20 @@
  * those reads can ever happen — asserted on the wire in
  * `tests/isolated/agent-model-adapter.test.ts` with sentinel values.
  *
- * The three OpenAI-compatible kinds (`openai`, `ollama`, `custom`) go through the
+ * The two self-hosted OpenAI-compatible kinds (`ollama`, `custom`) go through the
  * OpenAI provider's `chat()` model, which posts to `{baseURL}/chat/completions` —
- * the same endpoint `src/lib/llm/providers/{openai,ollama,custom}.ts` already post
- * to, so an `LLM_API_URL` that works for the chat surface works here too.
- * `responses()` is deliberately not used: it is OpenAI's own API shape and a
- * self-hosted OpenAI-compatible endpoint does not serve it.
+ * the same endpoint `src/lib/llm/providers/{ollama,custom}.ts` already post to,
+ * so an `LLM_API_URL` that works for the chat surface works here too. They stay
+ * off `responses()` because it is OpenAI's own API shape and a self-hosted
+ * OpenAI-compatible endpoint does not serve it.
+ *
+ * The `openai` kind is OpenAI itself, and it uses `responses()`, posting to
+ * `{baseURL}/responses`. OpenAI's GPT-6 guide routes tool calling through the
+ * Responses API: GPT-6.1 Sol and GPT-6 Astra take no function tools on Chat
+ * Completions at all, and GPT-6 Sol and Luna take them there only with
+ * `reasoning_effort: "none"`. What every call sends with it, `store: false` among
+ * it, is `agentProviderOptions` in `model-adapter.ts`. The chat surface's
+ * `src/lib/llm/providers/openai.ts` sends no tools and stays on Chat Completions.
  *
  * Gemini takes `LLM_API_URL` too, on both surfaces at once (B20): the chat
  * provider passes it as this SDK family's origin-shaped `RequestOptions.baseUrl`
@@ -48,7 +56,7 @@
  * half-built; the reasoning and what closing it takes are in `docs/BACKLOG.md` B2.
  */
 
-import type { LanguageModel } from "ai";
+import type { CallWarning, LanguageModel } from "ai";
 import { type LLMConfig, type LLMProviderType, LLMConfigError } from "@/lib/llm/types";
 import { resolveGeminiSdkBaseUrl } from "@/lib/llm/utils/gemini-endpoint";
 
@@ -124,13 +132,16 @@ async function createOpenAICompatibleModel(config: LLMConfig, fetchImpl?: AgentF
   const { createOpenAI } = await import("@ai-sdk/openai");
   const { apiKey, headers } = openAICompatibleAuth(config);
 
-  return createOpenAI({
+  const provider = createOpenAI({
     apiKey,
     headers,
     baseURL: config.apiUrl,
     fetch: asSdkFetch(fetchImpl),
     name: config.provider,
-  }).chat(config.model);
+  });
+  // The one difference between the three kinds; see the header for why only OpenAI itself
+  // speaks the Responses API.
+  return config.provider === "openai" ? provider.responses(config.model) : provider.chat(config.model);
 }
 
 async function createGeminiModel(config: LLMConfig, fetchImpl?: AgentFetch): Promise<AgentLanguageModel> {
@@ -151,9 +162,10 @@ async function createGeminiModel(config: LLMConfig, fetchImpl?: AgentFetch): Pro
 
 /**
  * Every provider kind the settings surface can resolve, and nothing else. Three
- * kinds share one construction function and still carry their own `kind`, which
- * is what makes an error or a log line name the endpoint the operator configured
- * instead of naming OpenAI for an Ollama server.
+ * kinds share one construction function, which picks the Responses API for `openai`
+ * and Chat Completions for the other two, and each still carries its own `kind`,
+ * which is what makes an error or a log line name the endpoint the operator
+ * configured instead of naming OpenAI for an Ollama server.
  */
 export const AGENT_PROVIDER_ADAPTERS: Readonly<Record<LLMProviderType, AgentProviderAdapter>> = Object.freeze({
   gemini: { kind: "gemini", createModel: createGeminiModel },
@@ -183,3 +195,40 @@ export function resolveAgentProviderAdapter(kind: LLMProviderType): AgentProvide
 // multi-line string concatenation.
 const noAdapterMessage = (kind: string): string =>
   `No agent provider adapter for "${kind}". Configured kinds: ${Object.keys(AGENT_PROVIDER_ADAPTERS).join(", ")}.`;
+
+/**
+ * The warnings the SDK raises while it PREPARES a Responses request for `modelId` with these
+ * provider options, without sending it.
+ *
+ * `prepareRequest` is the step every Responses call runs before its first byte leaves: it reads the
+ * SDK's per-model capability table and drops, with a warning, a reasoning effort the model does not
+ * take. Calling it on its own asks that table the question with no network call and no copy of the
+ * table here. It is a public static on the Responses model in the package's `internal` entry point,
+ * and the package is pinned to an exact version (`tests/unit/agent-dependency-boundary.test.ts`), so
+ * an upgrade that moved it fails the typecheck and the tests that pin its sentence to a real call's.
+ *
+ * The optional `sampling` is handed to the same preparation step, so a caller can learn offline
+ * whether the SDK would keep or drop `temperature`/`topP` for this model and effort. The SDK drops
+ * both for reasoning models unless the resolved effort is `none` and the model takes non-reasoning
+ * parameters; the warning it raises is exactly the one a real call would log, so reading it here is
+ * the whole decision with no capability table copied into this repository.
+ */
+export async function openAIResponsesRequestWarnings(
+  modelId: string,
+  providerOptions: Record<string, Record<string, string | boolean | null>> | undefined,
+  sampling?: { readonly temperature?: number; readonly topP?: number },
+): Promise<CallWarning[]> {
+  const { OpenAIResponsesLanguageModel } = await import("@ai-sdk/openai/internal");
+  const prepared = await OpenAIResponsesLanguageModel.prepareRequest({
+    modelId,
+    // No `fetch` and no real URL: preparation reads neither, and nothing here sends what it builds.
+    config: { provider: "openai.responses", url: () => "" },
+    options: {
+      prompt: [],
+      providerOptions,
+      ...(sampling?.temperature !== undefined ? { temperature: sampling.temperature } : {}),
+      ...(sampling?.topP !== undefined ? { topP: sampling.topP } : {}),
+    },
+  });
+  return prepared.warnings;
+}

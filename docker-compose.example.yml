@@ -73,6 +73,7 @@ services:
       # LLM_API_KEY: ${LLM_API_KEY}                # required for gemini/openai
       # LLM_MODEL: ${LLM_MODEL:-gemini-2.5-flash}
       # LLM_API_URL: ${LLM_API_URL}                # ollama/custom only, e.g. http://host:11434/v1
+      # LLM_MODEL_EFFORT: ${LLM_MODEL_EFFORT}      # openai only: none|minimal|low|medium|high|xhigh|max
 
       # -----------------------------------------------------------------------
       # AGENT RUNTIME — standalone only, and there is no flag to turn it on.

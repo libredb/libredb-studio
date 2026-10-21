@@ -270,6 +270,15 @@ not speak 5.0 refuses the handshake rather than half-working: a 5.0 broker refus
 both. A code outside the fourteen in 10.1 is reported as itself in both bases. The brokers measured are in
 section 8.
 
+### Connection string
+
+`mqtt` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/keyvalue/mqtt/connection-string.ts)).
+
+### Execution UI
+
+The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `mqtt` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
+Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/keyvalue/mqtt/execution-ui.ts).
+
 ## 5. The read
 
 A read ends on one of Studio's own budgets: elapsed time (3 seconds), message count (50,000) or bytes (32 MiB).
@@ -305,6 +314,14 @@ Every read reports what it saw, why it stopped, and what it can prove it lost. `
 `incomplete` and `unknown`; `complete` is not one of them. `MQTT_KEY_SCAN.totalScope` is `none`, which tells
 the panel not to read the page's `total` at all; the field itself is `0` on every page, because the shape
 requires a number and there is no count a broker publishes.
+
+### 5.1 SQL grammar
+
+How this engine's statement text is read is declared once, in [`src/lib/db/providers/keyvalue/mqtt/sql-grammar.ts`](../../src/lib/db/providers/keyvalue/mqtt/sql-grammar.ts), the `mqtt` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+`readsSqlText` is `false`: there is no query console in this version ([§2.1](#21-where-it-sits)), the Keys panel is the surface, so no statement text of this engine is SQL.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` in `src/lib/db/destructive-commands.ts` instead of a SQL reading.
+Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
+Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
 
 ## 6. Objects
 
@@ -387,6 +404,17 @@ and Vacuum says maintenance would be a write and this provider has no code that 
 read an agent should be handed without a reader looking at it: an agent asked "is the sensor reporting?" would
 receive the absence of a topic as evidence it does not exist, which is exactly the inference "Before you
 connect" says cannot be drawn.
+
+### 9.2 SQL writing
+
+[`mqtt/sql-writing.ts`](../../src/lib/db/providers/keyvalue/mqtt/sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+A literal is written by `literalStandard` and read back by `unquoteStandard`: the quote is doubled and a backslash is data.
+A name is quoted by `identifierDoubleQuoted`, the SQL standard form: a double-quoted name with an inner double quote doubled.
+There is no placeholder (`placeholder: null`), so a generator quotes the value with `quoteLiteral` instead of emitting a bind.
+No measurement stands behind this row; it uses the standard building blocks named above.
+Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+
+The module's `export` field writes a result export's CREATE TABLE and INSERT from the shared building blocks alone: `STANDARD_DDL_TYPES` for the column types, `NOTHING_STANDS_ALONE` and `NO_BARE_SPELLING`, so every bare declared name is re-spelled from its family, `NULL_NON_FINITE` for NaN and the infinities, and `binaryStandardHex` for a binary cell (`X'0102'`).
 
 ## 10. Error handling
 
@@ -517,6 +545,16 @@ Each replay asserts the topics by name and the type of each, so a decoder that r
   admin account, it is not MQTT, and it does not exist on every broker. Candidate for a later version.
 - `$SYS` is not subscribed to by default, for the reasons in 3.8.
 - The Keys panel cannot ask for a second page, by the choice in 3.7.
+
+## Migration DDL
+
+[`MQTT_MIGRATION_DDL`](../../src/lib/db/providers/keyvalue/mqtt/migration-ddl.ts) is what the schema-diff migration generator writes for `mqtt`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
+A broker keeps no schema and no catalog, so there is no table DDL to decline or to wrap (#1635).
+
+The refusal reason it prints, verbatim:
+
+- "A broker keeps no schema and no catalog, so there is no column definition to change."
 
 ## 13. References
 

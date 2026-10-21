@@ -1,0 +1,42 @@
+-- fixture: full
+-- Migration generated at 2026-10-19T12:00:00.000Z
+-- Dialect: trino
+-- Changes: 1 added, 1 removed, 2 modified
+
+-- Objects that are not tables
+-- Skipped v_orders (view): only tables are created, altered or dropped here; change it by hand. If it reads a table changed below, drop it before this script and recreate it after.
+
+-- Drop removed tables
+DROP TABLE IF EXISTS "app"."legacy";
+
+-- Create new tables
+CREATE TABLE "app"."users" (
+  "id" integer NOT NULL,
+  "note" varchar(20) DEFAULT 'abc',
+  "bare" TEXT,
+  "y" Int32 DEFAULT MATERIALIZED toYear(d),
+  "empty" text DEFAULT 
+);
+-- Trino: Cannot declare a primary key. Trino SQL has no primary-key constraint.
+-- Trino: Cannot generate index DDL. Indexes belong to the connector's underlying system, not Trino SQL.
+-- Trino: Cannot generate index DDL. Indexes belong to the connector's underlying system, not Trino SQL.
+-- Trino: Cannot add a foreign key. The engine has no foreign-key constraint.
+
+-- Modify existing tables
+-- Alter table: orders
+-- Trino: Cannot drop a foreign key. The engine has no foreign-key constraint.
+-- Trino: Cannot generate index DDL. Indexes belong to the connector's underlying system, not Trino SQL.
+-- Trino: Cannot generate index DDL. Indexes belong to the connector's underlying system, not Trino SQL.
+ALTER TABLE "app"."orders" ADD COLUMN "extra" integer;
+ALTER TABLE "app"."orders" ADD COLUMN "bare2" TEXT;
+ALTER TABLE "app"."orders" DROP COLUMN "old";
+-- Trino: Cannot alter column "status". Whether a column can be retyped is the connector's answer, not Trino's; run the change in the system the catalog points at.
+-- Trino: Cannot alter column "amount". Whether a column can be retyped is the connector's answer, not Trino's; run the change in the system the catalog points at.
+-- Trino: Cannot alter column "calc". Whether a column can be retyped is the connector's answer, not Trino's; run the change in the system the catalog points at.
+-- Trino: Cannot alter column "line break". Whether a column can be retyped is the connector's answer, not Trino's; run the change in the system the catalog points at.
+-- Trino: Cannot generate index DDL. Indexes belong to the connector's underlying system, not Trino SQL.
+-- Trino: Cannot generate index DDL. Indexes belong to the connector's underlying system, not Trino SQL.
+-- Trino: Cannot add a foreign key. The engine has no foreign-key constraint.
+
+-- fixture: none
+-- No schema changes detected.

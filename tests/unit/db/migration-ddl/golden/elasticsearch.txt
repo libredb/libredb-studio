@@ -1,0 +1,8 @@
+-- fixture: full
+-- Migration generated at 2026-10-19T12:00:00.000Z
+-- Dialect: elasticsearch
+-- Changes: 1 added, 1 removed, 2 modified
+
+-- Elasticsearch: Cannot generate table DDL. Elasticsearch SQL reads only; change a field by reindexing into an index whose mapping declares it.
+-- fixture: none
+-- No schema changes detected.

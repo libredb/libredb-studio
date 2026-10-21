@@ -40,8 +40,8 @@
  * the connection, so it holds the answer.
  */
 
+import { sqlGrammarFor, sqlGrammarForExactType } from "@/lib/db/sql-grammar";
 import type { DatabaseType } from "@/lib/types";
-import { resolveSqlGrammar } from "./grammar";
 import { isBareIdentifier } from "./identifier";
 import { IDENTIFIER_PART, IDENTIFIER_START, readSqlSpan } from "./spans";
 
@@ -151,9 +151,6 @@ function endsTheCommaScan(piece: Piece, next: Piece | undefined): boolean {
  */
 const SET_OPERATORS = new Set(["UNION", "INTERSECT", "EXCEPT"]);
 
-/** Oracle's, and an ordinary column name on every other engine. */
-const ORACLE_SET_OPERATORS = new Set(["MINUS"]);
-
 /**
  * Words that are not the table even though they stand where the table stands.
  *
@@ -175,7 +172,8 @@ function refuse(reason: string): UpdateTarget {
 type PieceScan = Piece[] | "unterminated" | "executable-comment" | "split-comment" | "unopened-comment";
 
 function readPieces(sql: string, type?: DatabaseType): PieceScan {
-  const grammar = resolveSqlGrammar(type);
+  const { grammar } = sqlGrammarFor(type);
+  const { updateTarget } = sqlGrammarForExactType(type);
   const pieces: Piece[] = [];
   let depth = 0;
   let i = 0;
@@ -209,7 +207,7 @@ function readPieces(sql: string, type?: DatabaseType): PieceScan {
       // MariaDB, SQLite and DuckDB do not. Measured: `SELECT orders.note FROM products
       // -- x\r, orders` reads two tables on the first pair and one on the second, so the
       // span this reader was handed is not the span the engine will read.
-      if (span.kind === "line-comment" && type === "mysql" && sql.startsWith("--", i)) {
+      if (span.kind === "line-comment" && updateTarget.dashCommentNeedsSeparator && sql.startsWith("--", i)) {
         // The rule is about the DASH form only; `#` opens a comment on MySQL with nothing
         // after it required, and this reader already has that from the grammar.
         //
@@ -296,16 +294,6 @@ function isWord(piece: Piece | undefined, word: string): boolean {
 const QUERY_OPENERS = new Set(["SELECT", "TABLE", "FROM", "VALUES", "WITH"]);
 
 /**
- * DuckDB's own, which are not reserved anywhere else.
- *
- * Measured on DuckDB 1.5.5, `(PIVOT orders ON k USING max(note))` is a scalar subquery
- * that answers with another table's value. Asking about them everywhere cost PostgreSQL a
- * refusal for `coalesce(show, '')`, where `show` is an ordinary column name — so they are
- * asked about under the dialect that has them.
- */
-const DUCKDB_QUERY_OPENERS = new Set(["PIVOT", "UNPIVOT", "UNNEST", "SUMMARIZE", "DESCRIBE", "SHOW"]);
-
-/**
  * Whether a parenthesised group before `fromOffset` is a QUERY rather than an expression.
  *
  * The select list can carry a subquery, and that subquery supplies a column of its own,
@@ -328,7 +316,8 @@ const DUCKDB_QUERY_OPENERS = new Set(["PIVOT", "UNPIVOT", "UNNEST", "SUMMARIZE",
  * loop already has.
  */
 function opensASubquery(pieces: Piece[], fromOffset: number, type?: DatabaseType): boolean {
-  const opens = (word: string) => QUERY_OPENERS.has(word) || (type === "duckdb" && DUCKDB_QUERY_OPENERS.has(word));
+  const { extraQueryOpeners } = sqlGrammarForExactType(type).updateTarget;
+  const opens = (word: string) => QUERY_OPENERS.has(word) || extraQueryOpeners.has(word);
   for (let i = 0; i < pieces.length; i++) {
     const piece = pieces[i];
     if (piece.start >= fromOffset) break;
@@ -533,11 +522,11 @@ export function resolveUpdateTarget(sql: string, type?: DatabaseType): UpdateTar
     return refuse("Only the rows of a SELECT can be written back, and this is not one");
   }
 
+  const { extraSetOperators } = sqlGrammarForExactType(type).updateTarget;
   const setOp = top.findIndex(
     (piece) =>
       piece.kind === "name" &&
-      (SET_OPERATORS.has(piece.text.toUpperCase()) ||
-        (type === "oracle" && ORACLE_SET_OPERATORS.has(piece.text.toUpperCase()))),
+      (SET_OPERATORS.has(piece.text.toUpperCase()) || extraSetOperators.has(piece.text.toUpperCase())),
   );
   if (setOp !== -1) {
     return refuse("This result combines more than one query, so there is no single table to write to");

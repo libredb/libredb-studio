@@ -29,7 +29,7 @@
  * the model adapter must not also import this file.
  */
 
-import type { LLMProviderType } from "@/lib/llm/types";
+import type { LLMModelEffort, LLMProviderType } from "@/lib/llm/types";
 import type { AgentModel } from "@/lib/agent/model-adapter";
 import { resolveAgentProviderAdapter } from "@/lib/agent/provider-registry";
 import { type FetchDouble, chatTextStream, chatToolCallStream } from "./agent-transport";
@@ -88,7 +88,7 @@ export function scriptedModel(...turns: readonly ScriptedTurn[]): ScriptedModel 
 }
 
 /**
- * The ratified OpenAI adapter over a scripted transport.
+ * The ratified OpenAI-compatible adapter over a scripted transport.
  *
  * The model NAME is settable because the drive reads settings per model now
  * (`src/lib/agent/models/`), and a fixture that could only ever be `gpt-4o-mini` could only
@@ -103,17 +103,25 @@ export async function modelOver(
     The provider the run is configured as, which defaults to the one that hid a real defect.
 
     `providerOptions` were once keyed by the provider's own NAME. Every test passed, because
-    this double is `openai`; the first real ollama run sent nothing and timed out at 94
+    this double was `openai`; the first real ollama run sent nothing and timed out at 94
     seconds. `provider-registry.ts` builds ollama, openai and custom through one
     `@ai-sdk/openai` adapter, and that adapter reads its options under its own key.
+
+    `ollama` now, because the script steps below answer on the Chat Completions wire, which
+    `ollama` and `custom` speak and the `openai` kind left for the Responses API. The URL is
+    never dialled: the transport is scripted. A test of the `openai` kind passes it here and
+    answers with the Responses fixtures in `agent-transport.ts`.
   */
-  provider: LLMProviderType = "openai",
+  provider: LLMProviderType = "ollama",
+  /** `LLM_MODEL_EFFORT`, which only the `openai` kind may carry. */
+  effort?: LLMModelEffort,
 ): Promise<AgentModel> {
   const config = { provider, apiKey: "sk-test", model: modelName, apiUrl } as const;
   return {
     provider,
     modelId: config.model,
     model: await resolveAgentProviderAdapter(provider).createModel(config, fetchImpl),
+    ...(effort === undefined ? {} : { effort }),
   };
 }
 

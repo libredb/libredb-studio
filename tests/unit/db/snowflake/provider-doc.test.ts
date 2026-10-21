@@ -143,6 +143,7 @@ const HEADINGS = [
   "## 11. Errors",
   "## 12. Embedded package",
   "## 13. Evidence",
+  "## Migration DDL",
 ];
 
 const DISCONNECT_SENTENCE =
@@ -266,7 +267,7 @@ const QUOTED: Readonly<Record<string, { readonly keys: readonly string[]; readon
 };
 
 describe("docs/providers/snowflake.md", () => {
-  test("has the thirteen sections in order", () => {
+  test("has the thirteen sections and the Migration DDL section in order", () => {
     const headings = DOC.split("\n").filter((line) => line.startsWith("## "));
     expect(headings).toEqual(HEADINGS);
   });

@@ -48,6 +48,7 @@ The `${{ secret(...) }}` values are generated once, when the template is deploye
 | `LLM_API_KEY` | `AIza… / sk-…` | API key for the chosen AI provider (Gemini/OpenAI). Not needed for a local Ollama. |
 | `LLM_MODEL` | `gemini-2.5-flash` | AI model name; provider default used if empty (e.g. gpt-4o-mini, llama3.1). |
 | `LLM_API_URL` | `http://host:11434/v1` | Base URL for ollama/custom AI providers only. Not needed for gemini/openai. |
+| `LLM_MODEL_EFFORT` | `low` | Reasoning effort for the openai provider only: none \| minimal \| low \| medium \| high \| xhigh \| max. Which values a model takes is the model's own. Omit for the model's default. |
 | `OIDC_ISSUER` | `https://tenant.auth0.com` | OIDC issuer URL for SSO. Required when NEXT_PUBLIC_AUTH_PROVIDER=oidc. |
 | `OIDC_CLIENT_ID` | | OIDC application client ID (SSO). |
 | `OIDC_CLIENT_SECRET` | | OIDC application client secret (SSO). |

@@ -61,6 +61,7 @@ const ENV_KEYS = [
   "LLM_API_KEY",
   "LLM_MODEL",
   "LLM_API_URL",
+  "LLM_MODEL_EFFORT",
 ] as const;
 
 let originalEnv: Record<string, string | undefined>;

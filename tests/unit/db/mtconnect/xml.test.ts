@@ -105,7 +105,7 @@ describe("the data behind the attributes", () => {
       expect(id).toBeTruthy();
       ids.add(id);
     });
-    expect(result).toEqual({ ok: true, count: 244 });
+    expect(result).toEqual({ ok: true, root: "MTConnectStreams", count: 244 });
     expect(ids.size).toBe(244);
   });
 
@@ -205,7 +205,7 @@ describe("the walker inherits what the observation does not carry", () => {
       return seen < 10;
     });
     expect(seen).toBe(10);
-    expect(result).toEqual({ ok: true, count: 10 });
+    expect(result).toEqual({ ok: true, root: "MTConnectStreams", count: 10 });
   });
 
   test("every Streams fixture walks, and the count of each is pinned", () => {
@@ -222,10 +222,52 @@ describe("the walker inherits what the observation does not carry", () => {
     };
     for (const [name, count] of Object.entries(expected)) {
       const result = streamMtconnectObservations(bytes(name), () => undefined);
-      expect(result).toEqual({ ok: true, count });
+      expect(result).toEqual({ ok: true, root: "MTConnectStreams", count });
     }
     // And the counts differ from one another, so a walker returning a constant fails here.
     expect(new Set(Object.values(expected)).size).toBe(Object.keys(expected).length);
+  });
+});
+
+describe("the walker reports the root it opened, and walks only a Streams document", () => {
+  // #1787: `readObservations` used to parse every answer as a whole tree first, only to learn its
+  // root. The walker knows the root as soon as it opens it, so it says which one it saw, and a root
+  // that is not a stream of observations is never handed out as one.
+  const utf8 = (text: string) => new Uint8Array(new TextEncoder().encode(text));
+  const elements = (input: Uint8Array) => {
+    const seen: string[] = [];
+    const result = streamMtconnectObservations(input, (observation) => {
+      seen.push(observation.element);
+    });
+    return { result, seen };
+  };
+
+  test("a Streams answer is walked, and its root is reported", () => {
+    const { result, seen } = elements(bytes("current.xml"));
+    expect(result).toEqual({ ok: true, root: "MTConnectStreams", count: 244 });
+    expect(seen).toHaveLength(244);
+  });
+
+  test("an agent's error document is reported by its root and emits no observation", () => {
+    const { result, seen } = elements(bytes("error-out-of-range.xml"));
+    expect(result).toEqual({ ok: true, root: "MTConnectError", count: 0 });
+    expect(seen).toEqual([]);
+  });
+
+  test("a foreign root, such as a proxy's page, is reported and emits no observation", () => {
+    const { result, seen } = elements(utf8("<html><body>503</body></html>"));
+    expect(result).toEqual({ ok: true, root: "html", count: 0 });
+    expect(seen).toEqual([]);
+  });
+
+  test("a device model is not a stream of observations either", () => {
+    const { result, seen } = elements(bytes("probe.xml"));
+    expect(result).toEqual({ ok: true, root: "MTConnectDevices", count: 0 });
+    expect(seen).toEqual([]);
+  });
+
+  test("a root that is not walked is still scanned to its end, so a broken tail is refused", () => {
+    expect(elements(utf8("<html><body>503</html>")).result).toEqual({ ok: false, reason: "malformed" });
   });
 });
 

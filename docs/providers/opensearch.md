@@ -428,7 +428,7 @@ shared generator emits a `?` this provider would then decline to fill.
 ### 4.1 Configuration fields
 
 The form offers exactly four fields
-(the `opensearch` entry in [`db-ui-config.ts`](../../src/lib/db-ui-config.ts)): `host`, `port`, `user`, `password`.
+(the `opensearch` entry in [`connection-form.ts`](../../src/lib/db/connection-form.ts)): `host`, `port`, `user`, `password`.
 
 | Field | Required | Notes |
 |---|---|---|
@@ -518,6 +518,15 @@ sent, so no value can move a request to another path or another server. A scheme
 Redirects are not followed. Every request sets `redirect: "manual"`, and a 3xx answer becomes a
 `ConnectionError` naming the status and only the origin of its `Location`, since a followed
 redirect would take the Basic credential and the statement to wherever the server pointed.
+
+### Connection string
+
+`opensearch` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`opensearch-connection-string.ts`](../../src/lib/db/providers/sql/search/opensearch-connection-string.ts)).
+
+### Execution UI
+
+The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `opensearch` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
+Its row in `EXECUTION_UI` is declared in [`opensearch-execution-ui.ts`](../../src/lib/db/providers/sql/search/opensearch-execution-ui.ts).
 
 ---
 
@@ -624,7 +633,7 @@ double quotes instead"*). The two search ids genuinely cannot share a quoting br
 **`[…]` is also an identifier quote**, MySQL/SQL-Server style: `SELECT [customer] FROM probe_orders`
 answers the field's value, while `SELECT [1, 2]` is refused with "All items between Brackets should be
 identifiers, got:LITERAL_INT". So `OPENSEARCH_GRAMMAR.bracket` is `"quoted-identifier"`
-([`grammar.ts`](../../src/lib/sql/grammar.ts)) — where `elasticsearch` leaves it at the default,
+([`opensearch-sql-grammar.ts`](../../src/lib/db/providers/sql/search/opensearch-sql-grammar.ts)), where `elasticsearch` leaves it at the default,
 because `[` has no meaning in that grammar at all.
 
 **`#` really is a line comment**, and this is where the fork's SQL plugin parts company with upstream.
@@ -652,8 +661,8 @@ the terminator is accepted **here too** (measured) and one answer that runs on b
 `SELECT 'a\'b'` → `a'b` too, so a backslash escapes the quote; `SELECT 'a\\b'` → one backslash, so it
 escapes itself; and `SELECT 'a\'` is a `ParserException`, because the trailing backslash escaped the
 closing quote and left the literal open — which is exactly the defect #290 is about. Hence
-`opensearch: "double-and-backslash"` in `LITERAL_ESCAPE` ([`src/lib/sql/values.ts`](../../src/lib/sql/values.ts)),
-where `elasticsearch` is `"standard"` (a backslash there is data).
+`escapeLiteral: literalDoubleAndBackslash` in `OPENSEARCH_SQL_WRITING` ([`opensearch-sql-writing.ts`](../../src/lib/db/providers/sql/search/opensearch-sql-writing.ts)),
+where `elasticsearch` takes `literalStandard` (a backslash there is data).
 
 **`_id` is selectable here.** `SELECT _id FROM probe_orders` returns the document id; upstream answers
 "Unknown column [_id]". It is still not reported as a column or as a key, because it is metadata rather
@@ -709,8 +718,8 @@ Consequences elsewhere in the product:
   unimplemented features, so the EDIT toggle and the editable cell are not offered (#269).
 - The schema-diff migration generator emits, in place of a column change: *"OpenSearch SQL reads only;
   change a field by reindexing into an index whose mapping declares it."*
-  (the `NO_COLUMN_MODIFICATION` table in
-  [`migration-generator.ts`](../../src/lib/schema-diff/migration-generator.ts)). It says *reindex*
+  (the `OPENSEARCH_MIGRATION_DDL` refusal in
+  [`opensearch-migration-ddl.ts`](../../src/lib/db/providers/sql/search/opensearch-migration-ddl.ts)). It says *reindex*
   rather than "use the mapping API" because an existing field's type cannot be changed in place at
   all, even outside SQL.
 - `schemaRefreshPattern` is `\b(DELETE)\b`
@@ -747,6 +756,18 @@ So there is nothing for the route to end, and the absence is a declared boundary
 fallback: the caller shape-checks for the method and this provider does not answer it.
 
 ---
+
+### 5.8 SQL grammar
+
+How this engine's statement text is read is declared once, in [`src/lib/db/providers/sql/search/opensearch-sql-grammar.ts`](../../src/lib/db/providers/sql/search/opensearch-sql-grammar.ts), the `opensearch` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+Its grammar is `OPENSEARCH_GRAMMAR`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
+Every fact was established by live probe on 2026-08-19 against OpenSearch 3.8.0; it disagrees with Elasticsearch about `#` and about `[...]`.
+`#` is a line comment: `SELECT 1 AS a # , 2 AS b` answers one column, the same with a newline before `, 2 AS b` answers two, and `SELECT customer # FROM probe_orders` is a `SemanticCheckException` because the `FROM` was hidden.
+`[...]` is a name quote: `SELECT [customer] FROM probe_orders` answers the field's value, `SELECT [1, 2]` is refused with "All items between Brackets should be identifiers, got:LITERAL_INT", and `[customer]]` and `[a[b]]` are both refused, so it has no escape and does not nest.
+Block comments are flat, by the same probe and answer as Elasticsearch, and `SELECT q'{it's}'` is refused, "Illegal SQL expression".
+`//` is not established, for the reason and at the cost the Elasticsearch row states.
+`readsSqlText` is `true`, deliberately: both search engines answer `POST`ed statements with columns and rows, and both providers extend `SQLBaseProvider` and call `prepareQuery`, so reading the text as not SQL would switch the SQL checks off for text that is SQL.
+Redaction is `sql` with no name quote: a redacted statement keeps its words, and every literal and quoted run becomes `?`.
 
 ## 6. Schema introspection
 
@@ -1438,6 +1459,26 @@ end into a page whose maintenance card is gated on the same capability, and
 row and a declared capability. See
 [elasticsearch.md §9](./elasticsearch.md#9-capabilities--labels) for the measurement.
 
+### SQL writing
+
+[`search/opensearch-sql-writing.ts`](../../src/lib/db/providers/sql/search/opensearch-sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+A literal is written by `literalDoubleAndBackslash` and read back by `unquoteDoubleAndBackslash`: the quote is doubled and a backslash escapes, so the backslash is doubled first.
+A name is quoted by `identifierBacktickDoubled`: a backtick name with an inner backtick doubled and a backslash as data.
+There is no placeholder (`placeholder: null`), so a generator quotes the value with `quoteLiteral` instead of emitting a bind.
+OpenSearch reads both escapes, which is why its type id does not share a row with Elasticsearch's.
+Measured on 3.8.0 (2026-08-19): `SELECT 'a''b'` answers `a'b`, so doubling works; `SELECT 'a\'b'` answers `a'b` too, so a backslash escapes the quote; `SELECT 'a\\b'` answers one backslash, so it escapes itself; and `SELECT 'a\'` is a `ParserException`, because the trailing backslash escaped the closing quote and left the literal open, which is exactly the defect #290 is about.
+The fork's SQL plugin reads its literals the way MySQL does, and this row is not an inference from that lineage but the four probes above.
+OpenSearch shares MySQL's backtick, and it is not a stylistic choice: measured 2026-08-19 on 3.8.0, its SQL plugin reads a double-quoted name as a string literal, so `SELECT customer FROM "probe_orders"` is `IndexNotFoundException[no such index ["probe_orders"]]`, quotes and all, while ``FROM `probe_orders` `` is HTTP 200.
+It is worse in a predicate, where nothing fails: `WHERE "customer" = 'acme'` compares two literals and answers 0 rows.
+Backticks work for both a table and a field there, and Elasticsearch 9.1.4 is the exact opposite, so the two search ids cannot share a form.
+The backtick doubling is this repo's own convention carried over from MySQL and is not measured: an index or field name containing a backtick would be needed to probe it, and creating one on the probe cluster was judged not worth polluting the fixtures.
+It is the fail-safe direction either way: a doubled backtick can only make the engine refuse a name, never make it read one it should not.
+Both search endpoints do bind `?`, but the provider's seam carries the statement alone, so its `query()` refuses positional parameters outright, as Elasticsearch's section says.
+Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+
+The module's `export` field writes a result export's CREATE TABLE and INSERT from the shared building blocks alone: `STANDARD_DDL_TYPES` for the column types, `NOTHING_STANDS_ALONE` and `NO_BARE_SPELLING`, so every bare declared name is re-spelled from its family, `NULL_NON_FINITE` for NaN and the infinities, and `binaryStandardHex` for a binary cell (`X'0102'`).
+The SQL endpoint parses no CREATE TABLE, so a file written from it is meant to run somewhere else, and every bare name in it is re-spelled from its family, portably.
+
 ---
 
 ## 10. Error handling
@@ -1693,6 +1734,20 @@ because the provider exposes no `cancelQuery`
 
 ---
 
+## Migration DDL
+
+[`OPENSEARCH_MIGRATION_DDL`](../../src/lib/db/providers/sql/search/opensearch-migration-ddl.ts) is what the schema-diff migration generator writes for `opensearch`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
+Measured 2026-08-19 on OpenSearch 3.8.0: `ALTER TABLE probe_orders ADD COLUMN x INT` and `... MODIFY COLUMN customer TEXT` are refused with `SQLFeatureNotSupportedException`, "Query must start with SELECT, DELETE, SHOW or DESCRIBE".
+OpenSearch SQL has no `BEGIN` either, measured on 3.8.0, so there is no wrapper (#284).
+An existing field's type cannot be changed in a mapping at all, which is why the reason says reindex rather than "use the mapping API".
+
+The refusal reason it prints, verbatim:
+
+- "OpenSearch SQL reads only; change a field by reindexing into an index whose mapping declares it."
+
+---
+
 ## 14. References
 
 - Source: [`src/lib/db/providers/sql/search/`](../../src/lib/db/providers/sql/search/)
@@ -1701,8 +1756,8 @@ because the provider exposes no `cancelQuery`
 - Base class: [`src/lib/db/base-provider.ts`](../../src/lib/db/base-provider.ts)
 - Interface & DTOs: [`src/lib/db/types.ts`](../../src/lib/db/types.ts)
 - Errors: [`src/lib/db/errors.ts`](../../src/lib/db/errors.ts)
-- Connection form config: [`src/lib/db-ui-config.ts`](../../src/lib/db-ui-config.ts)
-- Dialect facts elsewhere in the codebase: `OPENSEARCH_GRAMMAR` in [`src/lib/sql/grammar.ts`](../../src/lib/sql/grammar.ts) (`#`, `[…]`, block comments) · `quoteIdentifier()` in [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) (backticks) · `LITERAL_ESCAPE` in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) (both escape forms) · [`src/lib/sql/fence-tags.ts`](../../src/lib/sql/fence-tags.ts) (the fence tag)
+- Connection form config: [`src/lib/db/connection-form.ts`](../../src/lib/db/connection-form.ts)
+- Dialect facts elsewhere in the codebase: `OPENSEARCH_GRAMMAR` in [`src/lib/db/providers/sql/search/opensearch-sql-grammar.ts`](../../src/lib/db/providers/sql/search/opensearch-sql-grammar.ts) (`#`, `[…]`, block comments) · `quoteIdentifier()` in [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) (backticks) · `OPENSEARCH_SQL_WRITING` in [`opensearch-sql-writing.ts`](../../src/lib/db/providers/sql/search/opensearch-sql-writing.ts) (both escape forms) · [`src/lib/sql/fence-tags.ts`](../../src/lib/sql/fence-tags.ts) (the fence tag)
 - Local cluster: [`database-compose.yml`](../../database-compose.yml) (`opensearch` service, host port 9201)
 - Tests: [`tests/integration/db/opensearch-provider.test.ts`](../../tests/integration/db/opensearch-provider.test.ts) · [`tests/unit/db/search/`](../../tests/unit/db/search/)
 - API contract: [`docs/API_DOCS.md`](../API_DOCS.md)

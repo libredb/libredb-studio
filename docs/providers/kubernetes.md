@@ -257,6 +257,15 @@ The connection's `agentPassword` alone is the agent's bearer token, because Kube
 Without an agent token, the agent uses the connection's own token.
 That identity's RBAC decides what the agent can see, so give it a ServiceAccount bound to `view`, and to `studio-reader` for the cluster-scoped kinds, as section 4.5 creates.
 
+### Connection string
+
+`kubernetes` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/platform/kubernetes/connection-string.ts)).
+
+### Execution UI
+
+The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `kubernetes` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
+Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/platform/kubernetes/execution-ui.ts).
+
 ## 5. Query interface
 
 One kubectl command per run, the selected line: an optional leading `kubectl`, a leading `$ ` or `% ` prompt, POSIX shell quoting and `#` comment lines, with every short and long form of a flag kubectl takes (`-n shop`, `-n=shop`, `-nshop`, `--namespace shop`, `--namespace=shop`).
@@ -304,6 +313,14 @@ The grid pages the list form of a single-type `get` with a paging line of Studio
 A statement reads at most 5,000 rows; a page at or past that answers a sentence to narrow the list with `-l` or `--field-selector`.
 
 Query history masks the values of `--token`, `--password`, `--client-key`, `--client-certificate`, `--from-literal` and `--docker-password` in every spelling, though the console refuses every line that carries them; a tab keeps what was typed, a saved query keeps what was saved, and the embedded workspace writes no history.
+
+### 5.1 SQL grammar
+
+How this engine's statement text is read is declared once, in [`src/lib/db/providers/platform/kubernetes/sql-grammar.ts`](../../src/lib/db/providers/platform/kubernetes/sql-grammar.ts), the `kubernetes` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
+`readsSqlText` is `false`: `kubernetes` takes one kubectl subset statement, words split by POSIX shell rules, and a SQL span reader would report its quoting as unreadable and prompt on every run.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` in `src/lib/db/destructive-commands.ts` instead of a SQL reading.
+Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
+Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
 
 ## 6. Schema: the tree
 
@@ -394,6 +411,17 @@ The `kubectl` statement-language family has no dialect-bound member.
 This overlay overrides no Shared member, so every Shared member is the `kubectl` statement-language family's own.
 The cluster-* requirements hold here: `AGENT_REQUIREMENT_ENGINES` mirrors `cluster-usage-reading` and `cluster-workload-reading` from this provider's `agentReadings`, which the client tier cannot reach.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
+
+### 9.2 SQL writing
+
+[`kubernetes/sql-writing.ts`](../../src/lib/db/providers/platform/kubernetes/sql-writing.ts) declares how a generated statement spells a literal, a name and a bind for this engine, and it is this engine's row of `SQL_WRITING` ([`src/lib/db/sql-writing/index.ts`](../../src/lib/db/sql-writing/index.ts)), which the readers in [`src/lib/sql/values.ts`](../../src/lib/sql/values.ts) and [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) look up.
+A literal is written by `literalStandard` and read back by `unquoteStandard`: the quote is doubled and a backslash is data.
+A name is quoted by `identifierDoubleQuoted`, the SQL standard form: a double-quoted name with an inner double quote doubled.
+There is no placeholder (`placeholder: null`), so a generator quotes the value with `quoteLiteral` instead of emitting a bind.
+No generator calls `quoteLiteral` for Kubernetes: a kubectl statement names objects by their own names, which need no quoting, so the row is the inert answer Oxia's is.
+Inline row editing reads a key column's kind through the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` and `EXACT_DECIMAL_TYPE_NAMES` of the module's `inlineEdit`, and binds every edit as typed.
+
+The module's `export` field writes a result export's CREATE TABLE and INSERT from the shared building blocks alone: `STANDARD_DDL_TYPES` for the column types, `NOTHING_STANDS_ALONE` and `NO_BARE_SPELLING`, so every bare declared name is re-spelled from its family, `NULL_NON_FINITE` for NaN and the infinities, and `binaryStandardHex` for a binary cell (`X'0102'`).
 
 ## 10. Error handling
 
@@ -500,6 +528,16 @@ Not measured: an etcd-backed managed cluster, Rancher's proxy, OpenShift (its pr
 - No auto-execute on Kubernetes: a kubectl answer is never run in the editor, so the run route refuses `autoExecute`.
 - `inspect_usage` needs metrics-server: without `metrics.k8s.io` the run records that usage is unavailable and names metrics-server.
 - Restart counts are cumulative since a container started, so `profile_workloads` shows a count with the last termination time and reason, never a rate.
+
+## Migration DDL
+
+[`KUBERNETES_MIGRATION_DDL`](../../src/lib/db/providers/platform/kubernetes/migration-ddl.ts) is what the schema-diff migration generator writes for `kubernetes`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
+`kubernetes` text is one kubectl statement, not SQL, so there is no table DDL to wrap (#284).
+
+The refusal reason it prints, verbatim:
+
+- "Kubernetes objects follow the schema their API version serves, and Studio writes none, so there is no column definition to change."
 
 ## 15. References
 
