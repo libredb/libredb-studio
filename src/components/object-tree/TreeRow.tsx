@@ -11,7 +11,7 @@
  */
 
 import { formatRowCount, formatRowCountTitle } from "@/lib/db/utils/pool-manager";
-import { sampledMark } from "@/lib/db/detailed-object";
+import { displayedColumnType, sampledMark } from "@/lib/db/detailed-object";
 import {
   ChevronDown,
   ChevronRight,
@@ -317,11 +317,14 @@ export function TreeRow({
         </span>
       )}
       {/*
-        The declared type, right-aligned and TRUNCATED AT THE FIRST PAREN, which is what
-        `ColumnList` drew until 0.16.0: `VARCHAR(255)` reads `VARCHAR` and the whole declared
-        type is one hover away, so the parameters never push the column name out. `type` and
-        never `baseType`: that field's own docblock says `type` is "what a person wants to SEE"
-        and what the object browser renders, and `baseType` is what a reader DECIDING prefers.
+        The declared type, right-aligned and TRUNCATED AT THE FIRST PAREN of `type`, which is
+        what `ColumnList` drew until 0.16.0: `VARCHAR(255)` reads `VARCHAR` and the whole
+        declared type is one hover away, so the parameters never push the column name out.
+        The visible text is `type`, never `baseType`: that field's own docblock says `type`
+        is what the object browser renders, and `baseType` is what a reader DECIDING prefers.
+        The tooltip and the accessible name are `displayedColumnType`: `declaredType` where
+        the provider recorded the modifier (`vector(1536)`), and `type` otherwise. Truncating
+        `declaredType` instead would turn `timestamp(3) without time zone` into `timestamp`.
 
         TWO TEXTS, and that is the whole reason this is not one span. The row names itself by
         reference (`aria-labelledby` above), so `title` never reaches the accessible name: it is
@@ -347,11 +350,11 @@ export function TreeRow({
         <span
           id={rowNameId("type", row.id)}
           data-testid="tree-row-column-type"
-          title={row.column.type + sampledMark(row.column)}
+          title={displayedColumnType(row.column) + sampledMark(row.column)}
           className="ml-auto min-w-0 pl-2 max-w-[40%] truncate font-mono text-[10px] uppercase text-muted-foreground"
         >
           <span aria-hidden="true">{row.column.type.split("(")[0] + sampledMark(row.column)}</span>
-          <span className="sr-only">{row.column.type + sampledMark(row.column)}</span>
+          <span className="sr-only">{displayedColumnType(row.column) + sampledMark(row.column)}</span>
         </span>
       )}
       {/*

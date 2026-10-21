@@ -683,6 +683,27 @@ export interface ColumnSchema {
    * `type` that would claim a provider had looked.
    */
   baseType?: string;
+  /**
+   * The type as the engine prints the declaration, modifier included, where that
+   * spelling differs in kind from {@link type}.
+   *
+   * PostgreSQL is why it exists. `format_type(atttypid, NULL)` is the unqualified
+   * base name (`character varying`, `numeric`, `vector`) and that is what `type`
+   * stays, because a reader that matches a column against a spelling it knows —
+   * autocomplete, migration DDL, the agent's schema capture, the diagram's numeric
+   * test — is matching the base name. `format_type(atttypid, atttypmod)` is what a
+   * person needs in order to write the column: `character varying(50)`,
+   * `numeric(12,2)`, `vector(1536)`. The column tooltip and the object detail show
+   * this field. A column with no modifier (`text`, `integer`, `text[]`) is given
+   * the same string in both fields.
+   *
+   * Optional because an engine that already puts the modifier in `type` has nothing
+   * further to record, and an absent field there is the honest answer rather than a
+   * copy of `type`. It is not {@link baseType}: that one is the type an alias is
+   * built on, and a reader that is deciding prefers it. This one is the declaration
+   * a person is shown, and a reader that is displaying prefers it.
+   */
+  declaredType?: string;
   nullable: boolean;
   isPrimary: boolean;
   /**
