@@ -26,5 +26,11 @@ export const VIEW_CONTAINER = "libredb";
 /** The Connections view, in the LibreDB view container. */
 export const CONNECTIONS_VIEW = "libredb.connections";
 
+/** The Panel container that holds the Results view. */
+export const RESULTS_CONTAINER = "libredbResults";
+
+/** The Results webview view, in the Panel container libredbResults. */
+export const RESULTS_VIEW = "libredb.results";
+
 /** The status bar item that names the active editor's connection. */
 export const STATUS_ITEM = "libredb.connection";

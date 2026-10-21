@@ -7,7 +7,7 @@ import type { OpenedConnection } from "../../../src/host/open-connections";
 import type { ResultsPresenter, RunStart } from "../../../src/host/results/results-presenter";
 import type { CancelParams, CancelResult, ProviderDescription, QueryPage, RunQueryParams } from "../../../src/protocol";
 import { ZERO_LEVELS } from "../../fakes/descriptions";
-import { CancellationTokenSource } from "../../fakes/vscode";
+import { CancellationTokenSource, progressRuns, window } from "../../fakes/vscode";
 
 const UNTITLED = "untitled:Untitled-1";
 const FILE = "file:///w/q.sql";
@@ -69,6 +69,7 @@ function setup(opened: Record<string, ProviderDescription> = {}) {
     client,
     runs,
     presenter,
+    window,
     opened: {
       get: (connectionId: string): OpenedConnection | undefined =>
         opened[connectionId] === undefined ? undefined : { description: opened[connectionId], generation: 1 },
@@ -105,6 +106,9 @@ function request(overrides: Partial<RunRequest> = {}): RunRequest {
 
 /** Lets pending promise callbacks run. */
 const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+/** The options every query/run's progress is shown with: the Results view (part 3, "The run"). */
+const ON_RESULTS = { location: { viewId: "libredb.results" } };
 
 describe("RunService", () => {
   describe("execute", () => {
@@ -147,6 +151,62 @@ describe("RunService", () => {
       await done;
       assert.deepEqual(calls.slice(1), [["runSucceeded", "q1", PAGE]]);
       assert.deepEqual(runs.running(), []);
+    });
+
+    it("sends the run inside one progress on the Results view, opened after runStarted and settled once presented", async () => {
+      const { service, runs, pending, calls } = setup();
+      const done = service.execute(runs.prepare(UNTITLED, "c1"), request());
+      await settle();
+      assert.equal(calls[0][0], "runStarted");
+      assert.deepEqual(
+        progressRuns.map((run) => [run.options, run.settled]),
+        [[ON_RESULTS, false]],
+      );
+      pending[0].resolve(PAGE);
+      await done;
+      assert.deepEqual(
+        progressRuns.map((run) => [run.options, run.settled]),
+        [[ON_RESULTS, true]],
+      );
+
+      const failing = setup();
+      const failed = failing.service.execute(failing.runs.prepare(FILE, "c1"), request());
+      await settle();
+      failing.pending[0].reject(new BackendError(400, "QUERY_ERROR", "boom"));
+      await failed;
+      assert.deepEqual(
+        progressRuns.map((run) => [run.options, run.settled]),
+        [
+          [ON_RESULTS, true],
+          [ON_RESULTS, true],
+        ],
+      );
+    });
+
+    it("opens no progress when runStarted throws", async () => {
+      const { runs, calls, sent } = setup();
+      const presenterError = new Error("the view is gone");
+      const prepared = runs.prepare(UNTITLED, "c1");
+      const throwing = new RunService({
+        client: { runQuery: () => Promise.reject(new Error("unreached")), cancelQuery: () => Promise.reject() },
+        runs,
+        window,
+        opened: { get: () => undefined },
+        presenter: {
+          runStarted: () => {
+            throw presenterError;
+          },
+          runSucceeded: () => {},
+          runFailed: (queryId, error) => calls.push(["runFailed", queryId, error]),
+          documentClosed: () => {},
+          documentMoved: () => {},
+        },
+        newQueryId: () => "q9",
+      });
+      await throwing.execute(prepared, request());
+      assert.deepEqual(progressRuns, []);
+      assert.deepEqual(sent, []);
+      assert.deepEqual(calls, [["runFailed", "q9", presenterError]]);
     });
 
     it("sends no catalog key when the request carries none", async () => {
@@ -269,6 +329,65 @@ describe("RunService", () => {
       pending[0].resolve(PAGE);
       assert.equal(await read, PAGE);
       assert.deepEqual(runs.running(), []);
+    });
+
+    it("sends the read inside one progress on the Results view, settled when the read settles", async () => {
+      const { service, pending } = setup();
+      const read = service.runPage(READ);
+      await settle();
+      assert.deepEqual(
+        progressRuns.map((run) => [run.options, run.settled]),
+        [[ON_RESULTS, false]],
+      );
+      pending[0].reject(new BackendError(400, "QUERY_ERROR", "boom"));
+      await assert.rejects(read);
+      assert.deepEqual(
+        progressRuns.map((run) => [run.options, run.settled]),
+        [[ON_RESULTS, true]],
+      );
+    });
+
+    it("is a run of its document: Cancel sends the read's own queryId, and a cancelled read rejects (H6)", async () => {
+      const { service, runs, pending, cancels } = setup({ c1: cancellable(true) });
+      const done = service.execute(runs.prepare(FILE, "c1"), request());
+      await settle();
+      pending[0].resolve(PAGE);
+      await done;
+
+      const read = service.runPage({ ...READ, documentUri: FILE });
+      await settle();
+      assert.deepEqual(runs.running(), [FILE]);
+      assert.deepEqual(runs.cancellable(), [FILE]);
+      assert.deepEqual(await service.cancel(FILE), { cancelled: true });
+      assert.deepEqual(cancels, [{ connectionId: "c1", queryId: "q2" }]);
+      const cancelled = new BackendError(499, "QUERY_CANCELLED", "Query was cancelled");
+      pending[1].reject(cancelled);
+      await assert.rejects(read, cancelled);
+      assert.deepEqual(runs.running(), []);
+      assert.deepEqual(runs.cancellable(), []);
+    });
+
+    it("is running but not cancellable on a connection that cannot cancel, and Cancel sends nothing", async () => {
+      const { service, runs, pending, cancels } = setup({ c1: cancellable(false) });
+      const read = service.runPage({ ...READ, documentUri: FILE });
+      await settle();
+      assert.deepEqual(runs.running(), [FILE]);
+      assert.deepEqual(runs.cancellable(), []);
+      assert.equal(await service.cancel(FILE), undefined);
+      assert.deepEqual(cancels, []);
+      pending[0].resolve(PAGE);
+      await read;
+    });
+
+    it("refuses a second read and a Run's prepare on its document while it is pending", async () => {
+      const { service, runs, sent, pending } = setup();
+      const read = service.runPage({ ...READ, documentUri: FILE });
+      await settle();
+      await assert.rejects(service.runPage({ ...READ, documentUri: FILE }), RunInFlightError);
+      assert.throws(() => runs.prepare(FILE, "c1"), RunInFlightError);
+      assert.equal(sent.length, 1);
+      pending[0].resolve(PAGE);
+      await read;
     });
 
     it("sends the read's catalog, and is not cancellable when the connection's description cannot cancel", async () => {

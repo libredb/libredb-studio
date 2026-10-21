@@ -216,6 +216,14 @@ describe("the manifest's menus", () => {
     ]);
   });
 
+  it("contributes no webview context menu and names no webview in a when clause: no copy or export item in the Results view (H7)", () => {
+    assert.equal("webview/context" in menus, false);
+    assert.deepEqual(
+      entries.filter((entry) => (entry.when ?? "").includes("webviewId")),
+      [],
+    );
+  });
+
   it("puts Add Connection then Refresh in the view's title bar, and contributes no keybinding (criterion 22)", () => {
     assert.deepEqual(menus["view/title"], [
       { command: COMMANDS.addConnection, when: `view == ${CONNECTIONS_VIEW}`, group: "navigation@1" },

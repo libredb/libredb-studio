@@ -10,6 +10,7 @@ import {
   POSTGRES_GRID,
   RUN_A,
   RUN_B,
+  SYNTHETIC_RUN_FAILED_WITH_DETAIL,
 } from "../fixtures/results-sequences";
 import { COPY_FAILED_SENTENCE } from "../../src/webview/notices";
 import { openResultsView, type ResultsPage } from "./harness";
@@ -356,7 +357,12 @@ test("criterion 9: each failure, from the recorded sequences", async ({ page }) 
 
   await postAll(view, FAILURES.runFailed);
   await expect(page.getByText("The query failed.")).toBeVisible();
-  await expect(page.getByText('relation "nope" does not exist')).toBeVisible();
+  await expect(page.getByText('relation "it_missing" does not exist')).toBeVisible();
+
+  // FAILURES.runFailed holds no detail, as no live run answers one (D389), so the detail comes from the synthetic case.
+  await postAll(view, SYNTHETIC_RUN_FAILED_WITH_DETAIL);
+  await expect(page.getByText('duplicate key value violates unique constraint "it_unique_pkey"')).toBeVisible();
+  await expect(page.getByText("Key (id)=(1) already exists.")).toBeVisible();
 
   await postAll(view, FAILURES.cancelled);
   await expect(page.getByText("Query Cancelled")).toBeVisible();

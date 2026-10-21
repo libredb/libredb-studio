@@ -128,11 +128,3 @@ describe("LogResultsPresenter", () => {
     assert.deepEqual(lines, []);
   });
 });
-
-describe("results-presenter", () => {
-  // The seams are types only until the results view adds its presenter beside them; loading the module also lets c8
-  // measure it, since a module reached through type imports alone never loads.
-  it("carries no runtime value", async () => {
-    assert.deepEqual(Object.keys(await import("../../../src/host/results/results-presenter")), []);
-  });
-});

@@ -18,9 +18,12 @@ import { runQuery } from "./editor/run-query";
 import { RunRegistry } from "./editor/run-registry";
 import { RunService } from "./editor/run-service";
 import { ConnectionStatusBar } from "./editor/status-bar";
-import { COMMANDS, CONNECTIONS_VIEW } from "./names";
+import { COMMANDS, CONNECTIONS_VIEW, RESULTS_VIEW } from "./names";
 import { OpenConnections } from "./open-connections";
+import { newNonce } from "./results/html";
 import { LogResultsPresenter } from "./results/log-presenter";
+import { fanOut, ResultsViewPresenter } from "./results/results-presenter";
+import { ResultsViewProvider } from "./results/results-view-provider";
 import { ConnectionsTree } from "./tree/connections-tree";
 import { EngineIcons, readEngineIndex } from "./tree/icons";
 import { refreshTarget } from "./tree/nodes";
@@ -31,9 +34,11 @@ let supervisor: BackendSupervisor | undefined;
 /**
  * Reads the engine index the build wrote, creates the LibreDB log channel, registers the command that shows it, creates
  * the backend supervisor, reads the libredb.connections setting into the connection store, creates the Connections view
- * on its tree, and registers Add Connection, Remove Connection and Refresh.
- * Reading the setting needs no backend and the tree's root reads the store only, so activation starts no child (part 2
- * criterion 1). A missing or unreadable index is a broken install and throws before anything is registered.
+ * on its tree, registers Add Connection, Remove Connection and Refresh, the editor commands, and the Results view, whose
+ * presenter the run service presents to beside the log.
+ * Reading the setting needs no backend, the tree's root reads the store only and resolving the Results view renders
+ * without one, so activation starts no child (part 2 criterion 1, part 4 criterion 2). A missing or unreadable index is
+ * a broken install and throws before anything is registered.
  * It returns nothing, so no other extension can reach the backend and run statements on the person's connections.
  */
 export function activate(context: vscode.ExtensionContext): void {
@@ -96,9 +101,27 @@ export function activate(context: vscode.ExtensionContext): void {
     setContext: (key, value) => vscode.commands.executeCommand("setContext", key, value),
     log,
   });
-  // Part H replaces this presenter with the results view's, and hands it the service as its PageRunner.
-  const presenter = new LogResultsPresenter(log);
-  const service = new RunService({ client, runs, presenter, opened, newQueryId: randomUUID });
+  // The view reaches its presenter, and the presenter the run service, through closures that run only after activate
+  // has returned, so each is a const declared after the one that names it.
+  const provider = new ResultsViewProvider({
+    extensionUri: context.extensionUri,
+    window: vscode.window,
+    commands: vscode.commands,
+    clipboard: vscode.env.clipboard,
+    log,
+    session: { replay: () => results.replay(), loadMore: (runId) => results.loadMore(runId) },
+    newNonce,
+  });
+  const results = new ResultsViewPresenter({
+    surface: provider,
+    pages: { runPage: (read) => service.runPage(read) },
+    log,
+    newRunId: randomUUID,
+    now: Date.now,
+  });
+  // The log keeps one metadata line per run beside the view: the only run history a window reload leaves.
+  const presenter = fanOut(results, new LogResultsPresenter(log));
+  const service = new RunService({ client, runs, presenter, opened, window: vscode.window, newQueryId: randomUUID });
   const statusBar = new ConnectionStatusBar({ window: vscode.window, bindings, runs, store, icons });
   const lifecycle = new DocumentLifecycle({
     workspace: vscode.workspace,
@@ -155,6 +178,11 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand(COMMANDS.cancelQuery, (target?: unknown) => cancelQuery(editing, target)),
     vscode.commands.registerCommand(COMMANDS.changeConnection, (target?: unknown) => changeConnection(editing, target)),
     releaseOnChange(store, client, log, editors),
+    provider,
+    vscode.window.onDidChangeActiveTextEditor((editor) =>
+      results.activeDocumentChanged(editor?.document.uri.toString()),
+    ),
+    vscode.window.registerWebviewViewProvider(RESULTS_VIEW, provider),
   );
 }
 

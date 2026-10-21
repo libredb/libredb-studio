@@ -51,6 +51,7 @@ function description(capabilities: Partial<ProviderCapabilities>): ProviderDescr
     capabilities: { supportsQueryCancel: true, ...capabilities },
     labels: {},
     editorLanguage: "sql",
+    commitKeyword: "COMMIT",
   } as unknown as ProviderDescription;
 }
 

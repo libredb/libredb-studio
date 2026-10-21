@@ -1,6 +1,8 @@
 // A run's request and its outcome (part 3, "The run" and "Cancel"; part 4, "How a run arrives" and the PageRunner
 // contract): one query/run per run and per page read, each under a fresh queryId and registered under its document.
+import type * as vscode from "vscode";
 import type { BackendApi, CancelResult, QueryPage, RunQueryParams } from "../../protocol";
+import { RESULTS_VIEW } from "../names";
 import type { OpenConnections } from "../open-connections";
 import type { PageRead, PageRunner, ResultsPresenter, RunStart } from "../results/results-presenter";
 import type { PreparingRun, RunEntry, RunRegistry } from "./run-registry";
@@ -11,6 +13,8 @@ export interface RunServiceDeps {
   readonly presenter: ResultsPresenter;
   /** Where a page read finds whether its connection can cancel; no recorded description means it cannot. */
   readonly opened: Pick<OpenConnections, "get">;
+  /** Where each query/run shows its progress: the Results view (part 3, "The run"). */
+  readonly window: Pick<typeof vscode.window, "withProgress">;
   /** crypto.randomUUID in activate. */
   newQueryId(): string;
 }
@@ -38,7 +42,7 @@ export class RunService implements PageRunner {
     });
     try {
       presenter.runStarted({ ...request, queryId, documentUri: entry.uri, connectionId: entry.connectionId });
-      presenter.runSucceeded(queryId, await send(this.deps.client, entry, 0));
+      presenter.runSucceeded(queryId, await this.inProgress(() => send(this.deps.client, entry, 0)));
     } catch (error) {
       presenter.runFailed(queryId, error);
     } finally {
@@ -58,10 +62,15 @@ export class RunService implements PageRunner {
       cancellable: this.deps.opened.get(read.connectionId)?.description.capabilities.supportsQueryCancel ?? false,
     });
     try {
-      return await send(this.deps.client, entry, read.offset);
+      return await this.inProgress(() => send(this.deps.client, entry, read.offset));
     } finally {
       runs.settle(entry);
     }
+  }
+
+  /** The task inside the progress the Results view shows while a query/run is in flight. */
+  private inProgress<T>(task: () => Promise<T>): Thenable<T> {
+    return this.deps.window.withProgress({ location: { viewId: RESULTS_VIEW } }, task);
   }
 
   /** Cancel: a preparing run's token is cancelled; a running, cancellable run is sent query/cancel; undefined when nothing was sent. */

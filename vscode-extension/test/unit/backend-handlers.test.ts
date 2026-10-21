@@ -11,6 +11,7 @@ import {
 import { runEditorQuery } from "@/lib/api/editor-query";
 import { databaseErrorBody, internalErrorBody, TIMEOUT_SENTENCE } from "@/lib/api/error-body";
 import { consoleTextByteLimit, consoleTextOverLimit } from "@/lib/db/destructive-commands";
+import { executionUiFor } from "@/lib/db/execution-ui";
 import { generateTableQuery } from "@/lib/query-generators";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { runTarget } from "@/lib/sql/run-target";
@@ -42,6 +43,7 @@ import {
   toResponseError,
 } from "../../src/backend/handlers";
 import { ConnectionRegistry } from "../../src/backend/registry";
+import { ENABLED_PROVIDERS } from "../../src/host/channel";
 import { type BackendErrorData, EXIT_NOTIFICATION, METHODS } from "../../src/protocol";
 import {
   CAPS,
@@ -306,12 +308,30 @@ describe("connection/open", () => {
   it("answers the provider's description, with supportsQueryCancel read off its surface", async () => {
     const cancelling = backend(fakeProvider({ cancelQuery: async () => true }));
     assert.deepEqual(await cancelling.handlers.openConnection({ connection: WIRE, posture: POSTURE }), {
-      description: { capabilities: { ...CAPS, supportsQueryCancel: true }, labels: LABELS, editorLanguage: "sql" },
+      description: {
+        capabilities: { ...CAPS, supportsQueryCancel: true },
+        labels: LABELS,
+        editorLanguage: "sql",
+        commitKeyword: executionUiFor(WIRE.type).commitKeyword,
+      },
     });
     const plain = backend();
     assert.deepEqual(await plain.handlers.openConnection({ connection: WIRE, posture: POSTURE }), {
-      description: { capabilities: { ...CAPS, supportsQueryCancel: false }, labels: LABELS, editorLanguage: "sql" },
+      description: {
+        capabilities: { ...CAPS, supportsQueryCancel: false },
+        labels: LABELS,
+        editorLanguage: "sql",
+        commitKeyword: executionUiFor(WIRE.type).commitKeyword,
+      },
     });
+  });
+
+  it("answers the commit keyword the execution UI registry declares for the connection's type", async () => {
+    for (const type of ENABLED_PROVIDERS) {
+      const { handlers } = backend();
+      const { description } = await handlers.openConnection({ connection: { ...WIRE, type }, posture: POSTURE });
+      assert.equal(description.commitKeyword, executionUiFor(type).commitKeyword);
+    }
   });
 
   it("answers the editor language of the provider it opened, read from its capabilities", async () => {

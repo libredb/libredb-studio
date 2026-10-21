@@ -40,14 +40,18 @@ describe("the backend protocol", () => {
     assert.equal(new Set(Object.values(METHODS)).size, Object.keys(METHODS).length);
   });
 
-  it("describes an open connection with its editor language", () => {
+  it("describes an open connection with its editor language and its commit keyword", () => {
     const capabilities = { supportsQueryCancel: true } as ProviderCapabilities & { supportsQueryCancel: boolean };
     const labels = {} as ProviderLabels;
-    const description: ProviderDescription = { capabilities, labels, editorLanguage: "sql" };
+    const description: ProviderDescription = { capabilities, labels, editorLanguage: "sql", commitKeyword: "COMMIT" };
     // @ts-expect-error A description without its editor language is a type error.
-    const without: ProviderDescription = { capabilities, labels };
+    const without: ProviderDescription = { capabilities, labels, commitKeyword: "COMMIT" };
+    // @ts-expect-error A description without its commit keyword is a type error.
+    const noKeyword: ProviderDescription = { capabilities, labels, editorLanguage: "sql" };
     assert.equal(description.editorLanguage, "sql");
+    assert.equal(description.commitKeyword, "COMMIT");
     assert.equal(without.editorLanguage, undefined);
+    assert.equal(noKeyword.commitKeyword, undefined);
   });
 
   it("carries the query route's body and Test Connection's answer as they are", () => {

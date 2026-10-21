@@ -55,12 +55,13 @@ export interface InitializeResult {
   enabledProviders: readonly DatabaseType[] | null;
 }
 
-/** commitKeyword (PR 13) joins with its part. */
 export interface ProviderDescription {
   capabilities: ProviderCapabilities & { supportsQueryCancel: boolean };
   labels: ProviderLabels;
   /** editorLanguageForTabType(resolveTabType(capabilities)), computed in the child from the provider it opened. */
   editorLanguage: EditorLanguage;
+  /** executionUiFor(connection.type).commitKeyword, computed in the child: the keyword the rolled-back notice names. */
+  commitKeyword: string;
 }
 
 /** The core's own union, so the wire answer cannot drift from the route's. */

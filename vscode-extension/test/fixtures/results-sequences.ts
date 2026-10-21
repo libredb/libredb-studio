@@ -8,8 +8,8 @@ import type { GridContext, HostToWebview } from "../../src/results-protocol";
 export const RUN_A = "6f1c2b8e-3d4a-4b5c-9d6e-7f8091a2b3c4";
 export const RUN_B = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
 
-/** A fixed start, so a sequence is the same bytes on every run. */
-const STARTED_AT = 1_760_000_000_000;
+/** A fixed start, so a sequence is the same bytes on every run; the presenter test's clock answers it. */
+export const STARTED_AT = 1_760_000_000_000;
 
 export const POSTGRES_GRID: GridContext = {
   databaseType: "postgres",
@@ -46,12 +46,16 @@ const started = (runId: string, statement: string): HostToWebview => ({
 
 const SELECT_PEOPLE = 'SELECT * FROM "public"."people"';
 
+/** What PostgreSQL 18 declares for `people (id int, name text, email text)`, as a live run of SELECT_PEOPLE answers. */
+const PEOPLE_TYPES = { columnTypes: { id: "integer", name: "text", email: "text" } };
+
 const PEOPLE_FIRST_PAGE = page(
   [
     { id: 1, name: "Ada", email: "ada@example.com" },
     { id: 2, name: "Lin", email: "lin@example.com" },
   ],
   { limit: 2, offset: 0, hasMore: true, totalReturned: 2, wasLimited: true },
+  PEOPLE_TYPES,
 );
 
 /**
@@ -73,6 +77,7 @@ export const LOAD_MORE_ON_POSTGRES: HostToWebview[] = [
         { id: 4, name: "Edsger", email: "edsger@example.com" },
       ],
       { limit: 2, offset: 2, hasMore: false, totalReturned: 2, wasLimited: true },
+      PEOPLE_TYPES,
     ),
   },
 ];
@@ -94,12 +99,12 @@ export const FAILURES: Record<"pageFailed" | "runFailed" | "cancelled" | "backen
     },
   ],
   runFailed: [
-    started(RUN_B, "select * from nope"),
+    started(RUN_B, "select * from it_missing"),
     {
       v: 1,
       type: "runFailed",
       runId: RUN_B,
-      failure: { kind: "error", message: 'relation "nope" does not exist', detail: "LINE 1: select * from nope" },
+      failure: { kind: "error", message: 'relation "it_missing" does not exist' },
     },
   ],
   cancelled: [
@@ -111,6 +116,27 @@ export const FAILURES: Record<"pageFailed" | "runFailed" | "cancelled" | "backen
     { v: 1, type: "runFailed", runId: RUN_B, failure: { kind: "backendExited", exitCode: null, signal: "SIGKILL" } },
   ],
 };
+
+/**
+ * SYNTHETIC, not recorded: a failure that carries the driver's detail, for the cases that check how the webview shows
+ * one. No live run on the four v0 engines answers a detail today, because mapDatabaseError in src/lib/db/errors.ts
+ * builds QueryError without it (docs/BACKLOG.md D389), so this sequence is left out of the integration leg's
+ * comparison with live runs by name. The message and detail are what PostgreSQL itself raises for a unique violation.
+ * Part H's presenter test and the browser leg's criterion 9 read it; D389 replaces it with a recorded live sequence.
+ */
+export const SYNTHETIC_RUN_FAILED_WITH_DETAIL: HostToWebview[] = [
+  started(RUN_A, "insert into it_unique (id) values (1)"),
+  {
+    v: 1,
+    type: "runFailed",
+    runId: RUN_A,
+    failure: {
+      kind: "error",
+      message: 'duplicate key value violates unique constraint "it_unique_pkey"',
+      detail: "Key (id)=(1) already exists.",
+    },
+  },
+];
 
 /**
  * Criterion 10: an UPDATE of 3 rows, a lone BEGIN on PostgreSQL (the route rolls back the transaction it left open),
@@ -151,7 +177,7 @@ export const EMPTY_AND_NOTICES: Record<"update3" | "loneBegin" | "twoResultSets"
       page: page(
         [{ "?column?": 1 }],
         { limit: 2, offset: 0, hasMore: false, totalReturned: 1, wasLimited: false },
-        { resultSetCount: 2 },
+        { columnTypes: { "?column?": "integer" }, resultSetCount: 2 },
       ),
       grid: POSTGRES_GRID,
     },
@@ -164,7 +190,7 @@ export const EMPTY_AND_NOTICES: Record<"update3" | "loneBegin" | "twoResultSets"
  * Part H's presenter test: the MongoDB run posts exactly this.
  */
 export const MONGODB_DOCUMENTS: HostToWebview[] = [
-  started(RUN_B, "db.people.find({})"),
+  started(RUN_B, '{ "collection": "people", "operation": "find" }'),
   {
     v: 1,
     type: "runSucceeded",

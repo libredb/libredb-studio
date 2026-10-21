@@ -598,6 +598,7 @@ describe("the Connections tree against PostgreSQL, SQL Server, MySQL and MongoDB
         runs,
         presenter,
         opened,
+        window,
         newQueryId: () => {
           minted += 1;
           return randomUUID();

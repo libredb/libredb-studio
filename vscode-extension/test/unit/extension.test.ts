@@ -4,24 +4,42 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type * as vscode from "vscode";
 import { setImmediate } from "node:timers/promises";
+import { PassThrough } from "node:stream";
+import { createMessageConnection, StreamMessageReader, StreamMessageWriter } from "vscode-jsonrpc/node";
 import type { BackendCrash, BackendSupervisor } from "../../src/host/backend-supervisor";
 import { activate, deactivate } from "../../src/host/extension";
+import { ResultsViewProvider } from "../../src/host/results/results-view-provider";
 import { ConnectionsTree } from "../../src/host/tree/connections-tree";
+import { type HostToWebview, parseHostMessage } from "../../src/results-protocol";
+import {
+  type InitializeResult,
+  METHODS,
+  type QueryPage,
+  type RunQueryParams,
+  type RunTargetParams,
+} from "../../src/protocol";
 import type { TreeNode } from "../../src/host/tree/nodes";
+import { ZERO_LEVELS } from "../fakes/descriptions";
 import { FakeTextDocument, FakeTextEditor } from "../fakes/documents";
 import { MONGO, PG } from "../fakes/profiles";
 import {
   answerMessages,
   answerQuickPicks,
+  ColorThemeKind,
   changeConfiguration,
   commands,
   configurationReads,
   contextKeyCalls,
   createdEmitters,
   type EventEmitter,
+  FakeWebviewView,
   fakeExtensionContext as fakeContextAt,
   outputChannels,
+  progressRuns,
   registeredCommands,
+  registeredWebviewViews,
+  setActiveTextEditor,
+  setColorTheme,
   settings,
   shownQuickPicks,
   statusBarItems,
@@ -156,8 +174,8 @@ describe("activate", () => {
     assert.deepEqual(configurationReads, ["libredb.connections"]);
     // The channel, its command, the setting adapter, the store, the descriptions, the tree, its view, three commands,
     // the bindings, the runs, the crash listener, the context keys, the status bar, the document lifecycle, the five
-    // editor commands and the release.
-    assert.equal(context.subscriptions.length, 22);
+    // editor commands, the release, the Results view's provider, its active-editor listener and its registration.
+    assert.equal(context.subscriptions.length, 25);
   });
 
   it("re-reads the setting on Refresh", async () => {
@@ -325,5 +343,147 @@ describe("activate's editors", () => {
     );
     assert.equal(statusBarItems[0].disposed, true);
     assert.deepEqual([...registeredCommands.keys()], []);
+  });
+});
+
+const INITIALIZED: InitializeResult = {
+  protocolVersion: 1,
+  runtime: { node: "24.21.0", electron: "43.7.7", modules: "148", platform: "linux", arch: "x64" },
+  enabledProviders: ["postgres", "mssql", "mysql", "mongodb"],
+};
+
+/** One page of one row, as query/run answers a statement on the connection. */
+const PAGE: QueryPage = {
+  rows: [{ v: 1 }],
+  fields: ["v"],
+  rowCount: 1,
+  executionTime: 2,
+  pagination: { limit: 500, offset: 0, hasMore: false, totalReturned: 1, wasLimited: false },
+};
+
+/**
+ * Gives the supervisor activate created a child on the far side of an in-memory pair that answers connection/open with
+ * ZERO_LEVELS, query/target with the whole text and query/run with PAGE; answers every query/run's params, in order.
+ */
+function serveBackend(): RunQueryParams[] {
+  const up = new PassThrough();
+  const down = new PassThrough();
+  const host = createMessageConnection(new StreamMessageReader(down), new StreamMessageWriter(up));
+  const child = createMessageConnection(new StreamMessageReader(up), new StreamMessageWriter(down));
+  const runs: RunQueryParams[] = [];
+  child.onRequest(METHODS.openConnection, () => ({ description: ZERO_LEVELS }));
+  child.onRequest(METHODS.runTarget, (params: RunTargetParams) => ({ statement: params.text }));
+  child.onRequest(METHODS.runQuery, (params: RunQueryParams) => {
+    runs.push(params);
+    return PAGE;
+  });
+  child.listen();
+  host.listen();
+  supervisorOf().connection = async () => ({ connection: host, generation: 1, initialized: INITIALIZED });
+  return runs;
+}
+
+/** The provider activate registered for the Results view, resolved on a visible FakeWebviewView that sent ready. */
+function resolvedResults(): FakeWebviewView {
+  const view = new FakeWebviewView();
+  const [registered] = registeredWebviewViews;
+  // The provider reads neither the context nor the token.
+  void registered.provider.resolveWebviewView(view, { state: undefined }, {} as vscode.CancellationToken);
+  view.receive({ v: 1, type: "ready" });
+  return view;
+}
+
+/** An editor over the document at the uri, made active as switching to it does. */
+function showEditor(uri: string, text: string): vscode.TextEditor {
+  const editor = new FakeTextEditor(new FakeTextDocument(Uri.parse(uri), text)).asEditor();
+  setActiveTextEditor(editor);
+  return editor;
+}
+
+/** Every message the view was posted, each held to the webview's own guard first. */
+function postedTypes(view: FakeWebviewView): string[] {
+  return view.posted.map((message) => parseHostMessage(message).type);
+}
+
+describe("activate's Results view", () => {
+  afterEach(async () => {
+    await deactivate();
+  });
+
+  it("registers one webview view provider, for libredb.results, with no options, and keeps the provider in its subscriptions", () => {
+    const context = fakeExtensionContext();
+    activate(context as vscode.ExtensionContext);
+    assert.deepEqual(
+      registeredWebviewViews.map(({ viewId, options }) => [viewId, options]),
+      [["libredb.results", undefined]],
+    );
+    const [{ provider }] = registeredWebviewViews;
+    assert.ok(provider instanceof ResultsViewProvider);
+    assert.ok(context.subscriptions.includes(provider));
+  });
+
+  it("answers the resolved view's ready with init then clear, and starts no child", () => {
+    activate(fakeExtensionContext() as vscode.ExtensionContext);
+    const view = resolvedResults();
+    assert.deepEqual(postedTypes(view), ["init", "clear"]);
+    assert.equal(supervisorOf().generation, 0);
+    assert.equal(supervisorOf().state, "stopped");
+  });
+
+  it("presents a run to the view, writes the log's run lines and shows the progress on the view", async () => {
+    settings.set("libredb.connections", [PG]);
+    settings.set("libredb.query.rowLimit", 500);
+    const context = fakeExtensionContext();
+    await context.secrets.store(["connection", PG.id, "password"].join("/"), TEST_PASSWORD);
+    activate(context as vscode.ExtensionContext);
+    const runs = serveBackend();
+    const view = resolvedResults();
+    view.posted.length = 0;
+    showEditor(UNTITLED, "select 1;");
+    answerQuickPicks((shown) => shown.items.find((item) => item.label === "shop"));
+    await commands.executeCommand("libredb.runQuery");
+    assert.deepEqual(postedTypes(view), ["runStarted", "runSucceeded"]);
+    assert.equal(runs.length, 1);
+    const [{ queryId }] = runs;
+    assert.deepEqual(outputChannels[0].lines.slice(-2), [
+      ["info", `Run ${queryId} started on Untitled-1 (shop).`],
+      ["info", `Run ${queryId} answered 1 row in 2 ms.`],
+    ]);
+    assert.deepEqual(
+      progressRuns.map((run) => run.options),
+      [{ location: { viewId: "libredb.results" } }],
+    );
+  });
+
+  it("shows the active editor's record again when that editor becomes active (criterion 14)", async () => {
+    settings.set("libredb.connections", [PG]);
+    settings.set("libredb.query.rowLimit", 500);
+    const context = fakeExtensionContext();
+    await context.secrets.store(["connection", PG.id, "password"].join("/"), TEST_PASSWORD);
+    activate(context as vscode.ExtensionContext);
+    serveBackend();
+    const view = resolvedResults();
+    answerQuickPicks((shown) => shown.items.find((item) => item.label === "shop"));
+    const first = showEditor(UNTITLED, "select 1;");
+    view.posted.length = 0;
+    await commands.executeCommand("libredb.runQuery");
+    const firstSequence = [...view.posted] as HostToWebview[];
+    showEditor("untitled:Untitled-2", "select 2;");
+    await commands.executeCommand("libredb.runQuery");
+    view.posted.length = 0;
+    setActiveTextEditor(first);
+    assert.deepEqual(view.posted, firstSequence);
+    assert.deepEqual(postedTypes(view), ["runStarted", "runSucceeded"]);
+  });
+
+  it("stops following the theme and the active editor once its subscriptions are disposed", async () => {
+    const context = fakeExtensionContext();
+    activate(context as vscode.ExtensionContext);
+    const view = resolvedResults();
+    view.posted.length = 0;
+    for (const subscription of context.subscriptions) subscription.dispose();
+    setColorTheme(ColorThemeKind.Light);
+    showEditor(UNTITLED, "select 1;");
+    assert.deepEqual(view.posted, []);
   });
 });

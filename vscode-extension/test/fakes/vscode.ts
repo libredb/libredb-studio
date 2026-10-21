@@ -171,13 +171,13 @@ export class ThemeColor implements vscode.ThemeColor {
  * @public
  */
 export class Uri implements vscode.Uri {
-  readonly authority = "";
   readonly query = "";
   readonly fragment = "";
 
   private constructor(
-    readonly scheme: "file" | "untitled",
+    readonly scheme: "file" | "untitled" | "https",
     readonly path: string,
+    readonly authority = "",
   ) {}
 
   get fsPath(): string {
@@ -189,7 +189,8 @@ export class Uri implements vscode.Uri {
   }
 
   toString(): string {
-    return this.scheme === "file" ? `file://${this.path}` : `untitled:${this.path}`;
+    if (this.scheme === "untitled") return `untitled:${this.path}`;
+    return `${this.scheme}://${this.authority}${this.path}`;
   }
 
   toJSON(): unknown {
@@ -205,6 +206,13 @@ export class Uri implements vscode.Uri {
     if (value.startsWith("file://")) return new Uri("file", value.slice("file://".length));
     if (value.startsWith("untitled:")) return new Uri("untitled", value.slice("untitled:".length));
     throw new Error(`The fake Uri.parse reads file: and untitled: URIs only, not ${value}.`);
+  }
+
+  /** An `https:` URI from its authority and path, as a webview resource URI is built; any other scheme throws. */
+  static from(components: { readonly scheme: string; readonly authority?: string; readonly path?: string }): Uri {
+    if (components.scheme !== "https")
+      throw new Error(`The fake Uri.from builds https: URIs only, not ${components.scheme}.`);
+    return new Uri("https", components.path ?? "", components.authority ?? "");
   }
 
   static joinPath(base: Uri, ...parts: string[]): Uri {
@@ -331,6 +339,120 @@ export enum ProgressLocation {
   Notification = 15,
 }
 
+/**
+ * vscode.ColorThemeKind, with the real values.
+ * The code under test reaches this through tsconfig.test.json's "vscode" alias, which knip does not read.
+ * @public
+ */
+export enum ColorThemeKind {
+  Light = 1,
+  Dark = 2,
+  HighContrast = 3,
+  HighContrastLight = 4,
+}
+
+/** The authority VS Code 1.120 serves a local webview resource from. */
+const WEBVIEW_RESOURCE_AUTHORITY = "file+.vscode-resource.vscode-cdn.net";
+
+/**
+ * A webview view as VS Code hands one to `resolveWebviewView`: its webview records what is posted and answers true,
+ * `receive` fires `onDidReceiveMessage`, `dispose` fires `onDidDispose`, and `show` records its argument.
+ */
+export class FakeWebviewView implements vscode.WebviewView {
+  readonly viewType = "libredb.results";
+  title: string | undefined = undefined;
+  description: string | undefined = undefined;
+  badge: vscode.ViewBadge | undefined = undefined;
+  /** Whether the view is visible; a test sets it. */
+  visible = true;
+  /** Every message `webview.postMessage` received, in order. */
+  readonly posted: unknown[] = [];
+  /** What `webview.postMessage` answers; a test sets it. */
+  postAnswer = true;
+  /** Every `show` call's preserveFocus argument, in order. */
+  readonly shows: (boolean | undefined)[] = [];
+  private readonly messages = new EventEmitter<unknown>();
+  private readonly disposals = new EventEmitter<void>();
+  private readonly visibility = new EventEmitter<void>();
+  readonly onDidDispose = this.disposals.event;
+  readonly onDidChangeVisibility = this.visibility.event;
+  readonly webview: vscode.Webview;
+
+  constructor() {
+    this.webview = {
+      options: {},
+      html: "",
+      cspSource: "'self' https://*.vscode-cdn.net",
+      onDidReceiveMessage: this.messages.event,
+      postMessage: (message: unknown): Thenable<boolean> => {
+        this.posted.push(message);
+        return Promise.resolve(this.postAnswer);
+      },
+      asWebviewUri: (localResource: vscode.Uri): vscode.Uri =>
+        Uri.from({ scheme: "https", authority: WEBVIEW_RESOURCE_AUTHORITY, path: localResource.path }),
+    };
+  }
+
+  /** Fires `webview.onDidReceiveMessage` with raw, as the webview's postMessage does. */
+  receive(raw: unknown): void {
+    this.messages.fire(raw);
+  }
+
+  show(preserveFocus?: boolean): void {
+    this.shows.push(preserveFocus);
+  }
+
+  /** Fires `onDidDispose`, as hiding the view from its context menu does. */
+  dispose(): void {
+    this.disposals.fire();
+  }
+}
+
+/** One `window.registerWebviewViewProvider` call's three arguments. */
+export interface RegisteredWebviewView {
+  readonly viewId: string;
+  readonly provider: vscode.WebviewViewProvider;
+  readonly options: Parameters<typeof vscode.window.registerWebviewViewProvider>[2];
+}
+
+/** Every `window.registerWebviewViewProvider` call since the last reset, in order. */
+export const registeredWebviewViews: RegisteredWebviewView[] = [];
+
+/** Sets `window.activeColorTheme` to the kind and fires `onDidChangeActiveColorTheme`, as switching themes does. */
+export function setColorTheme(kind: ColorThemeKind): void {
+  window.activeColorTheme = { kind };
+  colorThemeChanges.fire(window.activeColorTheme);
+}
+
+/** Every `window.setStatusBarMessage` call since the last reset, as [text, hideAfterTimeout], in order. */
+export const statusBarMessages: [string, number | undefined][] = [];
+
+/** Every text `env.clipboard.writeText` received since the last reset, in order. */
+export const clipboardWrites: string[] = [];
+
+let answerClipboardWrite: () => Promise<void> = () => Promise.resolve();
+
+/** Scripts how every `env.clipboard.writeText` from now on settles. */
+export function answerClipboard(answer: () => Promise<void>): void {
+  answerClipboardWrite = answer;
+}
+
+/**
+ * vscode.env, as far as the host reads it: a clipboard whose writes record and settle as scripted, and whose read
+ * answers the last text written.
+ * The code under test reaches this through tsconfig.test.json's "vscode" alias, which knip does not read.
+ * @public
+ */
+export const env = {
+  clipboard: {
+    readText: (): Thenable<string> => Promise.resolve(clipboardWrites.at(-1) ?? ""),
+    writeText: (text: string): Thenable<void> => {
+      clipboardWrites.push(text);
+      return answerClipboardWrite();
+    },
+  },
+} satisfies Pick<typeof vscode.env, "clipboard">;
+
 /** One `window.withProgress` call: its options, and whether its task has settled. */
 export interface ProgressRun {
   readonly options: vscode.ProgressOptions;
@@ -410,6 +532,24 @@ export const window = {
   activeTextEditor: undefined as vscode.TextEditor | undefined,
   /** The visible editors; a test sets them. */
   visibleTextEditors: [] as readonly vscode.TextEditor[],
+  /** The active colour theme; setColorTheme changes it. */
+  activeColorTheme: { kind: ColorThemeKind.Dark } as vscode.ColorTheme,
+  // Subscribes when called: the emitter is declared after the EventEmitter class this object precedes.
+  onDidChangeActiveColorTheme: ((listener, thisArgs?, disposables?) =>
+    colorThemeChanges.event(listener, thisArgs, disposables)) as typeof vscode.window.onDidChangeActiveColorTheme,
+  // The host passes a timeout only; the Thenable form is never called.
+  setStatusBarMessage: ((text: string, hideAfterTimeout?: number) => {
+    statusBarMessages.push([text, hideAfterTimeout]);
+    return new Disposable(() => {});
+  }) as unknown as typeof vscode.window.setStatusBarMessage,
+  registerWebviewViewProvider(
+    viewId: string,
+    provider: vscode.WebviewViewProvider,
+    options?: Parameters<typeof vscode.window.registerWebviewViewProvider>[2],
+  ): Disposable {
+    registeredWebviewViews.push({ viewId, provider, options });
+    return new Disposable(() => {});
+  },
   // Subscribes when called: the emitter is declared after the EventEmitter class this object precedes.
   onDidChangeActiveTextEditor: ((listener, thisArgs?, disposables?) =>
     activeEditorChanges.event(listener, thisArgs, disposables)) as typeof vscode.window.onDidChangeActiveTextEditor,
@@ -546,6 +686,10 @@ export const window = {
   | "createInputBox"
   | "withProgress"
   | "createTreeView"
+  | "activeColorTheme"
+  | "onDidChangeActiveColorTheme"
+  | "registerWebviewViewProvider"
+  | "setStatusBarMessage"
 >;
 
 /**
@@ -669,6 +813,8 @@ export const configurationUpdates: ConfigurationUpdate[] = [];
 export const configurationReads: string[] = [];
 
 const activeEditorChanges = new EventEmitter<vscode.TextEditor | undefined>();
+
+const colorThemeChanges = new EventEmitter<vscode.ColorTheme>();
 
 const configurationChanges = new EventEmitter<vscode.ConfigurationChangeEvent>();
 
@@ -817,6 +963,12 @@ export function resetFake(): void {
   languageChanges.length = 0;
   statusBarItems.length = 0;
   activeEditorChanges.dispose();
+  window.activeColorTheme = { kind: ColorThemeKind.Dark };
+  colorThemeChanges.dispose();
+  registeredWebviewViews.length = 0;
+  statusBarMessages.length = 0;
+  clipboardWrites.length = 0;
+  answerClipboardWrite = () => Promise.resolve();
   contextKeyCalls.length = 0;
   createdEmitters.length = 0;
 }

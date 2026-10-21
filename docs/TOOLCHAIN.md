@@ -563,6 +563,7 @@ A callback whose behaviour the gate must hold keeps its body on its own line, as
   `@vscode/test-electron` starts every host with `--disable-workspace-trust`, so the leg sees a trusted workspace only.
   `activate` exports nothing, so a test reaches what the extension created through `test/e2e/tree-capture.ts`, which wraps `vscode.window.createTreeView` before the extension activates and keeps the Connections view it captured on `globalThis`.
   The editor cases read the same way through `test/e2e/host-capture.ts`, which wraps `vscode.window.createStatusBarItem`, `vscode.window.createOutputChannel` and `vscode.commands.executeCommand` before the extension activates and keeps every `setContext` call, the LibreDB log's lines and the connection status bar item on `globalThis`.
+  The same file also wraps `vscode.window.registerWebviewViewProvider` for the Results view, so `test/e2e/results-view.test.ts` and `test/e2e/smoke/results-view.test.ts` read each resolve, every message the host posts, every message the real webview sends and the view's description, and hand the host a message as the webview would.
 - Smoke: the e2e leg with `LIBREDB_E2E_SUBSET=smoke`, on macOS and Windows, with no Xvfb and no database.
   The smoke subset runs `test/e2e/smoke/tree-root.test.ts`, which needs no Docker; the full leg also runs `test/e2e/connections-tree.test.ts`, which does.
 - Browser: `npm run test:browser` runs the results webview in Chromium with Playwright, after `npm run build`.

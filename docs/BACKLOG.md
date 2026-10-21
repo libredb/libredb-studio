@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S9 · 6
-- [Drivers and connections](#drivers-and-connections) — D1-D388, U17 · 283
+- [Drivers and connections](#drivers-and-connections) — D1-D389, U17 · 284
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U148 · 134
@@ -3957,6 +3957,17 @@ Measured 2026-10-21 by the VS Code extension's integration leg against its SQL S
 Found 2026-10-21 during the VS Code extension work (PR 11), and deferred because it changes the SQL generated for SQL Server on the web too.
 
 **Done when:** `quoteIdentifier` brackets a T-SQL reserved word, with the word list declared where the repository keeps per-engine SQL facts rather than as a new type-id branch, and the skipped case "Select Rows runs on mssql's table named order" in `vscode-extension/test/integration/tree-editor.test.ts` runs again.
+
+### D389. A failed query reaches no client with the driver's detail
+
+`mapDatabaseError` in `src/lib/db/errors.ts` builds `QueryError` from the driver's message and position only, so the detail a driver gives is dropped before any route answers.
+PostgreSQL's detail for a unique violation, "Key (id)=(1) already exists.", reaches neither the web routes' error body nor the VS Code extension.
+Measured 2026-10-21 by the VS Code extension's integration leg against its PostgreSQL container: the unique violation answered only "duplicate key value violates unique constraint" and the constraint name.
+The extension's Results view renders a detail when one arrives, so its tests show one through `SYNTHETIC_RUN_FAILED_WITH_DETAIL` in `vscode-extension/test/fixtures/results-sequences.ts`, which the comparison with live runs leaves out by name.
+
+Found 2026-10-21 during the VS Code extension work (PR 13), and deferred because it changes the error body of the web's db routes.
+
+**Done when:** `mapDatabaseError` carries the driver's detail into `QueryError` where the driver gives one, a test per SQL engine pins it, and the extension's synthetic detail case is replaced by a recorded live one.
 
 ## Value interpolation
 

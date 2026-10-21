@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
+import { CONNECTIONS_VIEW, RESULTS_CONTAINER, RESULTS_VIEW, VIEW_CONTAINER } from "../../src/host/names";
 import { FLOOR_NODE, STABLE_RUNTIME } from "../vscode-floor";
 
 const root = join(__dirname, "..", "..");
@@ -119,15 +120,31 @@ describe("the manifest", () => {
     ]);
   });
 
-  it("contributes the LibreDB view container, the Connections view and its welcome content", () => {
+  it("contributes the LibreDB view container, the Connections view, the LibreDB Results panel and its one Results view", () => {
     assert.deepEqual(manifest.contributes.viewsContainers, {
-      activitybar: [{ id: "libredb", title: "LibreDB", icon: "media/libredb.svg" }],
+      activitybar: [{ id: VIEW_CONTAINER, title: "LibreDB", icon: "media/libredb.svg" }],
+      panel: [{ id: RESULTS_CONTAINER, title: "LibreDB Results", icon: "media/libredb.svg" }],
     });
-    assert.deepEqual(manifest.contributes.views, { libredb: [{ id: "libredb.connections", name: "Connections" }] });
+    assert.deepEqual(manifest.contributes.views, {
+      [VIEW_CONTAINER]: [{ id: CONNECTIONS_VIEW, name: "Connections" }],
+      [RESULTS_CONTAINER]: [{ id: RESULTS_VIEW, name: "Results", type: "webview" }],
+    });
     assert.deepEqual(manifest.contributes.viewsWelcome, [
       { view: "libredb.connections", contents: "No connections yet.\n[Add Connection](command:libredb.addConnection)" },
     ]);
     assert.ok(existsSync(join(root, "media", "libredb.svg")));
+  });
+
+  it("keeps no webview context while it is hidden: no file under src/ names retainContextWhenHidden (criterion 1)", () => {
+    const src = join(root, "src");
+    const files = readdirSync(src, { recursive: true, encoding: "utf8" })
+      .map((path) => join(src, path))
+      .filter((path) => /\.tsx?$/.test(path));
+    assert.ok(files.length > 0);
+    assert.deepEqual(
+      files.filter((path) => readFileSync(path, "utf8").includes("retainContextWhenHidden")),
+      [],
+    );
   });
 
   it("declares libredb.connections as part 2 writes it, synced and never read from a workspace", () => {

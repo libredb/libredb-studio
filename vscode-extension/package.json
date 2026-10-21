@@ -166,6 +166,13 @@
           "title": "LibreDB",
           "icon": "media/libredb.svg"
         }
+      ],
+      "panel": [
+        {
+          "id": "libredbResults",
+          "title": "LibreDB Results",
+          "icon": "media/libredb.svg"
+        }
       ]
     },
     "views": {
@@ -173,6 +180,13 @@
         {
           "id": "libredb.connections",
           "name": "Connections"
+        }
+      ],
+      "libredbResults": [
+        {
+          "id": "libredb.results",
+          "name": "Results",
+          "type": "webview"
         }
       ]
     },
