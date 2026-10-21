@@ -179,11 +179,13 @@ function analyzePlan(plan: ExplainPlanResult[]): PlanAnalysis {
     }
 
     // A Limit can stop streaming descendants early. Blocking nodes still consume
-    // their whole input, even when the Limit stops reading their output.
+    // their whole input, even when the Limit stops reading their output. A Hashed
+    // SetOp (EXCEPT, INTERSECT) builds its table from every input row first.
     const blocksInput =
       nodeType === "Sort" ||
       nodeType === "Hash" ||
-      (nodeType === "Aggregate" && (node.Strategy === "Plain" || node.Strategy === "Hashed"));
+      (nodeType === "Aggregate" && (node.Strategy === "Plain" || node.Strategy === "Hashed")) ||
+      (nodeType === "SetOp" && node.Strategy === "Hashed");
     const childrenStoppedByLimit = nodeType === "Limit" || (stoppedByLimit && !blocksInput);
     (node["Plans"] || []).forEach((child) => analyzeNode(child, depth + 1, childrenStoppedByLimit));
   }

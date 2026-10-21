@@ -249,6 +249,34 @@ describe("VisualExplain", () => {
     expect(queryByText("Expected 25.0K rows, got 10. Statistics may be outdated.")).not.toBeNull();
   });
 
+  test("reports a downward estimate mismatch for a scan below Limit and a Hashed SetOp", () => {
+    // The plan PostgreSQL 18.6 gives `SELECT x FROM a EXCEPT SELECT x FROM b LIMIT 5`
+    // with stale statistics on `a`: the Hashed SetOp read the whole scan before its first row.
+    const plan: ExplainPlanResult[] = [
+      {
+        Plan: {
+          "Node Type": "Limit",
+          "Plan Rows": 5,
+          "Actual Rows": 5,
+          Plans: [
+            {
+              "Node Type": "SetOp",
+              Strategy: "Hashed",
+              "Plan Rows": 50000,
+              "Actual Rows": 5,
+              Plans: [
+                { "Node Type": "Seq Scan", "Plan Rows": 50000, "Actual Rows": 300 },
+                { "Node Type": "Seq Scan", "Plan Rows": 100, "Actual Rows": 100 },
+              ],
+            },
+          ],
+        },
+      },
+    ];
+    const { queryByText } = render(<VisualExplain plan={plan} />);
+    expect(queryByText("Expected 50.0K rows, got 300. Statistics may be outdated.")).not.toBeNull();
+  });
+
   test("reports an upward estimate mismatch for an index scan below Limit", () => {
     const plan: ExplainPlanResult[] = [
       {
