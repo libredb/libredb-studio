@@ -210,6 +210,144 @@ describe("VisualExplain", () => {
     expect(queryByText(/Statistics may be outdated/)).not.toBeNull();
   });
 
+  test("does not report a downward estimate mismatch for an index scan stopped by Limit", () => {
+    const plan: ExplainPlanResult[] = [
+      {
+        Plan: {
+          "Node Type": "Limit",
+          "Plan Rows": 10,
+          "Actual Rows": 10,
+          Plans: [{ "Node Type": "Index Scan", "Plan Rows": 25000, "Actual Rows": 10 }],
+        },
+      },
+    ];
+    const { queryByText } = render(<VisualExplain plan={plan} />);
+    expect(queryByText("Estimate Mismatch")).toBeNull();
+    expect(queryByText("Query looks good")).not.toBeNull();
+  });
+
+  test("reports a downward estimate mismatch for a scan below Limit and Sort", () => {
+    const plan: ExplainPlanResult[] = [
+      {
+        Plan: {
+          "Node Type": "Limit",
+          "Plan Rows": 10,
+          "Actual Rows": 10,
+          Plans: [
+            {
+              "Node Type": "Sort",
+              "Plan Rows": 10,
+              "Actual Rows": 10,
+              Plans: [{ "Node Type": "Seq Scan", "Plan Rows": 25000, "Actual Rows": 10 }],
+            },
+          ],
+        },
+      },
+    ];
+    const { queryByText } = render(<VisualExplain plan={plan} />);
+    expect(queryByText("Estimate Mismatch")).not.toBeNull();
+    expect(queryByText("Expected 25.0K rows, got 10. Statistics may be outdated.")).not.toBeNull();
+  });
+
+  test("reports an upward estimate mismatch for an index scan below Limit", () => {
+    const plan: ExplainPlanResult[] = [
+      {
+        Plan: {
+          "Node Type": "Limit",
+          "Plan Rows": 10,
+          "Actual Rows": 10,
+          Plans: [{ "Node Type": "Index Scan", "Plan Rows": 100, "Actual Rows": 5000 }],
+        },
+      },
+    ];
+    const { queryByText } = render(<VisualExplain plan={plan} />);
+    expect(queryByText("Estimate Mismatch")).not.toBeNull();
+    expect(queryByText("Expected 100 rows, got 5.0K. Statistics may be outdated.")).not.toBeNull();
+  });
+
+  test("reports a downward estimate mismatch when there is no Limit", () => {
+    const plan: ExplainPlanResult[] = [{ Plan: { "Node Type": "Index Scan", "Plan Rows": 25000, "Actual Rows": 10 } }];
+    const { queryByText } = render(<VisualExplain plan={plan} />);
+    expect(queryByText("Estimate Mismatch")).not.toBeNull();
+  });
+
+  test.each([
+    ["Hash", undefined],
+    ["Aggregate", "Plain"],
+    ["Aggregate", "Hashed"],
+  ])("reports a scan's mismatch below Limit and %s (%s)", (nodeType, strategy) => {
+    const plan: ExplainPlanResult[] = [
+      {
+        Plan: {
+          "Node Type": "Limit",
+          "Plan Rows": 10,
+          "Actual Rows": 10,
+          Plans: [
+            {
+              "Node Type": nodeType,
+              Strategy: strategy,
+              "Plan Rows": 50000,
+              "Actual Rows": 10,
+              Plans: [{ "Node Type": "Seq Scan", "Plan Rows": 25000, "Actual Rows": 10 }],
+            },
+          ],
+        },
+      },
+    ];
+    const { queryByText, getAllByText } = render(<VisualExplain plan={plan} />);
+    expect(getAllByText("Estimate Mismatch")).toHaveLength(1);
+    expect(queryByText("Expected 25.0K rows, got 10. Statistics may be outdated.")).not.toBeNull();
+  });
+
+  test.each([
+    ["Result", undefined],
+    ["Aggregate", "Sorted"],
+    ["Hash Join", undefined],
+  ])("carries Limit context through streaming %s (%s)", (nodeType, strategy) => {
+    const plan: ExplainPlanResult[] = [
+      {
+        Plan: {
+          "Node Type": "Limit",
+          "Plan Rows": 10,
+          "Actual Rows": 10,
+          Plans: [
+            {
+              "Node Type": nodeType,
+              Strategy: strategy,
+              "Plan Rows": 25000,
+              "Actual Rows": 10,
+              Plans: [{ "Node Type": "Index Scan", "Plan Rows": 25000, "Actual Rows": 10 }],
+            },
+          ],
+        },
+      },
+    ];
+    const { queryByText } = render(<VisualExplain plan={plan} />);
+    expect(queryByText("Estimate Mismatch")).toBeNull();
+  });
+
+  test("a nested Limit stops its scan even below a blocking Sort", () => {
+    const plan: ExplainPlanResult[] = [
+      {
+        Plan: {
+          "Node Type": "Sort",
+          "Plan Rows": 10,
+          "Actual Rows": 10,
+          Plans: [
+            {
+              "Node Type": "Limit",
+              "Plan Rows": 10,
+              "Actual Rows": 10,
+              Plans: [{ "Node Type": "Index Scan", "Plan Rows": 25000, "Actual Rows": 10 }],
+            },
+          ],
+        },
+      },
+    ];
+    const { queryByText } = render(<VisualExplain plan={plan} />);
+    expect(queryByText("Estimate Mismatch")).toBeNull();
+  });
+
   test('shows "Query looks good" for healthy plan', () => {
     const { queryByText } = render(<VisualExplain plan={healthyPlan} />);
     expect(queryByText("Query looks good")).not.toBeNull();

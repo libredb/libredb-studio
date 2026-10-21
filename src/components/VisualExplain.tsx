@@ -119,7 +119,7 @@ function analyzePlan(plan: ExplainPlanResult[]): PlanAnalysis {
   const executed = rootPlan !== undefined && wasExecuted(rootPlan);
 
   // Recursive node analysis
-  function analyzeNode(node: ExplainPlanNode, depth: number = 0) {
+  function analyzeNode(node: ExplainPlanNode, depth: number = 0, stoppedByLimit: boolean = false) {
     if (!node) return;
     nodeCount++;
 
@@ -147,7 +147,7 @@ function analyzePlan(plan: ExplainPlanResult[]): PlanAnalysis {
     // Check for row estimate mismatch
     if (planRows > 0 && actualRows > 0) {
       const ratio = actualRows / planRows;
-      if (ratio > 10 || ratio < 0.1) {
+      if (ratio > 10 || (ratio < 0.1 && !stoppedByLimit)) {
         warnings.push({
           type: "info",
           title: "Estimate Mismatch",
@@ -178,8 +178,14 @@ function analyzePlan(plan: ExplainPlanResult[]): PlanAnalysis {
       });
     }
 
-    // Recurse into children
-    (node["Plans"] || []).forEach((child) => analyzeNode(child, depth + 1));
+    // A Limit can stop streaming descendants early. Blocking nodes still consume
+    // their whole input, even when the Limit stops reading their output.
+    const blocksInput =
+      nodeType === "Sort" ||
+      nodeType === "Hash" ||
+      (nodeType === "Aggregate" && (node.Strategy === "Plain" || node.Strategy === "Hashed"));
+    const childrenStoppedByLimit = nodeType === "Limit" || (stoppedByLimit && !blocksInput);
+    (node["Plans"] || []).forEach((child) => analyzeNode(child, depth + 1, childrenStoppedByLimit));
   }
 
   if (rootPlan) {
