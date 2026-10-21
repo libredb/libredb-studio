@@ -3,7 +3,7 @@
 # requirements.txt from this file; change this file, never that one.
 annotated-types==0.8.0
 anyio==4.15.1
-certifi==2026.7.22
+certifi==2026.10.19
 grpcio==1.84.0
 h11==0.16.0
 h2==4.4.1
