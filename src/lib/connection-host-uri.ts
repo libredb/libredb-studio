@@ -1,6 +1,6 @@
 /**
  * An `http://` or `https://` address typed or pasted into the connection dialog's Host box, read into a host
- * and a port for an engine that declares `hostAcceptsUri` (src/lib/db-ui-config.ts).
+ * and a port for an engine that declares `hostAcceptsUri` (src/lib/db/connection-form.ts).
  *
  * Pure and browser-safe: it imports types only, because the dialog runs it in the browser. That is why it
  * cannot call `validateHost` and `validatePort` from src/lib/db/http/endpoint.ts, which import `node:net` and

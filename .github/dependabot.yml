@@ -117,6 +117,35 @@ updates:
       # decision to make in a browser, not a version bump.
       - dependency-name: "@zumer/snapdom"
 
+  # ------------------------------------------------------- VS Code extension
+  # vscode-extension/ is an npm package with its own package-lock.json (vsce
+  # reads dependencies only through npm or Yarn 1), so it is the one place the
+  # `npm` ecosystem is right. No groups: its packages are build and test tools,
+  # and each bump is reviewed on its own (docs/TOOLCHAIN.md, "VS Code
+  # extension"). The VS Code builds the tests run on, in
+  # test/vscode-versions.json, are bumped by hand; the scheduled Insiders run
+  # (.github/workflows/vscode-extension-insiders.yml) is the early warning.
+  - package-ecosystem: "npm"
+    directory: "/vscode-extension"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Istanbul"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+    ignore:
+      # Pinned to the engines.vscode floor: vsce refuses typings above it, so
+      # it moves only with the floor.
+      - dependency-name: "@types/vscode"
+      # Both runtimes, the job's Node and VS Code's Electron, are Node 24.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+
   # ------------------------------------------------------------ GitHub Actions
   # Actions are SHA-pinned with the human-readable tag in a trailing comment
   # (`uses: actions/checkout@de0fac2... # v6`). Dependabot moves both together,

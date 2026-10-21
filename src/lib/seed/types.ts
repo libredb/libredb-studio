@@ -197,7 +197,7 @@ export const SeedConnectionSchema = z
     // Read no catalog when this connection opens (#765). Declarable in the seed file
     // because the deployment that ships a 40,000-object owner is the one that knows, and
     // a managed connection is read-only in the UI, so nobody could tick the box there.
-    // Unlike the maps in `connection-secrets.ts` and `use-connection-payload.ts`, this
+    // Unlike the maps in `secret-fields.ts` and `use-connection-payload.ts`, this
     // schema fails SILENTLY when a field is missing: zod strips an unknown key, so a seed
     // file setting it would round-trip as `undefined` with no error anywhere.
     skipObjectScan: z.boolean().optional(),

@@ -38,7 +38,10 @@ beforeAll(async () => {
   tcpPort = tcpAddress.port;
   tcp.unref();
 
-  const key = utils.generateKeyPairSync("ed25519", {});
+  // ECDSA rather than ed25519: an ed25519 key from ssh2 1.17.0's own generator fails ssh2's own parser about
+  // 4 times in 1,000 ("Malformed OpenSSH private key", measured on Node 24.14 and Bun 1.4.2), which failed this
+  // file at random; 3,000 ECDSA keys all parsed.
+  const key = utils.generateKeyPairSync("ecdsa", { bits: 256 });
   ssh = new SshServer({ hostKeys: [key.private] }, (client) => {
     client.on("authentication", (ctx) => (ctx.method === "password" ? ctx.accept() : ctx.reject(["password"])));
     client.on("ready", () => {

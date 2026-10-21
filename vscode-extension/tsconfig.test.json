@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["../src/*"],
+      "vscode": ["./test/fakes/vscode.ts"],
+      "sonner": ["./src/webview/shims/sonner.ts"],
+      "@/components/copy-button": ["./src/webview/shims/copy-button.ts"]
+    }
+  }
+}

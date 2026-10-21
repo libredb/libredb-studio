@@ -1,5 +1,6 @@
 /**
- * `DatabaseProvider.testConnectionWarnings()` has exactly one caller: `POST /api/db/test-connection`.
+ * `DatabaseProvider.testConnectionWarnings()` has exactly one caller: `testConnection` (`src/lib/api/test-connection.ts`),
+ * which `POST /api/db/test-connection` and the VS Code extension's `connection/test` share.
  *
  * The method exists so a provider can run probes that cost requests of their own, and only a
  * user who asked pays for them, through Test Connection or the connection dialog's Save.
@@ -19,7 +20,7 @@ import path from "node:path";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const METHOD = "testConnectionWarnings";
-const THE_CALLER = "src/app/api/db/test-connection/route.ts";
+const THE_CALLER = "src/lib/api/test-connection.ts";
 
 /**
  * A member declaration or definition of the method at the start of a line, which is not a use of
@@ -130,7 +131,7 @@ describe(`${METHOD}() is called from ${THE_CALLER} alone`, () => {
     expect(declarations).toMatch(/^\s*testConnectionWarnings\?\(\): Promise<QueryWarning\[\]>;$/m);
   });
 
-  test("every file that uses it is the Test Connection route", () => {
+  test("every file that uses it is the Test Connection core", () => {
     const users = files.filter((file) => usesOf(readFileSync(path.join(ROOT, file), "utf8")).length > 0);
     expect(users).toEqual([THE_CALLER]);
   });

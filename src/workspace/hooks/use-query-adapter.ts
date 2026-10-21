@@ -575,8 +575,9 @@ export function useQueryAdapter({
                 // OFFSET 100` on a hundred-row table with `rows: 0, fields: []`. Taking the
                 // page's own list left the grid holding its hundred rows under zero columns
                 // - the strip read "100 rows / 0 columns" and the table rendered
-                // header-less, cell-less stripes. The standalone hook carries the same
-                // guard, for the same reason (#816).
+                // header-less, cell-less stripes. The standalone hook applies the same
+                // guard, for the same reason (#816), through `appendResultPage` in
+                // `src/lib/results/append-page.ts`.
                 fields: result.fields.length > 0 ? result.fields : (t.result?.fields ?? []),
                 rowCount: newAllRows.length,
                 executionTime: t.result?.executionTime || 0,

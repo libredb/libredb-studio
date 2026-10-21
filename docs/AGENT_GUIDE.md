@@ -952,9 +952,10 @@ Stated plainly, because a surface that hides its edges is the one that surprises
   are refused before the database is reached. See [`docs/SECURITY.md`](./SECURITY.md) row 3.4.
 - **That pipeline is the agent's, not the application's.** It is worth saying plainly, because the
   wording used to imply otherwise: a statement you run yourself in the editor does not pass through
-  it. `/api/db/query` calls the provider directly (`src/app/api/db/query/route.ts:44`), so an editor
-  query is neither policy-checked nor written to the agent audit trail. The controls above describe
-  what the agent is held to, not a guarantee the whole product enforces.
+  it. `/api/db/query` runs the statement through `runEditorQuery` (`src/lib/api/editor-query.ts`),
+  which calls the provider directly, so an editor query is neither policy-checked nor written to the
+  agent audit trail. The controls above describe what the agent is held to, not a guarantee the whole
+  product enforces.
 - **Agent mode runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes and MongoDB only.** The read-only profile has to
   be implemented by the provider, and only those providers do: `queryReadOnly` exists on `postgres.ts`,
   `sqlite.ts`, `duckdb/index.ts`, `mssql.ts`, `mysql.ts`, `kubernetes/index.ts` and `mongodb/index.ts`.

@@ -352,7 +352,7 @@ export interface TunnelFarEnd {
  * `keyof DatabaseConnection` is a WRITE LIST with three exhaustive readers -
  * `FIELD_OWNERSHIP` in `src/hooks/use-connection-form.ts`, `CONNECTION_RELEVANCE` in
  * `src/hooks/use-connection-payload.ts` and `CONNECTION_FIELDS` in
- * `src/lib/storage/connection-secrets.ts` - and each of them answers a question about what a
+ * `src/lib/storage/secret-fields.ts` - and each of them answers a question about what a
  * USER may fill in, send and have stored. This value is none of those things, so adding it
  * there would have made all three classify something they never see. Intersecting instead keeps
  * the optional property assignable in both directions: a plain `DatabaseConnection` satisfies
@@ -617,7 +617,7 @@ export interface DatabaseConnection {
    * from an empty secret. OpenSearch refuses the pair: nothing has measured whether
    * its security plugin accepts the same scheme.
    *
-   * `apiKeyId` is classified `secret` in connection-secrets.ts, not `public` the way
+   * `apiKeyId` is classified `secret` in secret-fields.ts, not `public` the way
    * `user` is: unlike a name an operator chose, it is one generated, opaque half of a
    * credential pair, and leaving it readable narrows what a leak has to guess.
    */
@@ -635,7 +635,7 @@ export interface DatabaseConnection {
    * carries a whole key file's JSON in `password`.
    *
    * WHY NOT `password`. It is not a secret. `password` is classified `secret` in
-   * `connection-secrets.ts`, which would mask the map in the dialog and store it as a credential,
+   * `secret-fields.ts`, which would mask the map in the dialog and store it as a credential,
    * and a reader cannot correct a document they cannot see.
    *
    * WHY `resolution` IN `CONNECTION_RELEVANCE`, and it is NOT the summary criterion there. That

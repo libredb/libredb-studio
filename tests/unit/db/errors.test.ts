@@ -517,6 +517,56 @@ describe("mapDatabaseError", () => {
 });
 
 /**
+ * `mssql` and `tedious` end a cancelled request with `RequestError('Canceled.', 'ECANCEL')`, a sentence that holds
+ * none of the cancellation words, so the cancel is read from the driver's code. No other installed driver raises the
+ * code `ECANCEL`; the POSIX `ECANCELED` is a different string and is not read as one.
+ */
+describe("mapDatabaseError: a cancel read from the driver's code", () => {
+  const shaped = (message: string, fields: Record<string, unknown>) => Object.assign(new Error(message), fields);
+
+  test("an ECANCEL error shaped like the mssql RequestError maps to QueryCancelledError", () => {
+    const error = Object.assign(shaped("Canceled.", { code: "ECANCEL" }), { name: "RequestError" });
+    const result = mapDatabaseError(error, "mssql", "WAITFOR DELAY '00:00:30'");
+    expect(result).toBeInstanceOf(QueryCancelledError);
+    expect(result.message).toBe("Query was cancelled");
+    expect(result.query).toBe("WAITFOR DELAY '00:00:30'");
+  });
+
+  test("the bare word Canceled. without the code stays a generic DatabaseError", () => {
+    const result = mapDatabaseError(new Error("Canceled."), "mssql");
+    expect(result).not.toBeInstanceOf(QueryCancelledError);
+    expect(result).toBeInstanceOf(DatabaseError);
+  });
+
+  test("the POSIX ECANCELED system code is not read as a query cancel", () => {
+    const result = mapDatabaseError(shaped("operation canceled", { code: "ECANCELED" }), "mssql");
+    expect(result).not.toBeInstanceOf(QueryCancelledError);
+  });
+
+  test.each([
+    ["canceling statement due to user request", "postgres"],
+    ["Query execution was interrupted", "mysql"],
+    ["query was cancelled by the operator", "clickhouse"],
+  ] as const)("the word-based cancel %p still maps to QueryCancelledError", (message, provider) => {
+    expect(mapDatabaseError(new Error(message), provider)).toBeInstanceOf(QueryCancelledError);
+  });
+
+  test("a PostgreSQL statement timeout keeps its TimeoutError", () => {
+    const error = shaped("canceling statement due to statement timeout", { code: "57014" });
+    expect(mapDatabaseError(error, "postgres")).toBeInstanceOf(TimeoutError);
+  });
+
+  test("the SQL Server deadline's own budget QueryError passes through unchanged", () => {
+    const budget = new QueryError(
+      "Read-only execution exceeded its time budget: the statement was cancelled after 500 ms",
+      "mssql",
+      "SELECT 1",
+    );
+    expect(mapDatabaseError(budget, "mssql")).toBe(budget);
+  });
+});
+
+/**
  * A statement's own fault is read from the driver's code fields, never its words (#1427). Each
  * shape below is the one the installed driver raises, measured on 2026-10-04: `pg` against
  * PostgreSQL 18.6 and CockroachDB v26.3.2, `mysql2` against MySQL 26.7.0 and TiDB v8.5.8,

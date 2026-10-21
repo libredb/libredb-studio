@@ -1,0 +1,334 @@
+{
+  "name": "libredb-studio",
+  "publisher": "libredb",
+  "displayName": "LibreDB Studio",
+  "description": "Browse and query PostgreSQL, SQL Server, MySQL and MongoDB databases with LibreDB Studio.",
+  "version": "0.1.1",
+  "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/libredb/libredb-studio",
+    "directory": "vscode-extension"
+  },
+  "engines": {
+    "vscode": "^1.123.0"
+  },
+  "main": "./dist/extension.js",
+  "extensionDependencies": [
+    "vscode.sql"
+  ],
+  "icon": "media/icon.png",
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "PostgreSQL",
+    "SQL Server",
+    "MySQL",
+    "MongoDB",
+    "SQL"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "%untrustedWorkspaces.description%"
+    }
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "libredb.showLog",
+        "title": "Show Log",
+        "category": "LibreDB"
+      },
+      {
+        "command": "libredb.addConnection",
+        "title": "Add Connection",
+        "category": "LibreDB",
+        "icon": "$(add)"
+      },
+      {
+        "command": "libredb.removeConnection",
+        "title": "Remove Connection",
+        "category": "LibreDB"
+      },
+      {
+        "command": "libredb.refresh",
+        "title": "Refresh",
+        "category": "LibreDB",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "libredb.newQuery",
+        "title": "New Query",
+        "category": "LibreDB",
+        "icon": "$(file-code)"
+      },
+      {
+        "command": "libredb.selectRows",
+        "title": "Select Rows",
+        "category": "LibreDB",
+        "icon": "$(play)"
+      },
+      {
+        "command": "libredb.runQuery",
+        "title": "Run Query",
+        "category": "LibreDB",
+        "icon": "$(play)"
+      },
+      {
+        "command": "libredb.cancelQuery",
+        "title": "Cancel Query",
+        "category": "LibreDB",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "libredb.changeConnection",
+        "title": "Change Connection",
+        "category": "LibreDB"
+      }
+    ],
+    "configuration": {
+      "title": "LibreDB",
+      "properties": {
+        "libredb.connections": {
+          "type": "array",
+          "scope": "application",
+          "default": [],
+          "markdownDescription": "Database connections, without passwords or connection strings: LibreDB keeps those in VS Code's secret storage on each machine. Add one with **LibreDB: Add Connection**.",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "name",
+              "type",
+              "createdAt"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,64}$"
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "type": {
+                "type": "string"
+              },
+              "host": {
+                "type": "string"
+              },
+              "port": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              },
+              "user": {
+                "type": "string"
+              },
+              "database": {
+                "type": "string"
+              },
+              "instanceName": {
+                "type": "string"
+              },
+              "authSource": {
+                "type": "string"
+              },
+              "ssl": {
+                "type": "object",
+                "required": [
+                  "mode"
+                ],
+                "properties": {
+                  "mode": {
+                    "type": "string"
+                  }
+                }
+              },
+              "createdAt": {
+                "type": "string"
+              },
+              "secretFields": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "libredb.query.rowLimit": {
+          "type": "integer",
+          "default": 500,
+          "minimum": 1,
+          "maximum": 10000,
+          "scope": "application",
+          "description": "The number of rows each page of query results holds."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "libredb",
+          "title": "LibreDB",
+          "icon": "media/libredb.svg"
+        }
+      ],
+      "panel": [
+        {
+          "id": "libredbResults",
+          "title": "LibreDB Results",
+          "icon": "media/libredb.svg"
+        }
+      ]
+    },
+    "views": {
+      "libredb": [
+        {
+          "id": "libredb.connections",
+          "name": "Connections"
+        }
+      ],
+      "libredbResults": [
+        {
+          "id": "libredb.results",
+          "name": "Results",
+          "type": "webview"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "libredb.connections",
+        "contents": "No connections yet.\n[Add Connection](command:libredb.addConnection)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "libredb.addConnection",
+          "when": "view == libredb.connections",
+          "group": "navigation@1"
+        },
+        {
+          "command": "libredb.refresh",
+          "when": "view == libredb.connections",
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "libredb.newQuery",
+          "when": "view == libredb.connections && viewItem =~ /\\bnode=(connection|container)\\b/",
+          "group": "inline@1"
+        },
+        {
+          "command": "libredb.selectRows",
+          "when": "view == libredb.connections && viewItem =~ /\\brole=relation\\b/",
+          "group": "inline@1"
+        },
+        {
+          "command": "libredb.newQuery",
+          "when": "view == libredb.connections && viewItem =~ /\\bnode=(connection|container|folder|object)\\b/",
+          "group": "1_query@1"
+        },
+        {
+          "command": "libredb.selectRows",
+          "when": "view == libredb.connections && viewItem =~ /\\brole=relation\\b/",
+          "group": "1_query@2"
+        },
+        {
+          "command": "libredb.refresh",
+          "when": "view == libredb.connections && viewItem =~ /\\bnode=(connection|container|folder|object)\\b/",
+          "group": "8_refresh@1"
+        },
+        {
+          "command": "libredb.removeConnection",
+          "when": "view == libredb.connections && viewItem =~ /\\bnode=(connection|invalid)\\b/",
+          "group": "9_manage@1"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "libredb.runQuery",
+          "when": "resource in libredb.boundDocuments && resource not in libredb.runningQueries && !isInDiffEditor",
+          "group": "navigation@1"
+        },
+        {
+          "command": "libredb.cancelQuery",
+          "when": "resource in libredb.cancellableQueries && !isInDiffEditor",
+          "group": "navigation@1"
+        },
+        {
+          "command": "libredb.changeConnection",
+          "when": "resource in libredb.boundDocuments && !isInDiffEditor",
+          "group": "1_libredb@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "libredb.selectRows",
+          "when": "false"
+        },
+        {
+          "command": "libredb.runQuery",
+          "when": "editorIsOpen"
+        },
+        {
+          "command": "libredb.cancelQuery",
+          "when": "resource in libredb.cancellableQueries"
+        },
+        {
+          "command": "libredb.changeConnection",
+          "when": "editorIsOpen"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc --noEmit -p .",
+    "test:unit": "c8 mocha",
+    "coverage:check": "node ../scripts/check-coverage.mjs coverage/lcov.info",
+    "test:integration": "mocha --config test/integration/.mocharc.json --require test/setup/register.cjs",
+    "test:e2e": "node esbuild.mjs --e2e-tests && node scripts/coexistence-extensions.mjs && vscode-test",
+    "test:browser": "playwright test -c playwright.config.mjs",
+    "test:vsix": "node scripts/vsix-install-check.mjs",
+    "package": "node scripts/package.mjs",
+    "vscode:prepublish": "npm run build"
+  },
+  "devDependencies": {
+    "@happy-dom/global-registrator": "21.0.3",
+    "@playwright/test": "1.64.1",
+    "@sinonjs/fake-timers": "15.4.0",
+    "@tailwindcss/cli": "4.3.3",
+    "@types/mocha": "10.0.10",
+    "@types/node": "24.19.2",
+    "@types/vscode": "1.120.0",
+    "@vscode/test-cli": "0.0.15",
+    "@vscode/test-electron": "3.1.0",
+    "@vscode/vsce": "4.0.0",
+    "c8": "12.0.0",
+    "esbuild": "0.28.2",
+    "mocha": "12.0.3",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2",
+    "yaml": "2.9.1",
+    "yauzl": "3.4.0"
+  },
+  "//overrides": "@vscode/test-cli 0.0.15, the latest release, asks for mocha ^11.7.6, and both mocha releases in that range depend on serialize-javascript ^6.0.2 and diff ^7.0.0, which carry GHSA-5c6j-r48x-rmvq (remote code execution through RegExp.flags and Date.prototype.toISOString(), fixed in serialize-javascript 7.0.3), GHSA-qj8w-gfj5-8c6v (CPU exhaustion through crafted array-like objects, fixed in 7.0.5) and GHSA-73rr-hh4g-fpgx (a denial of service in diff's parsePatch and applyPatch, fixed in 8.0.3), with no fix inside either range. mocha 12.0.3, the direct pin, takes serialize-javascript ^7.1.1 and diff ^9.0.0, and this entry hands @vscode/test-cli that same mocha through the $mocha reference, so one copy runs the unit, integration and e2e legs and follows the pin. mocha 12 is outside test-cli's range, so it was verified where test-cli drives Mocha, inside the extension host: the e2e leg passes, full and smoke, on both builds of test/vscode-versions.json. test-cli's runner needs only new Mocha(), addFile() and run(), and its JSON stream reporter Mocha.Runner.constants, all of which mocha 12 keeps. None of these packages reaches the VSIX: .vscodeignore lets in only dist/extension.js, dist/backend.js, dist/webview/results.js, dist/webview/results.css, media/icon.png, media/libredb.svg, media/engines/** and the package's own text files. Remove the entry once a @vscode/test-cli release asks for mocha 12: microsoft/vscode-test-cli#118 made that change on 2026-08-31 and is not released yet.",
+  "overrides": {
+    "@vscode/test-cli": {
+      "mocha": "$mocha"
+    }
+  },
+  "dependencies": {
+    "vscode-jsonrpc": "9.0.3"
+  }
+}

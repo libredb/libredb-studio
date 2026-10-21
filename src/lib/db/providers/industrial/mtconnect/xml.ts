@@ -420,7 +420,7 @@ export interface MtcObservation {
 }
 
 export type MtcStreamResult =
-  | { readonly ok: true; readonly count: number }
+  | { readonly ok: true; readonly root: string; readonly count: number }
   | { readonly ok: false; readonly reason: MtcXmlRefusal };
 
 const WRAPPERS = new Set(["MTConnectStreams", "Header", "Streams", "DeviceStream", "ComponentStream"]);
@@ -439,6 +439,12 @@ const WRAPPERS = new Set(["MTConnectStreams", "Header", "Streams", "DeviceStream
  * observation the four inherited fields; a caller building rows never has to look upwards.
  *
  * `onObservation` returning `false` stops the walk, which is how a row cap ends a read early.
+ *
+ * The root is reported as soon as the scanner opens it, and only a `MTConnectStreams` document is
+ * walked: any other root emits nothing. That is what lets a caller tell an `MTConnectError` answer
+ * or a proxy's page from a stream in this one pass, instead of building the whole answer as a tree
+ * first just to read its root (#1787). The scanner still runs to the end of a document it does not
+ * walk, so a result that is `ok` always means the whole document was well-formed.
  */
 export function streamMtconnectObservations(
   bytes: Uint8Array,
@@ -449,6 +455,7 @@ export function streamMtconnectObservations(
     const text = decode(bytes);
     refuseDeclarations(text);
 
+    let root: string | undefined;
     let device: { name?: string; uuid?: string } = {};
     let component: { type?: string; name?: string; id?: string } = {};
     let count = 0;
@@ -457,7 +464,12 @@ export function streamMtconnectObservations(
     const open: Open[] = [];
 
     const sink: Sink = {
-      open(name, attributes) {
+      open(name, attributes, depth) {
+        if (depth === 1) {
+          root = name;
+          // Not a stream of observations: nothing in it is handed out as one.
+          if (name !== "MTConnectStreams") stopped = true;
+        }
         if (stopped) return;
         if (open.length === 0 && WRAPPERS.has(name)) {
           if (name === "DeviceStream") device = { name: attributes.name, uuid: attributes.uuid };
@@ -509,7 +521,8 @@ export function streamMtconnectObservations(
     };
 
     new Scanner(text, bounds, sink).run();
-    return { ok: true, count };
+    if (!root) throw new Refused("malformed");
+    return { ok: true, root, count };
   } catch (error) {
     if (error instanceof Refused) return { ok: false, reason: error.reason };
     throw error;

@@ -87,6 +87,7 @@ const info = analyzeQuery('SELECT * FROM users WHERE active = true');
 const result = applyQueryLimit('SELECT * FROM users', 500, 0);
 // Returns: { sql: 'SELECT * FROM users LIMIT 500', wasLimited: true, ... }
 // (OFFSET is only appended when offset > 0, e.g. applyQueryLimit(sql, 500, 500) -> '... LIMIT 500 OFFSET 500')
+// A limit or offset that is not a non-negative safe integer (isRowBound) throws a QueryError
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
 ### Supported Query Types
@@ -1011,9 +1012,11 @@ src/
 ├── lib/sql/
 │   └── result-order.ts       # Whether a statement orders its OWN result
 ├── lib/query-generators.ts   # The tree click's statement — no row bound of its own
+├── lib/results/
+│   └── append-page.ts        # appendResultPage: the Load More append rule (standalone hook; type-only imports so the VS Code webview can share it)
 ├── hooks/
 │   ├── use-tab-manager.ts    # PREVIEW_PAGE_SIZE, sent as an execution option
-│   └── use-query-execution.ts # Append, currentOffset, Load More (standalone)
+│   └── use-query-execution.ts # currentOffset, Load More (standalone)
 ├── workspace/hooks/
 │   └── use-query-adapter.ts  # The same, for the embedded shell
 ├── app/api/db/

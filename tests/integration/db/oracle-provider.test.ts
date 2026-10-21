@@ -1597,6 +1597,30 @@ describe("OracleProvider", () => {
       expect(result.wasLimited).toBe(true);
     });
 
+    // A limit and an offset are held to the rule the shared limiter holds them to (`assertRowBounds`).
+    describe("a limit or an offset that is not a row bound", () => {
+      const values: Array<[string, unknown]> = [
+        ["a numeric string", "10"],
+        ["a fraction", 1.5],
+        ["a negative number", -1],
+        ["null", null],
+        ["an array", [10]],
+        ["the first integer past Number.MAX_SAFE_INTEGER", 2 ** 53],
+      ];
+
+      test.each(values)("refuses %s as the limit with a QueryError", (_name, limit) => {
+        const run = () => provider.prepareQuery("SELECT * FROM USERS", { limit: limit as number });
+        expect(run).toThrow(QueryError);
+        expect(run).toThrow("The row limit must be a non-negative integer");
+      });
+
+      test.each(values)("refuses %s as the offset with a QueryError", (_name, offset) => {
+        const run = () => provider.prepareQuery("SELECT * FROM USERS", { offset: offset as number });
+        expect(run).toThrow(QueryError);
+        expect(run).toThrow("The row offset must be a non-negative integer");
+      });
+    });
+
     test("non-SELECT query is unchanged", () => {
       const sql = "INSERT INTO USERS (NAME) VALUES ('test')";
       const result = provider.prepareQuery(sql);

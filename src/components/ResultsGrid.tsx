@@ -3,9 +3,11 @@
 import React, { useMemo, useState, useRef, useCallback, useEffect } from "react";
 import { QueryResult, type DatabaseType } from "@/lib/types";
 import {
+  type CellSelectionRange,
   type ColumnDef,
   type SortFn,
   type SortingState,
+  cellSelectionFeature,
   columnResizingFeature,
   columnSizingFeature,
   columnVisibilityFeature,
@@ -19,7 +21,7 @@ import {
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/utils";
-import { ArrowUpDown, ArrowUp, ArrowDown, Eye, Funnel, Lock, LockOpen, Rows3 } from "lucide-react";
+import { ArrowUpDown, ArrowUp, ArrowDown, Eye, Funnel, Grid3x3, Lock, LockOpen, Rows3 } from "lucide-react";
 import { toast } from "sonner";
 import {
   type MaskingConfig,
@@ -44,10 +46,12 @@ import {
   renderContextFor,
 } from "@/components/results-grid/utils";
 import {
-  getHeaderFitColumnSize,
-  RESULT_COLUMN_MAX_SIZE,
+  getContentFitColumnSize,
   RESULT_COLUMN_MIN_SIZE,
+  RESULT_COLUMN_RESIZE_MAX_SIZE,
 } from "@/components/results-grid/column-sizing";
+import { type ClipboardRegion, selectionClipboardText } from "@/components/results-grid/clipboard";
+import { gridKeyCommand, gridKeyTarget, type GridPoint } from "@/components/results-grid/keyboard";
 import { isNumericColumn, numericCellComparator } from "@/components/results-grid/numeric-sort";
 import { hasResultOrder } from "@/lib/sql/result-order";
 import { pageOfferFor } from "@/components/results-grid/page-offer";
@@ -90,6 +94,27 @@ function emptyHeadline(result: QueryResult | undefined): string {
 const ENGINE_WARNINGS_LABEL = "The engine reported:";
 const ROW_DETAIL_COLUMN_ID = "__libredb_row_detail__";
 const ROW_DETAIL_HEADER_TITLE = "Show a row field by field";
+const SELECT_ALL_LABEL = "Select all cells";
+const DESKTOP_ROW_HEIGHT = 36;
+/**
+ * How many rows an initial column width is read from. The first rows are what the reader sees
+ * when the grid opens, and a fixed sample keeps a width from jumping when Load More appends.
+ */
+const CONTENT_FIT_SAMPLE_ROWS = 200;
+/** How much of a value its tooltip carries; enough to read, short of a megabyte in the DOM. */
+const VALUE_TOOLTIP_MAX_LENGTH = 1000;
+// The row-number column: the detail control, its padding, and one 12px monospace digit per place.
+const ROW_GUTTER_CONTROL_WIDTH = 36;
+const ROW_GUTTER_DIGIT_WIDTH = 7.2;
+const ROW_GUTTER_PADDING = 8;
+
+function rowGutterWidth(rowCount: number): number {
+  return Math.ceil(ROW_GUTTER_CONTROL_WIDTH + ROW_GUTTER_PADDING + String(rowCount).length * ROW_GUTTER_DIGIT_WIDTH);
+}
+
+function valueTooltip(text: string): string {
+  return text.length > VALUE_TOOLTIP_MAX_LENGTH ? `${text.slice(0, VALUE_TOOLTIP_MAX_LENGTH)}…` : text;
+}
 
 /**
  * A column id for the row detail control that no field of this result already carries.
@@ -114,12 +139,17 @@ function rowDetailColumnId(fields: string[]): string {
  * - `columnSizingFeature` + `columnResizingFeature` - the drag-to-resize handles
  *   (resizing builds on sizing, and the library validates that pairing)
  * - `columnVisibilityFeature` - `row.getVisibleCells()` in the row renderer
+ * - `cellSelectionFeature` - press, Shift, Ctrl and drag selection of cell rectangles,
+ *   the spreadsheet behaviour the grid's readers bring from Excel and DataGrip; the
+ *   clipboard text and the keyboard map stay here, since what a copied cell reads as
+ *   (its mask, its whole value) is this grid's decision
  *
  * Declared at module scope rather than inside the component because the object
  * is the table's static shape: rebuilding it per render would rebuild the
  * feature set on every keystroke.
  */
 const tableFeatureSet = tableFeatures({
+  cellSelectionFeature,
   columnResizingFeature,
   columnSizingFeature,
   columnVisibilityFeature,
@@ -483,12 +513,13 @@ export function ResultsGrid({
     [copyToClipboard, effectiveMaskingEnabled, result.fields, revealedCells, sensitiveColumns],
   );
 
-  const renderCopyMenu = (row: Record<string, unknown>, rowIndex: number) => {
+  const renderCopyMenu = (row: Record<string, unknown>, rowIndex: number, selectionItems?: React.ReactNode) => {
     const field = contextCell?.rowIndex === rowIndex ? contextCell.field : null;
 
     return (
       <ContextMenuContent>
         {field !== null && <ContextMenuItem onClick={() => copyCell(row, rowIndex, field)}>Copy Cell</ContextMenuItem>}
+        {selectionItems}
         <ContextMenuItem onClick={() => copyRow(row, rowIndex)}>Copy Row as JSON</ContextMenuItem>
       </ContextMenuContent>
     );
@@ -562,6 +593,45 @@ export function ResultsGrid({
     return sortFns;
   }, [effectiveMaskingEnabled, sensitiveColumns]);
 
+  /**
+   * The text each of `rows` shows in `field`, for measuring a column.
+   *
+   * A masked column is measured by its mask, as it is filtered and sorted (#1477, #1491): a width
+   * read off the clear value would tell the length of what the mask hides.
+   */
+  const cellDisplayTexts = useCallback(
+    (rows: readonly Record<string, unknown>[], field: string): string[] => {
+      const pattern = effectiveMaskingEnabled ? sensitiveColumns.get(field) : undefined;
+      const context = renderContextFor(result.vectorColumns, field);
+      return rows.map((row) => {
+        const value = Object.hasOwn(row, field) ? row[field] : undefined;
+        if (pattern && value !== null && value !== undefined) return maskValueByPattern(value, pattern);
+        return formatCellValue(value, context).display;
+      });
+    },
+    [effectiveMaskingEnabled, sensitiveColumns, result.vectorColumns],
+  );
+
+  /** The width each field opens at: its header or its widest sampled value, whichever is wider. */
+  const initialColumnSizes = useMemo(() => {
+    const sample = result.rows.slice(0, CONTENT_FIT_SAMPLE_ROWS);
+    const sizes = new Map<string, number>();
+    for (const field of result.fields) {
+      sizes.set(
+        field,
+        getContentFitColumnSize(
+          field,
+          declaredTypeOf(result.columnTypes, field),
+          effectiveMaskingEnabled && sensitiveColumns.has(field),
+          cellDisplayTexts(sample, field),
+        ),
+      );
+    }
+    return sizes;
+  }, [result.rows, result.fields, result.columnTypes, effectiveMaskingEnabled, sensitiveColumns, cellDisplayTexts]);
+
+  const tableContainerRef = useRef<HTMLDivElement>(null);
+
   const columns = useMemo<ColumnDef<typeof tableFeatureSet, Record<string, unknown>>[]>(() => {
     // `truncate` carries its own `white-space: nowrap`, so wrapping has to replace it here,
     // on the element holding the value, not only on the cell around it.
@@ -579,7 +649,18 @@ export function ResultsGrid({
      */
     const detailColumn: ColumnDef<typeof tableFeatureSet, Record<string, unknown>> = {
       id: detailColumnId,
-      header: () => <Rows3 strokeWidth={1.5} aria-hidden="true" className="w-3.5 h-3.5" />,
+      // The corner of the grid selects everything, as the corner of a spreadsheet does.
+      header: ({ table }) => (
+        <button
+          type="button"
+          aria-label={SELECT_ALL_LABEL}
+          title={SELECT_ALL_LABEL}
+          className="p-1 rounded text-fg-muted hover:text-brand hover:bg-brand-tint/10 transition-colors"
+          onClick={() => table.selectAllCells()}
+        >
+          <Grid3x3 strokeWidth={1.5} aria-hidden="true" className="w-3.5 h-3.5" />
+        </button>
+      ),
       cell: ({ row }) => (
         <button
           type="button"
@@ -594,11 +675,13 @@ export function ResultsGrid({
           <Rows3 strokeWidth={1.5} className="w-3.5 h-3.5" />
         </button>
       ),
-      size: 36,
-      minSize: 36,
-      maxSize: 36,
+      size: rowGutterWidth(result.rows.length),
+      minSize: rowGutterWidth(result.rows.length),
+      maxSize: rowGutterWidth(result.rows.length),
       enableResizing: false,
       enableSorting: false,
+      // The row number and its control are not data: a selection or a copy never includes them.
+      enableCellSelection: false,
     };
 
     const fieldColumns = result.fields.map<ColumnDef<typeof tableFeatureSet, Record<string, unknown>>>((field) => ({
@@ -636,14 +719,9 @@ export function ResultsGrid({
             className="flex items-center gap-1 select-none group/header w-full"
             ref={activeFilterCol === field ? filterPanelRef : undefined}
           >
-            <button
-              type="button"
-              aria-label={`${field}${declaredType ? `, ${declaredType}` : ""}${
-                column.getIsSorted() ? `, sorted ${column.getIsSorted() === "asc" ? "ascending" : "descending"}` : ""
-              }`}
-              className="flex items-center gap-1 cursor-pointer flex-1 min-w-0 text-left"
-              onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-            >
+            {/* The name is outside the sort control: pressing it selects the column, as a
+                spreadsheet's column letter does (the header cell's press handler). */}
+            <span className="flex items-center gap-1 flex-1 min-w-0 cursor-default">
               <span className="truncate" title={field}>
                 {field}
               </span>
@@ -664,11 +742,24 @@ export function ResultsGrid({
                   <LockOpen strokeWidth={1.5} className="w-3 h-3 text-text-muted shrink-0" />
                 </span>
               )}
-              <div className="flex-shrink-0 opacity-0 group-hover/header:opacity-100 transition-opacity">
-                {column.getIsSorted() === "asc" && <ArrowUp className="w-3 h-3" />}
-                {column.getIsSorted() === "desc" && <ArrowDown strokeWidth={1.5} className="w-3 h-3" />}
-                {!column.getIsSorted() && <ArrowUpDown strokeWidth={1.5} className="w-3 h-3" />}
-              </div>
+            </span>
+            <button
+              type="button"
+              aria-label={`${field}${declaredType ? `, ${declaredType}` : ""}${
+                column.getIsSorted() ? `, sorted ${column.getIsSorted() === "asc" ? "ascending" : "descending"}` : ""
+              }`}
+              title="Sort"
+              className={cn(
+                "shrink-0 p-0.5 rounded transition-colors hover:text-fg-secondary",
+                column.getIsSorted()
+                  ? "text-brand"
+                  : "opacity-0 group-hover/header:opacity-100 focus-visible:opacity-100",
+              )}
+              onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+            >
+              {column.getIsSorted() === "asc" && <ArrowUp className="w-3 h-3" />}
+              {column.getIsSorted() === "desc" && <ArrowDown strokeWidth={1.5} className="w-3 h-3" />}
+              {!column.getIsSorted() && <ArrowUpDown strokeWidth={1.5} className="w-3 h-3" />}
             </button>
             <button
               className={cn(
@@ -823,6 +914,9 @@ export function ResultsGrid({
 
         // Show pending change value
         const { display, className } = formatCellValue(displayValue, renderContextFor(result.vectorColumns, column.id));
+        // The whole value, for a cell its width cuts short; the copy form, so a binary or vector
+        // preview reads in full here too.
+        const tooltip = valueTooltip(formatCellCopy(displayValue, renderContextFor(result.vectorColumns, column.id)));
 
         // No editor is opened unless editing is on: the commit paths above already
         // required it, so without this a cell offered an input whose edit was
@@ -835,7 +929,14 @@ export function ResultsGrid({
               className={cn("w-full", valueFlow, pendingChange && "bg-warning-tint/10 rounded px-0.5")}
               title={editingEnabled ? editRefusal : undefined}
             >
-              <span className={cn(className, pendingChange && "text-warning")}>{display}</span>
+              {/* A refused cell's tooltip is the reason it cannot be edited; the value's own
+                  would sit on top of it wherever the pointer is over the text. */}
+              <span
+                className={cn(className, pendingChange && "text-warning")}
+                title={editingEnabled ? undefined : tooltip}
+              >
+                {display}
+              </span>
             </div>
           );
         }
@@ -848,22 +949,22 @@ export function ResultsGrid({
               setEditValue(pendingChange ? pendingChange.newValue : String(val ?? ""));
             }}
           >
-            <span className={cn(className, pendingChange && "text-warning")}>{display}</span>
+            <span className={cn(className, pendingChange && "text-warning")} title={tooltip}>
+              {display}
+            </span>
           </div>
         );
       },
-      size: getHeaderFitColumnSize(
-        field,
-        declaredTypeOf(result.columnTypes, field),
-        effectiveMaskingEnabled && sensitiveColumns.has(field),
-      ),
+      size: initialColumnSizes.get(field),
       minSize: RESULT_COLUMN_MIN_SIZE,
-      maxSize: RESULT_COLUMN_MAX_SIZE,
+      maxSize: RESULT_COLUMN_RESIZE_MAX_SIZE,
     }));
 
     return [detailColumn, ...fieldColumns];
   }, [
     detailColumnId,
+    initialColumnSizes,
+    result.rows.length,
     wrapText,
     result.fields,
     maskedSortFns,
@@ -939,7 +1040,6 @@ export function ResultsGrid({
     columnResizeMode: "onChange",
   });
 
-  const tableContainerRef = useRef<HTMLDivElement>(null);
   const cardContainerRef = useRef<HTMLDivElement>(null);
   const mobileTableContainerRef = useRef<HTMLDivElement>(null);
 
@@ -971,6 +1071,225 @@ export function ResultsGrid({
     estimateSize: () => 48,
     overscan: 5,
   });
+
+  // A range is stored by its corner ids and drawn over the rows in display order, so new rows, a
+  // sort or a hidden column would redraw the same corners around different cells. The selection
+  // ends with any of them. The table's own `autoResetCellSelection` covers new rows too, but only
+  // on its next row-model pass, which can leave the old range drawn over the new result.
+  // `table` is left out on purpose: the React adapter hands back a new wrapper object on every
+  // render, so naming it would clear the selection on every render.
+  useEffect(() => {
+    table.resetCellSelection(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the rows, sorting and visibility are the triggers; see above.
+  }, [tableData, sorting, columnVisibility]);
+
+  /*
+    The cell editor unmounts on Enter or Escape and leaves focus on the page body, where the
+    arrows would stop moving the selection until the grid is clicked again. Focus is handed
+    back only from there: an edit committed by clicking somewhere else leaves focus where the
+    click put it. Not done in the editor's key handler, because moving focus there blurs the
+    input first, and its blur commits the edit a second time.
+  */
+  const wasEditing = useRef(false);
+  useEffect(() => {
+    if (editingCell !== null) {
+      wasEditing.current = true;
+      return;
+    }
+    if (wasEditing.current && document.activeElement === document.body) tableContainerRef.current?.focus();
+    wasEditing.current = false;
+  }, [editingCell]);
+
+  const rowIndexById = useMemo(() => new Map(rows.map((row, index) => [row.id, index])), [rows]);
+
+  /** Where a range corner sits on screen, as a row position and a position among the visible fields. */
+  const pointOf = (rowId: string, columnId: string): GridPoint | undefined => {
+    const row = rowIndexById.get(rowId);
+    const column = visibleFields.indexOf(columnId);
+    return row === undefined || column < 0 ? undefined : { row, column };
+  };
+
+  const activeRange = (): CellSelectionRange | undefined => table.state.cellSelection.at(-1);
+
+  const rangeBetween = (anchor: GridPoint, focus: GridPoint): CellSelectionRange => ({
+    anchorRowId: rows[anchor.row].id,
+    anchorColumnId: visibleFields[anchor.column],
+    focusRowId: rows[focus.row].id,
+    focusColumnId: visibleFields[focus.column],
+  });
+
+  /**
+   * The selection's rectangles as the text a copy writes, in the order the reader sees.
+   *
+   * Each cell reads through `getCopyCellValue`, the reading Copy Cell has always used: the mask
+   * of a masked cell, a pending edit's new value, and the whole of a binary or vector value
+   * rather than its preview.
+   */
+  const selectionRegions = (withHeaders: boolean): ClipboardRegion[] => {
+    const columnsInOrder = table.getVisibleLeafColumns();
+    return table.getCellSelectionBounds().map((bound) => {
+      const fields = columnsInOrder
+        .slice(bound.minColumnIndex, bound.maxColumnIndex + 1)
+        .map((column) => column.id)
+        .filter((id) => id !== detailColumnId);
+      const regionRows = rows.slice(bound.minRowIndex, bound.maxRowIndex + 1).map((row) => {
+        const sourceIndex = resolveSourceIndex(row.original, row.index);
+        return fields.map((field) => getCopyCellValue(sourceIndex, row.original, field));
+      });
+      return withHeaders ? { headers: fields, rows: regionRows } : { rows: regionRows };
+    });
+  };
+
+  const copySelection = (withHeaders: boolean) => {
+    copyToClipboard(selectionClipboardText(selectionRegions(withHeaders)), "Selection");
+  };
+
+  /**
+   * Ctrl+C / Cmd+C, through the browser's own copy event rather than `navigator.clipboard`:
+   * the event's clipboard works over plain HTTP too, where the API is undefined (#389).
+   * A text box inside the grid (a filter, the cell editor) keeps the browser's copy.
+   */
+  const handleGridCopy = (event: React.ClipboardEvent<HTMLDivElement>) => {
+    if ((event.target as HTMLElement).closest("input, textarea")) return;
+    const count = table.getSelectedCellCount();
+    if (count === 0) return;
+    event.clipboardData.setData("text/plain", selectionClipboardText(selectionRegions(false)));
+    event.preventDefault();
+    toast.success(count === 1 ? "Cell copied to clipboard" : `${count} cells copied to clipboard`);
+  };
+
+  const scrollCellIntoView = (point: GridPoint) => {
+    rowVirtualizer.scrollToIndex(point.row);
+    const container = tableContainerRef.current;
+    const column = table.getColumn(visibleFields[point.column]);
+    if (!container || !column) return;
+    // The row-number column is sticky, so a cell under it is as hidden as one past the edge.
+    const start = column.getStart() - rowGutterWidth(result.rows.length);
+    const end = column.getStart() + column.getSize();
+    if (start < container.scrollLeft) container.scrollLeft = start;
+    else if (end > container.scrollLeft + container.clientWidth) container.scrollLeft = end - container.clientWidth;
+  };
+
+  /** Opens the cell editor where a double-click would have: editing on, the column writable, the cell unmasked. */
+  const startEditing = (row: (typeof rows)[number], field: string) => {
+    if (!editingEnabled || editRefusals.has(field)) return;
+    const sourceIndex = resolveSourceIndex(row.original, row.index);
+    if (getDisplayedCellValue(sourceIndex, row.original, field).isMasked) return;
+    const pendingChange = getCellChange(sourceIndex, field);
+    const value = Object.hasOwn(row.original, field) ? row.original[field] : undefined;
+    setEditingCell({ rowIndex: row.index, columnId: field });
+    setEditValue(pendingChange ? pendingChange.newValue : String(value ?? ""));
+  };
+
+  const handleGridKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    // Keys typed into a filter or the cell editor belong to that box.
+    if (event.target !== event.currentTarget) return;
+    const command = gridKeyCommand(event);
+    if (command === null || rows.length === 0 || visibleFields.length === 0) return;
+    event.preventDefault();
+
+    const active = activeRange();
+    const anchor = active && pointOf(active.anchorRowId, active.anchorColumnId);
+    const focus = active && pointOf(active.focusRowId, active.focusColumnId);
+
+    switch (command.kind) {
+      case "move": {
+        if (!anchor || !focus) {
+          // Nothing selected yet: the first move lands on the first cell, as in a spreadsheet.
+          table.setFocusedCell(rows[0].id, visibleFields[0]);
+          scrollCellIntoView({ row: 0, column: 0 });
+          return;
+        }
+        const page = Math.max(1, Math.floor((tableContainerRef.current?.clientHeight ?? 0) / DESKTOP_ROW_HEIGHT) - 1);
+        const size = { rows: rows.length, columns: visibleFields.length, page };
+        const target = gridKeyTarget(command.step, command.extend ? focus : anchor, size);
+        if (command.extend) {
+          const { focusRowId, focusColumnId } = rangeBetween(anchor, target);
+          table.setCellSelection((old) => [...old.slice(0, -1), { ...old[old.length - 1], focusRowId, focusColumnId }]);
+        } else {
+          table.setFocusedCell(rows[target.row].id, visibleFields[target.column]);
+        }
+        scrollCellIntoView(target);
+        return;
+      }
+      case "selectAll":
+        table.selectAllCells();
+        return;
+      case "selectRows":
+        if (anchor && focus) {
+          table.selectCellRange(
+            rangeBetween({ row: anchor.row, column: 0 }, { row: focus.row, column: visibleFields.length - 1 }),
+          );
+        }
+        return;
+      case "selectColumns":
+        if (anchor && focus) {
+          table.selectCellRange(
+            rangeBetween({ row: 0, column: anchor.column }, { row: rows.length - 1, column: focus.column }),
+          );
+        }
+        return;
+      case "edit":
+        if (anchor) startEditing(rows[anchor.row], visibleFields[anchor.column]);
+        return;
+      case "clear":
+        table.resetCellSelection(true);
+        return;
+    }
+  };
+
+  /**
+   * A press on a column's name selects the column, and on a row number the row: Shift extends
+   * from the active range's anchor and Ctrl or Cmd adds a rectangle, as a press on a cell does.
+   * A press on a control inside the header (sort, filter, the detail button, a resize handle)
+   * is that control's.
+   */
+  const selectLine = (event: React.MouseEvent, line: { column: number } | { row: number }) => {
+    if (event.button !== 0 || rows.length === 0) return;
+    if ((event.target as HTMLElement).closest("button, input, [data-resize-handle]")) return;
+    event.preventDefault();
+    tableContainerRef.current?.focus();
+    const active = activeRange();
+    const from = event.shiftKey && active ? pointOf(active.anchorRowId, active.anchorColumnId) : undefined;
+    const lastRow = rows.length - 1;
+    const lastColumn = visibleFields.length - 1;
+    const range =
+      "column" in line
+        ? rangeBetween({ row: 0, column: from?.column ?? line.column }, { row: lastRow, column: line.column })
+        : rangeBetween({ row: from?.row ?? line.row, column: 0 }, { row: line.row, column: lastColumn });
+    table.selectCellRange(range, { mode: event.ctrlKey || event.metaKey ? "include" : "replace" });
+  };
+
+  /** Double-click on a resize handle: as wide as the header and the loaded values need, as in a spreadsheet. */
+  const fitColumnToContent = (field: string) => {
+    const width = getContentFitColumnSize(
+      field,
+      declaredTypeOf(result.columnTypes, field),
+      effectiveMaskingEnabled && sensitiveColumns.has(field),
+      cellDisplayTexts(
+        rows.map((row) => row.original),
+        field,
+      ),
+      RESULT_COLUMN_RESIZE_MAX_SIZE,
+    );
+    table.setColumnSizing((old) => ({ ...old, [field]: width }));
+  };
+
+  const selectedCellCount = table.getSelectedCellCount();
+  const selectedColumnIds = new Set(table.getCellSelectionColumnIds());
+  const selectedRowIds = new Set(table.getCellSelectionRowIds());
+
+  const selectionMenuItems =
+    selectedCellCount > 0 ? (
+      <>
+        {selectedCellCount > 1 && (
+          <ContextMenuItem onClick={() => copySelection(false)}>Copy Selection</ContextMenuItem>
+        )}
+        <ContextMenuItem onClick={() => copySelection(true)}>
+          {selectedCellCount > 1 ? "Copy Selection with Headers" : "Copy with Headers"}
+        </ContextMenuItem>
+      </>
+    ) : undefined;
 
   /**
    * THE PAGE-TWO OFFER, or undefined where there is none (#816).
@@ -1210,25 +1529,47 @@ export function ResultsGrid({
         </div>
       </div>
 
+      {/* One keyboard stop for the whole grid, as in a spreadsheet: the arrows move the
+          active cell inside it, and Tab leaves it rather than walking every cell. */}
       <div
         ref={tableContainerRef}
         data-desktop-grid=""
-        className="hidden md:block flex-1 overflow-auto editor-scrollbar"
+        role="grid"
+        tabIndex={0}
+        aria-multiselectable="true"
+        aria-rowcount={rows.length + 1}
+        aria-colcount={visibleFields.length + 1}
+        className="hidden md:block flex-1 overflow-auto editor-scrollbar outline-none"
+        onKeyDown={handleGridKeyDown}
+        onCopy={handleGridCopy}
       >
         <div className="min-w-max">
-          <div className="sticky top-0 z-20 bg-raised flex">
+          {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- the rows are virtualized: absolutely placed, transformed flex rows that table layout cannot hold, so the WAI-ARIA grid roles go on divs. */}
+          <div role="row" aria-rowindex={1} className="sticky top-0 z-20 bg-raised flex">
             {table.getHeaderGroups().map((headerGroup) =>
               headerGroup.headers.map((header) => {
                 const isRowDetail = header.column.id === detailColumnId;
+                const isSelectedColumn = !isRowDetail && selectedColumnIds.has(header.column.id);
                 return (
                   <div
                     key={header.id}
-                    {...(isRowDetail ? { "data-row-detail-header": "" } : {})}
+                    // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- see the header row above.
+                    role="columnheader"
+                    // Focusable as the grid pattern asks, but never focused by a press: the press
+                    // handler keeps focus on the grid, where the keyboard is read.
+                    tabIndex={-1}
+                    {...(isRowDetail ? { "data-row-detail-header": "" } : { "aria-selected": isSelectedColumn })}
                     style={{ width: header.getSize(), minWidth: header.getSize() }}
                     className={cn(
-                      "h-10 flex items-center border-r border-b border-hairline text-xs uppercase font-mono text-fg-muted bg-raised relative group shrink-0",
+                      "h-10 flex items-center border-r border-b border-hairline text-xs uppercase font-mono text-fg-muted bg-raised relative group shrink-0 select-none",
                       isRowDetail ? "px-2 justify-center sticky left-0 z-10" : "px-4",
+                      isSelectedColumn && "text-fg bg-brand-tint/10",
                     )}
+                    onMouseDown={
+                      isRowDetail
+                        ? undefined
+                        : (event) => selectLine(event, { column: visibleFields.indexOf(header.column.id) })
+                    }
                   >
                     {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
 
@@ -1237,12 +1578,13 @@ export function ResultsGrid({
                     {header.column.getCanResize() && (
                       <div
                         aria-hidden="true"
+                        data-resize-handle=""
                         onMouseDown={header.getResizeHandler()}
                         onTouchStart={header.getResizeHandler()}
                         onDoubleClick={(event) => {
                           event.preventDefault();
                           event.stopPropagation();
-                          header.column.resetSize();
+                          fitColumnToContent(header.column.id);
                         }}
                         className={cn(
                           "absolute right-0 top-0 h-full w-1 cursor-col-resize hover:bg-brand-tint/50 transition-colors",
@@ -1256,14 +1598,20 @@ export function ResultsGrid({
             )}
           </div>
 
-          <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: "relative" }}>
+          {/* `select-none`: a drag here selects cells, and the browser's text highlight on top
+              of it would show a second, different selection. */}
+          <div className="select-none" style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: "relative" }}>
             {rowVirtualizer.getVirtualItems().map((virtualRow) => {
               const row = rows[virtualRow.index];
               const sourceIndex = resolveSourceIndex(row.original, row.index);
+              const isSelectedRow = selectedRowIds.has(row.id);
               return (
                 <ContextMenu key={row.id}>
                   <ContextMenuTrigger asChild>
                     <div
+                      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- see the header row above.
+                      role="row"
+                      aria-rowindex={virtualRow.index + 2}
                       data-index={virtualRow.index}
                       ref={wrapText ? rowVirtualizer.measureElement : undefined}
                       style={{
@@ -1282,9 +1630,14 @@ export function ResultsGrid({
                     >
                       {row.getVisibleCells().map((cell) => {
                         const isRowDetail = cell.column.id === detailColumnId;
+                        const isSelected = !isRowDetail && cell.getIsSelected();
+                        const startSelection = cell.getSelectionStartHandler();
                         return (
+                          // oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- the role is gridcell or rowheader, chosen per column; the rule cannot read a conditional role.
                           <div
                             key={cell.id}
+                            role={isRowDetail ? "rowheader" : "gridcell"}
+                            aria-selected={isRowDetail ? isSelectedRow : isSelected}
                             style={{ width: cell.column.getSize(), minWidth: cell.column.getSize() }}
                             className={cn(
                               "py-2 border-r border-hairline text-xs font-mono overflow-hidden group-hover:border-hairline-strong flex shrink-0",
@@ -1293,21 +1646,48 @@ export function ResultsGrid({
                                 : "h-full whitespace-nowrap items-center",
                               // Sticky with the header above it, so the control is still
                               // there once a wide result has been scrolled sideways.
-                              isRowDetail ? "px-1 justify-center sticky left-0 z-10 bg-sunken" : "px-4",
+                              isRowDetail
+                                ? cn(
+                                    "px-1 justify-between gap-1 sticky left-0 z-10 bg-sunken",
+                                    isSelectedRow && "bg-brand-tint/10",
+                                  )
+                                : "px-4",
+                              isSelected && "bg-brand-tint/15",
+                              !isRowDetail && cell.getIsFocused() && "ring-1 ring-inset ring-brand",
                             )}
+                            onMouseDown={(event) => {
+                              if (isRowDetail) {
+                                selectLine(event, { row: virtualRow.index });
+                                return;
+                              }
+                              // A right press opens the menu over the selection it is in, and a
+                              // press on a control or in the editor is that control's.
+                              if (event.button !== 0) return;
+                              if ((event.target as HTMLElement).closest("button, input")) return;
+                              startSelection(event);
+                            }}
+                            onMouseEnter={isRowDetail ? undefined : cell.getSelectionExtendHandler()}
                             // The detail control is not a value, so right-clicking it offers
                             // the row and nothing to copy out of that column.
-                            onContextMenu={() =>
-                              setContextCell(isRowDetail ? null : { rowIndex: sourceIndex, field: cell.column.id })
-                            }
+                            onContextMenu={() => {
+                              setContextCell(isRowDetail ? null : { rowIndex: sourceIndex, field: cell.column.id });
+                              // Outside the selection, a right-click moves it here first, so the
+                              // menu's Copy Selection means the cell the pointer is on.
+                              if (!isRowDetail && !isSelected) table.setFocusedCell(row.id, cell.column.id);
+                            }}
                           >
+                            {isRowDetail && (
+                              <span data-row-number="" className="text-[0.625rem] text-fg-muted tabular-nums">
+                                {virtualRow.index + 1}
+                              </span>
+                            )}
                             {flexRender(cell.column.columnDef.cell, cell.getContext())}
                           </div>
                         );
                       })}
                     </div>
                   </ContextMenuTrigger>
-                  {renderCopyMenu(row.original, sourceIndex)}
+                  {renderCopyMenu(row.original, sourceIndex, selectionMenuItems)}
                 </ContextMenu>
               );
             })}

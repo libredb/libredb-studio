@@ -3,6 +3,7 @@ import { streamText } from "ai";
 import {
   AGENT_PROVIDER_ADAPTERS,
   type AgentProviderAdapter,
+  openAIResponsesRequestWarnings,
   resolveAgentProviderAdapter,
 } from "@/lib/agent/provider-registry";
 import { type LLMConfig, type LLMProviderType, LLMConfigError } from "@/lib/llm/types";
@@ -191,4 +192,96 @@ describe("a built model names the kind the operator configured", () => {
       expect(model.modelId).toBe(config.model);
     });
   }
+});
+
+// ─── the SDK's offline answer about sampling ────────────────────────────────
+
+describe("openAIResponsesRequestWarnings reads the SDK's sampling table offline", () => {
+  const OPENAI = { openai: { store: false, reasoningSummary: null } };
+  const SAMPLING = { temperature: 0, topP: 1 };
+
+  /** The sampling features a preparation would drop, which is what a real call would warn about. */
+  function droppedFeatures(warnings: Awaited<ReturnType<typeof openAIResponsesRequestWarnings>>): string[] {
+    const features: string[] = [];
+    for (const warning of warnings) {
+      if (warning.type === "unsupported" && (warning.feature === "temperature" || warning.feature === "topP")) {
+        features.push(warning.feature);
+      }
+    }
+    return features;
+  }
+
+  test("a reasoning model with no effort drops both temperature and topP", async () => {
+    const warnings = await openAIResponsesRequestWarnings("gpt-6-luna", OPENAI, SAMPLING);
+
+    expect(droppedFeatures(warnings).sort()).toEqual(["temperature", "topP"]);
+  });
+
+  test("gpt-6-luna at effort none keeps both, the measured exception", async () => {
+    const warnings = await openAIResponsesRequestWarnings(
+      "gpt-6-luna",
+      { openai: { ...OPENAI.openai, reasoningEffort: "none" } },
+      SAMPLING,
+    );
+
+    expect(droppedFeatures(warnings)).toEqual([]);
+  });
+
+  test("gpt-6.1-sol at effort none still drops both, because only gpt-6-sol and gpt-6-luna keep them", async () => {
+    const warnings = await openAIResponsesRequestWarnings(
+      "gpt-6.1-sol",
+      { openai: { ...OPENAI.openai, reasoningEffort: "none" } },
+      SAMPLING,
+    );
+
+    expect(droppedFeatures(warnings).sort()).toEqual(["temperature", "topP"]);
+  });
+
+  test("a gpt-5 model at effort none drops both, because its minor version is absent", async () => {
+    const warnings = await openAIResponsesRequestWarnings(
+      "gpt-5",
+      { openai: { ...OPENAI.openai, reasoningEffort: "none" } },
+      SAMPLING,
+    );
+
+    expect(droppedFeatures(warnings).sort()).toEqual(["temperature", "topP"]);
+  });
+
+  test("a gpt-5.4 model at effort none keeps both", async () => {
+    const warnings = await openAIResponsesRequestWarnings(
+      "gpt-5.4-mini",
+      { openai: { ...OPENAI.openai, reasoningEffort: "none" } },
+      SAMPLING,
+    );
+
+    expect(droppedFeatures(warnings)).toEqual([]);
+  });
+
+  test("an o-series model drops both at any effort", async () => {
+    const warnings = await openAIResponsesRequestWarnings(
+      "o3",
+      { openai: { ...OPENAI.openai, reasoningEffort: "none" } },
+      SAMPLING,
+    );
+
+    expect(droppedFeatures(warnings).sort()).toEqual(["temperature", "topP"]);
+  });
+
+  test("a non-reasoning model keeps both", async () => {
+    const warnings = await openAIResponsesRequestWarnings("gpt-4o-mini", OPENAI, SAMPLING);
+
+    expect(droppedFeatures(warnings)).toEqual([]);
+  });
+
+  test("a gpt-5 chat variant is non-reasoning and keeps both", async () => {
+    const warnings = await openAIResponsesRequestWarnings("gpt-5-chat-latest", OPENAI, SAMPLING);
+
+    expect(droppedFeatures(warnings)).toEqual([]);
+  });
+
+  test("without sampling fields no sampling warning is raised", async () => {
+    const warnings = await openAIResponsesRequestWarnings("gpt-6-luna", OPENAI);
+
+    expect(droppedFeatures(warnings)).toEqual([]);
+  });
 });

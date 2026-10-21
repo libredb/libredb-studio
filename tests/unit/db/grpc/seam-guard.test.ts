@@ -36,6 +36,7 @@ import { dirname, join, posix } from "node:path";
 import ts from "typescript";
 import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { GRPC_SEAM_HOLDINGS, type GrpcSeamHolding } from "../../../helpers/grpc-seam-holdings";
+import { platformTimeoutMs } from "../../../helpers/platform-timeout";
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const TRANSPORT = "src/lib/db/grpc";
@@ -106,9 +107,10 @@ function repositoryOf(root: string, env?: NodeJS.ProcessEnv): Repository {
 
 // Reading and parsing every file of the repository is this file's one costly step, and repositoryOf keeps the result:
 // pay it once here, under its own budget, as the etcd guard does, so no test spends bun's per-test budget on it.
+// Under a 15% CPU quota with coverage it took 63.1s and 71.3s, past the 60s it had.
 beforeAll(() => {
   repositoryOf(ROOT);
-}, 60_000);
+}, platformTimeoutMs(120_000));
 
 /** How TypeScript resolves a module name in the repository at `root`, with that repository's tsconfig.json. */
 const resolvers = new Map<string, { readonly options: ts.CompilerOptions; readonly cache: ts.ModuleResolutionCache }>();
@@ -593,229 +595,293 @@ const planted = (files: Readonly<Record<string, string>>, rule: Rule) =>
 /** The holding repository with one file gone. */
 const holdingWithout = (gone: string) => Object.fromEntries(Object.entries(HOLDING).filter(([path]) => path !== gone));
 
+// Every test here builds one planted repository or more, each a git init, a write of the holding files and a
+// parse of them: 4s to 14s per test under a 15% CPU quota with coverage, past bun's 5s default, so each carries
+// its own bound.
 describe("planted violations: each rule fails by name", () => {
-  test.each(RULES)("%s: the holding repository passes", (_name, rule) => {
-    expect(planted({}, rule)).toEqual([]);
-  });
+  test.each(RULES)(
+    "%s: the holding repository passes",
+    (_name, rule) => {
+      expect(planted({}, rule)).toEqual([]);
+    },
+    platformTimeoutMs(40_000),
+  );
 
-  test("G1: an adapter importing @grpc/grpc-js, a third transport file, and a named file that stops", () => {
-    expect(planted({ [FIRST_IMPORTER]: `import { Client } from "${GRPC_JS}";\n` }, g1GrpcJsImporters)).toEqual([
-      `grpc-js importers under src: ${FIRST_IMPORTER} imports @grpc/grpc-js outside src/lib/db/grpc/`,
-    ]);
-    expect(
-      planted(
-        { "src/app/api/stray/route.ts": `const grpc = require("${GRPC_JS}/build/src/index.js");\n` },
-        g1GrpcJsImporters,
-      ),
-    ).toEqual([
-      "grpc-js importers under src: src/app/api/stray/route.ts imports @grpc/grpc-js outside src/lib/db/grpc/",
-    ]);
-    expect(planted({ [TLS]: `import type { VerifyOptions } from "${GRPC_JS}";\n` }, g1GrpcJsImporters)).toEqual([
-      `grpc-js importers under src: ${TLS} imports @grpc/grpc-js, and only channel.ts and credentials.ts may`,
-    ]);
-    expect(planted({ [CREDENTIALS]: "export {};\n" }, g1GrpcJsImporters)).toEqual([
-      `grpc-js importers under src: ${CREDENTIALS} is named, and no longer imports @grpc/grpc-js`,
-    ]);
-    expect(inPlantedRepository(holdingWithout(CHANNEL), (root, env) => g1GrpcJsImporters(root, env))).toEqual([
-      `grpc-js importers under src: ${CHANNEL} is named, and is not in the repository`,
-    ]);
-  });
+  test(
+    "G1: an adapter importing @grpc/grpc-js, a third transport file, and a named file that stops",
+    () => {
+      expect(planted({ [FIRST_IMPORTER]: `import { Client } from "${GRPC_JS}";\n` }, g1GrpcJsImporters)).toEqual([
+        `grpc-js importers under src: ${FIRST_IMPORTER} imports @grpc/grpc-js outside src/lib/db/grpc/`,
+      ]);
+      expect(
+        planted(
+          { "src/app/api/stray/route.ts": `const grpc = require("${GRPC_JS}/build/src/index.js");\n` },
+          g1GrpcJsImporters,
+        ),
+      ).toEqual([
+        "grpc-js importers under src: src/app/api/stray/route.ts imports @grpc/grpc-js outside src/lib/db/grpc/",
+      ]);
+      expect(planted({ [TLS]: `import type { VerifyOptions } from "${GRPC_JS}";\n` }, g1GrpcJsImporters)).toEqual([
+        `grpc-js importers under src: ${TLS} imports @grpc/grpc-js, and only channel.ts and credentials.ts may`,
+      ]);
+      expect(planted({ [CREDENTIALS]: "export {};\n" }, g1GrpcJsImporters)).toEqual([
+        `grpc-js importers under src: ${CREDENTIALS} is named, and no longer imports @grpc/grpc-js`,
+      ]);
+      expect(inPlantedRepository(holdingWithout(CHANNEL), (root, env) => g1GrpcJsImporters(root, env))).toEqual([
+        `grpc-js importers under src: ${CHANNEL} is named, and is not in the repository`,
+      ]);
+    },
+    platformTimeoutMs(40_000),
+  );
 
-  test("G2: a type-only import of @grpc/proto-loader in channel.ts", () => {
-    const text = `${HOLDING[CHANNEL]}import type { MethodDefinition } from "${PROTO_LOADER}";\n`;
-    expect(planted({ [CHANNEL]: text }, g2NoProtoLoader)).toEqual([
-      `no proto-loader in the transport: ${CHANNEL} imports @grpc/proto-loader`,
-    ]);
-  });
+  test(
+    "G2: a type-only import of @grpc/proto-loader in channel.ts",
+    () => {
+      const text = `${HOLDING[CHANNEL]}import type { MethodDefinition } from "${PROTO_LOADER}";\n`;
+      expect(planted({ [CHANNEL]: text }, g2NoProtoLoader)).toEqual([
+        `no proto-loader in the transport: ${CHANNEL} imports @grpc/proto-loader`,
+      ]);
+    },
+    platformTimeoutMs(40_000),
+  );
 
-  test("G3: a provider imported by its alias, by a relative path, and by a path that resolves to nothing", () => {
-    const client = `${PROVIDER_DIRECTORY}/client.ts`;
-    const alias = `@/${client.slice("src/".length, -".ts".length)}`;
-    const relative = posix.relative(TRANSPORT, client).slice(0, -".ts".length);
-    const provider = { [client]: "export interface ProviderError {}\n" };
-    expect(
-      planted({ ...provider, [TLS]: `import type { ProviderError } from "${alias}";\n` }, g3NoProviderImport),
-    ).toEqual([`no provider import: ${TLS} imports ${alias}, which is under src/lib/db/providers/`]);
-    expect(
-      planted({ ...provider, [TLS]: `import type { ProviderError } from "${relative}";\n` }, g3NoProviderImport),
-    ).toEqual([`no provider import: ${TLS} imports ${relative}, which is under src/lib/db/providers/`]);
-    expect(
-      planted({ [TLS]: 'export type Gone = import("../providers/gone/client").Gone;\n' }, g3NoProviderImport),
-    ).toEqual([`no provider import: ${TLS} imports ../providers/gone/client, which is under src/lib/db/providers/`]);
-    expect(planted({ [TLS]: 'import { validateHost } from "@/lib/db/http/endpoint";\n' }, g3NoProviderImport)).toEqual(
-      [],
-    );
-  });
+  test(
+    "G3: a provider imported by its alias, by a relative path, and by a path that resolves to nothing",
+    () => {
+      const client = `${PROVIDER_DIRECTORY}/client.ts`;
+      const alias = `@/${client.slice("src/".length, -".ts".length)}`;
+      const relative = posix.relative(TRANSPORT, client).slice(0, -".ts".length);
+      const provider = { [client]: "export interface ProviderError {}\n" };
+      expect(
+        planted({ ...provider, [TLS]: `import type { ProviderError } from "${alias}";\n` }, g3NoProviderImport),
+      ).toEqual([`no provider import: ${TLS} imports ${alias}, which is under src/lib/db/providers/`]);
+      expect(
+        planted({ ...provider, [TLS]: `import type { ProviderError } from "${relative}";\n` }, g3NoProviderImport),
+      ).toEqual([`no provider import: ${TLS} imports ${relative}, which is under src/lib/db/providers/`]);
+      expect(
+        planted({ [TLS]: 'export type Gone = import("../providers/gone/client").Gone;\n' }, g3NoProviderImport),
+      ).toEqual([`no provider import: ${TLS} imports ../providers/gone/client, which is under src/lib/db/providers/`]);
+      expect(
+        planted({ [TLS]: 'import { validateHost } from "@/lib/db/http/endpoint";\n' }, g3NoProviderImport),
+      ).toEqual([]);
+    },
+    platformTimeoutMs(40_000),
+  );
 
-  test("G4: a comment naming an engine fails, in any case; a word that only holds one passes", () => {
-    expect(planted({ [TLS]: "// as Milvus's server does\nexport {};\n" }, g4NoEngineName)).toEqual([
-      `no engine name: ${TLS}:1 names milvus`,
-    ]);
-    expect(planted({ [TLS]: "export {};\n/** The ETCD and libredb rule. */\n" }, g4NoEngineName)).toEqual([
-      `no engine name: ${TLS}:2 names etcd`,
-      `no engine name: ${TLS}:2 names libredb`,
-    ]);
-    expect(
-      planted({ [TLS]: "// the transport of every provider\nexport const kafkaesque = 1;\n" }, g4NoEngineName),
-    ).toEqual([]);
-  });
+  test(
+    "G4: a comment naming an engine fails, in any case; a word that only holds one passes",
+    () => {
+      expect(planted({ [TLS]: "// as Milvus's server does\nexport {};\n" }, g4NoEngineName)).toEqual([
+        `no engine name: ${TLS}:1 names milvus`,
+      ]);
+      expect(planted({ [TLS]: "export {};\n/** The ETCD and libredb rule. */\n" }, g4NoEngineName)).toEqual([
+        `no engine name: ${TLS}:2 names etcd`,
+        `no engine name: ${TLS}:2 names libredb`,
+      ]);
+      expect(
+        planted({ [TLS]: "// the transport of every provider\nexport const kafkaesque = 1;\n" }, g4NoEngineName),
+      ).toEqual([]);
+    },
+    platformTimeoutMs(40_000),
+  );
 
-  test("the engine names G4 refuses are the external engines and the embedded store", () => {
-    expect(EXTERNAL_DATABASE_TYPES.length).toBeGreaterThan(1);
-    for (const name of [...EXTERNAL_DATABASE_TYPES, "libredb"]) {
-      expect(planted({ [TLS]: `// ${name}\n` }, g4NoEngineName)).toEqual([`no engine name: ${TLS}:1 names ${name}`]);
-    }
-  });
+  test(
+    "the engine names G4 refuses are the external engines and the embedded store",
+    () => {
+      expect(EXTERNAL_DATABASE_TYPES.length).toBeGreaterThan(1);
+      for (const name of [...EXTERNAL_DATABASE_TYPES, "libredb"]) {
+        expect(planted({ [TLS]: `// ${name}\n` }, g4NoEngineName)).toEqual([`no engine name: ${TLS}:1 names ${name}`]);
+      }
+    },
+    platformTimeoutMs(40_000),
+  );
 
-  test("G5: a client component importing the transport, and a named importer that stops", () => {
-    const stray = "src/components/Stray.tsx";
-    expect(
-      planted(
-        { [stray]: '"use client";\nimport type { GrpcTlsOptions } from "@/lib/db/grpc/tls";\n' },
-        g5TransportImporters,
-      ),
-    ).toEqual([`who imports the transport: ${stray} imports src/lib/db/grpc/, and no row of ${REGISTRY} names it`]);
-    const sibling = `${PROVIDER_DIRECTORY}/stray.ts`;
-    const relative = posix.relative(PROVIDER_DIRECTORY, CHANNEL).slice(0, -".ts".length);
-    expect(planted({ [sibling]: `export * from "${relative}";\n` }, g5TransportImporters)).toEqual([
-      `who imports the transport: ${sibling} imports src/lib/db/grpc/, and no row of ${REGISTRY} names it`,
-    ]);
-    expect(planted({ [FIRST_IMPORTER]: "export {};\n" }, g5TransportImporters)).toEqual([
-      `who imports the transport: ${FIRST_IMPORTER} is named, and no longer imports src/lib/db/grpc/`,
-    ]);
-    expect(inPlantedRepository(holdingWithout(FIRST_IMPORTER), (root, env) => g5TransportImporters(root, env))).toEqual(
-      [`who imports the transport: ${FIRST_IMPORTER} is named, and is not in the repository`],
-    );
-  });
+  test(
+    "G5: a client component importing the transport, and a named importer that stops",
+    () => {
+      const stray = "src/components/Stray.tsx";
+      expect(
+        planted(
+          { [stray]: '"use client";\nimport type { GrpcTlsOptions } from "@/lib/db/grpc/tls";\n' },
+          g5TransportImporters,
+        ),
+      ).toEqual([`who imports the transport: ${stray} imports src/lib/db/grpc/, and no row of ${REGISTRY} names it`]);
+      const sibling = `${PROVIDER_DIRECTORY}/stray.ts`;
+      const relative = posix.relative(PROVIDER_DIRECTORY, CHANNEL).slice(0, -".ts".length);
+      expect(planted({ [sibling]: `export * from "${relative}";\n` }, g5TransportImporters)).toEqual([
+        `who imports the transport: ${sibling} imports src/lib/db/grpc/, and no row of ${REGISTRY} names it`,
+      ]);
+      expect(planted({ [FIRST_IMPORTER]: "export {};\n" }, g5TransportImporters)).toEqual([
+        `who imports the transport: ${FIRST_IMPORTER} is named, and no longer imports src/lib/db/grpc/`,
+      ]);
+      expect(
+        inPlantedRepository(holdingWithout(FIRST_IMPORTER), (root, env) => g5TransportImporters(root, env)),
+      ).toEqual([`who imports the transport: ${FIRST_IMPORTER} is named, and is not in the repository`]);
+    },
+    platformTimeoutMs(40_000),
+  );
 
-  test("G6: a third test importing a client package, a helper, and a named test that stops", () => {
-    expect(planted({ [TLS_TEST]: `import { credentials } from "${GRPC_JS}";\n` }, g6TestImporters)).toEqual([
-      `@grpc/grpc-js importers among the transport's tests: ${TLS_TEST} imports @grpc/grpc-js, and the rule does not name it`,
-    ]);
-    const helper = "tests/helpers/grpc-server.ts";
-    expect(planted({ [helper]: `import { fromJSON } from "${PROTO_LOADER}";\n` }, g6TestImporters)).toEqual([
-      `@grpc/proto-loader importers among the transport's tests: ${helper} imports @grpc/proto-loader, and the rule does not name it`,
-    ]);
-    expect(planted({ [CREDENTIALS_TEST]: `import { fromJSON } from "${PROTO_LOADER}";\n` }, g6TestImporters)).toEqual([
-      `@grpc/grpc-js importers among the transport's tests: ${CREDENTIALS_TEST} is named, and no longer imports @grpc/grpc-js`,
-      `@grpc/proto-loader importers among the transport's tests: ${CREDENTIALS_TEST} imports @grpc/proto-loader, and the rule does not name it`,
-    ]);
-    expect(planted({ [CHANNEL_TEST]: `import { Server } from "${GRPC_JS}";\n` }, g6TestImporters)).toEqual([
-      `@grpc/proto-loader importers among the transport's tests: ${CHANNEL_TEST} is named, and no longer imports @grpc/proto-loader`,
-    ]);
-    expect(planted({ [SERVER_STREAM_TEST]: "export {};\n" }, g6TestImporters)).toEqual([
-      `@grpc/grpc-js importers among the transport's tests: ${SERVER_STREAM_TEST} is named, and no longer imports @grpc/grpc-js`,
-    ]);
-    expect(planted({ [SERVER_STREAM_CASES]: "export {};\n" }, g6TestImporters)).toEqual([
-      `@grpc/grpc-js importers among the transport's tests: ${SERVER_STREAM_CASES} is named, and no longer imports @grpc/grpc-js`,
-    ]);
-  });
+  test(
+    "G6: a third test importing a client package, a helper, and a named test that stops",
+    () => {
+      expect(planted({ [TLS_TEST]: `import { credentials } from "${GRPC_JS}";\n` }, g6TestImporters)).toEqual([
+        `@grpc/grpc-js importers among the transport's tests: ${TLS_TEST} imports @grpc/grpc-js, and the rule does not name it`,
+      ]);
+      const helper = "tests/helpers/grpc-server.ts";
+      expect(planted({ [helper]: `import { fromJSON } from "${PROTO_LOADER}";\n` }, g6TestImporters)).toEqual([
+        `@grpc/proto-loader importers among the transport's tests: ${helper} imports @grpc/proto-loader, and the rule does not name it`,
+      ]);
+      expect(planted({ [CREDENTIALS_TEST]: `import { fromJSON } from "${PROTO_LOADER}";\n` }, g6TestImporters)).toEqual(
+        [
+          `@grpc/grpc-js importers among the transport's tests: ${CREDENTIALS_TEST} is named, and no longer imports @grpc/grpc-js`,
+          `@grpc/proto-loader importers among the transport's tests: ${CREDENTIALS_TEST} imports @grpc/proto-loader, and the rule does not name it`,
+        ],
+      );
+      expect(planted({ [CHANNEL_TEST]: `import { Server } from "${GRPC_JS}";\n` }, g6TestImporters)).toEqual([
+        `@grpc/proto-loader importers among the transport's tests: ${CHANNEL_TEST} is named, and no longer imports @grpc/proto-loader`,
+      ]);
+      expect(planted({ [SERVER_STREAM_TEST]: "export {};\n" }, g6TestImporters)).toEqual([
+        `@grpc/grpc-js importers among the transport's tests: ${SERVER_STREAM_TEST} is named, and no longer imports @grpc/grpc-js`,
+      ]);
+      expect(planted({ [SERVER_STREAM_CASES]: "export {};\n" }, g6TestImporters)).toEqual([
+        `@grpc/grpc-js importers among the transport's tests: ${SERVER_STREAM_CASES} is named, and no longer imports @grpc/grpc-js`,
+      ]);
+    },
+    platformTimeoutMs(40_000),
+  );
 
-  test("G7: a logger import and a console member", () => {
-    expect(planted({ [TLS]: 'import { logger } from "@/lib/logger";\n' }, g7NoLogger)).toEqual([
-      `no logger: ${TLS} imports @/lib/logger`,
-    ]);
-    expect(planted({ [CHANNEL]: `${HOLDING[CHANNEL]}console.debug("opened");\n` }, g7NoLogger)).toEqual([
-      `no logger: ${CHANNEL}:4 names a member of the console`,
-    ]);
-    expect(planted({ [TLS]: "/** Nothing is written to the console. */\nexport {};\n" }, g7NoLogger)).toEqual([]);
-  });
+  test(
+    "G7: a logger import and a console member",
+    () => {
+      expect(planted({ [TLS]: 'import { logger } from "@/lib/logger";\n' }, g7NoLogger)).toEqual([
+        `no logger: ${TLS} imports @/lib/logger`,
+      ]);
+      expect(planted({ [CHANNEL]: `${HOLDING[CHANNEL]}console.debug("opened");\n` }, g7NoLogger)).toEqual([
+        `no logger: ${CHANNEL}:4 names a member of the console`,
+      ]);
+      expect(planted({ [TLS]: "/** Nothing is written to the console. */\nexport {};\n" }, g7NoLogger)).toEqual([]);
+    },
+    platformTimeoutMs(40_000),
+  );
 
   const COPY = "src/lib/db/providers/keyvalue/third/grpc-client.ts";
 
-  test("G8: an untracked copy naming the package, in a comment too", () => {
-    expect(planted({ [COPY]: `export {};\n// import { Client } from '${GRPC_JS}';\n` }, g8NoGrpcJsName)).toEqual([
-      `no third copy, check 1: ${COPY}:2 holds '@grpc/grpc-js'`,
-    ]);
-  });
-
-  test("G9: the adapter's old credentials function, and a channel option literal", () => {
-    const credentialsCopy = [
-      "function channelCredentials(tls) {",
-      "  if (tls === undefined) return credentials.createInsecure();",
-      "  return credentials.createSsl(tls.ca);",
-      "}",
-      "",
-    ].join("\n");
-    expect(planted({ [COPY]: credentialsCopy }, g9NoChannelCode)).toEqual([
-      `no third copy, check 2: ${COPY}:1 holds function channelCredentials`,
-      `no third copy, check 2: ${COPY}:2 holds createInsecure(`,
-      `no third copy, check 2: ${COPY}:3 holds createSsl(`,
-    ]);
-    expect(planted({ [COPY]: 'export const options = { "grpc.enable_retries": 0 };\n' }, g9NoChannelCode)).toEqual([
-      `no third copy, check 2: ${COPY}:1 holds "grpc.enable_retries"`,
-    ]);
-    const keys = [
-      "export const options = {",
-      "  'grpc.keepalive_permit_without_calls': 1,",
-      '  [`grpc.default_authority`]: "x",',
-      '  "grpc-node.max_session_memory": 10,',
-      "};",
-      "/** Set as `grpc.ssl_target_name_override` in prose. */",
-      "",
-    ].join("\n");
-    expect(planted({ [COPY]: keys }, g9NoChannelCode)).toEqual([
-      `no third copy, check 2: ${COPY}:2 holds 'grpc.keepalive_permit_without_calls'`,
-      `no third copy, check 2: ${COPY}:3 holds [\`grpc.default_authority\`]`,
-      `no third copy, check 2: ${COPY}:4 holds "grpc-node.max_session_memory"`,
-    ]);
-    expect(planted({ [COPY]: "export const call = client.makeUnaryRequest;\n" }, g9NoChannelCode)).toEqual([
-      `no third copy, check 2: ${COPY}:1 holds makeUnaryRequest`,
-    ]);
-  });
-
-  test("G10: a TLS mode table in a provider directory of the registry, and nowhere else", () => {
-    const table = "const TLS_MODES = { disable: false };\nexport {};\n";
-    const copy = `${PROVIDER_DIRECTORY}/tls-copy.ts`;
-    expect(planted({ [copy]: table }, g10NoTlsMapping)).toEqual([`no third copy, check 3: ${copy}:1 holds TLS_MODES`]);
-    expect(planted({ [copy]: "// identity is checked by checkServerIdentity\nexport {};\n" }, g10NoTlsMapping)).toEqual(
-      [`no third copy, check 3: ${copy}:1 holds checkServerIdentity`],
-    );
-    expect(planted({ "src/lib/db/providers/document/other/tls.ts": table }, g10NoTlsMapping)).toEqual([]);
-  });
-
-  test("G10 reads every provider directory the registry names", () => {
-    const directories = Object.values(GRPC_SEAM_HOLDINGS).flatMap((holding) =>
-      holding.providerDirectory === undefined ? [] : [holding.providerDirectory],
-    );
-    expect(directories.length).toBeGreaterThan(1);
-    for (const directory of directories) {
-      expect(planted({ [`${directory}/pem.ts`]: "const ENCRYPTED_PEM_KEY = /x/;\n" }, g10NoTlsMapping)).toEqual([
-        `no third copy, check 3: ${directory}/pem.ts:1 holds ENCRYPTED_PEM_KEY`,
+  test(
+    "G8: an untracked copy naming the package, in a comment too",
+    () => {
+      expect(planted({ [COPY]: `export {};\n// import { Client } from '${GRPC_JS}';\n` }, g8NoGrpcJsName)).toEqual([
+        `no third copy, check 1: ${COPY}:2 holds '@grpc/grpc-js'`,
       ]);
-    }
-  });
+    },
+    platformTimeoutMs(40_000),
+  );
 
-  test("G11: an unanchored pattern, a pattern over nothing, a file held twice, an importer outside its directory", () => {
-    const sound: Holdings = {
-      transport: { held: [/^src\/lib\/db\/grpc\//], transportImporters: [] },
-      first: {
-        held: [],
-        transportImporters: [FIRST_IMPORTER],
-        providerDirectory: PROVIDER_DIRECTORY,
-      },
-    };
-    const check = (holdings: Holdings) => inPlantedRepository(HOLDING, (root, env) => g11Registry(root, env, holdings));
-    expect(check(sound)).toEqual([]);
-    expect(check({ ...sound, transport: { held: [/src\/lib\/db\/grpc\//], transportImporters: [] } })).toEqual([
-      "the registry: transport holds /src\\/lib\\/db\\/grpc\\//, which is not anchored with ^",
-    ]);
-    expect(check({ ...sound, second: { held: [/^tests\/live\/second-/], transportImporters: [] } })).toEqual([
-      "the registry: second holds /^tests\\/live\\/second-/, which matches no file",
-    ]);
-    expect(check({ ...sound, second: { held: [/^src\/lib\/db\/grpc\/tls\.ts$/], transportImporters: [] } })).toEqual([
-      `the registry: ${TLS} is held by transport and second`,
-    ]);
-    expect(
-      check({
-        ...sound,
-        second: { held: [], transportImporters: [FIRST_IMPORTER], providerDirectory: "src/lib/db/providers/second" },
-      }),
-    ).toEqual([`the registry: second names ${FIRST_IMPORTER}, which is not under its provider directory`]);
-    expect(check({ ...sound, second: { held: [], transportImporters: [FIRST_IMPORTER] } })).toEqual([
-      `the registry: second names ${FIRST_IMPORTER}, which is not under its provider directory`,
-    ]);
-  });
+  test(
+    "G9: the adapter's old credentials function, and a channel option literal",
+    () => {
+      const credentialsCopy = [
+        "function channelCredentials(tls) {",
+        "  if (tls === undefined) return credentials.createInsecure();",
+        "  return credentials.createSsl(tls.ca);",
+        "}",
+        "",
+      ].join("\n");
+      expect(planted({ [COPY]: credentialsCopy }, g9NoChannelCode)).toEqual([
+        `no third copy, check 2: ${COPY}:1 holds function channelCredentials`,
+        `no third copy, check 2: ${COPY}:2 holds createInsecure(`,
+        `no third copy, check 2: ${COPY}:3 holds createSsl(`,
+      ]);
+      expect(planted({ [COPY]: 'export const options = { "grpc.enable_retries": 0 };\n' }, g9NoChannelCode)).toEqual([
+        `no third copy, check 2: ${COPY}:1 holds "grpc.enable_retries"`,
+      ]);
+      const keys = [
+        "export const options = {",
+        "  'grpc.keepalive_permit_without_calls': 1,",
+        '  [`grpc.default_authority`]: "x",',
+        '  "grpc-node.max_session_memory": 10,',
+        "};",
+        "/** Set as `grpc.ssl_target_name_override` in prose. */",
+        "",
+      ].join("\n");
+      expect(planted({ [COPY]: keys }, g9NoChannelCode)).toEqual([
+        `no third copy, check 2: ${COPY}:2 holds 'grpc.keepalive_permit_without_calls'`,
+        `no third copy, check 2: ${COPY}:3 holds [\`grpc.default_authority\`]`,
+        `no third copy, check 2: ${COPY}:4 holds "grpc-node.max_session_memory"`,
+      ]);
+      expect(planted({ [COPY]: "export const call = client.makeUnaryRequest;\n" }, g9NoChannelCode)).toEqual([
+        `no third copy, check 2: ${COPY}:1 holds makeUnaryRequest`,
+      ]);
+    },
+    platformTimeoutMs(40_000),
+  );
+
+  test(
+    "G10: a TLS mode table in a provider directory of the registry, and nowhere else",
+    () => {
+      const table = "const TLS_MODES = { disable: false };\nexport {};\n";
+      const copy = `${PROVIDER_DIRECTORY}/tls-copy.ts`;
+      expect(planted({ [copy]: table }, g10NoTlsMapping)).toEqual([
+        `no third copy, check 3: ${copy}:1 holds TLS_MODES`,
+      ]);
+      expect(
+        planted({ [copy]: "// identity is checked by checkServerIdentity\nexport {};\n" }, g10NoTlsMapping),
+      ).toEqual([`no third copy, check 3: ${copy}:1 holds checkServerIdentity`]);
+      expect(planted({ "src/lib/db/providers/document/other/tls.ts": table }, g10NoTlsMapping)).toEqual([]);
+    },
+    platformTimeoutMs(40_000),
+  );
+
+  test(
+    "G10 reads every provider directory the registry names",
+    () => {
+      const directories = Object.values(GRPC_SEAM_HOLDINGS).flatMap((holding) =>
+        holding.providerDirectory === undefined ? [] : [holding.providerDirectory],
+      );
+      expect(directories.length).toBeGreaterThan(1);
+      for (const directory of directories) {
+        expect(planted({ [`${directory}/pem.ts`]: "const ENCRYPTED_PEM_KEY = /x/;\n" }, g10NoTlsMapping)).toEqual([
+          `no third copy, check 3: ${directory}/pem.ts:1 holds ENCRYPTED_PEM_KEY`,
+        ]);
+      }
+    },
+    platformTimeoutMs(40_000),
+  );
+
+  test(
+    "G11: an unanchored pattern, a pattern over nothing, a file held twice, an importer outside its directory",
+    () => {
+      const sound: Holdings = {
+        transport: { held: [/^src\/lib\/db\/grpc\//], transportImporters: [] },
+        first: {
+          held: [],
+          transportImporters: [FIRST_IMPORTER],
+          providerDirectory: PROVIDER_DIRECTORY,
+        },
+      };
+      const check = (holdings: Holdings) =>
+        inPlantedRepository(HOLDING, (root, env) => g11Registry(root, env, holdings));
+      expect(check(sound)).toEqual([]);
+      expect(check({ ...sound, transport: { held: [/src\/lib\/db\/grpc\//], transportImporters: [] } })).toEqual([
+        "the registry: transport holds /src\\/lib\\/db\\/grpc\\//, which is not anchored with ^",
+      ]);
+      expect(check({ ...sound, second: { held: [/^tests\/live\/second-/], transportImporters: [] } })).toEqual([
+        "the registry: second holds /^tests\\/live\\/second-/, which matches no file",
+      ]);
+      expect(check({ ...sound, second: { held: [/^src\/lib\/db\/grpc\/tls\.ts$/], transportImporters: [] } })).toEqual([
+        `the registry: ${TLS} is held by transport and second`,
+      ]);
+      expect(
+        check({
+          ...sound,
+          second: { held: [], transportImporters: [FIRST_IMPORTER], providerDirectory: "src/lib/db/providers/second" },
+        }),
+      ).toEqual([`the registry: second names ${FIRST_IMPORTER}, which is not under its provider directory`]);
+      expect(check({ ...sound, second: { held: [], transportImporters: [FIRST_IMPORTER] } })).toEqual([
+        `the registry: second names ${FIRST_IMPORTER}, which is not under its provider directory`,
+      ]);
+    },
+    platformTimeoutMs(40_000),
+  );
 
   test.each([...REFUSED_NAMES])("G12: %s named in the transport", (name) => {
     expect(planted({ [TLS]: `export const call = (client: any) => client.${name}();\n` }, g12RefusedNames)).toEqual([
@@ -823,43 +889,57 @@ describe("planted violations: each rule fails by name", () => {
     ]);
   });
 
-  test("G12: a server-streaming request is a call shape the transport sends", () => {
-    expect(
-      planted(
-        { [CHANNEL]: `${HOLDING[CHANNEL]}export const stream = (client: any) => client.makeServerStreamRequest();\n` },
-        g12RefusedNames,
-      ),
-    ).toEqual([]);
-  });
+  test(
+    "G12: a server-streaming request is a call shape the transport sends",
+    () => {
+      expect(
+        planted(
+          {
+            [CHANNEL]: `${HOLDING[CHANNEL]}export const stream = (client: any) => client.makeServerStreamRequest();\n`,
+          },
+          g12RefusedNames,
+        ),
+      ).toEqual([]);
+    },
+    platformTimeoutMs(40_000),
+  );
 
-  test("G12: a refused name as a string fails, and in a comment it does not", () => {
-    expect(planted({ [TLS]: 'export const name = "loadPackageDefinition";\n' }, g12RefusedNames)).toEqual([
-      `refused names: ${TLS}:1 names loadPackageDefinition`,
-    ]);
-    expect(planted({ [TLS]: "// never makeClientConstructor\nexport {};\n" }, g12RefusedNames)).toEqual([]);
-  });
+  test(
+    "G12: a refused name as a string fails, and in a comment it does not",
+    () => {
+      expect(planted({ [TLS]: 'export const name = "loadPackageDefinition";\n' }, g12RefusedNames)).toEqual([
+        `refused names: ${TLS}:1 names loadPackageDefinition`,
+      ]);
+      expect(planted({ [TLS]: "// never makeClientConstructor\nexport {};\n" }, g12RefusedNames)).toEqual([]);
+    },
+    platformTimeoutMs(40_000),
+  );
 
-  test("G13: a descriptor import, a generator import and a descriptor's file name, in every file the row holds", () => {
-    const rule = "no descriptor in the transport";
-    const descriptor = `@/${PROVIDER_DIRECTORY.slice("src/".length)}/proto/descriptor`;
-    expect(planted({ [CHANNEL_TEST]: `${HOLDING[CHANNEL_TEST]}import "${descriptor}";\n` }, g13NoDescriptor)).toEqual([
-      `${rule}: ${CHANNEL_TEST} imports a descriptor, ${descriptor}`,
-    ]);
-    const fileName = ["descriptor", "ts"].join(".");
-    const sibling = `./proto/${fileName}`;
-    expect(planted({ [TLS]: `export type Stub = typeof import("${sibling}");\n` }, g13NoDescriptor)).toEqual([
-      `${rule}: ${TLS} imports a descriptor, ${sibling}`,
-    ]);
-    const generator = "../../scripts/generate-third-descriptor.mjs";
-    const helper = "tests/helpers/grpc-server.ts";
-    expect(planted({ [helper]: `import { load } from "${generator}";\n` }, g13NoDescriptor)).toEqual([
-      `${rule}: ${helper} imports a descriptor generator, ${generator}`,
-    ]);
-    expect(
-      planted({ [TLS_TEST]: `export {};\nconst file = join(dir, "proto", "${fileName}");\n` }, g13NoDescriptor),
-    ).toEqual([`${rule}: ${TLS_TEST}:2 names the file of a descriptor`]);
-    expect(
-      planted({ [FIRST_IMPORTER]: `${HOLDING[FIRST_IMPORTER]}import "./proto/descriptor";\n` }, g13NoDescriptor),
-    ).toEqual([]);
-  });
+  test(
+    "G13: a descriptor import, a generator import and a descriptor's file name, in every file the row holds",
+    () => {
+      const rule = "no descriptor in the transport";
+      const descriptor = `@/${PROVIDER_DIRECTORY.slice("src/".length)}/proto/descriptor`;
+      expect(planted({ [CHANNEL_TEST]: `${HOLDING[CHANNEL_TEST]}import "${descriptor}";\n` }, g13NoDescriptor)).toEqual(
+        [`${rule}: ${CHANNEL_TEST} imports a descriptor, ${descriptor}`],
+      );
+      const fileName = ["descriptor", "ts"].join(".");
+      const sibling = `./proto/${fileName}`;
+      expect(planted({ [TLS]: `export type Stub = typeof import("${sibling}");\n` }, g13NoDescriptor)).toEqual([
+        `${rule}: ${TLS} imports a descriptor, ${sibling}`,
+      ]);
+      const generator = "../../scripts/generate-third-descriptor.mjs";
+      const helper = "tests/helpers/grpc-server.ts";
+      expect(planted({ [helper]: `import { load } from "${generator}";\n` }, g13NoDescriptor)).toEqual([
+        `${rule}: ${helper} imports a descriptor generator, ${generator}`,
+      ]);
+      expect(
+        planted({ [TLS_TEST]: `export {};\nconst file = join(dir, "proto", "${fileName}");\n` }, g13NoDescriptor),
+      ).toEqual([`${rule}: ${TLS_TEST}:2 names the file of a descriptor`]);
+      expect(
+        planted({ [FIRST_IMPORTER]: `${HOLDING[FIRST_IMPORTER]}import "./proto/descriptor";\n` }, g13NoDescriptor),
+      ).toEqual([]);
+    },
+    platformTimeoutMs(40_000),
+  );
 });

@@ -19,6 +19,7 @@ import { shouldRefreshSchema } from "@/lib/query-generators";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import { logger } from "@/lib/logger";
 import { newLocalId } from "@/lib/ids";
+import { appendResultPage } from "@/lib/results/append-page";
 import { getExplainStrategy, type ExplainStrategy } from "@/lib/explain";
 import type { ExplainFormat } from "@/lib/db/types";
 import { maybeInviteToStar } from "@/lib/community/star-prompt-toast";
@@ -930,7 +931,9 @@ export function useQueryExecution({
           // Load More mode: append rows
           if (isLoadMore && t.result) {
             const existingRows = t.allRows || t.result.rows;
-            const newAllRows = [...existingRows, ...resultData.rows];
+            // The append rule (rows, the shape they are rendered under, rowCount) is
+            // `appendResultPage` in `src/lib/results/append-page.ts`.
+            const merged = appendResultPage({ ...t.result, rows: existingRows }, resultData);
 
             return {
               ...t,
@@ -938,27 +941,8 @@ export function useQueryExecution({
               // the same reason the replace branch does: a reader of the rows must never
               // be handed a different statement's name for them.
               resultQuery: queryToExecute,
-              result: {
-                ...resultData,
-                // THE SHAPE COMES FROM THE ROWS ON SCREEN, NOT FROM THE PAGE THAT ARRIVED.
-                //
-                // A page of the same statement cannot legitimately name different columns,
-                // and an empty page often names none at all: SQLite answers `... LIMIT 50
-                // OFFSET 100` on a hundred-row table with `rows: 0, fields: []`. Spreading
-                // that over the tab left the grid holding its hundred rows under zero
-                // columns - the strip read "100 rows / 0 columns" and the table rendered
-                // header-less, cell-less stripes. A table whose size is an exact multiple
-                // of the page size reaches that state in one click.
-                fields: resultData.fields.length > 0 ? resultData.fields : t.result.fields,
-                // The vector declaration describes those rows too, so a page that declares none keeps theirs, as
-                // the embedded adapter's load-more does (`carriedChannels` in `use-query-adapter.ts`).
-                ...((resultData.vectorColumns ?? t.result.vectorColumns) !== undefined && {
-                  vectorColumns: resultData.vectorColumns ?? t.result.vectorColumns,
-                }),
-                rows: newAllRows,
-                rowCount: newAllRows.length,
-              },
-              allRows: newAllRows,
+              result: merged,
+              allRows: merged.rows,
               currentOffset: offset + resultData.rows.length,
               isExecuting: false,
               isLoadingMore: false,

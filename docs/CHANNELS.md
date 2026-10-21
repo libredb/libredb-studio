@@ -34,9 +34,9 @@ channel count.
 
 ## Coverage snapshot
 
-**47 channels · 40 live · 6 pending · 1 deprecated**
+**48 channels · 41 live · 6 pending · 1 deprecated**
 
-Live channels by platform: **Linux 9 · macOS 3 · Windows 5 · Container 7 · Kubernetes 5 · Cloud 17**
+Live channels by platform: **Linux 10 · macOS 4 · Windows 6 · Container 7 · Kubernetes 5 · Cloud 17**
 
 | Category | Live | Pending | Deprecated |
 | --- | ---: | ---: | ---: |
@@ -44,7 +44,7 @@ Live channels by platform: **Linux 9 · macOS 3 · Windows 5 · Container 7 · K
 | Containers | 2 | 0 | 0 |
 | Kubernetes & operators | 4 | 0 | 0 |
 | Package managers | 6 | 1 | 1 |
-| OS / desktop packages | 3 | 0 | 0 |
+| OS / desktop packages | 4 | 0 | 0 |
 | PaaS catalogs (listed) | 16 | 3 | 0 |
 | Deploy recipes | 3 | 0 | 0 |
 | Cloud marketplaces | 4 | 2 | 0 |
@@ -76,6 +76,7 @@ Live channels by platform: **Linux 9 · macOS 3 · Windows 5 · Container 7 · K
 | [Desktop app (AppImage, .deb)](https://github.com/libredb/libredb-studio/releases/latest) | OS / desktop packages | Linux | live | Automated, every release | [desktop/README.md](../desktop/README.md) |
 | [AppImageHub](https://github.com/libredb/libredb-studio/releases/latest) | OS / desktop packages | Linux | live | Manual, on demand | [desktop/README.md](../desktop/README.md) |
 | [Linux .deb / .rpm](https://github.com/libredb/libredb-studio/releases/latest) | OS / desktop packages | Linux | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
+| [VS Code extension](https://marketplace.visualstudio.com/items?itemName=libredb.libredb-studio) | OS / desktop packages | Linux, macOS, Windows | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [CapRover auto-connect](https://github.com/caprover/one-click-apps) | PaaS catalogs (listed) | Cloud | live | Manual, on demand | [deploy/caprover/README.md](../deploy/caprover/README.md) |
 | [CapRover official](https://github.com/caprover/one-click-apps) | PaaS catalogs (listed) | Cloud | live | Manual, on demand | [deploy/caprover/README.md](../deploy/caprover/README.md) |
 | [CasaOS App Store](https://github.com/IceWhaleTech/CasaOS-AppStore) | PaaS catalogs (listed) | Container | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |

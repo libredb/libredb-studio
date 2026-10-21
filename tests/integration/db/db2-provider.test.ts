@@ -992,6 +992,30 @@ describe("Db2Provider: prepareQuery", () => {
     );
   });
 
+  // A limit and an offset are held to the rule the shared limiter holds them to (`assertRowBounds`).
+  describe("a limit or an offset that is not a row bound", () => {
+    const values: Array<[string, unknown]> = [
+      ["a numeric string", "10"],
+      ["a fraction", 1.5],
+      ["a negative number", -1],
+      ["null", null],
+      ["an array", [10]],
+      ["the first integer past Number.MAX_SAFE_INTEGER", 2 ** 53],
+    ];
+
+    test.each(values)("refuses %s as the limit with a QueryError", (_name, limit) => {
+      const run = () => provider.prepareQuery("SELECT * FROM T", { limit: limit as number });
+      expect(run).toThrow(QueryError);
+      expect(run).toThrow("The row limit must be a non-negative integer");
+    });
+
+    test.each(values)("refuses %s as the offset with a QueryError", (_name, offset) => {
+      const run = () => provider.prepareQuery("SELECT * FROM T", { offset: offset as number });
+      expect(run).toThrow(QueryError);
+      expect(run).toThrow("The row offset must be a non-negative integer");
+    });
+  });
+
   test("a statement that bounds itself is left alone, FETCH FIRST and LIMIT both", () => {
     expect(provider.prepareQuery("SELECT * FROM T FETCH FIRST 5 ROWS ONLY").wasLimited).toBe(false);
     // Measured on 12.1.0.0: Db2 accepts LIMIT, and the limiter reads it as a bound for db2 too.

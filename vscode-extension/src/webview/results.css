@@ -1,0 +1,11 @@
+@import "tailwindcss" source(none);
+@import "../../../src/styles/theme.css";
+@import "./vscode-bridge.css";
+@source "../../../src/components/ResultsGrid.tsx";
+@source "../../../src/components/results-grid";
+@source "../../../src/components/ui/context-menu.tsx";
+@source "../../../src/components/ui/sheet.tsx";
+@source "../../../src/components/ui/button.tsx";
+@source "../../../src/components/ui/scroll-area.tsx";
+@source "./";
+@custom-variant dark (&:where(.dark, .dark *));

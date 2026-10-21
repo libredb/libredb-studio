@@ -1,8 +1,8 @@
 /**
  * Spark's spelling of names and of multi-part namespaces.
  *
- * Pure and browser-safe: the connection dialog cannot import a provider module, so src/lib/db-ui-config.ts copies the
- * three field patterns below literally, and tests/unit/lib/db-ui-config.test.ts holds each copy equal to these.
+ * Pure and browser-safe: the connection dialog cannot import a provider module, so src/lib/db/connection-form.ts copies
+ * the three field patterns below literally, and tests/unit/lib/db-ui-config.test.ts holds each copy equal to these.
  * `parseNamespaceSpelling` accepts exactly the texts SPARK_NAMESPACE_PATTERN accepts, so the dialog and the provider
  * refuse the same Namespace values.
  */

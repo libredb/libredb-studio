@@ -1073,7 +1073,13 @@ const CASES: readonly CaseDefinition[] = [
       outcome: "failed",
       category: "not-connected",
       grpcCode: 14,
-      text: /ECONNREFUSED/,
+      // The refusal is the connect's ECONNREFUSED, or "Failed to connect" with no errno when the handshake
+      // completes and the peer drops the socket before HTTP/2 (measured on Linux under Bun 1.4.2 and Node
+      // v22.23.3, 2026-10-20: 48 runs of this case per runtime beside four CPU-bound processes, and 150 direct
+      // dials of a closed port per runtime, all read "Error: connect ECONNREFUSED 127.0.0.1:<port>"; a listener
+      // that accepts and end()s or destroy()s the socket read "Failed to connect (<timestamp>)" on both, still
+      // code 14).
+      text: /ECONNREFUSED|Failed to connect/,
       sentence: noPlaintextAnswer(`127.0.0.1:${ports.closed}`),
     }),
   ),

@@ -88,6 +88,14 @@ const REFUSALS: ReadonlyMap<string, string> = new Map([
   [`/sample?from=${BUFFER.first}&count=5`, readFileSync(join(FIXTURES, "2.8.0.3", "error-out-of-range.xml"), "utf-8")],
 ]);
 
+/**
+ * A reverse proxy's own page where an observation read was asked for, served as nginx serves one.
+ * It is not an MTConnect document at all, and the streaming reads have to say so rather than walk it.
+ */
+const PROXY_PAGE =
+  "<html><head><title>502 Bad Gateway</title></head><body><center><h1>502 Bad Gateway</h1></center></body></html>";
+const PROXY_PAGES: ReadonlySet<string> = new Set(["/sample?count=2", `/current?at=${AT - 1}`]);
+
 /** The Path prefix a reverse proxy puts in front of the agent; the fixture server answers under it too. */
 const PROXY_PREFIX = "/mtc";
 
@@ -114,6 +122,11 @@ function answer(request: IncomingMessage, response: ServerResponse): void {
   if (refusal !== undefined) {
     response.writeHead(400, { "content-type": "application/xml" });
     response.end(refusal);
+    return;
+  }
+  if (PROXY_PAGES.has(route)) {
+    response.writeHead(502, { "content-type": "text/html" });
+    response.end(PROXY_PAGE);
     return;
   }
   const body = ANSWERS.get(route);
@@ -305,6 +318,24 @@ describe("an agent's error document reaches the reader on every route", () => {
     const provider = await connected();
     await expect(provider.query(`GET /sample?from=${BUFFER.first}&count=5`)).rejects.toThrow(
       "'from' must be greater than 29516470 (OUT_OF_RANGE)",
+    );
+    await provider.disconnect();
+  });
+});
+
+describe("a proxy's page where observations were asked for is named, never walked", () => {
+  test("on sample", async () => {
+    const provider = await connected();
+    await expect(provider.query("GET /sample?count=2")).rejects.toThrow(
+      "its document's root element is html rather than an MTConnect one",
+    );
+    await provider.disconnect();
+  });
+
+  test("on current", async () => {
+    const provider = await connected();
+    await expect(provider.query(`GET /current?at=${AT - 1}`)).rejects.toThrow(
+      "its document's root element is html rather than an MTConnect one",
     );
     await provider.disconnect();
   });

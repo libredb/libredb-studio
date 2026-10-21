@@ -162,8 +162,8 @@ export interface ObjectRequestContext {
  *
  * Its sentence is wrong for two of the three conditions it answers, and this phase FILES that
  * rather than fixing it: five existing routes answer `Empty request body` for a body that was
- * TRUNCATED by the framework at 10,485,760 bytes, and `POST /api/db/query` answers HTTP 500 with
- * a JSON parser's message for the same condition. Repairing it here would change the response of
+ * TRUNCATED by the framework at 10,485,760 bytes, and `POST /api/db/query` answers HTTP 400
+ * "Invalid request body" for the same condition. Repairing it here would change the response of
  * five shipped routes inside a pull request whose subject is a write path, which is how a diff
  * grows. `readObjectRouteBody` below is what the two new routes use instead.
  */
@@ -186,8 +186,8 @@ async function readDefaultBody(req: NextRequest): Promise<Record<string, unknown
  * THE MEASURED FACT THIS FUNCTION EXISTS FOR. There is a hard inbound bound at exactly 10,485,760
  * bytes, `DEFAULT_BODY_CLONE_SIZE_LIMIT` in Next 16.3.4's `getCloneableBody`, which exists because
  * this repository has middleware and the request body is therefore cloned for it. It TRUNCATES
- * rather than refusing, so above it `POST /api/db/query` answers HTTP 500 carrying a JSON parser's
- * message and `POST /api/db/objects/source` answers HTTP 400 `Empty request body`. One condition,
+ * rather than refusing, so above it `POST /api/db/query` answers HTTP 400 `Invalid request body`
+ * and `POST /api/db/objects/source` answers HTTP 400 `Empty request body`. One condition,
  * two wrong sentences, and NEITHER IS TRUE: the body was neither malformed by its sender nor
  * absent. A caller reading either one has no way to learn that the fix is to send less.
  *

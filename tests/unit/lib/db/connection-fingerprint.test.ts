@@ -69,7 +69,7 @@ describe("connectionFingerprint", () => {
     expect(await connectionFingerprint(vary({ serviceName: "XEPDB1" }))).not.toBe(base);
     expect(await connectionFingerprint(vary({ instanceName: "SQLEXPRESS" }))).not.toBe(base);
     // The tenth, which the four above were audited without and which a review of THAT audit found
-    // one field away: the bastion is the ROUTE, and `factory.ts:1189-1196` rewrites `host` and `port`
+    // one field away: the bastion is the ROUTE, and `factory.ts:1251-1258` rewrites `host` and `port`
     // to the tunnel's local endpoint before the provider is constructed, so the tunnel and not the
     // record decides which machine the sealed statement reaches.
     expect(await connectionFingerprint(vary({ sshTunnel: BASTION }))).not.toBe(base);
@@ -95,7 +95,7 @@ describe("connectionFingerprint", () => {
     expect(ours).not.toBe(await connectionFingerprint(vary({ sshTunnel: { ...BASTION, port: 2222 } })));
     expect(ours).not.toBe(await connectionFingerprint(vary({ sshTunnel: { ...BASTION, username: "mallory" } })));
     // A DISABLED tunnel is not the same route as an enabled one to the same bastion, because
-    // `factory.ts:1189` branches on exactly that flag and only the enabled arm rewrites the endpoint.
+    // `factory.ts:1251` branches on exactly that flag and only the enabled arm rewrites the endpoint.
     expect(ours).not.toBe(await connectionFingerprint(vary({ sshTunnel: { ...BASTION, enabled: false } })));
     // And the tunnel's SECRETS are out, on the rule the database password already follows: rotating
     // a key changes who may reach the bastion, never which machine it is. `hostKeyFingerprint` is
@@ -273,8 +273,8 @@ describe("connectionFingerprint", () => {
  * `DatabaseConnection`, and the whole argument rests on three named maps being exhaustive over
  * `keyof DatabaseConnection`. The argument was right and every one of the three names was wrong:
  * two of them (`CONNECTION_FIELD_RELEVANCE`, `CONNECTION_FIELD_CLASSES`) existed nowhere in the
- * repository, and the third (`connectionFields`) is a per-engine UI field list in
- * `src/lib/db-ui-config.ts`, so a reader who greps the file it is attributed to finds something
+ * repository, and the third (`connectionFields`) is a per-engine UI field list on each
+ * `CONNECTION_FORM` entry in `src/lib/db/connection-form.ts`, so a reader who greps the file it is attributed to finds something
  * that is not a `keyof` map and concludes the argument is unsound.
  *
  * A prose pointer nobody executes rots the moment a map is renamed, so the names are held in one
@@ -285,7 +285,7 @@ describe("connectionFingerprint", () => {
 const KEYOF_CONNECTION_READERS: { identifier: string; file: string }[] = [
   { identifier: "FIELD_OWNERSHIP", file: "src/hooks/use-connection-form.ts" },
   { identifier: "CONNECTION_RELEVANCE", file: "src/hooks/use-connection-payload.ts" },
-  { identifier: "CONNECTION_FIELDS", file: "src/lib/storage/connection-secrets.ts" },
+  { identifier: "CONNECTION_FIELDS", file: "src/lib/storage/secret-fields.ts" },
 ];
 
 describe("the maps the WithTunnelFarEnd docblock calls exhaustive over keyof DatabaseConnection", () => {

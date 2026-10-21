@@ -1,0 +1,58 @@
+# The VS Code extension's release (docs/DISTRIBUTION.md, "VS Code extension (Marketplace)").
+# It runs on a pushed vscode-extension-<version> tag, its own namespace: product
+# tags stay bare semver and chart tags libredb-studio-<chart version>, so
+# release-artifacts.yml and the chart's workflows never see these tags.
+#
+# verify refuses the tag unless it names vscode-extension/package.json's version
+# and its commit is on main; gates then run the same reusable workflow as every
+# pull request, smoke matrix included, and upload the tested VSIX as the
+# vscode-extension-vsix artifact.
+#
+# No publish job yet: it lands with the owner's decisions on the Marketplace
+# publisher id and its authentication (the VS Code extension design, section 9,
+# items 1 and 2), as `vsce publish --pre-release --packagePath <file>` from a
+# GitHub environment that requires a reviewer. No GitHub Release either: a
+# published release starts the product's own publishes.
+name: VS Code Extension Release
+
+on:
+  push:
+    tags:
+      - "vscode-extension-*"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify the release tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+
+      - name: The tag names the manifest's version
+        working-directory: vscode-extension
+        run: node scripts/release-tag.mjs "$GITHUB_REF_NAME"
+
+      - name: The tag's commit is on main
+        run: |
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "The tag's commit is not on main." >&2
+            exit 1
+          fi
+
+  gates:
+    name: Gates
+    needs: verify
+    uses: ./.github/workflows/vscode-extension.yml

@@ -37,7 +37,7 @@ import { logger } from "@/lib/logger";
 import { setLineNumbersPreference, useLineNumbersPreference } from "@/hooks/use-line-numbers-preference";
 import { writeToClipboard } from "@/components/copy-button";
 import { toast } from "sonner";
-import { splitCursorTargets } from "@/lib/sql/statement-splitter";
+import { cursorTarget, selectionTarget } from "@/lib/sql/run-target";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import type { DatabaseType } from "@/lib/types";
 import { containerSpellingOf, quoteIdentifier } from "@/lib/query-generators";
@@ -432,62 +432,29 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
       const model = editorRef.current.getModel();
       if (!model) return { query: editorValue, range: null };
 
-      // 1. Check for explicit selection
+      // The rule is `runTarget`'s, in `src/lib/sql/run-target.ts`, which the VS Code channel's `query/target` shares.
+      const rule = {
+        editorLanguage: language,
+        statementTerminator: capabilities?.statementTerminator,
+        grammar: resolveSqlGrammar(databaseType),
+      };
+
+      // 1. A non-blank selection.
       const selection = editorRef.current.getSelection();
       if (selection) {
-        const selectedText = model.getValueInRange(selection);
-        if (selectedText && selectedText.trim().length > 0) {
-          // An engine whose grammar takes no terminator refuses a trailing `;` (Elasticsearch
-          // answers `extraneous input ';'`), and a selection is sent as written while the caret
-          // path below reads its statement through the splitter, which drops it (#1414). So a
-          // selection that is ONE statement is read the same way there; a multi-statement one,
-          // and every other engine, is still sent exactly as selected.
-          if (language === "sql" && capabilities?.statementTerminator === "none") {
-            const statements = splitCursorTargets(selectedText, resolveSqlGrammar(databaseType));
-            if (statements.length === 1 && statements[0]) {
-              return { query: statements[0].sql, range: selection };
-            }
-          }
-          return { query: selectedText, range: selection };
-        }
+        const query = selectionTarget(model.getValueInRange(selection), rule);
+        if (query !== null) return { query, range: selection };
       }
 
-      // 2. No selection: run the statement the cursor is in.
-      //
-      // Read through the shared splitter, under the connection's dialect. This used to be
-      // `lastIndexOf(";")` over the raw text - no spans, no dialect, not even a
-      // string-literal check - which made it the THIRD reader of "where does a statement
-      // end" and the only one whose answer is what gets SENT. Measured in Chrome on
-      // 2026-08-25 against postgres 18: a buffer PostgreSQL reads as one statement was
-      // cut at a `;` inside a nested comment, so what reached the engine was a line
-      // comment plus the SELECT, and the grid read 0 rows where psql answers 2. A `;`
-      // inside a literal (`SELECT 'a;b'`) cut the same way.
-      //
-      // A procedural body is one target (#1312): a caret inside a PL/SQL unit, a SQLite
-      // trigger or a T-SQL `CREATE PROCEDURE` batch runs the whole definition, and a `GO` or
-      // `/` line is never sent. A T-SQL batch that is a run of statements still offers them
-      // one by one, so a caret on a SELECT never sends the DELETE after it; a script whose
-      // statements share a `DECLARE @x` is run by selecting it.
-      if (language === "sql") {
-        const position = editorRef.current.getPosition();
-        if (position) {
-          const fullText = model.getValue();
-          const cursorOffset = model.getOffsetAt(position);
-          const statements = splitCursorTargets(fullText, resolveSqlGrammar(databaseType));
-          // The statement the cursor is inside or immediately after, which is what "run
-          // this one" means with the caret resting at a statement's end. Whitespace
-          // between two statements belongs to neither, so the last one that starts at or
-          // before the cursor wins - and with the caret before the first statement, that
-          // first one does.
-          const current =
-            [...statements].reverse().find((statement) => statement.start <= cursorOffset) ?? statements[0];
-
-          if (current) {
-            const startPos = model.getPositionAt(current.start);
-            const endPos = model.getPositionAt(current.end);
-            const range = new monaco.Range(startPos.lineNumber, startPos.column, endPos.lineNumber, endPos.column);
-            return { query: current.sql, range };
-          }
+      // 2. No selection: the statement the cursor is in, under the `sql` editor language.
+      const position = editorRef.current.getPosition();
+      if (position) {
+        const current = cursorTarget(model.getValue(), model.getOffsetAt(position), rule);
+        if (current) {
+          const startPos = model.getPositionAt(current.start);
+          const endPos = model.getPositionAt(current.end);
+          const range = new monaco.Range(startPos.lineNumber, startPos.column, endPos.lineNumber, endPos.column);
+          return { query: current.sql, range };
         }
       }
 

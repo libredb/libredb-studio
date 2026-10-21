@@ -7,11 +7,11 @@ import type { DatabaseType } from "@/lib/types";
  * block, issue #425). Typed `Record<DatabaseType, number>`, so a further member of the
  * union fails `bun run typecheck` on the missing key instead of quietly never being
  * shown - the same compile-time-exhaustive trick the connection picker's coverage map
- * uses in tests/hooks/use-connection-form.test.ts.
+ * uses in tests/unit/lib/db/connection-form.test.ts.
  *
  * The order is recognisability-first: an evaluator scanning the login page should meet
  * the names they already know before the ones they do not. It is deliberately NOT the
- * connection picker's order (`selectableTypes`, src/hooks/use-connection-form.ts),
+ * connection picker's order (`CONNECTION_PICKER_ORDER`, src/lib/db/connection-form.ts),
  * which groups by connect-form affordance instead. The two lists answer different
  * questions, so they are not unified; keep both when adding a provider.
  */

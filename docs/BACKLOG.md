@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S9 · 6
-- [Drivers and connections](#drivers-and-connections) — D1-D379, U17 · 275
+- [Drivers and connections](#drivers-and-connections) — D1-D390, U17 · 285
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U148 · 134
@@ -2087,23 +2087,6 @@ Measured 2026-10-03: no `provenance:` assignment exists in either provider, and 
 
 **Done when:** the owner has decided whether MongoDB's and Couchbase's sampled fields stay visible to models, and for each engine either its column builder sets `provenance: "sampled"` with a test that `inspect_schema` and the agent inventory hold none of them, or its provider doc (`docs/providers/mongodb.md`, `docs/providers/couchbase.md`) states that its sampled fields reach those surfaces; then this entry is deleted.
 
-### D153. The etcd connection-options test can outrun bun's five-second hook timeout
-
-The file-level `beforeAll` in `tests/unit/db/etcd/connection-options.test.ts` makes its certificates at test time with `openssl`, eight of them over a new RSA-2048 key, and passes no timeout, so bun's default of 5000 ms bounds the whole setup.
-On the `Unit & Integration Tests` run of #1246 on 2026-10-03 (12:03 UTC) the hook timed out after 5001 ms while `openssl req` made the eighth key, the one for `etcd-server`, and the file failed with no test run; later runs of the same job passed.
-The same eight keys took 14 to 88 ms each on a development machine the same day, so the setup normally ends far inside the limit, but RSA key generation searches for primes and has no fixed duration, and a busy runner stretches it further.
-
-Found on #1246, whose change does not touch etcd.
-Not fixed there: the test is etcd's, and that PR touched no other provider.
-
-Amended 2026-10-04: the same default bounds each test of `tests/unit/db/etcd/seam-guard.test.ts`, and `descriptor readers: exactly the files spec E11 names` ran out of it in one full coverage run on `main` at `6dcc67fd6` at a load average of about 40.
-That file's `beforeAll` already parses the repository once under a 60-second budget, so what ran out was the rule's own walk over the parsed files.
-The file passed alone (59 tests in 6.3 s there, and 60 tests in 3.9 s on `main` at `d994ad72f`), in every full run after that one, and in three runs beside 40 busy loops on a 20-core machine (7 to 10 s each, on `main` at `6dcc67fd6`), so it needs more load than that to fail again.
-This entry is done only when that test also passes repeated runs at the CI job's concurrency, through a timeout of its own or a cheaper walk.
-Amended 2026-10-20: it failed that way again on the `Cross-platform Tests (macos-latest)` job of #1818 on 2026-10-19 (attempt 1 of run 39288327751, 6028 ms), beside D379's failure; attempt 2 passed.
-
-**Done when:** the hook carries a timeout sized for a busy runner (bun's `beforeAll` takes one as its second argument), or makes RSA keys only where a test needs RSA, and the file passes repeated runs at the CI job's concurrency.
-
 ### D154. Qdrant Cloud is not claimed
 
 Qdrant Cloud speaks the Qdrant REST API and connects as a `qdrant` connection: its address pasted into the Host box, SSL mode `verify-system`, and a key in API key or JWT.
@@ -2557,7 +2540,7 @@ Not fixed there: that change touches the transport's `Authorization` header, not
 
 **Done when:** a `connectionString` that does not parse is refused with a `DatabaseConfigError` that names the field before any request is sent, and a test pins it.
 
-### D233. Six test files leave their temporary directories in `TMPDIR`
+### D233. Seven test files leave their temporary directories in `TMPDIR`
 
 Six test files make directories under `os.tmpdir()` with `mkdtempSync` and leave them there.
 `tests/unit/lib/agent/model-tuning.test.ts` (line 83) and `tests/unit/lib/agent/model-profiles.test.ts` (line 52) make `libredb-tuning-*`, and `tests/api/agent/config.test.ts` (line 344) makes `libredb-tuning-route-*`.
@@ -2566,11 +2549,13 @@ Six test files make directories under `os.tmpdir()` with `mkdtempSync` and leave
 Measured 2026-10-05 on `main` at `d994ad72f`, each file run alone through `bun tests/run-tests.ts` with `TMPDIR` pointed at an empty directory: they left 14, 1, 2, 7, 7 and 5 directories, in that order, 36 in all.
 One passing run of the whole suite on `main` at `6dcc67fd6`, measured 2026-10-04 the same way, left the same 36 and none from any other file.
 Nothing removes them, so every run on a developer machine or a self-hosted runner adds as many again.
+The VS Code extension's unit leg does the same: `vscode-extension/test/unit/backend-session.test.ts` makes a `libredb-backend-session-*` directory per case with `mkdtempSync` and removes none.
+On the maintainer's machine on 2026-10-21, `/tmp` held 8,368 `libredb-tuning-*`, 1,066 `libredb-tuning-route-*` and 790 `libredb-backend-session-*` directories.
 
 Found 2026-10-04 while planning the platform integration, whose local gates kept `TMPDIR` in a scratch directory.
 Not fixed there: none of the six files is part of that work.
 
-**Done when:** each of the six files removes the directories it makes, for example with `rmSync(path, { recursive: true, force: true })` in an `afterEach` or `afterAll`, and a run of `bun run test` with `TMPDIR` pointed at an empty directory leaves it empty.
+**Done when:** each of the six files removes the directories it makes, for example with `rmSync(path, { recursive: true, force: true })` in an `afterEach` or `afterAll`, and a run of `bun run test`, and of the extension's `npm run test:unit`, with `TMPDIR` pointed at an empty directory leaves it empty.
 
 ### D240. Two connection records naming one DuckDB file get two read-write handles in one process
 
@@ -2925,13 +2910,16 @@ Found 2026-10-10 by the review of the S3 provider; not reached by any shipped fl
 
 ### D276. No deadline bounds a provider's `connect()` as a whole
 
-`src/app/api/db/test-connection/route.ts` awaits `provider.connect()` with no deadline of its own; the `queryTimeout` it passes bounds each request a provider makes, not the sum of them.
+`testConnection` (`src/lib/api/test-connection.ts`), which both Test Connection and the VS Code extension's `connection/test` reach, awaits `provider.connect()` with no deadline of its own; the `queryTimeout` it passes bounds each request a provider makes, not the sum of them.
 A provider whose `connect()` makes several requests in turn (discovery, reviews, a paged list) can therefore hold Test Connection for many query timeouts, and a provider that loops on what a server answers holds it until the loop ends.
 The Kubernetes provider bounds its own walks (one deadline per walk and a count of empty pages), and a `disconnect()` closes a session still being opened, but no rule says every provider must.
+Measured 2026-10-21 for the VS Code extension's backend, against a listener on 127.0.0.1 that accepts TCP and never answers, with four engines tested through `testConnection` at once: MongoDB settled at 10,232 ms and MySQL at 10,249 ms on deadlines of their own, while PostgreSQL ("Connection terminated due to connection timeout") and SQL Server ("Failed to connect to 127.0.0.1:<port> in 60000ms") both settled at 60,242 ms, on the 60 s `acquireTimeout` their pools are built with rather than the 10 s `queryTimeout` the test passes.
+A `disconnect()` during that pending connect frees nothing sooner: PostgreSQL's `pool.end()` waited for the pending client until 60,153 ms, and SQL Server's `pool.close()` returned at once while tedious held its socket until its own 60 s connect timeout.
+The extension's `connection/test` answers `CONNECTION_ERROR` after 11 s instead (`TEST_DEADLINE_MS` in `vscode-extension/src/backend/handlers.ts`) and has `testConnection` close the provider when its connect settles, so a PostgreSQL or SQL Server server that takes between 11 and 60 seconds to accept a connection fails that channel's test and passes the web route's.
 
 Found 2026-10-11 by the review of the Kubernetes provider.
 
-**Done when:** the Test Connection route, or `BaseDatabaseProvider`, gives `connect()` one deadline derived from the query timeout, a connect past it is answered with a timeout sentence and its provider disconnected, and a test holds a connect open and expects the sentence and the disconnect.
+**Done when:** the Test Connection route, or `BaseDatabaseProvider`, gives `connect()` one deadline derived from the query timeout, a connect past it is answered with a timeout sentence and its provider disconnected, a test holds a connect open and expects the sentence and the disconnect, and the extension's own `TEST_DEADLINE_MS` race is removed in favour of it.
 
 ### D277. Kubernetes watch and logs are bounded snapshots, never a live stream
 
@@ -3043,7 +3031,7 @@ Found 2026-10-10 while planning the Kubernetes provider.
 The file-level `beforeAll` in `tests/unit/lib/agent/composed-sql.test.ts` loads the DuckDB native addon, creates a database file and its fixture tables, and passes no timeout, so bun's default of 5000 ms bounds the whole setup.
 In one full coverage run on 2026-10-11, on the Kubernetes provider's branch, which does not touch that file, the hook timed out and the file failed with no test run.
 The file passed alone and alone with coverage three times that day, and 16 parallel coverage runs of it passed the same day, so it needs more load than that to fail again.
-It is the same shape as D153.
+It is the same shape as the etcd `connection-options.test.ts` hook, which #1855 gave a 60-second budget.
 
 **Done when:** the hook carries a timeout sized for a busy runner (bun's `beforeAll` takes one as its second argument), and the file passes repeated runs at the CI job's concurrency.
 
@@ -3243,11 +3231,11 @@ Found 2026-10-12 while designing the RabbitMQ provider.
 
 ### D315. The API replaces every provider's timeout sentence with one shared sentence
 
-`createErrorResponse` in `src/lib/api/errors.ts` answers every `TimeoutError` with "Query timed out. Please try a simpler query or increase timeout.", so a provider's phase-specific sentence, such as RabbitMQ's "No answer from {host}:{port} within {n} s.", never reaches the user; 19 provider files write such sentences today.
+`createErrorResponse` in `src/lib/api/errors.ts` answers every `TimeoutError` through `databaseErrorBody` in `src/lib/api/error-body.ts`, whose `TIMEOUT_SENTENCE` is "Query timed out. Please try a simpler query or increase timeout.", so a provider's phase-specific sentence, such as RabbitMQ's "No answer from {host}:{port} within {n} s.", never reaches the user; 19 provider files write such sentences today.
 
 Found 2026-10-12 while designing the RabbitMQ provider.
 
-**Done when:** the route passes a provider's own `TimeoutError` message through for every provider, in a shared PR with a route test per class.
+**Done when:** `databaseErrorBody` passes a provider's own `TimeoutError` message through for every provider, in a shared PR with a route test per class.
 
 ### D316. The package does not export the object source part predicates
 
@@ -3853,7 +3841,7 @@ Each ran out of that default under load on a 20-core development machine during 
   Its slowest without a timeout of its own is `the real sources pass all three rules`, an import-graph walk from every file under `src/lib/db/operations` and `src/lib/agent`, read from disk in the body.
 
 Re-measured alone on 2026-10-20 on `main` at `6e611bf73`, three runs each through bun's JUnit reporter: 0.88 to 1.13 s, 0.52 to 0.53 s, 0.39 to 0.40 s and 0.38 to 0.39 s, in the order above.
-D153 is the same class in the etcd files.
+The etcd `seam-guard.test.ts` and `connection-options.test.ts` were the same class; #1855 made the one's slowest rule cheaper and gave the other's hook a budget.
 
 Found on #1847, #1849 and #1850, none of which touches these tests.
 
@@ -3883,12 +3871,116 @@ Found on #1850, which moved the spec's quoting beside each provider and left the
 `the seconds are the wait this request made, never a limit it was not given` in `tests/unit/db/http/node-transport-connect-timeout.test.ts` makes a 700 ms deadline, sleeps 400 ms with `setTimeout`, then sends a request to a host whose connect never completes, and expects the failure to name a wait of 0.2 to 0.4 seconds.
 The transport counts that wait from the request's own start (`queuedAt` in `createNodeTransport`, `src/lib/db/http/node-transport.ts`), and `waitedSeconds` in `src/lib/db/errors.ts` names 0.2 only from 150 ms up, so the test holds only while the sleep ends no more than 150 ms late.
 On the `Cross-platform Tests (macos-latest)` job of #1818, attempt 1 of run 39288327751 on 2026-10-19, it failed at line 108 with `expect(received).toBeGreaterThanOrEqual(expected)`, "Expected: >= 0.2", "Received: 0.1", after 704 ms, so the request started with under 150 ms of the deadline left; attempt 2 passed.
-The same attempt also ran D153's etcd `descriptor readers` test out of the default timeout (6028 ms), so the runner was busy, and nothing points at the transport.
+The same attempt also ran the etcd `descriptor readers` test of `tests/unit/db/etcd/seam-guard.test.ts` out of the default timeout (6028 ms), so the runner was busy, and nothing points at the transport.
 The file passed alone on 2026-10-20 on `main` at `6e611bf73` (12 tests, 3.3 s).
 
 Found on #1818, whose change does not touch the HTTP transport.
 
 **Done when:** the test bounds the named wait by the time it measured itself between sending the request and the deadline, not by the sleep's nominal length, and the file passes repeated runs at the CI job's concurrency.
+
+### D380. An inline connection is not held to `SEED_ONLY_FIELDS`
+
+`SEED_ONLY_FIELDS` in `src/lib/db/connection-fields.ts` names the fields only a seed file may set, but `resolveConnection` in `src/lib/seed/resolve-connection.ts` does not check an inline connection against it.
+For example, OPC UA's `clientCertificatePath` and `clientPrivateKeyPath` are seed-only, and the provider reads them from any config it is given, so a request that carries them inline reaches the provider with them.
+
+Found 2026-10-20 during the VS Code extension work, and deferred because it does not block that work.
+
+**Done when:** `resolveConnection` refuses an inline connection that carries a seed-only field with `400`, with a route test.
+
+### D381. A broken seed file's path reaches the answer to a request by seed id
+
+When the seed file does not load, a request by seed id answers `500` with the seed loader's message, and that message names the seed file's path. Every role gets the same answer.
+
+Found 2026-10-20 during the VS Code extension work, and deferred because it does not block that work.
+
+**Done when:** the answer is a fixed sentence that names no path, and the loader's message, path included, stays in the server log.
+
+### D382. The LibreDB library's stale-lock check blocks on a FIFO
+
+`isStaleLock` in the `@libredb/libredb` library's node-fs adapter reads the lock path with `readFileSync`, which blocks when that path is a FIFO.
+Studio guards against it from outside: it refuses a non-regular database path and the files beside it before the library opens them (`src/lib/db/utils/regular-file.ts`).
+
+Found 2026-10-20 during the VS Code extension work, and deferred because it does not block that work.
+
+**Done when:** the library checks the lock file's type itself before reading it, so the guard does not rest on every caller.
+
+### D383. SQLite's WAL check lets a read error escape as a raw `Error`
+
+`isWalModeFile`, called from the `connect` catch in `src/lib/db/providers/sql/sqlite.ts`, reads the database file's header. A read error on a regular file escapes it as a raw `Error` rather than a `ConnectionError`.
+
+Found 2026-10-20 during the VS Code extension work, and deferred because it does not block that work.
+
+**Done when:** that read error reaches the caller as a `ConnectionError`, with a test.
+
+### D384. `SQLBaseProvider.buildLimitClause` has no caller
+
+`buildLimitClause` in `src/lib/db/providers/sql/sql-base.ts` is not called from anywhere.
+
+Found 2026-10-20 during the VS Code extension work.
+
+**Done when:** the method is removed.
+
+### D385. An etcd certificate test timed out on Windows
+
+`step 4: a certificate whose Common Name etcd does not know is named` in `tests/integration/db/etcd-provider.test.ts` timed out at 60 s on the `windows-latest` job of #1875 on 2026-10-20.
+Whether the cause is the runner or the test was not measured.
+
+**Done when:** the cause is known and the test passes repeated runs on the `windows-latest` job.
+
+### D386. Two first requests for one connection at once each open a provider, and the cache keeps only the second
+
+`getOrCreateProvider` (`src/lib/db/factory.ts`) looks its key up in `providerCache`, then awaits `createDatabaseProvider` and `connectPhase(() => provider.connect())`, and only then calls `providerCache.set`, with no in-flight entry for the key.
+Two requests that miss the cache at once therefore each build and connect a provider, and the later `set` replaces the earlier entry, whose provider no `removeProvider`, idle sweep or `clearProviderCache` can reach any more: its pool and its server sessions stay open until the process exits.
+Measured 2026-10-21 on `postgres:18` (1 CPU, `512m`) through the VS Code extension's backend child as its first review found it: two concurrent `connection/open` requests with the same params logged `[DB] Creating postgres provider` twice and left 2 client sessions in `pg_stat_activity`, and 1 of them stayed after `connection/close` and after `shutdown` had answered `null`.
+The child now runs one `connection/open` or `connection/close` of an id at a time and the extension shares one reopen per connection, generation and profile revision, starting a reopen at a newer revision only once the one under way has settled, so that channel no longer sends two at once: the same probe then counts 1 provider, 1 session, and none after the close.
+Nothing in `getOrCreateProvider` keeps the web routes from doing the same when two requests for one connection both miss the cache, after the idle sweep closed its provider, say; that path was not measured.
+
+Found by the review of the VS Code extension's backend (PR 5).
+
+**Done when:** `getOrCreateProvider` keeps one in-flight promise per cache key that concurrent callers share and a failed connect removes, and a test sends two concurrent first calls for one key and expects one `createDatabaseProvider`, one `connect()` and one cached provider.
+
+### D387. A wrong password answers `CONNECTION_ERROR`, not `AUTH_ERROR`, on the four v0 engines
+
+The `connect` of the PostgreSQL, MySQL, SQL Server and MongoDB providers raises `ConnectionError` for a refused login, so the db routes and the VS Code extension's backend both answer 503 `CONNECTION_ERROR` for a wrong password, the same answer as an unreachable server.
+Measured 2026-10-21 by the VS Code extension's wrong-password walk against all four engines' containers, on both backend runtimes.
+The extension therefore offers Enter Credentials on `CONNECTION_ERROR` too (`CREDENTIALS_OFFER_CODES` in `vscode-extension/src/host/backend-client.ts`), still decided by `data.code` alone; the offer is harmless when the server is unreachable.
+
+Found 2026-10-21 during the VS Code extension work (PR 8), and deferred because changing the provider layer's mapping is not that PR's to do.
+
+**Done when:** each of the four providers maps its login refusal (PostgreSQL SQLSTATE `28P01` and `28000`, MySQL `1045`, SQL Server `18456`, MongoDB code `18`) to `AuthenticationError`, after checking how the web client treats a 401 from the db routes; a test per engine pins `AUTH_ERROR` for a wrong password; and the extension's offer narrows back to `AUTH_ERROR`.
+
+### D388. Select Rows writes a SQL Server reserved word bare, which the server refuses
+
+`quoteIdentifier` in `src/lib/query-generators.ts` brackets a SQL Server name only when it holds a special character, so a table named `order` gives `SELECT * FROM master.dbo.order;`, and SQL Server answers "Incorrect syntax near the keyword 'order'.".
+The web's tree click and the VS Code extension's Select Rows both build that text through `generateTableQuery`.
+PostgreSQL and MySQL accept a reserved word after a qualifier, so `public.order` and `libredb_it.order` run.
+Measured 2026-10-21 by the VS Code extension's integration leg against its SQL Server container.
+
+Found 2026-10-21 during the VS Code extension work (PR 11), and deferred because it changes the SQL generated for SQL Server on the web too.
+
+**Done when:** `quoteIdentifier` brackets a T-SQL reserved word, with the word list declared where the repository keeps per-engine SQL facts rather than as a new type-id branch, and the skipped case "Select Rows runs on mssql's table named order" in `vscode-extension/test/integration/tree-editor.test.ts` runs again.
+
+### D389. A failed query reaches no client with the driver's detail
+
+`mapDatabaseError` in `src/lib/db/errors.ts` builds `QueryError` from the driver's message and position only, so the detail a driver gives is dropped before any route answers.
+PostgreSQL's detail for a unique violation, "Key (id)=(1) already exists.", reaches neither the web routes' error body nor the VS Code extension.
+Measured 2026-10-21 by the VS Code extension's integration leg against its PostgreSQL container: the unique violation answered only "duplicate key value violates unique constraint" and the constraint name.
+The extension's Results view renders a detail when one arrives, so its tests show one through `SYNTHETIC_RUN_FAILED_WITH_DETAIL` in `vscode-extension/test/fixtures/results-sequences.ts`, which the comparison with live runs leaves out by name.
+
+Found 2026-10-21 during the VS Code extension work (PR 13), and deferred because it changes the error body of the web's db routes.
+
+**Done when:** `mapDatabaseError` carries the driver's detail into `QueryError` where the driver gives one, a test per SQL engine pins it, and the extension's synthetic detail case is replaced by a recorded live one.
+
+### D390. A MongoDB run has no deadline, and the VS Code extension offers it no Cancel
+
+The MongoDB provider's `queryTimeout` bounds only its connect, the race between the client's connect and a deadline in `connect` of `src/lib/db/providers/document/mongodb/index.ts`.
+No `maxTimeMS` is set on the query path, so a MongoDB statement runs as long as the server lets it, in the db routes and in the VS Code extension's backend alike; only the agent's reads set one.
+Once a MongoDB statement is sent, the extension offers no Cancel either, because `supportsQueryCancel` is false for MongoDB.
+Measured 2026-10-21 by the VS Code extension's e2e leg (PR 14): a find with `$where: 'sleep(3000) || true'` held the run for 25 to 26 s, with no Cancel offered.
+
+Found 2026-10-21 during the VS Code extension work (PR 14), and deferred because it changes the MongoDB provider's query path for the web too.
+
+**Done when:** the provider passes the connection's `queryTimeout` as `maxTimeMS` on every query operation, a test per operation pins it, and the extension's MongoDB run ends with `TIMEOUT_ERROR` at that bound.
 
 ## Value interpolation
 
@@ -4269,7 +4361,7 @@ first 10MB will be available unless configured.`
 
 So one condition gets two wrong answers. The five existing object routes that go through
 `handleObjectRequest`'s body-parse arm answer HTTP 400 `{ "error": "Empty request body" }` for a body that
-was neither empty nor malformed, and `POST /api/db/query` answers HTTP 500 with a JSON parser's sentence.
+was neither empty nor malformed, and `POST /api/db/query` answers HTTP 400 `{ "error": "Invalid request body" }`.
 Neither tells the caller their request was too large.
 
 The two routes added by #789 Phase 3 do NOT inherit this: `readObjectRouteBody` reads `content-length` and
@@ -5532,9 +5624,9 @@ Found 2026-10-12 in a browser pass of the RabbitMQ provider, reproduced with scr
 ### U124. Firestore's Database ID box carries a sentence about Create Table and SHOW SCHEMAS
 
 The connection dialog draws one fixed sentence under the schema box for every engine that takes the field (`src/components/ConnectionModal.tsx:1063`, `:1080-1083`): "Used for unqualified table names in queries and Create Table. Leave empty to qualify names yourself. Run SHOW SCHEMAS to list the catalog's schemas."
-It was written for Trino, and the box is also Firestore's "Database ID" (`src/lib/db-ui-config.ts:987-992`), where the provider declares no `createTable` (`src/lib/db/providers/document/firestore/index.ts`) and there is no `SHOW SCHEMAS`.
+It was written for Trino, and the box is also Firestore's "Database ID" (the `firestore` entry of `CONNECTION_FORM` in `src/lib/db/connection-form.ts`), where the provider declares no `createTable` (`src/lib/db/providers/document/firestore/index.ts`) and there is no `SHOW SCHEMAS`.
 So a Firestore user reads, under the engine's own hint ("Empty for the (default) database"), advice about table names and a statement the engine does not have.
-BigQuery's "Default dataset" box (`src/lib/db-ui-config.ts:859`) takes the same sentence, and whether it holds there is not measured.
+BigQuery's "Default dataset" box (the `bigquery` entry of `CONNECTION_FORM` in `src/lib/db/connection-form.ts`) takes the same sentence, and whether it holds there is not measured.
 The sentence is not a declared field, so an engine entry cannot replace or drop it the way `fieldHints` and `fieldPlaceholders` do.
 
 Found 2026-10-12 while reading the connection dialog for a new provider.
@@ -5690,7 +5782,7 @@ A window narrowed by a vertical scrollbar (1265 wide) wraps more of the hero and
 ### U140. The connection dialog's field census leaves six shipped types out
 
 The docblock of the "declared connection-field copy (#1085)" block in `tests/components/ConnectionModal.test.tsx` says its `SHIPPED` table holds "every shipped type", but the table has no row for BigQuery, Snowflake, Neo4j, MQTT, Firestore or OPC UA, six of the thirty-seven in `SHIPPED_DATABASE_TYPES` (counted 2026-10-14 on `main` at 59cdfd09b, where #1759 added Apache Spark's row).
-The same docblock calls Prometheus and Kafka "the shipped entries that declare either" label or hint, while `src/lib/db-ui-config.ts` now declares field copy for libSQL, Db2, etcd, Neo4j, Milvus, Qdrant, InfluxDB and InfluxDB 3 as well.
+The same docblock calls Prometheus and Kafka "the shipped entries that declare either" label or hint, while `src/lib/db/connection-form.ts` now declares field copy for libSQL, Db2, etcd, Neo4j, Milvus, Qdrant, InfluxDB and InfluxDB 3 as well.
 So a change to the labels or hints of those six types reaches no census row.
 
 Found 2026-10-13 while building the Apache Spark provider (#1759); pre-existing.
@@ -5764,7 +5856,7 @@ Found 2026-10-18 while designing #1822.
 
 ### U147. The ClickHouse connection-URI box shows a MongoDB example
 
-The `clickhouse` entry of `DB_UI_CONFIG` in `src/lib/db-ui-config.ts` declares `fieldPlaceholders.connectionString` as `mongodb://localhost:27017/mydb  or  mongodb+srv://...`, so a ClickHouse dialog switched to its connection string mode offers a MongoDB URI as the example.
+The `clickhouse` entry of `CONNECTION_FORM` in `src/lib/db/connection-form.ts` declares `fieldPlaceholders.connectionString` as `mongodb://localhost:27017/mydb  or  mongodb+srv://...`, so a ClickHouse dialog switched to its connection string mode offers a MongoDB URI as the example.
 That is the dialog's old fall-through for every toggle engine that was not Couchbase or libSQL, moved onto the declaration unchanged so the engine contract refactor changed no rendered text; `tests/unit/db/connection-form/golden/clickhouse.txt` and `tests/unit/lib/db-ui-config-placement.test.ts` pin it.
 The schemes the parser reads for ClickHouse are `clickhouse://`, `http://` and `https://`.
 
@@ -6626,13 +6718,14 @@ the reason, distinct from a missing token, with the row 1.4 residual in `docs/SE
 
 ### H14. A 500 hands the caller the raw error message, including a storage database address
 
-The generic branch at the end of `createErrorResponse()` in `src/lib/api/errors.ts` returns `error.message` verbatim for any error it does not classify.
+The generic branch at the end of `createErrorResponse()` in `src/lib/api/errors.ts` answers with `internalErrorBody` in `src/lib/api/error-body.ts`, which returns `error.message` verbatim for any error it does not classify.
+`internalErrorBody` is the shared body every caller of `error-body.ts` answers an unclassified error with, so its fix covers each of them, not only the route.
 With `STORAGE_PROVIDER=postgres` and the database unreachable, `POST /api/auth/login` and the account routes answer `{"error":"connect ECONNREFUSED 127.0.0.1:55432"}` (measured against a local container), which tells an unauthenticated caller the internal address of the store.
 Found by the red-team pass on #1122, where the account registry made the login route depend on the store; the branch itself predates that PR and serves every route.
 
 Not fixed there because the branch is shared: some routes rely on the message reaching the caller, and changing it is a behaviour change across the API surface that needs its own audit of which errors are meant to be shown.
 
-**Done when:** an unclassified error answers a fixed message with its detail in the log only, each route that must show a driver's own message classifies that error first, and a test pins that an `ECONNREFUSED` from the store does not reach the response body.
+**Done when:** `internalErrorBody` answers an unclassified error with a fixed message and its detail in the log only, each route that must show a driver's own message classifies that error first, and a test pins that an `ECONNREFUSED` from the store does not reach the response body.
 
 ---
 
@@ -6832,7 +6925,7 @@ CodeQL's text: "A broken or weak cryptographic algorithm depends on sensitive da
 The line computed the SHA-1 thumbprint of the server's DER certificate, which `session.ts` compares against the operator's pin.
 
 The stated CONSEQUENCE was measured on 2026-10-12 and does not hold, and that is worth recording because it is what the next reader will want.
-The hashed DER is not sensitive: an OPC UA server publishes it to any unauthenticated caller in its `GetEndpoints` reply (Part 4 5.5.4), and this repository already classifies the derived thumbprint as `public` in `src/lib/storage/connection-secrets.ts`.
+The hashed DER is not sensitive: an OPC UA server publishes it to any unauthenticated caller in its `GetEndpoints` reply (Part 4 5.5.4), and this repository already classifies the derived thumbprint as `public` in `src/lib/storage/secret-fields.ts`.
 Nor was the pin defeatable: defeating a pin of a certificate that already exists needs a SECOND PREIMAGE, which SHA-1 still resists, and not the collision resistance that SHAttered 2017 and Leurent and Peyrin 2020 broke.
 The thing actually worth fixing that the audit turned up is U130, which is about which certificate the pin is compared against rather than about the hash.
 

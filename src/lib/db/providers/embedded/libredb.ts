@@ -61,6 +61,7 @@ import { comparePaths } from "../../object-path";
 import { DatabaseConfigError, ConnectionError, QueryError } from "../../errors";
 import { formatBytes } from "../../utils/pool-manager";
 import { carriesLossyNumber } from "../../utils/json-integers";
+import { assertRegularFilesOrMissing } from "../../utils/regular-file";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import * as fs from "fs";
 import { isReservedStoragePath } from "@/lib/data-dir";
@@ -68,6 +69,9 @@ import * as path from "path";
 
 /** SQLite's in-memory database name, which LibreDB does not have (#1450). */
 const LIBREDB_MEMORY_NAME = ":memory:";
+
+/** The file the kernel keeps beside a database: its writer lock. */
+const LIBREDB_SIDECAR_SUFFIXES = [".lock"] as const;
 
 function isDirectory(dir: string): boolean {
   try {
@@ -525,6 +529,10 @@ export class LibreDBProvider extends BaseDatabaseProvider {
     }
     const lib = await loadLibreDB(); // DatabaseConfigError propagates if unavailable
     try {
+      // Before the kernel opens anything: it opened a FIFO and reported a connection to it. Its
+      // `.lock` too, since lock() reads a lock it finds taken to judge whether it is stale, and that
+      // read of a FIFO waited for a writer on the server's own thread.
+      assertRegularFilesOrMissing(dbPath, LIBREDB_SIDECAR_SUFFIXES);
       this.db = lib.open({ path: dbPath });
       this.kv = lib.kv(this.db);
       this.dbVersion = lib.version;

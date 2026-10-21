@@ -396,7 +396,7 @@ ioredis only authenticates as `default` when `username` is absent. A pasted
 userinfo into `user` / `password` ([§4.2](#42-connection-string-nuance)).
 
 **A connection saved before the field was writable keeps authenticating as `default`, and there is
-nothing to migrate.** `connectionFields` in [`src/lib/db-ui-config.ts`](../../src/lib/db-ui-config.ts)
+nothing to migrate.** `connectionFields` in [`src/lib/db/connection-form.ts`](../../src/lib/db/connection-form.ts)
 decides what a save WRITES, and it omitted `user` for `redis` until the settlement round of
 2026-08-27 — so the ACL user a person typed was discarded between the box and the driver, and the
 value simply was never captured. No migration can restore a credential that was never stored: an

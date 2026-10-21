@@ -58,7 +58,7 @@ export interface SparkConnectionOptions {
 
 /**
  * The field refusals; hostEmpty, tokenCharacters, catalogFormat, namespaceFormat and userNotTaken end with
- * "Nothing was sent.". src/lib/db-ui-config.ts copies
+ * "Nothing was sent.". src/lib/db/connection-form.ts copies
  * hostEmpty, tokenCharacters, catalogFormat and namespaceFormat literally into SPARK_FIELD_RULES, and
  * tests/unit/lib/db-ui-config.test.ts holds each copy equal to these.
  */

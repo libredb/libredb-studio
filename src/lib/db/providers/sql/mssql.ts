@@ -64,7 +64,7 @@ import {
 } from "../../errors";
 import { assertReadOnlyBudget, measureResultBytes } from "./read-only-budget";
 import { formatBytes } from "../../utils/pool-manager";
-import { analyzeQuery, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../utils/query-limiter";
+import { analyzeQuery, assertRowBounds, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../utils/query-limiter";
 import { measuredNullableAggregate } from "../../utils/measured-aggregate";
 import { uniqueFieldNames } from "../../utils/result-fields";
 import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
@@ -2679,6 +2679,7 @@ export class MSSQLProvider extends SQLBaseProvider {
   public override prepareQuery(query: string, options: QueryPrepareOptions = {}): PreparedQuery {
     const { limit = DEFAULT_QUERY_LIMIT, offset = 0, unlimited = false } = options;
     const effectiveLimit = unlimited ? MAX_UNLIMITED_ROWS : limit;
+    assertRowBounds(effectiveLimit, offset, this.type);
     const queryInfo = analyzeQuery(query, this.type);
 
     if (queryInfo.type === "SELECT" && !queryInfo.hasLimit) {
