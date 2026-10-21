@@ -594,9 +594,9 @@ not. `CTE_EXCLUDE_INFO` reads `pg_constraint` where `contype = 'x'` and takes th
 joined into both `describeObject()` and `describeObjects()` and surfaces as the optional
 `exclusionConstraints` (`{ name, definition }`) on `ObjectDetail` and `DetailedObject`; a table with none
 carries no key. The desktop tree draws it as a row under the table's columns, marked `EXCLUDE`, and the mobile
-schema list as an "Exclusion constraints" group, each with the definition as the tooltip. An engine that refuses `pg_constraint` or `pg_get_constraintdef()` is retried with
+schema list as an "Exclusion constraints" group; both show the definition as text under the name, and as its tooltip. An engine that refuses `pg_constraint` or `pg_get_constraintdef()` is retried with
 the CTE emptied, like `fk_info`, so the list is absent there and every other column still arrives.
-Verified against PostgreSQL through PGlite with `EXCLUDE USING gist (table_id WITH =, tsrange(starts_at,
+Verified against PostgreSQL through PGlite, and against a PostgreSQL 18.6 server in the explorer, with `EXCLUDE USING gist (table_id WITH =, tsrange(starts_at,
 ends_at, '[)') WITH &&) WHERE (...)`: both reads return the constraint, and a table without one returns none.
 
 **`describeObject()` takes the kind, and branches on it rather than on the name.** Only the kinds

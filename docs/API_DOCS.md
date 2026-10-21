@@ -1333,7 +1333,7 @@ and the provider validates the path against that declaration.
 **Response (200 OK):** one `ObjectDetail`, exactly as the provider answered it.
 `ColumnSchema`, `IndexSchema`, `ForeignKeySchema` and `ExclusionConstraintSchema` are defined under
 [DatabaseObject](#databaseobject).
-`exclusionConstraints` is optional: PostgreSQL publishes it (empty when the table has none);
+`exclusionConstraints` is optional: PostgreSQL publishes it when the table has one, and omits the key when it has none;
 engines that never create exclusion constraints omit the key.
 
 ```json
