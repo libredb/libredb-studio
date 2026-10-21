@@ -242,7 +242,7 @@ export function parseConnectionString(input: string): ParsedConnection | null {
 
   // PostgreSQL
   if (trimmed.startsWith("postgres://") || trimmed.startsWith("postgresql://")) {
-    return parseGenericURL(trimmed, "postgres", "5432");
+    return parsePostgresURL(trimmed);
   }
 
   // MySQL
@@ -597,6 +597,51 @@ function parseLibSQLURL(uri: string): ParsedConnection | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * The libpq connection keywords a postgres URL may carry as query parameters
+ * (PostgreSQL docs, "Connection Strings": every keyword is accepted in the
+ * query part, e.g. postgresql:///mydb?host=db.example.com&port=5433).
+ * Mapped onto the field each one fills; `dbname` is handled separately because
+ * libpq lets it disagree with the path.
+ */
+const POSTGRES_QUERY_PARAMETERS: Readonly<Record<string, "host" | "port" | "user" | "password">> = {
+  host: "host",
+  port: "port",
+  user: "user",
+  password: "password",
+};
+
+/**
+ * A postgres:// or postgresql:// URL, read the way libpq reads it: host, port,
+ * user and password may also come from the query string, filling in what the
+ * authority left out. A value the authority already spelled stays - libpq
+ * resolves the same conflict in favour of the URL part - and `dbname=` may
+ * override the path's database. Other parameters are left to `readQueryTLS`
+ * and the rest of the query string is not inspected.
+ */
+function parsePostgresURL(uri: string): ParsedConnection | null {
+  const parsed = parseGenericURL(uri, "postgres", "5432");
+  if (parsed === null) return null;
+  let url: URL;
+  try {
+    url = new URL(uri);
+  } catch {
+    return parsed;
+  }
+  for (const [name, field] of Object.entries(POSTGRES_QUERY_PARAMETERS)) {
+    const authorityValue =
+      field === "host" ? url.hostname : field === "port" ? url.port : field === "user" ? url.username : url.password;
+    if (!authorityValue && url.searchParams.has(name)) {
+      parsed[field] = safeDecodeURIComponent(url.searchParams.get(name)!);
+    }
+  }
+  const dbname = url.searchParams.get("dbname");
+  if (dbname !== null) {
+    parsed.database = safeDecodeURIComponent(dbname);
+  }
+  return parsed;
 }
 
 function parseGenericURL(uri: string, type: DatabaseType, defaultPort: string): ParsedConnection | null {

@@ -64,6 +64,40 @@ describe("parseConnectionString", () => {
     });
   });
 
+  describe("postgres:// URL query parameters (libpq keywords)", () => {
+    test("reads host, port, user and password from the query string", () => {
+      const result = parseConnectionString("postgres:///app?host=db.example.com&port=6543&user=alice&password=secret");
+      expect(result!.host).toBe("db.example.com");
+      expect(result!.port).toBe("6543");
+      expect(result!.user).toBe("alice");
+      expect(result!.password).toBe("secret");
+      expect(result!.database).toBe("app");
+    });
+
+    test("query parameters fill in fields the authority left out", () => {
+      const result = parseConnectionString("postgres://localhost/app?user=alice");
+      expect(result!.host).toBe("localhost");
+      expect(result!.user).toBe("alice");
+    });
+
+    test("dbname= overrides the path database the way libpq does", () => {
+      const result = parseConnectionString("postgres://alice@localhost/app?dbname=other");
+      expect(result!.database).toBe("other");
+    });
+
+    test("the authority wins when both spell a field", () => {
+      const result = parseConnectionString("postgres://bob@db1.example.com:5432/app?host=db2.example.com&user=alice");
+      expect(result!.host).toBe("db1.example.com");
+      expect(result!.user).toBe("bob");
+    });
+
+    test("percent-encoded query parameter values are decoded", () => {
+      const result = parseConnectionString("postgres:///app?user=us%3Aer&password=p%40ss");
+      expect(result!.user).toBe("us:er");
+      expect(result!.password).toBe("p@ss");
+    });
+  });
+
   // ── MySQL ───────────────────────────────────────────────────────────────
 
   describe("mysql:// URLs", () => {
