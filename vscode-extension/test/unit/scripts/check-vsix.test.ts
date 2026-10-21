@@ -16,6 +16,8 @@ const REQUIRED_PATHS = [
   "extension/dist/webview/results.css",
   "extension/THIRD_PARTY_NOTICES.txt",
   "extension/LICENSE.txt",
+  "extension/media/libredb.svg",
+  "extension/media/engines/index.json",
 ];
 
 interface Entry {
@@ -52,10 +54,33 @@ describe("vsixViolations", () => {
     assert.deepEqual(vsixViolations(passing()), []);
   });
 
-  it("requires the package manifest, both bundles, the webview's script and stylesheet, the notices and the licence", () => {
-    assert.equal(REQUIRED.length, 7);
+  it("requires the package manifest, both bundles, the webview's script and stylesheet, the notices, the licence, the view container icon and the engine index", () => {
+    assert.equal(REQUIRED.length, 9);
     assert.ok(REQUIRED.includes("extension/dist/webview/results.js"));
     assert.ok(REQUIRED.includes("extension/dist/webview/results.css"));
+    assert.ok(REQUIRED.includes("extension/media/libredb.svg"));
+    assert.ok(REQUIRED.includes("extension/media/engines/index.json"));
+  });
+
+  it("passes the engine logos of both themes beside the engine index", () => {
+    const logos = ["extension/media/engines/postgres.light.svg", "extension/media/engines/postgres.dark.svg"];
+    const entries = [...passing().entries, ...logos.map((path) => ({ path, size: KIB }))];
+    assert.deepEqual(vsixViolations(passing(entries)), []);
+  });
+
+  for (const path of ["extension/media/engines/index.json", "extension/media/libredb.svg"]) {
+    it(`reports ${path} missing by name`, () => {
+      const entries = passing().entries.filter((entry) => entry.path !== path);
+      assert.equal(one(passing(entries)), `${path} is missing.`);
+    });
+  }
+
+  it("reports both media entries missing from a VSIX that holds no media", () => {
+    const entries = passing().entries.filter((entry) => !entry.path.startsWith("extension/media/"));
+    assert.deepEqual(vsixViolations(passing(entries)), [
+      "extension/media/libredb.svg is missing.",
+      "extension/media/engines/index.json is missing.",
+    ]);
   });
 
   it("passes a VSIX, its unpacked content and its child bundle at exactly their budgets", () => {
@@ -105,6 +130,8 @@ describe("vsixViolations", () => {
     "extension/dist/backend.js.MAP",
     "extension/tsconfig.json",
     "extension/CHANGELOG.md",
+    "extension/media/engines/postgres.svg",
+    "extension/media/other.png",
   ]) {
     it(`refuses the entry ${path}, which is not on the allowlist`, () => {
       const entries = [...passing().entries, { path, size: KIB }];

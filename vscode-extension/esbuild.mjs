@@ -1,9 +1,10 @@
-// The extension's single build entry (part 5, "Builds"): the LICENSE copy, the host, child and webview bundles,
+// The extension's single build entry (part 5, "Builds"): the engine logos, the LICENSE copy, the host, child and webview bundles,
 // their metafile checks, the webview stylesheet through the Tailwind CLI, and THIRD_PARTY_NOTICES.txt. Production is the default; --watch builds unminified.
 // --e2e-tests bundles the e2e leg's test files into out/ and builds nothing else: the leg runs against the dist/ that ships.
 
 import { spawn, spawnSync } from "node:child_process";
 import { copyFileSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
@@ -107,6 +108,27 @@ function finish(bundle, metafile) {
 /** The CLI's command line: Node itself running the CLI's script, as scripts/package.mjs runs vsce. */
 const tailwindCommand = (options) => [tailwindCli(root), ...tailwindArgs(options)];
 
+/**
+ * Writes media/engines/** from scripts/engine-icons.tsx, bundled into out/ so the build needs no TypeScript loader at run
+ * time; the script's bundle never reaches dist/.
+ */
+async function writeEngineIcons() {
+  const outfile = join(root, "out", "scripts", "engine-icons.cjs");
+  await esbuild.build({
+    absWorkingDir: root,
+    entryPoints: ["scripts/engine-icons.tsx"],
+    outfile,
+    bundle: true,
+    platform: "node",
+    format: "cjs",
+    target: "node24",
+    jsx: "automatic",
+    tsconfig: "tsconfig.json",
+    logLevel: "warning",
+  });
+  createRequire(import.meta.url)(outfile).writeShippedEngineIcons(root);
+}
+
 if (e2eTests) {
   for (const leg of ["e2e", "e2e-workspace"]) rmSync(join(root, "out", "test", leg), { recursive: true, force: true });
   await esbuild.build({
@@ -123,6 +145,7 @@ if (e2eTests) {
     logLevel: "info",
   });
 } else {
+  await writeEngineIcons();
   copyFileSync(join(root, "..", "LICENSE"), join(root, "LICENSE"));
   if (watch) {
     for (const bundle of bundles) {

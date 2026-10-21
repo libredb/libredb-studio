@@ -18,12 +18,14 @@ import {
 import type { BackendExit, BackendLink, BackendState } from "../../src/host/backend-supervisor";
 import { CredentialsNotGivenError } from "../../src/host/connections/connection-source";
 import { UnknownConnectionError } from "../../src/host/connections/connection-store";
+import { OpenConnections } from "../../src/host/open-connections";
 import {
   type BackendApi,
   type BackendErrorCode,
   type ConnectionParams,
   type InitializeResult,
   METHODS,
+  type ProviderDescription,
   type RunQueryParams,
 } from "../../src/protocol";
 import { EventEmitter } from "../fakes/vscode";
@@ -151,7 +153,8 @@ function setup() {
   serve(METHODS.openConnection, () => OPENED);
   host.listen();
   child.listen();
-  return { client: new BackendClient(link, source), link, source, host, received, reads, serve };
+  const opened = new OpenConnections();
+  return { client: new BackendClient(link, source, opened), link, source, host, received, reads, serve, opened };
 }
 
 const methods = (received: readonly [string, unknown][]) => received.map(([method]) => method);
@@ -901,6 +904,117 @@ describe("BackendClient", () => {
       await client.closeIfOpen("c1");
       assert.deepEqual(received, []);
       assert.equal(link.connections, 0);
+    });
+  });
+
+  describe("the recorded descriptions and ensureOpen, the tree's open", () => {
+    const D2 = { capabilities: { supportsQueryCancel: true }, labels: {} } as unknown as ProviderDescription;
+    const D3 = { capabilities: { supportsQueryCancel: false }, labels: {} } as unknown as ProviderDescription;
+
+    /** The child answers each connection/open with the next of descriptions, the last one again once they run out. */
+    function answerOpens(serve: ReturnType<typeof setup>["serve"], ...descriptions: ProviderDescription[]) {
+      serve(METHODS.openConnection, () => ({
+        description: descriptions.length > 1 ? descriptions.shift() : descriptions[0],
+      }));
+    }
+
+    it("opens a connection with no record through the source, once, and answers its description", async () => {
+      const { client, source, received, opened } = setup();
+      assert.deepEqual(await client.ensureOpen("c1"), OPENED.description);
+      assert.deepEqual(received, [[METHODS.openConnection, PARAMS]]);
+      assert.deepEqual(source.opened, [1]);
+      assert.deepEqual(opened.get("c1"), { description: OPENED.description, generation: 1 });
+      assert.deepEqual(await client.ensureOpen("c1"), OPENED.description);
+      assert.equal(received.length, 1);
+      assert.deepEqual(source.reads, ["c1"]);
+    });
+
+    it("opens again after the revision moved and in a new generation, recording each answer", async () => {
+      const { client, link, source, received, opened, serve } = setup();
+      answerOpens(serve, OPENED.description as unknown as ProviderDescription, D2, D3);
+      await client.ensureOpen("c1");
+      source.current = 1;
+      assert.deepEqual(await client.ensureOpen("c1"), D2);
+      assert.deepEqual(opened.get("c1"), { description: D2, generation: 1 });
+      link.generation = 2;
+      assert.deepEqual(await client.ensureOpen("c1"), D3);
+      assert.deepEqual(opened.get("c1"), { description: D3, generation: 2 });
+      assert.deepEqual(methods(received), [METHODS.openConnection, METHODS.openConnection, METHODS.openConnection]);
+    });
+
+    it("records the open that reask's answer made after an AUTH_ERROR", async () => {
+      const { client, source, opened, serve } = setup();
+      let refusals = 1;
+      serve(METHODS.openConnection, () => {
+        if (refusals-- > 0) throw new ResponseError(401, "password authentication failed", { code: "AUTH_ERROR" });
+        return { description: D2 };
+      });
+      source.reask = async () => source.answer(PARAMS);
+      assert.deepEqual(await client.ensureOpen("c1"), D2);
+      assert.deepEqual(opened.get("c1"), { description: D2, generation: 1 });
+    });
+
+    it("rethrows the AUTH_ERROR and records nothing when reask answers undefined", async () => {
+      const { client, opened, serve } = setup();
+      serve(METHODS.openConnection, () => {
+        throw new ResponseError(401, "password authentication failed", { code: "AUTH_ERROR" });
+      });
+      const error = await rejection(client.ensureOpen("c1"));
+      assert.ok(error instanceof BackendError);
+      assert.equal(error.code, "AUTH_ERROR");
+      assert.equal(opened.get("c1"), undefined);
+    });
+
+    it("rejects with a declined read, sending no open and recording nothing", async () => {
+      const { client, source, received, opened } = setup();
+      const declined = new CredentialsNotGivenError("shop");
+      source.read = async () => {
+        throw declined;
+      };
+      assert.equal(await rejection(client.ensureOpen("c1")), declined);
+      assert.deepEqual(received, []);
+      assert.equal(opened.get("c1"), undefined);
+    });
+
+    it("records the reopen a read on a stale record makes, so the tree reads the new child's capabilities", async () => {
+      const { client, link, opened, serve } = setup();
+      answerOpens(serve, OPENED.description as unknown as ProviderDescription, D2);
+      serve(METHODS.listContainers, () => []);
+      await client.ensureOpen("c1");
+      link.generation = 2;
+      await client.listContainers({ connectionId: "c1" });
+      assert.deepEqual(opened.get("c1"), { description: D2, generation: 2 });
+    });
+
+    it("records what openConnection answered", async () => {
+      const { client, opened, serve } = setup();
+      answerOpens(serve, D2);
+      await client.openConnection(PARAMS);
+      assert.deepEqual(opened.get("c1"), { description: D2, generation: 1 });
+    });
+
+    it("forgets the id on closeConnection, and on closeIfOpen though the link is not ready and nothing is sent", async () => {
+      const { client, link, received, opened, serve } = setup();
+      serve(METHODS.closeConnection, () => null);
+      await client.openConnection(PARAMS);
+      await client.closeConnection({ connectionId: "c1" });
+      assert.equal(opened.get("c1"), undefined);
+      await client.openConnection(PARAMS);
+      await client.closeIfOpen("c1");
+      assert.equal(opened.get("c1"), undefined);
+      await client.openConnection(PARAMS);
+      link.state = "restarting";
+      const sent = received.length;
+      await client.closeIfOpen("c1");
+      assert.equal(received.length, sent);
+      assert.equal(opened.get("c1"), undefined);
+    });
+
+    it("refuses an open connection whose description another holder of the record forgot", async () => {
+      const { client, opened } = setup();
+      await client.ensureOpen("c1");
+      opened.forget("c1");
+      await assert.rejects(client.ensureOpen("c1"), { message: "c1 is open with no recorded description." });
     });
   });
 

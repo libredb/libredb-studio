@@ -13,9 +13,15 @@ export const MISSING_SECRET_PROMPT =
 export const REASK_PROMPT = "LibreDB replaces the stored value in VS Code's secret storage once the connection opens.";
 export const ENTER_CREDENTIALS = "Enter Credentials";
 
-/** An open the person declined, by Escape in a secret prompt or by declining Enter Credentials (builder's call 12). */
+/**
+ * An open the person declined, by Escape in a secret prompt or by declining Enter Credentials (builder's call 12).
+ * refusal is the open's error when the decline answered Enter Credentials, so a caller can still show why it failed.
+ */
 export class CredentialsNotGivenError extends Error {
-  constructor(connectionName: string) {
+  constructor(
+    connectionName: string,
+    readonly refusal?: BackendError,
+  ) {
     super(`No credentials were given for ${connectionName}, so it stays not connected.`);
     this.name = "CredentialsNotGivenError";
   }
@@ -55,8 +61,8 @@ export class ProfileConnectionSource implements ConnectionSource {
       dialogOptions(error.fixStatement),
       ENTER_CREDENTIALS,
     );
-    if (choice !== ENTER_CREDENTIALS) throw new CredentialsNotGivenError(entry.name);
-    const typed = await this.ask(entry.name, paths, REASK_PROMPT);
+    if (choice !== ENTER_CREDENTIALS) throw new CredentialsNotGivenError(entry.name, error);
+    const typed = await this.ask(entry.name, paths, REASK_PROMPT, error);
     return this.sourced(entry, revision, typed, typed);
   }
 
@@ -66,8 +72,13 @@ export class ProfileConnectionSource implements ConnectionSource {
     return entry;
   }
 
-  /** One masked box per path, in order; Escape in any of them declines the open. */
-  private async ask(name: string, paths: readonly string[], prompt: string): Promise<Record<string, string>> {
+  /** One masked box per path, in order; Escape in any of them declines the open, carrying the refusal a reask answers. */
+  private async ask(
+    name: string,
+    paths: readonly string[],
+    prompt: string,
+    refusal?: BackendError,
+  ): Promise<Record<string, string>> {
     const typed: Record<string, string> = {};
     for (const path of paths) {
       // oxlint-disable-next-line no-await-in-loop -- one box at a time: the person answers each before the next opens.
@@ -77,7 +88,7 @@ export class ProfileConnectionSource implements ConnectionSource {
         password: true,
         ignoreFocusOut: true,
       });
-      if (value === undefined) throw new CredentialsNotGivenError(name);
+      if (value === undefined) throw new CredentialsNotGivenError(name, refusal);
       typed[path] = value;
     }
     return typed;

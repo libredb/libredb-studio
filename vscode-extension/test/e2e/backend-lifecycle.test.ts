@@ -12,6 +12,7 @@ import {
   CRASH_WARNING,
   type SupervisorDeps,
 } from "../../src/host/backend-supervisor";
+import { OpenConnections } from "../../src/host/open-connections";
 import type { ConnectionParams } from "../../src/protocol";
 import { type RunningEngine, START_DEADLINE_MS, startEngine, stopEngine } from "../integration/containers";
 import { engineFixture } from "../integration/engines";
@@ -118,12 +119,15 @@ describe("the backend's lifecycle in a real extension host", () => {
 
   it("forks nothing on activation, and one child for three concurrent first calls", async function () {
     this.timeout(120_000);
+    // The extension's own child, when an earlier file expanded a connection in the Connections tree, runs throughout
+    // and is unreachable, so the check counts from the children that ran before this case.
+    const before = await backendChildren();
     const { extensionPath } = await installedExtension();
-    assert.deepEqual(await backendChildren(), []);
+    assert.deepEqual(await backendChildren(), before);
     supervisor = new BackendSupervisor(recordingDeps(extensionPath).deps);
-    assert.deepEqual(await backendChildren(), []);
+    assert.deepEqual(await backendChildren(), before);
     await Promise.all([supervisor.connection(), supervisor.connection(), supervisor.connection()]);
-    assert.equal((await backendChildren()).length, 1);
+    assert.equal((await backendChildren()).length, before.length + 1);
   });
 
   it("logs the host's execPath and ELECTRON_RUN_AS_NODE, and a child that runs on Electron", async function () {
@@ -160,7 +164,7 @@ describe("the backend's lifecycle in a real extension host", () => {
     };
     const { deps, recording } = recordingDeps(extensionPath);
     supervisor = new BackendSupervisor(deps);
-    const client = new BackendClient(supervisor, source);
+    const client = new BackendClient(supervisor, source, new OpenConnections());
     const loginStarted = Date.now();
     for (;;) {
       try {

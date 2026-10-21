@@ -5,6 +5,7 @@
  * disagrees with the 1.120.0 typings fails the typecheck.
  * The e2e leg checks the real API behind it.
  */
+import { posix } from "node:path";
 import type * as vscode from "vscode";
 import { ScriptedQuickInputs } from "./quick-input";
 import { MemorySecretStorage } from "./secret-storage";
@@ -154,6 +155,117 @@ export class ThemeIcon {
 }
 
 /**
+ * vscode.ThemeColor: a colour of the current theme, by its id.
+ * The code under test reaches this through tsconfig.test.json's "vscode" alias, which knip does not read.
+ * @public
+ */
+export class ThemeColor implements vscode.ThemeColor {
+  constructor(readonly id: string) {}
+}
+
+/**
+ * vscode.Uri, as far as the host builds one: a file path and POSIX joins below it.
+ * The code under test reaches this through tsconfig.test.json's "vscode" alias, which knip does not read.
+ * @public
+ */
+export class Uri implements vscode.Uri {
+  readonly scheme = "file";
+  readonly authority = "";
+  readonly query = "";
+  readonly fragment = "";
+
+  private constructor(readonly path: string) {}
+
+  get fsPath(): string {
+    return this.path;
+  }
+
+  with(): vscode.Uri {
+    throw new Error("The fake Uri has no with(); no host code calls it.");
+  }
+
+  toString(): string {
+    return `file://${this.path}`;
+  }
+
+  toJSON(): unknown {
+    return { scheme: this.scheme, path: this.path };
+  }
+
+  static file(path: string): Uri {
+    return new Uri(path);
+  }
+
+  static joinPath(base: Uri, ...parts: string[]): Uri {
+    return new Uri(posix.join(base.path, ...parts));
+  }
+}
+
+/**
+ * vscode.TreeItemCollapsibleState, with the real enum's values.
+ * The code under test reaches this through tsconfig.test.json's "vscode" alias, which knip does not read.
+ * @public
+ */
+export enum TreeItemCollapsibleState {
+  None = 0,
+  Collapsed = 1,
+  Expanded = 2,
+}
+
+/**
+ * vscode.TreeItem: the fields a tree data provider sets, read back by a test.
+ * The code under test reaches this through tsconfig.test.json's "vscode" alias, which knip does not read.
+ * @public
+ */
+export class TreeItem implements vscode.TreeItem {
+  id?: string;
+  description?: string | boolean;
+  tooltip?: string | vscode.MarkdownString;
+  iconPath?: vscode.TreeItem["iconPath"];
+  contextValue?: string;
+  command?: vscode.Command;
+
+  constructor(
+    readonly label: string | vscode.TreeItemLabel,
+    readonly collapsibleState?: vscode.TreeItemCollapsibleState,
+  ) {}
+}
+
+/** One appendText or appendMarkdown call a MarkdownString received. */
+export interface MarkdownPart {
+  readonly kind: "text" | "markdown";
+  readonly value: string;
+}
+
+/**
+ * vscode.MarkdownString, recording each appendText and appendMarkdown call in `parts` so a test can tell escaped text
+ * from markdown.
+ * The code under test reaches this through tsconfig.test.json's "vscode" alias, which knip does not read.
+ * @public
+ */
+export class MarkdownString implements vscode.MarkdownString {
+  value = "";
+  isTrusted?: boolean;
+  readonly parts: MarkdownPart[] = [];
+
+  appendText(value: string): MarkdownString {
+    this.parts.push({ kind: "text", value });
+    this.value += value.replace(/[\\`*_{}[\]()#+\-.!<>|~]/g, "\\$&");
+    return this;
+  }
+
+  appendMarkdown(value: string): MarkdownString {
+    this.parts.push({ kind: "markdown", value });
+    this.value += value;
+    return this;
+  }
+
+  appendCodeblock(): MarkdownString {
+    throw new Error("The fake MarkdownString has no appendCodeblock(); no host code calls it.");
+  }
+}
+
+/**
  * vscode.QuickInputButtons: the Back button, one object for the whole host, as in VS Code.
  * The code under test reaches this through tsconfig.test.json's "vscode" alias, which knip does not read.
  * @public
@@ -172,6 +284,26 @@ export enum QuickPickItemKind {
   Separator = -1,
   Default = 0,
 }
+
+/** One `window.withProgress` call: its options, and whether its task has settled. */
+export interface ProgressRun {
+  readonly options: vscode.ProgressOptions;
+  settled: boolean;
+}
+
+/** Every `window.withProgress` call since the last reset, in order. */
+export const progressRuns: ProgressRun[] = [];
+
+/** A tree view `window.createTreeView` created: its id, its options, what it revealed, and whether it was disposed. */
+export interface FakeTreeView {
+  readonly viewId: string;
+  readonly options: vscode.TreeViewOptions<unknown>;
+  readonly revealed: [unknown, unknown][];
+  disposed: boolean;
+}
+
+/** Every tree view `window.createTreeView` created since the last reset, in order. */
+export const treeViews: FakeTreeView[] = [];
 
 /** The quick inputs `window.createQuickPick` and `window.createInputBox` created since the last reset, scripted by a test. */
 export const quickInputs = new ScriptedQuickInputs(QuickInputButtons.Back);
@@ -211,6 +343,39 @@ export const window = {
   createInputBox(): vscode.InputBox {
     return quickInputs.createInputBox();
   },
+  // Answers a TreeView whose reveal and dispose record; the host calls nothing else on it.
+  createTreeView<T>(viewId: string, options: vscode.TreeViewOptions<T>): vscode.TreeView<T> {
+    const view: FakeTreeView = {
+      viewId,
+      options: options as vscode.TreeViewOptions<unknown>,
+      revealed: [],
+      disposed: false,
+    };
+    treeViews.push(view);
+    return {
+      reveal: async (element: T, revealOptions?: unknown) => {
+        view.revealed.push([element, revealOptions]);
+      },
+      dispose: () => {
+        view.disposed = true;
+      },
+    } as unknown as vscode.TreeView<T>;
+  },
+  // Runs the task at once with a progress that reports nowhere and a token never cancelled, and records when it settles.
+  withProgress<R>(
+    options: vscode.ProgressOptions,
+    task: (
+      progress: vscode.Progress<{ message?: string; increment?: number }>,
+      token: vscode.CancellationToken,
+    ) => Thenable<R>,
+  ): Thenable<R> {
+    const run: ProgressRun = { options, settled: false };
+    progressRuns.push(run);
+    const token = new CancellationTokenSource().token;
+    return Promise.resolve(task({ report: () => {} }, token)).finally(() => {
+      run.settled = true;
+    });
+  },
 } satisfies Pick<
   typeof vscode.window,
   | "createOutputChannel"
@@ -220,6 +385,8 @@ export const window = {
   | "showQuickPick"
   | "createQuickPick"
   | "createInputBox"
+  | "withProgress"
+  | "createTreeView"
 >;
 
 /**
@@ -285,13 +452,21 @@ export const commands = {
     if (!callback) {
       return Promise.reject(new Error(`command '${command}' not found`));
     }
-    return Promise.resolve(callback(...rest) as T);
+    // A callback that throws rejects, as VS Code's executeCommand does.
+    return new Promise<T>((resolve) => resolve(callback(...rest) as T));
   },
 } satisfies Pick<typeof vscode.commands, "registerCommand" | "executeCommand">;
 
 /** An extension context holding only what the host code reads; each call has its own empty MemorySecretStorage. */
-export function fakeExtensionContext(): Pick<vscode.ExtensionContext, "subscriptions" | "extensionPath" | "secrets"> {
-  return { subscriptions: [], extensionPath: "/ext", secrets: new MemorySecretStorage() };
+export function fakeExtensionContext(
+  extensionPath = "/ext",
+): Pick<vscode.ExtensionContext, "subscriptions" | "extensionPath" | "extensionUri" | "secrets"> {
+  return {
+    subscriptions: [],
+    extensionPath,
+    extensionUri: Uri.file(extensionPath),
+    secrets: new MemorySecretStorage(),
+  };
 }
 
 /**
@@ -381,5 +556,7 @@ export function resetFake(): void {
   configurationReads.length = 0;
   configurationChanges.dispose();
   quickInputs.reset();
+  progressRuns.length = 0;
+  treeViews.length = 0;
   workspace.isTrusted = true;
 }

@@ -21,11 +21,13 @@ import type {
   DescribeParams,
   ListParams,
   ParseParams,
+  ProviderDescription,
   RunQueryParams,
 } from "../protocol";
 import { METHODS } from "../protocol";
 import type { BackendExit, BackendLink } from "./backend-supervisor";
 import { UnknownConnectionError } from "./connections/connection-store";
+import type { OpenConnections } from "./open-connections";
 
 /** What a BackendApi method resolves. */
 type Answer<M extends keyof BackendApi> = Awaited<ReturnType<BackendApi[M]>>;
@@ -100,7 +102,7 @@ interface OpenRecord {
 
 export class BackendClient implements BackendApi {
   /** Each opened connection's record, by id; one that differs from the current generation or revision is reopened. */
-  private readonly opened = new Map<string, OpenRecord>();
+  private readonly records = new Map<string, OpenRecord>();
   /** The reopen under way for each connection id, with its generation and revision: calls that need both share it. */
   private readonly reopening = new Map<string, { generation: number; revision: number; done: Promise<void> }>();
   /** The token source of every query/run in flight, by connection id, until the run settles. */
@@ -109,6 +111,8 @@ export class BackendClient implements BackendApi {
   constructor(
     private readonly link: BackendLink,
     private readonly source: ConnectionSource,
+    /** Where every open's description is recorded, a reopen's included, and forgotten on a close. */
+    private readonly opened: OpenConnections,
   ) {}
 
   /** The supervisor already ran the handshake with PROTOCOL_VERSION; this answers its result and sends nothing. */
@@ -127,12 +131,26 @@ export class BackendClient implements BackendApi {
     const revision = this.source.revision(params.connection.id);
     const { connection, generation } = await this.link.connection();
     const opened = await this.request<Answer<"openConnection">>(connection, METHODS.openConnection, params, token);
-    this.opened.set(params.connection.id, { generation, revision });
+    this.records.set(params.connection.id, { generation, revision });
+    this.opened.record(params.connection.id, generation, opened.description);
     return opened;
   }
 
+  /**
+   * The tree's open: the description of the connection opened in the current generation at the profile's current
+   * revision, opening it first through the source (read, connection/open, the one reask, opened()) when its record is
+   * missing or stale. Starts the child when none runs.
+   */
+  async ensureOpen(connectionId: string): Promise<ProviderDescription> {
+    await this.onOpenConnection(connectionId, async () => undefined);
+    const recorded = this.opened.get(connectionId);
+    if (recorded === undefined) throw new Error(`${connectionId} is open with no recorded description.`);
+    return recorded.description;
+  }
+
   async closeConnection(params: ConnectionIdParams): Promise<null> {
-    this.opened.delete(params.connectionId);
+    this.records.delete(params.connectionId);
+    this.opened.forget(params.connectionId);
     const { connection } = await this.link.connection();
     return await this.request<null>(connection, METHODS.closeConnection, params);
   }
@@ -193,8 +211,9 @@ export class BackendClient implements BackendApi {
    * while the link is ready; never starts a child.
    */
   async closeIfOpen(connectionId: string): Promise<void> {
-    const record = this.opened.get(connectionId);
-    this.opened.delete(connectionId);
+    const record = this.records.get(connectionId);
+    this.records.delete(connectionId);
+    this.opened.forget(connectionId);
     if (record === undefined || this.link.state !== "ready" || record.generation !== this.link.generation) return;
     // A ready link answers its running child: this call starts none.
     const { connection } = await this.link.connection();
@@ -234,7 +253,7 @@ export class BackendClient implements BackendApi {
     send: (connection: MessageConnection) => Promise<T>,
   ): Promise<T> {
     const { connection, generation } = await this.link.connection();
-    const record = this.opened.get(connectionId);
+    const record = this.records.get(connectionId);
     if (
       record === undefined ||
       record.generation !== generation ||
@@ -246,7 +265,7 @@ export class BackendClient implements BackendApi {
       return await send(connection);
     } catch (error) {
       if (!(error instanceof BackendError && error.code === "CONNECTION_NOT_OPEN")) throw error;
-      this.opened.delete(connectionId);
+      this.records.delete(connectionId);
       const current = await this.link.connection();
       await this.reopen(current.connection, current.generation, connectionId);
       return await send(current.connection);
@@ -256,8 +275,8 @@ export class BackendClient implements BackendApi {
   /**
    * Reads the connection from the source and opens it; an AUTH_ERROR or CONNECTION_ERROR answer (D387) asks the source
    * once more (Enter Credentials) and opens with its answer, or rethrows when it has none. Records the revision the read
-   * answered, after that read's opened() has stored what the person typed; a profile removed while the open waited is
-   * closed in the child and rejects UnknownConnectionError, recording nothing.
+   * answered, and the description the open answered, after that read's opened() has stored what the person typed; a
+   * profile removed while the open waited is closed in the child and rejects UnknownConnectionError, recording nothing.
    * Every call that needs this id in this generation at the profile's current revision shares one reopen, so the source
    * is read, and the person asked, once. A reopen at a newer revision starts once the one under way has settled, opened
    * or failed, so the child's last connection/open of the id is the one the record names.
@@ -269,14 +288,15 @@ export class BackendClient implements BackendApi {
     if (underWay?.generation === generation && underWay.revision === revision) return underWay.done;
     const open = async (): Promise<void> => {
       let sourced = await this.source.read(connectionId);
+      let answer: Answer<"openConnection">;
       try {
-        await this.request<Answer<"openConnection">>(connection, METHODS.openConnection, sourced.params);
+        answer = await this.request<Answer<"openConnection">>(connection, METHODS.openConnection, sourced.params);
       } catch (error) {
         if (!(error instanceof BackendError && CREDENTIALS_OFFER_CODES.has(error.code))) throw error;
         const again = await this.source.reask(connectionId, error);
         if (again === undefined) throw error;
         sourced = again;
-        await this.request<Answer<"openConnection">>(connection, METHODS.openConnection, sourced.params);
+        answer = await this.request<Answer<"openConnection">>(connection, METHODS.openConnection, sourced.params);
       }
       try {
         await sourced.opened();
@@ -289,7 +309,8 @@ export class BackendClient implements BackendApi {
         }
         throw error;
       }
-      this.opened.set(connectionId, { generation, revision: sourced.revision });
+      this.records.set(connectionId, { generation, revision: sourced.revision });
+      this.opened.record(connectionId, generation, answer.description);
     };
     const started = underWay?.generation === generation ? underWay.done.then(open, open) : open();
     const done = started.finally(() => {

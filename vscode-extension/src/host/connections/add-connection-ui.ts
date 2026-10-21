@@ -34,6 +34,8 @@ export interface AddConnectionDeps {
   /** newLocalId (src/lib/ids.ts) */
   newId(): string;
   now(): Date;
+  /** ConnectionsTree.revealConnection, called once store.add has resolved (part 3: the flow reveals what it saved). */
+  reveal(connectionId: string): Thenable<void>;
 }
 
 /** The first catalogue the backend answers, kept for the activation; a failed load is not kept (part 2: it changes only with a new VSIX). */
@@ -258,6 +260,7 @@ class Session {
       });
       return undefined;
     }
+    await this.deps.reveal(step.entry.id);
     return step.entry.id;
   }
 

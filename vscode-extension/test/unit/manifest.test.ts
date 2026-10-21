@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { FLOOR_NODE, STABLE_RUNTIME } from "../vscode-floor";
 
@@ -93,7 +93,25 @@ describe("the manifest", () => {
       { command: "libredb.removeConnection", title: "Remove Connection", category: "LibreDB" },
       { command: "libredb.refresh", title: "Refresh", category: "LibreDB", icon: "$(refresh)" },
     ]);
-    assert.deepEqual(Object.keys(manifest.contributes), ["commands", "configuration"]);
+    assert.deepEqual(Object.keys(manifest.contributes), [
+      "commands",
+      "configuration",
+      "viewsContainers",
+      "views",
+      "viewsWelcome",
+      "menus",
+    ]);
+  });
+
+  it("contributes the LibreDB view container, the Connections view and its welcome content", () => {
+    assert.deepEqual(manifest.contributes.viewsContainers, {
+      activitybar: [{ id: "libredb", title: "LibreDB", icon: "media/libredb.svg" }],
+    });
+    assert.deepEqual(manifest.contributes.views, { libredb: [{ id: "libredb.connections", name: "Connections" }] });
+    assert.deepEqual(manifest.contributes.viewsWelcome, [
+      { view: "libredb.connections", contents: "No connections yet.\n[Add Connection](command:libredb.addConnection)" },
+    ]);
+    assert.ok(existsSync(join(root, "media", "libredb.svg")));
   });
 
   it("declares libredb.connections as part 2 writes it, synced and never read from a workspace", () => {

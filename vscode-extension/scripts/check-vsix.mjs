@@ -18,6 +18,8 @@ export const REQUIRED = [
   "extension/dist/webview/results.css",
   "extension/THIRD_PARTY_NOTICES.txt",
   /^extension\/LICENSE(\.txt)?$/,
+  "extension/media/libredb.svg",
+  "extension/media/engines/index.json",
 ];
 
 /**
@@ -31,6 +33,7 @@ export const ALLOWED = [
   "[Content_Types].xml",
   "extension/readme.md",
   "extension/package.nls.json",
+  /^extension\/media\/engines\/[a-z0-9-]+\.(light|dark)\.svg$/,
 ];
 
 /** [test on an entry's path, rule]; an entry reports the first rule it breaks, and one on none of them is held to ALLOWED. */

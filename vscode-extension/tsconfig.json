@@ -17,5 +17,5 @@
       "@/*": ["../src/*"]
     }
   },
-  "include": ["src/**/*", "test/**/*", "../src/types/db-drivers.d.ts"]
+  "include": ["src/**/*", "test/**/*", "scripts/**/*.tsx", "../src/types/db-drivers.d.ts"]
 }

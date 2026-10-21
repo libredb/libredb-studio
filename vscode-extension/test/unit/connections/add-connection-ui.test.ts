@@ -117,7 +117,7 @@ function setup(more: { items?: ProfileItem[]; ids?: string[]; catalog?: () => Pr
   const client = new FakeClient();
   const store = new FakeStore(more.items);
   const ids = [...(more.ids ?? ["1kq2v7x93j0ab"])];
-  const ran = { showLog: 0, openUserSettings: 0 };
+  const ran = { showLog: 0, openUserSettings: 0, revealed: [] as [string, number][] };
   const deps: AddConnectionDeps = {
     client,
     catalog: more.catalog ?? (async () => CATALOG),
@@ -132,6 +132,10 @@ function setup(more: { items?: ProfileItem[]; ids?: string[]; catalog?: () => Pr
     },
     newId: () => ids.shift() ?? "spare",
     now: () => NOW,
+    // Records the id with how many saves the store had finished when the flow revealed it.
+    reveal: async (connectionId) => {
+      ran.revealed.push([connectionId, store.added.length]);
+    },
   };
   return { deps, client, store, ran };
 }
@@ -211,6 +215,27 @@ describe("addConnection", () => {
       inputs.shown.every((input) => input.disposed),
       true,
     );
+  });
+
+  it("reveals the saved connection once, after the store has saved it (part 2 criterion 14)", async () => {
+    const { deps, client, ran } = setup();
+    const running = addConnection(deps);
+    await toTest();
+    client.tested(PASS);
+    await inputs.nextBox();
+    inputs.accept("shop");
+    assert.equal(await running, "1kq2v7x93j0ab");
+    assert.deepEqual(ran.revealed, [["1kq2v7x93j0ab", 1]]);
+  });
+
+  it("reveals nothing when the flow ends at the engine step", async () => {
+    const { deps, ran } = setup();
+    const running = addConnection(deps);
+    await inputs.nextPick();
+    await tick();
+    inputs.escape();
+    assert.equal(await running, undefined);
+    assert.deepEqual(ran.revealed, []);
   });
 
   it("mints the id again while it equals a listed one", async () => {
@@ -520,9 +545,10 @@ describe("addConnection", () => {
       return { running, ran, name };
     }
 
-    it("shows a secret storage failure alone, and saves nothing", async () => {
-      const { running, name } = await saveFailing(new SecretStoreError("S"));
+    it("shows a secret storage failure alone, and saves and reveals nothing", async () => {
+      const { running, name, ran } = await saveFailing(new SecretStoreError("S"));
       assert.equal(await running, undefined);
+      assert.deepEqual(ran.revealed, []);
       await tick();
       assert.deepEqual(shownMessages, [{ level: "error", message: "S", items: [] }]);
       assert.equal(name.disposed, true);

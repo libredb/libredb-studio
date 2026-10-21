@@ -96,6 +96,7 @@ describe("ProfileConnectionSource", () => {
       assert.ok(error instanceof CredentialsNotGivenError);
       assert.equal(error.name, "CredentialsNotGivenError");
       assert.equal(error.message, DECLINED);
+      assert.equal(error.refusal, undefined);
       assert.deepEqual(store.stored, []);
     });
 
@@ -161,9 +162,11 @@ describe("ProfileConnectionSource", () => {
 
     it("rejects CredentialsNotGivenError and stores nothing when the person declines the dialog", async () => {
       const { store, source } = setup();
-      const error = await rejection(source.reask(PG.id, new BackendError(401, "AUTH_ERROR", AUTH)));
+      const refusal = new BackendError(401, "AUTH_ERROR", AUTH);
+      const error = await rejection(source.reask(PG.id, refusal));
       assert.ok(error instanceof CredentialsNotGivenError);
       assert.equal(error.message, DECLINED);
+      assert.equal(error.refusal, refusal);
       assert.deepEqual(shownInputBoxes, []);
       assert.deepEqual(store.stored, []);
     });
@@ -171,8 +174,10 @@ describe("ProfileConnectionSource", () => {
     it("rejects CredentialsNotGivenError and stores nothing when the person escapes the box", async () => {
       const { store, source } = setup();
       answerMessages(() => ENTER_CREDENTIALS);
-      const error = await rejection(source.reask(PG.id, new BackendError(401, "AUTH_ERROR", AUTH)));
+      const refusal = new BackendError(401, "AUTH_ERROR", AUTH);
+      const error = await rejection(source.reask(PG.id, refusal));
       assert.ok(error instanceof CredentialsNotGivenError);
+      assert.equal(error.refusal, refusal);
       assert.deepEqual(store.stored, []);
     });
 

@@ -29,7 +29,8 @@
       "project": [
         "src/**/*.{ts,tsx}",
         "test/**/*.{ts,tsx}",
-        "scripts/*.mjs"
+        "scripts/*.mjs",
+        "scripts/*.tsx"
       ],
       "playwright": false,
       "ignoreDependencies": [

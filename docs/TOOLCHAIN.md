@@ -561,6 +561,7 @@ A callback whose behaviour the gate must hold keeps its body on its own line, as
   The smoke subset runs neither the workspace configuration nor any file that needs Docker.
   `@vscode/test-electron` starts every host with `--disable-workspace-trust`, so the leg sees a trusted workspace only.
 - Smoke: the e2e leg with `LIBREDB_E2E_SUBSET=smoke`, on macOS and Windows, with no Xvfb and no database.
+  The smoke subset runs `test/e2e/smoke/tree-root.test.ts`, which needs no Docker; the full leg also runs `test/e2e/connections-tree.test.ts`, which does.
 - Browser: `npm run test:browser` runs the results webview in Chromium with Playwright, after `npm run build`.
   `@playwright/test` is pinned to the root's version, because `npm run` finds only the package's own binaries, and the same version shares the root's Chromium.
   Its `playwright.config.mjs` starts no server: `test/browser/harness.ts` serves `dist/webview/` through `renderResultsHtml` with `page.route` and a fake `acquireVsCodeApi`, so the bundle runs under the view's real CSP.
@@ -602,6 +603,13 @@ The stylesheet, `dist/webview/results.css`, is built by `@tailwindcss/cli`, pinn
 Its `@source` list is explicit, and `sourceCoverageViolations` in `scripts/webview-css.mjs` fails the build when a bundled file under `src/components/` lies under none of them.
 `src/webview/vscode-bridge.css` maps LibreDB's tokens onto the `--vscode-*` variables every webview receives, so one mapping serves every theme.
 `tailwindcss` is in the notices, because its preflight is compiled into the stylesheet.
+
+### The engine logos
+
+The build first bundles `scripts/engine-icons.tsx` into `out/scripts/` and runs it, before it bundles the extension.
+The script writes `media/engines/**`, a light and a dark logo per engine and `index.json` with each engine's label, from `DB_UI_CONFIG` with the root's React and `react-dom/server`, so `npm run build` needs the root's `bun install` first.
+It fails the build unless `DB_UI_CONFIG` and `SHIPPED_DATABASE_TYPES` hold the same set of types.
+`media/engines/` is a build artifact that `vscode-extension/.gitignore` ignores and every build writes again, while the activity bar icon `media/libredb.svg` is committed.
 
 ### How the root tools cover the directory
 
