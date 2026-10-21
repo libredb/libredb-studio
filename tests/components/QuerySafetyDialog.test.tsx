@@ -1513,10 +1513,11 @@ describe("isDangerousQuery", () => {
 
   /**
    * `DELETE`, `MERGE` and `INSERT` are the rest of the data-modifying set the
-   * `UPDATE … SET` probe above already covers for `UPDATE` (#1862). They are read
-   * from the statement's code, and only when it leads with `WITH`, so the same
-   * words inside a string or a comment do not ask and a plain `WITH … SELECT` does
-   * not either. CockroachDB is the postgres type-id, so it shares the grammar.
+   * `UPDATE … SET` probe above already covers for `UPDATE` (#1862). They count only
+   * as the first word of a CTE body, and only when the statement leads with `WITH`,
+   * so the same words inside a string or a comment do not ask and a plain
+   * `WITH … SELECT` does not either. CockroachDB is the postgres type-id, so it
+   * shares the grammar.
    */
   test.each<[string, string]>([
     ["a DELETE", "WITH d AS (DELETE FROM users RETURNING *) SELECT count(*) FROM d"],
@@ -1546,6 +1547,43 @@ describe("isDangerousQuery", () => {
 
   test("does not prompt for a plain WITH … SELECT", () => {
     expect(isDangerousQuery("WITH cte AS (SELECT 1) SELECT * FROM cte", "postgres")).toBe(false);
+  });
+
+  // DELETE, INSERT and MERGE are non-reserved, so a name spelled that way is not a write.
+  test.each<[string, string]>([
+    ["merge", "WITH a AS (SELECT merge FROM audit) SELECT * FROM a"],
+    ["delete", "WITH a AS (SELECT delete FROM audit) SELECT * FROM a"],
+    ["insert", "WITH a AS (SELECT insert FROM audit) SELECT * FROM a"],
+    ["merge in a MATERIALIZED CTE", "WITH a AS MATERIALIZED (SELECT merge FROM audit) SELECT * FROM a"],
+    ["delete in a NOT MATERIALIZED CTE", "WITH a AS NOT MATERIALIZED (SELECT delete FROM audit) SELECT * FROM a"],
+    ["merge", "WITH merge AS (SELECT 1 FROM audit) SELECT * FROM merge"],
+    ["delete", "WITH delete AS (SELECT 1 FROM audit) SELECT * FROM delete"],
+    ["insert", "WITH insert AS (SELECT 1 FROM audit) SELECT * FROM insert"],
+    ["merge in a column list", "WITH a (merge) AS (SELECT 1) SELECT * FROM a"],
+    ["merge aliased as delete", "WITH a AS (SELECT merge AS delete FROM audit) SELECT * FROM a"],
+  ])("does not prompt for a column or CTE named %s", (_label, query) => {
+    expect(isDangerousQuery(query, "postgres")).toBe(false);
+  });
+
+  test.each<[string, string]>([
+    [
+      "DELETE after MATERIALIZED",
+      "WITH d AS /* hint */ MATERIALIZED /* body */ (/* open */ DELETE FROM users RETURNING *) SELECT count(*) FROM d",
+    ],
+    [
+      "INSERT after NOT MATERIALIZED",
+      "WITH i AS NOT MATERIALIZED (INSERT INTO users(id) VALUES (1) RETURNING id) SELECT * FROM i",
+    ],
+    [
+      "MERGE after MATERIALIZED",
+      "WITH m AS MATERIALIZED (MERGE INTO users u USING (SELECT 1 id) s ON u.id=s.id WHEN MATCHED THEN DELETE RETURNING u.id) SELECT * FROM m",
+    ],
+    [
+      "a later DELETE",
+      "WITH a AS (SELECT merge FROM audit), d AS MATERIALIZED (DELETE FROM users RETURNING *) SELECT * FROM d",
+    ],
+  ])("prompts for a data-modifying CTE that opens with %s", (_label, query) => {
+    expect(isDangerousQuery(query, "postgres")).toBe(true);
   });
 
   test("prompts for a destructive statement a CTE list only precedes", () => {
@@ -1583,7 +1621,7 @@ describe("isDangerousQuery", () => {
    * Answers pinned so a regression is silence, and so `docs/editor/query-optimization.md`
    * cannot drift from them.
    *
-   * A `DELETE`, `MERGE` or `INSERT` inside a `WITH` whose list can be read asks
+   * A `DELETE`, `MERGE` or `INSERT` that opens a CTE body whose list can be read asks
    * (#1862). Those words stay out of the unanchored `UPDATE … SET` pair: widening
    * that pair would make every read whose code names one of them prompt.
    *

@@ -573,7 +573,8 @@ same reading the auto-limiter uses, so the two cannot disagree about where a sta
 | The `DO` of `ON CONFLICT DO NOTHING` or `CREATE RULE … DO INSTEAD`, which a word follows | No |
 | Any of those behind a comment (`-- note`, `/* note */`, MySQL's `# note`, several stacked) | Yes |
 | A `WITH` whose CTE list precedes one (`WITH x AS (…) DELETE FROM …`) | Yes |
-| A `WITH` whose CTE list *contains* an `INSERT`, `UPDATE … SET`, `DELETE` or `MERGE` (PostgreSQL's data-modifying CTE; CockroachDB shares the grammar) | Yes |
+| A `WITH` whose CTE body opens with `INSERT`, `DELETE` or `MERGE` (`AS (`, `AS MATERIALIZED (`, `AS NOT MATERIALIZED (`), or whose code contains `UPDATE … SET` (PostgreSQL's data-modifying CTE; CockroachDB shares the grammar) | Yes |
+| A `WITH` that only names `merge`, `delete` or `insert` as a column or a CTE | No |
 | A statement carrying a run the reader cannot resolve (`SELECT '\';` and anything after it, an unterminated comment, literal, name or array) | Yes, and the dialog says why |
 | Any of those behind a **nested** comment (`/* a /* b */ c */ DROP TABLE users`), on a dialect that nests — PostgreSQL, SQL Server, ClickHouse | Yes: the comment is read whole, so the statement's own keyword is the one that answers |
 | The same text on a dialect that does **not** nest — MySQL, MariaDB, SQLite, Oracle | No, because there the comment closed at the first `*/` and what follows it is text the engine rejects outright |
@@ -603,13 +604,15 @@ from a statement that really does write. It reads the statement's **code** rathe
 `'UPDATE t SET x = 1'` or mentions it in a comment no longer prompts.
 
 `DELETE`, `MERGE` and `INSERT` are the other three words of that set (`DATA_MODIFYING` in
-`src/lib/explain/select-prefix.ts`). They count only when the statement leads with `WITH`, the CTE
-list can be read, and the word sits in that list — before the keyword that operates the statement —
-so `WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d` asks, and so do the `MERGE … DELETE` and
-`INSERT` forms. CockroachDB connections are the `postgres` type-id and share that grammar, so they
-ask too. A plain `SELECT` whose code names one of those words does not ask, and neither does a
-word that only appears in a string or a comment, or after the statement the list precedes. An
-unclosed list still does not: the shape cannot be typed, and no dialect accepts the text.
+`src/lib/explain/select-prefix.ts`). They are non-reserved in PostgreSQL, so a column or a CTE may
+be named one of them. They count only when the statement leads with `WITH`, the CTE list can be
+read, and the word is the first word of a CTE body — right after `AS (`, `AS MATERIALIZED (` or
+`AS NOT MATERIALIZED (`, with strings and comments skipped. So
+`WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d` asks, and so do the `MERGE … DELETE` and
+`INSERT` forms, including a `MATERIALIZED` hint. `WITH a AS (SELECT merge FROM audit) SELECT * FROM a`
+does not. CockroachDB connections are the `postgres` type-id and share that grammar, so they ask for
+the same bodies. A word that only appears in a string or a comment does not ask. An unclosed list
+still does not: the shape cannot be typed, and no dialect accepts the text.
 ┌──────────────────────────────────────────────────────────────────────────────┐
 ### Text the reading cannot resolve asks, and says so
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -687,8 +690,10 @@ One gap is known and pinned by tests rather than claimed closed:
 A data-modifying CTE that `DELETE`s, `MERGE`s or `INSERT`s used to be a second gap beside that one:
 only `UPDATE … SET` was looked for inside a read, so
 `WITH gone AS (DELETE FROM t RETURNING *) SELECT * FROM gone` ran with no confirmation. Widening the
-unanchored pair to those words would have made every read whose code names one of them prompt, so
-the three are read only inside a `WITH` whose list can be typed. That gap is closed (#1862).
+unanchored pair to those words would have made every read whose code names one of them prompt, and
+counting the word anywhere in the CTE list would prompt for a column or CTE named `merge`, `delete`
+or `insert`. The three count only as the first word of a CTE body whose list can be typed. That gap
+is closed (#1862).
 ┌──────────────────────────────────────────────────────────────────────────────┐
 Another gap sat beside them and is closed (S1). A multi-statement script used to be read as one
 statement, so `SELECT 1; DROP TABLE users` did not prompt — its first keyword is the `SELECT` —
