@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { releaseTagViolations, TAG_PREFIX } from "../../../scripts/release-tag.mjs";
@@ -48,13 +48,10 @@ describe("release-tag.mjs as a program", () => {
   let dir: string;
 
   beforeEach(() => {
-    // A scratch copy of the extension: its two scripts, a manifest at 0.1.0, and the real node_modules.
+    // A scratch copy of the extension: every script and a manifest at 0.1.0, but no node_modules, because the
+    // release workflow's verify job runs the guard on a bare checkout with nothing installed.
     dir = mkdtempSync(join(tmpdir(), "libredb-release-tag-"));
-    mkdirSync(join(dir, "scripts"));
-    for (const script of ["release-tag.mjs", "check-vsix.mjs"]) {
-      copyFileSync(join(EXTENSION_ROOT, "scripts", script), join(dir, "scripts", script));
-    }
-    symlinkSync(join(EXTENSION_ROOT, "node_modules"), join(dir, "node_modules"), "junction");
+    cpSync(join(EXTENSION_ROOT, "scripts"), join(dir, "scripts"), { recursive: true });
     writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "libredb-studio", version: "0.1.0" }));
   });
 

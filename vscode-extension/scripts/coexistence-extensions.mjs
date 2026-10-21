@@ -8,7 +8,7 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { downloadAndUnzipVSCode, resolveCliArgsFromVSCodeExecutablePath } from "@vscode/test-electron";
-import { isDirectExecution } from "./check-vsix.mjs";
+import { isDirectExecution } from "./direct-execution.mjs";
 import { CliFailure, installArgs, listArgs, listedVersion, runCli } from "./vsix-install-check.mjs";
 
 /**

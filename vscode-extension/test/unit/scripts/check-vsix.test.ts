@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { crc32 } from "node:zlib";
-import { BUDGET, isDirectExecution, REQUIRED, vsixViolations } from "../../../scripts/check-vsix.mjs";
+import { BUDGET, REQUIRED, vsixViolations } from "../../../scripts/check-vsix.mjs";
+import { isDirectExecution } from "../../../scripts/direct-execution.mjs";
 
 const KIB = 1024;
 const REQUIRED_PATHS = [

@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { downloadAndUnzipVSCode, resolveCliArgsFromVSCodeExecutablePath } from "@vscode/test-electron";
-import { isDirectExecution } from "./check-vsix.mjs";
+import { isDirectExecution } from "./direct-execution.mjs";
 import { vscePackageArgs } from "./package.mjs";
 
 /** The extension's id as VS Code lists it: <publisher>.<name> from the manifest. */

@@ -1,9 +1,9 @@
 // Holds a packed VSIX to part 5 "Packaging": its budget, its allowlist and its pre-release flag.
 // Run as `node scripts/check-vsix.mjs <file>`: prints each violation and exits 1, or prints the size and entry count.
 
-import { existsSync, realpathSync, statSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { statSync } from "node:fs";
 import yauzl from "yauzl";
+import { isDirectExecution } from "./direct-execution.mjs";
 
 const MIB = 1024 * 1024;
 
@@ -127,20 +127,6 @@ async function main(file) {
     process.exit(1);
   }
   console.log(`${file}: ${vsix.vsixBytes} bytes, ${vsix.entries.length} entries, within budget.`);
-}
-
-/**
- * Whether node runs the module at moduleUrl as its program, rather than a module that imports it (the unit leg does).
- * Both sides are made real: process.argv[1] keeps the path node was given, which through a symlinked directory is the link,
- * while import.meta.url is the real file, so comparing the two as given skipped the check and exited 0 without a word.
- * Under --preserve-symlinks-main import.meta.url keeps the link as well.
- * An argv[1] that names no file means node runs no file of its own (`node -e` puts its first argument there).
- * scripts/package.mjs guards itself with it too.
- * @param {string | undefined} argv1
- * @param {string} moduleUrl
- */
-export function isDirectExecution(argv1, moduleUrl) {
-  return argv1 !== undefined && existsSync(argv1) && realpathSync(argv1) === realpathSync(fileURLToPath(moduleUrl));
 }
 
 // No top-level await: the unit leg loads this module through tsx's CommonJS transform.

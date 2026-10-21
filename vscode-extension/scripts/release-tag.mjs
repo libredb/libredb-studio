@@ -5,7 +5,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { isDirectExecution } from "./check-vsix.mjs";
+import { isDirectExecution } from "./direct-execution.mjs";
 
 /** The extension's tag namespace (part 5 "Release path"): product tags stay bare semver, chart tags libredb-studio-<chart version>. */
 export const TAG_PREFIX = "vscode-extension-";

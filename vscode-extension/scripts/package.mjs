@@ -6,7 +6,7 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { isDirectExecution } from "./check-vsix.mjs";
+import { isDirectExecution } from "./direct-execution.mjs";
 
 /** vsce's arguments: package --no-dependencies --out dist-vsix/libredb-studio-<version>.vsix, plus --pre-release on an odd minor. */
 export function vscePackageArgs(version) {
