@@ -92,9 +92,9 @@ describe("parseConnectionString", () => {
     });
 
     test("percent-encoded query parameter values are decoded", () => {
-      const result = parseConnectionString("postgres:///app?user=us%3Aer&password=p%40ss");
+      const result = parseConnectionString("postgres:///app?user=us%3Aer&password=pa%24%24word0");
       expect(result!.user).toBe("us:er");
-      expect(result!.password).toBe("p@ss");
+      expect(result!.password).toBe("pa$$word0");
     });
   });
 
