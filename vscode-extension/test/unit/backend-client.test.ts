@@ -56,6 +56,8 @@ const PARAMS: ConnectionParams = {
 const OPENED = { description: { capabilities: {}, labels: {} } };
 const RUN = { connectionId: "c1", queryId: "q-1", statement: "SELECT 1", limit: 500, offset: 0 };
 const PAGE = { rows: [], fields: [], rowCount: 0, executionTime: 1 };
+const ORDERS = { path: ["public", "orders"], name: "orders", kind: "table" };
+const TARGET = { connectionId: "c1", text: "select 1", selection: { start: 0, end: 0 }, cursor: 0 };
 
 /** A BackendLink over the host side of an in-memory pair, whose generation, state and lastExit the test sets. */
 class FakeLink implements BackendLink {
@@ -286,6 +288,12 @@ describe("BackendClient", () => {
         "objects/containers",
         METHODS.listContainers,
         (client: BackendClient, token: CancellationToken) => client.listContainers({ connectionId: "c1" }, token),
+      ],
+      [
+        "objects/selectStatement",
+        METHODS.selectStatement,
+        (client: BackendClient, token: CancellationToken) =>
+          client.selectStatement({ connectionId: "c1", object: ORDERS }, token),
       ],
     ] as const) {
       it(`cancels the child's token for ${name} when the caller cancels`, async () => {
@@ -1015,6 +1023,68 @@ describe("BackendClient", () => {
       await client.ensureOpen("c1");
       opened.forget("c1");
       await assert.rejects(client.ensureOpen("c1"), { message: "c1 is open with no recorded description." });
+    });
+  });
+
+  describe("Select Rows' statement and the run target", () => {
+    const NOT_OPEN = () => new ResponseError(404, "not open", { code: "CONNECTION_NOT_OPEN" });
+
+    it("opens a connection never opened first, then sends objects/selectStatement by name", async () => {
+      const { client, received, reads, serve } = setup();
+      serve(METHODS.selectStatement, () => ({ statement: "SELECT * FROM public.orders;" }));
+      assert.deepEqual(await client.selectStatement({ connectionId: "c1", object: ORDERS }), {
+        statement: "SELECT * FROM public.orders;",
+      });
+      assert.deepEqual(reads, ["c1"]);
+      assert.deepEqual(received, [
+        [METHODS.openConnection, PARAMS],
+        [METHODS.selectStatement, { connectionId: "c1", object: ORDERS }],
+      ]);
+    });
+
+    it("sends only query/target on an opened connection", async () => {
+      const { client, received, serve } = setup();
+      await client.openConnection(PARAMS);
+      serve(METHODS.runTarget, () => ({ statement: "select 1" }));
+      assert.deepEqual(await client.runTarget(TARGET), { statement: "select 1" });
+      assert.deepEqual(received, [
+        [METHODS.openConnection, PARAMS],
+        [METHODS.runTarget, TARGET],
+      ]);
+    });
+
+    it("reopens once on CONNECTION_NOT_OPEN and retries, and rejects a second refusal as that BackendError", async () => {
+      const { client, received, serve } = setup();
+      await client.openConnection(PARAMS);
+      let refusals = 1;
+      serve(METHODS.runTarget, () => {
+        if (refusals-- > 0) throw NOT_OPEN();
+        return { statement: "select 1" };
+      });
+      assert.deepEqual(await client.runTarget(TARGET), { statement: "select 1" });
+      assert.deepEqual(methods(received), [
+        METHODS.openConnection,
+        METHODS.runTarget,
+        METHODS.openConnection,
+        METHODS.runTarget,
+      ]);
+
+      refusals = 2;
+      received.length = 0;
+      const error = await rejection(client.runTarget(TARGET));
+      assert.ok(error instanceof BackendError);
+      assert.equal(error.code, "CONNECTION_NOT_OPEN");
+      assert.deepEqual(methods(received), [METHODS.runTarget, METHODS.openConnection, METHODS.runTarget]);
+    });
+
+    it("rejects an InvalidParams answer as a BackendError with status -32602 and code null", async () => {
+      const { client, serve } = setup();
+      serve(METHODS.runTarget, () => {
+        throw new ResponseError(ErrorCodes.InvalidParams, "cursor must be an integer");
+      });
+      const error = await rejection(client.runTarget(TARGET));
+      assert.ok(error instanceof BackendError);
+      assert.deepEqual([error.status, error.code, error.message], [-32602, null, "cursor must be an integer"]);
     });
   });
 

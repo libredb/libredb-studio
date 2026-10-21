@@ -46,6 +46,35 @@
         "title": "Refresh",
         "category": "LibreDB",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "libredb.newQuery",
+        "title": "New Query",
+        "category": "LibreDB",
+        "icon": "$(file-code)"
+      },
+      {
+        "command": "libredb.selectRows",
+        "title": "Select Rows",
+        "category": "LibreDB",
+        "icon": "$(play)"
+      },
+      {
+        "command": "libredb.runQuery",
+        "title": "Run Query",
+        "category": "LibreDB",
+        "icon": "$(play)"
+      },
+      {
+        "command": "libredb.cancelQuery",
+        "title": "Cancel Query",
+        "category": "LibreDB",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "libredb.changeConnection",
+        "title": "Change Connection",
+        "category": "LibreDB"
       }
     ],
     "configuration": {
@@ -119,6 +148,14 @@
               }
             }
           }
+        },
+        "libredb.query.rowLimit": {
+          "type": "integer",
+          "default": 500,
+          "minimum": 1,
+          "maximum": 10000,
+          "scope": "application",
+          "description": "The number of rows each page of query results holds."
         }
       }
     },
@@ -160,6 +197,26 @@
       ],
       "view/item/context": [
         {
+          "command": "libredb.newQuery",
+          "when": "view == libredb.connections && viewItem =~ /\\bnode=(connection|container)\\b/",
+          "group": "inline@1"
+        },
+        {
+          "command": "libredb.selectRows",
+          "when": "view == libredb.connections && viewItem =~ /\\brole=relation\\b/",
+          "group": "inline@1"
+        },
+        {
+          "command": "libredb.newQuery",
+          "when": "view == libredb.connections && viewItem =~ /\\bnode=(connection|container|folder|object)\\b/",
+          "group": "1_query@1"
+        },
+        {
+          "command": "libredb.selectRows",
+          "when": "view == libredb.connections && viewItem =~ /\\brole=relation\\b/",
+          "group": "1_query@2"
+        },
+        {
           "command": "libredb.refresh",
           "when": "view == libredb.connections && viewItem =~ /\\bnode=(connection|container|folder|object)\\b/",
           "group": "8_refresh@1"
@@ -168,6 +225,41 @@
           "command": "libredb.removeConnection",
           "when": "view == libredb.connections && viewItem =~ /\\bnode=(connection|invalid)\\b/",
           "group": "9_manage@1"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "libredb.runQuery",
+          "when": "resource in libredb.boundDocuments && resource not in libredb.runningQueries && !isInDiffEditor",
+          "group": "navigation@1"
+        },
+        {
+          "command": "libredb.cancelQuery",
+          "when": "resource in libredb.cancellableQueries && !isInDiffEditor",
+          "group": "navigation@1"
+        },
+        {
+          "command": "libredb.changeConnection",
+          "when": "resource in libredb.boundDocuments && !isInDiffEditor",
+          "group": "1_libredb@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "libredb.selectRows",
+          "when": "false"
+        },
+        {
+          "command": "libredb.runQuery",
+          "when": "editorIsOpen"
+        },
+        {
+          "command": "libredb.cancelQuery",
+          "when": "resource in libredb.cancellableQueries"
+        },
+        {
+          "command": "libredb.changeConnection",
+          "when": "editorIsOpen"
         }
       ]
     }

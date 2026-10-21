@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { FLOOR_NODE, STABLE_RUNTIME } from "../vscode-floor";
 
 const root = join(__dirname, "..", "..");
@@ -35,6 +36,16 @@ const CONNECTIONS_SCHEMA = {
       secretFields: { type: "array", uniqueItems: true, items: { type: "string" } },
     },
   },
+};
+
+/** Part 5's manifest entry for the row limit, written out. */
+const ROW_LIMIT_SCHEMA = {
+  type: "integer",
+  default: 500,
+  minimum: 1,
+  maximum: 10000,
+  scope: "application",
+  description: "The number of rows each page of query results holds.",
 };
 
 const exact = /^\d+\.\d+\.\d+$/;
@@ -86,12 +97,17 @@ describe("the manifest", () => {
     assert.deepEqual(manifest.dependencies, { "vscode-jsonrpc": "9.0.3" });
   });
 
-  it("contributes the four commands in category LibreDB, and the one setting", () => {
+  it("contributes the nine commands in category LibreDB", () => {
     assert.deepEqual(manifest.contributes.commands, [
       { command: "libredb.showLog", title: "Show Log", category: "LibreDB" },
       { command: "libredb.addConnection", title: "Add Connection", category: "LibreDB", icon: "$(add)" },
       { command: "libredb.removeConnection", title: "Remove Connection", category: "LibreDB" },
       { command: "libredb.refresh", title: "Refresh", category: "LibreDB", icon: "$(refresh)" },
+      { command: "libredb.newQuery", title: "New Query", category: "LibreDB", icon: "$(file-code)" },
+      { command: "libredb.selectRows", title: "Select Rows", category: "LibreDB", icon: "$(play)" },
+      { command: "libredb.runQuery", title: "Run Query", category: "LibreDB", icon: "$(play)" },
+      { command: "libredb.cancelQuery", title: "Cancel Query", category: "LibreDB", icon: "$(debug-stop)" },
+      { command: "libredb.changeConnection", title: "Change Connection", category: "LibreDB" },
     ]);
     assert.deepEqual(Object.keys(manifest.contributes), [
       "commands",
@@ -117,10 +133,15 @@ describe("the manifest", () => {
   it("declares libredb.connections as part 2 writes it, synced and never read from a workspace", () => {
     assert.deepEqual(manifest.contributes.configuration, {
       title: "LibreDB",
-      properties: { "libredb.connections": CONNECTIONS_SCHEMA },
+      properties: { "libredb.connections": CONNECTIONS_SCHEMA, "libredb.query.rowLimit": ROW_LIMIT_SCHEMA },
     });
     assert.equal("ignoreSync" in manifest.contributes.configuration.properties["libredb.connections"], false);
     assert.equal("restrictedConfigurations" in manifest.capabilities.untrustedWorkspaces, false);
+  });
+
+  it("declares libredb.query.rowLimit from 1 to 10000, application-scoped, defaulting to DEFAULT_QUERY_LIMIT", () => {
+    assert.deepEqual(manifest.contributes.configuration.properties["libredb.query.rowLimit"], ROW_LIMIT_SCHEMA);
+    assert.equal(ROW_LIMIT_SCHEMA.default, DEFAULT_QUERY_LIMIT);
   });
 
   it("is limited in untrusted workspaces, with no restricted configuration", () => {

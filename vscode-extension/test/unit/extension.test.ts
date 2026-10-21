@@ -3,9 +3,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type * as vscode from "vscode";
+import { setImmediate } from "node:timers/promises";
+import type { BackendCrash, BackendSupervisor } from "../../src/host/backend-supervisor";
 import { activate, deactivate } from "../../src/host/extension";
 import { ConnectionsTree } from "../../src/host/tree/connections-tree";
 import type { TreeNode } from "../../src/host/tree/nodes";
+import { FakeTextDocument, FakeTextEditor } from "../fakes/documents";
 import { MONGO, PG } from "../fakes/profiles";
 import {
   answerMessages,
@@ -13,16 +16,33 @@ import {
   changeConfiguration,
   commands,
   configurationReads,
+  contextKeyCalls,
+  createdEmitters,
+  type EventEmitter,
   fakeExtensionContext as fakeContextAt,
   outputChannels,
   registeredCommands,
   settings,
   shownQuickPicks,
+  statusBarItems,
   treeViews,
+  Uri,
+  window,
 } from "../fakes/vscode";
 import { TEST_PASSWORD } from "../fakes/credentials";
 
-const COMMANDS = ["libredb.showLog", "libredb.addConnection", "libredb.removeConnection", "libredb.refresh"];
+const COMMANDS = [
+  "libredb.showLog",
+  "libredb.addConnection",
+  "libredb.removeConnection",
+  "libredb.refresh",
+  "libredb.newQuery",
+  "libredb.selectRows",
+  "libredb.runQuery",
+  "libredb.cancelQuery",
+  "libredb.changeConnection",
+];
+const UNTITLED = "untitled:Untitled-1";
 
 /** The labels Remove Connection's palette offers, dismissed. */
 async function palette(remove = () => commands.executeCommand("libredb.removeConnection")): Promise<string[]> {
@@ -125,7 +145,7 @@ describe("activate", () => {
     assert.deepEqual(fired, []);
   });
 
-  it("creates the LibreDB log channel, registers the four commands and reads the setting once", () => {
+  it("creates the LibreDB log channel, registers the nine commands and reads the setting once", () => {
     const context = fakeExtensionContext();
     activate(context as vscode.ExtensionContext);
     assert.deepEqual(
@@ -134,9 +154,10 @@ describe("activate", () => {
     );
     assert.deepEqual([...registeredCommands.keys()], COMMANDS);
     assert.deepEqual(configurationReads, ["libredb.connections"]);
-    // The channel, its command, the setting adapter, the store, the descriptions, the tree, its view, three commands
-    // and the release.
-    assert.equal(context.subscriptions.length, 11);
+    // The channel, its command, the setting adapter, the store, the descriptions, the tree, its view, three commands,
+    // the bindings, the runs, the crash listener, the context keys, the status bar, the document lifecycle, the five
+    // editor commands and the release.
+    assert.equal(context.subscriptions.length, 22);
   });
 
   it("re-reads the setting on Refresh", async () => {
@@ -204,5 +225,105 @@ describe("deactivate", () => {
     assert.ok(stopped instanceof Promise);
     await stopped;
     assert.equal(deactivate(), undefined);
+  });
+});
+
+/** The supervisor activate created, reached through the Connections tree it was given as the link. */
+function supervisorOf(): BackendSupervisor {
+  return (treeViews[0].options.treeDataProvider as unknown as { deps: { link: BackendSupervisor } }).deps.link;
+}
+
+/** Fires the supervisor's crash event as a child's exit does; the emitter is private, so the test reaches it by name. */
+function crash(link: BackendSupervisor): void {
+  const { crashEmitter } = link as unknown as { crashEmitter: EventEmitter<BackendCrash> };
+  crashEmitter.fire({ exit: { exitCode: 1, signal: null }, generation: 1 });
+}
+
+/** The last value published for the context key, or undefined when it was never published. */
+function published(key: string): unknown {
+  return contextKeyCalls.findLast(([name]) => name === key)?.[1];
+}
+
+/** An untitled document over the text, active in the fake window. */
+function activeEditor(text: string): void {
+  window.activeTextEditor = new FakeTextEditor(new FakeTextDocument(Uri.parse(UNTITLED), text)).asEditor();
+}
+
+describe("activate's editors", () => {
+  afterEach(async () => {
+    await deactivate();
+  });
+
+  it("creates the status bar item once and publishes the three context keys empty after a microtask, starting no child", async () => {
+    activate(fakeExtensionContext() as vscode.ExtensionContext);
+    assert.deepEqual(
+      statusBarItems.map((item) => item.id),
+      ["libredb.connection"],
+    );
+    assert.deepEqual(contextKeyCalls, []);
+    await Promise.resolve();
+    assert.deepEqual(contextKeyCalls, [
+      ["libredb.boundDocuments", []],
+      ["libredb.runningQueries", []],
+      ["libredb.cancellableQueries", []],
+    ]);
+    assert.equal(supervisorOf().generation, 0);
+    assert.equal(supervisorOf().state, "stopped");
+  });
+
+  it("forgets every run when the backend crashes, which republishes libredb.runningQueries empty", async () => {
+    settings.set("libredb.connections", [PG]);
+    settings.set("libredb.query.rowLimit", 500);
+    activate(fakeExtensionContext() as vscode.ExtensionContext);
+    const link = supervisorOf();
+    // The open waits for a child that never answers.
+    link.connection = () => new Promise(() => {});
+    activeEditor("select 1;");
+    answerQuickPicks((shown) => shown.items.find((item) => item.label === "shop"));
+    void commands.executeCommand("libredb.runQuery");
+    await setImmediate();
+    assert.deepEqual(published("libredb.runningQueries"), [UNTITLED]);
+    assert.deepEqual(published("libredb.boundDocuments"), [UNTITLED]);
+    assert.equal(statusBarItems[0].text, "$(loading~spin) shop");
+    crash(link);
+    await Promise.resolve();
+    assert.deepEqual(published("libredb.runningQueries"), []);
+    assert.deepEqual(published("libredb.cancellableQueries"), []);
+    assert.equal(statusBarItems[0].text, "$(database) shop");
+  });
+
+  it("unbinds a document whose connection another window removed", async () => {
+    settings.set("libredb.connections", [PG, MONGO]);
+    settings.set("libredb.query.rowLimit", 500);
+    activate(fakeExtensionContext() as vscode.ExtensionContext);
+    // A blank document is bound by Run's pick, then refused before any open.
+    activeEditor("");
+    answerQuickPicks((shown) => shown.items.find((item) => item.label === "shop"));
+    await commands.executeCommand("libredb.runQuery");
+    await setImmediate();
+    assert.deepEqual(published("libredb.boundDocuments"), [UNTITLED]);
+    assert.equal(statusBarItems[0].visible, true);
+    settings.set("libredb.connections", [MONGO]);
+    changeConfiguration("libredb.connections");
+    await setImmediate();
+    assert.deepEqual(published("libredb.boundDocuments"), []);
+    assert.equal(statusBarItems[0].visible, false);
+    assert.equal(supervisorOf().generation, 0);
+  });
+
+  it("puts every emitter, status bar item and command it created in its subscriptions, but the supervisor's", () => {
+    const context = fakeExtensionContext();
+    const before = createdEmitters.length;
+    activate(context as vscode.ExtensionContext);
+    const created = createdEmitters.slice(before);
+    const link = supervisorOf();
+    const owned = new Set<unknown>([link.onDidChangeState, link.onDidCrash, link.onWillStop]);
+    for (const subscription of context.subscriptions) subscription.dispose();
+    assert.deepEqual(
+      created.filter((emitter) => !emitter.disposed).map((emitter) => owned.has(emitter.event)),
+      [true, true, true],
+    );
+    assert.equal(statusBarItems[0].disposed, true);
+    assert.deepEqual([...registeredCommands.keys()], []);
   });
 });

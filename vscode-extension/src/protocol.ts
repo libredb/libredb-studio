@@ -15,6 +15,7 @@ import type {
   ProviderCapabilities,
   ProviderLabels,
 } from "@/lib/db/types";
+import type { EditorLanguage } from "@/lib/editor/tab-language";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 
 /** The version initialize carries both ways; the child refuses any other with PROTOCOL_MISMATCH. */
@@ -54,10 +55,12 @@ export interface InitializeResult {
   enabledProviders: readonly DatabaseType[] | null;
 }
 
-/** editorLanguage (PR 11) and commitKeyword (PR 13) join with their parts. */
+/** commitKeyword (PR 13) joins with its part. */
 export interface ProviderDescription {
   capabilities: ProviderCapabilities & { supportsQueryCancel: boolean };
   labels: ProviderLabels;
+  /** editorLanguageForTabType(resolveTabType(capabilities)), computed in the child from the provider it opened. */
+  editorLanguage: EditorLanguage;
 }
 
 /** The core's own union, so the wire answer cannot drift from the route's. */
@@ -92,6 +95,32 @@ export interface ListParams extends ConnectionIdParams {
 export interface DescribeParams extends ConnectionIdParams {
   path: readonly string[];
   kind: string;
+}
+
+export interface SelectStatementParams extends ConnectionIdParams {
+  object: DatabaseObject;
+}
+
+export interface SelectStatementResult {
+  statement: string;
+}
+
+/** A [start, end) pair of UTF-16 offsets into a document's text. */
+export interface OffsetRange {
+  start: number;
+  end: number;
+}
+
+export interface RunTargetParams extends ConnectionIdParams {
+  text: string;
+  selection: OffsetRange;
+  cursor: number;
+}
+
+/** range is absent when the statement is the whole text; statement is "" when the target holds no code. */
+export interface RunTargetResult {
+  statement: string;
+  range?: OffsetRange;
 }
 
 export interface RunQueryParams {
@@ -182,6 +211,8 @@ export interface BackendApi {
   shutdown(): Promise<null>;
   listEngines(params: Record<string, never>): Promise<EngineCatalog>;
   parsePastedConnection(params: ParseParams): Promise<PastedConnection>;
+  selectStatement(params: SelectStatementParams, token?: CancellationToken): Promise<SelectStatementResult>;
+  runTarget(params: RunTargetParams): Promise<RunTargetResult>;
 }
 
 /** One JSON-RPC method name per BackendApi method, so no method can be added without its name. */
@@ -199,6 +230,8 @@ export const METHODS = {
   shutdown: "shutdown",
   listEngines: "engines/list",
   parsePastedConnection: "connection/parse",
+  selectStatement: "objects/selectStatement",
+  runTarget: "query/target",
 } as const satisfies Record<keyof BackendApi, string>;
 
 /** The notification that ends the child once shutdown has answered. */

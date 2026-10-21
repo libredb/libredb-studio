@@ -8,7 +8,7 @@ import type { ProfileItem } from "../../../src/host/connections/profile";
 import { OpenConnections } from "../../../src/host/open-connections";
 import { BACKEND_STOPPED_DURING_READ, ConnectionsTree } from "../../../src/host/tree/connections-tree";
 import { EngineIcons } from "../../../src/host/tree/icons";
-import { nodeId, type TreeNode } from "../../../src/host/tree/nodes";
+import { isIssuedNode, nodeId, type TreeNode } from "../../../src/host/tree/nodes";
 import type { ProviderDescription } from "../../../src/protocol";
 import { CATALOG_SESSIONS, ONE_LEVEL, TWO_LEVELS, ZERO_LEVELS } from "../../fakes/descriptions";
 import { MONGO, PG } from "../../fakes/profiles";
@@ -157,6 +157,16 @@ describe("ConnectionsTree's reads", () => {
         progressRuns.map((run) => run.options),
         [{ location: { viewId: "libredb.connections" } }],
       );
+    });
+
+    it("issues every node it answers, the root's and a read's, so a command can tell them from a forged one", async () => {
+      const context = setup();
+      const roots = await context.tree.getChildren();
+      const pg = await child(context.tree, undefined, PG_NODE);
+      const schemas = await context.tree.getChildren(pg);
+      assert.equal(roots.length > 0 && roots.every(isIssuedNode), true);
+      assert.equal(schemas.length > 0 && schemas.every(isIssuedNode), true);
+      assert.equal(isIssuedNode({ ...schemas[0] }), false);
     });
 
     it("draws a schema's folders with their counts, a group for two kinds of one group, and no folder for a key-browser kind", async () => {

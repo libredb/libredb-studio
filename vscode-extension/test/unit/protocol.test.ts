@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import type { EditorQueryBody } from "@/lib/api/editor-query";
 import type { TestConnectionAnswer } from "@/lib/api/test-connection";
+import type { ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
 import {
   type BackendErrorCode,
   type BackendErrorData,
   EXIT_NOTIFICATION,
   METHODS,
   PROTOCOL_VERSION,
+  type ProviderDescription,
   type QueryPage,
   type TestConnectionResult,
 } from "../../src/protocol";
@@ -27,9 +29,25 @@ describe("the backend protocol", () => {
       shutdown: "shutdown",
       listEngines: "engines/list",
       parsePastedConnection: "connection/parse",
+      selectStatement: "objects/selectStatement",
+      runTarget: "query/target",
     });
     assert.equal(EXIT_NOTIFICATION, "exit");
     assert.equal(PROTOCOL_VERSION, 1);
+  });
+
+  it("gives no two methods one name", () => {
+    assert.equal(new Set(Object.values(METHODS)).size, Object.keys(METHODS).length);
+  });
+
+  it("describes an open connection with its editor language", () => {
+    const capabilities = { supportsQueryCancel: true } as ProviderCapabilities & { supportsQueryCancel: boolean };
+    const labels = {} as ProviderLabels;
+    const description: ProviderDescription = { capabilities, labels, editorLanguage: "sql" };
+    // @ts-expect-error A description without its editor language is a type error.
+    const without: ProviderDescription = { capabilities, labels };
+    assert.equal(description.editorLanguage, "sql");
+    assert.equal(without.editorLanguage, undefined);
   });
 
   it("carries the query route's body and Test Connection's answer as they are", () => {

@@ -7,6 +7,7 @@
  */
 import { posix } from "node:path";
 import type * as vscode from "vscode";
+import { FakeTextDocument } from "./documents";
 import { ScriptedQuickInputs } from "./quick-input";
 import { MemorySecretStorage } from "./secret-storage";
 
@@ -28,9 +29,9 @@ export const outputChannels: FakeLogOutputChannel[] = [];
 /** The commands registered and not yet disposed, by id. */
 export const registeredCommands = new Map<string, (...args: unknown[]) => unknown>();
 
-/** A notification `window.showWarningMessage` or `window.showErrorMessage` showed. */
+/** A notification `window.showInformationMessage`, `window.showWarningMessage` or `window.showErrorMessage` showed. */
 export interface ShownMessage {
-  readonly level: "warning" | "error";
+  readonly level: "info" | "warning" | "error";
   readonly message: string;
   /** Present only when the caller passed MessageOptions, a modal dialog's among them. */
   readonly options?: vscode.MessageOptions;
@@ -164,17 +165,20 @@ export class ThemeColor implements vscode.ThemeColor {
 }
 
 /**
- * vscode.Uri, as far as the host builds one: a file path and POSIX joins below it.
+ * vscode.Uri, as far as the host builds or reads one: a file path and POSIX joins below it, and the `file:` and
+ * `untitled:` URIs a document carries.
  * The code under test reaches this through tsconfig.test.json's "vscode" alias, which knip does not read.
  * @public
  */
 export class Uri implements vscode.Uri {
-  readonly scheme = "file";
   readonly authority = "";
   readonly query = "";
   readonly fragment = "";
 
-  private constructor(readonly path: string) {}
+  private constructor(
+    readonly scheme: "file" | "untitled",
+    readonly path: string,
+  ) {}
 
   get fsPath(): string {
     return this.path;
@@ -185,7 +189,7 @@ export class Uri implements vscode.Uri {
   }
 
   toString(): string {
-    return `file://${this.path}`;
+    return this.scheme === "file" ? `file://${this.path}` : `untitled:${this.path}`;
   }
 
   toJSON(): unknown {
@@ -193,12 +197,43 @@ export class Uri implements vscode.Uri {
   }
 
   static file(path: string): Uri {
-    return new Uri(path);
+    return new Uri("file", path);
+  }
+
+  /** `file:///<path>` or `untitled:<name>`; any other text throws, since no test needs it. */
+  static parse(value: string): Uri {
+    if (value.startsWith("file://")) return new Uri("file", value.slice("file://".length));
+    if (value.startsWith("untitled:")) return new Uri("untitled", value.slice("untitled:".length));
+    throw new Error(`The fake Uri.parse reads file: and untitled: URIs only, not ${value}.`);
   }
 
   static joinPath(base: Uri, ...parts: string[]): Uri {
-    return new Uri(posix.join(base.path, ...parts));
+    return new Uri(base.scheme, posix.join(base.path, ...parts));
   }
+}
+
+/**
+ * vscode.Position: a zero-based line and character.
+ * The code under test reaches this through tsconfig.test.json's "vscode" alias, which knip does not read.
+ * @public
+ */
+export class Position implements Pick<vscode.Position, "line" | "character"> {
+  constructor(
+    readonly line: number,
+    readonly character: number,
+  ) {}
+}
+
+/**
+ * vscode.Range: its start and end positions.
+ * The code under test reaches this through tsconfig.test.json's "vscode" alias, which knip does not read.
+ * @public
+ */
+export class Range implements Pick<vscode.Range, "start" | "end"> {
+  constructor(
+    readonly start: vscode.Position,
+    readonly end: vscode.Position,
+  ) {}
 }
 
 /**
@@ -285,6 +320,17 @@ export enum QuickPickItemKind {
   Default = 0,
 }
 
+/**
+ * vscode.ProgressLocation, with the real enum's values.
+ * The code under test reaches this through tsconfig.test.json's "vscode" alias, which knip does not read.
+ * @public
+ */
+export enum ProgressLocation {
+  SourceControl = 1,
+  Window = 10,
+  Notification = 15,
+}
+
 /** One `window.withProgress` call: its options, and whether its task has settled. */
 export interface ProgressRun {
   readonly options: vscode.ProgressOptions;
@@ -293,6 +339,18 @@ export interface ProgressRun {
 
 /** Every `window.withProgress` call since the last reset, in order. */
 export const progressRuns: ProgressRun[] = [];
+
+/** A decoration type `window.createTextEditorDecorationType` created: its options, and whether it was disposed. */
+export interface FakeDecorationType extends vscode.TextEditorDecorationType {
+  readonly options: vscode.DecorationRenderOptions;
+  disposed: boolean;
+}
+
+/** Every decoration type `window.createTextEditorDecorationType` created since the last reset, in order. */
+export const decorationTypes: FakeDecorationType[] = [];
+
+/** Every `window.showTextDocument` call since the last reset, as [document, options], in order. */
+export const shownDocuments: [vscode.TextDocument, vscode.TextDocumentShowOptions | undefined][] = [];
 
 /** A tree view `window.createTreeView` created: its id, its options, what it revealed, and whether it was disposed. */
 export interface FakeTreeView {
@@ -305,6 +363,41 @@ export interface FakeTreeView {
 /** Every tree view `window.createTreeView` created since the last reset, in order. */
 export const treeViews: FakeTreeView[] = [];
 
+/**
+ * vscode.StatusBarAlignment, with the real enum's values.
+ * The code under test reaches this through tsconfig.test.json's "vscode" alias, which knip does not read.
+ * @public
+ */
+export enum StatusBarAlignment {
+  Left = 1,
+  Right = 2,
+}
+
+/** A status bar item `window.createStatusBarItem` created: its creation arguments, what the host set, and its show and hide counts. */
+export interface FakeStatusBarItem extends vscode.StatusBarItem {
+  readonly alignment: vscode.StatusBarAlignment;
+  readonly priority: number | undefined;
+  visible: boolean;
+  shown: number;
+  hidden: number;
+  disposed: boolean;
+}
+
+/** Every status bar item `window.createStatusBarItem` created since the last reset, in order. */
+export const statusBarItems: FakeStatusBarItem[] = [];
+
+/** Sets `window.activeTextEditor` and fires `onDidChangeActiveTextEditor`, as switching editors does. */
+export function setActiveTextEditor(editor: vscode.TextEditor | undefined): void {
+  window.activeTextEditor = editor;
+  activeEditorChanges.fire(editor);
+}
+
+/** Every EventEmitter created since the last reset, in order, the fake's own included. */
+export const createdEmitters: EventEmitter<unknown>[] = [];
+
+/** Every `executeCommand("setContext", key, value)` since the last reset, as [key, value], in order. */
+export const contextKeyCalls: [string, unknown][] = [];
+
 /** The quick inputs `window.createQuickPick` and `window.createInputBox` created since the last reset, scripted by a test. */
 export const quickInputs = new ScriptedQuickInputs(QuickInputButtons.Back);
 
@@ -313,12 +406,71 @@ export const quickInputs = new ScriptedQuickInputs(QuickInputButtons.Back);
  * @public
  */
 export const window = {
+  /** The active editor; a test sets it. */
+  activeTextEditor: undefined as vscode.TextEditor | undefined,
+  /** The visible editors; a test sets them. */
+  visibleTextEditors: [] as readonly vscode.TextEditor[],
+  // Subscribes when called: the emitter is declared after the EventEmitter class this object precedes.
+  onDidChangeActiveTextEditor: ((listener, thisArgs?, disposables?) =>
+    activeEditorChanges.event(listener, thisArgs, disposables)) as typeof vscode.window.onDidChangeActiveTextEditor,
+  // The host passes the id form only; the other overload is never called.
+  createStatusBarItem: ((id: string, alignment?: vscode.StatusBarAlignment, priority?: number): FakeStatusBarItem => {
+    const item = {
+      id,
+      alignment: alignment ?? StatusBarAlignment.Left,
+      priority,
+      name: undefined,
+      text: "",
+      tooltip: undefined,
+      tooltip2: undefined,
+      color: undefined,
+      backgroundColor: undefined,
+      command: undefined,
+      accessibilityInformation: undefined,
+      visible: false,
+      shown: 0,
+      hidden: 0,
+      disposed: false,
+      show: () => {
+        item.visible = true;
+        item.shown += 1;
+      },
+      hide: () => {
+        item.visible = false;
+        item.hidden += 1;
+      },
+      dispose: () => {
+        item.disposed = true;
+      },
+    } as FakeStatusBarItem;
+    statusBarItems.push(item);
+    return item;
+  }) as unknown as typeof vscode.window.createStatusBarItem,
+  // Records the call and answers no editor: the host code reads none from it.
+  showTextDocument: ((document: vscode.TextDocument, options?: vscode.TextDocumentShowOptions) => {
+    shownDocuments.push([document, options]);
+    return Promise.resolve(undefined);
+  }) as unknown as typeof vscode.window.showTextDocument,
+  createTextEditorDecorationType(options: vscode.DecorationRenderOptions): FakeDecorationType {
+    const type: FakeDecorationType = {
+      key: `decoration-${decorationTypes.length + 1}`,
+      options,
+      disposed: false,
+      dispose: () => {
+        type.disposed = true;
+      },
+    };
+    decorationTypes.push(type);
+    return type;
+  },
   createOutputChannel(name: string, options?: unknown): FakeLogOutputChannel {
     const channel = new LogChannel(name, options);
     outputChannels.push(channel);
     return channel;
   },
   // The real overloads answer the item type each caller passes; the fake answers whatever the test scripted.
+  showInformationMessage: ((message: string, ...rest: (string | vscode.MessageOptions)[]) =>
+    show("info", message, rest)) as typeof vscode.window.showInformationMessage,
   showWarningMessage: ((message: string, ...rest: (string | vscode.MessageOptions)[]) =>
     show("warning", message, rest)) as typeof vscode.window.showWarningMessage,
   showErrorMessage: ((message: string, ...rest: (string | vscode.MessageOptions)[]) =>
@@ -378,7 +530,14 @@ export const window = {
   },
 } satisfies Pick<
   typeof vscode.window,
+  | "activeTextEditor"
+  | "onDidChangeActiveTextEditor"
+  | "createStatusBarItem"
+  | "visibleTextEditors"
+  | "showTextDocument"
+  | "createTextEditorDecorationType"
   | "createOutputChannel"
+  | "showInformationMessage"
   | "showWarningMessage"
   | "showErrorMessage"
   | "showInputBox"
@@ -396,6 +555,12 @@ export const window = {
  */
 export class EventEmitter<T> implements vscode.EventEmitter<T> {
   private listeners: ((event: T) => unknown)[] = [];
+  /** Whether dispose() was called. */
+  disposed = false;
+
+  constructor() {
+    createdEmitters.push(this as EventEmitter<unknown>);
+  }
 
   readonly event: vscode.Event<T> = (listener, thisArgs?, disposables?) => {
     const bound = (event: T) => listener.call(thisArgs, event);
@@ -413,6 +578,7 @@ export class EventEmitter<T> implements vscode.EventEmitter<T> {
 
   dispose(): void {
     this.listeners = [];
+    this.disposed = true;
   }
 }
 
@@ -448,6 +614,11 @@ export const commands = {
     return new Disposable(() => registeredCommands.delete(command));
   },
   executeCommand<T = unknown>(command: string, ...rest: unknown[]): Thenable<T> {
+    // VS Code's own command, which no extension registers.
+    if (command === "setContext") {
+      contextKeyCalls.push([rest[0] as string, rest[1]]);
+      return Promise.resolve(undefined as T);
+    }
     const callback = registeredCommands.get(command);
     if (!callback) {
       return Promise.reject(new Error(`command '${command}' not found`));
@@ -497,7 +668,39 @@ export const configurationUpdates: ConfigurationUpdate[] = [];
 /** The full key of every `get` since the last reset, in order. */
 export const configurationReads: string[] = [];
 
+const activeEditorChanges = new EventEmitter<vscode.TextEditor | undefined>();
+
 const configurationChanges = new EventEmitter<vscode.ConfigurationChangeEvent>();
+
+const documentOpens = new EventEmitter<vscode.TextDocument>();
+const documentCloses = new EventEmitter<vscode.TextDocument>();
+const documentSaves = new EventEmitter<vscode.TextDocumentWillSaveEvent>();
+const fileRenames = new EventEmitter<vscode.FileRenameEvent>();
+
+/** Fires `onDidOpenTextDocument` for the document, as VS Code does when it opens or reopens one. */
+export function openDocument(document: vscode.TextDocument): void {
+  documentOpens.fire(document);
+}
+
+/** Fires `onDidCloseTextDocument` for the document, as VS Code does when it disposes one. */
+export function closeDocument(document: vscode.TextDocument): void {
+  documentCloses.fire(document);
+}
+
+/** Fires `onWillSaveTextDocument` for the document, as an explicit save does; waitUntil is never called by the host. */
+export function saveDocument(document: vscode.TextDocument): void {
+  documentSaves.fire({ document, reason: 1, waitUntil: () => {} } as vscode.TextDocumentWillSaveEvent);
+}
+
+/** Fires `onDidRenameFiles` with each [oldUri, newUri] pair, as a rename in the explorer does. */
+export function renameFiles(...pairs: [string, string][]): void {
+  fileRenames.fire({
+    files: pairs.map(([oldUri, newUri]) => ({ oldUri: Uri.parse(oldUri), newUri: Uri.parse(newUri) })),
+  });
+}
+
+/** Every document `workspace.openTextDocument` opened since the last reset, in order. */
+export const openedDocuments: FakeTextDocument[] = [];
 
 /** The full key of a setting: "libredb" and "connections" make "libredb.connections". */
 function fullKey(section: string | undefined, key: string): string {
@@ -536,11 +739,54 @@ export const workspace = {
   onDidChangeConfiguration: configurationChanges.event,
   /** Whether the workspace is trusted; a test sets it false for Restricted Mode. */
   isTrusted: true as boolean,
-} satisfies Pick<typeof vscode.workspace, "getConfiguration" | "onDidChangeConfiguration" | "isTrusted">;
+  // Opens an untitled document, Untitled-<n>, with the given language and content; the host passes no other form.
+  openTextDocument: ((options: { language?: string; content?: string }) => {
+    const document = new FakeTextDocument(
+      Uri.parse(`untitled:Untitled-${openedDocuments.length + 1}`),
+      options.content ?? "",
+      options.language ?? "plaintext",
+    );
+    openedDocuments.push(document);
+    documentOpens.fire(document.asDocument());
+    return Promise.resolve(document.asDocument());
+  }) as typeof vscode.workspace.openTextDocument,
+  onDidOpenTextDocument: documentOpens.event,
+  onDidCloseTextDocument: documentCloses.event,
+  onWillSaveTextDocument: documentSaves.event,
+  onDidRenameFiles: fileRenames.event,
+} satisfies Pick<
+  typeof vscode.workspace,
+  | "getConfiguration"
+  | "onDidChangeConfiguration"
+  | "isTrusted"
+  | "openTextDocument"
+  | "onDidOpenTextDocument"
+  | "onDidCloseTextDocument"
+  | "onWillSaveTextDocument"
+  | "onDidRenameFiles"
+>;
+
+/** Every `languages.setTextDocumentLanguage` call since the last reset, as [uri, languageId], in order. */
+export const languageChanges: [string, string][] = [];
 
 /**
- * Forget every channel, command, notification, scripted answer, quick input and setting, and trust the workspace again,
- * so each test starts from an empty host.
+ * The code under test reaches this through tsconfig.test.json's "vscode" alias, which knip does not read.
+ * @public
+ */
+export const languages = {
+  // Sets the language and fires a close and an open of the same uri, as VS Code does.
+  setTextDocumentLanguage(document: vscode.TextDocument, languageId: string): Thenable<vscode.TextDocument> {
+    languageChanges.push([document.uri.toString(), languageId]);
+    documentCloses.fire(document);
+    (document as unknown as FakeTextDocument).languageId = languageId;
+    documentOpens.fire(document);
+    return Promise.resolve(document);
+  },
+} satisfies Pick<typeof vscode.languages, "setTextDocumentLanguage">;
+
+/**
+ * Forget every channel, command, notification, scripted answer, quick input, setting, editor, document, decoration type
+ * and language change, and trust the workspace again, so each test starts from an empty host.
  */
 export function resetFake(): void {
   outputChannels.length = 0;
@@ -559,4 +805,18 @@ export function resetFake(): void {
   progressRuns.length = 0;
   treeViews.length = 0;
   workspace.isTrusted = true;
+  window.activeTextEditor = undefined;
+  window.visibleTextEditors = [];
+  decorationTypes.length = 0;
+  shownDocuments.length = 0;
+  openedDocuments.length = 0;
+  documentOpens.dispose();
+  documentCloses.dispose();
+  documentSaves.dispose();
+  fileRenames.dispose();
+  languageChanges.length = 0;
+  statusBarItems.length = 0;
+  activeEditorChanges.dispose();
+  contextKeyCalls.length = 0;
+  createdEmitters.length = 0;
 }

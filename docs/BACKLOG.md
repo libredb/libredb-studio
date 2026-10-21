@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S9 · 6
-- [Drivers and connections](#drivers-and-connections) — D1-D387, U17 · 282
+- [Drivers and connections](#drivers-and-connections) — D1-D388, U17 · 283
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U148 · 134
@@ -3946,6 +3946,17 @@ The extension therefore offers Enter Credentials on `CONNECTION_ERROR` too (`CRE
 Found 2026-10-21 during the VS Code extension work (PR 8), and deferred because changing the provider layer's mapping is not that PR's to do.
 
 **Done when:** each of the four providers maps its login refusal (PostgreSQL SQLSTATE `28P01` and `28000`, MySQL `1045`, SQL Server `18456`, MongoDB code `18`) to `AuthenticationError`, after checking how the web client treats a 401 from the db routes; a test per engine pins `AUTH_ERROR` for a wrong password; and the extension's offer narrows back to `AUTH_ERROR`.
+
+### D388. Select Rows writes a SQL Server reserved word bare, which the server refuses
+
+`quoteIdentifier` in `src/lib/query-generators.ts` brackets a SQL Server name only when it holds a special character, so a table named `order` gives `SELECT * FROM master.dbo.order;`, and SQL Server answers "Incorrect syntax near the keyword 'order'.".
+The web's tree click and the VS Code extension's Select Rows both build that text through `generateTableQuery`.
+PostgreSQL and MySQL accept a reserved word after a qualifier, so `public.order` and `libredb_it.order` run.
+Measured 2026-10-21 by the VS Code extension's integration leg against its SQL Server container.
+
+Found 2026-10-21 during the VS Code extension work (PR 11), and deferred because it changes the SQL generated for SQL Server on the web too.
+
+**Done when:** `quoteIdentifier` brackets a T-SQL reserved word, with the word list declared where the repository keeps per-engine SQL facts rather than as a new type-id branch, and the skipped case "Select Rows runs on mssql's table named order" in `vscode-extension/test/integration/tree-editor.test.ts` runs again.
 
 ## Value interpolation
 

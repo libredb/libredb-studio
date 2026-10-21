@@ -529,6 +529,7 @@ The root's packages (React, the drivers) resolve from the root's `node_modules`,
 
 `@vscode/test-cli` runs Mocha only, so one framework serves the unit, integration and e2e legs.
 tsx loads the TypeScript and honours `tsconfig.test.json`'s `paths`, which send `@/` to the root's `src/` and `vscode` to `test/fakes/vscode.ts`; `test/setup/register.cjs` points tsx at that file.
+The editor modules' unit tests drive `FakeTextDocument` and `FakeTextEditor` from `test/fakes/documents.ts`, which compute offsets and positions over a text's lines as VS Code does for `\n` line ends.
 Every Mocha configuration sets `forbid-only` (`.mocharc.json`, `test/integration/.mocharc.json` and `.vscode-test.mjs`), and `SCAN_ROOTS` in `scripts/only-check.mjs` reads `vscode-extension/test`, so `bun run lint` refuses a focused test there too.
 `.vscode-test.mjs` also sets `failZero`: `@vscode/test-cli` hands Mocha an empty file list without an error, so an e2e glob that matches no file, a moved `test/e2e/smoke/` for one, would otherwise pass with nothing run.
 The webview's unit files are `.tsx` and register happy-dom per file, through `useDom()` in `test/setup/dom.ts` at the top of a `describe` block, so no host or backend test ever sees a DOM global.
@@ -560,6 +561,8 @@ A callback whose behaviour the gate must hold keeps its body on its own line, as
   That configuration also runs `test/e2e-workspace/connections.test.ts`, which drives the connection commands through scripted quick inputs against PostgreSQL in Docker: it and `backend-lifecycle.test.ts` each need a host whose extension has started no child yet, and Add Connection leaves the extension's own child running.
   The smoke subset runs neither the workspace configuration nor any file that needs Docker.
   `@vscode/test-electron` starts every host with `--disable-workspace-trust`, so the leg sees a trusted workspace only.
+  `activate` exports nothing, so a test reaches what the extension created through `test/e2e/tree-capture.ts`, which wraps `vscode.window.createTreeView` before the extension activates and keeps the Connections view it captured on `globalThis`.
+  The editor cases read the same way through `test/e2e/host-capture.ts`, which wraps `vscode.window.createStatusBarItem`, `vscode.window.createOutputChannel` and `vscode.commands.executeCommand` before the extension activates and keeps every `setContext` call, the LibreDB log's lines and the connection status bar item on `globalThis`.
 - Smoke: the e2e leg with `LIBREDB_E2E_SUBSET=smoke`, on macOS and Windows, with no Xvfb and no database.
   The smoke subset runs `test/e2e/smoke/tree-root.test.ts`, which needs no Docker; the full leg also runs `test/e2e/connections-tree.test.ts`, which does.
 - Browser: `npm run test:browser` runs the results webview in Chromium with Playwright, after `npm run build`.

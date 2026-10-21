@@ -15,6 +15,14 @@ import type { QueryResult } from "@/lib/types";
 
 /** Copied into a description and read field by field by no handler, so a small literal stands for the whole. */
 export const CAPS = { defaultPort: 5432, supportsCreateDatabase: true } as unknown as ProviderCapabilities;
+/**
+ * PostgreSQL-shaped for the generator and the run target: its port picks the double-quote rule, no statementTerminator
+ * declaration means ";", and one table kind with columns. No previewProjection, so Select Rows describes nothing.
+ */
+export const SQL_CAPS = {
+  defaultPort: 5432,
+  objectKinds: [{ id: "table", role: "relation", label: "Table", labelPlural: "Tables", hasColumns: true }],
+} as unknown as ProviderCapabilities;
 export const LABELS = { entityName: "Table", entityNamePlural: "Tables" } as unknown as ProviderLabels;
 
 /** The limiter's rule as a SQL provider applies it: a bound of ours, unless the text carries its own LIMIT. */

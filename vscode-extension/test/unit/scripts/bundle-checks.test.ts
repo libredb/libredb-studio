@@ -124,6 +124,18 @@ describe("hostViolations", () => {
     });
   }
 
+  // Part 3 criterion 23: what the child bundles for the editors stays out of the host, each by its own rule.
+  const childOnly: [string, string][] = [
+    ["src/lib/sql/run-target.ts", "the host never bundles src/lib/sql"],
+    ["src/lib/editor/tab-language.ts", "the host never bundles src/lib/editor"],
+    ["src/lib/query-generators.ts", "the host never bundles the query generators"],
+  ];
+  for (const [path, rule] of childOnly) {
+    it(`refuses ${path} with its rule's sentence`, () => {
+      assert.deepEqual(hostViolations(hostInput(`../${path}`), wd), [`${path}: ${rule}`]);
+    });
+  }
+
   it("keeps the secret-field leaf and the id generator", () => {
     assert.deepEqual(hostViolations(hostInput("../src/lib/storage/secret-fields.ts"), wd), []);
     assert.deepEqual(hostViolations(hostInput("../src/lib/ids.ts"), wd), []);
@@ -161,6 +173,26 @@ describe("childViolations", () => {
       ["node:fs", "fs", "oracledb", "@duckdb/node-api", "../build/Release/sshcrypto.node"],
     );
     assert.deepEqual(childViolations(clean, wd), []);
+  });
+
+  // Part 3 "Backend additions" 3: the child takes in the editor language, the generators and the run target, whose
+  // Monaco imports are type-only, so Monaco itself never reaches it.
+  it("keeps a child of the editor language, the dialect editors, the generators and the run target", () => {
+    const clean = metafile([
+      "src/backend/main.ts",
+      "../src/lib/editor/tab-language.ts",
+      "../src/lib/editor/dialect-editors.ts",
+      "../src/lib/query-generators.ts",
+      "../src/lib/sql/run-target.ts",
+    ]);
+    assert.deepEqual(childViolations(clean, wd), []);
+  });
+
+  it("refuses Monaco's editor API as one violation naming monaco-editor", () => {
+    const monaco = "../node_modules/monaco-editor/esm/vs/editor/editor.api.js";
+    assert.deepEqual(childViolations(metafile(["src/backend/main.ts", monaco]), wd), [
+      "node_modules/monaco-editor/esm/vs/editor/editor.api.js: the child never bundles Monaco",
+    ]);
   });
 
   it("reports vscode, or an external on neither list, once however many inputs import it", () => {

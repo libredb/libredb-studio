@@ -17,9 +17,17 @@ export interface ConnectionRelease {
   closeIfOpen(connectionId: string): Promise<void>;
 }
 
+/** Remove's step 4: unbinds the connection's editors and cancels their runs. */
+export interface EditorRelease {
+  releaseConnection(connectionId: string): void;
+  /** Cancels every editor run on the connection, preparing or sent, and keeps the editors' bindings. */
+  cancelRuns(connectionId: string): void;
+}
+
 export interface RemoveDeps {
   readonly store: Pick<ConnectionStore, "list" | "remove">;
   readonly client: ConnectionRelease;
+  readonly editors: EditorRelease;
   readonly window: Pick<typeof vscode.window, "showQuickPick" | "showWarningMessage" | "showErrorMessage">;
   readonly log: Pick<vscode.LogOutputChannel, "warn">;
   /** executeCommand("workbench.action.openSettingsJson") */
@@ -54,7 +62,7 @@ export async function removeConnection(deps: RemoveDeps, target?: unknown): Prom
   );
   if (choice !== REMOVE) return false;
   await release(deps.client, deps.log, id, "before its removal");
-  // Step 4, unbinding the editors bound to the connection, joins here with them (PR 11).
+  deps.editors.releaseConnection(id);
   let removal: Awaited<ReturnType<ConnectionStore["remove"]>>;
   try {
     removal = await deps.store.remove(id);
@@ -78,14 +86,26 @@ export async function removeConnection(deps: RemoveDeps, target?: unknown): Prom
   return removal.removed;
 }
 
-/** The edit rule's host half: steps 2 and 3 of Remove, with no question and no secret deletion, for each id a store change reports removed or changed. */
+/**
+ * The edit rule's host half: steps 2 and 3 of Remove, with no question and no secret deletion, for each id a store
+ * change reports removed or changed, and step 4 for a removed id once its close settled; an edited profile keeps its
+ * editors.
+ */
 export function releaseOnChange(
   store: Pick<ConnectionStore, "onDidChange">,
   client: ConnectionRelease,
   log: Pick<vscode.LogOutputChannel, "warn">,
+  editors: EditorRelease,
 ): vscode.Disposable {
   return store.onDidChange(({ removed, changed }) => {
-    for (const id of [...removed, ...changed]) void release(client, log, id, "after libredb.connections changed");
+    for (const id of removed) {
+      void release(client, log, id, "after libredb.connections changed").then(() => editors.releaseConnection(id));
+    }
+    for (const id of changed) {
+      // A run prepared against the old profile must not reopen on the edited one (criterion 20).
+      editors.cancelRuns(id);
+      void release(client, log, id, "after libredb.connections changed");
+    }
   });
 }
 

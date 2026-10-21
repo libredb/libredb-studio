@@ -1,6 +1,7 @@
 // ProviderDescriptions for the tree's unit tests, one per container shape, written out rather than computed.
 // Each holds the capabilities the tree reads (containerLevels, catalogSessions, objectKinds) and casts past the rest,
-// which no tree read touches, as the backend's fakes do (test/fakes/provider.ts).
+// which no tree read touches, as the backend's fakes do (test/fakes/provider.ts). None declares a queryLanguage, so
+// each is in the sql editor language.
 import type { ContainerLevelSpec, ObjectKindSpec, ProviderCapabilities } from "@/lib/db/types";
 import type { ProviderDescription } from "../../src/protocol";
 
@@ -49,6 +50,7 @@ function description(capabilities: Partial<ProviderCapabilities>): ProviderDescr
   return {
     capabilities: { supportsQueryCancel: true, ...capabilities },
     labels: {},
+    editorLanguage: "sql",
   } as unknown as ProviderDescription;
 }
 

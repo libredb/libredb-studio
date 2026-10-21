@@ -12,9 +12,22 @@ import { scopeToCatalog } from "@/lib/db/catalog-scope";
 import { CONNECTION_FORM } from "@/lib/db/connection-form";
 import { ConnectionError, waitedSeconds } from "@/lib/db/errors";
 import type { clearProviderCache, enabledProviderTypes, getOrCreateProvider } from "@/lib/db/factory";
+import { findKind, kindHasColumns } from "@/lib/db/object-kinds";
 import { supportsQueryCancel } from "@/lib/db/query-cancel";
-import type { Container, DatabaseObject, KindCount, ObjectDetail, QueryPrepareOptions } from "@/lib/db/types";
-import type { DatabaseConnection } from "@/lib/types";
+import type {
+  Container,
+  DatabaseObject,
+  KindCount,
+  ObjectDetail,
+  ProviderCapabilities,
+  QueryPrepareOptions,
+} from "@/lib/db/types";
+import { type EditorLanguage, editorLanguageForTabType, resolveTabType } from "@/lib/editor/tab-language";
+import { generateTableQuery } from "@/lib/query-generators";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
+import { runTarget } from "@/lib/sql/run-target";
+import { countCodeStatements } from "@/lib/sql/statement-splitter";
+import type { ColumnSchema, DatabaseConnection } from "@/lib/types";
 import {
   type BackendErrorCode,
   type BackendErrorData,
@@ -27,6 +40,8 @@ import {
   type PastedConnection,
   PROTOCOL_VERSION,
   type QueryPage,
+  type RunTargetResult,
+  type SelectStatementResult,
   type TestConnectionResult,
 } from "../protocol";
 import { engineCatalog } from "./engine-catalog";
@@ -102,6 +117,8 @@ export interface BackendHandlers {
   shutdown(): Promise<null>;
   listEngines(params: unknown): EngineCatalog;
   parsePastedConnection(params: unknown): PastedConnection;
+  selectStatement(params: unknown): Promise<SelectStatementResult>;
+  runTarget(params: unknown): Promise<RunTargetResult>;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -135,6 +152,21 @@ function stringArray(value: unknown, field: string): readonly string[] {
   return value;
 }
 
+function anInteger(value: unknown, field: string): number {
+  if (!Number.isInteger(value)) throw invalidParams(`${field} must be an integer`);
+  return value as number;
+}
+
+/** The object of objects/selectStatement: the fields the generator addresses it by, checked; the rest as sent. */
+function databaseObjectOf(value: unknown): DatabaseObject {
+  if (!isObject(value)) throw invalidParams("object must be an object");
+  stringArray(value.path, "object.path");
+  aString(value.kind, "object.kind");
+  aString(value.name, "object.name");
+  // The other fields (readRanges among them) are the provider's and the generator's to read, as they are on the web.
+  return value as unknown as DatabaseObject;
+}
+
 /** The connectionId every request after connection/open names its connection by. */
 function connectionIdOf(params: unknown): string {
   return nonEmptyString(fieldOf(params, "connectionId"), "connectionId");
@@ -155,6 +187,11 @@ function readConnectionParams(params: unknown): OpenRecord {
   // The other fields are the provider's to check, as they are behind the routes.
   const connection = { ...wire, createdAt } as unknown as DatabaseConnection;
   return { connection, posture: { allowExternalFileAccess } };
+}
+
+/** The editor language a provider's text is written in, as the web's query tab reads it from the same capabilities. */
+function editorLanguageOf(capabilities: ProviderCapabilities): EditorLanguage {
+  return editorLanguageForTabType(resolveTabType(capabilities));
 }
 
 export function createHandlers(
@@ -259,11 +296,13 @@ export function createHandlers(
         }
         const provider = await factory.getOrCreateProvider(record.connection, {}, record.posture);
         registry.set(record);
+        const capabilities = provider.getCapabilities();
         return {
           description: {
             // supportsQueryCancel is computed as POST /api/db/provider-meta computes it.
-            capabilities: { ...provider.getCapabilities(), supportsQueryCancel: supportsQueryCancel(provider) },
+            capabilities: { ...capabilities, supportsQueryCancel: supportsQueryCancel(provider) },
             labels: provider.getLabels(),
+            editorLanguage: editorLanguageOf(capabilities),
           },
         };
       });
@@ -374,6 +413,56 @@ export function createHandlers(
     parsePastedConnection(params) {
       const parsed = parseConnectionString(aString(fieldOf(params, "text"), "text"));
       return { parsed, label: parsed === null ? null : CONNECTION_FORM[parsed.type].label };
+    },
+
+    // What the web's tree click writes (handleTableClick), with the columns read only where the engine declares a
+    // projection for a kind that has them (part 3, "Backend additions" 1).
+    async selectStatement(params) {
+      const connectionId = connectionIdOf(params);
+      const object = databaseObjectOf(fieldOf(params, "object"));
+      const provider = await providerOf(openRecord(connectionId));
+      const capabilities = provider.getCapabilities();
+      let columns: readonly ColumnSchema[] | undefined;
+      if (capabilities.previewProjection !== undefined && kindHasColumns(findKind(capabilities, object.kind))) {
+        columns = (await provider.describeObject(object.path, object.kind)).columns;
+      }
+      try {
+        return { statement: generateTableQuery(object.path, capabilities, columns, { readRanges: object.readRanges }) };
+      } catch (error) {
+        throw refusal(500, "INTERNAL_ERROR", (error as Error).message);
+      }
+    },
+
+    // The web editor's run target rule on the offsets the host's editor reports; a target with no code under the sql
+    // editor language answers "", so the host's one blank check says "Nothing to run." (builder's call 4).
+    async runTarget(params) {
+      const connectionId = connectionIdOf(params);
+      const text = aString(fieldOf(params, "text"), "text");
+      const selectionField = fieldOf(params, "selection");
+      if (!isObject(selectionField)) throw invalidParams("selection must be an object");
+      const selection = {
+        start: anInteger(selectionField.start, "selection.start"),
+        end: anInteger(selectionField.end, "selection.end"),
+      };
+      const cursor = anInteger(fieldOf(params, "cursor"), "cursor");
+      const record = openRecord(connectionId);
+      const capabilities = (await providerOf(record)).getCapabilities();
+      const rule = {
+        editorLanguage: editorLanguageOf(capabilities),
+        statementTerminator: capabilities.statementTerminator,
+        grammar: resolveSqlGrammar(record.connection.type),
+      };
+      let target: RunTargetResult;
+      try {
+        target = runTarget({ text, selection, cursor, ...rule });
+      } catch (error) {
+        // Offsets the rule cannot honour are the caller's params (the PR 10 ruling); anything else is an error answer.
+        throw error instanceof RangeError ? invalidParams(error.message) : error;
+      }
+      if (rule.editorLanguage === "sql" && countCodeStatements(target.statement, rule.grammar) === 0) {
+        return { statement: "" };
+      }
+      return target;
     },
   };
 }

@@ -20,7 +20,7 @@ import type { ProfileItem } from "../connections/profile";
 import { CONNECTIONS_VIEW } from "../names";
 import { isConnected, type OpenConnections } from "../open-connections";
 import type { EngineIcons } from "./icons";
-import { nodeId, type TreeNode } from "./nodes";
+import { issueNode, nodeId, type TreeNode } from "./nodes";
 import { treeItemOf } from "./tree-items";
 
 export interface TreeDeps {
@@ -74,12 +74,13 @@ export class ConnectionsTree implements vscode.TreeDataProvider<TreeNode>, vscod
    * An answer read before a drop of its node resolves to what the node answers now.
    */
   getChildren(node?: TreeNode): Promise<TreeNode[]> {
-    if (node === undefined) return Promise.resolve(this.deps.store.list().map(rootNode));
+    if (node === undefined) return Promise.resolve(this.deps.store.list().map(rootNode).map(issueNode));
     const cached = this.cache.get(node.id);
     if (cached !== undefined) return cached.children;
     const epoch = this.epochOf(node.id);
     const entry: CacheEntry = {
       children: this.load(node).then((children) => {
+        for (const child of children) issueNode(child);
         if (this.epochOf(node.id) !== epoch) return this.getChildren(node);
         entry.settled = children;
         return children;

@@ -48,6 +48,20 @@ export type TreeNode =
   | (NodeBase & { readonly node: "empty"; readonly label: string })
   | (NodeBase & { readonly node: "error"; readonly message: string; readonly code?: string });
 
+/** Every node the Connections tree answered: VS Code hands a menu command the very object the tree gave it. */
+const issued = new WeakSet<object>();
+
+/** Records the node as one the tree built, and answers it. */
+export function issueNode<T extends TreeNode>(node: T): T {
+  issued.add(node);
+  return node;
+}
+
+/** Whether the target is a node the tree answered, not one of the same shape built elsewhere (another extension's executeCommand). */
+export function isIssuedNode(target: unknown): boolean {
+  return typeof target === "object" && target !== null && issued.has(target);
+}
+
 /** [tag, ...segments], each encodeURIComponent'd, joined by "/": injective, and stable across refreshes and restarts. */
 export function nodeId(tag: NodeTag, segments: readonly string[]): string {
   return [tag, ...segments].map(encodeURIComponent).join("/");

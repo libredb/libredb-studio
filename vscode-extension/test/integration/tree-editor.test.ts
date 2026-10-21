@@ -1,6 +1,8 @@
 // The Connections tree against the four v0 engines (part 3, "Tests", the integration leg): the real store, source,
 // client, OpenConnections, EngineIcons and ConnectionsTree over one forked dist/backend.js, with the fake vscode, so
-// every expand opens through the profile setting and SecretStorage as it does in the host. PR 11 adds the editor cases.
+// every expand opens through the profile setting and SecretStorage as it does in the host. The editor cases run New
+// Query, Select Rows, Run and Cancel through the same client with a recording presenter: Select Rows' text and its run
+// on each engine and on names that need quoting, the run target, malformed text, a cancelled run and a hanging open.
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
@@ -10,12 +12,19 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { applicableKinds, declaredLevels, enumerableKinds } from "@/lib/db/object-kinds";
 import type { KindCount } from "@/lib/db/types";
-import { BackendClient } from "../../src/host/backend-client";
+import { quoteObjectPath } from "@/lib/query-generators";
+import { BackendClient, BackendError } from "../../src/host/backend-client";
 import type { BackendCrash, BackendLink } from "../../src/host/backend-supervisor";
 import { ENTER_CREDENTIALS, ProfileConnectionSource } from "../../src/host/connections/connection-source";
 import { ConnectionStore } from "../../src/host/connections/connection-store";
 import type { ProfileEntry } from "../../src/host/connections/profile";
+import { BindingStore } from "../../src/host/editor/bindings";
+import { cancelQuery, type EditorCommandDeps, newQuery, selectRows } from "../../src/host/editor/commands";
+import { NOTHING_TO_RUN, runQuery } from "../../src/host/editor/run-query";
+import { RunRegistry } from "../../src/host/editor/run-registry";
+import { RunService } from "../../src/host/editor/run-service";
 import { OpenConnections } from "../../src/host/open-connections";
+import type { ResultsPresenter, RunStart } from "../../src/host/results/results-presenter";
 import { ConnectionsTree } from "../../src/host/tree/connections-tree";
 import { EngineIcons, readEngineIndex } from "../../src/host/tree/icons";
 import { nodeId, type TreeNode } from "../../src/host/tree/nodes";
@@ -25,15 +34,23 @@ import {
   type InitializeResult,
   METHODS,
   type OpenResult,
+  type QueryPage,
   type TestConnectionResult,
   type WireConnection,
 } from "../../src/protocol";
 import { type BackendSession, openSession } from "../backend-session";
 import { FakeSetting } from "../fakes/connections-setting";
+import { FakeTextDocument, FakeTextEditor } from "../fakes/documents";
 import { MemorySecretStorage } from "../fakes/secret-storage";
 import {
+  answerQuickPicks,
+  CancellationTokenSource,
+  languages,
+  openedDocuments,
+  settings,
   shownInputBoxes,
   shownMessages,
+  shownQuickPicks,
   ThemeIcon,
   TreeItemCollapsibleState,
   Uri,
@@ -60,6 +77,30 @@ const TREE_SETUP: Readonly<Record<EngineService, readonly string[]>> = {
   ],
   mssql: ["create table dbo.it_tree_pk (id int primary key, label varchar(20))"],
   mysql: ["create table libredb_it.it_tree_pk (id int primary key, label varchar(20))"],
+  mongodb: [],
+};
+
+/** Review Focus 3's names on every SQL engine, each table holding one row n = 1 (the editor cases). */
+const EDITOR_NAMES = ["order", 'a"b', "a.b", "çay"];
+const bracketed = (name: string) => `[${name.replaceAll("]", "]]")}]`;
+const backticked = (name: string) => `\`${name.replaceAll("`", "``")}\``;
+
+/** Statements after TREE_SETUP: the quoted tables PostgreSQL lacks, one row in each, and three rows in it_tree_pk. */
+const EDITOR_SETUP: Readonly<Record<EngineService, readonly string[]>> = {
+  postgres: [
+    ...EDITOR_NAMES.map((name) => `insert into ${quoted(name)} (n) values (1)`),
+    "insert into it_tree_pk (id, label) values (1, 'one'), (2, 'two'), (3, 'three')",
+  ],
+  mssql: [
+    ...EDITOR_NAMES.map((name) => `create table dbo.${bracketed(name)} (n int)`),
+    ...EDITOR_NAMES.map((name) => `insert into dbo.${bracketed(name)} (n) values (1)`),
+    "insert into dbo.it_tree_pk (id, label) values (1, 'one'), (2, 'two'), (3, 'three')",
+  ],
+  mysql: [
+    ...EDITOR_NAMES.map((name) => `create table libredb_it.${backticked(name)} (n int)`),
+    ...EDITOR_NAMES.map((name) => `insert into libredb_it.${backticked(name)} (n) values (1)`),
+    "insert into libredb_it.it_tree_pk (id, label) values (1, 'one'), (2, 'two'), (3, 'three')",
+  ],
   mongodb: [],
 };
 
@@ -97,6 +138,7 @@ describe("the Connections tree against PostgreSQL, SQL Server, MySQL and MongoDB
   let client: BackendClient;
   let opened: OpenConnections;
   let store: ConnectionStore;
+  let icons: EngineIcons;
 
   const engineOf = (service: EngineService): RunningEngine => {
     const engine = engines.get(service);
@@ -136,7 +178,7 @@ describe("the Connections tree against PostgreSQL, SQL Server, MySQL and MongoDB
     const id = `${fixture.service}-setup`;
     const connection = fixture.connection(engineOf(fixture.service), id);
     await child().connection.sendRequest<OpenResult>(METHODS.openConnection, { connection, posture: POSTURE });
-    for (const statement of [...fixture.setup, ...TREE_SETUP[fixture.service]]) {
+    for (const statement of [...fixture.setup, ...TREE_SETUP[fixture.service], ...EDITOR_SETUP[fixture.service]]) {
       await child().connection.sendRequest(METHODS.runQuery, {
         connectionId: id,
         queryId: randomUUID(),
@@ -255,14 +297,8 @@ describe("the Connections tree against PostgreSQL, SQL Server, MySQL and MongoDB
     opened = new OpenConnections();
     client = new BackendClient(link, new ProfileConnectionSource({ store, window, workspace }), opened);
     const index = readEngineIndex(readFileSync(join(EXTENSION_ROOT, "media", "engines", "index.json"), "utf8"));
-    tree = new ConnectionsTree({
-      store,
-      client,
-      opened,
-      link,
-      icons: new EngineIcons(Uri.file(EXTENSION_ROOT), index),
-      window,
-    });
+    icons = new EngineIcons(Uri.file(EXTENSION_ROOT), index);
+    tree = new ConnectionsTree({ store, client, opened, link, icons, window });
     for (const fixture of ENGINES) {
       await add(fixture.connection(engineOf(fixture.service), profileId(fixture.service)));
     }
@@ -531,5 +567,425 @@ describe("the Connections tree against PostgreSQL, SQL Server, MySQL and MongoDB
       server.close();
       await once(server, "close");
     }
+  });
+
+  describe("editors", () => {
+    type Presented =
+      | { readonly event: "started"; readonly run: RunStart }
+      | { readonly event: "succeeded"; readonly queryId: string; readonly page: QueryPage }
+      | { readonly event: "failed"; readonly queryId: string; readonly error: unknown };
+
+    const presented: Presented[] = [];
+    const presenter: ResultsPresenter = {
+      runStarted: (run) => presented.push({ event: "started", run }),
+      runSucceeded: (queryId, page) => presented.push({ event: "succeeded", queryId, page }),
+      runFailed: (queryId, error) => presented.push({ event: "failed", queryId, error }),
+      documentClosed: () => {},
+      documentMoved: () => {},
+    };
+    let minted = 0;
+    let bindings: BindingStore;
+    let runs: RunRegistry;
+    let deps: EditorCommandDeps;
+    let documents = 0;
+    const HANGING_RUN = "it-editor-hanging";
+
+    before(() => {
+      bindings = new BindingStore();
+      runs = new RunRegistry(() => new CancellationTokenSource());
+      const service = new RunService({
+        client,
+        runs,
+        presenter,
+        opened,
+        newQueryId: () => {
+          minted += 1;
+          return randomUUID();
+        },
+      });
+      deps = {
+        store,
+        icons,
+        window,
+        workspace,
+        languages,
+        client,
+        bindings,
+        runs,
+        service,
+        log: window.createOutputChannel("LibreDB editor test", { log: true }),
+        timers: { setTimeout },
+        showLog: () => Promise.resolve(),
+        openUserSettings: () => Promise.resolve(),
+        addConnection: () => Promise.resolve(),
+      } as unknown as EditorCommandDeps;
+    });
+
+    beforeEach(() => {
+      settings.set("libredb.query.rowLimit", 500);
+      answerQuickPicks(() => undefined);
+    });
+
+    after(() => {
+      settings.delete("libredb.query.rowLimit");
+      answerQuickPicks(() => undefined);
+      window.activeTextEditor = undefined;
+      bindings?.dispose();
+      runs?.dispose();
+    });
+
+    /** What the presenter received from `from` on. */
+    const since = (from: number): Presented[] => presented.slice(from);
+
+    /** The one run presented since `from`: its start and its page, failing on a failed run. */
+    function succeeded(from: number): { run: RunStart; page: QueryPage } {
+      const events = since(from);
+      assert.equal(events.length, 2, JSON.stringify(events.map((each) => each.event)));
+      const [started, outcome] = events;
+      assert.equal(started.event, "started");
+      if (outcome.event === "failed") assert.fail(`the run failed: ${String(outcome.error)}`);
+      assert.equal(outcome.event, "succeeded");
+      return { run: (started as { run: RunStart }).run, page: (outcome as { page: QueryPage }).page };
+    }
+
+    /** The one failed run presented since `from`, and its error. */
+    function failed(from: number): unknown {
+      const events = since(from);
+      assert.equal(events.length, 2, JSON.stringify(events.map((each) => each.event)));
+      const outcome = events[1];
+      assert.equal(outcome.event, "failed", JSON.stringify(outcome));
+      return (outcome as { error: unknown }).error;
+    }
+
+    /** A bound untitled document of the text, shown as the active editor with the selection from anchor to active. */
+    function editorFor(connectionId: string, text: string, anchor = 0, active = anchor): FakeTextEditor {
+      documents += 1;
+      const document = new FakeTextDocument(Uri.parse(`untitled:it-editor-${documents}`), text);
+      bindings.bind(document.uri.toString(), { connectionId });
+      const editor = new FakeTextEditor(document, anchor, active);
+      window.activeTextEditor = editor.asEditor();
+      return editor;
+    }
+
+    /** Runs the text from the active editor and answers what the presenter received. */
+    async function run(connectionId: string, text: string, anchor = 0, active = anchor): Promise<Presented[]> {
+      editorFor(connectionId, text, anchor, active);
+      const from = presented.length;
+      await runQuery(deps);
+      return since(from);
+    }
+
+    /** The first row's value of the column in the one run presented. */
+    const firstValue = (events: readonly Presented[], column: string): unknown => {
+      const outcome = events.find((each) => each.event !== "started");
+      if (outcome?.event !== "succeeded") assert.fail(`no page: ${JSON.stringify(events)}`);
+      return outcome.page.rows[0]?.[column];
+    };
+
+    /** Select Rows on the object node and the document it opened. */
+    async function selectRowsOn(node: Node<"object">): Promise<{ document: FakeTextDocument; from: number }> {
+      const from = presented.length;
+      const opening = openedDocuments.length;
+      await selectRows(deps, node);
+      assert.equal(openedDocuments.length, opening + 1, "Select Rows opened no document");
+      return { document: openedDocuments[opening], from };
+    }
+
+    /** What quoteObjectPath writes for the object on its connection, and the terminator part 3's rule appends. */
+    const predicted = (connectionId: string, path: readonly string[]): string => {
+      const capabilities = capabilitiesOf(connectionId);
+      return `SELECT * FROM ${quoteObjectPath(path, capabilities)}${capabilities.statementTerminator ?? ";"}`;
+    };
+
+    // Part 3 predicted every segment quoted; quoteObjectPath quotes a segment only where it does not read bare, as
+    // the measured texts show on all three engines.
+    const SELECT_ROWS_CASES: readonly {
+      title: string;
+      id: string;
+      path: () => readonly string[];
+      text: () => string;
+    }[] = [
+      {
+        title: "postgres",
+        id: profileId("postgres"),
+        path: () => ["public"],
+        text: () => "SELECT * FROM public.it_tree_pk;",
+      },
+      {
+        title: "postgres at server level",
+        id: PG_SERVER,
+        path: () => [engineOf("postgres").environment.POSTGRES_DB, "public"],
+        text: () => `SELECT * FROM ${engineOf("postgres").environment.POSTGRES_DB}.public.it_tree_pk;`,
+      },
+      {
+        title: "mysql",
+        id: profileId("mysql"),
+        path: () => engineFixture("mysql").tableContainer,
+        text: () => "SELECT * FROM libredb_it.it_tree_pk;",
+      },
+      {
+        title: "mssql",
+        id: profileId("mssql"),
+        path: () => engineFixture("mssql").tableContainer,
+        text: () => "SELECT * FROM master.dbo.it_tree_pk;",
+      },
+    ];
+
+    for (const { title, id, path, text } of SELECT_ROWS_CASES) {
+      it(`Select Rows on ${title}'s it_tree_pk opens its SELECT and pages it by libredb.query.rowLimit (criterion 11)`, async () => {
+        settings.set("libredb.query.rowLimit", 2);
+        const { object } = await objectIn(await containerAt(await connectionNode(id), path()), "it_tree_pk");
+        const { document, from } = await selectRowsOn(object);
+        console.log(`${title}: Select Rows wrote ${JSON.stringify(document.getText())}`);
+        assert.equal(document.getText(), predicted(id, object.object.path), "part 3's rule");
+        assert.equal(document.getText(), text());
+        assert.equal(document.languageId, "sql");
+        const { run: started, page } = succeeded(from);
+        assert.equal(started.statement, text());
+        assert.equal(page.rows.length, 2);
+        assert.equal(page.pagination.limit, 2);
+        assert.equal(page.pagination.hasMore, true);
+        const binding = bindings.get(document.uri.toString());
+        if (id === PG_SERVER) {
+          const catalog = engineOf("postgres").environment.POSTGRES_DB;
+          assert.deepEqual(binding, { connectionId: id, catalog });
+          assert.equal(started.catalog, catalog);
+        } else {
+          assert.deepEqual(binding, { connectionId: id });
+          assert.equal(started.catalog, undefined);
+        }
+      });
+    }
+
+    it("Select Rows on a MongoDB collection opens its find command and answers at most 50 documents (criterion 11)", async () => {
+      const fixture = engineFixture("mongodb");
+      const id = profileId("mongodb");
+      const { object } = await objectIn(
+        await containerAt(await connectionNode(id), fixture.tableContainer),
+        fixture.tableName,
+      );
+      const { document, from } = await selectRowsOn(object);
+      console.log(`mongodb: Select Rows wrote ${JSON.stringify(document.getText())}`);
+      assert.equal(
+        document.getText(),
+        JSON.stringify(
+          {
+            database: "libredb_it",
+            collection: fixture.tableName,
+            operation: "find",
+            filter: {},
+            options: { limit: 50 },
+          },
+          null,
+          2,
+        ),
+      );
+      assert.equal(document.languageId, "json");
+      const { page } = succeeded(from);
+      assert.ok(page.rows.length <= 50);
+      assert.equal(page.rows.length, 4);
+      assert.equal(page.pagination.hasMore, false);
+    });
+
+    for (const service of ["postgres", "mssql", "mysql"] as const) {
+      it(`Select Rows runs on ${service}'s names that need quoting, each answering its one row (Review Focus 3)`, async () => {
+        const fixture = engineFixture(service);
+        const id = profileId(service);
+        const read = async (): Promise<Map<string, Node<"object">>> => {
+          const container = await containerAt(await connectionNode(id), fixture.tableContainer);
+          const found = new Map<string, Node<"object">>();
+          for (const name of EDITOR_NAMES) found.set(name, (await objectIn(container, name)).object);
+          return found;
+        };
+        const nodes = await read();
+        const ids = [...nodes.values()].map((node) => node.id);
+        assert.equal(new Set(ids).size, EDITOR_NAMES.length, ids.join());
+        tree.refresh();
+        assert.deepEqual(
+          [...(await read()).values()].map((node) => node.id),
+          ids,
+        );
+        for (const [name, node] of nodes) {
+          if (service === "mssql" && name === "order") continue;
+          const { document, from } = await selectRowsOn(node);
+          console.log(`${service}: Select Rows on ${name} wrote ${JSON.stringify(document.getText())}`);
+          const { page } = succeeded(from);
+          assert.equal(page.rows.length, 1, name);
+          assert.equal(Number(page.rows[0].n), 1, name);
+        }
+      });
+    }
+
+    // SQL Server refuses `SELECT * FROM master.dbo.order;` with "Incorrect syntax near the keyword 'order'.":
+    // quoteObjectPath writes a reserved word bare on SQL Server, on the web too (D388 in docs/BACKLOG.md).
+    // This case runs again once D388 brackets a reserved word.
+    it.skip("Select Rows runs on mssql's table named order (Review Focus 3, the quoting defect)", async () => {
+      const container = await containerAt(
+        await connectionNode(profileId("mssql")),
+        engineFixture("mssql").tableContainer,
+      );
+      const { document, from } = await selectRowsOn((await objectIn(container, "order")).object);
+      assert.equal(document.getText(), "SELECT * FROM master.dbo.[order];");
+      assert.equal(Number(succeeded(from).page.rows[0].n), 1);
+    });
+
+    it("New Query binds a server-level container's catalog without a pick, and the palette's two picks to the same (criterion 12)", async () => {
+      const db = engineOf("postgres").environment.POSTGRES_DB;
+      const picks = shownQuickPicks.length;
+      const opening = openedDocuments.length;
+      await newQuery(deps, await containerAt(await connectionNode(PG_SERVER), [db]));
+      assert.equal(shownQuickPicks.length, picks, "New Query from the node showed a pick");
+      const fromNode = openedDocuments[opening];
+      assert.deepEqual(bindings.get(fromNode.uri.toString()), { connectionId: PG_SERVER, catalog: db });
+      assert.equal(fromNode.languageId, "sql");
+
+      answerQuickPicks((shown) =>
+        shown.options?.title === undefined
+          ? shown.items.find((item) => (item as { answer?: string }).answer === PG_SERVER)
+          : shown.items.find((item) => item.label === db),
+      );
+      await newQuery(deps);
+      assert.equal(shownQuickPicks.length, picks + 2);
+      assert.equal(shownQuickPicks[picks + 1].options?.title, "Choose a Database");
+      const fromPalette = openedDocuments[opening + 1];
+      assert.deepEqual(bindings.get(fromPalette.uri.toString()), { connectionId: PG_SERVER, catalog: db });
+      assert.equal(fromPalette.languageId, "sql");
+
+      await newQuery(deps, await connectionNode(profileId("mongodb")));
+      const mongo = openedDocuments[opening + 2];
+      assert.deepEqual(bindings.get(mongo.uri.toString()), { connectionId: profileId("mongodb") });
+      assert.equal(mongo.languageId, "json");
+    });
+
+    it("Run sends the selection, else the statement at the cursor, through query/target (criterion 13)", async () => {
+      const id = profileId("postgres");
+      const text = "select 1 as a;\nselect 2 as a;";
+      const answers: Record<number, unknown> = {};
+      for (const cursor of [5, 14, 15, 20]) answers[cursor] = firstValue(await run(id, text, cursor), "a");
+      console.log(`postgres: the cursor at 5, 14, 15 and 20 ran a = ${JSON.stringify(answers)}`);
+      // 14 is the end of the first line, and 15 the first character of the second statement.
+      assert.deepEqual(answers, { 5: 1, 14: 1, 15: 2, 20: 2 });
+      const between = firstValue(await run(id, "select 1 as a;\n\nselect 2 as a;", 15), "a");
+      console.log(`postgres: the cursor on the blank line between ran a = ${between}`);
+      assert.equal(between, 1);
+      assert.equal(firstValue(await run(id, text, 15, 29), "a"), 2);
+      // Three spaces selected inside the first statement: the cursor's statement runs instead.
+      const spaced = "select   1 as a;\nselect 2 as a;";
+      const events = await run(id, spaced, 6, 9);
+      assert.equal(firstValue(events, "a"), 1);
+      // The run target answers the statement without its terminator.
+      assert.equal((events[0] as { run: RunStart }).run.statement, "select   1 as a");
+    });
+
+    it("Run sends a MongoDB document whole, wherever the cursor is (criterion 13)", async () => {
+      const id = profileId("mongodb");
+      const text = JSON.stringify(JSON.parse(engineFixture("mongodb").selectFour), null, 2);
+      for (const cursor of [0, Math.floor(text.length / 2), text.length]) {
+        editorFor(id, text, cursor);
+        const from = presented.length;
+        await runQuery(deps);
+        const { run: started, page } = succeeded(from);
+        assert.equal(started.statement, text, `cursor ${cursor}`);
+        assert.equal(page.rows.length, 4);
+      }
+    });
+
+    it("answers a comment-only text with Nothing to run., minting no queryId and presenting nothing (Review Focus 5)", async () => {
+      const shown = shownMessages.length;
+      const before = minted;
+      const events = await run(profileId("postgres"), "-- only a note\n/* and this */");
+      assert.deepEqual(events, []);
+      assert.equal(minted, before);
+      assert.deepEqual(
+        shownMessages.slice(shown).map(({ message }) => message),
+        [NOTHING_TO_RUN],
+      );
+      assert.deepEqual(runs.running(), []);
+    });
+
+    it("ends MongoDB text that is not JSON with the provider's sentence, and the child answers the next run (Review Focus 5)", async () => {
+      const id = profileId("mongodb");
+      editorFor(id, "{ collection: orders }");
+      const from = presented.length;
+      await runQuery(deps);
+      const error = failed(from);
+      assert.ok(error instanceof BackendError, String(error));
+      console.log(`mongodb: text that is not JSON answered ${error.code}: ${JSON.stringify(error.message)}`);
+      assert.ok(error.message.length > 0);
+      assert.ok(!/\n\s+at /.test(error.message), "the message is a stack");
+      assert.equal(firstValue(await run(id, engineFixture("mongodb").selectFour), "n"), 1);
+    });
+
+    it("settles a find on a missing MongoDB collection within the query timeout (Review Focus 5)", async () => {
+      const started = Date.now();
+      const events = await run(profileId("mongodb"), '{"collection":"it_missing","operation":"find","filter":{}}');
+      const elapsed = Date.now() - started;
+      const outcome = events.at(-1);
+      console.log(`mongodb: a missing collection answered after ${elapsed} ms: ${JSON.stringify(outcome)}`);
+      assert.equal(outcome?.event, "succeeded");
+      assert.equal((outcome as { page: QueryPage }).page.rows.length, 0);
+    });
+
+    it("Cancel ends a running PostgreSQL statement as QUERY_CANCELLED within 5 s (criterion 15)", async () => {
+      editorFor(profileId("postgres"), "select pg_sleep(30)");
+      const from = presented.length;
+      const pending = runQuery(deps);
+      await delay(500);
+      const cancelled = Date.now();
+      await cancelQuery(deps);
+      await pending;
+      const elapsed = Date.now() - cancelled;
+      console.log(`postgres: the run ended ${elapsed} ms after Cancel`);
+      assert.ok(elapsed < 5000, `${elapsed} ms`);
+      const error = failed(from);
+      assert.ok(error instanceof BackendError, String(error));
+      assert.equal(error.code, "QUERY_CANCELLED");
+      assert.deepEqual(runs.running(), []);
+    });
+
+    it("holds a run whose open never answers until Cancel, which ends it with nothing presented (the controller's ruling)", async () => {
+      const sockets = new Set<Socket>();
+      const server = createServer((socket) => {
+        sockets.add(socket);
+        socket.on("close", () => sockets.delete(socket));
+      });
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      try {
+        const { port } = server.address() as AddressInfo;
+        await add({
+          id: HANGING_RUN,
+          name: "it editor hanging",
+          type: "mysql",
+          host: "127.0.0.1",
+          port,
+          user: "root",
+          database: "libredb_it",
+          createdAt: new Date(0).toISOString(),
+        });
+        const editor = editorFor(HANGING_RUN, "select 1");
+        const uri = editor.document.uri.toString();
+        const from = presented.length;
+        let settled = false;
+        const pending = runQuery(deps).then(() => {
+          settled = true;
+        });
+        await delay(1000);
+        assert.equal(settled, false, "the run settled before Cancel");
+        assert.deepEqual(runs.running(), [uri]);
+        assert.deepEqual(runs.cancellable(), [uri]);
+        const cancelled = Date.now();
+        await cancelQuery(deps);
+        await Promise.race([pending, delay(2000)]);
+        const elapsed = Date.now() - cancelled;
+        assert.equal(settled, true, `the run had not settled ${elapsed} ms after Cancel`);
+        assert.deepEqual(since(from), []);
+        assert.deepEqual(runs.running(), []);
+      } finally {
+        for (const socket of sockets) socket.destroy();
+        server.close();
+        await once(server, "close");
+      }
+    });
   });
 });

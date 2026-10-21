@@ -4,6 +4,7 @@ import type { ProfileEntry, ProfileItem } from "../../../src/host/connections/pr
 import {
   type ConnectionRelease,
   describeEntry,
+  type EditorRelease,
   REMOVE,
   REMOVE_DETAIL,
   type RemoveDeps,
@@ -54,11 +55,20 @@ function setup(more: { removal?: Removal | Error; closing?: Error } = {}) {
       if (more.closing !== undefined) throw more.closing;
     },
   };
+  const editors: EditorRelease = {
+    releaseConnection(id) {
+      calls.push(["releaseConnection", id]);
+    },
+    cancelRuns(id) {
+      calls.push(["cancelEditorRuns", id]);
+    },
+  };
   const log = window.createOutputChannel("LibreDB", { log: true });
   const ran = { openUserSettings: 0 };
   const deps: RemoveDeps = {
     store,
     client,
+    editors,
     window,
     log,
     openUserSettings: async () => {
@@ -112,6 +122,7 @@ describe("removeConnection", () => {
     assert.deepEqual(calls, [
       ["cancelRuns", PG.id],
       ["closeIfOpen", PG.id],
+      ["releaseConnection", PG.id],
       ["remove", PG.id],
     ]);
     assert.equal(
@@ -220,7 +231,12 @@ describe("removeConnection", () => {
     assert.deepEqual(outputChannels[0].lines, [
       ["warn", "Closing 1kq2v7x93j0ab before its removal failed: pipe closed"],
     ]);
-    assert.deepEqual(calls.at(-1), ["remove", PG.id]);
+    assert.deepEqual(calls, [
+      ["cancelRuns", PG.id],
+      ["closeIfOpen", PG.id],
+      ["releaseConnection", PG.id],
+      ["remove", PG.id],
+    ]);
   });
 });
 
@@ -228,23 +244,57 @@ describe("releaseOnChange", () => {
   it("cancels the runs of and closes each removed or changed connection (criterion 19, Review Focus 4)", async () => {
     const { deps, calls } = setup();
     const changes = new EventEmitter<ConnectionsChange>();
-    const release = releaseOnChange({ onDidChange: changes.event }, deps.client, deps.log);
+    const release = releaseOnChange({ onDidChange: changes.event }, deps.client, deps.log, deps.editors);
     changes.fire({ added: ["n1"], removed: ["r1"], changed: ["c1"] });
     assert.deepEqual(calls, [
       ["cancelRuns", "r1"],
       ["closeIfOpen", "r1"],
+      ["cancelEditorRuns", "c1"],
       ["cancelRuns", "c1"],
       ["closeIfOpen", "c1"],
     ]);
+    await tick();
     release.dispose();
     changes.fire({ added: [], removed: ["r2"], changed: [] });
-    assert.equal(calls.length, 4);
+    await tick();
+    assert.equal(calls.length, 6);
+  });
+
+  it("unbinds the editors of a removed connection once its close settled, and never those of a changed or added one", async () => {
+    const { deps, calls } = setup({ closing: new Error("pipe closed") });
+    const changes = new EventEmitter<ConnectionsChange>();
+    releaseOnChange({ onDidChange: changes.event }, deps.client, deps.log, deps.editors);
+    changes.fire({ added: ["n1"], removed: ["r1"], changed: ["c1"] });
+    assert.equal(
+      calls.some(([name]) => name === "releaseConnection"),
+      false,
+    );
+    await tick();
+    assert.deepEqual(calls, [
+      ["cancelRuns", "r1"],
+      ["closeIfOpen", "r1"],
+      ["cancelEditorRuns", "c1"],
+      ["cancelRuns", "c1"],
+      ["closeIfOpen", "c1"],
+      ["releaseConnection", "r1"],
+    ]);
+  });
+
+  it("cancels every editor run on a changed connection, a preparing one included, before its close (criterion 20)", () => {
+    const { deps, calls } = setup();
+    const changes = new EventEmitter<ConnectionsChange>();
+    releaseOnChange({ onDidChange: changes.event }, deps.client, deps.log, deps.editors);
+    changes.fire({ added: [], removed: [], changed: ["c1"] });
+    assert.deepEqual(calls.slice(0, 2), [
+      ["cancelEditorRuns", "c1"],
+      ["cancelRuns", "c1"],
+    ]);
   });
 
   it("logs a close that failed with its id and message", async () => {
     const { deps } = setup({ closing: new Error("pipe closed") });
     const changes = new EventEmitter<ConnectionsChange>();
-    releaseOnChange({ onDidChange: changes.event }, deps.client, deps.log);
+    releaseOnChange({ onDidChange: changes.event }, deps.client, deps.log, deps.editors);
     changes.fire({ added: [], removed: [], changed: ["c1"] });
     await tick();
     assert.deepEqual(outputChannels[0].lines, [

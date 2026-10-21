@@ -11,6 +11,9 @@ import {
 import { runEditorQuery } from "@/lib/api/editor-query";
 import { databaseErrorBody, internalErrorBody, TIMEOUT_SENTENCE } from "@/lib/api/error-body";
 import { consoleTextByteLimit, consoleTextOverLimit } from "@/lib/db/destructive-commands";
+import { generateTableQuery } from "@/lib/query-generators";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
+import { runTarget } from "@/lib/sql/run-target";
 import {
   AuthenticationError,
   ConnectionError,
@@ -22,8 +25,8 @@ import {
   QueryError,
   TimeoutError,
 } from "@/lib/db/errors";
-import type { Container, DatabaseObject, KindCount, ObjectDetail } from "@/lib/db/types";
-import type { QueryResult } from "@/lib/types";
+import type { Container, DatabaseObject, KindCount, ObjectDetail, ProviderCapabilities } from "@/lib/db/types";
+import type { ColumnSchema, QueryResult } from "@/lib/types";
 import { engineCatalog } from "../../src/backend/engine-catalog";
 import {
   type BackendFactory,
@@ -48,6 +51,7 @@ import {
   type ProviderSurface,
   resultOf,
   rowsOf,
+  SQL_CAPS,
 } from "../fakes/provider";
 import { TEST_PASSWORD } from "../fakes/credentials";
 
@@ -302,12 +306,19 @@ describe("connection/open", () => {
   it("answers the provider's description, with supportsQueryCancel read off its surface", async () => {
     const cancelling = backend(fakeProvider({ cancelQuery: async () => true }));
     assert.deepEqual(await cancelling.handlers.openConnection({ connection: WIRE, posture: POSTURE }), {
-      description: { capabilities: { ...CAPS, supportsQueryCancel: true }, labels: LABELS },
+      description: { capabilities: { ...CAPS, supportsQueryCancel: true }, labels: LABELS, editorLanguage: "sql" },
     });
     const plain = backend();
     assert.deepEqual(await plain.handlers.openConnection({ connection: WIRE, posture: POSTURE }), {
-      description: { capabilities: { ...CAPS, supportsQueryCancel: false }, labels: LABELS },
+      description: { capabilities: { ...CAPS, supportsQueryCancel: false }, labels: LABELS, editorLanguage: "sql" },
     });
+  });
+
+  it("answers the editor language of the provider it opened, read from its capabilities", async () => {
+    const json = { ...CAPS, queryLanguage: "json" } as ProviderCapabilities;
+    const { handlers } = backend(fakeProvider({ getCapabilities: () => json }));
+    const { description } = await handlers.openConnection({ connection: WIRE, posture: POSTURE });
+    assert.equal(description.editorLanguage, "json");
   });
 
   it("opens through the factory with an explicit posture, never an owner or readOnly, and stores the record", async () => {
@@ -734,6 +745,216 @@ describe("query/run", () => {
   });
 });
 
+describe("objects/selectStatement", () => {
+  const ORDERS = { path: ["public", "orders"], name: "orders", kind: "table" };
+  const COLUMNS: ColumnSchema[] = [
+    { name: "id", type: "integer", nullable: false, isPrimary: true },
+    { name: "Total", type: "numeric", nullable: true, isPrimary: false },
+  ];
+  /** SQL_CAPS with a projection that reads every column as it is, so the statement names the described columns. */
+  const PROJECTED = {
+    ...SQL_CAPS,
+    previewProjection: { rules: [], omittedNote: "", unprojectedNote: "No columns." },
+  } as ProviderCapabilities;
+  /** A JSON-language engine with one container level, the database, as MongoDB declares it. */
+  const JSON_CAPS = {
+    queryLanguage: "json",
+    containerLevels: [{ id: "schema", label: "Database", labelPlural: "Databases" }],
+    objectKinds: [{ id: "collection", role: "relation", label: "Collection", labelPlural: "Collections" }],
+  } as unknown as ProviderCapabilities;
+
+  const on = (capabilities: ProviderCapabilities, over: ProviderSurface = {}) =>
+    openedOn(fakeProvider({ getCapabilities: () => capabilities, ...over }));
+
+  it("answers the generator's statement and describes nothing where no previewProjection is declared", async () => {
+    const { handlers, provider } = await on(SQL_CAPS, { describeObject: async () => ({}) as ObjectDetail });
+    // The PostgreSQL rule quotes only a name outside the lowercase bare set.
+    assert.deepEqual(await handlers.selectStatement({ connectionId: "c1", object: ORDERS }), {
+      statement: "SELECT * FROM public.orders;",
+    });
+    assert.deepEqual(methodsOf(provider), ["getCapabilities"]);
+  });
+
+  it("names the described columns where a previewProjection is declared on a kind with columns", async () => {
+    const detail = { path: ORDERS.path, columns: COLUMNS, indexes: [], foreignKeys: [] };
+    const { handlers, provider } = await on(PROJECTED, { describeObject: async () => detail });
+    assert.deepEqual(await handlers.selectStatement({ connectionId: "c1", object: ORDERS }), {
+      statement: 'SELECT id, "Total" FROM public.orders;',
+    });
+    assert.deepEqual(
+      provider.calls.filter(([method]) => method === "describeObject"),
+      [["describeObject", ["public", "orders"], "table"]],
+    );
+  });
+
+  it("answers a JSON command addressed by the declared levels", async () => {
+    const { handlers } = await on(JSON_CAPS);
+    const object = { path: ["shop", "orders"], name: "orders", kind: "collection" };
+    const expected = { database: "shop", collection: "orders", operation: "find", filter: {}, options: { limit: 50 } };
+    assert.deepEqual(await handlers.selectStatement({ connectionId: "c1", object }), {
+      statement: JSON.stringify(expected, null, 2),
+    });
+  });
+
+  it("answers the generator's own sentence as INTERNAL_ERROR when it refuses the path", async () => {
+    const { handlers } = await on(JSON_CAPS);
+    const object = { path: ["orders"], name: "orders", kind: "collection" };
+    let sentence = "";
+    try {
+      generateTableQuery(object.path, JSON_CAPS);
+    } catch (error) {
+      sentence = (error as Error).message;
+    }
+    assert.notEqual(sentence, "");
+    await refused(handlers.selectStatement({ connectionId: "c1", object }), 500, sentence, { code: "INTERNAL_ERROR" });
+  });
+
+  it("refuses an object it cannot read, naming the field, before resolving a provider", async () => {
+    const { handlers, calls } = await on(SQL_CAPS);
+    const before = calls.length;
+    const cases: [unknown, string][] = [
+      ["orders", "object must be an object"],
+      [{ path: "public.orders", kind: "table", name: "orders" }, "object.path must be an array of strings"],
+      [{ path: [], kind: 5, name: "x" }, "object.kind must be a string"],
+      [{ path: [], kind: "table" }, "object.name must be a string"],
+    ];
+    await Promise.all(
+      cases.map(([object, message]) =>
+        refused(handlers.selectStatement({ connectionId: "c1", object }), -32602, message),
+      ),
+    );
+    await refused(handlers.selectStatement({ object: ORDERS }), -32602, "connectionId must be a non-empty string");
+    assert.equal(calls.length, before);
+  });
+
+  it("refuses a connection this backend has not opened", async () => {
+    const { handlers } = await on(SQL_CAPS);
+    await refused(
+      handlers.selectStatement({ connectionId: "c9", object: ORDERS }),
+      404,
+      'No connection with id "c9" is open in this LibreDB backend.',
+      { code: "CONNECTION_NOT_OPEN" },
+    );
+  });
+});
+
+describe("query/target", () => {
+  const TEXT = "select 1;\nselect 2;";
+  const NONE = { start: 0, end: 0 };
+  const target = (handlers: BackendHandlers, text: string, cursor: number, selection: unknown = NONE) =>
+    handlers.runTarget({ connectionId: "c1", text, selection, cursor });
+  const on = (capabilities: ProviderCapabilities = SQL_CAPS) =>
+    openedOn(fakeProvider({ getCapabilities: () => capabilities }));
+
+  /** The RangeError runTarget itself throws for these offsets, so the test holds its sentence, not a copy. */
+  function rangeSentence(text: string, selection: { start: number; end: number }, cursor: number): string {
+    const rule = {
+      editorLanguage: "sql" as const,
+      statementTerminator: undefined,
+      grammar: resolveSqlGrammar("postgres"),
+    };
+    try {
+      runTarget({ text, selection, cursor, ...rule });
+    } catch (error) {
+      assert.ok(error instanceof RangeError);
+      return error.message;
+    }
+    assert.fail("runTarget accepted the offsets");
+  }
+
+  it("answers the cursor's statement, without its terminator, and where it sits", async () => {
+    const { handlers } = await on();
+    const first = { statement: "select 1", range: { start: 0, end: 8 } };
+    const second = { statement: "select 2", range: { start: 10, end: 18 } };
+    assert.deepEqual(await target(handlers, TEXT, 3), first);
+    // At the end of the first statement, and on the newline after its terminator, the first is the one before.
+    assert.deepEqual(await target(handlers, TEXT, 8), first);
+    assert.deepEqual(await target(handlers, TEXT, 9), first);
+    // Offset 10 is where the second statement starts.
+    assert.deepEqual(await target(handlers, TEXT, 10), second);
+    assert.deepEqual(await target(handlers, TEXT, 19), second);
+  });
+
+  it("answers a non-blank selection as written, and falls back to the cursor on a blank one", async () => {
+    const { handlers } = await on();
+    assert.deepEqual(await target(handlers, TEXT, 0, { start: 10, end: 18 }), {
+      statement: "select 2",
+      range: { start: 10, end: 18 },
+    });
+    const spaced = "select 1;\n   \nselect 2;";
+    assert.deepEqual(await target(handlers, spaced, 3, { start: 10, end: 13 }), {
+      statement: "select 1",
+      range: { start: 0, end: 8 },
+    });
+  });
+
+  it("answers an empty statement with no range for a text that holds no code", async () => {
+    const { handlers } = await on();
+    assert.deepEqual(await target(handlers, "-- only a note\n/* and this */", 0), { statement: "" });
+    assert.deepEqual(await target(handlers, "", 0), { statement: "" });
+  });
+
+  it("answers the whole text with no range in an editor language other than sql, whatever the cursor", async () => {
+    const { handlers } = await on({ ...SQL_CAPS, queryLanguage: "json" } as ProviderCapabilities);
+    const text = '{ "collection": "orders" }';
+    assert.deepEqual(await target(handlers, text, 0), { statement: text });
+    assert.deepEqual(await target(handlers, text, 12), { statement: text });
+  });
+
+  it("answers runTarget's RangeError as InvalidParams with its sentence", async () => {
+    const { handlers } = await on();
+    const offsets = [
+      [{ start: 5, end: 2 }, 0],
+      [{ start: 0, end: 99 }, 0],
+      [NONE, 99],
+    ] as const;
+    await Promise.all(
+      offsets.map(([selection, cursor]) =>
+        refused(target(handlers, TEXT, cursor, selection), -32602, rangeSentence(TEXT, selection, cursor)),
+      ),
+    );
+  });
+
+  it("refuses params it cannot read, naming the field, before resolving a provider", async () => {
+    const { handlers, calls } = await on();
+    const before = calls.length;
+    await refused(target(handlers, TEXT, 0, { start: 0.5, end: 1 }), -32602, "selection.start must be an integer");
+    await refused(target(handlers, TEXT, 0, { start: 0, end: "1" }), -32602, "selection.end must be an integer");
+    await refused(target(handlers, TEXT, 0, "0,1"), -32602, "selection must be an object");
+    await refused(
+      handlers.runTarget({ connectionId: "c1", text: TEXT, selection: NONE, cursor: "3" }),
+      -32602,
+      "cursor must be an integer",
+    );
+    await refused(
+      handlers.runTarget({ connectionId: "c1", text: 7, selection: NONE, cursor: 0 }),
+      -32602,
+      "text must be a string",
+    );
+    await refused(handlers.runTarget({ text: TEXT }), -32602, "connectionId must be a non-empty string");
+    assert.equal(calls.length, before);
+  });
+
+  it("refuses a connection this backend has not opened", async () => {
+    const { handlers } = await on();
+    await refused(
+      handlers.runTarget({ connectionId: "c9", text: TEXT, selection: NONE, cursor: 0 }),
+      404,
+      'No connection with id "c9" is open in this LibreDB backend.',
+      { code: "CONNECTION_NOT_OPEN" },
+    );
+  });
+
+  it("passes a provider's error on as it is", async () => {
+    const broken = new Error("capabilities unreadable");
+    const { handlers, provider } = await on();
+    (provider as unknown as { getCapabilities: () => never }).getCapabilities = () => {
+      throw broken;
+    };
+    await assert.rejects(target(handlers, TEXT, 0), (error) => error === broken);
+  });
+});
+
 describe("query/cancel", () => {
   it("answers whether the engine stopped the statement", async () => {
     let stopped = true;
@@ -874,6 +1095,19 @@ describe("registerHandlers", () => {
     await session.host.sendRequest(METHODS.initialize, { protocolVersion: 1 });
     return session;
   }
+
+  it("registers one request handler under each METHODS name, and the exit notification", () => {
+    const requests: string[] = [];
+    const notifications: string[] = [];
+    const connection = {
+      onRequest: (method: string) => requests.push(method),
+      onNotification: (method: string) => notifications.push(method),
+    } as unknown as MessageConnection;
+    registerHandlers(connection, createHandlers(fakeFactory().factory, RUNTIME), () => undefined);
+    assert.deepEqual(requests, Object.values(METHODS));
+    assert.ok(requests.includes("objects/selectStatement") && requests.includes("query/target"));
+    assert.deepEqual(notifications, [EXIT_NOTIFICATION]);
+  });
 
   it("refuses every request until an initialize has been answered, and serves them after it", async () => {
     const { host } = served();

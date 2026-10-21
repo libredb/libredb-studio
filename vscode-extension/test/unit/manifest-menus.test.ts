@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ObjectKindSpec, ObjectRole } from "@/lib/db/types";
-import { COMMANDS, CONNECTIONS_VIEW, VIEW_CONTAINER } from "../../src/host/names";
+import { COMMANDS, CONNECTIONS_VIEW, CONTEXT_KEYS, VIEW_CONTAINER } from "../../src/host/names";
 import { contextValueOf, type TreeNode } from "../../src/host/tree/nodes";
 import { PG } from "../fakes/profiles";
 
@@ -15,6 +15,8 @@ interface MenuEntry {
 const manifest = JSON.parse(readFileSync(join(__dirname, "..", "..", "package.json"), "utf8"));
 const menus: Record<string, MenuEntry[]> = manifest.contributes.menus;
 const entries = Object.values(menus).flat();
+/** The entries of the two menus of the Connections view. */
+const viewEntries = [...menus["view/title"], ...menus["view/item/context"]];
 const commandIds = new Set<string>(Object.values(COMMANDS));
 
 const TABLE: ObjectKindSpec = { id: "table", role: "relation", label: "Table", labelPlural: "Tables" };
@@ -89,10 +91,17 @@ function matched(entry: MenuEntry): string[] {
     .map(([name]) => name);
 }
 
-function contextEntry(command: string): MenuEntry {
-  const found = menus["view/item/context"].find((entry) => entry.command === command);
+function contextEntry(command: string, group?: string): MenuEntry {
+  const found = menus["view/item/context"].find(
+    (entry) => entry.command === command && (group === undefined || entry.group === group),
+  );
   if (found === undefined) throw new Error(`no context menu entry for ${command}`);
   return found;
+}
+
+/** Every `resource in <key>` and `resource not in <key>` key a when clause of the manifest reads. */
+function keysRead(): Set<string> {
+  return new Set(entries.flatMap((entry) => [...(entry.when ?? "").matchAll(/\bin ([\w.]+)/g)].map((m) => m[1])));
 }
 
 describe("the manifest's menus", () => {
@@ -103,11 +112,14 @@ describe("the manifest's menus", () => {
       assert.ok(contributed.includes(entry.command), entry.command);
     }
     assert.deepEqual([...contributed].sort(), [...commandIds].sort());
+    assert.equal(commandIds.size, 9);
   });
 
-  it("names only the Connections view in a when clause, which is the first view of the LibreDB container", () => {
-    const views = entries.flatMap((entry) => [...(entry.when ?? "").matchAll(/view == ([\w.]+)/g)].map((m) => m[1]));
-    assert.equal(views.length, entries.length);
+  it("names only the Connections view in a view menu's when clause, which is the first view of the LibreDB container", () => {
+    const views = viewEntries.flatMap((entry) =>
+      [...(entry.when ?? "").matchAll(/view == ([\w.]+)/g)].map((m) => m[1]),
+    );
+    assert.equal(views.length, viewEntries.length);
     assert.deepEqual(new Set(views), new Set([CONNECTIONS_VIEW]));
     assert.equal(manifest.contributes.views[VIEW_CONTAINER][0].id, CONNECTIONS_VIEW);
   });
@@ -130,12 +142,86 @@ describe("the manifest's menus", () => {
     assert.deepEqual(matched(contextEntry(COMMANDS.removeConnection)), ["connection", "invalid"]);
   });
 
-  it("puts Add Connection then Refresh in the view's title bar, and contributes no keybinding", () => {
+  it("offers New Query inline on the connection and container nodes only", () => {
+    assert.deepEqual(matched(contextEntry(COMMANDS.newQuery, "inline@1")), ["connection", "container"]);
+  });
+
+  it("offers New Query in the context menu on the connection, container, folder and object nodes", () => {
+    assert.deepEqual(matched(contextEntry(COMMANDS.newQuery, "1_query@1")), [
+      "connection",
+      "container",
+      "folder",
+      "object;role=relation",
+      "object;role=routine",
+      "object;role=group",
+      "object;role=attached",
+      "object;role=config",
+      "object",
+    ]);
+  });
+
+  it("offers Select Rows, inline and in the context menu, on a relation object only (criterion 10)", () => {
+    assert.deepEqual(matched(contextEntry(COMMANDS.selectRows, "inline@1")), ["object;role=relation"]);
+    assert.deepEqual(matched(contextEntry(COMMANDS.selectRows, "1_query@2")), ["object;role=relation"]);
+  });
+
+  it("reads each context key of CONTEXT_KEYS in some when clause, and no other key with in", () => {
+    assert.deepEqual(keysRead(), new Set(Object.values(CONTEXT_KEYS)));
+  });
+
+  it("hides Select Rows from the palette, which needs a node", () => {
+    assert.ok(menus.commandPalette.some((entry) => entry.command === COMMANDS.selectRows && entry.when === "false"));
+  });
+
+  it("shows the editor title's entries on bound or cancellable documents only, never in a diff editor (criterion 21)", () => {
+    const title = menus["editor/title"];
+    assert.deepEqual(
+      title.map((entry) => entry.command),
+      [COMMANDS.runQuery, COMMANDS.cancelQuery, COMMANDS.changeConnection],
+    );
+    for (const entry of title) {
+      assert.match(entry.when ?? "", /\bresource in libredb\.(boundDocuments|cancellableQueries)\b/, entry.command);
+      assert.match(entry.when ?? "", /!isInDiffEditor\b/, entry.command);
+    }
+    const run = title.find((entry) => entry.command === COMMANDS.runQuery);
+    assert.match(run?.when ?? "", /\bresource not in libredb\.runningQueries\b/);
+    const cancel = menus.commandPalette.find((entry) => entry.command === COMMANDS.cancelQuery);
+    assert.equal(cancel?.when, "resource in libredb.cancellableQueries");
+    for (const entry of entries) assert.doesNotMatch(entry.when ?? "", /editorLangId/, entry.command);
+  });
+
+  it("holds part 3's editor title and palette blocks", () => {
+    assert.deepEqual(menus["editor/title"], [
+      {
+        command: "libredb.runQuery",
+        when: "resource in libredb.boundDocuments && resource not in libredb.runningQueries && !isInDiffEditor",
+        group: "navigation@1",
+      },
+      {
+        command: "libredb.cancelQuery",
+        when: "resource in libredb.cancellableQueries && !isInDiffEditor",
+        group: "navigation@1",
+      },
+      {
+        command: "libredb.changeConnection",
+        when: "resource in libredb.boundDocuments && !isInDiffEditor",
+        group: "1_libredb@1",
+      },
+    ]);
+    assert.deepEqual(menus.commandPalette, [
+      { command: "libredb.selectRows", when: "false" },
+      { command: "libredb.runQuery", when: "editorIsOpen" },
+      { command: "libredb.cancelQuery", when: "resource in libredb.cancellableQueries" },
+      { command: "libredb.changeConnection", when: "editorIsOpen" },
+    ]);
+  });
+
+  it("puts Add Connection then Refresh in the view's title bar, and contributes no keybinding (criterion 22)", () => {
     assert.deepEqual(menus["view/title"], [
       { command: COMMANDS.addConnection, when: `view == ${CONNECTIONS_VIEW}`, group: "navigation@1" },
       { command: COMMANDS.refresh, when: `view == ${CONNECTIONS_VIEW}`, group: "navigation@2" },
     ]);
-    assert.deepEqual(Object.keys(menus), ["view/title", "view/item/context"]);
+    assert.deepEqual(Object.keys(menus), ["view/title", "view/item/context", "editor/title", "commandPalette"]);
     assert.equal(manifest.contributes.keybindings, undefined);
   });
 });

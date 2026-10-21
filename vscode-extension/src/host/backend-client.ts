@@ -23,6 +23,8 @@ import type {
   ParseParams,
   ProviderDescription,
   RunQueryParams,
+  RunTargetParams,
+  SelectStatementParams,
 } from "../protocol";
 import { METHODS } from "../protocol";
 import type { BackendExit, BackendLink } from "./backend-supervisor";
@@ -176,6 +178,20 @@ export class BackendClient implements BackendApi {
   describeObject(params: DescribeParams, token?: CancellationToken): Promise<Answer<"describeObject">> {
     return this.onOpenConnection(params.connectionId, (connection) =>
       this.request<Answer<"describeObject">>(connection, METHODS.describeObject, params, token),
+    );
+  }
+
+  /** Select Rows' statement, written by the child's generator for the open connection's provider. */
+  selectStatement(params: SelectStatementParams, token?: CancellationToken): Promise<Answer<"selectStatement">> {
+    return this.onOpenConnection(params.connectionId, (connection) =>
+      this.request<Answer<"selectStatement">>(connection, METHODS.selectStatement, params, token),
+    );
+  }
+
+  /** What Run sends, read by the child under the open connection's editor language, terminator and grammar. */
+  runTarget(params: RunTargetParams): Promise<Answer<"runTarget">> {
+    return this.onOpenConnection(params.connectionId, (connection) =>
+      this.request<Answer<"runTarget">>(connection, METHODS.runTarget, params),
     );
   }
 
