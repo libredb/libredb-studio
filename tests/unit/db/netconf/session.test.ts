@@ -232,10 +232,16 @@ test("a deadline, an incompatibility, our own defect and a device fault end with
   const opened = NetconfSession.open(busy, limits);
   busy.send(helloWith([BASE10]));
   const { session } = await opened;
-  void session.request({ operation: "get" });
+  // The first request is held and ended here, not left to its own 500 ms deadline: unawaited, it
+  // rejected after the test's own checks on a loaded macOS runner and failed the test there.
+  const first = session.request({ operation: "get" }).catch((e: unknown) => e);
   const second = await session.request({ operation: "get" }).catch((e: unknown) => e);
   expectTruthy(second instanceof NetconfSessionError);
   expectBe(second.end.reason, "internal", "our own defect must not wear a word about the device");
+  busy.drop();
+  const dropped = await first;
+  expectTruthy(dropped instanceof NetconfSessionError);
+  expectBe(dropped.end.reason, "closed-by-peer");
 
   // The REQUEST deadline as well as the hello one: they are two paths with one meaning, and a test
   // that held only the first left the second free to drift back. A planted mutation did exactly
