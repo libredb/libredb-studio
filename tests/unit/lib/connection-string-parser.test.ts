@@ -85,16 +85,61 @@ describe("parseConnectionString", () => {
       expect(result!.database).toBe("other");
     });
 
-    test("the authority wins when both spell a field", () => {
+    test("query parameters override the authority the way libpq does", () => {
       const result = parseConnectionString("postgres://bob@db1.example.com:5432/app?host=db2.example.com&user=alice");
-      expect(result!.host).toBe("db1.example.com");
-      expect(result!.user).toBe("bob");
+      expect(result!.host).toBe("db2.example.com");
+      expect(result!.user).toBe("alice");
+      expect(result!.port).toBe("5432");
     });
 
-    test("percent-encoded query parameter values are decoded", () => {
+    test("query parameter values keep their percent-encoding as typed", () => {
       const result = parseConnectionString("postgres:///app?user=us%3Aer&password=pa%24%24word0");
       expect(result!.user).toBe("us:er");
       expect(result!.password).toBe("pa$$word0");
+    });
+
+    test("a double-encoded value stays double-encoded, not decoded twice", () => {
+      const result = parseConnectionString("postgres:///app?password=literal%252Fvalue");
+      expect(result!.password).toBe("literal%2Fvalue");
+    });
+
+    test("a plus in a query parameter value is a literal plus", () => {
+      const result = parseConnectionString("postgres:///app?password=pa+ss");
+      expect(result!.password).toBe("pa+ss");
+    });
+
+    test("a percent-encoded UTF-8 value decodes to the typed character", () => {
+      const result = parseConnectionString("postgres:///app?user=us%C3%A9r");
+      expect(result!.user).toBe("usér");
+    });
+
+    test("repeated query keys use the last value", () => {
+      const result = parseConnectionString("postgres:///app?host=db1.example.com&host=db2.example.com");
+      expect(result!.host).toBe("db2.example.com");
+    });
+
+    test("an empty last value still replaces an earlier one", () => {
+      const result = parseConnectionString("postgres:///app?password=old&password=");
+      expect(result!.password).toBe("");
+    });
+
+    test("a percent-encoded keyword name is decoded", () => {
+      const result = parseConnectionString("postgres:///app?ho%73t=db.example.com");
+      expect(result!.host).toBe("db.example.com");
+    });
+
+    test("an authority with only a userinfo and no host parses", () => {
+      const result = parseConnectionString("postgresql://@/app?host=db.example.com&user=alice&password=secret");
+      expect(result!.host).toBe("db.example.com");
+      expect(result!.user).toBe("alice");
+      expect(result!.password).toBe("secret");
+      expect(result!.database).toBe("app");
+    });
+
+    test("a userinfo-only authority falls back to localhost like the empty form", () => {
+      const result = parseConnectionString("postgres://alice@/app");
+      expect(result!.host).toBe("localhost");
+      expect(result!.user).toBe("alice");
     });
   });
 

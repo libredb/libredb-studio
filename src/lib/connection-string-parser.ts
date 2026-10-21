@@ -614,32 +614,47 @@ const POSTGRES_QUERY_PARAMETERS: Readonly<Record<string, "host" | "port" | "user
 };
 
 /**
- * A postgres:// or postgresql:// URL, read the way libpq reads it: host, port,
- * user and password may also come from the query string, filling in what the
- * authority left out. A value the authority already spelled stays - libpq
- * resolves the same conflict in favour of the URL part - and `dbname=` may
- * override the path's database. Other parameters are left to `readQueryTLS`
- * and the rest of the query string is not inspected.
+ * The postgres URL query string, split and decoded the way libpq splits it
+ * (fe-connect.c, `conninfo_uri_parse_params`): each pair on its first `=`,
+ * one percent-decode pass (a `+` is a literal plus, since libpq's
+ * `conninfo_uri_decode` only handles `%XX`), and a later occurrence of a
+ * keyword replaces an earlier one, because libpq stores each value as it
+ * walks the pairs. Malformed escapes are kept verbatim rather than rejecting
+ * the URL, the way the rest of this parser treats them.
  */
-function parsePostgresURL(uri: string): ParsedConnection | null {
-  const parsed = parseGenericURL(uri, "postgres", "5432");
-  if (parsed === null) return null;
-  let url: URL;
-  try {
-    url = new URL(uri);
-  } catch {
-    return parsed;
+function postgresQueryParameter(url: URL): (name: string) => string | null {
+  const values = new Map<string, string>();
+  for (const pair of url.search.slice(1).split("&")) {
+    if (pair === "") continue;
+    const equals = pair.indexOf("=");
+    if (equals === -1) continue;
+    values.set(safeDecodeURIComponent(pair.slice(0, equals)), safeDecodeURIComponent(pair.slice(equals + 1)));
   }
+  return (name: string) => values.get(name) ?? null;
+}
+
+/** An authority that is only a userinfo (`postgresql://@/db`): valid for libpq, rejected by the URL constructor. */
+const EMPTY_HOST_AUTHORITY = /^(postgres(?:ql)?:\/\/[^/?#]*@)(?=[/?])/;
+
+function parsePostgresURL(uri: string): ParsedConnection | null {
+  // `postgresql://@/db` and `postgresql://user@/db` carry only a userinfo and
+  // no host; libpq accepts them, the URL constructor does not. The empty host
+  // becomes `localhost` first, the same host the plain `postgresql:///db`
+  // form reads as, and a query `host=` still replaces it.
+  const normalized = uri.replace(EMPTY_HOST_AUTHORITY, "$1localhost");
+  const parsed = parseGenericURL(normalized, "postgres", "5432");
+  if (parsed === null) return null;
+  const url = new URL(normalized);
+  const queryValue = postgresQueryParameter(url);
   for (const [name, field] of Object.entries(POSTGRES_QUERY_PARAMETERS)) {
-    const authorityValue =
-      field === "host" ? url.hostname : field === "port" ? url.port : field === "user" ? url.username : url.password;
-    if (!authorityValue && url.searchParams.has(name)) {
-      parsed[field] = safeDecodeURIComponent(url.searchParams.get(name)!);
+    const value = queryValue(name);
+    if (value !== null) {
+      parsed[field] = value;
     }
   }
-  const dbname = url.searchParams.get("dbname");
+  const dbname = queryValue("dbname");
   if (dbname !== null) {
-    parsed.database = safeDecodeURIComponent(dbname);
+    parsed.database = dbname;
   }
   return parsed;
 }
