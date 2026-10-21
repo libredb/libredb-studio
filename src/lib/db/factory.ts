@@ -17,8 +17,8 @@ import type { TunnelInfo } from "@/lib/ssh/tunnel";
 import { readSecret } from "@/lib/storage/encryption";
 import { providerCacheKey, providerOwner } from "./provider-cache-key";
 import { registerOwnerRemoval } from "./owner-removal";
-import { READ_ONLY_ENFORCED, READS_FILE_ACCESS_POSTURE } from "./compatibility";
-import { TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
+import { READ_ONLY_ENFORCED, READS_FILE_ACCESS_POSTURE, SHIPPED_DATABASE_TYPES } from "./compatibility";
+import { TUNNEL_FAR_END, type DatabaseType, type WithTunnelFarEnd } from "@/lib/types";
 import { logger } from "@/lib/logger";
 import { runShutdownHooks } from "@/lib/shutdown";
 import * as path from "path";
@@ -49,7 +49,8 @@ import * as path from "path";
  *   `false`, so called without a context it opens with the trusted reach. An `owner` makes the provider
  *   that user's own (docs/GOVERNANCE.md#per-user-providers): its pool opens with `min: 0` and `max: ownerPoolMax`.
  * @returns Promise<DatabaseProvider> instance
- * @throws DatabaseConfigError if connection type is not supported, if its `readOnly` cannot be
+ * @throws DatabaseConfigError if connection type is not supported or is left out of a set
+ *   `LIBREDB_ENABLED_PROVIDERS` (see assertProviderEnabled), if its `readOnly` cannot be
  *   honoured (see assertReadOnlyHonoured), or if an owner comes without a whole `ownerPoolMax`
  *   from 1 (see assertOwnerPoolHonoured)
  *
@@ -130,8 +131,9 @@ function assertConnectionIdPresent(connection: DatabaseConnection): void {
  * try that closes a fresh one, so a refusal raised only inside the factory would dial the bastion and
  * leave the pooled tunnel open. Ahead of the lookup too, because a mode that is not a boolean keys as
  * `read-write` (`providerCacheKey`), so the lookup would hand it the connection's cached read-write
- * provider without refusing it. Exported for the tests; the published factory's three entry points
- * raise it (`src/exports/providers.ts`).
+ * provider without refusing it. `assertProviderEnabled` stands beside it in all four places for the same
+ * reason: a type `LIBREDB_ENABLED_PROVIDERS` leaves out must never reach a cache lookup or dial a bastion.
+ * Exported for the tests; the published factory's three entry points raise it (`src/exports/providers.ts`).
  */
 export function assertReadOnlyHonoured(connection: DatabaseConnection): void {
   const readOnly: unknown = connection.readOnly;
@@ -169,11 +171,69 @@ function assertOwnerPoolHonoured(connection: DatabaseConnection, execution: Prov
   }
 }
 
+// ============================================================================
+// Enabled providers (LIBREDB_ENABLED_PROVIDERS)
+// ============================================================================
+
+/** Every connection type id, the embedded LibreDB store included: the exhaustive shipped set. */
+const CONNECTION_TYPE_IDS: ReadonlySet<string> = new Set<string>(SHIPPED_DATABASE_TYPES);
+
+/**
+ * The connection types this server may open: `LIBREDB_ENABLED_PROVIDERS` as a comma list, trimmed, with empty
+ * entries dropped and each type kept once in first-seen order, or `null` when the variable is unset or blank, which
+ * enables every provider. The VS Code extension is the one channel that sets it, in its backend process; the web app,
+ * Docker, Helm, npx and the desktop launchers leave it unset. Read on every call, never cached.
+ *
+ * @throws DatabaseConfigError naming the entry when an entry is not a connection type id, or when a set value lists none.
+ */
+export function enabledProviderTypes(): readonly DatabaseType[] | null {
+  const raw = process.env.LIBREDB_ENABLED_PROVIDERS;
+  if (raw === undefined || raw.trim() === "") return null;
+  const entries = [
+    ...new Set(
+      raw
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter((entry) => entry !== ""),
+    ),
+  ];
+  if (entries.length === 0) {
+    throw new DatabaseConfigError(
+      "LIBREDB_ENABLED_PROVIDERS is set but lists no connection type id. Leave it unset to enable every provider.",
+    );
+  }
+  const unknown = entries.find((entry) => !CONNECTION_TYPE_IDS.has(entry));
+  if (unknown !== undefined) {
+    throw new DatabaseConfigError(
+      `LIBREDB_ENABLED_PROVIDERS names ${JSON.stringify(unknown)}, which is not a connection type id. List type ids such as postgres, separated by commas.`,
+    );
+  }
+  return entries as DatabaseType[];
+}
+
+/**
+ * Refuse a connection whose type `LIBREDB_ENABLED_PROVIDERS` leaves out, before anything is built, loaded or dialled.
+ *
+ * It is set membership inside the provider layer and names no type id, so `tests/unit/lib/no-engine-branches.test.ts`
+ * needs no entry for it. It runs before the `switch` of `createDatabaseProvider`, so the provider module of a refused
+ * type, and its driver, is never imported. Unset or blank returns at once; a value that names something other than a
+ * type id raises the reader's `DatabaseConfigError`, so every connection fails with that entry named.
+ */
+function assertProviderEnabled(connection: DatabaseConnection): void {
+  const enabled = enabledProviderTypes();
+  if (enabled === null || enabled.includes(connection.type)) return;
+  throw new DatabaseConfigError(
+    `The ${sanitize(connection.type)} provider is not available in this distribution of LibreDB Studio.`,
+    connection.type,
+  );
+}
+
 export async function createDatabaseProvider(
   connection: DatabaseConnection,
   options: ProviderOptions = {},
   execution: ProviderExecutionContext = {},
 ): Promise<DatabaseProvider> {
+  assertProviderEnabled(connection);
   assertReadOnlyHonoured(connection);
   assertOwnerPoolHonoured(connection, execution);
   console.log(`[DB] Creating ${sanitize(connection.type)} provider for "${sanitize(connection.name || "")}"`);
@@ -596,6 +656,7 @@ export async function withOneShotTunnel<T>(
   connection: DatabaseConnection,
   run: (effective: DatabaseConnection) => Promise<T>,
 ): Promise<T> {
+  assertProviderEnabled(connection);
   assertReadOnlyHonoured(connection);
   if (!connection.sshTunnel?.enabled || !connection.host || !connection.port) {
     return await run(connection);
@@ -760,7 +821,7 @@ export function findOpenSingleWriterProvider(
  * through one read-write handle per process, and a second one keeps its own copy of the catalog and
  * checkpoints it over the file when it closes, which loses the other handle's committed rows on Linux
  * and macOS and is refused outright on Windows. Test Connection opens a read-only handle instead,
- * which leaves the writer's file and write-ahead log alone (`src/app/api/db/test-connection/route.ts`).
+ * which leaves the writer's file and write-ahead log alone (`src/lib/api/test-connection.ts`).
  */
 export function isSingleWriterFileOpen(connection: DatabaseConnection): boolean {
   const identity = fileIdentity(connection);
@@ -1098,6 +1159,7 @@ export async function getOrCreateProvider(
   // refusal shares the place: the cache key length-frames connection.id, so a missing id must be
   // refused before the key is computed, as the DatabaseConfigError the provider would have raised (#1539).
   assertConnectionIdPresent(connection);
+  assertProviderEnabled(connection);
   assertReadOnlyHonoured(connection);
   assertOwnerPoolHonoured(connection, execution);
   // The writable cache never holds a read-only handle, and its key frames no such mode for an
@@ -1460,6 +1522,7 @@ export async function acquireExecutionProfileProvider(
   // First, ahead of the profiled cache lookup and of any tunnel (#1089): see assertReadOnlyHonoured.
   // The id refusal shares the place for the same reason: the profiled key frames connection.id (#1539).
   assertConnectionIdPresent(connection);
+  assertProviderEnabled(connection);
   assertReadOnlyHonoured(connection);
   assertOwnerPoolHonoured(connection, requester);
   // Refuses an unknown profile ahead of the cache key, which frames the profile.

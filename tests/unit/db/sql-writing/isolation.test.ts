@@ -1,5 +1,6 @@
-import { beforeAll, describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runPool, separatingGroups } from "../isolation-children";
 import { type EngineModule, ENGINE_MODULES, ROOT } from "./engine-modules";
@@ -99,8 +100,19 @@ interface Run {
 
 const membersOf = (group: readonly string[]): EngineModule[] => ENGINE_MODULES.filter(({ id }) => group.includes(id));
 
-async function render(group: readonly string[]): Promise<Run> {
-  const child = Bun.spawn(["bun", "-e", scriptFor(membersOf(group))], { cwd: ROOT, stdout: "pipe", stderr: "pipe" });
+let dir = "";
+
+/**
+ * Runs one group's child from a script FILE, as the other isolation tests do. Handed over as
+ * `bun -e <script>` it was one command-line argument of about 40,000 characters for the
+ * largest group, past Windows' 32,767-character command line, and the spawn failed there with
+ * ENAMETOOLONG before the child ran. The script imports by absolute path, so where the file
+ * sits does not change what it resolves.
+ */
+async function render(group: readonly string[], index: number): Promise<Run> {
+  const script = join(dir, `group-${index}.ts`);
+  writeFileSync(script, scriptFor(membersOf(group)));
+  const child = Bun.spawn(["bun", script], { cwd: ROOT, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
@@ -112,13 +124,18 @@ async function render(group: readonly string[]): Promise<Run> {
 const runs = new Map<number, Run>();
 
 beforeAll(async () => {
+  dir = mkdtempSync(join(tmpdir(), "sql-writing-isolation-"));
   await runPool(
     GROUPS.map((_, index) => index),
     async (index) => {
-      runs.set(index, await render(GROUPS[index] ?? []));
+      runs.set(index, await render(GROUPS[index] ?? [], index));
     },
   );
 }, 120_000);
+
+afterAll(() => {
+  if (dir !== "") rmSync(dir, { recursive: true, force: true });
+});
 
 /** The child that shows `id`'s own replaced output: the first group holding it, one half of the lowest bit. */
 const ownRun = (id: string): Run | undefined => runs.get(GROUPS.findIndex((group) => group.includes(id)));

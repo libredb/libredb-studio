@@ -187,10 +187,14 @@ describe("SSH tunnel discipline (#457)", () => {
     // outside both caches and so had to open its own tunnel, and it is deleted with the
     // flat schema reading it read (#789). Its consumer reads `/api/db/objects/inventory`,
     // which goes through `getOrCreateProvider` and is tunnelled by the factory.
+    //
+    // The remaining one builds through `testConnection` (`src/lib/api/test-connection.ts`), which
+    // `/api/db/test-connection` and the VS Code extension's `connection/test` share, so the scan
+    // reads the core, where the build and its tunnel now are.
     const scanned = walk(SRC).map(repoRelative);
-    expect(scanned).toContain("src/app/api/db/test-connection/route.ts");
+    expect(scanned).toContain("src/lib/api/test-connection.ts");
 
-    for (const route of ["src/app/api/db/test-connection/route.ts"]) {
+    for (const route of ["src/lib/api/test-connection.ts"]) {
       const source = fs.readFileSync(path.join(ROOT, route), "utf8");
       // Compliant today, and provably in scope: strip the scope and the rule bites.
       expect(analyseTunnelDiscipline(route, source)).toBeNull();

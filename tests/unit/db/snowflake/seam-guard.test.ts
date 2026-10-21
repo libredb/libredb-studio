@@ -44,6 +44,7 @@ import { readdirSync, readFileSync, realpathSync } from "node:fs";
 import { isBuiltin } from "node:module";
 import { join, posix } from "node:path";
 import ts from "typescript";
+import { platformTimeoutMs } from "../../../helpers/platform-timeout";
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const DIR = "src/lib/db/providers/sql/snowflake";
@@ -428,15 +429,26 @@ const SOURCES = readdirSync(join(ROOT, DIR))
   .map((entry) => `${DIR}/${entry}`);
 
 describe("the Snowflake directory holds its seams", () => {
-  test("every source passes rules 1 to 9", () => {
-    expect(SOURCES).toContain(`${DIR}/index.ts`);
-    expect(SOURCES).toContain(`${DIR}/account-host.ts`);
-    expect(SOURCES.flatMap((file) => seamFindings(file, read(file)))).toEqual([]);
-  });
+  // The first parse of the directory pays the parser's warm-up: 0.7s alone with coverage and 5.4s under a
+  // 15% CPU quota, past bun's 5s default, so it carries its own bound.
+  test(
+    "every source passes rules 1 to 9",
+    () => {
+      expect(SOURCES).toContain(`${DIR}/index.ts`);
+      expect(SOURCES).toContain(`${DIR}/account-host.ts`);
+      expect(SOURCES.flatMap((file) => seamFindings(file, read(file)))).toEqual([]);
+    },
+    platformTimeoutMs(40_000),
+  );
 
-  test("every value export has an importer under src/ or the doc test (rule 10)", () => {
-    expect(unimportedExports(SOURCES.map((file) => ({ file, text: read(file) })))).toEqual([]);
-  });
+  // Reads every file under src/: 0.5s alone with coverage and 3.1s under a 15% CPU quota.
+  test(
+    "every value export has an importer under src/ or the doc test (rule 10)",
+    () => {
+      expect(unimportedExports(SOURCES.map((file) => ({ file, text: read(file) })))).toEqual([]);
+    },
+    platformTimeoutMs(40_000),
+  );
 
   test("the detector reads real code", () => {
     const transport = references(`${DIR}/transport.ts`, read(`${DIR}/transport.ts`));
@@ -724,11 +736,16 @@ describe("rule 10 fails by name", () => {
     expect(unimportedExports(planted, [...importers(), namespace])).toEqual([finding("decode.ts", "onlyForATest")]);
   });
 
-  test("the doc test counts as an importer, and no other test file does", () => {
-    const planted = sources("decode.ts", ONLY_FOR_A_TEST);
-    expect(unimportedExports(planted, [...importers(), readerOf(DOC_TEST)])).toEqual([]);
-    expect(unimportedExports(planted, [...importers(), readerOf("tests/unit/db/snowflake/decode.test.ts")])).toEqual([
-      finding("decode.ts", "onlyForATest"),
-    ]);
-  });
+  // Reads every file under src/ twice: 0.5s alone with coverage and 2.8s under a 15% CPU quota.
+  test(
+    "the doc test counts as an importer, and no other test file does",
+    () => {
+      const planted = sources("decode.ts", ONLY_FOR_A_TEST);
+      expect(unimportedExports(planted, [...importers(), readerOf(DOC_TEST)])).toEqual([]);
+      expect(unimportedExports(planted, [...importers(), readerOf("tests/unit/db/snowflake/decode.test.ts")])).toEqual([
+        finding("decode.ts", "onlyForATest"),
+      ]);
+    },
+    platformTimeoutMs(40_000),
+  );
 });

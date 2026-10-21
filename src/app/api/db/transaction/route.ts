@@ -1,9 +1,16 @@
 import { firstResultSet } from "@/lib/api/first-result-set";
+import { INVALID_REQUEST_BODY, readJsonObject } from "@/lib/api/json-object-body";
 import { pageOfProbe, pageOptionError, probePastPage } from "@/lib/api/page-probe";
 import { NextRequest, NextResponse } from "next/server";
 import { getOrCreateProvider } from "@/lib/db";
 import { editorCacheKey } from "@/lib/db/factory";
-import type { BeginTransactionOptions, BeginTransactionResult, DatabaseProvider, QueryResult } from "@/lib/db/types";
+import type {
+  BeginTransactionOptions,
+  BeginTransactionResult,
+  DatabaseProvider,
+  QueryPrepareOptions,
+  QueryResult,
+} from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 import { createErrorResponse } from "@/lib/api/errors";
 import { ApiErrorCode } from "@/lib/api/error-codes";
@@ -246,13 +253,32 @@ export async function POST(req: NextRequest) {
   if ("response" in guard) return guard.response;
 
   try {
-    const body = await req.json();
-    const { action, sql, options = {} } = body;
+    // A body that is not a JSON object is a malformed request, refused before any connection resolves.
+    const body = await readJsonObject(req);
+    if (body === null) {
+      return NextResponse.json({ error: INVALID_REQUEST_BODY }, { status: 400 });
+    }
+    // `options` is handed on as the page options it names, as it was when the body was read untyped.
+    const {
+      action,
+      sql,
+      options = {},
+    } = body as {
+      options?: QueryPrepareOptions & Record<string, unknown>;
+    } & Record<string, unknown>;
 
     const connection = await resolveConnection(body, guard.session);
 
     if (!action) {
       return NextResponse.json({ error: "Connection and action are required" }, { status: 400 });
+    }
+    // A query action's text is read before its provider resolves. A `sql` that is present but not a string, a falsy
+    // one (0, false) included, is refused in words: a truthy one answered 500 with a TypeError of its own, thrown by
+    // the splitter without `params` and by the provider's prepareQuery with them, so it never reached
+    // queryInTransaction. For a number the two read "input.slice is not a function" and "sql.slice is not a function".
+    // A missing (null) or empty one keeps its answer below.
+    if (action === "query" && sql != null && typeof sql !== "string") {
+      return NextResponse.json({ error: "sql must be a string" }, { status: 400 });
     }
 
     // Each database of a server-level connection holds its own transaction (#1530), so ownership is per database.
@@ -405,7 +431,7 @@ export async function POST(req: NextRequest) {
       }
 
       case "query": {
-        if (!sql) {
+        if (!sql || typeof sql !== "string") {
           return NextResponse.json({ error: "SQL query is required for transaction query" }, { status: 400 });
         }
 

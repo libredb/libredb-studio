@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { editorCacheKey, removeProvider } from "@/lib/db/factory";
 import { createErrorResponse } from "@/lib/api/errors";
+import { INVALID_REQUEST_BODY, readJsonObject } from "@/lib/api/json-object-body";
 import { guardRoute } from "@/lib/api/require-session";
 import { editorExecutionContext, sessionOwner } from "@/lib/api/execution-context";
 import type { UserPayload } from "@/lib/auth";
@@ -50,10 +51,14 @@ export async function POST(req: NextRequest) {
   if ("response" in guard) return guard.response;
 
   try {
-    const body = await req.json();
+    // A body that is not a JSON object is a malformed request, refused before any connection resolves.
+    const body = await readJsonObject(req);
+    if (body === null) {
+      return NextResponse.json({ success: false, error: INVALID_REQUEST_BODY }, { status: 400 });
+    }
     // A managed connection is named by its seed id and a connection of the user's own by its record, as the editor
     // sends them to every route; the record carries its own id.
-    const connectionId: unknown = body.connectionId ?? body.connection?.id;
+    const connectionId: unknown = body.connectionId ?? (body.connection as { id?: unknown } | null | undefined)?.id;
 
     if (!connectionId || typeof connectionId !== "string") {
       return NextResponse.json(

@@ -162,8 +162,8 @@ export interface ObjectRequestContext {
  *
  * Its sentence is wrong for two of the three conditions it answers, and this phase FILES that
  * rather than fixing it: five existing routes answer `Empty request body` for a body that was
- * TRUNCATED by the framework at 10,485,760 bytes, and `POST /api/db/query` answers HTTP 500 with
- * a JSON parser's message for the same condition. Repairing it here would change the response of
+ * TRUNCATED by the framework at 10,485,760 bytes, and `POST /api/db/query` answers HTTP 400
+ * "Invalid request body" for the same condition. Repairing it here would change the response of
  * five shipped routes inside a pull request whose subject is a write path, which is how a diff
  * grows. `readObjectRouteBody` below is what the two new routes use instead.
  */
@@ -186,8 +186,8 @@ async function readDefaultBody(req: NextRequest): Promise<Record<string, unknown
  * THE MEASURED FACT THIS FUNCTION EXISTS FOR. There is a hard inbound bound at exactly 10,485,760
  * bytes, `DEFAULT_BODY_CLONE_SIZE_LIMIT` in Next 16.3.4's `getCloneableBody`, which exists because
  * this repository has middleware and the request body is therefore cloned for it. It TRUNCATES
- * rather than refusing, so above it `POST /api/db/query` answers HTTP 500 carrying a JSON parser's
- * message and `POST /api/db/objects/source` answers HTTP 400 `Empty request body`. One condition,
+ * rather than refusing, so above it `POST /api/db/query` answers HTTP 400 `Invalid request body`
+ * and `POST /api/db/objects/source` answers HTTP 400 `Empty request body`. One condition,
  * two wrong sentences, and NEITHER IS TRUE: the body was neither malformed by its sender nor
  * absent. A caller reading either one has no way to learn that the fix is to send less.
  *
@@ -712,7 +712,7 @@ function boundText(part: ObjectSourcePart, limit: number): ObjectSourcePart {
  * was the only engine that had landed; the day-one set is now three and the count was re-measured
  * rather than the digit bumped, because what it counts is what the paragraph is for.
  *
- * The day-one producers of `edit` are: `providers/sql/postgres.ts:4335`, gated on
+ * The day-one producers of `edit` are: `providers/sql/postgres.ts:4370`, gated on
  * `kindAcceptsSourceEdits(capabilities, kind)`; `providers/sql/trino/index.ts:1342` and
  * `providers/keyvalue/redis.ts:2234`, both gated on `spec.acceptsSourceEdits === true`, which is the
  * same fact read through the same declaration. Later engines may produce it too, as etcd does for a
@@ -747,7 +747,7 @@ function boundText(part: ObjectSourcePart, limit: number): ObjectSourcePart {
  *
  * THE BOUND, on both sides of the same constant. `edit-plan/route.ts:74` refuses a SUBMITTED text
  * longer than `EDIT_CHARACTER_LIMIT`, and all three day-one providers refuse a READ definition longer
- * than it inside `buildObjectEdit`: `providers/sql/postgres.ts:4503`, `providers/keyvalue/redis.ts:2324`
+ * than it inside `buildObjectEdit`: `providers/sql/postgres.ts:4538`, `providers/keyvalue/redis.ts:2324`
  * and `providers/sql/trino/index.ts:1536`. The second is what closes the class rather than narrowing
  * it: a plan is minted only from the build's own read, so a definition the pane could only have shown
  * truncated never reaches a plan at all, whatever the client POSTs.

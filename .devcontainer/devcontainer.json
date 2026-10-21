@@ -8,5 +8,5 @@
     "source=libredb-studio-${devcontainerId}-node-modules,target=${containerWorkspaceFolder}/node_modules,type=volume"
   ],
   "forwardPorts": [3000],
-  "postCreateCommand": "sudo chown node:node node_modules && bun install --frozen-lockfile && helm repo add bitnami https://charts.bitnami.com/bitnami --timeout 5m && helm dependency build charts/libredb-studio --skip-refresh"
+  "postCreateCommand": "sudo chown node:node node_modules && bun install --frozen-lockfile && (cd vscode-extension && npm ci --ignore-scripts) && helm repo add bitnami https://charts.bitnami.com/bitnami --timeout 5m && helm dependency build charts/libredb-studio --skip-refresh"
 }

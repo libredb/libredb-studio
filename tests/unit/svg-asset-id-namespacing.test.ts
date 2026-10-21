@@ -20,6 +20,11 @@
  * is the single most common class name in the world's SVG files. Presentation attributes
  * say the same thing and cannot leak, so an exported asset gets its stylesheet dissolved
  * on the way in.
+ *
+ * An icon that defines no id, such as the VS Code extension's single-colour view icon,
+ * has nothing to namespace and passes. A file the readers find nothing in must then hold
+ * no id attribute and no url(#...) in any spelling, so a quoting the readers cannot parse
+ * never passes as clean.
  */
 import { describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
@@ -52,6 +57,7 @@ function leakedStyling(markup: string): string[] {
 }
 
 const ILLUSTRATOR_EXPORT = '<svg><defs><style>.cls-1{fill:red;}</style></defs><g class="cls-1"/></svg>';
+const GRADIENT_MARK = '<svg><defs><linearGradient id="libredb-mark"/></defs><path fill="url(#libredb-mark)"/></svg>';
 
 const svgPaths = committedSvgPaths();
 
@@ -61,11 +67,17 @@ describe("static SVG asset id namespacing", () => {
     expect(svgPaths.length).toBeGreaterThan(0);
   });
 
+  test("the id and reference readers recognise a namespaced gradient", () => {
+    // The control for the two suites below, which read nothing from an icon with no ids.
+    expect(definedIds(GRADIENT_MARK)).toEqual(["libredb-mark"]);
+    expect(referencedIds(GRADIENT_MARK)).toEqual(["libredb-mark"]);
+  });
+
   test.each(svgPaths)("%s namespaces every id it defines", (relativePath) => {
     const markup = readFileSync(join(ROOT, relativePath), "utf8");
     const ids = definedIds(markup);
 
-    expect(ids.length).toBeGreaterThan(0);
+    if (ids.length === 0) expect(markup).not.toMatch(/\bid\s*=/);
     expect(ids.filter((id) => !id.startsWith(REQUIRED_PREFIX))).toEqual([]);
   });
 
@@ -74,7 +86,7 @@ describe("static SVG asset id namespacing", () => {
     const ids = new Set(definedIds(markup));
     const references = referencedIds(markup);
 
-    expect(references.length).toBeGreaterThan(0);
+    if (references.length === 0) expect(markup).not.toMatch(/url\(\s*['"]?#/);
     expect(references.filter((reference) => !ids.has(reference))).toEqual([]);
   });
 

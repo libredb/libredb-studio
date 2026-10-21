@@ -96,6 +96,8 @@ limit-less `SELECT`: with no offset it injects `TOP n` right after `SELECT [DIST
 offset it appends `OFFSET m ROWS FETCH NEXT n ROWS ONLY` — and because T-SQL requires an `ORDER BY`
 for `OFFSET … FETCH`, it injects `ORDER BY (SELECT NULL)` when the query has none.
 
+A `limit` or an `offset` that is not a non-negative safe integer is refused with a `QueryError` before either branch runs, by the check the shared limiter runs first (`assertRowBounds` in [`query-limiter.ts`](../../src/lib/db/utils/query-limiter.ts)).
+
 The two branches differ in where a **trailing** comment can reach them. `TOP` is spliced into the
 head, so `SELECT * FROM t -- note` has always come back as `SELECT TOP n * FROM t -- note` and is
 unchanged. The `OFFSET … FETCH` branch appends at the tail, so a trailing `-- note` used to swallow
@@ -425,6 +427,10 @@ A query issued with a `queryId` stores its `Request`. `cancelQuery(queryId)`
 ([`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts)) returns `false` if no `Request` is tracked
 for that id; otherwise it calls `request.cancel()` and returns `true` as long as that call doesn't
 throw — it does **not** confirm the cancellation actually took effect. Exposed via `POST /api/db/cancel`.
+
+The cancelled statement's own `POST /api/db/query` then answers `499` *Query was cancelled*, the same as every other engine.
+tedious ends the request with `RequestError('Canceled.', 'ECANCEL')`, and `mapDatabaseError()` reads that code as a `QueryCancelledError` ([§11](#11-error-handling)).
+Before that mapping the route answered `500` *Canceled.*, measured on SQL Server 2022 with `WAITFOR DELAY '00:00:30'` cancelled after 2 s, and the editor's grid reset to "Ready to query" where PostgreSQL keeps the previous result.
 
 ### 5.3 Data-type & parameter handling
 
@@ -1498,7 +1504,7 @@ A row that reads like the old shared list is SQL Server agreeing with it, not a 
 ### Labels — overridden (`getLabels()`, [`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts))
 
 `analyzeAction` → *"Update Statistics"*, `vacuumAction` → *"Rebuild Indexes"*, plus the matching
-global labels. The UI display name for the database type is *"SQL Server"* (`db-ui-config.ts`).
+global labels. The UI display name for the database type is *"SQL Server"* (`connection-form.ts`).
 
 `slowQueriesEmptyState` → *"Query stats come from sys.dm_exec_query_stats, which needs the VIEW
 SERVER STATE permission."* The monitoring Queries panel's empty state was hardcoded to PostgreSQL's
@@ -1546,7 +1552,7 @@ It writes a `datetime` or `smalldatetime` cell's `yyyy-mm-dd hh:mi:ss[.mmm]` tex
 | Message contains *cannot open database* (`4060`) | `ConnectionError`, matched **before** the access refusals, because the server's sentence ends in *The login failed.* (#1451) |
 | A permission the principal lacks, by the error number `mssql` carries: `229` on an object, `230` on a column, `262` in a database, `297` for an action, `300` on a server-level object, `916` a database the login may not enter | `PermissionDeniedError`, answered `403 PERMISSION_DENIED` with `Permission denied: ` before the server's sentence |
 | Message contains *login failed* | `AuthenticationError`, answered `401 AUTH_ERROR`. tedious raises a refused login as `ELOGIN` without the server's error number (`18456`), so the words decide this one |
-| Cancellation messages (*canceling statement*, *query was cancelled*, *query execution was interrupted*, *kill query*) | `QueryCancelledError` — matched **before** the timeout check |
+| A cancelled request, which `mssql` and tedious end as `RequestError('Canceled.', 'ECANCEL')`, read from the driver code `ECANCEL` because the sentence holds none of the cancellation words; also the cancellation messages (*canceling statement*, *query was cancelled*, *query execution was interrupted*, *kill query*) | `QueryCancelledError`, answered `499` with *Query was cancelled*, matched **before** the timeout check. A cancel the read-only profile's own deadline made is answered by `runWithDeadline` first, as its time-budget `QueryError` |
 | `requestTimeout` exceeded (message contains *timeout*) | `TimeoutError` |
 | Other errors | generic `QueryError` / `DatabaseError` with the original message |
 

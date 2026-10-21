@@ -179,6 +179,7 @@ import {
   databendNotAppliedNotice,
 } from "@/lib/connection-string-parser";
 import { READ_ONLY_ENFORCED, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { CONNECTION_PICKER_ORDER } from "@/lib/db/connection-form";
 
 // =============================================================================
 // useConnectionForm Tests
@@ -1982,71 +1983,12 @@ describe("useConnectionForm", () => {
     expect(first).toHaveProperty("color");
   });
 
-  // ── Every connectable type is offered by the picker (#127) ─────────────────
-
-  // The picker must cover the whole DatabaseType union, because this form is also the EDIT
-  // form: a type missing here renders the edit dialog with no tile selected. Keyed by
-  // DatabaseType, so adding a provider to the union fails `typecheck` on the missing key
-  // instead of silently dropping it from the UI. Set an entry to false only to hide a type
-  // on purpose — and say why.
-  const PICKER_COVERAGE: Record<DatabaseType, boolean> = {
-    postgres: true,
-    mysql: true,
-    sqlite: true,
-    oracle: true,
-    db2: true,
-    mssql: true,
-    mongodb: true,
-    redis: true,
-    libredb: true,
-    couchbase: true,
-    clickhouse: true,
-    druid: true,
-    // Both search ids are selectable: the same form EDITS an existing connection, so
-    // an omitted type leaves the picker with nothing selected for a connection the
-    // product can otherwise open (issue #424 Phase 1).
-    elasticsearch: true,
-    opensearch: true,
-    trino: true,
-    cassandra: true,
-    libsql: true,
-    duckdb: true,
-    prometheus: true,
-    kafka: true,
-    etcd: true,
-    neo4j: true,
-    milvus: true,
-    qdrant: true,
-    influxdb: true,
-    influxdb3: true,
-    oxia: true,
-    databend: true,
-    bigquery: true,
-    s3: true,
-    kubernetes: true,
-    mqtt: true,
-    firestore: true,
-    rabbitmq: true,
-    snowflake: true,
-    spark: true,
-    opcua: true,
-    mtconnect: true,
-    modbus: true,
-    netconf: true,
-    snmp: true,
-    sparkplug: true,
-  };
-
-  test("dbTypes offers every database type a connection can carry", () => {
+  test("dbTypes offers every type of the shared picker order, in that order", () => {
+    // The dialog is also the edit form: a type the hook drops leaves its edit dialog with no tile selected (#127).
+    // tests/unit/lib/db/connection-form.test.ts holds CONNECTION_PICKER_ORDER to the DatabaseType union.
     const { result } = renderHook(() => useConnectionForm(defaultProps));
 
-    const offered = result.current.dbTypes.map((t: { value: string }) => t.value).sort();
-    const expected = Object.entries(PICKER_COVERAGE)
-      .filter(([, selectable]) => selectable)
-      .map(([type]) => type)
-      .sort();
-
-    expect(offered).toEqual(expected);
+    expect(result.current.dbTypes.map((t: { value: string }) => t.value)).toEqual([...CONNECTION_PICKER_ORDER]);
   });
 
   test("dbTypes includes sqlite so the seeded sample connection can be edited", () => {

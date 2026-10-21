@@ -23,6 +23,7 @@ import {
   offersSslPanel,
   type ConnectionField,
 } from "@/lib/db-ui-config";
+import { CONNECTION_PICKER_ORDER } from "@/lib/db/connection-form";
 import type { ImportedContext, ImportedField, ImportedSsl } from "@/lib/connection-import";
 import { databendNotAppliedNotice, parseConnectionString } from "@/lib/connection-string-parser";
 import { PASTE_FORMATS_TEXT } from "@/lib/connection-paste-formats";
@@ -44,7 +45,7 @@ import { credentialWarningFor } from "@/lib/db/credential-warnings";
  * the connection's main credentials without saying so.
  *
  * A `Record<keyof DatabaseConnection, ...>` rather than a list of names to copy, for
- * the reason `connection-secrets.ts` gives about credentials: the failure mode of a
+ * the reason `secret-fields.ts` gives about credentials: the failure mode of a
  * list is silence, and silence is exactly how this bug survived. A field added to
  * `DatabaseConnection`, `SSLConfig` or `SSHTunnelConfig` now fails `bun run typecheck`
  * until someone decides whether the editor owns it.
@@ -1659,7 +1660,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
   }, [pasteInput, name, type, host, sslMode, applyAuthMethod, chooseType, startNewTarget]);
 
   /**
-   * Fills the form from one entry of the import the type declares (`connectionImport` in db-ui-config.ts). The entry
+   * Fills the form from one entry of the import the type declares (`connectionImport` in connection-form.ts). The entry
    * replaces every connection-scoped field, so nothing typed for another server, a password, a certificate, an SSH
    * tunnel or a connection string left in the paste box, is sent to this one: the form is reset, as a save resets it,
    * and then filled. The type, the environment, a name already typed and the choices about how to connect (read-only,
@@ -1713,57 +1714,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     [isEditMode, type, environment, name, readOnly, skipObjectScan, queryTimeout, resetConnectionFields, importSetters],
   );
 
-  // Ordered for display (the modal renders these as a 2-column grid), and covering the whole
-  // DatabaseType union — the same form edits existing connections, so an omitted type leaves the
-  // picker with nothing selected. tests/hooks/use-connection-form.test.ts enforces the coverage.
-  const selectableTypes: DatabaseType[] = [
-    "postgres",
-    "mysql",
-    "sqlite",
-    "oracle",
-    "mssql",
-    "mongodb",
-    "couchbase",
-    "redis",
-    "libredb",
-    "clickhouse",
-    "druid",
-    "elasticsearch",
-    "opensearch",
-    "trino",
-    "cassandra",
-    "libsql",
-    "duckdb",
-    "prometheus",
-    "kafka",
-    "etcd",
-    "db2",
-    "neo4j",
-    "milvus",
-    "qdrant",
-    "influxdb",
-    "influxdb3",
-    "oxia",
-    "databend",
-    "bigquery",
-    "s3",
-    "kubernetes",
-    "mqtt",
-    "firestore",
-    "rabbitmq",
-    "snowflake",
-    "opcua",
-    "snmp",
-    "sparkplug",
-    "spark",
-    "mtconnect",
-    "modbus",
-    // An engine missing from this list cannot be created at all, and the compiler cannot see the
-    // omission: the array is typed `DatabaseType[]`, and every subset of a union satisfies that.
-    // So registering an engine everywhere else is not enough; it has to be named here too.
-    "netconf",
-  ];
-  const dbTypes = selectableTypes.map((t) => {
+  const dbTypes = CONNECTION_PICKER_ORDER.map((t) => {
     const cfg = getDBConfig(t);
     return { value: t, label: cfg.label, icon: cfg.icon, color: cfg.color };
   });

@@ -152,6 +152,12 @@ does not exist": the kernel opens its `.lock` sidecar first, so that case used t
 about a `<file>.libredb.lock` the user never named. The directory is not created, unlike the SQLite
 provider, because a connection setting should not make directories on the server.
 
+A path that exists and is not a regular file is refused before the kernel opens anything, by `assertRegularFilesOrMissing` ([`regular-file.ts`](../../src/lib/db/utils/regular-file.ts)), shared with the SQLite and DuckDB providers.
+It asks `stat`, which never opens the path and follows a symlink: the kernel opened a FIFO, took a `.lock` beside it and Test Connection answered "Connected" (measured on bun 1.4.2), while the same FIFO froze the DuckDB provider.
+The kernel's `<path>.lock` is checked the same way, and the error then names the `.lock`: `lock()` reads a lock it finds taken to judge whether it is stale, and that read of a FIFO `.lock` waited for a writer on the server's own thread, so the connect never returned (measured on bun 1.4.2).
+The answer is the open failure in [§10](#10-error-handling), for example `Failed to open LibreDB file: /data/app.libredb is a named pipe (FIFO), not a regular file`, or `a socket`, `a character device`, `a block device` or `a directory` in place of the FIFO.
+A regular file and a symlink to one open as before, and a missing file is created as before.
+
 ### 3.3 Catalog-aware schema, with key-prefix grouping as the raw-kv fallback
 
 Since `@libredb/libredb` 0.0.2 a `.libredb` file carries a persisted **catalog**: the lenses
@@ -1134,6 +1140,7 @@ The provider raises the shared error classes from
 | `@libredb/libredb` package not installed | `DatabaseConfigError` — install instructions in message |
 | Operation before `connect()` | `DatabaseConfigError` (via `ensureConnected()`) |
 | `connect()` fails to open the file | `ConnectionError` |
+| `connect()` on a path, or a `<path>.lock`, that exists and is not a regular file ([§3.2](#32-no-in-memory-connections)) | `ConnectionError`: *"Failed to open LibreDB file: <path> is a named pipe (FIFO), not a regular file"*, naming the `.lock` when it is the one, or the file's other kind |
 | Empty command | `QueryError` — *"Empty command"* |
 | Unknown verb | `QueryError` — lists supported verbs |
 | Wrong argument count for a verb | `QueryError` — usage hint (e.g. *"Usage: get <key>"*) |

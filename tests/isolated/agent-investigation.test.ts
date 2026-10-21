@@ -18,6 +18,7 @@ import {
 } from "@/lib/agent/investigation";
 import { type AgentModel, PLAN_NO_REASONING_EFFORT } from "@/lib/agent/model-adapter";
 import { resolveAgentProviderAdapter } from "@/lib/agent/provider-registry";
+import * as providerRegistry from "@/lib/agent/provider-registry";
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
 import { AgentRunService, AgentRunServiceError } from "@/lib/agent/run-service";
 import { AgentRunStore } from "@/lib/agent/run-store";
@@ -60,6 +61,7 @@ import {
   chatTextStream,
   chatToolCallStream,
   endpointError,
+  geminiTextStream,
   responsesTextStream,
   responsesToolCallStream,
 } from "./fixtures/agent-transport";
@@ -7110,5 +7112,177 @@ describe("an openai run speaks the Responses API, statelessly", () => {
 
     await expect(drive).rejects.toThrow("The reasoning effort this model's profile asks for was refused");
     expect(script.turns[0]?.body.store).toBe(false);
+  });
+});
+
+describe("a run sends sampling only where the SDK honours it", () => {
+  const LUNA = "gpt-6-luna";
+
+  /** Collects every warning the SDK's logger is handed, so a drop on the wire can be told from a logged one. */
+  function captureSdkWarnings(): { logged: unknown[]; restore: () => void } {
+    const scope = globalThis as typeof globalThis & { AI_SDK_LOG_WARNINGS?: unknown };
+    const previous = scope.AI_SDK_LOG_WARNINGS;
+    const logged: unknown[] = [];
+    scope.AI_SDK_LOG_WARNINGS = (options: { warnings: unknown[] }) => logged.push(...options.warnings);
+    return { logged, restore: () => (scope.AI_SDK_LOG_WARNINGS = previous) };
+  }
+
+  test("an openai reasoning turn carries no sampling the SDK would drop, and logs no sampling warning", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b, "planning");
+    const script = scriptedModel(
+      () => responsesTextStream("```sqlite\nSELECT 1\n```"),
+      () => responsesTextStream("```sqlite\nSELECT 1\n```"),
+    );
+    const warnings = captureSdkWarnings();
+
+    try {
+      await runInvestigation(run.runId, {
+        service: b.service,
+        model: await modelOver(script.fetch, "https://api.openai.com/v1", LUNA, "openai"),
+        resources: b.resources,
+      });
+
+      expect(script.turns[0]?.body).not.toHaveProperty("temperature");
+      expect(script.turns[0]?.body).not.toHaveProperty("top_p");
+      expect(warnings.logged).not.toContainEqual(expect.objectContaining({ feature: "temperature" }));
+      expect(warnings.logged).not.toContainEqual(expect.objectContaining({ feature: "topP" }));
+    } finally {
+      warnings.restore();
+    }
+  });
+
+  test("gpt-6-luna at effort none keeps the default sampling on its turns", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b, "planning");
+    const script = scriptedModel(
+      () => responsesTextStream("```sqlite\nSELECT 1\n```"),
+      () => responsesTextStream("```sqlite\nSELECT 1\n```"),
+    );
+
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch, "https://api.openai.com/v1", LUNA, "openai", "none"),
+      resources: b.resources,
+    });
+
+    expect(script.turns[0]?.body?.temperature).toBe(0);
+    expect(script.turns[0]?.body?.top_p).toBe(1);
+  });
+
+  test("a non-reasoning openai model keeps the default sampling on its turns", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b, "planning");
+    const script = scriptedModel(
+      () => responsesTextStream("```sqlite\nSELECT 1\n```"),
+      () => responsesTextStream("```sqlite\nSELECT 1\n```"),
+    );
+
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch, "https://api.openai.com/v1", "gpt-4o-mini", "openai"),
+      resources: b.resources,
+    });
+
+    expect(script.turns[0]?.body?.temperature).toBe(0);
+    expect(script.turns[0]?.body?.top_p).toBe(1);
+  });
+
+  test("an ollama turn still carries the default sampling, byte for byte", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b, "planning");
+    const script = scriptedModel(answersProse("```sqlite\nSELECT 1\n```"), answersProse("```sqlite\nSELECT 1\n```"));
+
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch, "https://api.openai.com/v1", "some-model-nobody-measured:9b", "ollama"),
+      resources: b.resources,
+    });
+
+    // Key order is the wire byte order: the sampling fields sit where the SDK always put them,
+    // so the filtering decision did not reorder or disturb a single byte of the request.
+    expect(Object.keys(script.turns[0]?.body ?? {})).toEqual([
+      "model",
+      "temperature",
+      "top_p",
+      "messages",
+      "stream",
+      "stream_options",
+    ]);
+    expect(script.turns[0]?.body?.temperature).toBe(0);
+    expect(script.turns[0]?.body?.top_p).toBe(1);
+  });
+
+  test("a custom turn still carries the default sampling, byte for byte", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b, "planning");
+    const script = scriptedModel(answersProse("```sqlite\nSELECT 1\n```"), answersProse("```sqlite\nSELECT 1\n```"));
+
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch, "https://llm.internal/v1", "mixtral", "custom"),
+      resources: b.resources,
+    });
+
+    expect(Object.keys(script.turns[0]?.body ?? {})).toEqual([
+      "model",
+      "temperature",
+      "top_p",
+      "messages",
+      "stream",
+      "stream_options",
+    ]);
+    expect(script.turns[0]?.body?.temperature).toBe(0);
+    expect(script.turns[0]?.body?.top_p).toBe(1);
+  });
+
+  test("a gemini turn carries the default sampling under Gemini's own field names", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b, "planning");
+    const script = scriptedModel(
+      () => geminiTextStream("```sqlite\nSELECT 1\n```"),
+      () => geminiTextStream("```sqlite\nSELECT 1\n```"),
+    );
+
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(
+        script.fetch,
+        "https://generativelanguage.googleapis.com/v1beta",
+        "gemini-2.5-flash",
+        "gemini",
+      ),
+      resources: b.resources,
+    });
+
+    const generationConfig = script.turns[0]?.body.generationConfig as
+      | { temperature?: number; topP?: number }
+      | undefined;
+    expect(generationConfig?.temperature).toBe(0);
+    expect(generationConfig?.topP).toBe(1);
+  });
+
+  test("a turn whose sampling preparation breaks is refused as a config error, before anything is sent", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b, "planning");
+    const script = scriptedModel(() => responsesTextStream("```sqlite\nSELECT 1\n```"));
+    // A model id no other test resolves, so this test owns the cache entry and the spy is reached.
+    const prepare = spyOn(providerRegistry, "openAIResponsesRequestWarnings").mockRejectedValue(
+      new TypeError("prepareRequest broke"),
+    );
+
+    try {
+      await expect(
+        runInvestigation(run.runId, {
+          service: b.service,
+          model: await modelOver(script.fetch, "https://api.openai.com/v1", "gpt-6-luna-prepare-failure", "openai"),
+          resources: b.resources,
+        }),
+      ).rejects.toBeInstanceOf(LLMConfigError);
+      // The preparation is offline and refused before `streamText`, so the turn never reaches the wire.
+      expect(script.turns.length).toBe(0);
+    } finally {
+      prepare.mockRestore();
+    }
   });
 });

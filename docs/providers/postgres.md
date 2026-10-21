@@ -508,17 +508,25 @@ refuses any subquery among an aggregate call's arguments, *subquery inside aggre
 index CTE used to build each index's column list that way. The `LATERAL` form is the same per-index
 read, and an index over expressions alone still answers NULL, which the provider reads as `[]` (#1075).
 
-The type text matches on every column but one shape. `format_type(a.atttypid, NULL)` is passed NULL
-rather than `a.atttypmod` because that is what `information_schema.columns.data_type` says:
-`character varying` and `numeric`, not `character varying(50)` and `numeric(12,2)`. Verified column
-by column on `app.orders`, so `describeObject()` and `describeObjects()` name a column's type
-identically.
+**A column carries two type strings.** `type` is `format_type(a.atttypid, NULL)`, the unqualified
+base name: `character varying`, `numeric`, `vector`, `text`, `integer`, `text[]`. `declaredType` is
+`format_type(a.atttypid, a.atttypmod)`, the declaration PostgreSQL itself prints:
+`character varying(50)`, `numeric(12,2)`, `vector(1536)`. `describeObject()` and `describeObjects()`
+select both, from the same `pg_attribute` row, so the two object-model reads agree.
 
-One measurement is kept from the deleted flat reading, because it is why the type text is read this
-way. `app.products.tags` is `text[]`: `format_type` answers `text[]` and both object-model surfaces
-show that, while `information_schema.columns.data_type` answered the bare word `ARRAY` and put the
-element type in `information_schema.element_types`. The object model had the better half of that
-disagreement, and it is the only reading left.
+`type` used to be the only string, and NULL was passed on purpose so this surface would match
+`information_schema.columns.data_type`, which is what the deleted flat schema tree showed. That
+reading is gone (#789): the provider no longer implements `getSchema`, and this file does not read
+`information_schema.columns`. The modifier is recorded beside the base name rather than inside it
+(#1860). The diagram, completions and migration DDL read `type` and are unchanged. The agent's
+grounding capture reads `information_schema.columns.data_type`, the same base name, and is unchanged.
+The column tooltip and the object detail show `declaredType`. A column with no modifier is given the
+same string in both fields, so `text`, `integer` and `text[]` render as they did.
+
+One measurement is kept from the deleted flat reading. `app.products.tags` is `text[]`:
+`format_type` answers `text[]` in both fields, while `information_schema.columns.data_type` answered
+the bare word `ARRAY` and put the element type in `information_schema.element_types`. That second
+answer has no reader left.
 
 `OBJECT_DETAIL_SQL` also strips the `AS MATERIALIZED` hints, which is the opposite of what
 [§3.1](#31-materialized-ctes-for-schema-introspection) wants and for the opposite reason. There the
@@ -1509,6 +1517,8 @@ A text of several statements sent as one simple query (`SELECT 1 AS a; SELECT 2 
 Measured the same day, that text answers `rows` `[{"a":1}]` and two `resultSets`, the second with fields `["b","b (2)"]`.
 Before, such a text answered no `rows` at all, because the list of answers was read as one answer.
 
+A statement whose command tag carries no count (an `EXPLAIN`, a `SHOW`) has its `rowCount` answered from the rows it returned, because `pg` reads the count from the tag alone and leaves it null while `rows` holds the answer; a count the driver did read, including a real 0, keeps its own value (#1839).
+
 #### Server notices (#1401)
 
 The NOTICE and WARNING messages the server sends while a statement that SUCCEEDS runs come back in
@@ -1733,10 +1743,12 @@ paths do it: `query()`, `queryInTransaction()` and the agent's `queryReadOnly()`
 | >= 16384 | *absent* |
 
 The names are the base type's, without the type modifier: `character varying`, not
-`character varying(40)`. That is what `information_schema.columns.data_type` — the same source the
-schema tree shows — answers for the same column, and the modifier is not on the wire in a form worth
-reconstructing. `columnTypes` is consumed by the results grid's column labels, by the SQL-DDL export
-(which prefers a declared type over its value-shaped guess) and by the agent's state summary.
+`character varying(40)`. The modifier is not on the wire in a form worth reconstructing. This is
+`QueryResult.columnTypes`, the result grid's column labels. The schema tree's `type` is the same
+base name, and the modifier a person needs there is `declaredType` on the object detail
+([§3.1.4](#314-what-the-object-surface-declares-and-which-catalog-answers-for-it)). `columnTypes` is
+consumed by the results grid's column labels, by the SQL-DDL export (which prefers a declared type
+over its value-shaped guess) and by the agent's state summary.
 
 ### 5.5 The types read as the engine's text
 
@@ -2117,7 +2129,7 @@ Ten apparent losses in the first run of that probe were `HTTP 429` from the rout
 **A ROLLBACK THIS PROVIDER COULD NOT ISSUE RAISES, and the raise takes the response with it.**
 Every client the scope recorded is attempted inside its own `try`, so one dead socket cannot strand the clients behind it in the loop, and the held failures are raised together once the loop is done: `Could not roll back the transaction this request left open on N of M pooled clients: ...`, where `M` counts the clients ASKED and not the clients recorded, because a client a later statement of the same scope already returned to `I` was never sent anything.
 Neither arm of the outcome type is true of a client still sitting in `T`: `"none"` denies the transaction and `"rolled-back"` certifies a rollback that did not happen.
-The class raised is the base `DatabaseError` with `code: "DATABASE_ERROR"` and NOT the `QueryError` the rest of this provider raises, because [`errors.ts`](../../src/lib/api/errors.ts) maps `QueryError` to HTTP 400 `QUERY_ERROR`, which would report a rollback this server could not issue on a client of its own pool as a fault in the SQL the caller sent; the `DatabaseError` arm answers HTTP 500 `DATABASE_ERROR`, which is what it is.
+The class raised is the base `DatabaseError` with `code: "DATABASE_ERROR"` and NOT the `QueryError` the rest of this provider raises, because `databaseErrorBody` in [`error-body.ts`](../../src/lib/api/error-body.ts), reached through `createErrorResponse`, maps `QueryError` to HTTP 400 `QUERY_ERROR`, which would report a rollback this server could not issue on a client of its own pool as a fault in the SQL the caller sent; the `DatabaseError` arm answers HTTP 500 `DATABASE_ERROR`, which is what it is.
 The cost is two losses and both are deliberate: the throw is inside the route's `finally`, so it replaces the response the request had already produced, a script's per-statement results included, and a `finally` that throws also DISCARDS the exception the body was leaving with, so a dead socket that killed the statement AND the ROLLBACK costs the engine's own message with its `position` and `detail`.
 A pooled client left `idle in transaction` poisons every later user of that stored connection, which is the failure this whole surface exists for, so it is raised rather than reported quietly.
 

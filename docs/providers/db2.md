@@ -365,6 +365,7 @@ A privilege the user lacks, SQLSTATE `42501` (SQL0551N) or `42502` (SQL0552N), o
 
 A SELECT without its own limit is paged on the server: the first page gets `FETCH FIRST n ROWS ONLY`, a later one `OFFSET m ROWS FETCH NEXT n ROWS ONLY`, placed between the statement and its trailing `;` or comment.
 A statement that already carries `FETCH FIRST` or `LIMIT` is left as written, and so is any statement that is not a SELECT.
+A `limit` or an `offset` that is not a non-negative safe integer is refused with a `QueryError` before any of this, by the check the shared limiter runs first (`assertRowBounds` in [`query-limiter.ts`](../../src/lib/db/utils/query-limiter.ts)).
 
 ### 7.3 Values
 

@@ -74,6 +74,8 @@ PRUNE_LIST=(
   snap
   src
   tests
+  # The VS Code extension: its node_modules, its bundles and its .vscode-test/ downloads.
+  vscode-extension
   artifacthub-repo.yml
   biome.json
   bun.lock

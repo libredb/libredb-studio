@@ -2,6 +2,7 @@ import { describe, test, expect } from "bun:test";
 import {
   detailedObjects,
   machineColumns,
+  displayedColumnType,
   sampledMark,
   objectAtPath,
   relationCountLabel,
@@ -344,5 +345,19 @@ describe("sampledMark", () => {
   test("is the suffix the human views add to a sampled column's type, and nothing for a declared one", () => {
     expect(sampledMark({ provenance: "sampled" })).toBe(" (sampled)");
     expect(sampledMark({})).toBe("");
+  });
+});
+
+describe("displayedColumnType", () => {
+  test("prefers the declaration with its modifier, and the base type where none was recorded", () => {
+    expect(displayedColumnType({ type: "vector", declaredType: "vector(1536)" })).toBe("vector(1536)");
+    expect(displayedColumnType({ type: "character varying", declaredType: "character varying(50)" })).toBe(
+      "character varying(50)",
+    );
+    expect(displayedColumnType({ type: "numeric", declaredType: "numeric(12,2)" })).toBe("numeric(12,2)");
+    // No modifier: the two strings are the same, and an engine that never recorded one answers `type`.
+    expect(displayedColumnType({ type: "text", declaredType: "text" })).toBe("text");
+    expect(displayedColumnType({ type: "text[]", declaredType: "text[]" })).toBe("text[]");
+    expect(displayedColumnType({ type: "integer" })).toBe("integer");
   });
 });

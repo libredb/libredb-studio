@@ -1,0 +1,6 @@
+{
+  "spec": ["test/integration/**/*.test.ts"],
+  "extension": ["ts"],
+  "forbid-only": true,
+  "timeout": 300000
+}

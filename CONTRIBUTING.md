@@ -50,6 +50,7 @@ Feature suggestions are welcome! Please provide:
 4. **Run the checks locally when your environment supports them.** They mirror the required CI checks:
 
    ```bash
+   (cd vscode-extension && npm ci --ignore-scripts)   # once, and again when its package-lock.json changes
    bun run format && bun run lint && bun run typecheck && bun run knip \
      && bun run readme:check && bun run chart:check && bun run channels:showcase:check \
      && bun run security:check && bun run test && bun run build
@@ -272,6 +273,9 @@ cd libredb-studio
 # Install dependencies
 bun install
 
+# Install the VS Code extension's packages, which bun run knip reads
+(cd vscode-extension && npm ci --ignore-scripts)
+
 # Copy environment example
 cp .env.example .env.local
 
@@ -358,7 +362,7 @@ bun start                # production server
 bun run format           # Biome formatter check (format:fix to write)
 bun run lint             # oxlint, then ESLint 9
 bun run typecheck        # TypeScript strict
-bun run knip             # unused files, exports and dependencies
+bun run knip             # unused files, exports and dependencies (run npm ci in vscode-extension/ first)
 bun run test             # every test file, one bun process each; never bare `bun test`. Without Helm the chart tests are listed as not run, see Prerequisites
 bun run test:unit        # one layer; also test:api, test:integration, test:hooks, test:security, test:evals, test:components
 bun run test:coverage    # coverage report (merged lcov)

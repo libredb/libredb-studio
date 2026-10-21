@@ -125,6 +125,26 @@ describe("resolve-connection", () => {
     },
   );
 
+  /*
+   * A present `connection.id` that is not a string threw the runtime's own TypeError from the seed
+   * namespace check, and every route that resolves a connection answered 500 quoting it.
+   */
+  it.each([[5], [["seed:x"]], [{}]])("refuses an inline connection whose id is %p", async (id) => {
+    const inline = {
+      id,
+      name: "Not a string id",
+      type: "postgres",
+      host: "db.example.com",
+      createdAt: new Date(),
+    } as unknown as DatabaseConnection;
+
+    await expect(resolveConnection({ connection: inline }, { role: "user", username: "test" })).rejects.toMatchObject({
+      name: "SeedConnectionError",
+      message: "Invalid connection ID format",
+      statusCode: 400,
+    });
+  });
+
   it("resolves an inline connection that claims a seed id the role may reach", async () => {
     const claimed: DatabaseConnection = {
       id: "seed:everyone",

@@ -6,9 +6,12 @@ import {
   applyQueryLimit,
   hasQueryLimit,
   noteAppendedBound,
+  assertRowBounds,
+  isRowBound,
   isSelectQuery,
   type ParsedQueryInfo,
 } from "@/lib/db/utils/query-limiter";
+import { QueryError } from "@/lib/db/errors";
 
 // ─── analyzeQuery ───────────────────────────────────────────────────────────
 
@@ -661,6 +664,58 @@ describe("applyQueryLimit", () => {
       const result = applyQueryLimit("SELECT * FROM t", 100, 50);
       expect(result.sql).toBe("SELECT * FROM t LIMIT 100 OFFSET 50");
       expect(result.appliedOffset).toBe(50);
+    });
+  });
+
+  // ── A limit and an offset are non-negative integers, the rule the routes hold options to ──
+
+  describe("limit and offset values", () => {
+    const outOfRule: Array<[string, unknown]> = [
+      ["a numeric string", "10"],
+      ["a fraction", 1.5],
+      ["a negative number", -1],
+      ["NaN", Number.NaN],
+      ["an infinity", Number.POSITIVE_INFINITY],
+      ["null", null],
+      ["an array", [10]],
+      ["the first integer past Number.MAX_SAFE_INTEGER", 2 ** 53],
+      ["a number JavaScript prints in exponent form", 1e21],
+    ];
+
+    test.each(outOfRule)("refuses %s as the limit with a QueryError", (_name, limit) => {
+      const run = () => applyQueryLimit("SELECT * FROM t", limit as number, 0, {}, "postgres");
+      expect(run).toThrow(QueryError);
+      expect(run).toThrow("The row limit must be a non-negative integer");
+    });
+
+    test.each(outOfRule)("refuses %s as the offset with a QueryError", (_name, offset) => {
+      const run = () => applyQueryLimit("SELECT * FROM t", 100, offset as number, {}, "postgres");
+      expect(run).toThrow(QueryError);
+      expect(run).toThrow("The row offset must be a non-negative integer");
+    });
+
+    test("refuses a value out of the rule whatever the query is", () => {
+      expect(() => applyQueryLimit("UPDATE t SET a = 1", "10" as unknown as number)).toThrow(QueryError);
+      expect(() => applyQueryLimit("SELECT * FROM t LIMIT 5", 100, "10" as unknown as number)).toThrow(QueryError);
+    });
+
+    test("keeps zero and every larger safe integer as it was given", () => {
+      expect(applyQueryLimit("SELECT * FROM t", 0).sql).toBe("SELECT * FROM t LIMIT 0");
+      expect(applyQueryLimit("SELECT * FROM t", Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER).sql).toBe(
+        "SELECT * FROM t LIMIT 9007199254740991 OFFSET 9007199254740991",
+      );
+    });
+
+    test("assertRowBounds throws the same QueryError for either bound and passes two row bounds", () => {
+      expect(() => assertRowBounds("10", 0)).toThrow("The row limit must be a non-negative integer");
+      expect(() => assertRowBounds(10, 1.5)).toThrow("The row offset must be a non-negative integer");
+      expect(() => assertRowBounds(null, 0)).toThrow(QueryError);
+      expect(() => assertRowBounds(0, Number.MAX_SAFE_INTEGER)).not.toThrow();
+    });
+
+    test("holds the same rule as a request's page options", () => {
+      for (const [, value] of outOfRule) expect(isRowBound(value)).toBe(false);
+      for (const value of [0, 1, 500, Number.MAX_SAFE_INTEGER]) expect(isRowBound(value)).toBe(true);
     });
   });
 });

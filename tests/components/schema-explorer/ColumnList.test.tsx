@@ -156,6 +156,30 @@ describe("ColumnList", () => {
     const { queryByText } = render(<ColumnList columns={columns} indexes={[]} />);
     expect(queryByText("boolean")).not.toBeNull();
   });
+
+  test("a modifier recorded beside the base type is the tooltip, and the row still shows the base", () => {
+    const columns: DetailedObject["columns"] = [
+      {
+        name: "title",
+        type: "character varying",
+        declaredType: "character varying(50)",
+        nullable: true,
+        isPrimary: false,
+      },
+      { name: "amount", type: "numeric", declaredType: "numeric(12,2)", nullable: false, isPrimary: false },
+      { name: "embedding", type: "vector", declaredType: "vector(1536)", nullable: true, isPrimary: false },
+      { name: "body", type: "text", declaredType: "text", nullable: true, isPrimary: false },
+    ];
+    const { getByText, queryByText } = render(<ColumnList columns={columns} indexes={[]} />);
+    expect(getByText("character varying").getAttribute("title")).toBe("character varying(50)");
+    expect(getByText("numeric").getAttribute("title")).toBe("numeric(12,2)");
+    expect(getByText("vector").getAttribute("title")).toBe("vector(1536)");
+    expect(getByText("text").getAttribute("title")).toBe("text");
+    // The row keeps the base name. The modifier is the tooltip.
+    expect(queryByText("character varying(50)")).toBeNull();
+    expect(queryByText("numeric(12,2)")).toBeNull();
+    expect(queryByText("vector(1536)")).toBeNull();
+  });
 });
 
 describe("ColumnList and a column the engine only inferred from sampled data", () => {

@@ -85,7 +85,7 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
-
+import { platformTimeoutMs } from "../../../helpers/platform-timeout";
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 /** The provider's directory in the repository, as git lists its files. */
 const PROVIDER_PATH = "src/lib/db/providers/stream/kafka";
@@ -1287,9 +1287,15 @@ describe("Kafka seam guard", () => {
     expect(unwrittenPins(rewritten)).toEqual(["tls.code as string", "value as LibRawMetadata", "code is string"]);
   });
 
-  test("the adapter and the fixture seed are the only files in the repository that import the library", () => {
-    expect(importersIn(ROOT)).toEqual(IMPORTERS);
-  }, 30_000);
+  // The first repository-wide check parses every source file: 7.2s alone with coverage, and 87.6s under a
+  // 15% CPU quota on a busy runner, past the 30s it had, so it carries the larger bound.
+  test(
+    "the adapter and the fixture seed are the only files in the repository that import the library",
+    () => {
+      expect(importersIn(ROOT)).toEqual(IMPORTERS);
+    },
+    platformTimeoutMs(120_000),
+  );
 
   test("outside the provider, only the pinned files take the adapter's loader", () => {
     expect(loaderTakersIn(ROOT)).toEqual(LOADER_TAKERS);

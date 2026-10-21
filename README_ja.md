@@ -37,7 +37,8 @@
   <a href="https://valkey.io/participants/#:~:text=LibreDB%20Studio%20connects%20to%20Valkey">Valkey</a>、
   <a href="https://clickhouse.com/docs/integrations/connectors/tools/gui#libredb-studio">ClickHouse Visual Interfaces</a>、
   <a href="https://clickhouse.com/docs/integrations/connectors/sql-clients/libredb-studio">ClickHouse SQL Clients</a>、
-  <a href="https://mariadb.com/docs/server/clients-and-utilities/graphical-and-enhanced-clients/libredb-studio">MariaDB</a>、
+  <a href="https://mariadb.com/docs/server/clients-and-utilities/graphical-and-enhanced-clients/libredb-studio">MariaDB Graphical Clients</a>、
+  <a href="https://ecohub.mariadb.org/database-management/libredb-studio">MariaDB Ecosystem Hub</a>、
   <a href="https://trino.io/ecosystem/client-application#libredb-studio">Trino</a>、
   <a href="https://docs.yugabyte.com/stable/integrations/tools/libredb-studio/">YugabyteDB</a>、
   <a href="https://www.tigerdata.com/docs/integrate/query-administration/libredb-studio">TimescaleDB</a>、
@@ -50,6 +51,7 @@
   <a href="https://aiven.io/docs/products/postgresql/howto/connect-libredb-studio">Aiven for PostgreSQL</a>、
   <a href="https://aiven.io/docs/products/mysql/howto/connect-libredb-studio">Aiven for MySQL</a>、
   <a href="https://docs.scylladb.com/stable/get-started/gui-clients/libredb-studio.html">ScyllaDB</a>、
+  <a href="https://docs.couchbase.com/server/current/third-party/integrations.html#standalone-query-and-admin-tools">Couchbase</a>、
   <a href="https://cloudberry.apache.org/docs/ecosystem/sql-clients/libredb-studio/">Apache Cloudberry</a>、
   <a href="https://doris.apache.org/docs/4.x/connection-integration/data-integration/libredb-studio/">Apache Doris</a>、
   <a href="https://cwiki.apache.org/confluence/display/KAFKA/Ecosystem#:~:text=LibreDB%20Studio">Apache Kafka</a>、
@@ -210,7 +212,7 @@ StudioのAIの中心は、エディタの隣にあるエージェントレール
   動きます（PostgreSQLでは読み取り専用トランザクション、SQLiteでは文ごとに`PRAGMA query_only`を再宣言、DuckDBでは`READ_ONLY`のエンジンハンドルに加えてSQLレベルのガード。そのフラグだけでは`COPY … TO`、`EXPORT DATABASE`、ローカルファイルを読むテーブル関数が通ってしまうためです。読み取り専用トランザクションがそもそも存在しないSQL Serverでは、接続を開く時点でセッションのプリンシパルが書けないことを検証し、オプティマイザが各文を実行せずにコンパイルだけして受け入れ、行数をサーバー側で制限し、必ずロールバックされるトランザクションの中で実行します）。
   書き込みとDDLはデータベースに届く前に拒否され、`EXPLAIN ANALYZE`は文を実際に実行してしまうため既定で
   不許可です。このパイプラインはエージェント専用です。あなたがエディタで自分で実行する文はプロバイダを直接
-  呼び出しており（`src/app/api/db/query/route.ts:44`）、ここでのポリシー判定も監査も受けません。
+  呼び出しており（`src/app/api/db/query/route.ts:312`）、ここでのポリシー判定も監査も受けません。
 - **Agentモードが対応するのはPostgreSQL・SQLite・DuckDB・SQL Server・MySQL・Kubernetes・MongoDBだけ**：読み取り専用プロファイルは、
   それを実装したプロバイダにしか存在しません。`postgres.ts`、`sqlite.ts`、`duckdb/index.ts`、
   `mssql.ts`、`mysql.ts`、`kubernetes/index.ts`、`mongodb/index.ts`の`queryReadOnly`のみで、他にはありません。
@@ -278,7 +280,7 @@ StudioのAIの中心は、エディタの隣にあるエージェントレール
 
 ### DBA運用ツール（管理者のみ）
 
-7タブのモニタリング（概要、パフォーマンス、クエリ、セッション、テーブル、ストレージ、コネクションプール）、時系列トレンドグラフ、5〜60秒で調整可能な自動更新、しきい値による色分けアラート、そしてワンクリックの `VACUUM` / `ANALYZE` / `REINDEX` / `UPDATE STATISTICS` / `DBCC CHECKDB` / `ALTER INDEX REBUILD`。組織全体のクエリ監査ログも含みます。
+7タブのモニタリング（概要、パフォーマンス、クエリ、セッション、テーブル、ストレージ、コネクションプール）、時系列トレンドグラフ、5〜60秒で調整可能な自動更新、しきい値による色分けアラート、そしてワンクリックの `VACUUM` / `ANALYZE` / `REINDEX` / `UPDATE STATISTICS` / `DBCC CHECKDB` / `ALTER INDEX REBUILD`。管理者の監査タブには、サーバーの最近の監査イベント（サインイン、権限の拒否、メンテナンス操作、オブジェクトの編集、エージェントとMCPの操作）が、それぞれの背後にいるユーザーとともに表示され、サインインしている管理者自身のクエリ履歴も表示されます。どちらも、現在のフィルタを保ったままCSVまたはJSONとして書き出せます。[ガバナンス](docs/GOVERNANCE.md#query-events)の下では、Studioは人が実行した各ステートメントのクエリイベントを記録し、コントロールプレーンがその組織全体の記録を保持します。
 
 ## インストール方法
 
@@ -329,12 +331,6 @@ export default {
 オプション：`reportOnly` は強制ではなく `Content-Security-Policy-Report-Only` を送ります。`hsts: false` はHSTSを無効化（オブジェクトを渡せばカスタマイズ）。`allowEval` は `'unsafe-eval'` を追加するもので、Reactの**開発**ビルドがこれを必要とします。`monacoVsPath` はMonacoのバンドルが同一オリジンでない場合にそのoriginを追加します。`extra` はディレクティブごとに独自のソースをマージします。`studioCspDirectives()` と `HSTS_MAX_AGE_SECONDS` もエクスポートされており、ポリシーをそのまま送るのではなく組み立てたい設定で使えます。
 
 継承する前にポリシーそのものを読んでください。このCSPはインラインスクリプトを許可します。すべてのドキュメントルートが静的にプリレンダされ、ハイドレーション用のインラインスクリプトにnonceを付けられないからです。したがってこのポリシーが縛るのは、注入されたスクリプトがデータを**どこへ送れるか**であって、実行できるかどうかではありません。このトレードオフと、Next.jsアプリがこれらのヘッダを配送する2つの経路については [`docs/SECURITY.md`](docs/SECURITY.md) で論じています。
-
-## 有料との線引きについて
-
-StudioがMITなのは、あらゆる場所に置ける必要があるからです。有料なのはlibredb-platformで、そこで売っているのは「運用の代行」、つまりホスティング、テナント管理、課金、サポートであって、有料の壁の向こうに移された機能ではありません。
-
-**アップグレードの理由を作るために線の向こう側へ移された機能は、1つもありません。** SSO、RBAC、クエリ監査ログ、ER図、AI機能、NoSQLエンジン群、すべてMITビルドに入っています。
 
 ## テストと品質
 

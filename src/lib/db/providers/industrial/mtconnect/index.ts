@@ -493,8 +493,8 @@ export class MTConnectProvider extends BaseDatabaseProvider {
    *
    * A cap it applied is reported on `pagination`, the field the house keeps for exactly this and
    * the one InfluxDB's row cut already uses: `POST /api/db/query` carries `wasLimited` through
-   * (`src/app/api/db/query/route.ts:332`) and the results strip then says "Studio bounded this
-   * result. Anything beyond the bound is not in it." It is NOT a warning, because a warning is a
+   * (`runEditorQuery`, `src/lib/api/editor-query.ts`) and the results strip then says "Studio
+   * bounded this result. Anything beyond the bound is not in it." It is NOT a warning, because a warning is a
    * notice the ENGINE attached and this bound is ours; and it is not an error, because the rows
    * that did arrive are good.
    */

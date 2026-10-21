@@ -242,7 +242,7 @@ export function parseConnectionString(input: string): ParsedConnection | null {
 
   // PostgreSQL
   if (trimmed.startsWith("postgres://") || trimmed.startsWith("postgresql://")) {
-    return parseGenericURL(trimmed, "postgres", "5432");
+    return parsePostgresURL(trimmed);
   }
 
   // MySQL
@@ -599,6 +599,66 @@ function parseLibSQLURL(uri: string): ParsedConnection | null {
   }
 }
 
+/**
+ * The libpq connection keywords a postgres URL may carry as query parameters
+ * (PostgreSQL docs, "Connection Strings": every keyword is accepted in the
+ * query part, e.g. postgresql:///mydb?host=db.example.com&port=5433).
+ * Mapped onto the field each one fills; `dbname` is handled separately because
+ * libpq lets it disagree with the path.
+ */
+const POSTGRES_QUERY_PARAMETERS: Readonly<Record<string, "host" | "port" | "user" | "password">> = {
+  host: "host",
+  port: "port",
+  user: "user",
+  password: "password",
+};
+
+/**
+ * The postgres URL query string, split and decoded the way libpq splits it
+ * (fe-connect.c, `conninfo_uri_parse_params`): each pair on its first `=`,
+ * one percent-decode pass (a `+` is a literal plus, since libpq's
+ * `conninfo_uri_decode` only handles `%XX`), and a later occurrence of a
+ * keyword replaces an earlier one, because libpq stores each value as it
+ * walks the pairs. Malformed escapes are kept verbatim rather than rejecting
+ * the URL, the way the rest of this parser treats them.
+ */
+function postgresQueryParameter(url: URL): (name: string) => string | null {
+  const values = new Map<string, string>();
+  for (const pair of url.search.slice(1).split("&")) {
+    if (pair === "") continue;
+    const equals = pair.indexOf("=");
+    if (equals === -1) continue;
+    values.set(safeDecodeURIComponent(pair.slice(0, equals)), safeDecodeURIComponent(pair.slice(equals + 1)));
+  }
+  return (name: string) => values.get(name) ?? null;
+}
+
+/** An authority that is only a userinfo (`postgresql://@/db`): valid for libpq, rejected by the URL constructor. */
+const EMPTY_HOST_AUTHORITY = /^(postgres(?:ql)?:\/\/[^/?#]*@)(?=[/?])/;
+
+function parsePostgresURL(uri: string): ParsedConnection | null {
+  // `postgresql://@/db` and `postgresql://user@/db` carry only a userinfo and
+  // no host; libpq accepts them, the URL constructor does not. The empty host
+  // becomes `localhost` first, the same host the plain `postgresql:///db`
+  // form reads as, and a query `host=` still replaces it.
+  const normalized = uri.replace(EMPTY_HOST_AUTHORITY, "$1localhost");
+  const parsed = parseGenericURL(normalized, "postgres", "5432");
+  if (parsed === null) return null;
+  const url = new URL(normalized);
+  const queryValue = postgresQueryParameter(url);
+  for (const [name, field] of Object.entries(POSTGRES_QUERY_PARAMETERS)) {
+    const value = queryValue(name);
+    if (value !== null) {
+      parsed[field] = value;
+    }
+  }
+  const dbname = queryValue("dbname");
+  if (dbname !== null) {
+    parsed.database = dbname;
+  }
+  return parsed;
+}
+
 function parseGenericURL(uri: string, type: DatabaseType, defaultPort: string): ParsedConnection | null {
   try {
     const url = new URL(uri);
@@ -609,7 +669,10 @@ function parseGenericURL(uri: string, type: DatabaseType, defaultPort: string): 
       port: url.port || defaultPort,
       user: url.username ? decodeURIComponent(url.username) : undefined,
       password: url.password ? decodeURIComponent(url.password) : undefined,
-      database: url.pathname.slice(1) || undefined, // remove leading /
+      // The pathname keeps a space, non-ASCII letter or reserved character percent-encoded.
+      // Decode it the way the user, the password and the MongoDB database already are, and
+      // keep a broken escape as written. An empty path is no database.
+      database: url.pathname.length > 1 ? safeDecodeURIComponent(url.pathname.slice(1)) : undefined,
       ...readQueryTLS(url, type),
     };
   } catch {
@@ -692,8 +755,8 @@ const DATABEND_SIGN_IN_PARAMETERS = new Set([
  * password as the database or a parameter, and since an `@` past the address part can also be a path's or a
  * parameter's, and a password can hold an unencoded `@` before its `/`, every such `@` is refused, naming each
  * encoding; and BendSQL's token and key-pair sign-in have no field here. Unlike BendSQL, which decodes the password
- * only, the user is percent-decoded too, as every other scheme here does. With no `warehouse=`, the warehouse an older Databend Cloud host names
- * (`<tenant>--<warehouse>.gw...`) fills Warehouse.
+ * only, the user and the database path are percent-decoded too, as every other scheme here does. With no
+ * `warehouse=`, the warehouse an older Databend Cloud host names (`<tenant>--<warehouse>.gw...`) fills Warehouse.
  */
 function parseDatabendDSN(uri: string): ParsedConnection | null {
   if (uri.includes("#")) return databendRefusal("fragment");
@@ -742,7 +805,7 @@ function parseDatabendDSN(uri: string): ParsedConnection | null {
     port: url.port || (plain ? "80" : "443"),
     user: url.username ? safeDecodeURIComponent(url.username) : undefined,
     password: url.password ? safeDecodeURIComponent(url.password) : undefined,
-    database: url.pathname.slice(1) || undefined,
+    database: url.pathname.length > 1 ? safeDecodeURIComponent(url.pathname.slice(1)) : undefined,
     ...(warehouse ? { warehouse } : {}),
     ...tls,
     allowInsecureAuth: false,

@@ -275,7 +275,7 @@ export class ModbusProvider extends BaseDatabaseProvider {
     readMap(this.config);
     // AND A BARE DIAL, because the map alone made this method answer for a device that is not
     // there. MEASURED: against a closed port it returned successfully in 0 ms, and
-    // `src/app/api/db/test-connection/route.ts:146-160` reports a health failure after a
+    // `testConnection` (`src/lib/api/test-connection.ts`) reports a health failure after a
     // successful connect as a DEGRADED SUCCESS - so an address with no device at all answered
     // `success: true` and the dialog saved the connection. That sends a reader to fix their map
     // when the fault is the address.

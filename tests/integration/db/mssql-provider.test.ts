@@ -277,6 +277,7 @@ import {
   DatabaseError,
   ExecutionProfileError,
   PermissionDeniedError,
+  QueryCancelledError,
   QueryError,
 } from "@/lib/db/errors";
 import { createErrorResponse } from "@/lib/api/errors";
@@ -947,6 +948,30 @@ describe("MSSQLProvider", () => {
       expect(result.query).toContain("OFFSET 10 ROWS");
       expect(result.query).toContain("FETCH NEXT 50 ROWS ONLY");
       expect(result.wasLimited).toBe(true);
+    });
+
+    // A limit and an offset are held to the rule the shared limiter holds them to (`assertRowBounds`).
+    describe("a limit or an offset that is not a row bound", () => {
+      const values: Array<[string, unknown]> = [
+        ["a numeric string", "10"],
+        ["a fraction", 1.5],
+        ["a negative number", -1],
+        ["null", null],
+        ["an array", [10]],
+        ["the first integer past Number.MAX_SAFE_INTEGER", 2 ** 53],
+      ];
+
+      test.each(values)("refuses %s as the limit with a QueryError", (_name, limit) => {
+        const run = () => provider.prepareQuery("SELECT * FROM users", { limit: limit as number });
+        expect(run).toThrow(QueryError);
+        expect(run).toThrow("The row limit must be a non-negative integer");
+      });
+
+      test.each(values)("refuses %s as the offset with a QueryError", (_name, offset) => {
+        const run = () => provider.prepareQuery("SELECT * FROM users", { offset: offset as number });
+        expect(run).toThrow(QueryError);
+        expect(run).toThrow("The row offset must be a non-negative integer");
+      });
     });
 
     test("non-SELECT query is unchanged", () => {
@@ -1816,6 +1841,28 @@ describe("MSSQLProvider", () => {
 
       release?.();
       await pending;
+    });
+
+    test("a statement the user cancelled rejects as QueryCancelledError, so the route answers 499", async () => {
+      await provider.connect();
+
+      let reject: ((error: Error) => void) | undefined;
+      mockQueryFn = () =>
+        new Promise((_resolve, rejectQuery) => {
+          reject = rejectQuery;
+        });
+
+      const pending = provider.query("WAITFOR DELAY '00:00:30'", undefined, "qid-3");
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(await provider.cancelQuery("qid-3")).toBe(true);
+      // What mssql and tedious end a cancelled request with: RequestError('Canceled.', 'ECANCEL').
+      reject?.(Object.assign(new Error("Canceled."), { name: "RequestError", code: "ECANCEL" }));
+
+      const cancelledError = await pending.catch((error: unknown) => error);
+      expect(cancelledError).toBeInstanceOf(QueryCancelledError);
+      expect((cancelledError as Error).message).toBe("Query was cancelled");
+      expect(createErrorResponse(cancelledError, { route: "api/db/query" }).status).toBe(499);
     });
   });
 
@@ -5598,10 +5645,11 @@ class ShowplanSession {
     return new Promise<ReturnType<typeof toResult>>((_resolve, reject) => {
       request.onCancel(() => {
         this.events.push("cancelled");
-        // tedious ends a cancelled request by rejecting it. The wording is this fixture's
-        // own and nothing asserts it; what is asserted is that the await ended because
-        // `cancel()` was called, and that it ended before the rollback.
-        reject(new Error("Canceled."));
+        // tedious ends a cancelled request by rejecting it with RequestError('Canceled.',
+        // 'ECANCEL'), the same shape a user's stop produces. What is asserted is that the await
+        // ended because `cancel()` was called, that it ended before the rollback, and that the
+        // deadline's own budget refusal still names the budget rather than a user cancel.
+        reject(Object.assign(new Error("Canceled."), { name: "RequestError", code: "ECANCEL" }));
       });
     });
   }

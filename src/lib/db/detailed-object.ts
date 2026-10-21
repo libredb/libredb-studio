@@ -197,6 +197,18 @@ export function sampledMark(column: Pick<ColumnSchema, "provenance">): string {
 }
 
 /**
+ * The type text a person is shown for one column.
+ *
+ * `declaredType` is the engine's own declaration, modifier included. `type` stays
+ * the base name where a provider records the two apart, so a reader that compares
+ * types is unchanged. An engine that already puts the modifier in `type` leaves
+ * `declaredType` absent, and this answers `type`.
+ */
+export function displayedColumnType(column: Pick<ColumnSchema, "type" | "declaredType">): string {
+  return column.declaredType ?? column.type;
+}
+
+/**
  * The schema as the AI panels are handed it, which is `schemaContext` on both shells: its JSON,
  * with every `readRanges` left out (etcd spec 3.4, E13).
  *

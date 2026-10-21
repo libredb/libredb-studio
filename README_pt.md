@@ -38,7 +38,8 @@
   <a href="https://valkey.io/participants/#:~:text=LibreDB%20Studio%20connects%20to%20Valkey">Valkey</a>,
   <a href="https://clickhouse.com/docs/integrations/connectors/tools/gui#libredb-studio">ClickHouse Visual Interfaces</a>,
   <a href="https://clickhouse.com/docs/integrations/connectors/sql-clients/libredb-studio">ClickHouse SQL Clients</a>,
-  <a href="https://mariadb.com/docs/server/clients-and-utilities/graphical-and-enhanced-clients/libredb-studio">MariaDB</a>,
+  <a href="https://mariadb.com/docs/server/clients-and-utilities/graphical-and-enhanced-clients/libredb-studio">MariaDB Graphical Clients</a>,
+  <a href="https://ecohub.mariadb.org/database-management/libredb-studio">MariaDB Ecosystem Hub</a>,
   <a href="https://trino.io/ecosystem/client-application#libredb-studio">Trino</a>,
   <a href="https://docs.yugabyte.com/stable/integrations/tools/libredb-studio/">YugabyteDB</a>,
   <a href="https://www.tigerdata.com/docs/integrate/query-administration/libredb-studio">TimescaleDB</a>,
@@ -51,6 +52,7 @@
   <a href="https://aiven.io/docs/products/postgresql/howto/connect-libredb-studio">Aiven for PostgreSQL</a>,
   <a href="https://aiven.io/docs/products/mysql/howto/connect-libredb-studio">Aiven for MySQL</a>,
   <a href="https://docs.scylladb.com/stable/get-started/gui-clients/libredb-studio.html">ScyllaDB</a>,
+  <a href="https://docs.couchbase.com/server/current/third-party/integrations.html#standalone-query-and-admin-tools">Couchbase</a>,
   <a href="https://cloudberry.apache.org/docs/ecosystem/sql-clients/libredb-studio/">Apache Cloudberry</a>,
   <a href="https://doris.apache.org/docs/4.x/connection-integration/data-integration/libredb-studio/">Apache Doris</a>,
   <a href="https://cwiki.apache.org/confluence/display/KAFKA/Ecosystem#:~:text=LibreDB%20Studio">Apache Kafka</a>,
@@ -236,7 +238,7 @@ A interface principal de IA é um **painel de agente** ao lado do editor. Você 
 - **Gráficos de tendência**: métricas em tempo real (conexões, taxa de acerto de cache, buffer pool, deadlocks) com histórico em buffer circular e refresh automático configurável entre 5 e 60 segundos.
 - **Alertas por limiar**: indicadores de saúde com cores (saudável, aviso, crítico) para taxa de acerto de cache, uso de conexões, deadlocks e uso do buffer pool.
 - **Manutenção em um clique**: `VACUUM`, `ANALYZE`, `REINDEX`, `UPDATE STATISTICS`, `DBCC CHECKDB` e `ALTER INDEX REBUILD`, conforme o motor.
-- **Registro de auditoria**: histórico completo de cada consulta executada na organização.
+- **Registro de auditoria**: a aba Auditoria do administrador mostra os eventos de auditoria recentes do servidor, como inícios de sessão, recusas de permissão, ações de manutenção, edições de objetos e operações do agente e do MCP, cada um com o usuário que está por trás, e o histórico de consultas do próprio administrador que iniciou sessão. Ambos são exportados como CSV ou JSON, respeitando os filtros atuais. Sob a [governança](docs/GOVERNANCE.md#query-events), o Studio registra um evento de consulta para cada instrução que uma pessoa executa, e o plano de controle guarda esse registro de toda a organização.
 
 ## Instalação
 
@@ -265,12 +267,6 @@ npm i @libredb/studio
 ```
 
 O Studio também é publicado como pacote npm, então pode ser embutido diretamente na sua aplicação. Se o seu produto cria bancos de dados para os usuários, esse é o lugar onde o editor mais ajuda.
-
-## Onde traçamos a linha de cobrança
-
-O Studio é MIT porque precisa poder ir a qualquer lugar. O que é cobrado é o libredb-platform — e o que ele vende é alguém operando por você: hosting, multi-tenancy, faturamento e suporte. Não é um recurso bloqueado atrás de um paywall.
-
-**Nenhuma capacidade foi movida para o outro lado dessa linha só para fabricar motivo de upgrade.** Login único, RBAC, auditoria de consultas, diagramas ER, recursos de IA e todos os motores NoSQL estão na versão MIT.
 
 ## Testes e qualidade
 
