@@ -16,6 +16,7 @@ const REQUIRED_PATHS = [
   "extension/dist/webview/results.css",
   "extension/THIRD_PARTY_NOTICES.txt",
   "extension/LICENSE.txt",
+  "extension/media/icon.png",
   "extension/media/libredb.svg",
   "extension/media/engines/index.json",
 ];
@@ -54,10 +55,11 @@ describe("vsixViolations", () => {
     assert.deepEqual(vsixViolations(passing()), []);
   });
 
-  it("requires the package manifest, both bundles, the webview's script and stylesheet, the notices, the licence, the view container icon and the engine index", () => {
-    assert.equal(REQUIRED.length, 9);
+  it("requires the package manifest, both bundles, the webview's script and stylesheet, the notices, the licence, the Marketplace icon, the view container icon and the engine index", () => {
+    assert.equal(REQUIRED.length, 10);
     assert.ok(REQUIRED.includes("extension/dist/webview/results.js"));
     assert.ok(REQUIRED.includes("extension/dist/webview/results.css"));
+    assert.ok(REQUIRED.includes("extension/media/icon.png"));
     assert.ok(REQUIRED.includes("extension/media/libredb.svg"));
     assert.ok(REQUIRED.includes("extension/media/engines/index.json"));
   });
@@ -68,16 +70,21 @@ describe("vsixViolations", () => {
     assert.deepEqual(vsixViolations(passing(entries)), []);
   });
 
-  for (const path of ["extension/media/engines/index.json", "extension/media/libredb.svg"]) {
+  for (const path of [
+    "extension/media/engines/index.json",
+    "extension/media/icon.png",
+    "extension/media/libredb.svg",
+  ]) {
     it(`reports ${path} missing by name`, () => {
       const entries = passing().entries.filter((entry) => entry.path !== path);
       assert.equal(one(passing(entries)), `${path} is missing.`);
     });
   }
 
-  it("reports both media entries missing from a VSIX that holds no media", () => {
+  it("reports the three media entries missing from a VSIX that holds no media", () => {
     const entries = passing().entries.filter((entry) => !entry.path.startsWith("extension/media/"));
     assert.deepEqual(vsixViolations(passing(entries)), [
+      "extension/media/icon.png is missing.",
       "extension/media/libredb.svg is missing.",
       "extension/media/engines/index.json is missing.",
     ]);
@@ -134,6 +141,14 @@ describe("vsixViolations", () => {
     "extension/media/other.png",
   ]) {
     it(`refuses the entry ${path}, which is not on the allowlist`, () => {
+      const entries = [...passing().entries, { path, size: KIB }];
+      assert.equal(one(passing(entries)), `${path}: not on the VSIX allowlist.`);
+    });
+  }
+
+  // No changelog ships in 0.1.0: the repository has no changelog generator, and a changelog is a generated artifact.
+  for (const path of ["extension/changelog.md", "extension/CHANGELOG.md"]) {
+    it(`refuses a packed changelog, ${path}`, () => {
       const entries = [...passing().entries, { path, size: KIB }];
       assert.equal(one(passing(entries)), `${path}: not on the VSIX allowlist.`);
     });

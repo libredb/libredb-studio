@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S9 · 6
-- [Drivers and connections](#drivers-and-connections) — D1-D389, U17 · 284
+- [Drivers and connections](#drivers-and-connections) — D1-D390, U17 · 285
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U148 · 134
@@ -3968,6 +3968,17 @@ The extension's Results view renders a detail when one arrives, so its tests sho
 Found 2026-10-21 during the VS Code extension work (PR 13), and deferred because it changes the error body of the web's db routes.
 
 **Done when:** `mapDatabaseError` carries the driver's detail into `QueryError` where the driver gives one, a test per SQL engine pins it, and the extension's synthetic detail case is replaced by a recorded live one.
+
+### D390. A MongoDB run has no deadline, and the VS Code extension offers it no Cancel
+
+The MongoDB provider's `queryTimeout` bounds only its connect, the race between the client's connect and a deadline in `connect` of `src/lib/db/providers/document/mongodb/index.ts`.
+No `maxTimeMS` is set on the query path, so a MongoDB statement runs as long as the server lets it, in the db routes and in the VS Code extension's backend alike; only the agent's reads set one.
+Once a MongoDB statement is sent, the extension offers no Cancel either, because `supportsQueryCancel` is false for MongoDB.
+Measured 2026-10-21 by the VS Code extension's e2e leg (PR 14): a find with `$where: 'sleep(3000) || true'` held the run for 25 to 26 s, with no Cancel offered.
+
+Found 2026-10-21 during the VS Code extension work (PR 14), and deferred because it changes the MongoDB provider's query path for the web too.
+
+**Done when:** the provider passes the connection's `queryTimeout` as `maxTimeMS` on every query operation, a test per operation pins it, and the extension's MongoDB run ends with `TIMEOUT_ERROR` at that bound.
 
 ## Value interpolation
 

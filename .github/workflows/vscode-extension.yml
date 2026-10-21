@@ -1,7 +1,7 @@
 # The VS Code extension's gates (docs/TOOLCHAIN.md, "VS Code extension").
-# A reusable workflow: ci.yml calls it on every push and pull request, and the
-# extension's release workflow is to call the same file, so the two cannot
-# drift.
+# A reusable workflow: ci.yml calls it on every push and pull request, and
+# vscode-extension-release.yml calls the same file on a vscode-extension-* tag,
+# so the gates a release passes cannot drift from a pull request's.
 #
 # vscode-extension/ is its own npm package beside the Bun root. Its bundles and
 # tests resolve React, the drivers and the provider layer from the root's
@@ -89,11 +89,24 @@ jobs:
       - name: Package the VSIX and check it
         run: npm run package
 
+      - name: Install the packed VSIX into the stable build
+        run: npm run test:vsix
+
       - name: Upload the VSIX
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: vscode-extension-vsix
           path: vscode-extension/dist-vsix/*.vsix
+          if-no-files-found: error
+
+      # The VSIX leaves the source maps out; vsce's prepublish build wrote them
+      # beside the bundles it packed, so they are kept for symbolicating a
+      # released build's stack traces.
+      - name: Upload the packaged build's source maps
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vscode-extension-sourcemaps
+          path: vscode-extension/dist/*.js.map
           if-no-files-found: error
 
   # Hosted macOS and Windows runners cannot start the Linux database containers,

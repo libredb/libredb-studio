@@ -27,6 +27,8 @@ export interface ResultsCapture {
   readonly received: readonly unknown[];
   /** The view's description as the host last set it. */
   readonly description: string | undefined;
+  /** Whether the resolved view is visible now, as VS Code reports it; false before any resolve. */
+  readonly visible: boolean;
   /** Hands raw to the host's message listeners, as the webview's postMessage would. */
   send(raw: unknown): void;
 }
@@ -224,6 +226,9 @@ export function hostCapture(): HostCapture {
         received: results.received,
         get description() {
           return results.view?.description;
+        },
+        get visible() {
+          return results.view?.visible ?? false;
         },
         send(raw: unknown) {
           if (results.listeners.size === 0) {

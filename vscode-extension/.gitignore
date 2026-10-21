@@ -5,6 +5,7 @@ dist-vsix/
 .vscode-test/
 coverage/
 media/engines/
+media/icon.png
 LICENSE
 THIRD_PARTY_NOTICES.txt
 # The e2e workspace configuration opens this folder, whose settings.json is a fixture; the root ignores every .vscode/.

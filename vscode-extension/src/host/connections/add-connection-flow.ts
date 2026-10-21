@@ -85,7 +85,8 @@ export type FlowInput =
   | { readonly kind: "pick"; readonly id: string }
   | { readonly kind: "accept"; readonly value: string }
   | { readonly kind: "back" }
-  | { readonly kind: "moreOptions" }
+  /** value is what the box on screen holds, which More Options keeps as Enter would; a pick sends none. */
+  | { readonly kind: "moreOptions"; readonly value?: string }
   | { readonly kind: "parsed"; readonly answer: PastedConnection }
   | { readonly kind: "tested"; readonly outcome: TestOutcome }
   | { readonly kind: "dialog"; readonly choice: string | undefined };
@@ -183,6 +184,8 @@ export class AddConnectionFlow {
   private cautions: string[] = [];
   /** The linear step More Options opened Review from, which Review's Back shows again (builder's call 7). */
   private reviewBack: (() => FlowStep) | undefined;
+  /** The name typed at Name before More Options, which the next Name shows in place of the suggestion. */
+  private named: string | undefined;
 
   constructor(private readonly init: FlowInit) {
     this.shown = this.engineStep();
@@ -223,7 +226,7 @@ export class AddConnectionFlow {
         return this.show(this.back());
       case "moreOptions":
         this.expect(input, "pick", "input");
-        return this.show(this.moreOptions());
+        return this.show(this.moreOptions(input.value));
       case "parsed":
         this.expect(input, "parse");
         return this.show(this.read(input.answer));
@@ -326,17 +329,30 @@ export class AddConnectionFlow {
     }
   }
 
-  /** Review, with a Back to the linear step it was opened from; opened from Name, after a test, it has none. */
-  private moreOptions(): FlowStep {
+  /**
+   * Review, with a Back to the linear step it was opened from; opened from Name, after a test, it has none. The value the
+   * box holds is kept as Enter keeps it, and one Enter would refuse answers the same step with the sentence; the paste
+   * box's text is kept for Back, unread until Enter, and a name for the Name after the next test.
+   */
+  private moreOptions(value: string | undefined): FlowStep {
     const shown = this.shown as PickStep | InputStep;
     if (!shown.moreOptions) throw new Error("moreOptions does not answer a step without More Options");
+    if (value !== undefined && shown.kind === "pick") {
+      throw new Error("moreOptions carries a value only from an input step");
+    }
+    const refusal = value === undefined ? undefined : this.validate(value);
+    if (refusal !== undefined) return { ...(shown as InputStep), value: value as string, validationMessage: refusal };
     const { position } = this;
     if (position.at === "method") this.reviewBack = () => this.methodStep();
-    if (position.at === "field") this.reviewBack = () => this.fieldOrTest(position.index);
-    if (position.at === "paste") {
-      const { value } = shown as InputStep;
-      this.reviewBack = () => this.pasteStep(value, false);
+    if (position.at === "field") {
+      if (value !== undefined) this.draft.set(this.linear[position.index].name, value);
+      this.reviewBack = () => this.fieldOrTest(position.index);
     }
+    if (position.at === "paste") {
+      const text = value ?? (shown as InputStep).value;
+      this.reviewBack = () => this.pasteStep(text, false);
+    }
+    if (position.at === "name" && value !== undefined) this.named = value.trim();
     return this.reviewStep();
   }
 
@@ -633,7 +649,7 @@ export class AddConnectionFlow {
       totalSteps: total,
       prompt:
         "latency" in answer ? `Connected in ${answer.latency} ms. Name this connection.` : "Name this connection.",
-      value: this.suggestedName(),
+      value: this.named ?? this.suggestedName(),
       password: false,
       back: true,
       moreOptions: true,

@@ -382,6 +382,54 @@ describe("addConnection", () => {
     assert.equal(await running, undefined);
   });
 
+  it("keeps the value typed into a box when More Options opens Review, as Enter would", async () => {
+    const { deps } = setup();
+    const running = addConnection(deps);
+    await inputs.nextPick();
+    await tick();
+    inputs.choose("PostgreSQL");
+    await inputs.nextPick();
+    inputs.choose("Enter connection details");
+    for (const value of ["localhost", "5432", "app", TEST_PASSWORD]) {
+      await inputs.nextBox();
+      inputs.accept(value);
+    }
+    const database = await inputs.nextBox();
+    inputs.type("shop");
+    inputs.press(database.buttons[1]);
+    const review = await inputs.nextPick();
+    assert.equal(review.title, "Add PostgreSQL Connection: Review");
+    assert.deepEqual(
+      review.items.find((item) => item.label === "Database"),
+      { id: "field:database", label: "Database", description: "shop", detail: undefined },
+    );
+    inputs.back();
+    const back = await inputs.nextBox();
+    assert.deepEqual([back.title, back.value], ["Add PostgreSQL Connection: Database", "shop"]);
+    inputs.escape();
+    assert.equal(await running, undefined);
+  });
+
+  it("stays on the box with the check's sentence when More Options is pressed on a value Enter would refuse", async () => {
+    const { deps } = setup();
+    const running = addConnection(deps);
+    await inputs.nextPick();
+    await tick();
+    inputs.choose("PostgreSQL");
+    await inputs.nextPick();
+    inputs.choose("Enter connection details");
+    await inputs.nextBox();
+    inputs.accept("localhost");
+    const port = await inputs.nextBox();
+    inputs.type("54x2");
+    port.validationMessage = undefined;
+    inputs.press(port.buttons[1]);
+    await tick();
+    assert.deepEqual([inputs.current, port.validationMessage, inputs.shown.length], [port, PORT_REFUSAL, 4]);
+    inputs.escape();
+    assert.equal(await running, undefined);
+  });
+
   it("keeps the paste box busy while the child reads it, and shows its refusal on a new box", async () => {
     const { deps, client } = setup();
     const running = addConnection(deps);

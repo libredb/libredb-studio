@@ -35,7 +35,8 @@
       "playwright": false,
       "ignoreDependencies": [
         "get-nonce",
-        "@radix-ui/react-use-layout-effect"
+        "@radix-ui/react-use-layout-effect",
+        "sharp"
       ]
     }
   },

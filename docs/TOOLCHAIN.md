@@ -564,12 +564,21 @@ A callback whose behaviour the gate must hold keeps its body on its own line, as
   `activate` exports nothing, so a test reaches what the extension created through `test/e2e/tree-capture.ts`, which wraps `vscode.window.createTreeView` before the extension activates and keeps the Connections view it captured on `globalThis`.
   The editor cases read the same way through `test/e2e/host-capture.ts`, which wraps `vscode.window.createStatusBarItem`, `vscode.window.createOutputChannel` and `vscode.commands.executeCommand` before the extension activates and keeps every `setContext` call, the LibreDB log's lines and the connection status bar item on `globalThis`.
   The same file also wraps `vscode.window.registerWebviewViewProvider` for the Results view, so `test/e2e/results-view.test.ts` and `test/e2e/smoke/results-view.test.ts` read each resolve, every message the host posts, every message the real webview sends and the view's description, and hand the host a message as the webview would.
+  `test/e2e/first-run.test.ts` drives the first-run flow once per engine against PostgreSQL, SQL Server, MySQL and MongoDB in Docker: the empty view, Add Connection through the real quick inputs, New Query and Run, the tree down to a table's columns, Select Rows to the Results view, Load More and Cancel.
+  It does not repeat the cases that already pass in `test/e2e/editors.test.ts` and `test/e2e/results-view.test.ts`.
+  The coexistence subset, `LIBREDB_E2E_SUBSET=coexistence`, runs `test/e2e-coexistence/coexistence.test.ts` alone, with `ms-mssql.mssql` installed beside LibreDB.
+  `configurationsFor` in `.vscode-test.mjs` gives it one `vscode-<version>-coexistence` configuration per build, whose `--extensions-dir` is `COEXISTENCE_EXTENSIONS_DIR` (`.vscode-test/extensions-coexistence`): `@vscode/test-cli` installs every `installExtensions` entry into the shared `.vscode-test/extensions`, so mssql installed there would load into every other e2e host.
+  `scripts/coexistence-extensions.mjs` installs the pinned `COEXISTENCE_EXTENSIONS` into that directory from the Marketplace before `vscode-test` starts, and installs nothing outside the subset.
+  mssql declares an extension pack of four more extensions, so `COEXISTENCE_EXTENSIONS` pins each of them beside mssql in the same install call, and `listingViolations` fails the run when the directory then lists anything but that pinned set.
+  Because it downloads from the Marketplace, the subset runs in the daily workflow and by hand, never in the pull request job.
 - Smoke: the e2e leg with `LIBREDB_E2E_SUBSET=smoke`, on macOS and Windows, with no Xvfb and no database.
   The smoke subset runs `test/e2e/smoke/tree-root.test.ts`, which needs no Docker; the full leg also runs `test/e2e/connections-tree.test.ts`, which does.
 - Browser: `npm run test:browser` runs the results webview in Chromium with Playwright, after `npm run build`.
   `@playwright/test` is pinned to the root's version, because `npm run` finds only the package's own binaries, and the same version shares the root's Chromium.
   Its `playwright.config.mjs` starts no server: `test/browser/harness.ts` serves `dist/webview/` through `renderResultsHtml` with `page.route` and a fake `acquireVsCodeApi`, so the bundle runs under the view's real CSP.
   It sets `forbidOnly`, and it does not count toward coverage.
+
+Beside the legs, `npm run test:vsix` runs `scripts/vsix-install-check.mjs` after `npm run package`: it installs the packed VSIX with the stable build's CLI into a scratch extensions and user data directory and reads `--list-extensions --show-versions`, because the e2e leg runs `dist/` from the development path, which proves the files and not the package.
 
 The local e2e run, from the checkout's root after `npm run build` in `vscode-extension/`:
 
@@ -614,6 +623,7 @@ The build first bundles `scripts/engine-icons.tsx` into `out/scripts/` and runs 
 The script writes `media/engines/**`, a light and a dark logo per engine and `index.json` with each engine's label, from `DB_UI_CONFIG` with the root's React and `react-dom/server`, so `npm run build` needs the root's `bun install` first.
 It fails the build unless `DB_UI_CONFIG` and `SHIPPED_DATABASE_TYPES` hold the same set of types.
 `media/engines/` is a build artifact that `vscode-extension/.gitignore` ignores and every build writes again, while the activity bar icon `media/libredb.svg` is committed.
+The build also writes the 128 by 128 Marketplace icon `media/icon.png` from the brand mark `public/logo.svg` through `scripts/marketplace-icon.mjs`, and `vscode-extension/.gitignore` ignores it too.
 
 ### How the root tools cover the directory
 
@@ -625,19 +635,23 @@ It fails the build unless `DB_UI_CONFIG` and `SHIPPED_DATABASE_TYPES` hold the s
   Its entries list neither bundle entry nor `esbuild.mjs`, which knip finds without them (it reports them as redundant entry patterns, `src/webview/main.tsx` among them); an export of the fake `vscode` module that only the code under test reaches, through `tsconfig.test.json`'s alias, which knip does not read, carries `@public` (today `window`).
   Its `project` and test entries take `.tsx` as well as `.ts`.
   The workspace turns knip's Playwright plugin off and names `test/browser/**/*.spec.ts` as an entry instead: the plugin loads `playwright.config.mjs`, which requires the extension's `@playwright/test` after knip has loaded the root's, and Playwright refuses a second copy.
-  It ignores exactly `get-nonce` and `@radix-ui/react-use-layout-effect`, which the webview and its tests import from the root's install on purpose; declaring them in the extension would install a second copy beside React's.
+  It ignores exactly `get-nonce`, `@radix-ui/react-use-layout-effect` and `sharp`.
+  The webview and its tests import the first two from the root's install on purpose; declaring them in the extension would install a second copy beside React's.
+  `scripts/marketplace-icon.mjs` renders the Marketplace icon through the root's `sharp`, the copy Next.js installs as its optional dependency, so the build reads one brand source with one renderer.
   The required `Lint, Typecheck and Build` job installs the extension's packages with `npm ci --ignore-scripts` before knip: measured on a clone with only the root installed, knip otherwise reports `c8`, `mocha` and `vscode-test` as unlisted binaries and `c8` and `@vscode/test-cli` as unused dependencies.
   Its `actions/setup-node` step gives that install npm's cache, keyed on `vscode-extension/package-lock.json`, and runs the job's Node tools on Node 24.
   Biome, oxlint, ESLint and the root `tsc` pass there without them.
 
 ### The CI job
 
-`.github/workflows/vscode-extension.yml` is a reusable workflow that `ci.yml` calls as the `vscode-extension` job; the extension's release workflow is to call the same file, so the two cannot drift.
-Its Linux job runs the typecheck, the build with its metafile checks, the unit leg and its gate, the browser leg, both integration runtimes, the e2e leg and `npm run package`, and uploads the VSIX, failing when there is none; its smoke job runs on `macos-latest` and `windows-latest`.
+`.github/workflows/vscode-extension.yml` is a reusable workflow that `ci.yml` calls as the `vscode-extension` job.
+Its Linux job runs the typecheck, the build with its metafile checks, the unit leg and its gate, the browser leg, both integration runtimes, the e2e leg, `npm run package` and `npm run test:vsix`, and uploads the VSIX, failing when there is none; its smoke job runs on `macos-latest` and `windows-latest`.
+`.github/workflows/vscode-extension-release.yml` calls the same file as its `gates` job on a pushed `vscode-extension-*` tag, so a release passes the gates a pull request does; its release runbook is in `docs/DISTRIBUTION.md`, "VS Code extension (Marketplace)".
 The browser leg's Chromium comes from `bunx playwright install --with-deps chromium` at the repository root, because the job does not run in Playwright's image; the root's Playwright is the extension's version, so the extension's own Playwright finds that browser.
 The smoke and Insiders runs have no browser leg: the webview is the same bytes on every OS and VS Code build.
 It caches Bun's packages through `.github/actions/bun-install`, npm's through `actions/setup-node` keyed on `vscode-extension/package-lock.json`, and the VS Code builds through `actions/cache` keyed on `vscode-extension/test/vscode-versions.json`.
 The VS Code cache holds `.vscode-test/vscode-*` only: the e2e leg's profile in `.vscode-test/user-data` and `.vscode-test/extensions` stays out of it, so no run starts from a profile an earlier run left, and a fork's pull request restores none.
 `.github/workflows/vscode-extension-insiders.yml` runs the build, the `vscode` integration runtime and the e2e leg against VS Code Insiders daily and on demand, so an Electron or Node bump shows up before stable ships it; `test/vscode-versions.json` is bumped by hand.
+Its `coexistence` job runs the coexistence subset on the pinned builds on the same schedule.
 Dependabot watches `vscode-extension/` through its own `npm` entry, with `@types/vscode` held at the `engines.vscode` floor.
 The job is not a required check until the owner adds it to `main`'s branch protection.

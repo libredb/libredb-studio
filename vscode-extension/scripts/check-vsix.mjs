@@ -18,6 +18,7 @@ export const REQUIRED = [
   "extension/dist/webview/results.css",
   "extension/THIRD_PARTY_NOTICES.txt",
   /^extension\/LICENSE(\.txt)?$/,
+  "extension/media/icon.png",
   "extension/media/libredb.svg",
   "extension/media/engines/index.json",
 ];

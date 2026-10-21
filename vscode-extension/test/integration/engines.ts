@@ -14,6 +14,8 @@ export interface EngineFixture {
   readonly tableContainer: readonly string[];
   /** What objects/list names the table. */
   readonly tableName: string;
+  /** A statement that runs for seconds against the fixture's connection: Cancel's subject. */
+  readonly slowStatement: string;
 }
 
 const CREATED_AT = new Date(0).toISOString();
@@ -46,6 +48,7 @@ const postgres: EngineFixture = {
   selectFour: "select n from it_four order by n",
   tableContainer: ["public"],
   tableName: "it_four",
+  slowStatement: "select pg_sleep(30)",
 };
 
 const mssql: EngineFixture = {
@@ -64,6 +67,7 @@ const mssql: EngineFixture = {
   selectFour: "select n from dbo.it_four order by n",
   tableContainer: ["master", "dbo"],
   tableName: "it_four",
+  slowStatement: "waitfor delay '00:00:30'",
 };
 
 // The compose file's MYSQL_DATABASE is mysql, the system schema, so the table lives in a database of its own.
@@ -85,6 +89,9 @@ const mysql: EngineFixture = {
   selectFour: "select n from libredb_it.it_four order by n",
   tableContainer: ["libredb_it"],
   tableName: "it_four",
+  // A lone SLEEP that KILL QUERY interrupts returns 1 with no error, so the run would succeed; a SLEEP inside a WHERE
+  // makes the interrupted query fail with "Query execution was interrupted", which the provider reads as a cancel.
+  slowStatement: "select n from libredb_it.it_four where sleep(10) = 0",
 };
 
 // The JSON command format of docs/providers/mongodb.md section 3.1.
@@ -113,6 +120,12 @@ const mongodb: EngineFixture = {
   }),
   tableContainer: ["libredb_it"],
   tableName: "it_four",
+  // The slow command test/e2e/editors.test.ts runs on MongoDB: $where sleeps 3 s per document it reads.
+  slowStatement: JSON.stringify({
+    collection: "it_four",
+    operation: "find",
+    filter: { $where: "sleep(3000) || true" },
+  }),
 };
 
 export const ENGINES: readonly EngineFixture[] = [postgres, mssql, mysql, mongodb];

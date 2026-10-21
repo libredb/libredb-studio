@@ -1309,6 +1309,55 @@ bash scripts/build-standalone-payload.sh dist --smoke
 `GET /api/db/health` to return 200. Run the result via the npx launcher:
 `npx @libredb/studio --archive dist/libredb-studio-standalone-<version>-<os>-<arch>.tar.gz`.
 
+## VS Code extension (Marketplace)
+
+LibreDB Studio for VS Code lives in [`vscode-extension/`](../vscode-extension), an npm package of its own with a version line of its own, and nothing of it is published yet.
+This section is its release runbook.
+Its build, tests and CI job are in [docs/TOOLCHAIN.md, "VS Code extension"](TOOLCHAIN.md#vs-code-extension-vscode-extension).
+
+### The version line
+
+The extension's version is the `version` of [`vscode-extension/package.json`](../vscode-extension/package.json), independent of the product's bare semver.
+The Marketplace takes `major.minor.patch` only, with a pre-release as a flag rather than a suffix, and recommends an odd minor for pre-releases.
+So every 0.1.x is a pre-release, 0.1.0 included, and the first release is 0.2.0.
+`vscode-extension/test/unit/manifest.test.ts` holds the version to the odd-minor 0.x line, so the release that leaves it changes that case in the same PR.
+
+### Cutting a version
+
+1. The version step is a PR to `main` that runs `npm version <version> --no-git-tag-version` in `vscode-extension/`, which writes `package.json` and `package-lock.json` together; `vscode-extension/test/unit/manifest.test.ts` fails when the two drift.
+2. The release notes are that PR's body.
+   No `CHANGELOG.md` ships: the repository has no changelog generator, and `vscode-extension/scripts/check-vsix.mjs` refuses a packed changelog.
+3. Once the PR has merged, the owner tags `main`'s merge commit `vscode-extension-<version>` and pushes the tag.
+   The namespace is the extension's own, like the chart's `libredb-studio-<chart version>`, so product tags stay bare semver and `release-artifacts.yml` never sees it.
+
+### What the release workflow does today
+
+[`vscode-extension-release.yml`](../.github/workflows/vscode-extension-release.yml) runs on a pushed `vscode-extension-*` tag.
+Its `verify` job runs `vscode-extension/scripts/release-tag.mjs`, which refuses a tag that is not `vscode-extension-` plus the manifest's `version`, and refuses a tag whose commit is not on `main`.
+Its `gates` job then calls [`vscode-extension.yml`](../.github/workflows/vscode-extension.yml), the same reusable workflow every pull request runs, smoke matrix included, which uploads the tested VSIX as the `vscode-extension-vsix` workflow artifact and the packaged build's `dist/*.js.map` as `vscode-extension-sourcemaps`.
+Nothing is published: the workflow has no publish job and no environment, and `tests/unit/vscode-extension-workflow.test.ts` holds that until the publishing PR changes it.
+No GitHub Release is created either.
+`npm-publish.yml`, `docker-build-push.yml` and `aws-ami-build.yml` run on every `release: published` and skip only the chart's `libredb-studio-` prefix, so a GitHub Release for the extension would start a product publish and, while the `aws-marketplace` channel is live, an AMI build from the root `package.json` version.
+`operator-release.yml` runs on it too, but already skips a tag that is not an app semver.
+
+### The owner's decisions before the first publish
+
+None of these is taken here; each is the owner's, and the publishing PR records the answer.
+
+- The Marketplace publisher id, which cannot change after the first publish (`libredb` in the manifest is a placeholder), the Open VSX namespace, and who owns each account.
+- The Marketplace authentication, before global Azure DevOps PATs retire on 2026-12-01: trusted publishing (`vsce publish --oidc` with `id-token: write`) or Entra ID (`--azure-credential`).
+- The publish job: `vsce publish --pre-release --packagePath <file>` of the VSIX the gates tested, from a GitHub environment that requires a reviewer, and who that reviewer is.
+- When the `VS Code Extension` job and its macOS and Windows smoke matrix become required checks.
+- The version line and the tag namespace above, and the matching line in `CLAUDE.md`'s "Tag namespace" paragraph.
+- Whether the extension ever gets GitHub Releases; if it does, `npm-publish.yml`, `docker-build-push.yml` and `aws-ami-build.yml` must first learn to skip `vscode-extension-` tags.
+- When to publish to Open VSX (`ovsx publish --pre-release`) for Cursor, Windsurf and VSCodium, after their extension host runtimes are measured.
+
+### After the first publish
+
+The extension has no row in [`distribution/channels.yaml`](../distribution/channels.yaml) until it is published.
+The publishing PR adds a `vscode-marketplace` row with `kind: marketplace` and `runtime: channel_supplied`, regenerates `docs/CHANNELS.md` with `bun run distribution:matrix` and the login page's showcase with `bun run channels:showcase`, and adds the matching lines here.
+`evaluateChannel` in `scripts/distribution-check.mjs` compares a live row with the root `package.json` version, which is not the extension's, so the row goes live only with a pin read from the listing against `vscode-extension/package.json`, and its test.
+
 ## Maintainer notes
 
 Release publishing is driven by two workflows, both triggered on `release: published` (plus

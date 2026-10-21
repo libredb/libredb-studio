@@ -38,27 +38,42 @@ const EXPECTED_TIMEOUTS: Record<string, Record<string, number>> = {
   },
   "update-sponsors.yml": { "update-sponsors": 5 },
   "vscode-extension.yml": { "vscode-extension": 35, "vscode-extension-smoke": 25 },
-  "vscode-extension-insiders.yml": { insiders: 30 },
+  "vscode-extension-insiders.yml": { insiders: 30, coexistence: 20 },
+  // Its gates job calls vscode-extension.yml, whose own jobs carry their timeouts.
+  "vscode-extension-release.yml": { verify: 5 },
 };
 
 interface WorkflowJob {
   "timeout-minutes"?: unknown;
+  uses?: string;
 }
 
 interface Workflow {
   jobs?: Record<string, WorkflowJob>;
 }
 
-function readTimeouts(file: string): Record<string, unknown> {
+function readJobs(file: string): [string, WorkflowJob][] {
   const workflow = parseYaml(readFileSync(join(WORKFLOWS, file), "utf8")) as Workflow;
+  return Object.entries(workflow.jobs ?? {});
+}
+
+// A job that calls a reusable workflow takes no timeout-minutes: GitHub refuses the key there.
+function readTimeouts(file: string): Record<string, unknown> {
   return Object.fromEntries(
-    Object.entries(workflow.jobs ?? {}).map(([job, definition]) => [job, definition["timeout-minutes"]]),
+    readJobs(file)
+      .filter(([, definition]) => definition.uses === undefined)
+      .map(([job, definition]) => [job, definition["timeout-minutes"]]),
   );
 }
 
 describe("workflow job timeouts", () => {
   test.each(Object.entries(EXPECTED_TIMEOUTS))("%s has a deliberate timeout for every job", (file, expected) => {
     expect(readTimeouts(file)).toStrictEqual(expected);
+  });
+
+  test.each(Object.keys(EXPECTED_TIMEOUTS))("%s gives no reusable workflow call a timeout", (file) => {
+    const calls = readJobs(file).filter(([, definition]) => definition.uses !== undefined);
+    for (const [, definition] of calls) expect(definition["timeout-minutes"]).toBeUndefined();
   });
 
   test("uses limits sized for different kinds of work", () => {

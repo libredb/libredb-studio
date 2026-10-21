@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { CONNECTION_FORM } from "@/lib/db/connection-form";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
+import { ICON_OUTPUT } from "../../scripts/marketplace-icon.mjs";
+import { ENABLED_PROVIDERS } from "../../src/host/channel";
 import { CONNECTIONS_VIEW, RESULTS_CONTAINER, RESULTS_VIEW, VIEW_CONTAINER } from "../../src/host/names";
 import { FLOOR_NODE, STABLE_RUNTIME } from "../vscode-floor";
 
@@ -94,6 +97,18 @@ describe("the manifest", () => {
     );
   });
 
+  it("keeps the lockfile on the manifest's version, as npm version writes both", () => {
+    const lock = read("package-lock.json");
+    assert.equal(lock.version, manifest.version);
+    assert.equal(lock.packages[""].version, manifest.version);
+  });
+
+  it("is on the pre-release line: 0.1.x, an odd minor below the first release 0.2.0", () => {
+    const [major, minor] = triple(manifest.version);
+    assert.equal(major, 0);
+    assert.equal(minor % 2, 1);
+  });
+
   it("pins vscode-jsonrpc exactly, as the bundles' one runtime package", () => {
     assert.deepEqual(manifest.dependencies, { "vscode-jsonrpc": "9.0.3" });
   });
@@ -133,6 +148,23 @@ describe("the manifest", () => {
       { view: "libredb.connections", contents: "No connections yet.\n[Add Connection](command:libredb.addConnection)" },
     ]);
     assert.ok(existsSync(join(root, "media", "libredb.svg")));
+  });
+
+  it("describes itself on the Marketplace card by the four engines it ships, in category Other", () => {
+    const labels = ENABLED_PROVIDERS.map((type) => CONNECTION_FORM[type].label);
+    assert.deepEqual(labels, ["PostgreSQL", "SQL Server", "MySQL", "MongoDB"]);
+    assert.equal(
+      manifest.description,
+      "Browse and query PostgreSQL, SQL Server, MySQL and MongoDB databases with LibreDB Studio.",
+    );
+    assert.deepEqual(manifest.categories, ["Other"]);
+    assert.deepEqual(manifest.keywords, [...labels, "SQL"]);
+  });
+
+  it("names the 128x128 Marketplace icon the build writes, and lets it into the VSIX", () => {
+    assert.equal(manifest.icon, ICON_OUTPUT);
+    const ignore = readFileSync(join(root, ".vscodeignore"), "utf8").split("\n");
+    assert.ok(ignore.includes(`!${ICON_OUTPUT}`));
   });
 
   it("keeps no webview context while it is hidden: no file under src/ names retainContextWhenHidden (criterion 1)", () => {

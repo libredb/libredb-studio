@@ -191,7 +191,13 @@ class Session {
       if (refusal === undefined) this.settle({ kind: "accept", value: box.value });
       else box.validationMessage = refusal;
     });
-    this.watch(box);
+    // More Options keeps the value as Enter does, and a value the check refuses stays on the box the same way.
+    this.watch(box, () => {
+      const refusal = this.flow.validate(box.value);
+      if (refusal === undefined) return { kind: "moreOptions", value: box.value };
+      box.validationMessage = refusal;
+      return undefined;
+    });
     this.present(box);
     return await this.wait();
   }
@@ -270,19 +276,19 @@ class Session {
       const [item] = pick.selectedItems;
       if (pick === this.current && item !== undefined) this.settle({ kind: "pick", id: item.id });
     });
-    this.watch(pick);
+    this.watch(pick, () => ({ kind: "moreOptions" }));
     return pick;
   }
 
-  /** Escape ends the flow; Back and More Options answer the step. */
-  private watch(input: Shown): void {
+  /** Escape ends the flow; Back answers the step, and More Options with what more answers, unless that is undefined. */
+  private watch(input: Shown, more: () => FlowInput | undefined): void {
     input.onDidHide(() => {
       if (input === this.current) this.end();
     });
     input.onDidTriggerButton((button) => {
-      if (input === this.current) {
-        this.settle(button === vscode.QuickInputButtons.Back ? { kind: "back" } : { kind: "moreOptions" });
-      }
+      if (input !== this.current) return;
+      const answer = button === vscode.QuickInputButtons.Back ? { kind: "back" as const } : more();
+      if (answer !== undefined) this.settle(answer);
     });
   }
 

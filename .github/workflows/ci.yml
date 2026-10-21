@@ -321,8 +321,8 @@ jobs:
   # The VS Code extension's gates: typecheck, build, the unit leg with its own
   # 100% line coverage gate, both integration runtimes, the e2e leg, the VSIX,
   # and a macOS and Windows smoke subset. The steps live in the reusable
-  # workflow, which the extension's release workflow is to call too, so the
-  # gates cannot drift.
+  # workflow, which vscode-extension-release.yml calls too on a
+  # vscode-extension-* tag, so the gates cannot drift.
   # Not a required check until the owner adds it to main's branch protection.
   vscode-extension:
     name: VS Code Extension

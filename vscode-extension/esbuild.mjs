@@ -1,4 +1,4 @@
-// The extension's single build entry (part 5, "Builds"): the engine logos, the LICENSE copy, the host, child and webview bundles,
+// The extension's single build entry (part 5, "Builds"): the engine logos, the Marketplace icon, the LICENSE copy, the host, child and webview bundles,
 // their metafile checks, the webview stylesheet through the Tailwind CLI, and THIRD_PARTY_NOTICES.txt. Production is the default; --watch builds unminified.
 // --e2e-tests bundles the e2e leg's test files into out/ and builds nothing else: the leg runs against the dist/ that ships.
 
@@ -16,6 +16,7 @@ import {
   webviewOutputViolations,
   webviewViolations,
 } from "./scripts/bundle-checks.mjs";
+import { ICON_OUTPUT, ICON_SOURCE, writeMarketplaceIcon } from "./scripts/marketplace-icon.mjs";
 import { renderNotices } from "./scripts/notices.mjs";
 import {
   CSS_INPUT,
@@ -130,10 +131,12 @@ async function writeEngineIcons() {
 }
 
 if (e2eTests) {
-  for (const leg of ["e2e", "e2e-workspace"]) rmSync(join(root, "out", "test", leg), { recursive: true, force: true });
+  for (const leg of ["e2e", "e2e-workspace", "e2e-coexistence"]) {
+    rmSync(join(root, "out", "test", leg), { recursive: true, force: true });
+  }
   await esbuild.build({
     absWorkingDir: root,
-    entryPoints: ["test/e2e/**/*.test.ts", "test/e2e-workspace/**/*.test.ts"],
+    entryPoints: ["test/e2e/**/*.test.ts", "test/e2e-workspace/**/*.test.ts", "test/e2e-coexistence/**/*.test.ts"],
     outbase: ".",
     outdir: "out",
     bundle: true,
@@ -146,6 +149,7 @@ if (e2eTests) {
   });
 } else {
   await writeEngineIcons();
+  await writeMarketplaceIcon(join(root, ICON_SOURCE), join(root, ICON_OUTPUT));
   copyFileSync(join(root, "..", "LICENSE"), join(root, "LICENSE"));
   if (watch) {
     for (const bundle of bundles) {

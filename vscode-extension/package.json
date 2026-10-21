@@ -2,6 +2,7 @@
   "name": "libredb-studio",
   "publisher": "libredb",
   "displayName": "LibreDB Studio",
+  "description": "Browse and query PostgreSQL, SQL Server, MySQL and MongoDB databases with LibreDB Studio.",
   "version": "0.1.0",
   "private": true,
   "license": "MIT",
@@ -16,6 +17,17 @@
   "main": "./dist/extension.js",
   "extensionDependencies": [
     "vscode.sql"
+  ],
+  "icon": "media/icon.png",
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "PostgreSQL",
+    "SQL Server",
+    "MySQL",
+    "MongoDB",
+    "SQL"
   ],
   "capabilities": {
     "untrustedWorkspaces": {
@@ -285,8 +297,9 @@
     "test:unit": "c8 mocha",
     "coverage:check": "node ../scripts/check-coverage.mjs coverage/lcov.info",
     "test:integration": "mocha --config test/integration/.mocharc.json --require test/setup/register.cjs",
-    "test:e2e": "node esbuild.mjs --e2e-tests && vscode-test",
+    "test:e2e": "node esbuild.mjs --e2e-tests && node scripts/coexistence-extensions.mjs && vscode-test",
     "test:browser": "playwright test -c playwright.config.mjs",
+    "test:vsix": "node scripts/vsix-install-check.mjs",
     "package": "node scripts/package.mjs",
     "vscode:prepublish": "npm run build"
   },
@@ -309,7 +322,7 @@
     "yaml": "2.9.1",
     "yauzl": "3.4.0"
   },
-  "//overrides": "@vscode/test-cli 0.0.15, the latest release, asks for mocha ^11.7.6, and both mocha releases in that range depend on serialize-javascript ^6.0.2 and diff ^7.0.0, which carry GHSA-5c6j-r48x-rmvq (remote code execution through RegExp.flags and Date.prototype.toISOString(), fixed in serialize-javascript 7.0.3), GHSA-qj8w-gfj5-8c6v (CPU exhaustion through crafted array-like objects, fixed in 7.0.5) and GHSA-73rr-hh4g-fpgx (a denial of service in diff's parsePatch and applyPatch, fixed in 8.0.3), with no fix inside either range. mocha 12.0.3, the direct pin, takes serialize-javascript ^7.1.1 and diff ^9.0.0, and this entry hands @vscode/test-cli that same mocha through the $mocha reference, so one copy runs the unit, integration and e2e legs and follows the pin. mocha 12 is outside test-cli's range, so it was verified where test-cli drives Mocha, inside the extension host: the e2e leg passes, full and smoke, on both builds of test/vscode-versions.json. test-cli's runner needs only new Mocha(), addFile() and run(), and its JSON stream reporter Mocha.Runner.constants, all of which mocha 12 keeps. None of these packages reaches the VSIX: .vscodeignore lets in only dist/extension.js, dist/backend.js, dist/webview/results.js, dist/webview/results.css, media/libredb.svg, media/engines/** and the package's own text files. Remove the entry once a @vscode/test-cli release asks for mocha 12: microsoft/vscode-test-cli#118 made that change on 2026-08-31 and is not released yet.",
+  "//overrides": "@vscode/test-cli 0.0.15, the latest release, asks for mocha ^11.7.6, and both mocha releases in that range depend on serialize-javascript ^6.0.2 and diff ^7.0.0, which carry GHSA-5c6j-r48x-rmvq (remote code execution through RegExp.flags and Date.prototype.toISOString(), fixed in serialize-javascript 7.0.3), GHSA-qj8w-gfj5-8c6v (CPU exhaustion through crafted array-like objects, fixed in 7.0.5) and GHSA-73rr-hh4g-fpgx (a denial of service in diff's parsePatch and applyPatch, fixed in 8.0.3), with no fix inside either range. mocha 12.0.3, the direct pin, takes serialize-javascript ^7.1.1 and diff ^9.0.0, and this entry hands @vscode/test-cli that same mocha through the $mocha reference, so one copy runs the unit, integration and e2e legs and follows the pin. mocha 12 is outside test-cli's range, so it was verified where test-cli drives Mocha, inside the extension host: the e2e leg passes, full and smoke, on both builds of test/vscode-versions.json. test-cli's runner needs only new Mocha(), addFile() and run(), and its JSON stream reporter Mocha.Runner.constants, all of which mocha 12 keeps. None of these packages reaches the VSIX: .vscodeignore lets in only dist/extension.js, dist/backend.js, dist/webview/results.js, dist/webview/results.css, media/icon.png, media/libredb.svg, media/engines/** and the package's own text files. Remove the entry once a @vscode/test-cli release asks for mocha 12: microsoft/vscode-test-cli#118 made that change on 2026-08-31 and is not released yet.",
   "overrides": {
     "@vscode/test-cli": {
       "mocha": "$mocha"

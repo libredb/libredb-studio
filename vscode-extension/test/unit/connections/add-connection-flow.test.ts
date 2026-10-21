@@ -622,6 +622,48 @@ describe("AddConnectionFlow", () => {
       assert.deepEqual([box.value, box.validationMessage, box.moreOptions], ["nonsense", undefined, true]);
     });
 
+    it("keeps the value typed into a field's box when More Options opens Review, as Enter would", () => {
+      const flow = flowOf();
+      walk(flow, [pick("postgres"), pick("details"), ...["localhost", "5432", "app", TEST_PASSWORD].map(accept)]);
+      const review = flow.advance({ kind: "moreOptions", value: "shop" });
+      assert.deepEqual(rows(review)[6], ["field:database", "Database", "shop"]);
+      const box = as(flow.advance(BACK), "input");
+      assert.deepEqual([suffix(box.title), box.value], ["Database", "shop"]);
+      assert.equal(as(flow.advance(accept("shop")), "test").connection.database, "shop");
+    });
+
+    it("keeps no value Enter would refuse: the box stays, with the check's sentence", () => {
+      const flow = flowOf();
+      walk(flow, [pick("postgres"), pick("details"), accept("localhost")]);
+      const port = as(flow.advance({ kind: "moreOptions", value: "54x2" }), "input");
+      assert.deepEqual([suffix(port.title), port.value, port.validationMessage], ["Port", "54x2", PORT_REFUSAL]);
+      const review = flow.advance({ kind: "moreOptions", value: "6543" });
+      assert.deepEqual(rows(review)[3], ["field:port", "Port", "6543"]);
+    });
+
+    it("keeps the text typed into the paste box for Review's Back, unread until Enter", () => {
+      const flow = flowOf();
+      walk(flow, [pick("postgres"), pick("paste")]);
+      assert.equal(flow.advance({ kind: "moreOptions", value: "postgres://db.example/shop" }).kind, "pick");
+      const box = as(flow.advance(BACK), "input");
+      assert.deepEqual([suffix(box.title), box.value], ["Connection string", "postgres://db.example/shop"]);
+    });
+
+    it("keeps the name typed at Name for the Name after the next test, and refuses a taken one", () => {
+      const flow = flowOf(["Orders"]);
+      walk(flow, [
+        pick("postgres"),
+        pick("details"),
+        ...["localhost", "5432", "app", TEST_PASSWORD, "shop"].map(accept),
+        OK,
+      ]);
+      const taken = as(flow.advance({ kind: "moreOptions", value: "orders" }), "input");
+      assert.equal(taken.validationMessage, nameTaken("orders"));
+      assert.equal(flow.advance({ kind: "moreOptions", value: "Shop on staging" }).kind, "pick");
+      walk(flow, [pick("test")]);
+      assert.equal(as(flow.advance(OK), "input").value, "Shop on staging");
+    });
+
     it("lists an advanced field as optional and edits it in its own box (SQL Server's Instance name)", () => {
       const flow = flowOf();
       walk(flow, [pick("mssql"), pick("details"), MORE]);
@@ -1031,6 +1073,11 @@ describe("AddConnectionFlow", () => {
       assert.throws(() => flowOf().advance(pick("oracle")), { message: '"oracle" is not an item of this step' });
       assert.throws(() => flowOf().advance(MORE), {
         message: "moreOptions does not answer a step without More Options",
+      });
+      const method = flowOf();
+      method.advance(pick("postgres"));
+      assert.throws(() => method.advance({ kind: "moreOptions", value: "x" }), {
+        message: "moreOptions carries a value only from an input step",
       });
       const flow = flowOf();
       flow.advance(pick("postgres"));

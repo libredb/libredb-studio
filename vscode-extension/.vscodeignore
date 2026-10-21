@@ -8,5 +8,6 @@
 !dist/backend.js
 !dist/webview/results.js
 !dist/webview/results.css
+!media/icon.png
 !media/libredb.svg
 !media/engines/**

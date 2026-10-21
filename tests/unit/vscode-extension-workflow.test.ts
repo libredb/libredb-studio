@@ -17,15 +17,28 @@ interface Step {
   run?: string;
   "working-directory"?: string;
   with?: Record<string, string | number | boolean>;
+  env?: Record<string, string>;
+}
+interface Job {
+  steps?: Step[];
+  needs?: string | string[];
+  uses?: string;
+  permissions?: unknown;
+  environment?: unknown;
+  "timeout-minutes"?: number;
 }
 interface Workflow {
-  jobs: Record<string, { steps?: Step[] }>;
+  on?: Record<string, unknown>;
+  permissions?: unknown;
+  jobs: Record<string, Job>;
 }
 
 const WORKFLOWS = join(import.meta.dir, "../../.github/workflows");
 const read = (file: string) => parseYaml(readFileSync(join(WORKFLOWS, file), "utf8")) as Workflow;
 const steps = (workflow: Workflow, job: string) => workflow.jobs[job]?.steps ?? [];
 const extension = read("vscode-extension.yml");
+const daily = read("vscode-extension-insiders.yml");
+const RELEASE_FILE = "vscode-extension-release.yml";
 
 describe("vscode-extension.yml", () => {
   for (const job of ["vscode-extension", "vscode-extension-smoke"]) {
@@ -35,11 +48,131 @@ describe("vscode-extension.yml", () => {
     });
   }
 
-  test("the VSIX upload fails the job when packaging wrote no VSIX", () => {
+  test("the VSIX and source map uploads fail the job when packaging wrote no file", () => {
     const uploads = steps(extension, "vscode-extension").filter((step) =>
       step.uses?.startsWith("actions/upload-artifact@"),
     );
-    expect(uploads.map((step) => step.with?.["if-no-files-found"])).toEqual(["error"]);
+    expect(uploads.map((step) => step.with?.["if-no-files-found"])).toEqual(["error", "error"]);
+  });
+
+  test("keeps the packaged build's source maps beside the VSIX, so a released build can be symbolicated", () => {
+    const job = steps(extension, "vscode-extension");
+    const pack = job.findIndex((step) => step.run === "npm run package");
+    const maps = job.findIndex(
+      (step) => step.uses?.startsWith("actions/upload-artifact@") && step.with?.name === "vscode-extension-sourcemaps",
+    );
+    expect(maps).toBeGreaterThan(pack);
+    expect(job[maps]?.with?.path).toBe("vscode-extension/dist/*.js.map");
+  });
+
+  test("installs the packed VSIX into a real VS Code after packaging it and before the upload", () => {
+    const job = steps(extension, "vscode-extension");
+    const pack = job.findIndex((step) => step.run === "npm run package");
+    const install = job.findIndex((step) => step.run === "npm run test:vsix");
+    const upload = job.findIndex((step) => step.uses?.startsWith("actions/upload-artifact@"));
+    expect(pack).toBeGreaterThan(-1);
+    expect(install).toBeGreaterThan(pack);
+    expect(upload).toBeGreaterThan(install);
+  });
+});
+
+describe("the coexistence leg", () => {
+  // It downloads ms-mssql.mssql from the Marketplace, so it stays out of the pull request job (PR 14 decision 3).
+  const subsetOf = (step: Step) => step.env?.LIBREDB_E2E_SUBSET;
+
+  test("never runs in the pull request job", () => {
+    for (const job of Object.keys(extension.jobs)) {
+      const subsets = steps(extension, job).map(subsetOf);
+      expect(subsets).not.toContain("coexistence");
+    }
+  });
+
+  test("runs daily and on manual dispatch, on the pinned builds, in a job of its own", () => {
+    expect(Object.keys(daily.on ?? {}).sort()).toEqual(["schedule", "workflow_dispatch"]);
+    const job = steps(daily, "coexistence");
+    const leg = job.filter((step) => subsetOf(step) === "coexistence");
+    expect(leg.map((step) => step.run)).toEqual(["xvfb-run -a npm run test:e2e"]);
+    expect(leg[0]?.env?.LIBREDB_VSCODE_VERSION).toBeUndefined();
+    const caches = job.filter((step) => step.uses?.startsWith("actions/cache@"));
+    expect(caches.map((step) => step.with?.path)).toEqual(["vscode-extension/.vscode-test/vscode-*"]);
+  });
+});
+
+describe("vscode-extension-release.yml", () => {
+  const release = () => read(RELEASE_FILE);
+  const allSteps = (workflow: Workflow) => Object.keys(workflow.jobs).flatMap((job) => steps(workflow, job));
+
+  test("runs on a pushed vscode-extension-* tag only: no release event, no dispatch, no branch push", () => {
+    expect(release().on).toEqual({ push: { tags: ["vscode-extension-*"] } });
+  });
+
+  test("reads the repository and no job widens that", () => {
+    const workflow = release();
+    expect(workflow.permissions).toEqual({ contents: "read" });
+    for (const job of Object.values(workflow.jobs)) expect(job.permissions).toBeUndefined();
+  });
+
+  test("verify refuses a tag that does not name the manifest's version or a commit off main", () => {
+    const job = steps(release(), "verify");
+    const checkout = job.findIndex((step) => step.uses?.startsWith("actions/checkout@"));
+    expect(checkout).toBeGreaterThan(-1);
+    expect(job[checkout]?.with?.["fetch-depth"]).toBe(0);
+    const tag = job.findIndex((step) => step.run?.trim() === 'node scripts/release-tag.mjs "$GITHUB_REF_NAME"');
+    expect(tag).toBeGreaterThan(checkout);
+    expect(job[tag]?.["working-directory"]).toBe("vscode-extension");
+    const onMain = job.findIndex((step) =>
+      step.run?.includes('git merge-base --is-ancestor "$GITHUB_SHA" origin/main'),
+    );
+    expect(onMain).toBeGreaterThan(checkout);
+    expect(job[onMain]?.run).toContain("git fetch origin main");
+    expect(job[onMain]?.run).toContain("The tag's commit is not on main.");
+  });
+
+  test("gates run the same reusable workflow as every pull request, after verify", () => {
+    const gates = release().jobs.gates;
+    expect(gates?.needs).toBe("verify");
+    expect(gates?.uses).toBe("./.github/workflows/vscode-extension.yml");
+  });
+
+  test("pins every action by its full commit SHA, as vscode-extension.yml does", () => {
+    for (const step of allSteps(release())) {
+      if (step.uses) expect(step.uses).toMatch(/^[\w.-]+\/[\w.-]+@[0-9a-f]{40}$/);
+    }
+    const pinned = (workflow: Workflow) =>
+      new Set(allSteps(workflow).flatMap((step) => (step.uses ? [step.uses] : [])));
+    const ours = pinned(extension);
+    for (const uses of pinned(release())) expect(ours.has(uses)).toBe(true);
+  });
+
+  // The owner's publishing PR changes this case with the job it adds (main design section 9, items 1 and 2).
+  test("publishes nothing yet: no vsce publish, no Open VSX, no GitHub Release, no environment", () => {
+    const text = readFileSync(join(WORKFLOWS, RELEASE_FILE), "utf8");
+    const workflow = release();
+    for (const step of allSteps(workflow)) {
+      const command = `${step.run ?? ""} ${step.uses ?? ""}`;
+      expect(command).not.toMatch(/vsce\s+publish|ovsx|gh\s+release/);
+      expect(step.uses?.split("@")[0] ?? "").not.toContain("release");
+    }
+    for (const job of Object.values(workflow.jobs)) expect(job.environment).toBeUndefined();
+    expect(text).not.toMatch(/^\s*environment:/m);
+  });
+
+  test("the product's tag patterns never match the extension's tags", () => {
+    // GitHub's filter pattern syntax, as release-artifacts.yml uses it: a class, `+` after it, `*`, and literals.
+    const fromGlob = (glob: string) =>
+      new RegExp(
+        `^${glob.replace(/\[[^\]]+\]\+?|\*|[.+?^${}()|\\]/g, (token) =>
+          token.startsWith("[") ? token : token === "*" ? "[^/]*" : `\\${token}`,
+        )}$`,
+      );
+    const product = read("release-artifacts.yml").on?.push as { tags: string[] };
+    expect(product.tags.length).toBeGreaterThan(0);
+    for (const pattern of product.tags) {
+      expect(fromGlob(pattern).test("0.18.4")).toBe(!pattern.endsWith("-*"));
+      expect(fromGlob(pattern).test("vscode-extension-0.1.0")).toBe(false);
+    }
+    const npm = readFileSync(join(WORKFLOWS, "npm-publish.yml"), "utf8");
+    expect(npm).toContain("!startsWith(github.event.release.tag_name, 'libredb-studio-')");
   });
 });
 
