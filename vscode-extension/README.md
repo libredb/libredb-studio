@@ -64,6 +64,11 @@ In Restricted Mode, every connection opens with external file access denied.
 - Editor bindings that survive a window reload: after a reload, **Change Connection** binds the editor again.
 - Engines beyond PostgreSQL, SQL Server, MySQL and MongoDB.
 
+## How it works
+
+The extension runs LibreDB Studio's database providers in a child process of VS Code and shows results in Studio's own grid.
+https://github.com/libredb/libredb-studio/blob/main/docs/VSCODE_EXTENSION.md describes the architecture, and which parts are the extension's own and which come from Studio.
+
 ## Feedback
 
 Report a problem or ask for a feature at https://github.com/libredb/libredb-studio/issues.
