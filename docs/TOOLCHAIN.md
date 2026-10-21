@@ -556,6 +556,10 @@ A callback whose behaviour the gate must hold keeps its body on its own line, as
   Mount the checkout at a short path such as `/w`: VS Code listens on a socket under `.vscode-test/user-data/`, and a socket path over the 107-byte Unix limit fails with `listen EINVAL`.
   `test/e2e/backend-lifecycle.test.ts` starts PostgreSQL through Docker, so the local e2e container also runs with `--network host` and `-v /var/run/docker.sock:/var/run/docker.sock` and installs `docker.io` beside `xvfb`; the smoke subset needs no Docker access.
   The `node` user reaches the socket through a group with the socket's group id, created in the container and passed to `runuser -G`, as the command below does.
+  The leg runs a second configuration per build, `vscode-<version>-workspace`, which opens `test/e2e-workspace/fixture` so the connections setting can be checked against a workspace value.
+  That configuration also runs `test/e2e-workspace/connections.test.ts`, which drives the connection commands through scripted quick inputs against PostgreSQL in Docker: it and `backend-lifecycle.test.ts` each need a host whose extension has started no child yet, and Add Connection leaves the extension's own child running.
+  The smoke subset runs neither the workspace configuration nor any file that needs Docker.
+  `@vscode/test-electron` starts every host with `--disable-workspace-trust`, so the leg sees a trusted workspace only.
 - Smoke: the e2e leg with `LIBREDB_E2E_SUBSET=smoke`, on macOS and Windows, with no Xvfb and no database.
 - Browser: `npm run test:browser` runs the results webview in Chromium with Playwright, after `npm run build`.
   `@playwright/test` is pinned to the root's version, because `npm run` finds only the package's own binaries, and the same version shares the root's Chromium.

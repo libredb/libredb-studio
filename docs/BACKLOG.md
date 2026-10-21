@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S9 · 6
-- [Drivers and connections](#drivers-and-connections) — D1-D386, U17 · 281
+- [Drivers and connections](#drivers-and-connections) — D1-D387, U17 · 282
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U148 · 134
@@ -3930,12 +3930,22 @@ Whether the cause is the runner or the test was not measured.
 `getOrCreateProvider` (`src/lib/db/factory.ts`) looks its key up in `providerCache`, then awaits `createDatabaseProvider` and `connectPhase(() => provider.connect())`, and only then calls `providerCache.set`, with no in-flight entry for the key.
 Two requests that miss the cache at once therefore each build and connect a provider, and the later `set` replaces the earlier entry, whose provider no `removeProvider`, idle sweep or `clearProviderCache` can reach any more: its pool and its server sessions stay open until the process exits.
 Measured 2026-10-21 on `postgres:18` (1 CPU, `512m`) through the VS Code extension's backend child as its first review found it: two concurrent `connection/open` requests with the same params logged `[DB] Creating postgres provider` twice and left 2 client sessions in `pg_stat_activity`, and 1 of them stayed after `connection/close` and after `shutdown` had answered `null`.
-The child now runs one `connection/open` or `connection/close` of an id at a time and the extension shares one reopen per connection and generation, so that channel no longer sends two at once: the same probe then counts 1 provider, 1 session, and none after the close.
+The child now runs one `connection/open` or `connection/close` of an id at a time and the extension shares one reopen per connection, generation and profile revision, starting a reopen at a newer revision only once the one under way has settled, so that channel no longer sends two at once: the same probe then counts 1 provider, 1 session, and none after the close.
 Nothing in `getOrCreateProvider` keeps the web routes from doing the same when two requests for one connection both miss the cache, after the idle sweep closed its provider, say; that path was not measured.
 
 Found by the review of the VS Code extension's backend (PR 5).
 
 **Done when:** `getOrCreateProvider` keeps one in-flight promise per cache key that concurrent callers share and a failed connect removes, and a test sends two concurrent first calls for one key and expects one `createDatabaseProvider`, one `connect()` and one cached provider.
+
+### D387. A wrong password answers `CONNECTION_ERROR`, not `AUTH_ERROR`, on the four v0 engines
+
+The `connect` of the PostgreSQL, MySQL, SQL Server and MongoDB providers raises `ConnectionError` for a refused login, so the db routes and the VS Code extension's backend both answer 503 `CONNECTION_ERROR` for a wrong password, the same answer as an unreachable server.
+Measured 2026-10-21 by the VS Code extension's wrong-password walk against all four engines' containers, on both backend runtimes.
+The extension therefore offers Enter Credentials on `CONNECTION_ERROR` too (`CREDENTIALS_OFFER_CODES` in `vscode-extension/src/host/backend-client.ts`), still decided by `data.code` alone; the offer is harmless when the server is unreachable.
+
+Found 2026-10-21 during the VS Code extension work (PR 8), and deferred because changing the provider layer's mapping is not that PR's to do.
+
+**Done when:** each of the four providers maps its login refusal (PostgreSQL SQLSTATE `28P01` and `28000`, MySQL `1045`, SQL Server `18456`, MongoDB code `18`) to `AuthenticationError`, after checking how the web client treats a 401 from the db routes; a test per engine pins `AUTH_ERROR` for a wrong password; and the extension's offer narrows back to `AUTH_ERROR`.
 
 ## Value interpolation
 

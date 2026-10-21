@@ -24,6 +24,7 @@ import {
 } from "@/lib/db/errors";
 import type { Container, DatabaseObject, KindCount, ObjectDetail } from "@/lib/db/types";
 import type { QueryResult } from "@/lib/types";
+import { engineCatalog } from "../../src/backend/engine-catalog";
 import {
   type BackendFactory,
   type BackendHandlers,
@@ -779,6 +780,35 @@ describe("query/cancel", () => {
   });
 });
 
+describe("engines/list", () => {
+  it("answers the catalogue of the enabled types and constructs no provider", () => {
+    const { handlers, calls } = backend();
+    assert.deepEqual(handlers.listEngines({}), engineCatalog(["postgres", "mssql", "mysql", "mongodb"]));
+    assert.deepEqual(calls, []);
+  });
+
+  it("answers every external type when no list is set", () => {
+    const { handlers } = backend(fakeProvider(), { enabledProviderTypes: () => null });
+    assert.deepEqual(handlers.listEngines({}), engineCatalog(null));
+  });
+
+  it("refuses params that are not an empty object", () => {
+    const { handlers } = backend();
+    for (const params of [{ a: 1 }, null, [], undefined]) {
+      refusedNow(() => handlers.listEngines(params), -32602, "engines/list takes an empty params object");
+    }
+  });
+});
+
+describe("connection/parse", () => {
+  it("refuses a text that is not a string, before parsing anything", () => {
+    const { handlers, calls } = backend();
+    refusedNow(() => handlers.parsePastedConnection({ text: 5 }), -32602, "text must be a string");
+    refusedNow(() => handlers.parsePastedConnection({}), -32602, "text must be a string");
+    assert.deepEqual(calls, []);
+  });
+});
+
 /** host speaks to child over two in-memory streams, as the IPC channel carries the same messages. */
 function pair() {
   const up = new PassThrough();
@@ -855,6 +885,27 @@ describe("registerHandlers", () => {
     assert.equal((await answeredError(host, METHODS.closeConnection, { connectionId: "c1" })).code, -32002);
     await host.sendRequest(METHODS.initialize, { protocolVersion: 1 });
     assert.equal(await host.sendRequest(METHODS.closeConnection, { connectionId: "c1" }), null);
+  });
+
+  it("refuses engines/list and connection/parse before initialize, and serves both after it", async () => {
+    const { host, calls } = served();
+    const notInitialized = { code: -32002, message: "The LibreDB backend has not been initialized." };
+    assert.deepEqual(await answeredError(host, METHODS.listEngines, {}), notInitialized);
+    assert.deepEqual(await answeredError(host, METHODS.parsePastedConnection, { text: "hello" }), notInitialized);
+    await host.sendRequest(METHODS.initialize, { protocolVersion: 1 });
+    assert.deepEqual(
+      await host.sendRequest(METHODS.listEngines, {}),
+      engineCatalog(["postgres", "mssql", "mysql", "mongodb"]),
+    );
+    assert.deepEqual(await host.sendRequest(METHODS.parsePastedConnection, { text: "hello" }), {
+      parsed: null,
+      label: null,
+    });
+    assert.deepEqual(await answeredError(host, METHODS.parsePastedConnection, { text: 5 }), {
+      code: -32602,
+      message: "text must be a string",
+    });
+    assert.deepEqual(calls, []);
   });
 
   it("answers each error class with the status, sentence and code the query route answers it with", async () => {
@@ -984,6 +1035,8 @@ describe("registerHandlers", () => {
     };
     assert.deepEqual(await answeredError(host, METHODS.runQuery, RUN), shuttingDown);
     assert.deepEqual(await answeredError(host, METHODS.initialize, { protocolVersion: 1 }), shuttingDown);
+    assert.deepEqual(await answeredError(host, METHODS.listEngines, {}), shuttingDown);
+    assert.deepEqual(await answeredError(host, METHODS.parsePastedConnection, { text: "hello" }), shuttingDown);
   });
 
   it("exits 0 on the exit notification", async () => {

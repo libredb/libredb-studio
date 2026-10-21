@@ -25,6 +25,8 @@ describe("the backend protocol", () => {
       runQuery: "query/run",
       cancelQuery: "query/cancel",
       shutdown: "shutdown",
+      listEngines: "engines/list",
+      parsePastedConnection: "connection/parse",
     });
     assert.equal(EXIT_NOTIFICATION, "exit");
     assert.equal(PROTOCOL_VERSION, 1);

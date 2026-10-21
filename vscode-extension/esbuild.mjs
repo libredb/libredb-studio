@@ -108,10 +108,10 @@ function finish(bundle, metafile) {
 const tailwindCommand = (options) => [tailwindCli(root), ...tailwindArgs(options)];
 
 if (e2eTests) {
-  rmSync(join(root, "out", "test", "e2e"), { recursive: true, force: true });
+  for (const leg of ["e2e", "e2e-workspace"]) rmSync(join(root, "out", "test", leg), { recursive: true, force: true });
   await esbuild.build({
     absWorkingDir: root,
-    entryPoints: ["test/e2e/**/*.test.ts"],
+    entryPoints: ["test/e2e/**/*.test.ts", "test/e2e-workspace/**/*.test.ts"],
     outbase: ".",
     outdir: "out",
     bundle: true,

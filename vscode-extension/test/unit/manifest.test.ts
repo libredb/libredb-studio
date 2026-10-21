@@ -10,6 +10,33 @@ const nls = read("package.nls.json");
 const versions = read("test/vscode-versions.json");
 const rootManifest = read("../package.json");
 
+/** Part 2's manifest entry for the setting, written out. */
+const CONNECTIONS_SCHEMA = {
+  type: "array",
+  scope: "application",
+  default: [],
+  markdownDescription:
+    "Database connections, without passwords or connection strings: LibreDB keeps those in VS Code's secret storage on each machine. Add one with **LibreDB: Add Connection**.",
+  items: {
+    type: "object",
+    required: ["id", "name", "type", "createdAt"],
+    properties: {
+      id: { type: "string", pattern: "^[A-Za-z0-9_-]{1,64}$" },
+      name: { type: "string", minLength: 1 },
+      type: { type: "string" },
+      host: { type: "string" },
+      port: { type: "integer", minimum: 1, maximum: 65535 },
+      user: { type: "string" },
+      database: { type: "string" },
+      instanceName: { type: "string" },
+      authSource: { type: "string" },
+      ssl: { type: "object", required: ["mode"], properties: { mode: { type: "string" } } },
+      createdAt: { type: "string" },
+      secretFields: { type: "array", uniqueItems: true, items: { type: "string" } },
+    },
+  },
+};
+
 const exact = /^\d+\.\d+\.\d+$/;
 const triple = (version: string): number[] => version.split(".").map(Number);
 const atLeast = (a: number[], b: number[]): boolean =>
@@ -59,10 +86,23 @@ describe("the manifest", () => {
     assert.deepEqual(manifest.dependencies, { "vscode-jsonrpc": "9.0.3" });
   });
 
-  it("contributes libredb.showLog in category LibreDB", () => {
-    assert.deepEqual(manifest.contributes, {
-      commands: [{ command: "libredb.showLog", title: "Show Log", category: "LibreDB" }],
+  it("contributes the four commands in category LibreDB, and the one setting", () => {
+    assert.deepEqual(manifest.contributes.commands, [
+      { command: "libredb.showLog", title: "Show Log", category: "LibreDB" },
+      { command: "libredb.addConnection", title: "Add Connection", category: "LibreDB", icon: "$(add)" },
+      { command: "libredb.removeConnection", title: "Remove Connection", category: "LibreDB" },
+      { command: "libredb.refresh", title: "Refresh", category: "LibreDB", icon: "$(refresh)" },
+    ]);
+    assert.deepEqual(Object.keys(manifest.contributes), ["commands", "configuration"]);
+  });
+
+  it("declares libredb.connections as part 2 writes it, synced and never read from a workspace", () => {
+    assert.deepEqual(manifest.contributes.configuration, {
+      title: "LibreDB",
+      properties: { "libredb.connections": CONNECTIONS_SCHEMA },
     });
+    assert.equal("ignoreSync" in manifest.contributes.configuration.properties["libredb.connections"], false);
+    assert.equal("restrictedConfigurations" in manifest.capabilities.untrustedWorkspaces, false);
   });
 
   it("is limited in untrusted workspaces, with no restricted configuration", () => {

@@ -36,6 +36,10 @@ interface Ready {
 /** What the client needs of the supervisor. */
 export interface BackendLink {
   connection(): Promise<Ready>;
+  /** The current child generation, 0 before the first start. */
+  readonly generation: number;
+  /** Read by closeIfOpen, which must never start a child. */
+  readonly state: BackendState;
   readonly lastExit: BackendExit | undefined;
   readonly onWillStop: vscode.Event<void>;
   stop(): Promise<void>;

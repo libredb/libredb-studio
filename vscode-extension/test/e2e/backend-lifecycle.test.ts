@@ -149,11 +149,14 @@ describe("the backend's lifecycle in a real extension host", () => {
       posture: { allowExternalFileAccess: false },
     };
     let reads = 0;
+    // One revision throughout and no secretFields to ask again: the reopen this case counts is the restart's.
     const source: ConnectionSource = {
       read: async () => {
         reads += 1;
-        return opened;
+        return { params: opened, revision: 0, opened: () => Promise.resolve() };
       },
+      reask: () => Promise.resolve(undefined),
+      revision: () => 0,
     };
     const { deps, recording } = recordingDeps(extensionPath);
     supervisor = new BackendSupervisor(deps);

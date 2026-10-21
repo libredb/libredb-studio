@@ -4,6 +4,8 @@ import type { CancellationToken } from "vscode-jsonrpc";
 import type { EditorQueryBody } from "@/lib/api/editor-query";
 import type { ApiErrorCode } from "@/lib/api/error-codes";
 import type { TestConnectionAnswer } from "@/lib/api/test-connection";
+import type { ParsedConnection } from "@/lib/connection-string-parser";
+import type { ConnectionField, FieldPlacement } from "@/lib/db/connection-fields";
 import type {
   Container,
   DatabaseObject,
@@ -118,6 +120,54 @@ export interface CancelResult {
   cancelled: boolean;
 }
 
+/** One field as the add-connection flow asks for it (part 2, "Backend methods this part adds"). */
+export interface EngineField {
+  name: ConnectionField;
+  /** connectionFieldLabel(spec, name, ""), with "" sent as null. */
+  label: string | null;
+  /** connectionFieldHint(spec, name), with undefined sent as null. */
+  hint: string | null;
+  /** connectionFieldPlaceholder(spec, name, ""), with "" sent as null. */
+  placeholder: string | null;
+  /** connectionFieldPlacement for one of PLACEABLE_FIELDS, "open" for every other field. */
+  placement: FieldPlacement;
+}
+
+/** One engine the add-connection flow offers. */
+export interface EngineForm {
+  type: DatabaseType;
+  /** CONNECTION_FORM[type].label */
+  label: string;
+  /** CONNECTION_FORM[type].defaultHost, null where the entry declares none. */
+  defaultHost: string | null;
+  /** CONNECTION_FORM[type].defaultPort */
+  defaultPort: string;
+  /** CONNECTION_STRING[type].scheme */
+  pasteScheme: string | null;
+  /** CONNECTION_FORM_URI_MODE[type] */
+  keepsPastedString: boolean;
+  /** offersSslPanel(type) */
+  offersSsl: boolean;
+  /** CONNECTION_FIELDS[type] of src/lib/db/connection-fields.ts, in its order. */
+  fields: EngineField[];
+}
+
+export interface EngineCatalog {
+  engines: EngineForm[];
+}
+
+/** The text a person pasted: a credential, which no trace ever writes. */
+export interface ParseParams {
+  text: string;
+}
+
+export interface PastedConnection {
+  /** parseConnectionString(text) */
+  parsed: ParsedConnection | null;
+  /** CONNECTION_FORM[parsed.type].label when parsed is not null. */
+  label: string | null;
+}
+
 export interface BackendApi {
   initialize(params: InitializeParams): Promise<InitializeResult>;
   testConnection(params: ConnectionParams, token?: CancellationToken): Promise<TestConnectionResult>;
@@ -130,6 +180,8 @@ export interface BackendApi {
   runQuery(params: RunQueryParams, token?: CancellationToken): Promise<QueryPage>;
   cancelQuery(params: CancelParams): Promise<CancelResult>;
   shutdown(): Promise<null>;
+  listEngines(params: Record<string, never>): Promise<EngineCatalog>;
+  parsePastedConnection(params: ParseParams): Promise<PastedConnection>;
 }
 
 /** One JSON-RPC method name per BackendApi method, so no method can be added without its name. */
@@ -145,6 +197,8 @@ export const METHODS = {
   runQuery: "query/run",
   cancelQuery: "query/cancel",
   shutdown: "shutdown",
+  listEngines: "engines/list",
+  parsePastedConnection: "connection/parse",
 } as const satisfies Record<keyof BackendApi, string>;
 
 /** The notification that ends the child once shutdown has answered. */

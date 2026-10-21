@@ -32,6 +32,14 @@ function metafile(inputs: string[], externals: string[] = []) {
   };
 }
 
+/** A host metafile with one input and no external import. */
+function hostInput(input: string) {
+  return {
+    inputs: { [input]: { bytes: 1, imports: [] } },
+    outputs: { "dist/extension.js": { bytes: 1, inputs: {}, imports: [] } },
+  };
+}
+
 /** One input that leaves one import external, and the output that carries it, as esbuild writes both. */
 function oneExternal(importer: string, path: string, kind: string) {
   return {
@@ -91,6 +99,34 @@ describe("hostViolations", () => {
       ["vscode"],
     );
     assert.deepEqual(hostViolations(clean, wd), []);
+  });
+
+  // The host splits a connection's secrets through P7's leaf; the modules that seal them on the server stay out.
+  const serverOnly: [string, string][] = [
+    [
+      "src/lib/storage/encryption.ts",
+      "the host never bundles the server's storage encryption; it splits secrets through src/lib/storage/secret-fields.ts",
+    ],
+    [
+      "src/lib/storage/connection-secrets.ts",
+      "the host never bundles connection-secrets; it splits secrets through src/lib/storage/secret-fields.ts",
+    ],
+    ["src/lib/config/auth-env.ts", "the host never bundles the server's auth environment"],
+  ];
+  for (const [path, rule] of serverOnly) {
+    it(`refuses ${path}, which the child may bundle`, () => {
+      assert.deepEqual(hostViolations(hostInput(`../${path}`), wd), [`${path}: ${rule}`]);
+      const child = {
+        ...hostInput(`../${path}`),
+        outputs: { "dist/backend.js": { bytes: 1, inputs: {}, imports: [] } },
+      };
+      assert.deepEqual(childViolations(child, wd), []);
+    });
+  }
+
+  it("keeps the secret-field leaf and the id generator", () => {
+    assert.deepEqual(hostViolations(hostInput("../src/lib/storage/secret-fields.ts"), wd), []);
+    assert.deepEqual(hostViolations(hostInput("../src/lib/ids.ts"), wd), []);
   });
 });
 

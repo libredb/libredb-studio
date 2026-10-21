@@ -29,8 +29,99 @@
         "command": "libredb.showLog",
         "title": "Show Log",
         "category": "LibreDB"
+      },
+      {
+        "command": "libredb.addConnection",
+        "title": "Add Connection",
+        "category": "LibreDB",
+        "icon": "$(add)"
+      },
+      {
+        "command": "libredb.removeConnection",
+        "title": "Remove Connection",
+        "category": "LibreDB"
+      },
+      {
+        "command": "libredb.refresh",
+        "title": "Refresh",
+        "category": "LibreDB",
+        "icon": "$(refresh)"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "LibreDB",
+      "properties": {
+        "libredb.connections": {
+          "type": "array",
+          "scope": "application",
+          "default": [],
+          "markdownDescription": "Database connections, without passwords or connection strings: LibreDB keeps those in VS Code's secret storage on each machine. Add one with **LibreDB: Add Connection**.",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "name",
+              "type",
+              "createdAt"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,64}$"
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "type": {
+                "type": "string"
+              },
+              "host": {
+                "type": "string"
+              },
+              "port": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              },
+              "user": {
+                "type": "string"
+              },
+              "database": {
+                "type": "string"
+              },
+              "instanceName": {
+                "type": "string"
+              },
+              "authSource": {
+                "type": "string"
+              },
+              "ssl": {
+                "type": "object",
+                "required": [
+                  "mode"
+                ],
+                "properties": {
+                  "mode": {
+                    "type": "string"
+                  }
+                }
+              },
+              "createdAt": {
+                "type": "string"
+              },
+              "secretFields": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
   },
   "scripts": {
     "build": "node esbuild.mjs",

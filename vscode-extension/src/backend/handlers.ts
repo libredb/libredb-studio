@@ -7,7 +7,9 @@ import { checkEditorQuery, runEditorQuery } from "@/lib/api/editor-query";
 import { databaseErrorBody, internalErrorBody } from "@/lib/api/error-body";
 import { pageOptionError } from "@/lib/api/page-probe";
 import type { testConnection } from "@/lib/api/test-connection";
+import { parseConnectionString } from "@/lib/connection-string-parser";
 import { scopeToCatalog } from "@/lib/db/catalog-scope";
+import { CONNECTION_FORM } from "@/lib/db/connection-form";
 import { ConnectionError, waitedSeconds } from "@/lib/db/errors";
 import type { clearProviderCache, enabledProviderTypes, getOrCreateProvider } from "@/lib/db/factory";
 import { supportsQueryCancel } from "@/lib/db/query-cancel";
@@ -17,14 +19,17 @@ import {
   type BackendErrorCode,
   type BackendErrorData,
   type CancelResult,
+  type EngineCatalog,
   EXIT_NOTIFICATION,
   type InitializeResult,
   METHODS,
   type OpenResult,
+  type PastedConnection,
   PROTOCOL_VERSION,
   type QueryPage,
   type TestConnectionResult,
 } from "../protocol";
+import { engineCatalog } from "./engine-catalog";
 import { ConnectionRegistry, notOpenSentence, type OpenRecord } from "./registry";
 
 /** The factory functions the handlers call, as one object. */
@@ -95,10 +100,17 @@ export interface BackendHandlers {
   runQuery(params: unknown, token: CancellationToken): Promise<QueryPage>;
   cancelQuery(params: unknown): Promise<CancelResult>;
   shutdown(): Promise<null>;
+  listEngines(params: unknown): EngineCatalog;
+  parsePastedConnection(params: unknown): PastedConnection;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+/** An object with no own key, and not an array: what engines/list takes. */
+function isEmptyObject(value: unknown): boolean {
+  return isObject(value) && !Array.isArray(value) && Object.keys(value).length === 0;
 }
 
 /** The field `name` of a params object, or undefined when the params are not an object. */
@@ -350,6 +362,18 @@ export function createHandlers(
     async shutdown() {
       await factory.clearProviderCache();
       return null;
+    },
+
+    // No provider: the same list the factory's refusal parses keeps a type out of the catalogue.
+    listEngines(params) {
+      if (!isEmptyObject(params)) throw invalidParams("engines/list takes an empty params object");
+      return engineCatalog(factory.enabledProviderTypes());
+    },
+
+    // No provider and no line: the text is a credential.
+    parsePastedConnection(params) {
+      const parsed = parseConnectionString(aString(fieldOf(params, "text"), "text"));
+      return { parsed, label: parsed === null ? null : CONNECTION_FORM[parsed.type].label };
     },
   };
 }

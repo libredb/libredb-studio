@@ -177,6 +177,15 @@ const HOST_INPUT_RULES = [
   [(path) => path.startsWith("src/lib/editor/"), "the host never bundles src/lib/editor"],
   [(path) => path === "src/lib/query-generators.ts", "the host never bundles the query generators"],
   [(path) => path === "src/lib/db-ui-config.ts", "the host never bundles the UI configuration"],
+  [
+    (path) => path === "src/lib/storage/encryption.ts",
+    "the host never bundles the server's storage encryption; it splits secrets through src/lib/storage/secret-fields.ts",
+  ],
+  [
+    (path) => path === "src/lib/storage/connection-secrets.ts",
+    "the host never bundles connection-secrets; it splits secrets through src/lib/storage/secret-fields.ts",
+  ],
+  [(path) => path === "src/lib/config/auth-env.ts", "the host never bundles the server's auth environment"],
 ];
 
 const CHILD_INPUT_RULES = [
