@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { CONNECTION_FORM } from "@/lib/db/connection-form";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
@@ -32,6 +32,9 @@ const VIEW_NAMES = new Set([...views.map((view) => view.name), ...containers.map
  * store's engine label is one of them, so the README naming the product is not the README naming that engine.
  */
 const PRODUCT_NAMES = new Set([manifest.displayName, ...commands.map((command) => command.category), ...VIEW_NAMES]);
+
+/** Where the README's screenshots live: media/screenshots on main, raw, so the Marketplace page can load them. */
+const SCREENSHOT_BASE = `https://raw.githubusercontent.com/libredb/libredb-studio/main/vscode-extension/media/screenshots/`;
 
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -89,9 +92,22 @@ describe("the Marketplace README", () => {
     assert.ok(step.includes(`gear button titled ${MORE_OPTIONS_TOOLTIP} opens a review of every field`), step);
   });
 
-  it("keeps the repository's Markdown rules: no em or en dash, no image, one sentence per line", () => {
+  it("shows screenshots only from this repository's main branch by https, each a file the repository holds", () => {
+    // The Marketplace renders README images from https URLs only, and the VSIX packs none of them (.vscodeignore).
+    const images = [...readme.matchAll(/!\[([^\]]*)\]\(([^)]*)\)/g)];
+    assert.ok(images.length > 0, "the README shows no screenshot");
+    for (const [, alt, url] of images) {
+      assert.ok(alt.trim().length > 0, `${url} has no alt text`);
+      assert.ok(url.startsWith(SCREENSHOT_BASE), `${url} is not under ${SCREENSHOT_BASE}`);
+      const file = url.slice(SCREENSHOT_BASE.length);
+      assert.match(file, /^[a-z0-9-]+\.png$/, url);
+      assert.ok(existsSync(join(root, "media", "screenshots", file)), `${file} is not in media/screenshots`);
+    }
+    assert.equal(readme.match(/<img\b/g), null, "an HTML image");
+  });
+
+  it("keeps the repository's Markdown rules: no em or en dash, one sentence per line", () => {
     assert.ok(!/[\u2013\u2014]/.test(readme));
-    assert.ok(!/!\[/.test(readme));
     const lines = readme.split("\n").map((each) => each.replace(/^\s*(?:[-*]|\d+\.)\s+/, ""));
     for (const line of lines.filter((each) => /^[A-Z]/.test(each))) {
       assert.ok(!/[a-z0-9)]\. [A-Z]/.test(line), `two sentences on one line: ${line}`);

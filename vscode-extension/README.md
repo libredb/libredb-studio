@@ -4,6 +4,12 @@ LibreDB Studio for VS Code is a pre-release that browses and queries PostgreSQL,
 It needs no account and no login.
 It requires VS Code 1.123 or later.
 
+![The Connections view with PostgreSQL, MySQL, SQL Server and MongoDB connections, and a MongoDB find with its rows in LibreDB Results, in a dark theme](https://raw.githubusercontent.com/libredb/libredb-studio/main/vscode-extension/media/screenshots/connections-and-results-dark.png)
+
+![The same window in a light theme](https://raw.githubusercontent.com/libredb/libredb-studio/main/vscode-extension/media/screenshots/connections-and-results-light.png)
+
+![Add Connection asking for the database engine](https://raw.githubusercontent.com/libredb/libredb-studio/main/vscode-extension/media/screenshots/add-connection.png)
+
 ## Getting started
 
 1. Select the LibreDB icon in the Activity Bar.
