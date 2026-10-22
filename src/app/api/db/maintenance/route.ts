@@ -5,7 +5,7 @@ import { createErrorResponse } from "@/lib/api/errors";
 import { mapDatabaseError } from "@/lib/db/errors";
 import { maintenanceControl, type MaintenancePlacement } from "@/lib/db/types";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
-import { auditRoleDenial, guardRoute } from "@/lib/api/require-session";
+import { auditRoleDenial, guardRoute, adminRequiredResponse } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
 import { editorProvider } from "@/lib/api/editor-provider";
 import { clientAddress } from "@/lib/api/client-address";
@@ -31,7 +31,7 @@ export async function POST(request: Request) {
 
   if (guard.session.role !== "admin") {
     auditRoleDenial({ route: "POST /api/db/maintenance", user: guard.session.username, request });
-    return NextResponse.json({ error: "Unauthorized. Admin access required." }, { status: 403 });
+    return adminRequiredResponse();
   }
 
   try {

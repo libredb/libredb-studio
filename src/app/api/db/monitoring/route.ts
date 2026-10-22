@@ -4,7 +4,7 @@ import type { MonitoringOptions } from "@/lib/db/types";
 import { createErrorResponse } from "@/lib/api/errors";
 import { INVALID_REQUEST_BODY, isJsonObject } from "@/lib/api/json-object-body";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
-import { auditRoleDenial, guardRoute } from "@/lib/api/require-session";
+import { auditRoleDenial, guardRoute, adminRequiredResponse } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
 import { editorProvider } from "@/lib/api/editor-provider";
 import { governanceEnabled } from "@/lib/governance/config";
@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
   // session keeps the access it always had.
   if (governanceEnabled() && guard.session.role !== "admin") {
     auditRoleDenial({ route: "POST /api/db/monitoring", user: guard.session.username, request: req });
-    return NextResponse.json({ error: "Unauthorized. Admin access required." }, { status: 403 });
+    return adminRequiredResponse();
   }
 
   try {

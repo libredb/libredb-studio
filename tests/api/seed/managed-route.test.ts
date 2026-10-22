@@ -256,6 +256,71 @@ describe("GET /api/connections/managed", () => {
     resetCache();
   });
 
+  // An editable seed is copied into the browser to be edited, so the web keeps its credentials. A native client on the
+  // bearer channel edits no connection and holds no database credential, so it gets none (docs/OIDC.md).
+  describe("an editable seed with its credentials", () => {
+    const CANARY = "CANARY-EDITABLE-SEED-PASSWORD";
+    let dir: string;
+    let origPath: string | undefined;
+
+    beforeEach(() => {
+      origPath = process.env.SEED_CONFIG_PATH;
+      dir = mkdtempSync(path.join(tmpdir(), "libredb-seed-editable-"));
+      const file = path.join(dir, "seed-connections.json");
+      writeFileSync(
+        file,
+        JSON.stringify({
+          version: "1",
+          connections: [
+            {
+              id: "editable",
+              name: "Editable",
+              type: "postgres",
+              host: "db.example.internal",
+              port: 5432,
+              database: "app",
+              user: "app",
+              password: CANARY,
+              roles: ["*"],
+              managed: false,
+            },
+          ],
+        }),
+      );
+      process.env.SEED_CONFIG_PATH = file;
+      resetCache();
+    });
+
+    afterEach(() => {
+      process.env.SEED_CONFIG_PATH = origPath;
+      resetCache();
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("reach a cookie session, which edits it", async () => {
+      const data = await (await GET()).json();
+
+      expect(data.connections.find((c: { seedId: string }) => c.seedId === "editable").password).toBe(CANARY);
+    });
+
+    it("never reach a bearer session", async () => {
+      (getSession as ReturnType<typeof mock>).mockImplementation(() => ({
+        role: "user",
+        username: "ada@example.test",
+        channel: "bearer",
+      }));
+
+      const res = await GET();
+      expect(res.status).toBe(200);
+      const data = await res.json();
+
+      const editable = data.connections.find((c: { seedId: string }) => c.seedId === "editable");
+      expect(editable).toMatchObject({ seedId: "editable", managed: false, user: "app" });
+      expect("password" in editable).toBe(false);
+      expect(JSON.stringify(data)).not.toContain(CANARY);
+    });
+  });
+
   it("advertises the sqlite sample while its async seed is in flight", async () => {
     setSqliteSampleSeedState("seeding");
     try {
@@ -473,7 +538,7 @@ describe("GET /api/connections/managed under governance", () => {
     resetGovernanceState();
   });
 
-  it("governance lists only the subject's grants with no secret, literal or grantLevel field and cacheHint 10000", async () => {
+  it("governance lists only the subject's grants with their access, no secret, literal or grantLevel field and cacheHint 10000", async () => {
     process.env.SEED_CACHE_TTL_MS = "60000";
     recordGovernanceSnapshot(
       grantedSnapshot(
@@ -511,7 +576,9 @@ describe("GET /api/connections/managed under governance", () => {
         managed: true,
         roles: ["*"],
         createdAt: "2026-10-15T08:00:00.000Z",
+        access: "write",
       });
+      expect(data.connections[0].access).toBe("read");
       for (const connection of data.connections) {
         for (const field of ["password", "connectionString", "literal", "grantLevel"]) {
           expect(field in connection).toBe(false);

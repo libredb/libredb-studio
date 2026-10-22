@@ -416,4 +416,9 @@ export interface ManagedConnection extends DatabaseConnection {
    * written: no `${NAME}` or `${vault:...}` in it is resolved.
    */
   literal?: true;
+  /**
+   * Under governance only, set by GET /api/connections/managed from the grant level the record was resolved for: "read"
+   * when statements run under the connection's read credential. Never read from a file.
+   */
+  access?: "read" | "write";
 }

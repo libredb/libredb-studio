@@ -353,7 +353,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         {
           error: `This connection has an open transaction that belongs to another session, started at ${new Date(owner.startedAt).toISOString()}. Only the session that opened it can query it, commit it or roll it back. It is released for other sessions at ${availableAt} if its owner does not act on it before then.`,
-          code: "TRANSACTION_NOT_OWNED",
+          code: ApiErrorCode.TRANSACTION_NOT_OWNED,
           startedAt: new Date(owner.startedAt).toISOString(),
           availableAt,
         },

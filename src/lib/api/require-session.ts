@@ -108,6 +108,14 @@ export async function guardRoute(opts: {
   return { session };
 }
 
+/** The answer of a route for admins to a session that is not an admin's (403). The caller records auditRoleDenial. */
+export function adminRequiredResponse(): NextResponse {
+  return NextResponse.json(
+    { error: "Unauthorized. Admin access required.", code: ApiErrorCode.ADMIN_REQUIRED },
+    { status: 403 },
+  );
+}
+
 /**
  * The audit line for a ROLE denial: an authenticated caller that holds a session but not the role
  * an endpoint requires. `guardRoute` above cannot record it, because the routes that need it check

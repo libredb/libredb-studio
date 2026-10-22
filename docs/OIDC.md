@@ -508,11 +508,17 @@ How Studio answers:
 
 - A Bearer header decides alone on an API path that needs a session, even next to a valid cookie: a refused token answers `401` with `{"error":"Invalid access token","code":"AUTH_REQUIRED"}` and `WWW-Authenticate: Bearer error="invalid_token"`, never a redirect.
   Any other scheme, such as the `Basic` credentials a reverse proxy's basic authentication forwards, is ignored and the cookie decides.
-  The sign-in routes under `/api/auth/` never read the header, so a client holding an expired token can still sign in.
+- A token that verifies but whose account Studio refuses answers `403`, with code `BEARER_NO_ROLE` when its claims map to no role and `BEARER_NO_IDENTITY` when it carries no `sub` or no username under the rule above.
+  A fresh token for the same account is refused the same way until an administrator changes the account, so a client shows the refusal instead of refreshing.
+- The public routes that read a session, `GET /api/auth/me`, `POST /api/auth/logout` and `POST /api/db/health`, decide the header the same way.
+  The other routes under `/api/auth/` never read it, so a client holding an expired token can still sign in.
+- A `POST` that carries no `Origin` header passes the cross-site request check only with `Content-Type: application/json`, so a native client sends that header on every `POST`, the sign-out included.
 - A provider whose discovery document or key set cannot be read answers `503` with code `IDENTITY_PROVIDER_UNAVAILABLE`, so a client keeps its token and retries instead of signing the user out.
 - A page never takes a bearer, and no CORS header is added: the channel is for native clients, not for another web origin.
 - `GET /api/auth/me` answers the session, with `idpSubject`, `idpIssuer`, the token's `iat` and `exp`, and `channel: "bearer"`.
 - `POST /api/auth/logout` answers `{"success":true}` with no `redirectUrl` and sets no cookie; the client discards its tokens and ends the provider session itself.
+  A refused token answers `401` with the challenge instead, so a client can refresh and record the sign-out.
+- `GET /api/connections/managed` never sends a bearer session a connection's credentials, an editable seed's included.
 - `POST /api/mcp/token` refuses a bearer session with `403`: an MCP token is created from a browser session only.
 - A refusal is audited as `permission_denied` with reason `bearer_token_invalid`, `bearer_no_role` or `bearer_no_identity`.
   A bearer request writes no `login_success`, because the sign-in happened at the provider.

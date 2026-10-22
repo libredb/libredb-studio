@@ -96,9 +96,9 @@ The standalone app's browser code reacts to `AUTH_REQUIRED`, and only to it, by 
 
 **An identity provider's access token can stand in for the cookie on API routes, for native clients (opt-in).**
 With `NEXT_PUBLIC_AUTH_PROVIDER=oidc` and `OIDC_BEARER_AUDIENCE` set, a request to `/api/*` may carry `Authorization: Bearer <access token>` instead of the `auth-token` cookie ([OIDC.md](./OIDC.md#bearer-access-tokens-for-native-clients)).
-While the channel is on, a Bearer header decides alone, even next to a valid cookie: a refused token answers `401 { "error": "Invalid access token", "code": "AUTH_REQUIRED" }` with `WWW-Authenticate: Bearer error="invalid_token"`, and a provider that cannot be reached answers `503` with code `IDENTITY_PROVIDER_UNAVAILABLE`.
-Any other scheme is ignored, the routes under `/api/auth/` that sign in never read the header, and with the channel off the header is ignored everywhere outside `/api/mcp`.
-For a bearer session `POST /api/auth/logout` answers `{ "success": true }` with no `redirectUrl` and no cookie, and `POST /api/mcp/token` answers `403`.
+While the channel is on, a Bearer header decides alone, even next to a valid cookie: a refused token answers `401 { "error": "Invalid access token", "code": "AUTH_REQUIRED" }` with `WWW-Authenticate: Bearer error="invalid_token"`, a token that verifies for an account Studio refuses answers `403` with code `BEARER_NO_ROLE` or `BEARER_NO_IDENTITY`, and a provider that cannot be reached answers `503` with code `IDENTITY_PROVIDER_UNAVAILABLE`.
+`GET /api/auth/me`, `POST /api/auth/logout` and `POST /api/db/health` decide the header the same way, the other routes under `/api/auth/` never read it, any other scheme is ignored, and with the channel off the header is ignored everywhere outside `/api/mcp`.
+For a bearer session `POST /api/auth/logout` answers `{ "success": true }` with no `redirectUrl` and no cookie, `POST /api/mcp/token` answers `403`, and `GET /api/connections/managed` strips every secret-classified field from every connection, an editable one's included.
 
 **Two routes are session-less without being public: `POST /api/agent/drive` and `/api/mcp`.**
 Neither is on the list above, because a path-shaped exemption would admit anything that can reach the port.
@@ -1143,7 +1143,8 @@ Redis `analyze` is the only operation that fills them today: it runs `INFO` and 
 **Response (403 Forbidden):**
 ```json
 {
-  "error": "Unauthorized. Admin access required."
+  "error": "Unauthorized. Admin access required.",
+  "code": "ADMIN_REQUIRED"
 }
 ```
 
@@ -1191,7 +1192,7 @@ When the engine itself refuses the statement, the reply is the engine's answer, 
 Read what one per-object maintenance operation will do, before an admin confirms it.
 
 **Authentication:** Required (Admin only), on the same rate-limit bucket as `POST /api/db/maintenance`.
-No session returns `401`; a valid session with a non-admin role returns `403` with `{ "error": "Unauthorized. Admin access required." }` and writes a `permission_denied` audit event with the reason `insufficient_role`.
+No session returns `401`; a valid session with a non-admin role returns `403` with `{ "error": "Unauthorized. Admin access required.", "code": "ADMIN_REQUIRED" }` and writes a `permission_denied` audit event with the reason `insufficient_role`.
 
 **Request:** the body of `POST /api/db/maintenance`, with `target` required.
 
@@ -2193,6 +2194,7 @@ configuration is what failed.
 
 In governance mode (`GOVERNANCE_SOURCE` set, [`docs/GOVERNANCE.md`](GOVERNANCE.md)) it lists the connections the session's identity provider subject holds an unexpired grant on, by name, for an admin as for a user, and nothing for a session without a subject.
 Each is a `managed: true` record of the credential of the grant's level, with every secret-classified field stripped and `queryTimeout: 60000`, and no server-only field.
+Its `access` is `"read"` or `"write"`, the level of that credential, so a client can show a connection as read only before a write fails.
 `cacheHint` is `10000`, so a grant made or revoked in the control plane reaches the list within seconds, and `pendingSeeds` is `[]`.
 While the governance snapshot cannot be served (still loading, older than `GOVERNANCE_MAX_STALENESS_MS`, misconfigured or incompatible) it answers `503` instead of an empty list:
 
@@ -2276,7 +2278,7 @@ The transaction is released either way, so the next request runs with the new cr
 
 ### Admin API
 
-Every route here requires an **admin** role (enforced in-handler in addition to the middleware); non-admins get `403 { "error": "Unauthorized. Admin access required." }`. `GET`/`POST /api/admin/audit` check the session inline and return that same `403` whether there is no session at all or a valid session with the wrong role; the two are not distinguished. `POST /api/admin/fleet-health` goes through the shared route guard instead and distinguishes them: no session returns `401 { "error": "Authentication required", "code": "AUTH_REQUIRED" }`, and only a valid session with a non-admin role returns the `403` above.
+Every route here requires an **admin** role (enforced in-handler in addition to the middleware); non-admins get `403 { "error": "Unauthorized. Admin access required.", "code": "ADMIN_REQUIRED" }`. No session returns `401 { "error": "Authentication required", "code": "AUTH_REQUIRED" }`, and only a valid session with a non-admin role returns the `403` above.
 
 #### GET /api/admin/audit
 
@@ -2348,7 +2350,7 @@ A source that fails is reported here with `state: "error"` while `GET /api/conne
 
 > **Internal routes (not part of this public reference).** The frontend also calls several internal `/api/db/*` endpoints that mirror provider internals and change with the UI: `multi-query`, `transaction`, `cancel`, `disconnect`, `test-connection`, `monitoring`, `pool-stats`, `profile`, `provider-meta`, and the object-surface routes under `objects/` that are not documented above (`describe`, `edit-plan` and `edit-apply` are). They're auth-gated by the middleware like everything else; consult the route handlers in `src/app/api/db/` for their shapes.
 >
-> Under governance (`GOVERNANCE_SOURCE=postgres`, see [GOVERNANCE.md](GOVERNANCE.md)) `POST /api/db/monitoring` is admin-only: a session whose role is not `admin` gets `403` with `{"error": "Unauthorized. Admin access required."}` before any connection is resolved, and the denial is audited as `permission_denied` with reason `insufficient_role`.
+> Under governance (`GOVERNANCE_SOURCE=postgres`, see [GOVERNANCE.md](GOVERNANCE.md)) `POST /api/db/monitoring` is admin-only: a session whose role is not `admin` gets `403` with `{"error": "Unauthorized. Admin access required.", "code": "ADMIN_REQUIRED"}` before any connection is resolved, and the denial is audited as `permission_denied` with reason `insufficient_role`.
 > Without governance every signed-in session keeps its monitoring access.
 >
 > `POST /api/db/disconnect` takes the connection as the other `/api/db/*` routes do, `{"connectionId": "seed:<id>"}` for a managed connection or `{"connection": {...}}` with the record of a connection of the user's own, and answers `{"success": true}`.
@@ -2644,6 +2646,11 @@ These are the values of the `code` field emitted by `createErrorResponse` (`src/
 | `TRANSACTION_CREDENTIAL_CHANGED` | Governance mode only: the caller's grant level or the connection's credential changed while the caller's transaction was open, so `POST /api/db/transaction` rolled it back and answered this instead of the request (409), with `rolledBack` saying whether the rollback was confirmed. Answered by the route rather than `createErrorResponse`; see [Connections under governance](#connections-under-governance) |
 | `AI_DISABLED` | Governance mode only: the control plane set the runtime setting `ai.enabled` to `false`, so a route of the AI bucket refused a signed-in caller before any LLM provider was built (403). Answered by the route guard rather than `createErrorResponse`; see [AI API](#ai-api) |
 | `AUTH_REQUIRED` | No Studio session, or one that no longer verifies (401). Answered by the middleware and the route-level session checks rather than `createErrorResponse`; the only 401 the browser answers by sending the user to sign in |
+| `IDENTITY_PROVIDER_UNAVAILABLE` | A bearer access token could not be verified because the identity provider's discovery document or key set could not be read (503). Answered by the middleware; a client keeps its token and retries ([OIDC.md](./OIDC.md#bearer-access-tokens-for-native-clients)) |
+| `BEARER_NO_ROLE` | A bearer access token verified, but its claims map to no role Studio accepts (403). Answered by the middleware; a fresh token is refused the same way until an administrator changes the account |
+| `BEARER_NO_IDENTITY` | A bearer access token verified, but it carries no `sub` or no username Studio can use (403). Answered by the middleware; a fresh token is refused the same way until an administrator changes the account |
+| `ADMIN_REQUIRED` | The session is valid and the route is for admins only (403). Answered by the route rather than `createErrorResponse` |
+| `TRANSACTION_NOT_OWNED` | The transaction open on the connection belongs to another session (409), with `startedAt` and `availableAt`. Answered by `POST /api/db/transaction` rather than `createErrorResponse` |
 | `WORKSPACE_OWNER_MISMATCH` | The request's `X-LibreDB-Workspace-Owner` header names an account other than the signed-in one (409). Answered by the middleware rather than `createErrorResponse`; the browser reloads the tab for it (see [Storage API](#storage-api)) |
 | `TIMEOUT_ERROR` | Query exceeded time limit (504, never 408, which a browser sends again); `POST /api/ai/query-safety` answers it with 504 when the model does not answer in time |
 | `CONNECTION_ERROR` | Database connection failed (503) |

@@ -47,6 +47,22 @@ const WORKSPACE_OWNER_MISMATCH_BODY = {
 
 const BEARER_REFUSED = "Invalid access token";
 
+/**
+ * A verified access token Studio still refuses, by audit reason: 403 with a code of its own, so a native client shows
+ * the refusal instead of refreshing a token that is refused again until an administrator changes the account.
+ */
+const BEARER_ACCOUNT_REFUSED_BODY = {
+  bearer_no_role: {
+    error: "This account has no role in Studio. Ask an administrator for access.",
+    code: ApiErrorCode.BEARER_NO_ROLE,
+  },
+  bearer_no_identity: {
+    error:
+      "The access token carries no user name Studio can use. Ask an administrator to check the account's email and username.",
+    code: ApiErrorCode.BEARER_NO_IDENTITY,
+  },
+} as const;
+
 const IDENTITY_PROVIDER_UNAVAILABLE_BODY = {
   error: "The identity provider could not be reached to verify the access token. Try again.",
   code: ApiErrorCode.IDENTITY_PROVIDER_UNAVAILABLE,
@@ -175,6 +191,14 @@ export async function proxy(request: NextRequest) {
     if (launch.state === "misconfigured") return withSecurityHeaders(launchPageAnswer(launch.problem, 503));
   }
 
+  // A public route that answers from the session when a request offers one decides its Bearer header here, as every
+  // other API route does below, so a client reads a refused token, a refused account and an unreachable provider apart
+  // there too. The other public routes never read the header, so an expired token cannot stop a sign-in.
+  if (sessionReadingPublicRoute(request.method, pathname)) {
+    const bearer = await apiBearer(request, pathname);
+    if (bearer !== null) return withSecurityHeaders(bearerAnswer(request, pathname, bearer));
+  }
+
   // Allow public routes
   if (
     pathname.startsWith("/api/auth") ||
@@ -269,6 +293,18 @@ function isApiPath(pathname: string): boolean {
   return pathname === "/api" || pathname.startsWith("/api/");
 }
 
+/**
+ * The public routes that read the session (getSession) when there is one: who is signed in, the sign-out record, and
+ * the detailed health check of a connection. The liveness GET of /api/db/health reads none.
+ */
+function sessionReadingPublicRoute(method: string, pathname: string): boolean {
+  return (
+    pathname === "/api/auth/me" ||
+    pathname === "/api/auth/logout" ||
+    (method === "POST" && pathname === "/api/db/health")
+  );
+}
+
 type TakenBearer = Exclude<BearerAuthentication, { kind: "absent" }>;
 
 /** What the bearer channel says of an API call, or null for a page or a call it leaves to the cookie. */
@@ -279,8 +315,9 @@ async function apiBearer(request: NextRequest, pathname: string): Promise<TakenB
 }
 
 /**
- * The answer to an API call whose Bearer header the channel took. A refusal is 401 with the bearer challenge and never
- * a redirect, audited and metered as the Origin refusal is; a fault is the provider's or the configuration's, 503, logged
+ * The answer to an API call whose Bearer header the channel took. A refused token is 401 with the bearer challenge and
+ * never a redirect, a verified token whose account Studio refuses is 403, both audited and metered as the Origin
+ * refusal is; a fault is the provider's or the configuration's, 503, logged
  * and not audited, so neither the client nor an operator reads it as a bad token. The route verifies the token again.
  */
 function bearerAnswer(request: NextRequest, pathname: string, bearer: TakenBearer): NextResponse {
@@ -307,6 +344,9 @@ function bearerAnswer(request: NextRequest, pathname: string, bearer: TakenBeare
     } catch (auditError) {
       logger.error("Failed to record a bearer refusal audit event", auditError, { route: "proxy" });
     }
+  }
+  if (bearer.reason !== "bearer_token_invalid") {
+    return NextResponse.json(BEARER_ACCOUNT_REFUSED_BODY[bearer.reason], { status: 403 });
   }
   return NextResponse.json(sessionRequiredBody(BEARER_REFUSED), {
     status: 401,

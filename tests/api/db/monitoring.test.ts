@@ -369,10 +369,10 @@ describe("POST /api/db/monitoring", () => {
       const res = await POST(
         createMockRequest("/api/db/monitoring", { method: "POST", body: { connection: validConnection } }) as never,
       );
-      const data = await parseResponseJSON<{ error: string }>(res);
+      const data = await parseResponseJSON<{ error: string; code?: string }>(res);
 
       expect(res.status).toBe(403);
-      expect(data.error).toBe("Unauthorized. Admin access required.");
+      expect(data).toEqual({ error: "Unauthorized. Admin access required.", code: "ADMIN_REQUIRED" });
       expect(mockResolveConnection).not.toHaveBeenCalled();
       expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
       expect(mockEmitAuditEvent).toHaveBeenCalledTimes(1);
