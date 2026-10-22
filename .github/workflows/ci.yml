@@ -978,9 +978,14 @@ jobs:
           docker exec libredb-ci-netconf cat /fixture/ro-key > "$key"
           chmod 600 "$key"
           bun tests/live/netconf-live-check.ts --target "$NETCONF_PROBE" --key "$key"
+          # `--outdir`, as on the OPC UA step and for the same measured reason: where the runner has
+          # compiled ssh2's optional `sshcrypto.node`, bun emits it as an asset beside the bundle, and
+          # `--outfile` then exits 1 with `cannot write multiple output files without an output
+          # directory` after the Bun run above passed (run 39807979304). Without the addon, as on a
+          # machine that never built it, the same command emits the one file.
           out="$(mktemp -d)"
-          bun build tests/live/netconf-live-check.ts --target=node --external cpu-features --outfile "$out/live.mjs"
-          node "$out/live.mjs" --target "$NETCONF_PROBE" --key "$key"
+          bun build tests/live/netconf-live-check.ts --target=node --external cpu-features --outdir "$out"
+          node "$out/netconf-live-check.js" --target "$NETCONF_PROBE" --key "$key"
           # Then the house's own layer, on the bytes a real device sent and with no container in
           # reach: the one check here that still measures something where Docker is unavailable.
           bun tests/run-tests.ts tests/integration/db/netconf-provider.test.ts
