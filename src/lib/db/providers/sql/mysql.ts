@@ -61,6 +61,7 @@ import {
 import {
   DatabaseConfigError,
   ConnectionError,
+  connectFailureReason,
   ExecutionProfileError,
   QueryError,
   mapDatabaseError,
@@ -3254,7 +3255,7 @@ export class MySQLProvider extends SQLBaseProvider {
       this.pool = null;
       await failedPool?.end().catch(() => {});
       throw new ConnectionError(
-        `Failed to connect to MySQL: ${error instanceof Error ? error.message : error}`,
+        `Failed to connect to MySQL: ${connectFailureReason(error)}`,
         "mysql",
         this.config.host,
         this.config.port,

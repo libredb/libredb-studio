@@ -79,6 +79,7 @@ import { comparePaths } from "../../object-path";
 import {
   DatabaseConfigError,
   ConnectionError,
+  connectFailureReason,
   DatabaseError,
   ExecutionProfileError,
   PoolExhaustedError,
@@ -3115,7 +3116,7 @@ export class PostgresProvider extends SQLBaseProvider {
         throw error;
       }
       throw new ConnectionError(
-        `Failed to connect to PostgreSQL: ${error instanceof Error ? error.message : error}`,
+        `Failed to connect to PostgreSQL: ${connectFailureReason(error)}`,
         "postgres",
         this.config.host,
         this.config.port,

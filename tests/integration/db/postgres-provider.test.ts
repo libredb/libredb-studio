@@ -10776,6 +10776,21 @@ describe("PostgreSQL server-level connection (#1530)", () => {
       expect(mockPoolsMade[0].ended).toBe(true);
     });
 
+    test("names each address a dial to localhost was refused on", async () => {
+      mockConnectRefusal = () =>
+        Object.assign(
+          new AggregateError(
+            [new Error("connect ECONNREFUSED ::1:5432"), new Error("connect ECONNREFUSED 127.0.0.1:5432")],
+            "",
+          ),
+          { code: "ECONNREFUSED" },
+        );
+      mockQueryFn = serverAnswers();
+      await expect(serverLevel().connect()).rejects.toThrow(
+        "Failed to connect to PostgreSQL: connect ECONNREFUSED ::1:5432, connect ECONNREFUSED 127.0.0.1:5432",
+      );
+    });
+
     test("refuses the connection when neither maintenance database opens", async () => {
       mockConnectRefusal = (config) =>
         Object.assign(new Error(`database "${String(config.database)}" does not exist`), { code: "3D000" });
