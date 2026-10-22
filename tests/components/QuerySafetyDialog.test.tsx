@@ -1513,11 +1513,11 @@ describe("isDangerousQuery", () => {
 
   /**
    * `DELETE`, `MERGE` and `INSERT` are the rest of the data-modifying set the
-   * `UPDATE … SET` probe above already covers for `UPDATE` (#1862). They count only
-   * as the first word of a CTE body, and only when the statement leads with `WITH`,
-   * so the same words inside a string or a comment do not ask and a plain
-   * `WITH … SELECT` does not either. CockroachDB is the postgres type-id, so it
-   * shares the grammar.
+   * `UPDATE … SET` probe above already covers for `UPDATE` (#1862). They count as
+   * the first word of a CTE body, or as the keyword that operates a body opening
+   * with `WITH`. The statement need not lead with `WITH`. The same words inside a
+   * string or a comment do not ask, and a plain `WITH … SELECT` does not either.
+   * CockroachDB is the postgres type-id, so it shares the grammar.
    */
   test.each<[string, string]>([
     ["a DELETE", "WITH d AS (DELETE FROM users RETURNING *) SELECT count(*) FROM d"],
@@ -1526,6 +1526,13 @@ describe("isDangerousQuery", () => {
       "WITH m AS (MERGE INTO users u USING (SELECT 1 id) s ON u.id=s.id WHEN MATCHED THEN DELETE RETURNING u.id) SELECT * FROM m",
     ],
     ["an INSERT", "WITH i AS (INSERT INTO users(id) VALUES (1) RETURNING id) SELECT * FROM i"],
+    ["a nested WITH that deletes", "WITH x AS (WITH y AS (SELECT 1) DELETE FROM t RETURNING *) SELECT * FROM x"],
+    [
+      "a nested WITH that inserts",
+      "WITH x AS (WITH y AS (SELECT 1) INSERT INTO t VALUES (1) RETURNING *) SELECT * FROM x",
+    ],
+    ["a parenthesised WITH that deletes", "(WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d)"],
+    ["a CREATE TABLE whose query deletes", "CREATE TABLE t2 AS WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d"],
   ])("prompts for a data-modifying CTE that carries %s", (_label, query) => {
     expect(isDangerousQuery(query, "postgres")).toBe(true);
   });
@@ -1547,6 +1554,11 @@ describe("isDangerousQuery", () => {
 
   test("does not prompt for a plain WITH … SELECT", () => {
     expect(isDangerousQuery("WITH cte AS (SELECT 1) SELECT * FROM cte", "postgres")).toBe(false);
+    expect(isDangerousQuery("WITH x AS (WITH y AS (SELECT 1) SELECT * FROM y) SELECT * FROM x", "postgres")).toBe(
+      false,
+    );
+    expect(isDangerousQuery("(WITH d AS (SELECT 1) SELECT * FROM d)", "postgres")).toBe(false);
+    expect(isDangerousQuery("CREATE TABLE t2 AS WITH d AS (SELECT 1) SELECT * FROM d", "postgres")).toBe(false);
   });
 
   // DELETE, INSERT and MERGE are non-reserved, so a name spelled that way is not a write.
@@ -1561,6 +1573,9 @@ describe("isDangerousQuery", () => {
     ["insert", "WITH insert AS (SELECT 1 FROM audit) SELECT * FROM insert"],
     ["merge in a column list", "WITH a (merge) AS (SELECT 1) SELECT * FROM a"],
     ["merge aliased as delete", "WITH a AS (SELECT merge AS delete FROM audit) SELECT * FROM a"],
+    ["delete inside a nested WITH", "WITH x AS (WITH y AS (SELECT delete FROM audit) SELECT * FROM y) SELECT * FROM x"],
+    ["delete in a parenthesised WITH", "(WITH a AS (SELECT delete FROM audit) SELECT * FROM a)"],
+    ["delete in a CREATE TABLE AS WITH", "CREATE TABLE t2 AS WITH a AS (SELECT delete FROM audit) SELECT * FROM a"],
   ])("does not prompt for a column or CTE named %s", (_label, query) => {
     expect(isDangerousQuery(query, "postgres")).toBe(false);
   });
@@ -1622,8 +1637,9 @@ describe("isDangerousQuery", () => {
    * cannot drift from them.
    *
    * A `DELETE`, `MERGE` or `INSERT` that opens a CTE body whose list can be read asks
-   * (#1862). Those words stay out of the unanchored `UPDATE … SET` pair: widening
-   * that pair would make every read whose code names one of them prompt.
+   * (#1862), including a body that opens with `WITH` and a `WITH` that is not the
+   * statement's first word. Those words stay out of the unanchored `UPDATE … SET`
+   * pair: widening that pair would make every read whose code names one of them prompt.
    *
    * The multi-statement rows closed an older gap (S1): the predicate reads the SAME
    * fragments `/api/db/multi-query` will run, so a later `DROP` is answered by its
@@ -1632,6 +1648,22 @@ describe("isDangerousQuery", () => {
    */
   test.each<[string, string, boolean]>([
     ["a DELETE hidden in a CTE body", "WITH gone AS (DELETE FROM t RETURNING *) SELECT * FROM gone", true],
+    [
+      "a DELETE that operates a nested WITH",
+      "WITH x AS (WITH y AS (SELECT 1) DELETE FROM t RETURNING *) SELECT * FROM x",
+      true,
+    ],
+    [
+      "an INSERT that operates a nested WITH",
+      "WITH x AS (WITH y AS (SELECT 1) INSERT INTO t VALUES (1) RETURNING *) SELECT * FROM x",
+      true,
+    ],
+    ["a parenthesised WITH that deletes", "(WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d)", true],
+    [
+      "a CREATE TABLE whose query deletes",
+      "CREATE TABLE t2 AS WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d",
+      true,
+    ],
     ["a DROP after a leading SELECT", "SELECT 1; DROP TABLE users", true],
     ["an UPDATE after a leading SELECT", "SELECT 1;\nUPDATE t SET x = 1", true],
   ])("answers %s with %p", (_label, query, expected) => {

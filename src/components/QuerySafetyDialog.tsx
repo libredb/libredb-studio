@@ -748,7 +748,7 @@ function cteBodyAt(text: string, afterAs: number, grammar: SqlGrammar): number |
   return pastHiddenText(text, at + 1, grammar);
 }
 
-/** Whether `INSERT`, `DELETE` or `MERGE` is the first word of a CTE body. */
+/** Whether `INSERT`, `DELETE` or `MERGE` opens a CTE body, or operates one that itself opens with `WITH`. */
 function cteBodyWrites(text: string, grammar: SqlGrammar): boolean {
   let i = 0;
   while (i < text.length) {
@@ -768,7 +768,12 @@ function cteBodyOpensWithWrite(text: string, afterAs: number, grammar: SqlGramma
   const bodyAt = cteBodyAt(text, afterAs, grammar);
   if (bodyAt === null) return false;
   const body = readSqlWord(text, bodyAt);
-  return body !== null && CTE_DATA_MODIFYING.has(body.text);
+  if (body !== null && CTE_DATA_MODIFYING.has(body.text)) return true;
+  // `WITH x AS (WITH y AS (…) DELETE …)` : the body is a statement, and the write is the
+  // keyword that operates it, not the first word.
+  if (body?.text !== "WITH") return false;
+  const operative = readOperativeKeyword(text.slice(bodyAt), grammar);
+  return operative !== null && CTE_DATA_MODIFYING.has(operative.keyword);
 }
 
 /**
@@ -830,11 +835,15 @@ export function writesUnderGrammar(text: string, grammar: SqlGrammar): boolean {
   // A data-modifying CTE is operated by the statement after its list, so the keyword
   // test above answers for the SELECT. INSERT, DELETE and MERGE are non-reserved in
   // PostgreSQL, so they count only as the first word of a CTE body — right after
-  // `AS (` or `AS [NOT] MATERIALIZED (` — and only when the list can be typed. A column
-  // or CTE of those names does not ask, nor does a word in a string or a comment. An
-  // unclosed list (`WITH t AS (DELETE FROM x`) stays silent. UPDATE stays the pair below.
-  // CockroachDB connections are the postgres type-id and share this grammar (#1862).
-  if (readLeadingKeyword(text, grammar)?.keyword === "WITH" && reading !== null && cteBodyWrites(text, grammar)) {
+  // `AS (` or `AS [NOT] MATERIALIZED (` — or as the keyword that operates a body
+  // which itself opens with WITH. A column or CTE of those names does not ask, nor
+  // does a word in a string or a comment. The statement need not lead with WITH:
+  // a parenthesised query and `CREATE TABLE … AS WITH …` carry the same body.
+  // An unclosed list that leads with WITH (`WITH t AS (DELETE FROM x`) stays silent.
+  // UPDATE stays the pair below. CockroachDB connections are the postgres type-id
+  // and share this grammar (#1862).
+  const leadsWithWith = readLeadingKeyword(text, grammar)?.keyword === "WITH";
+  if ((!leadsWithWith || reading !== null) && cteBodyWrites(text, grammar)) {
     return true;
   }
   const update = findCodeWord(text, "UPDATE", 0, grammar);
