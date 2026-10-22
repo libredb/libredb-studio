@@ -340,6 +340,22 @@ export function waitedSeconds(ms: number): string {
 }
 
 /**
+ * The reason a failed connect gives. A dial to a host with several addresses (`localhost` is `::1` and `127.0.0.1`)
+ * rejects with an AggregateError whose message is empty; its reasons are the per-address errors.
+ */
+export function connectFailureReason(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  if (error instanceof AggregateError && !error.message) {
+    const reasons = error.errors.map((inner) => (inner instanceof Error ? inner.message : String(inner)));
+    const joined = reasons.filter(Boolean).join(", ");
+    if (joined) return joined;
+    const code = (error as { code?: unknown }).code;
+    if (typeof code === "string") return code;
+  }
+  return error.message;
+}
+
+/**
  * Runs a provider's connect(), timing it. A deadline met there ran no statement: the server was never reached, or
  * was reached and did not answer the connect, and a driver cannot always tell which. So a TimeoutError from the
  * connect is a ConnectionError naming the wait it made, on every route that connects, never the query sentence and

@@ -18,6 +18,7 @@ import {
   isRetryableError,
   waitedSeconds,
   connectPhase,
+  connectFailureReason,
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
 import {
@@ -1113,5 +1114,40 @@ describe("connectPhase", () => {
     const denied = new AuthenticationError("bad token", "kubernetes");
     expect(await connectPhase(() => Promise.reject(refused)).catch((e: unknown) => e)).toBe(refused);
     expect(await connectPhase(() => Promise.reject(denied)).catch((e: unknown) => e)).toBe(denied);
+  });
+});
+
+describe("connectFailureReason", () => {
+  test("names every address an AggregateError from a dial to localhost carries", () => {
+    const error = Object.assign(
+      new AggregateError(
+        [new Error("connect ECONNREFUSED ::1:5432"), new Error("connect ECONNREFUSED 127.0.0.1:5432")],
+        "",
+      ),
+      { code: "ECONNREFUSED" },
+    );
+    expect(connectFailureReason(error)).toBe("connect ECONNREFUSED ::1:5432, connect ECONNREFUSED 127.0.0.1:5432");
+  });
+
+  test("reads a reason that is not an Error as a string", () => {
+    expect(connectFailureReason(new AggregateError(["refused", ""], ""))).toBe("refused");
+  });
+
+  test("falls back to the code when the AggregateError carries no reason", () => {
+    expect(connectFailureReason(Object.assign(new AggregateError([], ""), { code: "ECONNREFUSED" }))).toBe(
+      "ECONNREFUSED",
+    );
+    expect(connectFailureReason(new AggregateError([], ""))).toBe("");
+  });
+
+  test("keeps the message an AggregateError or a plain Error gives", () => {
+    expect(connectFailureReason(new AggregateError([new Error("inner")], "outer"))).toBe("outer");
+    expect(connectFailureReason(new Error("connect ECONNREFUSED 127.0.0.1:5432"))).toBe(
+      "connect ECONNREFUSED 127.0.0.1:5432",
+    );
+  });
+
+  test("reads a value that is not an Error as a string", () => {
+    expect(connectFailureReason("socket closed")).toBe("socket closed");
   });
 });
