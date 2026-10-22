@@ -107,6 +107,13 @@ jobs:
               cat entities.err
               echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
+            # THE DENIAL GOES TO THE LOG TOO. The first probe run (39757602485) answered
+            # exactly what it was built to answer - the role cannot read the catalog - but
+            # the reason went only to the step summary, which no API returns: reading it
+            # back needed a human with the browser open. A result that cannot be fetched
+            # is a result that gets quoted from memory, so it is printed here as well.
+            echo "AWS denied the catalog read. Its own words:"
+            cat entities.err
             echo "catalog_read=no" >> "$GITHUB_OUTPUT"
             echo "::warning::This role cannot read the Marketplace catalog. The denial is in the summary; the listing step cannot run with this role as it stands."
           fi
