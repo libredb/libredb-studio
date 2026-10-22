@@ -8,11 +8,12 @@
 # pull request, smoke matrix included, and upload the tested VSIX as the
 # vscode-extension-vsix artifact.
 #
-# No publish job yet: it lands with the owner's decisions on the Marketplace
-# publisher id and its authentication (the VS Code extension design, section 9,
-# items 1 and 2), as `vsce publish --pre-release --packagePath <file>` from a
-# GitHub environment that requires a reviewer. No GitHub Release either: a
-# published release starts the product's own publishes.
+# publish then uploads that same VSIX to the Visual Studio Marketplace, from
+# the vscode-marketplace environment, which requires a reviewer. It rebuilds
+# nothing. Its only credential is the job's GitHub OIDC token, which
+# `vsce publish --oidc` trades for a Marketplace token against the trusted
+# publisher the libredb publisher names; no Marketplace token is stored.
+# No GitHub Release: a published release starts the product's own publishes.
 name: VS Code Extension Release
 
 on:
@@ -56,3 +57,38 @@ jobs:
     name: Gates
     needs: verify
     uses: ./.github/workflows/vscode-extension.yml
+
+  publish:
+    name: Publish to the Visual Studio Marketplace
+    needs: gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: vscode-marketplace
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: vscode-extension/package-lock.json
+
+      - name: Install the extension's dependencies, for vsce
+        working-directory: vscode-extension
+        run: npm ci --ignore-scripts
+
+      - name: Download the VSIX the gates tested
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: vscode-extension-vsix
+          path: vscode-extension/dist-vsix
+
+      - name: Publish it
+        working-directory: vscode-extension
+        run: npm run publish:marketplace

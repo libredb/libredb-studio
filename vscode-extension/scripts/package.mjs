@@ -8,12 +8,20 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDirectExecution } from "./direct-execution.mjs";
 
-/** vsce's arguments: package --no-dependencies --out dist-vsix/libredb-studio-<version>.vsix, plus --pre-release on an odd minor. */
-export function vscePackageArgs(version) {
+/** The Marketplace's version line: major.minor.patch, a pre-release on an odd minor (docs/DISTRIBUTION.md). */
+export function isPreRelease(version) {
   const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
   if (!match) throw new Error(`The version "${version}" is not major.minor.patch.`);
-  const args = ["package", "--no-dependencies", "--out", `dist-vsix/libredb-studio-${version}.vsix`];
-  return Number(match[2]) % 2 === 1 ? [...args, "--pre-release"] : args;
+  return Number(match[2]) % 2 === 1;
+}
+
+/** Where vsce packs the VSIX, and where the release workflow's publish job downloads the tested one. */
+export const vsixPath = (version) => `dist-vsix/libredb-studio-${version}.vsix`;
+
+/** vsce's arguments: package --no-dependencies --out dist-vsix/libredb-studio-<version>.vsix, plus --pre-release on an odd minor. */
+export function vscePackageArgs(version) {
+  const args = ["package", "--no-dependencies", "--out", vsixPath(version)];
+  return isPreRelease(version) ? [...args, "--pre-release"] : args;
 }
 
 if (isDirectExecution(process.argv[1], import.meta.url)) {
