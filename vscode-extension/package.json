@@ -326,6 +326,7 @@
     "test:browser": "playwright test -c playwright.config.mjs",
     "test:vsix": "node scripts/vsix-install-check.mjs",
     "package": "node scripts/package.mjs",
+    "publish:marketplace": "node scripts/publish.mjs",
     "vscode:prepublish": "npm run build"
   },
   "devDependencies": {

@@ -1398,14 +1398,28 @@ A later pre-release takes the next odd minor, 0.3.x, and stays above the release
 [`vscode-extension-release.yml`](../.github/workflows/vscode-extension-release.yml) runs on a pushed `vscode-extension-*` tag.
 Its `verify` job runs `vscode-extension/scripts/release-tag.mjs`, which refuses a tag that is not `vscode-extension-` plus the manifest's `version`, and refuses a tag whose commit is not on `main`.
 Its `gates` job then calls [`vscode-extension.yml`](../.github/workflows/vscode-extension.yml), the same reusable workflow every pull request runs, smoke matrix included, which uploads the tested VSIX as the `vscode-extension-vsix` workflow artifact and the packaged build's `dist/*.js.map` as `vscode-extension-sourcemaps`.
-It publishes nothing: the workflow has no publish job and no environment, and `tests/unit/vscode-extension-workflow.test.ts` holds that until a PR adds one.
-No GitHub Release is created either.
+Its `publish` job then uploads that same VSIX with `npm run publish:marketplace` ([`vscode-extension/scripts/publish.mjs`](../vscode-extension/scripts/publish.mjs)), which runs `vsce publish --oidc --packagePath <file>`, plus `--pre-release` on an odd minor; nothing is rebuilt.
+It runs in the `vscode-marketplace` GitHub environment, which requires a reviewer, so a pushed tag waits for that approval before anything reaches the Marketplace.
+Its only credential is the job's GitHub OIDC token (`id-token: write`), which vsce trades for a short-lived Marketplace token against the trusted publisher configured on the `libredb` publisher; no Marketplace token is stored in the repository.
+`tests/unit/vscode-extension-workflow.test.ts` holds the job to that shape: after `gates`, the tested artifact, that environment, no stored secret, no Open VSX.
+No GitHub Release is created.
 `npm-publish.yml`, `docker-build-push.yml` and `aws-ami-build.yml` run on every `release: published` and skip only the chart's `libredb-studio-` prefix, so a GitHub Release for the extension would start a product publish and, while the `aws-marketplace` channel is live, an AMI build from the root `package.json` version.
 `operator-release.yml` runs on it too, but already skips a tag that is not an app semver.
 
+### Before the publish job can run
+
+Three things outside the repository, all the owner's:
+
+1. The `vscode-marketplace` environment under the repository's Settings > Environments, with a required reviewer and deployments limited to `vscode-extension-*` tags.
+2. A trusted publisher on the `libredb` publisher's management page, naming the repository `libredb/libredb-studio`, the workflow `vscode-extension-release.yml` and, where the form takes one, the environment `vscode-marketplace`.
+   As of 22 October 2026 the Marketplace backend still refuses `--oidc` (`TrustedPublishingNotSupportedException`) and announced it for the following week ([microsoft/vscode-vsce#1275](https://github.com/microsoft/vscode-vsce/issues/1275)).
+3. A stable `@vscode/vsce` that carries the token exchange of [microsoft/vscode-vsce#1337](https://github.com/microsoft/vscode-vsce/pull/1337); 4.0.0, the version `vscode-extension/package.json` pins, predates it, and only the 4.0.1 prereleases had it on 22 October 2026.
+
+Until all three hold, a pushed tag's `publish` job is left unapproved, or rejected, and the version goes up by hand as below.
+
 ### Publishing a version by hand
 
-Until a publish job exists, the owner uploads the VSIX the gates tested; nothing is rebuilt for the upload.
+The owner uploads the VSIX the gates tested; nothing is rebuilt for the upload.
 
 1. Download the `vscode-extension-vsix` artifact of the tag's `vscode-extension-release.yml` run, or of `main`'s `vscode-extension.yml` run at the tagged commit, and check that its manifest names `Publisher="libredb"`, the version, and, on an odd minor, the `PreRelease` property.
 2. Install it into a fresh VS Code profile (`code --user-data-dir <dir> --extensions-dir <dir> --install-extension <file>`) and run one query on each v0 engine.
@@ -1420,12 +1434,12 @@ The listing's text and images come from the packed `README.md`; the management p
 - The Marketplace publisher id is `libredb`, display name LibreDB; it cannot change, and the extension's id is `libredb.libredb-studio`.
 - The publisher is owned by named members' Microsoft accounts, added by User ID on the publisher's Members page, so no single account holds it.
 - 0.1.0 was uploaded by hand from `main` at 15fff4b04 (the `vscode-extension-vsix` artifact of run 39575773660), with no token, after a check on the four v0 engines in a fresh VS Code profile.
+- The publish job authenticates by trusted publishing (`vsce publish --oidc`), decided on 22 October 2026 over Entra ID workload identity federation and an organization-scoped PAT: it stores no secret and needs no Azure tenant, and global Azure DevOps PATs retire on 1 December 2026.
 - The tag namespace is `vscode-extension-<version>`, as in "Cutting a version" above and `CLAUDE.md`'s "Tag namespace" paragraph.
 
 ### Still open
 
-- The Marketplace authentication for a publish job, before global Azure DevOps PATs retire on 2026-12-01: trusted publishing (`vsce publish --oidc` with `id-token: write`) or Entra ID (`--azure-credential`).
-- The publish job: `vsce publish --pre-release --packagePath <file>` of the VSIX the gates tested, from a GitHub environment that requires a reviewer, and who that reviewer is.
+- Who the `vscode-marketplace` environment's reviewer is.
 - When the `VS Code Extension` job and its macOS and Windows smoke matrix become required checks.
 - Whether the extension ever gets GitHub Releases; if it does, `npm-publish.yml`, `docker-build-push.yml` and `aws-ami-build.yml` must first learn to skip `vscode-extension-` tags.
 - The Open VSX namespace `libredb`, and when to publish there (`ovsx publish --pre-release`) for Cursor, Windsurf and VSCodium, after their extension host runtimes are measured.
