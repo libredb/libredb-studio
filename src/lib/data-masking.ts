@@ -179,9 +179,10 @@ const MASK_FUNCTIONS: Record<MaskType, (value: string, customMask?: string) => s
     if (parts.length === 4) return `${parts[0]}.***.***.${parts[3]}`;
     return "***";
   },
+  // Keeps the day of an ISO date, with or without a time after it; anything else is masked whole.
   date: (v) => {
-    if (v.length >= 4) return `****-**-${v.slice(-2)}`;
-    return "****-**-**";
+    const day = /^\d{4}-\d{2}-(\d{2})(?!\d)/.exec(v.trim())?.[1];
+    return day ? `****-**-${day}` : "****-**-**";
   },
   financial: () => "***,***.**",
   custom: (_v, customMask) => customMask || "***",
