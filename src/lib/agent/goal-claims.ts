@@ -41,10 +41,25 @@ function rowCountsByArtifact(events: readonly AgentRunEvent[]): ReadonlyMap<stri
  * it would be the verifier inventing the very evidence it is checking for.
  *
  * `unbounded` is the set of artifacts whose row count says nothing about whether the
- * question was answered, and it is skipped for the same reason: a count that cannot
- * be read is not a count of zero. The caller names them, because which artifacts
- * those are is a fact about a WORKFLOW's evidence and not about arithmetic — only the
- * optimization rule passes any (B45).
+ * question was answered. The caller names them, because which artifacts those are is a
+ * fact about a WORKFLOW's evidence and not about arithmetic — only the optimization rule
+ * passes any (B45).
+ *
+ * A cited `unbounded` artifact SETTLES this question rather than leaving it, and that is the
+ * B45 lesson a fourth time. Skipping one made the exemption work in exactly one shape — a
+ * report whose only citation was the plan, where the census comes out empty and an empty
+ * census is not an emptiness finding — and invert everywhere else: where a report cited a
+ * plan AND a read that came back empty, the only evidence that was not empty was the piece
+ * removed, and the empty read decided alone. Measured 2026-10-19 on `bonsai-2:4b`
+ * query-optimization, the cell at 4/5 and the model at 29/30: four of five runs ended
+ * `report-composed` with `empty-evidence` in 44-65 seconds, and the first cited a read of
+ * zero rows beside a `sql.explain.estimate` carrying FIVE. The exemption threw the five away.
+ *
+ * The exemption's own reason is that such an artifact is COMPLETE and its count measures
+ * nothing — so a report resting on one rests on something. That is the whole claim this
+ * function makes, and it is not widened: an id nobody cited is still not evidence, and an
+ * empty bounded read cited ALONE still ends the run `empty-evidence`, because zero rows from
+ * a read is the answer that read gave.
  */
 function restsOnlyOnEmptyResults(
   claims: readonly AgentReportClaim[],
@@ -55,7 +70,8 @@ function restsOnlyOnEmptyResults(
   const cited: number[] = [];
   for (const claim of claims) {
     for (const reference of claim.evidence) {
-      if (reference.source !== "artifact" || unbounded.has(reference.correlationId)) continue;
+      if (reference.source !== "artifact") continue;
+      if (unbounded.has(reference.correlationId)) return false;
       const rowCount = counts.get(reference.correlationId);
       if (rowCount !== undefined) cited.push(rowCount);
     }
