@@ -76,12 +76,18 @@ Add a manual (key-based) entry with:
 
 Those are every app's defaults, so in practice you only paste the key.
 
-Prefer to scan a QR code? Build the standard URI yourself and render it with any offline QR tool —
-Studio does not mint one, because doing so would mean the server handing the shared secret back
-over HTTP after startup:
+If the account lives in the server store and has no factor yet, skip the manual entry and open
+**Sign-in security** → **Set up authenticator**: Studio draws a QR code in the browser from the same
+`otpauth://` URI that screen already receives. Scan it instead of typing the key. No new endpoint is
+added, and the browser receives nothing more than the key it already displays.
+
+If step 2 already gave the account a factor, the screen says **On** and offers no setup. Accounts
+configured only by `ADMIN_TOTP_SECRET` or `USER_TOTP_SECRET` (the Quick Start above) have no
+enrollment screen at all. For either case, use the manual entry above, or build the same URI yourself
+and render it with any offline QR tool:
 
 ```
-otpauth://totp/LibreDB%20Studio:admin@libredb.org?secret=YOUR_SECRET_HERE&issuer=LibreDB%20Studio
+otpauth://totp/LibreDB:admin%40libredb.org?secret=YOUR_SECRET_HERE&issuer=LibreDB&algorithm=SHA1&digits=6&period=30
 ```
 
 ### 4. Sign in
@@ -116,7 +122,7 @@ password alone if that is what you need.
 After that the row is the secret: changing the environment variable does not change an account that already exists, and blanking it does not turn the factor off.
 `ADMIN_PASSWORD_RESET=true` is the exception for the env admin, and applies `ADMIN_TOTP_SECRET` (or no factor) along with the password; see [STORAGE.md](./STORAGE.md#accounts).
 
-Every account sets up its own authenticator under the user menu → Sign-in security (`/settings/authenticator`); an admin also finds it at the foot of Admin → Accounts.
+Every server-store account manages its own authenticator under the user menu → Sign-in security (`/settings/authenticator`); while setting one up, the screen shows a QR code and the key. An admin also finds it at the foot of Admin → Accounts.
 Setting one up asks for the current password, and turning one off asks for the current password and a current code, so a stolen session cookie can neither remove the factor nor replace it.
 A wrong password or code there is charged to the same budgets as a failed login.
 An admin clears someone else's factor with `PATCH /api/admin/accounts/<email>` `{"clearTotp":true}`, for example when a phone is lost.
