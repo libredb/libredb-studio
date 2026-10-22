@@ -48,9 +48,9 @@ describe("the Marketplace README", () => {
     for (const [, form] of others) assert.ok(!new RegExp(`\\b${escape(form.label)}\\b`).test(readme), form.label);
   });
 
-  it("says it is a pre-release, as the odd minor of the manifest's version makes it", () => {
-    assert.equal(Number(manifest.version.split(".")[1]) % 2, 1);
-    assert.match(readme, /pre-release/);
+  it("calls itself a pre-release exactly when the manifest's version has an odd minor", () => {
+    const preRelease = Number(manifest.version.split(".")[1]) % 2 === 1;
+    assert.equal(/pre-release/i.test(readme), preRelease);
   });
 
   it("names the floor VS Code version the manifest asks for", () => {

@@ -304,7 +304,7 @@ channels:
         headless server package) is what FlatPark pins as extra-data.
 
   - id: vscode-marketplace
-    name: VS Code extension (Visual Studio Marketplace, pre-release)
+    name: VS Code extension (Visual Studio Marketplace)
     short_name: VS Code extension
     status: live
     category: os-desktop
@@ -324,7 +324,8 @@ channels:
       docs: docs/DISTRIBUTION.md
     pin:
       strategy: none
-      note: Published 21 Oct 2026 as 0.1.0, a pre-release, under the publisher libredb. The extension has
+      note: Published 21 Oct 2026 as the 0.1.0 pre-release, under the publisher libredb; 0.2.0 is its first
+        release. The extension has
         a version line of its own in vscode-extension/package.json, which the drift check's comparison
         with the root package.json cannot read, so the listed version is checked by hand against the
         listing.

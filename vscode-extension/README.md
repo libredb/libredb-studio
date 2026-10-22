@@ -1,6 +1,6 @@
 # LibreDB Studio for VS Code
 
-LibreDB Studio for VS Code is a pre-release that browses and queries PostgreSQL, SQL Server, MySQL and MongoDB databases from the editor.
+LibreDB Studio for VS Code browses and queries PostgreSQL, SQL Server, MySQL and MongoDB databases from the editor.
 It needs no account and no login.
 It requires VS Code 1.123 or later.
 
@@ -35,7 +35,7 @@ A MongoDB command cannot be cancelled once it is sent.
 
 ## Keyboard shortcut
 
-This pre-release binds no key to **Run Query**.
+LibreDB binds no key to **Run Query**.
 To add one, put an entry like this in your `keybindings.json`:
 
 ```json
@@ -56,7 +56,7 @@ In Restricted Mode, every connection opens with external file access denied.
 - `libredb.connections`: the saved connections, written by **Add Connection** and **Remove Connection**.
 - `libredb.query.rowLimit`: the number of rows each page of results holds, 500 by default, from 1 to 10000.
 
-## Not in this pre-release
+## Not in this version
 
 - Editing a saved connection: when a sign-in fails, LibreDB offers Enter Credentials instead.
 - Exporting results.

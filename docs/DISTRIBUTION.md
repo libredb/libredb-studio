@@ -1312,7 +1312,8 @@ bash scripts/build-standalone-payload.sh dist --smoke
 ## VS Code extension (Marketplace)
 
 LibreDB Studio for VS Code lives in [`vscode-extension/`](../vscode-extension), an npm package of its own with a version line of its own.
-Its 0.1.0 pre-release has been on the [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=libredb.libredb-studio) since 21 October 2026, under the publisher `libredb`.
+It has been on the [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=libredb.libredb-studio) since 21 October 2026, under the publisher `libredb`: 0.1.0 and 0.1.1 as pre-releases, then 0.2.0 as its first release.
+A listing with pre-releases only refuses a plain install (`code --install-extension libredb.libredb-studio` fails with "it has no release version"), which is why 0.2.0 is a release.
 This section is its release runbook.
 Its build, tests and CI job are in [docs/TOOLCHAIN.md, "VS Code extension"](TOOLCHAIN.md#vs-code-extension-vscode-extension).
 
@@ -1321,7 +1322,8 @@ Its build, tests and CI job are in [docs/TOOLCHAIN.md, "VS Code extension"](TOOL
 The extension's version is the `version` of [`vscode-extension/package.json`](../vscode-extension/package.json), independent of the product's bare semver.
 The Marketplace takes `major.minor.patch` only, with a pre-release as a flag rather than a suffix, and recommends an odd minor for pre-releases.
 So every 0.1.x is a pre-release, 0.1.0 included, and the first release is 0.2.0.
-`vscode-extension/test/unit/manifest.test.ts` holds the version to the odd-minor 0.x line, so the release that leaves it changes that case in the same PR.
+A later pre-release takes the next odd minor, 0.3.x, and stays above the release users have, so only those who chose pre-releases get it.
+`vscode-extension/test/unit/manifest.test.ts` holds the version to the 0.2.x line, so a version that leaves it changes that case in the same PR, and `test/unit/readme.test.ts` holds the README to calling itself a pre-release exactly on an odd minor.
 
 ### Cutting a version
 
@@ -1348,7 +1350,7 @@ Until a publish job exists, the owner uploads the VSIX the gates tested; nothing
 1. Download the `vscode-extension-vsix` artifact of the tag's `vscode-extension-release.yml` run, or of `main`'s `vscode-extension.yml` run at the tagged commit, and check that its manifest names `Publisher="libredb"`, the version, and, on an odd minor, the `PreRelease` property.
 2. Install it into a fresh VS Code profile (`code --user-data-dir <dir> --extensions-dir <dir> --install-extension <file>`) and run one query on each v0 engine.
 3. On https://marketplace.visualstudio.com/manage/publishers/libredb, upload it as a new version of LibreDB Studio, or through **New extension** > **Visual Studio Code** for a new extension.
-4. When the Marketplace has verified it, check that `code --install-extension libredb.libredb-studio --pre-release` installs that version in another fresh profile.
+4. When the Marketplace has verified it, check that `code --install-extension libredb.libredb-studio` installs that version in another fresh profile, with `--pre-release` on an odd minor.
 
 A version number can be uploaded once, so a fix to a published version is the next patch.
 The listing's text and images come from the packed `README.md`; the management page has no field for them, so changing them is a new version.

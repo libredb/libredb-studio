@@ -3,7 +3,7 @@
   "publisher": "libredb",
   "displayName": "LibreDB Studio",
   "description": "Browse and query PostgreSQL, SQL Server, MySQL and MongoDB databases with LibreDB Studio.",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "license": "MIT",
   "repository": {
