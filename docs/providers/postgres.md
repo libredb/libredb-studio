@@ -1820,7 +1820,7 @@ Before this, the same file stopped at its first row with `ERROR: malformed array
 The editor's confirmation gate asks before the shared destructive keywords, `MERGE` among them ([query-optimization.md](../editor/query-optimization.md#destructive-statement-confirmation)).
 On this dialect it also asks before a `DO` block, whatever the block does: the block's code is a literal, `$$ ... $$` or `'...'`, which the gate does not read.
 The grammar row's `confirmCodeForms` names `DO` followed by a body and `DO LANGUAGE` ([`postgres-sql-grammar.ts`](../../src/lib/db/providers/sql/postgres-sql-grammar.ts)), so the `DO` of `INSERT ... ON CONFLICT DO NOTHING` and of `CREATE RULE ... DO INSTEAD`, which a word follows, does not ask.
-`explainExecutesWithAnalyze` is set, because `EXPLAIN ANALYZE` (and `EXPLAIN (ANALYZE, …)`) runs the explained statement: the gate strips the option and asks about what remains when `ANALYZE` is on, and a plain `EXPLAIN` or `ANALYZE` set to `false`, `off` or `0` only plans, so it does not ask.
+`explainExecutesWithAnalyze` is set, because `EXPLAIN ANALYZE` (and `EXPLAIN (ANALYZE, …)`) runs the explained statement: the gate strips the option and asks about what remains when `ANALYZE` is on. A plain `EXPLAIN` only plans, and so does `ANALYZE` set to a boolean false (`false`, `off`, `no`, `0` and their accepted prefixes) or to an integer literal of value 0 (`0x0`, `0b0`, `0o0`, `0_0`). A nonzero literal (`0x1`, `0b1`, `0o1`, `0_1`) executes, so it asks.
 CockroachDB shares this type id and this grammar.
 
 ---

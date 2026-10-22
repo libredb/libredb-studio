@@ -574,7 +574,7 @@ same reading the auto-limiter uses, so the two cannot disagree about where a sta
 | Any of those behind a comment (`-- note`, `/* note */`, MySQL's `# note`, several stacked) | Yes |
 | A `WITH` whose CTE list precedes one (`WITH x AS (…) DELETE FROM …`) | Yes |
 | A `WITH` whose CTE list *contains* an `INSERT`, `UPDATE … SET`, `DELETE` or `MERGE` (PostgreSQL's data-modifying CTE; CockroachDB shares the grammar) | Yes |
-| `EXPLAIN ANALYZE` or `EXPLAIN (ANALYZE, …)` of a statement that asks, on PostgreSQL (CockroachDB shares the grammar). `ANALYZE` set to `false`, `off` or `0`, and a plain `EXPLAIN`, only plan | Yes, the same answer as the explained statement |
+| `EXPLAIN ANALYZE` or `EXPLAIN (ANALYZE, …)` of a statement that asks, on PostgreSQL (CockroachDB shares the grammar). `ANALYZE` set to a boolean false (`false`, `off`, `no`, `0` and their prefixes) or an integer 0 (`0x0`, `0b0`, `0o0`, `0_0`), and a plain `EXPLAIN`, only plan. `0x1`, `0b1`, `0o1` and `0_1` execute | Yes, the same answer as the explained statement |
 | A statement carrying a run the reader cannot resolve (`SELECT '\';` and anything after it, an unterminated comment, literal, name or array) | Yes, and the dialog says why |
 | Any of those behind a **nested** comment (`/* a /* b */ c */ DROP TABLE users`), on a dialect that nests — PostgreSQL, SQL Server, ClickHouse | Yes: the comment is read whole, so the statement's own keyword is the one that answers |
 | The same text on a dialect that does **not** nest — MySQL, MariaDB, SQLite, Oracle | No, because there the comment closed at the first `*/` and what follows it is text the engine rejects outright |
@@ -618,7 +618,10 @@ be read as an `EXPLAIN`, which is not a dangerous keyword, so `EXPLAIN ANALYZE D
 deleted the rows with no confirmation (#1863). The gate strips a leading run of `ANALYZE`, `ANALYSE`
 and `VERBOSE`, or a parenthesised option list, and when `ANALYZE` is enabled asks about the remaining
 statement the way it would on its own — including a data-modifying CTE written under the `EXPLAIN`.
-`ANALYZE` with no value is on; `true`, `on` and `1` are on; `false`, `off` and `0` are off. A plain
+`ANALYZE` with no value is on; `true`, `on` and `1` are on. A value is off only when the whole of it
+is a boolean false (`false`, `off`, `no`, `0` and their accepted prefixes) or an integer literal of
+value 0, so `0x0`, `0b0`, `0o0` and `0_0` plan while `0x1`, `0b1`, `0o1` and `0_1` execute. Anything
+else is on. A plain
 `EXPLAIN`, `EXPLAIN VERBOSE`, or `ANALYZE` set off only plans, so it does not ask, and an `UPDATE … SET`
 inside that plan does not either. A word inside a string or a comment is not an option and is not the
 statement. CockroachDB connections are the `postgres` type-id and share the grammar, so they ask too.

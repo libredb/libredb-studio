@@ -62,8 +62,10 @@ const POSTGRES_GRAMMAR: SqlGrammar = {
   // `ON CONFLICT DO NOTHING | UPDATE` and of `CREATE RULE ... DO INSTEAD | ALSO` is followed by a word and does not ask.
   confirmCodeForms: [{ wordThenBody: "DO" }, ["DO", "LANGUAGE"]],
   // `EXPLAIN` only plans. `EXPLAIN ANALYZE` (and the British `ANALYSE`) executes the explained statement, and so does
-  // a parenthesised `ANALYZE` whose value is absent or anything other than false, off or 0 (PostgreSQL manual,
-  // EXPLAIN). CockroachDB shares this type-id, so the same statements ask there (#1863).
+  // a parenthesised `ANALYZE` whose value is absent or anything other than a boolean false (`false`, `off`, `no`, `0`
+  // and their accepted prefixes) or an integer literal of value 0. `0x1`, `0b1`, `0o1` and `0_1` are 1, so they
+  // execute (PostgreSQL manual, EXPLAIN; the integer scanner). CockroachDB shares this type-id, so the same
+  // statements ask there (#1863).
   explainExecutesWithAnalyze: true,
 };
 
