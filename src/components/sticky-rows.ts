@@ -101,13 +101,26 @@ export function stickyEntries(
 }
 
 /**
- * Where to scroll so a strip row is visible: the top of the row's own box.
+ * Where to scroll so a pressed strip row is revealed BELOW the strip that will draw over the list.
  *
- * Exported beside the strip because the two are one gesture: a strip row the reader presses is
- * revealed by this offset, and the strip then recomputes on the resulting scroll - the row is first
- * visible, so it leaves the chain and its ancestors take its place. A browser clamps the value at
- * the end of the list, which leaves the row visible at the bottom rather than unreachable.
+ * The row's own top edge is the obvious offset, and it is wrong: the row's ancestors pin exactly
+ * there, so the strip paints on top of the row the press just revealed. Nor is subtracting the row's
+ * own chain enough - at the new position the strip is recomputed from whichever row is then first
+ * visible, and a row above the target may sit DEEPER than the target, pinning a longer chain that
+ * covers the row again.
+ *
+ * So the walk takes the nearest row `at` at or above the target whose own chain is at most
+ * `target - at` rows tall - short enough that the strip over `at` cannot reach the target - and
+ * scrolls to `at`'s top edge. A root row qualifies at `at = target` itself and lands on its own top
+ * edge, and the first row of a depth-stacked list is a root, so the walk always lands. A browser
+ * clamps the value at the end of the list, which leaves the row visible at the bottom rather than
+ * unreachable.
  */
-export function revealOffset(index: number, rowHeight: number): number {
-  return Math.max(index, 0) * rowHeight;
+export function revealOffset(rows: readonly StickyRowLike[], index: number, rowHeight: number): number {
+  const target = Math.min(Math.max(index, 0), rows.length - 1);
+  for (let at = target; at > 0; at -= 1) {
+    const depth = rows[at]?.depth ?? 0;
+    if (depth <= target - at) return at * rowHeight;
+  }
+  return 0;
 }

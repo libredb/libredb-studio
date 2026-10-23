@@ -155,12 +155,45 @@ describe("stickyEntries()", () => {
 });
 
 describe("revealOffset()", () => {
-  test("a row is revealed at its own top edge", () => {
-    expect(revealOffset(0, ROW)).toBe(0);
-    expect(revealOffset(12, ROW)).toBe(12 * ROW);
+  /** The height the strip draws over the top of the box at scrollTop `top`. */
+  function stripHeight(rows: readonly StickyRowLike[], top: number, cap = 5): number {
+    return stickyEntries(rows, parentIndices(rows), top, 600, ROW, cap).length * ROW;
+  }
+
+  test("a row no strip can reach is revealed at its own top edge", () => {
+    // A flat list: nothing pins, so nothing is owed above the row and the old offset is still right.
+    const rows = Array.from({ length: 13 }, (): StickyRowLike => ({ depth: 0 }));
+    expect(revealOffset(rows, 12, ROW)).toBe(12 * ROW);
+    expect(revealOffset(rows, 0, ROW)).toBe(0);
+  });
+
+  test("a row is revealed below the strip its own ancestors pin", () => {
+    // A three deep chain. The leaf cannot go to its own top edge - its chain pins exactly there -
+    // so it lands one row up, where the one row strip stops at the leaf's top edge.
+    const rows = depths(0, 1, 2);
+    expect(revealOffset(rows, 2, ROW)).toBe(1 * ROW);
+  });
+
+  test("a row above the target can pin a longer chain than the target's own", () => {
+    // The trap the naive offsets fall into. The row just above the target is DEEPER than the target,
+    // so the target's top edge leaves it under one pinned row, and target minus its own chain leaves
+    // it under three - the strip recomputes at the new position. The nearest row whose own chain
+    // cannot reach the target is two up.
+    const rows = depths(0, 1, 2, 3, 1);
+    expect(revealOffset(rows, 4, ROW)).toBe(2 * ROW);
+  });
+
+  test("the revealed row is never under a strip slot", () => {
+    // The contract the offset exists for, checked on every row of every shape above.
+    for (const rows of [depths(0, 1, 2), depths(0, 1, 2, 3, 1), depths(0, 0, 1, 2, 1, 0, 1)]) {
+      for (let index = 1; index < rows.length; index += 1) {
+        const top = revealOffset(rows, index, ROW);
+        expect(index * ROW - top).toBeGreaterThanOrEqual(stripHeight(rows, top));
+      }
+    }
   });
 
   test("a negative index cannot scroll above the top", () => {
-    expect(revealOffset(-3, ROW)).toBe(0);
+    expect(revealOffset(depths(0, 1), -3, ROW)).toBe(0);
   });
 });

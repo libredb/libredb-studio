@@ -628,6 +628,10 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
       }),
     [stripDepths, panelRows, scrollTop, viewportHeight, shape, levels],
   );
+  // The strip overlays the top of the scroll box, so the box reserves the strip's height as scroll
+  // PADDING: a row brought in by keyboard focus - the browser's own scrolling on Tab - stops BELOW
+  // the strip instead of under it.
+  const scrollPaddingTop = `${stripRows.length * KEY_ROW_HEIGHT}px`;
   const [flashKey, setFlashKey] = useState<string | null>(null);
   // A flash is a moment, not a state. Every jump replaces the key and the effect tears its timer down.
   useEffect(() => {
@@ -637,18 +641,22 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
   }, [flashKey]);
 
   /**
-   * A press on a strip row: reveal it at the top edge, mark it, and keep the window pinned to it.
+   * A press on a strip row: reveal it below the strip, mark it, and keep the window pinned to it.
    * The strip is a map back into the list, so the press ends on the row rather than opening a second
-   * surface beside it.
+   * surface beside it. The offset walks the VISUAL depths the strip itself is built from, which is
+   * what guarantees the row lands clear of the slots the press came from.
    */
-  const revealKeyRow = useCallback((index: number, id: string) => {
-    const top = revealOffset(index, KEY_ROW_HEIGHT);
-    if (treeRef.current !== null) treeRef.current.scrollTop = top;
-    setScrollTop(top);
-    setFocusedRow(index);
-    setPinned(true);
-    setFlashKey(id);
-  }, []);
+  const revealKeyRow = useCallback(
+    (index: number, id: string) => {
+      const top = revealOffset(stripDepths, index, KEY_ROW_HEIGHT);
+      if (treeRef.current !== null) treeRef.current.scrollTop = top;
+      setScrollTop(top);
+      setFocusedRow(index);
+      setPinned(true);
+      setFlashKey(id);
+    },
+    [stripDepths],
+  );
 
   /*
    * WHAT THE TWO NUMBERS OF THE PROGRESS LINE ARE, because they are not the same kind of number and
@@ -1046,6 +1054,7 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
         aria-label="Keys"
         tabIndex={-1}
         onScroll={onScroll}
+        style={{ scrollPaddingTop }}
         className="relative min-h-0 flex-1 overflow-auto outline-none"
       >
         <StickyStrip

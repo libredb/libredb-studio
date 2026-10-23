@@ -290,7 +290,7 @@ export function ObjectTree({
   const moveTo = useCallback((index: number) => focusRow(rows[clamp(index, 0, rows.length - 1)].id), [focusRow, rows]);
 
   /**
-   * Send the reader back to a strip row: reveal it at the top edge, mark it, and let it take the
+   * Send the reader back to a strip row: reveal it below the strip, mark it, and let it take the
    * tab stop. The strip is a map, not a second navigation surface, so a press on it ends on the
    * row itself - which is also what makes the press announceable once, by the row it lands on.
    */
@@ -298,7 +298,7 @@ export function ObjectTree({
     (index: number) => {
       const row = rows[index];
       if (row === undefined) return;
-      const top = revealOffset(index, TREE_ROW_HEIGHT);
+      const top = revealOffset(rows, index, TREE_ROW_HEIGHT);
       if (treeRef.current !== null) treeRef.current.scrollTop = top;
       setScroll({ query: filterQuery, top });
       setFlashId(row.id);
@@ -703,6 +703,11 @@ export function ObjectTree({
   // A menu whose row is gone - collapsed away, or dropped by a re-read - is closed by
   // DERIVING it from the rows rather than by an effect watching them.
   const menuRow = menu === null ? undefined : rows.find((row) => row.id === menu.rowId);
+  // The strip overlays the top of the scroll box, so the box reserves the strip's height as scroll
+  // PADDING: a row brought in by keyboard focus - `scrollIntoView` or the browser's own scrolling -
+  // stops BELOW the strip instead of under it. Without it, ArrowUp lands the row it names hidden
+  // beneath the very slots that name it.
+  const scrollPaddingTop = `${strip.length * TREE_ROW_HEIGHT}px`;
 
   return (
     <>
@@ -733,6 +738,7 @@ export function ObjectTree({
             onClick={onClick}
             onContextMenu={onContextMenu}
             onScroll={onScroll}
+            style={{ scrollPaddingTop }}
             className="relative min-h-0 flex-1 overflow-auto outline-none"
           >
             <StickyStrip

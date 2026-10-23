@@ -3508,9 +3508,39 @@ describe("the sticky strip above the key rows", () => {
     const strip = screen.getByTestId("key-browser-sticky");
     fireEvent.click(within(strip).getAllByTestId("key-browser-sticky-row")[1]);
 
-    // The press is a map back to the row, so it ends on the row rather than beside it.
-    expect(tree.scrollTop).toBe(KEY_ROW_HEIGHT);
+    // The press is a map back to the row, so it ends on the row rather than beside it. "cache:*" is
+    // one level down, so it cannot sit at the top edge - its parent pins exactly there - and the
+    // press lands at the top of the list instead, where both rows are under an empty strip.
+    expect(tree.scrollTop).toBe(0);
     expect(treeRow("cache:*").className).toContain("bg-brand/20");
+  });
+
+  test("a press on a deeper row ends it below its parent's slot", async () => {
+    await openChain("app:cache:user:", ["app:*", "cache:*", "user:*"]);
+    const tree = scrolled(KEY_ROW_HEIGHT * 4);
+
+    const strip = screen.getByTestId("key-browser-sticky");
+    fireEvent.click(within(strip).getAllByTestId("key-browser-sticky-row")[2]);
+
+    // "user:*" lands one row up: at its own top edge the strip recomputes as two slots ("app:*" and
+    // "cache:*") and covers the row. The row now ends exactly below the one slot that remains.
+    expect(tree.scrollTop).toBe(KEY_ROW_HEIGHT);
+    expect(stripLabels()).toEqual(["app:*"]);
+    const stripHeight = stripLabels().length * KEY_ROW_HEIGHT;
+    expect(2 * KEY_ROW_HEIGHT - tree.scrollTop).toBeGreaterThanOrEqual(stripHeight);
+    expect(treeRow("user:*").className).toContain("bg-brand/20");
+  });
+
+  test("keeps keyboard focus clear of the strip", async () => {
+    await openChain("app:cache:user:", ["app:*", "cache:*", "user:*"]);
+    const tree = scrolled(KEY_ROW_HEIGHT * 4);
+
+    // The strip overlays the top of the box. The box pads its top by the strip's height, so native
+    // focus scrolling stops a row below the strip instead of under it.
+    expect(tree.style.scrollPaddingTop).toBe(`${3 * KEY_ROW_HEIGHT}px`);
+
+    scrolled(0);
+    expect(tree.style.scrollPaddingTop).toBe("0px");
   });
 
   test("the database row is pinned too, because the key space belongs to it", async () => {

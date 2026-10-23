@@ -1570,7 +1570,7 @@ describe("the sticky strip above the object rows", () => {
     expect(row(/app/).className).toContain("bg-brand/20");
   });
 
-  test("a second press on a deeper row still ends on that row", async () => {
+  test("a press from deep in the list ends with the pressed row clear of the strip", async () => {
     render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
     await openTables();
     const tree = scrolled(TREE_ROW_HEIGHT * 8);
@@ -1578,6 +1578,26 @@ describe("the sticky strip above the object rows", () => {
     const strip = screen.getByTestId("object-tree-sticky");
     fireEvent.click(within(strip).getAllByTestId("object-tree-sticky-row")[1]);
 
-    expect(tree.scrollTop).toBe(TREE_ROW_HEIGHT);
+    // The repro this fixes: from deep in the list, a press on "Tables" (the second row) landed at
+    // the row's own top edge, where its parent's slot pinned on top of it. The row now ends below
+    // whatever the strip draws over the list.
+    expect(tree.scrollTop).toBe(0);
+    const stripHeight = screen.queryAllByTestId("object-tree-sticky-row").length * TREE_ROW_HEIGHT;
+    expect(1 * TREE_ROW_HEIGHT - tree.scrollTop).toBeGreaterThanOrEqual(stripHeight);
+  });
+
+  test("keeps keyboard focus clear of the strip", async () => {
+    render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
+    await openTables();
+    const tree = scrolled(TREE_ROW_HEIGHT * 5);
+
+    // The strip overlays the top of the box. The box pads its top by the strip's height, so the
+    // scroll that follows keyboard focus - `scrollIntoView` or the browser's own - stops a row
+    // below the strip instead of under it.
+    expect(stripLabels()).toHaveLength(2);
+    expect(tree.style.scrollPaddingTop).toBe(`${2 * TREE_ROW_HEIGHT}px`);
+
+    scrolled(0);
+    expect(tree.style.scrollPaddingTop).toBe("0px");
   });
 });
