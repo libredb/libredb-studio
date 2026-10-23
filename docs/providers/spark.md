@@ -315,6 +315,7 @@ The lexical facts are read off Spark's lexer and parser at tag v4.2.0 (`SqlBaseL
 Block comments nest at every level, and `/*+` opens a hint Spark lexes as code that opens no level inside a comment (both measured on 4.2.0).
 A backslash escapes inside `'...'` and `"..."` under every setting, and `r'C:\'` is a raw literal that takes none.
 A backslash right before a line feed continues a `--` comment, and a lone carriage return ends one as a line feed does; the reader follows both.
+Other engines read that carriage return as comment text, and one connection type can reach servers that disagree, so a text whose `--` comment holds one with code after it is treated as ambiguous here as everywhere: the confirmation gate asks and the row limiter leaves it unbounded ([which dialect the readers are reading](../editor/query-optimization.md#which-dialect-the-readers-are-reading)).
 Three readings the shared reader does not follow: a backslash before a line feed continues a literal, Unicode spaces count as white space, and an unquoted address (`a://b`) is one token; the provider refuses the last two before any call.
 The row bound goes before a trailing `OFFSET`, since `LIMIT` must precede it.
 `readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.

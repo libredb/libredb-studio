@@ -12,7 +12,7 @@ import { ObjectRouteError, objectRouteErrorBody, optionalDatabase } from "@/lib/
 import { containerDepth } from "@/lib/db/object-kinds";
 import { getExplainStrategy, type ExplainMode } from "@/lib/explain";
 import { countCodeStatements } from "@/lib/sql/statement-splitter";
-import { hasUnterminatedSpan } from "@/lib/sql/spans";
+import { hasLoneCarriageReturnInLineComment, hasUnterminatedSpan } from "@/lib/sql/spans";
 import { readsSqlText, resolveSqlGrammar } from "@/lib/sql/grammar";
 import type { ExplainFormat, QueryPrepareOptions } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
@@ -133,7 +133,9 @@ export async function POST(req: NextRequest) {
     // `;` inside a quote or a comment is not a second statement, and neither is a note
     // after the final `;` (a fragment of comments only is not counted). A text with a
     // run the grammar cannot close is refused too: the splitter finds no boundary in
-    // it, yet `SELECT E'\''; INSERT ...` is two statements to PostgreSQL. Only SQL text
+    // it, yet `SELECT E'\''; INSERT ...` is two statements to PostgreSQL. So is a text whose
+    // line comment holds a lone carriage return, which ends the comment on PostgreSQL and
+    // not on CockroachDB, so the code after it is a second statement to one. Only SQL text
     // is counted: an engine whose text is not SQL enforces one statement in its own
     // parser (Firestore's provider refuses a second statement), and the SQL counter
     // would read a `;` in its comment as a boundary.
@@ -142,7 +144,9 @@ export async function POST(req: NextRequest) {
       explain.explain &&
       typeof sql === "string" &&
       readsSqlText(connection.type) &&
-      (countCodeStatements(sql, explainGrammar) > 1 || hasUnterminatedSpan(sql, explainGrammar))
+      (countCodeStatements(sql, explainGrammar) > 1 ||
+        hasUnterminatedSpan(sql, explainGrammar) ||
+        hasLoneCarriageReturnInLineComment(sql, explainGrammar))
     ) {
       return NextResponse.json({ error: "Only a single statement can be explained" }, { status: 400 });
     }

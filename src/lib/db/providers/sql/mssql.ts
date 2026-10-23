@@ -69,6 +69,7 @@ import { measuredNullableAggregate } from "../../utils/measured-aggregate";
 import { uniqueFieldNames } from "../../utils/result-fields";
 import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
 import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
+import { hasLoneCarriageReturnInLineComment } from "@/lib/sql/spans";
 import { readStatementEnd } from "@/lib/sql/statement-end";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
 
@@ -2718,6 +2719,13 @@ export class MSSQLProvider extends SQLBaseProvider {
       // that a page cannot be ruled out. Neither is the hash the paragraph above
       // describes: that half is closed at the root by naming the dialect.
       if (TSQL_PAGE_TAIL.test(modifiedSql) || (!rewritable && TSQL_ROW_BOUND_MENTION.test(modifiedSql))) {
+        return { query, wasLimited: false, limit: effectiveLimit, offset };
+      }
+
+      // The head splice does not depend on where the statement ends, but a line comment holding a lone carriage return
+      // leaves the text with two readings, and the limiter edits such a text nowhere (`readStatementEnd`), so this
+      // branch declines it too rather than report a bound on a statement it cannot read one way.
+      if (hasLoneCarriageReturnInLineComment(source, grammar)) {
         return { query, wasLimited: false, limit: effectiveLimit, offset };
       }
 

@@ -1156,6 +1156,9 @@ describe("POST /api/db/query with an explain request", () => {
     // grammar fact the splitter carries, so it reads the run as unterminated and finds
     // no boundary: an unresolvable text is not a single statement either.
     ["a backslash-escaped string hiding a write", "SELECT E'\\''; INSERT INTO t VALUES (7)"],
+    // PostgreSQL ends a `--` comment at a lone carriage return and CockroachDB, on the same type id, does not, so
+    // whether the INSERT is code depends on the server, and such a text is not one statement to explain.
+    ["a write after a lone carriage return in a line comment", "SELECT 1 -- x\r; INSERT INTO t VALUES (7)"],
   ])("returns 400 and runs nothing for an explain of %s", async (_label, sql) => {
     // No provider is queued: the refusal comes before one is opened, and a queued
     // `mockResolvedValueOnce` nobody consumed would leak into the next test.

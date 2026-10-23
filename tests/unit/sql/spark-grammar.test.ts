@@ -76,12 +76,12 @@ describe("the Spark grammar", () => {
 
   test("a lone carriage return ends a `--` comment, and a backslash before it continues nothing", () => {
     expect(grammar.lineCommentEndsAtCarriageReturn).toBe(true);
-    // Spark reads the text after a lone carriage return as code, so a `;` there cuts a unit, a WHERE there is the
-    // statement's own clause and the bound follows it, and the keywords after the comment are read.
+    // Spark reads the text after a lone carriage return as code, so a `;` there cuts a unit and the keywords after the
+    // comment are read. The limiter leaves such a text unbounded, since engines that share a type disagree about it.
     expect(units("SELECT 1 -- note\r; DROP TABLE t")).toHaveLength(2);
     expect(units("SELECT 1 -- note \\\r; DROP TABLE t")).toHaveLength(2);
     expect(units("SELECT 1 -- a \\\nb\r; DROP TABLE t")).toStrictEqual(["SELECT 1 -- a \\\nb", "DROP TABLE t"]);
-    expect(limited("SELECT * FROM t -- note\rWHERE x = 1")).toBe("SELECT * FROM t -- note\rWHERE x = 1 LIMIT 500");
+    expect(limited("SELECT * FROM t -- note\rWHERE x = 1")).toBe("SELECT * FROM t -- note\rWHERE x = 1");
     expect(readLeadingKeyword("-- note\rDELETE FROM t", grammar)?.keyword).toBe("DELETE");
     expect(readOperativeKeyword("WITH c AS (SELECT 1) -- note\rINSERT INTO u\nSELECT 1", grammar)?.keyword).toBe(
       "INSERT",

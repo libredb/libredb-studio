@@ -13,7 +13,7 @@ import { consoleTextByteLimit, statementRefusal } from "@/lib/db/destructive-com
 import { executionUiFor } from "@/lib/db/execution-ui";
 import { countCodeStatements, isMultiStatement } from "@/lib/sql/statement-splitter";
 import { readsSqlText, resolveSqlGrammar } from "@/lib/sql/grammar";
-import { hasUnterminatedSpan } from "@/lib/sql/spans";
+import { hasLoneCarriageReturnInLineComment, hasUnterminatedSpan } from "@/lib/sql/spans";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { shouldRefreshSchema } from "@/lib/query-generators";
 import { ApiErrorCode } from "@/lib/api/error-codes";
@@ -525,13 +525,17 @@ export function useQueryExecution({
       // is not counted: `SELECT 1; -- note` is one statement to explain, though the run
       // route below still splits it in two. A text with a run the grammar cannot close
       // is not one statement either: the splitter finds no boundary in it, yet
-      // `SELECT E'\''; INSERT ...` is two statements to PostgreSQL.
+      // `SELECT E'\''; INSERT ...` is two statements to PostgreSQL. Nor is a text whose
+      // line comment holds a lone carriage return, which ends the comment on PostgreSQL
+      // and not on CockroachDB, so the code after it is a second statement to one.
       const grammar = resolveSqlGrammar(activeConnection.type);
       // An engine whose text is not SQL enforces one statement in its own parser, where the SQL counter would read a `;`
       // inside its comment or string as a boundary, so only SQL text is counted here.
       const oneStatement =
         !readsSqlText(activeConnection.type) ||
-        (countCodeStatements(queryToExecute, grammar) <= 1 && !hasUnterminatedSpan(queryToExecute, grammar));
+        (countCodeStatements(queryToExecute, grammar) <= 1 &&
+          !hasUnterminatedSpan(queryToExecute, grammar) &&
+          !hasLoneCarriageReturnInLineComment(queryToExecute, grammar));
       const explainSupported = !metadata || metadata.capabilities.supportsExplain;
       const explainAccepted =
         isExplain &&

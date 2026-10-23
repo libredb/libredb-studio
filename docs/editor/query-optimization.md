@@ -185,6 +185,12 @@ never see a type id, so no reader can grow a dialect test of its own.
 | `\` before a line feed in a `--` comment | a backslash right before a line feed continues a `--` comment onto the next line, and one before CR LF does not | Apache Spark |
 | a carriage return in a `--` comment | a lone carriage return ends a `--` comment, and a CR LF pair ends it once | Apache Spark |
 ┌──────────────────────────────────────────────────────────────────────────────┐
+A lone carriage return in a line comment is the one character here no grammar row can settle, because engines differ on it and one connection type can reach servers that disagree.
+Measured live, it ends a `--` comment on PostgreSQL 17.6, YugabyteDB 2025.2, SQL Server 2022 CU21, Apache Cassandra 5.0.6 and DuckDB, and it is comment text on MySQL 8.4.6 and CockroachDB v26.2.5, which connects as `postgres`.
+So the code after it is a statement's tail, or a second statement, on one server and comment text on another, and Studio treats such a text as ambiguous on every SQL dialect (`hasLoneCarriageReturnInLineComment` in `src/lib/sql/spans.ts`).
+The confirmation gate asks about it and names the lone carriage return, the agent and MCP guard refuses it as `DIALECT_AMBIGUOUS_TEXT`, Explain does not count it as one statement, and the row limiter leaves it unbounded with `wasLimited: false`.
+A CR LF pair is an ordinary line end, and a carriage return inside a literal or a block comment is not counted.
+┌──────────────────────────────────────────────────────────────────────────────┐
 Each row was established from an authoritative source: the engine's own documentation, or its
 driver's own tokenizer under `node_modules` (node-oracledb accepts `#` inside an identifier; the
 SQLite amalgamation classifies `#` as a bind-variable prefix and `[` as a "`[...]` style quoted id").
