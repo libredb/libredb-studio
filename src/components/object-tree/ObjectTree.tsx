@@ -810,7 +810,7 @@ function StickyStripRow({
   readonly slot: number;
   readonly onReveal: (index: number) => void;
 }) {
-  const Icon = row.kind === "column" ? null : ROW_ICONS[row.kind];
+  const Icon = row.kind === "column" || row.kind === "constraint" ? null : ROW_ICONS[row.kind];
   return (
     <button
       type="button"
