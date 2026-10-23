@@ -1121,6 +1121,78 @@ describe("useTabManager", () => {
     expect(result.current.tabs[1].query).toBe("HGETALL videobackend:login:refreshToken:1");
   });
 
+  /**
+   * A key whose name ends in `:*` is spelled like the prefix group the tree draws for it, so the key
+   * browser says the path names a key, and the tab it opens reads that key rather than scanning.
+   */
+  test("handleTableClick reads a key named like a prefix group when the caller says it names a key", () => {
+    const executeFn = mock(() => {});
+    const { result } = renderHook(() =>
+      useTabManager({
+        activeConnection: makeConnection({ type: "redis", port: 6379 }),
+        metadata: redisMetadata,
+        schema: testSchema,
+      }),
+    );
+    const stringType = [{ name: "type", type: "string", nullable: false, isPrimary: false }];
+
+    act(() => {
+      result.current.handleTableClick(["cache:*"], executeFn);
+    });
+    act(() => {
+      result.current.handleTableClick(["cache:*"], executeFn, stringType, undefined, true);
+    });
+
+    // Two tabs: the group's scan does not capture the key's activation, though the path is the same.
+    expect(result.current.tabs.map((tab) => tab.query)).toEqual([
+      expect.any(String),
+      "SCAN 0 MATCH cache:* COUNT 50",
+      "GET cache:*",
+    ]);
+
+    act(() => {
+      result.current.handleTableClick(["cache:*"], executeFn, stringType, undefined, true);
+    });
+
+    // A second activation of the key focuses the key's tab.
+    expect(result.current.tabs).toHaveLength(3);
+    expect(result.current.activeTabId).toBe(result.current.tabs[2].id);
+  });
+
+  /**
+   * The key browser's mark changes nothing for a key no group is spelled like, so it is not recorded and
+   * not compared: the tree and the key browser share one tab for `plain`, as a tab saved before the mark
+   * existed is shared too.
+   */
+  test("handleTableClick shares one tab between the tree and the key browser for a key the mark does not change", () => {
+    const executeFn = mock(() => {});
+    const stringType = [{ name: "type", type: "string", nullable: false, isPrimary: false }];
+    const plainSchema: DetailedObject[] = [
+      { name: "plain", kind: "table", path: ["plain"], columns: stringType, indexes: [] },
+    ];
+    const { result } = renderHook(() =>
+      useTabManager({
+        activeConnection: makeConnection({ type: "redis", port: 6379 }),
+        metadata: redisMetadata,
+        schema: plainSchema,
+      }),
+    );
+
+    act(() => {
+      result.current.handleTableClick(["plain"], executeFn);
+    });
+    act(() => {
+      result.current.handleTableClick(["plain"], executeFn, stringType, undefined, true);
+    });
+    act(() => {
+      result.current.handleTableClick(["plain"], executeFn);
+    });
+
+    expect(result.current.tabs.map((tab) => tab.query)).toEqual([expect.any(String), "GET plain"]);
+    expect(result.current.tabs[1].origin?.namesKey).toBeUndefined();
+    expect(result.current.activeTabId).toBe(result.current.tabs[1].id);
+  });
+
   test("handleTableClick falls back to the type probe for a key nobody described", () => {
     const executeFn = mock(() => {});
     const { result } = renderHook(() =>

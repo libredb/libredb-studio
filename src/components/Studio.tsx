@@ -1065,12 +1065,14 @@ export default function Studio() {
   );
 
   const openTabFor = useStableCallback(
-    (path: readonly string[], columns?: readonly ColumnSchema[], database?: number | null) => {
+    (
+      path: readonly string[],
+      key?: { readonly columns: readonly ColumnSchema[]; readonly database?: number | null },
+    ) => {
       if (applyInFlight) {
         refuseWhileApplying();
         return;
       }
-      const databaseOverride = database ?? undefined;
       // An object in another database makes that one active and runs there (#1530).
       const catalog = activateCatalogOf(path);
       const run: RunTabStatement =
@@ -1078,17 +1080,15 @@ export default function Studio() {
           ? queryExec.executeQuery
           : (query, tabId, isExplain, options) =>
               queryExec.executeQuery(query, tabId, isExplain, { ...options, catalog });
-      if (databaseOverride === undefined) {
-        // The third argument is passed only when there is one, so an object activation stays the
-        // two-argument call its readers and its tests describe.
-        if (columns === undefined) tabMgr.handleTableClick(path, run);
-        else tabMgr.handleTableClick(path, run, columns);
+      if (key === undefined) {
+        // An object activation stays the two-argument call its readers and its tests describe.
+        tabMgr.handleTableClick(path, run);
         return;
       }
-      // A caller that knows a database knows the object's columns too, so `?? []` is only what keeps
-      // the call below total: an absent set is the "nobody described this object" the key browser
-      // already sends for a key no page carried.
-      tabMgr.handleTableClick(path, run, columns ?? [], databaseOverride);
+      // A key from the key browser: its columns are the type the page carried, or none for a key no
+      // page described, and the last argument says the path names a key, so a key named like the
+      // prefix group the tree draws (`cache:*`) is read rather than scanned.
+      tabMgr.handleTableClick(path, run, key.columns, key.database ?? undefined, true);
     },
   );
 
@@ -1158,7 +1158,10 @@ export default function Studio() {
   const onOpenKey = useStableCallback((key: string, type: string | null, database?: number | null) => {
     const keyKind = metadata === null ? undefined : keyBrowserKind(metadata.capabilities);
     if (keyKind === undefined) {
-      openTabFor([key], type === null ? [] : [{ name: "type", type, nullable: false, isPrimary: false }], database);
+      openTabFor([key], {
+        columns: type === null ? [] : [{ name: "type", type, nullable: false, isPrimary: false }],
+        database,
+      });
       return;
     }
     if (applyInFlight) {

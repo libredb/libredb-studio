@@ -764,6 +764,9 @@ A prefix group always SCANs and is never used as a key argument: it is a derived
 the unknown-bucket answer rather than a guessed reader, because a wrong reader (`GET` on a hash)
 returns a `WRONGTYPE` error instead of an answer.
 
+A key opened from the Keys panel is a key whatever its name ends in.
+A string key named `cache:*` is spelled like the prefix group the tree draws for `cache:` keys, so the panel tells the generator that the path names a key (`GeneratorScope.namesKey`), and the key opens on `GET cache:*` while the tree's `cache:*` row still scans.
+
 **Generate Command** (`generateSelectQuery`) inserts a cheatsheet instead — a use-case comment above
 each command, where **every command line is runnable on its own** via "Run Selected". For a
 `user:*` group whose keys sampled as `hash`:

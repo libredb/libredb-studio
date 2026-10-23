@@ -795,6 +795,12 @@ export interface GeneratorScope {
   readonly readOnly?: boolean;
   /** The object's kind, `DatabaseObject.kind`, handed to `rowAction`, whose statement depends on what the row is. */
   readonly kind?: string;
+  /**
+   * The path names one key the key browser listed, and never a prefix group. Read by the Redis arm alone: a key
+   * may be named `cache:*`, which is how the tree spells the group of the same name, and only the caller knows
+   * which of the two it activated.
+   */
+  readonly namesKey?: boolean;
 }
 
 /**
@@ -870,13 +876,15 @@ const DIALECT_GENERATORS: Readonly<Record<QueryDialect, DialectGenerators>> = Ob
   },
   // Redis speaks its own command grammar, and it silently got MongoDB documents its driver answered with HTTP 400
   // before it had a record (#427). A prefix group is not addressable (`tablesAreDerivedGroupings`), so it always
-  // SCANs; a bare key gets the reader its sampled type calls for, or `TYPE` when unknown.
+  // SCANs; a bare key gets the reader its sampled type calls for, or `TYPE` when unknown. A key the key browser
+  // names (`scope.namesKey`) is a key whatever its name ends in, so `cache:*` reads the key and scans nothing.
   redis: {
-    table: (path, columns) => {
-      const { isPrefixGroup, base } = prefixGroup(objectSegment(path));
-      if (isPrefixGroup) return redisScan(base);
+    table: (path, columns, scope) => {
+      const name = objectSegment(path);
+      const { isPrefixGroup, base } = prefixGroup(name);
+      if (isPrefixGroup && scope?.namesKey !== true) return redisScan(base);
       const keyType = redisKeyType(columns);
-      return renderRedisCommand(keyType ? REDIS_COMMANDS[keyType].read(base) : ["TYPE", base]);
+      return renderRedisCommand(keyType ? REDIS_COMMANDS[keyType].read(name) : ["TYPE", name]);
     },
     select: (path, columns) => redisCheatsheet(objectSegment(path), columns),
   },

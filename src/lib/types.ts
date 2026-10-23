@@ -1084,6 +1084,8 @@ export interface QueryTab {
     readonly connectionId?: string;
     readonly path: readonly string[];
     readonly databaseOverride?: number;
+    /** Set when the activation named one key rather than a group spelled the same, and only where that changed the statement (`handleTableClick`). */
+    readonly namesKey?: true;
     readonly query: string;
     /**
      * The row action this activation ran (`KindRowAction.activates`), when it ran one rather than

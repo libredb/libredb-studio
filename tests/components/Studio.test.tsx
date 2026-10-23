@@ -1164,9 +1164,14 @@ describe("Studio", () => {
 
     act(() => fn("videobackend:login:refreshToken:1", "hash", null));
 
-    expect(mockHandleTableClick).toHaveBeenCalledWith(["videobackend:login:refreshToken:1"], mockExecuteQuery, [
-      { name: "type", type: "hash", nullable: false, isPrimary: false },
-    ]);
+    // The fifth argument says the path names a key, so a key named like a prefix group reads the key.
+    expect(mockHandleTableClick).toHaveBeenCalledWith(
+      ["videobackend:login:refreshToken:1"],
+      mockExecuteQuery,
+      [{ name: "type", type: "hash", nullable: false, isPrimary: false }],
+      undefined,
+      true,
+    );
   });
 
   /**
@@ -1175,8 +1180,8 @@ describe("Studio", () => {
    * The panel walked ONE numbered database, and the statement that reads the key cannot say which:
    * Redis has no database-qualified key syntax, so `GET report:daily` run on the session's database
    * answers `(nil)` for a key that was just on screen. The number must therefore reach the TAB, and
-   * the fourth argument is where this shell hands it over - the third stays the type carrier, so an
-   * activation that walked nothing is the call it has always been.
+   * the fourth argument is where this shell hands it over - the third stays the type carrier, and an
+   * activation that walked nothing passes no number.
    */
   test("a key from a walked database opens its tab in that database", () => {
     render(<Studio />);
@@ -1189,12 +1194,13 @@ describe("Studio", () => {
       mockExecuteQuery,
       [{ name: "type", type: "string", nullable: false, isPrimary: false }],
       3,
+      true,
     );
   });
 
   /**
    * `null` is the panel saying "the engine's own session database", which is not a database to
-   * override: that activation stays the three-argument call it was before the number existed.
+   * override: that activation hands over no number.
    */
   test("a key from the session's own database carries no override", () => {
     render(<Studio />);
@@ -1202,10 +1208,28 @@ describe("Studio", () => {
 
     act(() => fn("report:daily", "string", null));
 
-    expect(mockHandleTableClick).toHaveBeenCalledWith(["report:daily"], mockExecuteQuery, [
-      { name: "type", type: "string", nullable: false, isPrimary: false },
-    ]);
-    expect((mockHandleTableClick.mock.calls.at(-1) as unknown[]).length).toBe(3);
+    expect(mockHandleTableClick).toHaveBeenCalledWith(
+      ["report:daily"],
+      mockExecuteQuery,
+      [{ name: "type", type: "string", nullable: false, isPrimary: false }],
+      undefined,
+      true,
+    );
+  });
+
+  test("a key named like a prefix group is handed over as a key", () => {
+    render(<Studio />);
+    const fn = capturedSidebarProps.onOpenKey as (key: string, type: string | null, database: number | null) => void;
+
+    act(() => fn("cache:*", "string", null));
+
+    expect(mockHandleTableClick).toHaveBeenCalledWith(
+      ["cache:*"],
+      mockExecuteQuery,
+      [{ name: "type", type: "string", nullable: false, isPrimary: false }],
+      undefined,
+      true,
+    );
   });
 
   test("a key no page described is handed over with no type at all", () => {
@@ -1217,7 +1241,13 @@ describe("Studio", () => {
     // Not a guess and not the commonest type: NO columns is what sends the generator to its own
     // unknown branch, and the editor opens on `TYPE <key>` — a command that reports what the key is
     // rather than opening a read nobody chose.
-    expect(mockHandleTableClick).toHaveBeenCalledWith(["videobackend:login:refreshToken:1"], mockExecuteQuery, []);
+    expect(mockHandleTableClick).toHaveBeenCalledWith(
+      ["videobackend:login:refreshToken:1"],
+      mockExecuteQuery,
+      [],
+      undefined,
+      true,
+    );
   });
 
   /**
@@ -1308,9 +1338,13 @@ describe("Studio", () => {
 
     act(() => fn("report:daily", "string", null));
 
-    expect(mockHandleTableClick).toHaveBeenCalledWith(["report:daily"], mockExecuteQuery, [
-      { name: "type", type: "string", nullable: false, isPrimary: false },
-    ]);
+    expect(mockHandleTableClick).toHaveBeenCalledWith(
+      ["report:daily"],
+      mockExecuteQuery,
+      [{ name: "type", type: "string", nullable: false, isPrimary: false }],
+      undefined,
+      true,
+    );
   });
 
   // --- objectActions: the row menu's six, restored (U22, #789) ---

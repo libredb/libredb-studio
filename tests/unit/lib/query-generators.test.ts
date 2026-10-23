@@ -1326,6 +1326,14 @@ describe("generateTableQuery — Redis dialect", () => {
     expect(generateTableQuery(["counter"], redisCaps, sampleColumns)).toBe("TYPE counter");
   });
 
+  test("a key the key browser names reads that key, even where its name ends in :*", () => {
+    // `cache:*` is a legal key name, and the tree draws a group of the same name: only the caller
+    // knows which one it activated, so the key browser says so on the scope.
+    expect(generateTableQuery(["cache:*"], redisCaps, typeCols("string"), { namesKey: true })).toBe("GET cache:*");
+    expect(generateTableQuery(["cache:*"], redisCaps, [], { namesKey: true })).toBe("TYPE cache:*");
+    expect(generateTableQuery(["cache:*"], redisCaps, typeCols("string"))).toBe("SCAN 0 MATCH cache:* COUNT 50");
+  });
+
   test("glob metacharacters in the prefix are escaped in MATCH", () => {
     // The escape introduces a backslash, which the plain tokenizer cannot be
     // trusted to carry, so the line switches to the lossless JSON form (#427).

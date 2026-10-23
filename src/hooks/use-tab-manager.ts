@@ -460,8 +460,35 @@ export function useTabManager({
        * means the ordinary activation, whose tab reaches whatever database the connection names.
        */
       databaseOverride?: number,
+      /**
+       * The path names one key and never a prefix group, for the key browser, whose keys can be named
+       * like the group the tree draws (`cache:*`). Where it changes the statement it reaches the generator
+       * as `GeneratorScope.namesKey` and the tab's origin, so the group's tab never captures the key's
+       * activation, or the reverse; elsewhere it is dropped, and the key shares the tree's tab.
+       */
+      namesKey?: boolean,
     ) => {
       const key = pathKey(path);
+      const capabilities = metadata?.capabilities;
+      const tableName = objectSegment(path);
+      // Look the object up exactly as handleGenerateSelect does: the Redis generator is
+      // type-aware, and the sampled key type lives on the schema node's `type` column (#427).
+      const table = schema.find((t) => pathKey(t.path) === key);
+      const columns = columnsOverride ?? table?.columns ?? [];
+      // A group's readable pieces ride on its schema entry, and only the etcd arm reads them (#1089 4.7).
+      const generate = (marked: boolean) =>
+        capabilities
+          ? generateTableQuery(path, capabilities, columns, {
+              readRanges: table?.readRanges,
+              ...(marked ? { namesKey: true } : {}),
+            })
+          : `SELECT * FROM ${path.join(".")};`;
+      /*
+       * The mark counts only where it changes the statement, which is a key spelled like a prefix group
+       * (`cache:*`). Every other key the key browser opens reads the same with or without it, so it shares
+       * the tree's tab, and a tab saved before the mark existed, instead of opening a second one.
+       */
+      const marked = namesKey === true && generate(true) !== generate(false);
       /*
        * A data tab already open for this object, on this connection, in this database, and still
        * on the statement it was opened with, is FOCUSED and not run again: the rule
@@ -490,6 +517,7 @@ export function useTabManager({
           tab.origin.connectionId === activeConnection?.id &&
           pathKey(tab.origin.path) === key &&
           tab.origin.databaseOverride === databaseOverride &&
+          (tab.origin.namesKey === true) === marked &&
           tab.origin.rowAction === undefined &&
           tab.query === tab.origin.query,
       );
@@ -502,18 +530,7 @@ export function useTabManager({
         return;
       }
 
-      const capabilities = metadata?.capabilities;
-      const tableName = objectSegment(path);
-      // Look the object up exactly as handleGenerateSelect does: the Redis generator is
-      // type-aware, and the sampled key type lives on the schema node's `type` column (#427).
-      const table = schema.find((t) => pathKey(t.path) === key);
-      const columns = columnsOverride ?? table?.columns ?? [];
-      // A group's readable pieces ride on its schema entry, and only the etcd arm reads them (#1089 4.7).
-      const newQuery = generatedOrRefused(() =>
-        capabilities
-          ? generateTableQuery(path, capabilities, columns, { readRanges: table?.readRanges })
-          : `SELECT * FROM ${path.join(".")};`,
-      );
+      const newQuery = generatedOrRefused(() => generate(marked));
       if (newQuery === undefined) return;
 
       const newId = newLocalId();
@@ -532,6 +549,7 @@ export function useTabManager({
           path,
           ...(activeConnection === null ? {} : { connectionId: activeConnection.id }),
           ...(databaseOverride === undefined ? {} : { databaseOverride }),
+          ...(marked ? { namesKey: true as const } : {}),
           query: newQuery,
         },
       };
