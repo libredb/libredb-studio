@@ -216,6 +216,28 @@ describe("the wire body one refusal renders as", () => {
     expect(body).toEqual({ error: "that plan is not one this server will run", code: "EDIT_PLAN_INVALID" });
   });
 
+  test("a refusal with fields renders them beside the code", () => {
+    const body = objectRouteErrorBody(
+      new ObjectRouteError("this search would list 1002 pairs", 400, ApiErrorCode.INVENTORY_PAIR_LIMIT, {
+        limit: 1000,
+        pairs: 1002,
+      }),
+    );
+    expect(body).toEqual({
+      error: "this search would list 1002 pairs",
+      code: "INVENTORY_PAIR_LIMIT",
+      limit: 1000,
+      pairs: 1002,
+    });
+  });
+
+  test("a field named like the message or the code cannot replace them", () => {
+    const body = objectRouteErrorBody(
+      new ObjectRouteError("refused", 400, ApiErrorCode.INVENTORY_PAIR_LIMIT, { error: 7, code: 9 }),
+    );
+    expect(body).toEqual({ error: "refused", code: "INVENTORY_PAIR_LIMIT" });
+  });
+
   test("the 413 the bound answers carries the status and no code", async () => {
     // The status is asserted here rather than through `.rejects.toThrow`, which reads the message
     // only: a 413 answered as a 400 would pass every sentence test above.

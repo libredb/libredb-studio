@@ -110,14 +110,15 @@ export async function handleObjectRequest(
 }
 
 /**
- * The wire body for one `ObjectRouteError`, `{ error }` plus `code` when the refusal carries one.
+ * The wire body for one `ObjectRouteError`, `{ error }` plus `code` and `fields` when the refusal carries them.
  *
  * A named function rather than an object literal inside the catch above, and the reason is
- * measurement rather than tidiness. The one code that uses the `code` arm, `EDIT_PLAN_INVALID`, has
- * exactly ONE producer: `src/app/api/db/objects/edit-apply/route.ts` raises
+ * measurement rather than tidiness. The `code` arm has two producers:
+ * `src/app/api/db/objects/edit-apply/route.ts` raises
  * `ObjectRouteError(verdict.reason, 400, ApiErrorCode.EDIT_PLAN_INVALID)` for a plan that no longer
- * verifies. A ternary buried in the catch would therefore be a branch one route reaches and
- * everything else in this file's own suite cannot, covered by line count and unexercised in fact.
+ * verifies, and `src/app/api/db/objects/search/route.ts` raises `INVENTORY_PAIR_LIMIT` with its
+ * `limit` and `pairs` fields. A ternary buried in the catch would therefore be a branch two routes
+ * reach and everything else in this file's own suite cannot, covered by line count and unexercised in fact.
  * Exported, so the test drives BOTH arms directly and the shape is asserted rather than assumed.
  * An earlier revision of this paragraph said the arm had no producer at all and that the edit
  * routes were a later task's, which was true before they landed.
@@ -129,8 +130,10 @@ export async function handleObjectRequest(
 export function objectRouteErrorBody(error: ObjectRouteError): {
   readonly error: string;
   readonly code?: ApiErrorCode;
+  readonly [field: string]: unknown;
 } {
-  return { error: error.message, ...(error.code === undefined ? {} : { code: error.code }) };
+  // The fields go first, so one named like the message or the code cannot replace them.
+  return { ...error.fields, error: error.message, ...(error.code === undefined ? {} : { code: error.code }) };
 }
 
 /**
@@ -327,6 +330,8 @@ export class ObjectRouteError extends Error {
     message: string,
     public readonly status: number,
     public readonly code?: ApiErrorCode,
+    /** Machine-readable facts a coded refusal carries beside `error` and `code`, such as a bound and a count. */
+    public readonly fields?: Readonly<Record<string, number>>,
   ) {
     super(message);
     this.name = "ObjectRouteError";

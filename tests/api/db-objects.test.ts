@@ -1045,7 +1045,10 @@ describe("POST /api/db/objects/search", () => {
     );
 
     expect(response.status).toBe(400);
-    expect((await parseResponseJSON<{ error: string }>(response)).error).toContain("term");
+    const body = await parseResponseJSON<{ error: string }>(response);
+    expect(body.error).toContain("term");
+    // A caller mistake keeps the plain `{ error }`: only the pair bound carries a code.
+    expect(Object.keys(body)).toEqual(["error"]);
   });
 
   test("refuses a kinds filter that is not an array of strings", async () => {
@@ -1169,10 +1172,16 @@ describe("POST /api/db/objects/search", () => {
     );
 
     expect(response.status).toBe(400);
-    expect((await parseResponseJSON<{ error: string }>(response)).error).toBe(
-      `this search would list ${INVENTORY_PAIR_LIMIT + 2} container and kind pairs, more than the ` +
+    // A code and the two numbers, so a client tells this refusal from every other 400 without
+    // reading the sentence.
+    expect(await parseResponseJSON(response)).toEqual({
+      error:
+        `this search would list ${INVENTORY_PAIR_LIMIT + 2} container and kind pairs, more than the ` +
         `${INVENTORY_PAIR_LIMIT} one search may list; name fewer kinds in "kinds"`,
-    );
+      code: "INVENTORY_PAIR_LIMIT",
+      limit: INVENTORY_PAIR_LIMIT,
+      pairs: INVENTORY_PAIR_LIMIT + 2,
+    });
     expect(listObjects).toHaveBeenCalledTimes(0);
   });
 

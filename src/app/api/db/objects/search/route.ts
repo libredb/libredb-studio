@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { ApiErrorCode } from "@/lib/api/error-codes";
 import {
   handleObjectRequest,
   INVENTORY_PAIR_LIMIT,
@@ -33,7 +34,8 @@ export const dynamic = "force-dynamic";
  * above, and a cap on the response would bound nothing that matters, because the cost of a search is
  * the scan and not the matches. So a search that would list more container and kind pairs than the
  * inventory's `INVENTORY_PAIR_LIMIT` is refused before its first listing, with the sentence telling the
- * caller to name fewer kinds, and every search under it answers every match. A container is paired
+ * caller to name fewer kinds and the code `INVENTORY_PAIR_LIMIT` carrying the bound and the pair count,
+ * and every search under it answers every match. A container is paired
  * only with the kinds it holds (`Container.kinds`), so the bound counts listings that can be sent.
  *
  * Matching is on `name`, the display label, and not on the path's last segment. Those differ
@@ -56,6 +58,8 @@ export async function POST(req: NextRequest) {
         `this search would list ${pairs.length} container and kind pairs, more than the ${INVENTORY_PAIR_LIMIT} ` +
           'one search may list; name fewer kinds in "kinds"',
         400,
+        ApiErrorCode.INVENTORY_PAIR_LIMIT,
+        { limit: INVENTORY_PAIR_LIMIT, pairs: pairs.length },
       );
     }
     const listObjects = provider.listObjects.bind(provider);

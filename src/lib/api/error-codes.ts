@@ -35,6 +35,14 @@ export const ApiErrorCode = {
    */
   EDIT_PLAN_INVALID: "EDIT_PLAN_INVALID",
 
+  /**
+   * An object search would list more container and kind pairs than `INVENTORY_PAIR_LIMIT` (400,
+   * src/app/api/db/objects/search/route.ts), so it was refused before its first listing. The body's `limit` is the
+   * bound and `pairs` the count the search would have listed, so a client can narrow `kinds` without reading the
+   * sentence. Distinct from the plain `{ error }` 400 a malformed body gets: naming fewer kinds answers this one.
+   */
+  INVENTORY_PAIR_LIMIT: "INVENTORY_PAIR_LIMIT",
+
   // LLM errors
   LLM_SAFETY: "LLM_SAFETY",
   LLM_AUTH: "LLM_AUTH",

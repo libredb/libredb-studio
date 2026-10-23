@@ -1302,8 +1302,9 @@ A search is refused before its first listing when the container and kind pairs i
 
 | Condition | Status | Body |
 |-----------|--------|------|
-| more than 1,000 container and kind pairs | `400` | `{ "error": "this search would list <n> container and kind pairs, more than the 1000 one search may list; name fewer kinds in \"kinds\"" }` |
+| more than 1,000 container and kind pairs | `400` | `{ "error": "this search would list <n> container and kind pairs, more than the 1000 one search may list; name fewer kinds in \"kinds\"", "code": "INVENTORY_PAIR_LIMIT", "limit": 1000, "pairs": <n> }` |
 
+The `code` tells this refusal apart from the plain `{ "error" }` 400 a missing `term` or a malformed `kinds` gets, and `limit` and `pairs` carry the bound and the count without the sentence.
 Naming fewer kinds brings the search under the bound; a search under it still answers every match.
 
 #### POST /api/db/objects/describe
@@ -2667,6 +2668,7 @@ These are the values of the `code` field emitted by `createErrorResponse` (`src/
 | `NETWORK_ERROR` | Network failure |
 | `RATE_LIMITED` | Application-level rate limit exceeded (429) - see "Rate Limiting" below |
 | `EDIT_PLAN_INVALID` | An object edit plan did not verify: forged, expired, digest mismatch, wrong connection fingerprint, or an unknown `planVersion` (400). Returned by the two `/api/db/objects/edit-*` routes directly rather than through `createErrorResponse`. It is a machine-readable code and not a sentence, so a client can tell a plan that no longer verifies apart from an apply that failed and offer to rebuild the preview; no shipped UI branches on it yet |
+| `INVENTORY_PAIR_LIMIT` | `POST /api/db/objects/search` would list more container and kind pairs than the bound of 1,000 (400), so it was refused before its first listing, with `limit` (the bound) and `pairs` (the count it would have listed). Returned by the route directly rather than through `createErrorResponse`; naming fewer kinds in `kinds` brings the search under the bound |
 
 The Origin-mismatch 403 (see "CSRF: Origin Check" below) is not in this table: it is returned
 directly by the request middleware (`src/proxy.ts`), before a request ever reaches

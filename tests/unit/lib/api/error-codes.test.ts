@@ -30,6 +30,7 @@ const GROUPS = {
     "POOL_EXHAUSTED",
     "DATABASE_ERROR",
     "EDIT_PLAN_INVALID",
+    "INVENTORY_PAIR_LIMIT",
   ],
   llm: ["LLM_SAFETY", "LLM_AUTH", "LLM_RATE_LIMIT", "LLM_CONFIG", "LLM_UNCONFIGURED", "LLM_STREAM", "LLM_ERROR"],
   rateLimit: ["RATE_LIMITED"],
@@ -128,6 +129,10 @@ describe("ApiErrorCode", () => {
     const published = API_CODES.map((entry) => entry.code);
     expect(published.length).toBeGreaterThan(0);
     expect(published.filter((code) => !declared.includes(code) || !governance.includes(code))).toEqual([]);
+  });
+
+  test("contains the object search's refusal over the inventory pair bound", () => {
+    expect(ApiErrorCode.INVENTORY_PAIR_LIMIT).toBe("INVENTORY_PAIR_LIMIT");
   });
 
   test("contains the application rate-limit error code", () => {
