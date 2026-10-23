@@ -22,6 +22,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
 
+      # Node 24, the root's engines floor, for every Node tool below, and npm's
+      # cache for the VS Code extension's install before knip.
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: vscode-extension/package-lock.json
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
@@ -93,6 +102,13 @@ jobs:
 
       - name: Run TypeScript type check
         run: bun run typecheck
+
+      - name: Install the VS Code extension's dependencies for knip
+        # knip's vscode-extension workspace reads the extension's own manifest:
+        # without vscode-extension/node_modules it reports c8, mocha and
+        # vscode-test as unlisted binaries and c8 and @vscode/test-cli as unused.
+        run: npm ci --ignore-scripts
+        working-directory: vscode-extension
 
       - name: Run knip (unused files, exports, dependencies)
         run: bun run knip
@@ -302,6 +318,16 @@ jobs:
           USER_EMAIL: user@libredb.org
           USER_PASSWORD: test-user
 
+  # The VS Code extension's gates: typecheck, build, the unit leg with its own
+  # 100% line coverage gate, both integration runtimes, the e2e leg, the VSIX,
+  # and a macOS and Windows smoke subset. The steps live in the reusable
+  # workflow, which vscode-extension-release.yml calls too on a
+  # vscode-extension-* tag, so the gates cannot drift.
+  # Not a required check until the owner adds it to main's branch protection.
+  vscode-extension:
+    name: VS Code Extension
+    uses: ./.github/workflows/vscode-extension.yml
+
   e2e:
     name: E2E Tests
     needs: [lint-and-build]
@@ -390,7 +416,14 @@ jobs:
     name: Functional Smoke (PostgreSQL, MongoDB, RabbitMQ)
     needs: [lint-and-build]
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Raised from 30 with the six provider live checks below. THIS NUMBER IS A BUDGET AND
+    # NOT A MEASUREMENT, and saying so is the point: the six steps were never run in CI, so
+    # nobody has timed them here. What is known is what they do - four pull a pinned image,
+    # `snmp` and `netconf` build one, and the readiness loops alone allow 90, 60, 60, 60, 60
+    # and 180 seconds before any check runs. Re-measure this from the first green run and
+    # bring the number down to what the job actually takes; a cap nobody has measured is a
+    # cap that will one day cut a run in half and read like a defect.
+    timeout-minutes: 60
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
@@ -511,6 +544,451 @@ jobs:
         run: bun tests/live/mongodb-agent-profile.ts
         env:
           LIBREDB_LIVE_MONGO_IMAGE: mongo:9.0.4@sha256:f90507905ce6e52e4a63d0ff8964fc254fa4d37ccbe56c56f4bc0186eb02edea
+
+      # THE SIX PROVIDER LIVE CHECKS BELOW WERE WRITTEN AND NEVER RUN. Each of the six
+      # industrial and network providers shipped with a live check and with its CI step
+      # already written, in `docker/<engine>/ci-step.yml`, and every one of those files
+      # said the same thing: the block is delivered on its own because five engines were
+      # landing in one round and five sessions editing this file would be a rerun of the
+      # merge the repository had just finished, so "the coordinating session pastes the
+      # block below into the job that runs the other live checks". That paste never
+      # happened. MEASURED 19 October 2026: `tests/live/` carried the checks, the fixtures
+      # and their pins were in place, and none of the nineteen workflow files mentioned
+      # opcua, mtconnect, modbus, sparkplug, snmp or netconf. The scripts therefore ran
+      # only by hand. (An earlier draft of this comment added that `docs/providers/*.md`
+      # claimed a CI check CI never asked for. MEASURED: five of those six documents never
+      # mention CI at all, so the claim was removed rather than kept because it read well.)
+      #
+      # They are pasted here, in this job, after the checks above, for the reason the
+      # RabbitMQ and MongoDB steps give: the steps run in order with no `if:`, so a red
+      # check here cannot hide a result above it.
+      #
+      # THE ORDER IS CHEAPEST FIRST, and that is a choice about how fast a red arrives
+      # rather than about importance: the first four pull a digest-pinned image, while
+      # `snmp` and `netconf` build theirs (Netopeer2 from four verified tarballs), so a
+      # defect the cheap fixtures can see is reported without waiting for two builds.
+      - name: OPC UA read-only check
+        run: |
+          set -euo pipefail
+          image="mcr.microsoft.com/iotedge/opc-plc:2.15.10@sha256:28bbdaa2e8781fe3b8bda1bbd2d4ebe0ad5bcb1fbb83f69c74b8a92efa7fe75c"
+          # The digest reaches the suite, so the image this step runs and the image the fixture documents
+          # cannot drift apart: `tests/unit/db/opcua/live-environment.test.ts` compares them.
+          export OPCUA_LIVE_DIGEST="${image#*@}"
+          export LIBREDB_OPCUA_LIVE_URL="opc.tcp://127.0.0.1:54840/"
+          trap 'docker rm -f libredb-ci-opcua > /dev/null' EXIT
+          # Loopback only. Without the host address Docker publishes on 0.0.0.0, and this server is
+          # started --autoaccept --unsecuretransport: it would accept any client on every interface of
+          # the runner.
+          docker run -d --name libredb-ci-opcua -p 127.0.0.1:54840:50000 "$image" \
+            --pn=50000 --autoaccept --unsecuretransport --ut --sph --hn --slownodes=3 --fastnodes=3
+
+          # 1. The server's own statement. opc-plc prints this once the simulation is up.
+          logged=""
+          end=$((SECONDS + 90))
+          while [ "$SECONDS" -lt "$end" ]; do
+            if docker logs libredb-ci-opcua 2>&1 | grep -q "PLC simulation started"; then
+              logged=yes
+              break
+            fi
+            sleep 1
+          done
+          if [ -z "$logged" ]; then
+            echo "NOT MEASURED: the OPC UA fixture never printed its start line within 90 s, so nothing below ran."
+            docker logs --tail 50 libredb-ci-opcua
+            exit 1
+          fi
+
+          # 2. The protocol. GetEndpoints on an unsecured channel, before any session exists: it proves a
+          # reader can reach the server, which the log line alone does not.
+          answered=""
+          end=$((SECONDS + 60))
+          while [ "$SECONDS" -lt "$end" ]; do
+            if bun tests/live/opcua-endpoints-probe.ts "$LIBREDB_OPCUA_LIVE_URL" | grep -q "GETENDPOINTS_OK"; then
+              answered=yes
+              break
+            fi
+            sleep 2
+          done
+          if [ -z "$answered" ]; then
+            echo "NOT MEASURED: the fixture started but answered no GetEndpoints within 60 s, so the live check never ran."
+            docker logs --tail 50 libredb-ci-opcua
+            exit 1
+          fi
+
+          # Two runners. The provider reaches the network through `node-opcua-client`, and Bun and Node
+          # do not resolve or socket alike; a check that ran on one of them would be a claim about one.
+          bun tests/live/opcua-live-check.ts
+          # THE EXTERNALS ARE NOT A PRECAUTION, they are what the first CI run measured. Without
+          # them this line exits 1 with `Could not resolve` for `proper-lockfile`, for seven
+          # `@duckdb/node-bindings-*/duckdb.node` paths and for `../build/Release/cpufeatures.node`
+          # (run 39294474038, reproduced locally on bun 1.4.2). The reason is the one the Sparkplug
+          # step's file already names: this check reaches `createDatabaseProvider`, the factory
+          # imports every provider, and DuckDB's bindings for the other six platforms cannot be
+          # resolved on this one. Node loads what it needs at run time from node_modules for the
+          # platform it is on, and `cpu-features` is loaded by ssh2 inside a try/catch.
+          # MEASURED: the five other provider bundles in this job build with no external at all,
+          # so the flags are on the one line that needs them rather than on all six.
+          # `--outdir` AND NOT `--outfile`, and that is the second thing CI measured rather than a
+          # preference. With `--outfile` this line failed on the runner with
+          # `error: cannot write multiple output files without an output directory` (run
+          # 39297290735), while the same command succeeded locally on darwin-arm64 - so the
+          # number of outputs bun decides to emit for these externals is not the same on both
+          # platforms, and `--outdir` is the form that holds whatever it emits. The glob is
+          # needed too: `--external @duckdb/node-bindings-linux-x64` does NOT cover the import,
+          # which is the subpath `@duckdb/node-bindings-linux-x64/duckdb.node`. MEASURED: with the
+          # eight package names spelled out and no glob, the build still exits 1 on all eight.
+          out="$(mktemp -d)"
+          bun build --target=node --outdir "$out" tests/live/opcua-live-check.ts \
+            --external proper-lockfile --external "@duckdb/*" --external cpu-features
+          # `--require reflect-metadata` IS MEASURED, not defensive. node-opcua reaches the
+          # network through tsyringe, which refuses to load without the polyfill: the bundle
+          # threw `tsyringe requires a reflect polyfill` on Node and exited 1 (run 39299407452).
+          # Bun needs nothing, which is why the Bun run above has always passed and this line is
+          # the one that fell over. Reproduced and fixed under the runner's own Node v24.21.0:
+          # plain `node` throws, `node --require reflect-metadata` gets past module load and
+          # fails only on ECONNREFUSED where no fixture is listening, which is the right failure
+          # for a machine with no server. MEASURED the same way: the other five provider bundles
+          # in this job load under Node with no polyfill, because only this check reaches
+          # `createDatabaseProvider`. `reflect-metadata` is a transitive dependency here
+          # (tsyringe <- node-opcua); if a lockfile update ever drops it, this line is where
+          # that shows up.
+          node --require reflect-metadata "$out/opcua-live-check.js"
+
+      - name: MTConnect provider check
+        run: |
+          agent="mtconnect/agent:2.8.0.4@sha256:c42f90850ab70d65ae5e73b14392b3041ed51065bd7bf287658db6f7260df641"
+          adapter="python:3.14-slim@sha256:0741d101873c12ab927e6f8653feb8862b9bd58771177acb1b885b95141f91b4"
+          trap 'docker rm -f libredb-ci-mtconnect libredb-ci-mtconnect-adapter > /dev/null 2>&1;
+                docker network rm libredb-ci-mtconnect > /dev/null 2>&1' EXIT
+          docker network create libredb-ci-mtconnect > /dev/null
+          # The alias is the name the agent's own configuration dials, so docker/mtconnect-init/agent.cfg
+          # is the same file here and under compose.
+          docker run -d --name libredb-ci-mtconnect-adapter --network libredb-ci-mtconnect \
+            --network-alias mtconnect-adapter \
+            -v "$PWD/docker/mtconnect-init:/fixture:ro" "$adapter" python /fixture/adapter.py
+          docker run -d --name libredb-ci-mtconnect --network libredb-ci-mtconnect \
+            -v "$PWD/docker/mtconnect-init:/mtconnect/config:ro" \
+            -p 127.0.0.1:17322:5000 "$agent"
+          # TWO QUESTIONS, TWO SENTENCES. A readiness check that reports one failure for two different
+          # states tells whoever reads the log the wrong thing half the time. "The agent never answered"
+          # and "the agent answered but the device behind it never arrived" are different repairs, so the
+          # loop records which of the two it last saw. Neither question asks whether a port is open: a
+          # published port accepts a connection before the server inside has spoken, so "open" measures
+          # Docker rather than the fixture.
+          ready=""
+          answered=""
+          end=$((SECONDS + 90))
+          while [ "$SECONDS" -lt "$end" ]; do
+            current="$(docker exec libredb-ci-mtconnect sh -c \
+              'wget -qO- http://127.0.0.1:5000/current' 2> /dev/null || true)"
+            if [ -n "$current" ]; then
+              answered=yes
+              case "$current" in
+                *ConnectionStatus*ESTABLISHED*) ready=yes; break ;;
+              esac
+            fi
+            sleep 2
+          done
+          if [ -z "$ready" ]; then
+            if [ -z "$answered" ]; then
+              echo "MEASURED NOTHING: the MTConnect agent never answered /current within 90 s."
+              echo "The fixture did not come up; the checks below would have measured nothing."
+            else
+              echo "MEASURED NOTHING: the agent answered, but ConnectionStatus never reached ESTABLISHED"
+              echo "within 90 s. The agent is up and the device behind it is not, so the fixture is half"
+              echo "built: every data item would read UNAVAILABLE and every check would pass on nothing."
+            fi
+            echo "--- agent ---"
+            docker logs --tail 50 libredb-ci-mtconnect
+            echo "--- adapter ---"
+            docker logs --tail 50 libredb-ci-mtconnect-adapter
+            exit 1
+          fi
+          # The live check first: it is the only layer that can see a window read at connect going stale,
+          # and it prints its own count rather than a word, so a check that was deleted or could not run
+          # does not leave the same line behind as a run where every check passed.
+          # MTCONNECT_LIVE_REQUIRED turns a skip into a failure here. MEASURED while writing this file:
+          # with the published port set to a wrong one, every check skipped, the integration test still
+          # passed from its captures, and the step exited 0 - a step that reached no agent reported
+          # success. Without this flag the canary below is green, which is how it was found.
+          MTCONNECT_LIVE_REQUIRED=1 bun tests/live/mtconnect-live-check.ts
+          # And the same check under Node, which is what the contract asks for and what this file's own
+          # docblock describes: the provider's transport is the repository's own and both runtimes drive
+          # it, so a difference between them is a defect the Bun run alone cannot see. The Node run goes
+          # through `bun build --target=node` rather than Node's own TypeScript support, as
+          # `tests/live/oxia-live-check.ts` does, so the `@/` alias is resolved while bundling.
+          OUT="$(mktemp -d)"
+          bun build tests/live/mtconnect-live-check.ts --target=node --outfile "$OUT/live.mjs"
+          MTCONNECT_LIVE_REQUIRED=1 node "$OUT/live.mjs"
+          rm -rf "$OUT"
+          # Then the same captures the integration test replays, read against the agent that produced
+          # them: a capture taken from another build fails the digest case rather than drifting quietly.
+          bun tests/run-tests.ts tests/integration/db/mtconnect-provider.test.ts
+
+      - name: Modbus live check
+        run: |
+          image="oitc/modbus-server:2.3.0@sha256:32bfe144512e1f070cf7e7e2513cdcb774d74db142ee5dbad45b21d6d705ab97"
+          export MODBUS_LIVE_DIGEST="${image#*@}"
+          trap 'docker rm -f libredb-ci-modbus > /dev/null' EXIT
+          docker run -d --name libredb-ci-modbus \
+            -v "$PWD/docker/modbus/modbus_server.json:/app/modbus_server.json:ro" \
+            -p 127.0.0.1:1502:5020 "$image"
+          # The address the probes use AND the sentences name, from one place: the sentences said
+          # "on 1502" while the probe read MODBUS_PROBE, so a run against another port was
+          # refused with a sentence naming a port it had never asked.
+          export MODBUS_PROBE="${MODBUS_PROBE:-127.0.0.1:1502}"
+          ready=""
+          end=$((SECONDS + 60))
+          while [ "$SECONDS" -lt "$end" ]; do
+            # Two questions, and the second plainly implies the first. They are asked separately
+            # so the two failures can be told apart below, not for coverage.
+            if bun tests/live/modbus-ready-probe.ts --speaks && bun tests/live/modbus-ready-probe.ts --tables; then
+              ready=yes
+              break
+            fi
+            sleep 1
+          done
+          if [ -z "$ready" ]; then
+            # Which of the two it was, in its own sentence. Both are NOT MEASURED, because in
+            # neither case did anything about this repository's code get measured, but a reader
+            # who has to fix one of them needs to know which one.
+            if bun tests/live/modbus-ready-probe.ts --speaks; then
+              echo "NOT MEASURED: a Modbus server answered on $MODBUS_PROBE but its tables are not this fixture's, so the live check never ran."
+            else
+              echo "NOT MEASURED: nothing speaking Modbus answered on $MODBUS_PROBE within 60 s, so the live check never ran."
+            fi
+            docker logs --tail 50 libredb-ci-modbus
+            exit 1
+          fi
+          bun tests/live/modbus-live-check.ts
+          out="$(mktemp -d)"
+          bun build tests/live/modbus-live-check.ts --target=node --outfile "$out/live.mjs"
+          node "$out/live.mjs"
+
+      - name: Sparkplug B live check
+        run: |
+          image="eclipse-mosquitto:2.0.22@sha256:199ea8ef2e35ec2b1b37e59cfd1dbae538ed4dfa4a2251a121a52215a6248a21"
+          export SPARKPLUG_LIVE_DIGEST="${image#*@}"
+          trap 'docker rm -f libredb-ci-sparkplug libredb-ci-sparkplug-publisher > /dev/null 2>&1' EXIT
+          docker run -d --name libredb-ci-sparkplug \
+            -v "$PWD/docker/sparkplug/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro" \
+            -p 127.0.0.1:1884:1883 "$image"
+
+          # First readiness check: the broker answers about itself.
+          listening=""
+          end=$((SECONDS + 60))
+          while [ "$SECONDS" -lt "$end" ]; do
+            if docker exec libredb-ci-sparkplug \
+              mosquitto_sub -h 127.0.0.1 -p 1883 -t '$SYS/broker/version' -C 1 -W 3 > /dev/null 2>&1; then
+              listening=yes
+              break
+            fi
+            sleep 1
+          done
+          if [ -z "$listening" ]; then
+            echo "The broker did not accept a session within 60 s."
+            docker logs --tail 50 libredb-ci-sparkplug
+            exit 1
+          fi
+
+          docker run -d --name libredb-ci-sparkplug-publisher --network host \
+            -v "$PWD/docker/sparkplug:/publisher:ro" \
+            python:3.14-slim@sha256:0741d101873c12ab927e6f8653feb8862b9bd58771177acb1b885b95141f91b4 \
+            python3 /publisher/publisher.py --host 127.0.0.1 --port 1884
+
+          # Second readiness check, independent of the first: a Sparkplug message actually arrives.
+          # The broker answered the first one before the publisher existed, which is the state this
+          # check exists to refuse.
+          publishing=""
+          end=$((SECONDS + 60))
+          while [ "$SECONDS" -lt "$end" ]; do
+            if docker exec libredb-ci-sparkplug \
+              mosquitto_sub -h 127.0.0.1 -p 1883 -t 'spBv1.0/#' -C 1 -W 5 > /dev/null 2>&1; then
+              publishing=yes
+              break
+            fi
+            sleep 1
+          done
+          if [ -z "$publishing" ]; then
+            echo "No Sparkplug message arrived within 60 s, so the fixture is a broker with nothing on it."
+            docker logs --tail 50 libredb-ci-sparkplug-publisher
+            exit 1
+          fi
+
+          # --strict, because a SKIP keeps the exit code at 0: if the digest export above were ever
+          # dropped, the digest item would skip, this step would stay green and nothing would have
+          # checked which broker the run measured. In CI an item that cannot run is a failure.
+          bun tests/live/sparkplug-live-check.ts --strict
+          bun build tests/live/sparkplug-live-check.ts --target=node --outfile "$RUNNER_TEMP/sparkplug-live.mjs"
+          node "$RUNNER_TEMP/sparkplug-live.mjs" --strict
+
+      - name: SNMP live check
+        run: |
+          base="sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f"
+          # This value was EXPORTED as SNMP_LIVE_DIGEST and read by nobody: the live check speaks SNMP
+          # to an agent, and an agent does not report the image it was built from. An export nothing
+          # reads is worse than no export, because the next reader takes it for a check that runs. So
+          # the digest does its work here instead, before the build, and the unit test still holds this
+          # file equal to the Dockerfile.
+          if ! grep -q "$base" docker/snmp/Dockerfile; then
+            echo "NOT MEASURED: docker/snmp/Dockerfile does not carry $base, so this run would build another base."
+            exit 1
+          fi
+          # The trap, not a last line: a `docker rm` written at the end does not run when a check above
+          # it fails, which is exactly the run that leaves a container behind.
+          trap 'docker rm -f libredb-ci-snmp > /dev/null 2>&1' EXIT
+          docker build -t libredb-ci-snmp:test docker/snmp
+          docker run -d --name libredb-ci-snmp \
+            --health-cmd 'snmpget -v2c -c libredb-live -t 2 -r 1 127.0.0.1:161 1.3.6.1.2.1.1.5.0' \
+            --health-interval 3s --health-retries 10 --health-start-period 3s \
+            -p 127.0.0.1:1161:161/udp libredb-ci-snmp:test
+          # TWO READINESS CHECKS, independent on purpose, and the SECOND one crosses the published port.
+          # The first is Docker's own health verdict, which asks the agent from INSIDE the container. On
+          # its own it is not enough, and that was measured rather than reasoned: a canary that published
+          # the fixture on the wrong host port left the inside-the-container check perfectly happy, the
+          # step walked past readiness, and the live check then failed with "nothing is listening" - a
+          # red that reads like a provider defect for a fixture nobody could reach. So the second check
+          # asks the same question from the HOST side, over the mapping the live check will use, with the
+          # image's own snmpget (the host has no SNMP tools and should not need any).
+          # A UDP port that is merely open proves nothing either way: snmpd binds before it reads its
+          # configuration, so a port probe reports a half-configured fixture as healthy.
+          # THE TWO CHECKS ALSO ASK TWO DIFFERENT FACTS, and that is the second half of the same point.
+          # They both used to ask for sysName, which snmpd.conf sets, while every value the live check
+          # reads comes from the `pass` script in playpen.sh. MEASURED by breaking that script: sysName
+          # still answered on both paths and the playpen answered "No Such Instance", so both checks
+          # passed over a fixture that carries none of the data the live check is about. The host-side
+          # check therefore asks the playpen for a value only the script can produce; the health command
+          # inside the container keeps asking sysName, so the two differ in path AND in fact.
+          ready=""
+          end=$((SECONDS + 60))
+          while [ "$SECONDS" -lt "$end" ]; do
+            health="$(docker inspect -f '{{.State.Health.Status}}' libredb-ci-snmp 2>/dev/null || true)"
+            if [ "$health" = "healthy" ] \
+              && docker run --rm --network host libredb-ci-snmp:test \
+                snmpget -v2c -c libredb-live -t 2 -r 1 127.0.0.1:1161 .1.3.6.1.4.1.8072.9999.9999.4.0 2>/dev/null \
+                | grep -q "live-test-value"; then
+              ready=yes
+              break
+            fi
+            sleep 1
+          done
+          if [ -z "$ready" ]; then
+            # NOT "the live check failed". Nothing was measured: the fixture never answered, so this run
+            # says nothing about the provider, and the sentence has to say which of the two it is.
+            echo "NOT MEASURED: the SNMP fixture did not answer within 60 s, so the live check never ran."
+            docker logs --tail 50 libredb-ci-snmp
+            exit 1
+          fi
+          # Both runtimes, because the provider's socket is node:dgram and the two runtimes implement it
+          # separately. The Node run goes through a bundle for the reason written in the check's header.
+          bun tests/live/snmp-live-check.ts
+          out="$(mktemp -d)"
+          bun build tests/live/snmp-live-check.ts --target=node --outfile "$out/live.mjs"
+          node "$out/live.mjs"
+
+      - name: NETCONF live check
+        run: |
+          # The port the probes use AND the sentences name, from one place. MEASURED elsewhere in
+          # this repository, on the Modbus fixture's step: that step was
+          # measured saying "on 1502" while its probe read another variable, so a run against a
+          # different port was refused with a sentence naming a port it had never asked.
+          export NETCONF_PROBE_PORT="${NETCONF_PROBE_PORT:-1830}"
+          export NETCONF_PROBE="${NETCONF_PROBE:-127.0.0.1:$NETCONF_PROBE_PORT}"
+          trap 'docker rm -f libredb-ci-netconf > /dev/null 2>&1' EXIT
+          # Built from the repository, so the tag below names this build and never a registry's.
+          docker build -t libredb-fixture/netconf:2.8.7 docker/netconf
+          docker run -d --name libredb-ci-netconf \
+            -e LIBREDB_NETCONF_INTERFACES=5000 \
+            -e LIBREDB_NETCONF_RO_PASSWORD=fixture-password \
+            -e LIBREDB_NETCONF_ROOT_PASSWORD=fixture-root \
+            -e LIBREDB_NETCONF_KEY_PASSPHRASE=fixture-passphrase \
+            -p "127.0.0.1:$NETCONF_PROBE_PORT:830" libredb-fixture/netconf:2.8.7
+          # The first question is asked inside the container, where 127.0.0.1 is the server itself
+          # and the answer cannot be Docker's. The second is asked from the HOST, over the published
+          # port, and that split is the point: a readiness check that only ever looks inside never
+          # tests the mapping, so a wrong `-p` passes it and every check afterwards fails with
+          # ECONNREFUSED, which reads as a provider defect rather than as an unreachable fixture.
+          # Asking from the host raises the question of whose banner answers. It can only be this
+          # container's: `docker run` above exits 125 when the published port is already taken, and
+          # the step stops there, so a foreign server never reaches this loop. MEASURED: starting a
+          # second fixture on a port another container held exited 125 with "failed to set up
+          # container networking".
+          configured=""
+          serving=""
+          end=$((SECONDS + 180))
+          while [ "$SECONDS" -lt "$end" ]; do
+            if docker exec libredb-ci-netconf test -f /fixture/.ready 2> /dev/null; then
+              configured=yes
+              if ssh-keyscan -T 3 -p "$NETCONF_PROBE_PORT" 127.0.0.1 2> /dev/null | grep -q 'SSH-2.0'; then
+                serving=yes
+                break
+              fi
+            fi
+            sleep 2
+          done
+          if [ -z "$serving" ]; then
+            # Both are NOT MEASURED, because in neither case did anything about this repository's
+            # code get measured. A reader who has to fix one of them needs to know which one.
+            if [ -n "$configured" ]; then
+              echo "NOT MEASURED: the NETCONF fixture finished configuring itself but never answered"
+              echo "on $NETCONF_PROBE within 180 s. Either the server is not speaking or the published"
+              echo "port does not reach it; this question is asked from the host for that reason. The"
+              echo "live check never ran."
+            else
+              echo "NOT MEASURED: the NETCONF fixture never wrote /fixture/.ready within 180 s, so it"
+              echo "never finished loading its accounts, its NACM rule-list and its interface list."
+              echo "The live check never ran, and a server reached before this point would have"
+              echo "refused every read."
+            fi
+            docker logs --tail 80 libredb-ci-netconf
+            exit 1
+          fi
+          # The deliverable has to be here to be measured. Without this the step would report
+          # success on a missing file: `bun` would fail with a module error, which reads as a broken
+          # step rather than as a deliverable that never landed.
+          test -f tests/live/netconf-live-check.ts || {
+            echo "NOT MEASURED: tests/live/netconf-live-check.ts is absent, so the fixture above was"
+            echo "built and started and nothing was asked of it."
+            exit 1
+          }
+          # The check exits 2 before dialling anything without these two, so they are set from the
+          # fixture rather than defaulted inside the check: a password with a default in a committed
+          # file is a published credential whatever it unlocks. `fixture-password` is this image's
+          # own read-only account, named in docker/netconf/README.md, and it unlocks nothing else.
+          # The fingerprint is read out of band because the image generates its host key at BUILD
+          # time, so it is this build's key and not a value any file could carry.
+          # The image this run is against, declared rather than assumed. The check carries its own
+          # pin and exits 2 without dialling anything if the two disagree, so a tag changed in one
+          # place and not the other is reported instead of being measured as though it were the
+          # same device. Without it the summary line reads "image not declared".
+          export NETCONF_LIVE_IMAGE=libredb-fixture/netconf:2.8.7
+          export NETCONF_LIVE_PASSWORD=fixture-password
+          NETCONF_LIVE_FINGERPRINT="$(docker exec libredb-ci-netconf sh -c \
+            'ssh-keyscan -T 5 -p 830 127.0.0.1 2> /dev/null | ssh-keygen -lf - | awk "{print \$2}"' | head -1)"
+          export NETCONF_LIVE_FINGERPRINT
+          if [ -z "$NETCONF_LIVE_FINGERPRINT" ]; then
+            echo "NOT MEASURED: the fixture answered a banner but its host key fingerprint could not"
+            echo "be read, so the check would have had nothing to pin the device to."
+            exit 1
+          fi
+          # The public-key account, extracted the way docker/netconf/README.md extracts it. Without
+          # it the check still runs and reports `NOT MEASURED the public-key account`, which is an
+          # honest line and a thinner run: the password path would be the only one dialled.
+          key="$(mktemp)"
+          docker exec libredb-ci-netconf cat /fixture/ro-key > "$key"
+          chmod 600 "$key"
+          bun tests/live/netconf-live-check.ts --target "$NETCONF_PROBE" --key "$key"
+          # `--outdir`, as on the OPC UA step and for the same measured reason: where the runner has
+          # compiled ssh2's optional `sshcrypto.node`, bun emits it as an asset beside the bundle, and
+          # `--outfile` then exits 1 with `cannot write multiple output files without an output
+          # directory` after the Bun run above passed (run 39807979304). Without the addon, as on a
+          # machine that never built it, the same command emits the one file.
+          out="$(mktemp -d)"
+          bun build tests/live/netconf-live-check.ts --target=node --external cpu-features --outdir "$out"
+          node "$out/netconf-live-check.js" --target "$NETCONF_PROBE" --key "$key"
+          # Then the house's own layer, on the bytes a real device sent and with no container in
+          # reach: the one check here that still measures something where Docker is unavailable.
+          bun tests/run-tests.ts tests/integration/db/netconf-provider.test.ts
 
       - name: Upload Playwright report
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

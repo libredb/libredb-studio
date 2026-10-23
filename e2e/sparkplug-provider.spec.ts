@@ -14,7 +14,8 @@ import { expect, test } from "@playwright/test";
  * 127.0.0.1:1884, and it names its reason and SKIPS where no broker is listening: CI's "E2E
  * Tests" job starts no compose service, so a case that needs one cannot pass in the job it runs
  * in. The live connection itself is measured where a broker is actually started, in
- * `docker/sparkplug/ci-step.yml`, which is this layer's complement rather than its duplicate -
+ * the `Sparkplug B live check` step of `.github/workflows/ci.yml`, which is this layer's
+ * complement rather than its duplicate -
  * holding one claim in two layers means whatever reddens one reddens the other, and that is
  * exactly what happened on #1798.
  *

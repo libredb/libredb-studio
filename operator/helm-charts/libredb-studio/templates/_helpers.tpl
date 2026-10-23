@@ -464,6 +464,9 @@ with fails the render instead, naming the value to fix. Included from deployment
 {{- if .Values.seedConnections.enabled }}
 {{- fail "governance.enabled refuses seedConnections.enabled: the governance source is the only catalog of connections" }}
 {{- end }}
+{{- if .Values.config.oidcRolePrefix }}
+{{- fail "governance.enabled refuses config.oidcRolePrefix: governance mode reads connections from the governance source only" }}
+{{- end }}
 {{- if get (.Values.mcp | default dict) "enabled" }}
 {{- fail "governance.enabled refuses mcp.enabled: MCP under governance is not supported in this release" }}
 {{- end }}

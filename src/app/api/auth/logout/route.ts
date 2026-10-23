@@ -30,11 +30,39 @@ function hintForSession(hint: string | undefined, idpSubject: string | undefined
   }
 }
 
+/**
+ * The logout line. Isolated in its own try/catch, separate from the mutation before it: an audit call must never change
+ * the outcome of the thing it is recording, so a failure to record it must not turn a successful logout into a 500,
+ * and must not retroactively make it look like the logout never happened.
+ */
+function recordLogout(request: NextRequest, username: string): void {
+  try {
+    emitAuditEvent({
+      type: "logout",
+      action: "logout",
+      target: ROUTE,
+      user: username,
+      result: "success",
+      ip: clientAddress(request),
+    });
+  } catch (auditError) {
+    logger.error("Failed to record logout audit event", auditError, { route: ROUTE });
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     // Ordering matters: logout() clears the cookie, so reading the session afterwards would always
     // record "anonymous" and the audit trail would never name who signed out.
     const session = await getSession();
+
+    // An access token's session (src/lib/oidc-bearer.ts) has no cookie to clear and no Studio state to end: the native
+    // client discards its tokens and ends its provider session itself. Any cookie on the request belongs to another
+    // session and is left alone.
+    if (session?.channel === "bearer") {
+      recordLogout(request, session.username);
+      return NextResponse.json({ success: true });
+    }
 
     await logout();
 
@@ -47,25 +75,7 @@ export async function POST(request: NextRequest) {
     // No session means no state transition occurred - "anonymous logged out" would be noise, not a
     // fact, and this route has no rate limit, so recording it unconditionally would let an
     // unauthenticated caller flood the audit trail for free.
-    if (session) {
-      // Isolated in its own try/catch, separate from the mutation above: an audit call must never
-      // change the outcome of the thing it is recording. logout() has already succeeded by this
-      // point, so a failure to record it (today unrealistic - console.log basically cannot throw -
-      // but real the moment the audit sink gains an I/O step) must not turn a successful logout
-      // into a 500, and must not retroactively make it look like the logout never happened.
-      try {
-        emitAuditEvent({
-          type: "logout",
-          action: "logout",
-          target: ROUTE,
-          user: session.username,
-          result: "success",
-          ip: clientAddress(request),
-        });
-      } catch (auditError) {
-        logger.error("Failed to record logout audit event", auditError, { route: ROUTE });
-      }
-    }
+    if (session) recordLogout(request, session.username);
 
     const authProvider = process.env.NEXT_PUBLIC_AUTH_PROVIDER || "local";
     if (authProvider === "oidc") {

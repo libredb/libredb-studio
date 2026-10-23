@@ -303,6 +303,33 @@ channels:
         channel); the GUI .deb (libredb-studio-desktop_<version>_<arch>.deb, distinct from the
         headless server package) is what FlatPark pins as extra-data.
 
+  - id: vscode-marketplace
+    name: VS Code extension (Visual Studio Marketplace)
+    short_name: VS Code extension
+    status: live
+    category: os-desktop
+    platforms: [linux, macos, windows]
+    # VS Code's own binary runs the providers in Node mode (ELECTRON_RUN_AS_NODE),
+    # so the editor supplies the runtime, not the user.
+    runtime: channel_supplied
+    tier: 2
+    kind: marketplace
+    update:
+      # The VSIX that vscode-extension.yml tested is uploaded by hand on the
+      # publisher's management page; the release workflow publishes nothing yet.
+      method: manual_ui
+      sla: on_demand
+    links:
+      catalog: https://marketplace.visualstudio.com/items?itemName=libredb.libredb-studio
+      docs: docs/DISTRIBUTION.md
+    pin:
+      strategy: none
+      note: Published 21 Oct 2026 as the 0.1.0 pre-release, under the publisher libredb; 0.2.0 is its first
+        release. The extension has
+        a version line of its own in vscode-extension/package.json, which the drift check's comparison
+        with the root package.json cannot read, so the listed version is checked by hand against the
+        listing.
+
   - id: aur
     name: Arch User Repository (libredb-studio-bin)
     short_name: AUR

@@ -3441,3 +3441,126 @@ describe("a panel listed one level at a time", () => {
     expect(route.seen.filter((body) => body.pattern === "a/")).toHaveLength(1);
   });
 });
+
+describe("the sticky strip above the key rows", () => {
+  /** A measured, scrolled tree box: the only state a strip is drawn in. */
+  function scrolled(top: number): HTMLElement {
+    const tree = screen.getByRole("tree");
+    Object.defineProperty(tree, "clientHeight", { configurable: true, value: 240 });
+    tree.scrollTop = top;
+    fireEvent.scroll(tree);
+    return tree;
+  }
+
+  function stripLabels(): string[] {
+    const strip = screen.getByTestId("key-browser-sticky");
+    return within(strip)
+      .getAllByTestId("key-browser-sticky-row")
+      .map((stripRow) => stripRow.querySelector("span.truncate")?.textContent ?? "");
+  }
+
+  const treeRow = (label: string): HTMLElement => {
+    const found = screen.getByText(label).closest('[role="treeitem"]');
+    if (found === null) throw new Error(`no row named ${label}`);
+    return found as HTMLElement;
+  };
+
+  /** A forty key walk under one three level prefix, opened all the way down. */
+  async function openChain(prefix: string, labels: readonly string[]): Promise<void> {
+    const keys = Array.from({ length: 40 }, (_, index) => `${prefix}${index}`);
+    mockGlobalFetch(redisRoutes(page(keys, "0", keys.length)));
+    renderBrowser();
+    const root = prefix.slice(0, prefix.indexOf(":"));
+    await waitFor(() => expect(rows()[0]).toBe(`${root}:*@0`));
+    for (const label of labels) fireEvent.click(screen.getByText(label));
+    await waitFor(() => expect(screen.getByText(`${prefix}0`)).toBeTruthy());
+  }
+
+  test("pins the ancestors of the first visible row, root first", async () => {
+    await openChain("app:cache:user:", ["app:*", "cache:*", "user:*"]);
+    // 240px of box holds ten 24px rows, and the share bound caps the strip at three.
+    scrolled(KEY_ROW_HEIGHT * 4);
+
+    expect(stripLabels()).toEqual(["app:*", "cache:*", "user:*"]);
+  });
+
+  test("draws nothing at the top, where the ancestors are still on screen", async () => {
+    await openChain("app:cache:user:", ["app:*", "cache:*", "user:*"]);
+    scrolled(0);
+    expect(screen.queryByTestId("key-browser-sticky")).toBeNull();
+  });
+
+  test("is decorative: hidden from assistive tech, and holds no tab stop", async () => {
+    await openChain("app:cache:user:", ["app:*", "cache:*", "user:*"]);
+    scrolled(KEY_ROW_HEIGHT * 4);
+
+    const strip = screen.getByTestId("key-browser-sticky");
+    expect(strip.getAttribute("aria-hidden")).toBe("true");
+    for (const stripRow of within(strip).getAllByTestId("key-browser-sticky-row")) {
+      expect(stripRow.getAttribute("tabindex")).toBe("-1");
+    }
+  });
+
+  test("a press reveals the row it names and marks it", async () => {
+    await openChain("app:cache:user:", ["app:*", "cache:*", "user:*"]);
+    const tree = scrolled(KEY_ROW_HEIGHT * 4);
+
+    const strip = screen.getByTestId("key-browser-sticky");
+    fireEvent.click(within(strip).getAllByTestId("key-browser-sticky-row")[1]);
+
+    // The press is a map back to the row, so it ends on the row rather than beside it. "cache:*" is
+    // one level down, so it cannot sit at the top edge - its parent pins exactly there - and the
+    // press lands at the top of the list instead, where both rows are under an empty strip.
+    expect(tree.scrollTop).toBe(0);
+    expect(treeRow("cache:*").className).toContain("bg-brand/20");
+  });
+
+  test("a press on a deeper row ends it below its parent's slot", async () => {
+    await openChain("app:cache:user:", ["app:*", "cache:*", "user:*"]);
+    const tree = scrolled(KEY_ROW_HEIGHT * 4);
+
+    const strip = screen.getByTestId("key-browser-sticky");
+    fireEvent.click(within(strip).getAllByTestId("key-browser-sticky-row")[2]);
+
+    // "user:*" lands one row up: at its own top edge the strip recomputes as two slots ("app:*" and
+    // "cache:*") and covers the row. The row now ends exactly below the one slot that remains.
+    expect(tree.scrollTop).toBe(KEY_ROW_HEIGHT);
+    expect(stripLabels()).toEqual(["app:*"]);
+    const stripHeight = stripLabels().length * KEY_ROW_HEIGHT;
+    expect(2 * KEY_ROW_HEIGHT - tree.scrollTop).toBeGreaterThanOrEqual(stripHeight);
+    expect(treeRow("user:*").className).toContain("bg-brand/20");
+  });
+
+  test("keeps keyboard focus clear of the strip", async () => {
+    await openChain("app:cache:user:", ["app:*", "cache:*", "user:*"]);
+    const tree = scrolled(KEY_ROW_HEIGHT * 4);
+
+    // The strip overlays the top of the box. The box pads its top by the strip's height, so native
+    // focus scrolling stops a row below the strip instead of under it.
+    expect(tree.style.scrollPaddingTop).toBe(`${3 * KEY_ROW_HEIGHT}px`);
+
+    scrolled(0);
+    expect(tree.style.scrollPaddingTop).toBe("0px");
+  });
+
+  test("the database row is pinned too, because the key space belongs to it", async () => {
+    const keys = Array.from({ length: 40 }, (_, index) => `app:${index}`);
+    mockGlobalFetch(redisRoutes(page(keys, "0", keys.length)));
+    renderLevel();
+    await waitFor(() => expect(screen.getByTestId("key-browser-database")).toBeTruthy());
+    fireEvent.click(screen.getByText("app:*"));
+    await waitFor(() => expect(screen.getByText("app:0")).toBeTruthy());
+
+    scrolled(KEY_ROW_HEIGHT * 5);
+    expect(stripLabels()).toEqual(["0", "app:*"]);
+  });
+
+  test("a chain over the cap keeps the root and the nearest parent, and says it cut the middle", async () => {
+    await openChain("a:b:c:d:", ["a:*", "b:*", "c:*", "d:*"]);
+    scrolled(KEY_ROW_HEIGHT * 5);
+
+    const strip = screen.getByTestId("key-browser-sticky");
+    expect(stripLabels()).toEqual(["a:*", "d:*"]);
+    expect(strip.textContent).toContain("\u2026");
+  });
+});

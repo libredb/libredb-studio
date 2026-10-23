@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { INVALID_REQUEST_BODY, readJsonObject } from "@/lib/api/json-object-body";
 import { getOrCreateProvider } from "@/lib/db";
 import { splitExecutionUnits, unitIsModuleBody, type ExecutionUnit } from "@/lib/sql/statement-splitter";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { isSelectQuery, noteAppendedBound } from "@/lib/db/utils/query-limiter";
 import { createErrorResponse } from "@/lib/api/errors";
 import { bridgeAbortToCancel } from "@/lib/api/abort-cancel";
+import { pageOptionError } from "@/lib/api/page-probe";
 import { supportsQueryCancel } from "@/lib/db/query-cancel";
 import { QueryCancelledError } from "@/lib/db/errors";
 import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
@@ -223,19 +225,35 @@ export async function POST(req: NextRequest) {
   let admitting = false;
 
   try {
-    const body = await req.json();
-    const { sql, options = {}, queryId } = body;
+    // A body that is not a JSON object is a malformed request, refused before any connection resolves.
+    const body = await readJsonObject(req);
+    if (body === null) {
+      return NextResponse.json({ error: INVALID_REQUEST_BODY }, { status: 400 });
+    }
+    // `options` is handed on as the options record it names, as it was when the body was read untyped.
+    const { sql, options = {}, queryId } = body as { options?: Record<string, unknown> } & Record<string, unknown>;
     requestedId = requestedConnectionId(body);
     submitted = typeof sql === "string" ? sql : null;
 
     const connection = await resolveConnection(body, guard.session);
     resolved = connection;
 
+    // A `sql` that is present but not a string, a falsy one (0, false) included, is refused in words: a truthy one
+    // reached the splitter and answered 500 with its own TypeError ("input.slice is not a function"). A missing
+    // (null) or empty one keeps its answer.
+    if (sql != null && typeof sql !== "string") {
+      return NextResponse.json({ error: "sql must be a string" }, { status: 400 });
+    }
     if (!sql) {
       return NextResponse.json({ error: "Connection and query are required" }, { status: 400 });
     }
     if (queryId !== undefined && typeof queryId !== "string") {
       return NextResponse.json({ error: "queryId must be a string" }, { status: 400 });
+    }
+    // The page bounds, held to the rule `POST /api/db/query` holds them to, before anything is split or acquired.
+    const optionError = pageOptionError(options);
+    if (optionError !== null) {
+      return NextResponse.json({ error: optionError }, { status: 400 });
     }
 
     // A type that declares a console text bound runs one statement per request. The SQL splitter below would turn

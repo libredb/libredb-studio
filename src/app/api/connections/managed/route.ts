@@ -19,14 +19,17 @@ const GOVERNED_CACHE_HINT_MS = 10_000;
 /**
  * The server-only markers are not part of this response's shape, so they are removed before anything reaches the
  * browser: the literal marker (src/lib/seed/types.ts) tells the server how to resolve a connection's values, and the
- * grant level (src/lib/governance/visible.ts) which credential a governed record carries.
+ * grant level (src/lib/governance/visible.ts) which credential a governed record carries. The level itself is no secret
+ * and goes out as `access`, so a client can say a connection is read only before a write fails.
  */
-function withoutServerMarkers(conn: ManagedConnection): ManagedConnection {
-  const copy: ManagedConnection & { grantLevel?: unknown } = { ...conn };
+function withoutServerMarkers(conn: GovernedRecord): ManagedConnection {
+  const { grantLevel, ...copy } = conn;
   delete copy.literal;
-  delete copy.grantLevel;
-  return copy;
+  return grantLevel === undefined ? copy : { ...copy, access: grantLevel };
 }
+
+/** A listed record: a governed one carries the level of the credential it was resolved for. */
+type GovernedRecord = ManagedConnection & { grantLevel?: "read" | "write" };
 
 /** How long the browser may keep the list, in ms: `SEED_CACHE_TTL_MS`, 60000 by default, and 10000 under governance. */
 function cacheHintMs(): number {
@@ -71,9 +74,11 @@ export async function GET() {
     // stays here, the API key pair and the TLS client key as well as the password. An editable
     // one is copied into the browser to be edited, so it keeps them. Every governed connection is
     // managed, so it never leaves with a credential.
+    // A bearer session is a native client (src/lib/oidc-bearer.ts), which edits no connection and holds no database
+    // credential, so an editable one reaches it without them too.
     const sanitized = connections
       .map(withoutServerMarkers)
-      .map((conn) => (conn.managed ? withoutSecretFields(conn) : conn));
+      .map((conn) => (conn.managed || session.channel === "bearer" ? withoutSecretFields(conn) : conn));
 
     // Seed ids still being seeded asynchronously (e.g. the SQLite sample file
     // copy at boot) — clients poll while non-empty so the sample appears

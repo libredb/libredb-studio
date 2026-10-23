@@ -54,7 +54,7 @@ import {
   requiredVariant,
 } from "./agent-manifest";
 import { logger } from "@/lib/logger";
-import { isRetryableError, isToolCallParseError } from "@/lib/llm/types";
+import { isRetryableError, isToolCallParseError, LLMConfigError } from "@/lib/llm/types";
 import { type AssistantModelMessage, type ModelMessage, Output, type ToolSet, streamText, tool } from "ai";
 import { z } from "zod";
 import {
@@ -109,7 +109,13 @@ import {
   AGENT_REPORT_RESERVE_TURNS,
   AGENT_WORKFLOW_BUDGETS,
 } from "./execution-policy";
-import { type AgentModel, agentProviderOptions, mapAgentModelError, refusedEffortError } from "./model-adapter";
+import {
+  type AgentModel,
+  agentProviderOptions,
+  agentSamplingFor,
+  mapAgentModelError,
+  refusedEffortError,
+} from "./model-adapter";
 import { modelToolSchema } from "./model-tool-schema";
 import {
   type AgentRunInvocation,
@@ -2479,10 +2485,20 @@ async function takeTurn(
   // its plan turn was not measured needing it while holding tools. See both fields in `profile.ts`.
   const quiet =
     mode === "agent" ? suppressesAgentReasoning(agentModel.modelId) : suppressesPlanReasoning(agentModel.modelId);
+  const providerOptions = agentProviderOptions(agentModel, quiet);
+  // The `openai` kind's SDK drops `temperature`/`topP` for reasoning models and logs a warning; a
+  // call sends only what the SDK would keep, asked from its own offline `prepareRequest`. Every
+  // other kind keeps its sampling byte-identical.
+  const turnSampling = await agentSamplingFor(agentModel, providerOptions, sampling).catch((error: unknown) => {
+    // The build-time path raises an LLMConfigError for the same preparation failure, so a turn does
+    // too: a preparation that broke is a configuration refusal, not a transport retry.
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new LLMConfigError(`Cannot decide the ${agentModel.provider} sampling: ${detail}`, agentModel.provider);
+  });
   const stream = streamText({
     model: agentModel.model,
-    ...(sampling.temperature !== undefined ? { temperature: sampling.temperature } : {}),
-    ...(sampling.topP !== undefined ? { topP: sampling.topP } : {}),
+    ...(turnSampling.temperature !== undefined ? { temperature: turnSampling.temperature } : {}),
+    ...(turnSampling.topP !== undefined ? { topP: turnSampling.topP } : {}),
     // Constrained decoding, where a shape was asked for. `Output.object` is what makes the
     // SDK send `response_format`, and it composes here precisely because this branch offers
     // no tools.
@@ -2493,7 +2509,7 @@ async function takeTurn(
     instructions,
     messages: [...messages],
     ...(tools === undefined ? {} : { tools }),
-    providerOptions: agentProviderOptions(agentModel, quiet),
+    providerOptions,
     maxRetries: 0,
     // Real-time backstop for ONE call, sized by what the run has left. The
     // deadline object remains the authority — it is what the loop reads between

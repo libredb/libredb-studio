@@ -2,6 +2,7 @@ import { describe, test, expect } from "bun:test";
 import {
   detailedObjects,
   machineColumns,
+  displayedColumnType,
   sampledMark,
   objectAtPath,
   relationCountLabel,
@@ -130,6 +131,16 @@ describe("detailedObjects", () => {
         foreignKeys: [{ columnName: "id", referencedTable: "other", referencedColumn: "id" }],
       },
     ]);
+  });
+
+  test("EXCLUDE constraints are carried when the detail has them and absent when it has none (#1778)", () => {
+    const exclusion = { name: "no_overlap", definition: "EXCLUDE USING gist (table_id WITH =)" };
+    const [withOne, without] = detailedObjects(
+      [listed("table", "app", "reservations"), listed("table", "app", "orders")],
+      [{ ...detail("app", "reservations"), exclusionConstraints: [exclusion] }, detail("app", "orders")],
+    );
+    expect(withOne.exclusionConstraints).toEqual([exclusion]);
+    expect("exclusionConstraints" in without).toBe(false);
   });
 
   test("a name containing a dot still finds its detail, because the key is the path", () => {
@@ -334,5 +345,19 @@ describe("sampledMark", () => {
   test("is the suffix the human views add to a sampled column's type, and nothing for a declared one", () => {
     expect(sampledMark({ provenance: "sampled" })).toBe(" (sampled)");
     expect(sampledMark({})).toBe("");
+  });
+});
+
+describe("displayedColumnType", () => {
+  test("prefers the declaration with its modifier, and the base type where none was recorded", () => {
+    expect(displayedColumnType({ type: "vector", declaredType: "vector(1536)" })).toBe("vector(1536)");
+    expect(displayedColumnType({ type: "character varying", declaredType: "character varying(50)" })).toBe(
+      "character varying(50)",
+    );
+    expect(displayedColumnType({ type: "numeric", declaredType: "numeric(12,2)" })).toBe("numeric(12,2)");
+    // No modifier: the two strings are the same, and an engine that never recorded one answers `type`.
+    expect(displayedColumnType({ type: "text", declaredType: "text" })).toBe("text");
+    expect(displayedColumnType({ type: "text[]", declaredType: "text[]" })).toBe("text[]");
+    expect(displayedColumnType({ type: "integer" })).toBe("integer");
   });
 });

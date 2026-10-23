@@ -174,10 +174,10 @@ describe("GET /api/admin/governance: access", () => {
 
     try {
       const res = await GET(request());
-      const body = await parseResponseJSON<{ error: string }>(res);
+      const body = await parseResponseJSON<{ error: string; code?: string }>(res);
 
       expect(res.status).toBe(403);
-      expect(body).toEqual({ error: "Unauthorized. Admin access required." });
+      expect(body).toEqual({ error: "Unauthorized. Admin access required.", code: "ADMIN_REQUIRED" });
       expect(auditLines(sink)).toEqual([
         expect.objectContaining({
           event: "permission_denied",

@@ -500,24 +500,31 @@ export async function createDatabaseProvider(
 
 ## Step 4: Add UI Configuration
 
-**File:** `src/lib/db-ui-config.ts`
+**Files:** `src/lib/db/connection-form.ts` and `src/lib/db-ui-config.ts`
 
-Add an entry to `DB_UI_CONFIG`:
+The label, the default port, the fields and every optional declaration go into the type's entry of `CONNECTION_FORM` in `src/lib/db/connection-form.ts`, a UI-free module that imports no React, icon or component:
 
 ```typescript
-import { /* existing imports */, Hexagon } from 'lucide-react';
-
-const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
+export const CONNECTION_FORM: { [T in DatabaseType]: /* ... */ } = {
   // ... existing entries ...
 
   cockroachdb: {
-    icon: Hexagon,                          // Pick a Lucide icon
-    color: 'text-indigo-400',               // Tailwind color class
     label: 'CockroachDB',                   // Display name in ConnectionModal
     defaultPort: '26257',                   // Default port for host/port form
     showConnectionStringToggle: true,        // Show "Connection String" tab in modal
     connectionFields: CONNECTION_FIELDS.cockroachdb, // Declared in src/lib/db/connection-fields.ts
   },
+};
+```
+
+The icon and the colour go into the type's entry of `DB_UI_CONFIG` in `src/lib/db-ui-config.ts`, which adds them to the form entry:
+
+```typescript
+import { /* existing imports */, Hexagon } from 'lucide-react';
+
+export const DB_UI_CONFIG: { [T in DatabaseType]: /* ... */ } = {
+  // ... existing entries ...
+  cockroachdb: branded(CONNECTION_FORM.cockroachdb, Hexagon, 'text-indigo-400'), // A Lucide icon, a colour class
 };
 ```
 
@@ -530,22 +537,22 @@ export const CONNECTION_FIELDS: Readonly<Record<DatabaseType, readonly Connectio
 });
 ```
 
-Then add the type to the selectable list that drives the ConnectionModal picker:
+Then append the type to the picker order that drives the ConnectionModal picker:
 
-**File:** `src/hooks/use-connection-form.ts`
+**File:** `src/lib/db/connection-form.ts`
 
 ```typescript
 // Append to the existing list - do not retype it, or you will drop a provider from the picker.
-const selectableTypes: DatabaseType[] = [
+export const CONNECTION_PICKER_ORDER: readonly DatabaseType[] = Object.freeze([
   'postgres', 'mysql', 'sqlite', 'oracle', 'mssql', 'mongodb', 'couchbase', 'redis', 'libredb',
   'clickhouse', 'druid', 'elasticsearch', 'opensearch', 'trino', 'cassandra', 'libsql', 'duckdb',
   'cockroachdb',
-];
+]);
 ```
 
 That's it. The ConnectionModal reads `getDBConfig(type)` for everything else — port, form fields, connection string toggle — automatically.
 
-Two optional declarations on the same entry change what the dialog does with the Host box and the credential.
+Two optional declarations on the type's `CONNECTION_FORM` entry change what the dialog does with the Host box and the credential.
 `hostAcceptsUri: ["http", "https"]` lets a user paste a whole address such as `https://host:443` into Host, for an engine whose own documentation writes its endpoint that way.
 The dialog splits it into Host and Port, keeps an explicit port such as 443 or 80 as typed, takes 80 or 443 when the address names none, and never lowers the SSL mode: `https://` raises a disabled mode to `verify-system`.
 An address with a user name or password, a path, a query string or a fragment is refused, naming the part to remove.
@@ -898,7 +905,7 @@ Every field and what it controls:
 | `tablesAreDerivedGroupings` | `boolean?` | Whether the relation-shaped rows of this provider are objects the engine holds, or groupings this server derived from a bounded scan. `true` on Redis, LibreDB and etcd only. Where it is true the schema explorer hides the items that *address* the row, `Profile Table`, `Generate Count Query` and both per-row maintenance items, all of which name the row to a route that needs a real object, and keeps the ones that merely name it (`Select`, `Generate`, `Copy Name`, `Generate Code`). It does not gate `Generate Test Data`: since #1085 (decision D-M) both row menus offer that item only where the kind of the row declares `acceptsRowWrites` and the engine declares `supportsTestDataGeneration` (`offersTestDataGeneration`, #1468). With `keyScan` beside it, it is also one half of the gate on `Browse Keys`, the row-menu item that opens the key-space panel with the row's own name as its pattern: a glob under `keyScan.pattern: "glob"` and a bare prefix under `"prefix"`: a prefix is only a glob on an engine whose rows are prefixes. The agent layer states it to a plan run in one sentence. Browse Keys is also offered on rows of `keyScan.levels.rootKind`, handing the panel `<name><separator>`, on an engine with no container level. Consumers gate on `=== true`, so an absent flag reads as "ordinary objects" |
 | `containersNameKinds` | `true?` | Whether this engine's containers answer `Container.kinds`, the kinds each one holds, from `listContainers`. Declare it with that answer: the object-surface conformance refuses a container naming its kinds on an engine that does not. The inventory route then reads the kinds of the containers a body names with one container listing per distinct parent, and refuses a named container that listing does not hold. Absent: named containers are read for every kind with no listing |
 | `containerNameSpelling` | `"engine"?` | The schema-level segment of this engine's container and object paths is the engine's own spelling of a possibly multi-part name, already quoted where it needs quoting; absent: every segment is a raw name. A declaration needs `identifierQuoting` beside it: `quoteObjectPath` reads each part bare or quoted with that character. |
-| `schemaDiffScope` | `"agent-walk"?` | Which containers a Schema Diff reads. `"agent-walk"`: the containers `agentWalkScope` names, listed one level at a time, and a connection that names none is refused in a sentence. Declare it only where the connection's own fields name those containers (Snowflake's Database and Schema); an engine whose walk default is just a container the server holds (RabbitMQ's `/`) leaves it absent. Absent: every container the connection reaches, a server-level connection one database at a time. Ignored without `agentWalkScope` |
+| `schemaDiffScope` | `"agent-walk" \| "session-container"?` | Which containers a Schema Diff reads. `"agent-walk"`: the containers `agentWalkScope` names, listed one level at a time, and a connection that names none is refused in a sentence. Declare it only where the connection's own fields name those containers (Snowflake's Database and Schema); an engine whose walk default is just a container the server holds (RabbitMQ's `/`) leaves it absent. `"agent-walk"` is ignored without `agentWalkScope`. `"session-container"` (#1791): a one-level engine whose connection names its container (MySQL's Database); the diff reads the session's own container and the Diff tab offers a Scope picker with "Whole connection" kept as a choice. Needs no `agentWalkScope`. Absent: every container the connection reaches, a server-level connection one database at a time |
 | `rowActions` | `KindRowAction[]?` | The row-menu items this engine offers on objects of named kinds, each `{ id, label, kinds }`, in menu order: Describe on every kind, Logs on one. Gated in `src/components/object-tree/row-actions.ts` by this declaration alone, through `rowActionsForKind()` in `src/lib/db/object-kinds.ts`, and offered after every other item. Choosing one opens a new tab and runs what the dialect's `DialectGenerators.rowAction` writes for that object, with its kind on `GeneratorScope.kind` (`generateRowActionQuery` in `src/lib/query-generators.ts`), every time, so running two actions on one object opens two tabs. Declare it only with that generator: `generateRowActionQuery` raises for a dialect that has none. A row action reads and never writes, because it runs on click with no role asked and no editing step, and it honours `GeneratorScope.readOnly`. Every path segment is an object name taken from a listing, so the generator quotes it by the dialect's own quoting rule and never concatenates it. An entry may also set `activates: true`: activating a row of its kinds in the object tree (a click, Enter or Space) then runs that action instead of opening the kind's source, through `activationRowActionForKind()`, and a second activation of the same object focuses the tab the first one opened rather than opening another (Kubernetes declares it on Logs, so a pod's click reads its last 50 lines). At most one action may declare it for a kind, and the reader raises on a second; a relation kind's data preview still wins. Absent offers nothing |
 | `enforcesReadOnly` | `true?` | Whether this provider refuses every write, object edit and maintenance operation before any request while the connection's `readOnly` is true, or while it was opened with `ProviderExecutionContext.readOnly`, naming the read-only mode in the refusal. Nothing under `src/` reads the field: the seed schema, `assertReadOnlyHonoured` in `factory.ts` and the connection form decide before a provider exists, so they read `READ_ONLY_ENFORCED` in `src/lib/db/compatibility.ts`, and `tests/unit/db/read-only-enforced-capability.test.ts` holds that map equal to this declaration for every type-id. Only the literal `true` is declared, so an absent flag reads as "a read-only connection is refused here" (#1089) |
 | `readsFileAccessPosture` | `true?` | Whether this provider opens its editor handle under the server-derived file-access posture, `ProviderExecutionContext.allowExternalFileAccess` (only DuckDB does, opening a denied handle with `enable_external_access: 'false'`); nothing under `src/` reads the field, because `providerCacheKey` and `findOpenSingleWriterProvider` key and lend handles by posture from `READS_FILE_ACCESS_POSTURE` in `src/lib/db/compatibility.ts`, which `tests/unit/db/reads-file-access-posture-capability.test.ts` holds equal to this declaration for every type-id, so an engine that starts reading the posture sets both, and only the literal `true` is declared, so an absent flag reads as "every editor handle opens alike" |
@@ -906,7 +913,7 @@ Every field and what it controls:
 | `supportsMaintenance` | `boolean` | Whether maintenance API accepts requests for this provider |
 | `maintenanceOperations` | `MaintenanceOperation[]` | Which global cards and per-table buttons the admin Operations tab renders. `/api/db/maintenance` rejects anything not in this list, so a surface that ignored it could only offer a control answering HTTP 400. Both row menus read it too, through `maintenanceControl()` (#496): a per-row maintenance item is offered only for an operation declared here, and not where its `maintenanceOperationSpecs` entry sets `perEntity: false`. Both offer such an item to an admin only, and the schema explorer also withholds it from a derived grouping (`tablesAreDerivedGroupings`) |
 | `supportsConnectionString` | `boolean` | Used for future connection validation logic |
-| `defaultPort` | `number \| null` | Informational; actual UI port comes from `db-ui-config.ts` |
+| `defaultPort` | `number \| null` | Informational; actual UI port comes from `connection-form.ts` |
 | `schemaRefreshPattern` | `string` | Regex to detect write/DDL queries that should trigger schema reload |
 
 ### ProviderLabels
@@ -1087,11 +1094,12 @@ The integration points, all of which need an entry. This is the list the Strateg
 - [ ] `src/lib/types.ts` — add to the `DatabaseType` union
 - [ ] `src/lib/db/providers/<family>/<type-id>.ts` (or a directory) — **new:** the provider class
 - [ ] `src/lib/db/factory.ts` — add a `case` with a **dynamic** import
-- [ ] `src/lib/db-ui-config.ts` — icon, colour, label, default port
+- [ ] `src/lib/db/connection-form.ts`: the type's `CONNECTION_FORM` entry, with its label, default port and fields
+- [ ] `src/lib/db-ui-config.ts`: the icon and colour, as `branded(CONNECTION_FORM.<type>, <Icon>, "<colour>")`
 - [ ] `src/lib/db/connection-fields.ts`: the type's row of `CONNECTION_FIELDS`, which the entry's `connectionFields` reads by reference, and its row of `SEED_ONLY_FIELDS`, which is `null` unless only this engine's provider reads a field
 - [ ] `src/lib/db/providers/<family>/<type-id>/connection-string.ts` (or `<type-id>-connection-string.ts` beside a flat provider file): **new:** the type's `ConnectionStringSpec`, with its scheme, `readTls` and `validateSeed`, each `null` when the engine has none; add its row to `CONNECTION_STRING` in `src/lib/db/connection-string/index.ts` and run `UPDATE_GOLDEN=1` for `tests/unit/db/connection-string/golden.test.ts` and `tests/unit/db/connection-form/golden.test.tsx`
 - [ ] `src/lib/db/providers/<family>/<type-id>/execution-ui.ts` (or `<type-id>-execution-ui.ts` beside a flat provider file): **new:** the type's `ExecutionUiSpec`, its `commitKeyword` (`SQL_COMMIT_KEYWORD` unless the engine keeps a transaction with another keyword) and `consentDeadline` (`null` unless a long read ends differently on it); add its row to `EXECUTION_UI` in `src/lib/db/execution-ui/index.ts` and run `UPDATE_GOLDEN=1` for `tests/unit/db/execution-ui/golden.test.tsx`
-- [ ] `src/hooks/use-connection-form.ts` — **append** to `selectableTypes` (do not retype the array)
+- [ ] `src/lib/db/connection-form.ts`: **append** to `CONNECTION_PICKER_ORDER` (do not retype the array)
 - [ ] `src/components/icons/db-icons.tsx` — the engine's mark (`strokeWidth={1.5}`, no HTML size attrs)
 - [ ] `src/lib/seed/types.ts` — the seed-config `type` enum, or seeded connections fail validation
 - [ ] `src/lib/db/compatibility.ts` — the `SHIPPED` record. It is an exhaustive
@@ -1123,7 +1131,7 @@ Those three reach code and tests only; the four prose greps of the published blo
 - [ ] `src/lib/sql/fence-tags.ts`: `ENGINE_FENCE_TAGS`, the fence tags a plan-mode draft may carry.
 - [ ] `src/lib/db/sql-writing/index.ts`: `SQL_WRITING`, whose row is the module the Step 2 "SQL writing" rule places beside the provider, with its golden file written by `UPDATE_GOLDEN=1`.
 - [ ] `tests/helpers/census-connection.ts`: `CENSUS_CONNECTION`, the unconnected connection every census builds through the real factory.
-- [ ] `tests/isolated/object-column-declarations.test.ts` (`EXPECTED_COLUMN_KINDS`), `tests/isolated/object-source-declarations.test.ts` (`SOURCE_DECLARATIONS`), `tests/unit/db/result-pagination-capability.test.ts` (`EXPECTED`), `tests/unit/db/container-path-shapes-capability.test.ts` (`EXPECTED_CONTAINER_PATH_SHAPES`), `tests/unit/schema-diff/migration-dialects.test.ts` (`COLUMN_GRAMMAR`), `tests/unit/schema-diff/migration-generator.test.ts` (`MODIFIED_COLUMN_COVERAGE`, `TRANSACTION_WRAPPER_COVERAGE`) and `tests/hooks/use-connection-form.test.ts` (`PICKER_COVERAGE`).
+- [ ] `tests/isolated/object-column-declarations.test.ts` (`EXPECTED_COLUMN_KINDS`), `tests/isolated/object-source-declarations.test.ts` (`SOURCE_DECLARATIONS`), `tests/unit/db/result-pagination-capability.test.ts` (`EXPECTED`), `tests/unit/db/container-path-shapes-capability.test.ts` (`EXPECTED_CONTAINER_PATH_SHAPES`), `tests/unit/schema-diff/migration-dialects.test.ts` (`COLUMN_GRAMMAR`), `tests/unit/schema-diff/migration-generator.test.ts` (`MODIFIED_COLUMN_COVERAGE`, `TRANSACTION_WRAPPER_COVERAGE`) and `tests/unit/lib/db/connection-form.test.ts` (`PICKER_COVERAGE`).
 - [ ] `tests/unit/lib/db-ui-config.test.ts`: `ALL_TYPES`, which a test holds equal to the keys of `DB_UI_CONFIG`.
 - [ ] `tests/helpers/object-edit-expectation.ts`: `EXPECTED_EDIT_ABSTAINERS`, when the new id declares no editable kind.
       That is a population, not a record, so the compiler says nothing; `tests/isolated/object-edit-declarations.test.ts` then requires an `Object edit (#789)` heading in the new provider doc naming which absence it is.
@@ -1169,7 +1177,7 @@ Those three reach code and tests only; the four prose greps of the published blo
 - [ ] `src/lib/seed/credential-resolver.ts`: `RESOLVABLE_FIELDS`, when the field is a credential or an address a deployment keeps out of the seed file; a name such as a SASL mechanism is neither, and takes a literal.
 - [ ] `src/lib/db/provider-cache-key.ts`: `credentialDigest`, a hand-kept list of every field that changes who a connection authenticates as, so two connections that differ only in that field never share a cached provider.
 - [ ] `docs/API_DOCS.md`: the `DatabaseConnection` block, which `tests/unit/api-docs-types.test.ts` compares with the interface as an ordered list of field names, so the field goes in at the same position in both.
-- [ ] `src/lib/db-ui-config.ts`: `fieldOptions`, when the field is a choice the dialog renders as a select, and `showSshTunnel: false`, when the engine cannot run through a tunnel; the dialog and `buildConnection` both read the latter through `offersSshTunnel`, one rule for both readers.
+- [ ] `src/lib/db/connection-form.ts`: `fieldOptions`, when the field is a choice the dialog renders as a select, and `showSshTunnel: false`, when the engine cannot run through a tunnel; the dialog and `buildConnection` both read the latter through `offersSshTunnel`, one rule for both readers.
 
 **For agent mode (#1821):**
 
@@ -1209,12 +1217,12 @@ Those three reach code and tests only; the four prose greps of the published blo
       A new member is not neutral: a reader written `=== "json"` sends it into its SQL branch and one written `!== "sql"` into its MongoDB branch, so every reader needs an explicit arm or a test pinning that its branch is right.
       `grep -rn queryLanguage src` is not the whole population: `src/components/agent/AnswerCard.tsx` reads it through `editorLanguageForTabType`.
       `docs/providers/prometheus.md` section 3.1 is the worked case.
-- [ ] `src/lib/db-ui-config.ts`: `fieldLabels`, `fieldHints` and `fieldPlaceholders`, when a connection field needs its own label, hint or placeholder.
-- [ ] `src/lib/db-ui-config.ts`: `fieldPlacement`, required when the type's `CONNECTION_FIELDS` row takes one of the `PLACEABLE_FIELDS` (`authSource`, `localDataCenter`, `serviceName`, `instanceName`), saying for each whether the dialog draws it `"open"` or `"advanced"`; the entry does not compile until it says, and a type that takes none of them declares none.
+- [ ] `src/lib/db/connection-form.ts`: `fieldLabels`, `fieldHints` and `fieldPlaceholders`, when a connection field needs its own label, hint or placeholder.
+- [ ] `src/lib/db/connection-form.ts`: `fieldPlacement`, required when the type's `CONNECTION_FIELDS` row takes one of the `PLACEABLE_FIELDS` (`authSource`, `localDataCenter`, `serviceName`, `instanceName`), saying for each whether the dialog draws it `"open"` or `"advanced"`; the entry does not compile until it says, and a type that takes none of them declares none.
       Declare them there rather than testing the type id in `src/components/ConnectionModal.tsx`, which reads every label, placeholder and hint from `DatabaseUIConfig`.
-- [ ] `src/lib/db-ui-config.ts`: `hostAcceptsUri`, when the engine's documentation gives its endpoint as an `http://` or `https://` address; and the type's row of `CREDENTIAL_WARNINGS` in `src/lib/db/credential-warnings.ts`, which the entry's `credentialWarnings` reads by reference, when the engine ships a default credential, accepts no secret, or takes a token whose claims say how far it reaches.
+- [ ] `src/lib/db/connection-form.ts`: `hostAcceptsUri`, when the engine's documentation gives its endpoint as an `http://` or `https://` address; and the type's row of `CREDENTIAL_WARNINGS` in `src/lib/db/credential-warnings.ts`, which the entry's `credentialWarnings` reads by reference, when the engine ships a default credential, accepts no secret, or takes a token whose claims say how far it reaches.
       Each needs a test that the real record declares it, and a declared `pair` or `no-secret` entry needs the provider's own `readOnlySeedRefusal` check in `connect()` for a seed connection.
-- [ ] `src/lib/db-ui-config.ts`: `connectionImport`, when users keep this engine's connections in a file of their own, such as a client configuration file.
+- [ ] `src/lib/db/connection-form.ts`: `connectionImport`, when users keep this engine's connections in a file of their own, such as a client configuration file.
       Its parser module stays browser-side, and the type joins `DECLARING` in `tests/unit/lib/connection-import-declaration.test.ts`.
 
 **Published where a human reads it, and this is the block with the fewest gates.** `readme:check`
@@ -1270,12 +1278,12 @@ git grep -n -I -E 'Redpanda|redpanda' -- "${OUT[@]}"   # G4, the latest relative
 The numerals of G1 move with each engine, so widen its word list to the next one before running it.
 
 **And the tests for every exhaustive map**, which are the real checklist — several are exhaustive
-*by construction* (`Record<DatabaseType, …>` in `db-ui-config`, `PICKER_COVERAGE` in the
-connection-form test), so the compiler and those tests refuse to pass until each is updated:
+*by construction* (`Record<DatabaseType, …>` in `db-ui-config`, `PICKER_COVERAGE` in
+`tests/unit/lib/db/connection-form.test.ts`), so the compiler and those tests refuse to pass until each is updated:
 `tests/isolated/factory.test.ts`, `tests/unit/lib/db-ui-config.test.ts`,
 `tests/unit/lib/db-icons.test.tsx`, `tests/unit/lib/connection-string-parser.test.ts`,
 `tests/unit/lib/query-generators.test.ts`, `tests/unit/seed/types.test.ts`,
-`tests/hooks/use-connection-form.test.ts`,
+`tests/unit/lib/db/connection-form.test.ts`,
 `tests/unit/schema-diff/migration-generator.test.ts` (`MODIFIED_COLUMN_COVERAGE` — classify the new id
 as having its own dialect branch or as unable to express a column modification; and
 `TRANSACTION_WRAPPER_COVERAGE` — classify it as `"wrapped"` or `"unwrapped"`, matching the module's
@@ -1290,7 +1298,7 @@ has an established grammar or reads at the default, and whether its query text i
 >
 > Cassandra (#424 Phase 4) found three surfaces the grep over `trino` reached and this list does not
 > name, all of them because it added a connection FIELD (`localDataCenter`) rather than only a
-> type-id: `src/hooks/use-connection-payload.ts` and `src/lib/storage/connection-secrets.ts` both
+> type-id: `src/hooks/use-connection-payload.ts` and `src/lib/storage/secret-fields.ts` both
 > carry an exhaustive `Record<keyof DatabaseConnection, …>` that stops compiling until the new field
 > is classified, and `src/lib/seed/connection-filter.ts` maps seed fields onto a connection BY HAND,
 > so a field omitted there is silently dropped from every managed connection. The first two fail

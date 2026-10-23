@@ -156,6 +156,30 @@ describe("ColumnList", () => {
     const { queryByText } = render(<ColumnList columns={columns} indexes={[]} />);
     expect(queryByText("boolean")).not.toBeNull();
   });
+
+  test("a modifier recorded beside the base type is the tooltip, and the row still shows the base", () => {
+    const columns: DetailedObject["columns"] = [
+      {
+        name: "title",
+        type: "character varying",
+        declaredType: "character varying(50)",
+        nullable: true,
+        isPrimary: false,
+      },
+      { name: "amount", type: "numeric", declaredType: "numeric(12,2)", nullable: false, isPrimary: false },
+      { name: "embedding", type: "vector", declaredType: "vector(1536)", nullable: true, isPrimary: false },
+      { name: "body", type: "text", declaredType: "text", nullable: true, isPrimary: false },
+    ];
+    const { getByText, queryByText } = render(<ColumnList columns={columns} indexes={[]} />);
+    expect(getByText("character varying").getAttribute("title")).toBe("character varying(50)");
+    expect(getByText("numeric").getAttribute("title")).toBe("numeric(12,2)");
+    expect(getByText("vector").getAttribute("title")).toBe("vector(1536)");
+    expect(getByText("text").getAttribute("title")).toBe("text");
+    // The row keeps the base name. The modifier is the tooltip.
+    expect(queryByText("character varying(50)")).toBeNull();
+    expect(queryByText("numeric(12,2)")).toBeNull();
+    expect(queryByText("vector(1536)")).toBeNull();
+  });
 });
 
 describe("ColumnList and a column the engine only inferred from sampled data", () => {
@@ -171,5 +195,32 @@ describe("ColumnList and a column the engine only inferred from sampled data", (
     const { getByTitle, getByText } = render(<ColumnList columns={columns} indexes={[]} />);
     expect(getByTitle("TEXT(64) (sampled)").textContent).toBe("TEXT (sampled)");
     expect(getByText("KEYWORD").getAttribute("title")).toBe("KEYWORD");
+  });
+});
+
+describe("ColumnList and EXCLUDE constraints (#1778)", () => {
+  afterEach(cleanup);
+
+  const exclusion = [
+    {
+      name: "reservations_no_overlapping_active",
+      definition: "EXCLUDE USING gist (table_id WITH =, tsrange(starts_at, ends_at, '[)'::text) WITH &&)",
+    },
+  ];
+
+  test("shows the constraint name, with its definition as a muted second line", () => {
+    const { getByText, getByTitle } = render(
+      <ColumnList columns={columnsWithPrimary} indexes={[]} exclusionConstraints={exclusion} />,
+    );
+    expect(getByText("Exclusion constraints")).toBeTruthy();
+    expect(getByText("reservations_no_overlapping_active")).toBeTruthy();
+    // Mobile has no title tooltip, so the definition is a visible truncated line under the name.
+    expect(getByText(exclusion[0].definition)).toBeTruthy();
+    expect(getByTitle(exclusion[0].definition)).toBeTruthy();
+  });
+
+  test("draws no section when there are none", () => {
+    const { queryByText } = render(<ColumnList columns={columnsWithPrimary} indexes={[]} />);
+    expect(queryByText("Exclusion constraints")).toBeNull();
   });
 });

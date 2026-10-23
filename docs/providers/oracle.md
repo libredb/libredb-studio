@@ -103,6 +103,8 @@ overrides the base and appends `FETCH FIRST n ROWS ONLY` (or `OFFSET m ROWS FETC
 when an offset is set) to bare `SELECT`s that don't already have a limit. Default page size
 `DEFAULT_QUERY_LIMIT = 500`; unlimited caps at `MAX_UNLIMITED_ROWS = 100000`.
 
+A `limit` or an `offset` that is not a non-negative safe integer is refused with a `QueryError` before either branch runs, by the check the shared limiter runs first (`assertRowBounds` in [`query-limiter.ts`](../../src/lib/db/utils/query-limiter.ts)).
+
 Both branches append at the **end of the statement**, which `src/lib/sql/statement-end.ts` delimits —
 before any trailing comment and before the terminating `;`, both of which are then re-attached
 verbatim. Appending after them instead put the clause inside a trailing `-- note` while this method

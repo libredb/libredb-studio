@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, test } from "bun:test";
 import { parse as parseYaml } from "yaml";
+import { ciStep } from "../../../helpers/ci-step";
 
 /**
  * The OPC UA fixture's own environment: where it publishes, and what image it is.
@@ -23,7 +24,11 @@ import { parse as parseYaml } from "yaml";
  */
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 const README = readFileSync(path.join(ROOT, "tests/fixtures/opcua/README.md"), "utf8");
-const CI_STEP = readFileSync(path.join(ROOT, "docker/opcua/ci-step.yml"), "utf8");
+// The step CI RUNS, not the file it was delivered in. Until 19 Eki 2026 this read
+// `docker/opcua/ci-step.yml`, which was written to be pasted into the workflow and never
+// was: the comparison held two files equal while the file that ran was a third one
+// nobody compared. The step now lives in `.github/workflows/ci.yml`.
+const CI_STEP = ciStep("OPC UA read-only check");
 const SERVICE = readFileSync(path.join(ROOT, "docker/opcua/compose-service.yml"), "utf8");
 
 /** The `docker run` line the capture is started with, which is the fixture's definition. */

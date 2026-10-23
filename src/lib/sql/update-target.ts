@@ -203,9 +203,9 @@ function readPieces(sql: string, type?: DatabaseType): PieceScan {
       if (span.kind === "block-comment" && (sql.startsWith("/*!", i) || sql.startsWith("/*M!", i))) {
         return "executable-comment";
       }
-      // PostgreSQL and SQL Server end a `--` comment at a bare carriage return; MySQL,
-      // MariaDB, SQLite and DuckDB do not. Measured: `SELECT orders.note FROM products
-      // -- x\r, orders` reads two tables on the first pair and one on the second, so the
+      // PostgreSQL, SQL Server and DuckDB end a `--` comment at a bare carriage return;
+      // MySQL, MariaDB and SQLite do not. Measured: `SELECT orders.note FROM products
+      // -- x\r, orders` reads two tables on the first three and one on the others, so the
       // span this reader was handed is not the span the engine will read.
       if (span.kind === "line-comment" && updateTarget.dashCommentNeedsSeparator && sql.startsWith("--", i)) {
         // The rule is about the DASH form only; `#` opens a comment on MySQL with nothing

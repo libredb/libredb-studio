@@ -113,6 +113,11 @@ export type AuditReason =
    */
   | "oidc_no_role"
   /**
+   * The provider authenticated the account, but its role claim held more than 20 claim roles matching
+   * OIDC_ROLE_PREFIX or a claim role longer than 64 characters, so no session was created.
+   */
+  | "oidc_role_overflow"
+  /**
    * Under governance (docs/GOVERNANCE.md#sign-in), the provider authenticated the account, but the governance source
    * revoked its subject's sessions at or after this second, so every request would refuse the session the callback
    * was about to mint and none was minted. The record names the account, which the provider vouched for.
@@ -238,6 +243,12 @@ export type AuditReason =
   | "mcp_token_invalid"
   | "mcp_channel_unconfigured"
   | "mcp_host_not_allowed"
+  // The OIDC bearer channel (src/lib/oidc-bearer.ts), written by src/proxy.ts: an access token that is malformed,
+  // forged, expired, an ID token, for another audience, issuer or client; one whose account holds no role while
+  // OIDC_USER_ROLES is set; and one that carries no sub, or neither email nor preferred_username.
+  | "bearer_token_invalid"
+  | "bearer_no_role"
+  | "bearer_no_identity"
   // The rest are mcp_operation reasons, each with one meaning. Arguments that failed the tool's
   // input schema, which the SDK refuses before any handler runs and the route records.
   | "mcp_invalid_arguments"

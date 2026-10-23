@@ -106,6 +106,28 @@ describe("the seed file", () => {
     ]);
     expect(await visibleIds(new McpConnectionContext(alice))).toEqual(["seed:shop"]);
   });
+
+  test("filters connections matching caller's claimRoles when OIDC_ROLE_PREFIX is set", async () => {
+    const origProvider = process.env.NEXT_PUBLIC_AUTH_PROVIDER;
+    const origPrefix = process.env.OIDC_ROLE_PREFIX;
+    process.env.NEXT_PUBLIC_AUTH_PROVIDER = "oidc";
+    process.env.OIDC_ROLE_PREFIX = "team-";
+    try {
+      writeSeedFile(dir, [
+        { id: "billing", type: "sqlite", database: join(dir, "shop.db"), roles: ["team-billing"] },
+        { id: "analytics", type: "sqlite", database: join(dir, "shop.db"), roles: ["team-analytics"] },
+        { id: "public", type: "sqlite", database: join(dir, "shop.db"), roles: ["*"] },
+      ]);
+      const caller = { username: "charlie", role: "user" as const, claimRoles: ["team-billing"] };
+      const context = new McpConnectionContext(caller);
+      expect(await visibleIds(context)).toEqual(["seed:billing", "seed:public"]);
+    } finally {
+      if (origProvider !== undefined) process.env.NEXT_PUBLIC_AUTH_PROVIDER = origProvider;
+      else delete process.env.NEXT_PUBLIC_AUTH_PROVIDER;
+      if (origPrefix !== undefined) process.env.OIDC_ROLE_PREFIX = origPrefix;
+      else delete process.env.OIDC_ROLE_PREFIX;
+    }
+  });
 });
 
 describe("resolve", () => {

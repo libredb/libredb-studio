@@ -258,9 +258,9 @@ describe("resolveUpdateTarget", () => {
     });
 
     test("refuses a comment that ends in a different place on different engines", () => {
-      // PostgreSQL and SQL Server end a `--` comment at a bare carriage return; MySQL,
-      // MariaDB, SQLite and DuckDB run on to the newline. Measured: the same text reads
-      // two tables on the first pair and one on the second, so the span this reader was
+      // PostgreSQL, SQL Server and DuckDB end a `--` comment at a bare carriage return;
+      // MySQL, MariaDB and SQLite run on to the newline. Measured: the same text reads
+      // two tables on the first three and one on the others, so the span this reader was
       // handed is not the span the engine will read.
       expect(refused("SELECT orders.note FROM products -- x\r, orders")).toBe(true);
       // An ordinary line comment is still a comment - and so is one from a file written on

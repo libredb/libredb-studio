@@ -8,6 +8,10 @@
  * can, and `CurrentSessionCount` is where it says so — on the servers that answer it at all.
  *
  * It is NOT in `bun run test`: the runner excludes `tests/live/` by name.
+ * CI runs it in the `OPC UA read-only check` step of the `functional-smoke` job of
+ * .github/workflows/ci.yml. That sentence was not here until 19 October 2026, and its absence
+ * was the defect: the step existed as a file waiting to be pasted, nothing pasted it, and a
+ * reader of this header could not tell a check CI asks for from one only a hand ever ran.
  *
  * Run it with the fixture of `tests/fixtures/opcua/README.md` up:
  *

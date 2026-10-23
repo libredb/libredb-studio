@@ -42,6 +42,8 @@ mock.module("openid-client", () => ({
 
 const {
   mapOIDCRole,
+  mapOIDCClaimRoles,
+  readRoleClaimValues,
   getOIDCConfig,
   encryptState,
   decryptState,
@@ -166,9 +168,206 @@ describe("mapOIDCRole", () => {
     expect(mapOIDCRole({ realm_access: null }, "realm_access.roles", ["admin"], ["user"])).toBeNull();
   });
 
+  test("maps admin from the Auth0 and Zitadel role claims of docs/OIDC.md", () => {
+    expect(mapOIDCRole({ "https://libredb.org/roles": ["admin"] }, "https://libredb.org/roles", ["admin"])).toBe(
+      "admin",
+    );
+    const zitadel = { "urn:zitadel:iam:org:project:roles": { admin: { "1234": "acme.zitadel.cloud" } } };
+    expect(mapOIDCRole(zitadel, "urn:zitadel:iam:org:project:roles", ["admin"], ["user"])).toBe("admin");
+  });
+
   test("with userRoles set and no role claim configured, no account maps to a role", () => {
     // getOIDCConfig() refuses this configuration; the pure function still answers it consistently.
     expect(mapOIDCRole({ roles: ["user"] }, "", ["admin"], ["user"])).toBeNull();
+  });
+});
+
+// ─── readRoleClaimValues ───────────────────────────────────────────────────
+
+describe("readRoleClaimValues", () => {
+  test("returns empty array when roleClaim is empty", () => {
+    expect(readRoleClaimValues({ roles: "admin" }, "")).toEqual([]);
+  });
+
+  test("returns empty array when claim is missing or null", () => {
+    expect(readRoleClaimValues({}, "roles")).toEqual([]);
+    expect(readRoleClaimValues({ roles: null }, "roles")).toEqual([]);
+  });
+
+  test("returns single string in an array for flat string claim", () => {
+    expect(readRoleClaimValues({ role: "admin" }, "role")).toEqual(["admin"]);
+  });
+
+  test("returns array of strings for array claim", () => {
+    expect(readRoleClaimValues({ roles: ["admin", "user"] }, "roles")).toEqual(["admin", "user"]);
+  });
+
+  test("supports dot-notation for nested claims", () => {
+    expect(readRoleClaimValues({ realm_access: { roles: ["admin"] } }, "realm_access.roles")).toEqual(["admin"]);
+  });
+
+  test("returns empty array when nested path encounters non-object or null", () => {
+    expect(readRoleClaimValues({ realm_access: "string" }, "realm_access.roles")).toEqual([]);
+    expect(readRoleClaimValues({ realm_access: null }, "realm_access.roles")).toEqual([]);
+    expect(readRoleClaimValues({ realm_access: {} }, "realm_access.roles")).toEqual([]);
+  });
+
+  test("reads a top-level claim whose name holds dots whole, as Auth0's namespaced claims are", () => {
+    expect(readRoleClaimValues({ "https://libredb.org/roles": ["admin"] }, "https://libredb.org/roles")).toEqual([
+      "admin",
+    ]);
+    expect(readRoleClaimValues({ "realm_access.roles": ["user"] }, "realm_access.roles")).toEqual(["user"]);
+  });
+
+  test("takes the keys of an object claim as the role names, as Zitadel's roles claim is", () => {
+    const claims = { "urn:zitadel:iam:org:project:roles": { admin: { "1234": "acme.zitadel.cloud" }, viewer: {} } };
+    expect(readRoleClaimValues(claims, "urn:zitadel:iam:org:project:roles")).toEqual(["admin", "viewer"]);
+  });
+});
+
+// ─── mapOIDCClaimRoles ─────────────────────────────────────────────────────
+
+describe("mapOIDCClaimRoles", () => {
+  test("returns empty roles and overflow false when prefix is empty", () => {
+    expect(mapOIDCClaimRoles(["team-billing"], "")).toEqual({ roles: [], overflow: false });
+  });
+
+  test("extracts prefixed claims, keeps prefix and exact casing as IdP sent it", () => {
+    const values = ["team-Billing", "other-role", "team-analytics"];
+    const result = mapOIDCClaimRoles(values, "team-");
+    expect(result.overflow).toBe(false);
+    expect(result.roles).toEqual(["team-Billing", "team-analytics"]);
+  });
+
+  test("reads custom roles from the Zitadel object claim by its role names", () => {
+    const claims = { "urn:zitadel:iam:org:project:roles": { "team-ops": { "1234": "acme" }, admin: {} } };
+    expect(mapOIDCClaimRoles(claims, "team-", "urn:zitadel:iam:org:project:roles")).toEqual({
+      roles: ["team-ops"],
+      overflow: false,
+    });
+  });
+
+  test("matches prefix case-sensitively", () => {
+    const values = ["team-billing", "Team-billing", "TEAM-analytics"];
+    const result = mapOIDCClaimRoles(values, "team-");
+    expect(result.overflow).toBe(false);
+    expect(result.roles).toEqual(["team-billing"]);
+  });
+
+  test("ignores values without the prefix", () => {
+    const values = ["admin", "user", "billing", "random-role"];
+    const result = mapOIDCClaimRoles(values, "team-");
+    expect(result.overflow).toBe(false);
+    expect(result.roles).toEqual([]);
+  });
+
+  test("reserved names (*, admin, user) never become claim roles even if prefix matches them", () => {
+    // Prefix "a" matches "admin", "Admin", "ADMIN"
+    expect(mapOIDCClaimRoles(["admin", "Admin", "ADMIN", "analyst"], "a")).toEqual({
+      roles: ["analyst"],
+      overflow: false,
+    });
+
+    // Prefix "u" matches "user", "User", "USER"
+    expect(mapOIDCClaimRoles(["user", "User", "USER", "ux"], "u")).toEqual({
+      roles: ["ux"],
+      overflow: false,
+    });
+
+    // Prefix "*" matches "*"
+    expect(mapOIDCClaimRoles(["*"], "*")).toEqual({
+      roles: [],
+      overflow: false,
+    });
+
+    // Prefix "admin-" on a non-reserved role like "admin-ops" is kept
+    expect(mapOIDCClaimRoles(["admin-ops", "admin"], "admin")).toEqual({
+      roles: ["admin-ops"],
+      overflow: false,
+    });
+  });
+
+  test("deduplicates and sorts claim roles lexicographically", () => {
+    const values = ["team-zeta", "team-alpha", "team-beta", "team-alpha", "team-beta"];
+    const result = mapOIDCClaimRoles(values, "team-");
+    expect(result.overflow).toBe(false);
+    expect(result.roles).toEqual(["team-alpha", "team-beta", "team-zeta"]);
+  });
+
+  test("accepts up to 20 claim roles without overflow", () => {
+    const values = Array.from({ length: 20 }, (_, i) => `team-${String(i).padStart(2, "0")}`);
+    const result = mapOIDCClaimRoles(values, "team-");
+    expect(result.overflow).toBe(false);
+    expect(result.roles).toHaveLength(20);
+  });
+
+  test("refuses with overflow when more than 20 claim roles match", () => {
+    const values = Array.from({ length: 21 }, (_, i) => `team-${String(i).padStart(2, "0")}`);
+    const result = mapOIDCClaimRoles(values, "team-");
+    expect(result.overflow).toBe(true);
+    expect(result.roles).toEqual([]);
+  });
+
+  test("non-matching values do not count toward the 20 role limit", () => {
+    const matching = Array.from({ length: 20 }, (_, i) => `team-${String(i).padStart(2, "0")}`);
+    const ignored = Array.from({ length: 50 }, (_, i) => `other-${i}`);
+    const result = mapOIDCClaimRoles([...matching, ...ignored], "team-");
+    expect(result.overflow).toBe(false);
+    expect(result.roles).toHaveLength(20);
+  });
+
+  test("accepts claim roles up to 64 bytes in UTF-8 length", () => {
+    const exact64 = "team-" + "a".repeat(59);
+    expect(Buffer.byteLength(exact64, "utf8")).toBe(64);
+    const result = mapOIDCClaimRoles([exact64], "team-");
+    expect(result.overflow).toBe(false);
+    expect(result.roles).toEqual([exact64]);
+  });
+
+  test("accepts multi-byte claim role within 64 UTF-8 bytes", () => {
+    // "team-" is 5 bytes. 29 2-byte characters is 58 bytes. 5 + 58 = 63 bytes <= 64.
+    const multiByteRole = "team-" + "ü".repeat(29);
+    expect(Buffer.byteLength(multiByteRole, "utf8")).toBe(63);
+    const result = mapOIDCClaimRoles([multiByteRole], "team-");
+    expect(result.overflow).toBe(false);
+    expect(result.roles).toEqual([multiByteRole]);
+  });
+
+  test("refuses with overflow when any claim role exceeds 64 bytes in UTF-8 (including 64 non-ASCII characters)", () => {
+    const char65 = "team-" + "a".repeat(60);
+    expect(Buffer.byteLength(char65, "utf8")).toBe(65);
+    const result = mapOIDCClaimRoles(["team-valid", char65], "team-");
+    expect(result.overflow).toBe(true);
+    expect(result.roles).toEqual([]);
+
+    // 64 non-ASCII characters (e.g. 5 ASCII bytes + 59 2-byte chars = 123 bytes, char length = 64)
+    const nonAscii64Chars = "team-" + "ü".repeat(59);
+    expect(nonAscii64Chars.length).toBe(64);
+    expect(Buffer.byteLength(nonAscii64Chars, "utf8")).toBe(123);
+    const resultMultiByte = mapOIDCClaimRoles([nonAscii64Chars], "team-");
+    expect(resultMultiByte.overflow).toBe(true);
+    expect(resultMultiByte.roles).toEqual([]);
+  });
+
+  test("non-matching values longer than 64 characters do not trigger overflow", () => {
+    const longIgnored = "other-" + "b".repeat(100);
+    const result = mapOIDCClaimRoles(["team-billing", longIgnored], "team-");
+    expect(result.overflow).toBe(false);
+    expect(result.roles).toEqual(["team-billing"]);
+  });
+
+  test("extracts from nested claim paths via object input", () => {
+    const claims = { realm_access: { roles: ["team-finance", "team-dev", "admin"] } };
+    const result = mapOIDCClaimRoles(claims, "team-", "realm_access.roles");
+    expect(result.overflow).toBe(false);
+    expect(result.roles).toEqual(["team-dev", "team-finance"]);
+  });
+
+  test("extracts from flat string claim via object input", () => {
+    const claims = { custom_role: "team-single" };
+    const result = mapOIDCClaimRoles(claims, "team-", "custom_role");
+    expect(result.overflow).toBe(false);
+    expect(result.roles).toEqual(["team-single"]);
   });
 });
 
@@ -243,6 +442,22 @@ describe("getOIDCConfig", () => {
     expect(() => getOIDCConfig()).toThrow("OIDC_ROLE_CLAIM");
     process.env.OIDC_ROLE_CLAIM = "libredb_roles";
     expect(getOIDCConfig().userRoles).toEqual(["user"]);
+  });
+
+  test("throws AuthConfigError when OIDC_ROLE_PREFIX is set while OIDC_ROLE_CLAIM is empty", () => {
+    process.env.OIDC_ROLE_PREFIX = "team-";
+    delete process.env.OIDC_ROLE_CLAIM;
+    expect(() => getOIDCConfig()).toThrow(AuthConfigError);
+    expect(() => getOIDCConfig()).toThrow("OIDC_ROLE_CLAIM");
+    process.env.OIDC_ROLE_CLAIM = "libredb_roles";
+    expect(getOIDCConfig().rolePrefix).toBe("team-");
+  });
+
+  test("returns rolePrefix undefined when OIDC_ROLE_PREFIX is unset or empty", () => {
+    delete process.env.OIDC_ROLE_PREFIX;
+    expect(getOIDCConfig().rolePrefix).toBeUndefined();
+    process.env.OIDC_ROLE_PREFIX = "";
+    expect(getOIDCConfig().rolePrefix).toBeUndefined();
   });
 
   test("a user role list of only commas and spaces counts as unset", () => {

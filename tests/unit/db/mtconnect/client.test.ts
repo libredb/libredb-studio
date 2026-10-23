@@ -5,11 +5,12 @@
  * documents, so the assertions are about this module rather than about the network. The documents
  * are the real ones from `tests/fixtures/mtconnect/2.8.0.3/`.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { httpOrigin } from "@/lib/db/http/endpoint";
 import type { NodeRequest, NodeResponse, NodeTransport } from "@/lib/db/http/node-transport";
+import * as xml from "@/lib/db/providers/industrial/mtconnect/xml";
 import { MTC_XML_REFUSAL_OWNER } from "@/lib/db/providers/industrial/mtconnect/xml";
 import { MTC_XML_BOUNDS } from "@/lib/db/providers/industrial/mtconnect/xml-bounds";
 import {
@@ -319,6 +320,23 @@ describe("a sample read", () => {
     expect(result.capped).toBe(true);
   });
 
+  test("a Streams answer is parsed once, by the walker, and never built as a whole tree (#1787)", async () => {
+    const tree = spyOn(xml, "readMtconnectXml");
+    try {
+      const { transport } = standIn(fixture("sample-count-200.xml"));
+      const result = await readObservations(
+        options(transport, { count: 0 }),
+        guardRequestLine("/sample?count=200", GUARD),
+        10_000,
+        () => {},
+      );
+      expect(result.read).toBe(200);
+      expect(tree).not.toHaveBeenCalled();
+    } finally {
+      tree.mockRestore();
+    }
+  });
+
   test("an error document is handed back for the caller to report, never read as observations", async () => {
     const { transport } = standIn(fixture("error-out-of-range.xml"), 400);
     const result = await readObservations(
@@ -331,6 +349,19 @@ describe("a sample read", () => {
     );
     expect({ read: result.read, capped: result.capped }).toEqual({ read: 0, capped: false });
     expect(result.agentError?.name).toBe("MTConnectError");
+  });
+
+  test("a device model where observations were asked for gives no rows and no agent error", async () => {
+    const { transport } = standIn(fixture("probe.xml"));
+    const result = await readObservations(
+      options(transport, { count: 0 }),
+      guardRequestLine("/sample?count=1", GUARD),
+      10_000,
+      () => {
+        throw new Error("a device model has no observations");
+      },
+    );
+    expect(result).toEqual({ read: 0, capped: false });
   });
 
   test("a proxy page is refused here too, not walked", async () => {

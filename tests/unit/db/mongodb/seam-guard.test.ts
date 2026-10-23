@@ -22,6 +22,7 @@ import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
 import ts from "typescript";
+import { platformTimeoutMs } from "../../../helpers/platform-timeout";
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const MONGO = "src/lib/db/providers/document/mongodb";
@@ -145,9 +146,15 @@ function seamFindings(planted: Readonly<Record<string, string>> = {}): string[] 
 const read = (file: string): string => readFileSync(join(ROOT, file), "utf8");
 
 describe("the MongoDB seams", () => {
-  test("the real sources pass all three rules", () => {
-    expect(seamFindings()).toEqual([]);
-  });
+  // Walks the import graph of every operations and agent module: 1.1s alone with coverage and 10.2s
+  // under a 15% CPU quota, past bun's 5s default, so it carries its own bound.
+  test(
+    "the real sources pass all three rules",
+    () => {
+      expect(seamFindings()).toEqual([]);
+    },
+    platformTimeoutMs(40_000),
+  );
 
   test("the walk reads real code: the provider reaches the driver, and the reader does not", () => {
     expect(reach(INDEX).has(`package:${DRIVER}`)).toBe(true);
@@ -185,13 +192,20 @@ describe("planted violations fail by name", () => {
     );
   });
 
-  test("index.ts planted in a provider-side module fails rule 3, and a type-only import does not", () => {
-    const values = `${MONGO}/values.ts`;
-    expect(seamFindings({ [values]: `import { MongoDBProvider } from "./index";\n${read(values)}` })).toContain(
-      `rule 3: ${values} reaches ${INDEX} through ${values} -> ${INDEX}`,
-    );
-    expect(seamFindings({ [values]: `import type { MongoDBProvider } from "./index";\n${read(values)}` })).toEqual([]);
-  });
+  // Walks the same graph several times: 0.6s alone with coverage and 2.9s under a 15% CPU quota.
+  test(
+    "index.ts planted in a provider-side module fails rule 3, and a type-only import does not",
+    () => {
+      const values = `${MONGO}/values.ts`;
+      expect(seamFindings({ [values]: `import { MongoDBProvider } from "./index";\n${read(values)}` })).toContain(
+        `rule 3: ${values} reaches ${INDEX} through ${values} -> ${INDEX}`,
+      );
+      expect(seamFindings({ [values]: `import type { MongoDBProvider } from "./index";\n${read(values)}` })).toEqual(
+        [],
+      );
+    },
+    platformTimeoutMs(40_000),
+  );
 });
 
 /** How many modules of the driver a fresh bun process holds after importing `entries`. */

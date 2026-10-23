@@ -13,12 +13,13 @@ import { consoleTextByteLimit, statementRefusal } from "@/lib/db/destructive-com
 import { executionUiFor } from "@/lib/db/execution-ui";
 import { countCodeStatements, isMultiStatement } from "@/lib/sql/statement-splitter";
 import { readsSqlText, resolveSqlGrammar } from "@/lib/sql/grammar";
-import { hasUnterminatedSpan } from "@/lib/sql/spans";
+import { hasLoneCarriageReturnInLineComment, hasUnterminatedSpan } from "@/lib/sql/spans";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { shouldRefreshSchema } from "@/lib/query-generators";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import { logger } from "@/lib/logger";
 import { newLocalId } from "@/lib/ids";
+import { appendResultPage } from "@/lib/results/append-page";
 import { getExplainStrategy, type ExplainStrategy } from "@/lib/explain";
 import type { ExplainFormat } from "@/lib/db/types";
 import { maybeInviteToStar } from "@/lib/community/star-prompt-toast";
@@ -524,13 +525,17 @@ export function useQueryExecution({
       // is not counted: `SELECT 1; -- note` is one statement to explain, though the run
       // route below still splits it in two. A text with a run the grammar cannot close
       // is not one statement either: the splitter finds no boundary in it, yet
-      // `SELECT E'\''; INSERT ...` is two statements to PostgreSQL.
+      // `SELECT E'\''; INSERT ...` is two statements to PostgreSQL. Nor is a text whose
+      // line comment holds a lone carriage return, which ends the comment on PostgreSQL
+      // and not on CockroachDB, so the code after it is a second statement to one.
       const grammar = resolveSqlGrammar(activeConnection.type);
       // An engine whose text is not SQL enforces one statement in its own parser, where the SQL counter would read a `;`
       // inside its comment or string as a boundary, so only SQL text is counted here.
       const oneStatement =
         !readsSqlText(activeConnection.type) ||
-        (countCodeStatements(queryToExecute, grammar) <= 1 && !hasUnterminatedSpan(queryToExecute, grammar));
+        (countCodeStatements(queryToExecute, grammar) <= 1 &&
+          !hasUnterminatedSpan(queryToExecute, grammar) &&
+          !hasLoneCarriageReturnInLineComment(queryToExecute, grammar));
       const explainSupported = !metadata || metadata.capabilities.supportsExplain;
       const explainAccepted =
         isExplain &&
@@ -930,7 +935,9 @@ export function useQueryExecution({
           // Load More mode: append rows
           if (isLoadMore && t.result) {
             const existingRows = t.allRows || t.result.rows;
-            const newAllRows = [...existingRows, ...resultData.rows];
+            // The append rule (rows, the shape they are rendered under, rowCount) is
+            // `appendResultPage` in `src/lib/results/append-page.ts`.
+            const merged = appendResultPage({ ...t.result, rows: existingRows }, resultData);
 
             return {
               ...t,
@@ -938,27 +945,8 @@ export function useQueryExecution({
               // the same reason the replace branch does: a reader of the rows must never
               // be handed a different statement's name for them.
               resultQuery: queryToExecute,
-              result: {
-                ...resultData,
-                // THE SHAPE COMES FROM THE ROWS ON SCREEN, NOT FROM THE PAGE THAT ARRIVED.
-                //
-                // A page of the same statement cannot legitimately name different columns,
-                // and an empty page often names none at all: SQLite answers `... LIMIT 50
-                // OFFSET 100` on a hundred-row table with `rows: 0, fields: []`. Spreading
-                // that over the tab left the grid holding its hundred rows under zero
-                // columns - the strip read "100 rows / 0 columns" and the table rendered
-                // header-less, cell-less stripes. A table whose size is an exact multiple
-                // of the page size reaches that state in one click.
-                fields: resultData.fields.length > 0 ? resultData.fields : t.result.fields,
-                // The vector declaration describes those rows too, so a page that declares none keeps theirs, as
-                // the embedded adapter's load-more does (`carriedChannels` in `use-query-adapter.ts`).
-                ...((resultData.vectorColumns ?? t.result.vectorColumns) !== undefined && {
-                  vectorColumns: resultData.vectorColumns ?? t.result.vectorColumns,
-                }),
-                rows: newAllRows,
-                rowCount: newAllRows.length,
-              },
-              allRows: newAllRows,
+              result: merged,
+              allRows: merged.rows,
               currentOffset: offset + resultData.rows.length,
               isExecuting: false,
               isLoadingMore: false,

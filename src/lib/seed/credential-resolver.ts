@@ -45,7 +45,7 @@ const RESOLVABLE_FIELDS = [
   // the only credential, and the chart mounts the seed file from a ConfigMap, so a reference
   // is how they come from a Secret with no private key in the ConfigMap. A multi-line PEM
   // passes through unchanged: the patterns match the reference, never the value. The key
-  // stays a secret field (`SSL_FIELDS` in connection-secrets.ts) for every consumer.
+  // stays a secret field (`SSL_FIELDS` in secret-fields.ts) for every consumer.
   "ssl.caCert",
   "ssl.clientCert",
   "ssl.clientKey",

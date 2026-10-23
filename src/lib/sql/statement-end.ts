@@ -32,7 +32,7 @@
  */
 
 import { DEFAULT_SQL_GRAMMAR, hashRunIsAmbiguous, type SqlGrammar } from "./grammar";
-import { readSqlSpan, type SqlSpanKind } from "./spans";
+import { hasLoneCarriageReturnInLineComment, readSqlSpan, type SqlSpanKind } from "./spans";
 
 export interface StatementEnd {
   /**
@@ -99,7 +99,7 @@ function isStatementText(kind: SqlSpanKind): boolean {
  * is another statement rather than trivia. Splitting statements is
  * `statement-splitter.ts`'s job; this reader only has to find the LAST end.
  *
- * Two shapes answer `rewritable: false`, and both then report the terminator
+ * Three shapes answer `rewritable: false`, and all three then report the terminator
  * strip as their end:
  *
  * 1. **A span that never closes** - an unterminated block comment or literal, or
@@ -127,11 +127,20 @@ function isStatementText(kind: SqlSpanKind): boolean {
  *    opposite mistake only reports a bound the caller responds to by leaving the
  *    statement alone - which is what it does here anyway.
  *
+ * 3. **A line comment that holds a lone carriage return with code after it.**
+ *    Engines that share a connection type end that comment in different places
+ *    (`hasLoneCarriageReturnInLineComment`), so the code after the carriage return
+ *    is the statement's tail on one server and comment text on the other. A bound
+ *    placed by either reading is misplaced on the other server: inside the comment,
+ *    or ahead of a clause that server still reads.
+ *
  * A `#` comment with code after it on a later line is unaffected: the end then
  * advances past it, and inserting at the end of the statement is correct under
  * both readings.
  */
 export function readStatementEnd(sql: string, grammar: SqlGrammar = DEFAULT_SQL_GRAMMAR): StatementEnd {
+  if (hasLoneCarriageReturnInLineComment(sql, grammar)) return { end: endBeforeTerminator(sql), rewritable: false };
+
   let end = 0;
   let i = 0;
   // Whether the run since the last code character contains a `#` line comment

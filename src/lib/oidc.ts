@@ -20,6 +20,7 @@ export interface OIDCConfig {
   clientSecret: string;
   scope: string;
   roleClaim: string;
+  rolePrefix?: string;
   adminRoles: string[];
   /**
    * OIDC_USER_ROLES. Empty (the default): an account that matches no admin role is a user. Non-empty: an account must
@@ -48,6 +49,8 @@ const OIDC_ISSUER_NOT_HTTPS_MESSAGE =
 const OIDC_PROMPT_INVALID_MESSAGE = "OIDC_PROMPT must be one of login, consent, select_account, omit; got ";
 const OIDC_USER_ROLES_WITHOUT_CLAIM_MESSAGE =
   "OIDC_USER_ROLES is set but OIDC_ROLE_CLAIM is empty: with no claim to read roles from, every sign-in would be refused";
+const OIDC_ROLE_PREFIX_WITHOUT_CLAIM_MESSAGE =
+  "OIDC_ROLE_PREFIX is set but OIDC_ROLE_CLAIM is empty: with no claim to read roles from, no claim role could ever be extracted";
 
 /**
  * Unset or empty keeps `login`, the value Studio always sent before OIDC_PROMPT existed. `none` is
@@ -89,6 +92,7 @@ export function getOIDCConfig(): OIDCConfig {
   }
 
   const roleClaim = process.env.OIDC_ROLE_CLAIM || "";
+  const rolePrefix = process.env.OIDC_ROLE_PREFIX || "";
   const userRoles = (process.env.OIDC_USER_ROLES || "")
     .split(",")
     .map((r) => r.trim())
@@ -100,12 +104,17 @@ export function getOIDCConfig(): OIDCConfig {
     throw new AuthConfigError(OIDC_USER_ROLES_WITHOUT_CLAIM_MESSAGE);
   }
 
+  if (rolePrefix && !roleClaim) {
+    throw new AuthConfigError(OIDC_ROLE_PREFIX_WITHOUT_CLAIM_MESSAGE);
+  }
+
   return {
     issuer,
     clientId,
     clientSecret,
     scope: process.env.OIDC_SCOPE || "openid profile email",
     roleClaim,
+    rolePrefix: rolePrefix || undefined,
     adminRoles: (process.env.OIDC_ADMIN_ROLES || "admin")
       .split(",")
       .map((r) => r.trim())
@@ -219,7 +228,40 @@ export async function exchangeCode(
   return { claims: claims as unknown as OIDCClaims, idToken: tokens.id_token };
 }
 
-// ─── Role Mapping ──────────────────────────────────────────────────────────
+const OIDC_MAX_CLAIM_ROLES = 20;
+const OIDC_MAX_CLAIM_ROLE_BYTES = 64;
+
+const RESERVED_ROLES = new Set(["*", "admin", "user"]);
+
+export interface OIDCClaimRolesResult {
+  roles: string[];
+  overflow: boolean;
+}
+
+/**
+ * Extract normalized string values from an OIDC claim path.
+ * Supports dot-notation for nested claims (e.g. "realm_access.roles"); a top-level claim named exactly `roleClaim` is
+ * read whole first, because a namespaced claim such as Auth0's "https://libredb.org/roles" holds dots of its own.
+ * An object claim yields its keys, as Zitadel's "urn:zitadel:iam:org:project:roles" maps each role name to its orgs.
+ */
+export function readRoleClaimValues(claims: Record<string, unknown>, roleClaim: string): string[] {
+  if (!roleClaim) return [];
+
+  let value: unknown = claims;
+  if (Object.hasOwn(claims, roleClaim)) {
+    value = claims[roleClaim];
+  } else {
+    for (const part of roleClaim.split(".")) {
+      if (value == null || typeof value !== "object") return [];
+      value = (value as Record<string, unknown>)[part];
+    }
+  }
+
+  if (value == null) return [];
+
+  if (Array.isArray(value)) return value.map(String);
+  return typeof value === "object" ? Object.keys(value) : [String(value)];
+}
 
 /**
  * Extract role from OIDC claims using configured claim path.
@@ -236,20 +278,8 @@ export function mapOIDCRole(
 ): "admin" | "user" | null {
   // What an account that matches no role gets: everyone is at least a user until OIDC_USER_ROLES says otherwise.
   const unmatched = userRoles.length === 0 ? "user" : null;
-  if (!roleClaim) return unmatched;
-
-  // Navigate dot-notation path
-  const parts = roleClaim.split(".");
-  let value: unknown = claims;
-  for (const part of parts) {
-    if (value == null || typeof value !== "object") return unmatched;
-    value = (value as Record<string, unknown>)[part];
-  }
-
-  if (value == null) return unmatched;
-
-  // Normalize to array of strings
-  const values: string[] = Array.isArray(value) ? value.map(String) : [String(value)];
+  const values = readRoleClaimValues(claims, roleClaim);
+  if (values.length === 0) return unmatched;
 
   // Check if any value matches admin roles
   const isAdmin = values.some((v) => adminRoles.some((ar) => v.toLowerCase() === ar.toLowerCase()));
@@ -257,6 +287,46 @@ export function mapOIDCRole(
 
   const isUser = values.some((v) => userRoles.some((ur) => v.toLowerCase() === ur.toLowerCase()));
   return isUser ? "user" : unmatched;
+}
+
+/**
+ * Extract custom claim roles that start with the configured prefix.
+ * Keeps values exactly as the IdP sent them (prefix included), deduplicated and sorted.
+ * Reserved names ('*', 'admin', 'user') never become claim roles under any casing.
+ * Limits: at most 20 claim roles, each at most 64 bytes (UTF-8); exceeding either marks overflow: true.
+ */
+export function mapOIDCClaimRoles(
+  valuesOrClaims: readonly string[] | Record<string, unknown>,
+  prefix: string,
+  roleClaim?: string,
+): OIDCClaimRolesResult {
+  if (!prefix) return { roles: [], overflow: false };
+
+  const values = Array.isArray(valuesOrClaims)
+    ? (valuesOrClaims as readonly string[])
+    : readRoleClaimValues(valuesOrClaims as Record<string, unknown>, roleClaim || "");
+
+  const matching: string[] = [];
+  let overflow = false;
+
+  for (const val of values) {
+    if (val.startsWith(prefix)) {
+      if (RESERVED_ROLES.has(val.toLowerCase())) {
+        continue;
+      }
+      if (Buffer.byteLength(val, "utf8") > OIDC_MAX_CLAIM_ROLE_BYTES) {
+        overflow = true;
+      }
+      matching.push(val);
+    }
+  }
+
+  const deduped = Array.from(new Set(matching)).sort();
+  if (deduped.length > OIDC_MAX_CLAIM_ROLES) {
+    overflow = true;
+  }
+
+  return { roles: overflow ? [] : deduped, overflow };
 }
 
 // ─── State Cookie Encryption ───────────────────────────────────────────────

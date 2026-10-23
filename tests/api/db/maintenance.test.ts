@@ -345,6 +345,32 @@ describe("POST /api/db/maintenance", () => {
     expect(mockAuditPush).not.toHaveBeenCalled();
   });
 
+  // A non-string target reached the provider the same way, where a number failed as
+  // `identifier.replace is not a function` (a 500 quoting provider source), and the audit row
+  // recorded the serialized value. The route answers 400, opens no provider and records nothing.
+  test.each<[string, unknown]>([
+    ["an object", { name: "users" }],
+    ["a number", 7],
+    ["an array", ["users"]],
+    ["null", null],
+    ["false", false],
+  ])("a non-string target (%s) answers 400 and runs nothing", async (_label, target) => {
+    const req = createMockRequest("/api/db/maintenance", {
+      method: "POST",
+      body: { type: "vacuum", target, connection: validConnection },
+    });
+
+    const res = await POST(req as never);
+
+    expect(res.status).toBe(400);
+    expect(await parseResponseJSON<{ error: string }>(res)).toEqual({
+      error: `"target" must be a string naming the object to run against`,
+    });
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect(mockProvider.runMaintenance).not.toHaveBeenCalled();
+    expect(mockAuditPush).not.toHaveBeenCalled();
+  });
+
   test("an empty-string container is a container the caller omitted, not a malformed one", async () => {
     // The same reading `target: ""` gets below: a falsy string is the absence of the field.
     const req = createMockRequest("/api/db/maintenance", {

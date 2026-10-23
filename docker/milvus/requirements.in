@@ -2,7 +2,7 @@
 # pymilvus 3.0.2, numpy 2.5.3 and ml_dtypes 0.6.0, and their dependencies. docker/lock-requirements.sh writes
 # requirements.txt from this file; change this file, never that one.
 cachetools==7.2.0
-certifi==2026.7.22
+certifi==2026.10.19
 charset-normalizer==3.5.2
 grpcio==1.84.0
 idna==3.20

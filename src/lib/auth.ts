@@ -4,6 +4,7 @@ import { cookies, headers } from "next/headers";
 import { logger } from "@/lib/logger";
 import { getJwtSecret, sessionTtlSeconds } from "@/lib/config/auth-env";
 import { storedAccountAllows } from "@/lib/local-accounts";
+import { authenticateBearer } from "@/lib/oidc-bearer";
 
 // getJwtSecret is called per sign/verify rather than at module load, so a
 // misconfigured JWT_SECRET surfaces as an AuthConfigError the login route can turn
@@ -35,6 +36,16 @@ export interface UserPayload {
   idpSubject?: string;
   /** The ID token's `iss`, set together with `idpSubject`. */
   idpIssuer?: string;
+  /**
+   * Set only on a session an identity provider's access token stands for (src/lib/oidc-bearer.ts), never signed into
+   * a cookie. A route that would write the session cookie or mint a credential from the session reads it.
+   */
+  channel?: "bearer";
+  /**
+   * Custom roles extracted from OIDC_ROLE_CLAIM matching OIDC_ROLE_PREFIX. Set only by the
+   * OIDC callback and only when non-empty.
+   */
+  claimRoles?: string[];
 }
 
 export async function signJWT(payload: UserPayload) {
@@ -62,6 +73,24 @@ export async function verifyJWT(token: string) {
 }
 
 export async function getSession() {
+  // A Bearer header decides alone while the channel is on, even next to a valid cookie, and with it on or off the
+  // cookie is never touched here. Absent, the cookie decides as it always did.
+  const bearer = await authenticateBearer((await headers()).get("authorization"));
+  if (bearer.kind === "fault") {
+    logger.error("Could not verify a bearer access token, refusing the session", bearer.error, { route: "auth" });
+    return null;
+  }
+  if (bearer.kind === "denied") return null;
+  if (bearer.kind === "authenticated") {
+    // Under governance the access token's subject, issuer and own iat meet the same rule as a cookie session's.
+    try {
+      return (await storedAccountAllows(bearer.session)) ? bearer.session : null;
+    } catch (error) {
+      logger.error("Could not read the account registry, refusing the session", error, { route: "auth" });
+      return null;
+    }
+  }
+
   const cookieStore = await cookies();
   const token = cookieStore.get("auth-token")?.value;
   if (!token) return null;
@@ -181,10 +210,12 @@ export async function login(
   username?: string,
   sessionVersion?: number,
   identity?: { subject: string; issuer: string },
+  claimRoles?: string[],
 ) {
   // Only the OIDC callback passes an identity, so every other sign-in signs exactly the claims it did before.
   const idp = identity ? { idpSubject: identity.subject, idpIssuer: identity.issuer } : {};
-  const token = await signJWT({ role, username: username || role, sessionVersion, ...idp });
+  const claims = claimRoles && claimRoles.length > 0 ? { claimRoles } : {};
+  const token = await signJWT({ role, username: username || role, sessionVersion, ...idp, ...claims });
   const cookieStore = await cookies();
   cookieStore.set("auth-token", token, {
     httpOnly: true,

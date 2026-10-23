@@ -206,6 +206,8 @@ config:
   oidcScope: "openid profile email"
   # -- OIDC claim path for role extraction
   oidcRoleClaim: ""
+  # -- Case-sensitive prefix filter for custom seed roles from the OIDC role claim (optional)
+  oidcRolePrefix: ""
   # -- OIDC admin role values (comma-separated)
   oidcAdminRoles: "admin"
   # -- OIDC user role values (comma-separated). Empty writes nothing, and any signed-in user

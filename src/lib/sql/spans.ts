@@ -705,3 +705,36 @@ export function hasUnterminatedSpan(sql: string, grammar: SqlGrammar = DEFAULT_S
 
   return false;
 }
+
+/**
+ * Whether this text carries a line comment that holds a lone carriage return with code after it: a carriage return the
+ * line feed right after it does not pair with, followed before the comment's line feed by anything but ASCII
+ * whitespace. Only ASCII whitespace counts as nothing: measured, SQL Server 2022 runs what follows a U+00A0 or U+2028.
+ *
+ * Engines disagree about where such a comment ENDS. Some end it at the carriage return, so what follows is code they
+ * run; others run it on to the line feed, so what follows is comment text. One connection type can reach servers from
+ * both groups (PostgreSQL ends it there and CockroachDB, which connects as `postgres`, does not), so no grammar row can
+ * settle it, and the caller whose mistake would be a write run unconfirmed or a bound written into a comment treats
+ * the text as ambiguous instead (docs/editor/query-optimization.md has the measured engines).
+ *
+ * The comment is read as running on to the line feed whatever `grammar` declares, which is the reading under which it
+ * can hold the carriage return at all. That makes the answer the same in both directions: where the grammar ends the
+ * comment at the carriage return (Spark), the two readings part at this same character. Every other span is read
+ * under `grammar`, so a carriage return inside a literal or a block comment is not counted.
+ */
+export function hasLoneCarriageReturnInLineComment(sql: string, grammar: SqlGrammar = DEFAULT_SQL_GRAMMAR): boolean {
+  const toLineFeed: SqlGrammar = { ...grammar, lineCommentEndsAtCarriageReturn: false };
+  let i = 0;
+
+  while (i < sql.length) {
+    const span = readSqlSpan(sql, i, toLineFeed);
+    if (span === null) {
+      i++;
+      continue;
+    }
+    if (span.kind === "line-comment" && /\r(?!\n)[ \t\r\f\v]*[^ \t\r\n\f\v]/.test(sql.slice(i, span.end))) return true;
+    i = span.end;
+  }
+
+  return false;
+}

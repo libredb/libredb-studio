@@ -800,7 +800,10 @@ export function useTreeNodes(
     // and a miss that rests on that is not a guarantee. Without this arm a row that ever did
     // address itself like its parent would hand `TreeRow` the parent table, and every column row
     // would draw the table's status icon and its row count.
-    (row: TreeRowModel) => (row.kind === "column" ? undefined : objectIndex.get(objectKey(row.path, row.kindId ?? ""))),
+    (row: TreeRowModel) =>
+      row.kind === "column" || row.kind === "constraint"
+        ? undefined
+        : objectIndex.get(objectKey(row.path, row.kindId ?? "")),
     [objectIndex],
   );
 

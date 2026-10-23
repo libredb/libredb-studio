@@ -21,6 +21,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { isBuiltin } from "node:module";
 import { join, posix } from "node:path";
 import ts from "typescript";
+import { platformTimeoutMs } from "../../../helpers/platform-timeout";
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const DIR = "src/lib/db/providers/document/firestore";
@@ -246,12 +247,18 @@ const plant = (as: string, from: string, line: string): string[] =>
   seamFindings(`${DIR}/${as}`, line + read(`${DIR}/${from}`));
 
 describe("the Firestore directory holds its seams", () => {
-  test("every source passes rules 1 to 5", () => {
-    for (const file of [`${DIR}/index.ts`, SEAMS, CLOSED_TABLE, `${DIR}/console/lexer.ts`])
-      expect(SOURCES).toContain(file);
-    for (const file of BROWSER_SAFE) expect(existsSync(join(ROOT, file))).toBe(true);
-    expect(SOURCES.flatMap((file) => seamFindings(file, read(file)))).toEqual([]);
-  });
+  // The first parse of the directory pays the parser's warm-up: 0.7s alone with coverage and 7.4s under a
+  // 15% CPU quota, past bun's 5s default, so it carries its own bound.
+  test(
+    "every source passes rules 1 to 5",
+    () => {
+      for (const file of [`${DIR}/index.ts`, SEAMS, CLOSED_TABLE, `${DIR}/console/lexer.ts`])
+        expect(SOURCES).toContain(file);
+      for (const file of BROWSER_SAFE) expect(existsSync(join(ROOT, file))).toBe(true);
+      expect(SOURCES.flatMap((file) => seamFindings(file, read(file)))).toEqual([]);
+    },
+    platformTimeoutMs(40_000),
+  );
 
   test("the detector reads real code", () => {
     // seams.ts holds the real effects, which only its own exemption admits.

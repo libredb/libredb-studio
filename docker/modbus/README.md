@@ -13,9 +13,10 @@ server written in this repository, which left one question open on every read: t
 the device and the side that read it were the same side.
 
 The digest is written in three places and `tests/unit/db/modbus/live-environment.test.ts` holds
-them to one: here, in `compose-service.yml` and in `ci-step.yml`. The last two are delivery files
-rather than the shared ones, because `database-compose.yml` and `.github/workflows/ci.yml` are
-landed by one hand.
+them to one: here, in `compose-service.yml`, and in the `Modbus live check` step of
+`.github/workflows/ci.yml`. The third was `ci-step.yml` until 19 October 2026, a file written to
+be pasted into that workflow by one hand; the paste is done, and the test now compares the step
+that runs rather than the one that was waiting to be pasted.
 
 ## The values, and why they look like that
 

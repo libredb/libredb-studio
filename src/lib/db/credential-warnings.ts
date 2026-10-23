@@ -5,8 +5,8 @@
  * before Test Connection, through `useConnectionForm`; the seed schema refuses a `readOnly: true` seed at load
  * with `readOnlySeedRefusal` over the literal credential the file shows; and a provider whose type declares an
  * entry runs `readOnlySeedRefusal` again on a seed connection once its `${ENV}` and `${vault:...}` references
- * have resolved, before it dials. `DB_UI_CONFIG` takes each type's array from here by reference, so the data
- * exists once.
+ * have resolved, before it dials. `CONNECTION_FORM` (src/lib/db/connection-form.ts) takes each type's array from here
+ * by reference, so the data exists once.
  *
  * Pure, browser-safe and UI-free: it imports types only. It is not in src/lib/db-ui-config.ts because that
  * module imports React icon components, which the seed loader must not load, the reason the seed schema reads

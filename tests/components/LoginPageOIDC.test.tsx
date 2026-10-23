@@ -76,6 +76,14 @@ describe("LoginPage (OIDC mode)", () => {
     expect(queryByText("Authentication failed. Please try again.")).toBeNull();
   });
 
+  test("error=oidc_role_overflow shows the role-overflow message", () => {
+    setMockSearchParams(new URLSearchParams("error=oidc_role_overflow"));
+    const { getByText, queryByText } = render(<LoginForm authProvider="oidc" passkey={null} />);
+    const message = getByText("Your account has too many roles or a role name is too long. Ask your administrator.");
+    expect(message.textContent).not.toMatch(/try again/i);
+    expect(queryByText("Authentication failed. Please try again.")).toBeNull();
+  });
+
   // Under governance the control plane ended this account's sessions with a revocation that still applies, so the
   // callback minted none: the message says who ended them and where to go, instead of a generic failure.
   test("error=oidc_session_revoked shows the ended-sessions message", () => {

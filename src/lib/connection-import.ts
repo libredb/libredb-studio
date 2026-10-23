@@ -1,14 +1,14 @@
 /**
- * The connection import a type may declare on its `DB_UI_CONFIG` entry (`connectionImport`): the label of the
- * connection dialog's import action and a loader of the parser that reads a pasted text into entries the dialog can
- * fill the form from. The dialog calls `load` only when the import opens, so the parser and what it imports reach the
- * browser only then.
+ * The connection import a type may declare on its `CONNECTION_FORM` entry in src/lib/db/connection-form.ts
+ * (`connectionImport`): the label of the connection dialog's import action and a loader of the parser that reads a
+ * pasted text into entries the dialog can fill the form from. The dialog calls `load` only when the import opens, so
+ * the parser and what it imports reach the browser only then.
  *
  * Types only, so a parser module can name them without importing the dialog, its icons or anything server-side. A
  * parser runs in the browser: it imports no `node:` module and no provider, sends nothing, logs nothing and stores
  * nothing.
  */
-import type { ConnectionField } from "@/lib/db-ui-config";
+import type { ConnectionField } from "@/lib/db/connection-fields";
 import type { SSLConfig } from "@/lib/types";
 
 /**

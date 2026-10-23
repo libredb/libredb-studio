@@ -58,6 +58,16 @@ async function testConnectionCautions(provider: DatabaseProvider, route: string)
   }
 }
 
+/** Settles as `work` does, or rejects with the signal's reason when the signal aborts first. */
+function untilAborted<T>(work: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (signal === undefined) return work;
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    void work.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+  });
+}
+
 /**
  * Connects to `connection` once, reads its health and closes it, never caching the provider.
  *
@@ -66,11 +76,18 @@ async function testConnectionCautions(provider: DatabaseProvider, route: string)
  * handle of the other posture below. `route` is the label the rejected-checks log line carries.
  * A failed connect rejects with the provider's error, a `ConnectionError` naming the wait on a
  * deadline; the caller classifies it.
+ *
+ * `signal` is a deadline of the caller's own, which the route does not set and the VS Code
+ * extension's child does (D276). Once it aborts, the test stops waiting for the connect and
+ * rejects with the signal's reason, so a one-shot tunnel closes at once, and the provider it built
+ * is closed when that connect settles: no provider promises a disconnect during its connect, and
+ * one measured there (PostgreSQL, SQL Server) frees nothing sooner.
  */
 export async function testConnection(
   connection: DatabaseConnection,
   execution: EditorExecutionContext,
   route: string,
+  signal?: AbortSignal,
 ): Promise<TestConnectionAnswer> {
   // Through the tunnel, never around it (#457). This builds its provider directly rather than
   // through `getOrCreateProvider`, so it does not inherit that path's tunnel handling and has to
@@ -78,6 +95,8 @@ export async function testConnection(
   // cached, so no eviction would ever close a pooled one - and every failed test click would
   // strand it.
   return await withOneShotTunnel(connection, async (effective): Promise<TestConnectionAnswer> => {
+    // A caller that stopped waiting while the tunnel opened gets nothing built.
+    signal?.throwIfAborted();
     /*
       The handle already holding this connection's file, on an engine that admits
       only one (`ProviderCapabilities.singleWriterFile`; #498).
@@ -108,6 +127,8 @@ export async function testConnection(
     // Both declared inside the scope so a provider this test opened is always torn
     // down before the tunnel it runs over, on the success and the failure path alike.
     let provider = borrowed;
+    /** The connect of a provider this test built, which a close after the caller's abort waits for. */
+    let connecting: Promise<void> = Promise.resolve();
     const release = async () => {
       const own = borrowed ? null : provider;
       provider = null;
@@ -121,12 +142,15 @@ export async function testConnection(
           besideWriter ? { readOnly: true } : execution,
         );
         provider = opened;
+        // A caller that stopped waiting meanwhile gets no connect started.
+        signal?.throwIfAborted();
         // The connection itself: every provider's connect() reaches the server and is
         // refused by a wrong host, port, credential or database - the SQL ones borrow a
         // pooled client, and the HTTP ones send a probe statement. So a connect that
         // returns is the fact this test exists to establish.
         // A deadline met here is a ConnectionError naming the wait (connectPhase), never the query sentence.
-        await connectPhase(() => opened.connect());
+        connecting = connectPhase(() => opened.connect());
+        await untilAborted(connecting, signal);
       }
 
       // A connect can succeed onto something other than what was asked for, and the
@@ -188,11 +212,18 @@ export async function testConnection(
       // Only reached when the block above threw before its own release, and never
       // for a borrowed handle - which this test did not open and must not close.
       if (provider && !borrowed) {
-        try {
-          await provider.disconnect();
-        } catch {
-          /* ignore */
-        }
+        const own = provider;
+        const close = async () => {
+          try {
+            await own.disconnect();
+          } catch {
+            /* ignore */
+          }
+        };
+        // After the caller's abort the connect may still be pending: the provider is closed once
+        // it settles, and the rejection does not wait for that.
+        if (signal?.aborted) void connecting.then(close, close);
+        else await close();
       }
     }
   });

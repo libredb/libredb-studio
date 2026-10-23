@@ -12,6 +12,7 @@ export type {
   // `describeObject` needs them from here rather than reaching past this module (#789).
   IndexSchema,
   ForeignKeySchema,
+  ExclusionConstraintSchema,
   QueryResult,
   QueryWarning,
 } from "../types";
@@ -24,6 +25,7 @@ import type {
   ColumnSchema,
   IndexSchema,
   ForeignKeySchema,
+  ExclusionConstraintSchema,
 } from "../types";
 import { declaresDialect, dialectSpec } from "./query-dialects";
 
@@ -1711,6 +1713,10 @@ export interface ProviderCapabilities {
    * Absent: every container the connection reaches, as before (a server-level connection is still read one database
    * at a time). `"agent-walk"`: the containers `agentWalkScope` names, listed one level at a time from the top, and a
    * connection that names none is refused in a sentence rather than read whole. Ignored without `agentWalkScope`.
+   * `"session-container"` (#1791): a one-level engine whose connection names its container, MySQL's Database. A diff
+   * reads the container the server says the session is in, and the Diff tab offers a picker over the others with
+   * "Whole connection" kept as an explicit choice. A connection the server places in no container reads whole, as
+   * before. Needs no `agentWalkScope`.
    *
    * It is for an engine whose connection fields name the session's containers, so the walk's default is the
    * connection's own choice: Snowflake's Database and Schema, without which a diff read every database the role sees.
@@ -1720,7 +1726,7 @@ export interface ProviderCapabilities {
    *
    * Optional for the same published-interface reason as `containerLevels`.
    */
-  schemaDiffScope?: "agent-walk";
+  schemaDiffScope?: "agent-walk" | "session-container";
   /**
    * The row actions this engine offers on objects of named kinds, in menu order. See `KindRowAction`.
    *
@@ -3371,6 +3377,8 @@ export interface ObjectDetail {
   readonly columns: readonly ColumnSchema[];
   readonly indexes: readonly IndexSchema[] | { readonly unavailable: string };
   readonly foreignKeys: readonly ForeignKeySchema[];
+  /** Only where the engine has EXCLUDE constraints (PostgreSQL). Absent elsewhere. */
+  readonly exclusionConstraints?: readonly ExclusionConstraintSchema[];
 }
 
 /**

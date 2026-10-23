@@ -4,6 +4,7 @@ import { z } from "zod";
 import {
   type AgentModel,
   agentProviderOptions,
+  agentSamplingFor,
   createAgentModel,
   mapAgentModelError,
   refusedEffortError,
@@ -998,5 +999,285 @@ describe("an effort the model refuses is refused when the model is built, before
 
     expect(agentModel.effort).toBe("minimal");
     expect(recording.requests).toHaveLength(0);
+  });
+});
+
+// ─── sampling is filtered only for the openai kind ─────────────────────────
+
+describe("agentSamplingFor keeps only the sampling the openai kind's SDK would send", () => {
+  const SAMPLING = { temperature: 0, topP: 1 };
+  const LUNA = { provider: "openai", modelId: "gpt-6-luna" } as const;
+
+  test("an openai reasoning model with no effort drops both", async () => {
+    await expect(agentSamplingFor(LUNA, agentProviderOptions(LUNA), SAMPLING)).resolves.toEqual({});
+  });
+
+  test("an openai reasoning model at a non-none effort drops both", async () => {
+    const model = { provider: "openai", modelId: "gpt-6-luna", effort: "low" } as const;
+
+    await expect(agentSamplingFor(model, agentProviderOptions(model), SAMPLING)).resolves.toEqual({});
+  });
+
+  test("gpt-6-luna at effort none keeps both", async () => {
+    const model = { provider: "openai", modelId: "gpt-6-luna", effort: "none" } as const;
+
+    await expect(agentSamplingFor(model, agentProviderOptions(model), SAMPLING)).resolves.toEqual(SAMPLING);
+  });
+
+  test("the quiet switch, which sends effort none, keeps sampling on gpt-6-luna", async () => {
+    await expect(agentSamplingFor(LUNA, agentProviderOptions(LUNA, true), SAMPLING)).resolves.toEqual(SAMPLING);
+  });
+
+  test("gpt-6-sol at effort none keeps both", async () => {
+    const model = { provider: "openai", modelId: "gpt-6-sol", effort: "none" } as const;
+
+    await expect(agentSamplingFor(model, agentProviderOptions(model), SAMPLING)).resolves.toEqual(SAMPLING);
+  });
+
+  test("gpt-6.1-sol at effort none drops both, because only gpt-6-sol and gpt-6-luna keep them", async () => {
+    const model = { provider: "openai", modelId: "gpt-6.1-sol", effort: "none" } as const;
+
+    await expect(agentSamplingFor(model, agentProviderOptions(model), SAMPLING)).resolves.toEqual({});
+  });
+
+  test("gpt-5.4-mini at effort none keeps both", async () => {
+    const model = { provider: "openai", modelId: "gpt-5.4-mini", effort: "none" } as const;
+
+    await expect(agentSamplingFor(model, agentProviderOptions(model), SAMPLING)).resolves.toEqual(SAMPLING);
+  });
+
+  test("gpt-5 at effort none drops both, because its minor version is absent", async () => {
+    const model = { provider: "openai", modelId: "gpt-5", effort: "none" } as const;
+
+    await expect(agentSamplingFor(model, agentProviderOptions(model), SAMPLING)).resolves.toEqual({});
+  });
+
+  test("an o-series model drops both at effort none", async () => {
+    const model = { provider: "openai", modelId: "o3", effort: "none" } as const;
+
+    await expect(agentSamplingFor(model, agentProviderOptions(model), SAMPLING)).resolves.toEqual({});
+  });
+
+  test("a non-reasoning model keeps sampling untouched", async () => {
+    const model = { provider: "openai", modelId: "gpt-4o-mini" } as const;
+
+    await expect(agentSamplingFor(model, agentProviderOptions(model), SAMPLING)).resolves.toEqual(SAMPLING);
+  });
+
+  test("a gpt-5 chat variant keeps sampling untouched", async () => {
+    const model = { provider: "openai", modelId: "gpt-5-chat-latest" } as const;
+
+    await expect(agentSamplingFor(model, agentProviderOptions(model), SAMPLING)).resolves.toEqual(SAMPLING);
+  });
+
+  test("a partial sampling drops only the field that is present", async () => {
+    await expect(agentSamplingFor(LUNA, agentProviderOptions(LUNA), { temperature: 0 })).resolves.toEqual({});
+  });
+
+  test("a partial sampling with only topP drops only topP", async () => {
+    await expect(agentSamplingFor(LUNA, agentProviderOptions(LUNA), { topP: 1 })).resolves.toEqual({});
+  });
+
+  test("an o4-mini model drops both at any effort", async () => {
+    for (const effort of ["none", "low"] as const) {
+      const model = { provider: "openai", modelId: "o4-mini", effort } as const;
+      await expect(agentSamplingFor(model, agentProviderOptions(model), SAMPLING)).resolves.toEqual({});
+    }
+  });
+
+  test("gpt-5.4-mini at a non-none effort drops both", async () => {
+    const model = { provider: "openai", modelId: "gpt-5.4-mini", effort: "minimal" } as const;
+    await expect(agentSamplingFor(model, agentProviderOptions(model), SAMPLING)).resolves.toEqual({});
+  });
+
+  // Future gpt-5.x names are not copied into any table here: the SDK is asked, so each keeps
+  // sampling at `none` (minor >= 1) and drops it at the model's default effort.
+  for (const modelId of ["gpt-5.1", "gpt-5.2-pro", "gpt-5.4-nano", "gpt-5.6-luna"] as const) {
+    test(`${modelId} drops both without effort and keeps both at none`, async () => {
+      const noEffort = { provider: "openai", modelId } as const;
+      const atNone = { provider: "openai", modelId, effort: "none" } as const;
+      await expect(agentSamplingFor(noEffort, agentProviderOptions(noEffort), SAMPLING)).resolves.toEqual({});
+      await expect(agentSamplingFor(atNone, agentProviderOptions(atNone), SAMPLING)).resolves.toEqual(SAMPLING);
+    });
+  }
+
+  test("an ollama or custom endpoint named like a reasoning model is never asked", async () => {
+    const prepare = spyOn(providerRegistry, "openAIResponsesRequestWarnings");
+    try {
+      for (const model of [
+        { provider: "ollama", modelId: "gpt-6-luna" },
+        { provider: "custom", modelId: "gpt-6-luna" },
+      ] as const) {
+        await expect(
+          agentSamplingFor(model, agentProviderOptions({ provider: model.provider }), SAMPLING),
+        ).resolves.toEqual(SAMPLING);
+      }
+      expect(prepare).not.toHaveBeenCalled();
+    } finally {
+      prepare.mockRestore();
+    }
+  });
+
+  test("an empty sampling is returned without asking the SDK", async () => {
+    // A model id no other test resolves, so this test owns the cache entry: the early return for
+    // empty sampling is what keeps `prepareRequest` uncalled, not a memoized answer from an
+    // earlier test.
+    const model = { provider: "openai", modelId: "gpt-6-luna-empty-sampling" } as const;
+    const prepare = spyOn(providerRegistry, "openAIResponsesRequestWarnings");
+    try {
+      await expect(agentSamplingFor(model, agentProviderOptions(model), {})).resolves.toEqual({});
+      expect(prepare).not.toHaveBeenCalled();
+    } finally {
+      prepare.mockRestore();
+    }
+  });
+
+  for (const [label, model] of [
+    ["ollama", { provider: "ollama", modelId: "qwen3:8b" }],
+    ["custom", { provider: "custom", modelId: "mixtral" }],
+    ["gemini", { provider: "gemini", modelId: "gemini-2.5-flash" }],
+  ] as const) {
+    test(`${label} keeps sampling untouched and never asks the SDK`, async () => {
+      const prepare = spyOn(providerRegistry, "openAIResponsesRequestWarnings");
+      try {
+        await expect(
+          agentSamplingFor(model, agentProviderOptions({ provider: model.provider }), SAMPLING),
+        ).resolves.toEqual(SAMPLING);
+        expect(prepare).not.toHaveBeenCalled();
+      } finally {
+        prepare.mockRestore();
+      }
+    });
+  }
+
+  test("the SDK is asked once per model and effort, then the answer is reused", async () => {
+    // A model id no other test resolves, so this test owns the cache entry for it.
+    const model = { provider: "openai", modelId: "gpt-6-terra" } as const;
+    const prepare = spyOn(providerRegistry, "openAIResponsesRequestWarnings");
+    try {
+      await agentSamplingFor(model, agentProviderOptions(model), SAMPLING);
+      await agentSamplingFor(model, agentProviderOptions(model), SAMPLING);
+
+      expect(prepare).toHaveBeenCalledTimes(1);
+    } finally {
+      prepare.mockRestore();
+    }
+  });
+
+  test("a preparation failure is raised and not cached, so the next turn retries", async () => {
+    const model = { provider: "openai", modelId: "gpt-6-luna-retry-test" } as const;
+    const prepare = spyOn(providerRegistry, "openAIResponsesRequestWarnings").mockRejectedValue(
+      new TypeError("prepareRequest broke"),
+    );
+    try {
+      await expect(agentSamplingFor(model, agentProviderOptions(model), SAMPLING)).rejects.toThrow(
+        "prepareRequest broke",
+      );
+    } finally {
+      prepare.mockRestore();
+    }
+
+    await expect(agentSamplingFor(model, agentProviderOptions(model), SAMPLING)).resolves.toEqual({});
+  });
+});
+
+describe("the openai kind's wire sends no sampling the SDK would drop", () => {
+  test("gpt-6-luna with the default sampling sends neither field and warns about neither", async () => {
+    const config: Partial<LLMConfig> = { provider: "openai", apiKey: "sk-configured", model: "gpt-6-luna" };
+    const recording = recordingFetch(responsesCompletion("pong"));
+    const agentModel = await createAgentModel({ config, fetch: recording.fetch });
+    const providerOptions = agentProviderOptions(agentModel);
+    const sampling = await agentSamplingFor(agentModel, providerOptions, { temperature: 0, topP: 1 });
+
+    const result = await generateText({
+      model: agentModel.model,
+      prompt: "ping",
+      maxRetries: 0,
+      ...(sampling.temperature !== undefined ? { temperature: sampling.temperature } : {}),
+      ...(sampling.topP !== undefined ? { topP: sampling.topP } : {}),
+      providerOptions,
+    });
+
+    expect(recording.requests[0]?.body).not.toHaveProperty("temperature");
+    expect(recording.requests[0]?.body).not.toHaveProperty("top_p");
+    expect(result.warnings).not.toContainEqual(expect.objectContaining({ feature: "temperature" }));
+    expect(result.warnings).not.toContainEqual(expect.objectContaining({ feature: "topP" }));
+  });
+
+  test("gpt-6-luna at effort none keeps the default sampling on the wire", async () => {
+    const config: Partial<LLMConfig> = {
+      provider: "openai",
+      apiKey: "sk-configured",
+      model: "gpt-6-luna",
+      modelEffort: "none",
+    };
+    const recording = recordingFetch(responsesCompletion("pong"));
+    const agentModel = await createAgentModel({ config, fetch: recording.fetch });
+    const providerOptions = agentProviderOptions(agentModel);
+    const sampling = await agentSamplingFor(agentModel, providerOptions, { temperature: 0, topP: 1 });
+
+    await generateText({
+      model: agentModel.model,
+      prompt: "ping",
+      maxRetries: 0,
+      ...(sampling.temperature !== undefined ? { temperature: sampling.temperature } : {}),
+      ...(sampling.topP !== undefined ? { topP: sampling.topP } : {}),
+      providerOptions,
+    });
+
+    expect(recording.requests[0]?.body.temperature).toBe(0);
+    expect(recording.requests[0]?.body.top_p).toBe(1);
+  });
+
+  test("ollama and custom send the default sampling unchanged", async () => {
+    for (const config of [{ provider: "ollama", model: "qwen3:8b" }, CHAT_CONFIG] as const) {
+      const recording = recordingFetch(chatCompletion({ role: "assistant", content: "pong" }));
+      const agentModel = await createAgentModel({ config, fetch: recording.fetch });
+      const providerOptions = agentProviderOptions(agentModel);
+      const sampling = await agentSamplingFor(agentModel, providerOptions, { temperature: 0, topP: 1 });
+
+      await generateText({
+        model: agentModel.model,
+        prompt: "ping",
+        maxRetries: 0,
+        ...(sampling.temperature !== undefined ? { temperature: sampling.temperature } : {}),
+        ...(sampling.topP !== undefined ? { topP: sampling.topP } : {}),
+        providerOptions,
+      });
+
+      // Key order is the wire byte order: sampling still sits where the SDK always put it.
+      expect(Object.keys(recording.requests[0]?.body ?? {})).toEqual(["model", "temperature", "top_p", "messages"]);
+      expect(recording.requests[0]?.body.temperature).toBe(0);
+      expect(recording.requests[0]?.body.top_p).toBe(1);
+    }
+  });
+
+  // The openai-only gate is pinned at the unit level above ("an ollama or custom endpoint named
+  // like a reasoning model is never asked"). What a self-hosted endpoint NAMED `gpt-6-luna`
+  // actually receives is the SDK's own Chat Completions table, not this repository's decision:
+  // the SDK recognises the name and drops the fields with a warning. That is not asserted here
+  // because it is the SDK's behaviour, not the code under test.
+
+  test("gemini sends the default sampling under its own field names", async () => {
+    const config: Partial<LLMConfig> = { provider: "gemini", apiKey: "gemini-key", model: "gemini-2.5-flash" };
+    const recording = recordingFetch(geminiCompletion("pong"));
+    const agentModel = await createAgentModel({ config, fetch: recording.fetch });
+    const providerOptions = agentProviderOptions(agentModel);
+    const sampling = await agentSamplingFor(agentModel, providerOptions, { temperature: 0, topP: 1 });
+
+    await generateText({
+      model: agentModel.model,
+      prompt: "ping",
+      maxRetries: 0,
+      ...(sampling.temperature !== undefined ? { temperature: sampling.temperature } : {}),
+      ...(sampling.topP !== undefined ? { topP: sampling.topP } : {}),
+      providerOptions,
+    });
+
+    const generationConfig = recording.requests[0]?.body.generationConfig as
+      | { temperature?: number; topP?: number }
+      | undefined;
+    expect(generationConfig?.temperature).toBe(0);
+    expect(generationConfig?.topP).toBe(1);
   });
 });

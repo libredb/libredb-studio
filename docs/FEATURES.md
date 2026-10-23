@@ -164,6 +164,7 @@ Two components are described below and a claim true of one can be false of the o
     Holding Enter or Space down does not open another tab per key repeat.
 *   **Deep Tree Inspection (schema tab):** Expand tables to view column definitions, data types, and Primary Key (PK) constraints with intuitive iconography.
 *   **Object tree filter (sidebar):** Filters the desktop object tree by object name over every folder already read, keeps the path to each match, and reports the folders it has not read yet, reading them in batches of 24 only when asked.
+*   **Sticky ancestor rows (sidebar tree and Keys panel):** Once the rows scroll, the ancestors of the first visible row stay pinned across the top of the box, root first — at most five rows or 35% of the box, with an ellipsis in the middle when the chain is longer — so a reader deep inside a schema, a database or a key prefix keeps the path in sight. An ancestor leaves the strip the moment its own row is visible again, which is the same rule whether the reader scrolled there or the strip sent them. The strip is drawn over the rows rather than above them: it takes no height from the list and holds no tab stop, and pressing a pinned row scrolls back to that row, selects it and marks it for a moment.
 *   **Global Search & Filter (schema tab):** Real-time, high-performance filtering across both table names and column names.
 *   **Catalog Row Counts:** Both explorers draw the row count the engine already holds in its catalog, in compact K/M/B/T units (for example, `1.6M`).
     Hover to see the complete figure and the caveat that it is an estimate on most engines.
@@ -198,7 +199,7 @@ Two components are described below and a claim true of one can be false of the o
 *   **Zero-Config First Run:** Missing `JWT_SECRET`/`ADMIN_PASSWORD` are generated at boot and printed once; native channels bind to `127.0.0.1` by default, while Docker/Helm resolve their own address at startup and prefer a dual-stack `::`. Set `AUTH_BOOTSTRAP=off` for strict production mode requiring explicit secrets.
 
 ### 12. Advanced Query History (DBA-Level)
-*   **Full Audit Trail:** Searchable history of every query executed, including SQL content, success status, and error details.
+*   **Personal History:** A searchable history of the queries each person ran, with SQL content, success status and error details, keeping the latest 500.
 *   **Performance Tracking:** Precise execution time measurement (ms) for every query to identify slow operations.
 *   **Metadata Insights:** Automatic tracking of execution timestamps and row counts for historical analysis.
 *   **Instant Restore:** Re-run any previous query with a single click directly from the history panel.

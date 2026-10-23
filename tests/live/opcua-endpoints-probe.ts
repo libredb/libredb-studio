@@ -1,7 +1,8 @@
 /**
  * Readiness probe for the OPC UA fixture: does the SERVER answer, not does a port accept.
  *
- * `docker/opcua/ci-step.yml` runs this as the second of two readiness checks. A published port
+ * The `OPC UA read-only check` step of `.github/workflows/ci.yml` runs this as the second of two
+ * readiness checks. A published port
  * answers as soon as Docker's proxy binds it, so a TCP connect measures Docker rather than the
  * fixture; GetEndpoints measures the fixture. It runs on an unsecured channel and before any
  * session exists, which is what makes it cheap enough for a loop.

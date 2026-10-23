@@ -81,35 +81,31 @@ describe("POST /api/db/maintenance audit type safety", () => {
     );
   });
 
-  test("a non-string target reaches the audit line as a bounded string, not a nested object", async () => {
+  test("a non-string target is refused before it reaches the audit line or the buffer", async () => {
     const spy = spyOn(console, "log").mockImplementation(() => {});
     try {
       const req = createMockRequest("/api/db/maintenance", {
         method: "POST",
         body: {
           type: "vacuum",
-          // A shape the AuditEvent type never produces but nothing at runtime rejects - `body` from
-          // `await request.json()` is untyped, so this reaches emitAuditEvent's `target` field as-is.
+          // A shape the AuditEvent type never produces. `body` from `await request.json()` is untyped,
+          // and this once reached emitAuditEvent's `target` field as-is; the route now refuses it first,
+          // the way it refuses a non-string `container`.
           target: { nested: { token: "s3cr3t-value" } },
           connection: validConnection,
         },
       });
 
       const res = await POST(req as never);
-      await parseResponseJSON(res);
+      const body = (await parseResponseJSON(res)) as { error?: string };
 
-      expect(spy).toHaveBeenCalledTimes(1);
-      const line = JSON.parse(spy.mock.calls[0][0] as string) as Record<string, unknown>;
+      expect(res.status).toBe(400);
+      expect(body.error).toBe(`"target" must be a string naming the object to run against`);
 
-      // The stdout line must never carry an object where the schema promises a string, and must
-      // stay within the same bound every other free-text field is held to.
-      expect(typeof line.route).toBe("string");
-      expect((line.route as string).length).toBeLessThanOrEqual(254);
-
-      // The buffer the admin UI serves shares the same sanitized event - not a second, looser rule.
-      const buffered = getServerAuditBuffer().getAll();
-      expect(buffered).toHaveLength(1);
-      expect(typeof buffered[0].target).toBe("string");
+      // Nothing reaches the stdout line or the buffer the admin UI serves, so no object can sit where
+      // the schema promises a string; sanitizeAuditInput's own cases below still hold that rule.
+      expect(spy).not.toHaveBeenCalled();
+      expect(getServerAuditBuffer().getAll()).toHaveLength(0);
     } finally {
       spy.mockRestore();
     }

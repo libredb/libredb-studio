@@ -19,6 +19,7 @@ import { governanceServable } from "@/lib/governance/freshness";
 import { governanceState, sessionRevoked } from "@/lib/governance/state";
 import { getAuthUsers, type AuthUser } from "@/lib/local-auth";
 import { logger } from "@/lib/logger";
+import { comparableIssuer } from "@/lib/oidc-identity";
 import { hashPassword, needsRehash, passwordMatchesHash } from "@/lib/password-hash";
 import { getStorageProvider } from "@/lib/storage/factory";
 import {
@@ -413,24 +414,13 @@ export async function resolveLocalAuthUsers(): Promise<AuthUser[]> {
 }
 
 /**
- * An issuer as the governed sign-in rule compares it: serialized by the URL parser, so the host's case and a default
- * port read the same, with one trailing slash dropped, because a bare-host issuer such as Auth0's ends in a slash that
- * `OIDC_ISSUER` may leave out. Null when the value is not a URL.
- */
-function comparableIssuer(value: string): string | null {
-  const href = URL.parse(value)?.href;
-  if (href === undefined) return null;
-  return href.endsWith("/") ? href.slice(0, -1) : href;
-}
-
-/**
  * The governed sign-in rule (docs/GOVERNANCE.md#sign-in): whether an identity provider's subject and issuer may
  * speak for someone under governance. The subject must be a non-empty string, because openid-client accepts
  * `sub: ""`, and the issuer must be the identity provider at `OIDC_ISSUER`, because openid-client accepts another
  * `iss` for Microsoft Entra ID and Azure AD B2C. With `OIDC_ISSUER` unset or not a URL no issuer matches it.
  *
- * `storedAccountAllows()` applies it to a session's `idpSubject` and `idpIssuer`, which only the OIDC callback writes,
- * and the callback applies it to the ID token, with `governedSignInRevoked()` below, before it mints a session, so it
+ * `storedAccountAllows()` applies it to a session's `idpSubject` and `idpIssuer`, which only the OIDC callback and a
+ * native client's access token (src/lib/oidc-bearer.ts) write, and the callback applies it to the ID token, with `governedSignInRevoked()` below, before it mints a session, so it
  * never mints one that is refused.
  */
 export function governedIdentityAccepted(subject: unknown, issuer: unknown): boolean {
@@ -476,7 +466,8 @@ export function governedSignInRevoked(subject: string): boolean {
  *
  * Under governance the governed sign-in rule above decides, before any store is opened and
  * whatever NEXT_PUBLIC_AUTH_PROVIDER says, together with the session revocations of the governance
- * source. Only the OIDC callback writes `idpSubject` and `idpIssuer`, so an env password, passkey or
+ * source. Only the OIDC callback and a native client's access token write `idpSubject` and `idpIssuer`, so an env
+ * password, passkey or
  * launch session never reaches a route, even when the boot check was bypassed, and neither does a
  * session minted for another issuer or one issued at or before its subject's `revoked_before`.
  *

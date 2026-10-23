@@ -82,8 +82,9 @@ docker exec libredb-netconf cat /fixture/ro-key > /tmp/ro-key && chmod 600 /tmp/
 THE THREE CREDENTIAL VARIABLES ARE REQUIRED AND HAVE NO DEFAULTS. `setup.sh` holds none of the
 values, so that no commit adding it can carry one past a secret scanner, and it refuses by name
 rather than inventing one: a default would quietly give an account an empty password on a device
-that accepts logins. The same three are set by `compose-service.yml`, `ci-step.yml` and
-`verify.sh`, which are the other three ways this fixture is started.
+that accepts logins. The same three are set by `compose-service.yml`, the `NETCONF live
+check` step of `.github/workflows/ci.yml` and `verify.sh`, which are the other three ways this
+fixture is started.
 
 `LIBREDB_NETCONF_INTERFACES` sets how many interfaces the fixture loads; it defaults to 5000,
 the size the provider's read sizes were measured at.

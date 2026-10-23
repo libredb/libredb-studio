@@ -27,7 +27,7 @@
  * Like `state.ts` and `freshness.ts`, this module imports no `pg`: it reads the snapshot the loader swapped in.
  */
 import { ApiErrorCode } from "@/lib/api/error-codes";
-import { getManagedConnections, getSeedConnectionById, type ManagedConnection } from "@/lib/seed";
+import { getManagedConnections, getSeedConnectionById, seedRolesOf, type ManagedConnection } from "@/lib/seed";
 import { governanceEnabled } from "./config";
 import { governanceServable } from "./freshness";
 import { runtimeSetting } from "./settings";
@@ -38,6 +38,7 @@ export interface Principal {
   readonly role: string;
   readonly username: string;
   readonly idpSubject?: string;
+  readonly claimRoles?: readonly string[];
 }
 
 export interface VisibilityOptions {
@@ -118,7 +119,7 @@ export async function visibleConnections(
   principal: Principal,
   options: VisibilityOptions = {},
 ): Promise<ManagedConnection[]> {
-  if (!governanceEnabled()) return getManagedConnections([principal.role]);
+  if (!governanceEnabled()) return getManagedConnections(seedRolesOf(principal));
   const nowMs = Date.now();
   const snapshot = servableSnapshot(nowMs);
   const subject = subjectOf(principal);
@@ -140,7 +141,7 @@ export async function visibleConnectionById(
   id: string,
   options: VisibilityOptions = {},
 ): Promise<ManagedConnection | null> {
-  if (!governanceEnabled()) return getSeedConnectionById(id, [principal.role]);
+  if (!governanceEnabled()) return getSeedConnectionById(id, seedRolesOf(principal));
   const nowMs = Date.now();
   const snapshot = servableSnapshot(nowMs);
   const subject = subjectOf(principal);

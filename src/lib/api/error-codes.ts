@@ -73,6 +73,30 @@ export const ApiErrorCode = {
   GOVERNANCE_UNAVAILABLE: "GOVERNANCE_UNAVAILABLE",
 
   /**
+   * A bearer access token could not be verified because the identity provider's discovery document or key set could
+   * not be read, or the bearer channel is misconfigured (503, src/lib/oidc-bearer.ts). Not AUTH_REQUIRED: the token
+   * may be good, so a client keeps it and retries instead of signing the user out.
+   */
+  IDENTITY_PROVIDER_UNAVAILABLE: "IDENTITY_PROVIDER_UNAVAILABLE",
+
+  /**
+   * A bearer access token verified, but its claims map to no role Studio accepts under OIDC_ROLE_CLAIM,
+   * OIDC_ADMIN_ROLES and OIDC_USER_ROLES (403). Not AUTH_REQUIRED: a fresh token for the same account is refused the
+   * same way until an administrator changes the account, so a client shows the refusal instead of refreshing.
+   */
+  BEARER_NO_ROLE: "BEARER_NO_ROLE",
+
+  /**
+   * A bearer access token verified, but it carries no subject or no user name Studio can use (403,
+   * src/lib/oidc-identity.ts): no email the provider has not marked unverified, and no preferred_username without "@".
+   * Like BEARER_NO_ROLE, a fresh token is refused the same way until the account changes.
+   */
+  BEARER_NO_IDENTITY: "BEARER_NO_IDENTITY",
+
+  /** The caller holds a session, but the route is for admins only (403). */
+  ADMIN_REQUIRED: "ADMIN_REQUIRED",
+
+  /**
    * Under governance, with the runtime setting `queryLog.onSinkFailure` at `refuse`, Studio cannot record query events
    * right now (503): its query event sink is backing off after a failed insert, or its queue is at least 90% full. The
    * request was refused before any statement ran (src/lib/query-events/admission.ts). Distinct from
@@ -95,6 +119,12 @@ export const ApiErrorCode = {
    * whether that rollback was confirmed (src/app/api/db/transaction/route.ts).
    */
   TRANSACTION_CREDENTIAL_CHANGED: "TRANSACTION_CREDENTIAL_CHANGED",
+
+  /**
+   * The transaction open on the connection belongs to another session (409, src/app/api/db/transaction/route.ts): the
+   * caller may not run, commit or roll back a transaction it did not begin.
+   */
+  TRANSACTION_NOT_OWNED: "TRANSACTION_NOT_OWNED",
 
   /**
    * Under governance, the control plane set the runtime setting `ai.enabled` to false, and a route of the AI bucket

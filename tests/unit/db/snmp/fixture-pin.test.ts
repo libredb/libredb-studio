@@ -1,8 +1,9 @@
 /**
  * The fixture's base image is pinned in two files, and this holds them equal.
  *
- * WHY. `docker/snmp/Dockerfile` pins `debian:trixie-slim` by digest, and `docker/snmp/ci-step.yml`
- * carries the same digest so that the CI run can say which image it measured. A value that lives
+ * WHY. `docker/snmp/Dockerfile` pins `debian:trixie-slim` by digest, and the `SNMP live check`
+ * step of `.github/workflows/ci.yml` carries the same digest so that the CI run can say which image
+ * it measured. A value that lives
  * in two files and is compared by nobody is two values: the day one of them moves, the step keeps
  * reporting the digest of an image it no longer builds, and every number it prints is attributed
  * to the wrong thing.
@@ -14,10 +15,15 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { ciStep as ciStepText } from "../../../helpers/ci-step";
 
 const DOCKER = join(import.meta.dirname, "..", "..", "..", "..", "docker", "snmp");
 const dockerfile = readFileSync(join(DOCKER, "Dockerfile"), "utf8");
-const ciStep = readFileSync(join(DOCKER, "ci-step.yml"), "utf8");
+// The step CI RUNS, not the file it was delivered in. Until 19 Eki 2026 this read
+// `docker/snmp/ci-step.yml`, which was written to be pasted into the workflow and never
+// was: the comparison held two files equal while the file that ran was a third one
+// nobody compared. The step now lives in `.github/workflows/ci.yml`.
+const ciStep = ciStepText("SNMP live check");
 
 describe("the SNMP fixture's pin", () => {
   test("the Dockerfile pins its base by digest, not by tag alone", () => {

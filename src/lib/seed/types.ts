@@ -23,8 +23,16 @@ const SSLConfigSchema = z
 
 const ConnectionEnvironmentSchema = z.enum(["production", "staging", "development", "local", "other"]);
 
-// Allowed roles in current iteration (matches JWT role: 'admin' | 'user' + wildcard)
-const AllowedRoleSchema = z.enum(["*", "admin", "user"]);
+// Allowed roles: standard roles ('*', 'admin', 'user') or custom roles from OIDC role claim
+const CONTROL_CHAR_REGEX = /[\x00-\x1f\x7f-\x9f]/;
+
+const AllowedRoleSchema = z
+  .string()
+  .min(1, "Role cannot be empty")
+  .max(64, "Role name must not exceed 64 characters")
+  .refine((r) => Buffer.byteLength(r, "utf8") <= 64, "Role name must not exceed 64 bytes in UTF-8")
+  .refine((r) => r.trim() === r, "Role name cannot have leading or trailing whitespace")
+  .refine((r) => !CONTROL_CHAR_REGEX.test(r), "Role name cannot contain control characters");
 
 /**
  * One issue per present field of every "each" row, then one issue per "set" row with any field present, at the first
@@ -197,7 +205,7 @@ export const SeedConnectionSchema = z
     // Read no catalog when this connection opens (#765). Declarable in the seed file
     // because the deployment that ships a 40,000-object owner is the one that knows, and
     // a managed connection is read-only in the UI, so nobody could tick the box there.
-    // Unlike the maps in `connection-secrets.ts` and `use-connection-payload.ts`, this
+    // Unlike the maps in `secret-fields.ts` and `use-connection-payload.ts`, this
     // schema fails SILENTLY when a field is missing: zod strips an unknown key, so a seed
     // file setting it would round-trip as `undefined` with no error anywhere.
     skipObjectScan: z.boolean().optional(),
@@ -416,4 +424,9 @@ export interface ManagedConnection extends DatabaseConnection {
    * written: no `${NAME}` or `${vault:...}` in it is resolved.
    */
   literal?: true;
+  /**
+   * Under governance only, set by GET /api/connections/managed from the grant level the record was resolved for: "read"
+   * when statements run under the connection's read credential. Never read from a file.
+   */
+  access?: "read" | "write";
 }

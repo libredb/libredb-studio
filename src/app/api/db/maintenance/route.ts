@@ -5,7 +5,7 @@ import { createErrorResponse } from "@/lib/api/errors";
 import { mapDatabaseError } from "@/lib/db/errors";
 import { maintenanceControl, type MaintenancePlacement } from "@/lib/db/types";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
-import { auditRoleDenial, guardRoute } from "@/lib/api/require-session";
+import { auditRoleDenial, guardRoute, adminRequiredResponse } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
 import { editorProvider } from "@/lib/api/editor-provider";
 import { clientAddress } from "@/lib/api/client-address";
@@ -31,7 +31,7 @@ export async function POST(request: Request) {
 
   if (guard.session.role !== "admin") {
     auditRoleDenial({ route: "POST /api/db/maintenance", user: guard.session.username, request });
-    return NextResponse.json({ error: "Unauthorized. Admin access required." }, { status: 403 });
+    return adminRequiredResponse();
   }
 
   try {
@@ -58,6 +58,18 @@ export async function POST(request: Request) {
     if (container !== undefined && typeof container !== "string") {
       return NextResponse.json(
         { error: `"container" must be a string naming the target's container` },
+        { status: 400 },
+      );
+    }
+
+    // `target` is the same kind of field: a string naming the object the operation runs against,
+    // or absent for the whole-database form. A non-string one reached the provider, where a number
+    // failed as `identifier.replace is not a function` and the client read a 500 quoting provider
+    // source, and the audit row below recorded the serialized value. It is refused here, before
+    // any provider opens and before any audit row.
+    if (target !== undefined && typeof target !== "string") {
+      return NextResponse.json(
+        { error: `"target" must be a string naming the object to run against` },
         { status: 400 },
       );
     }

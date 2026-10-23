@@ -34,9 +34,9 @@ than assumed:
 - the `e2e` job of `.github/workflows/ci.yml` has no `services:`, no compose command and no
   `docker run`: its steps are checkout, Bun, dependencies, Playwright browsers, the test run,
   the subpath run and the report upload;
-- the Modbus live check of `docker/modbus/ci-step.yml` starts a container on 1502, but it is
-  pasted into the **`functional-smoke` job**, which is not the job the Playwright projects run
-  in, so pasting it changes nothing here;
+- the `Modbus live check` step of `.github/workflows/ci.yml` starts a container on 1502, but it
+  lives in the **`functional-smoke` job**, which is not the job the Playwright projects run in,
+  so it changes nothing here;
 - on the run of 2026-10-16 those six cases dialled `127.0.0.1:1502` and got
   `connect ECONNREFUSED` **eighteen times**, which is what turned the gate red.
 

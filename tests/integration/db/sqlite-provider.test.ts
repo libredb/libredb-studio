@@ -68,6 +68,13 @@ import { readFixtureStatements } from "../../../docker/sqlite-init/build-fixture
 import { logger } from "@/lib/logger";
 import { MISSING_POSIX_FILE_MODES, describeIf, testIf } from "../../helpers/posix-tools";
 import { howItFailed } from "../../helpers/spawn-outcome";
+import {
+  CHILD_TEST_TIMEOUT_MS,
+  MISSING_POSIX_SPECIAL_FILES,
+  connectInChild,
+  makeFifo,
+  runInChild,
+} from "../../helpers/special-files";
 
 // ============================================================================
 // Helpers
@@ -257,6 +264,205 @@ describe("SQLiteProvider", () => {
       await provider.connect();
       expect(provider.isConnected()).toBe(true);
       expect(existsSync(dbPath)).toBe(true);
+    });
+
+    test("a missing parent folder is created one level at a time, never with a recursive mkdir", async () => {
+      // Node's recursive mkdir never returns for a path under /proc, so the provider must not ask for one.
+      const dbPath = join(pathTmpDir, "nested", "deeper", "created.db");
+      const mkdirSpy = spyOn(fsNode, "mkdirSync");
+      try {
+        provider = new SQLiteProvider(makeSQLiteConfig({ database: dbPath }));
+        await provider.connect();
+        expect(provider.isConnected()).toBe(true);
+        expect(existsSync(dbPath)).toBe(true);
+        expect(mkdirSpy.mock.calls.map(([dir, options]) => [String(dir), options])).toEqual([
+          [join(pathTmpDir, "nested"), undefined],
+          [join(pathTmpDir, "nested", "deeper"), undefined],
+        ]);
+      } finally {
+        mkdirSpy.mockRestore();
+      }
+    });
+
+    testIf(
+      existsSync("/proc/self") ? null : "no /proc on this platform: the folder procfs refuses is Linux-only",
+      "a folder under /proc fails at once with the open error, naming ENOENT and the folder",
+      async () => {
+        const folder = `/proc/libredb-${process.pid}-${Date.now()}`;
+        provider = new SQLiteProvider(makeSQLiteConfig({ database: join(folder, "x", "app.db") }));
+        const error = await provider.connect().then(
+          () => null,
+          (e: unknown) => e,
+        );
+        expect(error).toBeInstanceOf(ConnectionError);
+        expect((error as Error).message).toStartWith("Failed to open SQLite database: ENOENT");
+        // The first missing level, not the deepest one: Bun's recursive mkdir also throws ENOENT here,
+        // but names the full path, so this is what tells the one-level-at-a-time walk apart.
+        expect((error as Error).message).toContain(`mkdir '${folder}'`);
+        expect(provider.isConnected()).toBe(false);
+      },
+    );
+  });
+
+  // --------------------------------------------------------------------------
+  // A database path that exists and is not a regular file
+  // --------------------------------------------------------------------------
+
+  describe("a path that is not a regular file", () => {
+    let specialDir: string;
+
+    beforeEach(() => {
+      specialDir = mkdtempSync(join(tmpdir(), "libredb-sqlite-special-"));
+    });
+
+    afterEach(() => {
+      rmSync(specialDir, { recursive: true, force: true });
+    });
+
+    test("a directory is refused before SQLite opens it, naming the path", async () => {
+      const dir = join(specialDir, "a-directory");
+      mkdirSync(dir);
+      provider = new SQLiteProvider(makeSQLiteConfig({ database: dir }));
+      const error = await provider.connect().then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(error).toBeInstanceOf(ConnectionError);
+      expect((error as Error).message).toBe(
+        `Failed to open SQLite database: ${dir} is a directory, not a regular file`,
+      );
+      expect(provider.isConnected()).toBe(false);
+    });
+
+    // SQLite used to report a connection to a character device: Test Connection said "Connected".
+    testIf(MISSING_POSIX_SPECIAL_FILES, "a character device is refused instead of reported connected", async () => {
+      provider = new SQLiteProvider(makeSQLiteConfig({ database: "/dev/null" }));
+      const error = await provider.connect().then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(error).toBeInstanceOf(ConnectionError);
+      expect((error as Error).message).toBe(
+        "Failed to open SQLite database: /dev/null is a character device, not a regular file",
+      );
+      expect(provider.isConnected()).toBe(false);
+    });
+
+    // A FIFO opened for reading waits for a writer that never comes: the agent's read-only open, and the
+    // editor's read-only open of a file it cannot write, never returned (measured on bun 1.4.2). Each
+    // case connects in a child under a hard limit, so a regression fails here instead of hanging.
+    describeIf(MISSING_POSIX_SPECIAL_FILES, "a FIFO", () => {
+      const sqliteModule = join(REPO_ROOT, "src/lib/db/providers/sql/sqlite.ts");
+
+      test.each([
+        ["the editor", "644", {}],
+        ["the editor, on a FIFO it cannot write and would open read-only", "444", {}],
+        ["the agent read-only profile", "644", { readOnly: true }],
+      ] as const)(
+        "%s refuses it at once, naming the path, and leaves no file beside it",
+        async (_who, mode, execution) => {
+          const fifo = join(specialDir, "nobody-writes.db");
+          makeFifo(fifo, mode);
+          const outcome = await connectInChild(
+            sqliteModule,
+            "SQLiteProvider",
+            { id: "fifo", name: "fifo", type: "sqlite", database: fifo },
+            execution,
+          );
+          expect(outcome).toEqual({
+            report: {
+              connected: false,
+              error: "ConnectionError",
+              message: `Failed to open SQLite database: ${fifo} is a named pipe (FIFO), not a regular file`,
+            },
+            failure: null,
+          });
+          expect(readdirSync(specialDir)).toEqual(["nobody-writes.db"]);
+          expect(statSync(fifo).isFIFO()).toBe(true);
+        },
+        CHILD_TEST_TIMEOUT_MS,
+      );
+
+      // SQLite opens a `-journal` beside the database read-only to see whether it is hot, and that open of
+      // a FIFO never returned, in the worker and in-process alike. A FIFO `-wal` or `-shm` let the connect
+      // through, and the first write then failed with "disk I/O error" (measured on bun 1.4.2).
+      test.each([
+        ["the editor", "-journal", {}],
+        ["the editor", "-wal", {}],
+        ["the editor", "-shm", {}],
+        ["the agent read-only profile", "-journal", { readOnly: true }],
+      ] as const)(
+        "%s refuses a FIFO at the database's %s at once, naming it",
+        async (_who, suffix, execution) => {
+          const dbPath = join(specialDir, "beside-a-fifo.db");
+          const seed = new BunDatabase(dbPath, { create: true });
+          seed.exec("PRAGMA journal_mode = DELETE; CREATE TABLE t (a INTEGER); INSERT INTO t VALUES (1);");
+          seed.close();
+          makeFifo(`${dbPath}${suffix}`);
+          const outcome = await connectInChild(
+            sqliteModule,
+            "SQLiteProvider",
+            { id: "fifo", name: "fifo", type: "sqlite", database: dbPath },
+            execution,
+          );
+          expect(outcome).toEqual({
+            report: {
+              connected: false,
+              error: "ConnectionError",
+              message: `Failed to open SQLite database: ${dbPath}${suffix} is a named pipe (FIFO), not a regular file`,
+            },
+            failure: null,
+          });
+          expect(readdirSync(specialDir).sort()).toEqual(["beside-a-fifo.db", `beside-a-fifo.db${suffix}`]);
+        },
+        CHILD_TEST_TIMEOUT_MS,
+      );
+
+      // A worker that a cancel or a deadline killed is started again on the same path, which may have been
+      // replaced since connect() checked it. On a FIFO the agent's restarted read-only open never returned,
+      // and the statement waiting on it never answered; the editor's answered "disk I/O error" (measured on
+      // bun 1.4.2). The child runs the worker, which is what restarts.
+      test.each([
+        ["the editor", {}],
+        ["the agent read-only profile", { readOnly: true }],
+      ] as const)(
+        "%s checks the path again when it restarts a killed worker, refusing a FIFO renamed onto it",
+        async (_who, execution) => {
+          const dbPath = join(specialDir, "replaced.db");
+          const seed = new BunDatabase(dbPath, { create: true });
+          seed.exec("CREATE TABLE t (a INTEGER)");
+          seed.close();
+          const fifo = join(specialDir, "stand-in");
+          makeFifo(fifo);
+          const outcome = await runInChild(
+            [
+              "delete process.env.LIBREDB_SQLITE_DRIVER;",
+              'process.env.LIBREDB_SQLITE_WORKER = "1";',
+              'const fs = await import("node:fs");',
+              `const { SQLiteProvider: Provider } = await import(${JSON.stringify(sqliteModule)});`,
+              `const provider = new Provider(${JSON.stringify({ id: "r", name: "r", type: "sqlite", database: dbPath })}, {}, ${JSON.stringify(execution)});`,
+              "await provider.connect();",
+              `fs.renameSync(${JSON.stringify(fifo)}, ${JSON.stringify(dbPath)});`,
+              "provider.worker.terminate();",
+              "try {",
+              '  await provider.query("SELECT 1 AS one");',
+              "  report({ answered: true });",
+              "} catch (error) {",
+              "  report({ answered: false, error: error.constructor.name, message: error.message });",
+              "}",
+            ].join("\n"),
+          );
+          expect(outcome).toEqual({
+            report: {
+              answered: false,
+              error: "ConnectionError",
+              message: `Failed to open SQLite database: ${dbPath} is a named pipe (FIFO), not a regular file`,
+            },
+            failure: null,
+          });
+        },
+        CHILD_TEST_TIMEOUT_MS,
+      );
     });
   });
 

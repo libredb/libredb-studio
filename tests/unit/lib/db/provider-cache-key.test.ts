@@ -164,7 +164,7 @@ const tunnel: NonNullable<DatabaseConnection["sshTunnel"]> = {
  * secret cannot be added without the cache key seeing it.
  *
  * `credentialDigest` is a hand-kept list, and the API key pair was once left out of it.
- * The maps in `src/lib/storage/connection-secrets.ts` fail typecheck when a field goes unclassified,
+ * The maps in `src/lib/storage/secret-fields.ts` fail typecheck when a field goes unclassified,
  * so walking them here turns a forgotten field into a red test. A field may be framed by
  * `credentialDigest` or by the fingerprint (`connectionString` is); the walk asks the whole key.
  * A public field that decides identity is outside this walk, so it is added to `credentialDigest` by

@@ -508,17 +508,25 @@ refuses any subquery among an aggregate call's arguments, *subquery inside aggre
 index CTE used to build each index's column list that way. The `LATERAL` form is the same per-index
 read, and an index over expressions alone still answers NULL, which the provider reads as `[]` (#1075).
 
-The type text matches on every column but one shape. `format_type(a.atttypid, NULL)` is passed NULL
-rather than `a.atttypmod` because that is what `information_schema.columns.data_type` says:
-`character varying` and `numeric`, not `character varying(50)` and `numeric(12,2)`. Verified column
-by column on `app.orders`, so `describeObject()` and `describeObjects()` name a column's type
-identically.
+**A column carries two type strings.** `type` is `format_type(a.atttypid, NULL)`, the unqualified
+base name: `character varying`, `numeric`, `vector`, `text`, `integer`, `text[]`. `declaredType` is
+`format_type(a.atttypid, a.atttypmod)`, the declaration PostgreSQL itself prints:
+`character varying(50)`, `numeric(12,2)`, `vector(1536)`. `describeObject()` and `describeObjects()`
+select both, from the same `pg_attribute` row, so the two object-model reads agree.
 
-One measurement is kept from the deleted flat reading, because it is why the type text is read this
-way. `app.products.tags` is `text[]`: `format_type` answers `text[]` and both object-model surfaces
-show that, while `information_schema.columns.data_type` answered the bare word `ARRAY` and put the
-element type in `information_schema.element_types`. The object model had the better half of that
-disagreement, and it is the only reading left.
+`type` used to be the only string, and NULL was passed on purpose so this surface would match
+`information_schema.columns.data_type`, which is what the deleted flat schema tree showed. That
+reading is gone (#789): the provider no longer implements `getSchema`, and this file does not read
+`information_schema.columns`. The modifier is recorded beside the base name rather than inside it
+(#1860). The diagram, completions and migration DDL read `type` and are unchanged. The agent's
+grounding capture reads `information_schema.columns.data_type`, the same base name, and is unchanged.
+The column tooltip and the object detail show `declaredType`. A column with no modifier is given the
+same string in both fields, so `text`, `integer` and `text[]` render as they did.
+
+One measurement is kept from the deleted flat reading. `app.products.tags` is `text[]`:
+`format_type` answers `text[]` in both fields, while `information_schema.columns.data_type` answered
+the bare word `ARRAY` and put the element type in `information_schema.element_types`. That second
+answer has no reader left.
 
 `OBJECT_DETAIL_SQL` also strips the `AS MATERIALIZED` hints, which is the opposite of what
 [§3.1](#31-materialized-ctes-for-schema-introspection) wants and for the opposite reason. There the
@@ -578,6 +586,18 @@ name is unique per table and not per schema: `[schema, trigger]` gives two trigg
 one address. The path builder reads this off the ROW - a `parent` column adds a segment, an
 `identity` column replaces the last one - so the three listings share one rule and no code branches
 on a kind id.
+
+**`EXCLUDE` constraints are listed beside the indexes (#1778).** The GiST index that backs an exclusion
+constraint was already listed, but the constraint itself, which is the rule a person is looking for, was
+not. `CTE_EXCLUDE_INFO` reads `pg_constraint` where `contype = 'x'` and takes the definition from
+`pg_get_constraintdef(oid)`, so the text is PostgreSQL's own rendering, `WHERE` predicate included. It is
+joined into both `describeObject()` and `describeObjects()` and surfaces as the optional
+`exclusionConstraints` (`{ name, definition }`) on `ObjectDetail` and `DetailedObject`; a table with none
+carries no key. The desktop tree draws it as a row under the table's columns, marked `EXCLUDE`, and the mobile
+schema list as an "Exclusion constraints" group; both show the definition as text under the name, and as its tooltip. An engine that refuses `pg_constraint` or `pg_get_constraintdef()` is retried with
+the CTE emptied, like `fk_info`, so the list is absent there and every other column still arrives.
+Verified against PostgreSQL through PGlite, and against a PostgreSQL 18.6 server in the explorer, with `EXCLUDE USING gist (table_id WITH =, tsrange(starts_at,
+ends_at, '[)') WITH &&) WHERE (...)`: both reads return the constraint, and a table without one returns none.
 
 **`describeObject()` takes the kind, and branches on it rather than on the name.** Only the kinds
 resolved in `pg_class` have columns, indexes or foreign keys, so a routine and a trigger answer three
@@ -1497,6 +1517,8 @@ A text of several statements sent as one simple query (`SELECT 1 AS a; SELECT 2 
 Measured the same day, that text answers `rows` `[{"a":1}]` and two `resultSets`, the second with fields `["b","b (2)"]`.
 Before, such a text answered no `rows` at all, because the list of answers was read as one answer.
 
+A statement whose command tag carries no count (an `EXPLAIN`, a `SHOW`) has its `rowCount` answered from the rows it returned, because `pg` reads the count from the tag alone and leaves it null while `rows` holds the answer; a count the driver did read, including a real 0, keeps its own value (#1839).
+
 #### Server notices (#1401)
 
 The NOTICE and WARNING messages the server sends while a statement that SUCCEEDS runs come back in
@@ -1606,6 +1628,11 @@ and, **only for `SELECT`/CTE-`SELECT` queries that don't already have a `LIMIT`*
   set (#287). Undeterminable CTE shapes are likewise not bounded — an over-large read can be re-run,
   a partly committed write cannot. Asserted at the shared seam in `tests/unit/db/sql-base.test.ts`,
   since the behaviour is `SQLBaseProvider`'s for every SQL provider.
+- A `SELECT` over a data-modifying CTE body (`WITH d AS (DELETE … RETURNING *) SELECT * FROM d`) is not bounded either, so no next page is offered.
+  The body runs exactly once and always to completion whatever the outer `SELECT` reads (manual 7.8.4); bounded, the statement was pageable and every next page re-ran the `DELETE`, measured on PostgreSQL 17.6 as 1000 more rows gone per page.
+  CockroachDB documents the same, and its `UPSERT … RETURNING` body is not bounded either.
+  A read-only body over a table named like a write (`delete_queue`) keeps its bound.
+  Pinned in `tests/integration/db/postgres-provider.test.ts`.
 - The clause is inserted at the end of the **statement** as
   [`statement-end.ts`](../../src/lib/sql/statement-end.ts) delimits it — before any trailing comment
   and before the terminating `;`, both re-attached verbatim — and the already-limited probes read the
@@ -1721,10 +1748,12 @@ paths do it: `query()`, `queryInTransaction()` and the agent's `queryReadOnly()`
 | >= 16384 | *absent* |
 
 The names are the base type's, without the type modifier: `character varying`, not
-`character varying(40)`. That is what `information_schema.columns.data_type` — the same source the
-schema tree shows — answers for the same column, and the modifier is not on the wire in a form worth
-reconstructing. `columnTypes` is consumed by the results grid's column labels, by the SQL-DDL export
-(which prefers a declared type over its value-shaped guess) and by the agent's state summary.
+`character varying(40)`. The modifier is not on the wire in a form worth reconstructing. This is
+`QueryResult.columnTypes`, the result grid's column labels. The schema tree's `type` is the same
+base name, and the modifier a person needs there is `declaredType` on the object detail
+([§3.1.4](#314-what-the-object-surface-declares-and-which-catalog-answers-for-it)). `columnTypes` is
+consumed by the results grid's column labels, by the SQL-DDL export (which prefers a declared type
+over its value-shaped guess) and by the agent's state summary.
 
 ### 5.5 The types read as the engine's text
 
@@ -1862,8 +1891,8 @@ Five more methods answer the container-aware object model (#789) and are documen
 | `listContainers()` | `CONTAINERS_SQL` | the schemas, through the same exclusion set as the three above, with the session's own marked from `current_schema()`; on a server-level connection the databases first, then one database's schemas ([§3.1.4](#314-what-the-object-surface-declares-and-which-catalog-answers-for-it)) |
 | `countObjects(container)` | `COUNTS_SQL` | one `KindCount` per declared kind, seeded at `{ count: 0 }` |
 | `listObjects(container, kind)` | `LIST_RELATIONS_SQL[kind]`, `LIST_ROUTINES_SQL`, `LIST_TRIGGERS_SQL` | names, plus `reltuples` and size for relations |
-| `describeObject(path, kind)` | `OBJECT_DETAIL_SQL` | columns, indexes and foreign keys for one object; the KIND decides whether there is a relation to read, so nothing infers it from the name |
-| `describeObjects(container, kind, limit?)` | `BULK_DETAIL_SQL[kind]`, `BULK_DETAIL_SQL_BOUNDED[kind]` | the same four aggregates for EVERY object of that kind in that container, in one round trip, keyed by path, with `truncated` when the caller's `limit` bit |
+| `describeObject(path, kind)` | `OBJECT_DETAIL_SQL` | columns, indexes, foreign keys and `EXCLUDE` constraints for one object; the KIND decides whether there is a relation to read, so nothing infers it from the name |
+| `describeObjects(container, kind, limit?)` | `BULK_DETAIL_SQL[kind]`, `BULK_DETAIL_SQL_BOUNDED[kind]` | the same five aggregates for EVERY object of that kind in that container, in one round trip, keyed by path, with `truncated` when the caller's `limit` bit |
 
 ---
 

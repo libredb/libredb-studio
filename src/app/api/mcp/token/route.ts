@@ -32,6 +32,8 @@ const UNAUTHENTICATED = sessionRequiredBody("Authentication required");
 const MINT_SESSION_MAX_AGE_SECONDS = 600;
 const RECENT_SIGN_IN_REQUIRED =
   "Sign in again to create a token: a token can only be created within 10 minutes of signing in.";
+const BROWSER_SESSION_REQUIRED =
+  "A token can only be created from a browser session: sign in to Studio and create it there.";
 
 /**
  * A session cannot be revoked on the server and lives 24 hours, so rotating
@@ -66,6 +68,7 @@ export async function GET(): Promise<Response> {
   const visible = await new McpConnectionContext({
     username: session.username,
     role: session.role,
+    claimRoles: session.claimRoles,
   }).visibleConnections();
   const readable = visible !== MCP_CONNECTIONS_UNREADABLE;
   return NextResponse.json(
@@ -85,6 +88,11 @@ export async function POST(request: Request): Promise<Response> {
   if (session !== null && !hasSessionShape(session)) return NextResponse.json(UNAUTHENTICATED, { status: 401 });
   const guard = await guardRoute({ route: "POST /api/mcp/token", bucket: "query", request });
   if ("response" in guard) return guard.response;
+  // An identity provider's access token (src/lib/oidc-bearer.ts) is refreshed every few minutes, so its iat would pass
+  // the recent sign-in check below without anyone having signed in to Studio. Only a cookie session mints.
+  if (guard.session.channel === "bearer") {
+    return NextResponse.json({ error: BROWSER_SESSION_REQUIRED }, { status: 403, headers: NO_STORE });
+  }
   const status = mcpChannelStatus();
   if (status.state !== "ready") {
     return NextResponse.json({ error: NOT_ISSUED, problems: [...status.problems] }, { status: 409, headers: NO_STORE });
@@ -104,6 +112,7 @@ export async function POST(request: Request): Promise<Response> {
     username: guard.session.username,
     role: guard.session.role,
     sessionVersion: guard.session.sessionVersion,
+    claimRoles: guard.session.claimRoles,
   });
   return NextResponse.json(
     { token: minted.token, expiresAt: minted.expiresAt.toISOString(), url: minted.url },

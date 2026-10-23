@@ -447,6 +447,7 @@ describe("the governance render guards", () => {
     ["secrets.governancePostgresUrl", ["--set", "secrets.governancePostgresUrl="]],
     ["secrets.governancePrivateKeys", ["--set", "secrets.governancePrivateKeys="]],
     ["seedConnections.enabled", ["--set", "seedConnections.enabled=true", "--set", "seedConnections.config.a=b"]],
+    ["config.oidcRolePrefix", ["--set", "config.oidcRolePrefix=team-"]],
     [
       "mcp.enabled",
       ["--set", "mcp.enabled=true", "--set", "mcp.url=https://s.example.com/api/mcp", "--set", "mcp.tokenLabel=one"],

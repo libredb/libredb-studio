@@ -206,17 +206,29 @@ const noAdapterMessage = (kind: string): string =>
  * table here. It is a public static on the Responses model in the package's `internal` entry point,
  * and the package is pinned to an exact version (`tests/unit/agent-dependency-boundary.test.ts`), so
  * an upgrade that moved it fails the typecheck and the tests that pin its sentence to a real call's.
+ *
+ * The optional `sampling` is handed to the same preparation step, so a caller can learn offline
+ * whether the SDK would keep or drop `temperature`/`topP` for this model and effort. The SDK drops
+ * both for reasoning models unless the resolved effort is `none` and the model takes non-reasoning
+ * parameters; the warning it raises is exactly the one a real call would log, so reading it here is
+ * the whole decision with no capability table copied into this repository.
  */
 export async function openAIResponsesRequestWarnings(
   modelId: string,
   providerOptions: Record<string, Record<string, string | boolean | null>> | undefined,
+  sampling?: { readonly temperature?: number; readonly topP?: number },
 ): Promise<CallWarning[]> {
   const { OpenAIResponsesLanguageModel } = await import("@ai-sdk/openai/internal");
   const prepared = await OpenAIResponsesLanguageModel.prepareRequest({
     modelId,
     // No `fetch` and no real URL: preparation reads neither, and nothing here sends what it builds.
     config: { provider: "openai.responses", url: () => "" },
-    options: { prompt: [], providerOptions },
+    options: {
+      prompt: [],
+      providerOptions,
+      ...(sampling?.temperature !== undefined ? { temperature: sampling.temperature } : {}),
+      ...(sampling?.topP !== undefined ? { topP: sampling.topP } : {}),
+    },
   });
   return prepared.warnings;
 }

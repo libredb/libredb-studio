@@ -209,6 +209,10 @@
           "type": "string",
           "description": "OIDC role claim path"
         },
+        "oidcRolePrefix": {
+          "type": "string",
+          "description": "OIDC_ROLE_PREFIX: case-sensitive prefix filter for custom seed roles from the OIDC role claim"
+        },
         "oidcAdminRoles": {
           "type": "string",
           "description": "OIDC admin role values"

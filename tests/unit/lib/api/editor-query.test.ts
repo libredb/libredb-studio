@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { checkEditorQuery, runEditorQuery } from "@/lib/api/editor-query";
+import { probePastPage } from "@/lib/api/page-probe";
 import { QueryCancelledError } from "@/lib/db/errors";
 import type { DatabaseProvider, PreparedQuery, QueryPrepareOptions } from "@/lib/db/types";
-import { appendedBoundNote } from "@/lib/db/utils/query-limiter";
+import { appendedBoundNote, applyQueryLimit } from "@/lib/db/utils/query-limiter";
 import type { QueryResult } from "@/lib/types";
 import { createMockProvider } from "../../../helpers/mock-provider";
 import { installStandInVocabulary, STAND_IN_TYPE } from "../../../helpers/stand-in-vocabulary";
@@ -70,12 +71,41 @@ describe("checkEditorQuery", () => {
     expect(checkEditorQuery({ statement: 42, type: "postgres", options: {} })).toBeNull();
   });
 
-  test("page bounds that are not non-negative integers are refused with the route's sentences", () => {
+  test("page bounds that are not non-negative safe integers are refused with the route's sentences", () => {
     const check = (options: unknown) => checkEditorQuery({ statement: "SELECT 1", type: "postgres", options });
     expect(check("500")).toEqual({ status: 400, error: "options must be an object" });
     expect(check({ limit: -1 })).toEqual({ status: 400, error: "options.limit must be a non-negative integer" });
     expect(check({ offset: 1.5 })).toEqual({ status: 400, error: "options.offset must be a non-negative integer" });
     expect(check({ limit: "500" })).toEqual({ status: 400, error: "options.limit must be a non-negative integer" });
+    expect(check({ limit: 2 ** 53 })).toEqual({ status: 400, error: "options.limit must be a non-negative integer" });
+    expect(check({ offset: 1e21 })).toEqual({ status: 400, error: "options.offset must be a non-negative integer" });
+    expect(check({ offset: Number.MAX_SAFE_INTEGER })).toEqual({
+      status: 400,
+      error: "options.offset must be a non-negative integer",
+    });
+  });
+
+  // The probe asks for one row more than the page, so the largest limit taken leaves that row a row bound too.
+  test("the largest page bounds taken are one below Number.MAX_SAFE_INTEGER, and the probe past them runs", () => {
+    const largest = Number.MAX_SAFE_INTEGER - 1;
+    const statement = "SELECT n FROM t";
+    const check = (options: unknown) => checkEditorQuery({ statement, type: "postgres", options });
+    expect(check({ limit: largest, offset: largest })).toBeNull();
+    expect(check({ limit: largest + 1 })).toEqual({
+      status: 400,
+      error: "options.limit must be a non-negative integer",
+    });
+
+    const limiting = {
+      prepareQuery: (sql: string, options: QueryPrepareOptions = {}): PreparedQuery => {
+        const { limit = 500, offset = 0 } = options;
+        const { sql: query, wasLimited } = applyQueryLimit(sql, limit, offset);
+        return { query, wasLimited, limit, offset };
+      },
+    };
+    const options = { limit: largest };
+    const probed = probePastPage(limiting, statement, options, limiting.prepareQuery(statement, options));
+    expect(probed.query).toBe(`${statement} LIMIT ${Number.MAX_SAFE_INTEGER}`);
   });
 
   test("a declared text bound refuses an oversize text in words and passes one at the bound", () => {

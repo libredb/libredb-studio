@@ -958,6 +958,44 @@ describe("QuerySafetyDialog", () => {
     expect(balanced.queryByText("Part of this statement could not be read")).toBeNull();
   });
 
+  // A lone carriage return in a `--` comment ends the comment on PostgreSQL and not on CockroachDB, which connects on
+  // the same type id, so the notice says why a statement that may read as a SELECT asks. A CR LF pair is an ordinary
+  // line end, and the notice stays silent.
+  test("says so for a line comment holding a lone carriage return", async () => {
+    globalThis.fetch = mock(async () =>
+      createStreamResponse({ chunks: [JSON.stringify(SAFE_PAYLOAD)] }),
+    ) as unknown as typeof fetch;
+
+    for (const databaseType of ["postgres", "mysql", "spark"] as const) {
+      const split = render(
+        <QuerySafetyDialog
+          isOpen
+          query={"SELECT 1 -- x\r; DELETE FROM t"}
+          schemaContext=""
+          databaseType={databaseType}
+          onClose={onClose}
+          onProceed={onProceed}
+        />,
+      );
+      expect(split.queryByText("Part of this statement could not be read")).not.toBeNull();
+      expect(split.queryByText(/lone carriage return/)).not.toBeNull();
+      split.unmount();
+      cleanup();
+    }
+
+    const paired = render(
+      <QuerySafetyDialog
+        isOpen
+        query={"SELECT 1 -- x\r\n; DELETE FROM t"}
+        schemaContext=""
+        databaseType="postgres"
+        onClose={onClose}
+        onProceed={onProceed}
+      />,
+    );
+    expect(paired.queryByText("Part of this statement could not be read")).toBeNull();
+  });
+
   // A vocabulary that asks for a typed value, or keeps its statements from the analysis (#1089, section 5.5 and
   // E10). These tests install a row of their own under a key no DatabaseType spells
   // (tests/helpers/stand-in-vocabulary.ts), so each rule is pinned apart from any engine's grammar; etcd's row,
@@ -1513,10 +1551,11 @@ describe("isDangerousQuery", () => {
 
   /**
    * `DELETE`, `MERGE` and `INSERT` are the rest of the data-modifying set the
-   * `UPDATE … SET` probe above already covers for `UPDATE` (#1862). They are read
-   * from the statement's code, and only when it leads with `WITH`, so the same
-   * words inside a string or a comment do not ask and a plain `WITH … SELECT` does
-   * not either. CockroachDB is the postgres type-id, so it shares the grammar.
+   * `UPDATE … SET` probe above already covers for `UPDATE` (#1862). They count as
+   * the first word of a CTE body, or as the keyword that operates a body opening
+   * with `WITH`. The statement need not lead with `WITH`. The same words inside a
+   * string or a comment do not ask, and a plain `WITH … SELECT` does not either.
+   * CockroachDB is the postgres type-id, so it shares the grammar.
    */
   test.each<[string, string]>([
     ["a DELETE", "WITH d AS (DELETE FROM users RETURNING *) SELECT count(*) FROM d"],
@@ -1525,6 +1564,13 @@ describe("isDangerousQuery", () => {
       "WITH m AS (MERGE INTO users u USING (SELECT 1 id) s ON u.id=s.id WHEN MATCHED THEN DELETE RETURNING u.id) SELECT * FROM m",
     ],
     ["an INSERT", "WITH i AS (INSERT INTO users(id) VALUES (1) RETURNING id) SELECT * FROM i"],
+    ["a nested WITH that deletes", "WITH x AS (WITH y AS (SELECT 1) DELETE FROM t RETURNING *) SELECT * FROM x"],
+    [
+      "a nested WITH that inserts",
+      "WITH x AS (WITH y AS (SELECT 1) INSERT INTO t VALUES (1) RETURNING *) SELECT * FROM x",
+    ],
+    ["a parenthesised WITH that deletes", "(WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d)"],
+    ["a CREATE TABLE whose query deletes", "CREATE TABLE t2 AS WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d"],
   ])("prompts for a data-modifying CTE that carries %s", (_label, query) => {
     expect(isDangerousQuery(query, "postgres")).toBe(true);
   });
@@ -1546,6 +1592,51 @@ describe("isDangerousQuery", () => {
 
   test("does not prompt for a plain WITH … SELECT", () => {
     expect(isDangerousQuery("WITH cte AS (SELECT 1) SELECT * FROM cte", "postgres")).toBe(false);
+    expect(isDangerousQuery("WITH x AS (WITH y AS (SELECT 1) SELECT * FROM y) SELECT * FROM x", "postgres")).toBe(
+      false,
+    );
+    expect(isDangerousQuery("(WITH d AS (SELECT 1) SELECT * FROM d)", "postgres")).toBe(false);
+    expect(isDangerousQuery("CREATE TABLE t2 AS WITH d AS (SELECT 1) SELECT * FROM d", "postgres")).toBe(false);
+  });
+
+  // DELETE, INSERT and MERGE are non-reserved, so a name spelled that way is not a write.
+  test.each<[string, string]>([
+    ["merge", "WITH a AS (SELECT merge FROM audit) SELECT * FROM a"],
+    ["delete", "WITH a AS (SELECT delete FROM audit) SELECT * FROM a"],
+    ["insert", "WITH a AS (SELECT insert FROM audit) SELECT * FROM a"],
+    ["merge in a MATERIALIZED CTE", "WITH a AS MATERIALIZED (SELECT merge FROM audit) SELECT * FROM a"],
+    ["delete in a NOT MATERIALIZED CTE", "WITH a AS NOT MATERIALIZED (SELECT delete FROM audit) SELECT * FROM a"],
+    ["merge", "WITH merge AS (SELECT 1 FROM audit) SELECT * FROM merge"],
+    ["delete", "WITH delete AS (SELECT 1 FROM audit) SELECT * FROM delete"],
+    ["insert", "WITH insert AS (SELECT 1 FROM audit) SELECT * FROM insert"],
+    ["merge in a column list", "WITH a (merge) AS (SELECT 1) SELECT * FROM a"],
+    ["merge aliased as delete", "WITH a AS (SELECT merge AS delete FROM audit) SELECT * FROM a"],
+    ["delete inside a nested WITH", "WITH x AS (WITH y AS (SELECT delete FROM audit) SELECT * FROM y) SELECT * FROM x"],
+    ["delete in a parenthesised WITH", "(WITH a AS (SELECT delete FROM audit) SELECT * FROM a)"],
+    ["delete in a CREATE TABLE AS WITH", "CREATE TABLE t2 AS WITH a AS (SELECT delete FROM audit) SELECT * FROM a"],
+  ])("does not prompt for a column or CTE named %s", (_label, query) => {
+    expect(isDangerousQuery(query, "postgres")).toBe(false);
+  });
+
+  test.each<[string, string]>([
+    [
+      "DELETE after MATERIALIZED",
+      "WITH d AS /* hint */ MATERIALIZED /* body */ (/* open */ DELETE FROM users RETURNING *) SELECT count(*) FROM d",
+    ],
+    [
+      "INSERT after NOT MATERIALIZED",
+      "WITH i AS NOT MATERIALIZED (INSERT INTO users(id) VALUES (1) RETURNING id) SELECT * FROM i",
+    ],
+    [
+      "MERGE after MATERIALIZED",
+      "WITH m AS MATERIALIZED (MERGE INTO users u USING (SELECT 1 id) s ON u.id=s.id WHEN MATCHED THEN DELETE RETURNING u.id) SELECT * FROM m",
+    ],
+    [
+      "a later DELETE",
+      "WITH a AS (SELECT merge FROM audit), d AS MATERIALIZED (DELETE FROM users RETURNING *) SELECT * FROM d",
+    ],
+  ])("prompts for a data-modifying CTE that opens with %s", (_label, query) => {
+    expect(isDangerousQuery(query, "postgres")).toBe(true);
   });
 
   test("prompts for a destructive statement a CTE list only precedes", () => {
@@ -1716,9 +1807,10 @@ describe("isDangerousQuery", () => {
    * Answers pinned so a regression is silence, and so `docs/editor/query-optimization.md`
    * cannot drift from them.
    *
-   * A `DELETE`, `MERGE` or `INSERT` inside a `WITH` whose list can be read asks
-   * (#1862). Those words stay out of the unanchored `UPDATE … SET` pair: widening
-   * that pair would make every read whose code names one of them prompt.
+   * A `DELETE`, `MERGE` or `INSERT` that opens a CTE body whose list can be read asks
+   * (#1862), including a body that opens with `WITH` and a `WITH` that is not the
+   * statement's first word. Those words stay out of the unanchored `UPDATE … SET`
+   * pair: widening that pair would make every read whose code names one of them prompt.
    *
    * The multi-statement rows closed an older gap (S1): the predicate reads the SAME
    * fragments `/api/db/multi-query` will run, so a later `DROP` is answered by its
@@ -1727,6 +1819,22 @@ describe("isDangerousQuery", () => {
    */
   test.each<[string, string, boolean]>([
     ["a DELETE hidden in a CTE body", "WITH gone AS (DELETE FROM t RETURNING *) SELECT * FROM gone", true],
+    [
+      "a DELETE that operates a nested WITH",
+      "WITH x AS (WITH y AS (SELECT 1) DELETE FROM t RETURNING *) SELECT * FROM x",
+      true,
+    ],
+    [
+      "an INSERT that operates a nested WITH",
+      "WITH x AS (WITH y AS (SELECT 1) INSERT INTO t VALUES (1) RETURNING *) SELECT * FROM x",
+      true,
+    ],
+    ["a parenthesised WITH that deletes", "(WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d)", true],
+    [
+      "a CREATE TABLE whose query deletes",
+      "CREATE TABLE t2 AS WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d",
+      true,
+    ],
     ["a DROP after a leading SELECT", "SELECT 1; DROP TABLE users", true],
     ["an UPDATE after a leading SELECT", "SELECT 1;\nUPDATE t SET x = 1", true],
   ])("answers %s with %p", (_label, query, expected) => {

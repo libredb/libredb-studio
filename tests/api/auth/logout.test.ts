@@ -5,7 +5,9 @@ import { createMockCookies, parseResponseJSON } from "../../helpers/mock-next";
 
 // ─── Mock @/lib/auth BEFORE importing the route ─────────────────────────────
 const mockLogout = mock(async () => {});
-const mockGetSession = mock(async () => null as { role: string; username: string; idpSubject?: string } | null);
+const mockGetSession = mock(
+  async () => null as { role: string; username: string; idpSubject?: string; channel?: "bearer" } | null,
+);
 
 mock.module("@/lib/auth", () => ({
   login: mock(async () => {}),
@@ -298,5 +300,49 @@ describe("POST /api/auth/logout (OIDC_LOGOUT_HINT)", () => {
 
     expect(mockBuildLogoutUrl).not.toHaveBeenCalled();
     expect(cookieStore._deleted).toEqual([{ name: "oidc-logout-hint", path: "/api/auth/logout" }]);
+  });
+});
+
+// A native client's session stands on the identity provider's access token (src/lib/oidc-bearer.ts). It holds no
+// Studio cookie and ends its provider session itself, so the route answers with neither a cookie nor an end-session URL.
+describe("POST /api/auth/logout (bearer access token)", () => {
+  beforeEach(() => {
+    cookieStore = createMockCookies();
+    mockLogout.mockClear();
+    mockBuildLogoutUrl.mockClear();
+    mockBuildLogoutUrl.mockResolvedValue(KEYCLOAK_LOGOUT);
+    mockGetSession.mockImplementation(async () => ({
+      role: "user",
+      username: "ada@example.test",
+      idpSubject: "subject-ada",
+      channel: "bearer",
+    }));
+    process.env.NEXT_PUBLIC_AUTH_PROVIDER = "oidc";
+  });
+
+  afterEach(() => {
+    process.env.NEXT_PUBLIC_AUTH_PROVIDER = "local";
+    mockGetSession.mockImplementation(async () => null);
+  });
+
+  test("answers success with no redirectUrl, touches no cookie and records the logout", async () => {
+    cookieStore.set("auth-token", "a-browser-session-on-the-same-device");
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const res = await POST(makeRequest() as never);
+
+      expect(res.status).toBe(200);
+      expect(await parseResponseJSON(res)).toEqual({ success: true });
+      expect(res.headers.get("set-cookie")).toBeNull();
+      expect(mockLogout).not.toHaveBeenCalled();
+      expect(mockBuildLogoutUrl).not.toHaveBeenCalled();
+      expect(cookieStore._deleted).toEqual([]);
+      const lines = logSpy.mock.calls.map((call) => String(call[0]));
+      expect(
+        lines.some((line) => line.includes('"event":"logout"') && line.includes('"actor":"ada@example.test"')),
+      ).toBe(true);
+    } finally {
+      logSpy.mockRestore();
+    }
   });
 });

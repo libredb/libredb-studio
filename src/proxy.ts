@@ -12,6 +12,7 @@ import { logger } from "@/lib/logger";
 import { auditMcpDenial, authenticateMcpRequest } from "@/lib/mcp/bearer";
 import { MCP_PATH } from "@/lib/mcp/config";
 import { mcpOriginHostRefusal } from "@/lib/mcp/origin-policy";
+import { authenticateBearer, type BearerAuthentication } from "@/lib/oidc-bearer";
 import { getJwtSecret } from "@/lib/config/auth-env";
 import { readOidcAutoRedirect } from "@/lib/config/oidc-auto-redirect";
 import { governanceEnabled } from "@/lib/governance/config";
@@ -42,6 +43,29 @@ const ORIGIN_MISMATCH_BODY = {
 const WORKSPACE_OWNER_MISMATCH_BODY = {
   error: "This page's workspace belongs to a different account than the one signed in. Reload the page.",
   code: ApiErrorCode.WORKSPACE_OWNER_MISMATCH,
+};
+
+const BEARER_REFUSED = "Invalid access token";
+
+/**
+ * A verified access token Studio still refuses, by audit reason: 403 with a code of its own, so a native client shows
+ * the refusal instead of refreshing a token that is refused again until an administrator changes the account.
+ */
+const BEARER_ACCOUNT_REFUSED_BODY = {
+  bearer_no_role: {
+    error: "This account has no role in Studio. Ask an administrator for access.",
+    code: ApiErrorCode.BEARER_NO_ROLE,
+  },
+  bearer_no_identity: {
+    error:
+      "The access token carries no user name Studio can use. Ask an administrator to check the account's email and username.",
+    code: ApiErrorCode.BEARER_NO_IDENTITY,
+  },
+} as const;
+
+const IDENTITY_PROVIDER_UNAVAILABLE_BODY = {
+  error: "The identity provider could not be reached to verify the access token. Try again.",
+  code: ApiErrorCode.IDENTITY_PROVIDER_UNAVAILABLE,
 };
 
 /** The sentence POST /api/auth/launch answers while launch sign-in is off. */
@@ -167,6 +191,14 @@ export async function proxy(request: NextRequest) {
     if (launch.state === "misconfigured") return withSecurityHeaders(launchPageAnswer(launch.problem, 503));
   }
 
+  // A public route that answers from the session when a request offers one decides its Bearer header here, as every
+  // other API route does below, so a client reads a refused token, a refused account and an unreachable provider apart
+  // there too. The other public routes never read the header, so an expired token cannot stop a sign-in.
+  if (sessionReadingPublicRoute(request.method, pathname)) {
+    const bearer = await apiBearer(request, pathname);
+    if (bearer !== null) return withSecurityHeaders(bearerAnswer(request, pathname, bearer));
+  }
+
   // Allow public routes
   if (
     pathname.startsWith("/api/auth") ||
@@ -192,6 +224,12 @@ export async function proxy(request: NextRequest) {
     return withSecurityHeaders(NextResponse.next());
   }
 
+  // An API call may carry an identity provider's access token instead of the cookie (src/lib/oidc-bearer.ts). While
+  // the channel is on, a Bearer header decides alone, even next to a valid cookie; off, or with another scheme, it is
+  // ignored as it always was. A page never takes one.
+  const bearer = await apiBearer(request, pathname);
+  if (bearer !== null) return withSecurityHeaders(bearerAnswer(request, pathname, bearer));
+
   if (!token) {
     return withSecurityHeaders(signInRequired(request, pathname, "Authentication required"));
   }
@@ -200,14 +238,8 @@ export async function proxy(request: NextRequest) {
     const { payload } = await jwtVerify(token, jwtSecret());
     const role = payload.role as string;
 
-    // A tab that claimed the browser copy names that account on every request (docs/STORAGE.md).
-    // One that names a different account than the session's is answered here, before any route
-    // runs, and the tab reloads to claim the copy again. A request without the header (MCP, the
-    // agent drive callback, an external client, local mode) is not checked.
-    const claimed = request.headers.get(WORKSPACE_OWNER_HEADER);
-    if (claimed !== null && decodedOwner(claimed) !== payload.username) {
-      return withSecurityHeaders(NextResponse.json(WORKSPACE_OWNER_MISMATCH_BODY, { status: 409 }));
-    }
+    const ownerMismatch = workspaceOwnerMismatch(request, payload.username);
+    if (ownerMismatch !== null) return withSecurityHeaders(ownerMismatch);
 
     // RBAC: /admin only for admin
     if (pathname.startsWith("/admin") && role !== "admin") {
@@ -247,6 +279,82 @@ export async function proxy(request: NextRequest) {
 }
 
 /**
+ * A tab that claimed the browser copy names that account on every request (docs/STORAGE.md). One that names a different
+ * account than the session's is answered here, before any route runs, and the tab reloads to claim the copy again. A
+ * request without the header (MCP, the agent drive callback, an external client, local mode) is not checked.
+ */
+function workspaceOwnerMismatch(request: NextRequest, username: unknown): NextResponse | null {
+  const claimed = request.headers.get(WORKSPACE_OWNER_HEADER);
+  if (claimed === null || decodedOwner(claimed) === username) return null;
+  return NextResponse.json(WORKSPACE_OWNER_MISMATCH_BODY, { status: 409 });
+}
+
+function isApiPath(pathname: string): boolean {
+  return pathname === "/api" || pathname.startsWith("/api/");
+}
+
+/**
+ * The public routes that read the session (getSession) when there is one: who is signed in, the sign-out record, and
+ * the detailed health check of a connection. The liveness GET of /api/db/health reads none.
+ */
+function sessionReadingPublicRoute(method: string, pathname: string): boolean {
+  return (
+    pathname === "/api/auth/me" ||
+    pathname === "/api/auth/logout" ||
+    (method === "POST" && pathname === "/api/db/health")
+  );
+}
+
+type TakenBearer = Exclude<BearerAuthentication, { kind: "absent" }>;
+
+/** What the bearer channel says of an API call, or null for a page or a call it leaves to the cookie. */
+async function apiBearer(request: NextRequest, pathname: string): Promise<TakenBearer | null> {
+  if (!isApiPath(pathname)) return null;
+  const bearer = await authenticateBearer(request.headers.get("authorization"));
+  return bearer.kind === "absent" ? null : bearer;
+}
+
+/**
+ * The answer to an API call whose Bearer header the channel took. A refused token is 401 with the bearer challenge and
+ * never a redirect, a verified token whose account Studio refuses is 403, both audited and metered as the Origin
+ * refusal is; a fault is the provider's or the configuration's, 503, logged
+ * and not audited, so neither the client nor an operator reads it as a bad token. The route verifies the token again.
+ */
+function bearerAnswer(request: NextRequest, pathname: string, bearer: TakenBearer): NextResponse {
+  if (bearer.kind === "authenticated") {
+    return workspaceOwnerMismatch(request, bearer.session.username) ?? NextResponse.next();
+  }
+  if (bearer.kind === "fault") {
+    logger.error("Could not verify a bearer access token", bearer.error, { route: "proxy" });
+    return NextResponse.json(IDENTITY_PROVIDER_UNAVAILABLE_BODY, { status: 503 });
+  }
+  const address = clientAddress(request);
+  const notice = consumeRateLimit("anon", address);
+  if (notice.allowed || notice.tripped) {
+    try {
+      emitAuditEvent({
+        type: "permission_denied",
+        action: "denied",
+        target: `${request.method} ${pathname}`.slice(0, MAX_AUDIT_FIELD_LENGTH),
+        user: "anonymous",
+        result: "failure",
+        reason: bearer.reason,
+        ip: address,
+      });
+    } catch (auditError) {
+      logger.error("Failed to record a bearer refusal audit event", auditError, { route: "proxy" });
+    }
+  }
+  if (bearer.reason !== "bearer_token_invalid") {
+    return NextResponse.json(BEARER_ACCOUNT_REFUSED_BODY[bearer.reason], { status: 403 });
+  }
+  return NextResponse.json(sessionRequiredBody(BEARER_REFUSED), {
+    status: 401,
+    headers: { "WWW-Authenticate": 'Bearer error="invalid_token"' },
+  });
+}
+
+/**
  * The redirect a signed-out GET /login takes straight to the identity provider (OIDC_AUTO_REDIRECT,
  * docs/OIDC.md), or null to render the login page. It carries `next` only when safeReturnPath
  * accepts it, and it is skipped whenever `error` is present: every OIDC failure lands on
@@ -273,7 +381,7 @@ function oidcAutoRedirect(request: NextRequest): NextResponse | null {
  * and sign-in then lands on the role's own page as before.
  */
 function signInRequired(request: NextRequest, pathname: string, error: string): NextResponse {
-  if (pathname === "/api" || pathname.startsWith("/api/")) {
+  if (isApiPath(pathname)) {
     return NextResponse.json(sessionRequiredBody(error), { status: 401 });
   }
   const { search } = request.nextUrl;

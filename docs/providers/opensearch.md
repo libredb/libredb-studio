@@ -428,7 +428,7 @@ shared generator emits a `?` this provider would then decline to fill.
 ### 4.1 Configuration fields
 
 The form offers exactly four fields
-(the `opensearch` entry in [`db-ui-config.ts`](../../src/lib/db-ui-config.ts)): `host`, `port`, `user`, `password`.
+(the `opensearch` entry in [`connection-form.ts`](../../src/lib/db/connection-form.ts)): `host`, `port`, `user`, `password`.
 
 | Field | Required | Notes |
 |---|---|---|
@@ -1756,7 +1756,7 @@ The refusal reason it prints, verbatim:
 - Base class: [`src/lib/db/base-provider.ts`](../../src/lib/db/base-provider.ts)
 - Interface & DTOs: [`src/lib/db/types.ts`](../../src/lib/db/types.ts)
 - Errors: [`src/lib/db/errors.ts`](../../src/lib/db/errors.ts)
-- Connection form config: [`src/lib/db-ui-config.ts`](../../src/lib/db-ui-config.ts)
+- Connection form config: [`src/lib/db/connection-form.ts`](../../src/lib/db/connection-form.ts)
 - Dialect facts elsewhere in the codebase: `OPENSEARCH_GRAMMAR` in [`src/lib/db/providers/sql/search/opensearch-sql-grammar.ts`](../../src/lib/db/providers/sql/search/opensearch-sql-grammar.ts) (`#`, `[…]`, block comments) · `quoteIdentifier()` in [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) (backticks) · `OPENSEARCH_SQL_WRITING` in [`opensearch-sql-writing.ts`](../../src/lib/db/providers/sql/search/opensearch-sql-writing.ts) (both escape forms) · [`src/lib/sql/fence-tags.ts`](../../src/lib/sql/fence-tags.ts) (the fence tag)
 - Local cluster: [`database-compose.yml`](../../database-compose.yml) (`opensearch` service, host port 9201)
 - Tests: [`tests/integration/db/opensearch-provider.test.ts`](../../tests/integration/db/opensearch-provider.test.ts) · [`tests/unit/db/search/`](../../tests/unit/db/search/)

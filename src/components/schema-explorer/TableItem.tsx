@@ -388,7 +388,11 @@ export const TableItem = React.memo(function TableItem({
             transition={{ duration: 0.2 }}
             className="overflow-hidden"
           >
-            <ColumnList columns={table.columns} indexes={table.indexes} />
+            <ColumnList
+              columns={table.columns}
+              indexes={table.indexes}
+              exclusionConstraints={table.exclusionConstraints}
+            />
           </motion.div>
         )}
       </AnimatePresence>

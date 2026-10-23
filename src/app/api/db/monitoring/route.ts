@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { getOrCreateProvider } from "@/lib/db";
 import type { MonitoringOptions } from "@/lib/db/types";
 import { createErrorResponse } from "@/lib/api/errors";
+import { INVALID_REQUEST_BODY, isJsonObject } from "@/lib/api/json-object-body";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
-import { auditRoleDenial, guardRoute } from "@/lib/api/require-session";
+import { auditRoleDenial, guardRoute, adminRequiredResponse } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
 import { editorProvider } from "@/lib/api/editor-provider";
 import { governanceEnabled } from "@/lib/governance/config";
@@ -25,7 +26,7 @@ export async function POST(req: NextRequest) {
   // session keeps the access it always had.
   if (governanceEnabled() && guard.session.role !== "admin") {
     auditRoleDenial({ route: "POST /api/db/monitoring", user: guard.session.username, request: req });
-    return NextResponse.json({ error: "Unauthorized. Admin access required." }, { status: 403 });
+    return adminRequiredResponse();
   }
 
   try {
@@ -40,9 +41,19 @@ export async function POST(req: NextRequest) {
     } catch {
       return NextResponse.json({ error: "Invalid JSON in request body" }, { status: 400 });
     }
+    // JSON that is not an object (`null`, an array, a number) is a malformed request as well, refused before any
+    // connection resolves: a `null` one answered 500 with the runtime's own destructuring error.
+    if (!isJsonObject(body)) {
+      return NextResponse.json({ error: INVALID_REQUEST_BODY }, { status: 400 });
+    }
 
-    const connection = await resolveConnection(body, guard.session);
+    // A present `options` that is not an object is refused in the query route's words: a `null` one reached the
+    // provider's destructuring and answered 500 with the runtime's own text.
     const { options } = body as { options?: MonitoringOptions };
+    if (options !== undefined && !isJsonObject(options)) {
+      return NextResponse.json({ error: "options must be an object" }, { status: 400 });
+    }
+    const connection = await resolveConnection(body, guard.session);
 
     if (!connection.type) {
       return NextResponse.json({ error: "Valid connection configuration is required" }, { status: 400 });

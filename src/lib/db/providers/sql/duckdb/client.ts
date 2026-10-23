@@ -49,6 +49,7 @@ import * as os from "os";
 import { join } from "path";
 import { ConnectionError } from "../../../errors";
 import { keyRowsByPosition } from "../../../utils/positional-rows";
+import { assertRegularFilesOrMissing, readRegularFileStart } from "../../../utils/regular-file";
 import { uniqueFieldNames } from "../../../utils/result-fields";
 
 // ============================================================================
@@ -277,23 +278,11 @@ const DUCKDB_MAGIC = "DUCK";
 /** The 16 bytes every SQLite database file starts with (https://www.sqlite.org/fileformat2.html). */
 const SQLITE_HEADER = "SQLite format 3\0";
 
-/** The first bytes of the file at `path`, or null when it cannot be read here. */
-function readHeader(path: string): Buffer | null {
-  let fd: number;
-  try {
-    fd = fs.openSync(path, "r");
-  } catch {
-    return null;
-  }
-  try {
-    const header = Buffer.alloc(SQLITE_HEADER.length);
-    return header.subarray(0, fs.readSync(fd, header, 0, header.length, 0));
-  } catch {
-    return null;
-  } finally {
-    fs.closeSync(fd);
-  }
-}
+/**
+ * The files DuckDB keeps beside a database file, the names its file allow-list admits with it: the WAL
+ * it replays when it opens the file, and the two it moves that WAL through.
+ */
+const DUCKDB_SIDECAR_SUFFIXES = [".wal", ".wal.checkpoint", ".wal.recovery"] as const;
 
 /**
  * Refuse an existing file that is not a DuckDB database, before the engine opens it (#1404).
@@ -303,12 +292,25 @@ function readHeader(path: string): Buffer | null {
  * checkpointing the SQLite WAL into the file, and the connection then reports success on
  * a database that is not DuckDB's. Reading the header first leaves the file untouched.
  *
- * A path that cannot be read here (missing, unreadable, a directory) is left to the
- * engine, which creates the missing file or names the failure in its own words.
+ * Before the header is read, a path that exists and is not a regular file (a FIFO, a socket,
+ * a device, a directory) is refused as an open failure: opening a FIFO for reading waits for
+ * a writer that never comes, and this read is synchronous, so it froze the server. So is such a
+ * file at one of the engine's own names beside it: a FIFO `.wal` held the engine's open on a
+ * threadpool thread for good (`assertRegularFilesOrMissing`). The header read itself opens
+ * without waiting and refuses from the descriptor, so a FIFO renamed onto the path after that
+ * check is refused too rather than read (`readRegularFileStart`). A path that cannot be read
+ * here (missing, unreadable) is left to the engine, which creates the missing file or names the
+ * failure in its own words.
  */
 function assertDuckDBFile(path: string): void {
   if (path === MEMORY_TARGET) return;
-  const header = readHeader(path);
+  let header: Buffer | null;
+  try {
+    assertRegularFilesOrMissing(path, DUCKDB_SIDECAR_SUFFIXES);
+    header = readRegularFileStart(path, SQLITE_HEADER.length);
+  } catch (error) {
+    throw describeOpenFailure(error, path, false);
+  }
   if (header === null) return;
 
   const magic = header.subarray(DUCKDB_MAGIC_OFFSET, DUCKDB_MAGIC_OFFSET + DUCKDB_MAGIC.length);
