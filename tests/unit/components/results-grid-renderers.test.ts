@@ -223,6 +223,16 @@ describe("renderDetail", () => {
     expect(jsonRenderer.renderDetail('{\n    "id": 1\n}').text).toBe('{\n  "id": 1\n}');
   });
 
+  test("jsonRenderer parses the trimmed text classifyValue parsed, so a leading U+00A0 never throws", () => {
+    // String.prototype.trim drops U+00A0 but JSON.parse rejects it as a token.
+    const nbsp = ' {"a":1}';
+    expect(classifyValue(nbsp)).toBe("json");
+    expect(jsonRenderer.renderDetail(nbsp).text).toBe('{\n  "a": 1\n}');
+    // A lossy value with the same padding keeps its stored text as-is.
+    const nbspLossy = ' {"n":9007199254740993}';
+    expect(jsonRenderer.renderDetail(nbspLossy).text).toBe(nbspLossy);
+  });
+
   test("jsonRenderer keeps the raw string when the number round-trip would lose fidelity", () => {
     // 9007199254740993 > 2^53: JSON.parse would round it to ...992, so the
     // detail sheet must show the stored text, not the canonicalized lie.
