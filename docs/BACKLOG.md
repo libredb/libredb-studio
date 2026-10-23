@@ -38,7 +38,7 @@ None of it is a GitHub issue.
 - [Chart configuration surface](#chart-configuration-surface) — N1 · 1
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H14 · 4
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 6
-- [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
+- [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K9 · 6
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
 - [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B128 · 61
@@ -6909,6 +6909,18 @@ Found 2026-10-05 by the final review of the platform integration branch.
 Not fixed there: it needs a new audit reason, a security control count change and tests of its own.
 
 **Done when:** the refusal emits `permission_denied` with the reason `custom_connections_disabled`, rate limited like `auditRoleDenial`, with tests and the `security:check` count that follows.
+
+### K9. An account store that cannot be read signs the browser out instead of answering an outage
+
+With password sign-in and the account store on `STORAGE_PROVIDER=sqlite` or `postgres`, `getSession` in `src/lib/auth.ts` returns null when `getStorageProvider`, `reconcileOnce` or `getAccount` throws, as its no-throw contract says.
+So `guardRoute` in `src/lib/api/require-session.ts` answers `401 AUTH_REQUIRED`, `/api/auth/me` answers `401 {authenticated:false}`, and `mcpTokenOwnerAllowed` in `src/lib/mcp/account-check.ts` treats the token as revoked (`401 invalid_token`), all for a store outage rather than a refused account.
+The browser is told to sign in again while its cookie still verifies, which may loop between `/login` and the editor the way a refused session once did; that loop is suspected, not measured.
+Governance and the bearer channel are not affected: under governance the account check reads the in-memory snapshot and lets a session through while no snapshot can be served (docs/GOVERNANCE.md), and under `NEXT_PUBLIC_AUTH_PROVIDER=oidc` the check opens no store.
+
+Found 2026-10-24 while checking a native client's report that a registry outage reads as 401; probed with the storage factory mocked to throw.
+Not fixed there: the native client's path is not affected, and the fix changes about 26 test files that mock `@/lib/auth`.
+
+**Done when:** a store read failure answers a 503 with a code of its own on `guardRoute`, `/api/auth/me` and MCP, for example through a `readSession()` in `src/lib/auth.ts` that tells a session, no session and an unreadable store apart while `getSession` keeps its no-throw contract, with route tests and docs/API_DOCS.md and docs/STORAGE.md saying so.
 
 ---
 
