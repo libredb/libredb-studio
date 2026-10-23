@@ -1612,6 +1612,12 @@ and, **only for `SELECT`/CTE-`SELECT` queries that don't already have a `LIMIT`*
 - "Unlimited" mode caps at `MAX_UNLIMITED_ROWS = 100000`.
 - Existing `LIMIT` / `FETCH FIRST … ROWS ONLY` / `TOP n` / `ROWNUM` is detected and respected
   (not double-limited).
+- **`LIMIT ALL` — PostgreSQL's own "no limit" spelling — is the statement's own bound**: the
+  SELECT page documents `LIMIT { count | ALL }`, so nothing is appended over it (#1926). The
+  word is declared on this dialect's grammar (`nonNumericRowBounds`), the same route
+  Snowflake's `NULL` took (SF-021); the parser takes `ALL` for the `LIMIT` count only, and a
+  `FETCH FIRST ALL ROWS ONLY` stays PostgreSQL's own refusal, just no longer a second
+  `LIMIT`'s.
 - Non-`SELECT` statements (INSERT/UPDATE/DELETE/DDL) are returned unchanged.
 - The statement type is read from its first keyword that is neither whitespace nor a **comment**
   ([`leading-keyword.ts`](../../src/lib/sql/leading-keyword.ts)), so `-- note`, `/* note */` and

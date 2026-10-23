@@ -4053,6 +4053,26 @@ describe("PostgresProvider", () => {
       expect(result.wasLimited).toBe(false);
     });
 
+    // ── `LIMIT ALL` is PostgreSQL's own unlimited bound (#1926) ─────────────
+    //
+    // The SELECT page documents `LIMIT { count | ALL }`, and the parser takes the
+    // ALL alternative for the count only (gram.y: select_limit_value: a_expr | ALL;
+    // select_fetch_first_value, the FETCH spelling, has no ALL arm). Reading only
+    // digits made the shared limiter treat the statement as unbounded and append a
+    // second LIMIT, which PostgreSQL refuses - so the fix is the value declared on
+    // this dialect's grammar, as Snowflake's NULL already was (SF-021).
+    test.each<[string, string]>([
+      ["uppercase", "SELECT id FROM t LIMIT ALL"],
+      ["lowercase", "SELECT id FROM t limit all"],
+    ])("bounds nothing over LIMIT ALL spelled %s: the statement keeps its own bound", (_label, sql) => {
+      provider = new PostgresProvider(makePgConfig());
+
+      const result = provider.prepareQuery(sql, { limit: 50 });
+
+      expect(result.query).toBe(sql);
+      expect(result.wasLimited).toBe(false);
+    });
+
     // CockroachDB connects as `postgres` and also takes an UPSERT as a CTE body.
     test("leaves a SELECT over an UPSERT ... RETURNING CTE unbounded, emitted intact", () => {
       provider = new PostgresProvider(makePgConfig());
