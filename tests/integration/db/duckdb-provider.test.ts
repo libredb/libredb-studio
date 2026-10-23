@@ -34,6 +34,8 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+/** A namespace import for `spyOn`, the same module object the provider's `import * as fs from "fs"` reads. */
+import * as fsNode from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { DuckDBProvider, assertReadOnlyStatementIsBounded } from "@/lib/db/providers/sql/duckdb";
@@ -60,6 +62,13 @@ import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { comparePaths } from "@/lib/db/object-path";
 import { logger } from "@/lib/logger";
 import { MISSING_POSIX_FILE_MODES, describeIf, testIf } from "../../helpers/posix-tools";
+import {
+  CHILD_TEST_TIMEOUT_MS,
+  MISSING_POSIX_SPECIAL_FILES,
+  connectInChild,
+  makeFifo,
+  runInChild,
+} from "../../helpers/special-files";
 import {
   WAREHOUSE_PLACEHOLDER,
   readFixtureStatements,
@@ -303,11 +312,155 @@ describe("connect / disconnect", () => {
     const dbPath = join(workDir, "nested", "deeper", "created.duckdb");
     provider = new DuckDBProvider(makeConfig({ database: dbPath }));
 
-    await provider.connect();
+    const mkdirSpy = spyOn(fsNode, "mkdirSync");
+    try {
+      await provider.connect();
+      // One level at a time, never recursive: Node's recursive mkdir never returns for a folder under /proc.
+      expect(mkdirSpy.mock.calls.map(([dir, options]) => [String(dir), options])).toEqual([
+        [join(workDir, "nested"), undefined],
+        [join(workDir, "nested", "deeper"), undefined],
+      ]);
+    } finally {
+      mkdirSpy.mockRestore();
+    }
     await provider.query("CREATE TABLE t (a INTEGER)");
     await provider.query("CHECKPOINT");
 
     expect(existsSync(dbPath)).toBe(true);
+  });
+
+  testIf(
+    existsSync("/proc/self") ? null : "no /proc on this platform: the folder procfs refuses is Linux-only",
+    "a folder under /proc fails at once with the open error, naming ENOENT and the folder",
+    async () => {
+      const folder = `/proc/libredb-${process.pid}-${Date.now()}`;
+      const dbPath = join(folder, "x", "app.duckdb");
+      provider = new DuckDBProvider(makeConfig({ database: dbPath }));
+      const error = await provider.connect().then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(error).toBeInstanceOf(ConnectionError);
+      expect((error as Error).message).toStartWith(`Failed to open DuckDB database ${dbPath}: ENOENT`);
+      expect((error as Error).message).toContain(`'${folder}'`);
+      expect(provider.isConnected()).toBe(false);
+    },
+  );
+
+  // The header read opened a FIFO for reading, which waits for a writer that never comes: connect()
+  // never returned and a 1 s timer never fired (measured on bun 1.4.2). Each case connects in a child
+  // under a hard limit, so a regression fails here instead of hanging the suite.
+  describeIf(MISSING_POSIX_SPECIAL_FILES, "a FIFO as the database path", () => {
+    const duckdbModule = join(import.meta.dir, "../../../src/lib/db/providers/sql/duckdb/index.ts");
+
+    test.each([
+      ["the editor", {}],
+      ["the agent read-only profile", { readOnly: true }],
+    ] as const)(
+      "%s refuses it at once, naming the path, and leaves no file beside it",
+      async (_who, execution) => {
+        const dir = mkdtempSync(join(workDir, "fifo-"));
+        const fifo = join(dir, "nobody-writes.duckdb");
+        makeFifo(fifo);
+        const outcome = await connectInChild(
+          duckdbModule,
+          "DuckDBProvider",
+          { id: "fifo", name: "fifo", type: "duckdb", database: fifo },
+          execution,
+        );
+        expect(outcome).toEqual({
+          report: {
+            connected: false,
+            error: "ConnectionError",
+            message: `Failed to open DuckDB database ${fifo}: ${fifo} is a named pipe (FIFO), not a regular file`,
+          },
+          failure: null,
+        });
+        expect(readdirSync(dir)).toEqual(["nobody-writes.duckdb"]);
+        expect(statSync(fifo).isFIFO()).toBe(true);
+      },
+      CHILD_TEST_TIMEOUT_MS,
+    );
+
+    // DuckDB replays a `.wal` beside an existing database when it opens it, and that open of a FIFO never
+    // returned: it blocks a libuv threadpool thread, and four such connects left every async file and DNS
+    // call in the server pending (measured on Node v24.14.0). `.wal.checkpoint` and `.wal.recovery` are
+    // the engine's other names beside the file, and are refused the same way.
+    test.each([
+      ["the editor", ".wal", {}],
+      ["the editor", ".wal.checkpoint", {}],
+      ["the editor", ".wal.recovery", {}],
+      ["the agent read-only profile", ".wal", { readOnly: true }],
+    ] as const)(
+      "%s refuses a FIFO at the database's %s at once, naming it",
+      async (_who, suffix, execution) => {
+        const dir = mkdtempSync(join(workDir, "fifo-sidecar-"));
+        const dbPath = join(dir, "beside-a-fifo.duckdb");
+        const seed = new DuckDBProvider(makeConfig({ database: dbPath }));
+        await seed.connect();
+        await seed.disconnect();
+        makeFifo(`${dbPath}${suffix}`);
+        const outcome = await connectInChild(
+          duckdbModule,
+          "DuckDBProvider",
+          { id: "fifo", name: "fifo", type: "duckdb", database: dbPath },
+          execution,
+        );
+        expect(outcome).toEqual({
+          report: {
+            connected: false,
+            error: "ConnectionError",
+            message: `Failed to open DuckDB database ${dbPath}: ${dbPath}${suffix} is a named pipe (FIFO), not a regular file`,
+          },
+          failure: null,
+        });
+        expect(readdirSync(dir).sort()).toEqual(["beside-a-fifo.duckdb", `beside-a-fifo.duckdb${suffix}`]);
+      },
+      CHILD_TEST_TIMEOUT_MS,
+    );
+
+    // A regular file when it is checked and a FIFO when it is read: a loop renaming an empty file and a
+    // FIFO onto the path by turns blocked the header read on the server's own thread for good (measured
+    // on bun 1.4.2). The child stands that swap in deterministically, answering stat for the FIFO with
+    // the regular file's answer, so the header read is what meets the FIFO.
+    test(
+      "a FIFO swapped in after the check is refused from what the header read opened",
+      async () => {
+        const dir = mkdtempSync(join(workDir, "swap-"));
+        const fifo = join(dir, "swapped.duckdb");
+        const standIn = join(dir, "stand-in");
+        writeFileSync(standIn, "");
+        makeFifo(fifo);
+        const outcome = await runInChild(
+          [
+            'const fs = await import("node:fs");',
+            'const { spyOn } = await import("bun:test");',
+            "const statSync = fs.statSync;",
+            `const regular = statSync(${JSON.stringify(standIn)});`,
+            `spyOn(fs, "statSync").mockImplementation((target, options) => (target === ${JSON.stringify(fifo)} ? regular : statSync(target, options)));`,
+            `const { DuckDBProvider: Provider } = await import(${JSON.stringify(duckdbModule)});`,
+            `const provider = new Provider(${JSON.stringify({ id: "swap", name: "swap", type: "duckdb", database: fifo })}, {}, {});`,
+            "try {",
+            "  await provider.connect();",
+            "  await provider.disconnect();",
+            "  report({ connected: true });",
+            "} catch (error) {",
+            "  report({ connected: false, error: error.constructor.name, message: error.message });",
+            "}",
+          ].join("\n"),
+        );
+        expect(outcome).toEqual({
+          report: {
+            connected: false,
+            error: "ConnectionError",
+            message: `Failed to open DuckDB database ${fifo}: ${fifo} is a named pipe (FIFO), not a regular file`,
+          },
+          failure: null,
+        });
+        expect(statSync(fifo).isFIFO()).toBe(true);
+      },
+      CHILD_TEST_TIMEOUT_MS,
+    );
   });
 
   test("a relative path is resolved against the process directory, matching factory.ts's fileIdentity", async () => {
@@ -488,9 +641,9 @@ describe("a file that is not a DuckDB database is refused before the engine open
     expect((await provider.queryReadOnly("SELECT count(*) AS n FROM users", GENEROUS_BUDGET)).rows[0].n).toBe("2");
   });
 
-  test("a path whose header cannot be read is left to the engine, which names its own failure", async () => {
-    // A directory opens for reading on POSIX and then refuses the read; the engine's own
-    // sentence is the right one there, not a claim about the file's format.
+  test("a directory is refused before the engine opens it, naming the path rather than a file format", async () => {
+    // A directory opens for reading on POSIX and then refuses the read, so it used to reach the
+    // engine. It is not a regular file, so the shared check refuses it the way it refuses a FIFO.
     const dir = join(workDir, "a-directory.duckdb");
     mkdirSync(dir);
 
@@ -501,7 +654,10 @@ describe("a file that is not a DuckDB database is refused before the engine open
     );
 
     expect(refusal).toBeInstanceOf(ConnectionError);
-    expect((refusal as Error).message).toStartWith(`Failed to open DuckDB database ${dir}: `);
+    expect((refusal as Error).message).toBe(
+      `Failed to open DuckDB database ${dir}: ${dir} is a directory, not a regular file`,
+    );
+    expect(provider.isConnected()).toBe(false);
   });
 });
 

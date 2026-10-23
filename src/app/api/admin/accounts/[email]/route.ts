@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { accountFailureResponse } from "@/lib/api/account-response";
-import { auditRoleDenial, guardRoute } from "@/lib/api/require-session";
+import { auditRoleDenial, guardRoute, adminRequiredResponse } from "@/lib/api/require-session";
 import { login } from "@/lib/auth";
 import { changeAccount, removeAccount } from "@/lib/local-accounts";
 
@@ -12,7 +12,7 @@ async function requireAdmin(request: Request, route: string) {
   if ("response" in guard) return guard;
   if (guard.session.role !== "admin") {
     auditRoleDenial({ route, user: guard.session.username, request });
-    return { response: NextResponse.json({ error: "Unauthorized. Admin access required." }, { status: 403 }) };
+    return { response: adminRequiredResponse() };
   }
   return guard;
 }

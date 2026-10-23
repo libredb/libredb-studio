@@ -122,6 +122,8 @@ describe("src/proxy.ts", () => {
 
     // The walk is deep and complete: it reaches the governance switch the proxy reads, and stops nowhere.
     expect([...proxy.files]).toContain("src/lib/governance/config.ts");
+    // The bearer verifier the proxy calls (src/lib/oidc-bearer.ts) is inside the walk, so the boundary holds for it.
+    expect([...proxy.files]).toEqual(expect.arrayContaining(["src/lib/oidc-bearer.ts", "src/lib/oidc-identity.ts"]));
     expect(proxy.files.size).toBeGreaterThan(10);
     expect(proxy.unresolved).toEqual([]);
     expect(FORBIDDEN_MODULES.filter((module) => proxy.files.has(module))).toEqual([]);

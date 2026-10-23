@@ -298,16 +298,8 @@ export async function readObservations(
   );
   const bytes = new Uint8Array(new TextEncoder().encode(response.text));
 
-  // An error document is small and is read as a tree, because it is not a stream of observations.
-  // It is handed back rather than dropped: the agent refused the read, and the caller says so.
-  const peek = readMtconnectXml(bytes);
-  if (peek.ok && peek.root.name === "MTConnectError") {
-    return { read: 0, capped: false, agentError: peek.root };
-  }
-  if (!peek.ok || !MTCONNECT_ROOTS.has(peek.root.name)) {
-    assertMtconnect(response.status, response.contentType, response.text);
-  }
-
+  // One pass: the walker reports the root it opened and walks only a Streams document, so the
+  // answer is never also built as a whole tree just to learn its root (#1787).
   let read = 0;
   let capped = false;
   const walk = streamMtconnectObservations(bytes, (observation) => {
@@ -322,6 +314,14 @@ export async function readObservations(
   if (!walk.ok) {
     // The same split as a tree read: a bound of ours is not the agent's defect.
     throw readerRefusal(walk.reason, response.status, response.contentType);
+  }
+  if (walk.root !== "MTConnectStreams") {
+    // An error document is small and is read as a tree, because it is not a stream of observations.
+    // It is handed back rather than dropped: the agent refused the read, and the caller says so.
+    // A root that is not MTConnect at all is refused by the same check a tree read makes.
+    const root = assertMtconnect(response.status, response.contentType, response.text);
+    if (root.name === "MTConnectError") return { read: 0, capped: false, agentError: root };
+    return { read: 0, capped: false };
   }
   return { read, capped };
 }

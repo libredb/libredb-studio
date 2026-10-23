@@ -41,9 +41,9 @@ const holding = (address: number): number => 7000 + 11 * address;
  * Whether the fixture is ANSWERING MODBUS on that address, asked once for the whole file.
  *
  * SKIPPED RATHER THAN FAILED WHERE NO FIXTURE WAS MEANT TO BE. CI's e2e job starts no compose
- * service - `.github/workflows/ci.yml` names no engine, and the Modbus step is delivered on its
- * own in `docker/modbus/ci-step.yml` for a maintainer to paste - so the six cases that dial a
- * device cannot pass there. MEASURED on this branch's run: they dialled 127.0.0.1:1502 and got
+ * service, and the `Modbus live check` step of `.github/workflows/ci.yml` lives in the
+ * `functional-smoke` job rather than in the e2e one - so the six cases that dial a device cannot
+ * pass there. MEASURED on this branch's run: they dialled 127.0.0.1:1502 and got
  * `connect ECONNREFUSED` eighteen times. `mtconnect-provider.spec.ts` and
  * `opcua-screens.spec.ts` guard their live cases this same way, and the dialog cases below need
  * nothing but a browser and keep running everywhere.
@@ -57,7 +57,8 @@ const holding = (address: number): number => 7000 + 11 * address;
  *
  * THE THRESHOLD IS "SPEAKS", NOT "SERVES THIS FIXTURE'S VALUES", on purpose: nothing listening is
  * an absent fixture and skips, while a server answering another table's values is a WRONG fixture
- * and must stay red. `docker/modbus/ci-step.yml` keeps those two apart for the same reason.
+ * and must stay red. The `Modbus live check` step of `.github/workflows/ci.yml` keeps those two
+ * apart for the same reason.
  */
 const TRANSACTION = 0x4242;
 const UNIT = 1;

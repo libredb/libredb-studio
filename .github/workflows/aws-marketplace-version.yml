@@ -1,0 +1,146 @@
+# Adds a released version to the AWS Marketplace listing WITHOUT the portal.
+#
+# WHY THIS EXISTS. The AMI side of a release is already automatic: `AWS AMI Build`
+# builds and shares the AMI on `workflow_dispatch`, and it did so for 1.0.0 on
+# 18 October 2026 (run 39090167831: VERSION 1.0.0, ami-02a9cdd4e98bc3c78 and
+# ami-0a16a539ca4b00b0e). The listing side was not automatic at all. MEASURED on
+# 20 October 2026: the public listing still served `0.17.0 - latest` three days
+# after 1.0.0 shipped, no file in this repository called the Marketplace Catalog
+# API, and the written procedure was "do it in the Marketplace Management Portal",
+# which lives in one person's account. So the release stopped there every time,
+# and the reason was a missing workflow rather than a missing permission.
+#
+# WHY THE FIRST RUN CHANGES NOTHING. `mode: probe` (the default) only READS: it
+# proves which role answers and whether the catalog lists this product. A listing
+# is a published surface, so the write path is a separate, explicit choice.
+# The probe is not caution for its own sake: this role was built to share an AMI,
+# not to speak to the catalog, so its catalog permission has never been tested,
+# and a submission that discovers the denial half way through is worse than one
+# that never starts.
+#
+# The JSON lives in `scripts/aws-marketplace-change-set.py` rather than in a
+# heredoc here, and that is also measured: nested heredocs with `${{ }}` inside
+# `run: |` are exactly the shape that broke four of this repository's own
+# documented commands the same morning. The script takes arguments, prints JSON,
+# and was checked on a laptop with no AWS account.
+name: AWS Marketplace Version
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Released version to add (e.g. 1.0.0). It must already have an AMI from AWS AMI Build.'
+        required: true
+      ami_id:
+        description: 'The AMI that AWS AMI Build produced for that version (ami-...). Required for submit.'
+        required: false
+      mode:
+        description: 'probe = read only. submit = start the change set that adds the version.'
+        required: true
+        default: probe
+        type: choice
+        options: [probe, submit]
+
+permissions:
+  contents: read
+
+jobs:
+  catalog:
+    name: Marketplace catalog (${{ inputs.mode }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write # OIDC - no long-lived AWS access keys anywhere
+    env:
+      VERSION: ${{ inputs.version }}
+      AMI_ID: ${{ inputs.ami_id }}
+      ACCESS_ROLE: ${{ vars.AWS_AMI_INGESTION_ROLE_ARN }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+
+      - name: Refuse a version that is not released
+        # The listing must never name a version no release carries: a customer who
+        # picked it would get a tag that was never published. `AWS AMI Build`
+        # applies the same gate before it builds.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh api "repos/${{ github.repository }}/releases/tags/$VERSION" > /dev/null 2>&1; then
+            echo "::error::$VERSION is not a published release of this repository."
+            exit 1
+          fi
+          echo "::notice::$VERSION is a published release."
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_AMI_BUILD_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Who answers, and does the catalog list this product
+        id: probe
+        # Two questions, asked separately so a red names which one failed: the role,
+        # and the catalog. A catalog denial is a RESULT here, not a broken run, which
+        # is why it is written to the summary and carried on an output instead of
+        # failing the job.
+        run: |
+          {
+            echo "### Identity"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if ! aws sts get-caller-identity >> "$GITHUB_STEP_SUMMARY" 2>&1; then
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::The role could not be assumed."
+            exit 1
+          fi
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+          echo "### AmiProduct entities this role can see" >> "$GITHUB_STEP_SUMMARY"
+          if aws marketplace-catalog list-entities --catalog AWSMarketplace \
+               --entity-type AmiProduct --max-results 20 > entities.json 2> entities.err; then
+            python3 -c 'import json;d=json.load(open("entities.json"));[print("-", e.get("EntityId"), "|", e.get("Name"), "|", e.get("Visibility")) for e in d.get("EntitySummaryList", [])];print("");print("entity count:", len(d.get("EntitySummaryList", [])))' >> "$GITHUB_STEP_SUMMARY"
+            echo "catalog_read=yes" >> "$GITHUB_OUTPUT"
+          else
+            {
+              echo '```'
+              cat entities.err
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            # THE DENIAL GOES TO THE LOG TOO. The first probe run (39757602485) answered
+            # exactly what it was built to answer - the role cannot read the catalog - but
+            # the reason went only to the step summary, which no API returns: reading it
+            # back needed a human with the browser open. A result that cannot be fetched
+            # is a result that gets quoted from memory, so it is printed here as well.
+            echo "AWS denied the catalog read. Its own words:"
+            cat entities.err
+            echo "catalog_read=no" >> "$GITHUB_OUTPUT"
+            echo "::warning::This role cannot read the Marketplace catalog. The denial is in the summary; the listing step cannot run with this role as it stands."
+          fi
+
+      - name: Add the version to the listing
+        if: inputs.mode == 'submit' && steps.probe.outputs.catalog_read == 'yes'
+        # One change set, AddDeliveryOptions, which is what the portal's "Add
+        # version" form sends. AWS reviews a change set before it reaches the
+        # listing, so this starts the review rather than publishing anything.
+        run: |
+          if [ -z "$AMI_ID" ]; then
+            echo "::error::submit needs ami_id - the AMI that AWS AMI Build produced for $VERSION."
+            exit 1
+          fi
+          entity="$(python3 scripts/aws-marketplace-change-set.py entity --entities entities.json)"
+          echo "::notice::entity $entity"
+          python3 scripts/aws-marketplace-change-set.py change \
+            --entity "$entity" --version "$VERSION" --ami "$AMI_ID" \
+            --access-role "$ACCESS_ROLE" > change-set.json
+          aws marketplace-catalog start-change-set \
+            --catalog AWSMarketplace \
+            --change-set-name "add-$VERSION" \
+            --change-set "file://change-set.json" | tee start.json
+          {
+            echo "### Change set started"
+            echo '```'
+            cat start.json
+            echo '```'
+            echo "AWS reviews the change set before the listing changes."
+          } >> "$GITHUB_STEP_SUMMARY"

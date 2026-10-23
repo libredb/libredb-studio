@@ -443,6 +443,20 @@ describe("rowActions on a column row", () => {
     expect(idsFor(columnRow(), postgres, allHandlers(), orders)).toEqual([]);
   });
 
+  test("a constraint row is offered nothing either (#1778)", () => {
+    const row: TreeRowModel = {
+      id: "constraint%3Aapp/x/table/ex",
+      kind: "constraint",
+      label: "ex",
+      depth: 3,
+      setSize: 1,
+      posInSet: 1,
+      path: ["app", "x", "ex"],
+      constraint: { name: "ex", definition: "EXCLUDE USING gist (a WITH =)" },
+    };
+    expect(idsFor({ ...row, kindId: "table" }, postgres, allHandlers(), orders)).toEqual([]);
+  });
+
   test("and still nothing where the row carries its parent's kind id", () => {
     // This is what the first line of `rowActions` is FOR, and it is the one case that can fail
     // without it. The row above misses by CONSTRUCTION, because `flattenTree` gives a column row

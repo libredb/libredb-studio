@@ -38,6 +38,7 @@ import { readdirSync, readFileSync, realpathSync } from "node:fs";
 import { isBuiltin } from "node:module";
 import { join, posix } from "node:path";
 import ts from "typescript";
+import { platformTimeoutMs } from "../../../helpers/platform-timeout";
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const DIR = "src/lib/db/providers/sql/databend";
@@ -356,14 +357,25 @@ const SOURCES = readdirSync(join(ROOT, DIR))
   .map((entry) => `${DIR}/${entry}`);
 
 describe("the Databend directory holds its seams", () => {
-  test("every source passes rules 1 to 7", () => {
-    expect(SOURCES).toContain(`${DIR}/index.ts`);
-    expect(SOURCES.flatMap((file) => seamFindings(file, read(file)))).toEqual([]);
-  });
+  // The first parse of the directory pays the parser's warm-up: 0.5s alone with coverage and 4.5s under a
+  // 15% CPU quota.
+  test(
+    "every source passes rules 1 to 7",
+    () => {
+      expect(SOURCES).toContain(`${DIR}/index.ts`);
+      expect(SOURCES.flatMap((file) => seamFindings(file, read(file)))).toEqual([]);
+    },
+    platformTimeoutMs(40_000),
+  );
 
-  test("every value export has an importer under src/ or the doc test (rule 8)", () => {
-    expect(unimportedExports(SOURCES.map((file) => ({ file, text: read(file) })))).toEqual([]);
-  });
+  // Reads every file under src/: 0.5s alone with coverage and 4.5s under a 15% CPU quota.
+  test(
+    "every value export has an importer under src/ or the doc test (rule 8)",
+    () => {
+      expect(unimportedExports(SOURCES.map((file) => ({ file, text: read(file) })))).toEqual([]);
+    },
+    platformTimeoutMs(40_000),
+  );
 
   test("the detector reads real code", () => {
     const transport = references(`${DIR}/http-transport.ts`, read(`${DIR}/http-transport.ts`));
@@ -610,15 +622,20 @@ describe("rule 8 fails by name", () => {
     expect(unimportedExports(sources("decode.ts", extra))).toEqual([]);
   });
 
-  test("a bound only the doc test reads passes, and fails once the doc test is no reader", () => {
-    const real = sources("auth-latch.ts", "");
-    expect(unimportedExports(real)).toEqual([]);
-    const srcOnly = importers().filter((importer) => importer.file !== DOC_TEST);
-    expect(unimportedExports(real, srcOnly)).toEqual([
-      finding("auth-latch.ts", "AUTH_LATCH_TTL_MS"),
-      finding("auth-latch.ts", "AUTH_LATCH_MAX_ENTRIES"),
-    ]);
-  });
+  // Reads every file under src/ twice: 0.8s alone with coverage and 2.8s under a 15% CPU quota.
+  test(
+    "a bound only the doc test reads passes, and fails once the doc test is no reader",
+    () => {
+      const real = sources("auth-latch.ts", "");
+      expect(unimportedExports(real)).toEqual([]);
+      const srcOnly = importers().filter((importer) => importer.file !== DOC_TEST);
+      expect(unimportedExports(real, srcOnly)).toEqual([
+        finding("auth-latch.ts", "AUTH_LATCH_TTL_MS"),
+        finding("auth-latch.ts", "AUTH_LATCH_MAX_ENTRIES"),
+      ]);
+    },
+    platformTimeoutMs(40_000),
+  );
 
   test("a function planted in sql-text.ts fails by name", () => {
     expect(unimportedExports(sources("sql-text.ts", ONLY_FOR_A_TEST))).toEqual([
@@ -635,11 +652,16 @@ describe("rule 8 fails by name", () => {
     expect(unimportedExports(planted, [...importers(), namespace])).toEqual([finding("decode.ts", "onlyForATest")]);
   });
 
-  test("the doc test counts as an importer, and no other test file does", () => {
-    const planted = sources("decode.ts", ONLY_FOR_A_TEST);
-    expect(unimportedExports(planted, [...importers(), readerOf(DOC_TEST)])).toEqual([]);
-    expect(unimportedExports(planted, [...importers(), readerOf("tests/unit/db/databend/decode.test.ts")])).toEqual([
-      finding("decode.ts", "onlyForATest"),
-    ]);
-  });
+  // Reads every file under src/ twice: 0.7s alone with coverage and 2.6s under a 15% CPU quota.
+  test(
+    "the doc test counts as an importer, and no other test file does",
+    () => {
+      const planted = sources("decode.ts", ONLY_FOR_A_TEST);
+      expect(unimportedExports(planted, [...importers(), readerOf(DOC_TEST)])).toEqual([]);
+      expect(unimportedExports(planted, [...importers(), readerOf("tests/unit/db/databend/decode.test.ts")])).toEqual([
+        finding("decode.ts", "onlyForATest"),
+      ]);
+    },
+    platformTimeoutMs(40_000),
+  );
 });

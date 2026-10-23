@@ -267,7 +267,7 @@ Three deliberate limits, so nobody reads more into this than it does:
 
 The fingerprint is stored and displayed **in the clear**, on purpose. It is public key material: it
 authenticates the bastion to Studio, grants no access, unlocks nothing, and it has to be readable for
-the comparison above to be possible at all. `src/lib/storage/connection-secrets.ts` classifies it
+the comparison above to be possible at all. `src/lib/storage/secret-fields.ts` classifies it
 `public` alongside the certificates in `ssl`; the tunnel's password, private key and passphrase stay
 encrypted at rest.
 

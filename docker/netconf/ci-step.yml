@@ -1,9 +1,18 @@
-# The NETCONF step of `.github/workflows/ci.yml`, delivered on its own.
+# WHY THE NETCONF live check STEP IS NOT IN THIS FILE ANY MORE.
 #
-# Not written into that file directly, for the reason `docker/netconf/compose-service.yml` gives:
-# five engines land in one round and five sessions editing one file is a small rerun of the merge
-# this repository just finished. The coordinating session pastes the block below into the job that
-# runs the other live checks, after the functional smoke. It needs no `if:` and no secret.
+# This file used to carry the step itself, staged here because five engines were landing in
+# one round and five sessions editing one workflow would have been that round's merge in
+# miniature. Whoever owned the workflow was to paste it in. MEASURED 19 October 2026: the
+# paste never happened for any of the six engines, so none of the nineteen workflow files
+# mentioned this fixture and the live check ran only by hand.
+#
+# The step now lives in `.github/workflows/ci.yml`, in the `functional-smoke` job, named
+# `NETCONF live check`. It is not duplicated here on purpose: the pin this fixture runs is held equal to
+# the compose fragment's by a test, and a pin that lives in a third file nobody compares is a
+# third pin. What stays here is the reasoning the step is too short to carry.
+#
+# The image is the one `docker/netconf/compose-service.yml` declares, and the test named above holds the two
+# equal, so CI and a developer's machine run the same device.
 #
 # THE FIXTURE IS BUILT, NOT PULLED, and that is this engine's difference from the other four. The
 # server is Netopeer2 2.8.7, NETCONF's own reference implementation, assembled from four tarballs
@@ -61,101 +70,3 @@
       # The NETCONF provider's live check (#1724 phase 1): a third-party reference server read
       # through the real provider, the refusals it makes before dialling, and the device asked
       # afterwards whether it can still answer somebody else.
-      - name: NETCONF live check
-        run: |
-          # The port the probes use AND the sentences name, from one place. MEASURED elsewhere in
-          # this repository, on the Modbus fixture's step: that step was
-          # measured saying "on 1502" while its probe read another variable, so a run against a
-          # different port was refused with a sentence naming a port it had never asked.
-          export NETCONF_PROBE_PORT="${NETCONF_PROBE_PORT:-1830}"
-          export NETCONF_PROBE="${NETCONF_PROBE:-127.0.0.1:$NETCONF_PROBE_PORT}"
-          trap 'docker rm -f libredb-ci-netconf > /dev/null 2>&1' EXIT
-          # Built from the repository, so the tag below names this build and never a registry's.
-          docker build -t libredb-fixture/netconf:2.8.7 docker/netconf
-          docker run -d --name libredb-ci-netconf \
-            -e LIBREDB_NETCONF_INTERFACES=5000 \
-            -e LIBREDB_NETCONF_RO_PASSWORD=fixture-password \
-            -e LIBREDB_NETCONF_ROOT_PASSWORD=fixture-root \
-            -e LIBREDB_NETCONF_KEY_PASSPHRASE=fixture-passphrase \
-            -p "127.0.0.1:$NETCONF_PROBE_PORT:830" libredb-fixture/netconf:2.8.7
-          # The first question is asked inside the container, where 127.0.0.1 is the server itself
-          # and the answer cannot be Docker's. The second is asked from the HOST, over the published
-          # port, and that split is the point: a readiness check that only ever looks inside never
-          # tests the mapping, so a wrong `-p` passes it and every check afterwards fails with
-          # ECONNREFUSED, which reads as a provider defect rather than as an unreachable fixture.
-          # Asking from the host raises the question of whose banner answers. It can only be this
-          # container's: `docker run` above exits 125 when the published port is already taken, and
-          # the step stops there, so a foreign server never reaches this loop. MEASURED: starting a
-          # second fixture on a port another container held exited 125 with "failed to set up
-          # container networking".
-          configured=""
-          serving=""
-          end=$((SECONDS + 180))
-          while [ "$SECONDS" -lt "$end" ]; do
-            if docker exec libredb-ci-netconf test -f /fixture/.ready 2> /dev/null; then
-              configured=yes
-              if ssh-keyscan -T 3 -p "$NETCONF_PROBE_PORT" 127.0.0.1 2> /dev/null | grep -q 'SSH-2.0'; then
-                serving=yes
-                break
-              fi
-            fi
-            sleep 2
-          done
-          if [ -z "$serving" ]; then
-            # Both are NOT MEASURED, because in neither case did anything about this repository's
-            # code get measured. A reader who has to fix one of them needs to know which one.
-            if [ -n "$configured" ]; then
-              echo "NOT MEASURED: the NETCONF fixture finished configuring itself but never answered"
-              echo "on $NETCONF_PROBE within 180 s. Either the server is not speaking or the published"
-              echo "port does not reach it; this question is asked from the host for that reason. The"
-              echo "live check never ran."
-            else
-              echo "NOT MEASURED: the NETCONF fixture never wrote /fixture/.ready within 180 s, so it"
-              echo "never finished loading its accounts, its NACM rule-list and its interface list."
-              echo "The live check never ran, and a server reached before this point would have"
-              echo "refused every read."
-            fi
-            docker logs --tail 80 libredb-ci-netconf
-            exit 1
-          fi
-          # The deliverable has to be here to be measured. Without this the step would report
-          # success on a missing file: `bun` would fail with a module error, which reads as a broken
-          # step rather than as a deliverable that never landed.
-          test -f tests/live/netconf-live-check.ts || {
-            echo "NOT MEASURED: tests/live/netconf-live-check.ts is absent, so the fixture above was"
-            echo "built and started and nothing was asked of it."
-            exit 1
-          }
-          # The check exits 2 before dialling anything without these two, so they are set from the
-          # fixture rather than defaulted inside the check: a password with a default in a committed
-          # file is a published credential whatever it unlocks. `fixture-password` is this image's
-          # own read-only account, named in docker/netconf/README.md, and it unlocks nothing else.
-          # The fingerprint is read out of band because the image generates its host key at BUILD
-          # time, so it is this build's key and not a value any file could carry.
-          # The image this run is against, declared rather than assumed. The check carries its own
-          # pin and exits 2 without dialling anything if the two disagree, so a tag changed in one
-          # place and not the other is reported instead of being measured as though it were the
-          # same device. Without it the summary line reads "image not declared".
-          export NETCONF_LIVE_IMAGE=libredb-fixture/netconf:2.8.7
-          export NETCONF_LIVE_PASSWORD=fixture-password
-          NETCONF_LIVE_FINGERPRINT="$(docker exec libredb-ci-netconf sh -c \
-            'ssh-keyscan -T 5 -p 830 127.0.0.1 2> /dev/null | ssh-keygen -lf - | awk "{print \$2}"' | head -1)"
-          export NETCONF_LIVE_FINGERPRINT
-          if [ -z "$NETCONF_LIVE_FINGERPRINT" ]; then
-            echo "NOT MEASURED: the fixture answered a banner but its host key fingerprint could not"
-            echo "be read, so the check would have had nothing to pin the device to."
-            exit 1
-          fi
-          # The public-key account, extracted the way docker/netconf/README.md extracts it. Without
-          # it the check still runs and reports `NOT MEASURED the public-key account`, which is an
-          # honest line and a thinner run: the password path would be the only one dialled.
-          key="$(mktemp)"
-          docker exec libredb-ci-netconf cat /fixture/ro-key > "$key"
-          chmod 600 "$key"
-          bun tests/live/netconf-live-check.ts --target "$NETCONF_PROBE" --key "$key"
-          out="$(mktemp -d)"
-          bun build tests/live/netconf-live-check.ts --target=node --external cpu-features --outfile "$out/live.mjs"
-          node "$out/live.mjs" --target "$NETCONF_PROBE" --key "$key"
-          # Then the house's own layer, on the bytes a real device sent and with no container in
-          # reach: the one check here that still measures something where Docker is unavailable.
-          bun tests/run-tests.ts tests/integration/db/netconf-provider.test.ts

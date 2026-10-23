@@ -274,14 +274,14 @@ describe("readStatementEnd", () => {
       expect(split(crlf, spark)).toEqual([crlf, ""]);
     });
 
-    // Spark ends a `--` comment at a lone carriage return, so the WHERE after it is code and the cut lands after it; a
-    // comment read on to a line feed runs to the end of this text, and the cut lands before it.
-    test("a lone carriage return ends a `--` comment only where the dialect declares the fact", () => {
-      const spark = resolveSqlGrammar("spark");
+    // Spark ends a `--` comment at a lone carriage return and the default runs it on to the line feed, but servers on
+    // one connection type disagree about it, so no reading may cut the text: either one misplaces the bound on the other.
+    test("a lone carriage return in a `--` comment leaves the end uncut under every dialect", () => {
       const cr = "SELECT * FROM t -- note\rWHERE x = 1";
 
-      expect(split(cr, spark)).toEqual([cr, ""]);
-      expect(split(cr, DEFAULT_SQL_GRAMMAR)).toEqual(["SELECT * FROM t", " -- note\rWHERE x = 1"]);
+      for (const grammar of [resolveSqlGrammar("spark"), DEFAULT_SQL_GRAMMAR]) {
+        expect(readStatementEnd(cr, grammar)).toEqual({ end: cr.length, rewritable: false });
+      }
     });
   });
 

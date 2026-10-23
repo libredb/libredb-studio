@@ -15,9 +15,13 @@
  * The filter box above the rows (U25) narrows them to the objects whose name matches, over what
  * the tree has already read. Typing reads nothing; what the filter cannot see is counted on its
  * status line and read only on a press. The rule for an unread subtree is in `filter.ts`.
+ *
+ * The sticky strip over the rows answers the other cost of a windowed tree: the parents of the row
+ * the reader is looking at are unmounted, not merely off screen. It is derived from the flat list
+ * (never from mounted rows), drawn by `StickyStrip`, and its arithmetic is `sticky-rows.ts`.
  */
 
-import { useCallback, useDeferredValue, useEffect, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { CircleAlert, Database, LoaderCircle, SearchX } from "lucide-react";
 import type { DatabaseObject, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
@@ -25,9 +29,11 @@ import { containerRowId, type TreeRowModel } from "./flatten";
 import { RowMenu, type RowMenuAnchor } from "./RowMenu";
 import { rowActions, type TreeRowAction, type TreeRowActionHandlers } from "./row-actions";
 import { TreeFilter } from "./TreeFilter";
-import { TREE_ROW_HEIGHT, TreeRow } from "./TreeRow";
+import { ROW_ICONS, TREE_ROW_HEIGHT, TreeRow } from "./TreeRow";
 import { useTreeNodes, type ObjectSource } from "./use-tree-nodes";
 import { enumerableKinds, keyBrowserKind } from "@/lib/db/object-kinds";
+import { parentIndices, revealOffset, stickyCap, stickyEntries } from "@/components/sticky-rows";
+import { StickyStrip, type StickyStripSlot } from "@/components/StickyStrip";
 
 /** Rows kept mounted beyond each edge of the viewport, so a scroll does not flash empty. */
 const OVERSCAN = 4;
@@ -220,6 +226,34 @@ export function ObjectTree({
   // Exactly one row is tabbable. Until the reader picks one it is the first, and a row that
   // disappeared under a collapse hands the tab stop back rather than taking it out of the page.
   const activeRowId = rows.find((row) => row.id === activeId)?.id ?? rows[0]?.id;
+  // One viewport for the window and the strip, so they cannot disagree about how many rows are
+  // visible: the strip is the same arithmetic read at the top edge of the same box.
+  const measuredHeight = viewportHeight > 0 ? viewportHeight : UNMEASURED_VIEWPORT;
+  const parents = useMemo(() => parentIndices(rows), [rows]);
+  const [flashId, setFlashId] = useState<string | null>(null);
+  // The flash is a moment, not a state the reader can leave on, and a timer per request is what
+  // clears it. Every new jump replaces the id, and the effect tears the old timer down with it.
+  useEffect(() => {
+    if (flashId === null) return;
+    const timer = setTimeout(() => setFlashId(null), 900);
+    return () => clearTimeout(timer);
+  }, [flashId]);
+  const strip = useMemo<readonly StickyStripSlot<{ readonly row: TreeRowModel; readonly index: number }>[]>(
+    () =>
+      stickyEntries(
+        rows,
+        parents,
+        scrollTop,
+        measuredHeight,
+        TREE_ROW_HEIGHT,
+        stickyCap(measuredHeight, TREE_ROW_HEIGHT),
+      ).map((entry, slot) =>
+        entry.kind === "gap"
+          ? { kind: "gap" as const, slot }
+          : { kind: "row" as const, slot, item: { row: rows[entry.index], index: entry.index } },
+      ),
+    [rows, parents, scrollTop, measuredHeight],
+  );
 
   // The window is clamped to the focused row, so by the time this runs the row is mounted even if
   // it was forty thousand rows away.
@@ -254,6 +288,24 @@ export function ObjectTree({
   );
 
   const moveTo = useCallback((index: number) => focusRow(rows[clamp(index, 0, rows.length - 1)].id), [focusRow, rows]);
+
+  /**
+   * Send the reader back to a strip row: reveal it below the strip, mark it, and let it take the
+   * tab stop. The strip is a map, not a second navigation surface, so a press on it ends on the
+   * row itself - which is also what makes the press announceable once, by the row it lands on.
+   */
+  const revealTreeRow = useCallback(
+    (index: number) => {
+      const row = rows[index];
+      if (row === undefined) return;
+      const top = revealOffset(rows, index, TREE_ROW_HEIGHT);
+      if (treeRef.current !== null) treeRef.current.scrollTop = top;
+      setScroll({ query: filterQuery, top });
+      setFlashId(row.id);
+      focusRow(row.id);
+    },
+    [filterQuery, focusRow, rows],
+  );
 
   /** ArrowDown from the filter box: into the tree, on its first row. */
   const enterTree = useCallback(() => {
@@ -374,7 +426,7 @@ export function ObjectTree({
       // effect than any other row's activation. Stated as an arm rather than left to the
       // `expanded !== undefined` fall-through below, so giving a column children later cannot
       // make this silently wrong.
-      if (row.kind === "column") return;
+      if (row.kind === "column" || row.kind === "constraint") return;
       if (row.kind === "object") {
         const object = tree.objectFor(row);
         if (object !== undefined) onObjectClick?.(object);
@@ -642,12 +694,7 @@ export function ObjectTree({
   }
 
   const activeIndex = rows.findIndex((row) => row.id === activeRowId);
-  const [start, end] = treeWindow(
-    rows.length,
-    scrollTop,
-    viewportHeight > 0 ? viewportHeight : UNMEASURED_VIEWPORT,
-    pinned ? activeIndex : -1,
-  );
+  const [start, end] = treeWindow(rows.length, scrollTop, measuredHeight, pinned ? activeIndex : -1);
   // A window can leave the row holding the tab stop unmounted, and then NOTHING inside the tree is
   // tabbable: the arrow handler would sit on an element that cannot take focus, and a keyboard user
   // could not get in without reaching for the mouse. So the container holds the tab stop exactly
@@ -656,6 +703,11 @@ export function ObjectTree({
   // A menu whose row is gone - collapsed away, or dropped by a re-read - is closed by
   // DERIVING it from the rows rather than by an effect watching them.
   const menuRow = menu === null ? undefined : rows.find((row) => row.id === menu.rowId);
+  // The strip overlays the top of the scroll box, so the box reserves the strip's height as scroll
+  // PADDING: a row brought in by keyboard focus - `scrollIntoView` or the browser's own scrolling -
+  // stops BELOW the strip instead of under it. Without it, ArrowUp lands the row it names hidden
+  // beneath the very slots that name it.
+  const scrollPaddingTop = `${strip.length * TREE_ROW_HEIGHT}px`;
 
   return (
     <>
@@ -686,8 +738,23 @@ export function ObjectTree({
             onClick={onClick}
             onContextMenu={onContextMenu}
             onScroll={onScroll}
+            style={{ scrollPaddingTop }}
             className="relative min-h-0 flex-1 overflow-auto outline-none"
           >
+            <StickyStrip
+              testId="object-tree-sticky"
+              rowHeight={TREE_ROW_HEIGHT}
+              entries={strip}
+              renderRow={(item, slot) => (
+                <StickyStripRow
+                  key={`${slot}-${item.row.id}`}
+                  row={item.row}
+                  index={item.index}
+                  slot={slot}
+                  onReveal={revealTreeRow}
+                />
+              )}
+            />
             {/* Presentational, so the rows below stay owned by the tree in the accessibility tree. */}
             <div role="presentation" className="relative" style={{ height: rows.length * TREE_ROW_HEIGHT }}>
               {rows.slice(start, end).map((row, offset) => (
@@ -705,6 +772,7 @@ export function ObjectTree({
                   onOpenMenu={openMenuOnTrigger}
                   onToggle={toggleRow}
                   top={(start + offset) * TREE_ROW_HEIGHT}
+                  flashed={row.id === flashId}
                 />
               ))}
             </div>
@@ -722,6 +790,45 @@ export function ObjectTree({
         />
       )}
     </>
+  );
+}
+
+/**
+ * One slot of the sticky strip: a pointer-only map back to a row, drawn from the same model the row
+ * itself is drawn from. The strip above it is `aria-hidden`, so this control holds no tab stop and
+ * no accessible name of its own - the row it lands on is what a screen reader announces, which is
+ * why the same gesture needs no keyboard equivalent: arrows already reach every row.
+ */
+function StickyStripRow({
+  row,
+  index,
+  slot,
+  onReveal,
+}: {
+  readonly row: TreeRowModel;
+  readonly index: number;
+  readonly slot: number;
+  readonly onReveal: (index: number) => void;
+}) {
+  const Icon = row.kind === "column" || row.kind === "constraint" ? null : ROW_ICONS[row.kind];
+  return (
+    <button
+      type="button"
+      tabIndex={-1}
+      data-testid="object-tree-sticky-row"
+      title={`Jump to ${row.label}`}
+      onClick={() => onReveal(index)}
+      style={{
+        top: slot * TREE_ROW_HEIGHT,
+        height: TREE_ROW_HEIGHT,
+        paddingLeft: 8 + row.depth * 12,
+        paddingRight: 28,
+      }}
+      className="absolute inset-x-0 flex w-full items-center gap-1.5 bg-transparent text-left text-xs text-foreground hover:bg-muted/60"
+    >
+      {Icon !== null && <Icon strokeWidth={1.5} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
+      <span className="truncate">{row.label}</span>
+    </button>
   );
 }
 

@@ -6,9 +6,12 @@ import {
   applyQueryLimit,
   hasQueryLimit,
   noteAppendedBound,
+  assertRowBounds,
+  isRowBound,
   isSelectQuery,
   type ParsedQueryInfo,
 } from "@/lib/db/utils/query-limiter";
+import { QueryError } from "@/lib/db/errors";
 
 // ─── analyzeQuery ───────────────────────────────────────────────────────────
 
@@ -488,6 +491,90 @@ describe("a CTE is typed by the keyword its list operates", () => {
       expect(result.wasLimited).toBe(false);
     });
 
+    // A CTE body that writes runs exactly once and always to completion,
+    // however few of its rows the outer SELECT reads (PostgreSQL manual 7.8.4). A
+    // bound on such a statement made it pageable, and every Load more page re-ran
+    // the DELETE in full: measured on PostgreSQL 17.6, a 3000-row queue lost 1000
+    // rows per page. So the statement is typed by the write its body does, and the
+    // limiter leaves it alone.
+    test.each<[string, ParsedQueryInfo["type"], string]>([
+      [
+        "a DELETE body",
+        "DELETE",
+        "WITH d AS (DELETE FROM queue WHERE id IN (SELECT id FROM queue ORDER BY id LIMIT 1000) RETURNING *) SELECT * FROM d",
+      ],
+      ["an UPDATE body", "UPDATE", "WITH u AS (UPDATE t SET seen = true RETURNING id) SELECT * FROM u"],
+      ["an INSERT body", "INSERT", "WITH i AS (INSERT INTO t VALUES (1) RETURNING id) SELECT * FROM i"],
+      [
+        "a MERGE body",
+        "OTHER",
+        "WITH m AS (MERGE INTO t USING s ON t.id = s.id WHEN MATCHED THEN DELETE RETURNING *) SELECT * FROM m",
+      ],
+      ["a MATERIALIZED body", "DELETE", "WITH d AS MATERIALIZED (DELETE FROM t RETURNING *) SELECT * FROM d"],
+      ["a NOT MATERIALIZED body", "DELETE", "WITH d AS NOT MATERIALIZED (DELETE FROM t RETURNING *) SELECT * FROM d"],
+      [
+        "a nested WITH operated by a write",
+        "DELETE",
+        "WITH o AS (WITH i AS (SELECT 1) DELETE FROM t WHERE id IN (SELECT * FROM i) RETURNING *) SELECT * FROM o",
+      ],
+      [
+        "several CTEs where only the second writes",
+        "DELETE",
+        "WITH a AS (SELECT 1), d AS (DELETE FROM t RETURNING *) SELECT * FROM a, d",
+      ],
+    ])("leaves a SELECT over %s unbounded, typed %s", (_label, expected, sql) => {
+      expect(analyzeQuery(sql).type).toBe(expected);
+
+      const result = applyQueryLimit(sql, 1000);
+
+      expect(result.sql).toBe(sql);
+      expect(result.wasLimited).toBe(false);
+    });
+
+    // CockroachDB, which connects as `postgres`, also takes an UPSERT as a CTE
+    // body. The union has no name for it, so it is OTHER, like MERGE, and OTHER
+    // is never bounded.
+    test("leaves a SELECT over an UPSERT body unbounded, typed OTHER", () => {
+      const sql = "WITH u AS (UPSERT INTO t VALUES (1) RETURNING *) SELECT * FROM u";
+
+      expect(analyzeQuery(sql, "postgres").type).toBe("OTHER");
+
+      const result = applyQueryLimit(sql, 1000, 0, {}, "postgres");
+
+      expect(result.sql).toBe(sql);
+      expect(result.wasLimited).toBe(false);
+    });
+
+    // The operative statement's own write still answers first: this was typed
+    // INSERT before the body was read and stays so.
+    test("keeps a write after a writing CTE typed by the operative write", () => {
+      expect(
+        analyzeQuery("WITH t AS (UPDATE logs SET seen = true RETURNING id) INSERT INTO audit SELECT id FROM t").type,
+      ).toBe("INSERT");
+    });
+
+    // Precision is the other half: a body that only MENTIONS a write word keeps
+    // its bound (#275).
+    test.each<[string, string]>([
+      [
+        "a table and a value named like a write",
+        "WITH r AS (SELECT * FROM delete_queue WHERE action = 'delete') SELECT * FROM r",
+      ],
+      ["a write word in a string", "WITH r AS (SELECT 'DELETE FROM t' AS s) SELECT * FROM r"],
+      ["a write word in a comment", "WITH r AS ( /* DELETE */ SELECT 1) SELECT * FROM r"],
+      [
+        "a nested WITH whose main query is parenthesised",
+        "WITH a AS (WITH b AS (SELECT 1 AS x) (SELECT * FROM b)) SELECT * FROM a",
+      ],
+    ])("still bounds a read-only CTE with %s", (_label, sql) => {
+      expect(analyzeQuery(sql).type).toBe("SELECT");
+
+      const result = applyQueryLimit(sql, 1000);
+
+      expect(result.sql).toBe(`${sql} LIMIT 1000`);
+      expect(result.wasLimited).toBe(true);
+    });
+
     test("reports a writing CTE as not a SELECT through isSelectQuery", () => {
       expect(isSelectQuery("WITH t AS (SELECT 1) INSERT INTO u SELECT * FROM t")).toBe(false);
       expect(isSelectQuery("WITH t AS (SELECT 1) SELECT * FROM t")).toBe(true);
@@ -661,6 +748,58 @@ describe("applyQueryLimit", () => {
       const result = applyQueryLimit("SELECT * FROM t", 100, 50);
       expect(result.sql).toBe("SELECT * FROM t LIMIT 100 OFFSET 50");
       expect(result.appliedOffset).toBe(50);
+    });
+  });
+
+  // ── A limit and an offset are non-negative integers, the rule the routes hold options to ──
+
+  describe("limit and offset values", () => {
+    const outOfRule: Array<[string, unknown]> = [
+      ["a numeric string", "10"],
+      ["a fraction", 1.5],
+      ["a negative number", -1],
+      ["NaN", Number.NaN],
+      ["an infinity", Number.POSITIVE_INFINITY],
+      ["null", null],
+      ["an array", [10]],
+      ["the first integer past Number.MAX_SAFE_INTEGER", 2 ** 53],
+      ["a number JavaScript prints in exponent form", 1e21],
+    ];
+
+    test.each(outOfRule)("refuses %s as the limit with a QueryError", (_name, limit) => {
+      const run = () => applyQueryLimit("SELECT * FROM t", limit as number, 0, {}, "postgres");
+      expect(run).toThrow(QueryError);
+      expect(run).toThrow("The row limit must be a non-negative integer");
+    });
+
+    test.each(outOfRule)("refuses %s as the offset with a QueryError", (_name, offset) => {
+      const run = () => applyQueryLimit("SELECT * FROM t", 100, offset as number, {}, "postgres");
+      expect(run).toThrow(QueryError);
+      expect(run).toThrow("The row offset must be a non-negative integer");
+    });
+
+    test("refuses a value out of the rule whatever the query is", () => {
+      expect(() => applyQueryLimit("UPDATE t SET a = 1", "10" as unknown as number)).toThrow(QueryError);
+      expect(() => applyQueryLimit("SELECT * FROM t LIMIT 5", 100, "10" as unknown as number)).toThrow(QueryError);
+    });
+
+    test("keeps zero and every larger safe integer as it was given", () => {
+      expect(applyQueryLimit("SELECT * FROM t", 0).sql).toBe("SELECT * FROM t LIMIT 0");
+      expect(applyQueryLimit("SELECT * FROM t", Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER).sql).toBe(
+        "SELECT * FROM t LIMIT 9007199254740991 OFFSET 9007199254740991",
+      );
+    });
+
+    test("assertRowBounds throws the same QueryError for either bound and passes two row bounds", () => {
+      expect(() => assertRowBounds("10", 0)).toThrow("The row limit must be a non-negative integer");
+      expect(() => assertRowBounds(10, 1.5)).toThrow("The row offset must be a non-negative integer");
+      expect(() => assertRowBounds(null, 0)).toThrow(QueryError);
+      expect(() => assertRowBounds(0, Number.MAX_SAFE_INTEGER)).not.toThrow();
+    });
+
+    test("holds the same rule as a request's page options", () => {
+      for (const [, value] of outOfRule) expect(isRowBound(value)).toBe(false);
+      for (const value of [0, 1, 500, Number.MAX_SAFE_INTEGER]) expect(isRowBound(value)).toBe(true);
     });
   });
 });

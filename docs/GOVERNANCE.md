@@ -137,6 +137,7 @@ Under governance the identity provider at `OIDC_ISSUER` is the only way into Stu
 Studio checks the session of every request against these rules:
 
 - A session counts only when Studio's OIDC callback minted it: it carries the ID token's `sub` as a non-empty subject and the ID token's `iss` as its issuer, and the issuer equals `OIDC_ISSUER`, the two compared as URLs with one trailing slash ignored.
+- A native client's identity provider access token ([OIDC.md](./OIDC.md#bearer-access-tokens-for-native-clients)) counts under the same rule, with the access token's `sub` and `iss`, and its own `iat` as its issue time.
 - A password, passkey or launch session carries no subject and is refused, and so is a session whose subject is empty or whose issuer is not `OIDC_ISSUER`.
   With `OIDC_ISSUER` unset or not a URL every session is refused, and a changed `OIDC_ISSUER` ends the sessions of the previous issuer.
 - A session issued at or before its subject's latest `revoked_before` in [`bridge.session_revocations_v1`](#row-semantics) is refused, typically within a second of the commit that adds the row, because its change notification reloads the snapshot.
@@ -708,6 +709,7 @@ Capture follows `queryLog.statementCapture`, which is `none` while the control p
 - `full` keeps every other secret written into a statement, such as a Redis `AUTH` argument, and an error text that quotes a statement in the driver's own words can carry one, so choose it only where the statements themselves must be kept.
 - A refused request whose connection did not resolve, such as one for a connection the caller holds no grant on, stores no statement and no error text in any mode, because the engine that would read them is unknown.
 - In every mode `statement_type` is `SELECT`, `INSERT`, `UPDATE` or `DELETE` from the keyword that operates the statement, also behind a `WITH`, `DDL` for `CREATE`, `ALTER`, `DROP` and `TRUNCATE`, and `OTHER` for any other statement, for a unit without text and for every engine whose statements are not SQL.
+  A `SELECT` behind a `WITH` whose CTE body writes takes the type of that write, so `WITH d AS (DELETE … RETURNING *) SELECT * FROM d` is `DELETE`, and a `MERGE` or `UPSERT` body is `OTHER`.
   A `profile` row is `SELECT` and a `key-scan` row `OTHER` on every engine, because their statement names what was read rather than being a statement the user wrote.
 - The statement of a `profile` or `key-scan` row is captured like any statement of its engine, so under `redacted` a quoted SQL name is kept while a Redis page request keeps only `SCAN` and one `?` per argument, and no cursor or pattern value reaches the row.
 - A request the admission gate refuses records one `refused` row with its route's source, the connection's engine and access level, and `error_code` `AUDIT_UNAVAILABLE`.

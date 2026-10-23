@@ -132,11 +132,12 @@ It shows whether MCP is ready on this server, what an operator has to set when i
 When it is ready, **Create token** mints one for you and shows it once: copy it then, because it is not shown again and nothing about it is stored.
 
 - A token is valid for `LIBREDB_MCP_TOKEN_TTL_DAYS` days, 30 by default.
-- It carries the role you had when you minted it.
+- It carries the role you had when you minted it, as well as any custom claim roles (`claimRoles`) mapped from your OIDC session.
 - Creating a token needs a sign-in from the last ten minutes: an older session is asked to sign in again, because a session lives 24 hours.
 - With local sign-in and `STORAGE_PROVIDER=sqlite` or `postgres`, every call checks the token against the stored account, as a session is checked, so a token stops working at its next call when its account is disabled, changes role, has its password set by an admin, is deleted, removes one of its passkeys, or has its passkeys removed by an admin.
 - Changing `LIBREDB_MCP_TOKEN_LABEL` revokes every MCP token at once.
-  Under OIDC and with `STORAGE_PROVIDER=local` there is no stored account to check, so that is the one revocation there: a lowered role, a disabled OIDC account or a changed password leaves the tokens valid until they expire or the label changes.
+  Under OIDC and with `STORAGE_PROVIDER=local` there is no stored account to check, so that is the one revocation there: a lowered role, removed claim roles, a disabled OIDC account or a changed password leaves the tokens valid until they expire or the label changes.
+  IdP roster changes or group membership removals do not immediately revoke an existing token's claim roles until token expiry or label rotation; set an appropriately short `LIBREDB_MCP_TOKEN_TTL_DAYS` (or rotate `LIBREDB_MCP_TOKEN_LABEL`) if your environment relies on dynamic IdP team rosters.
   Removing a person's access there takes two steps: stop them signing in, then rotate `LIBREDB_MCP_TOKEN_LABEL` once ten minutes have passed, so no session they still hold can mint under the new label.
 - Rotating `JWT_SECRET` ends every session and revokes every MCP token at once.
 - A changed `LIBREDB_MCP_URL`, and under npx a changed `--host` or `--port`, invalidates every token too.

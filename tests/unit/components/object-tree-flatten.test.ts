@@ -872,6 +872,43 @@ describe("flattenTree column rows", () => {
   });
 });
 
+describe("flattenTree EXCLUDE constraint rows (#1778)", () => {
+  const exclude = {
+    name: "reservations_no_overlapping_active",
+    definition: "EXCLUDE USING gist (table_id WITH =, tsrange(starts_at, ends_at, '[)'::text) WITH &&)",
+  };
+  const detail = { ...detailOf(ordersColumns), exclusionConstraints: [exclude] };
+
+  test("constraint rows follow the columns as their own sibling group", () => {
+    const rows = flattenTree(stateOf({ ...ordersOpen, details: { "app/orders/table": detail } }));
+    const children = rows.filter((r) => r.kind === "column" || r.kind === "constraint");
+    expect(children.map((r) => `${r.kind}:${r.label}:${r.posInSet}/${r.setSize}:${r.depth}`)).toEqual([
+      "column:id:1/2:3",
+      "column:total:2/2:3",
+      "constraint:reservations_no_overlapping_active:1/1:3",
+    ]);
+    const row = children[2];
+    expect(row?.id).toBe("constraint%3Aapp/orders/table/reservations_no_overlapping_active");
+    expect(row?.constraint).toEqual(exclude);
+    expect(row?.kindId).toBeUndefined();
+    expect(row?.expanded).toBeUndefined();
+  });
+
+  test("a constraint row draws its name, a label and the definition without a twisty", () => {
+    const row = flattenTree(stateOf({ ...ordersOpen, details: { "app/orders/table": detail } })).find(
+      (r) => r.kind === "constraint",
+    );
+    if (row === undefined) throw new Error("no constraint row");
+    const host = drawRow({ row });
+    const def = host.querySelector('[data-testid="tree-row-constraint-definition"]');
+    expect(def?.getAttribute("title")).toBe(exclude.definition);
+    expect(def?.textContent).toContain("EXCLUDE");
+    expect(def?.querySelector(".sr-only")?.textContent).toBe(exclude.definition);
+    expect(host.innerHTML).toContain("cursor-default");
+    expect(host.innerHTML).toContain(exclude.name);
+  });
+});
+
 /**
  * The row the walk built, DRAWN (#789).
  *

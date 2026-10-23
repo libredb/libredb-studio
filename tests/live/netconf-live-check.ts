@@ -32,6 +32,10 @@
  * claims instead is the thing it can: all 5,000 four-byte characters arrive intact.
  *
  * It is NOT in `bun run test`: the runner excludes `tests/live/` by name (`EXCLUDED` in
+ * CI runs it in the `NETCONF live check` step of the `functional-smoke` job of
+ * .github/workflows/ci.yml. That sentence was not here until 19 October 2026, and its absence
+ * was the defect: the step existed as a file waiting to be pasted, nothing pasted it, and a
+ * reader of this header could not tell a check CI asks for from one only a hand ever ran.
  * `tests/runner/discover.ts`).
  *
  * Run it from the repository root against the fixture (`docker/netconf/README.md`), on Bun and on
@@ -87,7 +91,8 @@ const RUNTIME = typeof Bun === "undefined" ? `node ${process.versions.node}` : `
  *
  * The Modbus fixture is pulled and pinned by digest; this one is BUILT from source, so there is no
  * digest to hold and the tag is what names it. `docker/netconf/SHA256SUMS` is what pins what goes
- * into it, and `docker/netconf/ci-step.yml` builds this tag and exports it here.
+ * into it, and the `NETCONF live check` step of `.github/workflows/ci.yml` builds this tag and
+ * exports it here.
  *
  * It is a gate rather than a note, for the reason the Modbus one became one: an exported variable
  * nothing reads records an intention and enforces none. Set to anything else, this check refuses
@@ -486,15 +491,18 @@ await check("the key walk folds the list into one entry, and the bare key value 
    * paging 5,000 entries is a design question and not a line to slip into this one.
    */
   await withProvider(connectionWith(), async (provider) => {
+    // A folder's own prefix ends with the separator, and a folder comes back in `prefixes`: the
+    // spelling and the shape `scanKeysPage` has answered since #1802.
     const level = await provider.scanKeysPage({
-      pattern: `running/${MODULE}:interfaces`,
+      pattern: `running/${MODULE}:interfaces/`,
       cursor: "0",
       count: 100,
     } as never);
     assert(
-      stringify(level.keys) === stringify([`running/${MODULE}:interfaces/interface`]),
-      `the level below interfaces now holds ${stringify(level.keys)}; if it lists entries, the walk was fixed ` +
-        "and this check, its docblock and scanKeysPage's all have to be rewritten",
+      stringify(level.prefixes) === stringify([`running/${MODULE}:interfaces/interface/`]) &&
+        stringify(level.keys) === stringify([]),
+      `the level below interfaces now holds ${stringify(level.prefixes)} and ${stringify(level.keys)}; if it lists ` +
+        "entries, the walk was fixed and this check, its docblock and scanKeysPage's all have to be rewritten",
     );
 
     // And the documented spelling, measured: the bare key value becomes an XML element name, so

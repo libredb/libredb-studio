@@ -48,7 +48,7 @@ import type {
   TableStats,
 } from "../../../types";
 import { DatabaseConfigError, QueryError } from "../../../errors";
-import { analyzeQuery, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../../utils/query-limiter";
+import { analyzeQuery, assertRowBounds, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../../utils/query-limiter";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { readStatementEnd } from "@/lib/sql/statement-end";
 import { SQLBaseProvider } from "../sql-base";
@@ -173,6 +173,7 @@ export class Db2Provider extends SQLBaseProvider {
   public override prepareQuery(query: string, options: QueryPrepareOptions = {}): PreparedQuery {
     const { limit = DEFAULT_QUERY_LIMIT, offset = 0, unlimited = false } = options;
     const effectiveLimit = unlimited ? MAX_UNLIMITED_ROWS : limit;
+    assertRowBounds(effectiveLimit, offset, this.type);
     const queryInfo = analyzeQuery(query, this.type);
 
     if (queryInfo.type === "SELECT" && !queryInfo.hasLimit) {

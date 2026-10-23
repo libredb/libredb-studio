@@ -45,6 +45,8 @@ mock.module("@/lib/oidc", () => ({
   decryptState: mockDecryptState,
   exchangeCode: mockExchangeCode,
   mapOIDCRole: mock(() => "user" as "admin" | "user"),
+  readRoleClaimValues: mock(() => []),
+  mapOIDCClaimRoles: mock(() => ({ roles: [], overflow: false })),
   resetDiscoveryCache: mock(() => {}),
   buildLogoutUrl: mock(async () => null as string | null),
   getPublicOrigin: mock((req: Request) => new URL(req.url).origin),

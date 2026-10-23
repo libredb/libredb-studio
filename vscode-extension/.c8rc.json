@@ -1,0 +1,8 @@
+{
+  "all": true,
+  "include": ["src/**"],
+  "exclude": ["src/types/**"],
+  "exclude-after-remap": true,
+  "reporter": ["lcov", "text-summary"],
+  "report-dir": "coverage"
+}

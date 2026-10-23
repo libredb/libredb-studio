@@ -1,13 +1,18 @@
-# The Modbus step of `.github/workflows/ci.yml`, delivered on its own.
+# WHY THE Modbus live check STEP IS NOT IN THIS FILE ANY MORE.
 #
-# Not written into that file directly, for the reason `docker/modbus/compose-service.yml` gives:
-# five engines land in one round and five sessions editing one file is a small rerun of the merge
-# this repository just finished.
+# This file used to carry the step itself, staged here because five engines were landing in
+# one round and five sessions editing one workflow would have been that round's merge in
+# miniature. Whoever owned the workflow was to paste it in. MEASURED 19 October 2026: the
+# paste never happened for any of the six engines, so none of the nineteen workflow files
+# mentioned this fixture and the live check ran only by hand.
 #
-# Paste the step below into the job that runs the other live checks, after the functional smoke.
-# It needs no `if:` and no secret. The image is the one `docker/modbus/compose-service.yml`
-# declares, and `tests/unit/db/modbus/live-environment.test.ts` holds the two equal, so CI and a
-# developer's machine run the same device.
+# The step now lives in `.github/workflows/ci.yml`, in the `functional-smoke` job, named
+# `Modbus live check`. It is not duplicated here on purpose: the pin this fixture runs is held equal to
+# the compose fragment's by a test, and a pin that lives in a third file nobody compares is a
+# third pin. What stays here is the reasoning the step is too short to carry.
+#
+# The image is the one `docker/modbus/compose-service.yml` declares, and the test named above holds the two
+# equal, so CI and a developer's machine run the same device.
 #
 # WHAT THE TWO READINESS CHECKS ARE FOR. The first asks whether anything there speaks Modbus: a
 # reply whose MBAP header echoes what was sent. The second asks whether a known register answers
@@ -33,42 +38,3 @@
       # through the real provider, the refusals it makes before dialling, and the device asked
       # afterwards whether it can still answer somebody else. It runs on both runtimes, because
       # the provider ships to both and the Node path is the one that bundles.
-      - name: Modbus live check
-        run: |
-          image="oitc/modbus-server:2.3.0@sha256:32bfe144512e1f070cf7e7e2513cdcb774d74db142ee5dbad45b21d6d705ab97"
-          export MODBUS_LIVE_DIGEST="${image#*@}"
-          trap 'docker rm -f libredb-ci-modbus > /dev/null' EXIT
-          docker run -d --name libredb-ci-modbus \
-            -v "$PWD/docker/modbus/modbus_server.json:/app/modbus_server.json:ro" \
-            -p 127.0.0.1:1502:5020 "$image"
-          # The address the probes use AND the sentences name, from one place: the sentences said
-          # "on 1502" while the probe read MODBUS_PROBE, so a run against another port was
-          # refused with a sentence naming a port it had never asked.
-          export MODBUS_PROBE="${MODBUS_PROBE:-127.0.0.1:1502}"
-          ready=""
-          end=$((SECONDS + 60))
-          while [ "$SECONDS" -lt "$end" ]; do
-            # Two questions, and the second plainly implies the first. They are asked separately
-            # so the two failures can be told apart below, not for coverage.
-            if bun tests/live/modbus-ready-probe.ts --speaks && bun tests/live/modbus-ready-probe.ts --tables; then
-              ready=yes
-              break
-            fi
-            sleep 1
-          done
-          if [ -z "$ready" ]; then
-            # Which of the two it was, in its own sentence. Both are NOT MEASURED, because in
-            # neither case did anything about this repository's code get measured, but a reader
-            # who has to fix one of them needs to know which one.
-            if bun tests/live/modbus-ready-probe.ts --speaks; then
-              echo "NOT MEASURED: a Modbus server answered on $MODBUS_PROBE but its tables are not this fixture's, so the live check never ran."
-            else
-              echo "NOT MEASURED: nothing speaking Modbus answered on $MODBUS_PROBE within 60 s, so the live check never ran."
-            fi
-            docker logs --tail 50 libredb-ci-modbus
-            exit 1
-          fi
-          bun tests/live/modbus-live-check.ts
-          out="$(mktemp -d)"
-          bun build tests/live/modbus-live-check.ts --target=node --outfile "$out/live.mjs"
-          node "$out/live.mjs"

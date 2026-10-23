@@ -36,6 +36,7 @@ export interface McpTokenOwner {
   readonly role: Role;
   /** The stored account's session version (src/lib/local-accounts.ts), when it has one. */
   readonly sessionVersion?: number;
+  readonly claimRoles?: readonly string[];
 }
 
 export interface MintedMcpToken {
@@ -53,6 +54,7 @@ export interface McpTokenClaims {
   readonly exp: number;
   readonly aud: string;
   readonly sv?: number;
+  readonly claimRoles?: readonly string[];
 }
 
 export type McpTokenFailure = "invalid" | "channel_unconfigured";
@@ -84,7 +86,13 @@ export async function mintMcpToken(owner: McpTokenOwner, clock: () => number = D
   const issuedAt = Math.floor(clock() / 1000);
   const expiresAt = issuedAt + ttl.value * DAY_SECONDS;
   const sessionVersion = owner.sessionVersion === undefined ? {} : { sv: owner.sessionVersion };
-  const token = await new SignJWT({ role: owner.role, scope: MCP_TOKEN_SCOPE, ...sessionVersion })
+  const claimRolesClaim = owner.claimRoles && owner.claimRoles.length > 0 ? { claimRoles: owner.claimRoles } : {};
+  const token = await new SignJWT({
+    role: owner.role,
+    scope: MCP_TOKEN_SCOPE,
+    ...sessionVersion,
+    ...claimRolesClaim,
+  })
     .setProtectedHeader({ alg: "HS256", typ: MCP_TOKEN_TYPE })
     .setSubject(owner.username)
     .setJti(crypto.randomUUID())
@@ -110,9 +118,10 @@ export async function verifyMcpToken(token: string): Promise<McpTokenClaims> {
   } catch {
     throw new McpTokenError("invalid");
   }
-  const { sub, role, scope, jti, iat, exp, aud, sv } = payload;
+  const { sub, role, scope, jti, iat, exp, aud, sv, claimRoles } = payload;
   if (
     (sv !== undefined && (typeof sv !== "number" || !Number.isSafeInteger(sv) || sv < 0)) ||
+    (claimRoles !== undefined && (!Array.isArray(claimRoles) || !claimRoles.every((r) => typeof r === "string"))) ||
     typeof sub !== "string" ||
     sub === "" ||
     (role !== "admin" && role !== "user") ||
@@ -127,7 +136,17 @@ export async function verifyMcpToken(token: string): Promise<McpTokenClaims> {
   const url = readMcpUrl();
   if (!url.ok) throw new McpTokenError("channel_unconfigured");
   if (aud !== url.value) throw new McpTokenError("invalid");
-  return { sub, role, scope: MCP_TOKEN_SCOPE, jti, iat, exp, aud, ...(sv === undefined ? {} : { sv }) };
+  return {
+    sub,
+    role,
+    scope: MCP_TOKEN_SCOPE,
+    jti,
+    iat,
+    exp,
+    aud,
+    ...(sv === undefined ? {} : { sv }),
+    ...(claimRoles !== undefined ? { claimRoles: claimRoles as string[] } : {}),
+  };
 }
 
 export const mcpTokenVerifier: OAuthTokenVerifier = {
@@ -153,6 +172,7 @@ export const mcpTokenVerifier: OAuthTokenVerifier = {
         username: claims.sub,
         role: claims.role,
         ...(claims.sv === undefined ? {} : { sessionVersion: claims.sv }),
+        ...(claims.claimRoles === undefined ? {} : { claimRoles: claims.claimRoles }),
       },
     };
   },

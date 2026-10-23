@@ -38,7 +38,8 @@
   <a href="https://valkey.io/participants/#:~:text=LibreDB%20Studio%20connects%20to%20Valkey">Valkey</a>、
   <a href="https://clickhouse.com/docs/integrations/connectors/tools/gui#libredb-studio">ClickHouse Visual Interfaces</a>、
   <a href="https://clickhouse.com/docs/integrations/connectors/sql-clients/libredb-studio">ClickHouse SQL Clients</a>、
-  <a href="https://mariadb.com/docs/server/clients-and-utilities/graphical-and-enhanced-clients/libredb-studio">MariaDB</a>、
+  <a href="https://mariadb.com/docs/server/clients-and-utilities/graphical-and-enhanced-clients/libredb-studio">MariaDB Graphical Clients</a>、
+  <a href="https://ecohub.mariadb.org/database-management/libredb-studio">MariaDB Ecosystem Hub</a>、
   <a href="https://trino.io/ecosystem/client-application#libredb-studio">Trino</a>、
   <a href="https://docs.yugabyte.com/stable/integrations/tools/libredb-studio/">YugabyteDB</a>、
   <a href="https://www.tigerdata.com/docs/integrate/query-administration/libredb-studio">TimescaleDB</a>、
@@ -51,6 +52,7 @@
   <a href="https://aiven.io/docs/products/postgresql/howto/connect-libredb-studio">Aiven for PostgreSQL</a>、
   <a href="https://aiven.io/docs/products/mysql/howto/connect-libredb-studio">Aiven for MySQL</a>、
   <a href="https://docs.scylladb.com/stable/get-started/gui-clients/libredb-studio.html">ScyllaDB</a>、
+  <a href="https://docs.couchbase.com/server/current/third-party/integrations.html#standalone-query-and-admin-tools">Couchbase</a>、
   <a href="https://cloudberry.apache.org/docs/ecosystem/sql-clients/libredb-studio/">Apache Cloudberry</a>、
   <a href="https://doris.apache.org/docs/4.x/connection-integration/data-integration/libredb-studio/">Apache Doris</a>、
   <a href="https://cwiki.apache.org/confluence/display/KAFKA/Ecosystem#:~:text=LibreDB%20Studio">Apache Kafka</a>、
@@ -177,7 +179,7 @@ Oxia、InfluxDB (InfluxQL)、Milvus、Qdrant、Neo4j、etcd、Apache Kafka、MQT
 - **四十一种引擎，一个界面**：PostgreSQL、MySQL、Oracle、Db2 LUW、SQL Server、SQLite、libSQL、DuckDB、MongoDB、Redis、Couchbase、Firestore、ClickHouse、Druid、Elasticsearch、OpenSearch、Trino、BigQuery、Databend、Snowflake、Apache Spark、Cassandra、Prometheus、Apache Kafka、etcd、Neo4j、Milvus、Qdrant、InfluxDB (InfluxQL)、InfluxDB 3 (SQL)、Oxia、S3-compatible object storage、Kubernetes、MQTT、RabbitMQ、OPC UA、MTConnect、Modbus、NETCONF、SNMP、Sparkplug B。
 - **你人在哪它就在哪跑**：浏览器、手机、Windows、MacOS、Linux 桌面。
 - **一个只读的 Agent，配你自己的模型**：说一个问题，这次运行就会起草 SQL、读取结果，并写出一份每条结论都引用来源的报告。Gemini、OpenAI，或者跑开源模型的本地 Ollama。
-- **没有东西被锁在墙后**：RBAC、OIDC 单点登录、查询审计日志和 ER 图，全部以 MIT 发布。
+- **没有东西被锁在墙后**：RBAC、OIDC 单点登录、审计日志和 ER 图，全部以 MIT 发布。
 
 <p align="center">
   <img src="public/screenshots/connection-modal.png" alt="多数据库连接管理器" width="100%" />
@@ -209,7 +211,7 @@ Oxia、InfluxDB (InfluxQL)、Milvus、Qdrant、Neo4j、etcd、Apache Kafka、MQT
 
 Studio 最主要的 AI 界面是编辑器旁边的 **Agent 侧栏**，下面列出的模型辅助功能是其余部分。你说出一个目标：*“哪个部门人最多？”*、*“这条查询为什么慢？”*，然后按下 Start。这次运行会针对已连接的数据库起草 SQL、读取返回结果，最后写出一份报告，其中每一条结论都引用它所依据的那次读取。
 
-- **只读，由数据库本身来保证，而不是靠解析器。** Agent 执行的每条语句都走 Agent 自己的受审计管线，在碰到驱动之前先做策略判定、记录审计事件、核算预算（`executeAuditedOperation`，`src/lib/db/operations/execution.ts:129`），并使用只读执行配置：PostgreSQL 上是只读事务，SQLite 上每条语句都重新声明 `PRAGMA query_only`，DuckDB 上是 `READ_ONLY` 引擎句柄外加一层 SQL 守卫，因为仅靠该标志仍然放行 `COPY … TO`、`EXPORT DATABASE` 和读取本地文件的表函数；SQL Server 上没有任何形式的只读事务，因此改由四层保证：开启连接时先核验会话主体确实无法写入，再由优化器在不执行的前提下编译放行每条语句，并在服务端限定返回行数，最后把语句放进一个总是回滚的事务里。写入和 DDL 在到达数据库之前就被拒绝，`EXPLAIN ANALYZE` 因为会真正执行语句而默认禁止。这条管线只属于 Agent：你自己在编辑器里执行的语句是直接调用 provider 的（`src/app/api/db/query/route.ts:44`），不会经过这里的策略判定，也不会产生这类审计记录。
+- **只读，由数据库本身来保证，而不是靠解析器。** Agent 执行的每条语句都走 Agent 自己的受审计管线，在碰到驱动之前先做策略判定、记录审计事件、核算预算（`executeAuditedOperation`，`src/lib/db/operations/execution.ts:129`），并使用只读执行配置：PostgreSQL 上是只读事务，SQLite 上每条语句都重新声明 `PRAGMA query_only`，DuckDB 上是 `READ_ONLY` 引擎句柄外加一层 SQL 守卫，因为仅靠该标志仍然放行 `COPY … TO`、`EXPORT DATABASE` 和读取本地文件的表函数；SQL Server 上没有任何形式的只读事务，因此改由四层保证：开启连接时先核验会话主体确实无法写入，再由优化器在不执行的前提下编译放行每条语句，并在服务端限定返回行数，最后把语句放进一个总是回滚的事务里。写入和 DDL 在到达数据库之前就被拒绝，`EXPLAIN ANALYZE` 因为会真正执行语句而默认禁止。这条管线只属于 Agent：你自己在编辑器里执行的语句是直接调用 provider 的（`src/app/api/db/query/route.ts:312`），不会经过这里的策略判定，也不会产生这类审计记录。
 - **Agent 模式只读取 PostgreSQL、SQLite、DuckDB、SQL Server、MySQL、Kubernetes 和 MongoDB。** 只读配置只在实现了它的 provider 上存在，也就是 `postgres.ts`、`sqlite.ts`、`duckdb/index.ts`、`mssql.ts`、`mysql.ts`、`kubernetes/index.ts` 和 `mongodb/index.ts` 上的 `queryReadOnly`，别无其他；每种引擎的只读边界各不相同，记录在各自的文档中。在其他引擎上，只要某个 Agent 模式工作流会发送语句，它就会在启动时被拒绝，此时运行尚未开启；万一有请求走到 provider 工厂，也会以 `engine-unsupported` 结束。**Plan** 模式对所有连接都可用，那里的模型不使用任何工具，不执行你的任何语句，不做任何写入，只为你起草一条由你自己去执行的语句。它的 GROUNDING 覆盖全部引擎：PostgreSQL 和 SQLite 上由服务端自己组装目录查询，其他连接则请该连接自己的 provider 描述其 schema，也就是侧边栏本来就在做的那次读取，这不需要只读语句通道。所以两条限制是分开的：Agent 模式是上面这些引擎，GROUNDING 是全部引擎，而读取失败的运行会直接说明，不会凭空编造表名。
 - **三种工作流**：**Investigate**（回答问题）、**Optimize**（比较预估执行计划，提出索引或改写）、**Assess**（做表画像，只有计数，永远不含具体值）。
 - **不会自行执行。** Agent 不会替你开始运行，不会写入编辑器，也不会执行它建议的语句。是否采用由你点击决定。
@@ -283,7 +285,7 @@ Studio 最主要的 AI 界面是编辑器旁边的 **Agent 侧栏**，下面列�
 - **阈值告警**：缓存命中率、连接使用率、死锁和缓冲池利用率都带按颜色区分的健康指示（健康/警告/严重）。
 - **连接池统计**：实时的总数/活跃/空闲/等待连接池指标，带利用率进度条。
 - **一键维护**：按数据库引擎触发 `VACUUM`、`ANALYZE`、`REINDEX`、`UPDATE STATISTICS`、`DBCC CHECKDB` 和 `ALTER INDEX REBUILD`。
-- **审计日志**：全组织执行过的每一条查询的完整历史。管理员审计标签页可以把已加载的操作和查询历史导出为 CSV 或 JSON，并遵循当前过滤条件。
+- **审计日志**：管理员审计标签页显示服务器最近的审计事件，例如登录、权限拒绝、维护操作、对象编辑以及 Agent 和 MCP 操作，每一条都带有背后的用户，以及当前登录管理员自己的查询历史。两者均可导出为 CSV 或 JSON，并遵循当前过滤条件。在[治理](docs/GOVERNANCE.md#query-events)下，Studio 为一个人运行的每条语句记录一条查询事件，控制平面保存这份全组织的记录。
 
 ## 支持的数据库
 
@@ -532,12 +534,6 @@ React 的*开发*构建需要它；`monacoVsPath` 在 Monaco 的 bundle 不是�
 带的是没有 nonce 的水合脚本，所以它约束的是注入的脚本能把数据*发往*哪里，
 而不是脚本能不能运行。这一权衡，以及 Next.js 应用交付这些响应头的两条路径，
 在 [`docs/SECURITY.md`](docs/SECURITY.md) 里有论证。
-
-## 关于收费的那条线
-
-Studio 是 MIT，因为它必须能去任何地方。付费的是 libredb-platform，它卖的是“别人替你运维”：托管、多租户、计费和支持，而不是某个被挪到付费墙后面的功能。
-
-**没有任何能力为了制造升级理由而被移到这条线的另一边。** 单点登录、RBAC、查询审计、ER 图、AI 功能、全部 NoSQL 引擎，都在 MIT 构建里。
 
 ## 开发用数据库
 

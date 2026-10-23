@@ -113,10 +113,10 @@ describe("/api/admin/audit", () => {
       const req = createMockRequest("/api/admin/audit");
 
       const res = await GET(req);
-      const data = await parseResponseJSON<{ error: string }>(res);
+      const data = await parseResponseJSON<{ error: string; code?: string }>(res);
 
       expect(res.status).toBe(403);
-      expect(data.error).toContain("Unauthorized");
+      expect(data).toEqual({ error: "Unauthorized. Admin access required.", code: "ADMIN_REQUIRED" });
     });
 
     // Threat: a role denial that leaves no trace. An authenticated caller probing for a role it
@@ -153,15 +153,16 @@ describe("/api/admin/audit", () => {
       clearRateLimitState();
     });
 
-    // This route has no guardRoute in front of it, so its 403 covers both "no session" and "wrong
-    // role". Only the latter is a ROLE denial; recording insufficient_role for an anonymous caller
-    // would both misname the reason and let an unauthenticated caller flood the trail for free.
-    test("an absent session emits nothing", async () => {
+    // This route has no guardRoute in front of it. An absent session is not a ROLE denial: it answers 401 AUTH_REQUIRED,
+    // so a client signs in again rather than reading "not permitted", and records nothing, since recording
+    // insufficient_role for an anonymous caller would both misname the reason and let it flood the trail for free.
+    test("an absent session answers 401 AUTH_REQUIRED and emits nothing", async () => {
       mockGetSession.mockResolvedValueOnce(null);
 
       const res = await GET(createMockRequest("/api/admin/audit"));
 
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({ error: "Authentication required", code: "AUTH_REQUIRED" });
       expect(mockEmitAuditEvent).not.toHaveBeenCalled();
     });
 
@@ -253,10 +254,19 @@ describe("/api/admin/audit", () => {
       });
 
       const res = await POST(req);
-      const data = await parseResponseJSON<{ error: string }>(res);
+      const data = await parseResponseJSON<{ error: string; code?: string }>(res);
 
       expect(res.status).toBe(403);
-      expect(data.error).toContain("Unauthorized");
+      expect(data).toEqual({ error: "Unauthorized. Admin access required.", code: "ADMIN_REQUIRED" });
+    });
+
+    test("an absent session answers 401 AUTH_REQUIRED on POST", async () => {
+      mockGetSession.mockResolvedValueOnce(null);
+
+      const res = await POST(createMockRequest("/api/admin/audit", { method: "POST", body: {} }));
+
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({ error: "Authentication required", code: "AUTH_REQUIRED" });
     });
 
     test("non-admin denial emits permission_denied with reason insufficient_role", async () => {

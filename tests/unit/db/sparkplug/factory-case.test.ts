@@ -10,8 +10,9 @@ import { SparkplugProvider } from "@/lib/db/providers/industrial/sparkplug/index
  * `createDatabaseProvider` is a `switch` with a `default`, so it is NOT exhaustive: leave the
  * `case` out and the compiler says nothing, `bun run typecheck` stays green, and every gate passes
  * while the engine cannot be built at all. That is the same shape as the connection picker's
- * `selectableTypes`, a hand-maintained list typed as `DatabaseType[]` where any subset compiles, and
- * a sibling session shipped an engine that was registered everywhere and could not be selected.
+ * `CONNECTION_PICKER_ORDER`, a hand-maintained list where any subset compiles (it was the hook's
+ * `selectableTypes`, typed as `DatabaseType[]`, when a sibling session shipped an engine that was
+ * registered everywhere and could not be selected).
  *
  * The fleet census in `tests/unit/lib/query-generators.test.ts` does build every provider through
  * the factory, so it would catch this too. This test exists anyway, and deliberately: a guarantee

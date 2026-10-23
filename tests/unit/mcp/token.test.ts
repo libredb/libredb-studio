@@ -58,6 +58,7 @@ interface Forged {
   readonly jti?: string | null;
   readonly alg?: "HS256" | "HS512";
   readonly sv?: unknown;
+  readonly claimRoles?: unknown;
 }
 
 async function forge(change: Forged = {}): Promise<string> {
@@ -67,6 +68,7 @@ async function forge(change: Forged = {}): Promise<string> {
     role: change.role ?? "admin",
     scope: change.scope ?? MCP_TOKEN_SCOPE,
     ...(change.sv === undefined ? {} : { sv: change.sv }),
+    ...(change.claimRoles === undefined ? {} : { claimRoles: change.claimRoles }),
   })
     .setProtectedHeader(typ === null ? { alg } : { alg, typ })
     .setSubject(change.sub ?? "alice")
@@ -239,6 +241,24 @@ describe("the SDK token verifier", () => {
       role: "user",
       sessionVersion: 41,
     });
+  });
+
+  test("carries claimRoles from mint to AuthInfo", async () => {
+    const token = await mintTestToken({ username: "bob", role: "user", claimRoles: ["team-billing", "team-dev"] });
+    expect(decodeJwt(token).claimRoles).toEqual(["team-billing", "team-dev"]);
+    const claims = await verifyMcpToken(token);
+    expect(claims.claimRoles).toEqual(["team-billing", "team-dev"]);
+    expect((await mcpTokenVerifier.verifyAccessToken(token)).extra).toEqual({
+      username: "bob",
+      role: "user",
+      claimRoles: ["team-billing", "team-dev"],
+    });
+  });
+
+  test("refuses a token with malformed claimRoles", async () => {
+    await expectRefused(await forge({ claimRoles: "not-an-array" }));
+    await expectRefused(await forge({ claimRoles: [123] }));
+    await expectRefused(await forge({ claimRoles: [null] }));
   });
 
   test("maps a verified token to AuthInfo", async () => {

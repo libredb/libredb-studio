@@ -66,6 +66,9 @@ test("a role refusal on an admin API keeps its message and does not sign the use
     const response = await fetch("/api/admin/audit");
     return { status: response.status, body: await response.json() };
   });
-  expect(refusal).toEqual({ status: 403, body: { error: "Unauthorized. Admin access required." } });
+  expect(refusal).toEqual({
+    status: 403,
+    body: { error: "Unauthorized. Admin access required.", code: "ADMIN_REQUIRED" },
+  });
   await expect(page).toHaveURL("/");
 });

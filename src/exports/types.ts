@@ -10,6 +10,7 @@ export type {
   ColumnSchema,
   IndexSchema,
   ForeignKeySchema,
+  ExclusionConstraintSchema,
   QueryPagination,
   QueryResult,
   QueryResultSet,

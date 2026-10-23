@@ -10,9 +10,10 @@ import { join } from "node:path";
 import { SignJWT } from "jose";
 
 let cookieStore: Record<string, { value: string } | undefined> = {};
+let requestHeaders = new Headers();
 mock.module("next/headers", () => ({
   cookies: async () => ({ get: (name: string) => cookieStore[name] }),
-  headers: async () => new Headers(),
+  headers: async () => requestHeaders,
 }));
 
 const { GET, POST } = await import("@/app/api/mcp/token/route");
@@ -26,6 +27,8 @@ const { resetCache } = await import("@/lib/seed");
 const fixtures = await import("../../helpers/mcp-fixtures");
 const harness = await import("../../helpers/mcp-harness");
 const { useMcpChannel } = await import("../../helpers/mcp-token");
+const bearerProvider = await import("../../helpers/oidc-bearer-provider");
+const { resetBearerKeys } = await import("@/lib/oidc-bearer");
 
 const dir = mkdtempSync(join(tmpdir(), "libredb-mcp-token-route-"));
 const NOT_ISSUED = "MCP tokens cannot be issued on this server";
@@ -34,8 +37,12 @@ const SEED_UNREADABLE =
   "The seed connection file could not be read, so the connections an MCP token reaches are unknown; the server log names the cause";
 let restoreChannel: () => void = () => {};
 
-async function signIn(username: string, role: "admin" | "user"): Promise<void> {
-  cookieStore = { "auth-token": { value: await signJWT({ username, role }) } };
+async function signIn(username: string, role: "admin" | "user", claimRoles?: string[]): Promise<void> {
+  cookieStore = {
+    "auth-token": {
+      value: await signJWT({ username, role, ...(claimRoles ? { claimRoles } : {}) }),
+    },
+  };
 }
 
 async function signInSecondsAgo(seconds: number): Promise<void> {
@@ -65,6 +72,7 @@ beforeAll(() => {
 beforeEach(() => {
   clearRateLimitState();
   cookieStore = {};
+  requestHeaders = new Headers();
   restoreChannel = useMcpChannel();
   fixtures.writeSeedFile(dir, [
     { id: "everyone", type: "sqlite", database: join(dir, "shop.db"), roles: ["*"] },
@@ -241,6 +249,27 @@ describe("POST /api/mcp/token", () => {
     expect((await POST(mintRequest({ authorization: `Bearer ${token}` }))).status).toBe(401);
   });
 
+  // An access token is refreshed every few minutes, so its iat always looks like a fresh sign-in, and the native client
+  // that holds it never signed in to Studio at all (src/lib/oidc-bearer.ts).
+  test("a bearer access token cannot mint, and nothing is signed", async () => {
+    const fetchSpy = bearerProvider.stubIdentityProvider();
+    bearerProvider.useBearerEnv();
+    resetBearerKeys();
+    try {
+      requestHeaders = new Headers({ authorization: `Bearer ${await bearerProvider.signBearer()}` });
+      const response = await POST(mintRequest());
+
+      expect(response.status).toBe(403);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(await response.json()).toEqual({
+        error: "A token can only be created from a browser session: sign in to Studio and create it there.",
+      });
+    } finally {
+      bearerProvider.restoreBearerEnv();
+      fetchSpy.mockRestore();
+    }
+  });
+
   test("a user-role token lists only what that role reaches, and an admin's the admin-only connection too", async () => {
     for (const [username, role, ids] of [
       ["bob", "user", ["seed:everyone"]],
@@ -257,6 +286,35 @@ describe("POST /api/mcp/token", () => {
       } finally {
         await session.close();
       }
+    }
+  });
+
+  test("a session with claimRoles mints a token carrying claimRoles that reaches custom role connections", async () => {
+    const origProvider = process.env.NEXT_PUBLIC_AUTH_PROVIDER;
+    const origPrefix = process.env.OIDC_ROLE_PREFIX;
+    process.env.NEXT_PUBLIC_AUTH_PROVIDER = "oidc";
+    process.env.OIDC_ROLE_PREFIX = "team-";
+    try {
+      fixtures.writeSeedFile(dir, [
+        { id: "everyone", type: "sqlite", database: join(dir, "shop.db"), roles: ["*"], mcp: true },
+        { id: "billing", type: "sqlite", database: join(dir, "shop.db"), roles: ["team-billing"], mcp: true },
+        { id: "analytics", type: "sqlite", database: join(dir, "shop.db"), roles: ["team-analytics"], mcp: true },
+      ]);
+      await signIn("carol", "user", ["team-billing"]);
+      const { token } = (await (await POST(mintRequest())).json()) as { token: string };
+      const session = await harness.connectClient(harness.routeServe(mcpRoute), { token });
+      try {
+        const result = await session.client.callTool({ name: "list_connections", arguments: {} });
+        const ids = (result.structuredContent as { connections: Array<{ id: string }> }).connections.map((c) => c.id);
+        expect(ids).toEqual(["seed:everyone", "seed:billing"]);
+      } finally {
+        await session.close();
+      }
+    } finally {
+      if (origProvider !== undefined) process.env.NEXT_PUBLIC_AUTH_PROVIDER = origProvider;
+      else delete process.env.NEXT_PUBLIC_AUTH_PROVIDER;
+      if (origPrefix !== undefined) process.env.OIDC_ROLE_PREFIX = origPrefix;
+      else delete process.env.OIDC_ROLE_PREFIX;
     }
   });
 

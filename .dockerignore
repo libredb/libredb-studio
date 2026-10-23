@@ -22,6 +22,7 @@ dist
 # tested locally was not the image CI publishes (CI checkouts are clean).
 desktop
 dist-desktop
+vscode-extension
 dist-rel
 operator
 packaging

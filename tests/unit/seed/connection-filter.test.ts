@@ -304,6 +304,21 @@ describe("filterByRoles", () => {
     );
     expect(result).toHaveLength(0);
   });
+
+  it("projects only roles the caller holds (or wildcard) to avoid leaking other teams' roles", () => {
+    const result = filterByRoles(
+      [{ ...baseConn, roles: ["team-billing", "team-dev", "admin"] }],
+      ["user", "team-billing"],
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0].roles).toEqual(["team-billing"]);
+  });
+
+  it("preserves wildcard role on projected connection", () => {
+    const result = filterByRoles([{ ...baseConn, roles: ["*", "team-secret"] }], ["user"]);
+    expect(result).toHaveLength(1);
+    expect(result[0].roles).toEqual(["*"]);
+  });
 });
 
 describe("filterByRoles: the read-only mode (#1089)", () => {

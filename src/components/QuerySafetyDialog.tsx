@@ -32,7 +32,7 @@ import {
 import { readsSqlText, resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
 import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
 import { readOperativeKeyword } from "@/lib/sql/operative-keyword";
-import { hasUnterminatedSpan, readSqlSpan } from "@/lib/sql/spans";
+import { hasLoneCarriageReturnInLineComment, hasUnterminatedSpan, readSqlSpan } from "@/lib/sql/spans";
 import { splitStatements } from "@/lib/sql/statement-splitter";
 import { findCodeWord, readSqlWord } from "@/lib/sql/words";
 import type { DatabaseType } from "@/lib/types";
@@ -209,7 +209,10 @@ export function QuerySafetyDialog({
     // Asked first: a SQL span reader's verdict about text that is not SQL is not
     // evidence of anything, and saying "could not be read" about a Mongo document
     // that reads fine is the false alarm this notice exists to avoid.
-    return readsSqlText(type) && hasUnterminatedSpan(query, resolveSqlGrammar(type));
+    const grammar = resolveSqlGrammar(type);
+    return (
+      readsSqlText(type) && (hasUnterminatedSpan(query, grammar) || hasLoneCarriageReturnInLineComment(query, grammar))
+    );
   }, [query, databaseType]);
 
   // What this engine's vocabulary asks the person to type before the statement runs, read from the table the gate
@@ -405,8 +408,8 @@ export function QuerySafetyDialog({
                 <span className="text-xs font-medium text-warning">Part of this statement could not be read</span>
                 <p className="text-xs text-fg-tertiary mt-0.5">
                   A quoted, commented or bracketed run in it never closes (or its closing quote sits behind a backslash,
-                  which dialects read differently), so nothing written after that point could be checked. It may hide a
-                  write, which is why you are being asked.
+                  or a comment holds a lone carriage return, which dialects read differently), so nothing written after
+                  that point could be checked. It may hide a write, which is why you are being asked.
                 </p>
               </div>
             </div>
@@ -916,6 +919,9 @@ export function isDangerousQuery(query: string, databaseType?: DatabaseType): bo
   // Redis the keyword tests below still run: narrowing this rule is not switching the
   // gate off.
   if (readsSqlText(databaseType) && hasUnterminatedSpan(query, grammar)) return true;
+  // The same reasoning for a line comment that holds a lone carriage return: engines that share a connection type end
+  // it in different places, so either reading of the code after it may be wrong about what the server runs.
+  if (readsSqlText(databaseType) && hasLoneCarriageReturnInLineComment(query, grammar)) return true;
 
   // A type whose own vocabulary is the whole answer is not read as SQL at all, and
   // PromQL, Kafka and etcd are those types. A PromQL expression can start with a metric name the

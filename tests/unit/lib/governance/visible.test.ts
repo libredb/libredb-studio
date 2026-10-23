@@ -96,6 +96,16 @@ describe("without governance", () => {
       "admin-and-user",
     ]);
   });
+
+  test("uses seedRolesOf to include custom claim roles when OIDC_ROLE_PREFIX is set", async () => {
+    process.env.OIDC_ROLE_PREFIX = "team-";
+    try {
+      const principal = { ...ALICE, claimRoles: ["team-billing"] };
+      expect(await visibleConnections(principal)).toEqual(await getManagedConnections(["user", "team-billing"]));
+    } finally {
+      delete process.env.OIDC_ROLE_PREFIX;
+    }
+  });
 });
 
 describe("under governance", () => {

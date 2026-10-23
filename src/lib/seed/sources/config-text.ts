@@ -49,6 +49,38 @@ function parseYAMLText(text: string): unknown {
   return doc.toJS();
 }
 
+const STANDARD_ROLES = new Set(["*", "admin", "user"]);
+const RESERVED_ROLES = new Set(["*", "admin", "user"]);
+
+function validateCustomRoles(config: SeedConfig, origin: string): void {
+  const isOidc = process.env.NEXT_PUBLIC_AUTH_PROVIDER === "oidc";
+  const prefix = process.env.OIDC_ROLE_PREFIX;
+
+  for (const conn of config.connections) {
+    for (const role of conn.roles) {
+      if (STANDARD_ROLES.has(role)) continue;
+      if (RESERVED_ROLES.has(role.toLowerCase())) {
+        throw new OperatorSourceError(
+          "invalid",
+          `Invalid seed config at ${origin}: connection "${conn.id}" declares reserved role "${role}"`,
+        );
+      }
+      if (!isOidc || !prefix) {
+        throw new OperatorSourceError(
+          "invalid",
+          `Invalid seed config at ${origin}: connection "${conn.id}" declares custom role "${role}", which requires NEXT_PUBLIC_AUTH_PROVIDER="oidc" and OIDC_ROLE_PREFIX to be set`,
+        );
+      }
+      if (!role.startsWith(prefix)) {
+        throw new OperatorSourceError(
+          "invalid",
+          `Invalid seed config at ${origin}: connection "${conn.id}" declares role "${role}", which does not start with OIDC_ROLE_PREFIX "${prefix}"`,
+        );
+      }
+    }
+  }
+}
+
 /** Parses and validates one config text; throws OperatorSourceError("unparseable" | "invalid"). */
 export function parseSeedConfigText(text: string, origin: string, format: SeedConfigFormat): SeedConfig {
   let parsed: unknown;
@@ -62,6 +94,7 @@ export function parseSeedConfigText(text: string, origin: string, format: SeedCo
   if (!result.success) {
     throw new OperatorSourceError("invalid", `Invalid seed config at ${origin}: ${describeIssues(result.error)}`);
   }
+  validateCustomRoles(result.data, origin);
   return result.data;
 }
 

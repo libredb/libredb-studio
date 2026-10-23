@@ -26,6 +26,7 @@ export const LIVE_CHANNELS: readonly ShowcaseChannel[] = [
   { id: "snap", label: "Snap Store", group: "packages" },
   { id: "linux-deb-rpm", label: "Linux .deb / .rpm", group: "packages" },
   { id: "appimage", label: "Desktop app (AppImage, .deb)", group: "packages" },
+  { id: "vscode-marketplace", label: "VS Code extension", group: "packages" },
   { id: "railway-template", label: "Railway one-click template", group: "paas" },
   { id: "koyeb-deploy-button", label: "Koyeb deploy button", group: "paas" },
   { id: "fly-io", label: "Fly.io launch config", group: "paas" },

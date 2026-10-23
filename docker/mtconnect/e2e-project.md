@@ -44,7 +44,8 @@ a step that reports that as a green suite is reporting something it did not meas
 
 ## The one thing that is not finished
 
-`docker/mtconnect/ci-step.yml` starts the fixture and publishes it on **`127.0.0.1:17322`**, which
+The `MTConnect provider check` step of `.github/workflows/ci.yml` starts the fixture and publishes
+it on **`127.0.0.1:17322`**, which
 is exactly the origin this spec dials by default. It looks as though the live case would therefore
 run in CI. MEASURED against the two files, it will not:
 

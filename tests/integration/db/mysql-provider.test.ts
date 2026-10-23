@@ -5475,6 +5475,8 @@ describe("object surface", () => {
     expect(kinds.find((k) => k.id === "package")).toBeUndefined();
     expect(kinds.find((k) => k.id === "sequence")).toBeUndefined();
     expect(capabilities.containerLevels).toEqual([{ id: "schema", label: "Database", labelPlural: "Databases" }]);
+    // The Diff tab reads the session's own database unless the Scope picker says otherwise (#1791).
+    expect(capabilities.schemaDiffScope).toBe("session-container");
     await provider.disconnect();
   });
 

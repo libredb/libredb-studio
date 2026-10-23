@@ -4,7 +4,7 @@
  * time with the test JWT_SECRET, never committed ones.
  */
 import { MCP_ENABLED_ENV, MCP_TOKEN_LABEL_ENV, MCP_TOKEN_TTL_DAYS_ENV, MCP_URL_ENV } from "@/lib/mcp/config";
-import { mintMcpToken } from "@/lib/mcp/token";
+import { mintMcpToken, type McpTokenOwner } from "@/lib/mcp/token";
 import { MCP_TEST_URL } from "./mcp-harness";
 
 export const TEST_CHANNEL_LABEL = "test-channel-label";
@@ -37,7 +37,7 @@ export function useMcpChannel(overrides: ChannelOverrides = {}): () => void {
 }
 
 export async function mintTestToken(
-  owner: { username: string; role: "admin" | "user"; sessionVersion?: number } = { username: "alice", role: "admin" },
+  owner: McpTokenOwner = { username: "alice", role: "admin" },
   clock?: () => number,
 ): Promise<string> {
   return (await mintMcpToken(owner, clock)).token;

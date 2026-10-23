@@ -958,6 +958,44 @@ describe("QuerySafetyDialog", () => {
     expect(balanced.queryByText("Part of this statement could not be read")).toBeNull();
   });
 
+  // A lone carriage return in a `--` comment ends the comment on PostgreSQL and not on CockroachDB, which connects on
+  // the same type id, so the notice says why a statement that may read as a SELECT asks. A CR LF pair is an ordinary
+  // line end, and the notice stays silent.
+  test("says so for a line comment holding a lone carriage return", async () => {
+    globalThis.fetch = mock(async () =>
+      createStreamResponse({ chunks: [JSON.stringify(SAFE_PAYLOAD)] }),
+    ) as unknown as typeof fetch;
+
+    for (const databaseType of ["postgres", "mysql", "spark"] as const) {
+      const split = render(
+        <QuerySafetyDialog
+          isOpen
+          query={"SELECT 1 -- x\r; DELETE FROM t"}
+          schemaContext=""
+          databaseType={databaseType}
+          onClose={onClose}
+          onProceed={onProceed}
+        />,
+      );
+      expect(split.queryByText("Part of this statement could not be read")).not.toBeNull();
+      expect(split.queryByText(/lone carriage return/)).not.toBeNull();
+      split.unmount();
+      cleanup();
+    }
+
+    const paired = render(
+      <QuerySafetyDialog
+        isOpen
+        query={"SELECT 1 -- x\r\n; DELETE FROM t"}
+        schemaContext=""
+        databaseType="postgres"
+        onClose={onClose}
+        onProceed={onProceed}
+      />,
+    );
+    expect(paired.queryByText("Part of this statement could not be read")).toBeNull();
+  });
+
   // A vocabulary that asks for a typed value, or keeps its statements from the analysis (#1089, section 5.5 and
   // E10). These tests install a row of their own under a key no DatabaseType spells
   // (tests/helpers/stand-in-vocabulary.ts), so each rule is pinned apart from any engine's grammar; etcd's row,

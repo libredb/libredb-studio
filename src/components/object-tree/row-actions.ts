@@ -177,7 +177,7 @@ export function rowActions({
   // cache miss into the parent table's whole menu offered against one of its columns. The shape
   // that would be: `objectFor` resolving the parent and `objectActions` offering "Vacuum Table"
   // on `order_id`, with the table's status and row count drawn on the column row beside it.
-  if (row.kind === "column") return [];
+  if (row.kind === "column" || row.kind === "constraint") return [];
   const kind = row.kindId === undefined ? undefined : findKind(capabilities, row.kindId);
   // A container row, and a row whose kind the provider does not declare. Neither can be
   // reasoned about from a declaration that is not there.

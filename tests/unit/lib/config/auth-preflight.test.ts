@@ -456,3 +456,71 @@ describe("config/auth-preflight STORAGE_POSTGRES_SCHEMA", () => {
     }
   });
 });
+
+describe("config/auth-preflight OIDC_BEARER_AUDIENCE", () => {
+  const KEYS = ["OIDC_BEARER_AUDIENCE", "NEXT_PUBLIC_AUTH_PROVIDER", "OIDC_CLIENT_ID"] as const;
+  const saved: Record<string, string | undefined> = {};
+
+  afterEach(() => {
+    for (const key of KEYS) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
+  });
+
+  function run(env: Partial<Record<(typeof KEYS)[number], string>>) {
+    for (const key of KEYS) {
+      saved[key] = process.env[key];
+      if (env[key] === undefined) delete process.env[key];
+      else process.env[key] = env[key];
+    }
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    const originalExit = process.exit;
+    const exitCalls: Array<number | undefined> = [];
+    process.exit = ((code?: number) => {
+      exitCalls.push(code);
+    }) as unknown as typeof process.exit;
+    try {
+      const result = verifyAuthEnvAtBoot();
+      return { result, exitCalls, banner: errorSpy.mock.calls.flat().join("\n") };
+    } finally {
+      process.exit = originalExit;
+      errorSpy.mockRestore();
+    }
+  }
+
+  test("an audience equal to OIDC_CLIENT_ID stops the boot naming the variable", () => {
+    const { result, exitCalls, banner } = run({
+      OIDC_BEARER_AUDIENCE: "studio-web",
+      NEXT_PUBLIC_AUTH_PROVIDER: "oidc",
+      OIDC_CLIENT_ID: "studio-web",
+    });
+    expect(result).toBe(false);
+    expect(exitCalls).toEqual([1]);
+    expect(banner).toContain("LibreDB Studio cannot start: OIDC_BEARER_AUDIENCE is invalid");
+    expect(banner).toContain("OIDC_BEARER_AUDIENCE must not equal OIDC_CLIENT_ID");
+  });
+
+  test("an audience without NEXT_PUBLIC_AUTH_PROVIDER=oidc stops the boot", () => {
+    const { result, exitCalls, banner } = run({
+      OIDC_BEARER_AUDIENCE: "studio-api",
+      NEXT_PUBLIC_AUTH_PROVIDER: "local",
+    });
+    expect(result).toBe(false);
+    expect(exitCalls).toEqual([1]);
+    expect(banner).toContain("bearer access tokens need NEXT_PUBLIC_AUTH_PROVIDER=oidc");
+  });
+
+  test("an unset audience, or a valid one under OIDC, lets the server boot", () => {
+    for (const audience of [undefined, "studio-api"]) {
+      const { result, exitCalls, banner } = run({
+        OIDC_BEARER_AUDIENCE: audience,
+        NEXT_PUBLIC_AUTH_PROVIDER: "oidc",
+        OIDC_CLIENT_ID: "studio-web",
+      });
+      expect(result).toBe(true);
+      expect(exitCalls).toEqual([]);
+      expect(banner).toBe("");
+    }
+  });
+});

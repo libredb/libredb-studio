@@ -2,12 +2,15 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
+import { ciStep } from "../../../helpers/ci-step";
 
 /**
  * The Modbus fixture's two delivery files, held to the rules the live check rests on.
  *
- * `docker/modbus/compose-service.yml` is what a developer runs and `docker/modbus/ci-step.yml` is
- * what CI runs, and they are separate files because the shared ones are landed by one hand. Two
+ * `docker/modbus/compose-service.yml` is what a developer runs and the `Modbus live check` step of
+ * `.github/workflows/ci.yml` is what CI runs. They were separate files because the shared ones are
+ * landed by one hand; the step was pasted into the workflow on 19 October 2026 and this test
+ * follows it, so the pin is held against the copy that runs. Two
  * files naming one device is exactly the shape that drifts: the day they name two digests, the
  * live check passes on one machine and fails on the other for a reason neither file admits.
  *
@@ -20,7 +23,11 @@ const ROOT = path.resolve(import.meta.dir, "../../../..");
 const read = (name: string): string => readFileSync(path.join(ROOT, "docker/modbus", name), "utf8");
 
 const COMPOSE = read("compose-service.yml");
-const CI_STEP = read("ci-step.yml");
+// The step CI RUNS, not the file it was delivered in. Until 19 Eki 2026 this read
+// `docker/modbus/ci-step.yml`, which was written to be pasted into the workflow and never
+// was: the comparison held two files equal while the file that ran was a third one
+// nobody compared. The step now lives in `.github/workflows/ci.yml`.
+const CI_STEP = ciStep("Modbus live check");
 const README = read("README.md");
 /** The live check carries the pin too, because it refuses a digest it did not measure. */
 const LIVE_CHECK = readFileSync(path.join(ROOT, "tests/live/modbus-live-check.ts"), "utf8");

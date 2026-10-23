@@ -152,6 +152,7 @@ import {
 } from "./objects";
 import { comparePaths } from "@/lib/db/object-path";
 import { readCount, toQueryResult } from "./values";
+import { createMissingDirectories } from "@/lib/db/utils/create-directory";
 import { isUnwritableExistingFile } from "@/lib/db/utils/unwritable-file";
 import { logger } from "@/lib/logger";
 import * as fs from "fs";
@@ -692,8 +693,13 @@ export class DuckDBProvider extends SQLBaseProvider {
       }
 
       if (dbPath !== MEMORY_TARGET) {
-        const dir = path.dirname(dbPath);
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        // One level at a time: Node's recursive mkdir never returns for a folder under /proc.
+        // A refused folder is the open failure it causes, so it reads like every other one.
+        try {
+          createMissingDirectories(path.dirname(dbPath));
+        } catch (error) {
+          throw describeOpenFailure(error, dbPath, false);
+        }
       }
 
       // An existing file this process cannot write, or whose directory it cannot write, is

@@ -25,17 +25,20 @@
  * The reading is dialect-less (`DEFAULT_SQL_GRAMMAR`): the descriptor's input
  * contract is evaluated before a provider is chosen. Where the dialects disagree
  * about a run's meaning, the default reading is not automatically the safe one —
- * two forms disagree about where the STATEMENT ENDS, and reading them the
+ * three forms disagree about where the STATEMENT ENDS, and reading them the
  * default way would admit a second statement rather than refuse a read:
  *
  * - `$tag$…$tag$` is a literal in PostgreSQL and a bind parameter followed by
  *   ordinary code in SQLite, so a `;` written inside one really terminates the
  *   statement there;
  * - `#` opens a comment in MySQL/ClickHouse, is an operator in PostgreSQL and
- *   prefixes a bind variable in SQLite.
+ *   prefixes a bind variable in SQLite;
+ * - a lone carriage return ends a `--` comment in PostgreSQL and SQL Server and
+ *   is comment text in MySQL and CockroachDB, so what follows it is code to one
+ *   and comment to the other.
  *
- * Both are therefore refused outright (`DIALECT_AMBIGUOUS_TEXT`) instead of
- * being read under one dialect's rules. A third form was considered and left
+ * All three are therefore refused outright (`DIALECT_AMBIGUOUS_TEXT`) instead of
+ * being read under one dialect's rules. A fourth form was considered and left
  * alone: `[…]` is a quoted identifier under this grammar and an array subscript
  * whose contents are CODE in PostgreSQL, so `SELECT a[1 ; DROP TABLE t]` reads
  * as one statement here and as two there. It stays admitted because it is not
@@ -59,7 +62,12 @@
 import { z } from "zod";
 import { DEFAULT_SQL_GRAMMAR } from "@/lib/sql/grammar";
 import { readOperativeKeyword } from "@/lib/sql/operative-keyword";
-import { hasUnterminatedSpan, readSqlSpan, type SqlSpanKind } from "@/lib/sql/spans";
+import {
+  hasLoneCarriageReturnInLineComment,
+  hasUnterminatedSpan,
+  readSqlSpan,
+  type SqlSpanKind,
+} from "@/lib/sql/spans";
 import { readSqlWord } from "@/lib/sql/words";
 
 export type AgentStatementViolation =
@@ -315,7 +323,10 @@ export function inspectAgentStatement(
   if (hasUnterminatedSpan(sql, DEFAULT_SQL_GRAMMAR)) return "UNDETERMINABLE_TEXT";
 
   const shape = scanStatementShape(sql);
-  if (shape.dialectAmbiguous) return "DIALECT_AMBIGUOUS_TEXT";
+  // A line comment holding a lone carriage return ends there on PostgreSQL and SQL Server and runs on to the line feed
+  // on MySQL and CockroachDB, so the engines disagree about where the statement's code is.
+  if (shape.dialectAmbiguous || hasLoneCarriageReturnInLineComment(sql, DEFAULT_SQL_GRAMMAR))
+    return "DIALECT_AMBIGUOUS_TEXT";
   if (shape.statementTail) return "MULTIPLE_STATEMENTS";
 
   const operative = readOperativeKeyword(sql, DEFAULT_SQL_GRAMMAR);

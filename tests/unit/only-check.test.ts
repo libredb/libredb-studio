@@ -248,12 +248,14 @@ describe("findFocusedTests", () => {
 });
 
 describe("isScannedFile", () => {
-  test("reads the two directories the runner and Playwright read", () => {
+  test("reads the directories the runner, Playwright and the extension's Mocha legs read", () => {
     expect(isScannedFile("tests/unit/x.test.ts")).toBe(true);
     expect(isScannedFile("tests/runner/report.ts")).toBe(true);
     expect(isScannedFile("e2e/login.spec.ts")).toBe(true);
     expect(isScannedFile("tests/helpers/posix-tools.ts")).toBe(true);
     expect(isScannedFile("tests/unit/x.mjs")).toBe(true);
+    expect(isScannedFile("vscode-extension/test/unit/manifest.test.ts")).toBe(true);
+    expect(isScannedFile("vscode-extension/test/e2e/smoke/skeleton.test.ts")).toBe(true);
   });
 
   test("leaves the application, the scripts and type declarations alone", () => {
@@ -261,6 +263,8 @@ describe("isScannedFile", () => {
     expect(isScannedFile("scripts/only-check.mjs")).toBe(false);
     expect(isScannedFile("tests/types.d.ts")).toBe(false);
     expect(isScannedFile("docs/AGENT.md")).toBe(false);
+    expect(isScannedFile("vscode-extension/src/host/extension.ts")).toBe(false);
+    expect(isScannedFile("vscode-extension/esbuild.mjs")).toBe(false);
   });
 
   test("reads its own test, which needs no carve-out to be scanned", () => {
@@ -343,5 +347,18 @@ describe("runOnlyCheck", () => {
     });
 
     expect(runOnlyCheck(root).code).toBe(1);
+  });
+
+  test("the gate refuses a focus in the extension's Mocha tests", () => {
+    // The clean file keeps the enumeration non-empty, so a red run is about the focus and not about an empty list.
+    const root = repo({
+      "tests/unit/clean.test.ts": CLEAN_SOURCE,
+      "vscode-extension/test/unit/manifest.test.ts": focused(`describe${SENTINEL}("the manifest", () => {});\n`),
+    });
+
+    const { code, lines } = runOnlyCheck(root);
+
+    expect(code).toBe(1);
+    expect(lines.join("\n")).toContain("vscode-extension/test/unit/manifest.test.ts:1");
   });
 });

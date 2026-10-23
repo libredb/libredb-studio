@@ -21,6 +21,7 @@ const mockGetOIDCConfig = mock(() => ({
   clientSecret: "test-client-secret",
   scope: "openid profile email",
   roleClaim: "roles",
+  rolePrefix: undefined as string | undefined,
   adminRoles: ["admin"],
   userRoles: ["user"],
 }));
@@ -55,6 +56,34 @@ const mockMapOIDCRole = mock(
 
 const mockGetPublicOrigin = mock((req: Request) => new URL(req.url).origin);
 
+const mockReadRoleClaimValues = mock((claims: Record<string, unknown>, roleClaim: string): string[] => {
+  if (!roleClaim) return [];
+  const parts = roleClaim.split(".");
+  let value: unknown = claims;
+  for (const part of parts) {
+    if (value == null || typeof value !== "object") return [];
+    value = (value as Record<string, unknown>)[part];
+  }
+  if (value == null) return [];
+  return Array.isArray(value) ? value.map(String) : [String(value)];
+});
+
+const mockMapOIDCClaimRoles = mock((values: readonly string[], prefix: string) => {
+  if (!prefix) return { roles: [], overflow: false };
+  const matching: string[] = [];
+  let overflow = false;
+  for (const val of values) {
+    if (val.startsWith(prefix)) {
+      if (["*", "admin", "user"].includes(val.toLowerCase())) continue;
+      if (val.length > 64) overflow = true;
+      matching.push(val);
+    }
+  }
+  const deduped = Array.from(new Set(matching)).sort();
+  if (deduped.length > 20) overflow = true;
+  return { roles: overflow ? [] : deduped, overflow };
+});
+
 mock.module("@/lib/oidc", () => ({
   getOIDCConfig: mockGetOIDCConfig,
   discoverProvider: mockDiscoverProvider,
@@ -63,6 +92,8 @@ mock.module("@/lib/oidc", () => ({
   decryptState: mockDecryptState,
   exchangeCode: mockExchangeCode,
   mapOIDCRole: mockMapOIDCRole,
+  mapOIDCClaimRoles: mockMapOIDCClaimRoles,
+  readRoleClaimValues: mockReadRoleClaimValues,
   resetDiscoveryCache: mock(() => {}),
   getPublicOrigin: mockGetPublicOrigin,
 }));
@@ -283,6 +314,26 @@ describe("GET /api/auth/oidc/callback", () => {
     expect(await mintedSession()).toMatchObject({ role: "user", username: "user-123" });
   });
 
+  test("passes over an email the provider marks unverified, so a chosen address cannot open another person's workspace", async () => {
+    mockExchangeCode.mockImplementationOnce(async () =>
+      exchanged({ ...defaultClaims, email: "victim@example.com", email_verified: false }),
+    );
+
+    await GET(new Request("http://localhost:3000/api/auth/oidc/callback?code=auth-code&state=test-state"));
+
+    expect(await mintedSession()).toMatchObject({ username: "testuser" });
+  });
+
+  test("never takes an email-shaped preferred_username, and falls back to sub", async () => {
+    mockExchangeCode.mockImplementationOnce(async () =>
+      exchanged({ iss: ISSUER, sub: "user-123", preferred_username: "victim@example.com" }),
+    );
+
+    await GET(new Request("http://localhost:3000/api/auth/oidc/callback?code=auth-code&state=test-state"));
+
+    expect(await mintedSession()).toMatchObject({ username: "user-123" });
+  });
+
   test("passes claims to mapOIDCRole with correct config", async () => {
     const req = new Request("http://localhost:3000/api/auth/oidc/callback?code=auth-code&state=test-state");
     await GET(req);
@@ -395,6 +446,7 @@ describe("GET /api/auth/oidc/callback", () => {
         clientSecret: "secret",
         scope: "openid",
         roleClaim: "roles",
+        rolePrefix: undefined,
         adminRoles: ["admin"],
         userRoles: ["user"],
       }));
@@ -608,6 +660,121 @@ describe("GET /api/auth/oidc/callback", () => {
       await GET(new Request(callbackUrl));
 
       expect(await mintedSession()).toMatchObject({ idpSubject: "user-123", idpIssuer: `${ISSUER}/` });
+    });
+  });
+
+  describe("claim roles (OIDC_ROLE_PREFIX)", () => {
+    const callbackUrl = "http://localhost:3000/api/auth/oidc/callback?code=auth-code&state=test-state";
+
+    test("session with claim roles carries claimRoles when OIDC_ROLE_PREFIX is set", async () => {
+      mockGetOIDCConfig.mockReturnValueOnce({
+        issuer: ISSUER,
+        clientId: "test-client-id",
+        clientSecret: "test-client-secret",
+        scope: "openid profile email",
+        roleClaim: "roles",
+        rolePrefix: "team-",
+        adminRoles: ["admin"],
+        userRoles: ["user"],
+      });
+      mockExchangeCode.mockImplementationOnce(async () =>
+        exchanged({ ...defaultClaims, roles: ["user", "team-billing", "team-dev"] }),
+      );
+
+      const res = await GET(new Request(callbackUrl));
+      expect(res.status).toBe(307);
+      const session = await mintedSession();
+      expect(session?.claimRoles).toEqual(["team-billing", "team-dev"]);
+    });
+
+    test("feature off gives the old session shape without claimRoles", async () => {
+      mockGetOIDCConfig.mockReturnValueOnce({
+        issuer: ISSUER,
+        clientId: "test-client-id",
+        clientSecret: "test-client-secret",
+        scope: "openid profile email",
+        roleClaim: "roles",
+        rolePrefix: undefined,
+        adminRoles: ["admin"],
+        userRoles: ["user"],
+      });
+      mockExchangeCode.mockImplementationOnce(async () =>
+        exchanged({ ...defaultClaims, roles: ["user", "team-billing"] }),
+      );
+
+      const res = await GET(new Request(callbackUrl));
+      expect(res.status).toBe(307);
+      const session = await mintedSession();
+      expect(session?.claimRoles).toBeUndefined();
+    });
+
+    test("oidc_role_overflow refusal and audit when claim roles exceed limits", async () => {
+      mockGetOIDCConfig.mockReturnValueOnce({
+        issuer: ISSUER,
+        clientId: "test-client-id",
+        clientSecret: "test-client-secret",
+        scope: "openid profile email",
+        roleClaim: "roles",
+        rolePrefix: "team-",
+        adminRoles: ["admin"],
+        userRoles: ["user"],
+      });
+      // 21 matching roles
+      const tooManyRoles = Array.from({ length: 21 }, (_, i) => `team-${i}`);
+      mockExchangeCode.mockImplementationOnce(async () =>
+        exchanged({ ...defaultClaims, roles: ["user", ...tooManyRoles] }),
+      );
+
+      const spy = spyOn(console, "log").mockImplementation(() => {});
+      try {
+        const res = await GET(new Request(callbackUrl));
+        expect(res.status).toBe(307);
+        expect(res.headers.get("location")).toBe("http://localhost:3000/login?error=oidc_role_overflow");
+        expect(setCookies.has("auth-token")).toBe(false);
+        expect(mockCookieStore.delete).toHaveBeenCalledWith({ name: "oidc-state", path: "/" });
+
+        const lines = spy.mock.calls.map((call: unknown[]) => JSON.parse(call[0] as string) as Record<string, unknown>);
+        expect(lines[0]).toMatchObject({
+          event: "login_failure",
+          reason: "oidc_role_overflow",
+          route: "GET /api/auth/oidc/callback",
+        });
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    test("OIDC_USER_ROLES still refuses a claim-roles-only account as oidc_no_role", async () => {
+      mockGetOIDCConfig.mockReturnValueOnce({
+        issuer: ISSUER,
+        clientId: "test-client-id",
+        clientSecret: "test-client-secret",
+        scope: "openid profile email",
+        roleClaim: "roles",
+        rolePrefix: "team-",
+        adminRoles: ["admin"],
+        userRoles: ["user"],
+      });
+      mockMapOIDCRole.mockReturnValueOnce(null);
+      mockExchangeCode.mockImplementationOnce(async () => exchanged({ ...defaultClaims, roles: ["team-billing"] }));
+
+      const spy = spyOn(console, "log").mockImplementation(() => {});
+      try {
+        const res = await GET(new Request(callbackUrl));
+        expect(res.status).toBe(307);
+        expect(res.headers.get("location")).toBe("http://localhost:3000/login?error=oidc_no_role");
+        expect(setCookies.has("auth-token")).toBe(false);
+        expect(mockCookieStore.delete).toHaveBeenCalledWith({ name: "oidc-state", path: "/" });
+
+        const lines = spy.mock.calls.map((call: unknown[]) => JSON.parse(call[0] as string) as Record<string, unknown>);
+        expect(lines[0]).toMatchObject({
+          event: "login_failure",
+          reason: "oidc_no_role",
+          route: "GET /api/auth/oidc/callback",
+        });
+      } finally {
+        spy.mockRestore();
+      }
     });
   });
 });

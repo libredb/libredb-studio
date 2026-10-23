@@ -34,6 +34,7 @@ import {
   sessionTtlSeconds,
 } from "@/lib/config/auth-env";
 import { isBootstrapEnabled } from "@/lib/auth-bootstrap";
+import { readBearerAudience } from "@/lib/oidc-bearer";
 import { isServerStorageEnabled } from "@/lib/storage/factory";
 import { getStorageProviderType } from "@/lib/storage/provider-type";
 import { readSchemaName } from "@/lib/storage/schema-name";
@@ -129,6 +130,33 @@ function verifyStorageSchemaAtBoot(): boolean {
 }
 
 /**
+ * Validate `OIDC_BEARER_AUDIENCE` (src/lib/oidc-bearer.ts). Unset leaves the bearer channel off. A set value without
+ * NEXT_PUBLIC_AUTH_PROVIDER=oidc, or equal to OIDC_CLIENT_ID, would answer every native client 503, so boot stops here.
+ * The same check runs on every bearer request, because an embedded Studio never runs this preflight.
+ */
+function verifyBearerAudienceAtBoot(): boolean {
+  try {
+    readBearerAudience();
+    return true;
+  } catch (error) {
+    console.error(
+      [
+        "",
+        "============================================================",
+        " LibreDB Studio cannot start: OIDC_BEARER_AUDIENCE is invalid",
+        ` ${(error as Error).message}.`,
+        " Set it to the audience the identity provider puts in the native client's access tokens,",
+        " or unset it to turn bearer access tokens off.",
+        "============================================================",
+        "",
+      ].join("\n"),
+    );
+    process.exit(1);
+    return false;
+  }
+}
+
+/**
  * Validate the auth environment before the server starts serving.
  *
  * Returns `true` when boot may continue. On a fatal misconfiguration it prints
@@ -137,7 +165,7 @@ function verifyStorageSchemaAtBoot(): boolean {
  * is stubbed (tests) rather than terminating the process immediately.
  */
 export function verifyAuthEnvAtBoot(): boolean {
-  if (!verifySessionTtlAtBoot()) return false;
+  if (!verifySessionTtlAtBoot() || !verifyBearerAudienceAtBoot()) return false;
 
   const secret = process.env.JWT_SECRET;
 

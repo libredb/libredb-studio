@@ -87,6 +87,29 @@ describe("auth", () => {
       const token = await signJWT({ role: "user", username: "user" });
       expect(typeof token).toBe("string");
     });
+
+    test("holds token under 4096 bytes with 20 roles of 64 UTF-8 bytes containing multi-byte characters", async () => {
+      const roles: string[] = [];
+      for (let i = 0; i < 20; i++) {
+        const prefix = `team:${i.toString().padStart(2, "0")}:`; // 8 ASCII bytes
+        // 56 bytes of 2-byte characters = 28 characters
+        const role = prefix + "ö".repeat(28); // 8 + 56 = 64 bytes
+        expect(Buffer.byteLength(role, "utf8")).toBe(64);
+        roles.push(role);
+      }
+      const token = await signJWT({
+        role: "user",
+        username: "testuser",
+        idpSubject: "sub-1234567890",
+        idpIssuer: "https://idp.example.com/auth/realms/master",
+        claimRoles: roles,
+      });
+      // The auth-token cookie must remain well under 4096 bytes so browsers do not drop it
+      expect(Buffer.byteLength(token, "utf8")).toBeLessThan(4096);
+      const verified = await verifyJWT(token);
+      expect(verified).not.toBeNull();
+      expect(verified?.claimRoles).toEqual(roles);
+    });
   });
 
   // --------------------------------------------------------------------------
@@ -224,6 +247,59 @@ describe("auth", () => {
         iat: expect.any(Number),
         exp: expect.any(Number),
       });
+    });
+
+    test("login with non-empty claimRoles signs claimRoles into the session", async () => {
+      await login(
+        "user",
+        "ada@example.com",
+        undefined,
+        {
+          subject: "4f6a2c1e-8b7d-4e3a-9c5f-1a2b3c4d5e6f",
+          issuer: "https://sso.example.com/realms/libredb",
+        },
+        ["team-billing", "team-dev"],
+      );
+      const claims = jose.decodeJwt(mockSetCalls[0].value) as { claimRoles?: string[] };
+      expect(claims.claimRoles).toEqual(["team-billing", "team-dev"]);
+    });
+
+    test("login with empty claimRoles omits claimRoles from the session", async () => {
+      await login(
+        "user",
+        "ada@example.com",
+        undefined,
+        {
+          subject: "4f6a2c1e-8b7d-4e3a-9c5f-1a2b3c4d5e6f",
+          issuer: "https://sso.example.com/realms/libredb",
+        },
+        [],
+      );
+      const claims = jose.decodeJwt(mockSetCalls[0].value) as { claimRoles?: string[] };
+      expect(claims.claimRoles).toBeUndefined();
+    });
+
+    test("a session carrying the maximum 20 claim roles of 64 characters fits under 4096 bytes", async () => {
+      const maxClaimRoles = Array.from(
+        { length: 20 },
+        (_, i) => "team-" + String(i).padStart(2, "0") + "-role-" + "x".repeat(51),
+      );
+      expect(maxClaimRoles).toHaveLength(20);
+      expect(maxClaimRoles.every((r) => r.length === 64)).toBe(true);
+
+      const token = await signJWT({
+        role: "user",
+        username: "user@example.com",
+        idpSubject: "4f6a2c1e-8b7d-4e3a-9c5f-1a2b3c4d5e6f",
+        idpIssuer: "https://sso.example.com/realms/libredb",
+        claimRoles: maxClaimRoles,
+      });
+
+      // Browser cookies are limited to 4096 bytes total
+      expect(token.length).toBeLessThan(4096);
+
+      const verified = await verifyJWT(token);
+      expect(verified?.claimRoles).toEqual(maxClaimRoles);
     });
 
     // The Secure flag is what makes a session survive - or not - in the desktop

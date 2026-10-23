@@ -2890,6 +2890,39 @@ describe("useQueryExecution", () => {
     expect(planCalls).toHaveLength(0);
   });
 
+  // A lone carriage return ends a `--` comment on PostgreSQL and not on CockroachDB, which connects on the same type
+  // id, so the INSERT after it is code to one server and comment to the other: not one statement to plan or explain.
+  test("no plan for a text whose line comment holds a lone carriage return", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+    const sql = "SELECT 1 -- x\r; INSERT INTO users (name) VALUES ('dup')";
+
+    await act(async () => {
+      await result.current.executeQuery(sql, undefined, false, { skipSafety: true });
+    });
+
+    const planCalls = fetchMock.mock.calls.filter((call) => {
+      const init = call[1] as RequestInit | undefined;
+      return typeof init?.body === "string" && JSON.parse(init.body).explain !== undefined;
+    });
+    expect(planCalls).toHaveLength(0);
+
+    fetchMock.mockClear();
+    await act(async () => {
+      await result.current.executeQuery(sql, undefined, true);
+    });
+
+    expect(fetchMock.mock.calls.some((call) => typeof call[0] === "string" && call[0].includes("/api/db/"))).toBe(
+      false,
+    );
+    expect(mockToastError).toHaveBeenCalledWith("Not Supported", {
+      description: "Only a single statement can be explained.",
+    });
+  });
+
   // A note after the final `;` is not a second statement: the splitter keeps it as a
   // fragment of its own, and counting it dropped the plan and refused the Explain
   // button for one SELECT.

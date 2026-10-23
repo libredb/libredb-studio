@@ -133,7 +133,8 @@ export function filterByRoles(connections: SeedConnection[], userRoles: string[]
         clientPrivateKeyPath: conn.clientPrivateKeyPath,
         createdAt: new Date(),
         managed: conn.managed ?? true,
-        roles: conn.roles,
+        // Send only the roles the caller holds (plus wildcard), so browser never sees other teams' roles
+        roles: conn.roles.filter((r) => r === "*" || userRoles.includes(r)),
         seedId: conn.id,
       };
     });

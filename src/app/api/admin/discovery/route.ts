@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createErrorResponse } from "@/lib/api/errors";
 import { isPlainHttpRequest } from "@/lib/api/request-scheme";
-import { auditRoleDenial, guardRoute } from "@/lib/api/require-session";
+import { auditRoleDenial, guardRoute, adminRequiredResponse } from "@/lib/api/require-session";
 import { readCookieSecureOverride } from "@/lib/auth";
 import { governanceEnabled } from "@/lib/governance/config";
 import { getDiscoveryStatus, type DiscoveryStatus } from "@/lib/seed/discovery-loader";
@@ -18,7 +18,7 @@ async function requireAdmin(request: Request, route: string) {
   if ("response" in guard) return guard;
   if (guard.session.role !== "admin") {
     auditRoleDenial({ route, user: guard.session.username, request });
-    return { response: NextResponse.json({ error: "Unauthorized. Admin access required." }, { status: 403 }) };
+    return { response: adminRequiredResponse() };
   }
   return guard;
 }

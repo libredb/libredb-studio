@@ -13,7 +13,7 @@ It runs **two ways**, as a standalone Next.js app and as a published npm package
 
 > **Trunk-based: feature branch → `main` → tag.** Open every PR with `gh pr create --base main`; there is no `dev` branch and no long-lived `release/*` branches. `main` is protected: PRs required, and `Lint, Typecheck and Build`, `Unit & Integration Tests` and `Secret Scan` must pass (SonarCloud runs but is not required — fork PRs cannot produce it).
 >
-> **Tag namespace.** Product releases are bare semver tags on `main` — **no `v` prefix**; the `v`-prefixed tags below 0.9.28 are frozen history, and chart releases use a separate `libredb-studio-<chart version>` namespace. So `git tag | tail` is not "the latest release". Cutting one is the user-invoked `/cut-release` skill ([`.claude/skills/cut-release/SKILL.md`](.claude/skills/cut-release/SKILL.md)) — ask for it, never improvise.
+> **Tag namespace.** Product releases are bare semver tags on `main` — **no `v` prefix**; the `v`-prefixed tags below 0.9.28 are frozen history, and chart releases use a separate `libredb-studio-<chart version>` namespace, and the VS Code extension `vscode-extension-<version>` ([`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md), "VS Code extension (Marketplace)"). So `git tag | tail` is not "the latest release". Cutting one is the user-invoked `/cut-release` skill ([`.claude/skills/cut-release/SKILL.md`](.claude/skills/cut-release/SKILL.md)) — ask for it, never improvise.
 >
 > **Two version gates, both enforced by the required check.** A PR bumping the `package.json` version must also run `bun run chart:bump` **and `make -C operator bundle`** and commit both (#138; the OLM CSV takes its version and controller image tag from `package.json`) — tag only once both are on `main`, since the tag ref is what the operator image and bundle build from. A PR changing any packaged file under `charts/libredb-studio/` must ALSO bump `Chart.yaml version` **by hand** when the current chart version is already released (#167) — `chart:bump` skips it while `appVersion` is in sync — plus the README `--version` examples.
 
@@ -45,6 +45,11 @@ bun run chart:check              # chart version sync guard (#138; CI sets CHART
 bun run channels:showcase:check  # login channel showcase drift guard (#425)
 bun run readme:check             # localized README drift guard (#317)
 bun run security:check           # security posture drift guard
+# VS Code extension (vscode-extension/, npm; after the root bun install; docs/TOOLCHAIN.md "VS Code extension")
+(cd vscode-extension && npm ci --ignore-scripts && npm run build)   # host and child bundles, metafile checks, notices
+(cd vscode-extension && npm run test:unit && npm run coverage:check) # its own 100% gate, unit leg only
+(cd vscode-extension && LIBREDB_BACKEND_RUNTIME=node npm run test:integration)  # or =vscode (P5)
+(cd vscode-extension && xvfb-run -a npm run test:e2e && npm run package)        # e2e needs a display on Linux
 ```
 
 > **Toolchain rationale (Biome formatter-only, oxlint in front of ESLint, the narrow type-aware layer, attw) lives in [`docs/TOOLCHAIN.md`](docs/TOOLCHAIN.md).** Read it before changing any lint, format or packaging config.
@@ -60,7 +65,8 @@ bun run security:check           # security posture drift guard
 Run the required-check gate set locally before claiming done. [`.github/workflows/ci.yml`](.github/workflows/ci.yml) is the authority — this list mirrors it and can fall behind it:
 
 ```bash
-bun run format && bun run lint && bun run typecheck && bun run knip \
+(cd vscode-extension && npm ci --ignore-scripts) \
+  && bun run format && bun run lint && bun run typecheck && bun run knip \
   && bun run chart:check && bun run channels:showcase:check \
   && bun run readme:check && bun run security:check \
   && bun run test && bun run build

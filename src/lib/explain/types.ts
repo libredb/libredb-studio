@@ -5,6 +5,7 @@ export type ExplainMode = "estimate" | "analyze";
 export type ExplainPlanNode = {
   Plan?: ExplainPlanNode;
   "Node Type"?: string;
+  Strategy?: string;
   "Actual Rows"?: number;
   "Plan Rows"?: number;
   "Actual Total Time"?: number;

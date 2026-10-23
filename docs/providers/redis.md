@@ -396,7 +396,7 @@ ioredis only authenticates as `default` when `username` is absent. A pasted
 userinfo into `user` / `password` ([§4.2](#42-connection-string-nuance)).
 
 **A connection saved before the field was writable keeps authenticating as `default`, and there is
-nothing to migrate.** `connectionFields` in [`src/lib/db-ui-config.ts`](../../src/lib/db-ui-config.ts)
+nothing to migrate.** `connectionFields` in [`src/lib/db/connection-form.ts`](../../src/lib/db/connection-form.ts)
 decides what a save WRITES, and it omitted `user` for `redis` until the settlement round of
 2026-08-27 — so the ACL user a person typed was discarded between the box and the driver, and the
 value simply was never captured. No migration can restore a credential that was never stored: an
@@ -1580,6 +1580,11 @@ One page carries four fields in and four out:
   row the reader has focus on is kept in the window rather than unmounted, because focus cannot move
   to a node that is not in the DOM. The database row scrolls with the rest of them — a row pinned over
   a scrolling slice of prefixes would disagree with it about where the list starts.
+- **The ancestors of the first visible row stay pinned above the rows**, root first, so a reader who
+  has scrolled deep into one prefix keeps the database and the folders in sight: at most five rows or
+  35% of the panel, and one ellipsis when the chain is longer than that. An ancestor leaves the strip
+  the moment its own row is visible again, and pressing a pinned row scrolls back to that row and
+  selects it. The same strip is on the object tree ([`FEATURES.md`](../../docs/FEATURES.md)).
 - **Click to load more**, under an open folder — one page of a walk **scoped to that prefix**
   ([§6.3](#63-the-prefix-scoped-walk-load-more)). It is the one control that can find keys the global
   sample never happened to include. The row carries **how many keys are loaded under that prefix** in

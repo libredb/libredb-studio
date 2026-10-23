@@ -431,6 +431,58 @@ describe("POST /api/db/query", () => {
     expect(data.error).toContain("required");
   });
 
+  // A `sql` that is present but not a string reached the provider and answered 500 with the TypeError's own text.
+  // It is refused in words before any provider resolves, a falsy one (0, false) included.
+  for (const [label, sql] of [
+    ["a number", 123],
+    ["an object", { text: "SELECT 1" }],
+    ["an array", ["SELECT 1"]],
+    ["true", true],
+    ["zero", 0],
+    ["false", false],
+  ] as const) {
+    test(`answers 400 when sql is ${label}, before any provider resolves`, async () => {
+      mockGetOrCreateProvider.mockClear();
+      const req = createMockRequest("/api/db/query", {
+        method: "POST",
+        body: { connection: validConnection, sql },
+      });
+
+      const res = await POST(req as never);
+      const data = await parseResponseJSON<{ error: string }>(res);
+
+      expect(res.status).toBe(400);
+      expect(data.error).toBe("sql must be a string");
+      expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    });
+  }
+
+  test("an empty sql keeps the answer of a missing one", async () => {
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "" },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(data.error).toBe("Connection and query are required");
+  });
+
+  test("a null sql keeps the answer of a missing one", async () => {
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: { connection: validConnection, sql: null },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(data.error).toBe("Connection and query are required");
+  });
+
   test("returns 400 when sql is missing", async () => {
     const req = createMockRequest("/api/db/query", {
       method: "POST",
@@ -1104,6 +1156,9 @@ describe("POST /api/db/query with an explain request", () => {
     // grammar fact the splitter carries, so it reads the run as unterminated and finds
     // no boundary: an unresolvable text is not a single statement either.
     ["a backslash-escaped string hiding a write", "SELECT E'\\''; INSERT INTO t VALUES (7)"],
+    // PostgreSQL ends a `--` comment at a lone carriage return and CockroachDB, on the same type id, does not, so
+    // whether the INSERT is code depends on the server, and such a text is not one statement to explain.
+    ["a write after a lone carriage return in a line comment", "SELECT 1 -- x\r; INSERT INTO t VALUES (7)"],
   ])("returns 400 and runs nothing for an explain of %s", async (_label, sql) => {
     // No provider is queued: the refusal comes before one is opened, and a queued
     // `mockResolvedValueOnce` nobody consumed would leak into the next test.
@@ -2157,5 +2212,30 @@ describe("POST /api/db/query: query events under governance", () => {
     expect(res.status).toBe(200);
     expect(queryEventSinkState().queued).toBe(0);
     expect(await recordedEvents()).toEqual([]);
+  });
+});
+
+// A JSON `null` body or one that is not JSON at all answered 500 INTERNAL_ERROR with the runtime's own text ("Cannot destructure property 'sql' ...").
+// Any body that is not a JSON object is the caller's malformed request, answered before any connection resolves.
+describe("POST /api/db/query: a body that is not a JSON object", () => {
+  test.each<[string, string]>([
+    ["null", "null"],
+    ["an array", "[]"],
+    ["a number", "7"],
+    ["a string", '"x"'],
+    ["text that is not JSON", "{not json"],
+  ])("a body that is %s answers 400 and opens no provider", async (_label, raw) => {
+    mockGetOrCreateProvider.mockClear();
+    const res = await POST(
+      new Request("http://localhost:3000/api/db/query", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: raw,
+      }) as never,
+    );
+
+    expect(res.status).toBe(400);
+    expect(await parseResponseJSON(res)).toEqual({ error: "Invalid request body" });
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
   });
 });

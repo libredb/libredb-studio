@@ -46,8 +46,8 @@ export interface EditorQueryRefusal {
  * Why this request is refused, or null when neither check refuses it: the page bounds first, then the
  * console text bound of a connection type that declares one. Null does not mean the request can run:
  * only a type with a text bound has its statement held to a string here, so a new caller checks that the
- * statement and the `queryId` are strings itself before it calls `runEditorQuery`. The route checks only
- * that `sql` is present and that `queryId` is a string, as it did before this module existed.
+ * statement and the `queryId` are strings itself before it calls `runEditorQuery`. The route checks that
+ * `sql` is present and is a string, and that `queryId` is a string, before it calls this.
  */
 export function checkEditorQuery(request: EditorQueryRequest): EditorQueryRefusal | null {
   const optionError = pageOptionError(request.options);

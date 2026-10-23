@@ -7,7 +7,8 @@
 # Paste the block below into `database-compose.yml` before the Kubernetes note at the end of the
 # services, and nothing else changes: it declares no volume, no network and no dependency.
 #
-# The digest here is the one `docker/modbus/ci-step.yml` runs and the one
+# The digest here is the one the `Modbus live check` step of `.github/workflows/ci.yml` runs and
+# the one
 # `tests/unit/db/modbus/live-environment.test.ts` holds the two to, so the fixture under the live
 # check is the fixture under CI.
 

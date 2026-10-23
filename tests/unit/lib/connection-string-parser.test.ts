@@ -62,6 +62,92 @@ describe("parseConnectionString", () => {
       expect(result!.user).toBe("user@name");
       expect(result!.password).toBe("p@ss#word");
     });
+
+    test("percent-decodes the database name, and keeps a broken escape as written", () => {
+      expect(parseConnectionString("postgres://us%3Aer:pw@host:5432/my%20db")!.database).toBe("my db");
+      expect(parseConnectionString("postgres://u:pw@h:5432/%E5%9C%A8")!.database).toBe("在");
+      expect(parseConnectionString("postgres://u:pw@h:5432/my%ZZdb")!.database).toBe("my%ZZdb");
+      expect(parseConnectionString("postgres://u:pw@host:5432/")!.database).toBeUndefined();
+    });
+  });
+
+  describe("postgres:// URL query parameters (libpq keywords)", () => {
+    test("reads host, port, user and password from the query string", () => {
+      const result = parseConnectionString("postgres:///app?host=db.example.com&port=6543&user=alice&password=secret");
+      expect(result!.host).toBe("db.example.com");
+      expect(result!.port).toBe("6543");
+      expect(result!.user).toBe("alice");
+      expect(result!.password).toBe("secret");
+      expect(result!.database).toBe("app");
+    });
+
+    test("query parameters fill in fields the authority left out", () => {
+      const result = parseConnectionString("postgres://localhost/app?user=alice");
+      expect(result!.host).toBe("localhost");
+      expect(result!.user).toBe("alice");
+    });
+
+    test("dbname= overrides the path database the way libpq does", () => {
+      const result = parseConnectionString("postgres://alice@localhost/app?dbname=other");
+      expect(result!.database).toBe("other");
+    });
+
+    test("query parameters override the authority the way libpq does", () => {
+      const result = parseConnectionString("postgres://bob@db1.example.com:5432/app?host=db2.example.com&user=alice");
+      expect(result!.host).toBe("db2.example.com");
+      expect(result!.user).toBe("alice");
+      expect(result!.port).toBe("5432");
+    });
+
+    test("query parameter values keep their percent-encoding as typed", () => {
+      const result = parseConnectionString("postgres:///app?user=us%3Aer&password=pa%24%24word0");
+      expect(result!.user).toBe("us:er");
+      expect(result!.password).toBe("pa$$word0");
+    });
+
+    test("a double-encoded value stays double-encoded, not decoded twice", () => {
+      const result = parseConnectionString("postgres:///app?password=literal%252Fvalue");
+      expect(result!.password).toBe("literal%2Fvalue");
+    });
+
+    test("a plus in a query parameter value is a literal plus", () => {
+      const result = parseConnectionString("postgres:///app?password=pa+ss");
+      expect(result!.password).toBe("pa+ss");
+    });
+
+    test("a percent-encoded UTF-8 value decodes to the typed character", () => {
+      const result = parseConnectionString("postgres:///app?user=us%C3%A9r");
+      expect(result!.user).toBe("usér");
+    });
+
+    test("repeated query keys use the last value", () => {
+      const result = parseConnectionString("postgres:///app?host=db1.example.com&host=db2.example.com");
+      expect(result!.host).toBe("db2.example.com");
+    });
+
+    test("an empty last value still replaces an earlier one", () => {
+      const result = parseConnectionString("postgres:///app?password=old&password=");
+      expect(result!.password).toBe("");
+    });
+
+    test("a percent-encoded keyword name is decoded", () => {
+      const result = parseConnectionString("postgres:///app?ho%73t=db.example.com");
+      expect(result!.host).toBe("db.example.com");
+    });
+
+    test("an authority with only a userinfo and no host parses", () => {
+      const result = parseConnectionString("postgresql://@/app?host=db.example.com&user=alice&password=secret");
+      expect(result!.host).toBe("db.example.com");
+      expect(result!.user).toBe("alice");
+      expect(result!.password).toBe("secret");
+      expect(result!.database).toBe("app");
+    });
+
+    test("a userinfo-only authority falls back to localhost like the empty form", () => {
+      const result = parseConnectionString("postgres://alice@/app");
+      expect(result!.host).toBe("localhost");
+      expect(result!.user).toBe("alice");
+    });
   });
 
   // ── MySQL ───────────────────────────────────────────────────────────────
@@ -87,6 +173,11 @@ describe("parseConnectionString", () => {
       expect(result!.user).toBeUndefined();
       expect(result!.password).toBeUndefined();
       expect(result!.port).toBe("3307");
+    });
+
+    test("percent-decodes a non-ASCII database name", () => {
+      const result = parseConnectionString("mysql://u:pw@h:3306/caf%C3%A9");
+      expect(result!.database).toBe("café");
     });
   });
 
@@ -1335,6 +1426,13 @@ describe("parseConnectionString: databend:// DSNs", () => {
     expect(result.user).toBe("us@er");
     expect(result.password).toBe("p:w/d");
     expect(parseConnectionString("databend://u:100%25%zz@host/db")!.password).toBe("100%25%zz");
+  });
+
+  test("the database path is percent-decoded, and a broken escape is kept as written", () => {
+    expect(parseConnectionString("databend://u:p@host/my%20db")!.database).toBe("my db");
+    expect(parseConnectionString("databend://u:p@host/caf%C3%A9")!.database).toBe("café");
+    expect(parseConnectionString("databend://u:p@host/%E5%9C%A8")!.database).toBe("在");
+    expect(parseConnectionString("databend://u:p@host/my%ZZdb")!.database).toBe("my%ZZdb");
   });
 
   test("a # anywhere is refused, because it ends the URL", () => {

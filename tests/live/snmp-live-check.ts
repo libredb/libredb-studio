@@ -10,6 +10,10 @@
  * returned nothing while `snmpwalk` read sixteen objects from the same subtree.
  *
  * It is NOT in `bun run test`: the runner excludes `tests/live/` by name.
+ * CI runs it in the `SNMP live check` step of the `functional-smoke` job of
+ * .github/workflows/ci.yml. That sentence was not here until 19 October 2026, and its absence
+ * was the defect: the step existed as a file waiting to be pasted, nothing pasted it, and a
+ * reader of this header could not tell a check CI asks for from one only a hand ever ran.
  *
  * RUN IT UNDER BOTH RUNTIMES, with the fixture up:
  *

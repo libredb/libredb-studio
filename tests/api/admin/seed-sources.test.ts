@@ -133,10 +133,10 @@ describe("GET /api/admin/seed-sources: access", () => {
 
     try {
       const res = await GET(request());
-      const data = await parseResponseJSON<{ error: string }>(res);
+      const data = await parseResponseJSON<{ error: string; code?: string }>(res);
 
       expect(res.status).toBe(403);
-      expect(data).toEqual({ error: "Unauthorized. Admin access required." });
+      expect(data).toEqual({ error: "Unauthorized. Admin access required.", code: "ADMIN_REQUIRED" });
       expect(statusCalls).toBe(0);
       expect(auditLines(sink)).toEqual([
         expect.objectContaining({
@@ -489,8 +489,9 @@ describe("GET /api/admin/seed-sources: governance", () => {
       const res = await GET(request());
 
       expect(res.status).toBe(403);
-      expect(await parseResponseJSON<{ error: string }>(res)).toEqual({
+      expect(await parseResponseJSON<{ error: string; code?: string }>(res)).toEqual({
         error: "Unauthorized. Admin access required.",
+        code: "ADMIN_REQUIRED",
       });
       expect(statusCalls).toBe(0);
     } finally {

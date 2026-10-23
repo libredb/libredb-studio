@@ -12,10 +12,31 @@
  * secret - a plain string beside a `password` key - out of the test files, which is what a
  * scanner reads them for.
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const CONFIG = join(import.meta.dir, "../../../docker/snmp/snmpd.conf");
+/**
+ * Where the configuration is, under BOTH runtimes, which is the part that was wrong.
+ *
+ * `import.meta.dir` is Bun's. Under Node it is `undefined`, so `join` threw
+ * `ERR_INVALID_ARG_TYPE: The "path" argument must be of type string` while this module was
+ * still loading - MEASURED in CI on 20 October 2026: the SNMP live check passed all 9 of its
+ * cases under Bun and then the Node run of the same check died before the first one
+ * (`Functional Smoke`, job 118601125543). The Bun-only path is why a check that ran green on a
+ * laptop could still fail on a runner.
+ *
+ * A path relative to this FILE cannot be the answer either: the Node run is a bundle written to
+ * a temp directory, so nothing relative to the bundle reaches the repository. The working
+ * directory is the one anchor both runs share - the live check is documented to run from the
+ * repository root, and the CI step runs there too - so it is the fallback, and the
+ * file-relative path stays first for the ordinary `bun tests/live/...` run.
+ */
+const CANDIDATES = [
+  typeof import.meta.dir === "string" ? join(import.meta.dir, "../../../docker/snmp/snmpd.conf") : undefined,
+  join(process.cwd(), "docker/snmp/snmpd.conf"),
+].filter((path): path is string => path !== undefined);
+
+const CONFIG = CANDIDATES.find((path) => existsSync(path)) ?? CANDIDATES[CANDIDATES.length - 1];
 
 /**
  * The `rocommunity` line's second word.

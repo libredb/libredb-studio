@@ -432,6 +432,8 @@ describe("routes that reach a provider require a session", () => {
     "@/lib/logger": "structured logging",
     "@/lib/non-finite": "writes NaN and the infinities in held rows as words; pure, imports nothing",
     "@/lib/oidc": "the OIDC discovery and PKCE exchange",
+    "@/lib/oidc-identity":
+      "the issuer comparison and the username rule for identity provider claims; pure, imports nothing",
     "@/lib/seed":
       "reads seed connection metadata from config and the CapRover discovery export; its only network use is a bare node:net reachability probe for built-image candidates, through ./discovery-loader, never a database or LLM provider",
     "@/lib/seed/discovery-loader":

@@ -34,9 +34,10 @@
  * injected at all (#280).
  */
 
+import { QueryError } from "@/lib/db/errors";
 import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
 import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
-import { readOperativeKeyword } from "@/lib/sql/operative-keyword";
+import { readCteBodyWrite, readOperativeKeyword } from "@/lib/sql/operative-keyword";
 import { hasUnterminatedSpan, readSqlSpan } from "@/lib/sql/spans";
 import { readStatementEnd } from "@/lib/sql/statement-end";
 import { findCodeWord } from "@/lib/sql/words";
@@ -323,7 +324,14 @@ function analyzeUnderGrammar(sql: string, grammar: SqlGrammar): ParsedQueryInfo 
   // module - `sql-base.ts`, `oracle.ts` and `mssql.ts` - test `=== "SELECT"` and
   // nothing else, so the honest answer costs nothing.
   // `MERGE`, which the union cannot name, falls through to OTHER.
-  const typingKeyword = keyword === "WITH" ? readOperativeKeyword(statement, grammar)?.keyword : keyword;
+  //
+  // A SELECT over a CTE body that writes is typed by that write: the body
+  // runs once and to completion whatever the SELECT reads, so a bound made the
+  // statement pageable and every next page re-ran the write in full.
+  let typingKeyword = keyword === "WITH" ? readOperativeKeyword(statement, grammar)?.keyword : keyword;
+  if (typingKeyword === "SELECT" && keyword === "WITH") {
+    typingKeyword = readCteBodyWrite(statement, grammar)?.keyword ?? typingKeyword;
+  }
   const type = classifyKeyword(typingKeyword);
 
   // LIMIT/OFFSET detection: find the outermost query's LIMIT, the
@@ -449,7 +457,30 @@ function analyzeUnderGrammar(sql: string, grammar: SqlGrammar): ParsedQueryInfo 
 // ============================================================================
 
 /**
+ * Whether `value` is a row bound the limiter takes: a non-negative safe integer, so at most `Number.MAX_SAFE_INTEGER`.
+ * Past it, the page probe's `limit + 1` can come back equal to `limit`, and from 1e21 up a number is written in
+ * exponent form. `pageOptionError` (`src/lib/api/page-probe.ts`) holds a request's `options.limit` and `options.offset`
+ * to it with one to spare, so neither a bound a route accepts nor the probe's `limit + 1` past it is refused here.
+ */
+export function isRowBound(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+/**
+ * Throws the `QueryError` a `limit` or an `offset` that is not a row bound (`isRowBound`) gets. `applyQueryLimit`
+ * calls it before anything else, and so does every `prepareQuery` that pages without `applyQueryLimit`.
+ */
+export function assertRowBounds(limit: unknown, offset: unknown, type?: DatabaseType): void {
+  if (!isRowBound(limit)) throw new QueryError("The row limit must be a non-negative integer", type);
+  if (!isRowBound(offset)) throw new QueryError("The row offset must be a non-negative integer", type);
+}
+
+/**
  * Adds a LIMIT to a SELECT statement, or updates the LIMIT it already has.
+ *
+ * `limit` and `offset` must each be a row bound (`isRowBound`): any other value throws a `QueryError`
+ * (`assertRowBounds`) before anything else is done. A caller holding a request's page options checks them first, as
+ * the routes do with `pageOptionError`.
  */
 export function applyQueryLimit(
   sql: string,
@@ -458,6 +489,7 @@ export function applyQueryLimit(
   options: Partial<QueryLimitOptions> = {},
   type?: DatabaseType,
 ): LimitedQueryResult {
+  assertRowBounds(limit, offset, type);
   const { forceLimit = false } = options;
   // Resolved once and passed down, so the type it came from stops here: no reader
   // below this line ever sees a database type id.

@@ -292,6 +292,7 @@
     "node-opcua-server": "2.187.3",
     "oxlint": "^1.81.0",
     "protobufjs": "7.6.6",
+    "reflect-metadata": "0.2.2",
     "tailwindcss": "^4.3.3",
     "tsup": "^9.0.0",
     "typescript": "^6.0.3",

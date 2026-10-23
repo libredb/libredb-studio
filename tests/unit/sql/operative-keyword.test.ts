@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
-import { readOperativeKeyword } from "@/lib/sql/operative-keyword";
+import { readCteBodyWrite, readOperativeKeyword } from "@/lib/sql/operative-keyword";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -530,5 +530,138 @@ describe("readOperativeKeyword", () => {
       expect(keyword, label).toBe(expected);
       expect(elapsed, `${label} took ${elapsed.toFixed(1)}ms`).toBeLessThan(BOUND_MS);
     }
+  });
+});
+
+// ─── readCteBodyWrite ───────────────────────────────────────────────────────
+//
+// A CTE body may itself be a write, and PostgreSQL runs such a body exactly once
+// and always to completion, whatever the outer statement reads of it (manual
+// 7.8.4). So `WITH d AS (DELETE … RETURNING *) SELECT * FROM d` is operated by a
+// SELECT and still WRITES: bounded and paged, every Load more page re-ran the
+// DELETE in full (measured on PostgreSQL 17.6). This reader answers which
+// write a CTE body does, so the limiter can leave such a statement alone.
+
+function bodyWriteOf(sql: string, grammar?: SqlGrammar): string | null {
+  return readCteBodyWrite(sql, grammar)?.keyword ?? null;
+}
+
+describe("readCteBodyWrite", () => {
+  describe("a CTE body that writes", () => {
+    test.each<[string, string, string]>([
+      [
+        "a DELETE body",
+        "WITH d AS (DELETE FROM queue WHERE id IN (SELECT id FROM queue ORDER BY id LIMIT 1000) RETURNING *) SELECT * FROM d",
+        "DELETE",
+      ],
+      ["an UPDATE body", "WITH u AS (UPDATE t SET seen = true RETURNING id) SELECT * FROM u", "UPDATE"],
+      ["an INSERT body", "WITH i AS (INSERT INTO t VALUES (1) RETURNING id) SELECT * FROM i", "INSERT"],
+      ["an UPSERT body", "WITH u AS (UPSERT INTO t VALUES (1) RETURNING *) SELECT * FROM u", "UPSERT"],
+      [
+        "a MERGE body",
+        "WITH m AS (MERGE INTO t USING s ON t.id = s.id WHEN MATCHED THEN DELETE RETURNING *) SELECT * FROM m",
+        "MERGE",
+      ],
+      ["a MATERIALIZED body", "WITH d AS MATERIALIZED (DELETE FROM t RETURNING *) SELECT * FROM d", "DELETE"],
+      ["a NOT MATERIALIZED body", "WITH d AS NOT MATERIALIZED (DELETE FROM t RETURNING *) SELECT * FROM d", "DELETE"],
+      ["a column list before AS", "WITH d (id) AS (DELETE FROM t RETURNING id) SELECT * FROM d", "DELETE"],
+      [
+        "a comment before the body's first word",
+        "WITH d AS ( /* purge */ DELETE FROM t RETURNING *) SELECT * FROM d",
+        "DELETE",
+      ],
+      ["lower case", "with d as (delete from t returning *) select * from d", "DELETE"],
+      ["WITH RECURSIVE", "WITH RECURSIVE d AS (DELETE FROM t RETURNING *) SELECT * FROM d", "DELETE"],
+      [
+        "several CTEs where only the second writes",
+        "WITH a AS (SELECT 1), d AS (DELETE FROM t RETURNING *) SELECT * FROM a, d",
+        "DELETE",
+      ],
+      [
+        "a nested WITH operated by a write",
+        "WITH o AS (WITH i AS (SELECT 1) DELETE FROM t WHERE id IN (SELECT * FROM i) RETURNING *) SELECT * FROM o",
+        "DELETE",
+      ],
+      [
+        "a nested WITH whose own CTE writes",
+        "WITH o AS (WITH i AS (UPDATE t SET a = 1 RETURNING id) SELECT * FROM i) SELECT * FROM o",
+        "UPDATE",
+      ],
+      [
+        "a nested WITH whose own CTE writes, under a parenthesised main query",
+        "WITH o AS (WITH i AS (UPDATE t SET a = 1 RETURNING id) (SELECT * FROM i)) SELECT * FROM o",
+        "UPDATE",
+      ],
+      [
+        "a nested WITH whose parenthesised main query holds a writing WITH",
+        "WITH o AS (WITH i AS (SELECT 1) (WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d)) SELECT * FROM o",
+        "DELETE",
+      ],
+      [
+        "an expression element in front of a writing body",
+        "WITH 1 AS one, d AS (DELETE FROM t RETURNING *) SELECT one, * FROM d",
+        "DELETE",
+      ],
+    ])("reports the write of %s", (_label, sql, expected) => {
+      expect(bodyWriteOf(sql)).toBe(expected);
+    });
+
+    test("reports where the write keyword is", () => {
+      const sql = "WITH d AS (delete FROM t RETURNING *) SELECT * FROM d";
+      const write = readCteBodyWrite(sql);
+
+      expect(sql.slice(write?.start, write?.end)).toBe("delete");
+    });
+
+    // A nested CTE list this reader cannot cross could hold anything, and the cost
+    // of calling it a read is a write re-run on every page. It answers the nested
+    // WITH itself, which no caller mistakes for SELECT.
+    test("answers the nested WITH when the nested list cannot be read", () => {
+      expect(bodyWriteOf("WITH o AS (WITH ) SELECT * FROM o")).toBe("WITH");
+      expect(bodyWriteOf("WITH o AS (WITH i AS (SELECT 1)) SELECT * FROM o")).toBe("WITH");
+    });
+  });
+
+  describe("a CTE list whose bodies only read", () => {
+    test.each<[string, string]>([
+      [
+        "a read-only body that names a write table and value",
+        "WITH r AS (SELECT * FROM delete_queue WHERE action = 'delete') SELECT * FROM r",
+      ],
+      ["a write word in a string", "WITH r AS (SELECT 'DELETE FROM t' AS s) SELECT * FROM r"],
+      ["a write word in a quoted identifier", 'WITH r AS (SELECT "update" FROM t) SELECT * FROM r'],
+      ["a write word in a line comment", "WITH r AS ( -- DELETE FROM t\n SELECT 1) SELECT * FROM r"],
+      ["a write word in a block comment", "WITH r AS ( /* INSERT */ SELECT 1) SELECT * FROM r"],
+      [
+        "a write word deeper in the body",
+        "WITH r AS (SELECT id FROM t WHERE id IN (SELECT id FROM merge)) SELECT * FROM r",
+      ],
+      ["a nested read-only WITH", "WITH o AS (WITH i AS (SELECT 1) SELECT * FROM i) SELECT * FROM o"],
+      [
+        "a nested read-only WITH whose main query is parenthesised",
+        "WITH a AS (WITH b AS (SELECT 1 AS x) (SELECT * FROM b)) SELECT * FROM a",
+      ],
+      ["an expression element", "WITH 1 AS one SELECT one"],
+      ["a parenthesised set operation", "WITH r AS ((SELECT 1) UNION (SELECT 2)) SELECT * FROM r"],
+    ])("answers null for %s", (_label, sql) => {
+      expect(bodyWriteOf(sql)).toBeNull();
+    });
+
+    test.each<[string, string]>([
+      ["a statement that does not lead with WITH", "DELETE FROM t"],
+      ["an empty input", ""],
+      ["an unreadable CTE list", "WITH t AS (DELETE FROM t"],
+      ["a CTE list with nothing after it", "WITH d AS (DELETE FROM t RETURNING *)"],
+    ])("answers null for %s, which readOperativeKeyword already declines", (_label, sql) => {
+      expect(bodyWriteOf(sql)).toBeNull();
+    });
+
+    // Under a dialect that has nested block comments, a write word left inside the
+    // inner comment is still a comment.
+    test("reads comments under the dialect's own grammar", () => {
+      const postgres = resolveSqlGrammar("postgres");
+
+      expect(bodyWriteOf("WITH r AS ( /* a /* b */ DELETE */ SELECT 1) SELECT * FROM r", postgres)).toBeNull();
+    });
   });
 });

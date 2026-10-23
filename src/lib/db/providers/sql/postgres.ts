@@ -330,6 +330,17 @@ function pgResultSet(answer: PgArrayAnswer, sql: string): QueryResultSet {
 }
 
 /**
+ * The count `pg` did not read from the command tag: the tag of an EXPLAIN or a SHOW carries
+ * no number, so the driver leaves `rowCount` null while `rows` holds the answer. The count
+ * of what was returned is then the rows themselves; a count the driver did read, including
+ * an explicit 0, keeps its own value.
+ */
+function pgRowCount(answer: PgArrayAnswer): number {
+  if (answer.rowCount !== null && answer.rowCount !== undefined) return answer.rowCount;
+  return answer.rows.length;
+}
+
+/**
  * The result of what `pg` answered a user's text with.
  *
  * One statement answers one result. A text of several statements on the simple protocol answers
@@ -343,13 +354,13 @@ function pgQueryResult(
   answer: PgArrayAnswer | PgArrayAnswer[],
   sql: string,
 ): Pick<QueryResult, "rows" | "fields" | "columnTypes" | "rowCount" | "resultSets"> {
-  if (!Array.isArray(answer)) return { ...pgResultSet(answer, sql), rowCount: answer.rowCount ?? 0 };
+  if (!Array.isArray(answer)) return { ...pgResultSet(answer, sql), rowCount: pgRowCount(answer) };
   const producing = answer.filter((one) => (one.fields ?? []).length > 0);
   const sets = producing.map((one) => pgResultSet(one, sql));
   const [first] = sets;
   return {
     ...(first ?? { rows: [], fields: [] }),
-    rowCount: (producing[0] ?? answer[0])?.rowCount ?? 0,
+    rowCount: pgRowCount(producing[0] ?? answer[0]),
     ...(sets.length > 1 && { resultSets: sets }),
   };
 }
@@ -407,7 +418,14 @@ interface SchemaRow {
   row_count: string | null;
   total_size: string;
   pk_columns: string[];
-  columns?: Array<{ name: string; type: string; nullable: boolean; defaultValue?: string | null }>;
+  columns?: Array<{
+    name: string;
+    type: string;
+    /** `format_type(atttypid, atttypmod)`. Absent when the row was not asked for it. */
+    declaredType?: string | null;
+    nullable: boolean;
+    defaultValue?: string | null;
+  }>;
   indexes?: Array<{ name: string; columns: string[]; unique: boolean }>;
   foreign_keys?: Array<{
     columnName: string;
@@ -415,6 +433,7 @@ interface SchemaRow {
     referencedTable: string;
     referencedColumn: string;
   }>;
+  exclusion_constraints?: Array<{ name: string; definition: string }>;
 }
 
 /** One row of `CONTAINERS_SQL`. */
@@ -446,9 +465,9 @@ interface ObjectRow {
 }
 
 /** The single row `OBJECT_DETAIL_SQL` always returns. */
-type ObjectDetailRow = Pick<SchemaRow, "pk_columns" | "columns" | "indexes" | "foreign_keys">;
+type ObjectDetailRow = Pick<SchemaRow, "pk_columns" | "columns" | "indexes" | "foreign_keys" | "exclusion_constraints">;
 
-/** One row of a bulk detail read: the same four aggregates, plus the relation's own name. */
+/** One row of a bulk detail read: the same five aggregates, plus the relation's own name. */
 type BulkDetailRow = ObjectDetailRow & { name: string };
 
 // ============================================================================
@@ -677,6 +696,47 @@ const CTE_INDEX_INFO = `
           WHERE ${schemaExclusion("n.nspname")}
           GROUP BY n.nspname, t.relname
         )`;
+
+// EXCLUDE constraints (pg_constraint.contype 'x') are listed beside the indexes, because only
+// the GiST index backing one was visible before (#1778). The object detail reads use it; the
+// schema queries do not. An engine without pg_constraint or pg_get_constraintdef() retries
+// with the empty body below, which leaves the list empty instead of failing the read.
+const CTE_EXCLUDE_INFO = `
+        exclude_info AS MATERIALIZED (
+          SELECT
+            n.nspname as table_schema,
+            t.relname as table_name,
+            jsonb_agg(
+              jsonb_build_object(
+                'name', c.conname,
+                'definition', pg_get_constraintdef(c.oid)
+              ) ORDER BY c.conname
+            ) as exclusion_constraints
+          FROM pg_constraint c
+          JOIN pg_class t ON t.oid = c.conrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+          WHERE c.contype = 'x'
+          AND ${schemaExclusion("n.nspname")}
+          GROUP BY n.nspname, t.relname
+        )`;
+
+const EMPTY_EXCLUDE_INFO_BODY = `
+          SELECT
+            NULL::text AS table_schema,
+            NULL::text AS table_name,
+            NULL::jsonb AS exclusion_constraints
+          WHERE false
+        `;
+
+function withoutExclusionConstraintCatalog(sql: string): string {
+  return replaceCteBody(sql, "exclude_info", EMPTY_EXCLUDE_INFO_BODY);
+}
+
+function isMissingExclusionConstraintCatalogError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return message.includes("pg_get_constraintdef") || message.includes("pg_constraint");
+}
 
 // Materialize and RisingWave reserve MATERIALIZED as a keyword (it's part of
 // their own CREATE MATERIALIZED VIEW grammar), so they reject the CTE modifier
@@ -1539,19 +1599,30 @@ function routineEditAffordance(row: SourceRow, schema: string, name: string): Ob
 // and 3. Reusing it would have shipped the object browser's headline new folder - the
 // materialized view #710 is about - with an empty column list.
 //
-// `format_type(a.atttypid, NULL)` is the second argument deliberately: passing
-// `a.atttypmod` yields `character varying(50)` and `numeric(12,2)`, while NULL yields the
-// unqualified base type. NULL is used because that is nearly always what
-// `information_schema.columns.data_type` says, so this surface and the flat schema tree
-// name a column's type identically while both are live. Verified column by column on
-// `app.orders`.
+// `type` is `format_type(a.atttypid, NULL)` and `declaredType` is
+// `format_type(a.atttypid, a.atttypmod)` (#1860). NULL is the unqualified base name
+// (`character varying`, `numeric`, `vector`). The column's own typmod is the declaration
+// PostgreSQL prints (`character varying(50)`, `numeric(12,2)`, `vector(1536)`).
 //
-// ONE measured exception, found while reshaping this statement into the bulk read (#789):
-// an ARRAY column. `app.products.tags` is `text[]`, which is what `format_type` answers and
-// what both object-model surfaces show, while `information_schema.columns.data_type` says
-// the bare word `ARRAY` and hides the element type in `element_types`. The two surfaces
-// disagree on exactly those columns, and the object model has the better half of the
-// disagreement, so this is recorded rather than repaired.
+// NULL used to be the whole answer. It was chosen because that is nearly always what
+// `information_schema.columns.data_type` says, so this surface and the flat schema tree
+// would name a column's type identically while both were live. Re-measured on this tree:
+// that reading is gone. `getSchema` is no longer on the provider (`src/lib/db/types.ts`),
+// `SCHEMA_FULL_SQL` and `CTE_COLUMNS_INFO` are gone with it, and nothing in this file reads
+// `information_schema.columns`. The parity those two surfaces were held to does not hold,
+// because one of them is not live. `type` stays the base name anyway: the diagram, the
+// completions and the migration DDL read it, and a modifier inside it would change what
+// they show and what they match. The agent's grounding capture reads
+// `information_schema.columns.data_type`, the same base name, and is unchanged.
+// `declaredType` is what the column tooltip and this object detail show. A column with no
+// modifier (`text`, `integer`, `text[]`) is given the same string in both fields, so it
+// renders as it did.
+//
+// ONE measured exception, found while reshaping this statement into the bulk read (#789)
+// and kept because it is still the better half: an ARRAY column. `app.products.tags` is
+// `text[]`, which is what `format_type` answers in both fields. `information_schema.columns.data_type`
+// said the bare word `ARRAY` and hid the element type in `element_types`. That second
+// answer has no reader left.
 //
 // `pg_get_expr()` is asked only when `pg_attrdef` has a row for the column. PostgreSQL
 // answers NULL for a NULL expression anyway, but RisingWave 3.0.4 answers '' - and its
@@ -1564,6 +1635,7 @@ const CTE_OBJECT_COLUMNS = `
               jsonb_build_object(
                 'name', a.attname,
                 'type', format_type(a.atttypid, NULL),
+                'declaredType', format_type(a.atttypid, a.atttypmod),
                 'nullable', NOT a.attnotnull,
                 'defaultValue', CASE WHEN ad.adbin IS NOT NULL THEN pg_get_expr(ad.adbin, ad.adrelid) END
               ) ORDER BY a.attnum
@@ -1592,16 +1664,18 @@ const CTE_OBJECT_COLUMNS = `
 // the object has no columns at all. That is what makes a sequence, a routine and a
 // trigger answer `{ columns: [], indexes: [], foreignKeys: [] }` instead of no row.
 const OBJECT_DETAIL_SQL = withoutMaterializedHint(`
-        WITH ${CTE_OBJECT_COLUMNS},${CTE_PK_INFO},${CTE_FK_INFO},${CTE_INDEX_INFO}
+        WITH ${CTE_OBJECT_COLUMNS},${CTE_PK_INFO},${CTE_FK_INFO},${CTE_INDEX_INFO},${CTE_EXCLUDE_INFO}
         SELECT
           COALESCE(oc.columns, '[]'::jsonb) as columns,
           COALESCE(pk.pk_columns, ARRAY[]::text[]) as pk_columns,
           COALESCE(fk.foreign_keys, '[]'::jsonb) as foreign_keys,
-          COALESCE(ii.indexes, '[]'::jsonb) as indexes
+          COALESCE(ii.indexes, '[]'::jsonb) as indexes,
+          COALESCE(ei.exclusion_constraints, '[]'::jsonb) as exclusion_constraints
         FROM object_columns oc
         LEFT JOIN pk_info pk ON pk.table_schema = $1 AND pk.table_name = $2
         LEFT JOIN fk_info fk ON fk.table_schema = $1 AND fk.table_name = $2
-        LEFT JOIN index_info ii ON ii.table_schema = $1 AND ii.table_name = $2;
+        LEFT JOIN index_info ii ON ii.table_schema = $1 AND ii.table_name = $2
+        LEFT JOIN exclude_info ei ON ei.table_schema = $1 AND ei.table_name = $2;
       `);
 
 /**
@@ -1669,6 +1743,7 @@ function bulkDetailSql(relkinds: string, bound?: number): string {
               jsonb_build_object(
                 'name', a.attname,
                 'type', format_type(a.atttypid, NULL),
+                'declaredType', format_type(a.atttypid, a.atttypmod),
                 'nullable', NOT a.attnotnull,
                 'defaultValue', CASE WHEN ad.adbin IS NOT NULL THEN pg_get_expr(ad.adbin, ad.adrelid) END
               ) ORDER BY a.attnum
@@ -1678,18 +1753,20 @@ function bulkDetailSql(relkinds: string, bound?: number): string {
           LEFT JOIN pg_catalog.pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum
           WHERE a.attnum > 0 AND NOT a.attisdropped
           GROUP BY d.relname
-        ),${CTE_PK_INFO},${CTE_FK_INFO},${CTE_INDEX_INFO}
+        ),${CTE_PK_INFO},${CTE_FK_INFO},${CTE_INDEX_INFO},${CTE_EXCLUDE_INFO}
         SELECT
           d.relname AS name,
           COALESCE(dc.columns, '[]'::jsonb) as columns,
           COALESCE(pk.pk_columns, ARRAY[]::text[]) as pk_columns,
           COALESCE(fk.foreign_keys, '[]'::jsonb) as foreign_keys,
-          COALESCE(ii.indexes, '[]'::jsonb) as indexes
+          COALESCE(ii.indexes, '[]'::jsonb) as indexes,
+          COALESCE(ei.exclusion_constraints, '[]'::jsonb) as exclusion_constraints
         FROM described d
         LEFT JOIN described_columns dc ON dc.relname = d.relname
         LEFT JOIN pk_info pk ON pk.table_schema = $1 AND pk.table_name = d.relname
         LEFT JOIN fk_info fk ON fk.table_schema = $1 AND fk.table_name = d.relname
-        LEFT JOIN index_info ii ON ii.table_schema = $1 AND ii.table_name = d.relname;
+        LEFT JOIN index_info ii ON ii.table_schema = $1 AND ii.table_name = d.relname
+        LEFT JOIN exclude_info ei ON ei.table_schema = $1 AND ei.table_name = d.relname;
       `);
 }
 
@@ -1845,7 +1922,7 @@ function objectPath(container: readonly string[], row: ObjectRow): string[] {
 /**
  * One catalog row turned into one `ObjectDetail`, shared by the single and the bulk read.
  *
- * One function because the two statements select the same four aggregates and a caller
+ * One function because the two statements select the same five aggregates and a caller
  * joins their results together: two copies of this mapping would be two chances for the
  * bulk read to spell a foreign key differently from the single read of the same table.
  *
@@ -1864,6 +1941,10 @@ function objectDetailFromRow(path: readonly string[], row: ObjectDetailRow): Obj
     columns: (row.columns || []).map((col) => ({
       name: col.name,
       type: col.type,
+      // Copied only when the catalog row carried it. A string equal to `type` is still
+      // copied: `text` and `text[]` are declarations, and dropping them would make "no
+      // modifier" look like "this read never asked".
+      ...(typeof col.declaredType === "string" ? { declaredType: col.declaredType } : {}),
       nullable: col.nullable,
       isPrimary: pkColumns.includes(col.name),
       defaultValue: col.defaultValue ?? undefined,
@@ -1873,6 +1954,9 @@ function objectDetailFromRow(path: readonly string[], row: ObjectDetailRow): Obj
       columns: Array.isArray(idx.columns) ? idx.columns : [],
       unique: idx.unique,
     })),
+    ...(row.exclusion_constraints?.length
+      ? { exclusionConstraints: row.exclusion_constraints.map((c) => ({ name: c.name, definition: c.definition })) }
+      : {}),
     foreignKeys: (row.foreign_keys || []).map((fk) => ({
       columnName: fk.columnName,
       referencedTable:
@@ -3803,6 +3887,7 @@ export class PostgresProvider extends SQLBaseProvider {
       { matches: isMissingConstraintColumnUsageError, apply: withoutForeignKeyCatalog },
       { matches: isMissingExtensionCatalogError, apply: withoutExtensionOwnershipTest },
       { matches: isMissingToRegclassError, apply: withoutToRegclass },
+      { matches: isMissingExclusionConstraintCatalogError, apply: withoutExclusionConstraintCatalog },
     ];
     let currentSql = sql;
     for (;;) {

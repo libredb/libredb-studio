@@ -395,7 +395,7 @@ whitespace is gone.
 **Elasticsearch only — `SearchDialectSpec.supportsApiKeyAuth` gates it, `true` there and `false` on
 OpenSearch** ([http-transport.ts](../../src/lib/db/providers/sql/search/http-transport.ts)), because
 nothing here has measured whether OpenSearch's security plugin accepts the same scheme. The form
-never offers the fields for that type-id ([db-ui-config.ts](../../src/lib/db-ui-config.ts)). A seed
+never offers the fields for that type-id ([connection-form.ts](../../src/lib/db/connection-form.ts)). A seed
 or stored connection that still carries the pair on OpenSearch is **refused** at the transport
 (and at seed parse) rather than dropped with no error — see [opensearch.md §4.1](./opensearch.md#41-configuration-fields).
 
@@ -481,7 +481,7 @@ shared generator emits a `?` this provider would then decline to fill.
 ### 4.1 Configuration fields
 
 The form offers six fields
-(the `elasticsearch` entry in [`db-ui-config.ts`](../../src/lib/db-ui-config.ts)): `host`, `port`, `user`, `password`,
+(the `elasticsearch` entry in [`connection-form.ts`](../../src/lib/db/connection-form.ts)): `host`, `port`, `user`, `password`,
 `apiKeyId`, `apiKeySecret`.
 
 | Field | Required | Notes |
@@ -1785,7 +1785,7 @@ The refusal reason it prints, verbatim:
 - Base class: [`src/lib/db/base-provider.ts`](../../src/lib/db/base-provider.ts)
 - Interface & DTOs: [`src/lib/db/types.ts`](../../src/lib/db/types.ts)
 - Errors: [`src/lib/db/errors.ts`](../../src/lib/db/errors.ts)
-- Connection form config: [`src/lib/db-ui-config.ts`](../../src/lib/db-ui-config.ts)
+- Connection form config: [`src/lib/db/connection-form.ts`](../../src/lib/db/connection-form.ts)
 - Dialect facts elsewhere in the codebase: `ELASTICSEARCH_GRAMMAR` in [`src/lib/db/providers/sql/search/elasticsearch-sql-grammar.ts`](../../src/lib/db/providers/sql/search/elasticsearch-sql-grammar.ts) (`#`, `[`, block comments) · `quoteIdentifier()` in [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) (double quotes) · `ELASTICSEARCH_SQL_WRITING` in [`elasticsearch-sql-writing.ts`](../../src/lib/db/providers/sql/search/elasticsearch-sql-writing.ts) (literal escaping) · [`src/lib/sql/fence-tags.ts`](../../src/lib/sql/fence-tags.ts) (the fence tag)
 - Local cluster: [`database-compose.yml`](../../database-compose.yml) (`elasticsearch` service, 9200)
 - Tests: [`tests/integration/db/elasticsearch-provider.test.ts`](../../tests/integration/db/elasticsearch-provider.test.ts) · [`tests/unit/db/search/`](../../tests/unit/db/search/)

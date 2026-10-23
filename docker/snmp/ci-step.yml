@@ -1,5 +1,15 @@
-# The step for .github/workflows/ci.yml, kept here until it is merged, the same reason the service
-# block is: five engines are editing that file and the merge is one hand's job.
+# WHY THE SNMP live check STEP IS NOT IN THIS FILE ANY MORE.
+#
+# This file used to carry the step itself, staged here because five engines were landing in
+# one round and five sessions editing one workflow would have been that round's merge in
+# miniature. Whoever owned the workflow was to paste it in. MEASURED 19 October 2026: the
+# paste never happened for any of the six engines, so none of the nineteen workflow files
+# mentioned this fixture and the live check ran only by hand.
+#
+# The step now lives in `.github/workflows/ci.yml`, in the `functional-smoke` job, named
+# `SNMP live check`. It is not duplicated here on purpose: the pin this fixture runs is held equal to
+# the compose fragment's by a test, and a pin that lives in a third file nobody compares is a
+# third pin. What stays here is the reasoning the step is too short to carry.
 #
 # It goes after the RabbitMQ read-only check, whose shape it follows. The fixture is built rather
 # than pulled (class A2: third-party source, pinned - the base image by digest and the two Net-SNMP
@@ -7,66 +17,3 @@
 # step carries, is the BASE digest, and tests/unit/db/snmp/fixture-pin.test.ts holds the value
 # below equal to the one in docker/snmp/Dockerfile. A digest that lives in two files and is
 # compared by nobody is two digests.
-- name: SNMP live check
-  run: |
-    base="sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f"
-    # This value was EXPORTED as SNMP_LIVE_DIGEST and read by nobody: the live check speaks SNMP
-    # to an agent, and an agent does not report the image it was built from. An export nothing
-    # reads is worse than no export, because the next reader takes it for a check that runs. So
-    # the digest does its work here instead, before the build, and the unit test still holds this
-    # file equal to the Dockerfile.
-    if ! grep -q "$base" docker/snmp/Dockerfile; then
-      echo "NOT MEASURED: docker/snmp/Dockerfile does not carry $base, so this run would build another base."
-      exit 1
-    fi
-    # The trap, not a last line: a `docker rm` written at the end does not run when a check above
-    # it fails, which is exactly the run that leaves a container behind.
-    trap 'docker rm -f libredb-ci-snmp > /dev/null 2>&1' EXIT
-    docker build -t libredb-ci-snmp:test docker/snmp
-    docker run -d --name libredb-ci-snmp \
-      --health-cmd 'snmpget -v2c -c libredb-live -t 2 -r 1 127.0.0.1:161 1.3.6.1.2.1.1.5.0' \
-      --health-interval 3s --health-retries 10 --health-start-period 3s \
-      -p 127.0.0.1:1161:161/udp libredb-ci-snmp:test
-    # TWO READINESS CHECKS, independent on purpose, and the SECOND one crosses the published port.
-    # The first is Docker's own health verdict, which asks the agent from INSIDE the container. On
-    # its own it is not enough, and that was measured rather than reasoned: a canary that published
-    # the fixture on the wrong host port left the inside-the-container check perfectly happy, the
-    # step walked past readiness, and the live check then failed with "nothing is listening" - a
-    # red that reads like a provider defect for a fixture nobody could reach. So the second check
-    # asks the same question from the HOST side, over the mapping the live check will use, with the
-    # image's own snmpget (the host has no SNMP tools and should not need any).
-    # A UDP port that is merely open proves nothing either way: snmpd binds before it reads its
-    # configuration, so a port probe reports a half-configured fixture as healthy.
-    # THE TWO CHECKS ALSO ASK TWO DIFFERENT FACTS, and that is the second half of the same point.
-    # They both used to ask for sysName, which snmpd.conf sets, while every value the live check
-    # reads comes from the `pass` script in playpen.sh. MEASURED by breaking that script: sysName
-    # still answered on both paths and the playpen answered "No Such Instance", so both checks
-    # passed over a fixture that carries none of the data the live check is about. The host-side
-    # check therefore asks the playpen for a value only the script can produce; the health command
-    # inside the container keeps asking sysName, so the two differ in path AND in fact.
-    ready=""
-    end=$((SECONDS + 60))
-    while [ "$SECONDS" -lt "$end" ]; do
-      health="$(docker inspect -f '{{.State.Health.Status}}' libredb-ci-snmp 2>/dev/null || true)"
-      if [ "$health" = "healthy" ] \
-        && docker run --rm --network host libredb-ci-snmp:test \
-          snmpget -v2c -c libredb-live -t 2 -r 1 127.0.0.1:1161 .1.3.6.1.4.1.8072.9999.9999.4.0 2>/dev/null \
-          | grep -q "live-test-value"; then
-        ready=yes
-        break
-      fi
-      sleep 1
-    done
-    if [ -z "$ready" ]; then
-      # NOT "the live check failed". Nothing was measured: the fixture never answered, so this run
-      # says nothing about the provider, and the sentence has to say which of the two it is.
-      echo "NOT MEASURED: the SNMP fixture did not answer within 60 s, so the live check never ran."
-      docker logs --tail 50 libredb-ci-snmp
-      exit 1
-    fi
-    # Both runtimes, because the provider's socket is node:dgram and the two runtimes implement it
-    # separately. The Node run goes through a bundle for the reason written in the check's header.
-    bun tests/live/snmp-live-check.ts
-    out="$(mktemp -d)"
-    bun build tests/live/snmp-live-check.ts --target=node --outfile "$out/live.mjs"
-    node "$out/live.mjs"

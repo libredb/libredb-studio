@@ -387,7 +387,7 @@ connections:
 | `connections[].ssl.clientCert` | No | absent | The client certificate as PEM, or a reference, resolved like `password` |
 | `connections[].ssl.clientKey` | No | absent | The client key as PEM, or a reference; an unset reference skips the connection naming `ssl.clientKey`. Never inline a private key in a ConfigMap |
 | `connections[].connectionString` | No | - | Full connection string (use `${ENV_VAR}`). Read only by postgres, mysql, sqlite (as the database file path), libsql, oracle, db2, clickhouse, mongodb and couchbase; every other type, mssql included, refuses it when the file loads, naming the connection and the type ([The connection string refusal](#the-connection-string-refusal)) |
-| `connections[].roles` | Yes | — | Access control: `["*"]`, `["admin"]`, `["user"]`, `["admin", "user"]` |
+| `connections[].roles` | Yes | — | Access control: `["*"]`, `["admin"]`, `["user"]`, `["admin", "user"]`, or custom roles starting with `OIDC_ROLE_PREFIX` when OIDC is enabled |
 | `connections[].managed` | No | from defaults | `true` = admin-controlled: not editable in the UI, its secrets stay on the server; `false` = an editable copy for the user |
 | `connections[].readOnly` | No | absent | `true` refuses every write, value edit and maintenance operation on the connection, on an engine whose provider enforces it (etcd, Neo4j, Milvus, Qdrant, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Oxia, S3-compatible object storage and Kubernetes); every other engine refuses `readOnly: true` when the file loads, naming the type and the field. Refused with `managed` false, on the connection or through `defaults.managed`, because an editable copy carries the credentials into the browser. A literal boolean: a `${ENV}` reference is refused |
 | `connections[].environment` | No | from defaults | Environment badge |
@@ -669,23 +669,37 @@ Each connection has a `roles` field that controls which users can see it:
 |--------|-------------|
 | `roles: ["*"]` | All authenticated users |
 | `roles: ["admin"]` | Admin users only |
-| `roles: ["user"]` | Regular users only |
+| `roles: ["user"]` | Regular users only (admins do not see this seed unless `admin` or `*` is also listed) |
 | `roles: ["admin", "user"]` | Both (same as `["*"]`) |
+| `roles: ["team:analytics"]` | Users holding the custom role `team:analytics` (an admin sees it only if the seed lists `admin` or `*`) |
 
-Roles are matched against the JWT session's `role` field. The role is extracted server-side from the JWT token — never from client input.
+Roles are matched against the JWT session's `role` field as well as any custom `claimRoles` extracted from the OIDC role claim. The roles are extracted server-side from the authenticated JWT session — never from client input. Studio enforces exact role matching without an implicit admin bypass: operators who expect administrators to see every connection should list `["user", "admin"]` or `["*"]`.
 
-**Current limitation:** The system supports `admin` and `user` roles only (matching the JWT `role` claim). Custom roles (e.g., `data-team`, `backend`) are planned for a future release with expanded OIDC role claim support.
+### Custom Seed Roles (OIDC)
+
+When `NEXT_PUBLIC_AUTH_PROVIDER=oidc` and `OIDC_ROLE_PREFIX` is set, seed connections can specify custom roles in addition to the standard `admin`, `user`, and `*`:
+- Custom roles must be 1 to 64 bytes in UTF-8, trimmed, contain no control characters, and start with the configured `OIDC_ROLE_PREFIX` (for example, `team:analytics` when `OIDC_ROLE_PREFIX=team:`).
+- Custom roles are validated when the seed configuration is loaded: if a custom role is specified while OIDC auth is not active or without `OIDC_ROLE_PREFIX` configured, or if the role does not start with the prefix, the seed source fails with an `invalid` error naming the origin, connection, and role.
+- An administrator sees a team seed only when the seed lists `admin` (or `*`). Custom roles are matched directly against the caller's active roles without an admin bypass.
+- Non-admin users see a connection if their session carries any matching role from their OIDC `claimRoles`, or if the connection specifies `*` or `user`.
+
+### Role Projection and Privacy
+
+To protect organizational structure and prevent internal role names from leaking across team boundaries, the managed connections API (`/api/connections/managed`) projects only the roles the caller actually holds:
+- Each connection's `roles` array returned to the browser contains only `*` and the roles the authenticated user possesses.
+- If a connection admits `["team:billing", "team:analytics"]` and the current user only holds `team:analytics`, the client receives `roles: ["team:analytics"]`. Other teams' role names are never exposed in browser network payloads.
 
 ### How Role Filtering Works
 
 ```
-User logs in → JWT contains { role: "user" }
-                    ↓
-GET /api/connections/managed
-                    ↓
-Server reads config → filters by role
-                    ↓
-User sees only connections where roles includes "user" or "*"
+User logs in (OIDC) → JWT contains { role: "user", claimRoles: ["team:analytics"] }
+                                        ↓
+                           GET /api/connections/managed
+                                        ↓
+                           Server reads seed config → filters by seedRolesOf(user)
+                                        ↓
+User sees only connections matching "*", "user", or "team:analytics",
+with connection.roles projected to only include roles the caller holds
 ```
 
 ---
@@ -1144,7 +1158,7 @@ Discovered connections are validated one by one, and a bad one never fails the l
 
 ### Credential Protection
 
-- `managed: true` connections: credentials **never reach the client**. The API strips every field `src/lib/storage/connection-secrets.ts` classifies as secret, which on a seed means `password`, `connectionString`, the Elasticsearch `apiKeyId` and `apiKeySecret` pair, and `ssl.clientKey`. Certificates (`ssl.caCert`, `ssl.clientCert`) are public and still reach it. Server resolves credentials at query execution time.
+- `managed: true` connections: credentials **never reach the client**. The API strips every field `src/lib/storage/secret-fields.ts` classifies as secret, which on a seed means `password`, `connectionString`, the Elasticsearch `apiKeyId` and `apiKeySecret` pair, and `ssl.clientKey`. Certificates (`ssl.caCert`, `ssl.clientCert`) are public and still reach it. Server resolves credentials at query execution time.
 - That covers what the API returns, not what an engine answers a statement with. A managed Redis seed that authenticates with `requirepass` answers `CONFIG GET requirepass` with the password, so give a managed seed a least-privilege credential, for Redis an ACL user without `+config`.
 - Config file should be mounted **read-only** (`:ro` in Docker, `readOnly: true` in Kubernetes).
 - Use `${ENV_VAR}` for the secrets of a file you write by hand.

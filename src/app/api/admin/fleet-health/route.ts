@@ -4,7 +4,7 @@ import type { DatabaseConnection } from "@/lib/types";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { buildConnectionPayload } from "@/hooks/use-connection-payload";
-import { auditRoleDenial, guardRoute } from "@/lib/api/require-session";
+import { auditRoleDenial, guardRoute, adminRequiredResponse } from "@/lib/api/require-session";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { logger } from "@/lib/logger";
 
@@ -51,7 +51,7 @@ export async function POST(request: Request) {
 
   if (guard.session.role !== "admin") {
     auditRoleDenial({ route: "POST /api/admin/fleet-health", user: guard.session.username, request });
-    return NextResponse.json({ error: "Unauthorized. Admin access required." }, { status: 403 });
+    return adminRequiredResponse();
   }
 
   try {

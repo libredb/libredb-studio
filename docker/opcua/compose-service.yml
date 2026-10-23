@@ -37,7 +37,8 @@ opcua:
   # and the server serves no HTTP endpoint to probe. A `curl` line here would report healthy on
   # something it never measured, which is worse than none.
   #
-  # Readiness therefore belongs to the caller, and `docker/opcua/ci-step.yml` carries it as two
+  # Readiness therefore belongs to the caller, and the `OPC UA read-only check` step of
+  # `.github/workflows/ci.yml` carries it as two
   # independent checks: the server's own `PLC simulation started` line, and a real GetEndpoints
   # through `tests/live/opcua-endpoints-probe.ts`. Neither is a TCP connect, because a published
   # port answers as soon as Docker's proxy binds it, which is before the server can speak.

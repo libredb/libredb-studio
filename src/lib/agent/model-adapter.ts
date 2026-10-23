@@ -31,6 +31,7 @@ import {
   openAIResponsesRequestWarnings,
   resolveAgentProviderAdapter,
 } from "./provider-registry";
+import type { AgentSampling } from "./models/profile";
 
 /** A model plus the resolved identity it was built from, for audit and logging. */
 export interface AgentModel {
@@ -136,6 +137,83 @@ export function agentProviderOptions(
     };
   }
   return effort === undefined ? undefined : { openai: { reasoningEffort: effort } };
+}
+
+type OpenAISamplingFeature = "temperature" | "topP";
+
+/**
+ * The sampling fields the `openai` kind's SDK would drop for one model and resolved effort.
+ *
+ * Asked offline through `prepareRequest` and memoized by `(modelId, effort)`: the only provider
+ * option that changes the answer is the resolved reasoning effort, so one preparation per pair
+ * serves every turn of a run. A rejected preparation is not cached, so a transient failure is
+ * retried on the next turn rather than pinned.
+ */
+const openAISamplingDropsCache = new Map<string, Promise<ReadonlySet<OpenAISamplingFeature>>>();
+
+async function openAISamplingDrops(
+  modelId: string,
+  providerOptions: AgentProviderOptions | undefined,
+): Promise<ReadonlySet<OpenAISamplingFeature>> {
+  const effort = providerOptions?.openai?.reasoningEffort;
+  const key = `${modelId}\u0000${String(effort ?? "")}`;
+  const cached = openAISamplingDropsCache.get(key);
+  if (cached !== undefined) return cached;
+  const pending = computeOpenAISamplingDrops(modelId, providerOptions).catch((error: unknown) => {
+    openAISamplingDropsCache.delete(key);
+    throw error;
+  });
+  openAISamplingDropsCache.set(key, pending);
+  return pending;
+}
+
+async function computeOpenAISamplingDrops(
+  modelId: string,
+  providerOptions: AgentProviderOptions | undefined,
+): Promise<ReadonlySet<OpenAISamplingFeature>> {
+  const warnings = await openAIResponsesRequestWarnings(modelId, providerOptions, { temperature: 0, topP: 1 });
+  const drops = new Set<OpenAISamplingFeature>();
+  for (const warning of warnings) {
+    if (warning.type === "unsupported" && (warning.feature === "temperature" || warning.feature === "topP")) {
+      drops.add(warning.feature);
+    }
+  }
+  return drops;
+}
+
+/**
+ * The sampling a turn sends to its model: the profile's own resolution, minus the fields the
+ * `openai` kind's SDK would drop before they reach the wire.
+ *
+ * Only `openai` is asked, for the reason `agentProviderOptions` records: `ollama`, `custom` and
+ * `gemini` must stay byte-identical, so the gate is the provider kind and nothing else. The answer
+ * comes from the SDK's own offline `prepareRequest`, so its per-model table is never copied here,
+ * and the provider options it is handed are the same object the call will send, so the quiet switch
+ * and `LLM_MODEL_EFFORT` decide it exactly as a real request would.
+ *
+ * One boundary is deliberately the SDK's and not this repository's: a self-hosted
+ * OpenAI-compatible endpoint whose model id literally reads as an OpenAI reasoning model (say
+ * `gpt-6-luna` on `ollama` or `custom`) still has its `temperature`/`top_p` dropped by the SDK's
+ * own Chat Completions table, with a warning, even though this gate is never asked. That is the
+ * SDK's per-model table applied on the wire, not this decision; the openai-only gate is what this
+ * repository owns.
+ *
+ * Deliberately not done here, and why: no capability table is copied (an SDK upgrade is caught by
+ * `tests/unit/agent-dependency-boundary.test.ts`, not by a stale copy), and no global log switch is
+ * touched.
+ */
+export async function agentSamplingFor(
+  agentModel: Pick<AgentModel, "provider" | "modelId">,
+  providerOptions: AgentProviderOptions | undefined,
+  sampling: AgentSampling,
+): Promise<AgentSampling> {
+  if (agentModel.provider !== "openai") return sampling;
+  if (sampling.temperature === undefined && sampling.topP === undefined) return sampling;
+  const drops = await openAISamplingDrops(agentModel.modelId, providerOptions);
+  return {
+    ...(sampling.temperature !== undefined && !drops.has("temperature") ? { temperature: sampling.temperature } : {}),
+    ...(sampling.topP !== undefined && !drops.has("topP") ? { topP: sampling.topP } : {}),
+  };
 }
 
 /**

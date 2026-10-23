@@ -4,7 +4,7 @@ import { editorExecutionContext } from "@/lib/api/execution-context";
 import { acquireExecutionProfileProvider, profiledCacheKey, type ExecutionProfile } from "@/lib/db/factory";
 import type { DatabaseProvider } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
-import { getManagedConnections, type ManagedConnection } from "@/lib/seed";
+import { getManagedConnections, seedRolesOf, type ManagedConnection } from "@/lib/seed";
 import { redactError } from "./serializer";
 
 /** The answer of a context whose seed file could not be loaded; the cause is logged, never sent. */
@@ -33,6 +33,7 @@ export const MCP_CONNECTIONS_UNREADABLE_TEXT =
 export interface McpCaller {
   readonly username: string;
   readonly role: Role;
+  readonly claimRoles?: readonly string[];
 }
 
 export interface McpToolCall {
@@ -44,10 +45,15 @@ export interface McpToolCall {
 export function mcpCaller(authInfo: AuthInfo): McpCaller {
   const username = authInfo.extra?.username;
   const role = authInfo.extra?.role;
+  const claimRoles = authInfo.extra?.claimRoles;
   if (typeof username !== "string" || username === "" || (role !== "admin" && role !== "user")) {
     throw new Error("The verified MCP identity carries no username and role");
   }
-  return { username, role };
+  return {
+    username,
+    role,
+    ...(Array.isArray(claimRoles) ? { claimRoles: claimRoles as string[] } : {}),
+  };
 }
 
 const pendingAcquisitions = new Map<string, Promise<DatabaseProvider>>();
@@ -92,7 +98,7 @@ export class McpConnectionContext {
    */
   private async load(): Promise<readonly ManagedConnection[] | typeof MCP_CONNECTIONS_UNREADABLE> {
     try {
-      const connections = await getManagedConnections([this.caller.role]);
+      const connections = await getManagedConnections(seedRolesOf(this.caller));
       return connections.filter((connection) => connection.mcp === true);
     } catch (error) {
       logger.error("Could not load managed connections for MCP", redactError(error), { route: "/api/mcp" });
