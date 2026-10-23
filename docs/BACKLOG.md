@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S9 · 6
-- [Drivers and connections](#drivers-and-connections) — D1-D390, U17 · 285
+- [Drivers and connections](#drivers-and-connections) — D1-D390, U17 · 284
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U148 · 134
@@ -1369,54 +1369,6 @@ with `"n/a"` and run that suite. It stays green.
 **Done when:** a `columnlessSamples` reason passes the same blank and `NOT_A_REASON` checks
 `emptyKinds` reasons pass, with the two negative cases asserted, and the two maps share one reason
 checker rather than two copies of it.
-
-### D102. PostgreSQL reports no primary key and no foreign key to a least-privilege role
-
-`CTE_PK_INFO` and `CTE_FK_INFO` in `src/lib/db/providers/sql/postgres.ts` read
-`information_schema.table_constraints`, which PostgreSQL defines as showing only constraints on
-tables the current user owns or holds some privilege other than `SELECT` on.
-A connection made as an ordinary `SELECT`-only role therefore sees every column and every index and
-NO key at all, and the answer is a claim rather than an absence: `describeObject` returns
-`isPrimary: false` on every column and `foreignKeys: []`.
-
-That role is not a corner case, it is what this product recommends and what its own seed fixture
-uses.
-The blind spot predates the object tree and is not confined to it: both CTEs feed `OBJECT_DETAIL_SQL`
-and the bulk statement beside it, so the ER diagram, the mobile schema explorer and the inventory's
-`includeColumns` answer have carried it too.
-What the object tree changed is that the key mark is now on screen, where an absent key reads as a
-table without one.
-The MCP server's `inspect_schema` (#246) carries it as well, and there it is not a corner case either: `docs/MCP.md` requires a least-privilege principal, and `src/lib/mcp/tools/inspect-schema.ts` copies `column.isPrimary` into `is_primary_key`.
-Measured 2026-09-26 in the PR #1070 live check: as a `SELECT`-only `mcp_reader`, `inspect_schema` with `include_indexes: true` answered `is_primary_key: false` for `mcp_events.id` while listing `mcp_events_pkey` among its indexes, and `information_schema.table_constraints` answered 0 primary keys for `mcp_events` to that role and 1 to `postgres`.
-
-Measured 2026-09-22 against PostgreSQL 18 holding `dvdrental`, `public.film`, tables owned by
-`postgres`, probed through `POST /api/db/objects/describe`:
-
-| Connected as | Columns | Primary key | Foreign keys |
-|---|---|---|---|
-| `postgres`, the owner | 13 | `film_id` | 1 |
-| `libredb_agent`, `SELECT` only | 13 | none | none |
-
-And at the catalog, as `libredb_agent`: `information_schema.table_constraints` answers 0 rows for
-`constraint_type = 'PRIMARY KEY'` in `public` while `pg_constraint` answers 15, and
-`information_schema.referential_constraints` answers 0 while `pg_constraint` answers 18 foreign keys.
-`information_schema.columns` answers 128 and `pg_indexes` answers 32 to the same role, which is why
-only the keys go missing.
-
-The repair is `pg_catalog`, which `CTE_INDEX_INFO` beside them already reads, and it is not a local
-edit: both statements run against every PostgreSQL wire-compatible engine this repo measures, and one
-of them, Materialize, already needs the documented `constraint_column_usage` fallback that
-`tests/integration/db/postgres-provider.test.ts` pins. So the change owes a live measurement on
-Materialize, CockroachDB, YugabyteDB and RisingWave before it lands, which is why it is filed rather
-than folded into #789's column work.
-
-Repro: connect Studio to any PostgreSQL as a role that owns nothing and holds only `SELECT`, expand a
-table in the object tree, and read the column rows. No key mark appears. Connect as the owner and it
-does.
-
-**Done when:** a `SELECT`-only role sees the same keys the owner sees, on PostgreSQL and on every
-wire-compatible engine whose fallback behaviour was measured for the change, with a test that drives
-the provider as a non-owner role rather than asserting the statement text.
 
 ### D103. `noAbstainingKinds` is enforced over the expectation's kinds, not the provider's declarations
 

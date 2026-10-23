@@ -137,17 +137,16 @@ recovers real object-browser data on independent gaps instead of failing outrigh
 1. **`pg_total_relation_size()`.** CockroachDB has no such builtin at all, and neither has
    Materialize. `withoutTotalRelationSizeFn()` replaces the call with a literal `0`, trading
    per-table size for real column/PK data instead of nothing.
-2. **`information_schema.constraint_column_usage`.** Materialize answers `table_constraints` and
-   `key_column_usage` but does not implement this one: its catalog ships fourteen
-   `information_schema` views and that is not among them, at HEAD as well as at the probed release,
-   so it is not a version gap that will close. Worth knowing what the fallback is and is not buying:
-   Materialize has no primary keys or foreign keys at all — `CREATE TABLE` refuses both — so those
-   columns would come back empty even with the view present. The fallback exists because the query
-   *fails* without it, not because it recovers data. `withoutForeignKeyCatalog()` empties the `fk_info` CTE rather
-   than dropping it, which keeps the outer `LEFT JOIN`/`FULL OUTER JOIN` valid and leaves
-   `foreignKeys` as `[]`. It matches the closing parenthesis by depth, not by text, because another
-   fallback may already have rewritten part of the statement by the time it runs.
-   RisingWave refuses the view too, and names its own `SHOW` commands instead.
+2. **`pg_constraint`.** The keys and the EXCLUDE constraints all read it, so `withoutConstraintCatalog()` empties `pk_info`, `fk_info` and `exclude_info` together, which keeps the columns and the indexes and leaves the keys and the EXCLUDE list empty.
+   It empties each CTE rather than dropping it, which keeps the outer `LEFT JOIN` valid.
+   It matches the closing parenthesis by depth, not by text, because another fallback may already have rewritten part of the statement by the time it runs.
+   Every engine measured has the catalog, PostgreSQL 17.6, CockroachDB v26.2.5, YugabyteDB 2026.1.2.0, RisingWave 3.1.0 and Materialize v26.44.1 on 2026-10-24, so this repair is for a fork nobody here has run.
+   A missing `pg_get_constraintdef()` alone empties only `exclude_info`.
+
+Another repair used to empty `fk_info` when `information_schema.constraint_column_usage` was refused.
+Materialize does not implement that view and RisingWave refuses it, so each paid a retry on every object read and lost its foreign keys for it.
+The keys are read from `pg_constraint` now ([§3.4.0](#340-how-keys-are-read-and-why-a-select-only-role-sees-them)), no statement names the view, and the repair is removed.
+Materialize has no primary or foreign keys at all, `CREATE TABLE` refuses both, so its `pg_constraint` holds no row for a user table; RisingWave has primary keys and no foreign keys.
 
 Two gaps that used to be repaired here no longer reach the chain at all (#1075).
 
@@ -158,7 +157,7 @@ It is removed.
 
 `json_agg()` / `json_build_object()` and the `json` type: the rows are built with `jsonb_agg()`, `jsonb_build_object()` and `'[]'::jsonb` from the start.
 RisingWave 3.0.4 has no `json` type at all and refuses `json_agg()`, `json_build_object()`, `'[]'::json` and `CAST(NULL AS json)` alike, while it answers every `jsonb` form; Materialize 26.40.0 has no `json_agg()` either.
-A swap applied after the first refusal could not work on RisingWave: the `constraint_column_usage` repair inserts a `NULL::json` of its own after the swap has already been spent, and the read failed on that.
+A swap applied after the first refusal could not work on RisingWave: the `constraint_column_usage` repair, since removed, inserted a `NULL::json` of its own after the swap had already been spent, and the read failed on that.
 PostgreSQL and every relative in the registry answer both forms, and `pg` parses the two OIDs into the same plain value.
 `jsonb` reorders an object's keys and drops duplicate ones, which changes nothing here: every object these statements build has a fixed set of distinct keys, and every consumer reads it parsed, never as text.
 It keeps an array's order, and `ORDER BY a.attnum` inside the aggregate is what hands back the table's own column order.
@@ -167,8 +166,7 @@ Each fallback is matched against whichever error actually comes back, not tried 
 Real PostgreSQL never takes any retry path; it accepts every construct above and the first attempt succeeds.
 An error no fallback recognizes, or one that survives every applicable fallback, is mapped through `mapDatabaseError()` and rethrown rather than left raw.
 
-**What still doesn't work.** On Materialize, foreign keys come back empty (see gap #2), because
-the engine has none; sizes are unmeasured (gap #1).
+**What still doesn't work.** On Materialize, keys come back empty because the engine has none; sizes are unmeasured (gap #1).
 
 RisingWave's object browser was unavailable until 2026-09-19 and this paragraph named the wrong
 cause, which is worth keeping rather than quietly replacing. It said the binder fails on the
@@ -183,7 +181,7 @@ produced the wrong diagnosis. The repair is in the object listing rather than in
 `withoutRowCountColumn()`.
 
 A statement that never joined the catalog a fallback repairs is *not* retried blind:
-`withoutForeignKeyCatalog()` returns the SQL untouched when there is no `fk_info` CTE to empty
+`withoutConstraintCatalog()` returns the SQL untouched when there is no key or EXCLUDE CTE to empty
 (`CONTAINERS_SQL` has none), so the rejection is mapped and rethrown on the next attempt instead of
 looping on a statement nothing changed.
 
@@ -203,7 +201,8 @@ Cloudberry, AlloyDB Omni and CockroachDB were each asked on a live instance and 
 
 **What this costs, measured** on 2026-09-24 through `describeObject()` and `describeObjects()` (#1075):
 a PostgreSQL object read is **one** round trip, and so is a CockroachDB one.
-A Materialize one is **two**, and so is a RisingWave one: each refuses `constraint_column_usage` once and the retry runs.
+A Materialize one was **two**, and so was a RisingWave one: each refused `constraint_column_usage` once and the retry ran.
+Since the keys moved to `pg_constraint` both are **one**, measured on Materialize v26.44.1 and RisingWave 3.1.0 on 2026-10-24.
 Materialize took three before the rows were built with `jsonb`, the extra one for `json_agg()`; RisingWave took four and still failed.
 Each failed attempt is a parse or plan error rather than work, and the chain is error-driven so it cannot be pre-sorted, but on a remote instance those round trips are latency the object browser pays on every refresh.
 
@@ -494,7 +493,7 @@ no row at all for a materialized view or a sequence. On the seeded `postgres:18`
 **0 columns** for `app.revenue_by_month` (relkind `'m'`) and **0** for `app.invoice_number_seq`
 (`'S'`), while `pg_attribute` answered 2 and 3. Reusing it would have shipped the browser's headline
 new folder, the materialized view #710 is about, with an empty column list. The primary key, foreign
-key and index CTEs *are* reused, so a fork that needs `withoutForeignKeyCatalog()` gets the same
+key and index CTEs *are* reused, so a fork that needs `withoutConstraintCatalog()` gets the same
 repair here that the container read gets.
 
 **A column's default is read only where `pg_attrdef` has one.** The column read hands
@@ -1218,11 +1217,41 @@ by what the reader actually opened rather than by a second query.
 
 Tables in the `public` schema are shown by bare name; tables in any other schema are prefixed
 (`reporting.invoices`). The same rule is applied to **foreign-key referenced tables**, so a FK that
-points across schemas renders correctly. The FK introspection CTE (`CTE_FK_INFO`,
-[`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)) joins `constraint_column_usage` on
-**both** `constraint_name` and `constraint_schema` — joining on name alone
-mis-resolves same-named constraints in different schemas (this was a real bug; there is a
-regression test for it).
+points across schemas renders correctly.
+
+### 3.4.0 How keys are read, and why a SELECT-only role sees them
+
+The primary-key and foreign-key CTEs (`CTE_PK_INFO`, `CTE_FK_INFO`, [`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)) read `pg_constraint` with `pg_attribute`, `contype = 'p'` and `contype = 'f'`, the way `CTE_INDEX_INFO` already reads `pg_index`.
+They used to read `information_schema.table_constraints`, `key_column_usage` and `constraint_column_usage`, and PostgreSQL shows a constraint in the first only to a role that owns the table or holds a privilege on it other than `SELECT`, and in the last only to the owner.
+So a read-only role, the setup this product recommends, saw `isPrimary: false` on every column and `foreignKeys: []`.
+`pg_constraint` answers every role that can see the table, so a `SELECT`-only role now sees the same keys the owner sees.
+
+`conkey` is unnested `WITH ORDINALITY`, which keeps the key in its declared order, and the referenced column is read as `confkey[k.ord::int]`, the referenced column at the same position.
+So each column of a multi-column foreign key names its own referenced column.
+The `constraint_column_usage` join this replaced paired every column of a two-column key with both referenced columns, four entries for two.
+A constraint is reached through `conrelid` and `confrelid`, which are oids, so two same-named constraints in different schemas cannot cross-match either.
+A partition copies its parent's foreign key under the same name, and the name join multiplied those rows too: measured, a foreign key on a partitioned table came back four times, on the parent and on each partition, and now comes back once.
+A role refused `pg_constraint` itself gets that refusal as the error, not a table that seems to have no keys.
+`pk_columns` stays `text[]` through an `attname::text` cast: `array_agg(a.attname)` is `name[]`, OID 1003, which node-postgres does not parse and hands back as the text `{order_id,line_no}` (#1394).
+
+Measured on 2026-10-24 through `describeObject()` and `describeObjects()`, over one fixture: `ref.countries (code)`, `app.customers (id)` with a foreign key into `ref`, `app.order_lines (order_id, line_no)`, and `app.shipments` with a foreign key on `(s_line, s_order)` referencing `app.order_lines (line_no, order_id)`.
+The second role holds `USAGE` on both schemas and `SELECT` on their tables and owns nothing.
+
+| Engine | Role | Keys before | Keys after |
+|---|---|---|---|
+| PostgreSQL 17.6 | owner | every key, the two-column key as four entries | every key, the two-column key as two entries |
+| PostgreSQL 17.6 | `SELECT` only | none | the same as the owner |
+| CockroachDB v26.2.5 | owner | every key, the two-column key as four entries | every key, the two-column key as two entries |
+| CockroachDB v26.2.5 | `SELECT` only | the same as the owner | the same as the owner |
+| YugabyteDB 2026.1.2.0 (PostgreSQL 15.12) | owner | every key, the two-column key as four entries | every key, the two-column key as two entries |
+| YugabyteDB 2026.1.2.0 (PostgreSQL 15.12) | `SELECT` only | none | the same as the owner |
+| RisingWave 3.1.0 | owner | every primary key, after one refused attempt | every primary key, first attempt |
+| RisingWave 3.1.0 | `SELECT` only | none, after one refused attempt | every primary key, first attempt |
+| Materialize v26.44.1 | either | none, after one refused attempt | none, first attempt |
+
+CockroachDB does not apply PostgreSQL's visibility rule to those views, so it was never affected.
+RisingWave refuses foreign keys (`column constraints "REFERENCES ..."` is not yet implemented) and Materialize refuses both kinds, so the fixture there has only what the engine accepts.
+The form of the two reads is what RisingWave 3.1.0 binds: `LATERAL unnest(...)` is refused there with *expected subquery after LATERAL*, so the unnest is written without the keyword PostgreSQL implies anyway, and the ordinal is cast to `int` because *array_access(smallint[], bigint)* does not exist there.
 
 ### 3.4.1 The session default container, and why a bare name needs one
 

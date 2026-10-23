@@ -712,7 +712,7 @@ function boundText(part: ObjectSourcePart, limit: number): ObjectSourcePart {
  * was the only engine that had landed; the day-one set is now three and the count was re-measured
  * rather than the digit bumped, because what it counts is what the paragraph is for.
  *
- * The day-one producers of `edit` are: `providers/sql/postgres.ts:4370`, gated on
+ * The day-one producers of `edit` are: `providers/sql/postgres.ts:4410`, gated on
  * `kindAcceptsSourceEdits(capabilities, kind)`; `providers/sql/trino/index.ts:1342` and
  * `providers/keyvalue/redis.ts:2234`, both gated on `spec.acceptsSourceEdits === true`, which is the
  * same fact read through the same declaration. Later engines may produce it too, as etcd does for a
@@ -747,7 +747,7 @@ function boundText(part: ObjectSourcePart, limit: number): ObjectSourcePart {
  *
  * THE BOUND, on both sides of the same constant. `edit-plan/route.ts:74` refuses a SUBMITTED text
  * longer than `EDIT_CHARACTER_LIMIT`, and all three day-one providers refuse a READ definition longer
- * than it inside `buildObjectEdit`: `providers/sql/postgres.ts:4538`, `providers/keyvalue/redis.ts:2324`
+ * than it inside `buildObjectEdit`: `providers/sql/postgres.ts:4578`, `providers/keyvalue/redis.ts:2324`
  * and `providers/sql/trino/index.ts:1536`. The second is what closes the class rather than narrowing
  * it: a plan is minted only from the build's own read, so a definition the pane could only have shown
  * truncated never reaches a plan at all, whatever the client POSTs.

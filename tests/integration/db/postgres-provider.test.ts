@@ -14,7 +14,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { EventEmitter } from "node:events";
 import { TUNNEL_FAR_END, type DatabaseConnection } from "@/lib/types";
-import type { ContainerLevels, ObjectEditRefusalClass, ReadOnlyStatementBudget } from "@/lib/db/types";
+import type { ContainerLevels, ObjectDetail, ObjectEditRefusalClass, ReadOnlyStatementBudget } from "@/lib/db/types";
 import { maintenanceControl } from "@/lib/db/types";
 import {
   AuthenticationError,
@@ -2152,6 +2152,12 @@ describe("PostgresProvider", () => {
       "Failed to prepare the statement Caused by: Feature is not yet implemented: " +
       "information_schema.constraint_column_usage is not supported, please use `SHOW` commands for now. " +
       "`SHOW TABLES`, `SHOW MATERIALIZED VIEWS`, `DESCRIBE <table>`, `SHOW COLUMNS FROM [table]`";
+    // RisingWave 3.1.0, measured 2026-10-24 against the pg_constraint key reads.
+    const RISINGWAVE_LATERAL_FUNCTION_REFUSAL =
+      "Failed to run the query Caused by: sql parser error: expected subquery after LATERAL, found: unnest";
+    const RISINGWAVE_BIGINT_SUBSCRIPT_REFUSAL =
+      "Failed to run the query Caused by these errors (recent errors listed first): 1: failed to build executor " +
+      "2: Expr error 3: Unsupported function: array_access(smallint[], bigint) -> smallint";
     const RISINGWAVE_AGGREGATE_REFUSAL =
       "Failed to execute the statement Caused by: Feature is not yet implemented: subquery inside aggregation calls";
 
@@ -2185,6 +2191,8 @@ describe("PostgresProvider", () => {
         if (sql.includes("constraint_column_usage")) {
           return Promise.reject(new Error(RISINGWAVE_CONSTRAINT_COLUMN_USAGE_REFUSAL));
         }
+        if (/\bLATERAL\s+unnest\(/i.test(sql)) return Promise.reject(new Error(RISINGWAVE_LATERAL_FUNCTION_REFUSAL));
+        if (/\[k\.ord\]/.test(sql)) return Promise.reject(new Error(RISINGWAVE_BIGINT_SUBSCRIPT_REFUSAL));
         if (hasSubqueryInsideAggregate(sql)) return Promise.reject(new Error(RISINGWAVE_AGGREGATE_REFUSAL));
         // RisingWave publishes no column default: its pg_attrdef is empty, so the LEFT JOIN
         // hands pg_get_expr() a NULL expression. PostgreSQL answers NULL for that and
@@ -2244,23 +2252,22 @@ describe("PostgresProvider", () => {
       }
     });
 
-    test("RisingWave's constraint_column_usage refusal is repaired on the first retry (#1075)", async () => {
-      // The refusal suggests `SHOW MATERIALIZED VIEWS`, which once read as the MATERIALIZED
-      // keyword collision and spent a retry resending an identical statement.
+    test("RisingWave answers the object reads, keys included, on the first attempt", async () => {
+      // It refused information_schema.constraint_column_usage, which cost every read a retry
+      // and the foreign keys with it (#1075). The keys are read from pg_constraint now, in
+      // the form RisingWave 3.1.0 binds: no LATERAL before the unnest, an integer subscript.
       const sent: string[] = [];
       risingWave(sent);
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
 
-      await provider.describeObject(["probe", "customers"], "table");
+      const detail = await provider.describeObject(["probe", "customers"], "table");
       await provider.describeObjects(["probe"], "table");
 
       for (const marker of ["object_columns", "described_columns"]) {
-        const attempts = sent.filter((sql) => sql.includes(marker));
-        expect(attempts).toHaveLength(2);
-        expect(attempts[0]).toContain("constraint_column_usage");
-        expect(attempts[1]).not.toContain("constraint_column_usage");
+        expect(sent.filter((sql) => sql.includes(marker))).toHaveLength(1);
       }
+      expect(detail.columns.filter((column) => column.isPrimary).map((column) => column.name)).toEqual(["zeta_id"]);
     });
 
     test("the object reads build their rows with jsonb and keep the column order (#1075)", async () => {
@@ -2456,37 +2463,6 @@ describe("PostgresProvider", () => {
       expect(countsSql).toContain("'crdb_internal'");
       expect(countsSql).toContain("'pg_extension'");
     });
-  });
-
-  // --------------------------------------------------------------------------
-  // Foreign-key catalog fallback (Materialize has no constraint_column_usage)
-  // --------------------------------------------------------------------------
-
-  describe("missing constraint_column_usage fallback", () => {
-    // Measured on Materialize v26.37.0: key_column_usage and table_constraints
-    // both exist, but constraint_column_usage does not, so the whole schema query
-    // fails even after the MATERIALIZED/size/json fallbacks have cleared their
-    // gaps. Foreign keys are genuinely unknowable there; every other column is not.
-    function rejectConstraintColumnUsage(onRetry: (sql: string) => ReturnType<typeof defaultMockQuery>) {
-      mockQueryFn = async (sql: string) => {
-        if (sql.includes("constraint_column_usage")) {
-          return Promise.reject(new Error("unknown catalog item 'information_schema.constraint_column_usage'"));
-        }
-        const result = await onRetry(sql);
-        // The canned rows carry foreign keys whatever SQL arrives, so asserting on
-        // them would test the fixture rather than the rewrite. Model what the engine
-        // actually does instead: an emptied fk_info CTE joins to nothing, and the
-        // outer COALESCE turns that into []. Keyed on the emptied CTE's own marker so
-        // the fixture cannot answer [] for a query that still asked for real keys.
-        if (!sql.includes("WHERE false")) return result;
-        return {
-          ...result,
-          rows: result.rows.map((row) =>
-            row !== null && typeof row === "object" && "foreign_keys" in row ? { ...row, foreign_keys: [] } : row,
-          ),
-        };
-      };
-    }
   });
 
   // --------------------------------------------------------------------------
@@ -6870,7 +6846,11 @@ describe("PostgreSQL object listing and detail", () => {
       await provider.connect();
 
       await provider.describeObject(["app", "orders"], "table");
-      expect(sent.filter((sql) => sql.includes("object_columns"))).toHaveLength(2);
+      const attempts = sent.filter((sql) => sql.includes("object_columns"));
+      expect(attempts).toHaveLength(2);
+      // The keys read pg_constraint too, so they are emptied with the EXCLUDE list.
+      expect(attempts[1]).not.toContain("pg_constraint");
+      expect(attempts[1].match(/WHERE false/g)).toHaveLength(3);
       await provider.disconnect();
     });
   });
@@ -7658,16 +7638,14 @@ describe("PostgreSQL bulk column read", () => {
     await provider.disconnect();
   });
 
-  test("a fork with no constraint_column_usage loses the foreign keys, not the columns", async () => {
-    // Materialize. The bulk read goes through the same fallback chain getSchema() does,
-    // which is the point of reshaping that body rather than writing a new statement.
+  test("a fork with no pg_constraint loses the keys, not the columns", async () => {
+    // The bulk read goes through the same fallback chain the single read does, which is the
+    // point of reshaping that body rather than writing a new statement.
     const asked: string[] = [];
     mockQueryFn = async (sql) => {
       if (!sql.includes("described_columns")) return { rows: [] };
       asked.push(sql);
-      if (sql.includes("constraint_column_usage")) {
-        throw new Error('relation "information_schema.constraint_column_usage" does not exist');
-      }
+      if (sql.includes("FROM pg_constraint c")) throw new Error('relation "pg_constraint" does not exist');
       return { rows: [bulkRows()[0]] };
     };
     const provider = makeProvider();
@@ -7675,8 +7653,28 @@ describe("PostgreSQL bulk column read", () => {
 
     const batch = await provider.describeObjects(["app"], "table");
     expect(asked).toHaveLength(2);
-    expect(asked[1]).not.toContain("constraint_column_usage");
+    expect(asked[1]).not.toContain("pg_constraint");
+    expect(asked[1]).toContain("NULL::text[] AS pk_columns");
     expect(batch.details[0].columns).toHaveLength(1);
+    await provider.disconnect();
+  });
+
+  test("a role refused pg_constraint gets the refusal, not a table without keys", async () => {
+    // Measured on PostgreSQL 17.6 with SELECT on pg_constraint revoked from PUBLIC: the catalog
+    // exists, so emptying the keys would show a table with none as if that were the truth.
+    const asked: string[] = [];
+    mockQueryFn = async (sql) => {
+      if (!sql.includes("described_columns")) return { rows: [] };
+      asked.push(sql);
+      throw new Error("permission denied for table pg_constraint");
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    await expect(provider.describeObjects(["app"], "table")).rejects.toThrow(
+      /permission denied for table pg_constraint/,
+    );
+    expect(asked).toHaveLength(1);
     await provider.disconnect();
   });
 
@@ -7701,9 +7699,11 @@ describe("PostgreSQL bulk column read", () => {
 });
 
 describe("PostgreSQL primary-key columns (#1394)", () => {
-  // Measured on PostgreSQL 18.6: `array_agg(kcu.column_name)` is `sql_identifier[]`, which
+  // Measured on PostgreSQL 18.6: `array_agg(kcu.column_name)` was `sql_identifier[]`, which
   // node-postgres hands back as the text `{id}`. `includes()` on that text flagged every
-  // column whose name it contains, so `i` and `d` were keys of `{id}`.
+  // column whose name it contains, so `i` and `d` were keys of `{id}`. The key is read from
+  // pg_attribute now, and `array_agg(a.attname)` is `name[]`, which the driver does not parse
+  // either, measured on PostgreSQL 17.6 on 2026-10-24.
   const COLUMNS = ["order_id", "id", "user_id", "role_id", "user", "role", "_", "i", "d"].map((name) => ({
     name,
     type: "integer",
@@ -7728,7 +7728,7 @@ describe("PostgreSQL primary-key columns (#1394)", () => {
   test("the key list is read as text[] in its declared order", async () => {
     const { sql } = await keysFor(["id"]);
     const detail = sql.find((text) => text.includes("object_columns"));
-    expect(detail).toContain("array_agg(kcu.column_name::text ORDER BY kcu.ordinal_position) as pk_columns");
+    expect(detail).toContain("array_agg(a.attname::text ORDER BY k.ord) as pk_columns");
   });
 
   test("a key named order_id marks order_id and not id", async () => {
@@ -7760,6 +7760,102 @@ describe("PostgreSQL primary-key columns (#1394)", () => {
     expect(sql.find((text) => text.includes("pg_stat_user_indexes"))).toContain(
       "array_agg(a.attname::text ORDER BY array_position(ix.indkey, a.attnum)) as columns",
     );
+  });
+});
+
+describe("PostgreSQL keys a SELECT-only role can see", () => {
+  // PostgreSQL shows a constraint in information_schema.table_constraints only to a role that
+  // owns the table or holds a privilege on it other than SELECT, and constraint_column_usage
+  // only to the owner. Measured on PostgreSQL 17.6 on 2026-10-24: the owner read the keys
+  // through those views and a role holding USAGE on the schema and SELECT on the tables read
+  // none. pg_constraint answers both roles alike. This double is that second role: a statement
+  // that still asks information_schema for a key gets the empty answer the engine gives it.
+  const COLUMNS = ["id", "s_line", "s_order", "customer_id", "country"].map((name) => ({
+    name,
+    type: "integer",
+    nullable: false,
+    defaultValue: null,
+  }));
+  // app.shipments: (s_line, s_order) REFERENCES app.order_lines (line_no, order_id), which is
+  // the referenced key in the opposite order, plus a key into another schema.
+  const FOREIGN_KEYS = [
+    { columnName: "country", referencedSchema: "ref", referencedTable: "countries", referencedColumn: "code" },
+    { columnName: "s_line", referencedSchema: "app", referencedTable: "order_lines", referencedColumn: "line_no" },
+    { columnName: "s_order", referencedSchema: "app", referencedTable: "order_lines", referencedColumn: "order_id" },
+  ];
+
+  function selectOnlyRole(sent: string[]): void {
+    mockQueryFn = async (sql) => {
+      sent.push(sql);
+      const blind = /information_schema\.(table_constraints|key_column_usage|constraint_column_usage)/.test(sql);
+      const row = {
+        pk_columns: blind ? [] : ["id"],
+        columns: COLUMNS,
+        indexes: null,
+        foreign_keys: blind ? [] : FOREIGN_KEYS,
+      };
+      if (sql.includes("object_columns")) return { rows: [row] };
+      if (sql.includes("described_columns")) return { rows: [{ name: "shipments", ...row }] };
+      return { rows: [] };
+    };
+  }
+
+  async function readBoth(): Promise<{ sent: string[]; details: ObjectDetail[] }> {
+    const sent: string[] = [];
+    selectOnlyRole(sent);
+    const provider = new PostgresProvider(makePgConfig());
+    await provider.connect();
+    const single = await provider.describeObject(["app", "shipments"], "table");
+    const batch = await provider.describeObjects(["app"], "table");
+    const bounded = await provider.describeObjects(["app"], "table", 5);
+    await provider.disconnect();
+    return { sent, details: [single, ...batch.details, ...bounded.details] };
+  }
+
+  test("the single and the bulk read mark the primary key and list every foreign key", async () => {
+    const { details } = await readBoth();
+    expect(details).toHaveLength(3);
+    for (const detail of details) {
+      expect(detail.columns.filter((column) => column.isPrimary).map((column) => column.name)).toEqual(["id"]);
+      // A key outside `public` is schema-qualified, the one into another schema included, and
+      // each column of the two-column key names its own referenced column.
+      expect(detail.foreignKeys).toEqual([
+        { columnName: "country", referencedTable: "ref.countries", referencedColumn: "code" },
+        { columnName: "s_line", referencedTable: "app.order_lines", referencedColumn: "line_no" },
+        { columnName: "s_order", referencedTable: "app.order_lines", referencedColumn: "order_id" },
+      ]);
+    }
+  });
+
+  test("the keys are read from pg_constraint and pg_attribute, not information_schema", async () => {
+    const { sent } = await readBoth();
+    const reads = sent.filter((sql) => sql.includes("object_columns") || sql.includes("described_columns"));
+    expect(reads).toHaveLength(3);
+    for (const sql of reads) {
+      expect(sql).not.toMatch(/information_schema\.(table_constraints|key_column_usage|constraint_column_usage)/);
+      expect(sql).toContain("WHERE c.contype = 'p'");
+      expect(sql).toContain("WHERE c.contype = 'f'");
+      // The key in its declared order, as text[] for the #1394 reason.
+      expect(sql).toContain("array_agg(a.attname::text ORDER BY k.ord) as pk_columns");
+      // Each referencing column is paired with the referenced column at the same position.
+      expect(sql).toContain("CROSS JOIN unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)");
+      expect(sql).toContain("ra.attrelid = c.confrelid AND ra.attnum = c.confkey[k.ord::int]");
+      // The foreign-key list keeps one constraint's columns together, in key order.
+      expect(sql).toMatch(
+        /jsonb_agg\(\s*jsonb_build_object\([^;]*?\)\s*ORDER BY c\.conname, k\.ord\s*\) as foreign_keys/,
+      );
+    }
+  });
+
+  test("the key reads keep the system-schema exclusion", async () => {
+    const { sent } = await readBoth();
+    const detail = sent.find((sql) => sql.includes("object_columns")) ?? "";
+    const pkInfo = detail.slice(detail.indexOf("pk_info AS"), detail.indexOf("fk_info AS"));
+    const fkInfo = detail.slice(detail.indexOf("fk_info AS"), detail.indexOf("index_info AS"));
+    for (const cte of [pkInfo, fkInfo]) {
+      expect(cte).toContain("n.nspname NOT IN ('pg_catalog', 'information_schema'");
+      expect(cte).toContain("'crdb_internal'");
+    }
   });
 });
 

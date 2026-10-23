@@ -615,24 +615,42 @@ function extensionMemberTableExclusion(schemaColumn: string, nameColumn: string)
   );
 }
 
-// `kcu.column_name` is `information_schema.sql_identifier`, and node-postgres has no array
-// parser for `sql_identifier[]`: uncast, the list reached `objectDetailFromRow` as the text
-// `{id}`, where `includes()` became a substring test that flagged `i` and `d` as keys too,
-// measured on PostgreSQL 18.6 (#1394). The `text` cast makes it a `text[]` the driver
-// parses, and `ordinal_position` hands the key back in its declared order.
+// The keys are read from pg_constraint and pg_attribute, never from information_schema.
+// PostgreSQL shows a constraint in information_schema.table_constraints only to a role that
+// owns the table or holds a privilege on it other than SELECT, and constraint_column_usage
+// only to the owner, so a read-only role saw `isPrimary: false` on every column and no
+// foreign key at all. Measured on PostgreSQL 17.6 on 2026-10-24: the owner read the key and
+// both foreign keys of a table through those views, and a role holding USAGE on the schema
+// and SELECT on the tables read none; pg_constraint answers both roles alike, as pg_index
+// already does for the index list below. CockroachDB v26.2.5 and YugabyteDB 2026.1.2.0
+// answer these reads the same rows as PostgreSQL to both roles; RisingWave 3.1.0 answers
+// its primary keys and has no foreign keys, and Materialize v26.44.1 has neither, so
+// pg_constraint holds no row for them there.
+//
+// `conkey` is the key in its declared order, and `WITH ORDINALITY` carries that position
+// out of the unnest. The unnest is written without the LATERAL keyword, which PostgreSQL
+// implies for a function in FROM: RisingWave 3.1.0 refuses `LATERAL unnest(...)`, "expected
+// subquery after LATERAL", and answers the plain form, measured on 2026-10-24.
+//
+// `array_agg(a.attname)` is `name[]`, and node-postgres has no array parser for it: uncast,
+// the list reaches `objectDetailFromRow` as the text `{order_id,line_no}`, measured on
+// PostgreSQL 17.6, where `includes()` became a substring test that flagged `i` and `d` as
+// keys of `{id}` (#1394, first measured on PostgreSQL 18.6 for the `sql_identifier[]` the
+// information_schema read answered). The `text` cast makes it a `text[]` the driver parses.
 const CTE_PK_INFO = `
         pk_info AS MATERIALIZED (
           SELECT
-            tc.table_schema,
-            tc.table_name,
-            array_agg(kcu.column_name::text ORDER BY kcu.ordinal_position) as pk_columns
-          FROM information_schema.table_constraints tc
-          JOIN information_schema.key_column_usage kcu
-            ON tc.constraint_name = kcu.constraint_name
-            AND tc.table_schema = kcu.table_schema
-          WHERE tc.constraint_type = 'PRIMARY KEY'
-          AND ${schemaExclusion("tc.table_schema")}
-          GROUP BY tc.table_schema, tc.table_name
+            n.nspname as table_schema,
+            t.relname as table_name,
+            array_agg(a.attname::text ORDER BY k.ord) as pk_columns
+          FROM pg_constraint c
+          JOIN pg_class t ON t.oid = c.conrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+          CROSS JOIN unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+          JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+          WHERE c.contype = 'p'
+          AND ${schemaExclusion("n.nspname")}
+          GROUP BY n.nspname, t.relname
         )`;
 
 // Every object row is built with jsonb_agg()/jsonb_build_object() and every empty list is
@@ -643,29 +661,38 @@ const CTE_PK_INFO = `
 // keys and drops duplicate ones, which changes nothing here: each object has a fixed set of
 // distinct keys and is read parsed, never as text. It keeps an array's order, which is what
 // `ORDER BY a.attnum` relies on to hand back the table's own column order.
+//
+// `conkey` and `confkey` are parallel arrays: the referencing column at one position points
+// at the referenced column at the same position. So the referenced column is read at the
+// ordinal the unnest of `conkey` hands out, cast to integer because the ordinal is bigint
+// and RisingWave 3.1.0 has no `array_access(smallint[], bigint)`. The information_schema
+// join this replaced paired every column of a two-column key with both referenced columns,
+// four entries for two, measured as the owner on PostgreSQL 17.6 and CockroachDB v26.2.5
+// on 2026-10-24.
 const CTE_FK_INFO = `
         fk_info AS MATERIALIZED (
           SELECT
-            tc.table_schema,
-            tc.table_name,
+            n.nspname as table_schema,
+            t.relname as table_name,
             jsonb_agg(
               jsonb_build_object(
-                'columnName', kcu.column_name,
-                'referencedSchema', ccu.table_schema,
-                'referencedTable', ccu.table_name,
-                'referencedColumn', ccu.column_name
-              )
+                'columnName', a.attname,
+                'referencedSchema', rn.nspname,
+                'referencedTable', rt.relname,
+                'referencedColumn', ra.attname
+              ) ORDER BY c.conname, k.ord
             ) as foreign_keys
-          FROM information_schema.table_constraints tc
-          JOIN information_schema.key_column_usage kcu
-            ON tc.constraint_name = kcu.constraint_name
-            AND tc.table_schema = kcu.table_schema
-          JOIN information_schema.constraint_column_usage ccu
-            ON ccu.constraint_name = tc.constraint_name
-            AND ccu.constraint_schema = tc.constraint_schema
-          WHERE tc.constraint_type = 'FOREIGN KEY'
-          AND ${schemaExclusion("tc.table_schema")}
-          GROUP BY tc.table_schema, tc.table_name
+          FROM pg_constraint c
+          JOIN pg_class t ON t.oid = c.conrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+          JOIN pg_class rt ON rt.oid = c.confrelid
+          JOIN pg_namespace rn ON rn.oid = rt.relnamespace
+          CROSS JOIN unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+          JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+          JOIN pg_attribute ra ON ra.attrelid = c.confrelid AND ra.attnum = c.confkey[k.ord::int]
+          WHERE c.contype = 'f'
+          AND ${schemaExclusion("n.nspname")}
+          GROUP BY n.nspname, t.relname
         )`;
 
 // An index's column list is read in a LATERAL join and not as a subquery inside the
@@ -699,8 +726,8 @@ const CTE_INDEX_INFO = `
 
 // EXCLUDE constraints (pg_constraint.contype 'x') are listed beside the indexes, because only
 // the GiST index backing one was visible before (#1778). The object detail reads use it; the
-// schema queries do not. An engine without pg_constraint or pg_get_constraintdef() retries
-// with the empty body below, which leaves the list empty instead of failing the read.
+// schema queries do not. An engine without pg_get_constraintdef() retries with the empty
+// body below, which leaves the list empty instead of failing the read.
 const CTE_EXCLUDE_INFO = `
         exclude_info AS MATERIALIZED (
           SELECT
@@ -732,10 +759,45 @@ function withoutExclusionConstraintCatalog(sql: string): string {
   return replaceCteBody(sql, "exclude_info", EMPTY_EXCLUDE_INFO_BODY);
 }
 
-function isMissingExclusionConstraintCatalogError(error: unknown): boolean {
+function isMissingConstraintDefinitionError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return error.message.toLowerCase().includes("pg_get_constraintdef");
+}
+
+// The keys and the EXCLUDE constraints all read pg_constraint, so an engine without it
+// empties the three CTEs together and keeps the columns and the indexes. Every engine
+// measured has it: PostgreSQL 17.6, CockroachDB v26.2.5, YugabyteDB 2026.1.2.0, RisingWave
+// 3.1.0 and Materialize v26.44.1 (where it holds no row) on 2026-10-24. It is kept for the
+// forks nobody here has run, which before the keys moved off information_schema lost only
+// the EXCLUDE list here.
+const EMPTY_PK_INFO_BODY = `
+          SELECT
+            NULL::text AS table_schema,
+            NULL::text AS table_name,
+            NULL::text[] AS pk_columns
+          WHERE false
+        `;
+
+const EMPTY_FK_INFO_BODY = `
+          SELECT
+            NULL::text AS table_schema,
+            NULL::text AS table_name,
+            NULL::jsonb AS foreign_keys
+          WHERE false
+        `;
+
+function withoutConstraintCatalog(sql: string): string {
+  const withoutKeys = replaceCteBody(replaceCteBody(sql, "pk_info", EMPTY_PK_INFO_BODY), "fk_info", EMPTY_FK_INFO_BODY);
+  return withoutExclusionConstraintCatalog(withoutKeys);
+}
+
+// A role refused the catalog is not an engine without it: emptying the keys then would show a
+// table with none as if that were the truth, so the refusal is answered instead (measured on
+// PostgreSQL 17.6 with SELECT on pg_constraint revoked from PUBLIC, 2026-10-24).
+function isMissingConstraintCatalogError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   const message = error.message.toLowerCase();
-  return message.includes("pg_get_constraintdef") || message.includes("pg_constraint");
+  return message.includes("pg_constraint") && !message.includes("permission denied");
 }
 
 // Materialize and RisingWave reserve MATERIALIZED as a keyword (it's part of
@@ -766,7 +828,7 @@ function isMissingTotalRelationSizeError(error: unknown): boolean {
 // inside single-quoted strings are skipped, so a literal cannot move the boundary; it
 // is still not a general SQL parser (no dollar-quoting, no comments). Returns the SQL
 // untouched when the CTE is absent,
-// which is how a query that never joined the FK catalog reports "not repairable"
+// which is how a query that never joined the constraint catalog reports "not repairable"
 // instead of silently retrying something it did not change.
 function replaceCteBody(sql: string, cteName: string, body: string): string {
   const header = new RegExp(`${cteName}\\s+AS\\s+(?:MATERIALIZED\\s+)?\\(`, "i");
@@ -790,29 +852,6 @@ function replaceCteBody(sql: string, cteName: string, body: string): string {
     cursor++;
   }
   return sql.slice(0, bodyStart) + body + sql.slice(cursor - 1);
-}
-
-// Materialize answers information_schema.table_constraints and key_column_usage but
-// has no constraint_column_usage, which is the only one of the three that names the
-// table a foreign key points AT - so the relationship is genuinely unknowable there,
-// while every other column in the same query is not. Emptying the CTE keeps the outer
-// LEFT JOIN and FULL OUTER JOIN valid and leaves foreignKeys as [], an absence, rather
-// than dropping the tables and columns that were readable all along.
-const EMPTY_FK_INFO_BODY = `
-          SELECT
-            NULL::text AS table_schema,
-            NULL::text AS table_name,
-            NULL::jsonb AS foreign_keys
-          WHERE false
-        `;
-
-function withoutForeignKeyCatalog(sql: string): string {
-  return replaceCteBody(sql, "fk_info", EMPTY_FK_INFO_BODY);
-}
-
-function isMissingConstraintColumnUsageError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  return error.message.toLowerCase().includes("constraint_column_usage");
 }
 
 // Every engine probed accepts the ownership test, PostgreSQL 18.4, TimescaleDB,
@@ -1648,7 +1687,7 @@ const CTE_OBJECT_COLUMNS = `
         )`;
 
 // One object's columns, primary key, foreign keys and indexes. The last three reuse the
-// schema query's own CTEs, so a fork that needs `withoutForeignKeyCatalog()` gets the same
+// schema query's own CTEs, so a fork that needs `withoutConstraintCatalog()` gets the same
 // repair here that `getSchema()` gets.
 //
 // The `AS MATERIALIZED` hints are stripped, which is the opposite of what the schema
@@ -3867,27 +3906,28 @@ export class PostgresProvider extends SQLBaseProvider {
    * relative may lack. Real PostgreSQL has all of them and this succeeds on the
    * first try. Independent gaps can reject it on a relative, and each engine can hit
    * them in a different order or subset: CockroachDB and Materialize both lack
-   * `pg_total_relation_size()`; Materialize and RisingWave have no
-   * `information_schema.constraint_column_usage`. Every fallback is matched against
-   * whichever error actually comes back, not tried in a fixed order, so one engine
-   * hitting only a later gap still recovers. Recovers real object-browser data on
-   * those engines instead of failing outright; any error no fallback recognizes, or
-   * one that survives every applicable fallback, is mapped and rethrown rather than
+   * `pg_total_relation_size()`; Materialize has no `to_regclass()`. Every fallback is
+   * matched against whichever error actually comes back, not tried in a fixed order,
+   * so one engine hitting only a later gap still recovers. Recovers real object-browser
+   * data on those engines instead of failing outright; any error no fallback recognizes,
+   * or one that survives every applicable fallback, is mapped and rethrown rather than
    * left raw.
    *
    * No statement that reaches this chain carries an `AS MATERIALIZED` hint: each has
    * it stripped where it is defined, so there is no keyword collision left to repair.
    * A matcher for one used to sit first here, and matched any message naming the word -
-   * including RisingWave's constraint_column_usage refusal, which recommends `SHOW
-   * MATERIALIZED VIEWS` - so it spent a retry resending an identical statement (#1075).
+   * including RisingWave's refusal of information_schema.constraint_column_usage, which
+   * recommends `SHOW MATERIALIZED VIEWS` - so it spent a retry resending an identical
+   * statement (#1075). No statement reads that view any more: the keys come from
+   * pg_constraint, which RisingWave 3.1.0 and Materialize v26.44.1 both answer.
    */
   private async queryWithMaterializedFallback(client: PoolClient, sql: string, params?: unknown[]) {
     const remainingFallbacks = [
       { matches: isMissingTotalRelationSizeError, apply: withoutTotalRelationSizeFn },
-      { matches: isMissingConstraintColumnUsageError, apply: withoutForeignKeyCatalog },
       { matches: isMissingExtensionCatalogError, apply: withoutExtensionOwnershipTest },
       { matches: isMissingToRegclassError, apply: withoutToRegclass },
-      { matches: isMissingExclusionConstraintCatalogError, apply: withoutExclusionConstraintCatalog },
+      { matches: isMissingConstraintCatalogError, apply: withoutConstraintCatalog },
+      { matches: isMissingConstraintDefinitionError, apply: withoutExclusionConstraintCatalog },
     ];
     let currentSql = sql;
     for (;;) {
