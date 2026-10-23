@@ -37,7 +37,7 @@
 import { QueryError } from "@/lib/db/errors";
 import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
 import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
-import { readOperativeKeyword } from "@/lib/sql/operative-keyword";
+import { readCteBodyWrite, readOperativeKeyword } from "@/lib/sql/operative-keyword";
 import { hasUnterminatedSpan, readSqlSpan } from "@/lib/sql/spans";
 import { readStatementEnd } from "@/lib/sql/statement-end";
 import { findCodeWord } from "@/lib/sql/words";
@@ -324,7 +324,14 @@ function analyzeUnderGrammar(sql: string, grammar: SqlGrammar): ParsedQueryInfo 
   // module - `sql-base.ts`, `oracle.ts` and `mssql.ts` - test `=== "SELECT"` and
   // nothing else, so the honest answer costs nothing.
   // `MERGE`, which the union cannot name, falls through to OTHER.
-  const typingKeyword = keyword === "WITH" ? readOperativeKeyword(statement, grammar)?.keyword : keyword;
+  //
+  // A SELECT over a CTE body that writes is typed by that write: the body
+  // runs once and to completion whatever the SELECT reads, so a bound made the
+  // statement pageable and every next page re-ran the write in full.
+  let typingKeyword = keyword === "WITH" ? readOperativeKeyword(statement, grammar)?.keyword : keyword;
+  if (typingKeyword === "SELECT" && keyword === "WITH") {
+    typingKeyword = readCteBodyWrite(statement, grammar)?.keyword ?? typingKeyword;
+  }
   const type = classifyKeyword(typingKeyword);
 
   // LIMIT/OFFSET detection: find the outermost query's LIMIT, the

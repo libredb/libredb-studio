@@ -126,7 +126,7 @@ function skipCteName(sql: string, index: number, grammar: SqlGrammar): number {
  * `WITH t AS NOT LAZY (SELECT 1) SELECT 2` has to stay undeterminable rather than
  * read `NOT` as an alias and `LAZY` as the keyword that operates the statement.
  */
-type StandardElement = { kind: "element"; end: number } | { kind: "other-shape" } | { kind: "malformed" };
+type StandardElement = { kind: "element"; body: number; end: number } | { kind: "other-shape" } | { kind: "malformed" };
 
 function readStandardElement(sql: string, index: number, grammar: SqlGrammar): StandardElement {
   const afterName = skipCteName(sql, index, grammar);
@@ -173,7 +173,7 @@ function readStandardElement(sql: string, index: number, grammar: SqlGrammar): S
   const afterBody = skipParenthesised(sql, i, grammar);
   if (afterBody < 0) return { kind: "malformed" };
 
-  return { kind: "element", end: afterBody };
+  return { kind: "element", body: i, end: afterBody };
 }
 
 /**
@@ -235,7 +235,17 @@ function skipExpressionElement(sql: string, index: number, grammar: SqlGrammar):
 }
 
 /**
- * The index past one element of a CTE list, or `-1` when it cannot be read.
+ * One element of a CTE list: where it ends, and where its parenthesised body opens
+ * when it has one. Only the standard shape has a body; an expression element is
+ * `body: -1`, and it cannot carry a write.
+ */
+interface CteElement {
+  body: number;
+  end: number;
+}
+
+/**
+ * One element of a CTE list, or `null` when it cannot be read.
  *
  * Two shapes, tried in this order:
  *
@@ -247,23 +257,34 @@ function skipExpressionElement(sql: string, index: number, grammar: SqlGrammar):
  *   the standard shape already reads - which is what keeps #287's writing CTEs
  *   answering their own write keyword.
  */
-function skipCteElement(sql: string, index: number, grammar: SqlGrammar): number {
+function readCteElement(sql: string, index: number, grammar: SqlGrammar): CteElement | null {
   const standard = readStandardElement(sql, index, grammar);
-  if (standard.kind === "element") return standard.end;
-  if (standard.kind === "malformed") return -1;
+  if (standard.kind === "element") return { body: standard.body, end: standard.end };
+  if (standard.kind === "malformed") return null;
 
-  return skipExpressionElement(sql, index, grammar);
+  const end = skipExpressionElement(sql, index, grammar);
+  return end < 0 ? null : { body: -1, end };
 }
 
 /**
- * The keyword after a `WITH` statement's CTE list.
+ * A `WITH` statement's CTE list, read: where each element's body opens, and where
+ * the code after the list resumes.
+ */
+interface CteList {
+  bodies: number[];
+  after: number;
+}
+
+/**
+ * The CTE list that starts after a `WITH`.
  *
  * Walks the list's real grammar - `[RECURSIVE] <element> [, …]` - rather than
  * searching the text, because every text search over a CTE can be answered by the
  * CTE's own body. Anything that does not match answers `null`: see the bias note
- * on the exported function.
+ * on `readOperativeKeyword`. A list with nothing after it is `null` as well.
  */
-function readKeywordAfterCteList(sql: string, afterWith: number, grammar: SqlGrammar): LeadingKeyword | null {
+function readCteList(sql: string, afterWith: number, grammar: SqlGrammar): CteList | null {
+  const bodies: number[] = [];
   let i = skipTrivia(sql, afterWith, grammar);
   if (i < 0) return null;
 
@@ -274,9 +295,10 @@ function readKeywordAfterCteList(sql: string, afterWith: number, grammar: SqlGra
   }
 
   for (;;) {
-    const afterElement = skipCteElement(sql, i, grammar);
-    if (afterElement < 0) return null;
-    i = skipTrivia(sql, afterElement, grammar);
+    const element = readCteElement(sql, i, grammar);
+    if (element === null) return null;
+    if (element.body >= 0) bodies.push(element.body);
+    i = skipTrivia(sql, element.end, grammar);
     if (i < 0) return null;
 
     if (sql[i] !== ",") break;
@@ -284,10 +306,72 @@ function readKeywordAfterCteList(sql: string, afterWith: number, grammar: SqlGra
     if (i < 0) return null;
   }
 
-  const operative = readSqlWord(sql, i);
+  return { bodies, after: i };
+}
+
+/** The keyword after a `WITH` statement's CTE list, or `null` when there is none to read. */
+function readKeywordAfterCteList(sql: string, afterWith: number, grammar: SqlGrammar): LeadingKeyword | null {
+  const list = readCteList(sql, afterWith, grammar);
+  if (list === null) return null;
+
+  const operative = readSqlWord(sql, list.after);
   if (operative === null) return null;
 
-  return { keyword: operative.text, start: i, end: operative.end };
+  return { keyword: operative.text, start: list.after, end: operative.end };
+}
+
+/**
+ * The keywords that open a data-modifying statement a CTE body may hold.
+ * `UPSERT` is CockroachDB's, which documents it as a CTE body; no other dialect
+ * here has a statement by that name.
+ */
+const WRITE_KEYWORDS: ReadonlySet<string> = new Set(["INSERT", "UPDATE", "DELETE", "MERGE", "UPSERT"]);
+
+/**
+ * The write a CTE list's bodies do, or `null` when every body reads.
+ *
+ * A body writes when its first word is a write keyword, or when it is a nested
+ * `WITH` whose own list writes or whose operative keyword is one. Only the first
+ * word of each body is read, so a write keyword the body merely mentions deeper in
+ * its text - a table called `delete_queue`, a value `'delete'`, a subquery - never
+ * counts, and neither does one in a literal or a comment.
+ */
+function readListWrite(sql: string, list: CteList, grammar: SqlGrammar): LeadingKeyword | null {
+  for (const open of list.bodies) {
+    const write = readBodyWrite(sql, open, grammar);
+    if (write !== null) return write;
+  }
+
+  return null;
+}
+
+/** The write the parenthesised body opening at `open` does, or `null` when it reads. */
+function readBodyWrite(sql: string, open: number, grammar: SqlGrammar): LeadingKeyword | null {
+  // The body is closed, so code follows its `(`: at the least its `)`.
+  const at = skipTrivia(sql, open + 1, grammar);
+  const word = readSqlWord(sql, at);
+  if (word === null) return null;
+
+  const keyword = { keyword: word.text, start: at, end: word.end };
+  if (WRITE_KEYWORDS.has(word.text)) return keyword;
+  if (word.text !== "WITH") return null;
+
+  // A nested list this reader cannot cross could hold anything, so it answers
+  // the nested `WITH` itself rather than calling the body a read.
+  const nested = readCteList(sql, word.end, grammar);
+  if (nested === null) return keyword;
+  const write = readListWrite(sql, nested, grammar);
+  if (write !== null) return write;
+
+  // The nested main query may be parenthesised, `WITH b AS (…) (SELECT …)`, and
+  // is then read like a body.
+  if (sql[nested.after] === "(") return readBodyWrite(sql, nested.after, grammar);
+
+  const operative = readSqlWord(sql, nested.after);
+  if (operative === null) return keyword;
+  return WRITE_KEYWORDS.has(operative.text)
+    ? { keyword: operative.text, start: nested.after, end: operative.end }
+    : null;
 }
 
 /**
@@ -346,4 +430,28 @@ export function readOperativeKeyword(sql: string, grammar: SqlGrammar = DEFAULT_
   if (leading === null || leading.keyword !== "WITH") return leading;
 
   return readKeywordAfterCteList(sql, leading.end, grammar);
+}
+
+/**
+ * The write keyword of the first CTE body that writes, or `null` when the statement
+ * is not a `WITH`, its list cannot be read, or every body reads.
+ *
+ * `readOperativeKeyword` answers which statement runs AFTER the list, and a body
+ * is not that statement - yet PostgreSQL runs a data-modifying body exactly once
+ * and always to completion, however few of its rows the outer statement reads
+ * (manual 7.8.4), and CockroachDB and YugabyteDB allow the same. So
+ * `WITH d AS (DELETE … RETURNING *) SELECT * FROM d` is operated by a SELECT and
+ * still deletes. The query limiter bounded it as a read, which made it pageable,
+ * and every next page re-ran the DELETE in full. The limiter asks this reader as
+ * well, and a statement that answers is not bounded.
+ *
+ * An unreadable list answers `null` here because `readOperativeKeyword` already
+ * answers `null` for it, which the limiter never bounds.
+ */
+export function readCteBodyWrite(sql: string, grammar: SqlGrammar = DEFAULT_SQL_GRAMMAR): LeadingKeyword | null {
+  const leading = readLeadingKeyword(sql, grammar);
+  if (leading === null || leading.keyword !== "WITH") return null;
+
+  const list = readCteList(sql, leading.end, grammar);
+  return list === null ? null : readListWrite(sql, list, grammar);
 }

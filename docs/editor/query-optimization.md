@@ -147,6 +147,12 @@ not a name, or an `AS` with no body after it — is re-read as an expression tha
 supported dialect accepts such text, so what the server receives is a rejected statement either way
 rather than a partly limited write.
 ┌──────────────────────────────────────────────────────────────────────────────┐
+A `SELECT` over a CTE body that writes is typed by that write, so it is not bounded.
+A body writes when its first word, after `AS`, an optional `[NOT] MATERIALIZED` and the opening parenthesis, is `INSERT`, `UPDATE`, `DELETE`, `MERGE` or `UPSERT`, or when it is a nested `WITH` whose own list writes or whose main query, bare or parenthesised, opens with one of those; `readCteBodyWrite` in `src/lib/sql/operative-keyword.ts` reads it.
+PostgreSQL runs such a body exactly once and always to completion, however few of its rows the outer `SELECT` reads (manual 7.8.4), so a bound made `WITH d AS (DELETE … RETURNING *) SELECT * FROM d` pageable and every next page re-ran the `DELETE` in full.
+CockroachDB documents the same for its CTEs and also takes an `UPSERT` body, which the union cannot name, so that statement is typed `OTHER`, as `MERGE` is.
+Only the first word of each body counts, so a read-only body that merely mentions a write word (`FROM delete_queue`, `WHERE action = 'delete'`, a comment or a string) keeps its bound.
+┌──────────────────────────────────────────────────────────────────────────────┐
 ### Which dialect the readers are reading
 ┌──────────────────────────────────────────────────────────────────────────────┐
 Every reader above answers from characters alone, and a few characters mean different things in

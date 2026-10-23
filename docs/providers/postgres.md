@@ -1628,6 +1628,11 @@ and, **only for `SELECT`/CTE-`SELECT` queries that don't already have a `LIMIT`*
   set (#287). Undeterminable CTE shapes are likewise not bounded — an over-large read can be re-run,
   a partly committed write cannot. Asserted at the shared seam in `tests/unit/db/sql-base.test.ts`,
   since the behaviour is `SQLBaseProvider`'s for every SQL provider.
+- A `SELECT` over a data-modifying CTE body (`WITH d AS (DELETE … RETURNING *) SELECT * FROM d`) is not bounded either, so no next page is offered.
+  The body runs exactly once and always to completion whatever the outer `SELECT` reads (manual 7.8.4); bounded, the statement was pageable and every next page re-ran the `DELETE`, measured on PostgreSQL 17.6 as 1000 more rows gone per page.
+  CockroachDB documents the same, and its `UPSERT … RETURNING` body is not bounded either.
+  A read-only body over a table named like a write (`delete_queue`) keeps its bound.
+  Pinned in `tests/integration/db/postgres-provider.test.ts`.
 - The clause is inserted at the end of the **statement** as
   [`statement-end.ts`](../../src/lib/sql/statement-end.ts) delimits it — before any trailing comment
   and before the terminating `;`, both re-attached verbatim — and the already-limited probes read the

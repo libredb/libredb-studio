@@ -4063,6 +4063,41 @@ describe("PostgresProvider", () => {
       expect(result.wasLimited).toBe(false);
     });
 
+    // A data-modifying CTE body runs once and to completion whatever the
+    // outer SELECT reads (manual 7.8.4), so a bound made the statement pageable and
+    // every next page re-ran the DELETE. The provider must offer no next page.
+    test("leaves a SELECT over a DELETE ... RETURNING CTE unbounded, emitted intact", () => {
+      provider = new PostgresProvider(makePgConfig());
+      const sql =
+        "WITH d AS (DELETE FROM queue WHERE id IN (SELECT id FROM queue ORDER BY id LIMIT 1000) RETURNING *) SELECT * FROM d";
+
+      const result = provider.prepareQuery(sql, { limit: 50 });
+
+      expect(result.query).toBe(sql);
+      expect(result.wasLimited).toBe(false);
+    });
+
+    // CockroachDB connects as `postgres` and also takes an UPSERT as a CTE body.
+    test("leaves a SELECT over an UPSERT ... RETURNING CTE unbounded, emitted intact", () => {
+      provider = new PostgresProvider(makePgConfig());
+      const sql = "WITH u AS (UPSERT INTO t VALUES (1) RETURNING *) SELECT * FROM u";
+
+      const result = provider.prepareQuery(sql, { limit: 50 });
+
+      expect(result.query).toBe(sql);
+      expect(result.wasLimited).toBe(false);
+    });
+
+    test("bounds a read-only CTE over a table named like a write", () => {
+      provider = new PostgresProvider(makePgConfig());
+      const sql = "WITH r AS (SELECT * FROM delete_queue WHERE action = 'delete') SELECT * FROM r";
+
+      const result = provider.prepareQuery(sql, { limit: 50 });
+
+      expect(result.query).toBe(`${sql} LIMIT 50`);
+      expect(result.wasLimited).toBe(true);
+    });
+
     // ── `[…]` is a SUBSCRIPT here (#295) ────────────────────────────────────
     //
     // Established from the manual: `expression[subscript]` and
