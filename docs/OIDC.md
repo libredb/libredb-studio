@@ -154,18 +154,19 @@ The difference is the realm role (`admin` or `user`), mapped through `OIDC_ROLE_
 
 4. **Role Mapping (Optional):**
 
-   Create a Post Login Action in Auth0 to add roles to the ID token:
+   Create a Post Login Action in Auth0 to add roles to the ID token, and to the access token for the [bearer channel](#bearer-access-tokens-for-native-clients):
 
    ```javascript
-   // Auth0 Action: Add roles to ID token
+   // Auth0 Action: Add roles to the ID token and the access token
    exports.onExecutePostLogin = async (event, api) => {
      const namespace = 'https://libredb.org';
      const roles = event.authorization?.roles || [];
      api.idToken.setCustomClaim(`${namespace}/roles`, roles);
+     api.accessToken.setCustomClaim(`${namespace}/roles`, roles);
    };
    ```
 
-   Then configure:
+   Then configure (the claim name is read whole, since it is a top-level claim, so its dots are not a path):
    ```env
    OIDC_ROLE_CLAIM=https://libredb.org/roles
    OIDC_ADMIN_ROLES=admin
@@ -367,8 +368,8 @@ The flag has no effect unless `NEXT_PUBLIC_AUTH_PROVIDER=oidc`.
 The role mapping system:
 
 1. Reads the claim specified by `OIDC_ROLE_CLAIM` from the ID token
-2. Supports dot-notation for nested claims (e.g., `realm_access.roles`)
-3. If the claim value is an array, checks if any element matches `OIDC_ADMIN_ROLES`
+2. Supports dot-notation for nested claims (e.g., `realm_access.roles`); a top-level claim named exactly `OIDC_ROLE_CLAIM`, such as `https://libredb.org/roles`, is read whole first
+3. If the claim value is an array, checks if any element matches `OIDC_ADMIN_ROLES`; if it is an object, as Zitadel's roles claim is, its keys are the role names
 4. If the claim value is a string, checks for exact match (case-insensitive)
 5. If no match or no claim configured, defaults to `user` role, unless `OIDC_USER_ROLES` is set (see [Requiring a role](#requiring-a-role))
 
@@ -383,6 +384,9 @@ The role mapping system:
 
 // Nested claim: OIDC_ROLE_CLAIM=realm_access.roles
 { "realm_access": { "roles": ["admin"] } }  →  admin
+
+// Object claim: OIDC_ROLE_CLAIM=urn:zitadel:iam:org:project:roles
+{ "urn:zitadel:iam:org:project:roles": { "admin": { "1234": "acme.zitadel.cloud" } } }  →  admin
 
 // No match → defaults to user
 { "roles": ["viewer", "editor"] }  →  user
@@ -1129,13 +1133,17 @@ Input: claims object, roleClaim path, adminRoles list,
 
 1. If roleClaim is empty → return unmatched
 
-2. Navigate claim path (dot-notation):
-   "realm_access.roles" → claims["realm_access"]["roles"]
+2. Find the claim value:
+   a. A top-level claim named exactly roleClaim → its value
+      "https://libredb.org/roles" → claims["https://libredb.org/roles"]
+   b. Otherwise navigate the claim path (dot-notation):
+      "realm_access.roles" → claims["realm_access"]["roles"]
    A missing value, or a step through a non-object → return unmatched
 
-3. Get claim value:
+3. Get claim values:
    a. If Array → its elements, as strings
-   b. Otherwise → the value, as a string
+   b. If Object → its keys (Zitadel: role name → organizations)
+   c. Otherwise → the value, as a string
 
 4. Any value matches adminRoles (case-insensitive) → "admin",
    so admin wins when the claim holds both roles
@@ -1153,13 +1161,19 @@ Provider: Auth0
 Claims:   { "https://libredb.org/roles": ["admin", "viewer"] }
 Config:   OIDC_ROLE_CLAIM=https://libredb.org/roles
           OIDC_ADMIN_ROLES=admin
-Result:   "admin" ✓ (array contains "admin")
+Result:   "admin" ✓ (top-level claim read whole; array contains "admin")
 
 Provider: Keycloak
 Claims:   { "realm_access": { "roles": ["offline_access", "uma_authorization", "admin"] } }
 Config:   OIDC_ROLE_CLAIM=realm_access.roles
           OIDC_ADMIN_ROLES=admin
 Result:   "admin" ✓ (dot-notation navigates nested object)
+
+Provider: Zitadel
+Claims:   { "urn:zitadel:iam:org:project:roles": { "admin": { "1234": "acme.zitadel.cloud" } } }
+Config:   OIDC_ROLE_CLAIM=urn:zitadel:iam:org:project:roles
+          OIDC_ADMIN_ROLES=admin
+Result:   "admin" ✓ (object claim: its keys are the role names)
 
 Provider: Okta
 Claims:   { "groups": ["Everyone", "Engineering"] }

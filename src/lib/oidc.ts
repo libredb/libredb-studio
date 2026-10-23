@@ -240,21 +240,27 @@ export interface OIDCClaimRolesResult {
 
 /**
  * Extract normalized string values from an OIDC claim path.
- * Supports dot-notation for nested claims (e.g. "realm_access.roles").
+ * Supports dot-notation for nested claims (e.g. "realm_access.roles"); a top-level claim named exactly `roleClaim` is
+ * read whole first, because a namespaced claim such as Auth0's "https://libredb.org/roles" holds dots of its own.
+ * An object claim yields its keys, as Zitadel's "urn:zitadel:iam:org:project:roles" maps each role name to its orgs.
  */
 export function readRoleClaimValues(claims: Record<string, unknown>, roleClaim: string): string[] {
   if (!roleClaim) return [];
 
-  const parts = roleClaim.split(".");
   let value: unknown = claims;
-  for (const part of parts) {
-    if (value == null || typeof value !== "object") return [];
-    value = (value as Record<string, unknown>)[part];
+  if (Object.hasOwn(claims, roleClaim)) {
+    value = claims[roleClaim];
+  } else {
+    for (const part of roleClaim.split(".")) {
+      if (value == null || typeof value !== "object") return [];
+      value = (value as Record<string, unknown>)[part];
+    }
   }
 
   if (value == null) return [];
 
-  return Array.isArray(value) ? value.map(String) : [String(value)];
+  if (Array.isArray(value)) return value.map(String);
+  return typeof value === "object" ? Object.keys(value) : [String(value)];
 }
 
 /**

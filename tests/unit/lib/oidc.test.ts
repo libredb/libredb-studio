@@ -168,6 +168,14 @@ describe("mapOIDCRole", () => {
     expect(mapOIDCRole({ realm_access: null }, "realm_access.roles", ["admin"], ["user"])).toBeNull();
   });
 
+  test("maps admin from the Auth0 and Zitadel role claims of docs/OIDC.md", () => {
+    expect(mapOIDCRole({ "https://libredb.org/roles": ["admin"] }, "https://libredb.org/roles", ["admin"])).toBe(
+      "admin",
+    );
+    const zitadel = { "urn:zitadel:iam:org:project:roles": { admin: { "1234": "acme.zitadel.cloud" } } };
+    expect(mapOIDCRole(zitadel, "urn:zitadel:iam:org:project:roles", ["admin"], ["user"])).toBe("admin");
+  });
+
   test("with userRoles set and no role claim configured, no account maps to a role", () => {
     // getOIDCConfig() refuses this configuration; the pure function still answers it consistently.
     expect(mapOIDCRole({ roles: ["user"] }, "", ["admin"], ["user"])).toBeNull();
@@ -203,6 +211,18 @@ describe("readRoleClaimValues", () => {
     expect(readRoleClaimValues({ realm_access: null }, "realm_access.roles")).toEqual([]);
     expect(readRoleClaimValues({ realm_access: {} }, "realm_access.roles")).toEqual([]);
   });
+
+  test("reads a top-level claim whose name holds dots whole, as Auth0's namespaced claims are", () => {
+    expect(readRoleClaimValues({ "https://libredb.org/roles": ["admin"] }, "https://libredb.org/roles")).toEqual([
+      "admin",
+    ]);
+    expect(readRoleClaimValues({ "realm_access.roles": ["user"] }, "realm_access.roles")).toEqual(["user"]);
+  });
+
+  test("takes the keys of an object claim as the role names, as Zitadel's roles claim is", () => {
+    const claims = { "urn:zitadel:iam:org:project:roles": { admin: { "1234": "acme.zitadel.cloud" }, viewer: {} } };
+    expect(readRoleClaimValues(claims, "urn:zitadel:iam:org:project:roles")).toEqual(["admin", "viewer"]);
+  });
 });
 
 // ─── mapOIDCClaimRoles ─────────────────────────────────────────────────────
@@ -217,6 +237,14 @@ describe("mapOIDCClaimRoles", () => {
     const result = mapOIDCClaimRoles(values, "team-");
     expect(result.overflow).toBe(false);
     expect(result.roles).toEqual(["team-Billing", "team-analytics"]);
+  });
+
+  test("reads custom roles from the Zitadel object claim by its role names", () => {
+    const claims = { "urn:zitadel:iam:org:project:roles": { "team-ops": { "1234": "acme" }, admin: {} } };
+    expect(mapOIDCClaimRoles(claims, "team-", "urn:zitadel:iam:org:project:roles")).toEqual({
+      roles: ["team-ops"],
+      overflow: false,
+    });
   });
 
   test("matches prefix case-sensitively", () => {
