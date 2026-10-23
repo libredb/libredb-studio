@@ -2021,3 +2021,241 @@ describe("parseConnectionString: sc:// addresses (Apache Spark)", () => {
     expect(ENGINE_URI_SCHEMES.spark).toBeUndefined();
   });
 });
+
+// ─── case-insensitive schemes (#1916) ───────────────────────────────────────
+
+describe("parseConnectionString: case-insensitive schemes (#1916)", () => {
+  test.each([
+    ["POSTGRES", "postgres", "5432"],
+    ["Postgres", "postgres", "5432"],
+    ["POSTGRESQL", "postgres", "5432"],
+    ["MYSQL", "mysql", "3306"],
+    ["Redis", "redis", "6379"],
+    ["ORACLE", "oracle", "1521"],
+    ["MSSQL", "mssql", "1433"],
+    ["SQLSERVER", "mssql", "1433"],
+    ["DB2", "db2", "50000"],
+    ["CLICKHOUSE", "clickhouse", "8123"],
+  ] as const)("parses %s:// URLs without regard to scheme case", (scheme, type, port) => {
+    const uri = `${scheme}://User:PaSS@Host/MyDB`;
+    expect(parseConnectionString(uri)).toMatchObject({
+      type,
+      host: "Host",
+      port,
+      user: "User",
+      password: "PaSS",
+      database: "MyDB",
+    });
+    expect(detectConnectionStringType(uri)).toBe(type);
+  });
+
+  test("keeps the case of the user, host and database under an uppercase scheme", () => {
+    expect(parseConnectionString("POSTGRES://User@Host/MyDB")).toMatchObject({
+      type: "postgres",
+      host: "Host",
+      user: "User",
+      database: "MyDB",
+    });
+  });
+
+  test("keeps the case of PostgreSQL query values and their existing precedence", () => {
+    expect(
+      parseConnectionString(
+        "POSTGRES://User:sec@Host/MyDB?user=QueryUser&password=QuErY%2FCase&host=QueryHost&dbname=QueryDB",
+      ),
+    ).toMatchObject({
+      type: "postgres",
+      host: "QueryHost",
+      user: "QueryUser",
+      password: "QuErY/Case",
+      database: "QueryDB",
+    });
+  });
+
+  test("normalizes POSTGRESQL:// before reading a userinfo-only authority", () => {
+    expect(parseConnectionString("POSTGRESQL://User@/MyDB")).toMatchObject({
+      type: "postgres",
+      host: "localhost",
+      user: "User",
+      database: "MyDB",
+    });
+  });
+
+  test("normalizes MONGODB:// and preserves the rest of the URI as typed", () => {
+    const suffix = "://User:PaSS@Host:27018/MyDB?appName=MyApp";
+    expect(parseConnectionString(`MONGODB${suffix}`)).toMatchObject({
+      type: "mongodb",
+      connectionString: `mongodb${suffix}`,
+      host: "Host",
+      port: "27018",
+      user: "User",
+      password: "PaSS",
+      database: "MyDB",
+    });
+  });
+
+  test("MONGODB+SRV:// keeps the SRV host handling and the verifying TLS default", () => {
+    const suffix = "://User:PaSS@Cluster.Example.com/MyDB?appName=MyApp";
+    const result = parseConnectionString(`MONGODB+SRV${suffix}`);
+    expect(result).toEqual({
+      type: "mongodb",
+      connectionString: `mongodb+srv${suffix}`,
+      user: "User",
+      password: "PaSS",
+      database: "MyDB",
+      sslMode: "verify-system",
+    });
+    expect(result).not.toHaveProperty("host");
+    expect(result).not.toHaveProperty("port");
+  });
+
+  test("REDISS:// still requires TLS and Redis:// still selects plaintext", () => {
+    expect(parseConnectionString("REDISS://User:PaSS@Host/MyDB")).toMatchObject({
+      type: "redis",
+      host: "Host",
+      port: "6379",
+      user: "User",
+      password: "PaSS",
+      database: "MyDB",
+      sslMode: "require",
+    });
+    expect(parseConnectionString("Redis://Host")!.sslMode).toBe("disable");
+  });
+
+  test.each([
+    ["DATABEND", "443", "verify-system"],
+    ["DATABEND+HTTPS", "443", "verify-system"],
+    ["DaTaBeNd+HtTpS", "443", "verify-system"],
+    ["DATABEND+HTTP", "80", "disable"],
+  ] as const)("parses %s:// with its existing TLS and port defaults", (scheme, port, sslMode) => {
+    const uri = `${scheme}://User:PaSS@Host/MyDB?warehouse=MyWH`;
+    expect(parseConnectionString(uri)).toEqual({
+      type: "databend",
+      host: "Host",
+      port,
+      user: "User",
+      password: "PaSS",
+      database: "MyDB",
+      warehouse: "MyWH",
+      sslMode,
+      allowInsecureAuth: false,
+    });
+    expect(detectConnectionStringType(uri)).toBe("databend");
+  });
+
+  test.each([
+    ["DATABEND+FLIGHT://Host/MyDB", DATABEND_DSN_REFUSALS.flight],
+    ["DaTaBeNd+GrPc://Host/MyDB", DATABEND_DSN_REFUSALS.flight],
+    ["JDBC:DATABEND://Host/MyDB", DATABEND_DSN_REFUSALS.jdbc],
+    ["jdbc:DataBend://Host/MyDB", DATABEND_DSN_REFUSALS.jdbc],
+  ])("keeps the existing refusal for %s", (uri, refusal) => {
+    expect(parseConnectionString(uri)).toEqual({ type: "databend", refusal });
+  });
+
+  test.each([
+    ["COUCHBASE", "8091", "disable"],
+    ["COUCHBASES", "18091", "require"],
+  ])("parses %s:// and stores the URI with a lowercase scheme", (scheme, port, sslMode) => {
+    const suffix = "://User:PaSS@Host/MyBucket";
+    expect(parseConnectionString(`${scheme}${suffix}`)).toMatchObject({
+      type: "couchbase",
+      host: "Host",
+      port,
+      user: "User",
+      password: "PaSS",
+      database: "MyBucket",
+      connectionString: `${scheme.toLowerCase()}${suffix}`,
+      sslMode,
+    });
+  });
+
+  test("LIBSQL:// preserves the authToken value's case", () => {
+    expect(parseConnectionString("LIBSQL://Db-Org.turso.io?authToken=AbCDefXYZ")).toMatchObject({
+      type: "libsql",
+      host: "Db-Org.turso.io",
+      port: "443",
+      password: "AbCDefXYZ",
+      sslMode: "require",
+    });
+  });
+
+  test.each([
+    ["HTTP", "8123", "disable"],
+    ["HTTPS", "8443", "require"],
+  ])("parses %s:// as ClickHouse when the host is not Snowflake's", (scheme, port, sslMode) => {
+    const uri = `${scheme}://User:PaSS@ch-host/MyDB`;
+    expect(parseConnectionString(uri)).toMatchObject({
+      type: "clickhouse",
+      host: "ch-host",
+      port,
+      user: "User",
+      password: "PaSS",
+      database: "MyDB",
+      sslMode,
+    });
+    expect(detectConnectionStringType(uri)).toBe("clickhouse");
+  });
+
+  test("HTTPS:// with a Snowflake host stays Snowflake ahead of ClickHouse", () => {
+    const uri = "HTTPS://xy12345.us-east-2.aws.snowflakecomputing.com";
+    expect(parseConnectionString(uri)).toEqual({
+      type: "snowflake",
+      host: "xy12345.us-east-2.aws.snowflakecomputing.com",
+    });
+    expect(detectConnectionStringType(uri)).toBe("snowflake");
+  });
+
+  test("SC:// reaches the Spark reader with the token's case preserved", () => {
+    expect(parseConnectionString("SC://spark.example.internal:15003/;use_ssl=true;token=AbC")).toEqual({
+      type: "spark",
+      host: "spark.example.internal",
+      port: "15003",
+      password: "AbC",
+      sslMode: "verify-system",
+    });
+  });
+
+  test.each(["JDBC:sc://h:15002", "jdbc:SC://h:15002", "JdBc:Sc://h:15002"])(
+    "%s reaches the Spark JDBC refusal without filling fields",
+    (uri) => {
+      expect(parseConnectionString(uri)).toEqual({
+        type: "spark",
+        refusal: SPARK_PASTE_SENTENCES.jdbcPrefix,
+      });
+    },
+  );
+
+  test("leaves an ADO.NET paste with no :// unchanged before parsing", () => {
+    expect(parseConnectionString("sErVeR=MiXeDHost;Database=MyDB;User Id=User;Password=PaSS;")).toEqual({
+      type: "mssql",
+      host: "MiXeDHost",
+      port: "1433",
+      user: "User",
+      password: "PaSS",
+      database: "MyDB",
+    });
+  });
+
+  test("does not normalize an ADO.NET prefix before a :// inside a password", () => {
+    expect(
+      parseConnectionString("Server=MiXeDHost;Database=MyDB;User Id=User;Password=KeepHTTPS://MiXeD/Case;"),
+    ).toEqual({
+      type: "mssql",
+      host: "MiXeDHost",
+      port: "1433",
+      user: "User",
+      password: "KeepHTTPS://MiXeD/Case",
+      database: "MyDB",
+    });
+  });
+
+  test.each(['export BENDSQL_DSN="DATABEND://User:PaSS@Host/MyDB"', "BENDSQL_DSN=DATABEND://User:PaSS@Host/MyDB"])(
+    "keeps the shell-export refusal for %s",
+    (input) => {
+      expect(parseConnectionString(input)).toEqual({
+        type: "databend",
+        refusal: DATABEND_DSN_REFUSALS.shellExport,
+      });
+    },
+  );
+});
