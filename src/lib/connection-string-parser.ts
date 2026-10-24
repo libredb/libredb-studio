@@ -78,7 +78,8 @@ export interface ParsedConnection {
    * (`p%40ss`) never sets this - the encoded form has exactly one literal `@`.
    *
    * `user`, `password` and `host` are left unset rather than populated with the wrong
-   * guess; `connectionString` still carries the original paste unchanged.
+   * guess; `connectionString` still carries the pasted URI with its scheme lower-cased
+   * and everything after `://` unchanged (#1916).
    */
   credentialsAmbiguous?: boolean;
   /**
@@ -208,8 +209,21 @@ export const SNOWFLAKE_PASTE_SENTENCES = Object.freeze({
 });
 
 /**
+ * URI schemes ignore case (RFC 3986 6.2.2.1; #1916); every character after `://` keeps its case.
+ * The JDBC wrapper is read with its inner scheme too, while text that is not a URI - a shell
+ * export, an ADO.NET password with `://` inside - is returned exactly as typed.
+ */
+function normalizedScheme(input: string): string {
+  const schemeEnd = input.indexOf("://");
+  if (schemeEnd === -1) return input;
+  const prefix = input.slice(0, schemeEnd);
+  if (!/^(?:jdbc:)?[a-z][a-z0-9+.-]*$/i.test(prefix)) return input;
+  return prefix.toLowerCase() + input.slice(schemeEnd);
+}
+
+/**
  * Parse a database connection string into its components, or null when no form below reads it.
- * Schemes, matched case-sensitively on the trimmed input: postgres://, postgresql://, mysql://,
+ * Schemes, matched case-insensitively on the trimmed input: postgres://, postgresql://, mysql://,
  * mongodb://, mongodb+srv://, rediss://, redis://, oracle://, mssql://, sqlserver://, db2://,
  * couchbases://, couchbase://, libsql://, clickhouse://, and http:// and https:// (both ClickHouse),
  * databend://, databend+http:// and databend+https://, plus the ADO.NET form `Server=...;` (SQL Server), whose
@@ -218,7 +232,7 @@ export const SNOWFLAKE_PASTE_SENTENCES = Object.freeze({
  * Apache Spark's `sc://` address is read by `parseSparkConnectUri`, and its `jdbc:sc://` form parses to a refusal.
  */
 export function parseConnectionString(input: string): ParsedConnection | null {
-  const trimmed = input.trim();
+  const trimmed = normalizedScheme(input.trim());
   if (!trimmed) return null;
 
   // Databend (design 6.2). The refusals first: each names a Databend spelling Studio does not connect with.
@@ -510,7 +524,7 @@ export function safeDecodeURIComponent(value: string): string {
  * couchbase://, 18091 for couchbases:// — because the query ports are discovered from the
  * cluster at connect time. A Capella endpoint (couchbases://cb.<id>.cloud.couchbase.com)
  * carries neither a port nor a bucket path, so both stay at their defaults and no bucket
- * is invented. The full original string is always preserved.
+ * is invented. The pasted string is preserved up to the scheme's case (#1916).
  */
 function parseCouchbaseString(uri: string, defaultPort: string): ParsedConnection | null {
   try {
