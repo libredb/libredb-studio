@@ -41,7 +41,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B128 · 61
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B129 · 61
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP3 · 3
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
@@ -1174,11 +1174,11 @@ test pins the behaviour that was chosen.
 
 ### D85. The `@/lib/auth` mock is hand-copied across a layer, untyped, and already misses four exports
 
-`grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 54 hits, re-measured 2026-10-17.
+`grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 55 hits, re-measured 2026-10-17.
 Twenty of them spread the real module and replace one function (`{ ...realAuth, getSession: mockGetSession }`, the agent routes' pattern).
-Thirty-one write out the same five-key object - `getSession`, `signJWT`, `verifyJWT`, `login`, `logout` - down to the same `mock(async () => "mock-token")` for a token nothing reads, and one of those thirty-one is `tests/helpers/object-edit-route-harness.ts`, a shared harness that could have been the factory and copied the stub instead.
+Thirty-two write out the same five-key object - `getSession`, `signJWT`, `verifyJWT`, `login`, `logout` - down to the same `mock(async () => "mock-token")` for a token nothing reads, and one of those thirty-two is `tests/helpers/object-edit-route-harness.ts`, a shared harness that could have been the factory and copied the stub instead.
 The remaining three write a shorter stub of their own, two with two keys and one with a single `getSession`.
-The count moved from 53 to 54 between 2026-10-12 and 2026-10-14: `tests/api/db-test-connection-modbus.test.ts`, added by `1ab0d88ff`, is the fifty-fourth, and it is a five-key copy down to the `mock(async () => "mock-token")` for a token nothing reads. The copying this entry describes continued after the entry was written, which is the argument for the factory rather than against it.
+The count moved from 53 to 54 between 2026-10-12 and 2026-10-14: `tests/api/db-test-connection-modbus.test.ts`, added by `1ab0d88ff`, is the fifty-fourth, and it is a five-key copy down to the `mock(async () => "mock-token")` for a token nothing reads. `tests/security/ai-prompt-fence.test.ts`, added with the AI route fence work, is the fifty-fifth and another five-key copy. The copying this entry describes continued after the entry was written, which is the argument for the factory rather than against it.
 
 `src/lib/auth.ts` exports nine names. The four that all but one hand-written stub lack are
 `shouldMarkCookieSecure`, `resetCookieSecurityWarning`, `readCookieSecureOverride` and
@@ -7739,15 +7739,6 @@ Found 2026-10-12 while designing the RabbitMQ provider.
 
 **Done when:** a stream read request is designed as an agent statement with its own read policy and bounds, `queryReadOnly` serves it, agent execution runs it and MCP runs it through the non-SQL arm B117 records, with tests; cited in `docs/AGENT.md` beside B105.
 
-### B109. The schema docs route puts database-written names in the prompt without the untrusted-content fence
-
-`POST /api/ai/describe-schema` (`src/app/api/ai/describe-schema/route.ts`) places the schema text the client built, which holds names anyone with write access to the database or broker chose, in the prompt with no untrusted-content fence, for every provider; the Docs tab posts it.
-The route has no tools, so the exposure is a spoofed document on the user's own screen, not an action.
-
-Found 2026-10-12 while designing the RabbitMQ provider.
-
-**Done when:** the route fences the names as plan mode and MCP do (`src/lib/agent/untrusted-content.ts`), with a test that a table named as an instruction is found only inside the fence.
-
 ### B110. The answer card counts every inventoried object under the engine's entity noun
 
 The inventory chip of `src/components/agent/AnswerCard.tsx` prints the capture's object count with `capture.noun`, the engine's entity noun, so on an engine whose inventory holds several kinds the chip names them all by one kind.
@@ -7931,6 +7922,14 @@ An engine whose statement text needs its own canonical form or its own advice ca
 Found 2026-10-19 while widening the engine overlays (#1821).
 
 **Done when:** the audited call and the drafted statement carry the connection's engine, every reader of the adapter and of the catalog advice resolves them through the run resolver, `adapter` and `catalogAdvice` join `ENGINE_OVERRIDABLE_SERVER_MEMBERS`, and a test proves an engine override of each reaches the fingerprint, the draft and the refusal while a ledger written before it keeps its step ids; cited in `docs/AGENT.md`.
+
+### B129. The AI summary's min/max masking is still a browser-side control
+
+The Data Profiler now masks the min/max it sends for an AI summary by default (`maskAiSummaryValue` in `src/lib/data-masking.ts`, applied in `src/components/DataProfiler.tsx`), independent of the grid's runtime toggle, unless `aiSummaryMinMax: "revealed"` is set. That masking is still applied in the browser, exactly as the grid's is: the profile route returns the raw values, and a host that renders its own profiler, or calls `onDescribeSchema` outside the component, is not covered. The three AI routes fence the text but do not redact it.
+
+Found 2026-10-24 while closing B109.
+
+**Done when:** the profile route or the AI route masks min/max server-side for the standalone app and the embedded workspace's `onDescribeSchema` path, or a written reason it cannot is recorded here; cited in `docs/AGENT_DATA_FLOW.md`.
 
 ## Passkey deferrals (#785)
 

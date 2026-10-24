@@ -10,6 +10,7 @@ import { machineColumns, schemaContextOf, type DetailedObject } from "@/lib/db/d
 import {
   detectSensitiveColumnsFromConfig,
   loadMaskingConfig,
+  maskAiSummaryValue,
   maskingInForce,
   maskValueByPattern,
   type MaskingConfig,
@@ -154,9 +155,17 @@ export function DataProfiler({
       );
       // Built from `data` itself: `profile` is set in the same tick and has not rendered yet.
       const sensitive = sensitiveColumnsOf(data);
+      // The summary is one more reader of the profile: under the default "masked"
+      // policy a column a pattern matches is masked even while the grid shows it in
+      // clear, because min/max are real values leaving the machine. "revealed"
+      // restores the grid's own decision (`sensitive`).
+      const aiMinMaxRevealed = resolvedMaskingConfig.aiSummaryMinMax === "revealed";
       const shownValue = (column: string, value: string): string => {
-        const pattern = sensitive.get(column);
-        return pattern ? maskValueByPattern(value, pattern) : value;
+        if (aiMinMaxRevealed) {
+          const pattern = sensitive.get(column);
+          return pattern ? maskValueByPattern(value, pattern) : value;
+        }
+        return maskAiSummaryValue(column, value, resolvedMaskingConfig);
       };
       const profileSummary = data.columns
         .filter((c) => !withheld.has(c.name))

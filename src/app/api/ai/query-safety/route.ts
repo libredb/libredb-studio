@@ -5,14 +5,18 @@ import { guardRoute } from "@/lib/api/require-session";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import { logger } from "@/lib/logger";
 import { QUERY_SAFETY_ROUTE_TIMEOUT_MS } from "@/lib/llm/query-safety";
+import { fenceForPrompt } from "@/lib/ai/prompt-fence";
 
 function buildSafetySystemPrompt(databaseType: string, schemaContext: string): string {
+  // Schema context is database content: fence it so a name written into the database
+  // cannot be read as an instruction the server composed.
+  const schemaBlock = schemaContext ? fenceForPrompt(schemaContext, "query-safety") : "No schema available.";
   return `You are a Database Safety Analyst. Your job is to analyze SQL queries BEFORE they are executed and warn the user about potential dangers.
-
+ 
 DATABASE TYPE: ${databaseType || "PostgreSQL"}
-
+ 
 SCHEMA CONTEXT:
-${schemaContext || "No schema available."}
+${schemaBlock}
 
 ANALYSIS RULES:
 1. Check for destructive operations: DROP, TRUNCATE, DELETE without WHERE, UPDATE without WHERE
@@ -73,11 +77,9 @@ export async function POST(req: NextRequest) {
     const systemPrompt = buildSafetySystemPrompt(databaseType, schemaContext);
 
     const userMessage = `Analyze this query for safety before execution:
-
-\`\`\`sql
-${query}
-\`\`\`
-
+ 
+${fenceForPrompt(query, "query-safety")}
+ 
 Return your analysis as a JSON code block.`;
 
     const stream = await provider.stream({

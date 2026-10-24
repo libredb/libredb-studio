@@ -2,14 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { createLLMProvider } from "@/lib/llm";
 import { createErrorResponse } from "@/lib/api/errors";
 import { guardRoute } from "@/lib/api/require-session";
+import { fenceExplainPlan, fenceForPrompt } from "@/lib/ai/prompt-fence";
 
 function buildExplainSystemPrompt(databaseType: string, schemaContext: string): string {
+  // The schema context is database content: fence it so a table or column name chosen
+  // by whoever writes to the database cannot be read as the server's own instruction.
+  const schemaBlock = schemaContext ? fenceForPrompt(schemaContext, "explain") : "No schema context available.";
   return `You are an Expert Database Performance Analyst specializing in query optimization for ${databaseType || "PostgreSQL"}.
-
+ 
 ROLE: Analyze EXPLAIN plans and provide actionable, plain-language explanations.
-
+ 
 SCHEMA CONTEXT:
-${schemaContext || "No schema context available."}
+${schemaBlock}
 
 OUTPUT FORMAT (always follow this structure):
 
@@ -55,17 +59,13 @@ export async function POST(req: NextRequest) {
     const systemPrompt = buildExplainSystemPrompt(databaseType, schemaContext);
 
     const userMessage = `Analyze this SQL query and its EXPLAIN plan:
-
+ 
 **Original Query:**
-\`\`\`sql
-${query}
-\`\`\`
-
+${fenceForPrompt(query, "explain")}
+ 
 **EXPLAIN Plan:**
-\`\`\`json
-${JSON.stringify(explainPlan, null, 2)}
-\`\`\`
-
+${fenceExplainPlan(explainPlan)}
+ 
 Provide a plain-language explanation, identify performance issues, give specific recommendations, and suggest an optimized query if possible.`;
 
     const stream = await provider.stream({

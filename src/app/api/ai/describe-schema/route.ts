@@ -3,6 +3,7 @@ import { createLLMProvider } from "@/lib/llm";
 import { MAX_SCHEMA_CONTEXT_CHARS } from "@/lib/llm/types";
 import { createErrorResponse } from "@/lib/api/errors";
 import { guardRoute } from "@/lib/api/require-session";
+import { fenceForPrompt } from "@/lib/ai/prompt-fence";
 
 export async function POST(req: NextRequest) {
   const guard = await guardRoute({ route: "POST /api/ai/describe-schema", bucket: "ai", request: req });
@@ -48,7 +49,7 @@ Format as clean markdown. Be concise. Database type: ${databaseType || "SQL"}.`;
     const stream = await provider.stream({
       messages: [
         { role: "system", content: systemPrompt },
-        { role: "user", content: `Generate documentation for:\n\n${schemaContext}` },
+        { role: "user", content: `Generate documentation for:\n\n${fenceForPrompt(schemaContext, "describe-schema")}` },
       ],
     });
 

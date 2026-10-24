@@ -10,6 +10,14 @@ import { numberedRepeatBase } from "@/lib/db/utils/result-fields";
 
 export type MaskType = "email" | "phone" | "card" | "ssn" | "full" | "partial" | "ip" | "date" | "financial" | "custom";
 
+/**
+ * How the Data Profiler's AI summary sends a column's `min`/`max`. These are real
+ * column values, so they are a separate decision from the grid's runtime toggle:
+ * `"masked"` (the default) masks a column a pattern matches even while the grid is
+ * showing it in clear, and `"revealed"` lets the summary follow the grid's decision.
+ */
+export type AiSummaryMinMax = "masked" | "revealed";
+
 export interface MaskingPattern {
   id: string;
   name: string;
@@ -27,6 +35,11 @@ export interface MaskingConfig {
     admin: { canToggle: boolean; canReveal: boolean };
     user: { canToggle: boolean; canReveal: boolean };
   };
+  /**
+   * The AI summary's min/max policy. Optional so a saved configuration from before
+   * this field existed keeps loading; absent is read as `"masked"`.
+   */
+  aiSummaryMinMax?: AiSummaryMinMax;
 }
 
 // ─── Default Masking Config ──────────────────────────────────────────────────
@@ -150,6 +163,7 @@ export const DEFAULT_MASKING_CONFIG: MaskingConfig = {
     admin: { canToggle: true, canReveal: true },
     user: { canToggle: false, canReveal: false },
   },
+  aiSummaryMinMax: "masked",
 };
 
 // ─── MaskType-based Masking Functions ────────────────────────────────────────
@@ -240,6 +254,32 @@ export function detectSensitiveColumnsFromConfig(fields: string[], config: Maski
 export function maskValueByPattern(value: unknown, pattern: MaskingPattern): string {
   if (value === null || value === undefined) return "NULL";
   return maskByType(String(value), pattern);
+}
+
+// ─── AI Summary Value ────────────────────────────────────────────────────────
+
+/**
+ * The value the Data Profiler's AI summary sends for one column's `min`/`max`.
+ *
+ * Unlike the grid, which follows the runtime toggle, the summary defaults to
+ * masking every column a pattern matches, because these values leave the machine:
+ * a model is one more reader the configuration hides them from. `"revealed"` passes
+ * the value through as the grid would show it — the caller then applies the grid's
+ * own masking, if any, exactly as it does on screen.
+ *
+ * `null`/`undefined` reads as `"N/A"` rather than `"NULL"` (the grid's spelling),
+ * because the summary renders the value as prose, not as a cell.
+ */
+export function maskAiSummaryValue(
+  column: string,
+  value: unknown,
+  config: MaskingConfig,
+  policy: AiSummaryMinMax = "masked",
+): string {
+  if (value === null || value === undefined) return "N/A";
+  if (policy === "revealed") return String(value);
+  const pattern = detectSensitiveColumnsFromConfig([column], config).get(column);
+  return pattern ? maskValueByPattern(value, pattern) : String(value);
 }
 
 // ─── Bulk Masking Utility ────────────────────────────────────────────────────

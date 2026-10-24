@@ -1435,13 +1435,27 @@ describe("DataProfiler masks exactly what the results grid masks", () => {
     expect(summary).toContain("min=Alice, max=Zara");
   });
 
-  test("masking switched off globally unmasks the built-in kinds too for an admin", async () => {
+  test("masking switched off globally unmasks the grid for an admin, while the AI summary still masks min/max", async () => {
     const { text, summary, container } = await renderAs("admin", nameMasked({ enabled: false }));
 
+    // The grid follows the global switch.
     expect(text).toContain("alice@example.com");
     expect(text).toContain("Alice");
-    expect(summary).toContain("min=alice@example.com");
     expect(container.querySelector('[title="Sensitive column - values masked"]')).toBeNull();
+
+    // The AI summary is one more reader: min/max stay masked by default.
+    expect(summary).not.toContain("min=alice@example.com");
+    expect(summary).not.toContain("Alice");
+    expect(summary).toContain("min=a****@e**********");
+    expect(summary).toContain("min=********");
+  });
+
+  test('an operator who sets aiSummaryMinMax "revealed" restores the grid decision for the summary', async () => {
+    const { text, summary } = await renderAs("admin", nameMasked({ enabled: false, aiSummaryMinMax: "revealed" }));
+
+    expect(text).toContain("alice@example.com");
+    expect(summary).toContain("min=alice@example.com");
+    expect(summary).toContain("min=Alice, max=Zara");
   });
 
   test("a user who may not toggle masking still sees it masked when the switch is off", async () => {
