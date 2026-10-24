@@ -110,6 +110,87 @@ describe("results-grid/RowDetailSheet", () => {
     expect(String(writeText.mock.calls[0]?.[0])).toContain("***MASKED***");
   });
 
+  test("Copy JSON preserves unmasked types and masks sensitive fields", () => {
+    const sensitiveColumns = new Map<string, unknown>([["email", { type: "email" }]]);
+    const row = {
+      id: 12,
+      score: 98.5,
+      active: true,
+      name: "Alex",
+      middle_name: null,
+      tags: ["admin", 3],
+      profile: { verified: true },
+      email: "alice@example.com",
+      payload: { type: "Buffer", data: [0xde, 0xad] },
+      count: BigInt("9007199254740993"),
+      omitted: undefined,
+      excluded: "not in fields",
+    };
+    const { queryByText } = render(
+      <RowDetailSheet
+        row={row}
+        fields={[
+          "id",
+          "score",
+          "active",
+          "name",
+          "middle_name",
+          "tags",
+          "profile",
+          "email",
+          "payload",
+          "count",
+          "omitted",
+        ]}
+        isOpen
+        onClose={mock(() => {})}
+        rowIndex={0}
+        maskingActive
+        sensitiveColumns={sensitiveColumns as never}
+      />,
+    );
+
+    fireEvent.click(queryByText("Copy JSON")!);
+    const copiedText = String(writeText.mock.calls[0]?.[0]);
+    expect(JSON.parse(copiedText)).toEqual({
+      id: 12,
+      score: 98.5,
+      active: true,
+      name: "Alex",
+      middle_name: null,
+      tags: ["admin", 3],
+      profile: { verified: true },
+      email: "***MASKED***",
+      payload: "\\xdead",
+      count: "9007199254740993",
+    });
+    expect(copiedText).not.toContain("alice@example.com");
+    expect(copiedText).not.toContain("not in fields");
+  });
+
+  test("Copy JSON keeps a revealed sensitive value masked", () => {
+    const sensitiveColumns = new Map<string, unknown>([["email", { type: "email" }]]);
+    const { queryByText, queryByTitle } = render(
+      <RowDetailSheet
+        row={{ email: "alice@example.com" }}
+        fields={["email"]}
+        isOpen
+        onClose={mock(() => {})}
+        rowIndex={0}
+        maskingActive
+        sensitiveColumns={sensitiveColumns as never}
+        allowReveal
+      />,
+    );
+
+    fireEvent.click(queryByTitle("Reveal value (10s)")!);
+    fireEvent.click(queryByText("Copy JSON")!);
+
+    const copiedText = String(writeText.mock.calls[0]?.[0]);
+    expect(JSON.parse(copiedText)).toEqual({ email: "***MASKED***" });
+    expect(copiedText).not.toContain("alice@example.com");
+  });
+
   test("shows masked value and reveals when reveal button is clicked", () => {
     const sensitiveColumns = new Map<string, unknown>([["email", { type: "email" }]]);
     const { queryByText, queryByTitle } = render(
@@ -423,7 +504,7 @@ describe("results-grid/RowDetailSheet", () => {
   });
 
   test("raw JSON copy contains exact row data when no masking active", () => {
-    const row = { id: 42, name: "Charlie", active: true, score: 99.5 };
+    const row = { id: 42, name: "Charlie", active: true, score: 99.5, excluded: "not in fields" };
     const { queryByText } = render(
       <RowDetailSheet
         row={row}
@@ -438,7 +519,8 @@ describe("results-grid/RowDetailSheet", () => {
     expect(writeText).toHaveBeenCalledTimes(1);
     const copiedJson = String(writeText.mock.calls[0]?.[0]);
     const parsed = JSON.parse(copiedJson);
-    expect(parsed).toEqual(row);
+    expect(parsed).toEqual({ id: 42, name: "Charlie", active: true, score: 99.5 });
+    expect(copiedJson).not.toContain("not in fields");
   });
 
   // The sheet shows a binary field as `\x` hex, and Copy JSON used to copy the Buffer
@@ -587,7 +669,7 @@ describe("results-grid/RowDetailSheet", () => {
     fireEvent.click(queryByText("Copy JSON")!);
     expect(writeText).toHaveBeenCalledTimes(1);
     expect(JSON.parse(String(writeText.mock.calls[0]?.[0]))).toEqual({
-      id: "1",
+      id: 1,
       email: "***MASKED***",
       embedding: "[1.0,0.5,0.0]",
     });
