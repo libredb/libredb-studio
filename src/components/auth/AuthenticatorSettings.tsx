@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Copy, Info } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -214,7 +215,26 @@ export function AuthenticatorSettings({ onChange }: { onChange?: () => void } = 
       <form className="space-y-5" onSubmit={(event) => void confirm(event)}>
         <ol className="space-y-5">
           <Step index={1} title="Add LibreDB to your authenticator app">
-            <p className="text-sm text-fg-muted">Type this key into the app, or open the setup link on this device.</p>
+            {otpauthUrl ? (
+              <>
+                <p className="text-sm text-fg-muted">
+                  Scan this code with your authenticator app, or type the key below if you cannot scan it.
+                </p>
+                <div data-testid="totp-qr" className="w-fit rounded-md bg-white p-2">
+                  <QRCodeSVG
+                    value={otpauthUrl}
+                    size={192}
+                    level="M"
+                    marginSize={4}
+                    bgColor="#ffffff"
+                    fgColor="#000000"
+                    title="Scan to add LibreDB to your authenticator app"
+                  />
+                </div>
+              </>
+            ) : (
+              <p className="text-sm text-fg-muted">Type this key into your authenticator app.</p>
+            )}
             <div className="flex max-w-md items-center gap-2">
               <code
                 data-testid="totp-secret"

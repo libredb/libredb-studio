@@ -1,11 +1,32 @@
 import "../../setup-dom";
 import { mockToastError, mockToastSuccess } from "../../helpers/mock-sonner";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor, type RenderResult } from "@testing-library/react";
 import { mockGlobalFetch, restoreGlobalFetch } from "../../helpers/mock-fetch";
-import { AuthenticatorSettings } from "@/components/auth/AuthenticatorSettings";
+
+function MockQrCode({ value, title }: { value: string; title?: string }) {
+  return (
+    <svg data-testid="totp-qr-code" data-value={value}>
+      <title>{title}</title>
+    </svg>
+  );
+}
+
+mock.module("qrcode.react", () => ({ QRCodeSVG: MockQrCode }));
+// The mock must be installed before the component resolves qrcode.react, so this import stays dynamic.
+const { AuthenticatorSettings } = await import("@/components/auth/AuthenticatorSettings");
 
 type Posted = { action?: string; password?: string; code?: string };
+
+function expectQr(view: RenderResult, otpauthUrl: string): void {
+  expect(
+    view.getByText("Scan this code with your authenticator app, or type the key below if you cannot scan it."),
+  ).toBeTruthy();
+  const qr = view.getByTestId("totp-qr");
+  const code = qr.querySelector('[data-testid="totp-qr-code"]');
+  expect(code?.getAttribute("data-value")).toBe(otpauthUrl);
+  expect(code?.querySelector("title")?.textContent).toBe("Scan to add LibreDB to your authenticator app");
+}
 
 describe("AuthenticatorSettings", () => {
   beforeEach(() => {
@@ -72,6 +93,7 @@ describe("AuthenticatorSettings", () => {
     fireEvent.click(view.getByRole("button", { name: "Set up authenticator" }));
     await waitFor(() => expect(view.getByTestId("totp-secret").textContent).toBe("SECRETVALUE"));
     expect(view.getByText("otpauth://totp/LibreDB")).toBeTruthy();
+    expectQr(view, "otpauth://totp/LibreDB");
     expect(posted[1]).toEqual({ action: "begin", password: "right" });
 
     fireEvent.change(view.getByLabelText("Authentication code"), { target: { value: "000000" } });
@@ -84,6 +106,7 @@ describe("AuthenticatorSettings", () => {
     fireEvent.click(view.getByRole("button", { name: "Confirm code" }));
     await waitFor(() => expect(view.getByText("On")).toBeTruthy());
     expect(view.queryByTestId("totp-secret")).toBeNull();
+    expect(view.queryByTestId("totp-qr")).toBeNull();
     expect(posted[posted.length - 1]).toEqual({ action: "confirm", code: "123456" });
   });
 
@@ -158,6 +181,7 @@ describe("AuthenticatorSettings", () => {
     expect(view.getByRole("link", { name: "otpauth://totp/LibreDB:me" }).getAttribute("href")).toBe(
       "otpauth://totp/LibreDB:me",
     );
+    expectQr(view, "otpauth://totp/LibreDB:me");
 
     fireEvent.click(view.getByRole("button", { name: "Copy key" }));
     await waitFor(() => expect(mockToastSuccess).toHaveBeenCalledWith("Key copied"));
@@ -173,6 +197,7 @@ describe("AuthenticatorSettings", () => {
 
     fireEvent.click(view.getByRole("button", { name: "Cancel" }));
     expect(view.queryByTestId("totp-secret")).toBeNull();
+    expect(view.queryByTestId("totp-qr")).toBeNull();
     expect(view.getByText("Off")).toBeTruthy();
     expect((view.getByLabelText("Current password") as HTMLInputElement).value).toBe("");
   });
@@ -195,8 +220,10 @@ describe("AuthenticatorSettings", () => {
     fireEvent.change(view.getByLabelText("Current password"), { target: { value: "right" } });
     fireEvent.click(view.getByRole("button", { name: "Set up authenticator" }));
     await waitFor(() => expect(view.getByTestId("totp-secret")).toBeTruthy());
-    // No link when the server sends none.
+    // No link or QR when the server sends no URI, so the copy tells the user to type the key.
     expect(view.queryByRole("link")).toBeNull();
+    expect(view.queryByTestId("totp-qr")).toBeNull();
+    expect(view.getByText("Type this key into your authenticator app.")).toBeTruthy();
 
     fireEvent.change(view.getByLabelText("Authentication code"), { target: { value: "000000" } });
     fireEvent.click(view.getByRole("button", { name: "Confirm code" }));
