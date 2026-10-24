@@ -60,6 +60,7 @@ button "Apache Spark"
 button "MTConnect"
 button "Modbus"
 button "NETCONF"
+button "Weaviate"
 label[for=host] "Endpoint host"
 input#host type=none placeholder="localhost" describedby="host-hint"
 input#port type=none placeholder=none describedby=none

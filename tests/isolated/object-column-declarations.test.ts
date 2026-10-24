@@ -118,6 +118,7 @@ const EXPECTED_COLUMN_KINDS: Readonly<Record<DatabaseType, readonly string[]>> =
   milvus: ["collection"],
   // One kind, a collection, whose columns are its id, its vectors and its payload fields (vector-family spec 6.3).
   qdrant: ["collection"],
+  weaviate: ["collection"],
   // One kind each: a measurement, whose columns are its time, tag keys and field keys, and an InfluxDB 3 table, whose
   // columns are its information-schema columns (InfluxDB spec I11, R16).
   influxdb: ["measurement"],
@@ -247,7 +248,7 @@ describe("the fleet census of object column declarations", () => {
     // `EXTERNAL_DATABASE_TYPES.length` plus the embedded store. The names are not repeated here,
     // because a prose list of them is what goes stale while the assertion stays green: the registry
     // is the list, and this numeral only says how long it is.
-    expect(CENSUS_TYPES).toHaveLength(42);
+    expect(CENSUS_TYPES).toHaveLength(43);
     expect(Object.keys(EXPECTED_COLUMN_KINDS).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
     // A row naming nothing would make its type-id's census pass on the empty set, so the design's
     // table has three such rows, and they are named here: every engine but Oxia, S3, Kubernetes, MQTT, OPC UA and Modbus has at least one

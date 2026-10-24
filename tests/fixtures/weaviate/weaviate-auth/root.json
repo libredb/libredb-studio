@@ -1,0 +1,109 @@
+{
+  "$captured": {
+    "engine": "weaviate",
+    "service": "weaviate-auth",
+    "scenario": "root",
+    "image": "cr.weaviate.io/semitechnologies/weaviate:1.40.2",
+    "digest": "sha256:0083587dc01f33112e5406ce9b471df1abea480c71a0407af903929a389ae08a",
+    "version": "1.40.2",
+    "date": "2026-10-23T23:54:53.068Z",
+    "runtime": "bun 1.4.2",
+    "credential": "root"
+  },
+  "transport": [
+    {
+      "origin": "http://127.0.0.1:18283",
+      "tls": null,
+      "maxSockets": 4,
+      "headers": {
+        "authorization": "Bearer <key>"
+      }
+    }
+  ],
+  "exchanges": [
+    {
+      "method": "GET",
+      "path": "/v1/meta",
+      "body": null,
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"grpcMaxMessageSize\":104858000,\"hostname\":\"http://[::]:8080\",\"license\":{\"documentationHref\":\"https://docs.weaviate.io/deploy/enterprise\",\"edition\":\"community\"},\"modules\":{},\"version\":\"1.40.2\"}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/schema",
+      "body": null,
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"classes\":[{\"class\":\"Author\",\"description\":\"objects with no vector at all\",\"invertedIndexConfig\":{\"bm25\":{\"b\":0.75,\"k1\":1.2},\"cleanupIntervalSeconds\":60,\"stopwords\":{\"additions\":null,\"preset\":\"en\",\"removals\":null},\"usingBlockMaxWAND\":true},\"multiTenancyConfig\":{\"autoTenantActivation\":false,\"autoTenantCreation\":false,\"enabled\":false},\"properties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"name\",\"tokenization\":\"word\"},{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"country\",\"tokenization\":\"field\"}],\"shardingConfig\":{\"actualCount\":1,\"actualVirtualCount\":128,\"desiredCount\":1,\"desiredVirtualCount\":128,\"function\":\"murmur3\",\"key\":\"_id\",\"strategy\":\"hash\",\"virtualPerPhysical\":128},\"vectorIndexConfig\":{\"bq\":{\"enabled\":false},\"cleanupIntervalSeconds\":300,\"distance\":\"cosine\",\"dynamicEfFactor\":8,\"dynamicEfMax\":500,\"dynamicEfMin\":100,\"ef\":-1,\"efConstruction\":128,\"filterStrategy\":\"acorn\",\"flatSearchCutoff\":40000,\"maxConnections\":32,\"multivector\":{\"aggregation\":\"maxSim\",\"enabled\":false,\"muvera\":{\"dprojections\":16,\"enabled\":false,\"ksim\":4,\"repetitions\":10}},\"pq\":{\"bitCompression\":false,\"centroids\":256,\"enabled\":false,\"encoder\":{\"distribution\":\"log-normal\",\"type\":\"kmeans\"},\"segments\":0,\"trainingLimit\":100000},\"rq\":{\"bits\":8,\"centering\":false,\"enabled\":false,\"rescoreLimit\":20,\"trainingLimit\":10000},\"skip\":false,\"skipDefaultQuantization\":false,\"sq\":{\"enabled\":false,\"rescoreLimit\":20,\"trainingLimit\":100000},\"trackDefaultQuantization\":false,\"vectorCacheMaxObjects\":1000000000000},\"vectorIndexType\":\"hnsw\",\"vectorizer\":\"none\",\"replicationConfig\":{\"deletionStrategy\":\"TimeBasedResolution\",\"factor\":1,\"asyncEnabled\":false}},{\"class\":\"Empty\",\"description\":\"no objects\",\"invertedIndexConfig\":{\"bm25\":{\"b\":0.75,\"k1\":1.2},\"cleanupIntervalSeconds\":60,\"stopwords\":{\"additions\":null,\"preset\":\"en\",\"removals\":null},\"usingBlockMaxWAND\":true},\"multiTenancyConfig\":{\"autoTenantActivation\":false,\"autoTenantCreation\":false,\"enabled\":false},\"properties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"label\",\"tokenization\":\"word\"}],\"shardingConfig\":{\"actualCount\":1,\"actualVirtualCount\":128,\"desiredCount\":1,\"desiredVirtualCount\":128,\"function\":\"murmur3\",\"key\":\"_id\",\"strategy\":\"hash\",\"virtualPerPhysical\":128},\"vectorIndexConfig\":{\"bq\":{\"enabled\":false},\"cleanupIntervalSeconds\":300,\"distance\":\"cosine\",\"dynamicEfFactor\":8,\"dynamicEfMax\":500,\"dynamicEfMin\":100,\"ef\":-1,\"efConstruction\":128,\"filterStrategy\":\"acorn\",\"flatSearchCutoff\":40000,\"maxConnections\":32,\"multivector\":{\"aggregation\":\"maxSim\",\"enabled\":false,\"muvera\":{\"dprojections\":16,\"enabled\":false,\"ksim\":4,\"repetitions\":10}},\"pq\":{\"bitCompression\":false,\"centroids\":256,\"enabled\":false,\"encoder\":{\"distribution\":\"log-normal\",\"type\":\"kmeans\"},\"segments\":0,\"trainingLimit\":100000},\"rq\":{\"bits\":8,\"centering\":false,\"enabled\":false,\"rescoreLimit\":20,\"trainingLimit\":10000},\"skip\":false,\"skipDefaultQuantization\":false,\"sq\":{\"enabled\":false,\"rescoreLimit\":20,\"trainingLimit\":100000},\"trackDefaultQuantization\":false,\"vectorCacheMaxObjects\":1000000000000},\"vectorIndexType\":\"hnsw\",\"vectorizer\":\"none\",\"replicationConfig\":{\"deletionStrategy\":\"TimeBasedResolution\",\"factor\":1,\"asyncEnabled\":false}},{\"class\":\"TenantNotes\",\"description\":\"multi-tenant, a read does not activate a tenant\",\"invertedIndexConfig\":{\"bm25\":{\"b\":0.75,\"k1\":1.2},\"cleanupIntervalSeconds\":60,\"stopwords\":{\"additions\":null,\"preset\":\"en\",\"removals\":null},\"usingBlockMaxWAND\":true},\"multiTenancyConfig\":{\"autoTenantActivation\":false,\"autoTenantCreation\":false,\"enabled\":true},\"properties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"note\",\"tokenization\":\"word\"},{\"dataType\":[\"int\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"seq\"}],\"shardingConfig\":{\"actualCount\":0,\"actualVirtualCount\":0,\"desiredCount\":0,\"desiredVirtualCount\":0,\"function\":\"\",\"key\":\"\",\"strategy\":\"\",\"virtualPerPhysical\":0},\"vectorIndexConfig\":{\"bq\":{\"enabled\":false},\"cleanupIntervalSeconds\":300,\"distance\":\"cosine\",\"dynamicEfFactor\":8,\"dynamicEfMax\":500,\"dynamicEfMin\":100,\"ef\":-1,\"efConstruction\":128,\"filterStrategy\":\"acorn\",\"flatSearchCutoff\":40000,\"maxConnections\":32,\"multivector\":{\"aggregation\":\"maxSim\",\"enabled\":false,\"muvera\":{\"dprojections\":16,\"enabled\":false,\"ksim\":4,\"repetitions\":10}},\"pq\":{\"bitCompression\":false,\"centroids\":256,\"enabled\":false,\"encoder\":{\"distribution\":\"log-normal\",\"type\":\"kmeans\"},\"segments\":0,\"trainingLimit\":100000},\"rq\":{\"bits\":8,\"centering\":false,\"enabled\":false,\"rescoreLimit\":20,\"trainingLimit\":10000},\"skip\":false,\"skipDefaultQuantization\":false,\"sq\":{\"enabled\":false,\"rescoreLimit\":20,\"trainingLimit\":100000},\"trackDefaultQuantization\":false,\"vectorCacheMaxObjects\":1000000000000},\"vectorIndexType\":\"hnsw\",\"vectorizer\":\"none\",\"replicationConfig\":{\"deletionStrategy\":\"TimeBasedResolution\",\"factor\":1,\"asyncEnabled\":false}},{\"class\":\"EdgeValues\",\"description\":\"int64 values a float64 cannot hold, one object per value\",\"invertedIndexConfig\":{\"bm25\":{\"b\":0.75,\"k1\":1.2},\"cleanupIntervalSeconds\":60,\"stopwords\":{\"additions\":null,\"preset\":\"en\",\"removals\":null},\"usingBlockMaxWAND\":true},\"multiTenancyConfig\":{\"autoTenantActivation\":false,\"autoTenantCreation\":false,\"enabled\":false},\"properties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"label\",\"tokenization\":\"word\"},{\"dataType\":[\"int\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"big\"},{\"dataType\":[\"int[]\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"bigs\"}],\"shardingConfig\":{\"actualCount\":1,\"actualVirtualCount\":128,\"desiredCount\":1,\"desiredVirtualCount\":128,\"function\":\"murmur3\",\"key\":\"_id\",\"strategy\":\"hash\",\"virtualPerPhysical\":128},\"vectorIndexConfig\":{\"bq\":{\"enabled\":false},\"cleanupIntervalSeconds\":300,\"distance\":\"cosine\",\"dynamicEfFactor\":8,\"dynamicEfMax\":500,\"dynamicEfMin\":100,\"ef\":-1,\"efConstruction\":128,\"filterStrategy\":\"acorn\",\"flatSearchCutoff\":40000,\"maxConnections\":32,\"multivector\":{\"aggregation\":\"maxSim\",\"enabled\":false,\"muvera\":{\"dprojections\":16,\"enabled\":false,\"ksim\":4,\"repetitions\":10}},\"pq\":{\"bitCompression\":false,\"centroids\":256,\"enabled\":false,\"encoder\":{\"distribution\":\"log-normal\",\"type\":\"kmeans\"},\"segments\":0,\"trainingLimit\":100000},\"rq\":{\"bits\":8,\"centering\":false,\"enabled\":false,\"rescoreLimit\":20,\"trainingLimit\":10000},\"skip\":false,\"skipDefaultQuantization\":false,\"sq\":{\"enabled\":false,\"rescoreLimit\":20,\"trainingLimit\":100000},\"trackDefaultQuantization\":false,\"vectorCacheMaxObjects\":1000000000000},\"vectorIndexType\":\"hnsw\",\"vectorizer\":\"none\",\"replicationConfig\":{\"deletionStrategy\":\"TimeBasedResolution\",\"factor\":1,\"asyncEnabled\":false}},{\"class\":\"Product\",\"description\":\"two named vectors with different dimensions and distances\",\"invertedIndexConfig\":{\"bm25\":{\"b\":0.75,\"k1\":1.2},\"cleanupIntervalSeconds\":60,\"stopwords\":{\"additions\":null,\"preset\":\"en\",\"removals\":null},\"usingBlockMaxWAND\":true},\"multiTenancyConfig\":{\"autoTenantActivation\":false,\"autoTenantCreation\":false,\"enabled\":false},\"properties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"name\",\"tokenization\":\"word\"},{\"dataType\":[\"number\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"price\"},{\"dataType\":[\"uuid\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"sku\"}],\"shardingConfig\":{\"actualCount\":1,\"actualVirtualCount\":128,\"desiredCount\":1,\"desiredVirtualCount\":128,\"function\":\"murmur3\",\"key\":\"_id\",\"strategy\":\"hash\",\"virtualPerPhysical\":128},\"vectorConfig\":{\"image\":{\"vectorIndexConfig\":{\"bq\":{\"enabled\":false},\"cleanupIntervalSeconds\":300,\"distance\":\"cosine\",\"dynamicEfFactor\":8,\"dynamicEfMax\":500,\"dynamicEfMin\":100,\"ef\":-1,\"efConstruction\":128,\"filterStrategy\":\"acorn\",\"flatSearchCutoff\":40000,\"maxConnections\":32,\"multivector\":{\"aggregation\":\"maxSim\",\"enabled\":false,\"muvera\":{\"dprojections\":16,\"enabled\":false,\"ksim\":4,\"repetitions\":10}},\"pq\":{\"bitCompression\":false,\"centroids\":256,\"enabled\":false,\"encoder\":{\"distribution\":\"log-normal\",\"type\":\"kmeans\"},\"segments\":0,\"trainingLimit\":100000},\"rq\":{\"bits\":8,\"centering\":false,\"enabled\":false,\"rescoreLimit\":20,\"trainingLimit\":10000},\"skip\":false,\"skipDefaultQuantization\":false,\"sq\":{\"enabled\":false,\"rescoreLimit\":20,\"trainingLimit\":100000},\"trackDefaultQuantization\":false,\"vectorCacheMaxObjects\":1000000000000},\"vectorIndexType\":\"hnsw\",\"vectorizer\":{\"none\":{}}},\"text\":{\"vectorIndexConfig\":{\"bq\":{\"cache\":false,\"enabled\":false,\"rescoreLimit\":-1},\"distance\":\"dot\",\"pq\":{\"cache\":false,\"enabled\":false,\"rescoreLimit\":-1},\"rq\":{\"bits\":8,\"cache\":false,\"enabled\":false,\"rescoreLimit\":-1},\"skipDefaultQuantization\":false,\"sq\":{\"cache\":false,\"enabled\":false,\"rescoreLimit\":-1},\"trackDefaultQuantization\":false,\"vectorCacheMaxObjects\":1000000000000},\"vectorIndexType\":\"flat\",\"vectorizer\":{\"none\":{}}}},\"replicationConfig\":{\"deletionStrategy\":\"TimeBasedResolution\",\"factor\":1,\"asyncEnabled\":false}},{\"class\":\"TenantNotesAuto\",\"description\":\"multi-tenant with autoTenantActivation on\",\"invertedIndexConfig\":{\"bm25\":{\"b\":0.75,\"k1\":1.2},\"cleanupIntervalSeconds\":60,\"stopwords\":{\"additions\":null,\"preset\":\"en\",\"removals\":null},\"usingBlockMaxWAND\":true},\"multiTenancyConfig\":{\"autoTenantActivation\":true,\"autoTenantCreation\":false,\"enabled\":true},\"properties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"note\",\"tokenization\":\"word\"},{\"dataType\":[\"int\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"seq\"}],\"shardingConfig\":{\"actualCount\":0,\"actualVirtualCount\":0,\"desiredCount\":0,\"desiredVirtualCount\":0,\"function\":\"\",\"key\":\"\",\"strategy\":\"\",\"virtualPerPhysical\":0},\"vectorIndexConfig\":{\"bq\":{\"enabled\":false},\"cleanupIntervalSeconds\":300,\"distance\":\"cosine\",\"dynamicEfFactor\":8,\"dynamicEfMax\":500,\"dynamicEfMin\":100,\"ef\":-1,\"efConstruction\":128,\"filterStrategy\":\"acorn\",\"flatSearchCutoff\":40000,\"maxConnections\":32,\"multivector\":{\"aggregation\":\"maxSim\",\"enabled\":false,\"muvera\":{\"dprojections\":16,\"enabled\":false,\"ksim\":4,\"repetitions\":10}},\"pq\":{\"bitCompression\":false,\"centroids\":256,\"enabled\":false,\"encoder\":{\"distribution\":\"log-normal\",\"type\":\"kmeans\"},\"segments\":0,\"trainingLimit\":100000},\"rq\":{\"bits\":8,\"centering\":false,\"enabled\":false,\"rescoreLimit\":20,\"trainingLimit\":10000},\"skip\":false,\"skipDefaultQuantization\":false,\"sq\":{\"enabled\":false,\"rescoreLimit\":20,\"trainingLimit\":100000},\"trackDefaultQuantization\":false,\"vectorCacheMaxObjects\":1000000000000},\"vectorIndexType\":\"hnsw\",\"vectorizer\":\"none\",\"replicationConfig\":{\"deletionStrategy\":\"TimeBasedResolution\",\"factor\":1,\"asyncEnabled\":false}},{\"class\":\"Article\",\"description\":\"one unnamed vector, a cross-reference and the common property types\",\"invertedIndexConfig\":{\"bm25\":{\"b\":0.75,\"k1\":1.2},\"cleanupIntervalSeconds\":60,\"indexTimestamps\":true,\"stopwords\":{\"additions\":null,\"preset\":\"en\",\"removals\":null},\"usingBlockMaxWAND\":true},\"multiTenancyConfig\":{\"autoTenantActivation\":false,\"autoTenantCreation\":false,\"enabled\":false},\"properties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"title\",\"tokenization\":\"word\"},{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"body\",\"tokenization\":\"word\"},{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"category\",\"tokenization\":\"field\"},{\"dataType\":[\"text[]\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"tags\",\"tokenization\":\"word\"},{\"dataType\":[\"int\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"wordCount\"},{\"dataType\":[\"number\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"rating\"},{\"dataType\":[\"boolean\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"published\"},{\"dataType\":[\"date\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"publishedAt\"},{\"dataType\":[\"geoCoordinates\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"location\"},{\"dataType\":[\"object\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"meta\",\"nestedProperties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"source\",\"tokenization\":\"word\"},{\"dataType\":[\"int\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"revision\"}]},{\"dataType\":[\"Author\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"writtenBy\"}],\"shardingConfig\":{\"actualCount\":1,\"actualVirtualCount\":128,\"desiredCount\":1,\"desiredVirtualCount\":128,\"function\":\"murmur3\",\"key\":\"_id\",\"strategy\":\"hash\",\"virtualPerPhysical\":128},\"vectorIndexConfig\":{\"bq\":{\"enabled\":false},\"cleanupIntervalSeconds\":300,\"distance\":\"cosine\",\"dynamicEfFactor\":8,\"dynamicEfMax\":500,\"dynamicEfMin\":100,\"ef\":-1,\"efConstruction\":128,\"filterStrategy\":\"acorn\",\"flatSearchCutoff\":40000,\"maxConnections\":32,\"multivector\":{\"aggregation\":\"maxSim\",\"enabled\":false,\"muvera\":{\"dprojections\":16,\"enabled\":false,\"ksim\":4,\"repetitions\":10}},\"pq\":{\"bitCompression\":false,\"centroids\":256,\"enabled\":false,\"encoder\":{\"distribution\":\"log-normal\",\"type\":\"kmeans\"},\"segments\":0,\"trainingLimit\":100000},\"rq\":{\"bits\":8,\"centering\":false,\"enabled\":false,\"rescoreLimit\":20,\"trainingLimit\":10000},\"skip\":false,\"skipDefaultQuantization\":false,\"sq\":{\"enabled\":false,\"rescoreLimit\":20,\"trainingLimit\":100000},\"trackDefaultQuantization\":false,\"vectorCacheMaxObjects\":1000000000000},\"vectorIndexType\":\"hnsw\",\"vectorizer\":\"none\",\"replicationConfig\":{\"deletionStrategy\":\"TimeBasedResolution\",\"factor\":1,\"asyncEnabled\":false}}]}\n"
+      },
+      "thrown": null
+    }
+  ],
+  "outcomes": [
+    {
+      "step": "connect",
+      "value": null
+    },
+    {
+      "step": "listObjects",
+      "value": [
+        {
+          "path": [
+            "Article"
+          ],
+          "name": "Article",
+          "kind": "collection"
+        },
+        {
+          "path": [
+            "Author"
+          ],
+          "name": "Author",
+          "kind": "collection"
+        },
+        {
+          "path": [
+            "EdgeValues"
+          ],
+          "name": "EdgeValues",
+          "kind": "collection"
+        },
+        {
+          "path": [
+            "Empty"
+          ],
+          "name": "Empty",
+          "kind": "collection"
+        },
+        {
+          "path": [
+            "Product"
+          ],
+          "name": "Product",
+          "kind": "collection"
+        },
+        {
+          "path": [
+            "TenantNotes"
+          ],
+          "name": "TenantNotes",
+          "kind": "collection"
+        },
+        {
+          "path": [
+            "TenantNotesAuto"
+          ],
+          "name": "TenantNotesAuto",
+          "kind": "collection"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+commit => none
+consent ticked => {"chips":["same read-only session","500 rows","no time limit"],"sentence":null}
+consent unticked => {"sentence":null}
+explain => "weaviate"

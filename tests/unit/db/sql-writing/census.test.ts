@@ -78,6 +78,7 @@ const PLACEMENT: Readonly<Record<DatabaseType, string>> = {
   postgres: "sql/postgres-sql-writing",
   prometheus: "timeseries/prometheus/sql-writing",
   qdrant: "vector/qdrant/sql-writing",
+  weaviate: "vector/weaviate/sql-writing",
   rabbitmq: "stream/rabbitmq/sql-writing",
   redis: "keyvalue/redis-sql-writing",
   s3: "objectstore/s3/sql-writing",

@@ -41,6 +41,7 @@ const COLUMN_GRAMMAR: Record<DatabaseType, [string, string] | null> = {
   neo4j: null,
   milvus: null,
   qdrant: null,
+  weaviate: null,
   influxdb: null,
   influxdb3: null,
   oxia: null,

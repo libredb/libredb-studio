@@ -4,6 +4,7 @@ import { formatConsole } from "@/lib/db/console/format";
 import { MTC_CONSOLE_DIALECT, MTC_CONSOLE_ROUTES } from "@/lib/db/providers/industrial/mtconnect/routes";
 import { MILVUS_CONSOLE, MILVUS_ROUTES } from "@/lib/db/providers/vector/milvus/routes";
 import { QDRANT_CONSOLE, QDRANT_ROUTES } from "@/lib/db/providers/vector/qdrant/routes";
+import { WEAVIATE_CONSOLE, WEAVIATE_ROUTES } from "@/lib/db/providers/vector/weaviate/routes";
 import { type ConsoleLanguage, registerConsoleLanguage } from "@/lib/editor/console-language";
 import type { EditorLanguage } from "@/lib/editor/tab-language";
 import type { SqlGrammar } from "@/lib/sql/grammar";
@@ -61,6 +62,9 @@ const MILVUS_CONSOLE_LANGUAGE: ConsoleLanguage = Object.freeze({ spec: MILVUS_CO
 /** The Qdrant console: its dialect and its route table, which register the Monaco language `qdrant` (3.5, 6.4). */
 const QDRANT_CONSOLE_LANGUAGE: ConsoleLanguage = Object.freeze({ spec: QDRANT_CONSOLE, routes: QDRANT_ROUTES });
 
+/** The Weaviate console: its dialect and its route table, which register the Monaco language `weaviate` (#1566 3.4). */
+const WEAVIATE_CONSOLE_LANGUAGE: ConsoleLanguage = Object.freeze({ spec: WEAVIATE_CONSOLE, routes: WEAVIATE_ROUTES });
+
 /**
  * MTConnect's request line, drawn by the shared console over the route table the guard runs.
  *
@@ -104,6 +108,12 @@ export const DIALECT_EDITORS: Readonly<Record<QueryTab["type"], DialectEditor>> 
     monacoId: "qdrant",
     format: (text: string) => formatConsole(QDRANT_CONSOLE, text),
     console: QDRANT_CONSOLE_LANGUAGE,
+  }),
+  // A Weaviate request renders in its own console language and formats through the console formatter, as Qdrant's.
+  weaviate: Object.freeze({
+    monacoId: "weaviate",
+    format: (text: string) => formatConsole(WEAVIATE_CONSOLE, text),
+    console: WEAVIATE_CONSOLE_LANGUAGE,
   }),
   // InfluxQL declares a language and no dialect, as PromQL and Cypher do, and has no formatter: no Format for an
   // InfluxQL tab (InfluxDB spec I12).

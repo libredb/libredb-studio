@@ -583,6 +583,31 @@ export const QdrantIcon: React.FC<IconProps> = ({ className, ...props }) => (
 );
 
 /**
+ * Weaviate: a mark drawn for Studio, never the project's logo or any vendor asset (#1566).
+ *
+ * Three objects at the corners of a hexagon, joined through its centre: a collection of objects linked by their
+ * vectors and cross-references, at the house weight with no fill, identifiable at the 14px the connection list draws.
+ */
+export const WeaviateIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <path d="M12 2.75 20 7.375v9.25L12 21.25 4 16.625v-9.25Z" />
+    <path d="M12 12V7.5M12 12l3.9 2.25M12 12l-3.9 2.25" />
+    <circle cx="12" cy="6.25" r="1.25" />
+    <circle cx="17.4" cy="15.1" r="1.25" />
+    <circle cx="6.6" cy="15.1" r="1.25" />
+  </svg>
+);
+
+/**
  * InfluxDB: a mark drawn for Studio, never InfluxData's logo or any vendor asset (InfluxDB spec E19), shared by the
  * InfluxQL and the SQL connection type.
  *

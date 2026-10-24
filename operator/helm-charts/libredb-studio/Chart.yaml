@@ -1,8 +1,8 @@
 apiVersion: v2
 name: libredb-studio
-description: Web-based SQL IDE for cloud-native teams supporting forty-one engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Apache Spark, Apache Cassandra, libSQL, Prometheus, Apache Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, InfluxDB, InfluxDB 3, Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA, MTConnect, Modbus, NETCONF, SNMP and Sparkplug B
+description: Web-based SQL IDE for cloud-native teams supporting forty-two engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Apache Spark, Apache Cassandra, libSQL, Prometheus, Apache Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, Weaviate, InfluxDB, InfluxDB 3, Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA, MTConnect, Modbus, NETCONF, SNMP and Sparkplug B
 type: application
-version: 0.1.102
+version: 0.1.103
 appVersion: "1.0.0"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
@@ -69,6 +69,8 @@ keywords:
   # evaluator looking for a Milvus or Qdrant client types, so there is no second spelling to catch.
   - milvus
   - qdrant
+  # Weaviate (#1566): the type-id is also the word an evaluator looking for a Weaviate client types.
+  - weaviate
   # Three keywords, like the prometheus pair above with one more: `influxdb` and `influxdb3` are
   # the two type-ids and the products, and `influxql` is what an evaluator looking for an
   # InfluxQL client types.
@@ -314,7 +316,7 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - "Add config.oidcRolePrefix, written as OIDC_ROLE_PREFIX: prefix filter for custom seed roles from the OIDC role claim"
+    - "Name Weaviate, read-only over its REST API, in the description and the keywords"
 dependencies:
   - name: postgresql
     version: "16.x.x"

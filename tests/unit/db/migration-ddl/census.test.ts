@@ -55,6 +55,7 @@ const PLACEMENT: Record<DatabaseType, string> = {
   prometheus: "timeseries/prometheus/migration-ddl",
   milvus: "vector/milvus/migration-ddl",
   qdrant: "vector/qdrant/migration-ddl",
+  weaviate: "vector/weaviate/migration-ddl",
 };
 
 const REFUSED: DatabaseType[] = [
@@ -71,6 +72,7 @@ const REFUSED: DatabaseType[] = [
   "neo4j",
   "milvus",
   "qdrant",
+  "weaviate",
   "influxdb",
   "influxdb3",
   "oxia",

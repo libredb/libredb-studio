@@ -42,6 +42,7 @@ const OFFERED: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   neo4j: false,
   milvus: false,
   qdrant: false,
+  weaviate: false,
   influxdb: false,
   influxdb3: false,
   oxia: false,

@@ -44,6 +44,7 @@ import { INFLUXDB3_MIGRATION_DDL } from "@/lib/db/providers/timeseries/influxdb/
 import { PROMETHEUS_MIGRATION_DDL } from "@/lib/db/providers/timeseries/prometheus/migration-ddl";
 import { MILVUS_MIGRATION_DDL } from "@/lib/db/providers/vector/milvus/migration-ddl";
 import { QDRANT_MIGRATION_DDL } from "@/lib/db/providers/vector/qdrant/migration-ddl";
+import { WEAVIATE_MIGRATION_DDL } from "@/lib/db/providers/vector/weaviate/migration-ddl";
 import type { DatabaseType } from "@/lib/types";
 import { NO_CONNECTION_DIALECT, NO_CONNECTION_MIGRATION_DDL } from "./no-connection";
 import type { MigrationDdlSpec } from "./types";
@@ -92,6 +93,7 @@ export const MIGRATION_DDL: Readonly<Record<DatabaseType, MigrationDdlSpec>> = O
   sparkplug: SPARKPLUG_MIGRATION_DDL,
   sqlite: SQLITE_MIGRATION_DDL,
   trino: TRINO_MIGRATION_DDL,
+  weaviate: WEAVIATE_MIGRATION_DDL,
 });
 
 /**

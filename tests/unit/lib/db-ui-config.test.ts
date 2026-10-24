@@ -108,6 +108,7 @@ const ALL_TYPES: DatabaseType[] = [
   "neo4j",
   "milvus",
   "qdrant",
+  "weaviate",
   "influxdb",
   "influxdb3",
   "oxia",
@@ -554,11 +555,13 @@ describe("db-ui-config", () => {
      * authentication is refused, and its provider refuses a non-empty `config.user` naming the field. RabbitMQ has no
      * database: virtual hosts are discovered, and its provider refuses a non-empty `config.database` naming the field.
      * Apache Spark has no user name either: every request uses one fixed Spark Connect user id, and its provider
-     * refuses a non-empty `config.user` naming the field (Apache Spark).
+     * refuses a non-empty `config.user` naming the field (Apache Spark). Weaviate has no user name either: an API
+     * key and an OIDC access token are both a bearer token in the password, and its provider refuses a non-empty
+     * `config.user` naming the field (#1566 spec 6.1).
      * Listed by name, so the read stays visible.
      */
     const READ_ONLY_TO_REFUSE: Readonly<Record<"user" | "database", readonly DatabaseType[]>> = {
-      user: ["qdrant", "influxdb3", "oxia", "kubernetes", "spark"],
+      user: ["qdrant", "weaviate", "influxdb3", "oxia", "kubernetes", "spark"],
       database: ["rabbitmq"],
     };
 
@@ -828,6 +831,27 @@ describe("declared connection-field copy (#1085)", () => {
     expect(qdrant.credentialWarnings).toBe(CREDENTIAL_WARNINGS.qdrant);
   });
 
+  test("weaviate declares its port, no Database box, no User field, API key or token, the hints and the Host box addresses (#1566 spec 6.1)", () => {
+    const weaviate = getDBConfig("weaviate");
+    expect(weaviate).toMatchObject({
+      label: "Weaviate",
+      color: "text-hue-zinc",
+      defaultPort: "8080",
+      showConnectionStringToggle: false,
+      connectionFields: ["host", "port", "password"],
+    });
+    expect(weaviate.showSshTunnel).toBeUndefined();
+    expect(offersSshTunnel("weaviate")).toBe(true);
+    expect(takesConnectionField("weaviate", "user")).toBe(false);
+    expect(takesConnectionField("weaviate", "database")).toBe(false);
+    expect(weaviate.fieldLabels).toEqual({ password: "API key or token" });
+    expect(Object.keys(weaviate.fieldHints ?? {})).toEqual(["host", "password"]);
+    expect(weaviate.fieldHints?.host).toContain("never Weaviate's gRPC port 50051");
+    expect(weaviate.fieldHints?.password).toContain("an SSL mode other than disable");
+    expect(hostUriSchemes("weaviate")).toEqual(["http", "https"]);
+    expect(weaviate.credentialWarnings).toBe(CREDENTIAL_WARNINGS.weaviate);
+  });
+
   test("oxia declares its label, port, fields, labels, the five hints and the read-only hint (SB3-1.5)", () => {
     const oxia = getDBConfig("oxia");
     expect(oxia.label).toBe("Oxia");
@@ -1050,7 +1074,7 @@ describe("declared connection-field copy (#1085)", () => {
     }
   });
 
-  test("only libsql, mongodb, oracle, db2, mssql, couchbase, trino, cassandra, prometheus, kafka, etcd, neo4j, milvus, qdrant, the two InfluxDB types, oxia, databend, bigquery, snowflake, spark, s3, kubernetes, mqtt, firestore, rabbitmq, opcua, mtconnect and modbus declare field copy, so every other engine draws every label and hint it drew before", () => {
+  test("only libsql, mongodb, oracle, db2, mssql, couchbase, trino, cassandra, prometheus, kafka, etcd, neo4j, milvus, qdrant, weaviate, the two InfluxDB types, oxia, databend, bigquery, snowflake, spark, s3, kubernetes, mqtt, firestore, rabbitmq, opcua, mtconnect and modbus declare field copy, so every other engine draws every label and hint it drew before", () => {
     const declared = Object.entries(DB_UI_CONFIG)
       .filter(([, config]) => config.fieldLabels !== undefined || config.fieldHints !== undefined)
       .map(([type]) => type);
@@ -1070,6 +1094,7 @@ describe("declared connection-field copy (#1085)", () => {
       "neo4j",
       "milvus",
       "qdrant",
+      "weaviate",
       "influxdb",
       "influxdb3",
       "oxia",
@@ -1614,9 +1639,11 @@ describe("db-showcase", () => {
         // Behind Snowflake and ahead of libSQL: the open-source engine a data team runs its lakehouse SQL on, so only
         // libSQL, the embedded store and OPC UA move.
         "spark",
+        // Behind Spark and ahead of libSQL (#1566): the third vector database on the page, and the newest name.
+        "weaviate",
         "libsql",
         "libredb",
-        // Last (rank 36), behind the embedded store: an industrial address space is the least recognisable
+        // Last (rank 37), behind the embedded store: an industrial address space is the least recognisable
         // name on a page of databases, so no existing engine moves for it (#1677).
         "opcua",
         "mtconnect",
@@ -1654,10 +1681,11 @@ describe("db-showcase", () => {
 });
 
 describe("Host box addresses and credential warnings", () => {
-  test("only milvus, qdrant, the two InfluxDB types, databend, s3, kubernetes, rabbitmq and mtconnect declare hostAcceptsUri, so every other Host box takes a host alone", () => {
+  test("only milvus, qdrant, weaviate, the two InfluxDB types, databend, s3, kubernetes, rabbitmq and mtconnect declare hostAcceptsUri, so every other Host box takes a host alone", () => {
     expect(ALL_TYPES.filter((type) => hostUriSchemes(type).length > 0)).toEqual([
       "milvus",
       "qdrant",
+      "weaviate",
       "influxdb",
       "influxdb3",
       "databend",

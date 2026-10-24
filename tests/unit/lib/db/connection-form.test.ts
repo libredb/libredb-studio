@@ -69,6 +69,7 @@ const PICKER_COVERAGE: Record<DatabaseType, boolean> = {
   neo4j: true,
   milvus: true,
   qdrant: true,
+  weaviate: true,
   influxdb: true,
   influxdb3: true,
   oxia: true,
@@ -350,6 +351,7 @@ describe("CONNECTION_PICKER_ORDER", () => {
       "mtconnect",
       "modbus",
       "netconf",
+      "weaviate",
     ]);
   });
 

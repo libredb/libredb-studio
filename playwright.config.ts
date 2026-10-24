@@ -8,7 +8,7 @@ import { LAUNCH_E2E_ENV } from "./e2e/helpers/launch-token";
 // Override one with its variable when that port is occupied by another instance.
 const port = Number(process.env.E2E_PORT ?? 3000);
 
-// offline-editor.spec.ts, the kafka, etcd, neo4j, milvus and qdrant provider specs, the influxdb
+// offline-editor.spec.ts, the kafka, etcd, neo4j, milvus, qdrant and weaviate provider specs, the influxdb
 // providers spec and the oxia, databend, snowflake, spark, s3, kubernetes, rabbitmq and mqtt provider specs get a second server
 // process on its own port - see the projects and the webServer array below for why. Override with
 // E2E_OFFLINE_PORT under the same collision circumstances as E2E_PORT.
@@ -68,12 +68,12 @@ export default defineConfig({
     {
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
-      // offline-editor.spec.ts, the kafka, etcd, neo4j, milvus and qdrant provider specs, the influxdb providers
+      // offline-editor.spec.ts, the kafka, etcd, neo4j, milvus, qdrant and weaviate provider specs, the influxdb providers
       // spec, the oxia, databend, snowflake, spark, s3, kubernetes, rabbitmq and mqtt provider specs and the firestore dialog spec
       // run under their own projects below, against the second server, passkey.spec.ts against the third,
       // launch.spec.ts against the fourth and the firestore browse spec against the fifth.
       testIgnore:
-        /(?:offline-editor|base-path|kafka-provider|etcd-provider|neo4j-provider|milvus-provider|qdrant-provider|influxdb-providers|mtconnect-provider|modbus-provider|oxia-provider|databend-provider|snowflake-provider|spark-provider|s3-provider|kubernetes-provider|firestore-connection|firestore-provider|rabbitmq-provider|mqtt-provider|passkey|launch)\.spec\.ts/,
+        /(?:offline-editor|base-path|kafka-provider|etcd-provider|neo4j-provider|milvus-provider|qdrant-provider|weaviate-provider|influxdb-providers|mtconnect-provider|modbus-provider|oxia-provider|databend-provider|snowflake-provider|spark-provider|s3-provider|kubernetes-provider|firestore-connection|firestore-provider|rabbitmq-provider|mqtt-provider|passkey|launch)\.spec\.ts/,
     },
     {
       // Every other spec in this suite signs in as the same shared user@libredb.org account
@@ -144,6 +144,13 @@ export default defineConfig({
       name: "chromium-qdrant",
       use: { ...devices["Desktop Chrome"], baseURL: `http://localhost:${offlinePort}` },
       testMatch: /qdrant-provider\.spec\.ts/,
+    },
+    {
+      // weaviate-provider.spec.ts drives Test Connection too (one call, for the refusal it asserts), so it takes the
+      // second server for the reason kafka-provider.spec.ts does.
+      name: "chromium-weaviate",
+      use: { ...devices["Desktop Chrome"], baseURL: `http://localhost:${offlinePort}` },
+      testMatch: /weaviate-provider\.spec\.ts/,
     },
     {
       // influxdb-providers.spec.ts drives Test Connection too (two calls, one refusal per type it asserts), so it takes

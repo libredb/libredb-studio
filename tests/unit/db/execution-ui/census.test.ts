@@ -43,7 +43,7 @@ const FAMILIES: Readonly<Record<string, readonly string[]>> = {
   ],
   stream: ["kafka", "rabbitmq"],
   timeseries: ["prometheus"],
-  vector: ["milvus", "qdrant"],
+  vector: ["milvus", "qdrant", "weaviate"],
 };
 
 function placement(id: string): string {

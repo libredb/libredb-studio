@@ -1,0 +1,1296 @@
+{
+  "$captured": {
+    "engine": "weaviate",
+    "service": "weaviate-1-38",
+    "scenario": "searches",
+    "image": "cr.weaviate.io/semitechnologies/weaviate:1.38.22",
+    "digest": "sha256:3b114db3992b8b4a62b623112b21a3d18c589e084dd9954b87b8d2ef08c6645c",
+    "version": "1.38.22",
+    "date": "2026-10-23T23:54:52.686Z",
+    "runtime": "bun 1.4.2",
+    "credential": "none"
+  },
+  "transport": [
+    {
+      "origin": "http://127.0.0.1:18285",
+      "tls": null,
+      "maxSockets": 4,
+      "headers": {}
+    }
+  ],
+  "exchanges": [
+    {
+      "method": "GET",
+      "path": "/v1/meta",
+      "body": null,
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"grpcMaxMessageSize\":104858000,\"hostname\":\"http://[::]:8080\",\"modules\":{},\"version\":\"1.38.22\"}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/schema/Article",
+      "body": null,
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"class\":\"Article\",\"description\":\"one unnamed vector, a cross-reference and the common property types\",\"invertedIndexConfig\":{\"bm25\":{\"b\":0.75,\"k1\":1.2},\"cleanupIntervalSeconds\":60,\"indexTimestamps\":true,\"stopwords\":{\"additions\":null,\"preset\":\"en\",\"removals\":null},\"usingBlockMaxWAND\":true},\"multiTenancyConfig\":{\"autoTenantActivation\":false,\"autoTenantCreation\":false,\"enabled\":false},\"properties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"title\",\"tokenization\":\"word\"},{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"body\",\"tokenization\":\"word\"},{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"category\",\"tokenization\":\"field\"},{\"dataType\":[\"text[]\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"tags\",\"tokenization\":\"word\"},{\"dataType\":[\"int\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"wordCount\"},{\"dataType\":[\"number\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"rating\"},{\"dataType\":[\"boolean\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"published\"},{\"dataType\":[\"date\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"publishedAt\"},{\"dataType\":[\"geoCoordinates\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"location\"},{\"dataType\":[\"object\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"meta\",\"nestedProperties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"source\",\"tokenization\":\"word\"},{\"dataType\":[\"int\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"revision\"}]},{\"dataType\":[\"Author\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"writtenBy\"}],\"shardingConfig\":{\"actualCount\":1,\"actualVirtualCount\":128,\"desiredCount\":1,\"desiredVirtualCount\":128,\"function\":\"murmur3\",\"key\":\"_id\",\"strategy\":\"hash\",\"virtualPerPhysical\":128},\"vectorIndexConfig\":{\"bq\":{\"enabled\":false},\"cleanupIntervalSeconds\":300,\"distance\":\"cosine\",\"dynamicEfFactor\":8,\"dynamicEfMax\":500,\"dynamicEfMin\":100,\"ef\":-1,\"efConstruction\":128,\"filterStrategy\":\"acorn\",\"flatSearchCutoff\":40000,\"maxConnections\":32,\"multivector\":{\"aggregation\":\"maxSim\",\"enabled\":false,\"muvera\":{\"dprojections\":16,\"enabled\":false,\"ksim\":4,\"repetitions\":10}},\"pq\":{\"bitCompression\":false,\"centroids\":256,\"enabled\":false,\"encoder\":{\"distribution\":\"log-normal\",\"type\":\"kmeans\"},\"segments\":0,\"trainingLimit\":100000},\"rq\":{\"bits\":8,\"enabled\":false,\"rescoreLimit\":20},\"skip\":false,\"skipDefaultQuantization\":false,\"sq\":{\"enabled\":false,\"rescoreLimit\":20,\"trainingLimit\":100000},\"trackDefaultQuantization\":false,\"vectorCacheMaxObjects\":1000000000000},\"vectorIndexType\":\"hnsw\",\"vectorizer\":\"none\",\"replicationConfig\":{\"deletionStrategy\":\"TimeBasedResolution\",\"factor\":1,\"asyncEnabled\":false}}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "POST",
+      "path": "/v1/graphql",
+      "body": "{\"query\":\"{Get{Article(bm25:{query:\\\"vector\\\"},limit:3){title wordCount _additional{id score}}}}\"}",
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"data\":{\"Get\":{\"Article\":[{\"_additional\":{\"id\":\"5878774a-b088-5365-803b-f38de3ae1785\",\"score\":\"1.7275589\"},\"title\":\"article 271 cosine schema\",\"wordCount\":371},{\"_additional\":{\"id\":\"c5ea6507-374d-559f-8ee9-270bd411c288\",\"score\":\"1.2622087\"},\"title\":\"article 001 schema vector\",\"wordCount\":101},{\"_additional\":{\"id\":\"6a685778-9bb0-5b39-b66e-20e12491d845\",\"score\":\"1.0772038\"},\"title\":\"article 494 index graph\",\"wordCount\":594}]}}}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/schema/Article",
+      "body": null,
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"class\":\"Article\",\"description\":\"one unnamed vector, a cross-reference and the common property types\",\"invertedIndexConfig\":{\"bm25\":{\"b\":0.75,\"k1\":1.2},\"cleanupIntervalSeconds\":60,\"indexTimestamps\":true,\"stopwords\":{\"additions\":null,\"preset\":\"en\",\"removals\":null},\"usingBlockMaxWAND\":true},\"multiTenancyConfig\":{\"autoTenantActivation\":false,\"autoTenantCreation\":false,\"enabled\":false},\"properties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"title\",\"tokenization\":\"word\"},{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"body\",\"tokenization\":\"word\"},{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"category\",\"tokenization\":\"field\"},{\"dataType\":[\"text[]\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"tags\",\"tokenization\":\"word\"},{\"dataType\":[\"int\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"wordCount\"},{\"dataType\":[\"number\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"rating\"},{\"dataType\":[\"boolean\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"published\"},{\"dataType\":[\"date\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"publishedAt\"},{\"dataType\":[\"geoCoordinates\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"location\"},{\"dataType\":[\"object\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"meta\",\"nestedProperties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"source\",\"tokenization\":\"word\"},{\"dataType\":[\"int\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"revision\"}]},{\"dataType\":[\"Author\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"writtenBy\"}],\"shardingConfig\":{\"actualCount\":1,\"actualVirtualCount\":128,\"desiredCount\":1,\"desiredVirtualCount\":128,\"function\":\"murmur3\",\"key\":\"_id\",\"strategy\":\"hash\",\"virtualPerPhysical\":128},\"vectorIndexConfig\":{\"bq\":{\"enabled\":false},\"cleanupIntervalSeconds\":300,\"distance\":\"cosine\",\"dynamicEfFactor\":8,\"dynamicEfMax\":500,\"dynamicEfMin\":100,\"ef\":-1,\"efConstruction\":128,\"filterStrategy\":\"acorn\",\"flatSearchCutoff\":40000,\"maxConnections\":32,\"multivector\":{\"aggregation\":\"maxSim\",\"enabled\":false,\"muvera\":{\"dprojections\":16,\"enabled\":false,\"ksim\":4,\"repetitions\":10}},\"pq\":{\"bitCompression\":false,\"centroids\":256,\"enabled\":false,\"encoder\":{\"distribution\":\"log-normal\",\"type\":\"kmeans\"},\"segments\":0,\"trainingLimit\":100000},\"rq\":{\"bits\":8,\"enabled\":false,\"rescoreLimit\":20},\"skip\":false,\"skipDefaultQuantization\":false,\"sq\":{\"enabled\":false,\"rescoreLimit\":20,\"trainingLimit\":100000},\"trackDefaultQuantization\":false,\"vectorCacheMaxObjects\":1000000000000},\"vectorIndexType\":\"hnsw\",\"vectorizer\":\"none\",\"replicationConfig\":{\"deletionStrategy\":\"TimeBasedResolution\",\"factor\":1,\"asyncEnabled\":false}}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "POST",
+      "path": "/v1/graphql",
+      "body": "{\"query\":\"{Get{Article(where:{path:[\\\"category\\\"],operator:Equal,valueText:\\\"alpha\\\"},bm25:{query:\\\"vector\\\"},limit:2){title category _additional{id}}}}\"}",
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"data\":{\"Get\":{\"Article\":[{\"_additional\":{\"id\":\"0245f640-b59b-53d9-9c84-456331b99614\"},\"category\":\"alpha\",\"title\":\"article 260 vector recall\"},{\"_additional\":{\"id\":\"8fc2a823-3c0d-5585-87a8-ada81a6e779d\"},\"category\":\"alpha\",\"title\":\"article 065 property collection\"}]}}}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/schema/Article",
+      "body": null,
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"class\":\"Article\",\"description\":\"one unnamed vector, a cross-reference and the common property types\",\"invertedIndexConfig\":{\"bm25\":{\"b\":0.75,\"k1\":1.2},\"cleanupIntervalSeconds\":60,\"indexTimestamps\":true,\"stopwords\":{\"additions\":null,\"preset\":\"en\",\"removals\":null},\"usingBlockMaxWAND\":true},\"multiTenancyConfig\":{\"autoTenantActivation\":false,\"autoTenantCreation\":false,\"enabled\":false},\"properties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"title\",\"tokenization\":\"word\"},{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"body\",\"tokenization\":\"word\"},{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"category\",\"tokenization\":\"field\"},{\"dataType\":[\"text[]\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"tags\",\"tokenization\":\"word\"},{\"dataType\":[\"int\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"wordCount\"},{\"dataType\":[\"number\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"rating\"},{\"dataType\":[\"boolean\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"published\"},{\"dataType\":[\"date\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"publishedAt\"},{\"dataType\":[\"geoCoordinates\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"location\"},{\"dataType\":[\"object\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"meta\",\"nestedProperties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"source\",\"tokenization\":\"word\"},{\"dataType\":[\"int\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"revision\"}]},{\"dataType\":[\"Author\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"writtenBy\"}],\"shardingConfig\":{\"actualCount\":1,\"actualVirtualCount\":128,\"desiredCount\":1,\"desiredVirtualCount\":128,\"function\":\"murmur3\",\"key\":\"_id\",\"strategy\":\"hash\",\"virtualPerPhysical\":128},\"vectorIndexConfig\":{\"bq\":{\"enabled\":false},\"cleanupIntervalSeconds\":300,\"distance\":\"cosine\",\"dynamicEfFactor\":8,\"dynamicEfMax\":500,\"dynamicEfMin\":100,\"ef\":-1,\"efConstruction\":128,\"filterStrategy\":\"acorn\",\"flatSearchCutoff\":40000,\"maxConnections\":32,\"multivector\":{\"aggregation\":\"maxSim\",\"enabled\":false,\"muvera\":{\"dprojections\":16,\"enabled\":false,\"ksim\":4,\"repetitions\":10}},\"pq\":{\"bitCompression\":false,\"centroids\":256,\"enabled\":false,\"encoder\":{\"distribution\":\"log-normal\",\"type\":\"kmeans\"},\"segments\":0,\"trainingLimit\":100000},\"rq\":{\"bits\":8,\"enabled\":false,\"rescoreLimit\":20},\"skip\":false,\"skipDefaultQuantization\":false,\"sq\":{\"enabled\":false,\"rescoreLimit\":20,\"trainingLimit\":100000},\"trackDefaultQuantization\":false,\"vectorCacheMaxObjects\":1000000000000},\"vectorIndexType\":\"hnsw\",\"vectorizer\":\"none\",\"replicationConfig\":{\"deletionStrategy\":\"TimeBasedResolution\",\"factor\":1,\"asyncEnabled\":false}}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "POST",
+      "path": "/v1/graphql",
+      "body": "{\"query\":\"{Get{Article(bm25:{query:\\\"vector\\\"},limit:2){title body category tags wordCount rating published publishedAt location{latitude longitude} meta{source revision} _additional{id}}}}\"}",
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"data\":{\"Get\":{\"Article\":[{\"_additional\":{\"id\":\"5878774a-b088-5365-803b-f38de3ae1785\"},\"body\":\"schema replica vector hybrid index index vector vector cosine tenant keyword hybrid\",\"category\":\"beta\",\"location\":{\"latitude\":59.708,\"longitude\":24.7536},\"meta\":{\"revision\":3,\"source\":\"seed\"},\"published\":true,\"publishedAt\":\"2026-10-01T12:00:00Z\",\"rating\":2.71,\"tags\":[\"graph\",\"vector\"],\"title\":\"article 271 cosine schema\",\"wordCount\":371},{\"_additional\":{\"id\":\"c5ea6507-374d-559f-8ee9-270bd411c288\"},\"body\":\"tenant tenant index object object node schema shard collection object tenant alias\",\"category\":\"beta\",\"location\":{\"latitude\":59.438,\"longitude\":24.7536},\"meta\":{\"revision\":1,\"source\":\"seed\"},\"published\":true,\"publishedAt\":\"2026-10-01T12:00:00Z\",\"rating\":0.01,\"tags\":[\"replica\",\"tenant\",\"vector\"],\"title\":\"article 001 schema vector\",\"wordCount\":101}]}}}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/schema/Article",
+      "body": null,
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"class\":\"Article\",\"description\":\"one unnamed vector, a cross-reference and the common property types\",\"invertedIndexConfig\":{\"bm25\":{\"b\":0.75,\"k1\":1.2},\"cleanupIntervalSeconds\":60,\"indexTimestamps\":true,\"stopwords\":{\"additions\":null,\"preset\":\"en\",\"removals\":null},\"usingBlockMaxWAND\":true},\"multiTenancyConfig\":{\"autoTenantActivation\":false,\"autoTenantCreation\":false,\"enabled\":false},\"properties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"title\",\"tokenization\":\"word\"},{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"body\",\"tokenization\":\"word\"},{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"category\",\"tokenization\":\"field\"},{\"dataType\":[\"text[]\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"tags\",\"tokenization\":\"word\"},{\"dataType\":[\"int\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"wordCount\"},{\"dataType\":[\"number\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"rating\"},{\"dataType\":[\"boolean\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"published\"},{\"dataType\":[\"date\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"publishedAt\"},{\"dataType\":[\"geoCoordinates\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"location\"},{\"dataType\":[\"object\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"meta\",\"nestedProperties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"source\",\"tokenization\":\"word\"},{\"dataType\":[\"int\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"revision\"}]},{\"dataType\":[\"Author\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"writtenBy\"}],\"shardingConfig\":{\"actualCount\":1,\"actualVirtualCount\":128,\"desiredCount\":1,\"desiredVirtualCount\":128,\"function\":\"murmur3\",\"key\":\"_id\",\"strategy\":\"hash\",\"virtualPerPhysical\":128},\"vectorIndexConfig\":{\"bq\":{\"enabled\":false},\"cleanupIntervalSeconds\":300,\"distance\":\"cosine\",\"dynamicEfFactor\":8,\"dynamicEfMax\":500,\"dynamicEfMin\":100,\"ef\":-1,\"efConstruction\":128,\"filterStrategy\":\"acorn\",\"flatSearchCutoff\":40000,\"maxConnections\":32,\"multivector\":{\"aggregation\":\"maxSim\",\"enabled\":false,\"muvera\":{\"dprojections\":16,\"enabled\":false,\"ksim\":4,\"repetitions\":10}},\"pq\":{\"bitCompression\":false,\"centroids\":256,\"enabled\":false,\"encoder\":{\"distribution\":\"log-normal\",\"type\":\"kmeans\"},\"segments\":0,\"trainingLimit\":100000},\"rq\":{\"bits\":8,\"enabled\":false,\"rescoreLimit\":20},\"skip\":false,\"skipDefaultQuantization\":false,\"sq\":{\"enabled\":false,\"rescoreLimit\":20,\"trainingLimit\":100000},\"trackDefaultQuantization\":false,\"vectorCacheMaxObjects\":1000000000000},\"vectorIndexType\":\"hnsw\",\"vectorizer\":\"none\",\"replicationConfig\":{\"deletionStrategy\":\"TimeBasedResolution\",\"factor\":1,\"asyncEnabled\":false}}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "POST",
+      "path": "/v1/graphql",
+      "body": "{\"query\":\"{Get{Article(nearVector:{vector:[0.1,-0.2,0.3,0.4,-0.5,0.6,0.7,-0.8,0.9,0.1,0.2,-0.3,0.4,0.5,-0.6,0.7]},limit:2){title _additional{id distance}}}}\"}",
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"data\":{\"Get\":{\"Article\":[{\"_additional\":{\"distance\":0.23860067,\"id\":\"8d4e0b7b-e646-5fce-8c75-448bded66eb1\"},\"title\":\"article 044 quantize object\"},{\"_additional\":{\"distance\":0.38131392,\"id\":\"b3dbaa8b-f6d5-53d4-bc9c-66ee6393b3de\"},\"title\":\"article 428 alias keyword\"}]}}}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/schema/Article",
+      "body": null,
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"class\":\"Article\",\"description\":\"one unnamed vector, a cross-reference and the common property types\",\"invertedIndexConfig\":{\"bm25\":{\"b\":0.75,\"k1\":1.2},\"cleanupIntervalSeconds\":60,\"indexTimestamps\":true,\"stopwords\":{\"additions\":null,\"preset\":\"en\",\"removals\":null},\"usingBlockMaxWAND\":true},\"multiTenancyConfig\":{\"autoTenantActivation\":false,\"autoTenantCreation\":false,\"enabled\":false},\"properties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"title\",\"tokenization\":\"word\"},{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"body\",\"tokenization\":\"word\"},{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"category\",\"tokenization\":\"field\"},{\"dataType\":[\"text[]\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"tags\",\"tokenization\":\"word\"},{\"dataType\":[\"int\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"wordCount\"},{\"dataType\":[\"number\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"rating\"},{\"dataType\":[\"boolean\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"published\"},{\"dataType\":[\"date\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"publishedAt\"},{\"dataType\":[\"geoCoordinates\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"location\"},{\"dataType\":[\"object\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"meta\",\"nestedProperties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"source\",\"tokenization\":\"word\"},{\"dataType\":[\"int\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"revision\"}]},{\"dataType\":[\"Author\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"writtenBy\"}],\"shardingConfig\":{\"actualCount\":1,\"actualVirtualCount\":128,\"desiredCount\":1,\"desiredVirtualCount\":128,\"function\":\"murmur3\",\"key\":\"_id\",\"strategy\":\"hash\",\"virtualPerPhysical\":128},\"vectorIndexConfig\":{\"bq\":{\"enabled\":false},\"cleanupIntervalSeconds\":300,\"distance\":\"cosine\",\"dynamicEfFactor\":8,\"dynamicEfMax\":500,\"dynamicEfMin\":100,\"ef\":-1,\"efConstruction\":128,\"filterStrategy\":\"acorn\",\"flatSearchCutoff\":40000,\"maxConnections\":32,\"multivector\":{\"aggregation\":\"maxSim\",\"enabled\":false,\"muvera\":{\"dprojections\":16,\"enabled\":false,\"ksim\":4,\"repetitions\":10}},\"pq\":{\"bitCompression\":false,\"centroids\":256,\"enabled\":false,\"encoder\":{\"distribution\":\"log-normal\",\"type\":\"kmeans\"},\"segments\":0,\"trainingLimit\":100000},\"rq\":{\"bits\":8,\"enabled\":false,\"rescoreLimit\":20},\"skip\":false,\"skipDefaultQuantization\":false,\"sq\":{\"enabled\":false,\"rescoreLimit\":20,\"trainingLimit\":100000},\"trackDefaultQuantization\":false,\"vectorCacheMaxObjects\":1000000000000},\"vectorIndexType\":\"hnsw\",\"vectorizer\":\"none\",\"replicationConfig\":{\"deletionStrategy\":\"TimeBasedResolution\",\"factor\":1,\"asyncEnabled\":false}}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "POST",
+      "path": "/v1/graphql",
+      "body": "{\"query\":\"{Get{Article(nearObject:{id:\\\"9e6866af-ef70-5a5a-9b61-1ae7a41bad0d\\\"},limit:2){title _additional{id distance}}}}\"}",
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"data\":{\"Get\":{\"Article\":[{\"_additional\":{\"distance\":2.3841858e-7,\"id\":\"9e6866af-ef70-5a5a-9b61-1ae7a41bad0d\"},\"title\":\"article 099 tenant index\"},{\"_additional\":{\"distance\":0.30005395,\"id\":\"091a6b21-3727-5500-8f12-17036b912723\"},\"title\":\"article 468 shard quantize\"}]}}}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/schema/Article",
+      "body": null,
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"class\":\"Article\",\"description\":\"one unnamed vector, a cross-reference and the common property types\",\"invertedIndexConfig\":{\"bm25\":{\"b\":0.75,\"k1\":1.2},\"cleanupIntervalSeconds\":60,\"indexTimestamps\":true,\"stopwords\":{\"additions\":null,\"preset\":\"en\",\"removals\":null},\"usingBlockMaxWAND\":true},\"multiTenancyConfig\":{\"autoTenantActivation\":false,\"autoTenantCreation\":false,\"enabled\":false},\"properties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"title\",\"tokenization\":\"word\"},{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"body\",\"tokenization\":\"word\"},{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"category\",\"tokenization\":\"field\"},{\"dataType\":[\"text[]\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"tags\",\"tokenization\":\"word\"},{\"dataType\":[\"int\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"wordCount\"},{\"dataType\":[\"number\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"rating\"},{\"dataType\":[\"boolean\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"published\"},{\"dataType\":[\"date\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"publishedAt\"},{\"dataType\":[\"geoCoordinates\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"location\"},{\"dataType\":[\"object\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"meta\",\"nestedProperties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"source\",\"tokenization\":\"word\"},{\"dataType\":[\"int\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"revision\"}]},{\"dataType\":[\"Author\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"writtenBy\"}],\"shardingConfig\":{\"actualCount\":1,\"actualVirtualCount\":128,\"desiredCount\":1,\"desiredVirtualCount\":128,\"function\":\"murmur3\",\"key\":\"_id\",\"strategy\":\"hash\",\"virtualPerPhysical\":128},\"vectorIndexConfig\":{\"bq\":{\"enabled\":false},\"cleanupIntervalSeconds\":300,\"distance\":\"cosine\",\"dynamicEfFactor\":8,\"dynamicEfMax\":500,\"dynamicEfMin\":100,\"ef\":-1,\"efConstruction\":128,\"filterStrategy\":\"acorn\",\"flatSearchCutoff\":40000,\"maxConnections\":32,\"multivector\":{\"aggregation\":\"maxSim\",\"enabled\":false,\"muvera\":{\"dprojections\":16,\"enabled\":false,\"ksim\":4,\"repetitions\":10}},\"pq\":{\"bitCompression\":false,\"centroids\":256,\"enabled\":false,\"encoder\":{\"distribution\":\"log-normal\",\"type\":\"kmeans\"},\"segments\":0,\"trainingLimit\":100000},\"rq\":{\"bits\":8,\"enabled\":false,\"rescoreLimit\":20},\"skip\":false,\"skipDefaultQuantization\":false,\"sq\":{\"enabled\":false,\"rescoreLimit\":20,\"trainingLimit\":100000},\"trackDefaultQuantization\":false,\"vectorCacheMaxObjects\":1000000000000},\"vectorIndexType\":\"hnsw\",\"vectorizer\":\"none\",\"replicationConfig\":{\"deletionStrategy\":\"TimeBasedResolution\",\"factor\":1,\"asyncEnabled\":false}}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "POST",
+      "path": "/v1/graphql",
+      "body": "{\"query\":\"{Get{Article(hybrid:{query:\\\"vector\\\",alpha:0},limit:2){title _additional{id}}}}\"}",
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"data\":{\"Get\":{\"Article\":[{\"_additional\":{\"id\":\"6b7a5622-dfa8-5802-9c9a-b39275345406\"},\"title\":\"article 261 vector vector\"},{\"_additional\":{\"id\":\"0590a353-a65e-5f95-bafc-0b46dca27152\"},\"title\":\"article 223 vector search\"}]}}}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/schema/Product",
+      "body": null,
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"class\":\"Product\",\"description\":\"two named vectors with different dimensions and distances\",\"invertedIndexConfig\":{\"bm25\":{\"b\":0.75,\"k1\":1.2},\"cleanupIntervalSeconds\":60,\"stopwords\":{\"additions\":null,\"preset\":\"en\",\"removals\":null},\"usingBlockMaxWAND\":true},\"multiTenancyConfig\":{\"autoTenantActivation\":false,\"autoTenantCreation\":false,\"enabled\":false},\"properties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"name\",\"tokenization\":\"word\"},{\"dataType\":[\"number\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"price\"},{\"dataType\":[\"uuid\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"sku\"}],\"shardingConfig\":{\"actualCount\":1,\"actualVirtualCount\":128,\"desiredCount\":1,\"desiredVirtualCount\":128,\"function\":\"murmur3\",\"key\":\"_id\",\"strategy\":\"hash\",\"virtualPerPhysical\":128},\"vectorConfig\":{\"image\":{\"vectorIndexConfig\":{\"bq\":{\"enabled\":false},\"cleanupIntervalSeconds\":300,\"distance\":\"cosine\",\"dynamicEfFactor\":8,\"dynamicEfMax\":500,\"dynamicEfMin\":100,\"ef\":-1,\"efConstruction\":128,\"filterStrategy\":\"acorn\",\"flatSearchCutoff\":40000,\"maxConnections\":32,\"multivector\":{\"aggregation\":\"maxSim\",\"enabled\":false,\"muvera\":{\"dprojections\":16,\"enabled\":false,\"ksim\":4,\"repetitions\":10}},\"pq\":{\"bitCompression\":false,\"centroids\":256,\"enabled\":false,\"encoder\":{\"distribution\":\"log-normal\",\"type\":\"kmeans\"},\"segments\":0,\"trainingLimit\":100000},\"rq\":{\"bits\":8,\"enabled\":false,\"rescoreLimit\":20},\"skip\":false,\"skipDefaultQuantization\":false,\"sq\":{\"enabled\":false,\"rescoreLimit\":20,\"trainingLimit\":100000},\"trackDefaultQuantization\":false,\"vectorCacheMaxObjects\":1000000000000},\"vectorIndexType\":\"hnsw\",\"vectorizer\":{\"none\":{}}},\"text\":{\"vectorIndexConfig\":{\"bq\":{\"cache\":false,\"enabled\":false,\"rescoreLimit\":-1},\"distance\":\"dot\",\"pq\":{\"cache\":false,\"enabled\":false,\"rescoreLimit\":-1},\"rq\":{\"bits\":8,\"cache\":false,\"enabled\":false,\"rescoreLimit\":-1},\"skipDefaultQuantization\":false,\"sq\":{\"cache\":false,\"enabled\":false,\"rescoreLimit\":-1},\"trackDefaultQuantization\":false,\"vectorCacheMaxObjects\":1000000000000},\"vectorIndexType\":\"flat\",\"vectorizer\":{\"none\":{}}}},\"replicationConfig\":{\"deletionStrategy\":\"TimeBasedResolution\",\"factor\":1,\"asyncEnabled\":false}}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "POST",
+      "path": "/v1/graphql",
+      "body": "{\"query\":\"{Get{Product(nearVector:{vector:[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8],targetVectors:[\\\"image\\\"]},limit:1){name _additional{id}}}}\"}",
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"data\":{\"Get\":{\"Product\":[{\"_additional\":{\"id\":\"9d8ce3ea-cf2e-5f73-a18c-f5016695d856\"},\"name\":\"product 019\"}]}}}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/schema/TenantNotes",
+      "body": null,
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"class\":\"TenantNotes\",\"description\":\"multi-tenant, a read does not activate a tenant\",\"invertedIndexConfig\":{\"bm25\":{\"b\":0.75,\"k1\":1.2},\"cleanupIntervalSeconds\":60,\"stopwords\":{\"additions\":null,\"preset\":\"en\",\"removals\":null},\"usingBlockMaxWAND\":true},\"multiTenancyConfig\":{\"autoTenantActivation\":false,\"autoTenantCreation\":false,\"enabled\":true},\"properties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"note\",\"tokenization\":\"word\"},{\"dataType\":[\"int\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"seq\"}],\"shardingConfig\":{\"actualCount\":0,\"actualVirtualCount\":0,\"desiredCount\":0,\"desiredVirtualCount\":0,\"function\":\"\",\"key\":\"\",\"strategy\":\"\",\"virtualPerPhysical\":0},\"vectorIndexConfig\":{\"bq\":{\"enabled\":false},\"cleanupIntervalSeconds\":300,\"distance\":\"cosine\",\"dynamicEfFactor\":8,\"dynamicEfMax\":500,\"dynamicEfMin\":100,\"ef\":-1,\"efConstruction\":128,\"filterStrategy\":\"acorn\",\"flatSearchCutoff\":40000,\"maxConnections\":32,\"multivector\":{\"aggregation\":\"maxSim\",\"enabled\":false,\"muvera\":{\"dprojections\":16,\"enabled\":false,\"ksim\":4,\"repetitions\":10}},\"pq\":{\"bitCompression\":false,\"centroids\":256,\"enabled\":false,\"encoder\":{\"distribution\":\"log-normal\",\"type\":\"kmeans\"},\"segments\":0,\"trainingLimit\":100000},\"rq\":{\"bits\":8,\"enabled\":false,\"rescoreLimit\":20},\"skip\":false,\"skipDefaultQuantization\":false,\"sq\":{\"enabled\":false,\"rescoreLimit\":20,\"trainingLimit\":100000},\"trackDefaultQuantization\":false,\"vectorCacheMaxObjects\":1000000000000},\"vectorIndexType\":\"hnsw\",\"vectorizer\":\"none\",\"replicationConfig\":{\"deletionStrategy\":\"TimeBasedResolution\",\"factor\":1,\"asyncEnabled\":false}}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/schema/TenantNotes/tenants/acme",
+      "body": null,
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"activityStatus\":\"HOT\",\"name\":\"acme\"}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "POST",
+      "path": "/v1/graphql",
+      "body": "{\"query\":\"{Get{TenantNotes(tenant:\\\"acme\\\",bm25:{query:\\\"note\\\"},limit:2){note seq _additional{id}}}}\"}",
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"data\":{\"Get\":{\"TenantNotes\":[{\"_additional\":{\"id\":\"5f733153-385b-599c-baea-79de4736abac\"},\"note\":\"acme note 02\",\"seq\":2},{\"_additional\":{\"id\":\"988ef2a7-fe5e-591e-b020-9a2239223014\"},\"note\":\"acme note 01\",\"seq\":1}]}}}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/schema/EdgeValues",
+      "body": null,
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"class\":\"EdgeValues\",\"description\":\"int64 values a float64 cannot hold, one object per value\",\"invertedIndexConfig\":{\"bm25\":{\"b\":0.75,\"k1\":1.2},\"cleanupIntervalSeconds\":60,\"stopwords\":{\"additions\":null,\"preset\":\"en\",\"removals\":null},\"usingBlockMaxWAND\":true},\"multiTenancyConfig\":{\"autoTenantActivation\":false,\"autoTenantCreation\":false,\"enabled\":false},\"properties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"label\",\"tokenization\":\"word\"},{\"dataType\":[\"int\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"big\"},{\"dataType\":[\"int[]\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"bigs\"}],\"shardingConfig\":{\"actualCount\":1,\"actualVirtualCount\":128,\"desiredCount\":1,\"desiredVirtualCount\":128,\"function\":\"murmur3\",\"key\":\"_id\",\"strategy\":\"hash\",\"virtualPerPhysical\":128},\"vectorIndexConfig\":{\"bq\":{\"enabled\":false},\"cleanupIntervalSeconds\":300,\"distance\":\"cosine\",\"dynamicEfFactor\":8,\"dynamicEfMax\":500,\"dynamicEfMin\":100,\"ef\":-1,\"efConstruction\":128,\"filterStrategy\":\"acorn\",\"flatSearchCutoff\":40000,\"maxConnections\":32,\"multivector\":{\"aggregation\":\"maxSim\",\"enabled\":false,\"muvera\":{\"dprojections\":16,\"enabled\":false,\"ksim\":4,\"repetitions\":10}},\"pq\":{\"bitCompression\":false,\"centroids\":256,\"enabled\":false,\"encoder\":{\"distribution\":\"log-normal\",\"type\":\"kmeans\"},\"segments\":0,\"trainingLimit\":100000},\"rq\":{\"bits\":8,\"enabled\":false,\"rescoreLimit\":20},\"skip\":false,\"skipDefaultQuantization\":false,\"sq\":{\"enabled\":false,\"rescoreLimit\":20,\"trainingLimit\":100000},\"trackDefaultQuantization\":false,\"vectorCacheMaxObjects\":1000000000000},\"vectorIndexType\":\"hnsw\",\"vectorizer\":\"none\",\"replicationConfig\":{\"deletionStrategy\":\"TimeBasedResolution\",\"factor\":1,\"asyncEnabled\":false}}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "POST",
+      "path": "/v1/graphql",
+      "body": "{\"query\":\"{Get{EdgeValues(bm25:{query:\\\"9007199254740991\\\"},limit:10){label big _additional{id}}}}\"}",
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"data\":{\"Get\":{\"EdgeValues\":[{\"_additional\":{\"id\":\"08f3aa7e-ac67-524b-830c-0f0b4522079b\"},\"big\":null,\"label\":\"9007199254740991\"}]}}}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/schema/Product",
+      "body": null,
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"class\":\"Product\",\"description\":\"two named vectors with different dimensions and distances\",\"invertedIndexConfig\":{\"bm25\":{\"b\":0.75,\"k1\":1.2},\"cleanupIntervalSeconds\":60,\"stopwords\":{\"additions\":null,\"preset\":\"en\",\"removals\":null},\"usingBlockMaxWAND\":true},\"multiTenancyConfig\":{\"autoTenantActivation\":false,\"autoTenantCreation\":false,\"enabled\":false},\"properties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"name\",\"tokenization\":\"word\"},{\"dataType\":[\"number\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"price\"},{\"dataType\":[\"uuid\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"sku\"}],\"shardingConfig\":{\"actualCount\":1,\"actualVirtualCount\":128,\"desiredCount\":1,\"desiredVirtualCount\":128,\"function\":\"murmur3\",\"key\":\"_id\",\"strategy\":\"hash\",\"virtualPerPhysical\":128},\"vectorConfig\":{\"image\":{\"vectorIndexConfig\":{\"bq\":{\"enabled\":false},\"cleanupIntervalSeconds\":300,\"distance\":\"cosine\",\"dynamicEfFactor\":8,\"dynamicEfMax\":500,\"dynamicEfMin\":100,\"ef\":-1,\"efConstruction\":128,\"filterStrategy\":\"acorn\",\"flatSearchCutoff\":40000,\"maxConnections\":32,\"multivector\":{\"aggregation\":\"maxSim\",\"enabled\":false,\"muvera\":{\"dprojections\":16,\"enabled\":false,\"ksim\":4,\"repetitions\":10}},\"pq\":{\"bitCompression\":false,\"centroids\":256,\"enabled\":false,\"encoder\":{\"distribution\":\"log-normal\",\"type\":\"kmeans\"},\"segments\":0,\"trainingLimit\":100000},\"rq\":{\"bits\":8,\"enabled\":false,\"rescoreLimit\":20},\"skip\":false,\"skipDefaultQuantization\":false,\"sq\":{\"enabled\":false,\"rescoreLimit\":20,\"trainingLimit\":100000},\"trackDefaultQuantization\":false,\"vectorCacheMaxObjects\":1000000000000},\"vectorIndexType\":\"hnsw\",\"vectorizer\":{\"none\":{}}},\"text\":{\"vectorIndexConfig\":{\"bq\":{\"cache\":false,\"enabled\":false,\"rescoreLimit\":-1},\"distance\":\"dot\",\"pq\":{\"cache\":false,\"enabled\":false,\"rescoreLimit\":-1},\"rq\":{\"bits\":8,\"cache\":false,\"enabled\":false,\"rescoreLimit\":-1},\"skipDefaultQuantization\":false,\"sq\":{\"cache\":false,\"enabled\":false,\"rescoreLimit\":-1},\"trackDefaultQuantization\":false,\"vectorCacheMaxObjects\":1000000000000},\"vectorIndexType\":\"flat\",\"vectorizer\":{\"none\":{}}}},\"replicationConfig\":{\"deletionStrategy\":\"TimeBasedResolution\",\"factor\":1,\"asyncEnabled\":false}}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "POST",
+      "path": "/v1/graphql",
+      "body": "{\"query\":\"{Get{Product(bm25:{query:\\\"product\\\"},limit:2){name _additional{id}}}}\"}",
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"data\":{\"Get\":{\"Product\":[{\"_additional\":{\"id\":\"51fd5a34-9aa4-54be-afcf-ff814a32afb7\"},\"name\":\"product 001\"},{\"_additional\":{\"id\":\"92693fd4-cfd7-50d9-a1bc-7d9cf95d0326\"},\"name\":\"product 000\"}]}}}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/schema/Missing",
+      "body": null,
+      "answer": {
+        "status": 404,
+        "contentType": null,
+        "retryAfter": null,
+        "text": ""
+      },
+      "thrown": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/schema/Article",
+      "body": null,
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"class\":\"Article\",\"description\":\"one unnamed vector, a cross-reference and the common property types\",\"invertedIndexConfig\":{\"bm25\":{\"b\":0.75,\"k1\":1.2},\"cleanupIntervalSeconds\":60,\"indexTimestamps\":true,\"stopwords\":{\"additions\":null,\"preset\":\"en\",\"removals\":null},\"usingBlockMaxWAND\":true},\"multiTenancyConfig\":{\"autoTenantActivation\":false,\"autoTenantCreation\":false,\"enabled\":false},\"properties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"title\",\"tokenization\":\"word\"},{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"body\",\"tokenization\":\"word\"},{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"category\",\"tokenization\":\"field\"},{\"dataType\":[\"text[]\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"tags\",\"tokenization\":\"word\"},{\"dataType\":[\"int\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"wordCount\"},{\"dataType\":[\"number\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"rating\"},{\"dataType\":[\"boolean\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"published\"},{\"dataType\":[\"date\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"publishedAt\"},{\"dataType\":[\"geoCoordinates\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"location\"},{\"dataType\":[\"object\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"meta\",\"nestedProperties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"source\",\"tokenization\":\"word\"},{\"dataType\":[\"int\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"revision\"}]},{\"dataType\":[\"Author\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"writtenBy\"}],\"shardingConfig\":{\"actualCount\":1,\"actualVirtualCount\":128,\"desiredCount\":1,\"desiredVirtualCount\":128,\"function\":\"murmur3\",\"key\":\"_id\",\"strategy\":\"hash\",\"virtualPerPhysical\":128},\"vectorIndexConfig\":{\"bq\":{\"enabled\":false},\"cleanupIntervalSeconds\":300,\"distance\":\"cosine\",\"dynamicEfFactor\":8,\"dynamicEfMax\":500,\"dynamicEfMin\":100,\"ef\":-1,\"efConstruction\":128,\"filterStrategy\":\"acorn\",\"flatSearchCutoff\":40000,\"maxConnections\":32,\"multivector\":{\"aggregation\":\"maxSim\",\"enabled\":false,\"muvera\":{\"dprojections\":16,\"enabled\":false,\"ksim\":4,\"repetitions\":10}},\"pq\":{\"bitCompression\":false,\"centroids\":256,\"enabled\":false,\"encoder\":{\"distribution\":\"log-normal\",\"type\":\"kmeans\"},\"segments\":0,\"trainingLimit\":100000},\"rq\":{\"bits\":8,\"enabled\":false,\"rescoreLimit\":20},\"skip\":false,\"skipDefaultQuantization\":false,\"sq\":{\"enabled\":false,\"rescoreLimit\":20,\"trainingLimit\":100000},\"trackDefaultQuantization\":false,\"vectorCacheMaxObjects\":1000000000000},\"vectorIndexType\":\"hnsw\",\"vectorizer\":\"none\",\"replicationConfig\":{\"deletionStrategy\":\"TimeBasedResolution\",\"factor\":1,\"asyncEnabled\":false}}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "POST",
+      "path": "/v1/graphql",
+      "body": "{\"query\":\"{Aggregate{Article{meta{count}}}}\"}",
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"data\":{\"Aggregate\":{\"Article\":[{\"meta\":{\"count\":500}}]}}}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/schema/Article",
+      "body": null,
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"class\":\"Article\",\"description\":\"one unnamed vector, a cross-reference and the common property types\",\"invertedIndexConfig\":{\"bm25\":{\"b\":0.75,\"k1\":1.2},\"cleanupIntervalSeconds\":60,\"indexTimestamps\":true,\"stopwords\":{\"additions\":null,\"preset\":\"en\",\"removals\":null},\"usingBlockMaxWAND\":true},\"multiTenancyConfig\":{\"autoTenantActivation\":false,\"autoTenantCreation\":false,\"enabled\":false},\"properties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"title\",\"tokenization\":\"word\"},{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"body\",\"tokenization\":\"word\"},{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"category\",\"tokenization\":\"field\"},{\"dataType\":[\"text[]\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"tags\",\"tokenization\":\"word\"},{\"dataType\":[\"int\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"wordCount\"},{\"dataType\":[\"number\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"rating\"},{\"dataType\":[\"boolean\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"published\"},{\"dataType\":[\"date\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"publishedAt\"},{\"dataType\":[\"geoCoordinates\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"location\"},{\"dataType\":[\"object\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"meta\",\"nestedProperties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"source\",\"tokenization\":\"word\"},{\"dataType\":[\"int\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"revision\"}]},{\"dataType\":[\"Author\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"writtenBy\"}],\"shardingConfig\":{\"actualCount\":1,\"actualVirtualCount\":128,\"desiredCount\":1,\"desiredVirtualCount\":128,\"function\":\"murmur3\",\"key\":\"_id\",\"strategy\":\"hash\",\"virtualPerPhysical\":128},\"vectorIndexConfig\":{\"bq\":{\"enabled\":false},\"cleanupIntervalSeconds\":300,\"distance\":\"cosine\",\"dynamicEfFactor\":8,\"dynamicEfMax\":500,\"dynamicEfMin\":100,\"ef\":-1,\"efConstruction\":128,\"filterStrategy\":\"acorn\",\"flatSearchCutoff\":40000,\"maxConnections\":32,\"multivector\":{\"aggregation\":\"maxSim\",\"enabled\":false,\"muvera\":{\"dprojections\":16,\"enabled\":false,\"ksim\":4,\"repetitions\":10}},\"pq\":{\"bitCompression\":false,\"centroids\":256,\"enabled\":false,\"encoder\":{\"distribution\":\"log-normal\",\"type\":\"kmeans\"},\"segments\":0,\"trainingLimit\":100000},\"rq\":{\"bits\":8,\"enabled\":false,\"rescoreLimit\":20},\"skip\":false,\"skipDefaultQuantization\":false,\"sq\":{\"enabled\":false,\"rescoreLimit\":20,\"trainingLimit\":100000},\"trackDefaultQuantization\":false,\"vectorCacheMaxObjects\":1000000000000},\"vectorIndexType\":\"hnsw\",\"vectorizer\":\"none\",\"replicationConfig\":{\"deletionStrategy\":\"TimeBasedResolution\",\"factor\":1,\"asyncEnabled\":false}}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "POST",
+      "path": "/v1/graphql",
+      "body": "{\"query\":\"{Aggregate{Article{meta{count}}}}\"}",
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"data\":{\"Aggregate\":{\"Article\":[{\"meta\":{\"count\":500}}]}}}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/schema/Article",
+      "body": null,
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"class\":\"Article\",\"description\":\"one unnamed vector, a cross-reference and the common property types\",\"invertedIndexConfig\":{\"bm25\":{\"b\":0.75,\"k1\":1.2},\"cleanupIntervalSeconds\":60,\"indexTimestamps\":true,\"stopwords\":{\"additions\":null,\"preset\":\"en\",\"removals\":null},\"usingBlockMaxWAND\":true},\"multiTenancyConfig\":{\"autoTenantActivation\":false,\"autoTenantCreation\":false,\"enabled\":false},\"properties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"title\",\"tokenization\":\"word\"},{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"body\",\"tokenization\":\"word\"},{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"category\",\"tokenization\":\"field\"},{\"dataType\":[\"text[]\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"tags\",\"tokenization\":\"word\"},{\"dataType\":[\"int\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"wordCount\"},{\"dataType\":[\"number\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"rating\"},{\"dataType\":[\"boolean\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"published\"},{\"dataType\":[\"date\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"publishedAt\"},{\"dataType\":[\"geoCoordinates\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"location\"},{\"dataType\":[\"object\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"meta\",\"nestedProperties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"source\",\"tokenization\":\"word\"},{\"dataType\":[\"int\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"revision\"}]},{\"dataType\":[\"Author\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"writtenBy\"}],\"shardingConfig\":{\"actualCount\":1,\"actualVirtualCount\":128,\"desiredCount\":1,\"desiredVirtualCount\":128,\"function\":\"murmur3\",\"key\":\"_id\",\"strategy\":\"hash\",\"virtualPerPhysical\":128},\"vectorIndexConfig\":{\"bq\":{\"enabled\":false},\"cleanupIntervalSeconds\":300,\"distance\":\"cosine\",\"dynamicEfFactor\":8,\"dynamicEfMax\":500,\"dynamicEfMin\":100,\"ef\":-1,\"efConstruction\":128,\"filterStrategy\":\"acorn\",\"flatSearchCutoff\":40000,\"maxConnections\":32,\"multivector\":{\"aggregation\":\"maxSim\",\"enabled\":false,\"muvera\":{\"dprojections\":16,\"enabled\":false,\"ksim\":4,\"repetitions\":10}},\"pq\":{\"bitCompression\":false,\"centroids\":256,\"enabled\":false,\"encoder\":{\"distribution\":\"log-normal\",\"type\":\"kmeans\"},\"segments\":0,\"trainingLimit\":100000},\"rq\":{\"bits\":8,\"enabled\":false,\"rescoreLimit\":20},\"skip\":false,\"skipDefaultQuantization\":false,\"sq\":{\"enabled\":false,\"rescoreLimit\":20,\"trainingLimit\":100000},\"trackDefaultQuantization\":false,\"vectorCacheMaxObjects\":1000000000000},\"vectorIndexType\":\"hnsw\",\"vectorizer\":\"none\",\"replicationConfig\":{\"deletionStrategy\":\"TimeBasedResolution\",\"factor\":1,\"asyncEnabled\":false}}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "POST",
+      "path": "/v1/graphql",
+      "body": "{\"query\":\"{Aggregate{Article(groupBy:[\\\"category\\\"],limit:100){meta{count} groupedBy{value path}}}}\"}",
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"data\":{\"Aggregate\":{\"Article\":[{\"groupedBy\":{\"path\":[\"category\"],\"value\":\"epsilon\"},\"meta\":{\"count\":100}},{\"groupedBy\":{\"path\":[\"category\"],\"value\":\"alpha\"},\"meta\":{\"count\":100}},{\"groupedBy\":{\"path\":[\"category\"],\"value\":\"beta\"},\"meta\":{\"count\":100}},{\"groupedBy\":{\"path\":[\"category\"],\"value\":\"delta\"},\"meta\":{\"count\":100}},{\"groupedBy\":{\"path\":[\"category\"],\"value\":\"gamma\"},\"meta\":{\"count\":100}}]}}}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/schema/TenantNotes",
+      "body": null,
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"class\":\"TenantNotes\",\"description\":\"multi-tenant, a read does not activate a tenant\",\"invertedIndexConfig\":{\"bm25\":{\"b\":0.75,\"k1\":1.2},\"cleanupIntervalSeconds\":60,\"stopwords\":{\"additions\":null,\"preset\":\"en\",\"removals\":null},\"usingBlockMaxWAND\":true},\"multiTenancyConfig\":{\"autoTenantActivation\":false,\"autoTenantCreation\":false,\"enabled\":true},\"properties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"note\",\"tokenization\":\"word\"},{\"dataType\":[\"int\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"seq\"}],\"shardingConfig\":{\"actualCount\":0,\"actualVirtualCount\":0,\"desiredCount\":0,\"desiredVirtualCount\":0,\"function\":\"\",\"key\":\"\",\"strategy\":\"\",\"virtualPerPhysical\":0},\"vectorIndexConfig\":{\"bq\":{\"enabled\":false},\"cleanupIntervalSeconds\":300,\"distance\":\"cosine\",\"dynamicEfFactor\":8,\"dynamicEfMax\":500,\"dynamicEfMin\":100,\"ef\":-1,\"efConstruction\":128,\"filterStrategy\":\"acorn\",\"flatSearchCutoff\":40000,\"maxConnections\":32,\"multivector\":{\"aggregation\":\"maxSim\",\"enabled\":false,\"muvera\":{\"dprojections\":16,\"enabled\":false,\"ksim\":4,\"repetitions\":10}},\"pq\":{\"bitCompression\":false,\"centroids\":256,\"enabled\":false,\"encoder\":{\"distribution\":\"log-normal\",\"type\":\"kmeans\"},\"segments\":0,\"trainingLimit\":100000},\"rq\":{\"bits\":8,\"enabled\":false,\"rescoreLimit\":20},\"skip\":false,\"skipDefaultQuantization\":false,\"sq\":{\"enabled\":false,\"rescoreLimit\":20,\"trainingLimit\":100000},\"trackDefaultQuantization\":false,\"vectorCacheMaxObjects\":1000000000000},\"vectorIndexType\":\"hnsw\",\"vectorizer\":\"none\",\"replicationConfig\":{\"deletionStrategy\":\"TimeBasedResolution\",\"factor\":1,\"asyncEnabled\":false}}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/schema/TenantNotes/tenants/acme",
+      "body": null,
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"activityStatus\":\"HOT\",\"name\":\"acme\"}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "POST",
+      "path": "/v1/graphql",
+      "body": "{\"query\":\"{Aggregate{TenantNotes(tenant:\\\"acme\\\"){meta{count}}}}\"}",
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"data\":{\"Aggregate\":{\"TenantNotes\":[{\"meta\":{\"count\":20}}]}}}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/schema/TenantNotes",
+      "body": null,
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"class\":\"TenantNotes\",\"description\":\"multi-tenant, a read does not activate a tenant\",\"invertedIndexConfig\":{\"bm25\":{\"b\":0.75,\"k1\":1.2},\"cleanupIntervalSeconds\":60,\"stopwords\":{\"additions\":null,\"preset\":\"en\",\"removals\":null},\"usingBlockMaxWAND\":true},\"multiTenancyConfig\":{\"autoTenantActivation\":false,\"autoTenantCreation\":false,\"enabled\":true},\"properties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"note\",\"tokenization\":\"word\"},{\"dataType\":[\"int\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"seq\"}],\"shardingConfig\":{\"actualCount\":0,\"actualVirtualCount\":0,\"desiredCount\":0,\"desiredVirtualCount\":0,\"function\":\"\",\"key\":\"\",\"strategy\":\"\",\"virtualPerPhysical\":0},\"vectorIndexConfig\":{\"bq\":{\"enabled\":false},\"cleanupIntervalSeconds\":300,\"distance\":\"cosine\",\"dynamicEfFactor\":8,\"dynamicEfMax\":500,\"dynamicEfMin\":100,\"ef\":-1,\"efConstruction\":128,\"filterStrategy\":\"acorn\",\"flatSearchCutoff\":40000,\"maxConnections\":32,\"multivector\":{\"aggregation\":\"maxSim\",\"enabled\":false,\"muvera\":{\"dprojections\":16,\"enabled\":false,\"ksim\":4,\"repetitions\":10}},\"pq\":{\"bitCompression\":false,\"centroids\":256,\"enabled\":false,\"encoder\":{\"distribution\":\"log-normal\",\"type\":\"kmeans\"},\"segments\":0,\"trainingLimit\":100000},\"rq\":{\"bits\":8,\"enabled\":false,\"rescoreLimit\":20},\"skip\":false,\"skipDefaultQuantization\":false,\"sq\":{\"enabled\":false,\"rescoreLimit\":20,\"trainingLimit\":100000},\"trackDefaultQuantization\":false,\"vectorCacheMaxObjects\":1000000000000},\"vectorIndexType\":\"hnsw\",\"vectorizer\":\"none\",\"replicationConfig\":{\"deletionStrategy\":\"TimeBasedResolution\",\"factor\":1,\"asyncEnabled\":false}}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/schema/TenantNotes/tenants/initech",
+      "body": null,
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"activityStatus\":\"COLD\",\"name\":\"initech\"}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/schema/Empty",
+      "body": null,
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"class\":\"Empty\",\"description\":\"no objects\",\"invertedIndexConfig\":{\"bm25\":{\"b\":0.75,\"k1\":1.2},\"cleanupIntervalSeconds\":60,\"stopwords\":{\"additions\":null,\"preset\":\"en\",\"removals\":null},\"usingBlockMaxWAND\":true},\"multiTenancyConfig\":{\"autoTenantActivation\":false,\"autoTenantCreation\":false,\"enabled\":false},\"properties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"label\",\"tokenization\":\"word\"}],\"shardingConfig\":{\"actualCount\":1,\"actualVirtualCount\":128,\"desiredCount\":1,\"desiredVirtualCount\":128,\"function\":\"murmur3\",\"key\":\"_id\",\"strategy\":\"hash\",\"virtualPerPhysical\":128},\"vectorIndexConfig\":{\"bq\":{\"enabled\":false},\"cleanupIntervalSeconds\":300,\"distance\":\"cosine\",\"dynamicEfFactor\":8,\"dynamicEfMax\":500,\"dynamicEfMin\":100,\"ef\":-1,\"efConstruction\":128,\"filterStrategy\":\"acorn\",\"flatSearchCutoff\":40000,\"maxConnections\":32,\"multivector\":{\"aggregation\":\"maxSim\",\"enabled\":false,\"muvera\":{\"dprojections\":16,\"enabled\":false,\"ksim\":4,\"repetitions\":10}},\"pq\":{\"bitCompression\":false,\"centroids\":256,\"enabled\":false,\"encoder\":{\"distribution\":\"log-normal\",\"type\":\"kmeans\"},\"segments\":0,\"trainingLimit\":100000},\"rq\":{\"bits\":8,\"enabled\":false,\"rescoreLimit\":20},\"skip\":false,\"skipDefaultQuantization\":false,\"sq\":{\"enabled\":false,\"rescoreLimit\":20,\"trainingLimit\":100000},\"trackDefaultQuantization\":false,\"vectorCacheMaxObjects\":1000000000000},\"vectorIndexType\":\"hnsw\",\"vectorizer\":\"none\",\"replicationConfig\":{\"deletionStrategy\":\"TimeBasedResolution\",\"factor\":1,\"asyncEnabled\":false}}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "POST",
+      "path": "/v1/graphql",
+      "body": "{\"query\":\"{Aggregate{Empty{meta{count}}}}\"}",
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"data\":{\"Aggregate\":{\"Empty\":[{\"meta\":{\"count\":0}}]}}}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/schema/Article",
+      "body": null,
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"class\":\"Article\",\"description\":\"one unnamed vector, a cross-reference and the common property types\",\"invertedIndexConfig\":{\"bm25\":{\"b\":0.75,\"k1\":1.2},\"cleanupIntervalSeconds\":60,\"indexTimestamps\":true,\"stopwords\":{\"additions\":null,\"preset\":\"en\",\"removals\":null},\"usingBlockMaxWAND\":true},\"multiTenancyConfig\":{\"autoTenantActivation\":false,\"autoTenantCreation\":false,\"enabled\":false},\"properties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"title\",\"tokenization\":\"word\"},{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"body\",\"tokenization\":\"word\"},{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"category\",\"tokenization\":\"field\"},{\"dataType\":[\"text[]\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"tags\",\"tokenization\":\"word\"},{\"dataType\":[\"int\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"wordCount\"},{\"dataType\":[\"number\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"rating\"},{\"dataType\":[\"boolean\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"published\"},{\"dataType\":[\"date\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"publishedAt\"},{\"dataType\":[\"geoCoordinates\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"location\"},{\"dataType\":[\"object\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"meta\",\"nestedProperties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"source\",\"tokenization\":\"word\"},{\"dataType\":[\"int\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"revision\"}]},{\"dataType\":[\"Author\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"writtenBy\"}],\"shardingConfig\":{\"actualCount\":1,\"actualVirtualCount\":128,\"desiredCount\":1,\"desiredVirtualCount\":128,\"function\":\"murmur3\",\"key\":\"_id\",\"strategy\":\"hash\",\"virtualPerPhysical\":128},\"vectorIndexConfig\":{\"bq\":{\"enabled\":false},\"cleanupIntervalSeconds\":300,\"distance\":\"cosine\",\"dynamicEfFactor\":8,\"dynamicEfMax\":500,\"dynamicEfMin\":100,\"ef\":-1,\"efConstruction\":128,\"filterStrategy\":\"acorn\",\"flatSearchCutoff\":40000,\"maxConnections\":32,\"multivector\":{\"aggregation\":\"maxSim\",\"enabled\":false,\"muvera\":{\"dprojections\":16,\"enabled\":false,\"ksim\":4,\"repetitions\":10}},\"pq\":{\"bitCompression\":false,\"centroids\":256,\"enabled\":false,\"encoder\":{\"distribution\":\"log-normal\",\"type\":\"kmeans\"},\"segments\":0,\"trainingLimit\":100000},\"rq\":{\"bits\":8,\"enabled\":false,\"rescoreLimit\":20},\"skip\":false,\"skipDefaultQuantization\":false,\"sq\":{\"enabled\":false,\"rescoreLimit\":20,\"trainingLimit\":100000},\"trackDefaultQuantization\":false,\"vectorCacheMaxObjects\":1000000000000},\"vectorIndexType\":\"hnsw\",\"vectorizer\":\"none\",\"replicationConfig\":{\"deletionStrategy\":\"TimeBasedResolution\",\"factor\":1,\"asyncEnabled\":false}}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "POST",
+      "path": "/v1/graphql",
+      "body": "{\"query\":\"{Aggregate{Article(where:{path:[\\\"location\\\"],operator:WithinGeoRange,valueGeoRange:{geoCoordinates:{latitude:41,longitude:29},distance:{max:3000000}}}){meta{count}}}}\"}",
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"data\":{\"Aggregate\":{\"Article\":[{\"meta\":{\"count\":500}}]}}}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/schema/Article",
+      "body": null,
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"class\":\"Article\",\"description\":\"one unnamed vector, a cross-reference and the common property types\",\"invertedIndexConfig\":{\"bm25\":{\"b\":0.75,\"k1\":1.2},\"cleanupIntervalSeconds\":60,\"indexTimestamps\":true,\"stopwords\":{\"additions\":null,\"preset\":\"en\",\"removals\":null},\"usingBlockMaxWAND\":true},\"multiTenancyConfig\":{\"autoTenantActivation\":false,\"autoTenantCreation\":false,\"enabled\":false},\"properties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"title\",\"tokenization\":\"word\"},{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"body\",\"tokenization\":\"word\"},{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"category\",\"tokenization\":\"field\"},{\"dataType\":[\"text[]\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"tags\",\"tokenization\":\"word\"},{\"dataType\":[\"int\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"wordCount\"},{\"dataType\":[\"number\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"rating\"},{\"dataType\":[\"boolean\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"published\"},{\"dataType\":[\"date\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"publishedAt\"},{\"dataType\":[\"geoCoordinates\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"location\"},{\"dataType\":[\"object\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"meta\",\"nestedProperties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"source\",\"tokenization\":\"word\"},{\"dataType\":[\"int\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"revision\"}]},{\"dataType\":[\"Author\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"writtenBy\"}],\"shardingConfig\":{\"actualCount\":1,\"actualVirtualCount\":128,\"desiredCount\":1,\"desiredVirtualCount\":128,\"function\":\"murmur3\",\"key\":\"_id\",\"strategy\":\"hash\",\"virtualPerPhysical\":128},\"vectorIndexConfig\":{\"bq\":{\"enabled\":false},\"cleanupIntervalSeconds\":300,\"distance\":\"cosine\",\"dynamicEfFactor\":8,\"dynamicEfMax\":500,\"dynamicEfMin\":100,\"ef\":-1,\"efConstruction\":128,\"filterStrategy\":\"acorn\",\"flatSearchCutoff\":40000,\"maxConnections\":32,\"multivector\":{\"aggregation\":\"maxSim\",\"enabled\":false,\"muvera\":{\"dprojections\":16,\"enabled\":false,\"ksim\":4,\"repetitions\":10}},\"pq\":{\"bitCompression\":false,\"centroids\":256,\"enabled\":false,\"encoder\":{\"distribution\":\"log-normal\",\"type\":\"kmeans\"},\"segments\":0,\"trainingLimit\":100000},\"rq\":{\"bits\":8,\"enabled\":false,\"rescoreLimit\":20},\"skip\":false,\"skipDefaultQuantization\":false,\"sq\":{\"enabled\":false,\"rescoreLimit\":20,\"trainingLimit\":100000},\"trackDefaultQuantization\":false,\"vectorCacheMaxObjects\":1000000000000},\"vectorIndexType\":\"hnsw\",\"vectorizer\":\"none\",\"replicationConfig\":{\"deletionStrategy\":\"TimeBasedResolution\",\"factor\":1,\"asyncEnabled\":false}}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "POST",
+      "path": "/v1/graphql",
+      "body": "{\"query\":\"{Aggregate{Article(where:{operator:And,operands:[{path:[\\\"published\\\"],operator:Equal,valueBoolean:true},{path:[\\\"location\\\"],operator:WithinGeoRange,valueGeoRange:{geoCoordinates:{latitude:41,longitude:29},distance:{max:3000000}}}]}){meta{count}}}}\"}",
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"data\":{\"Aggregate\":{\"Article\":[{\"meta\":{\"count\":333}}]}}}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/schema/Article",
+      "body": null,
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"class\":\"Article\",\"description\":\"one unnamed vector, a cross-reference and the common property types\",\"invertedIndexConfig\":{\"bm25\":{\"b\":0.75,\"k1\":1.2},\"cleanupIntervalSeconds\":60,\"indexTimestamps\":true,\"stopwords\":{\"additions\":null,\"preset\":\"en\",\"removals\":null},\"usingBlockMaxWAND\":true},\"multiTenancyConfig\":{\"autoTenantActivation\":false,\"autoTenantCreation\":false,\"enabled\":false},\"properties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"title\",\"tokenization\":\"word\"},{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"body\",\"tokenization\":\"word\"},{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"category\",\"tokenization\":\"field\"},{\"dataType\":[\"text[]\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"tags\",\"tokenization\":\"word\"},{\"dataType\":[\"int\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"wordCount\"},{\"dataType\":[\"number\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"rating\"},{\"dataType\":[\"boolean\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"published\"},{\"dataType\":[\"date\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"publishedAt\"},{\"dataType\":[\"geoCoordinates\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"location\"},{\"dataType\":[\"object\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"meta\",\"nestedProperties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"source\",\"tokenization\":\"word\"},{\"dataType\":[\"int\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"revision\"}]},{\"dataType\":[\"Author\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"writtenBy\"}],\"shardingConfig\":{\"actualCount\":1,\"actualVirtualCount\":128,\"desiredCount\":1,\"desiredVirtualCount\":128,\"function\":\"murmur3\",\"key\":\"_id\",\"strategy\":\"hash\",\"virtualPerPhysical\":128},\"vectorIndexConfig\":{\"bq\":{\"enabled\":false},\"cleanupIntervalSeconds\":300,\"distance\":\"cosine\",\"dynamicEfFactor\":8,\"dynamicEfMax\":500,\"dynamicEfMin\":100,\"ef\":-1,\"efConstruction\":128,\"filterStrategy\":\"acorn\",\"flatSearchCutoff\":40000,\"maxConnections\":32,\"multivector\":{\"aggregation\":\"maxSim\",\"enabled\":false,\"muvera\":{\"dprojections\":16,\"enabled\":false,\"ksim\":4,\"repetitions\":10}},\"pq\":{\"bitCompression\":false,\"centroids\":256,\"enabled\":false,\"encoder\":{\"distribution\":\"log-normal\",\"type\":\"kmeans\"},\"segments\":0,\"trainingLimit\":100000},\"rq\":{\"bits\":8,\"enabled\":false,\"rescoreLimit\":20},\"skip\":false,\"skipDefaultQuantization\":false,\"sq\":{\"enabled\":false,\"rescoreLimit\":20,\"trainingLimit\":100000},\"trackDefaultQuantization\":false,\"vectorCacheMaxObjects\":1000000000000},\"vectorIndexType\":\"hnsw\",\"vectorizer\":\"none\",\"replicationConfig\":{\"deletionStrategy\":\"TimeBasedResolution\",\"factor\":1,\"asyncEnabled\":false}}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "POST",
+      "path": "/v1/graphql",
+      "body": "{\"query\":\"{Get{Article(where:{path:[\\\"tags\\\"],operator:ContainsAny,valueText:[\\\"graph\\\",\\\"shard\\\"]},bm25:{query:\\\"vector\\\"},limit:50){title _additional{id}}}}\"}",
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"data\":{\"Get\":{\"Article\":[{\"_additional\":{\"id\":\"5878774a-b088-5365-803b-f38de3ae1785\"},\"title\":\"article 271 cosine schema\"},{\"_additional\":{\"id\":\"0245f640-b59b-53d9-9c84-456331b99614\"},\"title\":\"article 260 vector recall\"},{\"_additional\":{\"id\":\"78dfc127-4ef9-5643-9476-410f7efe648f\"},\"title\":\"article 405 cosine vector\"},{\"_additional\":{\"id\":\"97059d77-2db1-5521-855a-7fe8043015cc\"},\"title\":\"article 273 vector property\"},{\"_additional\":{\"id\":\"8fc2a823-3c0d-5585-87a8-ada81a6e779d\"},\"title\":\"article 065 property collection\"},{\"_additional\":{\"id\":\"5950025b-9947-5837-bc3d-b08a911897a1\"},\"title\":\"article 262 vector node\"},{\"_additional\":{\"id\":\"5e20ba2a-e7f3-5cf1-8515-7d74da53ab9f\"},\"title\":\"article 282 filter vector\"},{\"_additional\":{\"id\":\"568019d7-fa21-5d7b-98a7-126890f32e51\"},\"title\":\"article 341 node index\"},{\"_additional\":{\"id\":\"97bf6379-894b-5304-a05d-dc88e2efb96d\"},\"title\":\"article 334 quantize filter\"},{\"_additional\":{\"id\":\"adbe9c20-828e-5543-ab79-5fe3cd27be37\"},\"title\":\"article 224 vector shard\"},{\"_additional\":{\"id\":\"b181572c-0cdf-5f13-bde8-87fd7f1ce823\"},\"title\":\"article 328 filter property\"},{\"_additional\":{\"id\":\"e66f149e-51db-5bdb-afb2-d0fb6d47873d\"},\"title\":\"article 164 keyword node\"},{\"_additional\":{\"id\":\"9cd5f0ba-baff-56a1-a2a9-053ebc89309e\"},\"title\":\"article 403 search schema\"},{\"_additional\":{\"id\":\"d84aef74-a1a2-5534-964c-4f2f13f5b040\"},\"title\":\"article 463 keyword cosine\"},{\"_additional\":{\"id\":\"df43df7f-7493-5b64-b8d1-03be6a838dd8\"},\"title\":\"article 037 object node\"},{\"_additional\":{\"id\":\"109ab621-699c-521a-a71d-8761665a0fd2\"},\"title\":\"article 240 filter keyword\"},{\"_additional\":{\"id\":\"11910949-1a12-5d12-9c1c-015c150aa53c\"},\"title\":\"article 257 property graph\"},{\"_additional\":{\"id\":\"154cade8-3800-54f7-86bf-11940efda50c\"},\"title\":\"article 063 replica keyword\"},{\"_additional\":{\"id\":\"15a7167f-5614-5907-9c37-6ec7ac2faec3\"},\"title\":\"article 242 cosine shard\"},{\"_additional\":{\"id\":\"15b9b024-cbbe-506e-8cc6-b547ef29d366\"},\"title\":\"article 427 engine object\"},{\"_additional\":{\"id\":\"3bf3c3da-3b9d-586e-be52-058c017d408b\"},\"title\":\"article 034 cosine replica\"},{\"_additional\":{\"id\":\"675a3068-3c33-5279-937b-a1e55d8858e5\"},\"title\":\"article 043 shard tenant\"},{\"_additional\":{\"id\":\"71ad2be0-c4cb-5d55-ae14-45aaea14f4a9\"},\"title\":\"article 245 property shard\"},{\"_additional\":{\"id\":\"83a602fc-404e-56fb-9faf-f9405e6f50eb\"},\"title\":\"article 426 cosine recall\"},{\"_additional\":{\"id\":\"9eeef104-fb18-58a8-83ef-63db7229b331\"},\"title\":\"article 156 index hybrid\"},{\"_additional\":{\"id\":\"aa03ca5a-de8c-5f92-b16e-f9e2c32edb5d\"},\"title\":\"article 385 hybrid cosine\"},{\"_additional\":{\"id\":\"b32a7a72-6389-5bb4-9947-49abf9b9cd91\"},\"title\":\"article 278 shard engine\"},{\"_additional\":{\"id\":\"c7a72ea7-5103-5ef4-b0b7-94052e81e528\"},\"title\":\"article 129 cosine tenant\"},{\"_additional\":{\"id\":\"efe60c07-cd04-5435-955b-e0f657176bae\"},\"title\":\"article 324 tenant alias\"},{\"_additional\":{\"id\":\"c9985312-f531-5ed2-a0f4-c4f070fcaffa\"},\"title\":\"article 492 search node\"},{\"_additional\":{\"id\":\"00139992-3118-5ccc-bfac-42062afb1418\"},\"title\":\"article 042 index search\"},{\"_additional\":{\"id\":\"16f723f0-5c76-5f11-9cae-c8d970510c4a\"},\"title\":\"article 023 shard search\"},{\"_additional\":{\"id\":\"2716ffdb-f678-5f5e-a25b-7597d419a8f6\"},\"title\":\"article 040 shard graph\"},{\"_additional\":{\"id\":\"28a5ee00-944b-5fbe-bb71-775ef97aae95\"},\"title\":\"article 024 filter vector\"},{\"_additional\":{\"id\":\"30c49f98-46cc-51c8-9364-f0f544bd99f3\"},\"title\":\"article 161 object quantize\"},{\"_additional\":{\"id\":\"3968998f-7416-5e44-a02b-3d4f6a76d28d\"},\"title\":\"article 047 hybrid property\"},{\"_additional\":{\"id\":\"3b5e188a-dba4-551c-a4c2-2743202df1bb\"},\"title\":\"article 189 schema property\"},{\"_additional\":{\"id\":\"4d89b5b1-1efa-561a-add6-06731ea73da5\"},\"title\":\"article 197 keyword node\"},{\"_additional\":{\"id\":\"4e9f48c4-d174-52ff-becc-c2d72ea4fcde\"},\"title\":\"article 128 replica object\"},{\"_additional\":{\"id\":\"536bc3a8-9bff-5042-bfb2-f9d9cbecc250\"},\"title\":\"article 066 shard object\"},{\"_additional\":{\"id\":\"69b31860-8732-512f-aef1-79d35b48ed84\"},\"title\":\"article 244 cosine engine\"},{\"_additional\":{\"id\":\"754bf866-c2db-5a9b-929e-f69ba6555b80\"},\"title\":\"article 185 search filter\"},{\"_additional\":{\"id\":\"8d4e0b7b-e646-5fce-8c75-448bded66eb1\"},\"title\":\"article 044 quantize object\"},{\"_additional\":{\"id\":\"a8212a0a-ba71-5ab9-9408-9158262a5711\"},\"title\":\"article 202 index tenant\"},{\"_additional\":{\"id\":\"a8eadb65-e8e1-5db4-b088-9bae6988ee67\"},\"title\":\"article 144 collection graph\"},{\"_additional\":{\"id\":\"a9d0efad-a959-552b-b65a-fda42cdbe2cd\"},\"title\":\"article 117 collection graph\"},{\"_additional\":{\"id\":\"b3c2ed60-4a50-5b93-97f3-d379133c266c\"},\"title\":\"article 237 replica object\"},{\"_additional\":{\"id\":\"b5391a2a-6084-55bd-ad80-c17ce6392439\"},\"title\":\"article 174 quantize tenant\"},{\"_additional\":{\"id\":\"d976ca88-a069-5460-a816-70339070c4ce\"},\"title\":\"article 029 filter property\"},{\"_additional\":{\"id\":\"fb3cde60-51fc-5a23-b3cd-5914001d0b7b\"},\"title\":\"article 264 recall quantize\"}]}}}\n"
+      },
+      "thrown": null
+    }
+  ],
+  "outcomes": [
+    {
+      "step": "connect",
+      "value": null
+    },
+    {
+      "step": "query POST /v1/search/Article/bm25 {\"query\": \"vector\", \"limit\": 3, \"returnProperties\": [\"title\", \"wordCount\"], \"returnMetadata\": [\"score\"]}",
+      "value": {
+        "fields": [
+          "$id",
+          "title",
+          "wordCount",
+          "$score"
+        ],
+        "rows": [
+          {
+            "$id": "5878774a-b088-5365-803b-f38de3ae1785",
+            "title": "article 271 cosine schema",
+            "wordCount": 371,
+            "$score": 1.7275589
+          },
+          {
+            "$id": "c5ea6507-374d-559f-8ee9-270bd411c288",
+            "title": "article 001 schema vector",
+            "wordCount": 101,
+            "$score": 1.2622087
+          },
+          {
+            "$id": "6a685778-9bb0-5b39-b66e-20e12491d845",
+            "title": "article 494 index graph",
+            "wordCount": 594,
+            "$score": 1.0772038
+          }
+        ],
+        "rowCount": 3,
+        "columnTypes": {
+          "$id": "uuid",
+          "$score": "score, higher is better"
+        },
+        "warnings": [
+          {
+            "message": "Answered via GraphQL."
+          }
+        ]
+      }
+    },
+    {
+      "step": "query POST /v1/search/Article/bm25 {\"query\": \"vector\", \"where\": {\"path\": [\"category\"], \"operator\": \"Equal\", \"valueText\": \"alpha\"}, \"limit\": 2, \"returnProperties\": [\"title\", \"category\"]}",
+      "value": {
+        "fields": [
+          "$id",
+          "title",
+          "category"
+        ],
+        "rows": [
+          {
+            "$id": "0245f640-b59b-53d9-9c84-456331b99614",
+            "title": "article 260 vector recall",
+            "category": "alpha"
+          },
+          {
+            "$id": "8fc2a823-3c0d-5585-87a8-ada81a6e779d",
+            "title": "article 065 property collection",
+            "category": "alpha"
+          }
+        ],
+        "rowCount": 2,
+        "columnTypes": {
+          "$id": "uuid"
+        },
+        "warnings": [
+          {
+            "message": "Answered via GraphQL."
+          }
+        ]
+      }
+    },
+    {
+      "step": "query POST /v1/search/Article/bm25 {\"query\": \"vector\", \"limit\": 2}",
+      "value": {
+        "fields": [
+          "$id",
+          "title",
+          "body",
+          "category",
+          "tags",
+          "wordCount",
+          "rating",
+          "published",
+          "publishedAt",
+          "location",
+          "meta"
+        ],
+        "rows": [
+          {
+            "$id": "5878774a-b088-5365-803b-f38de3ae1785",
+            "title": "article 271 cosine schema",
+            "body": "schema replica vector hybrid index index vector vector cosine tenant keyword hybrid",
+            "category": "beta",
+            "tags": [
+              "graph",
+              "vector"
+            ],
+            "wordCount": 371,
+            "rating": 2.71,
+            "published": true,
+            "publishedAt": "2026-10-01T12:00:00Z",
+            "location": {
+              "latitude": 59.708,
+              "longitude": 24.7536
+            },
+            "meta": {
+              "revision": 3,
+              "source": "seed"
+            }
+          },
+          {
+            "$id": "c5ea6507-374d-559f-8ee9-270bd411c288",
+            "title": "article 001 schema vector",
+            "body": "tenant tenant index object object node schema shard collection object tenant alias",
+            "category": "beta",
+            "tags": [
+              "replica",
+              "tenant",
+              "vector"
+            ],
+            "wordCount": 101,
+            "rating": 0.01,
+            "published": true,
+            "publishedAt": "2026-10-01T12:00:00Z",
+            "location": {
+              "latitude": 59.438,
+              "longitude": 24.7536
+            },
+            "meta": {
+              "revision": 1,
+              "source": "seed"
+            }
+          }
+        ],
+        "rowCount": 2,
+        "columnTypes": {
+          "$id": "uuid"
+        },
+        "warnings": [
+          {
+            "message": "Answered via GraphQL."
+          }
+        ]
+      }
+    },
+    {
+      "step": "query POST /v1/search/Article/near-vector {\"vector\": [0.1,-0.2,0.3,0.4,-0.5,0.6,0.7,-0.8,0.9,0.1,0.2,-0.3,0.4,0.5,-0.6,0.7], \"limit\": 2, \"returnProperties\": [\"title\"], \"returnMetadata\": [\"distance\"]}",
+      "value": {
+        "fields": [
+          "$id",
+          "title",
+          "$distance"
+        ],
+        "rows": [
+          {
+            "$id": "8d4e0b7b-e646-5fce-8c75-448bded66eb1",
+            "title": "article 044 quantize object",
+            "$distance": 0.23860067
+          },
+          {
+            "$id": "b3dbaa8b-f6d5-53d4-bc9c-66ee6393b3de",
+            "title": "article 428 alias keyword",
+            "$distance": 0.38131392
+          }
+        ],
+        "rowCount": 2,
+        "columnTypes": {
+          "$id": "uuid",
+          "$distance": "distance, lower is closer"
+        },
+        "warnings": [
+          {
+            "message": "Answered via GraphQL."
+          }
+        ]
+      }
+    },
+    {
+      "step": "query POST /v1/search/Article/near-vector {\"vector\": [0.1,-0.2,0.3,0.4,-0.5,0.6,0.7,-0.8,0.9,0.1,0.2,-0.3,0.4,0.5,-0.6,0.7], \"limit\": 1, \"includeVector\": true}",
+      "error": {
+        "name": "RequestRefusal",
+        "message": "The body takes no key \"includeVector\": Weaviate reads where, limit, offset, autoLimit, returnProperties, returnMetadata, tenant, consistencyLevel, vector, targetVector, distance, certainty there and nothing else."
+      }
+    },
+    {
+      "step": "query POST /v1/search/Article/near-object {\"id\": \"9e6866af-ef70-5a5a-9b61-1ae7a41bad0d\", \"limit\": 2, \"returnProperties\": [\"title\"], \"returnMetadata\": [\"distance\"]}",
+      "value": {
+        "fields": [
+          "$id",
+          "title",
+          "$distance"
+        ],
+        "rows": [
+          {
+            "$id": "9e6866af-ef70-5a5a-9b61-1ae7a41bad0d",
+            "title": "article 099 tenant index",
+            "$distance": 2.3841858e-7
+          },
+          {
+            "$id": "091a6b21-3727-5500-8f12-17036b912723",
+            "title": "article 468 shard quantize",
+            "$distance": 0.30005395
+          }
+        ],
+        "rowCount": 2,
+        "columnTypes": {
+          "$id": "uuid",
+          "$distance": "distance, lower is closer"
+        },
+        "warnings": [
+          {
+            "message": "Answered via GraphQL."
+          }
+        ]
+      }
+    },
+    {
+      "step": "query POST /v1/search/Article/hybrid {\"query\": \"vector\", \"alpha\": 0, \"limit\": 2, \"returnProperties\": [\"title\"]}",
+      "value": {
+        "fields": [
+          "$id",
+          "title"
+        ],
+        "rows": [
+          {
+            "$id": "6b7a5622-dfa8-5802-9c9a-b39275345406",
+            "title": "article 261 vector vector"
+          },
+          {
+            "$id": "0590a353-a65e-5f95-bafc-0b46dca27152",
+            "title": "article 223 vector search"
+          }
+        ],
+        "rowCount": 2,
+        "columnTypes": {
+          "$id": "uuid"
+        },
+        "warnings": [
+          {
+            "message": "Answered via GraphQL."
+          }
+        ]
+      }
+    },
+    {
+      "step": "query POST /v1/search/Product/near-vector {\"vector\": [0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8], \"targetVector\": \"image\", \"limit\": 1, \"returnProperties\": [\"name\"]}",
+      "value": {
+        "fields": [
+          "$id",
+          "name"
+        ],
+        "rows": [
+          {
+            "$id": "9d8ce3ea-cf2e-5f73-a18c-f5016695d856",
+            "name": "product 019"
+          }
+        ],
+        "rowCount": 1,
+        "columnTypes": {
+          "$id": "uuid"
+        },
+        "warnings": [
+          {
+            "message": "Answered via GraphQL."
+          }
+        ]
+      }
+    },
+    {
+      "step": "query POST /v1/search/TenantNotes/bm25 {\"query\": \"note\", \"tenant\": \"acme\", \"limit\": 2}",
+      "value": {
+        "fields": [
+          "$id",
+          "note",
+          "seq"
+        ],
+        "rows": [
+          {
+            "$id": "5f733153-385b-599c-baea-79de4736abac",
+            "note": "acme note 02",
+            "seq": 2
+          },
+          {
+            "$id": "988ef2a7-fe5e-591e-b020-9a2239223014",
+            "note": "acme note 01",
+            "seq": 1
+          }
+        ],
+        "rowCount": 2,
+        "columnTypes": {
+          "$id": "uuid"
+        },
+        "warnings": [
+          {
+            "message": "Answered via GraphQL."
+          }
+        ]
+      }
+    },
+    {
+      "step": "query POST /v1/search/EdgeValues/bm25 {\"query\": \"9007199254740991\", \"returnProperties\": [\"label\", \"big\"]}",
+      "value": {
+        "fields": [
+          "$id",
+          "label",
+          "big"
+        ],
+        "rows": [
+          {
+            "$id": "08f3aa7e-ac67-524b-830c-0f0b4522079b",
+            "label": "9007199254740991",
+            "big": null
+          }
+        ],
+        "rowCount": 1,
+        "columnTypes": {
+          "$id": "uuid"
+        },
+        "warnings": [
+          {
+            "message": "Answered via GraphQL."
+          },
+          {
+            "message": "GraphQL answers null for an int outside the 32-bit range, so a null in big may be such a value; Weaviate 1.39.7 and later answer it over REST."
+          }
+        ]
+      }
+    },
+    {
+      "step": "query POST /v1/search/Product/bm25 {\"query\": \"product\", \"limit\": 2, \"returnProperties\": [\"name\"]}",
+      "value": {
+        "fields": [
+          "$id",
+          "name"
+        ],
+        "rows": [
+          {
+            "$id": "51fd5a34-9aa4-54be-afcf-ff814a32afb7",
+            "name": "product 001"
+          },
+          {
+            "$id": "92693fd4-cfd7-50d9-a1bc-7d9cf95d0326",
+            "name": "product 000"
+          }
+        ],
+        "rowCount": 2,
+        "columnTypes": {
+          "$id": "uuid"
+        },
+        "warnings": [
+          {
+            "message": "Answered via GraphQL."
+          }
+        ]
+      }
+    },
+    {
+      "step": "query POST /v1/search/Missing/bm25 {\"query\": \"x\"}",
+      "error": {
+        "name": "QueryError",
+        "message": "The collection does not exist or is not visible to this credential."
+      }
+    },
+    {
+      "step": "query POST /v1/aggregate/Article {}",
+      "value": {
+        "fields": [
+          "count"
+        ],
+        "rows": [
+          {
+            "count": 500
+          }
+        ],
+        "rowCount": 1,
+        "columnTypes": {
+          "count": "Int64, exact count"
+        },
+        "warnings": [
+          {
+            "message": "Answered via GraphQL."
+          }
+        ]
+      }
+    },
+    {
+      "step": "query POST /v1/aggregate/Article",
+      "value": {
+        "fields": [
+          "count"
+        ],
+        "rows": [
+          {
+            "count": 500
+          }
+        ],
+        "rowCount": 1,
+        "columnTypes": {
+          "count": "Int64, exact count"
+        },
+        "warnings": [
+          {
+            "message": "Answered via GraphQL."
+          }
+        ]
+      }
+    },
+    {
+      "step": "query POST /v1/aggregate/Article {\"groupBy\": \"category\"}",
+      "value": {
+        "fields": [
+          "category",
+          "count"
+        ],
+        "rows": [
+          {
+            "category": "epsilon",
+            "count": 100
+          },
+          {
+            "category": "alpha",
+            "count": 100
+          },
+          {
+            "category": "beta",
+            "count": 100
+          },
+          {
+            "category": "delta",
+            "count": 100
+          },
+          {
+            "category": "gamma",
+            "count": 100
+          }
+        ],
+        "rowCount": 5,
+        "columnTypes": {
+          "count": "Int64, exact count"
+        },
+        "warnings": [
+          {
+            "message": "Answered via GraphQL."
+          }
+        ]
+      }
+    },
+    {
+      "step": "query POST /v1/aggregate/TenantNotes {\"tenant\": \"acme\"}",
+      "value": {
+        "fields": [
+          "count"
+        ],
+        "rows": [
+          {
+            "count": 20
+          }
+        ],
+        "rowCount": 1,
+        "columnTypes": {
+          "count": "Int64, exact count"
+        },
+        "warnings": [
+          {
+            "message": "Answered via GraphQL."
+          }
+        ]
+      }
+    },
+    {
+      "step": "query POST /v1/aggregate/TenantNotes {\"tenant\": \"initech\"}",
+      "error": {
+        "name": "RequestRefusal",
+        "message": "The tenant \"initech\" is COLD. Studio does not activate a tenant by reading it, so nothing was read: set the tenant HOT on the server first."
+      }
+    },
+    {
+      "step": "query POST /v1/aggregate/Empty {}",
+      "value": {
+        "fields": [
+          "count"
+        ],
+        "rows": [
+          {
+            "count": 0
+          }
+        ],
+        "rowCount": 1,
+        "columnTypes": {
+          "count": "Int64, exact count"
+        },
+        "warnings": [
+          {
+            "message": "Answered via GraphQL."
+          }
+        ]
+      }
+    },
+    {
+      "step": "query POST /v1/aggregate/Article {\"where\": {\"path\": [\"location\"], \"operator\": \"WithinGeoRange\", \"valueGeoRange\": {\"geoCoordinates\": {\"latitude\": 41, \"longitude\": 29}, \"distance\": {\"max\": 3000000}}}}",
+      "value": {
+        "fields": [
+          "count"
+        ],
+        "rows": [
+          {
+            "count": 500
+          }
+        ],
+        "rowCount": 1,
+        "columnTypes": {
+          "count": "Int64, exact count"
+        },
+        "warnings": [
+          {
+            "message": "Answered via GraphQL."
+          }
+        ]
+      }
+    },
+    {
+      "step": "query POST /v1/aggregate/Article {\"where\": {\"operator\": \"And\", \"operands\": [{\"path\": [\"published\"], \"operator\": \"Equal\", \"valueBoolean\": true}, {\"path\": [\"location\"], \"operator\": \"WithinGeoRange\", \"valueGeoRange\": {\"geoCoordinates\": {\"latitude\": 41, \"longitude\": 29}, \"distance\": {\"max\": 3000000}}}]}}",
+      "value": {
+        "fields": [
+          "count"
+        ],
+        "rows": [
+          {
+            "count": 333
+          }
+        ],
+        "rowCount": 1,
+        "columnTypes": {
+          "count": "Int64, exact count"
+        },
+        "warnings": [
+          {
+            "message": "Answered via GraphQL."
+          }
+        ]
+      }
+    },
+    {
+      "step": "query POST /v1/search/Article/bm25 {\"query\": \"vector\", \"where\": {\"path\": [\"tags\"], \"operator\": \"ContainsAny\", \"valueTextArray\": [\"graph\", \"shard\"]}, \"limit\": 50, \"returnProperties\": [\"title\"]}",
+      "value": {
+        "fields": [
+          "$id",
+          "title"
+        ],
+        "rows": [
+          {
+            "$id": "5878774a-b088-5365-803b-f38de3ae1785",
+            "title": "article 271 cosine schema"
+          },
+          {
+            "$id": "0245f640-b59b-53d9-9c84-456331b99614",
+            "title": "article 260 vector recall"
+          },
+          {
+            "$id": "78dfc127-4ef9-5643-9476-410f7efe648f",
+            "title": "article 405 cosine vector"
+          },
+          {
+            "$id": "97059d77-2db1-5521-855a-7fe8043015cc",
+            "title": "article 273 vector property"
+          },
+          {
+            "$id": "8fc2a823-3c0d-5585-87a8-ada81a6e779d",
+            "title": "article 065 property collection"
+          },
+          {
+            "$id": "5950025b-9947-5837-bc3d-b08a911897a1",
+            "title": "article 262 vector node"
+          },
+          {
+            "$id": "5e20ba2a-e7f3-5cf1-8515-7d74da53ab9f",
+            "title": "article 282 filter vector"
+          },
+          {
+            "$id": "568019d7-fa21-5d7b-98a7-126890f32e51",
+            "title": "article 341 node index"
+          },
+          {
+            "$id": "97bf6379-894b-5304-a05d-dc88e2efb96d",
+            "title": "article 334 quantize filter"
+          },
+          {
+            "$id": "adbe9c20-828e-5543-ab79-5fe3cd27be37",
+            "title": "article 224 vector shard"
+          },
+          {
+            "$id": "b181572c-0cdf-5f13-bde8-87fd7f1ce823",
+            "title": "article 328 filter property"
+          },
+          {
+            "$id": "e66f149e-51db-5bdb-afb2-d0fb6d47873d",
+            "title": "article 164 keyword node"
+          },
+          {
+            "$id": "9cd5f0ba-baff-56a1-a2a9-053ebc89309e",
+            "title": "article 403 search schema"
+          },
+          {
+            "$id": "d84aef74-a1a2-5534-964c-4f2f13f5b040",
+            "title": "article 463 keyword cosine"
+          },
+          {
+            "$id": "df43df7f-7493-5b64-b8d1-03be6a838dd8",
+            "title": "article 037 object node"
+          },
+          {
+            "$id": "109ab621-699c-521a-a71d-8761665a0fd2",
+            "title": "article 240 filter keyword"
+          },
+          {
+            "$id": "11910949-1a12-5d12-9c1c-015c150aa53c",
+            "title": "article 257 property graph"
+          },
+          {
+            "$id": "154cade8-3800-54f7-86bf-11940efda50c",
+            "title": "article 063 replica keyword"
+          },
+          {
+            "$id": "15a7167f-5614-5907-9c37-6ec7ac2faec3",
+            "title": "article 242 cosine shard"
+          },
+          {
+            "$id": "15b9b024-cbbe-506e-8cc6-b547ef29d366",
+            "title": "article 427 engine object"
+          },
+          {
+            "$id": "3bf3c3da-3b9d-586e-be52-058c017d408b",
+            "title": "article 034 cosine replica"
+          },
+          {
+            "$id": "675a3068-3c33-5279-937b-a1e55d8858e5",
+            "title": "article 043 shard tenant"
+          },
+          {
+            "$id": "71ad2be0-c4cb-5d55-ae14-45aaea14f4a9",
+            "title": "article 245 property shard"
+          },
+          {
+            "$id": "83a602fc-404e-56fb-9faf-f9405e6f50eb",
+            "title": "article 426 cosine recall"
+          },
+          {
+            "$id": "9eeef104-fb18-58a8-83ef-63db7229b331",
+            "title": "article 156 index hybrid"
+          },
+          {
+            "$id": "aa03ca5a-de8c-5f92-b16e-f9e2c32edb5d",
+            "title": "article 385 hybrid cosine"
+          },
+          {
+            "$id": "b32a7a72-6389-5bb4-9947-49abf9b9cd91",
+            "title": "article 278 shard engine"
+          },
+          {
+            "$id": "c7a72ea7-5103-5ef4-b0b7-94052e81e528",
+            "title": "article 129 cosine tenant"
+          },
+          {
+            "$id": "efe60c07-cd04-5435-955b-e0f657176bae",
+            "title": "article 324 tenant alias"
+          },
+          {
+            "$id": "c9985312-f531-5ed2-a0f4-c4f070fcaffa",
+            "title": "article 492 search node"
+          },
+          {
+            "$id": "00139992-3118-5ccc-bfac-42062afb1418",
+            "title": "article 042 index search"
+          },
+          {
+            "$id": "16f723f0-5c76-5f11-9cae-c8d970510c4a",
+            "title": "article 023 shard search"
+          },
+          {
+            "$id": "2716ffdb-f678-5f5e-a25b-7597d419a8f6",
+            "title": "article 040 shard graph"
+          },
+          {
+            "$id": "28a5ee00-944b-5fbe-bb71-775ef97aae95",
+            "title": "article 024 filter vector"
+          },
+          {
+            "$id": "30c49f98-46cc-51c8-9364-f0f544bd99f3",
+            "title": "article 161 object quantize"
+          },
+          {
+            "$id": "3968998f-7416-5e44-a02b-3d4f6a76d28d",
+            "title": "article 047 hybrid property"
+          },
+          {
+            "$id": "3b5e188a-dba4-551c-a4c2-2743202df1bb",
+            "title": "article 189 schema property"
+          },
+          {
+            "$id": "4d89b5b1-1efa-561a-add6-06731ea73da5",
+            "title": "article 197 keyword node"
+          },
+          {
+            "$id": "4e9f48c4-d174-52ff-becc-c2d72ea4fcde",
+            "title": "article 128 replica object"
+          },
+          {
+            "$id": "536bc3a8-9bff-5042-bfb2-f9d9cbecc250",
+            "title": "article 066 shard object"
+          },
+          {
+            "$id": "69b31860-8732-512f-aef1-79d35b48ed84",
+            "title": "article 244 cosine engine"
+          },
+          {
+            "$id": "754bf866-c2db-5a9b-929e-f69ba6555b80",
+            "title": "article 185 search filter"
+          },
+          {
+            "$id": "8d4e0b7b-e646-5fce-8c75-448bded66eb1",
+            "title": "article 044 quantize object"
+          },
+          {
+            "$id": "a8212a0a-ba71-5ab9-9408-9158262a5711",
+            "title": "article 202 index tenant"
+          },
+          {
+            "$id": "a8eadb65-e8e1-5db4-b088-9bae6988ee67",
+            "title": "article 144 collection graph"
+          },
+          {
+            "$id": "a9d0efad-a959-552b-b65a-fda42cdbe2cd",
+            "title": "article 117 collection graph"
+          },
+          {
+            "$id": "b3c2ed60-4a50-5b93-97f3-d379133c266c",
+            "title": "article 237 replica object"
+          },
+          {
+            "$id": "b5391a2a-6084-55bd-ad80-c17ce6392439",
+            "title": "article 174 quantize tenant"
+          },
+          {
+            "$id": "d976ca88-a069-5460-a816-70339070c4ce",
+            "title": "article 029 filter property"
+          },
+          {
+            "$id": "fb3cde60-51fc-5a23-b3cd-5914001d0b7b",
+            "title": "article 264 recall quantize"
+          }
+        ],
+        "rowCount": 50,
+        "columnTypes": {
+          "$id": "uuid"
+        },
+        "warnings": [
+          {
+            "message": "Answered via GraphQL."
+          }
+        ]
+      }
+    }
+  ]
+}

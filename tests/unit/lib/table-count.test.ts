@@ -85,6 +85,7 @@ const EXPECTED_COUNT: Readonly<Record<DatabaseType, string | null>> = Object.fre
   milvus: null,
   // A Qdrant console request (vector-family spec 6.7): the dialect's record withholds the action; a count is the documented count request.
   qdrant: null,
+  weaviate: null,
   // InfluxQL (InfluxDB spec I12): `offersCountQuery` answers false for the language, so no Count appears.
   influxdb: null,
   // DataFusion SQL with no container level (R16) and `double-always` quoting (R41): every segment double-quoted, no

@@ -66,7 +66,7 @@ describe("docs/ADDING_A_PROVIDER.md", () => {
   });
 
   test("the driver-free ids count bigquery and firestore", () => {
-    expect(guide).toContain("twenty shipped ids do:");
+    expect(guide).toContain("twenty-one shipped ids do:");
     expect(guide).toContain("`databend`, `kubernetes`, `bigquery`, `firestore`, `rabbitmq` and `snowflake`");
   });
 

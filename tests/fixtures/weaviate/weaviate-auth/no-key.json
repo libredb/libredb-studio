@@ -1,0 +1,44 @@
+{
+  "$captured": {
+    "engine": "weaviate",
+    "service": "weaviate-auth",
+    "scenario": "no-key",
+    "image": "cr.weaviate.io/semitechnologies/weaviate:1.40.2",
+    "digest": "sha256:0083587dc01f33112e5406ce9b471df1abea480c71a0407af903929a389ae08a",
+    "version": "1.40.2",
+    "date": "2026-10-23T23:54:53.073Z",
+    "runtime": "bun 1.4.2",
+    "credential": "none"
+  },
+  "transport": [
+    {
+      "origin": "http://127.0.0.1:18283",
+      "tls": null,
+      "maxSockets": 4,
+      "headers": {}
+    }
+  ],
+  "exchanges": [
+    {
+      "method": "GET",
+      "path": "/v1/meta",
+      "body": null,
+      "answer": {
+        "status": 401,
+        "contentType": "text/plain; charset=utf-8",
+        "retryAfter": null,
+        "text": "{\"code\":401,\"message\": \"anonymous access not enabled. Please authenticate through one of the available methods: [API-keys]\" }"
+      },
+      "thrown": null
+    }
+  ],
+  "outcomes": [
+    {
+      "step": "connect",
+      "error": {
+        "name": "AuthenticationError",
+        "message": "Weaviate refused the API key or token. (Weaviate: anonymous access not enabled. Please authenticate through one of the available methods: [API-keys])"
+      }
+    }
+  ]
+}

@@ -360,8 +360,9 @@ describe("the installed editor's language ids", () => {
     // than a near relative: the installed bundle registers no YANG, and declaring `ini` or `sql`
     // for a module's text would colour it as something it is not.
     // 146 with that pair, and 148 since Sparkplug B's two kinds joined (#1720): a node and a device
-    // each declare `json`, the payload this provider decodes a birth certificate into.
-    expect(declared).toHaveLength(148);
+    // each declare `json`, the payload this provider decodes a birth certificate into. 149 since Weaviate's
+    // collection joined (#1566), declaring `json`, the two-part Source of its schema and its state.
+    expect(declared).toHaveLength(149);
 
     const unregistered = declared.filter((entry) => !registered.has(entry.language));
     // Named, so a failure says which kind on which engine declared what, rather than false. This

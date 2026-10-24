@@ -1,0 +1,46 @@
+{
+  "$captured": {
+    "engine": "weaviate",
+    "service": "weaviate-auth",
+    "scenario": "wrong-key",
+    "image": "cr.weaviate.io/semitechnologies/weaviate:1.40.2",
+    "digest": "sha256:0083587dc01f33112e5406ce9b471df1abea480c71a0407af903929a389ae08a",
+    "version": "1.40.2",
+    "date": "2026-10-23T23:54:53.071Z",
+    "runtime": "bun 1.4.2",
+    "credential": "wrong"
+  },
+  "transport": [
+    {
+      "origin": "http://127.0.0.1:18283",
+      "tls": null,
+      "maxSockets": 4,
+      "headers": {
+        "authorization": "Bearer <key>"
+      }
+    }
+  ],
+  "exchanges": [
+    {
+      "method": "GET",
+      "path": "/v1/meta",
+      "body": null,
+      "answer": {
+        "status": 401,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"code\":401,\"message\":\"unauthorized: invalid api key\"}"
+      },
+      "thrown": null
+    }
+  ],
+  "outcomes": [
+    {
+      "step": "connect",
+      "error": {
+        "name": "AuthenticationError",
+        "message": "Weaviate refused the API key or token. (Weaviate: unauthorized: invalid api key)"
+      }
+    }
+  ]
+}

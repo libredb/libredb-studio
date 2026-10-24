@@ -36,6 +36,12 @@ import {
   readQdrantOperations,
 } from "@/lib/db/providers/vector/qdrant/guard";
 import { QDRANT_CONSOLE } from "@/lib/db/providers/vector/qdrant/routes";
+import {
+  readWeaviateOperations,
+  WEAVIATE_DESTRUCTIVE_OPERATIONS,
+  weaviateRefusal,
+} from "@/lib/db/providers/vector/weaviate/guard";
+import { WEAVIATE_CONSOLE } from "@/lib/db/providers/vector/weaviate/routes";
 
 /**
  * The confirmation gate's vocabulary for the engines whose query text is NOT SQL.
@@ -609,6 +615,18 @@ export const NON_SQL_DESTRUCTIVE_VOCABULARY: Readonly<Partial<Record<DatabaseTyp
     safetyAnalysis: false,
     refuse: qdrantRefusal,
     maxTextBytes: QDRANT_CONSOLE.maxTextBytes,
+  },
+  // Weaviate (#1566 spec 3.4): as Qdrant, the provider's own guard.ts reads the text with the parser the provider
+  // runs. A v1 request only reads, so nothing asks; what guard.ts refuses (a write route, a model-calling key, an
+  // alpha other than 0, an unknown key) the editor refuses before anything is sent.
+  weaviate: {
+    operations: WEAVIATE_DESTRUCTIVE_OPERATIONS,
+    read: readWeaviateOperations,
+    decidesAlone: true,
+    // A request carries vectors, filters and property values, so no Weaviate statement is posted for an AI analysis.
+    safetyAnalysis: false,
+    refuse: weaviateRefusal,
+    maxTextBytes: WEAVIATE_CONSOLE.maxTextBytes,
   },
   // Redis: each line of the text is one command (docs/providers/redis.md 3.4a), and a second command is refused in
   // the editor with the provider's own reading, before anything is sent, rather than run as one merged command.

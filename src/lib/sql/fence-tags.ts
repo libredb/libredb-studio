@@ -100,6 +100,9 @@ const ENGINE_FENCE_TAGS: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // is registered below: `json` is a MongoDB document as often, `http` and `rest` name no engine, and
   // `fenceTagEngine` is what decides whether a plan's deliverable was written for THIS connection.
   qdrant: true,
+  // A ```weaviate block holds one Weaviate console request the editor runs as it is (#1566 spec 3.4). No alias is
+  // registered: `graphql` would read as a request this console refuses, and `json` names no engine.
+  weaviate: true,
   // An ```influxdb block holds one InfluxQL statement the editor runs as it is. The `influxql` alias below
   // spells the language, and it still names this engine: see its entry. No `flux` tag is registered anywhere:
   // no type-id runs Flux, and an alias would make a Flux block look runnable on `influxdb`.

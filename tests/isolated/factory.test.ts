@@ -832,6 +832,28 @@ describe("createDatabaseProvider", () => {
     expect((await createDatabaseProvider(conn)).type).toBe("qdrant");
   });
 
+  test('creates provider for type "weaviate"', async () => {
+    // No user and no database: Weaviate takes a bearer token alone and has no container level. The constructor
+    // validates nothing and opens nothing, as Qdrant's, so the provider is built with no Weaviate running.
+    const conn = makeConnection("weaviate", { port: 8080, user: undefined, database: undefined });
+    const provider = await createDatabaseProvider(conn);
+    expect(provider.type).toBe("weaviate");
+    expect(provider.getCapabilities().queryLanguage).toBe("json");
+    expect(provider.getCapabilities().queryDialect).toBe("weaviate");
+    expect(provider.getCapabilities().enforcesReadOnly).toBe(true);
+    expect(provider.getCapabilities().supportsMaintenance).toBe(false);
+    expect(provider.isConnected()).toBe(false);
+  });
+
+  test("a weaviate connection with readOnly: true is built, since its provider keeps the mode (#1566 spec 3.5)", async () => {
+    const conn = {
+      ...makeConnection("weaviate", { port: 8080, user: undefined, database: undefined }),
+      readOnly: true,
+    };
+    expect(() => assertReadOnlyHonoured(conn)).not.toThrow();
+    expect((await createDatabaseProvider(conn)).type).toBe("weaviate");
+  });
+
   test('creates provider for type "oxia"', async () => {
     // No user and no namespace: Oxia has no user name, and an empty namespace means default. The constructor
     // validates nothing and opens nothing, so the provider is built, and declares its language, its dialect and
@@ -879,7 +901,7 @@ describe("createDatabaseProvider", () => {
   test("the factory error lists milvus among the supported types, before qdrant and the embedded store", async () => {
     const conn = makeConnection("not-an-engine");
     await expect(createDatabaseProvider(conn)).rejects.toThrow(
-      /Supported types: .*\bneo4j, milvus, qdrant, s3, mqtt, opcua, mtconnect, modbus, snmp, rabbitmq, kubernetes, netconf, sparkplug, libredb$/,
+      /Supported types: .*\bneo4j, milvus, qdrant, weaviate, s3, mqtt, opcua, mtconnect, modbus, snmp, rabbitmq, kubernetes, netconf, sparkplug, libredb$/,
     );
   });
 
@@ -915,6 +937,13 @@ describe("createDatabaseProvider", () => {
     lifetime.abort();
   });
 
+  test("the factory error lists weaviate between qdrant and s3", async () => {
+    const conn = makeConnection("not-an-engine");
+    await expect(createDatabaseProvider(conn)).rejects.toThrow(
+      /Supported types: .*\bqdrant, weaviate, s3\b.*, libredb$/,
+    );
+  });
+
   test("the factory error lists qdrant among the supported types, before the embedded store", async () => {
     const conn = makeConnection("not-an-engine");
     await expect(createDatabaseProvider(conn)).rejects.toThrow(/Supported types: .*\bqdrant\b.*, libredb$/);
@@ -945,7 +974,7 @@ describe("createDatabaseProvider", () => {
   test("the factory error lists s3 between qdrant and kubernetes, kubernetes before the embedded store", async () => {
     const conn = makeConnection("not-an-engine");
     await expect(createDatabaseProvider(conn)).rejects.toThrow(
-      /Supported types: .*\bqdrant, s3, mqtt, opcua, mtconnect, modbus, snmp, rabbitmq, kubernetes, netconf, sparkplug, libredb$/,
+      /Supported types: .*\bqdrant, weaviate, s3, mqtt, opcua, mtconnect, modbus, snmp, rabbitmq, kubernetes, netconf, sparkplug, libredb$/,
     );
   });
 

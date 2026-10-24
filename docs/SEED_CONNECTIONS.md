@@ -88,7 +88,7 @@ An mssql seed that carried only a `connectionString`, for example, loaded and op
 The types whose provider reads it are postgres, mysql, sqlite, libsql, oracle, db2, clickhouse, mongodb and couchbase.
 sqlite reads it as the database file path, with a `file:` prefix removed, although its provider's capability flag says it does not ([docs/providers/sqlite.md](./providers/sqlite.md)).
 mssql does not read it, although its provider's capability flag says it does: the flag covers the connection form, which splits a pasted URI into fields, and the provider builds from those fields only ([docs/providers/mssql.md](./providers/mssql.md#44-connection-string-nuance)).
-The 33 that refuse it are bigquery, snowflake, spark, duckdb, mssql, druid, trino, cassandra, elasticsearch, opensearch, redis, prometheus, kafka, etcd, neo4j, milvus, qdrant, influxdb, influxdb3, oxia, databend, s3, kubernetes, mqtt, firestore, rabbitmq, opcua, mtconnect, modbus, netconf, snmp, sparkplug and libredb.
+The 34 that refuse it are bigquery, snowflake, spark, duckdb, mssql, druid, trino, cassandra, elasticsearch, opensearch, redis, prometheus, kafka, etcd, neo4j, milvus, qdrant, weaviate, influxdb, influxdb3, oxia, databend, s3, kubernetes, mqtt, firestore, rabbitmq, opcua, mtconnect, modbus, netconf, snmp, sparkplug and libredb.
 To fix a refused file, move the value into `host`, `port`, `user`, `password` and `database`, and remove `connectionString`.
 
 ### A Firestore connection
@@ -190,7 +190,7 @@ defaults:                    # Optional — merges managed/environment/ssl only
 connections:
   - id: "analytics-pg"       # Required, unique, lowercase slug [a-z0-9-]
     name: "Analytics DB"      # Required, display name in UI
-    type: postgres            # Required: postgres|mysql|sqlite|libsql|duckdb|mongodb|redis|oracle|db2|mssql|libredb|couchbase|firestore|clickhouse|druid|elasticsearch|opensearch|trino|bigquery|snowflake|spark|cassandra|prometheus|kafka|mqtt|rabbitmq|opcua|etcd|neo4j|milvus|qdrant|influxdb|influxdb3|oxia|databend|s3|kubernetes
+    type: postgres            # Required: postgres|mysql|sqlite|libsql|duckdb|mongodb|redis|oracle|db2|mssql|libredb|couchbase|firestore|clickhouse|druid|elasticsearch|opensearch|trino|bigquery|snowflake|spark|cassandra|prometheus|kafka|mqtt|rabbitmq|opcua|etcd|neo4j|milvus|qdrant|weaviate|influxdb|influxdb3|oxia|databend|s3|kubernetes
     host: "${PG_HOST}"
     port: 5432
     database: analytics
@@ -373,7 +373,7 @@ connections:
 | `connections` | Yes | — | Array of connection definitions (min 1) |
 | `connections[].id` | Yes | — | Unique slug: `[a-z0-9-]+`, max 64 chars |
 | `connections[].name` | Yes | — | Display name, max 128 chars |
-| `connections[].type` | Yes | - | Database type: `postgres`, `mysql`, `sqlite`, `libsql`, `duckdb`, `mongodb`, `redis`, `oracle`, `db2`, `mssql`, `libredb`, `couchbase`, `firestore`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`, `bigquery`, `snowflake`, `spark`, `cassandra`, `prometheus`, `kafka`, `mqtt`, `rabbitmq`, `opcua`, `etcd`, `neo4j`, `milvus`, `qdrant`, `influxdb`, `influxdb3`, `oxia`, `databend`, `s3`, `kubernetes` |
+| `connections[].type` | Yes | - | Database type: `postgres`, `mysql`, `sqlite`, `libsql`, `duckdb`, `mongodb`, `redis`, `oracle`, `db2`, `mssql`, `libredb`, `couchbase`, `firestore`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`, `bigquery`, `snowflake`, `spark`, `cassandra`, `prometheus`, `kafka`, `mqtt`, `rabbitmq`, `opcua`, `etcd`, `neo4j`, `milvus`, `qdrant`, `weaviate`, `influxdb`, `influxdb3`, `oxia`, `databend`, `s3`, `kubernetes` |
 | `connections[].host` | No | — | Hostname or IP |
 | `connections[].port` | No | — | Port number (1-65535) |
 | `connections[].database` | No | — | Database name (Couchbase: the bucket. Druid has one catalog and ignores it. Trino: the **catalog**. S3: the optional pinned bucket. PostgreSQL: empty reaches the whole server, every database the role can CONNECT to) |
@@ -389,7 +389,7 @@ connections:
 | `connections[].connectionString` | No | - | Full connection string (use `${ENV_VAR}`). Read only by postgres, mysql, sqlite (as the database file path), libsql, oracle, db2, clickhouse, mongodb and couchbase; every other type, mssql included, refuses it when the file loads, naming the connection and the type ([The connection string refusal](#the-connection-string-refusal)) |
 | `connections[].roles` | Yes | — | Access control: `["*"]`, `["admin"]`, `["user"]`, `["admin", "user"]`, or custom roles starting with `OIDC_ROLE_PREFIX` when OIDC is enabled |
 | `connections[].managed` | No | from defaults | `true` = admin-controlled: not editable in the UI, its secrets stay on the server; `false` = an editable copy for the user |
-| `connections[].readOnly` | No | absent | `true` refuses every write, value edit and maintenance operation on the connection, on an engine whose provider enforces it (etcd, Neo4j, Milvus, Qdrant, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Oxia, S3-compatible object storage and Kubernetes); every other engine refuses `readOnly: true` when the file loads, naming the type and the field. Refused with `managed` false, on the connection or through `defaults.managed`, because an editable copy carries the credentials into the browser. A literal boolean: a `${ENV}` reference is refused |
+| `connections[].readOnly` | No | absent | `true` refuses every write, value edit and maintenance operation on the connection, on an engine whose provider enforces it (etcd, Neo4j, Milvus, Qdrant, Weaviate, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Oxia, S3-compatible object storage and Kubernetes); every other engine refuses `readOnly: true` when the file loads, naming the type and the field. Refused with `managed` false, on the connection or through `defaults.managed`, because an editable copy carries the credentials into the browser. A literal boolean: a `${ENV}` reference is refused |
 | `connections[].environment` | No | from defaults | Environment badge |
 | `connections[].group` | No | — | Group label |
 | `connections[].color` | No | — | Hex color for badge (e.g., `#10B981`) |
@@ -429,7 +429,7 @@ With no seed file, or with no entry that opts in for the token's role, `list_con
 ### A read-only cluster for everyone
 
 `readOnly: true` makes a connection refuse every write, value edit and maintenance operation before any request, on an engine whose provider keeps the mode.
-etcd's, Neo4j's, Milvus's, Qdrant's, both InfluxDB types', Oxia's, S3's and Kubernetes's do today ([providers/etcd.md](providers/etcd.md), section 3.4, the Neo4j recipe below, [providers/milvus.md](providers/milvus.md) and [providers/qdrant.md](providers/qdrant.md), section 3.4 of each, the InfluxDB recipes above, [providers/oxia.md](providers/oxia.md), section 3.5, [providers/s3.md](providers/s3.md), section 3.5, and [providers/kubernetes.md](providers/kubernetes.md), section 9), and on every other engine the file is refused at load, with a sentence naming the type and the field.
+etcd's, Neo4j's, Milvus's, Qdrant's, Weaviate's, both InfluxDB types', Oxia's, S3's and Kubernetes's do today ([providers/etcd.md](providers/etcd.md), section 3.4, the Neo4j recipe below, [providers/milvus.md](providers/milvus.md) and [providers/qdrant.md](providers/qdrant.md), section 3.4 of each, [providers/weaviate.md](providers/weaviate.md), section 3.5, the InfluxDB recipes above, [providers/oxia.md](providers/oxia.md), section 3.5, [providers/s3.md](providers/s3.md), section 3.5, and [providers/kubernetes.md](providers/kubernetes.md), section 9), and on every other engine the file is refused at load, with a sentence naming the type and the field.
 The recipe is two seeds of one cluster: one every role reaches, read-only, and one for the people who may write.
 
 ```yaml
@@ -473,6 +473,8 @@ Milvus declares both: its documented default `root` pair, and no password ([prov
 A Milvus seed's read-only mode is a boundary only when the server has authorization enabled, which is not Milvus's default.
 Qdrant declares the second: a read-only Qdrant seed with no key is refused, because a Qdrant server without a key accepts any key or none ([providers/qdrant.md](providers/qdrant.md), section 4.2).
 Give a read-only Qdrant seed the server's read-only key or a read-scoped JWT, through a reference such as `password: "${QDRANT_READ_ONLY_KEY}"`.
+Weaviate declares the same: a read-only Weaviate seed with no key is refused, because a server with anonymous access on, its default, grants a request with no key every write ([providers/weaviate.md](providers/weaviate.md), section 3.5).
+Give it the key of a database user with the built-in `viewer` role, through a reference such as `password: "${WEAVIATE_VIEWER_KEY}"`.
 Both InfluxDB types declare the second too: an InfluxDB 1.x server with authentication off, its default, and an InfluxDB 3 server started with `--without-auth` accept any credential or none, so a read-only InfluxDB seed with no password or token is refused.
 Give a read-only `influxdb` seed a 1.x user granted READ, or a 2.x read token for the bucket, through a reference such as `password: "${INFLUX_READER_PASSWORD}"`, and a read-only `influxdb3` seed a token through a reference such as `password: "${INFLUXDB3_TOKEN}"`.
 On a type that does, the seed loader refuses a `readOnly: true` connection whose credential matches, in two stages: load refuses what the file shows; resolution refuses the rest.

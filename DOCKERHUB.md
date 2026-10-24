@@ -20,7 +20,7 @@
 
 > 📖 **Full documentation, source, and issues:** <https://github.com/libredb/libredb-studio>
 
-Query **PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Databend, Snowflake, Apache Spark, Apache Cassandra, Prometheus, InfluxDB, Apache Kafka, MQTT, RabbitMQ, OPC UA, MTConnect, NETCONF, etcd, Neo4j, Milvus, Qdrant, Oxia, S3-compatible object storage and Kubernetes** from your browser, with AI query assistance, RBAC and OIDC SSO.
+Query **PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Databend, Snowflake, Apache Spark, Apache Cassandra, Prometheus, InfluxDB, Apache Kafka, MQTT, RabbitMQ, OPC UA, MTConnect, NETCONF, etcd, Neo4j, Milvus, Qdrant, Weaviate, Oxia, S3-compatible object storage and Kubernetes** from your browser, with AI query assistance, RBAC and OIDC SSO.
 
 ---
 
@@ -110,8 +110,8 @@ Every one of those tags is published on three bases, and the suffix is appended 
 
 ## Supported databases
 
-Forty-one external engines share one interface.
-The forty-second row is the embedded LibreDB store: it ships inside the image.
+Forty-two external engines share one interface.
+The forty-third row is the embedded LibreDB store: it ships inside the image.
 
 | Database | Driver | Highlights |
 | :--- | :--- | :--- |
@@ -143,6 +143,7 @@ The forty-second row is the embedded LibreDB store: it ships inside the image.
 | **Neo4j** | `neo4j-driver-lite` | Read-only Cypher editor, label and relationship-type browser |
 | **Milvus** | `@grpc/grpc-js` | Read-only REST v2 request editor, vector search, admin Load and Release |
 | **Qdrant** | none, HTTP | Read-only REST request editor, vector search, collection browser |
+| **Weaviate** | none, HTTP | Read-only REST requests, vector search |
 | **InfluxDB (InfluxQL)** | none, HTTP | Read-only InfluxQL editor, 1.x to 3 |
 | **InfluxDB 3 (SQL)** | none, HTTP | Read-only SQL editor |
 | **Oxia** | `@grpc/grpc-js` | Read-only oxia client commands, shard map, key browser |
@@ -158,7 +159,7 @@ Firestore, Prometheus, InfluxDB, Apache Kafka, MQTT, RabbitMQ, OPC UA, MTConnect
 
 ### Engines with no provider of their own
 
-Twenty-seven further engines speak the wire protocol of one of the forty-one drivers above: pick that driver in the connection dialog. Each was measured against a real instance, and how much worked is recorded per engine.
+Twenty-seven further engines speak the wire protocol of one of the forty-two drivers above: pick that driver in the connection dialog. Each was measured against a real instance, and how much worked is recorded per engine.
 
 | Engine | Connect as | Support |
 | :--- | :--- | :--- |

@@ -71,7 +71,7 @@ const sectionOf = (type: DatabaseType): string => {
 
 describe("each provider document's Connection string subsection", () => {
   test("covers every engine the registry has a row for", () => {
-    expect(ENGINES).toHaveLength(42);
+    expect(ENGINES).toHaveLength(43);
   });
 
   for (const type of ENGINES) {

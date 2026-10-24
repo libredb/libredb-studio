@@ -41,6 +41,7 @@ import { INFLUXDB3_SQL_WRITING } from "@/lib/db/providers/timeseries/influxdb/in
 import { PROMETHEUS_SQL_WRITING } from "@/lib/db/providers/timeseries/prometheus/sql-writing";
 import { MILVUS_SQL_WRITING } from "@/lib/db/providers/vector/milvus/sql-writing";
 import { QDRANT_SQL_WRITING } from "@/lib/db/providers/vector/qdrant/sql-writing";
+import { WEAVIATE_SQL_WRITING } from "@/lib/db/providers/vector/weaviate/sql-writing";
 import { NO_CONNECTION_SQL_WRITING } from "./no-connection";
 import type { SqlWritingSpec } from "./types";
 import { UNKNOWN_TYPE_SQL_WRITING } from "./unknown-type";
@@ -96,6 +97,7 @@ export const SQL_WRITING: Readonly<Record<DatabaseType, SqlWritingSpec>> = Objec
   sparkplug: SPARKPLUG_SQL_WRITING,
   sqlite: SQLITE_SQL_WRITING,
   trino: TRINO_SQL_WRITING,
+  weaviate: WEAVIATE_SQL_WRITING,
 });
 
 /**

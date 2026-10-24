@@ -6,13 +6,13 @@ metadata:
     capabilities: Basic Install
     categories: Database, Developer Tools
     containerImage: ghcr.io/libredb/libredb-studio-operator:0.0.0
-    description: Open-source web-based SQL IDE for forty-one engines - PostgreSQL,
+    description: Open-source web-based SQL IDE for forty-two engines - PostgreSQL,
       MySQL, Oracle, Db2 LUW, SQL Server, SQLite, DuckDB, MongoDB, Redis, Couchbase,
       Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery,
       Snowflake, Apache Spark, Apache Cassandra, libSQL, Prometheus, Apache Kafka,
-      MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, InfluxDB, InfluxDB 3, Oxia, Databend,
-      S3-compatible object storage, Kubernetes, OPC UA, MTConnect, Modbus, NETCONF,
-      SNMP and Sparkplug B - with AI-powered query assistance.
+      MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, Weaviate, InfluxDB, InfluxDB 3,
+      Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA, MTConnect,
+      Modbus, NETCONF, SNMP and Sparkplug B - with AI-powered query assistance.
     olm.skipRange: '>=0.0.0 <0.0.0'
     repository: https://github.com/libredb/libredb-studio
     support: LibreDB
@@ -37,7 +37,7 @@ spec:
     LibreDB Studio is an open-source, web-based SQL IDE. Query PostgreSQL,
     MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase,
     Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Apache Spark,
-    Apache Cassandra, Prometheus, Apache Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, InfluxDB,
+    Apache Cassandra, Prometheus, Apache Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, Weaviate, InfluxDB,
     InfluxDB 3, Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA, MTConnect, Modbus, NETCONF, SNMP and Sparkplug B from the browser,
     with AI-powered query assistance (natural-language-to-SQL, explain, fix),
     an ERD viewer, schema diff and a data profiler. No desktop client required.

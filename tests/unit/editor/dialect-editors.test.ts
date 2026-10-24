@@ -5,6 +5,7 @@ import { formatConsole } from "@/lib/db/console/format";
 import { MTC_CONSOLE_DIALECT, MTC_CONSOLE_ROUTES } from "@/lib/db/providers/industrial/mtconnect/routes";
 import { MILVUS_CONSOLE, MILVUS_ROUTES } from "@/lib/db/providers/vector/milvus/routes";
 import { QDRANT_CONSOLE, QDRANT_ROUTES as QDRANT_ROUTES_REAL } from "@/lib/db/providers/vector/qdrant/routes";
+import { WEAVIATE_CONSOLE, WEAVIATE_ROUTES } from "@/lib/db/providers/vector/weaviate/routes";
 import { DIALECT_EDITORS, formatterForLanguage, registerDialectConsoles } from "@/lib/editor/dialect-editors";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
@@ -21,6 +22,7 @@ const EDITOR_LANGUAGES: readonly EditorLanguage[] = [
   "graph-cypher",
   "milvus",
   "qdrant",
+  "weaviate",
   "influxql",
   "oxia",
   "s3",
@@ -54,6 +56,7 @@ describe("DIALECT_EDITORS", () => {
       "snmp",
       "sparkplug",
       "sql",
+      "weaviate",
     ]);
   });
 
@@ -79,6 +82,7 @@ describe("DIALECT_EDITORS", () => {
       cypher: "graph-cypher",
       milvus: "milvus",
       qdrant: "qdrant",
+      weaviate: "weaviate",
       influxql: "influxql",
       oxia: "oxia",
       s3: "s3",
@@ -88,7 +92,7 @@ describe("DIALECT_EDITORS", () => {
     });
   });
 
-  test("only the SQL tab, the eight JSON tabs and the Milvus and Qdrant consoles have a formatter", () => {
+  test("only the SQL tab, the eight JSON tabs and the Milvus, Qdrant and Weaviate consoles have a formatter", () => {
     const formatted = Object.entries(DIALECT_EDITORS)
       .filter(([, editor]) => editor.format !== undefined)
       .map(([type]) => type)
@@ -106,6 +110,7 @@ describe("DIALECT_EDITORS", () => {
       "snmp",
       "sparkplug",
       "sql",
+      "weaviate",
     ]);
   });
 
@@ -182,11 +187,11 @@ describe("formatterForLanguage", () => {
 });
 
 describe("the console field", () => {
-  test("the three console records carry their console languages, and no other record carries one", () => {
+  test("the four console records carry their console languages, and no other record carries one", () => {
     const carrying = Object.entries(DIALECT_EDITORS)
       .filter(([, editor]) => editor.console !== undefined)
       .map(([tabType]) => tabType);
-    expect(carrying).toEqual(["milvus", "qdrant", "mtconnect"]);
+    expect(carrying).toEqual(["milvus", "qdrant", "weaviate", "mtconnect"]);
     // MTConnect's routes are DERIVED from the table its guard runs, so the identity checked here is
     // that the record carries that derived table and not a second hand-written one (#1722).
     expect(DIALECT_EDITORS.mtconnect.console?.spec).toBe(MTC_CONSOLE_DIALECT);
@@ -198,6 +203,14 @@ describe("the console field", () => {
     expect(DIALECT_EDITORS.milvus.console?.routes).toBe(MILVUS_ROUTES);
     expect(DIALECT_EDITORS.qdrant.console?.spec).toBe(QDRANT_CONSOLE);
     expect(DIALECT_EDITORS.qdrant.console?.routes).toBe(QDRANT_ROUTES_REAL);
+    expect(DIALECT_EDITORS.weaviate.console?.spec).toBe(WEAVIATE_CONSOLE);
+    expect(DIALECT_EDITORS.weaviate.console?.routes).toBe(WEAVIATE_ROUTES);
+  });
+
+  test("a weaviate tab formats through formatConsole bound to WEAVIATE_CONSOLE", () => {
+    const text = 'POST /v1/search/Article/bm25\n{"query":"vector","limit":5}';
+    expect(DIALECT_EDITORS.weaviate.format?.(text)).toBe(formatConsole(WEAVIATE_CONSOLE, text));
+    expect(formatterForLanguage("weaviate")?.(text)).toBe(formatConsole(WEAVIATE_CONSOLE, text));
   });
 
   test("a milvus tab formats through formatConsole bound to MILVUS_CONSOLE", () => {
@@ -244,10 +257,10 @@ describe("registerDialectConsoles", () => {
     expect(registered.map((language) => language.id)).toEqual(["first-console", "second-console"]);
   });
 
-  test("registers the three console languages for the shipped records, once each", () => {
+  test("registers the four console languages for the shipped records, once each", () => {
     const { monaco, registered } = recordingMonaco();
     registerDialectConsoles(monaco);
     registerDialectConsoles(monaco);
-    expect(registered.map((language) => language.id)).toEqual(["milvus", "qdrant", "mtconnect"]);
+    expect(registered.map((language) => language.id)).toEqual(["milvus", "qdrant", "weaviate", "mtconnect"]);
   });
 });

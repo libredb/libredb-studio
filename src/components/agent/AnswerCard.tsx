@@ -122,6 +122,7 @@ type StatementLanguage =
   | "graph-cypher"
   | "milvus"
   | "qdrant"
+  | "weaviate"
   | "influxql"
   | "oxia"
   | "s3"
@@ -178,6 +179,12 @@ type StatementLanguage =
  * "not checked" chip, which rules out amber itself, yellow and orange, and red is ruled out as a failure hue. Of the
  * declared `-alt` steps left, pink's stands furthest from every status hue and every other language here in both
  * palettes (0.062 in OKLab from Qdrant's pink, its nearest), measured.
+ *
+ * Weaviate takes lime's `-alt` step (#1566): no guard here reads a Weaviate request, so its draft stands beside the
+ * amber "not checked" chip, which rules out amber itself, yellow and orange, and red is ruled out as a failure hue. Of
+ * the chromatic declared steps left, lime-alt stands furthest from every status hue and every other language here in
+ * both palettes (0.0608 in OKLab from InfluxQL's green, its nearest, in light), measured; the greys mauve and taupe
+ * stand further, but no language here has taken a grey, and a grey border reads as no accent.
  */
 const LANGUAGE_ACCENTS: Readonly<Record<StatementLanguage, string>> = Object.freeze({
   sql: "border-hue-blue/40",
@@ -189,6 +196,7 @@ const LANGUAGE_ACCENTS: Readonly<Record<StatementLanguage, string>> = Object.fre
   "graph-cypher": "border-hue-purple/40",
   milvus: "border-hue-teal/40",
   qdrant: "border-hue-pink/40",
+  weaviate: "border-hue-lime-alt/40",
   influxql: "border-hue-green/40",
   oxia: "border-hue-purple-alt/40",
   s3: "border-hue-indigo-alt/40",

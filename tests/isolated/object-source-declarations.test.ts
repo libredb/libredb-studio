@@ -149,6 +149,7 @@ const SOURCE_DECLARATIONS: Readonly<Record<DatabaseType, readonly string[]>> = O
   milvus: ["collection/json"],
   // A collection's two-part Source, JSON under the declared language (vector-family spec 6.3).
   qdrant: ["collection/json"],
+  weaviate: ["collection/json"],
   // No kind has a source in v1 (InfluxDB spec I11): a measurement and an InfluxDB 3 table are listed and described,
   // and neither provider implements readObjectSource.
   influxdb: [],
@@ -343,7 +344,7 @@ describe("the fleet census of object source declarations", () => {
     // EXTERNAL_DATABASE_TYPES.length (38 with db2, neo4j, milvus, qdrant, influxdb, influxdb3, oxia, databend,
     // bigquery, snowflake, s3, kubernetes, mqtt, firestore, rabbitmq, opcua, mtconnect and sparkplug) plus the
     // embedded store.
-    expect(CENSUS_TYPES).toHaveLength(42);
+    expect(CENSUS_TYPES).toHaveLength(43);
     expect(Object.keys(SOURCE_DECLARATIONS).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
   });
 
@@ -361,8 +362,8 @@ describe("the fleet census of object source declarations", () => {
     // `hasSource` moves between the two halves, so both halves must be pinned or the total alone
     // would still be satisfied. Neither half may be edited to match a build: if this fails, the
     // DECLARATION is wrong or the design's table is, and the repair is one of those two.
-    expect(UNCONNECTED_SOURCE_KINDS).toHaveLength(146);
-    expect(rows.filter((row) => row.kind.hasSource === true)).toHaveLength(146);
+    expect(UNCONNECTED_SOURCE_KINDS).toHaveLength(147);
+    expect(rows.filter((row) => row.kind.hasSource === true)).toHaveLength(147);
     // neo4j added four kinds, none source-bearing, db2 five source-bearing kinds and four others, milvus and
     // qdrant one source-bearing kind each, influxdb and influxdb3 one kind each, neither source-bearing, oxia
     // two source-bearing kinds, databend four source-bearing kinds, bigquery three kinds, snowflake nine source-bearing
@@ -371,9 +372,9 @@ describe("the fleet census of object source declarations", () => {
     // source-bearing kind, spark two source-bearing kinds and its function kind, mtconnect three
     // kinds of which two are not source-bearing, snmp two kinds, NEITHER source-bearing (an SNMP
     // object is a value at a numbered place, with no text behind it to show), netconf two kinds,
-    // BOTH source-bearing, and sparkplug two kinds, BOTH source-bearing.
+    // BOTH source-bearing, sparkplug two kinds, BOTH source-bearing, and weaviate one kind, source-bearing (#1566).
     expect(rows.filter((row) => row.kind.hasSource !== true)).toHaveLength(48);
-    expect(rows).toHaveLength(194);
+    expect(rows).toHaveLength(195);
   });
 
   test("the MariaDB branch declares two more, which an unconnected provider cannot show", async () => {
@@ -402,7 +403,7 @@ describe("the fleet census of object source declarations", () => {
     // 126 on a MariaDB connection against 124 unconnected: the design states both numbers because
     // criterion 2's evidence method reads an unconnected provider and would otherwise
     // structurally exclude the two riskiest declarations in the phase. 142 since MTConnect's `asset`
-    expect(UNCONNECTED_SOURCE_KINDS.length + MARIADB_EXTRA_SOURCE_KINDS.length).toBe(148);
+    expect(UNCONNECTED_SOURCE_KINDS.length + MARIADB_EXTRA_SOURCE_KINDS.length).toBe(149);
   });
 
   /*
@@ -490,8 +491,8 @@ describe("the fleet census of object source declarations", () => {
     }
     // 181 unconnected kinds plus the MariaDB branch's eight, and the kinds each new provider
     // brought: MTConnect's three (#1722), NETCONF's and Modbus's, SNMP's two (#1721) and
-    // Sparkplug B's two (#1720).
-    expect(rows).toHaveLength(202);
+    // Sparkplug B's two (#1720), and Weaviate's one (#1566).
+    expect(rows).toHaveLength(203);
 
     const halfDeclared = rows
       .filter((row) => row.kind.sourceLanguage !== undefined && row.kind.hasSource !== true)

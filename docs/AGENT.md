@@ -635,7 +635,7 @@ What a grounded plan run is given, and where each part comes from:
   which process happened to have read a catalog first. They are read from what the engine already
   holds — `pg_class.reltuples` and `pg_stats` on PostgreSQL, `sqlite_stat1` on SQLite — so no column
   is scanned and no value is read out of any row. A `statistics` reading is supplied by the engine overlays of those two and SQL Server (`buildMssqlEstimates`, from `sys.partitions`) and
-  nothing else, and #414 added no engine to them: on the other thirty-nine `readSchemaStatistics` answers
+  nothing else, and #414 added no engine to them: on the other forty `readSchemaStatistics` answers
   `DIALECT_HAS_NO_STATISTICS` — *"this engine does not hold statistics this run knows how to read"* —
   so **a known schema with no statistics is now the ORDINARY combination rather than a rare one**, and
   the two sentences the run is handed agree: the inventory is a record of what exists, and every
@@ -756,9 +756,9 @@ Three consequences worth stating plainly, because each is easy to assume the oth
 
 1. **A plan run costs statements now.** On PostgreSQL and SQLite grounding is catalog reads plus one
    statistics read (two on SQLite: the `sqlite_stat1` availability probe has to be its own statement,
-   because SQLite resolves table names at prepare time). On the other forty it is **one**, the
+   because SQLite resolves table names at prepare time). On the other forty-one it is **one**, the
    single `db.schema.read` call, except on SQL Server, which adds the one statistics read
-   its overlay's `statistics` supplies without a `catalogCapture`; the other thirty-nine hold no statistics this run
+   its overlay's `statistics` supplies without a `catalogCapture`; the other forty hold no statistics this run
    knows how to read. Since #789 an engine that declares object kinds costs **one more**, the
    object-surface reading above; an engine that declares none is charged nothing extra, because a read
    that cannot exist is never admitted. They come out of the same per-run statement budget every other read does,
@@ -816,7 +816,7 @@ block tagged with the connection's canonical type-id, rationale after the block,
 not in the inventory.
 Since #414 the WORDING varies with the engine's `queryLanguage` and the TAG does not: on an engine whose language is not SQL (a `json` engine, since #1085 a `promql` one, a `cypher` one since Neo4j, and an `influxql` one) the run is asked for one statement or command in that engine's own language, a MongoDB aggregation or a PromQL expression rather than a SELECT, and told that this engine speaks no SQL, while the tag stays the canonical type-id in both arms.
 That is deliberate rather than an oversight: `isQueryFenceTag`
-is a total record over `DatabaseType`, so all forty-two ids pass it, whereas a draft the model fenced as
+is a total record over `DatabaseType`, so all forty-three ids pass it, whereas a draft the model fenced as
 ```` ```javascript ```` passes nothing and records no `plan-statement-drafted` event at all — the run
 would score as having drafted nothing while the user is looking at a statement. A run that cannot answer from the
 inventory takes the other legitimate ending: a line beginning `NO STATEMENT:` saying exactly what is
@@ -1006,7 +1006,7 @@ Two consequences worth stating:
   composed path has and the provider path cannot: reads audited statement by statement rather than as
   one opaque call; foreign keys, which no provider can report on an engine that declares none; and
   SQLite's inventory, which is parsed out of the DDL text the engine stored and which its provider
-  does not expose in the same shape. Collapsing the other forty onto the composed one is the thing
+  does not expose in the same shape. Collapsing the other forty-one onto the composed one is the thing
   #414 exists because nobody can do: a catalog statement has to be written per dialect and verified
   against a live server, and until it is, refusing the dialect was the honest answer and reading the
   provider is a better one.

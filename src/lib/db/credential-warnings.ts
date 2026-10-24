@@ -41,6 +41,10 @@ export type CredentialWarning =
  * Connection; an opaque key is never probed. A server without `service.api_key`, its default, accepts any key or
  * none, so a read-only seed without a key promises a boundary the server does not keep and is refused.
  *
+ * Weaviate (#1566 spec 3.6, W2): a server with `AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED`, its default, answers a
+ * request with no key, so a read-only seed without a key is refused, as Qdrant's is. An API key is opaque, and an
+ * OIDC access token is short-lived by design, so the dialog warns about neither.
+ *
  * InfluxDB (InfluxQL) (InfluxDB spec E12, I7): a 1.x server ships with authentication off and then accepts any
  * credential or none, and an `influxdb` connection can also reach an InfluxDB 3 server started with
  * `--without-auth`, so a read-only seed without a password or token promises a boundary the server does not keep
@@ -94,6 +98,13 @@ export const CREDENTIAL_WARNINGS: Readonly<Partial<Record<DatabaseType, readonly
       kind: "no-secret",
       message:
         "A Qdrant server without an API key, its default, accepts any key or none, so a read-only seed without a key promises a boundary the server does not keep.",
+    },
+  ],
+  weaviate: [
+    {
+      kind: "no-secret",
+      message:
+        "A Weaviate server with anonymous access on, its default, answers a request that carries no key and grants it every write, so a read-only seed without a key promises a boundary the server does not keep.",
     },
   ],
   influxdb: [

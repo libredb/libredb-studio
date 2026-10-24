@@ -255,6 +255,11 @@ const HUES: ReadonlyArray<{ hue: string; light: string; lightAlt: string }> = [
   // was, light 0.0166 and dark 0.0100, which none of the other three do. Putting `gray-800` in
   // this slot instead fails "the light set is no tighter than the dark set it is modelled on".
   { hue: "mauve", light: "mauve-700", lightAlt: "mauve-900" },
+  // Weaviate's identity (#1566): every base hue, every `-alt` step and seven greys were an engine's, so the palette
+  // gains `zinc`, which the Modbus note above measured as clearing every test. MEASURED against the declared set:
+  // `zinc-900` in light and `zinc-400` in dark leave both closest identity pairs where they were (0.0205 light,
+  // 0.0076 dark); `zinc-800` tightens the light set to 0.0110 against `stone`.
+  { hue: "zinc", light: "zinc-900", lightAlt: "zinc-950" },
 ];
 
 /**

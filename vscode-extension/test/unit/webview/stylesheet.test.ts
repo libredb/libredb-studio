@@ -106,6 +106,7 @@ const HUE_FAMILIES: Record<string, string> = {
   mist: "--vscode-descriptionForeground",
   taupe: "--vscode-descriptionForeground",
   mauve: "--vscode-descriptionForeground",
+  zinc: "--vscode-descriptionForeground",
 };
 
 describe("the VS Code theming bridge", () => {

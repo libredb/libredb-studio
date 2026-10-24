@@ -235,6 +235,14 @@
   --studio-hue-slate-alt: #0f172b;
   --studio-hue-taupe: #473c39;
   --studio-hue-mauve: #463947;
+  /* Weaviate (#1566). Every base hue, every `-alt` step and the greys mist, slate, taupe, stone, neutral,
+     mauve and olive were an engine's by the time it registered, so the palette gains `zinc`, the grey the
+     Modbus note measured as clearing every test. MEASURED against this file: `zinc-900` in light and
+     `zinc-400` in dark leave both closest identity pairs where they were (0.0205 light, amber-alt vs
+     orange; 0.0076 dark, stone vs taupe); its nearest identity is `slate-alt` at 0.0362 in light and
+     `mauve` at 0.0130 in dark. `zinc-800` falls to 0.0110 from `stone` and `zinc-700` to 0.0175 from
+     `mist`, each tightening the light set. */
+  --studio-hue-zinc: #18181b;
 }
 
 .dark {
@@ -367,6 +375,7 @@
   --studio-hue-slate-alt: #cad5e2;
   --studio-hue-taupe: #aba09c;
   --studio-hue-mauve: #a89ea9;
+  --studio-hue-zinc: #9f9fa9;
 }
 
 /*
@@ -482,6 +491,7 @@
   --color-hue-slate-alt: var(--studio-hue-slate-alt);
   --color-hue-taupe: var(--studio-hue-taupe);
   --color-hue-mauve: var(--studio-hue-mauve);
+  --color-hue-zinc: var(--studio-hue-zinc);
   --color-hue-teal-solid: var(--studio-hue-teal-solid);
   --color-hue-teal-solid-hover: var(--studio-hue-teal-solid-hover);
   --color-hue-purple-solid: var(--studio-hue-purple-solid);

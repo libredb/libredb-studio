@@ -2,11 +2,11 @@
 
 **The open-source SQL IDE built for cloud-native teams.**
 
-LibreDB Studio gives you a full-featured database workspace in your browser: connect to PostgreSQL, MySQL, MongoDB, Redis and thirty-seven more engines, write and run queries, have the optional AI explain them wherever the engine returns a query plan, and share results with your team.
+LibreDB Studio gives you a full-featured database workspace in your browser: connect to PostgreSQL, MySQL, MongoDB, Redis and thirty-eight more engines, write and run queries, have the optional AI explain them wherever the engine returns a query plan, and share results with your team.
 
 ## Features
 
-- **Forty-one engines, one interface**: PostgreSQL, MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Databend, BigQuery, Snowflake, Apache Spark, Apache Cassandra, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant, Oxia, S3-compatible object storage, Kubernetes, MQTT, RabbitMQ, OPC UA, MTConnect, Modbus, NETCONF, SNMP and Sparkplug B
+- **Forty-two engines, one interface**: PostgreSQL, MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Databend, BigQuery, Snowflake, Apache Spark, Apache Cassandra, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant, Weaviate, Oxia, S3-compatible object storage, Kubernetes, MQTT, RabbitMQ, OPC UA, MTConnect, Modbus, NETCONF, SNMP and Sparkplug B
 - **Read-only AI agent**: state a question and the agent investigates it, and every claim in its report cites the result it came from; it runs statements on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes and MongoDB only, under the read-only boundary documented for each engine. On every other engine it drafts the statement and you run it, and nothing reaches your editor unless you consent to the hand-over when the run opens
 - **AI query explanation** — one click turns an unfamiliar query into plain English, with your own schema as context, on PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Couchbase, ClickHouse, Apache Druid, Trino, Databend, BigQuery, Snowflake and Apache Spark: the write-up is derived from the engine's own `EXPLAIN` plan, so it is offered where an engine returns one (bring your own key: Gemini, OpenAI, Ollama or any OpenAI-compatible endpoint; off unless configured)
 - **Modern editor** — autocomplete, syntax highlighting, query history

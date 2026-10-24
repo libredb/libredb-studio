@@ -112,30 +112,33 @@ export const SHOWCASE_RANK: Record<DatabaseType, number> = {
   // Behind etcd and ahead of the embedded store: libSQL is the name on this page an
   // evaluator is least likely to have met, but it is a product name (Turso's server)
   // rather than our own, so it goes ahead of `libredb`.
-  libsql: 34,
+  // Behind Spark and ahead of libSQL (#1566): the third vector database on this page, after Milvus and Qdrant, and
+  // the newest name, so only libSQL, the embedded store and the industrial and network names after it move.
+  weaviate: 34,
+  libsql: 35,
   // Last of the databases on purpose: the embedded store is the least recognisable database name here. It is
   // still shown - it is a shipped provider with a doc (docs/providers/libredb.md), an
   // icon and a slot in the connection picker, so omitting it would make the login page
   // contradict the app (issue #425, step 2).
-  libredb: 35,
-  // Last (rank 36), behind the embedded store: a plant's address space is the least recognisable name
+  libredb: 36,
+  // Last (rank 37), behind the embedded store: a plant's address space is the least recognisable name
   // on a page of databases, so no existing engine moves for it (#1677).
-  opcua: 36,
-  // Last (rank 37), behind the address space: a machine tool's agent is a narrower name still, so nothing
+  opcua: 37,
+  // Last (rank 38), behind the address space: a machine tool's agent is a narrower name still, so nothing
   // above it moves for it either (#1722).
-  mtconnect: 37,
-  // Last (rank 38): a device's registers are narrower still, and a map the user writes is the only
+  mtconnect: 38,
+  // Last (rank 39): a device's registers are narrower still, and a map the user writes is the only
   // thing that names them, so nothing above it moves for this one either (#1723).
-  modbus: 38,
-  // Rank 39, behind the device's registers: a device's configuration tree is a narrower name still,
+  modbus: 39,
+  // Rank 40, behind the device's registers: a device's configuration tree is a narrower name still,
   // and the people who know it are network engineers rather than the readers a page of databases is
   // written for, so nothing above it moves for this one either (#1724).
-  netconf: 39,
-  // Last (rank 40), behind the configuration tree: the three letters are an acronym a reader
+  netconf: 40,
+  // Last (rank 41), behind the configuration tree: the three letters are an acronym a reader
   // either knows from managing networks or does not know at all, and the page is read by people
   // who came for databases (#1721).
-  snmp: 40,
-  // Last (rank 41), behind the agent's object tree: the name on the box is a specification's rather
+  snmp: 41,
+  // Last (rank 42), behind the agent's object tree: the name on the box is a specification's rather
   // than a product's, so a reader scanning the login page is least likely to arrive already knowing
   // it (#1720). THE RANK MOVES WITH THE BASE AND THE SENTENCE WITH IT: this entry has been written
   // against five trees now, whose last engine was in turn NETCONF, MTConnect, Modbus, NETCONF again
@@ -143,7 +146,7 @@ export const SHOWCASE_RANK: Record<DatabaseType, number> = {
   // already taken by the time this branch rebased onto them - and the census that covers 0..N-1 is
   // what said so, all four times. Nothing else would: a duplicate rank only reorders two engines on
   // the page, so there is no failure to notice and no user to report it.
-  sparkplug: 41,
+  sparkplug: 42,
 };
 
 /**

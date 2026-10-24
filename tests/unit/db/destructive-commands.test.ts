@@ -364,7 +364,7 @@ describe("isDestructiveNonSqlQuery", () => {
 describe("vocabularyDecidesAlone", () => {
   // The rows the gate reads without its SQL keyword test in front. MongoDB and Redis keep that
   // test as a backstop; a type with no row is read by the SQL half entirely.
-  test("is true for prometheus, kafka, etcd, neo4j, milvus, qdrant, influxdb, oxia, s3, kubernetes, mqtt, firestore, rabbitmq, opcua, mtconnect and modbus and for no other type", () => {
+  test("is true for prometheus, kafka, etcd, neo4j, milvus, qdrant, weaviate, influxdb, oxia, s3, kubernetes, mqtt, firestore, rabbitmq, opcua, mtconnect and modbus and for no other type", () => {
     expect(SHIPPED_DATABASE_TYPES.filter((type) => vocabularyDecidesAlone(type))).toEqual([
       "prometheus",
       "kafka",
@@ -372,6 +372,7 @@ describe("vocabularyDecidesAlone", () => {
       "neo4j",
       "milvus",
       "qdrant",
+      "weaviate",
       "influxdb",
       "oxia",
       "s3",
@@ -394,7 +395,7 @@ describe("vocabularyDecidesAlone", () => {
 });
 
 describe("NON_SQL_DESTRUCTIVE_VOCABULARY", () => {
-  test("carries a row for exactly the eighteen types whose text is not SQL", () => {
+  test("carries a row for exactly the nineteen types whose text is not SQL", () => {
     expect(Object.keys(NON_SQL_DESTRUCTIVE_VOCABULARY).sort()).toEqual([
       "etcd",
       "firestore",
@@ -417,6 +418,7 @@ describe("NON_SQL_DESTRUCTIVE_VOCABULARY", () => {
       "s3",
       "snmp",
       "sparkplug",
+      "weaviate",
     ]);
   });
 
@@ -522,11 +524,12 @@ describe("vocabularySendsToModel", () => {
 
   // What the dialog did for every engine before the field existed, but for etcd, whose row keeps its statements,
   // values included, on this deployment (#1089 E10).
-  test("keeps etcd's, Milvus's, Qdrant's, InfluxDB's, Oxia's, S3's, Kubernetes's, MQTT's, Firestore's, RabbitMQ's, OPC UA's, MTConnect's, Modbus's and SNMP's statements from the AI analysis, and no other shipped type's", () => {
+  test("keeps etcd's, Milvus's, Qdrant's, Weaviate's, InfluxDB's, Oxia's, S3's, Kubernetes's, MQTT's, Firestore's, RabbitMQ's, OPC UA's, MTConnect's, Modbus's and SNMP's statements from the AI analysis, and no other shipped type's", () => {
     expect(SHIPPED_DATABASE_TYPES.filter((type) => !vocabularySendsToModel(type))).toEqual([
       "etcd",
       "milvus",
       "qdrant",
+      "weaviate",
       "influxdb",
       "oxia",
       "s3",
@@ -632,8 +635,17 @@ describe("statementRefusal and the console text bound", () => {
     remove = () => {};
   });
 
-  test("only milvus's, qdrant's, influxdb's, oxia's, s3's, kubernetes's and firestore's rows declare a refusal and a bound, and redis's a refusal alone", () => {
-    const declaring: readonly string[] = ["milvus", "qdrant", "influxdb", "oxia", "s3", "kubernetes", "firestore"];
+  test("only milvus's, qdrant's, weaviate's, influxdb's, oxia's, s3's, kubernetes's and firestore's rows declare a refusal and a bound, and redis's a refusal alone", () => {
+    const declaring: readonly string[] = [
+      "milvus",
+      "qdrant",
+      "weaviate",
+      "influxdb",
+      "oxia",
+      "s3",
+      "kubernetes",
+      "firestore",
+    ];
     for (const [type, row] of Object.entries(NON_SQL_DESTRUCTIVE_VOCABULARY)) {
       if (declaring.includes(type)) continue;
       expect(row?.maxTextBytes).toBeUndefined();

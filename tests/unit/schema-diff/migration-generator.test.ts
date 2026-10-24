@@ -1110,6 +1110,7 @@ describe("generateMigrationSQL: SQLite's grammar declares a foreign key only ins
     neo4j: "engine-has-no-foreign-key",
     milvus: "engine-has-no-foreign-key",
     qdrant: "engine-has-no-foreign-key",
+    weaviate: "engine-has-no-foreign-key",
     influxdb: "engine-has-no-foreign-key",
     influxdb3: "engine-has-no-foreign-key",
     oxia: "engine-has-no-foreign-key",
@@ -1253,6 +1254,7 @@ const MODIFIED_COLUMN_COVERAGE: Record<
   // Not a table store either (vector-family spec 6.3): a collection holds points whose payloads are schemaless, and
   // the columns the object browser shows are its vectors, its payload indexes and a sample of its payload keys.
   qdrant: { label: "Qdrant", reason: "payloads are schemaless" },
+  weaviate: { label: "Weaviate", reason: "declared through Weaviate's own schema API" },
   // Not a table store either: a measurement's tags and fields come from the points written to it.
   influxdb: { label: "InfluxDB (InfluxQL)", reason: "created by the points written to it" },
   // A table's tags and fields come from the line protocol written to it, and the 3.x SQL takes no DDL.
@@ -1640,6 +1642,7 @@ describe("generateMigrationSQL: dialects that cannot modify a column", () => {
           "neo4j",
           "milvus",
           "qdrant",
+          "weaviate",
           "influxdb",
           "influxdb3",
           "oxia",
@@ -1717,6 +1720,7 @@ const TRANSACTION_WRAPPER_COVERAGE: Record<DatabaseType, "BEGIN;" | "BEGIN TRANS
   neo4j: false, // a Cypher statement, not SQL text (`readsSqlText: false`), and no table DDL to wrap (the module's `tableDdl: "refused"`)
   milvus: false, // a Milvus console request, not SQL text (`readsSqlText: false`), and no table DDL to wrap (the module's `tableDdl: "refused"`)
   qdrant: false, // a Qdrant console request, not SQL text (`readsSqlText: false`), and no table DDL to wrap (the module's `tableDdl: "refused"`)
+  weaviate: false, // a Weaviate console request, not SQL text (`readsSqlText: false`), and no table DDL to wrap (the module's `tableDdl: "refused"`)
   influxdb: false, // an InfluxQL statement, not SQL text at all (`readsSqlText: false`), and no table DDL to wrap (the module's `tableDdl: "refused"`)
   influxdb3: false, // SQL, but the 3.x planner takes no DDL, so there is no table DDL to wrap (the module's `tableDdl: "refused"`)
   oxia: false, // an `oxia client` read command, not SQL text (`readsSqlText: false`), and no table DDL to wrap (the module's `tableDdl: "refused"`)
@@ -1768,6 +1772,7 @@ describe("generateMigrationSQL: transaction wrapper by dialect", () => {
             "neo4j",
             "milvus",
             "qdrant",
+            "weaviate",
             "influxdb",
             "influxdb3",
             "oxia",

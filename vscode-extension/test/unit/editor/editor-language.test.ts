@@ -13,6 +13,7 @@ const EVERY_LANGUAGE = {
   "graph-cypher": true,
   milvus: true,
   qdrant: true,
+  weaviate: true,
   influxql: true,
   oxia: true,
   s3: true,

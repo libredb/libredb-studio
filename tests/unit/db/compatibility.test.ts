@@ -512,9 +512,19 @@ describe("wire-compatibility registry", () => {
     // The one place these numerals live. A new provider moves them here and nowhere else, and the derived
     // assertions around this test say how the counts relate.
     expect([SHIPPED_DATABASE_TYPES.length, EXTERNAL_DATABASE_TYPES.length, WIRE_COMPATIBLE_ENGINES.length]).toEqual([
-      42, 41, 27,
+      43, 42, 27,
     ]);
-    expect(connectableProductCount()).toBe(68);
+    expect(connectableProductCount()).toBe(69);
+  });
+
+  test("the Weaviate row of each record (#1566)", () => {
+    expect(SHIPPED_DATABASE_TYPES).toContain("weaviate");
+    expect(EXTERNAL_DATABASE_TYPES).toContain("weaviate");
+    // As Qdrant's: every console request is a read and the provider keeps the mode; no file to read.
+    expect(READ_ONLY_ENFORCED.weaviate).toBe(true);
+    expect(READS_FILE_ACCESS_POSTURE.weaviate).toBe(false);
+    // As Milvus's and Qdrant's: list_connections and inspect_schema; run_read_query refuses it (no queryReadOnly).
+    expect(MCP_EXPOSABLE.weaviate).toBe(true);
   });
 
   test("the Apache Spark row of each record (#1736)", () => {

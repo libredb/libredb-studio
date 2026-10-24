@@ -31,6 +31,7 @@ import { OXIA_EXECUTION_UI } from "@/lib/db/providers/keyvalue/oxia/execution-ui
 import { POSTGRES_EXECUTION_UI } from "@/lib/db/providers/sql/postgres-execution-ui";
 import { PROMETHEUS_EXECUTION_UI } from "@/lib/db/providers/timeseries/prometheus/execution-ui";
 import { QDRANT_EXECUTION_UI } from "@/lib/db/providers/vector/qdrant/execution-ui";
+import { WEAVIATE_EXECUTION_UI } from "@/lib/db/providers/vector/weaviate/execution-ui";
 import { RABBITMQ_EXECUTION_UI } from "@/lib/db/providers/stream/rabbitmq/execution-ui";
 import { REDIS_EXECUTION_UI } from "@/lib/db/providers/keyvalue/redis-execution-ui";
 import { S3_EXECUTION_UI } from "@/lib/db/providers/objectstore/s3/execution-ui";
@@ -92,6 +93,7 @@ export const EXECUTION_UI: Readonly<Record<DatabaseType, ExecutionUiSpec>> = Obj
   sparkplug: SPARKPLUG_EXECUTION_UI,
   sqlite: SQLITE_EXECUTION_UI,
   trino: TRINO_EXECUTION_UI,
+  weaviate: WEAVIATE_EXECUTION_UI,
 });
 
 /**

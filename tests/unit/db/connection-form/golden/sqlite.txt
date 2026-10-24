@@ -57,6 +57,7 @@ button "Apache Spark"
 button "MTConnect"
 button "Modbus"
 button "NETCONF"
+button "Weaviate"
 label[for=database] "Database File Path"
 input#database type=none placeholder="/path/to/database file" describedby=none
 button "Cancel"

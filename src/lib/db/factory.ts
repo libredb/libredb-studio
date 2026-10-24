@@ -460,6 +460,13 @@ export async function createDatabaseProvider(
       return new QdrantProvider(connection, options, execution);
     }
 
+    case "weaviate": {
+      // The explicit /index specifier keeps this dynamic import statically analysable. The execution context
+      // rides along, so an execution profile opens it read-only, as Qdrant's does.
+      const { WeaviateProvider } = await import("./providers/vector/weaviate/index");
+      return new WeaviateProvider(connection, options, execution);
+    }
+
     // Object storage - dynamically imported
     case "s3": {
       // The explicit /index specifier keeps this dynamic import statically analysable. The execution context rides
@@ -568,7 +575,7 @@ export async function createDatabaseProvider(
         // This list is NOT type-checked against the union - a new case above with no
         // entry here is silent - so it is kept in the same order as the cases and
         // tests/isolated/factory.test.ts pins individual names in it by regex.
-        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, duckdb, libsql, oracle, db2, mssql, clickhouse, druid, trino, databend, bigquery, snowflake, spark, cassandra, elasticsearch, opensearch, mongodb, couchbase, firestore, redis, etcd, oxia, prometheus, influxdb, influxdb3, kafka, neo4j, milvus, qdrant, s3, mqtt, opcua, mtconnect, modbus, snmp, rabbitmq, kubernetes, netconf, sparkplug, libredb`,
+        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, duckdb, libsql, oracle, db2, mssql, clickhouse, druid, trino, databend, bigquery, snowflake, spark, cassandra, elasticsearch, opensearch, mongodb, couchbase, firestore, redis, etcd, oxia, prometheus, influxdb, influxdb3, kafka, neo4j, milvus, qdrant, weaviate, s3, mqtt, opcua, mtconnect, modbus, snmp, rabbitmq, kubernetes, netconf, sparkplug, libredb`,
         connection.type,
       );
   }

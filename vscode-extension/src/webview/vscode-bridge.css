@@ -165,6 +165,7 @@
   --studio-hue-slate-alt: var(--vscode-descriptionForeground);
   --studio-hue-taupe: var(--vscode-descriptionForeground);
   --studio-hue-mauve: var(--vscode-descriptionForeground);
+  --studio-hue-zinc: var(--vscode-descriptionForeground);
   --font-geist-sans: var(--vscode-font-family);
   --font-geist-mono: var(--vscode-editor-font-family);
   --radius: 0.5rem;

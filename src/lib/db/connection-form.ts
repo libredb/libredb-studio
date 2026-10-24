@@ -824,6 +824,24 @@ export const CONNECTION_FORM: {
     },
     hostAcceptsUri: ["http", "https"],
   },
+  weaviate: {
+    label: "Weaviate",
+    // REST and GraphQL share this port (#1566 spec 6.1); 50051 is gRPC, which the provider never dials.
+    defaultPort: "8080",
+    // The connection-string box reads http:// and https:// as ClickHouse, so the vendor's address belongs in the
+    // Host box, which splits it (hostAcceptsUri below), as Qdrant's.
+    showConnectionStringToggle: false,
+    // No Database box: Weaviate has no container level. No User field: an API key and an OIDC access token are both
+    // a bearer token, which is the password, and the provider refuses a non-empty user naming the field.
+    connectionFields: CONNECTION_FIELDS.weaviate,
+    fieldLabels: { password: "API key or token" },
+    fieldHints: {
+      host: "A name or address, or a pasted http:// or https:// address such as a Weaviate Cloud endpoint, which is split into Host and Port. Studio dials this port only, never Weaviate's gRPC port 50051.",
+      password:
+        "Weaviate receives the API key or OIDC access token on every request, so a key needs an SSL mode other than disable, unless the host is this machine or an SSH tunnel carries the connection. A key for a user with only the viewer role is the safest choice.",
+    },
+    hostAcceptsUri: ["http", "https"],
+  },
   influxdb: {
     // One connection type per query language: this one sends InfluxQL over the v1 /query API of 1.x, 2.x and 3.x.
     label: "InfluxDB (InfluxQL)",
@@ -1437,6 +1455,7 @@ export const CONNECTION_PICKER_ORDER: readonly DatabaseType[] = Object.freeze([
   "mtconnect",
   "modbus",
   "netconf",
+  "weaviate",
 ]);
 
 /** Whether the dialog offers the SSL / TLS panel: false only where the entry declares `showSslPanel: false`. */

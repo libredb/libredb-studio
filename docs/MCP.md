@@ -17,6 +17,7 @@ It is off by default.
     A column an engine only inferred from sampled data, rather than read from a declaration, is never listed, so a table may hold fields the answer does not show; `columns_omitted` counts only the columns beyond the 50-column cap, and agent grounding and the AI panels never receive such a column either.
     On Milvus it lists the collection's declared fields, with the dynamic field as one `$meta` column and never a key inside it.
     On Qdrant it lists payload-index fields and vectors only, and says that other payload keys may exist: the keys Studio samples from points never reach an MCP client.
+    On Weaviate it lists each collection's declared properties and vectors; a collection's tenants and aliases are never returned, and a call wakes no tenant.
     On InfluxDB (InfluxQL) it lists measurements with their tag and field keys, and on InfluxDB 3 (SQL) tables with their columns; the `_internal` database and the `system.*` tables of a 3.x server are never returned.
     On Databend it lists tables, views, materialized views and dynamic tables; on a Databend Cloud connection with a Warehouse set, a call resumes a suspended warehouse, which bills while it runs, as any statement does.
     On Apache Spark it lists the tables and views of one namespace, read with SHOW and DESCRIBE statements that start no Spark job on Studio's own session; a namespace is named in Spark's spelling, its parts joined by dots.

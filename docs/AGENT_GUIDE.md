@@ -214,8 +214,8 @@ having **no statistics**, never as empty. On SQLite the statistics exist only af
 
 **Every engine, read one of two ways.** On **PostgreSQL and SQLite** the server composes catalog
 statements and reads them through the same audited, read-only path an Agent run uses. On every other
-connection, which is the other forty (MySQL, Oracle, Db2 LUW, SQL Server, libSQL, DuckDB, MongoDB, Redis,
-ClickHouse, Couchbase, Firestore, Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Apache Spark, Cassandra, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, MQTT, RabbitMQ, OPC UA, MTConnect, etcd, Neo4j, Milvus, Qdrant, Oxia, Databend, S3-compatible object storage, Kubernetes, Modbus, NETCONF, SNMP, Sparkplug B and the bundled LibreDB
+connection, which is the other forty-one (MySQL, Oracle, Db2 LUW, SQL Server, libSQL, DuckDB, MongoDB, Redis,
+ClickHouse, Couchbase, Firestore, Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Apache Spark, Cassandra, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, MQTT, RabbitMQ, OPC UA, MTConnect, etcd, Neo4j, Milvus, Qdrant, Weaviate, Oxia, Databend, S3-compatible object storage, Kubernetes, Modbus, NETCONF, SNMP, Sparkplug B and the bundled LibreDB
 store), it asks that connection's own provider to describe its schema, which is the reading the
 sidebar already performs when it lists your tables, and composes no statement at all. Grounding is
 no longer decided by the engine, and that changed in #414; what decides it now is whether the
@@ -228,7 +228,7 @@ workflow including **Operate**.
 now two different sentences, and the difference is the whole of what changed:
 
 - **Grounding: every engine.** What a Plan run is TOLD about your database. It needs no read-only
-  statement path, because the provider reading sends no statement, so it reaches all forty-two engines.
+  statement path, because the provider reading sends no statement, so it reaches all forty-three engines.
 - **Agent mode: PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes and MongoDB.** What a run may DO by itself.
   Its tools execute statements and need a read-only path the provider implements, which only those providers do.
   So a schema-workflow Agent run on any other engine is refused when you press **Start**, before a run is opened and before anything is read, with the reason the rail's amber card shows (`workflowAvailability` in `src/app/api/agent/runs/route.ts`, #512); a Plan run there is still grounded.
@@ -240,7 +240,7 @@ inspection found and not proof that nothing else exists, and the plan is told so
 engines it works out a collection's fields from a **sample of your own documents**: no value from
 them is kept, but the existence of a field there is derived from your data rather than read from a
 catalog. The **estimated statistics** below are PostgreSQL's, SQLite's and SQL Server's alone; on the other
-thirty-nine the plan is told that this engine holds none it knows how to read, which means it has an
+forty the plan is told that this engine holds none it knows how to read, which means it has an
 inventory and no sizes — the ordinary case now rather than a rare one.
 
 On an engine that speaks no SQL, a Plan run is asked for one statement or command **in that engine's
@@ -977,7 +977,7 @@ Stated plainly, because a surface that hides its edges is the one that surprises
   (`src/lib/db/providers/embedded/libredb.ts`), so the bundled **SQLite sample** is the seeded connection to try a run against (`src/lib/seed/sqlite-sample.ts`).
   **Plan** mode still opens on
   every connection — the model is toolless there, so no profile has to be acquired for it — and since
-  #414 its **grounding** no longer takes this path at all on the other forty: it asks the provider to
+  #414 its **grounding** no longer takes this path at all on the other forty-one: it asks the provider to
   describe its schema, which needs no read-only statement profile, so a Plan run on Oracle or Redis
   is ordinarily grounded while an Agent run on the same connection still cannot read anything. Where
   the reading does fail — a provider that cannot describe itself, a description that overran its

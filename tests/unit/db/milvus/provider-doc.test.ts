@@ -273,7 +273,7 @@ describe("docs/SECURITY.md states Milvus's limits and its plaintext rule", () =>
     expect(bullet).toContain(
       "A Milvus password or token over no TLS is refused unless the host is a loopback address or `localhost`, or an SSH tunnel carries the connection.",
     );
-    expect(SECURITY).toContain("etcd's, Neo4j's, Milvus's and Qdrant's providers keep the mode today");
+    expect(SECURITY).toContain("etcd's, Neo4j's, Milvus's, Qdrant's and Weaviate's providers keep the mode today");
     expect(SECURITY).toContain("src/lib/db/providers/vector/milvus/write-policy.ts");
   });
 });

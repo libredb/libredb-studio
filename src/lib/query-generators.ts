@@ -14,6 +14,7 @@ import { influxqlSource, quoteInfluxqlIdentifier } from "@/lib/db/providers/time
 import { metricSelector } from "@/lib/db/providers/timeseries/prometheus/promql";
 import { milvusSelectQuery, milvusTableQuery } from "@/lib/db/providers/vector/milvus/generators";
 import { qdrantSelectQuery, qdrantTableQuery } from "@/lib/db/providers/vector/qdrant/generators";
+import { weaviateSelectQuery, weaviateTableQuery } from "@/lib/db/providers/vector/weaviate/generators";
 import {
   type ObjectReadRange,
   offersCountQuery,
@@ -921,6 +922,12 @@ const DIALECT_GENERATORS: Readonly<Record<QueryDialect, DialectGenerators>> = Ob
   qdrant: {
     table: (path) => qdrantTableQuery(path),
     select: (path, columns) => qdrantSelectQuery(path, columns),
+  },
+  // Weaviate reads a collection through its own console request (#1566 spec 6.4), written by the provider's
+  // generators: the click lists the first objects, Generate Request writes a near-vector search without running it.
+  weaviate: {
+    table: (path) => weaviateTableQuery(path),
+    select: (path, columns) => weaviateSelectQuery(path, columns),
   },
   // Oxia reads a key through an oxia client command (SB2-4.5), written by the provider's browser-safe generators.ts:
   // the click is `get <key>`, and "Generate Command" that get with the `list --prefix` and `range-scan --prefix` forms

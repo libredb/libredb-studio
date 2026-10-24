@@ -21,6 +21,7 @@ const SECOND_SERVER_SPECS = [
   "neo4j-provider.spec.ts",
   "milvus-provider.spec.ts",
   "qdrant-provider.spec.ts",
+  "weaviate-provider.spec.ts",
   "influxdb-providers.spec.ts",
   "oxia-provider.spec.ts",
   "databend-provider.spec.ts",

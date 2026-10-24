@@ -180,6 +180,7 @@ describe("CONNECTION_STRING_ACCEPTED against each provider's own declaration (Sp
       "neo4j",
       "milvus",
       "qdrant",
+      "weaviate",
       "influxdb",
       "influxdb3",
       "oxia",

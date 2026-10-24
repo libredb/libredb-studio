@@ -206,7 +206,7 @@ A rule that could **not** be established is not guessed from a neighbouring dial
 at the compatibility default below, and it is listed here rather than left implicit. The default is per
 **fact**, not per dialect: a dialect whose `#` rule is known can still be undecided about its brackets.
 
-**MongoDB, Firestore, Redis, Prometheus, InfluxDB (InfluxQL), Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, Oxia, S3-compatible object storage, Kubernetes, OPC UA, MTConnect, Modbus, NETCONF, SNMP and Sparkplug B are the twenty-one types whose query text is not SQL at all**: `readsSqlText: false`, declared in each engine's grammar module in the registry in `src/lib/db/sql-grammar/`, holds exactly those twenty-one, which is what `readsSqlText()` reports on.
+**MongoDB, Firestore, Redis, Prometheus, InfluxDB (InfluxQL), Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, Weaviate, Oxia, S3-compatible object storage, Kubernetes, OPC UA, MTConnect, Modbus, NETCONF, SNMP and Sparkplug B are the twenty-two types whose query text is not SQL at all**: `readsSqlText: false`, declared in each engine's grammar module in the registry in `src/lib/db/sql-grammar/`, holds exactly those twenty-two, which is what `readsSqlText()` reports on.
 Their providers never reach these readers on the query path, and the confirmation gate, which reads whatever is in the editor, asks `readsSqlText()` before applying any span-based rule to their text, so a JSON document, a Redis command, a PromQL expression, an InfluxQL statement, a Kafka read request, an etcdctl command, a Cypher statement, a Milvus request, a Qdrant request, an `oxia client` read command, an AWS CLI read command, a kubectl statement, a NETCONF read request, a Sparkplug read request or an SNMP walk is not judged by a SQL reader that cannot parse it.
 
 The gate's SQL keyword test still reads MongoDB and Redis text first, as a backstop, which on Redis also asks about a read whose arguments include `update` and then `set` (`docs/BACKLOG.md` U43).
@@ -764,7 +764,7 @@ ordering notice beside it cannot disagree:
 
 | Condition | Where it comes from | Why |
 |-----------|--------------------|-----|
-| `supportsResultPagination === true` | the connection's `ProviderCapabilities` | Sixteen providers cannot serve page two. Cassandra and Elasticsearch throw on a positive offset; MongoDB, Redis, LibreDB, Prometheus, InfluxDB (InfluxQL), Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, Oxia and S3-compatible object storage answer it with page one. An absent flag reads as unsupported |
+| `supportsResultPagination === true` | the connection's `ProviderCapabilities` | Seventeen providers cannot serve page two. Cassandra and Elasticsearch throw on a positive offset; MongoDB, Redis, LibreDB, Prometheus, InfluxDB (InfluxQL), Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, Weaviate, Oxia and S3-compatible object storage answer it with page one. An absent flag reads as unsupported |
 | `pagination.hasMore` | `POST /api/db/query` | Requires the limiter's `PreparedQuery.wasLimited` as well as a row past the page — see below |
 | the surface supplies `onLoadMore` | `BottomPanel` | A result hydrated from an agent run has no statement of its own to page |
 

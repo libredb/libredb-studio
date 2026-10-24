@@ -433,6 +433,7 @@ const GRAMMAR_COVERAGE: Record<DatabaseType, "established" | "default"> = {
   milvus: "default",
   // A Qdrant console request, not SQL (vector-family spec 6.4): no SQL grammar is established for it, and none is read.
   qdrant: "default",
+  weaviate: "default",
   // InfluxQL, not SQL: the provider's own lexer reads it, so no SQL grammar is established for it, and none is read.
   influxdb: "default",
   // Five facts probed on InfluxDB 3.12.0 Core through `POST /api/v3/query_sql`, the route the provider
@@ -763,6 +764,7 @@ const SQL_TEXT_COVERAGE: Record<DatabaseType, boolean> = {
   // A Qdrant console request is a request line and one JSON body, not SQL text: its strings escape with a
   // backslash and `//` opens a comment, which a SQL span reader cannot follow (vector-family spec 6.4).
   qdrant: false,
+  weaviate: false,
   // An InfluxQL statement is not SQL text: its strings escape with a backslash, `/.../` is a regex where the parser
   // asks for one, and a `--` comment ends at a lone `\r`, none of which a SQL span reader follows (SPEC 5.7).
   influxdb: false,

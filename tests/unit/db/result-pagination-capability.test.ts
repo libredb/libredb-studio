@@ -89,6 +89,7 @@ const EXPECTED: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   neo4j: false,
   milvus: false,
   qdrant: false,
+  weaviate: false,
   influxdb: false,
   influxdb3: true,
   oxia: false,

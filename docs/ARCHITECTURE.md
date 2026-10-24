@@ -5,7 +5,7 @@ This document outlines the architectural patterns, tech stack, and system design
 ## System Overview
 
 LibreDB Studio is a hybrid, cloud-native database management tool that provides an IDE-like experience in the browser.
-It supports **42 database backends** via a Strategy Pattern abstraction: PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Couchbase, Firestore, ClickHouse, Apache Druid, Trino, BigQuery, Databend, Snowflake, Apache Spark, Apache Cassandra, Elasticsearch, OpenSearch, Redis, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, MQTT, RabbitMQ, OPC UA, MTConnect, Modbus, etcd, Neo4j, Milvus, Qdrant, Oxia, S3-compatible object storage, Kubernetes, NETCONF, SNMP, Sparkplug B, LibreDB.
+It supports **43 database backends** via a Strategy Pattern abstraction: PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Couchbase, Firestore, ClickHouse, Apache Druid, Trino, BigQuery, Databend, Snowflake, Apache Spark, Apache Cassandra, Elasticsearch, OpenSearch, Redis, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, MQTT, RabbitMQ, OPC UA, MTConnect, Modbus, etcd, Neo4j, Milvus, Qdrant, Weaviate, Oxia, S3-compatible object storage, Kubernetes, NETCONF, SNMP, Sparkplug B, LibreDB.
 The count is the `SHIPPED` record in [`src/lib/db/compatibility.ts`](../src/lib/db/compatibility.ts), which is exhaustive over `DatabaseType`; `elasticsearch` and `opensearch` are two ids served by one provider module, and `influxdb` and `influxdb3` are two ids served by one provider directory with a class each.
 
 It runs in two modes: as a **standalone Next.js app** and as an **embedded npm package** (`@libredb/studio`) consumed by libredb-platform. See [§4.6](#46-workspace-abstraction-npm-package-embedding).
@@ -80,6 +80,7 @@ graph TD
         Graph --> Neo4j[(Neo4j)]
         Vector --> Milvus[(Milvus)]
         Vector --> Qdrant[(Qdrant)]
+        Vector --> Weaviate[(Weaviate)]
         ObjectStore --> S3[(S3-compatible object storage)]
         Platform --> Kubernetes[(Kubernetes)]
         DBFactory --> Embedded[Embedded Providers]
@@ -147,6 +148,7 @@ classDiagram
     BaseDatabaseProvider <|-- GraphBaseProvider
     BaseDatabaseProvider <|-- MilvusProvider
     BaseDatabaseProvider <|-- QdrantProvider
+    BaseDatabaseProvider <|-- WeaviateProvider
     BaseDatabaseProvider <|-- S3Provider
     BaseDatabaseProvider <|-- KubernetesProvider
     BaseDatabaseProvider <|-- RabbitMQProvider
@@ -419,7 +421,7 @@ src/
     │   │   │                #   InfluxDB 3's /api/v3/query_sql; the InfluxQL lexer, read policy, quoter and generators are browser-safe)
     │   │   ├── stream/      # kafka/ (read-client seam + JSON read requests over the Kafka protocol via @platformatic/kafka)
     │   │   ├── graph/       # neo4j/ (an engine profile, catalog, statement gate and monitoring on the graph layer below)
-    │   │   ├── vector/      # milvus/ (a gRPC client of its own via the shared gRPC transport, Milvus's REST v2 requests as the console, run over gRPC); qdrant/ (a REST client of its own over the shared node transport, the closed console, the payload sample)
+    │   │   ├── vector/      # milvus/ (a gRPC client of its own via the shared gRPC transport, Milvus's REST v2 requests as the console, run over gRPC); qdrant/ (a REST client of its own over the shared node transport, the closed console, the payload sample); weaviate/ (a REST client of its own over the shared node transport, the closed console run over REST or GraphQL as the server's version decides)
     │   │   ├── objectstore/ # s3/ (a REST client of its own over the shared byte transport, signed by its own SigV4 module over node:crypto; an AWS CLI read-command console; object metadata and capped previews, Parquet through hyparquet)
     │   │   ├── platform/    # kubernetes/ (a REST client of its own over the shared node transport behind a read-only request allowlist; a kubectl read-command console; namespaces and kinds in the tree, a YAML view of every object, Secret values redacted)
     │   │   └── embedded/    # libredb (built-in embedded provider for the sample connection)
@@ -446,7 +448,7 @@ src/
     │                        #   verifier (jose, HS256 pinned) and the in-process jti replay cache
     ├── llm/                 # LLM provider module
     ├── editor/              # Monaco completions (SQL + MongoDB), the tab-type/language ladder, the
-    │                       # editor registry (dialect-editors.ts), the LibreDB, Redis, etcd, Oxia, S3 and kubectl command languages, Cypher, InfluxQL, and the Milvus and Qdrant console languages
+    │                       # editor registry (dialect-editors.ts), the LibreDB, Redis, etcd, Oxia, S3 and kubectl command languages, Cypher, InfluxQL, and the Milvus, Qdrant and Weaviate console languages
     ├── schema-diff/         # Diff engine + migration SQL generator
     ├── export/              # The writers behind every "save this to disk": RFC 4180 CSV,
     │                        #   the SQL INSERT/DDL forms, and the one blob-download path

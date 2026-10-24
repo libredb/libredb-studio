@@ -26,10 +26,11 @@ const MANAGE_NO_EXP_URL_SAFE = "e30.eyJhY2Nlc3MiOiJtIiwic3ViIjoieHg_Pz8_Pz4-In0.
 type Credential = { user?: string; password?: string };
 
 describe("CREDENTIAL_WARNINGS", () => {
-  test("milvus, qdrant, influxdb, influxdb3, oxia, databend, s3 and rabbitmq are the shipped types that declare credential warnings (vector-family spec 3.12, InfluxDB spec E12, SB3-1.5, Databend design 7.2)", () => {
+  test("milvus, qdrant, weaviate, influxdb, influxdb3, oxia, databend, s3 and rabbitmq are the shipped types that declare credential warnings (vector-family spec 3.12, InfluxDB spec E12, SB3-1.5, Databend design 7.2)", () => {
     expect(Object.keys(CREDENTIAL_WARNINGS)).toEqual([
       "milvus",
       "qdrant",
+      "weaviate",
       "influxdb",
       "influxdb3",
       "oxia",
@@ -39,6 +40,7 @@ describe("CREDENTIAL_WARNINGS", () => {
     ]);
     expect(CREDENTIAL_WARNINGS.milvus?.map((entry) => entry.kind)).toEqual(["pair", "no-secret"]);
     expect(CREDENTIAL_WARNINGS.qdrant?.map((entry) => entry.kind)).toEqual(["jwt", "no-secret"]);
+    expect(CREDENTIAL_WARNINGS.weaviate?.map((entry) => entry.kind)).toEqual(["no-secret"]);
     expect(CREDENTIAL_WARNINGS.oxia?.map((entry) => entry.kind)).toEqual(["jwt"]);
     expect(CREDENTIAL_WARNINGS.s3?.map((entry) => entry.kind)).toEqual(["pair", "pair"]);
     expect(CREDENTIAL_WARNINGS.rabbitmq?.map((entry) => entry.kind)).toEqual(["pair"]);

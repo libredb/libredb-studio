@@ -48,7 +48,7 @@ const FAMILIES: Record<string, readonly DatabaseType[]> = {
   ],
   stream: ["kafka", "rabbitmq"],
   timeseries: ["prometheus"],
-  vector: ["milvus", "qdrant"],
+  vector: ["milvus", "qdrant", "weaviate"],
 };
 
 /** Where each type id's module sits, under `src/lib/db/providers/`. */

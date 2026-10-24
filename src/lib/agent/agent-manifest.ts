@@ -51,6 +51,7 @@ export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
   neo4j: null,
   milvus: null,
   qdrant: null,
+  weaviate: null,
   influxdb: null,
   influxdb3: null,
   oxia: null,

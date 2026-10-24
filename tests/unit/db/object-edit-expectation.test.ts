@@ -24,8 +24,8 @@ describe("the Phase 3 census expectation", () => {
     // the two numerals here only say how long that list is. SNMP and Sparkplug B abstain with
     // the rest: an SNMP object is a value at a numbered place, and a Sparkplug metric's shape is
     // the birth certificate's, which no client here writes.
-    expect(EXPECTED_EDIT_ABSTAINERS.length).toBe(38);
-    expect(EDIT_CENSUS_TYPES.length).toBe(42);
+    expect(EXPECTED_EDIT_ABSTAINERS.length).toBe(39);
+    expect(EDIT_CENSUS_TYPES.length).toBe(43);
   });
 
   test("no pair is written twice", () => {

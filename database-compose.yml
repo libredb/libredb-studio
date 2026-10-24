@@ -2576,6 +2576,243 @@ services:
     <<: *qdrant-limits
 
   # ---------------------------------------------------------------------------------------
+  # Weaviate (the weaviate provider, #1566). The default fixture is one 1.40 server, which
+  # serves every REST search route. Three more sit behind the `weaviate-matrix` profile, one per
+  # server shape the provider must read: 1.37.4, the version DigitalOcean Managed Weaviate
+  # runs, which has no REST search and is searched over GraphQL; 1.38.22, whose REST search
+  # sits behind a flag left off; and 1.40 with GraphQL disabled, the setting new Weaviate
+  # Cloud clusters are created with. Every server runs with
+  # no vectorizer and API_BASED_MODULES_DISABLED, so /v1/meta lists no module and no request
+  # can reach a model provider: an empty ENABLE_MODULES alone still loads every API-based
+  # module. Each server is seeded by a one-shot Python sidecar (docker/weaviate/seed.py, stdlib
+  # only). gRPC 50051, which the provider never dials, is not published, and no server has a
+  # data volume: removing its container resets it. docker/weaviate/README.md describes the
+  # servers and the seeded collections.
+  # ---------------------------------------------------------------------------------------
+  weaviate:
+    image: cr.weaviate.io/semitechnologies/weaviate:1.40.2@sha256:0083587dc01f33112e5406ce9b471df1abea480c71a0407af903929a389ae08a
+    container_name: libredb-weaviate
+    restart: unless-stopped
+    environment: &weaviate-env
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+      PERSISTENCE_DATA_PATH: /var/lib/weaviate
+      DEFAULT_VECTORIZER_MODULE: none
+      API_BASED_MODULES_DISABLED: "true"
+      DISABLE_TELEMETRY: "true"
+      CLUSTER_HOSTNAME: node1
+    ports:
+      - "127.0.0.1:18280:8080"
+    healthcheck: &weaviate-health
+      # The image is Alpine with busybox wget and no curl; /v1/.well-known/ready needs no key.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/v1/.well-known/ready"]
+      start_period: 30s
+      start_interval: 1s
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    <<: &weaviate-limits
+      deploy:
+        resources:
+          limits:
+            cpus: "2"
+            memory: 1G
+      memswap_limit: 1G
+
+  weaviate-seed:
+    # The Qdrant seed's pinned Python image; the Weaviate seed is stdlib only, so it installs
+    # nothing. It creates what is missing and leaves what exists.
+    image: python:3.14-slim@sha256:0741d101873c12ab927e6f8653feb8862b9bd58771177acb1b885b95141f91b4
+    container_name: libredb-weaviate-seed
+    restart: "no"
+    depends_on:
+      weaviate:
+        condition: service_healthy
+    volumes:
+      - ./docker/weaviate:/seed:ro
+    environment: *seed-env
+    entrypoint: ["python", "/seed/seed.py"]
+    command: ["--url", "http://weaviate:8080"]
+    <<: *vector-seed-limits
+
+  weaviate-1-37:
+    # DigitalOcean's version (docs.digitalocean.com, "How to Create Weaviate Clusters"). 1.37
+    # left Weaviate's three-minor support window when 1.40 shipped; it stays here because a
+    # managed service still runs it.
+    image: cr.weaviate.io/semitechnologies/weaviate:1.37.4@sha256:fcd0d4dfe70ed38feb2c12df58f991f3437bdf34ac022d978a48844c3ac86ea0
+    container_name: libredb-weaviate-1-37
+    profiles: ["weaviate-matrix"]
+    restart: unless-stopped
+    environment: *weaviate-env
+    ports:
+      - "127.0.0.1:18281:8080"
+    healthcheck: *weaviate-health
+    <<: *weaviate-limits
+
+  weaviate-1-38:
+    # The one line that carries the REST search routes behind EXPERIMENTAL_REST_SEARCH_ENABLED, left
+    # off as its default; the provider searches it over GraphQL, as every server below 1.39.7.
+    image: cr.weaviate.io/semitechnologies/weaviate:1.38.22@sha256:3b114db3992b8b4a62b623112b21a3d18c589e084dd9954b87b8d2ef08c6645c
+    container_name: libredb-weaviate-1-38
+    profiles: ["weaviate-matrix"]
+    restart: unless-stopped
+    environment: *weaviate-env
+    ports:
+      - "127.0.0.1:18285:8080"
+    healthcheck: *weaviate-health
+    <<: *weaviate-limits
+
+  weaviate-nographql:
+    image: cr.weaviate.io/semitechnologies/weaviate:1.40.2@sha256:0083587dc01f33112e5406ce9b471df1abea480c71a0407af903929a389ae08a
+    container_name: libredb-weaviate-nographql
+    profiles: ["weaviate-matrix"]
+    restart: unless-stopped
+    environment:
+      <<: *weaviate-env
+      DISABLE_GRAPHQL: "true"
+    ports:
+      - "127.0.0.1:18282:8080"
+    healthcheck: *weaviate-health
+    <<: *weaviate-limits
+
+  weaviate-matrix-seed:
+    image: python:3.14-slim@sha256:0741d101873c12ab927e6f8653feb8862b9bd58771177acb1b885b95141f91b4
+    container_name: libredb-weaviate-matrix-seed
+    profiles: ["weaviate-matrix"]
+    restart: "no"
+    depends_on:
+      weaviate-1-37:
+        condition: service_healthy
+      weaviate-1-38:
+        condition: service_healthy
+      weaviate-nographql:
+        condition: service_healthy
+    volumes:
+      - ./docker/weaviate:/seed:ro
+    environment: *seed-env
+    entrypoint:
+      - sh
+      - -c
+      - >-
+        python /seed/seed.py --url http://weaviate-1-37:8080 &&
+        python /seed/seed.py --url http://weaviate-1-38:8080 &&
+        python /seed/seed.py --url http://weaviate-nographql:8080
+    <<: *vector-seed-limits
+
+  # -- Weaviate, API keys, RBAC and TLS ----------------------------------------------
+
+  weaviate-keys:
+    # Generates the root key and the TLS material into a named volume at first start
+    # (docker/weaviate/keys.sh), so no key and no private key is ever committed.
+    image: alpine/openssl:3.5.8@sha256:3f25da71f70eba788067daac3f3df03bd1de7a7c52ed89fa93b94ad2c92d986b
+    container_name: libredb-weaviate-keys
+    profiles: ["weaviate-secure"]
+    restart: "no"
+    volumes:
+      - weaviate-keys:/keys
+      - ./docker/weaviate:/weaviate-scripts:ro
+    entrypoint: ["sh", "/weaviate-scripts/keys.sh", "/keys"]
+    <<: *vector-one-shot-limits
+
+  weaviate-auth:
+    # API keys and RBAC, anonymous access off; root is the one root user. Weaviate reads its
+    # keys from the environment alone, so the image's own sh exports the generated key and
+    # execs the server: the key never appears in this file.
+    image: cr.weaviate.io/semitechnologies/weaviate:1.40.2@sha256:0083587dc01f33112e5406ce9b471df1abea480c71a0407af903929a389ae08a
+    container_name: libredb-weaviate-auth
+    profiles: ["weaviate-secure"]
+    restart: unless-stopped
+    depends_on:
+      weaviate-keys:
+        condition: service_completed_successfully
+    entrypoint:
+      - sh
+      - -c
+      - AUTHENTICATION_APIKEY_ALLOWED_KEYS="$$(cat /keys/root.key)" exec /bin/weaviate "$$@"
+      - weaviate
+    command: ["--host", "0.0.0.0", "--port", "8080", "--scheme", "http"]
+    environment: &weaviate-rbac-env
+      <<: *weaviate-env
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "false"
+      AUTHENTICATION_APIKEY_ENABLED: "true"
+      AUTHENTICATION_APIKEY_USERS: root
+      AUTHENTICATION_DB_USERS_ENABLED: "true"
+      AUTHORIZATION_RBAC_ENABLED: "true"
+      AUTHORIZATION_RBAC_ROOT_USERS: root
+    volumes:
+      - weaviate-keys:/keys:ro
+    ports:
+      - "127.0.0.1:18283:8080"
+    healthcheck: *weaviate-health
+    <<: *weaviate-limits
+
+  weaviate-tls:
+    # The same RBAC server on Weaviate's own TLS listener; no reverse proxy is needed. Only
+    # 8443 is published. The plain listener stays inside the container for the health probe,
+    # because busybox wget verifies the certificate and has no option for the fixture's CA.
+    image: cr.weaviate.io/semitechnologies/weaviate:1.40.2@sha256:0083587dc01f33112e5406ce9b471df1abea480c71a0407af903929a389ae08a
+    container_name: libredb-weaviate-tls
+    profiles: ["weaviate-secure"]
+    restart: unless-stopped
+    depends_on:
+      weaviate-keys:
+        condition: service_completed_successfully
+    entrypoint:
+      - sh
+      - -c
+      - AUTHENTICATION_APIKEY_ALLOWED_KEYS="$$(cat /keys/root.key)" exec /bin/weaviate "$$@"
+      - weaviate
+    command:
+      - --scheme
+      - http
+      - --scheme
+      - https
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --tls-host
+      - 0.0.0.0
+      - --tls-port
+      - "8443"
+      - --tls-certificate
+      - /keys/server.pem
+      - --tls-key
+      - /keys/server.key
+    environment: *weaviate-rbac-env
+    volumes:
+      - weaviate-keys:/keys:ro
+    ports:
+      - "127.0.0.1:18284:8443"
+    healthcheck: *weaviate-health
+    <<: *weaviate-limits
+
+  weaviate-secure-seed:
+    # Seeds both keyed servers as root and creates db user reader with the built-in viewer
+    # role on each, keeping its key in the volume (auth/reader.key, tls/reader.key).
+    image: python:3.14-slim@sha256:0741d101873c12ab927e6f8653feb8862b9bd58771177acb1b885b95141f91b4
+    container_name: libredb-weaviate-secure-seed
+    profiles: ["weaviate-secure"]
+    restart: "no"
+    depends_on:
+      weaviate-auth:
+        condition: service_healthy
+      weaviate-tls:
+        condition: service_healthy
+    volumes:
+      - ./docker/weaviate:/seed:ro
+      - weaviate-keys:/keys
+    environment: *seed-env
+    entrypoint:
+      - sh
+      - -c
+      - >-
+        python /seed/seed.py --url http://weaviate-auth:8080 --api-key-file /keys/root.key
+        --reader-key-out /keys/auth/reader.key &&
+        python /seed/seed.py --url https://weaviate-tls:8443 --api-key-file /keys/root.key
+        --cacert /keys/ca.pem --reader-key-out /keys/tls/reader.key
+    <<: *vector-seed-limits
+
+  # ---------------------------------------------------------------------------------------
   # InfluxDB (the influxdb and influxdb3 providers). Three servers, one per line the providers
   # are verified against: 1.13.1 and 2.9.1, which the influxdb type reads over the v1 /query
   # API, and 3.12.0 Core, which both types read. Each is pinned by tag and by digest, and each
@@ -3901,7 +4138,8 @@ volumes:
   # the two etcd auth servers and their init one-shots. Each Milvus server keeps its data in a
   # volume of its own, because the image runs as uid 999 and a bind mount crashed it;
   # milvus-certs and milvus-credentials hold the generated certificates and the seeded users'
-  # passwords, and qdrant-keys the generated Qdrant keys, local.yaml files and certificates.
+  # passwords, and qdrant-keys the generated Qdrant keys, local.yaml files and certificates;
+  # weaviate-keys holds the generated Weaviate root key, certificate and the seeded viewer keys.
   # influxdb2-read-token keeps the InfluxDB 2.x read-only token influxdb-seed created, whose
   # value the server shows only once. oxia-auth-material carries the generated certificates, JWT
   # keys and tokens from oxia-auth-certs to the Oxia auth server. s3-garage-keys keeps Garage's
@@ -3925,6 +4163,7 @@ volumes:
   milvus-certs: {}
   milvus-credentials: {}
   qdrant-keys: {}
+  weaviate-keys: {}
   influxdb2-read-token: {}
   s3-garage-keys: {}
   s3-certs: {}

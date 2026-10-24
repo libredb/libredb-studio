@@ -242,10 +242,10 @@ The Memgraph provider is filed as `docs/BACKLOG.md` D141.
 
 ```typescript
 // Before:
-export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'db2' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'snowflake' | 'spark' | 'cassandra' | 'prometheus' | 'kafka' | 'etcd' | 'neo4j' | 'milvus' | 'qdrant' | 'opcua' | 'influxdb' | 'influxdb3' | 'oxia' | 'databend' | 's3' | 'kubernetes' | 'bigquery' | 'mqtt' | 'firestore' | 'rabbitmq';
+export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'db2' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'snowflake' | 'spark' | 'cassandra' | 'prometheus' | 'kafka' | 'etcd' | 'neo4j' | 'milvus' | 'qdrant' | 'weaviate' | 'opcua' | 'influxdb' | 'influxdb3' | 'oxia' | 'databend' | 's3' | 'kubernetes' | 'bigquery' | 'mqtt' | 'firestore' | 'rabbitmq';
 
 // After (example: adding CockroachDB):
-export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'db2' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'snowflake' | 'spark' | 'cassandra' | 'prometheus' | 'kafka' | 'etcd' | 'neo4j' | 'milvus' | 'qdrant' | 'opcua' | 'influxdb' | 'influxdb3' | 'oxia' | 'databend' | 's3' | 'kubernetes' | 'bigquery' | 'mqtt' | 'firestore' | 'rabbitmq' | 'cockroachdb';
+export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'db2' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'snowflake' | 'spark' | 'cassandra' | 'prometheus' | 'kafka' | 'etcd' | 'neo4j' | 'milvus' | 'qdrant' | 'weaviate' | 'opcua' | 'influxdb' | 'influxdb3' | 'oxia' | 'databend' | 's3' | 'kubernetes' | 'bigquery' | 'mqtt' | 'firestore' | 'rabbitmq' | 'cockroachdb';
 ```
 
 A type-id may contain a digit: `db2` does.
@@ -260,7 +260,7 @@ If your database uses a new editor mode (not `'sql'` or `'mongodb'`), add it:
 ```typescript
 export interface QueryTab {
   // ...
-  type: 'sql' | 'mongodb' | 'redis' | 'libredb' | 'promql' | 'kafka' | 'etcd' | 'cypher' | 'milvus' | 'qdrant' | 'opcua' | 'influxql' | 'oxia' | 's3' | 'kubectl' | 'mqtt' | 'firestore' | 'rabbitmq';  // Add your type here if needed
+  type: 'sql' | 'mongodb' | 'redis' | 'libredb' | 'promql' | 'kafka' | 'etcd' | 'cypher' | 'milvus' | 'qdrant' | 'weaviate' | 'opcua' | 'influxql' | 'oxia' | 's3' | 'kubectl' | 'mqtt' | 'firestore' | 'rabbitmq';  // Add your type here if needed
 }
 ```
 
@@ -982,7 +982,7 @@ For the authoritative, code-verified reference for each shipped provider (extend
 driver, pooling, capabilities, labels, `prepareQuery` behaviour, and limitations), see the prime
 docs — they are the single source of truth and are kept in sync with the code:
 
-**[docs/providers/](./providers/README.md)** → postgres · mysql · oracle · db2 · mssql · sqlite · libsql · duckdb · redis · mongodb · couchbase · clickhouse · druid · elasticsearch · opensearch · trino · bigquery · snowflake · spark · cassandra · prometheus · influxdb · influxdb3 · kafka · etcd · neo4j · milvus · qdrant · opcua · oxia · databend · s3 · kubernetes · mqtt · firestore · rabbitmq · libredb
+**[docs/providers/](./providers/README.md)** → postgres · mysql · oracle · db2 · mssql · sqlite · libsql · duckdb · redis · mongodb · couchbase · clickhouse · druid · elasticsearch · opensearch · trino · bigquery · snowflake · spark · cassandra · prometheus · influxdb · influxdb3 · kafka · etcd · neo4j · milvus · qdrant · weaviate · opcua · oxia · databend · s3 · kubernetes · mqtt · firestore · rabbitmq · libredb
 
 When implementing a new provider, the closest existing analogue is the best template: a pooled SQL
 provider (postgres/mysql), an embedded SQL provider (sqlite), a non-SQL provider (mongodb/redis), a
@@ -1107,8 +1107,8 @@ The integration points, all of which need an entry. This is the list the Strateg
       published engine count silently undercount; it is listed here because the count in `README.md`
       and `docs/BRAND_MESSAGING.md` is derived from it and has to move in the same PR
 - [ ] `package.json` — the driver, **if** it needs one. A driver-free provider leaves it untouched, and
-      twenty shipped ids do: `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`,
-      `libsql`, `sqlite`, `prometheus`, `qdrant`, `milvus`, `influxdb`, `influxdb3`, `oxia`, `databend`, `kubernetes`, `bigquery`, `firestore`, `rabbitmq` and `snowflake`
+      twenty-one shipped ids do: `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`,
+      `libsql`, `sqlite`, `prometheus`, `qdrant`, `weaviate`, `milvus`, `influxdb`, `influxdb3`, `oxia`, `databend`, `kubernetes`, `bigquery`, `firestore`, `rabbitmq` and `snowflake`
       each add nothing here (`milvus` and `oxia` only extend the `//dependencies` note).
       `s3` needs no driver but adds the Parquet decoders `hyparquet` and `hyparquet-compressors`, with their `//dependencies` note.
       `spark` needs no driver but adds the Arrow IPC decoder `apache-arrow`, with its `//dependencies` note.

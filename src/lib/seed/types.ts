@@ -108,6 +108,7 @@ const SeedDatabaseType = z.enum([
   "neo4j",
   "milvus",
   "qdrant",
+  "weaviate",
   "influxdb",
   "influxdb3",
   "oxia",

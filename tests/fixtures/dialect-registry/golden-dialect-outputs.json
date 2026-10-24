@@ -311,6 +311,18 @@
   "selectQuery": "// Collection \"Order\\\"Items\" declares no vector to search.",
   "countQuery": null
  },
+ "weaviate": {
+  "queryLanguage": "json",
+  "queryDialect": "weaviate",
+  "tabType": "weaviate",
+  "monacoLanguage": "weaviate",
+  "offersColumnProfiling": false,
+  "offersCodeGeneration": false,
+  "offersCountQuery": false,
+  "tableQuery": "GET /v1/objects?class=Order%22Items&limit=50",
+  "selectQuery": "// Collection \"Order\\\"Items\" declares no vector to search.\nPOST /v1/search/Order%22Items/bm25\n{\"query\": \"your words\", \"limit\": 10}",
+  "countQuery": null
+ },
  "influxdb": {
   "queryLanguage": "influxql",
   "queryDialect": null,

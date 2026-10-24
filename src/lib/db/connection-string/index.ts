@@ -31,6 +31,7 @@ import { OXIA_CONNECTION_STRING } from "@/lib/db/providers/keyvalue/oxia/connect
 import { POSTGRES_CONNECTION_STRING } from "@/lib/db/providers/sql/postgres-connection-string";
 import { PROMETHEUS_CONNECTION_STRING } from "@/lib/db/providers/timeseries/prometheus/connection-string";
 import { QDRANT_CONNECTION_STRING } from "@/lib/db/providers/vector/qdrant/connection-string";
+import { WEAVIATE_CONNECTION_STRING } from "@/lib/db/providers/vector/weaviate/connection-string";
 import { RABBITMQ_CONNECTION_STRING } from "@/lib/db/providers/stream/rabbitmq/connection-string";
 import { REDIS_CONNECTION_STRING } from "@/lib/db/providers/keyvalue/redis-connection-string";
 import { S3_CONNECTION_STRING } from "@/lib/db/providers/objectstore/s3/connection-string";
@@ -92,6 +93,7 @@ export const CONNECTION_STRING: Readonly<Record<DatabaseType, ConnectionStringSp
   sparkplug: SPARKPLUG_CONNECTION_STRING,
   sqlite: SQLITE_CONNECTION_STRING,
   trino: TRINO_CONNECTION_STRING,
+  weaviate: WEAVIATE_CONNECTION_STRING,
 });
 
 /**

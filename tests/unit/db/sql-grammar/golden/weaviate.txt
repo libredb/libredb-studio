@@ -1,0 +1,56 @@
+resolveSqlGrammar("weaviate") => {"hash":"comment-unless-operator","bracket":"quoted-identifier","blockComment":"flat","alternateQuoting":false,"doubleSlashComment":false,"backslashAlwaysEscapes":false,"script":{"blocks":"none","separatorLine":null,"unit":"statement"},"trailingLimitClauses":[]}
+readsSqlText("weaviate") => false
+hashRunIsAmbiguous(resolveSqlGrammar("weaviate")) => true
+readSqlSpan walk("SELECT 1 # c\nFROM t") => [["whitespace",6,7],["whitespace",8,9],["line-comment",9,13],["whitespace",17,18]]
+splitStatements("SELECT 1 # c\nFROM t") => [{"sql":"SELECT 1 # c\nFROM t","startLine":0,"start":0,"end":19}]
+readSqlSpan walk("SELECT a[1], [x]]y] FROM t") => [["whitespace",6,7],["quoted-identifier",8,11],["whitespace",12,13],["quoted-identifier",13,19],["whitespace",19,20],["whitespace",24,25]]
+splitStatements("SELECT a[1], [x]]y] FROM t") => [{"sql":"SELECT a[1], [x]]y] FROM t","startLine":0,"start":0,"end":26}]
+readSqlSpan walk("/* a /* b */ c */ SELECT 1") => [["block-comment",0,12],["whitespace",12,13],["whitespace",14,15],["whitespace",17,18],["whitespace",24,25]]
+splitStatements("/* a /* b */ c */ SELECT 1") => [{"sql":"/* a /* b */ c */ SELECT 1","startLine":0,"start":0,"end":26}]
+readSqlSpan walk("SELECT q'[it's]' FROM dual") => [["whitespace",6,7],["string",8,13],["string",15,26]]
+splitStatements("SELECT q'[it's]' FROM dual") => [{"sql":"SELECT q'[it's]' FROM dual","startLine":0,"start":0,"end":26}]
+readSqlSpan walk("SELECT 1 // c; DROP TABLE t") => [["whitespace",6,7],["whitespace",8,9],["whitespace",11,12],["whitespace",14,15],["whitespace",19,20],["whitespace",25,26]]
+splitStatements("SELECT 1 // c; DROP TABLE t") => [{"sql":"SELECT 1 // c","startLine":0,"start":0,"end":13},{"sql":"DROP TABLE t","startLine":0,"start":15,"end":27}]
+readSqlSpan walk("SELECT 'a\\'b'; SELECT 2") => [["whitespace",6,7],["string",7,23]]
+splitStatements("SELECT 'a\\'b'; SELECT 2") => [{"sql":"SELECT 'a\\'b'; SELECT 2","startLine":0,"start":0,"end":23}]
+readSqlSpan walk("SELECT $$x;$$, \"q\"\"n\", `b``t` FROM t") => [["whitespace",6,7],["dollar-string",7,13],["whitespace",14,15],["quoted-identifier",15,21],["whitespace",22,23],["quoted-identifier",23,29],["whitespace",29,30],["whitespace",34,35]]
+splitStatements("SELECT $$x;$$, \"q\"\"n\", `b``t` FROM t") => [{"sql":"SELECT $$x;$$, \"q\"\"n\", `b``t` FROM t","startLine":0,"start":0,"end":36}]
+readSqlSpan walk("CREATE TRIGGER tr AFTER INSERT ON t BEGIN SELECT 1; END; SELECT 2") => [["whitespace",6,7],["whitespace",14,15],["whitespace",17,18],["whitespace",23,24],["whitespace",30,31],["whitespace",33,34],["whitespace",35,36],["whitespace",41,42],["whitespace",48,49],["whitespace",51,52],["whitespace",56,57],["whitespace",63,64]]
+splitStatements("CREATE TRIGGER tr AFTER INSERT ON t BEGIN SELECT 1; END; SELECT 2") => [{"sql":"CREATE TRIGGER tr AFTER INSERT ON t BEGIN SELECT 1","startLine":0,"start":0,"end":50},{"sql":"END","startLine":0,"start":52,"end":55},{"sql":"SELECT 2","startLine":0,"start":57,"end":65}]
+readSqlSpan walk("SELECT 1\nGO\nSELECT 2") => [["whitespace",6,7],["whitespace",8,9],["whitespace",11,12],["whitespace",18,19]]
+splitStatements("SELECT 1\nGO\nSELECT 2") => [{"sql":"SELECT 1\nGO\nSELECT 2","startLine":0,"start":0,"end":20}]
+readSqlSpan walk("BEGIN NULL; END;\n/\nSELECT 1") => [["whitespace",5,6],["whitespace",11,12],["whitespace",16,17],["whitespace",18,19],["whitespace",25,26]]
+splitStatements("BEGIN NULL; END;\n/\nSELECT 1") => [{"sql":"BEGIN NULL","startLine":0,"start":0,"end":10},{"sql":"END","startLine":0,"start":12,"end":15},{"sql":"/\nSELECT 1","startLine":1,"start":17,"end":27}]
+readSqlSpan walk("SELECT 1 -- x\rDROP TABLE t") => [["whitespace",6,7],["whitespace",8,9],["line-comment",9,26]]
+splitStatements("SELECT 1 -- x\rDROP TABLE t") => [{"sql":"SELECT 1 -- x\rDROP TABLE t","startLine":0,"start":0,"end":26}]
+resolveUpdateTarget("SELECT id, note FROM products", "weaviate") => {"kind":"table","table":"products"}
+resolveUpdateTarget("SELECT id FROM products --x", "weaviate") => {"kind":"table","table":"products"}
+resolveUpdateTarget("SELECT id FROM products -- x", "weaviate") => {"kind":"table","table":"products"}
+resolveUpdateTarget("SELECT id, (PIVOT orders ON k USING max(note)) FROM products", "weaviate") => {"kind":"table","table":"products"}
+resolveUpdateTarget("SELECT id, coalesce(show, '') FROM products", "weaviate") => {"kind":"table","table":"products"}
+resolveUpdateTarget("SELECT id FROM products MINUS SELECT id FROM orders", "weaviate") => {"kind":"refused","reason":"This query reads from more than one place, so the row's table cannot be told apart"}
+resolveUpdateTarget("SELECT id FROM a UNION SELECT id FROM b", "weaviate") => {"kind":"refused","reason":"This result combines more than one query, so there is no single table to write to"}
+resolveUpdateTarget("SELECT id FROM products WHERE qty <> 5-- zz UNION SELECT id FROM zord", "weaviate") => {"kind":"table","table":"products"}
+selectsPlainColumn("SELECT id, note FROM products", "note", "weaviate") => true
+redactStatement("SELECT * FROM \"Users\" WHERE name = 'bob' AND id = 42", "weaviate") => {"statement":"?","statement_fingerprint":"8a8de823d5ed3e12746a62ef169bcf372be0ca44f0a1236abc35df05d96928e1"}
+maskCredentials("SELECT * FROM \"Users\" WHERE name = 'bob' AND id = 42", "weaviate") => "SELECT * FROM \"Users\" WHERE name = 'bob' AND id = 42"
+redactStatement("SELECT `a`, [b] FROM t WHERE x = 'y' -- note", "weaviate") => {"statement":"?","statement_fingerprint":"8a8de823d5ed3e12746a62ef169bcf372be0ca44f0a1236abc35df05d96928e1"}
+maskCredentials("SELECT `a`, [b] FROM t WHERE x = 'y' -- note", "weaviate") => "SELECT `a`, [b] FROM t WHERE x = 'y' -- note"
+redactStatement("{\"collection\":\"users\",\"operation\":\"find\",\"filter\":{\"name\":\"bob\"}}", "weaviate") => {"statement":"?","statement_fingerprint":"8a8de823d5ed3e12746a62ef169bcf372be0ca44f0a1236abc35df05d96928e1"}
+maskCredentials("{\"collection\":\"users\",\"operation\":\"find\",\"filter\":{\"name\":\"bob\"}}", "weaviate") => "{\"collection\":\"users\",\"operation\":\"find\",\"filter\":{\"name\":\"bob\"}}"
+redactStatement("GET user:1", "weaviate") => {"statement":"?","statement_fingerprint":"8a8de823d5ed3e12746a62ef169bcf372be0ca44f0a1236abc35df05d96928e1"}
+maskCredentials("GET user:1", "weaviate") => "GET user:1"
+redactStatement("SET k \"v\"", "weaviate") => {"statement":"?","statement_fingerprint":"8a8de823d5ed3e12746a62ef169bcf372be0ca44f0a1236abc35df05d96928e1"}
+maskCredentials("SET k \"v\"", "weaviate") => "SET k \"v\""
+redactStatement("SELECT 'postgres://u:p@h/db' # x", "weaviate") => {"statement":"?","statement_fingerprint":"8a8de823d5ed3e12746a62ef169bcf372be0ca44f0a1236abc35df05d96928e1"}
+maskCredentials("SELECT 'postgres://u:p@h/db' # x", "weaviate") => "SELECT 'postgres://[REDACTED]@h/db' # x"
+redactStatement("CREATE USER a IDENTIFIED BY secret", "weaviate") => {"statement":"?","statement_fingerprint":"8a8de823d5ed3e12746a62ef169bcf372be0ca44f0a1236abc35df05d96928e1"}
+maskCredentials("CREATE USER a IDENTIFIED BY secret", "weaviate") => "CREATE USER a IDENTIFIED BY secret"
+completions[plain]("SELECT * FROM ") => [["Order\"Items","Order\"Items"],["public.select","public.select"],["users","users"]]
+completions[plain]("SELECT * FROM public.se") => [["public.select","public.select"]]
+completions[plain]("SELECT \"Order\"\"Items\".") => []
+completions[plain]("SELECT users.") => [["email","email"],["id","id"]]
+completions[quoted]("SELECT * FROM ") => [["Order\"Items","Order\"Items"],["public.select","public.select"],["t","<c0>.<Order\"Items>"],["users","users"]]
+completions[quoted]("SELECT * FROM public.se") => [["public.select","public.select"]]
+completions[quoted]("SELECT \"Order\"\"Items\".") => []
+completions[quoted]("SELECT users.") => [["email","email"],["id","id"]]

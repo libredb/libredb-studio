@@ -153,7 +153,8 @@ src/lib/db/
 │   │       └── labels.ts       #   labels, and the plan-mode statement language
 │   ├── vector/                 # Vector Providers
 │   │   ├── milvus/             # Milvus Strategy (Milvus REST v2 requests run over its own gRPC client)
-│   │   └── qdrant/             # Qdrant Strategy (read-only REST over the shared node transport)
+│   │   ├── qdrant/             # Qdrant Strategy (read-only REST over the shared node transport)
+│   │   └── weaviate/           # Weaviate Strategy (read-only REST, GraphQL below 1.39.7, over the shared node transport)
 │   ├── objectstore/            # Object Storage Providers
 │   │   └── s3/                 # S3 Strategy (read-only REST over the shared byte transport, Studio's own SigV4, AWS CLI read commands)
 │   ├── platform/               # Platform Providers
@@ -199,6 +200,7 @@ BaseDatabaseProvider (abstract)
 │   └── Neo4jProvider ──────────────────────┤ Graph (read-only Cypher over Bolt)
 ├── MilvusProvider ─────────────────────────┤ Vector (Milvus REST v2 requests over gRPC)
 ├── QdrantProvider ─────────────────────────┤ Vector (Qdrant REST requests, read-only)
+├── WeaviateProvider ───────────────────────┤ Vector (Weaviate REST requests, read-only)
 ├── S3Provider ─────────────────────────────┤ Object storage (AWS CLI read commands over the S3 REST API, read-only)
 ├── KubernetesProvider ─────────────────────┤ Platform (kubectl read commands over HTTP, read-only)
 └── LibreDBProvider ────────────────────────┘ Embedded (key-value)
@@ -263,7 +265,7 @@ QueryEditor                      /api/db/query
 
 ## Supported Databases
 
-Forty-two type-ids are supported by forty provider modules: two pairs share one, `elasticsearch` and `opensearch` in `providers/sql/search/`, and `influxdb` and `influxdb3` in `providers/timeseries/influxdb/`.
+Forty-three type-ids are supported by forty-one provider modules: two pairs share one, `elasticsearch` and `opensearch` in `providers/sql/search/`, and `influxdb` and `influxdb3` in `providers/timeseries/influxdb/`.
 The count is derived from the exhaustive `SHIPPED` record in
 [`src/lib/db/compatibility.ts`](../src/lib/db/compatibility.ts) rather than written here twice - and
 the TABLE under it has to be checked by hand, which is the lesson a review left here: the numeral was
@@ -304,6 +306,7 @@ monitoring, limitations, …) see the prime docs in **[`docs/providers/`](./prov
 | Neo4j | `neo4j` | Graph (Cypher over Bolt, read-only) | [providers/neo4j.md](./providers/neo4j.md) |
 | Milvus | `milvus` | Vector (Milvus REST v2 requests over gRPC) | [providers/milvus.md](./providers/milvus.md) |
 | Qdrant | `qdrant` | Vector (Qdrant REST requests, read-only) | [providers/qdrant.md](./providers/qdrant.md) |
+| Weaviate | `weaviate` | Vector (Weaviate REST requests, read-only) | [providers/weaviate.md](./providers/weaviate.md) |
 | Oxia | `oxia` | Key-Value (oxia client read commands over gRPC, read-only) | [providers/oxia.md](./providers/oxia.md) |
 | S3-compatible object storage | `s3` | Object storage (AWS CLI read commands over the S3 REST API, read-only) | [providers/s3.md](./providers/s3.md) |
 | Kubernetes | `kubernetes` | Platform (kubectl read commands over the API server's REST API, read-only) | [providers/kubernetes.md](./providers/kubernetes.md) |
@@ -446,6 +449,7 @@ examples live in their prime docs:
 - **Neo4j** (one read-only Cypher statement): [providers/neo4j.md](./providers/neo4j.md).
 - **Milvus** (one Milvus REST v2 request): [providers/milvus.md](./providers/milvus.md).
 - **Qdrant** (one Qdrant REST request): [providers/qdrant.md](./providers/qdrant.md).
+- **Weaviate** (one Weaviate REST request): [providers/weaviate.md](./providers/weaviate.md).
 - **LibreDB** (one command: `get`, `put`, `delete`, `prefix` or `range`): [providers/libredb.md](./providers/libredb.md).
 - **Oxia** (one oxia client read command): [providers/oxia.md](./providers/oxia.md).
 - **S3-compatible object storage** (one AWS CLI read command, or Studio's own `preview`): [providers/s3.md](./providers/s3.md).
@@ -529,7 +533,7 @@ maintenance operations, and known limitations — is documented per provider und
 [`docs/providers/`](./providers/README.md). Start there for anything specific to PostgreSQL, MySQL,
 Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, Redis, MongoDB, Couchbase, Firestore, ClickHouse, Apache Druid,
 Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Apache Spark, Apache Cassandra, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL),
-Apache Kafka, MQTT, RabbitMQ, OPC UA, etcd, Neo4j, Milvus, Qdrant, Oxia, Databend, S3-compatible object storage, Kubernetes, or LibreDB.
+Apache Kafka, MQTT, RabbitMQ, OPC UA, etcd, Neo4j, Milvus, Qdrant, Weaviate, Oxia, Databend, S3-compatible object storage, Kubernetes, or LibreDB.
 
 Not every provider has every feature, and the docs record the absences rather than glossing over
 them. Druid is the sharpest case: its SQL has no `UPDATE`, no `DELETE` and no `CREATE TABLE`, no

@@ -1,0 +1,8 @@
+-- fixture: full
+-- Migration generated at 2026-10-19T12:00:00.000Z
+-- Dialect: weaviate
+-- Changes: 1 added, 1 removed, 2 modified
+
+-- Weaviate: Cannot generate table DDL. A collection's properties and vectors are declared through Weaviate's own schema API, not SQL DDL, so there is no column definition to change.
+-- fixture: none
+-- No schema changes detected.

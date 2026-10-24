@@ -97,6 +97,7 @@ interface QueryEditorProps {
     | "graph-cypher"
     | "milvus"
     | "qdrant"
+    | "weaviate"
     | "influxql"
     | "oxia"
     | "s3"

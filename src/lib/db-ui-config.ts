@@ -29,6 +29,7 @@ import {
   Db2Icon,
   Neo4jIcon,
   QdrantIcon,
+  WeaviateIcon,
   MilvusIcon,
   InfluxDBIcon,
   OxiaIcon,
@@ -165,6 +166,11 @@ export const DB_UI_CONFIG: {
   // clears the separation test, which is why `rose` joined IDENTITY_ALTS in tests/unit/theme-accent-contrast.test.ts
   // with this entry, as `fuchsia` did with Neo4j's.
   qdrant: branded(CONNECTION_FORM.qdrant, QdrantIcon, "text-hue-rose-alt"),
+  // A mark drawn for Studio, never the vendor's logo (#1566). A NEW hue, as for Sparkplug's `olive`: every base hue,
+  // every `-alt` step and every grey theme.css declared was an engine's, so the palette gains `zinc`. Measured, not
+  // chosen: `zinc-900` light and `zinc-400` dark leave both closest identity pairs where they were (theme.css says the
+  // figures, tests/unit/theme-accent-contrast.test.ts holds them).
+  weaviate: branded(CONNECTION_FORM.weaviate, WeaviateIcon, "text-hue-zinc"),
   // A generic time-series mark drawn for Studio, never InfluxData's logo (InfluxDB spec E19), shared by both types.
   // `hue-purple` is Db2's; its `-alt` step is a second identity only because it clears the separation test, which
   // is why `purple` joined IDENTITY_ALTS in tests/unit/theme-accent-contrast.test.ts with this entry.

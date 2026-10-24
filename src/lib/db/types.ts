@@ -981,6 +981,10 @@ export interface ProviderCapabilities {
    * line and one JSON body, the closed console the provider re-serialises from its own parse. It landed through
    * one record in each registry and no arm anywhere else.
    *
+   * `"weaviate"` is the Weaviate provider's (#1566 spec 5.1): its editor text is one `METHOD /v1/path` request line
+   * and one JSON body in Weaviate's REST shape, the closed console the provider runs over REST or GraphQL as the
+   * server's version decides. It landed through one record in each registry and no arm anywhere else.
+   *
    * `"oxia"` is the Oxia provider's: one `oxia client` read command per run (O10).
    *
    * `"s3"` is the S3 provider's: one AWS CLI read command per run, `aws s3 ls`, the `aws s3api` reads its table names,
@@ -1007,6 +1011,7 @@ export interface ProviderCapabilities {
     | "etcd"
     | "milvus"
     | "qdrant"
+    | "weaviate"
     | "oxia"
     | "s3"
     | "mqtt"

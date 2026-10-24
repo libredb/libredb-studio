@@ -92,6 +92,9 @@ const SHIPPED: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // Qdrant (vector-family spec 6): its own provider, doc and integration test, a member of the `vector/` family.
   // Qdrant Cloud speaks the same API and is recorded nowhere until a test cluster passes gate 4 (vector-family spec 6.2).
   qdrant: true,
+  // Weaviate (#1566): its own provider, doc and integration test, the third member of the `vector/` family. Weaviate
+  // Cloud and DigitalOcean Managed Weaviate are recorded nowhere until a test cluster passes gate 4 (spec 8).
+  weaviate: true,
   // InfluxDB (InfluxDB spec I2): its own provider class, doc and integration test; the first of two type-ids served by
   // `timeseries/influxdb/`, one per query language. InfluxDB Cloud, Clustered and Enterprise 1.x are claimed nowhere
   // until a gate-4 probe measures one.
@@ -199,6 +202,8 @@ const EXTERNAL: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   milvus: true,
   // A server or cluster the user already runs, reached over Qdrant's REST API.
   qdrant: true,
+  // A server or cluster the user already runs, reached over Weaviate's REST API (and GraphQL below 1.39.7).
+  weaviate: true,
   // A server the user already runs, reached over InfluxDB's v1 HTTP API.
   influxdb: true,
   // A server the user already runs, reached over InfluxDB 3's HTTP SQL API.
@@ -298,6 +303,9 @@ export const READ_ONLY_ENFORCED: Record<DatabaseType, boolean> = Object.freeze({
   // Every v1 console request is a read and the provider has no maintenance operation, and while the mode holds it
   // refuses every route that is not a read before any request (vector-family spec 4.4).
   qdrant: true,
+  // As Qdrant (#1566 spec 3.5): every console request is a read, the provider has no maintenance operation, and it
+  // refuses every route that is not a read, and every request that would wake a cold tenant, before any request.
+  weaviate: true,
   // Read-only whatever the flag says: on 1.x and 2.x the InfluxQL lexer policy (`influxql-policy.ts`) is the only
   // boundary between a Studio user and `DROP DATABASE`, so it refuses every statement that is not one `SELECT`, `SHOW`
   // or `EXPLAIN` before any request; the route table reaches no write endpoint.
@@ -394,6 +402,7 @@ export const READS_FILE_ACCESS_POSTURE: Readonly<Record<DatabaseType, boolean>> 
   neo4j: false,
   milvus: false,
   qdrant: false,
+  weaviate: false,
   influxdb: false,
   influxdb3: false,
   oxia: false,
@@ -455,6 +464,7 @@ export const SINGLE_WRITER_FILE: Readonly<Record<DatabaseType, boolean>> = Objec
   neo4j: false,
   milvus: false,
   qdrant: false,
+  weaviate: false,
   influxdb: false,
   influxdb3: false,
   oxia: false,
@@ -520,6 +530,9 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // Offered for the two metadata tools, carrying names and types only (vector-family spec 4.4); `run_read_query` does not
   // serve it, because the provider implements no `queryReadOnly`.
   qdrant: true,
+  // As Milvus and Qdrant (#1566 spec 3.5): offered for the two metadata tools; tenant names are a collection's detail,
+  // listed in its Source up to 1,024 as Milvus lists partitions, and `run_read_query` does not serve it.
+  weaviate: true,
   // Both offered for the two metadata tools (InfluxDB spec I13); `run_read_query` does not serve either, because
   // neither provider implements `queryReadOnly`.
   influxdb: true,
@@ -605,6 +618,7 @@ export const CONNECTION_FORM_URI_MODE: Readonly<Record<DatabaseType, boolean>> =
   neo4j: false,
   milvus: false,
   qdrant: false,
+  weaviate: false,
   influxdb: false,
   influxdb3: false,
   oxia: false,
@@ -671,6 +685,7 @@ export const CONNECTION_STRING_ACCEPTED: Readonly<Record<DatabaseType, boolean>>
   neo4j: false,
   milvus: false,
   qdrant: false,
+  weaviate: false,
   influxdb: false,
   influxdb3: false,
   oxia: false,
@@ -733,6 +748,7 @@ export const OPENS_LOCAL_FILE: Readonly<Record<DatabaseType, boolean>> = Object.
   neo4j: false,
   milvus: false,
   qdrant: false,
+  weaviate: false,
   influxdb: false,
   influxdb3: false,
   oxia: false,
@@ -793,6 +809,7 @@ export const OPENS_SERVER_LEVEL_WITHOUT_DATABASE: Readonly<Record<DatabaseType, 
   neo4j: false,
   milvus: false,
   qdrant: false,
+  weaviate: false,
   influxdb: false,
   influxdb3: false,
   oxia: false,

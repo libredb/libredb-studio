@@ -1,0 +1,44 @@
+{
+  "$captured": {
+    "engine": "weaviate",
+    "service": "weaviate-tls",
+    "scenario": "plain-to-tls",
+    "image": "cr.weaviate.io/semitechnologies/weaviate:1.40.2",
+    "digest": "sha256:0083587dc01f33112e5406ce9b471df1abea480c71a0407af903929a389ae08a",
+    "version": "1.40.2",
+    "date": "2026-10-23T23:54:53.096Z",
+    "runtime": "bun 1.4.2",
+    "credential": "none"
+  },
+  "transport": [
+    {
+      "origin": "http://127.0.0.1:18284",
+      "tls": null,
+      "maxSockets": 4,
+      "headers": {}
+    }
+  ],
+  "exchanges": [
+    {
+      "method": "GET",
+      "path": "/v1/meta",
+      "body": null,
+      "answer": {
+        "status": 400,
+        "contentType": null,
+        "retryAfter": null,
+        "text": "Client sent an HTTP request to an HTTPS server.\n"
+      },
+      "thrown": null
+    }
+  ],
+  "outcomes": [
+    {
+      "step": "connect",
+      "error": {
+        "name": "ConnectionError",
+        "message": "Weaviate at 127.0.0.1:18284 speaks TLS on this port, and the connection sent plain HTTP: choose an SSL mode under SSL / TLS."
+      }
+    }
+  ]
+}

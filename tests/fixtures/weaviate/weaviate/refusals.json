@@ -1,0 +1,121 @@
+{
+  "$captured": {
+    "engine": "weaviate",
+    "service": "weaviate",
+    "scenario": "refusals",
+    "image": "cr.weaviate.io/semitechnologies/weaviate:1.40.2",
+    "digest": "sha256:0083587dc01f33112e5406ce9b471df1abea480c71a0407af903929a389ae08a",
+    "version": "1.40.2",
+    "date": "2026-10-23T23:54:52.524Z",
+    "runtime": "bun 1.4.2",
+    "credential": "none"
+  },
+  "transport": [
+    {
+      "origin": "http://127.0.0.1:18280",
+      "tls": null,
+      "maxSockets": 4,
+      "headers": {}
+    }
+  ],
+  "exchanges": [
+    {
+      "method": "GET",
+      "path": "/v1/meta",
+      "body": null,
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"grpcMaxMessageSize\":104858000,\"hostname\":\"http://[::]:8080\",\"license\":{\"documentationHref\":\"https://docs.weaviate.io/deploy/enterprise\",\"edition\":\"community\"},\"modules\":{},\"version\":\"1.40.2\"}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/schema/TenantNotes",
+      "body": null,
+      "answer": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"class\":\"TenantNotes\",\"description\":\"multi-tenant, a read does not activate a tenant\",\"invertedIndexConfig\":{\"bm25\":{\"b\":0.75,\"k1\":1.2},\"cleanupIntervalSeconds\":60,\"stopwords\":{\"additions\":null,\"preset\":\"en\",\"removals\":null},\"usingBlockMaxWAND\":true},\"multiTenancyConfig\":{\"autoTenantActivation\":false,\"autoTenantCreation\":false,\"enabled\":true},\"properties\":[{\"dataType\":[\"text\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":true,\"name\":\"note\",\"tokenization\":\"word\"},{\"dataType\":[\"int\"],\"indexFilterable\":true,\"indexRangeFilters\":false,\"indexSearchable\":false,\"name\":\"seq\"}],\"shardingConfig\":{\"actualCount\":0,\"actualVirtualCount\":0,\"desiredCount\":0,\"desiredVirtualCount\":0,\"function\":\"\",\"key\":\"\",\"strategy\":\"\",\"virtualPerPhysical\":0},\"vectorIndexConfig\":{\"bq\":{\"enabled\":false},\"cleanupIntervalSeconds\":300,\"distance\":\"cosine\",\"dynamicEfFactor\":8,\"dynamicEfMax\":500,\"dynamicEfMin\":100,\"ef\":-1,\"efConstruction\":128,\"filterStrategy\":\"acorn\",\"flatSearchCutoff\":40000,\"maxConnections\":32,\"multivector\":{\"aggregation\":\"maxSim\",\"enabled\":false,\"muvera\":{\"dprojections\":16,\"enabled\":false,\"ksim\":4,\"repetitions\":10}},\"pq\":{\"bitCompression\":false,\"centroids\":256,\"enabled\":false,\"encoder\":{\"distribution\":\"log-normal\",\"type\":\"kmeans\"},\"segments\":0,\"trainingLimit\":100000},\"rq\":{\"bits\":8,\"centering\":false,\"enabled\":false,\"rescoreLimit\":20,\"trainingLimit\":10000},\"skip\":false,\"skipDefaultQuantization\":false,\"sq\":{\"enabled\":false,\"rescoreLimit\":20,\"trainingLimit\":100000},\"trackDefaultQuantization\":false,\"vectorCacheMaxObjects\":1000000000000},\"vectorIndexType\":\"hnsw\",\"vectorizer\":\"none\",\"replicationConfig\":{\"deletionStrategy\":\"TimeBasedResolution\",\"factor\":1,\"asyncEnabled\":false}}\n"
+      },
+      "thrown": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/schema/TenantNotes/tenants/nobody",
+      "body": null,
+      "answer": {
+        "status": 404,
+        "contentType": null,
+        "retryAfter": null,
+        "text": ""
+      },
+      "thrown": null
+    }
+  ],
+  "outcomes": [
+    {
+      "step": "connect",
+      "value": null
+    },
+    {
+      "step": "query POST /v1/search/Article/hybrid {\"query\": \"vector\", \"alpha\": 0.5}",
+      "error": {
+        "name": "RequestRefusal",
+        "message": "alpha must be 0 in this console: any other value makes Weaviate embed the query text with the collection's vectorizer, which sends it to a model provider. Write \"alpha\": 0 for a keyword-only hybrid search."
+      }
+    },
+    {
+      "step": "query POST /v1/search/Article/hybrid {\"query\": \"vector\"}",
+      "error": {
+        "name": "RequestRefusal",
+        "message": "The body needs the key alpha."
+      }
+    },
+    {
+      "step": "query POST /v1/search/Article/bm25 {\"query\": \"x\", \"wher\": {}}",
+      "error": {
+        "name": "RequestRefusal",
+        "message": "The body takes no key \"wher\": Weaviate reads where, limit, offset, autoLimit, returnProperties, returnMetadata, tenant, consistencyLevel, query, queryProperties there and nothing else."
+      }
+    },
+    {
+      "step": "query POST /v1/search/Article/near-text {\"concepts\": [\"x\"]}",
+      "error": {
+        "name": "ConsoleRefusal",
+        "message": "POST /v1/search/Article/near-text is a search that sends its text or media to a model provider, which this console does not run. This console runs Weaviate's read requests only, with GET and POST: the meta, schema, shard, tenant, alias and node reads, object list and read by id, the bm25, hybrid, near-vector and near-object searches, and aggregate counts. (line 1, column 6)"
+      }
+    },
+    {
+      "step": "query DELETE /v1/schema/Article",
+      "error": {
+        "name": "ConsoleRefusal",
+        "message": "DELETE /v1/schema/Article is a schema, tenant, index or alias change, which this console does not run. This console runs Weaviate's read requests only, with GET and POST: the meta, schema, shard, tenant, alias and node reads, object list and read by id, the bm25, hybrid, near-vector and near-object searches, and aggregate counts. (line 1, column 1)"
+      }
+    },
+    {
+      "step": "query POST /v1/objects {}",
+      "error": {
+        "name": "ConsoleRefusal",
+        "message": "POST /v1/objects is an object write, which this console does not run. This console runs Weaviate's read requests only, with GET and POST: the meta, schema, shard, tenant, alias and node reads, object list and read by id, the bm25, hybrid, near-vector and near-object searches, and aggregate counts. (line 1, column 6)"
+      }
+    },
+    {
+      "step": "query GET /v1/backups/filesystem",
+      "error": {
+        "name": "ConsoleRefusal",
+        "message": "GET /v1/backups/filesystem is a backup route, which this console does not run. This console runs Weaviate's read requests only, with GET and POST: the meta, schema, shard, tenant, alias and node reads, object list and read by id, the bm25, hybrid, near-vector and near-object searches, and aggregate counts. (line 1, column 5)"
+      }
+    },
+    {
+      "step": "query GET /v1/objects?class=TenantNotes&limit=2&tenant=nobody",
+      "error": {
+        "name": "QueryError",
+        "message": "The tenant does not exist in this collection."
+      }
+    }
+  ]
+}

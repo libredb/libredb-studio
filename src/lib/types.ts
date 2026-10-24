@@ -127,6 +127,12 @@ export type DatabaseType =
   // `queryDialect` of its own. The connection is one REST endpoint plus TLS and an API key or JWT in `password`;
   // there is no user and no database, and `readOnly` is a mode its provider enforces.
   | "qdrant"
+  // Weaviate (#1566). A vector database read over its REST API, and over GraphQL for the searches of a server below
+  // 1.39.7, by a client of this repository's own on the shared node transport, a member of the `vector/` family. Its
+  // editor text is Weaviate's own `METHOD /v1/path` request with one JSON body, so it declares `queryLanguage:
+  // "json"` with a `queryDialect` of its own. The connection is one endpoint plus TLS and an API key or OIDC access
+  // token in `password`; there is no user and no database, and `readOnly` is a mode its provider enforces.
+  | "weaviate"
   // InfluxDB (InfluxDB spec I2). A time-series store read over the v1 `/query` endpoint, as a form POST (R14), in
   // InfluxQL: the TSM generation (1.x, and 2.x through its virtual DBRP mappings) and InfluxDB 3 through its
   // v1-compatible handler. It declares `queryLanguage: "influxql"`. The connection is a host, a port, an optional
@@ -1029,6 +1035,7 @@ export interface QueryTab {
     | "cypher"
     | "milvus"
     | "qdrant"
+    | "weaviate"
     | "influxql"
     | "oxia"
     | "s3"

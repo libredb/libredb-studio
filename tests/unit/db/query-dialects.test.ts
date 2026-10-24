@@ -49,6 +49,7 @@ describe("QUERY_DIALECTS", () => {
       "s3",
       "snmp",
       "sparkplug",
+      "weaviate",
     ]);
   });
 
@@ -73,6 +74,13 @@ describe("QUERY_DIALECTS", () => {
       },
       qdrant: {
         tabType: "qdrant",
+        offersColumnProfiling: false,
+        offersCodeGeneration: false,
+        offersCountQuery: false,
+        offersSqlExport: false,
+      },
+      weaviate: {
+        tabType: "weaviate",
         offersColumnProfiling: false,
         offersCodeGeneration: false,
         offersCountQuery: false,
@@ -188,7 +196,7 @@ describe("QUERY_DIALECTS", () => {
     }
   });
 
-  test("a record may decline the SQL export formats, and only milvus's, qdrant's, oxia's, s3's, rabbitmq's, kubectl's and firestore's do, so every other shipped engine keeps both", () => {
+  test("a record may decline the SQL export formats, and only milvus's, qdrant's, weaviate's, oxia's, s3's, rabbitmq's, kubectl's and firestore's do, so every other shipped engine keeps both", () => {
     // `bun run typecheck` is the assertion for the field: this literal compiles only while `DialectSpec` declares
     // `offersSqlExport`, and bun strips types, so no runtime expect on it could fail. What a declining record does
     // to the menus is pinned by the export gate's own tests.
@@ -204,6 +212,7 @@ describe("QUERY_DIALECTS", () => {
       if (
         dialect === "milvus" ||
         dialect === "qdrant" ||
+        dialect === "weaviate" ||
         dialect === "oxia" ||
         dialect === "s3" ||
         dialect === "rabbitmq" ||
@@ -232,6 +241,7 @@ describe("registeredDialect, dialectSpec and declaresDialect", () => {
       "etcd",
       "milvus",
       "qdrant",
+      "weaviate",
       "oxia",
       "s3",
       "firestore",

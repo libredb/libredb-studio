@@ -83,7 +83,7 @@ const golden = (key: string): string => readFileSync(join(GOLDEN_DIR, `${key}.tx
 
 describe("one engine's connection fields cannot reach another engine's form", () => {
   test("one form per shipped type id", () => {
-    expect(FORM_KEYS.length).toBe(42);
+    expect(FORM_KEYS.length).toBe(43);
   });
 
   test("the groups replace every engine while holding every other engine real", () => {

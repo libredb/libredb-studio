@@ -1320,10 +1320,10 @@ describe("docs/SECURITY.md: the S3 rows and limits", () => {
 
   test("42. the Known limits name S3 where they list the engines, and state S3's own limits", () => {
     expect(knownLimit("**The HTTP destination guard is opt-in and address-based.**")).toContain(
-      "Qdrant, InfluxDB (InfluxQL), InfluxDB 3 (SQL), S3-compatible object storage and Kubernetes HTTP requests",
+      "Qdrant, Weaviate, InfluxDB (InfluxQL), InfluxDB 3 (SQL), S3-compatible object storage and Kubernetes HTTP requests",
     );
     expect(knownLimit("**A statement the editor refuses is never sent and never written to history.**")).toContain(
-      "The Milvus, Qdrant, InfluxDB (InfluxQL), Oxia, S3 and Kubernetes rows declare both (rows 3.11, 3.12, 3.15, 3.18 and 3.20); no other shipped engine declares either.",
+      "The Milvus, Qdrant, Weaviate, InfluxDB (InfluxQL), Oxia, S3 and Kubernetes rows declare both (rows 3.11, 3.12, 3.15, 3.18, 3.20 and 3.25); no other shipped engine declares either.",
     );
     const s3 = knownLimit("**S3-compatible object storage is reached over a REST client of Studio's own.**");
     expect(s3).toContain("14 minutes of skew were accepted and 20 refused on MinIO, Silo and RustFS");
@@ -1352,7 +1352,7 @@ describe("packaging and listing copy no count gate reads", () => {
       "packaging/flatpak/org.libredb.Studio.desktop",
       "packaging/flatpark/org.libredb.Studio.desktop",
     ]) {
-      expect(read(file), file).toContain(";Qdrant;Oxia;S3;ObjectStorage;MinIO;Kubernetes;IDE;");
+      expect(read(file), file).toContain(";Qdrant;Weaviate;Oxia;S3;ObjectStorage;MinIO;Kubernetes;IDE;");
     }
   });
 
@@ -1471,7 +1471,7 @@ describe("DOCKERHUB.md", () => {
     expect(lines[oxia + 1]).toBe(
       "| **S3-compatible object storage** | none, HTTP | Read-only AWS CLI commands, bucket and folder browser, object preview |",
     );
-    expect(hub).toContain("Qdrant, Oxia, S3-compatible object storage and Kubernetes** from your browser");
+    expect(hub).toContain("Qdrant, Weaviate, Oxia, S3-compatible object storage and Kubernetes** from your browser");
     expect(hub).toContain(`${Word(EXTERNAL_DATABASE_TYPES.length)} external engines share one interface.`);
     // The ordinal counts the table's rows: every external engine, then the embedded store.
     expect(SHIPPED_DATABASE_TYPES).toHaveLength(EXTERNAL_DATABASE_TYPES.length + 1);
@@ -1542,7 +1542,7 @@ describe("FEATURES, BRAND_MESSAGING and API_DOCS", () => {
       expect(FEATURES_GROUP, words).toContain(words === "fd00:ec2::254" ? "AWS's IPv6 metadata address" : words);
     }
     expect(flat(features)).toContain(
-      "Milvus, Qdrant, Oxia, S3-compatible object storage and Kubernetes have no count grammar here",
+      "Milvus, Qdrant, Weaviate, Oxia, S3-compatible object storage and Kubernetes have no count grammar here",
     );
   });
 
@@ -1554,7 +1554,7 @@ describe("FEATURES, BRAND_MESSAGING and API_DOCS", () => {
     expect(brand).toContain(`- **Proof:** ${word(engines)} providers, each with its own reference document`);
     expect(brand).toContain(`| ${Word(engines)} database engines | One reference document per engine:`);
     expect(brand).toContain(
-      "Qdrant, Oxia, S3-compatible object storage, Kubernetes, OPC UA, MTConnect, Modbus, NETCONF, SNMP and Sparkplug B. One more, `libredb.md`, is the embedded provider",
+      "Qdrant, Weaviate, Oxia, S3-compatible object storage, Kubernetes, OPC UA, MTConnect, Modbus, NETCONF, SNMP and Sparkplug B. One more, `libredb.md`, is the embedded provider",
     );
     expect(brand).toContain(`against ${word(engines)} here.`);
     expect(brand).toContain(`"${Word(engines)} engines" beats "extensive database support".`);
@@ -1570,7 +1570,7 @@ describe("FEATURES, BRAND_MESSAGING and API_DOCS", () => {
     const capabilities = provider.getCapabilities();
     const keyScan = capabilities.keyScan;
     expect(api).toContain(
-      "Milvus, Qdrant, Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA, MTConnect, Modbus, NETCONF, SNMP and Sparkplug B.",
+      "Milvus, Qdrant, Weaviate, Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA, MTConnect, Modbus, NETCONF, SNMP and Sparkplug B.",
     );
     expect(api).toMatch(
       new RegExp(
@@ -1579,7 +1579,7 @@ describe("FEATURES, BRAND_MESSAGING and API_DOCS", () => {
       ),
     );
     expect(capabilities.supportsResultPagination).toBe(false);
-    expect(api).toContain("Milvus, Qdrant, Oxia, S3-compatible object storage and Firestore ignore it.");
+    expect(api).toContain("Milvus, Qdrant, Weaviate, Oxia, S3-compatible object storage and Firestore ignore it.");
     expect(capabilities.containerLevels).toEqual([]);
     expect(api).toContain(
       "etcd, Oxia and S3-compatible object storage declare the walk and no container level, because one connection is one key space (one etcd cluster, one Oxia namespace, one S3 endpoint), so they refuse the field as well.",
@@ -1704,7 +1704,7 @@ describe("docs/providers/README.md", () => {
     expect(lines[influxdb3 + 10].startsWith("| Sparkplug B | `sparkplug` |")).toBe(true);
     expect(lines[influxdb3 + 11].startsWith("| LibreDB | `libredb` |")).toBe(true);
     expect(index).toContain(
-      "Qdrant, InfluxDB, Oxia, Databend, S3, Kubernetes, MQTT, Firestore, RabbitMQ and OPC UA are)",
+      "Qdrant, Weaviate, InfluxDB, Oxia, Databend, S3, Kubernetes, MQTT, Firestore, RabbitMQ and OPC UA are)",
     );
     // And the index holds a row for EVERY shipped type-id, which is the rule it states about itself.
     const indexed = new Set(
@@ -1747,12 +1747,12 @@ describe("the architecture, provider, editor and guide docs", () => {
       `${word(EXTERNAL_DATABASE_TYPES.length)} external engines, plus the embedded LibreDB store`,
     );
     expect(claude).toContain(
-      "`oxia`, `milvus`, `qdrant`, `s3`, `kubernetes`, `rabbitmq`, `libredb`) extend `BaseDatabaseProvider` directly",
+      "`oxia`, `milvus`, `qdrant`, `weaviate`, `s3`, `kubernetes`, `rabbitmq`, `libredb`) extend `BaseDatabaseProvider` directly",
     );
     const architecture = read("docs/ARCHITECTURE.md");
     expect(architecture).toContain(`It supports **${ids} database backends**`);
     expect(architecture).toContain(
-      "Milvus, Qdrant, Oxia, S3-compatible object storage, Kubernetes, NETCONF, SNMP, Sparkplug B, LibreDB.",
+      "Milvus, Qdrant, Weaviate, Oxia, S3-compatible object storage, Kubernetes, NETCONF, SNMP, Sparkplug B, LibreDB.",
     );
     expect(architecture).toContain("        DBFactory --> ObjectStore[Object Storage Providers]");
     expect(architecture).toContain("        ObjectStore --> S3[(S3-compatible object storage)]");
@@ -1772,7 +1772,9 @@ describe("the architecture, provider, editor and guide docs", () => {
     expect(providers).toContain(
       "- **S3-compatible object storage** (one AWS CLI read command, or Studio's own `preview`): [providers/s3.md](./providers/s3.md).",
     );
-    expect(flat(providers)).toContain("Qdrant, Oxia, Databend, S3-compatible object storage, Kubernetes, or LibreDB.");
+    expect(flat(providers)).toContain(
+      "Qdrant, Weaviate, Oxia, Databend, S3-compatible object storage, Kubernetes, or LibreDB.",
+    );
     /*
      * AND THE TABLE UNDER THE COUNT HOLDS EVERY SHIPPED TYPE-ID. The numeral was swept to
      * thirty-three while the table stayed thirty rows - BigQuery, MQTT and OPC UA missing, two of
@@ -1793,18 +1795,18 @@ describe("the architecture, provider, editor and guide docs", () => {
     const nonSql = SHIPPED_DATABASE_TYPES.filter((type) => !readsSqlText(type)).length;
     const optimization = read("docs/editor/query-optimization.md");
     expect(optimization).toContain(
-      `Qdrant, Oxia, S3-compatible object storage, Kubernetes, OPC UA, MTConnect, Modbus, NETCONF, SNMP and Sparkplug B are the ${word(nonSql)} types whose query text is not SQL at all**`,
+      `Qdrant, Weaviate, Oxia, S3-compatible object storage, Kubernetes, OPC UA, MTConnect, Modbus, NETCONF, SNMP and Sparkplug B are the ${word(nonSql)} types whose query text is not SQL at all**`,
     );
     expect(optimization).toContain(`holds exactly those ${word(nonSql)},`);
     expect(provider.getCapabilities().supportsResultPagination).toBe(false);
-    expect(optimization).toContain("Sixteen providers cannot serve page two.");
-    expect(optimization).toContain("Qdrant, Oxia and S3-compatible object storage answer it with page one.");
+    expect(optimization).toContain("Seventeen providers cannot serve page two.");
+    expect(optimization).toContain("Qdrant, Weaviate, Oxia and S3-compatible object storage answer it with page one.");
     expect(optimization).toContain("The S3 row names no operation and, like the Oxia row, is the gate's whole answer:");
     expect(optimization).toContain(
       "a Qdrant request, an `oxia client` read command, an AWS CLI read command, a kubectl statement, a NETCONF read request, a Sparkplug read request or an SNMP walk is not judged by a SQL reader",
     );
     expect(flat(read("docs/SCHEMA_DIFF.md"))).toContain(
-      "Qdrant, Oxia, S3-compatible object storage and Kubernetes receive an explanatory",
+      "Qdrant, Weaviate, Oxia, S3-compatible object storage and Kubernetes receive an explanatory",
     );
   });
 
@@ -1955,7 +1957,7 @@ describe("the agent docs count the type-ids and name S3 where they list engines"
     const guide = flat(read("docs/AGENT_GUIDE.md"));
     expect(guide).toContain(`which is the other ${word(provided)} (MySQL,`);
     expect(guide).toContain(
-      "Qdrant, Oxia, Databend, S3-compatible object storage, Kubernetes, Modbus, NETCONF, SNMP, Sparkplug B and the bundled LibreDB store)",
+      "Qdrant, Weaviate, Oxia, Databend, S3-compatible object storage, Kubernetes, Modbus, NETCONF, SNMP, Sparkplug B and the bundled LibreDB store)",
     );
     expect(guide).toContain(`so it reaches all ${word(ids)} engines.`);
     expect(guide).toContain(
@@ -1969,9 +1971,9 @@ describe("the agent docs count the type-ids and name S3 where they list engines"
     const flow = flat(read("docs/AGENT_DATA_FLOW.md"));
     expect(flow).toContain(`and the other ${word(provided)} by asking the connection's own provider`);
     expect(flow).toContain(
-      "Never an etcd, Milvus, Qdrant, InfluxDB (InfluxQL), Oxia, S3-compatible object storage or Kubernetes statement",
+      "Never an etcd, Milvus, Qdrant, Weaviate, InfluxDB (InfluxQL), Oxia, S3-compatible object storage or Kubernetes statement",
     );
-    expect(flow).toContain("which those seven do");
+    expect(flow).toContain("which those eight do");
     expect(flow).toContain(
       "an S3 command names buckets and object keys, and a kubectl statement names namespaces and objects",
     );
@@ -1989,22 +1991,20 @@ describe("the agent docs count the type-ids and name S3 where they list engines"
       "- On S3-compatible object storage the grounding carries bucket names only, never an object key, a prefix, a size or any object content (objects are listed by the Keys panel, not by the object walk).",
     );
     /*
-     * TWENTY-NINE, COUNTED FROM THE DECLARATIONS AND NOT FROM THE SENTENCE. `declaresForeignKeys:
-     * false` is set by every shipped type-id but the eight SQL engines that declare them, so the
-     * number is `SHIPPED_DATABASE_TYPES.length - 8`. It was twenty-seven at thirty-five type-ids and
-     * is twenty-eight at thirty-six, because Snowflake sets it false too
-     * (`src/lib/db/providers/sql/snowflake/index.ts`), and twenty-nine at thirty-seven, because
-     * Apache Spark does as well (`src/lib/db/providers/sql/spark/index.ts`). The sentence had said twenty-four and named
-     * twenty-four: BigQuery had been missing since its own merge, Firestore since its own, OPC UA
-     * since ours and Snowflake since theirs.
+     * COUNTED FROM THE DECLARATIONS AND NOT FROM THE SENTENCE. `declaresForeignKeys: false` is set by every shipped
+     * type-id but the eight SQL engines that declare them, so the list names `SHIPPED_DATABASE_TYPES.length - 8`.
+     * The sentence once carried that number and named fewer: it said twenty-four and named twenty-four while BigQuery,
+     * Firestore, OPC UA and Snowflake were missing. It names them now and counts none (#1614), so the count is held
+     * here, on the names between the parentheses.
      */
-    expect(flow).toContain(`On the ${word(ids - 8)} engines that declare no foreign keys at all`);
+    const noKeys = flow.split("On every engine that declares no foreign keys at all (")[1]?.split(") this block")[0];
+    expect(noKeys?.split(/, | and /)).toHaveLength(ids - 8);
     expect(flow).toContain(
-      "Qdrant, Oxia, Databend, S3-compatible object storage, Kubernetes, SNMP and Sparkplug B) this block carries no relations",
+      "Qdrant, Weaviate, Oxia, Databend, S3-compatible object storage, Kubernetes, SNMP and Sparkplug B) this block carries no relations",
     );
     expect(flow).toContain(`replaces them on the other ${word(provided)}.`);
     expect(flow).toContain(
-      "nothing at all for an etcd, Milvus, Qdrant, InfluxDB (InfluxQL), Oxia, S3-compatible object storage or Kubernetes statement",
+      "nothing at all for an etcd, Milvus, Qdrant, Weaviate, InfluxDB (InfluxQL), Oxia, S3-compatible object storage or Kubernetes statement",
     );
   });
 });
@@ -2040,7 +2040,9 @@ describe("the complete engine lists outside the agent docs", () => {
     // straight back to MQTT. The chain is a claim about ORDER, so each link is pinned at both ends: an engine added
     // without moving the head leaves the previous head claiming a title it no longer holds, which is exactly what
     // this change did to Kubernetes until the `not` assertions below were added.
-    expect(readme).toContain("Sparkplug B is the newest: one broker read over MQTT");
+    expect(readme).toContain("Weaviate is the newest: Weaviate's own REST requests typed in the editor");
+    expect(readme).toContain("Sparkplug B came before Weaviate: one broker read over MQTT");
+    expect(readme).not.toContain("Sparkplug B is the newest");
     expect(readme).toContain("SNMP came before Sparkplug B: one agent read over UDP");
     expect(readme).not.toContain("SNMP is the newest");
     expect(readme).toContain("NETCONF came before SNMP: one network device read over NETCONF on SSH");
@@ -2122,10 +2124,10 @@ describe("the complete engine lists outside the agent docs", () => {
       );
     }
     expect(read("docs/BRAND_MESSAGING.md")).toContain(
-      "Milvus, Qdrant, Oxia, S3-compatible object storage and Kubernetes, with SSO and audit",
+      "Milvus, Qdrant, Weaviate, Oxia, S3-compatible object storage and Kubernetes, with SSO and audit",
     );
     expect(read("docs/FEATURES.md")).toContain(
-      "Qdrant, Oxia, Databend, S3-compatible object storage, Kubernetes and LibreDB show no editing control at all",
+      "Qdrant, Weaviate, Oxia, Databend, S3-compatible object storage, Kubernetes and LibreDB show no editing control at all",
     );
     expect(provider.getCapabilities().supportsInlineRowEdit).toBe(false);
     const guide = read("docs/ADDING_A_PROVIDER.md");

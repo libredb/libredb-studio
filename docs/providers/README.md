@@ -35,6 +35,7 @@ in lockstep with the code (see the tri-sync rule in [`../../CLAUDE.md`](../../CL
 | Neo4j | `neo4j` | Graph | `neo4j-driver-lite` (pure JavaScript, Bolt) | Cypher (read-only) | [neo4j.md](./neo4j.md) |
 | Milvus | `milvus` | Vector | `@grpc/grpc-js` (pure JavaScript, gRPC) | Milvus REST v2 requests (read routes) | [milvus.md](./milvus.md) |
 | Qdrant | `qdrant` | Vector | none, REST over the shared `node:http(s)` transport | Qdrant REST requests (read routes) | [qdrant.md](./qdrant.md) |
+| Weaviate | `weaviate` | Vector | none, REST (and GraphQL below 1.39.7) over the shared `node:http(s)` transport | Weaviate REST requests (read routes) | [weaviate.md](./weaviate.md) |
 | InfluxDB (InfluxQL) | `influxdb` | Time series | none, HTTP over the shared `node:http(s)` transport | InfluxQL (read-only) | [influxdb.md](./influxdb.md) |
 | InfluxDB 3 (SQL) | `influxdb3` | Time series | none, HTTP over the shared `node:http(s)` transport | SQL (Apache DataFusion, read-only) | [influxdb3.md](./influxdb3.md) |
 | S3-compatible object storage | `s3` | Object storage | none, REST over the shared `node:http(s)` transport, signed by Studio's own SigV4 code; `hyparquet` for Parquet previews | AWS CLI read commands (a subset, read-only) | [s3.md](./s3.md) |
@@ -53,7 +54,7 @@ in lockstep with the code (see the tri-sync rule in [`../../CLAUDE.md`](../../CL
 
 - **Filename = canonical type-id** (`postgres.md`, `mssql.md`, …), mirroring the source file
   (`src/lib/db/providers/<family>/<type-id>.ts`, or a `<type-id>/` directory when a provider is
-  split across modules, as Couchbase, ClickHouse, Druid, Trino, BigQuery, Snowflake, Spark, Cassandra, libSQL, DuckDB, Db2, Prometheus, Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB, Oxia, Databend, S3, Kubernetes, MQTT, Firestore, RabbitMQ and OPC UA are). The official product name (e.g.
+  split across modules, as Couchbase, ClickHouse, Druid, Trino, BigQuery, Snowflake, Spark, Cassandra, libSQL, DuckDB, Db2, Prometheus, Kafka, etcd, Neo4j, Milvus, Qdrant, Weaviate, InfluxDB, Oxia, Databend, S3, Kubernetes, MQTT, Firestore, RabbitMQ and OPC UA are). The official product name (e.g.
   "SQL Server") is used only in each doc's title and prose. **One directory may serve two type-ids**
   — `providers/sql/search/` is `elasticsearch` and `opensearch`, and `providers/timeseries/influxdb/` is
   `influxdb` and `influxdb3`, two classes on two base classes sharing one connection layer — and each type-id still gets its own
@@ -289,8 +290,8 @@ InfluxDB (InfluxQL) has a row per server line it reads, because each line is a s
 The Oxia row was verified against the running container on 2026-10-04, by the capture `tests/fixtures/oxia/README.md` records.
 The Databend row was verified against the running `databend-http` container (v1.2.951-nightly) on 2026-10-08: the user and password below sign in, and `system.databases` lists the seeded `libredb_demo` and `studio_demo`.
 
-Start the fifty-one always-on services with a plain `docker compose -f database-compose.yml up -d`:
-thirty-three engine containers plus the one-shot `couchbase-init`, `trino-init`, `kafka-init`, `rabbitmq-init`, `etcd-seed`, `oxia-seed`, `milvus-seed`, `qdrant-seed`, `influxdb-seed`, `databend-http-seed`, `silo-principals`, `silo-seed`, `garage-keys`, `garage-setup`, `garage-seed`, `rustfs-principals`, `rustfs-seed` and `firestore-seed` seed sidecars; the `Profile` column names
+Start the fifty-three always-on services with a plain `docker compose -f database-compose.yml up -d`:
+thirty-four engine containers plus the one-shot `couchbase-init`, `trino-init`, `kafka-init`, `rabbitmq-init`, `etcd-seed`, `oxia-seed`, `milvus-seed`, `qdrant-seed`, `weaviate-seed`, `influxdb-seed`, `databend-http-seed`, `silo-principals`, `silo-seed`, `garage-keys`, `garage-setup`, `garage-seed`, `rustfs-principals`, `rustfs-seed` and `firestore-seed` seed sidecars; the `Profile` column names
 the ones that need asking for. The count is derived, not written: a service in this file carries no
 `profiles:` key precisely when it backs a SHIPPED provider whose fixture lives here, so a plain
 `up -d` can reproduce that provider's integration pass.
@@ -335,6 +336,7 @@ reproduces every provider in the table below and those two are reproduced by the
 | Neo4j | `neo4j` | localhost | 7687 | `neo4j` | `password123` | `neo4j`, or empty for the home database | *none* |
 | Milvus | `milvus` | localhost | 19530 | `root` | the documented default ([milvus.md, section 4.2](./milvus.md#42-authentication)) | `default` | *none* |
 | Qdrant | `qdrant` | localhost | 6333 | *none* | *none* | *none* | *none* |
+| Weaviate | `weaviate` | localhost | 18280 | *none* | *none* | *none* | *none* |
 | S3-compatible object storage, MinIO | `minio` | localhost | 9000 | `studio-browse` | `Browse123pass!` | *none*, or a bucket such as `studio-demo` to pin it | `s3-minio` |
 | S3-compatible object storage, MinIO with a site region | `minio-region` | localhost | 9030 | `studio-browse` | `Browse123pass!` | *none*; Region `eu-central-1` | `s3-region` |
 | S3-compatible object storage, Silo | `silo` | localhost | 9010 | `studio-browse` | `Browse123pass!` | *none*, or a bucket such as `studio-demo` | *none* |
@@ -386,6 +388,10 @@ Their certificates are generated into a volume by the `milvus-certs` one-shot an
 **Qdrant has three more fixtures behind two profiles, and the plain `qdrant` service takes no key and no TLS.**
 `qdrant` is seeded by its `qdrant-seed` one-shot; `qdrant-auth` (port 6343, an admin key, a read-only key and JWT RBAC) sits behind the profile `qdrant-auth`, and `qdrant-tls` (port 6353, one-way TLS) and `qdrant-mtls` (port 6363, TLS that verifies a client certificate) behind `qdrant-tls`.
 Their keys and certificates are generated into a volume by the `qdrant-keys` one-shot and never committed; [`docker/qdrant/README.md`](../../docker/qdrant/README.md) says how to start and seed each, how to copy the keys out, and what every seeded collection is for.
+
+**Weaviate has three more servers behind `weaviate-matrix` and two keyed ones behind `weaviate-secure`, and the plain `weaviate` service takes no key and no TLS.**
+`weaviate` (1.40.2) is seeded by its `weaviate-seed` one-shot; `weaviate-1-37` (1.37.4, port 18281), `weaviate-1-38` (1.38.22, port 18285) and `weaviate-nographql` (1.40.2 with GraphQL disabled, port 18282) sit behind `weaviate-matrix`, one per server shape the provider reads, and `weaviate-auth` (port 18283, API keys and RBAC) and `weaviate-tls` (port 18284, Weaviate's own TLS listener) behind `weaviate-secure`, each with a database user that holds only the `viewer` role.
+Their root key and certificate are generated into a volume by the `weaviate-keys` one-shot and never committed; [`docker/weaviate/README.md`](../../docker/weaviate/README.md) says how to start and seed each, how to copy the keys out, and what every seeded collection is for.
 
 **InfluxDB has one more fixture behind a profile of its own, and the three plain services take no TLS.**
 `influxdb1`, `influxdb2` and `influxdb3` are seeded by the `influxdb-seed` one-shot, which writes the `home` sample with timestamps in the last 25 hours, the fixed `edge` measurements, the 1.x user `reader` and the 2.x read-only token; `influxdb3-filelimit` (port 8182, `--query-file-limit 1`) sits behind the profile `influxdb-filelimit` and is seeded from the host.

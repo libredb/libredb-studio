@@ -91,6 +91,7 @@ const EXPECTED_CONTAINER_PATH_SHAPES: Readonly<
   etcd: "absent",
   neo4j: "absent",
   qdrant: "absent",
+  weaviate: "absent",
   // No container level (R16): its tables are top-level objects of the session database, the Qdrant shape.
   influxdb3: "absent",
   oxia: "absent",
