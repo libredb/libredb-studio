@@ -102,12 +102,16 @@ const MISSING_PASSPHRASE_CODES: ReadonlySet<string> = new Set([
 /** The codes a wrong passphrase throws on Bun and Node, and OpenSSL's older EVP spelling. */
 const WRONG_PASSPHRASE_CODES: ReadonlySet<string> = new Set(["ERR_OSSL_BAD_DECRYPT", "ERR_OSSL_EVP_BAD_DECRYPT"]);
 /**
- * The decoder's codes, Node's OpenSSL 3 and Bun's BoringSSL: a wrong passphrase decrypts an encrypted key to random
- * bytes, and about one time in 256 their padding holds and the decoder refuses them (measured 2026-10-13: 15 to 22 of
- * 4,000 wrong passphrases on Node 24.14.0 and Bun 1.4.2). On an encrypted key given a passphrase they read as the
- * wrong passphrase; elsewhere as unreadable.
+ * A wrong passphrase can decrypt an encrypted key to random bytes, and about one time in 256 their padding holds and
+ * the decoder refuses them. OpenSSL 4 reports ERR_OSSL_ASN1_WRONG_TAG for the PKCS#8 case; OpenSSL 3 and Bun's
+ * BoringSSL report their decoder codes (measured 2026-10-13: 15 to 22 of 4,000 wrong passphrases on Node 24.14.0 and
+ * Bun 1.4.2). These codes mean wrong passphrase only for an encrypted key when one was supplied; elsewhere unreadable.
  */
-const GARBLED_DECRYPT_CODES: ReadonlySet<string> = new Set(["ERR_OSSL_UNSUPPORTED", "ERR_OSSL_EVP_DECODE_ERROR"]);
+const GARBLED_DECRYPT_CODES: ReadonlySet<string> = new Set([
+  "ERR_OSSL_ASN1_WRONG_TAG",
+  "ERR_OSSL_UNSUPPORTED",
+  "ERR_OSSL_EVP_DECODE_ERROR",
+]);
 
 export interface SnowflakeKeyFingerprint {
   /** `SHA256:` and the standard base64 of SHA-256 over the DER SPKI, as Snowflake shows RSA_PUBLIC_KEY_FP. */

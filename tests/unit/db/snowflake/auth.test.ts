@@ -428,8 +428,9 @@ describe("the passphrase", () => {
   });
 
   // A wrong passphrase whose decryption happens to end in valid padding reaches the decoder, which refuses the bytes
-  // with its own code: Node's OpenSSL 3 and Bun's BoringSSL spell it differently.
+  // with its own code: OpenSSL 3, OpenSSL 4 and Bun's BoringSSL spell it differently.
   test.each([
+    ["OpenSSL 4's ASN.1 wrong-tag code", "ERR_OSSL_ASN1_WRONG_TAG"],
     ["Node's decoder code", "ERR_OSSL_UNSUPPORTED"],
     ["Bun's decoder code", "ERR_OSSL_EVP_DECODE_ERROR"],
   ])("%s reads as the wrong passphrase on an encrypted key given one, and as unreadable otherwise", (_name, code) => {
