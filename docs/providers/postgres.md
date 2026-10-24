@@ -548,6 +548,12 @@ the listing statement is repairable by that chain anyway: it has no `to_regclass
 because `schemaExclusion()` carries the `pg_depend` ownership test and
 `withoutExtensionOwnershipTest()` drops only a filter.
 
+**A relation with no storage of its own carries no size.**
+The listing reads `pg_total_relation_size(c.oid)` only for a relkind PostgreSQL's `RELKIND_HAS_STORAGE()` names (`r`, `i`, `S`, `t`, `m`), and answers `NULL` for the rest.
+A plain view (`v`) and a partitioned table (`p`) have none: measured on postgres:17.6-alpine, the function answered `0` for a view over a 65536-byte table, and `0` for a partitioned table whose one partition held 65536 bytes.
+`0` is what an empty table measures, so those rows carry no `sizeBytes` and draw no badge, an empty table still carries `0`, and a materialized view keeps its real size (73728 bytes in the same run).
+A foreign table (`f`) has no storage either, and no kind here lists one.
+
 **`path` addresses, `name` labels, and the two are allowed to differ.** `DatabaseObject.path`'s
 last segment is the identifier that is unique WITHIN ITS PARENT, and two kinds here need more than a
 bare name for that:

@@ -902,7 +902,10 @@ function isMissingToRegclassError(error: unknown): boolean {
 // because this composes with the size repair in either order: an engine can refuse both,
 // and RisingWave does.
 function withoutSizeColumn(sql: string): string {
-  return sql.replace(/,\s*\n\s*pg_total_relation_size\(c\.oid\) AS size_bytes/, "");
+  return sql.replace(
+    /,\s*CASE WHEN c\.relkind IN \([^)]*\) THEN pg_total_relation_size\(c\.oid\) END AS size_bytes/,
+    "",
+  );
 }
 
 function withoutRowCountColumn(sql: string): string {
@@ -1056,12 +1059,18 @@ function hasColumns(kind: string): boolean {
 // `measuredSizeBytes()` reads absence. Nothing else in this statement is repairable by
 // that chain: it has no `AS MATERIALIZED` and no `to_regclass`, and its one `pg_depend`
 // clause, the extension ownership test, has its own repair in `queryListing()`.
+//
+// The size is read only for a relkind with storage of its own, the list PostgreSQL's
+// `RELKIND_HAS_STORAGE()` macro names. A view and a partitioned table have none, and
+// `pg_total_relation_size()` answers 0 for both, measured on postgres:17.6-alpine even where
+// the one partition held 65536 bytes. 0 is what an empty table measures, so those rows carry
+// no size at all rather than a claim that they are empty.
 function listRelationsSql(relkinds: string): string {
   return `
         SELECT
           c.relname AS name,
           c.reltuples::bigint AS row_count,
-          pg_total_relation_size(c.oid) AS size_bytes
+          CASE WHEN c.relkind IN ('r', 'i', 'S', 't', 'm') THEN pg_total_relation_size(c.oid) END AS size_bytes
         FROM pg_catalog.pg_class c
         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname = $1 AND c.relkind IN (${relkinds})

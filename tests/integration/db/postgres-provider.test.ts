@@ -6512,6 +6512,53 @@ describe("PostgreSQL object listing and detail", () => {
     await provider.disconnect();
   });
 
+  /**
+   * A view and a partitioned table have no storage of their own, and `pg_total_relation_size()`
+   * answers 0 for both, measured on postgres:17.6-alpine: a view over a 65536-byte table read 0, and
+   * so did a partitioned table whose one partition held 65536 bytes. 0 is the measurement of an EMPTY
+   * relation, so the listing reads a size only for a relkind that has storage, and leaves it absent
+   * for the others. The mock answers what that server answered to each form of the statement.
+   */
+  test("a relation without storage of its own carries no size, and an empty table still carries 0", async () => {
+    const unguarded: Record<string, Record<string, string>> = {
+      "'r','p'": { empty_t: "0", parted: "0", parted_1: "65536" },
+      "'v'": { v: "0" },
+      "'m'": { mv: "73728" },
+      "'S'": { seq: "8192" },
+    };
+    const storageRelkind: Record<string, boolean> = {
+      empty_t: true,
+      parted: false,
+      parted_1: true,
+      v: false,
+      mv: true,
+      seq: true,
+    };
+    mockQueryFn = async (sql) => {
+      if (!sql.includes("relkind")) return { rows: [] };
+      const guarded = sql.includes(
+        "CASE WHEN c.relkind IN ('r', 'i', 'S', 't', 'm') THEN pg_total_relation_size(c.oid) END AS size_bytes",
+      );
+      const relkinds = Object.keys(unguarded).find((list) => sql.includes(`c.relkind IN (${list})`));
+      return {
+        rows: Object.entries(unguarded[relkinds ?? ""] ?? {}).map(([name, size]) => ({
+          name,
+          size_bytes: guarded && !storageRelkind[name] ? null : size,
+        })),
+      };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    const sizes = async (kind: string) =>
+      Object.fromEntries((await provider.listObjects(["app"], kind)).map((object) => [object.name, object.sizeBytes]));
+    expect(await sizes("table")).toEqual({ empty_t: 0, parted: undefined, parted_1: 65536 });
+    expect(await sizes("view")).toEqual({ v: undefined });
+    expect(await sizes("materialized_view")).toEqual({ mv: 73728 });
+    expect(await sizes("sequence")).toEqual({ seq: 8192 });
+    await provider.disconnect();
+  });
+
   test("a server without pg_total_relation_size loses the size, not the folder", async () => {
     // CockroachDB and Materialize are both reached under the `postgres` type id and have
     // no such builtin. The shared withoutTotalRelationSizeFn() is deliberately NOT used:
