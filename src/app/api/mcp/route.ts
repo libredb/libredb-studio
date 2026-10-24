@@ -1,6 +1,7 @@
 import type { AuthInfo } from "@modelcontextprotocol/server";
 import { NextResponse } from "next/server";
 import { getAppVersion } from "@/lib/app-version";
+import { ApiErrorCode } from "@/lib/api/error-codes";
 import { runtimeSetting } from "@/lib/governance/settings";
 import { logger } from "@/lib/logger";
 import { mcpTokenOwnerAllowed } from "@/lib/mcp/account-check";
@@ -30,6 +31,10 @@ export const dynamic = "force-dynamic";
 
 const MCP_DISABLED_BODY = { error: "MCP is not enabled on this server" };
 const VERSION_UNAVAILABLE_MESSAGE = "server version unavailable: NEXT_PUBLIC_APP_VERSION is not set";
+const ACCOUNT_STORE_UNAVAILABLE_BODY = {
+  error: "The account store is unavailable. Try again.",
+  code: ApiErrorCode.ACCOUNT_STORE_UNAVAILABLE,
+};
 
 /** Each unrecognized switch value is logged once per process, not once per request. */
 const reportedSwitchValues = new Set<string>();
@@ -58,7 +63,11 @@ async function admit(request: Request): Promise<Admission> {
   const authentication = await authenticateMcpRequest(request);
   if (authentication.kind === "denied") auditMcpDenial(request, authentication.reason);
   if (authentication.kind !== "authenticated") return { response: authentication.response };
-  if (!(await mcpTokenOwnerAllowed(authentication.authInfo))) {
+  const owner = await mcpTokenOwnerAllowed(authentication.authInfo);
+  if (owner === "store_unavailable") {
+    return { response: NextResponse.json(ACCOUNT_STORE_UNAVAILABLE_BODY, { status: 503 }) };
+  }
+  if (!owner) {
     auditMcpDenial(request, "mcp_token_invalid");
     return { response: mcpRevokedTokenResponse() };
   }

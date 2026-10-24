@@ -88,6 +88,13 @@ export const ApiErrorCode = {
   IDENTITY_PROVIDER_UNAVAILABLE: "IDENTITY_PROVIDER_UNAVAILABLE",
 
   /**
+   * With password sign-in and a server storage provider (STORAGE_PROVIDER=sqlite or postgres), the account store could
+   * not be read to verify the session (503). Distinct from AUTH_REQUIRED: the session may be valid, so the client keeps
+   * its cookie and retries instead of signing the user out.
+   */
+  ACCOUNT_STORE_UNAVAILABLE: "ACCOUNT_STORE_UNAVAILABLE",
+
+  /**
    * A bearer access token verified, but its claims map to no role Studio accepts under OIDC_ROLE_CLAIM,
    * OIDC_ADMIN_ROLES and OIDC_USER_ROLES (403). Not AUTH_REQUIRED: a fresh token for the same account is refused the
    * same way until an administrator changes the account, so a client shows the refusal instead of refreshing.

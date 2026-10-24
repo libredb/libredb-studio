@@ -261,6 +261,7 @@ export function DataProfiler({
 
   useEffect(() => {
     if (isOpen && tablePath.length > 0 && connection) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       fetchProfile();
     }
     return () => {

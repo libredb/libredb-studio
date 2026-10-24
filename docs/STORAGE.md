@@ -682,6 +682,15 @@ If the key is gone, re-enter the affected passwords; everything else about the c
 - Migration runs once per browser (guarded by the `libredb_server_migrated` flag) and replaces each collection wholesale, so duplicates shouldn't occur
 - If you do see them, check whether the same user pushed data from multiple browsers before the first migration completed
 
+### Store Outage: "503 ACCOUNT_STORE_UNAVAILABLE"
+
+When `STORAGE_PROVIDER=sqlite` or `postgres` is configured and the account database cannot be reached or read (e.g. disk I/O error, database container down, or connection refused):
+- Route guards, `GET /api/auth/me` and `/api/mcp` answer `503 { "error": "The account store is unavailable. Try again.", "code": "ACCOUNT_STORE_UNAVAILABLE" }`.
+- The user's `auth-token` cookie is preserved rather than cleared.
+- `WorkspaceOwnerGate` in the browser catches the 503 as a service outage and displays a failure notification instead of treating it as an ended session (`401`), preventing redirect loops between the editor and `/login` (#1942).
+- Once the database recovers, reloading the page restores the session and workspace without requiring the user to sign in again.
+- A genuinely refused account (disabled, deleted, demoted, or session version mismatch) clears the cookie and answers `401`.
+
 ---
 
 ## Database Schema Reference
@@ -1299,7 +1308,7 @@ When any `storage.*` mutation fires:
 In server mode the browser copy is bound to the account that signed in: `libredb_workspace_owner` holds its username, and it is compared with `GET /api/auth/me` before any page reads the copy.
 Every page that reads it (the editor, the admin dashboard and the monitoring page) renders inside `WorkspaceOwnerGate`, which runs that check first; the lifecycle above runs it again when it starts, before anything is migrated or pulled, and from then on every request names the owner (see below).
 The settings pages (`/settings/mcp`, `/settings/authenticator`) do not read the copy but render inside the gate too, because a sign-in can land on them, and the gate records the owner there.
-While the check runs, those pages show a loading indicator; when the signed-in account cannot be read, they show a message instead of the copy.
+While the check runs, those pages show a loading indicator; when the signed-in account cannot be read (such as an account store outage answering `503 ACCOUNT_STORE_UNAVAILABLE`), they show a message instead of the copy and preserve the session cookie, avoiding redirect loops between `/login` and the editor (#1942).
 They show it too when `GET /api/storage/config` cannot be read and the copy carries an owner or the migration flag, both written only in server mode; a copy with neither renders as it is, so local mode does not change.
 The copy is every synced collection, the editor tabs (never stored on the server), the object-source drafts, the agent thread hint, the names of the collections a sign-out could not push, the migration flag and the owner key itself; per-browser preferences such as the theme and line numbers are not part of it.
 `clearAccountWorkspace()` in `src/lib/storage/local-storage.ts` holds that list.

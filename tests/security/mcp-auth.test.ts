@@ -23,6 +23,8 @@ import * as runtimeSettings from "@/lib/governance/settings";
 import { validateSettings } from "@/lib/governance/settings";
 import { recordGovernanceSnapshot, resetGovernanceState } from "@/lib/governance/state";
 import * as accountCheck from "@/lib/mcp/account-check";
+import * as localAccounts from "@/lib/local-accounts";
+import { ACCOUNT_STORE_UNAVAILABLE_BODY } from "@/lib/api/account-store-error";
 import { MCP_ENABLED_ENV, MCP_ENABLED_INVALID_MESSAGE } from "@/lib/mcp/config";
 import { config, proxy } from "@/proxy";
 import { withBasePathEnv } from "../helpers/base-path";
@@ -355,6 +357,58 @@ describe("at the route, called directly so the proxy is bypassed", () => {
     }
     // The control: the scan reads the route it names.
     expect(source).toContain("authenticateMcpRequest(");
+  });
+
+  test("an account store outage answers 503 ACCOUNT_STORE_UNAVAILABLE and writes no permission_denied audit line", async () => {
+    const ownerCheck = spyOn(accountCheck, "mcpTokenOwnerAllowed").mockResolvedValue("store_unavailable");
+    const spy = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const response = await route.POST(mcpRequest("POST", { authorization: `Bearer ${await mintTestToken()}` }));
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual(ACCOUNT_STORE_UNAVAILABLE_BODY);
+      expect(permissionDeniedLines(spy)).toEqual([]);
+    } finally {
+      ownerCheck.mockRestore();
+      spy.mockRestore();
+    }
+  });
+
+  test("a refused token owner answers 401 with challenge and writes a permission_denied audit line", async () => {
+    const ownerCheck = spyOn(accountCheck, "mcpTokenOwnerAllowed").mockResolvedValue(false);
+    const spy = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const response = await route.POST(mcpRequest("POST", { authorization: `Bearer ${await mintTestToken()}` }));
+      expect(response.status).toBe(401);
+      expect(response.headers.get("www-authenticate")).toStartWith('Bearer error="invalid_token"');
+      expect(await response.json()).toEqual({
+        error: "invalid_token",
+        error_description: "The MCP token is invalid, expired or revoked",
+      });
+      expect(permissionDeniedLines(spy).map((line) => [line.actor, line.reason, line.route])).toEqual([
+        ["anonymous", "mcp_token_invalid", "POST /api/mcp"],
+      ]);
+    } finally {
+      ownerCheck.mockRestore();
+      spy.mockRestore();
+    }
+  });
+
+  test("mcpTokenOwnerAllowed reports store_unavailable when storedAccountAllows throws", async () => {
+    const allowsSpy = spyOn(localAccounts, "storedAccountAllows").mockRejectedValue(new Error("store outage"));
+    const errorSpy = spyOn(logger, "error").mockImplementation(() => {});
+    try {
+      const outcome = await accountCheck.mcpTokenOwnerAllowed({
+        token: "probe",
+        clientId: "probe",
+        scopes: [],
+        extra: { username: "alice", role: "admin" },
+      });
+      expect(outcome).toBe("store_unavailable");
+      expect(errorSpy).toHaveBeenCalled();
+    } finally {
+      allowsSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
   });
 });
 

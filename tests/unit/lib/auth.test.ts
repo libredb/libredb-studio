@@ -41,9 +41,12 @@ mock.module("next/headers", () => ({
 // Import module under test (after mocks)
 // ============================================================================
 
+import * as localAccounts from "@/lib/local-accounts";
+
 const {
   signJWT,
   verifyJWT,
+  readSession,
   getSession,
   login,
   logout,
@@ -150,20 +153,86 @@ describe("auth", () => {
   // getSession()
   // --------------------------------------------------------------------------
 
-  describe("getSession()", () => {
-    test("returns payload when auth-token cookie exists", async () => {
+  describe("readSession() and getSession()", () => {
+    test("returns authenticated session when auth-token cookie exists and account is allowed", async () => {
       const token = await signJWT({ role: "user", username: "user" });
       mockCookieStore["auth-token"] = { value: token };
+
+      const reading = await readSession();
+      expect(reading.kind).toBe("authenticated");
+      if (reading.kind === "authenticated") {
+        expect(reading.session.role).toBe("user");
+        expect(reading.session.username).toBe("user");
+      }
 
       const session = await getSession();
       expect(session).not.toBeNull();
       expect(session!.role).toBe("user");
       expect(session!.username).toBe("user");
+      expect(mockDeleteCalls).toHaveLength(0);
     });
 
-    test("returns null when no cookie", async () => {
+    test("returns anonymous and getSession returns null when no cookie", async () => {
+      const reading = await readSession();
+      expect(reading.kind).toBe("anonymous");
+
       const session = await getSession();
       expect(session).toBeNull();
+      expect(mockDeleteCalls).toHaveLength(0);
+    });
+
+    test("returns anonymous and getSession returns null when cookie is invalid", async () => {
+      mockCookieStore["auth-token"] = { value: "invalid-token" };
+
+      const reading = await readSession();
+      expect(reading.kind).toBe("anonymous");
+
+      const session = await getSession();
+      expect(session).toBeNull();
+      expect(mockDeleteCalls).toHaveLength(0);
+    });
+
+    test("returns anonymous, calls logout() to clear cookie, and getSession returns null when account is refused", async () => {
+      const token = await signJWT({ role: "user", username: "user" });
+      mockCookieStore["auth-token"] = { value: token };
+      const allowsSpy = spyOn(localAccounts, "storedAccountAllows").mockResolvedValue(false);
+      try {
+        const reading = await readSession();
+        expect(reading.kind).toBe("anonymous");
+        expect(mockDeleteCalls.length).toBeGreaterThan(0);
+
+        const session = await getSession();
+        expect(session).toBeNull();
+      } finally {
+        allowsSpy.mockRestore();
+      }
+    });
+
+    test("returns store_unavailable, logs error, keeps cookie, and getSession returns null when account store throws", async () => {
+      const token = await signJWT({ role: "user", username: "user" });
+      mockCookieStore["auth-token"] = { value: token };
+      const allowsSpy = spyOn(localAccounts, "storedAccountAllows").mockRejectedValue(
+        new Error("sqlite disk I/O error"),
+      );
+      const errorSpy = spyOn(logger, "error").mockImplementation(() => {});
+      try {
+        const reading = await readSession();
+        expect(reading.kind).toBe("store_unavailable");
+        if (reading.kind === "store_unavailable") {
+          expect((reading.error as Error).message).toBe("sqlite disk I/O error");
+        }
+        // Cookie is NOT deleted on outage (#1942)
+        expect(mockDeleteCalls).toHaveLength(0);
+        expect(mockCookieStore["auth-token"]?.value).toBe(token);
+        expect(errorSpy).toHaveBeenCalled();
+
+        // getSession() wraps readSession() and preserves its no-throw contract returning null
+        const session = await getSession();
+        expect(session).toBeNull();
+      } finally {
+        allowsSpy.mockRestore();
+        errorSpy.mockRestore();
+      }
     });
   });
 

@@ -28,39 +28,7 @@
 import { describe, expect, test } from "bun:test";
 import { isSystemIndex, SEARCH_CONTAINER_TYPES, toColumns } from "@/lib/db/providers/sql/search/introspect";
 import { ELASTICSEARCH_PRODUCT, OPENSEARCH_PRODUCT } from "@/lib/db/providers/sql/search/index";
-import type {
-  SearchClusterHealth,
-  SearchIndexInfo,
-  SearchMappingField,
-  SearchObjectDefinition,
-  SearchObjectInfo,
-  SearchQueryResult,
-  SearchTransport,
-} from "@/lib/db/providers/sql/search/transport";
-import { SearchTransportError } from "@/lib/db/providers/sql/search/transport";
-
-// ============================================================================
-// Fake transport
-// ============================================================================
-
-interface FakeOptions {
-  indices?: SearchIndexInfo[];
-  /** Mapping per index name. An index absent from here answers an empty mapping. */
-  mappings?: Record<string, SearchMappingField[]>;
-  /** Raised instead of returning a mapping, per index name. */
-  failures?: Record<string, Error>;
-  /** Milliseconds each index's mapping read takes, per index name. */
-  delays?: Record<string, number>;
-}
-
-interface Recorded {
-  /** Index names in the order `mapping()` was entered. */
-  mappingCalls: string[];
-  /** The signal each seam call received, so forwarding can be asserted. */
-  signals: (AbortSignal | undefined)[];
-  /** The highest number of mapping reads in flight at once. */
-  peakInFlight: number;
-}
+import type { SearchIndexInfo, SearchMappingField } from "@/lib/db/providers/sql/search/transport";
 
 function index(name: string, overrides: Partial<SearchIndexInfo> = {}): SearchIndexInfo {
   return {
@@ -74,107 +42,6 @@ function index(name: string, overrides: Partial<SearchIndexInfo> = {}): SearchIn
     isSystem: false,
     ...overrides,
   };
-}
-
-function field(path: string, type: string, hasSubfields = false, isMultiField = false): SearchMappingField {
-  return { path, type, hasSubfields, isMultiField };
-}
-
-function createTransport(options: FakeOptions = {}) {
-  const recorded: Recorded = { mappingCalls: [], signals: [], peakInFlight: 0 };
-  let inFlight = 0;
-
-  const transport: SearchTransport = {
-    dialect: "elasticsearch",
-
-    indices: async (signal?: AbortSignal): Promise<SearchIndexInfo[]> => {
-      recorded.signals.push(signal);
-      return options.indices ?? [];
-    },
-
-    // The bulk form is unused by `introspect.ts`, which reads one index at a time, and it
-    // is here because the seam requires it: a double that omitted a method would not
-    // compile, and one that answered rows for it would let a read that should never happen
-    // pass unnoticed.
-    mappings: async (): Promise<Map<string, SearchMappingField[]>> => {
-      throw new Error("introspect must not use the bulk mapping read");
-    },
-
-    mapping: async (name: string, signal?: AbortSignal): Promise<SearchMappingField[]> => {
-      recorded.mappingCalls.push(name);
-      recorded.signals.push(signal);
-      inFlight += 1;
-      recorded.peakInFlight = Math.max(recorded.peakInFlight, inFlight);
-      // A real read suspends, which is the only way the concurrency limit is
-      // observable at all: without a suspension every worker would finish before
-      // the next one starts and any limit would look respected.
-      await new Promise((resolve) => setTimeout(resolve, options.delays?.[name] ?? 1));
-      inFlight -= 1;
-
-      const failure = options.failures?.[name];
-      if (failure) throw failure;
-      return options.mappings?.[name] ?? [];
-    },
-
-    // Introspection must never reach these seven. The four object listings (#789)
-    // belong to the OBJECT surface, which is a different reader of the same seam:
-    // `getSchema()` describes indices and nothing else, so an alias, a pipeline, a
-    // template or a data stream reaching this file would be a scope error rather
-    // than a missing case.
-    aliases: (): Promise<SearchObjectInfo[]> => {
-      throw new Error("introspection listed aliases; getSchema describes indices");
-    },
-    pipelines: (): Promise<SearchObjectInfo[]> => {
-      throw new Error("introspection listed ingest pipelines; getSchema describes indices");
-    },
-    templates: (): Promise<SearchObjectInfo[]> => {
-      throw new Error("introspection listed index templates; getSchema describes indices");
-    },
-    dataStreams: (): Promise<SearchObjectInfo[]> => {
-      throw new Error("introspection listed data streams; getSchema describes indices");
-    },
-    // The two source reads (#789 Phase 2), the same story as the bulk mapping read
-    // above: the seam requires them and introspection must never make one, so each
-    // throws by name rather than answering a document nothing would notice.
-    pipelineSource: (): Promise<SearchObjectDefinition | null> => {
-      throw new Error("introspection read an ingest pipeline's source; getSchema describes indices");
-    },
-    templateSource: (): Promise<SearchObjectDefinition | null> => {
-      throw new Error("introspection read an index template's source; getSchema describes indices");
-    },
-
-    // See the file header for why `query()` in particular is a design boundary
-    // rather than a convenience.
-    query: (): Promise<SearchQueryResult> => {
-      throw new Error("introspection ran a statement; the schema comes from the mapping");
-    },
-    version: (): Promise<{ version: string; product: string }> => {
-      throw new Error("introspection read the version");
-    },
-    health: (): Promise<SearchClusterHealth> => {
-      throw new Error("introspection read cluster health");
-    },
-  };
-
-  return { transport, recorded };
-}
-
-/** The `probe_shapes` mapping as the transport flattens it, measured. */
-function probeShapesMapping(): SearchMappingField[] {
-  return [
-    field("address", "object", true),
-    field("address.city", "keyword"),
-    field("note", "text", true),
-    // A MULTI-FIELD, and the flag matters: the transport marks everything below a
-    // mapping's `fields` this way, and introspection drops that kind because
-    // OpenSearch cannot select it. The fake has to say so or it stops speaking what
-    // the transport speaks.
-    field("note.keyword", "keyword", false, true),
-  ];
-}
-
-function names(columns: { name: string }[]): string[] {
-  return columns.map((column) => column.name);
 }
 
 // ============================================================================
@@ -278,22 +145,4 @@ describe("toColumns (#1459)", () => {
     const columns = toColumns(fields);
     expect(columns.every((c) => c.projectable === undefined)).toBe(true);
   });
-});
-
-// ============================================================================
-// Table shape
-// ============================================================================
-
-// ============================================================================
-// Failures
-// ============================================================================
-
-// ============================================================================
-// Reads
-// ============================================================================
-
-describe("getSchema mapping reads", () => {
-  function manyIndices(count: number): SearchIndexInfo[] {
-    return Array.from({ length: count }, (_unused, position) => index(`probe_${position}`));
-  }
 });

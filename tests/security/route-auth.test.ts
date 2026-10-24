@@ -9,11 +9,20 @@ import {
   SRC_ROOT_DIR,
 } from "./helpers/provider-routes";
 
-const mockGetSession = mock(
-  async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
-);
+import type { SessionReading, UserPayload } from "@/lib/auth";
+import { ACCOUNT_STORE_UNAVAILABLE_BODY } from "@/lib/api/account-store-error";
 
+const mockGetSession = mock(async (): Promise<UserPayload | null> => ({ role: "admin", username: "admin" }));
+
+const mockReadSession = mock(async (): Promise<SessionReading> => {
+  const session = await mockGetSession();
+  return session ? { kind: "authenticated", session } : { kind: "anonymous" };
+});
+
+const realAuth = await import("@/lib/auth");
 mock.module("@/lib/auth", () => ({
+  ...realAuth,
+  readSession: mockReadSession,
   getSession: mockGetSession,
   signJWT: mock(async () => "mock-token"),
   verifyJWT: mock(async () => null),
@@ -160,6 +169,36 @@ describe("guardRoute", () => {
     const response = (guard as { response: Response }).response;
     expect(response.status).toBe(401);
     expect(await response.json()).toEqual({ error: "Authentication required", code: "AUTH_REQUIRED" });
+  });
+
+  test("returns a 503 response without auditing permission_denied when account store is unavailable", async () => {
+    mockReadSession.mockResolvedValueOnce({
+      kind: "store_unavailable",
+      error: new Error("sqlite disk I/O error"),
+    });
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const request = new Request("http://localhost:3000/api/db/query", { method: "POST" });
+
+      const guard = await guardRoute({ route: "POST /api/db/query", bucket: "query", request });
+
+      expect("response" in guard).toBe(true);
+      const response = (guard as { response: Response }).response;
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual(ACCOUNT_STORE_UNAVAILABLE_BODY);
+      const denials = logSpy.mock.calls
+        .map((call: unknown[]) => {
+          try {
+            return JSON.parse(call[0] as string) as Record<string, unknown>;
+          } catch {
+            return null;
+          }
+        })
+        .filter((entry): entry is Record<string, unknown> => entry !== null && entry.event === "permission_denied");
+      expect(denials).toHaveLength(0);
+    } finally {
+      logSpy.mockRestore();
+    }
   });
 
   test("still returns 401 when the permission_denied audit emit throws", async () => {
@@ -381,6 +420,8 @@ describe("routes that reach a provider require a session", () => {
     "@/lib/agent/runtime": `the run loop, and it ${PROVIDER_NAMING_HELPER} - the artifacts route imports only readAgentArtifact (the in-process ExecutionArtifactStore), and agent/runs/[runId] imports driveAgentRun, which the resume action uses to drive the run`,
     "@/lib/agent/run-service": `the run lifecycle service (pause/unpause/cancel/status), and it ${PROVIDER_NAMING_HELPER} (@/lib/db/operations/execution) - but only for releaseExecutionRun, which releases the run's in-process budget and artifacts, never a database or model`,
     "@/lib/api/account-response": "maps account-registry failures to HTTP responses; opens nothing",
+    "@/lib/api/account-store-error":
+      "the fixed 503 response body and message for account-store outages; data only, opens nothing",
     "@/lib/api/agent-run-access": "resolves a run id to its ledger behind guardRoute; reads no provider",
     "@/lib/api/bounded-json": "reads a request body up to a byte limit; opens nothing",
     "@/lib/api/client-address": "parses the forwarded-for chain for the audit record",

@@ -9,9 +9,9 @@ import { MCP_PATH } from "./config";
  * as its session does. Called by the route only: src/proxy.ts is a separately compiled entry that
  * must not load the storage drivers, and stays a signature check.
  *
- * A registry that cannot be read refuses the token rather than trusting it.
+ * A registry that cannot be read reports store_unavailable so the route can answer 503 instead of treating it as revoked (#1942).
  */
-export async function mcpTokenOwnerAllowed(authInfo: AuthInfo): Promise<boolean> {
+export async function mcpTokenOwnerAllowed(authInfo: AuthInfo): Promise<boolean | "store_unavailable"> {
   const { username, role, sessionVersion } = authInfo.extra ?? {};
   if (typeof username !== "string" || (role !== "admin" && role !== "user")) return false;
   try {
@@ -22,6 +22,6 @@ export async function mcpTokenOwnerAllowed(authInfo: AuthInfo): Promise<boolean>
     });
   } catch (error) {
     logger.error("Could not read the account registry, refusing the MCP token", error, { route: MCP_PATH });
-    return false;
+    return "store_unavailable";
   }
 }
