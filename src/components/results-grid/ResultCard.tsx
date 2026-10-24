@@ -33,6 +33,8 @@ export function ResultCard({
 }: ResultCardProps) {
   const primaryValue: unknown = row[primaryColumn];
   const idValue: unknown = idColumn ? row[idColumn] : null;
+  const idMasked =
+    maskingActive && idColumn != null && idValue != null && sensitiveColumns?.has(idColumn) === true;
 
   // Mask primary value if sensitive
   const displayPrimary = useMemo(() => {
@@ -44,6 +46,14 @@ export function ResultCard({
     const context = renderContextFor(vectorColumns, primaryColumn);
     return context === undefined ? String(primaryValue) : formatCellValue(primaryValue, context).display;
   }, [maskingActive, sensitiveColumns, primaryColumn, primaryValue, index, vectorColumns]);
+
+  const displayId = useMemo(() => {
+    if (idValue == null || idColumn == null) return null;
+    if (maskingActive && sensitiveColumns?.has(idColumn)) {
+      return maskValueByPattern(idValue, sensitiveColumns.get(idColumn)!);
+    }
+    return String(idValue);
+  }, [idValue, idColumn, maskingActive, sensitiveColumns]);
 
   // Show first 4 fields (excluding primary and id)
   const previewFields = fields.filter((f) => f !== primaryColumn && f !== idColumn).slice(0, 4);
@@ -68,7 +78,11 @@ export function ResultCard({
             >
               {displayPrimary}
             </p>
-            {idValue != null && <p className="text-xs text-fg-muted font-mono">#{String(idValue)}</p>}
+            {displayId != null && (
+              <p className={cn("text-xs font-mono", idMasked ? "text-fg-muted italic" : "text-fg-muted")}>
+                #{displayId}
+              </p>
+            )}
           </div>
         </div>
         <ChevronRight strokeWidth={1.5} className="w-3.5 h-3.5 text-fg-subtle" />

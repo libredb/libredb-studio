@@ -81,6 +81,25 @@ describe("results-grid/ResultCard", () => {
     expect(onSelect).toHaveBeenCalledTimes(1);
   });
 
+  test("masks a sensitive id column the way the title is masked", () => {
+    const sensitiveColumns = new Map<string, unknown>([["national_id", { type: "ssn" }]]);
+    const { queryByText } = render(
+      <ResultCard
+        row={{ national_id: "123-45-6789", name: "Dana", email: "dana@example.com" }}
+        fields={["national_id", "name", "email"]}
+        primaryColumn="name"
+        idColumn="national_id"
+        index={0}
+        onSelect={mock(() => {})}
+        maskingActive
+        sensitiveColumns={sensitiveColumns as never}
+      />,
+    );
+
+    expect(queryByText("#***MASKED***")).not.toBeNull();
+    expect(queryByText("#123-45-6789")).toBeNull();
+  });
+
   test("masks primary and preview sensitive values", () => {
     const sensitiveColumns = new Map<string, unknown>([
       ["name", { type: "email" }],
