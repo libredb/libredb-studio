@@ -163,7 +163,13 @@ describe("the monitoring reads (spec 7)", () => {
       indexCount: 2,
     });
     const [session] = await provider.getActiveSessions();
-    expect(session).toMatchObject({ pid: "neo4j-transaction-18", user: "neo4j", state: "active", durationMs: 101 });
+    expect(session).toMatchObject({
+      pid: "neo4j-transaction-18",
+      user: "neo4j",
+      state: "active",
+      activity: "active",
+      durationMs: 101,
+    });
     expect((await provider.getTableStats()).map((row) => [row.tableName, row.rowCount])).toEqual([
       ["Back`tick", 2],
       ["Marker", 2],

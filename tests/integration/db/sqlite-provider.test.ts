@@ -972,6 +972,7 @@ describe("SQLiteProvider", () => {
       expect(session.pid).toBe(process.pid);
       expect(session.user).toBe("sqlite");
       expect(session.state).toBe("active");
+      expect(session.activity).toBe("active");
     });
   });
 

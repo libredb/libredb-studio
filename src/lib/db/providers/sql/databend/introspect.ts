@@ -14,8 +14,9 @@
  * Sessions [X08]: Databend creates a session per HTTP request, so `system.processes` lists one row per running
  * statement of the whole warehouse, every user's included, and needs no grant (`user_grant.rs:27-51`). The kill target
  * is that row's `id`, a SESSION id Databend makes for the request, never the client session id Studio sends:
- * `KILL QUERY` by the HTTP query id answers 1053, so the query id is never the target. A row's state is the word the
- * monitoring panels count, "active", for the command `Query`, and the command lower-cased otherwise (`Aborting`).
+ * `KILL QUERY` by the HTTP query id answers 1053, so the query id is never the target. A row's state is "active" for
+ * the command `Query`, and the command lower-cased otherwise (`Aborting`). The cards count `activity`: `active` for
+ * `Query`, and `other` for any other command.
  * `KILL QUERY` on a session stops its current statement and needs global SUPER.
  *
  * Studio's own statements are not running work: `system.processes` lists every running statement, the reading one, a
@@ -37,6 +38,7 @@ import type {
   HealthInfo,
   IndexStats,
   PerformanceMetrics,
+  SessionActivity,
   SlowQuery,
   SlowQueryStats,
   StorageStats,
@@ -285,12 +287,19 @@ export async function getSlowQueries(
 }
 
 /**
- * The state the monitoring panels count: they count `state === "active"`, PostgreSQL's word for a statement in flight,
- * which is what the command `Query` means; another command (`Aborting`) keeps its own word, lower-cased, so no panel
- * counts it as active or idle, as Neo4j's sessions do.
+ * The row's status word. `Query` is shown as "active"; another command (`Aborting`) keeps its own word, lower-cased.
+ * The cards count {@link sessionActivity}.
  */
 function sessionState(command: string): string {
   return command === "Query" ? "active" : command.toLowerCase();
+}
+
+/**
+ * The card a session belongs on. `Query` is a statement in flight (`active`); any other command is `other`,
+ * so an aborting session is counted as neither active nor idle.
+ */
+function sessionActivity(command: string): SessionActivity {
+  return command === "Query" ? "active" : "other";
 }
 
 /** Every running statement of the warehouse but Studio's own, keyed by its session id [X08]. */
@@ -311,6 +320,7 @@ export async function getActiveSessions(
       user: readText(row.user_name),
       database: readText(row.database_name),
       state: sessionState(readText(row.command)),
+      activity: sessionActivity(readText(row.command)),
       query: readText(row.query_text),
       duration: formatDuration(durationMs),
       durationMs,

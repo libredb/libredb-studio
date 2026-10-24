@@ -132,8 +132,8 @@ const DEFAULT_SESSION_LIMIT = 50;
 
 /**
  * Every row of `system.processes` is a statement the server is executing right
- * now: ClickHouse has no idle-in-transaction equivalent to distinguish, so the
- * state is a constant rather than a column.
+ * now. ClickHouse has no idle session to distinguish, so `state` and `activity`
+ * are both this constant rather than a column.
  */
 const RUNNING_STATE = "active";
 
@@ -1013,6 +1013,7 @@ export class ClickHouseProvider extends SQLBaseProvider {
         database: asText(row.database),
         clientAddr: asText(row.clientAddr),
         state: RUNNING_STATE,
+        activity: RUNNING_STATE,
         query: asText(row.query),
         duration: this.formatDuration(durationMs),
         durationMs,

@@ -1594,6 +1594,8 @@ describe("ClickHouseProvider monitoring", () => {
     expect(sessions[0].database).toBe(DATABASE);
     expect(sessions[0].clientAddr).toBe("::ffff:172.17.0.1");
     expect(sessions[0].state).toBe("active");
+    expect(sessions[0].activity).toBe("active");
+    expect(sessions[1].activity).toBe("active");
     expect(sessions[0].durationMs).toBe(12500);
     expect(sessions[0].duration).toBe("12.50s");
     expect(sessions[1].durationMs).toBe(1);

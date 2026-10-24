@@ -48,6 +48,7 @@ import {
   type PerformanceMetrics,
   type SlowQueryStats,
   type ActiveSessionDetails,
+  type SessionActivity,
   type TableStats,
   type IndexStats,
   type StorageStats,
@@ -1163,6 +1164,11 @@ function redisApplyFailure(payload: ObjectEditStep, error: unknown, duration: nu
     },
     duration,
   };
+}
+
+/** `CLIENT LIST` flags. `b` is a client blocked on a command; every other flag, including `N`, is idle. */
+function redisSessionActivity(flags: string): SessionActivity {
+  return flags.includes("b") ? "waiting" : "idle";
 }
 
 // ============================================================================
@@ -2690,6 +2696,7 @@ export class RedisProvider extends BaseDatabaseProvider {
           user: fields.user || "default",
           database: fields.db || "0",
           state: fields.flags || "N",
+          activity: redisSessionActivity(fields.flags || "N"),
           query: fields.cmd || "idle",
           duration: `${Math.round(parseInt(fields.idle || "0"))}s`,
           durationMs: parseInt(fields.idle || "0") * 1000,

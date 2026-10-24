@@ -9,7 +9,14 @@
  * A count arrives as the transport writes a 64-bit integer: a number, or its decimal string beyond 2^53.
  * The overview's text keeps every digit; a numeric field takes the nearest number, as it must.
  */
-import type { ActiveSessionDetails, DatabaseOverview, HealthInfo, IndexStats, TableStats } from "@/lib/db/types";
+import type {
+  ActiveSessionDetails,
+  DatabaseOverview,
+  HealthInfo,
+  IndexStats,
+  SessionActivity,
+  TableStats,
+} from "@/lib/db/types";
 import { formatDuration } from "@/lib/db/utils/pool-manager";
 
 /** The release series this provider is verified against; any other server connects and is marked untested. */
@@ -127,12 +134,19 @@ export interface Neo4jTransaction {
 }
 
 /**
- * The panel state of a transaction status. The monitoring panels count `state === "active"`, PostgreSQL's
- * word for a statement in flight, which is what Neo4j's `Running` means; the other statuses (`Blocked`,
- * `Closing`, `Terminated`) keep their own words, lower-cased, so no panel counts them as active or idle.
+ * The row's status word. `Running` is shown as "active"; the other statuses (`Blocked`, `Closing`, `Terminated`)
+ * keep their own words, lower-cased. The cards count {@link sessionActivity}.
  */
 function sessionState(status: string): string {
   return status === "Running" ? "active" : status.toLowerCase();
+}
+
+/**
+ * The card a transaction belongs on. `Running` is a statement in flight (`active`); any other status is `other`,
+ * so a blocked, closing or terminated transaction is counted as neither active nor idle.
+ */
+function sessionActivity(status: string): SessionActivity {
+  return status === "Running" ? "active" : "other";
 }
 
 /** One session per transaction, its transaction id as the pid. */
@@ -142,6 +156,7 @@ export function toActiveSessions(transactions: readonly Neo4jTransaction[]): Act
     user: transaction.username,
     database: transaction.database,
     state: sessionState(transaction.status),
+    activity: sessionActivity(transaction.status),
     query: transaction.currentQuery,
     queryStart: new Date(transaction.startTime),
     duration: formatDuration(transaction.durationMs),

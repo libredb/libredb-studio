@@ -1979,6 +1979,9 @@ export class MongoDBProvider extends BaseDatabaseProvider {
       return (currentOps.inprog || []).slice(0, limit).map((op: Document) => {
         const microseconds = op.microsecs_running || 0;
         const durationMs = microseconds / 1000;
+        // `currentOp.active` is the operation's own flag. The row shows that word, and the
+        // cards count it: a statement in flight is Active, and one that is not is Idle.
+        const activity = op.active ? "active" : "idle";
 
         return {
           pid: op.opid || "N/A",
@@ -1986,7 +1989,8 @@ export class MongoDBProvider extends BaseDatabaseProvider {
           database: op.ns?.split(".")[0] || this.getDatabaseName(),
           applicationName: op.appName || undefined,
           clientAddr: op.client?.split(":")[0] || undefined,
-          state: op.active ? "active" : "idle",
+          state: activity,
+          activity,
           query: JSON.stringify(op.command || {}).substring(0, 500),
           duration: this.formatDurationString(durationMs),
           durationMs,

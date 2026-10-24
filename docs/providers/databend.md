@@ -732,7 +732,7 @@ When Databend answers one of the codes 1003, 1025, 1063, 1112, 1119 or 1002 (an 
 - Overview: the version is `version()`; uptime is "unknown" and the connection limit 0, because Databend publishes neither; the size is the compressed data plus index size of the default catalog's base tables, "N/A" when that read degraded; the active count is the running statements of `system.processes`, Studio's own statements left out (below).
 - Sessions: one row per running statement of the server or warehouse, every user's included, from `system.processes`, which needs no grant, since Databend creates a session per HTTP request.
   The kill target is the row's session id.
-  Its state is "active" while it runs a statement (`command` `Query`), the word the Active card and the Overview count, and "aborting" (`Aborting`) while a `KILL CONNECTION` or a server shutdown ends its session; the panel's own kill, a `KILL QUERY`, leaves it "active" until the statement stops.
+  Its state is "active" while it runs a statement (`command` `Query`) and "aborting" (`Aborting`) while a `KILL CONNECTION` or a server shutdown ends its session; the panel's own kill, a `KILL QUERY`, leaves it "active" until the statement stops. `activity` is `active` for `Query` and `other` for any other command, and the Active and Idle cards count `activity`.
   Databend's query id of the statement is not shown: a session row of the panel has no field for one.
   Studio's own statements are left out (below).
 - Slow queries: `system_history.query_history`, the finished statements of the last 24 hours, slowest first.

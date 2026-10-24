@@ -1552,10 +1552,9 @@ describe("Studio's own statements are left out of the Sessions panel and the act
     // Settled by the disconnect after the test when an assertion fails first.
     listing.catch(() => {});
     await until(() => fake.sqls().includes(SQL.catalogs));
-    expect((await provider.getActiveSessions()).map((session) => session.pid)).toEqual([
-      USER.session,
-      LITERAL_LED.session,
-    ]);
+    const sessions = await provider.getActiveSessions();
+    expect(sessions.map((session) => session.pid)).toEqual([USER.session, LITERAL_LED.session]);
+    expect(sessions.map((session) => session.activity)).toEqual(["active", "active"]);
     expect((await provider.getOverview()).activeConnections).toBe(2);
     tree.open({ schema: [column("catalog_name")], data: [["default"]] });
     expect((await listing).map((container) => container.name)).toEqual(["default"]);

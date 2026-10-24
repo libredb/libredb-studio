@@ -89,7 +89,9 @@ is not.
 `getActiveSessions()` ([`redis.ts`](../../src/lib/db/providers/keyvalue/redis.ts)) splits each
 line into `key=value` pairs and substitutes a default for anything missing: the session's user is
 `user` falling back to `default`, its pid `id` falling back to `0`, its state `flags` falling back
-to `N`, its command `cmd` falling back to `idle`. A relative that omits a field therefore produces a
+to `N`, its command `cmd` falling back to `idle`. `activity` reads those flags: a flag string
+containing `b` (the client is blocked) is `waiting`, and every other flag, including the fallback
+`N`, is `idle`. A relative that omits a field therefore produces a
 plausible-looking row rather than an error.
 
 Three relatives diverge, all measured on the versions above:

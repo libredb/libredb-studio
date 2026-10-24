@@ -2498,6 +2498,8 @@ export class SQLiteProvider extends SQLBaseProvider {
         user: "sqlite",
         database: path.basename(dbPath),
         state: "active",
+        // The one session this process holds is a statement in flight. The cards count `activity`.
+        activity: "active",
         query: "",
         duration: "N/A",
         durationMs: 0,

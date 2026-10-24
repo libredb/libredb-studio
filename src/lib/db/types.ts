@@ -2854,6 +2854,12 @@ export interface SlowQueryStats {
 }
 
 /**
+ * Which summary card a session belongs on. The engine's own word stays in `state` for the row.
+ * `waiting` is a session that is blocked, not one that is merely sitting ready for the next command.
+ */
+export type SessionActivity = "active" | "idle" | "idle-in-transaction" | "waiting" | "other";
+
+/**
  * Active session with detailed information
  */
 export interface ActiveSessionDetails {
@@ -2862,7 +2868,13 @@ export interface ActiveSessionDetails {
   database: string;
   applicationName?: string;
   clientAddr?: string;
+  /** The engine's own status word, shown on the row. */
   state: string;
+  /**
+   * The card this session counts toward. Absent when the engine does not classify its own
+   * vocabulary, which the cards render as N/A rather than a measured 0 (#1426).
+   */
+  activity?: SessionActivity;
   query: string;
   queryStart?: Date;
   duration: string;

@@ -30,6 +30,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { AuthenticationError, ConnectionError, QueryCancelledError, QueryError } from "@/lib/db/errors";
 import { DatabendProvider } from "@/lib/db/providers/sql/databend";
+import { DATABEND_DEFAULT_SESSION_LIMIT, databendSessionsSql } from "@/lib/db/providers/sql/databend/introspect";
 import type { DatabaseProvider } from "@/lib/db/types";
 import { DATABEND_ERROR_SENTENCES } from "@/lib/db/providers/sql/databend/errors";
 import { TEMP_TABLES_DROPPED, TRANSACTION_ENDED } from "@/lib/db/providers/sql/databend/session";
@@ -723,6 +724,62 @@ describe("Databend v1.2.951-nightly, replayed", () => {
     expect(paths(after(server.requests, sql))).toEqual(capturePaths("final-kill", [0, 2, 3]));
     expect(server.unanswered()).toEqual([]);
     record();
+  });
+
+  flow("a running statement counts as active and an aborting one as other", async () => {
+    const sessionsSql = databendSessionsSql(DATABEND_DEFAULT_SESSION_LIMIT);
+    const { provider } = replay(
+      {},
+      {
+        answer: (sql) => {
+          if (sql !== sessionsSql) return connectAnswer(sql);
+          return {
+            built: {
+              schema: [
+                text("session_id"),
+                text("query_id"),
+                text("user_name"),
+                text("host", "Nullable(String)"),
+                text("database_name"),
+                text("command"),
+                text("query_text"),
+                text("created_time", "Timestamp"),
+                text("elapsed_seconds", "UInt64"),
+              ],
+              data: [
+                [
+                  "5c00e52f-34c2-4cab-8ba8-c1f1121157bf",
+                  "q-query",
+                  "studio_reader",
+                  "172.20.0.1",
+                  "libredb_demo",
+                  "Query",
+                  "SELECT 1",
+                  "2026-10-07 22:58:07.375243",
+                  "3",
+                ],
+                [
+                  "6d11f63a-45d3-5dbc-9cb9-d2e2232268c0",
+                  "q-abort",
+                  "studio_reader",
+                  "172.20.0.1",
+                  "libredb_demo",
+                  "Aborting",
+                  "SELECT 2",
+                  "2026-10-07 22:58:08.375243",
+                  "1",
+                ],
+              ],
+            },
+          };
+        },
+      },
+    );
+    await provider.connect();
+    expect((await provider.getActiveSessions()).map((session) => [session.state, session.activity])).toEqual([
+      ["active", "active"],
+      ["aborting", "other"],
+    ]);
   });
 
   test("every captured exchange is replayed, except the ones Studio's flow never asks for", () => {

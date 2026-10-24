@@ -2171,6 +2171,73 @@ describe("MSSQLProvider", () => {
       expect(typeof first.query).toBe("string");
       expect(typeof first.duration).toBe("string");
       expect(typeof first.durationMs).toBe("number");
+      expect(first.state).toBe("sleeping");
+      expect(first.activity).toBe("idle");
+    });
+
+    test("running with a wait is waiting, and sleeping stays idle", async () => {
+      mockQueryFn = async (sql: string) => {
+        const upper = sql.toUpperCase();
+        if (upper.includes("SYS.DM_EXEC_SESSIONS") && upper.includes("TOP") && !upper.includes("COUNT")) {
+          return {
+            recordset: [
+              {
+                pid: 1,
+                user: "sa",
+                database: "db",
+                state: "running",
+                query: "SELECT 1",
+                duration: "1s",
+                duration_ms: 1,
+                wait_type: null,
+              },
+              {
+                pid: 2,
+                user: "sa",
+                database: "db",
+                state: "running",
+                query: "UPDATE t",
+                duration: "1s",
+                duration_ms: 1,
+                wait_type: "LCK_M_X",
+              },
+              {
+                pid: 3,
+                user: "sa",
+                database: "db",
+                state: "suspended",
+                query: "",
+                duration: "1s",
+                duration_ms: 1,
+                wait_type: "LCK_M_S",
+              },
+              { pid: 4, user: "sa", database: "db", state: "dormant", query: "", duration: "1s", duration_ms: 1 },
+              {
+                pid: 5,
+                user: "sa",
+                database: "db",
+                state: "runnable",
+                query: "SELECT 2",
+                duration: "1s",
+                duration_ms: 1,
+              },
+              { pid: 6, user: "sa", database: "db", state: "preconnect", query: "", duration: "1s", duration_ms: 1 },
+            ],
+            rowsAffected: [6],
+          };
+        }
+        return defaultQuery(sql);
+      };
+      await provider.connect();
+      const sessions = await provider.getActiveSessions();
+      expect(sessions.map((session) => session.activity)).toEqual([
+        "active",
+        "waiting",
+        "waiting",
+        "idle",
+        "active",
+        "other",
+      ]);
     });
   });
 

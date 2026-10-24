@@ -214,6 +214,7 @@ describe("readActiveSessions", () => {
         user: "neo4j",
         database: "neo4j",
         state: "active",
+        activity: "active",
         query: transactions,
         queryStart: new Date("2026-10-03T05:18:20.881Z"),
         duration: "101ms",

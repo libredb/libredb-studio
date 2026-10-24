@@ -1435,10 +1435,10 @@ describe("docs/providers/databend.md quotes what the code says", () => {
     );
   });
 
-  test("the session state the monitoring section names is the word the panels count (F8)", async () => {
+  test("the session row the monitoring section names, and the card activity the panels count (F8)", async () => {
     const monitoring = flat(sectionOf(DOC, "## 7. Monitoring & health"));
     expect(monitoring).toContain(
-      'Its state is "active" while it runs a statement (`command` `Query`), the word the Active card and the Overview count, and "aborting" (`Aborting`) while a `KILL CONNECTION` or a server shutdown ends its session; the panel\'s own kill, a `KILL QUERY`, leaves it "active" until the statement stops.',
+      'Its state is "active" while it runs a statement (`command` `Query`) and "aborting" (`Aborting`) while a `KILL CONNECTION` or a server shutdown ends its session; the panel\'s own kill, a `KILL QUERY`, leaves it "active" until the statement stops. `activity` is `active` for `Query` and `other` for any other command, and the Active and Idle cards count `activity`.',
     );
     expect(monitoring).not.toContain("(query [query id])");
     const columns = ["session_id", "user_name", "host", "database_name", "command", "query_text"];
@@ -1456,7 +1456,10 @@ describe("docs/providers/databend.md quotes what the code says", () => {
         affect: null,
       };
     };
-    expect((await getActiveSessions(runner)).map((session) => session.state)).toEqual(["active", "aborting"]);
+    expect((await getActiveSessions(runner)).map((session) => [session.state, session.activity])).toEqual([
+      ["active", "active"],
+      ["aborting", "other"],
+    ]);
   });
 
   test("section 7 leaves Studio's own statements out by the query id Studio sent them under (CL-OPS-1)", async () => {

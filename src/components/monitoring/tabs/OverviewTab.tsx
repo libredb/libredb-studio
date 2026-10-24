@@ -11,6 +11,7 @@ import type { TimeSeriesPoint } from "@/lib/time-series-buffer";
 import { evaluateThreshold, getThresholdColor, thresholdFor } from "@/lib/monitoring-thresholds";
 import { storage } from "@/lib/storage";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
+import { sessionActivityFigure } from "@/lib/session-activity";
 import { MetricChart } from "./MetricChart";
 import { PanelUnavailable } from "../PanelUnavailable";
 
@@ -393,13 +394,13 @@ function QuickStatsCard({ data }: Readonly<{ data: MonitoringData | null }>) {
         <div className="flex justify-between items-center">
           <span className="text-xs sm:text-xs text-muted-foreground">Active of listed sessions</span>
           <Badge variant="secondary" className="text-xs" data-testid="quick-stat-active">
-            {quickStat(sessions, () => (sessions ?? []).filter((s) => s.state === "active").length)}
+            {sessionActivityFigure(sessions ?? [], "active", sessions === undefined)}
           </Badge>
         </div>
         <div className="flex justify-between items-center">
           <span className="text-xs sm:text-xs text-muted-foreground">Idle of listed sessions</span>
           <Badge variant="secondary" className="text-xs" data-testid="quick-stat-idle">
-            {quickStat(sessions, () => (sessions ?? []).filter((s) => s.state === "idle").length)}
+            {sessionActivityFigure(sessions ?? [], "idle", sessions === undefined)}
           </Badge>
         </div>
       </CardContent>

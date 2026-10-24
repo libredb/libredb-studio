@@ -52,6 +52,7 @@ import {
   type PerformanceMetrics,
   type SlowQueryStats,
   type ActiveSessionDetails,
+  type SessionActivity,
   type TableStats,
   type IndexStats,
   type StorageStats,
@@ -1346,6 +1347,18 @@ const ACTIVE_SESSIONS_BODY_SQL = `
         FROM information_schema.PROCESSLIST
         WHERE DB = ? OR DB IS NULL
         ORDER BY TIME DESC`;
+
+/** PROCESSLIST `COMMAND`: `Query` is a statement in flight, `Sleep` is a connection waiting for the next one. */
+function mysqlSessionActivity(command: string): SessionActivity {
+  switch (command.toLowerCase()) {
+    case "query":
+      return "active";
+    case "sleep":
+      return "idle";
+    default:
+      return "other";
+  }
+}
 
 const TABLE_STATS_SQL = `
         SELECT
@@ -5039,6 +5052,7 @@ export class MySQLProvider extends SQLBaseProvider {
           database: r.database_name || "",
           clientAddr: r.client_addr?.split(":")[0] || undefined,
           state: r.state || "unknown",
+          activity: mysqlSessionActivity(String(r.state || "unknown")),
           query: r.query || "",
           duration: this.formatDurationString(durationSeconds * 1000),
           durationMs: durationSeconds * 1000,

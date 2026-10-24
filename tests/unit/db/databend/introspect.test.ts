@@ -427,7 +427,7 @@ describe("limits", () => {
 });
 
 describe("sessions and the kill [X08]", () => {
-  test("a row maps id to pid, the kill target, and a running statement's state is the word the panels count", async () => {
+  test("a row maps id to pid, the kill target, and a running statement counts as active", async () => {
     const { runner } = routed({ [databendSessionsSql(5)]: outcome(SESSION_SCHEMA, [SESSION_ROW]) });
     expect(await getActiveSessions(runner, { limit: 5 })).toEqual([
       {
@@ -436,6 +436,7 @@ describe("sessions and the kill [X08]", () => {
         database: "libredb_demo",
         clientAddr: "172.20.0.1",
         state: "active",
+        activity: "active",
         query: "SELECT 1",
         queryStart: new Date("2026-10-07T22:58:07.375Z"),
         duration: "3.00s",
@@ -444,18 +445,19 @@ describe("sessions and the kill [X08]", () => {
     ]);
   });
 
-  // The Sessions, Overview and Operations panels count `state === "active"`, PostgreSQL's word for a statement in
-  // flight, which is what Databend's command `Query` means (F8); `Aborting` keeps its own word, lower-cased, so no
-  // card counts it as active or idle. The sessions read leaves `Idle` out.
+  // The cards count `activity`. `Query` is a statement in flight, so it is `active`; `Aborting` keeps its own
+  // word on the row, lower-cased, and counts as `other`, neither active nor idle (F8). The sessions read leaves
+  // `Idle` out.
   test.each([
-    ["Query", "active"],
-    ["Aborting", "aborting"],
-  ])("the command %s is the panel state %s", async (command, state) => {
+    ["Query", "active", "active"],
+    ["Aborting", "aborting", "other"],
+  ] as const)("the command %s is the row state %s and the card %s", async (command, state, activity) => {
     const row = [...SESSION_ROW];
     row[5] = command;
     const { runner } = routed({ [databendSessionsSql(5)]: outcome(SESSION_SCHEMA, [row]) });
     const [session] = await getActiveSessions(runner, { limit: 5 });
     expect(session.state).toBe(state);
+    expect(session.activity).toBe(activity);
   });
 
   test("a session with no host and an unreadable time keeps only what it has", async () => {
