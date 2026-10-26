@@ -126,7 +126,7 @@ describe("assertPersistableState — FUNCTION_VALUE", () => {
   });
 
   test("refuses a setter-only property too", () => {
-    const state = Object.defineProperty({}, "sink", { set: () => undefined, enumerable: true });
+    const state = Object.defineProperty({}, "sink", { set: () => {}, enumerable: true });
     expect(captureRefusal(state).reasonCode).toBe("FUNCTION_VALUE");
   });
 });
