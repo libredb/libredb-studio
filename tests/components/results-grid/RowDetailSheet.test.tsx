@@ -123,25 +123,12 @@ describe("results-grid/RowDetailSheet", () => {
       email: "alice@example.com",
       payload: { type: "Buffer", data: [0xde, 0xad] },
       count: BigInt("9007199254740993"),
-      omitted: undefined,
       excluded: "not in fields",
     };
     const { queryByText } = render(
       <RowDetailSheet
         row={row}
-        fields={[
-          "id",
-          "score",
-          "active",
-          "name",
-          "middle_name",
-          "tags",
-          "profile",
-          "email",
-          "payload",
-          "count",
-          "omitted",
-        ]}
+        fields={["id", "score", "active", "name", "middle_name", "tags", "profile", "email", "payload", "count"]}
         isOpen
         onClose={mock(() => {})}
         rowIndex={0}
@@ -152,23 +139,18 @@ describe("results-grid/RowDetailSheet", () => {
 
     fireEvent.click(queryByText("Copy JSON")!);
     const copiedText = String(writeText.mock.calls[0]?.[0]);
-    expect(JSON.parse(copiedText)).toEqual({
-      id: 12,
-      score: 98.5,
-      active: true,
-      name: "Alex",
-      middle_name: null,
-      tags: ["admin", 3],
-      profile: { verified: true },
+    const expectedRow = {
+      ...row,
       email: "***MASKED***",
       payload: "\\xdead",
       count: "9007199254740993",
-    });
+    };
+    expect(JSON.parse(copiedText)).toEqual(expectedRow);
     expect(copiedText).not.toContain("alice@example.com");
-    expect(copiedText).not.toContain("not in fields");
+    expect(JSON.parse(copiedText).excluded).toBe(row.excluded);
   });
 
-  test("Copy JSON keeps a revealed sensitive value masked", () => {
+  test("Copy JSON preserves a revealed sensitive value in clear text", () => {
     const sensitiveColumns = new Map<string, unknown>([["email", { type: "email" }]]);
     const { queryByText, queryByTitle } = render(
       <RowDetailSheet
@@ -187,8 +169,45 @@ describe("results-grid/RowDetailSheet", () => {
     fireEvent.click(queryByText("Copy JSON")!);
 
     const copiedText = String(writeText.mock.calls[0]?.[0]);
-    expect(JSON.parse(copiedText)).toEqual({ email: "***MASKED***" });
-    expect(copiedText).not.toContain("alice@example.com");
+    expect(JSON.parse(copiedText)).toEqual({ email: "alice@example.com" });
+    expect(copiedText).toContain("alice@example.com");
+  });
+
+  test("Copy JSON preserves a NULL sensitive value as JSON null", () => {
+    const sensitiveColumns = new Map<string, unknown>([["email", { type: "email" }]]);
+    const { queryByText } = render(
+      <RowDetailSheet
+        row={{ email: null }}
+        fields={["email"]}
+        isOpen
+        onClose={mock(() => {})}
+        rowIndex={0}
+        maskingActive
+        sensitiveColumns={sensitiveColumns as never}
+      />,
+    );
+
+    fireEvent.click(queryByText("Copy JSON")!);
+    expect(JSON.parse(String(writeText.mock.calls[0]?.[0]))).toEqual({ email: null });
+  });
+
+  test("Copy JSON copies a sensitive value raw when masking is disabled", () => {
+    const sensitiveColumns = new Map<string, unknown>([["email", { type: "email" }]]);
+    const row = { email: "alice@example.com", unrelated: "preserved" };
+    const { queryByText } = render(
+      <RowDetailSheet
+        row={row}
+        fields={["email"]}
+        isOpen
+        onClose={mock(() => {})}
+        rowIndex={0}
+        maskingActive={false}
+        sensitiveColumns={sensitiveColumns as never}
+      />,
+    );
+
+    fireEvent.click(queryByText("Copy JSON")!);
+    expect(JSON.parse(String(writeText.mock.calls[0]?.[0]))).toEqual(row);
   });
 
   test("shows masked value and reveals when reveal button is clicked", () => {
@@ -519,8 +538,7 @@ describe("results-grid/RowDetailSheet", () => {
     expect(writeText).toHaveBeenCalledTimes(1);
     const copiedJson = String(writeText.mock.calls[0]?.[0]);
     const parsed = JSON.parse(copiedJson);
-    expect(parsed).toEqual({ id: 42, name: "Charlie", active: true, score: 99.5 });
-    expect(copiedJson).not.toContain("not in fields");
+    expect(parsed).toEqual(row);
   });
 
   // The sheet shows a binary field as `\x` hex, and Copy JSON used to copy the Buffer
