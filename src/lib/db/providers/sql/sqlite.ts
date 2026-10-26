@@ -2533,8 +2533,10 @@ export class SQLiteProvider extends SQLBaseProvider {
     const stats: TableStats[] = [];
 
     for (const { name: tableName } of tables) {
-      // Get row count
-      const countResult = (await (await this.getHandle()).get(`SELECT COUNT(*) as count FROM "${tableName}"`)) as {
+      // Catalog names can contain "; escape them as ANALYZE/REINDEX already do.
+      const countResult = (await (
+        await this.getHandle()
+      ).get(`SELECT COUNT(*) as count FROM ${this.escapeIdentifier(tableName)}`)) as {
         count: number;
       } | null;
       const rowCount = countResult?.count || 0;
@@ -2554,14 +2556,18 @@ export class SQLiteProvider extends SQLBaseProvider {
 
     for (const { name: indexName, tbl_name: tableName } of indexes) {
       // Get index info
-      const indexCols = (await (await this.getHandle()).all(`PRAGMA index_info("${indexName}")`)) as {
+      const indexCols = (await (
+        await this.getHandle()
+      ).all(`PRAGMA index_info(${this.escapeIdentifier(indexName)})`)) as {
         seqno: number;
         cid: number;
         name: string;
       }[];
 
       // Get index uniqueness
-      const indexList = (await (await this.getHandle()).all(`PRAGMA index_list("${tableName}")`)) as {
+      const indexList = (await (
+        await this.getHandle()
+      ).all(`PRAGMA index_list(${this.escapeIdentifier(tableName)})`)) as {
         name: string;
         unique: number;
       }[];

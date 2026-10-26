@@ -1060,6 +1060,8 @@ Minimal by nature — SQLite keeps almost no server-style runtime statistics.
 | `getIndexStats()` | `PRAGMA index_list`/`index_info` | `scans` always `0` (no usage counter); `indexSize` is `N/A` and `indexSizeBytes` is **omitted** — SQLite publishes no per-index size, and a `0` was summed by the Storage tab as an empty index |
 | `getStorageStats()` | `fs.statSync` on the DB / `-wal` / `-shm` files | per-file sizes (on disk only) |
 
+Stats `COUNT(*)` and index PRAGMAs quote catalog names via `escapeIdentifier()`, including embedded double quotes.
+
 ### 7.1 There is no cache hit ratio, and there cannot be
 
 SQLite's page-cache hit and miss counters exist only behind the C API —

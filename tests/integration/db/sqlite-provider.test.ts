@@ -1011,6 +1011,19 @@ describe("SQLiteProvider", () => {
       expect(usersStats!.rowCount).toBe(2);
     });
 
+    test("returns row counts for table names containing double quotes", async () => {
+      provider = new SQLiteProvider(makeSQLiteConfig());
+      await provider.connect();
+
+      await provider.query(`CREATE TABLE "foo""bar" (id INTEGER PRIMARY KEY, val TEXT)`);
+      await provider.query(`INSERT INTO "foo""bar" VALUES (1, 'Alice'), (2, 'Bob')`);
+
+      const stats = await provider.getTableStats();
+      const tableStats = stats.find((s) => s.tableName === 'foo"bar');
+      expect(tableStats).toBeDefined();
+      expect(tableStats!.rowCount).toBe(2);
+    });
+
     // The size used to be `rowCount * 100` ("Assume 100 bytes average per row"), and the
     // Storage tab summed it into the Data figure it draws beside the measured database
     // size. The real answer is `dbstat`, a virtual table behind a COMPILE-TIME option.
@@ -1186,6 +1199,23 @@ describe("SQLiteProvider", () => {
         expect(entry.indexSize).toBe("N/A");
         expect("indexSizeBytes" in entry).toBe(false);
       }
+    });
+
+    test("returns index metadata for table and index names containing double quotes", async () => {
+      provider = new SQLiteProvider(makeSQLiteConfig());
+      await provider.connect();
+
+      await provider.query(`CREATE TABLE "foo""bar" (id INTEGER PRIMARY KEY, val TEXT)`);
+      await provider.query(`INSERT INTO "foo""bar" VALUES (1, 'Alice'), (2, 'Bob')`);
+      await provider.query(`CREATE UNIQUE INDEX "idx""x" ON "foo""bar"(val)`);
+
+      const stats = await provider.getIndexStats();
+      const indexStats = stats.find((s) => s.indexName === 'idx"x');
+      expect(indexStats).toBeDefined();
+      expect(indexStats!.tableName).toBe('foo"bar');
+      expect(indexStats!.columns).toEqual(["val"]);
+      expect(indexStats!.isUnique).toBe(true);
+      expect(indexStats!.isPrimary).toBe(false);
     });
   });
 
