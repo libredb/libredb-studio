@@ -46,6 +46,10 @@ const realAuth = await import("@/lib/auth");
 mock.module("@/lib/auth", () => ({
   ...realAuth,
   getSession: mockGetSession,
+  readSession: mock(async () => {
+    const s = await mockGetSession();
+    return s ? { kind: "authenticated", session: s } : { kind: "anonymous" };
+  }),
 }));
 
 mock.module("@/lib/seed/resolve-connection", () => {

@@ -24,8 +24,14 @@ const mockProvider = createMockProvider();
 const mockGetOrCreateProvider = mock(async () => mockProvider);
 
 // ─── Mock auth + seed resolution BEFORE importing the route ─────────────────
+const mockGetSession = mock(async () => ({ role: "admin", username: "admin" }));
+
 mock.module("@/lib/auth", () => ({
-  getSession: mock(async () => ({ role: "admin", username: "admin" })),
+  getSession: mockGetSession,
+  readSession: mock(async () => {
+    const s = await mockGetSession();
+    return s ? { kind: "authenticated", session: s } : { kind: "anonymous" };
+  }),
   signJWT: mock(async () => "mock-token"),
   verifyJWT: mock(async () => null),
   login: mock(async () => {}),

@@ -14,6 +14,10 @@ mock.module("@/lib/auth", () => ({
   signJWT: mock(async () => "mock-token"),
   verifyJWT: mock(async () => null),
   getSession: mockGetSession,
+  readSession: mock(async () => {
+    const s = await mockGetSession();
+    return s ? { kind: "authenticated", session: s } : { kind: "anonymous" };
+  }),
   logout: mockLogout,
 }));
 

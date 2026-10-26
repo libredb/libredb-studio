@@ -1,4 +1,4 @@
-resolveSqlGrammar("postgres") => {"hash":"code","bracket":"subscript","blockComment":"nesting","alternateQuoting":false,"doubleSlashComment":false,"backslashAlwaysEscapes":false,"script":{"blocks":"none","separatorLine":null,"unit":"statement"},"trailingLimitClauses":["/\\s+AS\\s+OF\\s+(?:AT\\s+LEAST\\s+)?(?:\\d+|'[^']*')\\s*$/i"],"confirmCodeForms":[{"wordThenBody":"DO"},["DO","LANGUAGE"]],"explainExecutesWithAnalyze":true}
+resolveSqlGrammar("postgres") => {"hash":"code","bracket":"subscript","blockComment":"nesting","alternateQuoting":false,"doubleSlashComment":false,"backslashAlwaysEscapes":false,"script":{"blocks":"none","separatorLine":null,"unit":"statement"},"trailingLimitClauses":["/\\s+AS\\s+OF\\s+(?:AT\\s+LEAST\\s+)?(?:\\d+|'[^']*')\\s*$/i"],"nonNumericRowBounds":["ALL"],"confirmCodeForms":[{"wordThenBody":"DO"},["DO","LANGUAGE"]],"explainExecutesWithAnalyze":true}
 readsSqlText("postgres") => true
 hashRunIsAmbiguous(resolveSqlGrammar("postgres")) => false
 readSqlSpan walk("SELECT 1 # c\nFROM t") => [["whitespace",6,7],["whitespace",8,9],["whitespace",10,11],["whitespace",12,13],["whitespace",17,18]]

@@ -30,7 +30,14 @@ const mockListConversations = mock(
 );
 
 function installMocks(): void {
-  mock.module("@/lib/auth", () => ({ ...realAuth, getSession: mockGetSession }));
+  mock.module("@/lib/auth", () => ({
+    ...realAuth,
+    getSession: mockGetSession,
+    readSession: mock(async () => {
+      const s = await mockGetSession();
+      return s ? { kind: "authenticated", session: s } : { kind: "anonymous" };
+    }),
+  }));
   // Spread over the real runtime rather than listing its exports: the route
   // statically imports `driveAgentRun` too, and a partial replacement would
   // leave that named export missing for every later file in the same process.

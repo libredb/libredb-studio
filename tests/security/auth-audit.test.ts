@@ -17,6 +17,10 @@ const mockLogin = mock(async () => {});
 
 mock.module("@/lib/auth", () => ({
   getSession: mockGetSession,
+  readSession: mock(async () => {
+    const s = await mockGetSession();
+    return s ? { kind: "authenticated", session: s } : { kind: "anonymous" };
+  }),
   logout: mockLogout,
   login: mockLogin,
   shouldMarkCookieSecure: mock(async () => false),

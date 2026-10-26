@@ -627,6 +627,21 @@ curl -b cookies.txt http://localhost:3000/api/storage
 2. Make sure the response shows `"serverMode": true`
 3. Check browser console for sync errors (look for `[StorageSync]` prefixed logs)
 
+### Store Outage: 503 "ACCOUNT_STORE_UNAVAILABLE"
+
+When `STORAGE_PROVIDER=sqlite` or `postgres`, each authenticated request checks that the session's account remains active and permitted in the account store. If the store suffers an outage (e.g. PostgreSQL is unreachable or SQLite is locked):
+
+- **Three surfaces answer 503** — they call `readSession()` and return `{ "error": "Account store unavailable", "code": "ACCOUNT_STORE_UNAVAILABLE" }` with no permission-denial audit and without touching the cookie:
+  1. `guardRoute` (`src/lib/api/require-session.ts`) — protects all database, query, admin, and AI routes.
+  2. `GET /api/auth/me` (`src/app/api/auth/me/route.ts`) — the browser polls this to establish session state.
+  3. `/api/mcp` (`src/app/api/mcp/route.ts` via `mcpTokenOwnerAllowed`) — the MCP bearer-token route.
+
+- **Other routes that call `getSession()` directly** still receive `null` under its non-throwing contract and answer `401`. These are routes that bypass `guardRoute` and check the session themselves (e.g. `GET /api/connections/managed`, which the editor calls on load).
+
+- The browser's session cookie is **preserved** throughout. Verified with a valid cookie against a mocked storage outage: the browser did not loop to `/login` because `/api/auth/me` answered 503, not 401, so the client-side `AUTH_REQUIRED` redirect guard did not fire (#1942).
+
+- Once the store recovers, client requests resume immediately without requiring the user to sign in again.
+
 ### SQLite: "SQLITE_CANTOPEN"
 
 - The directory in `STORAGE_SQLITE_PATH` must be writable by the app process

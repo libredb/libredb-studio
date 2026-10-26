@@ -151,6 +151,7 @@ afterAll(async () => {
 
 /** The session reader, answering as whoever `send` last sent a request for. */
 let getSession: ReturnType<typeof spyOn>;
+let readSession: ReturnType<typeof spyOn>;
 /** The console the factory announces every provider it builds on. */
 let consoleLog: ReturnType<typeof spyOn>;
 const quiet: ReturnType<typeof spyOn>[] = [];
@@ -159,12 +160,17 @@ beforeEach(() => {
   clearRateLimitState();
   recordGovernanceSnapshot(grantedSnapshot([ORDERS], GRANTS));
   getSession = spyOn(auth, "getSession").mockResolvedValue(ALICE);
+  readSession = spyOn(auth, "readSession").mockImplementation(async () => {
+    const s = await auth.getSession();
+    return s ? { kind: "authenticated", session: s } : { kind: "anonymous" };
+  });
   consoleLog = spyOn(console, "log").mockImplementation(() => {});
   quiet.push(...[spyOn(logger, "info"), spyOn(logger, "debug")].map((spy) => spy.mockImplementation(() => {})));
 });
 
 afterEach(() => {
   getSession.mockRestore();
+  readSession.mockRestore();
   consoleLog.mockRestore();
   for (const spy of quiet.splice(0)) spy.mockRestore();
 });

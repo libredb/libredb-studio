@@ -110,6 +110,106 @@ describe("results-grid/RowDetailSheet", () => {
     expect(String(writeText.mock.calls[0]?.[0])).toContain("***MASKED***");
   });
 
+  test("Copy JSON preserves unmasked types and masks sensitive fields", () => {
+    const sensitiveColumns = new Map<string, unknown>([["email", { type: "email" }]]);
+    const row = {
+      id: 12,
+      score: 98.5,
+      active: true,
+      name: "Alex",
+      middle_name: null,
+      tags: ["admin", 3],
+      profile: { verified: true },
+      email: "alice@example.com",
+      payload: { type: "Buffer", data: [0xde, 0xad] },
+      count: BigInt("9007199254740993"),
+      excluded: "not in fields",
+    };
+    const { queryByText } = render(
+      <RowDetailSheet
+        row={row}
+        fields={["id", "score", "active", "name", "middle_name", "tags", "profile", "email", "payload", "count"]}
+        isOpen
+        onClose={mock(() => {})}
+        rowIndex={0}
+        maskingActive
+        sensitiveColumns={sensitiveColumns as never}
+      />,
+    );
+
+    fireEvent.click(queryByText("Copy JSON")!);
+    const copiedText = String(writeText.mock.calls[0]?.[0]);
+    const expectedRow = {
+      ...row,
+      email: "***MASKED***",
+      payload: "\\xdead",
+      count: "9007199254740993",
+    };
+    expect(JSON.parse(copiedText)).toEqual(expectedRow);
+    expect(copiedText).not.toContain("alice@example.com");
+    expect(JSON.parse(copiedText).excluded).toBe(row.excluded);
+  });
+
+  test("Copy JSON preserves a revealed sensitive value in clear text", () => {
+    const sensitiveColumns = new Map<string, unknown>([["email", { type: "email" }]]);
+    const { queryByText, queryByTitle } = render(
+      <RowDetailSheet
+        row={{ email: "alice@example.com" }}
+        fields={["email"]}
+        isOpen
+        onClose={mock(() => {})}
+        rowIndex={0}
+        maskingActive
+        sensitiveColumns={sensitiveColumns as never}
+        allowReveal
+      />,
+    );
+
+    fireEvent.click(queryByTitle("Reveal value (10s)")!);
+    fireEvent.click(queryByText("Copy JSON")!);
+
+    const copiedText = String(writeText.mock.calls[0]?.[0]);
+    expect(JSON.parse(copiedText)).toEqual({ email: "alice@example.com" });
+    expect(copiedText).toContain("alice@example.com");
+  });
+
+  test("Copy JSON preserves a NULL sensitive value as JSON null", () => {
+    const sensitiveColumns = new Map<string, unknown>([["email", { type: "email" }]]);
+    const { queryByText } = render(
+      <RowDetailSheet
+        row={{ email: null }}
+        fields={["email"]}
+        isOpen
+        onClose={mock(() => {})}
+        rowIndex={0}
+        maskingActive
+        sensitiveColumns={sensitiveColumns as never}
+      />,
+    );
+
+    fireEvent.click(queryByText("Copy JSON")!);
+    expect(JSON.parse(String(writeText.mock.calls[0]?.[0]))).toEqual({ email: null });
+  });
+
+  test("Copy JSON copies a sensitive value raw when masking is disabled", () => {
+    const sensitiveColumns = new Map<string, unknown>([["email", { type: "email" }]]);
+    const row = { email: "alice@example.com", unrelated: "preserved" };
+    const { queryByText } = render(
+      <RowDetailSheet
+        row={row}
+        fields={["email"]}
+        isOpen
+        onClose={mock(() => {})}
+        rowIndex={0}
+        maskingActive={false}
+        sensitiveColumns={sensitiveColumns as never}
+      />,
+    );
+
+    fireEvent.click(queryByText("Copy JSON")!);
+    expect(JSON.parse(String(writeText.mock.calls[0]?.[0]))).toEqual(row);
+  });
+
   test("shows masked value and reveals when reveal button is clicked", () => {
     const sensitiveColumns = new Map<string, unknown>([["email", { type: "email" }]]);
     const { queryByText, queryByTitle } = render(
@@ -423,7 +523,7 @@ describe("results-grid/RowDetailSheet", () => {
   });
 
   test("raw JSON copy contains exact row data when no masking active", () => {
-    const row = { id: 42, name: "Charlie", active: true, score: 99.5 };
+    const row = { id: 42, name: "Charlie", active: true, score: 99.5, excluded: "not in fields" };
     const { queryByText } = render(
       <RowDetailSheet
         row={row}
@@ -587,7 +687,7 @@ describe("results-grid/RowDetailSheet", () => {
     fireEvent.click(queryByText("Copy JSON")!);
     expect(writeText).toHaveBeenCalledTimes(1);
     expect(JSON.parse(String(writeText.mock.calls[0]?.[0]))).toEqual({
-      id: "1",
+      id: 1,
       email: "***MASKED***",
       embedding: "[1.0,0.5,0.0]",
     });

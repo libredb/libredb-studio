@@ -22,6 +22,7 @@ import { logger } from "@/lib/logger";
 import * as runtimeSettings from "@/lib/governance/settings";
 import { validateSettings } from "@/lib/governance/settings";
 import { recordGovernanceSnapshot, resetGovernanceState } from "@/lib/governance/state";
+import { ApiErrorCode } from "@/lib/api/error-codes";
 import * as accountCheck from "@/lib/mcp/account-check";
 import { MCP_ENABLED_ENV, MCP_ENABLED_INVALID_MESSAGE } from "@/lib/mcp/config";
 import { config, proxy } from "@/proxy";
@@ -575,5 +576,57 @@ describe("phase 1 serves no protected resource metadata", () => {
     const challenge = (await proxy(mcpRequest("POST"))).headers.get("www-authenticate");
     expect(challenge).toContain('scope="mcp:read"');
     expect(challenge).not.toContain("resource_metadata");
+  });
+});
+
+describe("MCP store outage and token refusal (#1942)", () => {
+  test("answers 503 with ACCOUNT_STORE_UNAVAILABLE on store outage, and writes no denial audit", async () => {
+    const token = await mintTestToken();
+    const ownerCheck = spyOn(accountCheck, "mcpTokenOwnerAllowed").mockResolvedValue("store_unavailable");
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const response = await route.POST(
+        new Request("http://localhost/api/mcp", {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${token}`,
+            host: "localhost",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }),
+        }),
+      );
+      expect(response.status).toBe(503);
+      const data = (await response.json()) as { code: string; error: string };
+      expect(data.code).toBe(ApiErrorCode.ACCOUNT_STORE_UNAVAILABLE);
+      expect(permissionDeniedLines(logSpy)).toHaveLength(0);
+    } finally {
+      ownerCheck.mockRestore();
+      logSpy.mockRestore();
+    }
+  });
+
+  test("answers 401 when accountCheck returns false and writes denial audit", async () => {
+    const token = await mintTestToken();
+    const ownerCheck = spyOn(accountCheck, "mcpTokenOwnerAllowed").mockResolvedValue(false);
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const response = await route.POST(
+        new Request("http://localhost/api/mcp", {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${token}`,
+            host: "localhost",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }),
+        }),
+      );
+      expect(response.status).toBe(401);
+      expect(permissionDeniedLines(logSpy).map((l) => l.reason)).toEqual(["mcp_token_invalid"]);
+    } finally {
+      ownerCheck.mockRestore();
+      logSpy.mockRestore();
+    }
   });
 });

@@ -25,7 +25,14 @@ import { resetCache as resetSeedCache } from "@/lib/seed";
 let role = "user";
 // The spread form, not a hand-written stub: only getSession is replaced (BACKLOG D85).
 const realAuth = await import("@/lib/auth");
-mock.module("@/lib/auth", () => ({ ...realAuth, getSession: mock(async () => ({ role, username: role })) }));
+mock.module("@/lib/auth", () => ({
+  ...realAuth,
+  getSession: mock(async () => ({ role, username: role })),
+  readSession: mock(async () => ({
+    kind: "authenticated",
+    session: { role, username: role },
+  })),
+}));
 
 const { POST: queryPost } = await import("@/app/api/db/query/route");
 const { POST: multiQueryPost } = await import("@/app/api/db/multi-query/route");

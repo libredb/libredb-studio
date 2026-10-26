@@ -26,7 +26,14 @@ let discoveryCalls = 0;
 
 // Spread over the real modules: a partial replacement stays installed process-wide and breaks the
 // next import of an export this file forgot.
-mock.module("@/lib/auth", () => ({ ...realAuth, getSession: mockGetSession }));
+mock.module("@/lib/auth", () => ({
+  ...realAuth,
+  getSession: mockGetSession,
+  readSession: mock(async () => {
+    const s = await mockGetSession();
+    return s ? { kind: "authenticated", session: s } : { kind: "anonymous" };
+  }),
+}));
 mock.module("@/lib/seed/discovery-loader", () => ({
   ...realLoader,
   getDiscoveryStatus: async (deps?: realLoader.DiscoveryDeps) => {
