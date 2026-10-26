@@ -5974,6 +5974,7 @@ The `db2-node` 1.0.25 addons statically link `rustls` 0.23.45, `rustls-webpki` 0
 Checked through the OSV API on 2026-10-26, they are inside RUSTSEC-2026-0346 to RUSTSEC-2026-0349 (`rustls`, patched in 0.23.46), RUSTSEC-2026-0382 (`rustls-webpki`, patched in 0.103.16) and the informational RUSTSEC-2026-0386 (`tokio`, patched in 1.51.6), all published after the 2026-10-04 check.
 Only RUSTSEC-2026-0382 is reachable from the addons, through a verified TLS connection whose trust store holds the operating system's roots; section 12 of `docs/providers/db2.md` gives the reading of each.
 The 1.0.26 and 1.0.27 `Cargo.lock` are byte for byte the 1.0.25 one, so no release moves past them yet, and the crates are compiled in: only a new `db2-node` release can move one.
+Reported upstream as gurungabit/db2-node#38.
 
 Found 2026-10-26 while measuring `db2-node` 1.0.27 for the Dependabot production group.
 
@@ -5987,7 +5988,7 @@ The wire dump (`DB2_WIRE_DEBUG_HEX=1`) of one failure shows the step before it: 
 1.0.26 changed exactly that path: off z/OS it now completes a reply at the DRDA chain end instead of draining further frames for a timeout ("complete LUW replies at the DRDA chain end instead of timed drains" in its release notes).
 A loop of the same two reads on one fresh connection, 50 times on each server, did not fail, so the trigger needs more of the live check's sequence than those two statements.
 1.0.27 also fixes K24: a bound CLOB, DBCLOB or BLOB is written alone and beside other parameters, 100000, 40000 and 70000 bytes long, on 12.1.0.0 and 11.5.9.0, so D225 waits on this entry.
-Not yet reported upstream.
+Reported upstream as gurungabit/db2-node#37.
 
 Found 2026-10-26 while measuring `db2-node` 1.0.27 for the Dependabot production group; the pin stays at 1.0.25.
 
