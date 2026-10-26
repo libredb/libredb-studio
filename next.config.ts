@@ -252,8 +252,9 @@ const nextConfig: NextConfig = {
   // the Dockerfiles and payload scripts prune them to the platform.
   // `node-opcua-client` and `node-opcua-certificate-manager` are pure JavaScript, but two modules
   // under them cannot be bundled. Both failures are measured, and re-measured against the installed
-  // `node-opcua-crypto` 6.2.0 after a review found this comment describing an older version of it:
-  // removing the two names below and building answers three errors, no more and no fewer.
+  // `node-opcua-crypto` 6.2.3 (node-opcua 2.187.16) after a review found this comment describing
+  // an older version of it: removing the two names below and building answers three errors, no
+  // more and no fewer.
   //   `node-opcua-crypto/dist/source_nodejs/read.js:288` computes its certificate store as
   //   `fileURLToPath(new URL("../../certificates/", import.meta.url))`. Turbopack reads that URL as
   //   a module request and answers `Module not found: Can't resolve '../../certificates/'` - and

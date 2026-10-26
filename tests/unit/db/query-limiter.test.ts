@@ -1882,6 +1882,72 @@ describe("a dialect's declared non-numeric LIMIT and OFFSET values are bounds (S
   });
 });
 
+describe("PostgreSQL's LIMIT ALL is the statement's own unlimited bound (#1926)", () => {
+  const read = "SELECT ID FROM E_TYPES ORDER BY ID";
+
+  for (const value of ["ALL", "all", "All"]) {
+    test(`LIMIT ${value} is an existing, unlimited bound: nothing is appended`, () => {
+      const result = applyQueryLimit(`${read} LIMIT ${value}`, 501, 0, {}, "postgres");
+      expect(result.sql).toBe(`${read} LIMIT ${value}`);
+      expect(result.wasLimited).toBe(false);
+      expect(result.appliedLimit).toBe(0);
+      const info = analyzeQuery(`${read} LIMIT ${value}`, "postgres");
+      expect(info.hasLimit).toBe(true);
+      expect(info.existingLimit).toBeUndefined();
+    });
+  }
+
+  test("a trailing comment and a WITH statement read the bound the same way", () => {
+    for (const sql of [`${read} LIMIT ALL -- every row`, "WITH t AS (SELECT 1) SELECT * FROM t LIMIT ALL"]) {
+      expect(applyQueryLimit(sql, 501, 0, {}, "postgres").wasLimited).toBe(false);
+    }
+    expect(analyzeQuery(`${read} LIMIT ALL -- every row`, "postgres").hasLimit).toBe(true);
+    expect(analyzeQuery("WITH t AS (SELECT 1) SELECT * FROM t LIMIT ALL", "postgres").hasLimit).toBe(true);
+  });
+
+  test("FETCH FIRST ALL ROWS ONLY reads as a bound, though PostgreSQL itself takes no ALL there", () => {
+    // The FETCH count is a value the probe family shares with LIMIT, so it reads as declared
+    // here too. PostgreSQL's parser has no ALL arm for the FETCH count (gram.y:
+    // select_fetch_first_value), so the text is the engine's own refusal either way; what the
+    // reading buys is that Studio no longer appends a second bound to it.
+    const sql = `${read} FETCH FIRST ALL ROWS ONLY`;
+    expect(applyQueryLimit(sql, 501, 0, {}, "postgres")).toMatchObject({ sql, wasLimited: false, appliedLimit: 0 });
+    expect(analyzeQuery(sql, "postgres")).toMatchObject({ hasLimit: true, existingLimit: undefined });
+  });
+
+  test("forceLimit replaces an ALL bound instead of appending a second one", () => {
+    expect(applyQueryLimit(`${read} LIMIT ALL`, 10, 0, { forceLimit: true }, "postgres").sql).toBe(`${read} LIMIT 10`);
+  });
+
+  test("a word only spelled like the value, inside a literal or a comment, is not a bound", () => {
+    // `ALL` is a word, so unlike Snowflake's quoted values the literal case cannot end in it;
+    // the comment case can, and the code-word check must still keep it out.
+    expect(applyQueryLimit("SELECT 'ALL' AS x FROM t", 501, 0, {}, "postgres").sql).toBe(
+      "SELECT 'ALL' AS x FROM t LIMIT 501",
+    );
+    expect(applyQueryLimit(`${read} /* LIMIT ALL */`, 501, 0, {}, "postgres").sql).toBe(
+      `${read} LIMIT 501 /* LIMIT ALL */`,
+    );
+  });
+
+  test("every other dialect keeps reading LIMIT ALL as before: a LIMIT is appended", () => {
+    for (const type of [
+      "mysql",
+      "clickhouse",
+      "duckdb",
+      "sqlite",
+      "trino",
+      "databend",
+      "bigquery",
+      "snowflake",
+    ] as const) {
+      const result = applyQueryLimit(`${read} LIMIT ALL`, 501, 0, {}, type);
+      expect(result.sql).toBe(`${read} LIMIT ALL LIMIT 501`);
+      expect(analyzeQuery(`${read} LIMIT ALL`, type).hasLimit).toBe(false);
+    }
+  });
+});
+
 describe("an error that points into the bound Studio added says so (SF-022)", () => {
   const written = "SELECT * FROM D_PARENT WHERE";
   const sent = "SELECT * FROM D_PARENT WHERE LIMIT 501";

@@ -1,8 +1,8 @@
 /**
  * The Snowflake key intake on the runtimes production runs: in this Bun process and in one Node child per binary that
  * NODE_TRANSPORT_NODES lists, split on the path delimiter, or else in the `node` on PATH, so CI's Node 24 runs them and
- * NODE_TRANSPORT_NODES=$HOME/.nvm/versions/node/v24.14.0/bin/node:$HOME/.nvm/versions/node/v26.10.0/bin/node runs both
- * Node lines in one pass. Each child must report the version its binary prints, so a listed Node never passes as another.
+ * NODE_TRANSPORT_NODES can list Node 24, 26.10 and 26.12 in one pass. Each child must report the version its binary
+ * prints, so a listed Node never passes as another.
  *
  * Each child runs one bundle that Bun.build({ target: "node" }) makes of auth.ts and the key helper around the text of
  * `runCases`, the function this process runs in place. The missing and wrong passphrase errors differ by runtime (Bun
@@ -70,8 +70,8 @@ function runCases(a: typeof auth, k: typeof keys, c: Pick<typeof crypto, "create
     codes[`${name} wrong`] = code(pem, "not-the-passphrase");
   }
   // A wrong passphrase decrypts to random bytes, and about one time in 256 their padding holds and the decoder refuses
-  // them with a code of its own (measured 2026-10-13: 15 to 22 of 4,000 wrong passphrases on Node 24.14.0 and Bun
-  // 1.4.2). The first such passphrase of a fixed sequence must still read as the wrong passphrase.
+  // them with a code of its own. OpenSSL 4 reports ERR_OSSL_ASN1_WRONG_TAG for the PKCS#8 case; the first such
+  // passphrase of a fixed sequence must still read as the wrong passphrase.
   for (const [name, pem] of Object.entries(forms)) {
     let garbled: string | undefined;
     for (let i = 0; i < 20_000 && garbled === undefined; i += 1) {

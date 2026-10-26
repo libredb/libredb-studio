@@ -68,7 +68,14 @@ const mockStatus = mock(async (runId: string) => {
 const mockReadAgentArtifact = mock((correlationId: string) => held.get(correlationId));
 
 function installMocks(): void {
-  mock.module("@/lib/auth", () => ({ ...realAuth, getSession: mockGetSession }));
+  mock.module("@/lib/auth", () => ({
+    ...realAuth,
+    getSession: mockGetSession,
+    readSession: mock(async () => {
+      const s = await mockGetSession();
+      return s ? { kind: "authenticated", session: s } : { kind: "anonymous" };
+    }),
+  }));
   mock.module("@/lib/agent/runtime", () => ({
     getAgentRunService: mock(async () => ({ status: mockStatus })),
     driveAgentRun: mock(async () => ({ runId: "arun_1", status: "succeeded" })),

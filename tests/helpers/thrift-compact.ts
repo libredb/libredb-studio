@@ -1,6 +1,6 @@
 /**
  * A Thrift compact protocol writer for test inputs: Parquet footers, page headers and the guard's hostile cases.
- * It writes what hyparquet 1.31.1's thrift.js reads (field headers with a delta or a zigzag id, zigzag varints,
+ * It writes what hyparquet 1.31.5's thrift.js reads (field headers with a delta or a zigzag id, zigzag varints,
  * length-prefixed binaries, list headers with a size nibble or a varint, a bool list element as one byte).
  */
 export const THRIFT = {

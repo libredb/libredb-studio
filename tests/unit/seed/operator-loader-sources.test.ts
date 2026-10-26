@@ -34,6 +34,10 @@ mock.module("@/lib/seed/sources/registry", () => ({
 
 mock.module("@/lib/auth", () => ({
   getSession: mock(() => ({ role: "admin", username: "admin@test.com" })),
+  readSession: mock(async () => ({
+    kind: "authenticated",
+    session: { role: "admin", username: "admin@test.com" },
+  })),
   verifyJWT: mock(() => ({ role: "admin", username: "admin@test.com" })),
 }));
 

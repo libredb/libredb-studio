@@ -11,7 +11,6 @@
  * The library is injected (`lib`), so tests replace it with recorded payloads and the
  * provider loads the real one through `loadPlatformatic()`.
  */
-import { isIP } from "node:net";
 import {
   BIGINT_ONE,
   BIGINT_ZERO,
@@ -275,51 +274,35 @@ const STALE_LEADER = new Set(["NOT_LEADER_OR_FOLLOWER", "LEADER_NOT_AVAILABLE", 
 const RETRIES = 1;
 
 export function createPlatformaticClient(options: KafkaConnectionOptions, lib: PlatformaticLib): KafkaReadClient {
+  // With TLS on, every broker connection sends its own host as the TLS server name (SNI), which
+  // SNI-routed listeners need. The option is set rather than left to the library's default, which
+  // 2.14.0 turned on; the library reads it per connection and sends no name for an IP literal, which
+  // is no legal server name and which Node 26 refuses (dist/network/connection.js, spec 6.1).
   const transport = {
-    ...(options.tls === undefined ? {} : { tls: options.tls }),
+    ...(options.tls === undefined ? {} : { tls: options.tls, tlsServerName: true }),
     ...(options.sasl === undefined ? {} : { sasl: options.sasl }),
     connectTimeout: options.timeoutMs,
     requestTimeout: options.timeoutMs,
   };
-  let serverName = options.tlsServerName === true;
-  const build = () => {
-    const connections = { ...transport, ...(serverName ? { tlsServerName: true } : {}) };
-    const base = {
-      clientId: options.clientId,
-      bootstrapBrokers: [{ host: options.broker.host, port: options.broker.port }],
-      autocreateTopics: false,
-      retries: RETRIES,
-      ...connections,
-    };
-    return {
-      admin: new lib.Admin(base),
-      // groupProtocol is pinned rather than left to the library default: Consumer.close()
-      // leaves a KIP-848 group with a heartbeat whenever the protocol is "consumer", joined
-      // or not (dist/clients/consumer/consumer.js:134-139).
-      consumer: new lib.Consumer({
-        ...base,
-        groupId: KAFKA_SENTINEL_GROUP_ID,
-        autocommit: false,
-        groupProtocol: "classic",
-      }),
-      // The connections a read's fetches go out on, one per broker address, with the clients' transport.
-      fetchPool: new lib.ConnectionPool(options.clientId, connections),
-    };
+  const base = {
+    clientId: options.clientId,
+    bootstrapBrokers: [{ host: options.broker.host, port: options.broker.port }],
+    autocreateTopics: false,
+    retries: RETRIES,
+    ...transport,
   };
-  let { admin, consumer, fetchPool } = build();
-
-  // The library applies one server-name rule to every broker connection, and an IP literal
-  // is not a legal server name (Node 26 throws on one). So a cluster that advertises any
-  // broker by IP gets both clients and the fetch pool rebuilt without SNI; such a cluster is
-  // not routed by server name anyway (spec 6.1). Every broker list the adapter reads passes
-  // here, connect()'s first and a fetch's own, before a connection reaches that broker.
-  const dropServerNameForIpBrokers = async (brokers: readonly KafkaBroker[]) => {
-    if (!serverName || brokers.every((b) => isIP(b.host) === 0)) return;
-    serverName = false;
-    const previous = [admin, consumer, fetchPool];
-    ({ admin, consumer, fetchPool } = build());
-    await Promise.all(previous.map((client) => client.close()));
-  };
+  const admin = new lib.Admin(base);
+  // groupProtocol is pinned rather than left to the library default: Consumer.close()
+  // leaves a KIP-848 group with a heartbeat whenever the protocol is "consumer", joined
+  // or not (dist/clients/consumer/consumer.js:134-139).
+  const consumer = new lib.Consumer({
+    ...base,
+    groupId: KAFKA_SENTINEL_GROUP_ID,
+    autocommit: false,
+    groupProtocol: "classic",
+  });
+  // The connections a read's fetches go out on, one per broker address, with the clients' transport.
+  const fetchPool = new lib.ConnectionPool(options.clientId, transport);
 
   const guard = async <T>(operation: () => Promise<T>): Promise<T> => {
     try {
@@ -356,7 +339,6 @@ export function createPlatformaticClient(options: KafkaConnectionOptions, lib: P
         return mapRawMetadata(raw, names);
       });
     }
-    await dropServerNameForIpBrokers(metadata.brokers);
     return metadata;
   };
 
@@ -422,7 +404,6 @@ export function createPlatformaticClient(options: KafkaConnectionOptions, lib: P
    */
   const listedBrokers = async (): Promise<readonly KafkaBroker[]> => {
     const { brokers } = mapMetadata(await admin.metadata({ topics: [], autocreateTopics: false }));
-    await dropServerNameForIpBrokers(brokers);
     return brokers;
   };
 
@@ -542,7 +523,6 @@ export function createPlatformaticClient(options: KafkaConnectionOptions, lib: P
         const fresh = mapMetadata(
           await abortable(admin.metadata({ topics: [topic.name], autocreateTopics: false, forceUpdate: true }), signal),
         );
-        await dropServerNameForIpBrokers(fresh.brokers);
         const moved = fresh.topics.find((t) => t.name === topic.name);
         const movedTo = moved?.partitions.find((p) => p.partition === partition)?.leader ?? -1;
         const broker = movedTo === leader ? undefined : fresh.brokers.find((b) => b.nodeId === movedTo);
@@ -971,11 +951,8 @@ async function describeConsumerProtocol(
   );
   if (coordinator === undefined)
     throw new KafkaError("protocol", `The broker named no coordinator for group ${JSON.stringify(listing.groupId)}`);
-  // One connection, one host: the server name is decided for this host alone.
-  const connection = new lib.Connection(options.clientId, {
-    ...transport,
-    ...(options.tls !== undefined && isIP(coordinator.host) === 0 ? { tlsServerName: true } : {}),
-  });
+  // The clients' transport, server name included: the library leaves an IP literal unnamed itself.
+  const connection = new lib.Connection(options.clientId, transport);
   let response: LibGroupDescribeResponse;
   let refused: unknown;
   try {

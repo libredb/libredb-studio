@@ -60,6 +60,13 @@ export const ApiErrorCode = {
   AUTH_REQUIRED: "AUTH_REQUIRED",
 
   /**
+   * The server account store (STORAGE_PROVIDER=sqlite or postgres) could not be read during
+   * session verification or MCP token check (503). Distinct from AUTH_REQUIRED: the client keeps
+   * its session cookie or MCP token and retries (#1942).
+   */
+  ACCOUNT_STORE_UNAVAILABLE: "ACCOUNT_STORE_UNAVAILABLE",
+
+  /**
    * The request names, in X-LibreDB-Workspace-Owner, an account other than the signed-in one
    * (409): the tab claimed its browser copy for that account, and the session is now another
    * account's. The browser reloads the tab for this code, so the owner check runs again.

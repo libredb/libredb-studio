@@ -54,6 +54,10 @@ const mockGetOrCreateProvider = mock(async () => provider as never);
 
 mock.module("@/lib/auth", () => ({
   getSession: mock(async () => ({ role: "admin", username: "admin" })),
+  readSession: mock(async () => ({
+    kind: "authenticated",
+    session: { role: "admin", username: "admin" },
+  })),
   signJWT: mock(async () => "mock-token"),
   verifyJWT: mock(async () => null),
   login: mock(async () => {}),

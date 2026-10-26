@@ -21,7 +21,6 @@
  * The parameter is named `config` in every function here on purpose: the db-ui-config
  * test finds which addressing fields a provider reads by the `config.<field>` pattern.
  */
-import { isIP } from "node:net";
 import type { DatabaseConnection, SSHTunnelConfig, SSLConfig, SSLMode } from "@/lib/types";
 import { validateHost, validatePort } from "@/lib/db/http/endpoint";
 import { KafkaError } from "./client";
@@ -63,12 +62,6 @@ export interface KafkaConnectionOptions {
   readonly clientId: string;
   readonly broker: { readonly host: string; readonly port: number };
   readonly tls?: KafkaTlsOptions;
-  /**
-   * Present when TLS is on and the bootstrap host is a DNS name: the client then sends each
-   * connection's own host as its TLS server name (SNI). Node sends none unless asked, and an
-   * IP literal is not a legal server name (spec 6.1).
-   */
-  readonly tlsServerName?: true;
   readonly sasl?: KafkaSaslOptions;
   readonly timeoutMs: number;
 }
@@ -94,7 +87,6 @@ export function kafkaConnectionOptions(config: DatabaseConnection, timeoutMs: nu
     clientId: CLIENT_ID,
     broker: { host, port },
     ...(tls === undefined ? {} : { tls }),
-    ...(tls !== undefined && isIP(host) === 0 ? { tlsServerName: true as const } : {}),
     ...(sasl === undefined ? {} : { sasl }),
     timeoutMs,
   };

@@ -78,6 +78,8 @@ Lowest-risk, path-clearing step. One-shot full-repo reformat.
   "javascript": { "formatter": { "quoteStyle": "double", "semicolons": "always" } },
   "css": { "formatter": { "enabled": false } },
   "json": { "formatter": { "enabled": false } },
+  "markdown": { "formatter": { "enabled": false } },
+  "yaml": { "formatter": { "enabled": false } },
   "linter": { "enabled": false },
   "assist": { "enabled": false }
 }
@@ -101,6 +103,8 @@ Notes:
 - `css.formatter.enabled: false` (plus `json.formatter.enabled: false`) keeps `globals.css` and JSON files
   untouched - `globals.css` is order-sensitive (see the CSS note above) and formatting JSON would churn
   generated/config files for no gain.
+- Biome 2.6 added Markdown and YAML formatters, enabled by default.
+  `markdown.formatter.enabled: false` and `yaml.formatter.enabled: false` keep the scope at JS/TS: the 2.6 Markdown formatter pads every table column to one width, which turns a one-row change into a whole-table diff, and the YAML formatter refuses the deliberately malformed seed fixtures under `tests/fixtures/seed-connections/`.
 - Deliverable: a single `chore(format): adopt Biome formatter` PR (~256 files). Afterwards run `build:lib`
   and verify BOTH modes (standalone + embedded), per the repo's UI-change rule. Coordinate timing to avoid
   clashing with open PRs.

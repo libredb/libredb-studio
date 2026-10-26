@@ -41,7 +41,7 @@ const MANIFEST = readManifest(ROOT_MANIFEST);
 
 describe("etcd client dependency pins", () => {
   test("@grpc/grpc-js and @grpc/proto-loader are exact runtime dependencies", () => {
-    expect(MANIFEST.dependencies?.["@grpc/grpc-js"]).toBe("1.14.5");
+    expect(MANIFEST.dependencies?.["@grpc/grpc-js"]).toBe("1.14.6");
     expect(MANIFEST.dependencies?.["@grpc/proto-loader"]).toBe("0.8.1");
   });
 

@@ -677,7 +677,7 @@ describe("the three routes' full JSON bodies on Node (R-S5, R-S7)", () => {
 
     writeFileSync(
       at("auth-seam.ts"),
-      `export * from ${source("src/lib/auth.ts")};\nexport async function getSession() { return { role: "admin", username: "admin" }; }\n`,
+      `export * from ${source("src/lib/auth.ts")};\nexport async function getSession() { return { role: "admin", username: "admin" }; }\nexport async function readSession() { return { kind: "authenticated", session: { role: "admin", username: "admin" } }; }\n`,
     );
     // One provider slot behind both lookups the routes use: `@/lib/db` (query, object source) and `@/lib/db/factory`
     // (Test Connection). A module's own export wins over a name `export *` brings.

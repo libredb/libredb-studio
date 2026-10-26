@@ -259,7 +259,7 @@ describe("a server stream, under Bun", () => {
   }, 10_000);
 
   test("case 12: a message deserialized after the limit's cancel is neither counted nor kept (SB1-3.3 rule 1a)", async () => {
-    // grpc-js 1.14.5 deserializes nothing after its own cancel, so no server reaches this rule. The stand-in hands the
+    // grpc-js 1.14.6 deserializes nothing after its own cancel, so no server reaches this rule. The stand-in hands the
     // stream's deserializer one more message as the cancel runs, the way a transport that kept reading would.
     const makeRequest = Client.prototype.makeServerStreamRequest;
     const opened = spyOn(Client.prototype, "makeServerStreamRequest").mockImplementation(function (

@@ -100,11 +100,17 @@ describe("kafkaConnectionOptions", () => {
     expect(kafkaConnectionOptions({ ...base, ssl: { mode: "disable" } } as DatabaseConnection, 1).tls).toBeUndefined();
   });
 
-  test("SNI: a DNS host over TLS sends its server name; an IP literal and a plaintext connection send none", () => {
-    expect(kafkaConnectionOptions(withTls({}), 1).tlsServerName).toBe(true);
-    expect(kafkaConnectionOptions(withTls({ host: "10.0.0.7" }), 1).tlsServerName).toBeUndefined();
-    expect(kafkaConnectionOptions(withTls({ host: "::1" }), 1).tlsServerName).toBeUndefined();
-    expect(kafkaConnectionOptions(base, 1).tlsServerName).toBeUndefined();
+  test("SNI is no part of the mapping: a DNS host and an IP literal over TLS map to the same keys", () => {
+    // The adapter turns the server name on with TLS, and the client library decides it per broker
+    // connection, leaving an IP literal unnamed (spec 6.1), so the bootstrap host decides nothing here.
+    for (const host of ["broker-1", "10.0.0.7", "::1"]) {
+      expect(Object.keys(kafkaConnectionOptions(withTls({ host }), 1))).toEqual([
+        "clientId",
+        "broker",
+        "tls",
+        "timeoutMs",
+      ]);
+    }
   });
 
   test("an SSH tunnel is refused, because the brokers are reached at the addresses they advertise", () => {
@@ -337,8 +343,6 @@ describe("kafkaConnectionOptions, each field as a caller may write it: another t
   test("the client is handed the host the validator answers, an IPv6 literal without its brackets", () => {
     expect(mapped({ ...base, host: "[::1]" }).broker.host).toBe("::1");
     expect(mapped({ ...base, host: "Broker-1.Example" }).broker.host).toBe("broker-1.example");
-    // A bracketed literal is an IP literal too, which is no legal server name.
-    expect(mapped({ ...base, host: "[::1]", ssl: TLS_ON }).tlsServerName).toBeUndefined();
   });
 
   test("a null port reads as absent, so the default, and the client is handed the port the validator answers", () => {

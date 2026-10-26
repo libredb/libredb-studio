@@ -42,7 +42,7 @@ const KEEPALIVE_TIMEOUT_MS = 6_000;
  * out;
  * an HTTP/2 ping every 10 s while a call is open, and the connection dropped when one is unanswered for 6 s, so a
  * server that stops answering without closing the connection (a lost host, a partition, a frozen VM) fails the call
- * it holds; grpc-js 1.14.5 sends no ping by default (`keepaliveTimeMs` -1, transport.ts);
+ * it holds; grpc-js 1.14.6 sends no ping by default (`keepaliveTimeMs` -1, transport.ts);
  * and, with TLS, the TLS name override, so the TLS identity is the override in every TLS mode, never the dialled
  * address.
  * 10 s is twice the 5 s ping minimum every server this transport was measured against enforces (each provider doc
@@ -176,7 +176,7 @@ function cancelOnAbort(signal: AbortSignal, cancel: () => void): () => void {
 }
 
 /**
- * Whether grpc-js gave a call a transport. grpc-js 1.14.5 asks a call's credentials for its metadata only once
+ * Whether grpc-js gave a call a transport. grpc-js 1.14.6 asks a call's credentials for its metadata only once
  * a pick has handed it a connected subchannel, right before it opens the call's stream (`LoadBalancingCall.doPick`,
  * load-balancing-call.ts near 183), so a call never asked was still waiting for name resolution, its metadata filters or
  * its LB pick, and its request never left; a call asked is read as one whose request may have left. These credentials

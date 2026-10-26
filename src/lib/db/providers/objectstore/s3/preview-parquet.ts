@@ -1235,6 +1235,13 @@ interface Span {
   bytes: Uint8Array;
 }
 
+/**
+ * hyparquet's columnGapLimit (plan.js): when it reads selected columns it merges chunks at most this many bytes
+ * apart into one slice, the gap included, because Arrow C++ before 18 and Polars write a copy of each chunk's
+ * metadata after it. The prefetch spans merge across the same gaps, so every slice hyparquet asks for lies in one.
+ */
+export const PARQUET_COLUMN_GAP_BYTES = 8192;
+
 /** A chunk's byte range as hyparquet plans it: the dictionary page if any (0 counts as none), else the first data page. */
 function chunkRange(chunk: ColumnChunk): { readonly start: number; readonly end: number } {
   const meta = metaOf(chunk);
@@ -1290,7 +1297,8 @@ async function readPlannedRows(
   const spans: Span[] = [];
   for (const each of [...chunks].sort((a, b) => a.start - b.start)) {
     const last = spans[spans.length - 1];
-    if (last !== undefined && last.end === each.start) last.end = each.end;
+    if (last !== undefined && each.start <= last.end + PARQUET_COLUMN_GAP_BYTES)
+      last.end = Math.max(last.end, each.end);
     else spans.push({ start: each.start, end: each.end, bytes: new Uint8Array(0) });
   }
   for (const span of spans) {

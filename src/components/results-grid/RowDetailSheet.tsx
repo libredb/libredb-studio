@@ -107,18 +107,21 @@ export function RowDetailSheet({
   };
 
   const copyAllAsJson = () => {
-    // If masking is active, copy masked version
-    if (maskingActive && sensitiveColumns && sensitiveColumns.size > 0) {
-      const maskedRow: Record<string, unknown> = {};
-      for (const field of fields) {
-        maskedRow[field] = copyTextOf(field, row[field]);
+    // Keep raw JSON values for unmasked fields; display text would stringify their types.
+    const copiedRow = { ...row };
+    for (const field of fields) {
+      if (!Object.hasOwn(row, field)) continue;
+      const value = row[field];
+      const pattern = sensitiveColumns?.get(field);
+      if (maskingActive && pattern && value != null && !revealedFields.has(field)) {
+        copiedRow[field] = maskValueByPattern(value, pattern);
+      } else if (maskingActive && sensitiveColumns && sensitiveColumns.size > 0 && vectorColumns?.[field]) {
+        // Declared vectors keep their established renderer copy form under masking.
+        const context = renderContextFor(vectorColumns, field);
+        copiedRow[field] = getRenderer(classifyValue(value, context)).renderCopy?.(value, context) ?? value;
       }
-      copyAndReport("__all__", JSON.stringify(maskedRow, null, 2));
-    } else {
-      // The masked branch above copies each field's display text, which is already the
-      // hex for a binary field; this one has to say so itself (#1381).
-      copyAndReport("__all__", jsonText(binaryCellsAsHex(row), 2));
     }
+    copyAndReport("__all__", jsonText(binaryCellsAsHex(copiedRow), 2));
   };
 
   return (

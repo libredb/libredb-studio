@@ -26,7 +26,7 @@ const MANIFEST = readManifest(ROOT_MANIFEST);
 
 describe("the Milvus client's dependency pins", () => {
   test("the two gRPC packages are the exact runtime pins etcd measured, and protobufjs a dev pin only", () => {
-    expect(MANIFEST.dependencies?.["@grpc/grpc-js"]).toBe("1.14.5");
+    expect(MANIFEST.dependencies?.["@grpc/grpc-js"]).toBe("1.14.6");
     expect(MANIFEST.dependencies?.["@grpc/proto-loader"]).toBe("0.8.1");
     expect(MANIFEST.devDependencies?.protobufjs).toBe("7.6.6");
     expect(MANIFEST.dependencies?.protobufjs).toBeUndefined();

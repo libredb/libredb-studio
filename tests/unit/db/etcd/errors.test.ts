@@ -150,7 +150,7 @@ describe("toEtcdError: etcd's answers, by code and message together", () => {
       "not-connected",
     ],
     [14, "round_robin: No connection established. Last error: null", "not-connected"],
-    // grpc-js 1.14.5's own pre-send texts: its DNS resolver's failure (`resolver-dns.ts`), and a call close()
+    // grpc-js 1.14.6's own pre-send texts: its DNS resolver's failure (`resolver-dns.ts`), and a call close()
     // found still waiting for its pick (`internal-channel.ts`), measured through the adapter in grpc-client.test.ts.
     [14, "Name resolution failed for target dns:etcd.invalid:2379", "not-connected"],
     [14, "Channel closed before call started", "closed"],

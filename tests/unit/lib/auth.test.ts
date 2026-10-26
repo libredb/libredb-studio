@@ -2,6 +2,8 @@ import { withBasePathEnv } from "../../helpers/base-path";
 import { describe, test, expect, mock, beforeEach, afterEach, spyOn } from "bun:test";
 import * as jose from "jose";
 import { logger } from "@/lib/logger";
+import * as localAccounts from "@/lib/local-accounts";
+import * as oidcBearer from "@/lib/oidc-bearer";
 
 // ============================================================================
 // Mock State — only mock next/headers (cookies), NOT jose
@@ -45,6 +47,7 @@ const {
   signJWT,
   verifyJWT,
   getSession,
+  readSession,
   login,
   logout,
   resetCookieSecurityWarning,
@@ -147,13 +150,20 @@ describe("auth", () => {
   });
 
   // --------------------------------------------------------------------------
-  // getSession()
+  // readSession() and getSession() (#1942)
   // --------------------------------------------------------------------------
 
-  describe("getSession()", () => {
-    test("returns payload when auth-token cookie exists", async () => {
+  describe("readSession() and getSession()", () => {
+    test("returns authenticated when auth-token cookie exists and account is allowed", async () => {
       const token = await signJWT({ role: "user", username: "user" });
       mockCookieStore["auth-token"] = { value: token };
+
+      const reading = await readSession();
+      expect(reading.kind).toBe("authenticated");
+      if (reading.kind === "authenticated") {
+        expect(reading.session.role).toBe("user");
+        expect(reading.session.username).toBe("user");
+      }
 
       const session = await getSession();
       expect(session).not.toBeNull();
@@ -161,9 +171,208 @@ describe("auth", () => {
       expect(session!.username).toBe("user");
     });
 
-    test("returns null when no cookie", async () => {
+    test("returns anonymous when no cookie", async () => {
+      const reading = await readSession();
+      expect(reading.kind).toBe("anonymous");
+
       const session = await getSession();
       expect(session).toBeNull();
+    });
+
+    test("returns anonymous when cookie does not verify", async () => {
+      mockCookieStore["auth-token"] = { value: "invalid-token" };
+
+      const reading = await readSession();
+      expect(reading.kind).toBe("anonymous");
+
+      const session = await getSession();
+      expect(session).toBeNull();
+    });
+
+    test("returns anonymous and logs out when account is refused", async () => {
+      const token = await signJWT({ role: "user", username: "user" });
+      mockCookieStore["auth-token"] = { value: token };
+      const allowsSpy = spyOn(localAccounts, "storedAccountAllows").mockResolvedValue(false);
+
+      try {
+        const reading = await readSession();
+        expect(reading.kind).toBe("anonymous");
+        expect(mockDeleteCalls).toContainEqual({ name: "auth-token", path: "/" });
+
+        const session = await getSession();
+        expect(session).toBeNull();
+      } finally {
+        allowsSpy.mockRestore();
+      }
+    });
+
+    test("returns store_unavailable when storedAccountAllows throws, and keeps cookie (#1942)", async () => {
+      const token = await signJWT({ role: "user", username: "user" });
+      mockCookieStore["auth-token"] = { value: token };
+      mockDeleteCalls = [];
+      const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+      const allowsSpy = spyOn(localAccounts, "storedAccountAllows").mockRejectedValue(
+        new Error("sqlite database is locked"),
+      );
+
+      try {
+        const reading = await readSession();
+        expect(reading.kind).toBe("store_unavailable");
+        if (reading.kind === "store_unavailable") {
+          expect((reading.error as Error).message).toBe("sqlite database is locked");
+        }
+        // Crucial: cookie is kept, logout is NOT called!
+        expect(mockDeleteCalls).toHaveLength(0);
+        expect(mockCookieStore["auth-token"]?.value).toBe(token);
+
+        // getSession contract: returns null without throwing
+        const session = await getSession();
+        expect(session).toBeNull();
+      } finally {
+        allowsSpy.mockRestore();
+        errorSpy.mockRestore();
+      }
+    });
+
+    describe("bearer authentication", () => {
+      test("returns anonymous on bearer fault", async () => {
+        const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+        const bearerSpy = spyOn(oidcBearer, "authenticateBearer").mockResolvedValue({
+          kind: "fault",
+          error: new Error("JWKS fetch timeout"),
+        });
+
+        try {
+          const reading = await readSession();
+          expect(reading.kind).toBe("anonymous");
+
+          const session = await getSession();
+          expect(session).toBeNull();
+        } finally {
+          bearerSpy.mockRestore();
+          errorSpy.mockRestore();
+        }
+      });
+
+      test("returns anonymous on bearer denial", async () => {
+        const bearerSpy = spyOn(oidcBearer, "authenticateBearer").mockResolvedValue({
+          kind: "denied",
+          reason: "bearer_token_invalid",
+        });
+
+        try {
+          const reading = await readSession();
+          expect(reading.kind).toBe("anonymous");
+
+          const session = await getSession();
+          expect(session).toBeNull();
+        } finally {
+          bearerSpy.mockRestore();
+        }
+      });
+
+      test("returns authenticated when bearer is authenticated and storedAccountAllows passes", async () => {
+        const bearerSession = {
+          role: "admin" as const,
+          username: "admin@example.com",
+          idpSubject: "sub-123",
+          idpIssuer: "https://idp.example.com",
+          iat: 1000,
+          exp: 2000,
+          channel: "bearer" as const,
+        };
+        const bearerSpy = spyOn(oidcBearer, "authenticateBearer").mockResolvedValue({
+          kind: "authenticated",
+          session: bearerSession,
+        });
+        const allowsSpy = spyOn(localAccounts, "storedAccountAllows").mockResolvedValue(true);
+
+        try {
+          const reading = await readSession();
+          expect(reading.kind).toBe("authenticated");
+          if (reading.kind === "authenticated") {
+            expect(reading.session).toEqual(bearerSession);
+          }
+
+          const session = await getSession();
+          expect(session).toEqual(bearerSession);
+        } finally {
+          bearerSpy.mockRestore();
+          allowsSpy.mockRestore();
+        }
+      });
+
+      test("returns anonymous when bearer is authenticated but storedAccountAllows refuses", async () => {
+        const bearerSession = {
+          role: "user" as const,
+          username: "user@example.com",
+          idpSubject: "sub-456",
+          idpIssuer: "https://idp.example.com",
+          iat: 1000,
+          exp: 2000,
+          channel: "bearer" as const,
+        };
+        const bearerSpy = spyOn(oidcBearer, "authenticateBearer").mockResolvedValue({
+          kind: "authenticated",
+          session: bearerSession,
+        });
+        const allowsSpy = spyOn(localAccounts, "storedAccountAllows").mockResolvedValue(false);
+
+        try {
+          const reading = await readSession();
+          expect(reading.kind).toBe("anonymous");
+
+          const session = await getSession();
+          expect(session).toBeNull();
+        } finally {
+          bearerSpy.mockRestore();
+          allowsSpy.mockRestore();
+        }
+      });
+
+      test("returns store_unavailable when bearer is authenticated and storedAccountAllows throws (#1942)", async () => {
+        const bearerSession = {
+          role: "admin" as const,
+          username: "admin@example.com",
+          idpSubject: "sub-123",
+          idpIssuer: "https://idp.example.com",
+          iat: 1000,
+          exp: 2000,
+          channel: "bearer" as const,
+        };
+        const bearerSpy = spyOn(oidcBearer, "authenticateBearer").mockResolvedValue({
+          kind: "authenticated",
+          session: bearerSession,
+        });
+        const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+        const allowsSpy = spyOn(localAccounts, "storedAccountAllows").mockRejectedValue(
+          new Error("account postgres unreachable"),
+        );
+
+        try {
+          const reading = await readSession();
+          expect(reading.kind).toBe("store_unavailable");
+
+          const session = await getSession();
+          expect(session).toBeNull();
+        } finally {
+          bearerSpy.mockRestore();
+          allowsSpy.mockRestore();
+          errorSpy.mockRestore();
+        }
+      });
+    });
+
+    test("propagates headers() errors — readSession() is only called from route handlers", async () => {
+      // The defensive try/catch around headers() was removed (reviewer item 2): every caller is
+      // a route handler, and swallowing an out-of-scope failure silently as anonymous is wrong.
+      // Route handlers can rely on Next.js's own error boundary instead.
+      mockHeadersThrow = new Error("headers was called outside a request scope");
+      try {
+        await expect(readSession()).rejects.toThrow("headers was called outside a request scope");
+      } finally {
+        mockHeadersThrow = null;
+      }
     });
   });
 

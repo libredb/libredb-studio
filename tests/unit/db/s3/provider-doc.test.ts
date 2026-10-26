@@ -75,6 +75,7 @@ import { S3Provider } from "@/lib/db/providers/objectstore/s3/index";
 import { S3_LABELS } from "@/lib/db/providers/objectstore/s3/labels";
 import { S3_OBJECTS_LISTED_ELSEWHERE } from "@/lib/db/providers/objectstore/s3/objects";
 import { S3_PREVIEW_ADAPTER_SENTENCES } from "@/lib/db/providers/objectstore/s3/preview-adapter";
+import { PARQUET_COLUMN_GAP_BYTES } from "@/lib/db/providers/objectstore/s3/preview-parquet";
 import { S3_PREVIEW_SENTENCES } from "@/lib/db/providers/objectstore/s3/preview-render";
 import { DEFAULT_QUERY_TIMEOUT } from "@/lib/db/types";
 import { resolveConnectionCredentials } from "@/lib/seed/credential-resolver";
@@ -756,6 +757,14 @@ describe("docs/providers/s3.md: the provider's shape, as the built provider decl
       expect(basis, name).toBeDefined();
       expect(basis?.startsWith("Measured"), name).toBe(false);
     }
+  });
+
+  test("23c. the Parquet span reads state the gap the prefetch spans merge across", () => {
+    const preview = flat(sectionOf(DOC, "#### Object preview"));
+    expect(preview).toContain(
+      `then one GET per run of planned column chunks that lie at most ${PARQUET_COLUMN_GAP_BYTES / 1024} KiB apart.`,
+    );
+    expect(preview).toContain("The bytes between two chunks of one run are read with them");
   });
 });
 

@@ -220,14 +220,15 @@ describe("a live session follows its stored account", () => {
     expect((await whoami()).status).toBe(401);
   });
 
-  test("a registry that cannot be read refuses the session instead of trusting the token", async () => {
+  test("a registry that cannot be read answers 503 instead of refusing the session (#1942)", async () => {
     const provider = await getStorageProvider();
     if (!provider) throw new Error("sqlite provider missing");
     const failure = spyOn(provider, "getAccount").mockRejectedValue(new Error("database is locked"));
     const errorSpy = spyOn(console, "error").mockImplementation(() => {});
     try {
       presentCookie(admin);
-      expect((await whoami()).status).toBe(401);
+      const res = await whoami();
+      expect(res.status).toBe(503);
       expect(errorSpy.mock.calls.flat().map(String).join("\n")).toContain("database is locked");
     } finally {
       failure.mockRestore();

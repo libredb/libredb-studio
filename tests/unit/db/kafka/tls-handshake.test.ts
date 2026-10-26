@@ -22,7 +22,8 @@
  *
  * Bun sends a TLS server name unasked and Node does not, so the handshakes below cannot tell
  * whether the option that makes Node send one works. The last block runs the library under
- * Node, the production runtime, with exactly the options the adapter builds for a DNS host.
+ * Node, the production runtime, with exactly the options the adapter builds, for a DNS host and
+ * for an IP literal.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -464,50 +465,69 @@ describe("transport failures through the real client", () => {
 });
 
 describe("the TLS server name under Node, the production runtime (spec 6.1)", () => {
-  test("the options the adapter builds for a DNS host make Node send that name, and without them Node sends none", async () => {
+  /**
+   * Runs the library itself under Node with the options the adapter hands its Admin, and answers the
+   * server names the handshakes it caused asked for. The adapter is TypeScript with extensionless
+   * imports, which Node does not load, so the child imports the library directly.
+   */
+  const namesUnderNode = async (options: Record<string, unknown>) => {
     const node = Bun.which("node");
     if (node === null) {
       throw new Error(
         "No node on PATH: this test runs the client under Node, the production runtime; install Node 24 or later",
       );
     }
-    // The adapter is TypeScript with extensionless imports, which Node does not load, so the
-    // child runs the library itself with exactly the options the adapter hands its Admin for
-    // the connection a user saves with a DNS host.
+    const library = pathToFileURL(Bun.resolveSync("@platformatic/kafka", import.meta.dir)).href;
+    const script = at("server-name-under-node.mjs");
+    writeFileSync(
+      script,
+      [
+        `const { Admin } = await import(${JSON.stringify(library)});`,
+        `const admin = new Admin(${JSON.stringify(options)});`,
+        "await admin.listTopics().catch(() => undefined);",
+        "await admin.close();",
+      ].join("\n"),
+    );
+    const before = privateCa.names.length;
+    // Asynchronous, so this process keeps answering the handshakes the child starts.
+    const child = Bun.spawn([node, script], { stdout: "ignore", stderr: "pipe" });
+    const stderr = await new Response(child.stderr).text();
+    // Compared whole, so a child that failed, or one Node warned about a server name (DEP0123), shows its stderr.
+    expect({ exitCode: await child.exited, stderr }).toMatchObject({ exitCode: 0, stderr: "" });
+    return privateCa.names.slice(before);
+  };
+
+  /** The options the adapter hands its Admin for the connection a user saves with this host. */
+  const adapterOptions = (host: string) => {
     const { lib, constructed } = recordedLib();
     createPlatformaticClient(
-      kafkaConnectionOptions(connection("localhost", privateCa.port, { mode: "verify-full", caCert: ca() }), 3000),
+      kafkaConnectionOptions(connection(host, privateCa.port, { mode: "verify-full", caCert: ca() }), 3000),
       lib,
     );
-    const adapterOptions = constructed.find(([name]) => name === "Admin")?.[1] as Record<string, unknown>;
-    expect(adapterOptions.tlsServerName).toBe(true);
-    const control = Object.fromEntries(Object.entries(adapterOptions).filter(([key]) => key !== "tlsServerName"));
-    const library = pathToFileURL(Bun.resolveSync("@platformatic/kafka", import.meta.dir)).href;
-    const namesUnderNode = async (options: Record<string, unknown>) => {
-      const script = at("server-name-under-node.mjs");
-      writeFileSync(
-        script,
-        [
-          `const { Admin } = await import(${JSON.stringify(library)});`,
-          `const admin = new Admin(${JSON.stringify(options)});`,
-          "await admin.listTopics().catch(() => undefined);",
-          "await admin.close();",
-        ].join("\n"),
-      );
-      const before = privateCa.names.length;
-      // Asynchronous, so this process keeps answering the handshakes the child starts.
-      const child = Bun.spawn([node, script], { stdout: "ignore", stderr: "pipe" });
-      const stderr = await new Response(child.stderr).text();
-      // Compared whole, so a child that failed shows its stderr.
-      expect({ exitCode: await child.exited, stderr }).toMatchObject({ exitCode: 0 });
-      return privateCa.names.slice(before);
-    };
-    const named = await namesUnderNode(adapterOptions);
+    return constructed.find(([name]) => name === "Admin")?.[1] as Record<string, unknown>;
+  };
+
+  test("the options the adapter builds for a DNS host make Node send that name, and turned off Node sends none", async () => {
+    const options = adapterOptions("localhost");
+    expect(options.tlsServerName).toBe(true);
+    const named = await namesUnderNode(options);
     expect(named.length).toBeGreaterThan(0);
     expect([...new Set(named)]).toStrictEqual(["localhost"]);
-    // The control, which makes the assertion above able to fail: unasked, Node sends no name.
-    const unnamed = await namesUnderNode(control);
+    // The control, which makes the assertion above able to fail. Since @platformatic/kafka 2.14.0 the
+    // library sends a DNS host's name when the option is left out too, so the control turns it off.
+    const unnamed = await namesUnderNode({ ...options, tlsServerName: false });
     expect(unnamed.length).toBeGreaterThan(0);
     expect(unnamed.filter((name) => typeof name === "string")).toStrictEqual([]);
+  }, 30_000);
+
+  test("the same options for an IP-literal host send no name, and verify-full checks the certificate's IP name", async () => {
+    // Node 26 refuses an IP literal as a server name; the library leaves one unnamed per connection,
+    // so the adapter keeps the option on whatever the host. A completed handshake under verify-full
+    // means the client accepted the certificate, by its IP:127.0.0.1 subject alternative name.
+    const options = adapterOptions("127.0.0.1");
+    expect(options.tlsServerName).toBe(true);
+    const names = await namesUnderNode(options);
+    expect(names.length).toBeGreaterThan(0);
+    expect(names.filter((name) => typeof name === "string")).toStrictEqual([]);
   }, 30_000);
 });

@@ -16,6 +16,7 @@ import { closeStorageProvider, getStorageProvider } from "@/lib/storage/factory"
 import { pinMcpTestEnvironment } from "../helpers/mcp-fixtures";
 import { legacyPost } from "../helpers/mcp-harness";
 import { useMcpChannel } from "../helpers/mcp-token";
+import { ApiErrorCode } from "@/lib/api/error-codes";
 
 pinMcpTestEnvironment();
 
@@ -141,7 +142,7 @@ describe("an MCP token for a stored account", () => {
     await expectRevoked(await listTools(await tokenFor("mcp-nov@example.com", "user", false)));
   });
 
-  test("is refused when the registry cannot be read", async () => {
+  test("answers 503 instead of refusing the token when the registry cannot be read (#1942)", async () => {
     await createAccount("admin@libredb.org", { email: "mcp-db@example.com", password: TEST_PASSWORD, role: "user" });
     const token = await tokenFor("mcp-db@example.com", "user");
     const provider = await getStorageProvider();
@@ -149,7 +150,11 @@ describe("an MCP token for a stored account", () => {
     const failure = spyOn(provider, "getAccount").mockRejectedValue(new Error("database is locked"));
     const errors = spyOn(console, "error").mockImplementation(() => {});
     try {
-      await expectRevoked(await listTools(token));
+      const res = await listTools(token);
+      expect(res.status).toBe(503);
+      const body = (await res.json()) as { error: string; code?: string };
+      expect(body.error).toBe("Account store unavailable");
+      expect(body.code).toBe(ApiErrorCode.ACCOUNT_STORE_UNAVAILABLE);
       expect(errors.mock.calls.flat().map(String).join("\n")).toContain("database is locked");
     } finally {
       failure.mockRestore();

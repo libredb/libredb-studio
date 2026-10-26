@@ -27,7 +27,14 @@ import { parseResponseJSON } from "../../helpers/mock-next";
 const ADMIN: realAuth.UserPayload = { role: "admin", username: "admin" };
 const mockGetSession = mock(async (): Promise<realAuth.UserPayload | null> => ADMIN);
 
-mock.module("@/lib/auth", () => ({ ...realAuth, getSession: mockGetSession }));
+mock.module("@/lib/auth", () => ({
+  ...realAuth,
+  getSession: mockGetSession,
+  readSession: mock(async () => {
+    const s = await mockGetSession();
+    return s ? { kind: "authenticated", session: s } : { kind: "anonymous" };
+  }),
+}));
 const realPg = await import("pg");
 mock.module("pg", () => ({ Pool: FakePool, Client: FakeListenerClient, types: realPg.types }));
 

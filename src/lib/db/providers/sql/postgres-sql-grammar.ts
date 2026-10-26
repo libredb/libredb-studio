@@ -57,6 +57,16 @@ const POSTGRES_GRAMMAR: SqlGrammar = {
   // this row and have no such clause: a statement of theirs ending in these words
   // is one the server refuses bound or unbound, so the reading costs neither.
   trailingLimitClauses: [/\s+AS\s+OF\s+(?:AT\s+LEAST\s+)?(?:\d+|'[^']*')\s*$/i],
+  // `LIMIT ALL` is PostgreSQL's own spelling of "no limit" (SELECT docs, LIMIT { count | ALL });
+  // the parser takes the ALL alternative for the count only - the FETCH spelling has no ALL arm
+  // (gram.y: select_limit_value has one, select_fetch_first_value does not). The count is a word,
+  // so the shared digit-only probe missed it, `hasLimit` read false and a second `LIMIT` followed
+  // the statement's own - which PostgreSQL refuses as two LIMIT clauses. Declaring the value reads
+  // the form as the statement's own unlimited bound, like Snowflake's `NULL` (SF-021). The
+  // declaration is shared by the whole row-bound probe family: an `OFFSET ALL` is not PostgreSQL
+  // syntax either, but a lone one is left untouched by the normal path and the engine keeps
+  // refusing the text as written.
+  nonNumericRowBounds: ["ALL"],
   // `DO` runs an anonymous block whose code is a literal, `$$ ... $$` or `'...'`, which the gate does not read, so it
   // asks whatever the block does; `DO LANGUAGE <name>` writes the language before the body. The `DO` of
   // `ON CONFLICT DO NOTHING | UPDATE` and of `CREATE RULE ... DO INSTEAD | ALSO` is followed by a word and does not ask.

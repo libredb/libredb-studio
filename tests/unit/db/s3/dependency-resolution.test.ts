@@ -1,6 +1,6 @@
 /**
  * The S3 object preview's Parquet reader must load the exact versions it was measured against:
- * the page pre-scan, the guarded compressors and the prefetch buffer depend on how hyparquet 1.31.1 plans column
+ * the page pre-scan, the guarded compressors and the prefetch buffer depend on how hyparquet 1.31.5 plans column
  * chunk reads and parses page headers, so a bump is a provider change. Both packages run no install script, and the
  * library build keeps them external because preview-parquet.ts loads them through a dynamic import.
  */
@@ -26,12 +26,12 @@ const resolveFrom = (from: string, specifier: string): string => createRequire(f
 
 describe("the Parquet preview's dependencies", () => {
   test("hyparquet and hyparquet-compressors are pinned exactly", () => {
-    expect(manifest.dependencies?.hyparquet).toBe("1.31.1");
+    expect(manifest.dependencies?.hyparquet).toBe("1.31.5");
     expect(manifest.dependencies?.["hyparquet-compressors"]).toBe("1.1.2");
   });
 
   test("the installed manifests carry the pinned versions, and the two codecs are the ones hyparquet-compressors pins", () => {
-    expect(read(path.join(NODE_MODULES, "hyparquet", "package.json")).version).toBe("1.31.1");
+    expect(read(path.join(NODE_MODULES, "hyparquet", "package.json")).version).toBe("1.31.5");
     expect(read(compressorsManifest).version).toBe("1.1.2");
     expect(read(resolveFrom(compressorsManifest, "fzstd/package.json")).version).toBe("0.1.1");
     expect(read(resolveFrom(compressorsManifest, "hysnappy/package.json")).version).toBe("1.1.1");

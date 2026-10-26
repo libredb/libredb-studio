@@ -72,7 +72,7 @@ export const ETCD_DEFAULT_PORT = 2379;
 export const ETCD_IP_SERVER_NAME = "etcd.invalid";
 
 /**
- * The channel's maximum receive size M (spec 5.4, E14): four times grpc-js 1.14.5's own default of
+ * The channel's maximum receive size M (spec 5.4, E14): four times grpc-js 1.14.6's own default of
  * 4 MiB and twice the byte budget B of 8 MiB. A get page whose answer is past M is asked again with
  * half its limit (execute.ts readPage), so only a get page of one key past M, or any other answer past
  * M, fails naming the cap rather than filling the process. Kept by Task 22's measurement on 2026-10-01

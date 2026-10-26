@@ -41,6 +41,7 @@ const GROUPS = {
     "BEARER_NO_ROLE",
     "BEARER_NO_IDENTITY",
     "ADMIN_REQUIRED",
+    "ACCOUNT_STORE_UNAVAILABLE",
   ],
   transaction: ["TRANSACTION_NOT_OWNED"],
   connectionPolicy: ["CUSTOM_CONNECTIONS_DISABLED"],
@@ -92,6 +93,11 @@ describe("ApiErrorCode", () => {
   test("contains the workspace owner mismatch code, distinct from the session-required code", () => {
     expect(ApiErrorCode.WORKSPACE_OWNER_MISMATCH).toBe("WORKSPACE_OWNER_MISMATCH");
     expect(ApiErrorCode.WORKSPACE_OWNER_MISMATCH).not.toBe(ApiErrorCode.AUTH_REQUIRED);
+  });
+
+  test("contains the account store unavailable code, distinct from AUTH_REQUIRED (#1942)", () => {
+    expect(ApiErrorCode.ACCOUNT_STORE_UNAVAILABLE).toBe("ACCOUNT_STORE_UNAVAILABLE");
+    expect(ApiErrorCode.ACCOUNT_STORE_UNAVAILABLE).not.toBe(ApiErrorCode.AUTH_REQUIRED);
   });
 
   test("contains the custom-connections refusal code, distinct from a role refusal's AUTH_ERROR", () => {

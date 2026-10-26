@@ -49,10 +49,18 @@ function makePattern(maskType: MaskType, customMask?: string): MaskingPattern {
 describe("maskByType", () => {
   test("masks email address", () => {
     const result = maskByType("john.doe@example.com", makePattern("email"));
-    expect(result).toContain("@");
-    expect(result).toStartWith("j");
-    expect(result).toContain("*");
-    expect(result).not.toBe("john.doe@example.com");
+    expect(result).toBe("j*******@e**********");
+  });
+
+  test.each([
+    ["@example.com", "***@***.***"],
+    ["bob@", "***@***.***"],
+    ["@", "***@***.***"],
+    ["a@b", "a**@b**"],
+    ["bob@example@com", "***@***.***"],
+    ["😀lice@🌐xample.com", "😀****@🌐**********"],
+  ])("email mask maps %j to %j", (value, expected) => {
+    expect(maskByType(value, makePattern("email"))).toBe(expected);
   });
 
   test("masks malformed email (no @)", () => {
@@ -93,16 +101,49 @@ describe("maskByType", () => {
     expect(result).toBe("********");
   });
 
-  test("partial mask preserves first/last 4 chars for long values", () => {
+  test("partial mask scales the visible ends for a short token", () => {
     const result = maskByType("sk-proj-abc123xyz789", makePattern("partial"));
-    expect(result).toStartWith("sk-p");
-    expect(result).toEndWith("z789");
-    expect(result).toContain("*");
+    expect(result).toBe("sk****************89");
+  });
+
+  test.each([
+    ["", ""],
+    ["a", "*"],
+    ["abcdefghi", "a*******i"],
+    ["abcdefghij", "a********j"],
+    ["abcdefghijkl", "a**********l"],
+    ["abcdefghijklmno", "a*************o"],
+    ["abcdefghijklmnop", "ab************op"],
+    ["abcdefghijklmnopqrstuvw", "ab*******************vw"],
+    ["abcdefghijklmnopqrstuvwx", "abc******************vwx"],
+    ["abcdefghijklmnopqrstuvwxyz12345", "abc*************************345"],
+    ["abcdefghijklmnopqrstuvwxyz123456", "abcd************************3456"],
+    ["abcdefghijklmnopqrstuvwxyz1234567", "abcd*************************4567"],
+    ["abcdefghijklmnopqrstuvwxyz1234567890ABCD", "abcd********************************ABCD"],
+    ["sk-pro...789j", "s***********j"],
+    ["😀bcdefghij😀", "😀*********😀"],
+    ["😀bcdefghijk😀", "😀**********😀"],
+    ["😀😀😀😀😀", "*****"],
+    ["😀bcdefgh", "********"],
+  ])("partial mask maps %j to %j by code point", (value, expected) => {
+    expect(maskByType(value, makePattern("partial"))).toBe(expected);
   });
 
   test("partial mask fully masks short values (<=8 chars)", () => {
     const result = maskByType("abcd1234", makePattern("partial"));
     expect(result).toBe("********");
+  });
+
+  test("default config masks token and malformed email columns without mutating rows", () => {
+    const fields = ["id", "api_key", "email"];
+    const rows = [{ id: 1, api_key: "abcdefghi", email: "@example.com" }];
+    const originalRows = structuredClone(rows);
+    const sensitiveColumns = detectSensitiveColumnsFromConfig(fields, DEFAULT_MASKING_CONFIG);
+
+    const result = applyMaskingToRows(rows, fields, sensitiveColumns);
+
+    expect(result).toEqual([{ id: 1, api_key: "a*******i", email: "***@***.***" }]);
+    expect(rows).toEqual(originalRows);
   });
 
   test("masks IP address", () => {
@@ -123,6 +164,19 @@ describe("maskByType", () => {
   test("masks short date", () => {
     const result = maskByType("05", makePattern("date"));
     expect(result).toBe("****-**-**");
+  });
+
+  test("date mask keeps the day of a timestamp, not its last two characters (#1917)", () => {
+    expect(maskByType("1990-05-17T00:00:00.000Z", makePattern("date"))).toBe("****-**-17");
+    expect(maskByType("1990-05-17 12:34:56", makePattern("date"))).toBe("****-**-17");
+    expect(maskByType("1990-05-17 12:34:56+05:30", makePattern("date"))).toBe("****-**-17");
+  });
+
+  test("date mask hides a value that is not an ISO date whole (#1917)", () => {
+    expect(maskByType("17/05/1990", makePattern("date"))).toBe("****-**-**");
+    expect(maskByType("Thu May 17 1990 00:00:00 GMT+0000", makePattern("date"))).toBe("****-**-**");
+    expect(maskByType("1990-05-170", makePattern("date"))).toBe("****-**-**");
+    expect(maskByType("abcd", makePattern("date"))).toBe("****-**-**");
   });
 
   test("masks financial value", () => {

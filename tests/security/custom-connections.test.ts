@@ -43,7 +43,14 @@ const mockGetSession = mock(
 // Spread over the real module: a partial replacement stays installed process-wide and breaks the
 // next importer of an export this one forgot. An admin session, so the admin-only routes reach
 // their connection handling too.
-mock.module("@/lib/auth", () => ({ ...realAuth, getSession: mockGetSession }));
+mock.module("@/lib/auth", () => ({
+  ...realAuth,
+  getSession: mockGetSession,
+  readSession: mock(async () => {
+    const s = await mockGetSession();
+    return s ? { kind: "authenticated", session: s } : { kind: "anonymous" };
+  }),
+}));
 
 const { clearRateLimitState } = await import("@/lib/api/rate-limit");
 const { resetCache } = await import("@/lib/seed");
