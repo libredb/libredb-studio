@@ -38,7 +38,7 @@ const UNAUTHENTICATED = 16;
 const STATUS_TASK_CONDITION = 10001;
 const CONTEXT_DEADLINE = "context deadline exceeded";
 
-/** grpc-js 1.14.5's deadline texts for a call that never had a stream; only these say the request never left. */
+/** grpc-js 1.14.6's deadline texts for a call that never had a stream; only these say the request never left. */
 const PRE_SEND_DEADLINE_MARKERS: readonly string[] = [
   "waiting for name resolution",
   "waiting for metadata filters",

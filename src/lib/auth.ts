@@ -72,45 +72,59 @@ export async function verifyJWT(token: string) {
   }
 }
 
-export async function getSession() {
+export type SessionReading =
+  | { readonly kind: "authenticated"; readonly session: UserPayload }
+  | { readonly kind: "anonymous" }
+  | { readonly kind: "store_unavailable"; readonly error: unknown };
+
+export async function readSession(): Promise<SessionReading> {
   // A Bearer header decides alone while the channel is on, even next to a valid cookie, and with it on or off the
   // cookie is never touched here. Absent, the cookie decides as it always did.
-  const bearer = await authenticateBearer((await headers()).get("authorization"));
+  const headerList = await headers();
+  const authHeader = headerList.get("authorization");
+  const bearer = await authenticateBearer(authHeader);
   if (bearer.kind === "fault") {
-    logger.error("Could not verify a bearer access token, refusing the session", bearer.error, { route: "auth" });
-    return null;
+    logger.error("Could not verify a bearer access token; refusing", bearer.error, { route: "auth" });
+    return { kind: "anonymous" };
   }
-  if (bearer.kind === "denied") return null;
+  if (bearer.kind === "denied") return { kind: "anonymous" };
   if (bearer.kind === "authenticated") {
     // Under governance the access token's subject, issuer and own iat meet the same rule as a cookie session's.
     try {
-      return (await storedAccountAllows(bearer.session)) ? bearer.session : null;
+      const allowed = await storedAccountAllows(bearer.session);
+      return allowed ? { kind: "authenticated", session: bearer.session } : { kind: "anonymous" };
     } catch (error) {
-      logger.error("Could not read the account registry, refusing the session", error, { route: "auth" });
-      return null;
+      logger.error("Could not read the account registry, store unavailable", error, { route: "auth" });
+      return { kind: "store_unavailable", error };
     }
   }
 
   const cookieStore = await cookies();
   const token = cookieStore.get("auth-token")?.value;
-  if (!token) return null;
+  if (!token) return { kind: "anonymous" };
   const session = await verifyJWT(token);
-  if (!session) return null;
+  if (!session) return { kind: "anonymous" };
   // The token is valid for 24 hours whatever happens to the account, so a stored account is read
   // again here: disabled, deleted, demoted or password-reset means this session is over. A registry
-  // that cannot be read refuses the session rather than trusting a token it cannot check.
+  // that cannot be read reports an outage (store_unavailable) rather than refusing a valid session
+  // or clearing its cookie (#1942).
   let allowed: boolean;
   try {
     allowed = await storedAccountAllows(session);
   } catch (error) {
-    logger.error("Could not read the account registry, refusing the session", error, { route: "auth" });
-    return null;
+    logger.error("Could not read the account registry, store unavailable", error, { route: "auth" });
+    return { kind: "store_unavailable", error };
   }
-  if (allowed) return session;
+  if (allowed) return { kind: "authenticated", session };
   // The proxy verifies only the signature, so a refused cookie would keep sending /login back to
   // the editor. Clearing it here, on the route's response, lets the next navigation reach login.
   await logout();
-  return null;
+  return { kind: "anonymous" };
+}
+
+export async function getSession(): Promise<UserPayload | null> {
+  const reading = await readSession();
+  return reading.kind === "authenticated" ? reading.session : null;
 }
 
 /** Hosts whose traffic never leaves the machine (port is stripped before the check). */

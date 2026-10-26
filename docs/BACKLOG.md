@@ -32,7 +32,7 @@ None of it is a GitHub issue.
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U148 · 134
-- [Dependencies](#dependencies) — P1-P9 · 7
+- [Dependencies](#dependencies) — P1-P11 · 9
 - [Documentation](#documentation) — DOC3-DOC35 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
 - [Chart configuration surface](#chart-configuration-surface) — N1 · 1
@@ -369,7 +369,7 @@ So the consolidation this entry asks for now has two sources to reconcile rather
 
 **A third mapping exists, by the same decision.**
 The Kafka provider (#1088, section 3.5) maps the TLS panel in `tlsOptions` of `src/lib/db/providers/stream/kafka/connection-options.ts`, `ca`, `cert` and `key` from the panel and the same `rejectUnauthorized` rule, because that PR too was decided to touch no other provider.
-It is a mapping only: the TLS connection is the Kafka client's own, over `node:tls`, so there is no request path to share, and it adds the server-name rule a Kafka client needs (SNI for a DNS host, none for an IP literal).
+It is a mapping only: the TLS connection is the Kafka client's own, over `node:tls`, so there is no request path to share, and its adapter turns on the client's server-name option, which since `@platformatic/kafka` 2.14.0 sends SNI for a DNS host and none for an IP literal.
 
 Not a defect in what any of them measures - it is a field the form offers and the transport
 discards, which is the kind of silence a security setting must not have.
@@ -1717,8 +1717,8 @@ Each is drafted below as an upstream issue, for the maintainer to approve, rewor
    The metadata cache answers an internal topic's name with `undefined` (`dist/clients/base/base.js`), and `listOffsets` dereferences it inside the socket handler, with the same unsettled call.
    Draft: "listOffsets on an internal topic should reject with an error rather than throw inside the socket handler."
 5. **`tlsServerName` and IP literals.**
-   With `tlsServerName: true` the client sends the connection's host as the server name even when it is an IP literal, which Node 26 and Bun refuse with `ERR_INVALID_ARG_VALUE` and Node 24 warns on (DEP0123); the provider rebuilds its clients without the option when a broker is advertised by IP.
-   Draft: "Skip SNI for a host that is an IP literal, as RFC 6066 requires."
+   With `tlsServerName: true` the client sent the connection's host as the server name even when it was an IP literal, which Node 26 and Bun refuse with `ERR_INVALID_ARG_VALUE` and Node 24 warns on (DEP0123), and the provider rebuilt its clients without the option when a broker was advertised by IP.
+   Fixed upstream in 2.14.0, which sends no server name for an IP literal (`dist/network/connection.js`); the provider took 2.14.0 on 2026-10-26 and dropped the rebuild, so this item needs no filing.
 6. **A fetch session epoch left behind.**
    A fetch answered with a partition error leaves the client's fetch session epoch behind the broker's, so the next fetch to that broker meets INVALID_FETCH_SESSION_EPOCH; the provider's own fetches open no session.
    Draft: "After a fetch that answers a partition error, the session epoch should follow the broker's, or the session be reset."
@@ -1851,7 +1851,7 @@ Found 2026-09-30 while designing the etcd provider (#1089, spec 6.1).
 
 ### D132. grpc-js sends an IP-literal target as the TLS server name, which Node 25 and later and Bun refuse
 
-`@grpc/grpc-js` 1.14.5 sets the TLS `servername` from the dial target (`connectionOptions.servername = remoteHost` in `build/src/channel-credentials.js`), and Node 25 and later and Bun refuse an IP address as a server name with `ERR_INVALID_ARG_VALUE`, "Setting the TLS ServerName to an IP address is not permitted".
+`@grpc/grpc-js` 1.14.5 sets the TLS `servername` from the dial target (`connectionOptions.servername = remoteHost` in `build/src/channel-credentials.js`), and 1.14.6 still does, and Node 25 and later and Bun refuse an IP address as a server name with `ERR_INVALID_ARG_VALUE`, "Setting the TLS ServerName to an IP address is not permitted".
 The etcd provider works around it with a server-name override that is not an IP and a `checkServerIdentity` that verifies the IP (spec E5), which depends on grpc-js internals and is why grpc-js is pinned exactly.
 Amended 2026-10-04: the override now lives once, in `grpcTlsIdentity` (`src/lib/db/grpc/tls.ts`) and `grpcChannelCredentials` (`src/lib/db/grpc/credentials.ts`), for every gRPC provider.
 No open grpc-node issue covers it; the closed #1919 is about `0.0.0.0`.
@@ -5967,6 +5967,31 @@ Nothing under `src/` imports a `workflow` package, and the runtime image carries
 Found while measuring the official Qdrant client, which pins undici 7.29.0.
 
 **Done when:** the lockfile resolves undici at 7.29.1 or later for both packages, by updating them or by an override with its `//overrides` note, and the regenerated `bun.lock` holds no undici copy inside the advisory's range.
+
+### P10. The rustls and rustls-webpki linked into db2-node's addons are inside six newer RustSec advisories
+
+The `db2-node` 1.0.25 addons statically link `rustls` 0.23.45, `rustls-webpki` 0.103.15 and `tokio` 1.51.0, which npm audit, Dependabot and the CycloneDX SBOM cannot see.
+Checked through the OSV API on 2026-10-26, they are inside RUSTSEC-2026-0346 to RUSTSEC-2026-0349 (`rustls`, patched in 0.23.46), RUSTSEC-2026-0382 (`rustls-webpki`, patched in 0.103.16) and the informational RUSTSEC-2026-0386 (`tokio`, patched in 1.51.6), all published after the 2026-10-04 check.
+Only RUSTSEC-2026-0382 is reachable from the addons, through a verified TLS connection whose trust store holds the operating system's roots; section 12 of `docs/providers/db2.md` gives the reading of each.
+The 1.0.26 and 1.0.27 `Cargo.lock` are byte for byte the 1.0.25 one, so no release moves past them yet, and the crates are compiled in: only a new `db2-node` release can move one.
+
+Found 2026-10-26 while measuring `db2-node` 1.0.27 for the Dependabot production group.
+
+**Done when:** a `db2-node` release links `rustls` 0.23.46 and `rustls-webpki` 0.103.16 or later, the pin moves to it with the measurement its `//dependencies` note asks for, and OSV names no advisory for its `Cargo.lock` but the unmaintained notices section 12 lists.
+
+### P11. db2-node 1.0.26 and 1.0.27 intermittently fail the statement after a one-row result fetched by CNTQRY
+
+On 1.0.26 and 1.0.27 a provider read intermittently fails with `Protocol error: prepare failed with QRYNOPRM`, and every later statement on that connection that reuses the section fails the same way.
+`tests/live/db2-live-check.ts` failed in 5 of 8 runs on Db2 11.5.9.0 and 3 of 8 on 12.1.0.0 through 1.0.27, at "describeObject reads the materialized query table APP.ORDER_TOTALS" or at the two `readObjectSource` checks after it; through 1.0.25, on the same two containers the same day, it passed 8 of 8 on each, and 1.0.26 failed 1 of 3 on 11.5.9.0.
+The wire dump (`DB2_WIRE_DEBUG_HEX=1`) of one failure shows the step before it: the OPNQRY reply to the view-text read carried a QRYDSC and no row, the driver sent CNTQRY, received the one 32680-byte QRYDTA row with ENDQRYRM and SQLCARD, and the next PRPSQLSTT was answered with QRYNOPRM.
+1.0.26 changed exactly that path: off z/OS it now completes a reply at the DRDA chain end instead of draining further frames for a timeout ("complete LUW replies at the DRDA chain end instead of timed drains" in its release notes).
+A loop of the same two reads on one fresh connection, 50 times on each server, did not fail, so the trigger needs more of the live check's sequence than those two statements.
+1.0.27 also fixes K24: a bound CLOB, DBCLOB or BLOB is written alone and beside other parameters, 100000, 40000 and 70000 bytes long, on 12.1.0.0 and 11.5.9.0, so D225 waits on this entry.
+Not yet reported upstream.
+
+Found 2026-10-26 while measuring `db2-node` 1.0.27 for the Dependabot production group; the pin stays at 1.0.25.
+
+**Done when:** a `db2-node` release passes `tests/live/db2-live-check.ts` in 8 of 8 runs on each of Db2 12.1.0.0 and 11.5.9.0, and the pin moves to it with the measurement its `//dependencies` note asks for.
 
 ## Documentation
 

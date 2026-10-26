@@ -192,7 +192,7 @@ const LEADER_CHANGING: ReadonlySet<number> = new Set([
 ]);
 const SHARD_RPCS: ReadonlySet<OxiaRpc> = new Set<OxiaRpc>(["Read", "List", "RangeScan"]);
 
-/** grpc-js 1.14.5's deadline texts for a call that never had a stream; only these say the request never left. */
+/** grpc-js 1.14.6's deadline texts for a call that never had a stream; only these say the request never left. */
 const PRE_SEND_DEADLINE_MARKERS: readonly string[] = [
   "waiting for name resolution",
   "waiting for metadata filters",

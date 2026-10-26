@@ -166,9 +166,9 @@ describe("the connect and transport rows", () => {
   });
 
   /**
-   * Measured with @grpc/grpc-js 1.14.5 under Bun 1.4.2 and Node 24.14.0 against tests/fixtures/tls; the certificate
-   * dates against a scratch certificate, since the fixtures hold no expired one. tls-handshake.test.ts repeats every
-   * case the fixtures can reach.
+   * Measured with @grpc/grpc-js 1.14.5, and the fixture cases again with 1.14.6, under Bun 1.4.2 and Node 24.14.0
+   * against tests/fixtures/tls; the certificate dates against a scratch certificate, since the fixtures hold no expired
+   * one. tls-handshake.test.ts repeats every case the fixtures can reach.
    */
   const MEASURED_TLS: readonly (readonly [string, string, string])[] = [
     [

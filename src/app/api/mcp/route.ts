@@ -1,5 +1,6 @@
 import type { AuthInfo } from "@modelcontextprotocol/server";
 import { NextResponse } from "next/server";
+import { ACCOUNT_STORE_UNAVAILABLE_BODY } from "@/lib/api/account-store-error";
 import { getAppVersion } from "@/lib/app-version";
 import { runtimeSetting } from "@/lib/governance/settings";
 import { logger } from "@/lib/logger";
@@ -58,7 +59,11 @@ async function admit(request: Request): Promise<Admission> {
   const authentication = await authenticateMcpRequest(request);
   if (authentication.kind === "denied") auditMcpDenial(request, authentication.reason);
   if (authentication.kind !== "authenticated") return { response: authentication.response };
-  if (!(await mcpTokenOwnerAllowed(authentication.authInfo))) {
+  const ownerAdmission = await mcpTokenOwnerAllowed(authentication.authInfo);
+  if (ownerAdmission === "store_unavailable") {
+    return { response: NextResponse.json(ACCOUNT_STORE_UNAVAILABLE_BODY, { status: 503 }) };
+  }
+  if (!ownerAdmission) {
     auditMcpDenial(request, "mcp_token_invalid");
     return { response: mcpRevokedTokenResponse() };
   }

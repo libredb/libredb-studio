@@ -165,6 +165,7 @@ afterAll(async () => {
 
 /** The session reader, answering as the admin unless a test signs another account in with `signIn`. */
 let getSession: ReturnType<typeof spyOn>;
+let readSession: ReturnType<typeof spyOn>;
 
 const signIn = (session: auth.UserPayload): void => {
   getSession.mockResolvedValue(session);
@@ -174,10 +175,15 @@ beforeEach(() => {
   clearRateLimitState();
   recordGovernanceSnapshot({ ...loaded, loadedAt: Date.now() });
   getSession = spyOn(auth, "getSession").mockResolvedValue(ADMIN);
+  readSession = spyOn(auth, "readSession").mockImplementation(async () => {
+    const s = await auth.getSession();
+    return s ? { kind: "authenticated", session: s } : { kind: "anonymous" };
+  });
 });
 
 afterEach(() => {
   getSession.mockRestore();
+  readSession.mockRestore();
 });
 
 /** A connection that would really open if anything let it through. */

@@ -21,6 +21,10 @@ import { createMockRequest, parseResponseJSON } from "../helpers/mock-next";
 const mockGetSession = mock(async () => ({ role: "admin", username: "admin" }) as unknown);
 mock.module("@/lib/auth", () => ({
   getSession: mockGetSession,
+  readSession: mock(async () => {
+    const s = await mockGetSession();
+    return s ? { kind: "authenticated", session: s } : { kind: "anonymous" };
+  }),
   signJWT: mock(async () => "mock-token"),
   verifyJWT: mock(async () => null),
   login: mock(async () => {}),

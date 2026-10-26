@@ -57,7 +57,7 @@ The channel never goes through an `http_proxy`, `https_proxy` or `grpc_proxy` va
 
 ### 2.4 The client, and why
 
-The client is `@grpc/grpc-js` 1.14.5 with `@grpc/proto-loader` 0.8.1, pinned exactly, over a JSON descriptor of the v3.7.2 protos generated ahead of time, with `protobufjs` 7.6.6 pinned as a devDependency for the generator.
+The client is `@grpc/grpc-js` 1.14.6 with `@grpc/proto-loader` 0.8.1, pinned exactly, over a JSON descriptor of the v3.7.2 protos generated ahead of time, with `protobufjs` 7.6.6 pinned as a devDependency for the generator.
 It was chosen by measurement: it passed every check on Node 24 and Node 26, and under Bun all but the two error texts Bun does not report, once two pieces of code were in place: a server-name override for a TLS connection to an IP address, now in the shared gRPC transport of `src/lib/db/grpc/`, and `call.cancel()` on every end of a watch, which the adapter still makes.
 `microsoft/etcd3` was set aside: it fails TLS to an IP address on Node 26 and Bun, loads its protos from disk at run time, cannot cancel a call in flight, and has had no functional commit since 2023-07-30.
 etcd's JSON gateway is not used, because it cannot carry client-certificate authentication with RBAC on, and neither k3s's embedded etcd nor kine serves it.

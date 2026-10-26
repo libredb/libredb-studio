@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { getEventListeners } from "node:events";
-import { type AddressInfo, createServer, type Socket } from "node:net";
+import { type AddressInfo, createServer, isIP, type Socket } from "node:net";
 import {
   KafkaError,
   type KafkaErrorCategory,
@@ -216,50 +216,6 @@ const afterLeaderMove = (movedTo: number, failure: () => unknown, failing: "fetc
   };
 };
 
-/**
- * The recorded library with every Admin, Consumer and pool construction its own object, so a call names
- * the client it reached (`admin2.listTopics`), which the shared objects of the recorded library cannot.
- */
-const generationalLib = (overrides: Parameters<typeof fakeLib>[0] = {}) => {
-  const recorded = fakeLib(overrides);
-  const reached: string[] = [];
-  const built: Record<string, number> = {};
-  const tagged = <T extends object>(kind: string, shared: T): T => {
-    built[kind] = (built[kind] ?? 0) + 1;
-    const generation = built[kind];
-    return new Proxy(shared, {
-      get: (target, member) => {
-        const value: unknown = Reflect.get(target, member);
-        if (typeof value !== "function") return value;
-        return (...args: unknown[]) => {
-          reached.push(`${kind}${generation}.${String(member)}`);
-          return value.apply(target, args);
-        };
-      },
-    });
-  };
-  const { Admin, Consumer, ConnectionPool } = recorded.lib;
-  const lib: typeof recorded.lib = {
-    ...recorded.lib,
-    Admin: class {
-      constructor(o: object) {
-        return tagged("admin", new Admin(o));
-      }
-    } as never,
-    Consumer: class {
-      constructor(o: object) {
-        return tagged("consumer", new Consumer(o));
-      }
-    } as never,
-    ConnectionPool: class {
-      constructor(id: string, o: object) {
-        return tagged("pool", new ConnectionPool(id, o));
-      }
-    } as never,
-  };
-  return { ...recorded, lib, reached };
-};
-
 /** A fetch that answers only when the test releases it, counting how many are in flight at once. */
 const heldFetches = () => {
   const held: Array<() => void> = [];
@@ -363,13 +319,12 @@ describe("createPlatformaticClient", () => {
     });
   });
 
-  test("TLS, SNI and SASL reach the client options; a connection without them carries none", () => {
+  test("TLS and SASL reach the client options, TLS with the server name on; a connection without them carries none", () => {
     const { lib, constructed } = fakeLib();
     createPlatformaticClient(
       {
         ...OPTIONS,
         tls: { ca: "CA", rejectUnauthorized: true },
-        tlsServerName: true,
         sasl: { mechanism: "SCRAM-SHA-512", username: "u", password: "p" },
       },
       lib,
@@ -392,106 +347,6 @@ describe("createPlatformaticClient", () => {
     }
   });
 
-  test("a cluster that advertises a broker by IP gets both clients and the fetch pool rebuilt without SNI, once", async () => {
-    const { lib, constructed, calls } = fakeLib({
-      "admin.metadata": () => ({
-        id: "c",
-        controllerId: 1,
-        brokers: new Map([[1, { host: "10.0.0.5", port: 9092, rack: null }]]),
-        topics: new Map(),
-      }),
-    });
-    const client = createPlatformaticClient(
-      { ...OPTIONS, tls: { rejectUnauthorized: true }, tlsServerName: true },
-      lib,
-    );
-    await client.metadata([]);
-    await client.metadata([]);
-    const admins = constructed
-      .filter(([n]) => n === "Admin")
-      .map(([, o]) => (o as Record<string, unknown>).tlsServerName);
-    expect(admins).toEqual([true, undefined]);
-    expect(constructed.filter(([n]) => n === "Consumer").length).toBe(2);
-    expect(
-      constructed.filter(([n]) => n === "ConnectionPool").map(([, o]) => (o as Record<string, unknown>).tlsServerName),
-    ).toEqual([true, undefined]);
-    expect(
-      calls
-        .map(([n]) => n)
-        .filter((n) => n.endsWith(".close"))
-        .sort(),
-    ).toEqual(["admin.close", "consumer.close", "pool.close"]);
-  });
-
-  test("once the clients are rebuilt without SNI, every later call reaches the rebuilt ones, and the first are only closed", async () => {
-    const { lib, reached } = generationalLib({
-      "admin.metadata": (o) => ({
-        ...allTopics(o),
-        brokers: new Map([[1, { host: "10.0.0.5", port: 9092, rack: null }]]),
-      }),
-    });
-    const client = createPlatformaticClient(
-      { ...OPTIONS, tls: { rejectUnauthorized: true }, tlsServerName: true },
-      lib,
-    );
-    await client.metadata([]);
-    await client.listTopics();
-    await client.offsets("orders", "latest");
-    const [orders] = (await client.metadata(["orders"])).topics;
-    await client.fetch(orders, 1, big(5), signal());
-    await client.close();
-    expect(reached).toEqual([
-      "admin1.metadata",
-      "admin1.close",
-      "consumer1.close",
-      "pool1.close",
-      "admin2.listTopics",
-      "admin2.metadata",
-      "consumer2.listOffsets",
-      "admin2.metadata",
-      "admin2.listApis",
-      "admin2.metadata",
-      "pool2.get",
-      "admin2.close",
-      "consumer2.close",
-      "pool2.close",
-    ]);
-  });
-
-  test.each<[string, "raw" | "library"]>([
-    ["the answer a leaderless partition's error carries", "raw"],
-    ["the library's answer", "library"],
-  ])(
-    "a leaderless read's forced re-read is a broker list like any other: an IP broker in %s rebuilds the clients without SNI",
-    async (_, path) => {
-      const ipBrokers = { brokers: [{ nodeId: 1, host: "10.0.0.5", port: 9092, rack: null }] };
-      let reads = 0;
-      const { lib, constructed } = fakeLib({
-        "admin.metadata": () => {
-          reads++;
-          if (reads === 1 || path === "raw")
-            throw leaderless(reads === 1 ? RAW_OFFLINE : { ...RAW_OFFLINE, ...ipBrokers });
-          return { ...ordersWithLeader(1), brokers: new Map([[1, { host: "10.0.0.5", port: 9092, rack: null }]]) };
-        },
-      });
-      const client = createPlatformaticClient(
-        { ...OPTIONS, tls: { rejectUnauthorized: true }, tlsServerName: true },
-        lib,
-      );
-      expect((await client.metadata(["orders"])).brokers).toEqual([
-        { nodeId: 1, host: "10.0.0.5", port: 9092, rack: null },
-      ]);
-      expect(constructed.map(([n, o]) => [n, (o as Record<string, unknown>).tlsServerName])).toEqual([
-        ["Admin", true],
-        ["Consumer", true],
-        ["ConnectionPool", true],
-        ["Admin", undefined],
-        ["Consumer", undefined],
-        ["ConnectionPool", undefined],
-      ]);
-    },
-  );
-
   test.each<[string, (client: KafkaReadClient) => Promise<unknown>, (o: unknown) => unknown]>([
     ["a metadata read", (client) => client.metadata([]), () => ordersWithBrokerAt("10.0.0.5")],
     [
@@ -504,32 +359,47 @@ describe("createPlatformaticClient", () => {
       (client) => client.fetch(topicNamed("orders"), 0, big(5), signal()),
       (o) => ordersWithBrokerAt((o as { forceUpdate?: boolean }).forceUpdate ? "10.0.0.5" : "localhost"),
     ],
+    [
+      "a leaderless read's forced re-read",
+      (client) => client.metadata(["orders"]),
+      (o) => {
+        if (!(o as { forceUpdate?: boolean }).forceUpdate) throw leaderless(RAW_OFFLINE);
+        return { ...ordersWithLeader(1), brokers: new Map([[1, { host: "10.0.0.5", port: 9092, rack: null }]]) };
+      },
+    ],
   ])(
-    "the clients an SNI rebuild after %s replaces are closed before the call answers, and a close that fails fails the call",
+    "a broker advertised by IP in %s rebuilds no client: the one set keeps tlsServerName on, and the library leaves an IP literal unnamed (spec 6.1)",
     async (_, call, metadata) => {
-      // Awaited, so a close that fails is the call's failure rather than a rejection nothing handles.
-      const failure = new Error("the old admin could not be closed");
-      const { lib } = fakeLib({
-        "admin.metadata": metadata,
-        "admin.close": () => Promise.reject(failure),
+      // Since @platformatic/kafka 2.14.0 the library decides the server name per connection and sends
+      // none for an IP literal (dist/network/connection.js), which Node 26 would refuse as a server name.
+      let ipAnswers = 0;
+      const { lib, constructed, calls } = fakeLib({
+        "admin.metadata": (o) => {
+          const md = metadata(o) as { brokers: Map<number, { host: string }> };
+          if ([...md.brokers.values()].some((b) => isIP(b.host) !== 0)) ipAnswers++;
+          return md;
+        },
         fetchV13: () => {
           throw notLeader();
         },
       });
-      const client = createPlatformaticClient(
-        { ...OPTIONS, tls: { rejectUnauthorized: true }, tlsServerName: true },
-        lib,
-      );
-      expect(await call(client).catch((e) => e)).toBe(failure);
+      const client = createPlatformaticClient({ ...OPTIONS, tls: { rejectUnauthorized: true } }, lib);
+      await call(client).catch(() => undefined);
+      expect(ipAnswers).toBeGreaterThan(0);
+      expect(constructed.map(([n, o]) => [n, (o as Record<string, unknown>).tlsServerName])).toEqual([
+        ["Admin", true],
+        ["Consumer", true],
+        ["ConnectionPool", true],
+      ]);
+      expect(calls.map(([n]) => n).filter((n) => n.endsWith(".close"))).toEqual([]);
     },
   );
 
   test.each(["10.0.0.5", "fd00::5"])(
-    "one broker advertised by IP (%s) among named ones is enough: both clients are rebuilt without SNI (spec 6.1)",
+    "one broker advertised by IP (%s) among named ones keeps the server name for the named ones (spec 6.1)",
     async (ip) => {
-      // The client's SNI option is one flag for all of its broker connections, and Node 26 throws
-      // on an IP literal as a server name. The IP broker sits between two named ones, so a check
-      // that asks whether any broker has a name, or reads only the first or the last, keeps SNI.
+      // The option is one flag for all of a client's broker connections, and the library reads it
+      // per connection, so the named brokers still get their server name, which SNI routing needs.
       const { lib, constructed, calls } = fakeLib({
         "admin.metadata": () => ({
           id: "c",
@@ -542,76 +412,16 @@ describe("createPlatformaticClient", () => {
           topics: new Map(),
         }),
       });
-      const client = createPlatformaticClient(
-        { ...OPTIONS, tls: { rejectUnauthorized: true }, tlsServerName: true },
-        lib,
-      );
+      const client = createPlatformaticClient({ ...OPTIONS, tls: { rejectUnauthorized: true } }, lib);
       await client.metadata([]);
       expect(constructed.map(([n, o]) => [n, (o as Record<string, unknown>).tlsServerName])).toEqual([
         ["Admin", true],
         ["Consumer", true],
         ["ConnectionPool", true],
-        ["Admin", undefined],
-        ["Consumer", undefined],
-        ["ConnectionPool", undefined],
       ]);
-      expect(
-        calls
-          .map(([n]) => n)
-          .filter((n) => n.endsWith(".close"))
-          .sort(),
-      ).toEqual(["admin.close", "consumer.close", "pool.close"]);
+      expect(calls.map(([n]) => n).filter((n) => n.endsWith(".close"))).toEqual([]);
     },
   );
-
-  test("a cluster that advertises its brokers by name keeps SNI", async () => {
-    const { lib, constructed } = fakeLib();
-    const client = createPlatformaticClient(
-      { ...OPTIONS, tls: { rejectUnauthorized: true }, tlsServerName: true },
-      lib,
-    );
-    await client.metadata([]);
-    expect(constructed.map(([n]) => n)).toEqual(["Admin", "Consumer", "ConnectionPool"]);
-  });
-
-  test("an IP broker a read's fetch first learns of rebuilds the fetch pool without SNI before the fetch connects", async () => {
-    // The address a fetch is sent to comes from the cluster's broker list, which the fetch may be the
-    // first to read on this client; it is checked the same way, so no connection names an IP as a server.
-    const { lib, constructed, calls } = fakeLib({
-      "admin.metadata": () => {
-        const md = kafkaFixture<{ brokers: Map<number, { host: string; port: number; rack: null }> }>(
-          "metadata-orders",
-        );
-        md.brokers = new Map([[1, { host: "10.0.0.5", port: 9092, rack: null }]]);
-        return md;
-      },
-    });
-    const client = createPlatformaticClient(
-      { ...OPTIONS, tls: { rejectUnauthorized: true }, tlsServerName: true },
-      lib,
-    );
-    const orders = kafkaFixture<{ topics: Map<string, { id: string }> }>("metadata-orders").topics.get("orders")!;
-    const topic: KafkaTopicMetadata = {
-      name: "orders",
-      id: orders.id,
-      partitions: [0, 1, 2].map((partition) => ({
-        partition,
-        leader: 1,
-        leaderEpoch: 0,
-        replicas: [1],
-        isr: [1],
-        offlineReplicas: [],
-      })),
-    };
-    await client.fetch(topic, 1, big(5), signal());
-    const pools = constructed.filter(([n]) => n === "ConnectionPool").map(([, o]) => o as Record<string, unknown>);
-    expect(pools.map((o) => o.tlsServerName)).toEqual([true, undefined]);
-    // The fetch went out on the rebuilt pool, the one whose connections carry no server name.
-    const gets = calls.filter(([n]) => n === "pool.get").length;
-    const closes = calls.filter(([n]) => n === "pool.close").length;
-    expect([gets, closes]).toEqual([1, 1]);
-    expect(calls.findIndex(([n]) => n === "pool.close")).toBeLessThan(calls.findIndex(([n]) => n === "pool.get"));
-  });
 
   test("every metadata read passes autocreateTopics: false; a brokers-only read is forced past the library's cache", async () => {
     const { lib, calls } = fakeLib();
@@ -1393,7 +1203,7 @@ describe("createPlatformaticClient", () => {
     expect(fetchedFrom(calls)).toEqual([2]);
   });
 
-  test("an IP broker a forced re-read first names rebuilds the fetch pool without SNI before the re-fetch connects", async () => {
+  test("a leader a forced re-read moves to an IP broker is fetched from on the same pool, its server name left to the library", async () => {
     let fetches = 0;
     const { lib, constructed, calls } = fakeLib({
       "admin.metadata": (o) => {
@@ -1408,20 +1218,15 @@ describe("createPlatformaticClient", () => {
         return kafkaFixture("fetch-orders-p1-o5");
       },
     });
-    const client = createPlatformaticClient(
-      { ...OPTIONS, tls: { rejectUnauthorized: true }, tlsServerName: true },
-      lib,
-    );
+    const client = createPlatformaticClient({ ...OPTIONS, tls: { rejectUnauthorized: true } }, lib);
     await client.fetch((await client.metadata(["orders"])).topics[0], 1, big(5), signal());
     expect(
       constructed.filter(([n]) => n === "ConnectionPool").map(([, o]) => (o as Record<string, unknown>).tlsServerName),
-    ).toEqual([true, undefined]);
+    ).toEqual([true]);
     const names = calls.map(([n]) => n);
-    // The first pool is closed after the first fetch and before the connection the second one needs.
     expect(names.filter((n) => n === "pool.get" || n === "pool.close" || n === "fetchV13")).toEqual([
       "pool.get",
       "fetchV13",
-      "pool.close",
       "pool.get",
       "fetchV13",
     ]);
@@ -1816,7 +1621,7 @@ describe("createPlatformaticClient", () => {
       requestTimeout: 5000,
     });
     // Without TLS the connection carries no server name, as the clients carry none; with TLS, the
-    // KIP-848 member test below sends one to a DNS host.
+    // KIP-848 member test below turns it on, for a DNS host and an IP literal alike.
     expect(Object.keys(constructed.find(([n]) => n === "Connection")![1] as object)).not.toContain("tlsServerName");
     expect(calls.filter(([n]) => n === "connection.close").length).toBe(1);
   });
@@ -1934,7 +1739,7 @@ describe("createPlatformaticClient", () => {
     });
   });
 
-  test("a KIP-848 group's members are mapped from API 69, every one in order with its assignment, and its connection sends SNI only to a DNS host", async () => {
+  test("a KIP-848 group's members are mapped from API 69, every one in order with its assignment, and its connection turns the server name on for any host", async () => {
     // Three members, as a KIP-848 group of several consumers answers: one with no assignment, one
     // assigned partitions of two topics, one assigned one partition; the captures hold none.
     const answer = {
@@ -1968,12 +1773,10 @@ describe("createPlatformaticClient", () => {
         },
       ],
     };
-    const tlsOptions = { ...OPTIONS, tls: { rejectUnauthorized: true }, tlsServerName: true as const };
+    const tlsOptions = { ...OPTIONS, tls: { rejectUnauthorized: true } };
     const listing = { groupId: "g", state: "Stable", groupType: "consumer" as const, protocolType: "consumer" };
-    for (const [host, sni] of [
-      ["broker-2.example", true],
-      ["10.0.0.5", undefined],
-    ] as const) {
+    // The server name is on for either coordinator host: the library leaves an IP literal unnamed itself.
+    for (const host of ["broker-2.example", "10.0.0.5"]) {
       const { lib, constructed } = fakeLib({
         consumerGroupDescribeV0: () => answer,
         "admin.findCoordinator": () => [{ key: "g", nodeId: 2, host, port: 9092 }],
@@ -1993,7 +1796,7 @@ describe("createPlatformaticClient", () => {
         { memberId: "m", clientId: "c", clientHost: "/h", assignment: [{ topic: "orders", partitions: [1] }] },
       ]);
       const connection = constructed.find(([n]) => n === "Connection")![1] as Record<string, unknown>;
-      expect(connection.tlsServerName).toBe(sni);
+      expect(connection.tlsServerName).toBe(true);
       expect(connection.tls).toEqual({ rejectUnauthorized: true });
     }
   });
@@ -2005,7 +1808,7 @@ describe("createPlatformaticClient", () => {
     const sasl = { mechanism: "SCRAM-SHA-512" as const, username: "u", password: "p" };
     const tls = { rejectUnauthorized: true };
     const secured = fakeLib();
-    await createPlatformaticClient({ ...OPTIONS, tls, sasl, tlsServerName: true }, secured.lib).describeGroup(listing);
+    await createPlatformaticClient({ ...OPTIONS, tls, sasl }, secured.lib).describeGroup(listing);
     const clients = secured.constructed.map(([name, options]) => [name, options as Record<string, unknown>] as const);
     expect(clients.map(([name]) => name)).toEqual(["Admin", "Consumer", "ConnectionPool", "Connection"]);
     for (const [, options] of clients) {

@@ -158,9 +158,11 @@ const MASK_FUNCTIONS: Record<MaskType, (value: string, customMask?: string) => s
   email: (v) => {
     const parts = v.split("@");
     if (parts.length !== 2) return "***@***.***";
-    const name = parts[0];
-    const domain = parts[1];
-    return `${name[0]}${"*".repeat(Math.max(name.length - 1, 2))}@${domain[0]}${"*".repeat(Math.max(domain.length - 1, 2))}`;
+    const [name, domain] = parts;
+    if (!name || !domain) return "***@***.***";
+    const nameChars = Array.from(name);
+    const domainChars = Array.from(domain);
+    return `${nameChars[0]}${"*".repeat(Math.max(nameChars.length - 1, 2))}@${domainChars[0]}${"*".repeat(Math.max(domainChars.length - 1, 2))}`;
   },
   phone: (v) => {
     const digits = v.replace(/\D/g, "");
@@ -171,17 +173,21 @@ const MASK_FUNCTIONS: Record<MaskType, (value: string, customMask?: string) => s
   ssn: (v) => `***-**-${v.slice(-4).padStart(4, "*")}`,
   full: () => "********",
   partial: (v) => {
-    if (v.length <= 8) return "*".repeat(v.length);
-    return `${v.slice(0, 4)}${"*".repeat(Math.max(v.length - 8, 4))}${v.slice(-4)}`;
+    const chars = Array.from(v);
+    if (chars.length <= 8) return "*".repeat(chars.length);
+    const show = Math.min(4, Math.floor(chars.length / 8));
+    const hidden = Math.max(chars.length - 2 * show, 4);
+    return `${chars.slice(0, show).join("")}${"*".repeat(hidden)}${chars.slice(-show).join("")}`;
   },
   ip: (v) => {
     const parts = v.split(".");
     if (parts.length === 4) return `${parts[0]}.***.***.${parts[3]}`;
     return "***";
   },
+  // Keeps the day of an ISO date, with or without a time after it; anything else is masked whole.
   date: (v) => {
-    if (v.length >= 4) return `****-**-${v.slice(-2)}`;
-    return "****-**-**";
+    const day = /^\d{4}-\d{2}-(\d{2})(?!\d)/.exec(v.trim())?.[1];
+    return day ? `****-**-${day}` : "****-**-**";
   },
   financial: () => "***,***.**",
   custom: (_v, customMask) => customMask || "***",

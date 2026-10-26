@@ -176,7 +176,14 @@ function installMocks(): void {
   // Spread over the real modules rather than listing their exports: a partial
   // replacement stays installed for the rest of the process and breaks the next
   // file that imports an export this one forgot.
-  mock.module("@/lib/auth", () => ({ ...realAuth, getSession: mockGetSession }));
+  mock.module("@/lib/auth", () => ({
+    ...realAuth,
+    getSession: mockGetSession,
+    readSession: mock(async () => {
+      const s = await mockGetSession();
+      return s ? { kind: "authenticated", session: s } : { kind: "anonymous" };
+    }),
+  }));
   // The gate would otherwise build a real model and, where a key is configured, put a
   // live probe call inside this suite.
   mock.module("@/lib/agent/capability-gate", () => ({ ...realGate, admitAgentModel: mockAdmitAgentModel }));

@@ -1236,7 +1236,7 @@ function expectListeners(run: Run | undefined): void {
   expect(run.seenWhileDialled.localForward).toBe(0);
 }
 
-/** grpc-js 1.14.5's first reconnect backoff (`INITIAL_BACKOFF_MS`, backoff-timeout.ts), which it jitters by a fifth. */
+/** grpc-js 1.14.6's first reconnect backoff (`INITIAL_BACKOFF_MS`, backoff-timeout.ts), which it jitters by a fifth. */
 const GRPC_INITIAL_BACKOFF_MS = 1000;
 
 /**

@@ -36,7 +36,14 @@ const mockGetSession = mock(
 
 // The spread form, not a hand-written stub: only getSession is replaced (BACKLOG D85).
 const realAuth = await import("@/lib/auth");
-mock.module("@/lib/auth", () => ({ ...realAuth, getSession: mockGetSession }));
+mock.module("@/lib/auth", () => ({
+  ...realAuth,
+  getSession: mockGetSession,
+  readSession: mock(async () => {
+    const s = await mockGetSession();
+    return s ? { kind: "authenticated", session: s } : { kind: "anonymous" };
+  }),
+}));
 mock.module("@/lib/db", () => ({ ...actualDb, getOrCreateProvider: mockGetOrCreateProvider }));
 
 const { POST } = await import("@/app/api/db/query/route");

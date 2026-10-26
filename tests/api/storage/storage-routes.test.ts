@@ -11,6 +11,9 @@ let mockSession: { username: string; role: string; idpSubject?: string; idpIssue
 
 mock.module("@/lib/auth", () => ({
   getSession: async () => mockSession,
+  readSession: mock(async () =>
+    mockSession ? { kind: "authenticated", session: mockSession } : { kind: "anonymous" },
+  ),
 }));
 
 // ── Mock storage factory ─────────────────────────────────────────────────────

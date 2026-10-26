@@ -1,6 +1,9 @@
 import { describe, expect, test, mock, spyOn, beforeEach } from "bun:test";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import * as realAuth from "@/lib/auth";
+import type { SessionReading, UserPayload } from "@/lib/auth";
+import { ApiErrorCode } from "@/lib/api/error-codes";
 import {
   ALL_ROUTES,
   API_ROOT_DIR,
@@ -9,16 +12,21 @@ import {
   SRC_ROOT_DIR,
 } from "./helpers/provider-routes";
 
-const mockGetSession = mock(
-  async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
-);
+const mockGetSession = mock(async (): Promise<UserPayload | null> => ({ role: "admin", username: "admin" }));
+
+let storeUnavailableOverride: Error | null = null;
+const mockReadSession = mock(async (): Promise<SessionReading> => {
+  if (storeUnavailableOverride) {
+    return { kind: "store_unavailable", error: storeUnavailableOverride };
+  }
+  const session = await mockGetSession();
+  return session ? { kind: "authenticated", session } : { kind: "anonymous" };
+});
 
 mock.module("@/lib/auth", () => ({
+  ...realAuth,
   getSession: mockGetSession,
-  signJWT: mock(async () => "mock-token"),
-  verifyJWT: mock(async () => null),
-  login: mock(async () => {}),
-  logout: mock(async () => {}),
+  readSession: mockReadSession,
 }));
 
 // ─── Mock @/lib/llm so a bypassed guard can never be mistaken for a working one ──
@@ -381,6 +389,8 @@ describe("routes that reach a provider require a session", () => {
     "@/lib/agent/runtime": `the run loop, and it ${PROVIDER_NAMING_HELPER} - the artifacts route imports only readAgentArtifact (the in-process ExecutionArtifactStore), and agent/runs/[runId] imports driveAgentRun, which the resume action uses to drive the run`,
     "@/lib/agent/run-service": `the run lifecycle service (pause/unpause/cancel/status), and it ${PROVIDER_NAMING_HELPER} (@/lib/db/operations/execution) - but only for releaseExecutionRun, which releases the run's in-process budget and artifacts, never a database or model`,
     "@/lib/api/account-response": "maps account-registry failures to HTTP responses; opens nothing",
+    "@/lib/api/account-store-error":
+      "error payload and message for account store read failures; data only, pure, opens no provider (#1942)",
     "@/lib/api/agent-run-access": "resolves a run id to its ledger behind guardRoute; reads no provider",
     "@/lib/api/bounded-json": "reads a request body up to a byte limit; opens nothing",
     "@/lib/api/client-address": "parses the forwarded-for chain for the audit record",
@@ -635,5 +645,37 @@ describe("an admin-only route's role denial is audited", () => {
     } finally {
       logSpy.mockRestore();
     }
+  });
+
+  describe("guardRoute store outage (#1942)", () => {
+    beforeEach(() => {
+      storeUnavailableOverride = null;
+    });
+
+    test("answers 503 with ACCOUNT_STORE_UNAVAILABLE when account store throws", async () => {
+      const { POST } = await import("@/app/api/admin/fleet-health/route");
+      storeUnavailableOverride = new Error("sqlite disk I/O error");
+      const logSpy = spyOn(console, "log").mockImplementation(() => {});
+      try {
+        const res = await POST(probe());
+        expect(res.status).toBe(503);
+        const data = (await res.json()) as { code: string; error: string };
+        expect(data.code).toBe(ApiErrorCode.ACCOUNT_STORE_UNAVAILABLE);
+        // No permission_denied audit event emitted on store outage
+        const auditLines = logSpy.mock.calls
+          .map((c: unknown[]) => {
+            try {
+              return JSON.parse(c[0] as string);
+            } catch {
+              return null;
+            }
+          })
+          .filter((e) => e?.event === "permission_denied");
+        expect(auditLines).toHaveLength(0);
+      } finally {
+        logSpy.mockRestore();
+        storeUnavailableOverride = null;
+      }
+    });
   });
 });

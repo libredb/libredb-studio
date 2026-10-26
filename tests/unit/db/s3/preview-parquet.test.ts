@@ -31,6 +31,7 @@ import {
   loadParquetModules,
   type ParquetFooter,
   type ParquetModules,
+  PARQUET_COLUMN_GAP_BYTES,
   type ParquetPreviewInput,
   planParquet,
   PREVIEW_PARSERS,
@@ -2014,6 +2015,68 @@ describe("an empty column chunk", () => {
     });
     expect(reader.calls.filter((call) => call.range.kind === "span")).toEqual([]);
     expect(calls.read).toEqual([]);
+  });
+});
+
+describe("column chunks with a gap between them", () => {
+  /** Three INT32 columns a, b, c of one row each, with `gap` bytes after a and after b, as Arrow C++ before 18 writes them. */
+  const gapped = (gap: number): Uint8Array =>
+    syntheticParquet({
+      schema: [
+        { name: "schema", children: 3 },
+        { name: "a", type: PHYSICAL.INT32 },
+        { name: "b", type: PHYSICAL.INT32 },
+        { name: "c", type: PHYSICAL.INT32 },
+      ],
+      rowGroups: [
+        {
+          numRows: 1,
+          chunks: [
+            int32Chunk("a", [1], { trailingBytes: gap }),
+            int32Chunk("b", [2], { trailingBytes: gap }),
+            int32Chunk("c", [3]),
+          ],
+        },
+      ],
+    });
+  const spans = (reader: ReturnType<typeof inputFor>["reader"]) =>
+    reader.calls.flatMap((call) => (call.range.kind === "span" ? [[call.range.start, call.range.end]] : []));
+
+  test("hyparquet's own gap limit is the one the preview reads across", () => {
+    const plan = readFileSync(path.join(import.meta.dir, "../../../../node_modules/hyparquet/src/plan.js"), "utf8");
+    expect(plan).toContain(`const columnGapLimit = 1 << 13 // 8kb`);
+    expect(PARQUET_COLUMN_GAP_BYTES).toBe(1 << 13);
+  });
+
+  test("leading mode reads chunks up to the gap limit apart in one GET, the gap with them, and shows every column", async () => {
+    const object = gapped(PARQUET_COLUMN_GAP_BYTES);
+    const footer = await footerOf(object);
+    const [a, , c] = footer.metadata.row_groups[0].columns.map((chunk) => chunk.meta_data);
+    const { reader, input } = inputFor(object, "g.parquet");
+    const outcome = await previewParquet(input, depsOf((await spiedModules()).modules));
+    if (outcome.kind !== "parquet") throw new Error(`expected parquet, got ${JSON.stringify(outcome)}`);
+    expect(outcome.rows?.rows).toEqual([[1, 2, 3]]);
+    expect(spans(reader)).toEqual([
+      [Number(a?.data_page_offset), Number(c?.data_page_offset) + Number(c?.total_compressed_size)],
+    ]);
+  });
+
+  test("explicit mode skipping the middle column still reads a and c in one GET when b lies inside the gap limit", async () => {
+    const object = gapped(16);
+    const { reader, input } = inputFor(object, "g.parquet", { request: { columns: ["a", "c"] } });
+    const outcome = await previewParquet(input, depsOf((await spiedModules()).modules));
+    if (outcome.kind !== "parquet") throw new Error(`expected parquet, got ${JSON.stringify(outcome)}`);
+    expect(outcome.rows?.rows).toEqual([[1, 3]]);
+    expect(spans(reader)).toHaveLength(1);
+  });
+
+  test("chunks more than the gap limit apart are read in GETs of their own", async () => {
+    const object = gapped(PARQUET_COLUMN_GAP_BYTES + 1);
+    const { reader, input } = inputFor(object, "g.parquet");
+    const outcome = await previewParquet(input, depsOf((await spiedModules()).modules));
+    if (outcome.kind !== "parquet") throw new Error(`expected parquet, got ${JSON.stringify(outcome)}`);
+    expect(outcome.rows?.rows).toEqual([[1, 2, 3]]);
+    expect(spans(reader)).toHaveLength(3);
   });
 });
 

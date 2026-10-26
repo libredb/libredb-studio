@@ -208,7 +208,7 @@ jobs:
         run: helm repo add bitnami https://charts.bitnami.com/bitnami
 
       - name: Set up Python (for chart-testing)
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -471,3 +471,21 @@ jobs:
 
       - name: Push to OCI registry
         run: helm push .cr-release-packages/libredb-studio-*.tgz oci://ghcr.io/libredb/charts
+
+      - name: Set up oras
+        uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4 # v2.0.2
+        with:
+          version: 1.3.4
+
+      # Artifact Hub reads the OCI repository's metadata from the artifacthub.io tag.
+      # That repository has its own Artifact Hub ID; the rest is artifacthub-repo.yml's.
+      - name: Push Artifact Hub metadata
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.GITHUB_TOKEN }}" | oras login ghcr.io -u ${{ github.actor }} --password-stdin
+          mkdir -p "$RUNNER_TEMP/artifacthub"
+          sed 's/^repositoryID: .*/repositoryID: 47974612-63a3-40f0-9bf8-41593ec2117d/' artifacthub-repo.yml > "$RUNNER_TEMP/artifacthub/artifacthub-repo.yml"
+          cd "$RUNNER_TEMP/artifacthub"
+          oras push ghcr.io/libredb/charts/libredb-studio:artifacthub.io \
+            --config /dev/null:application/vnd.cncf.artifacthub.config.v1+yaml \
+            artifacthub-repo.yml:application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml

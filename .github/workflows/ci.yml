@@ -151,6 +151,9 @@ jobs:
         with:
           node-version: "24"
 
+      - name: Record the Node 24 binary for Snowflake runtime coverage
+        run: echo "NODE24_BINARY=$(command -v node)" >> "$GITHUB_ENV"
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
@@ -203,10 +206,24 @@ jobs:
         with:
           node-version: "26.10.0"
 
+      - name: Record the Node 26.10.0 binary for Snowflake runtime coverage
+        run: echo "NODE2610_BINARY=$(command -v node)" >> "$GITHUB_ENV"
+
       - name: Run the transport runtime cases, the S3 client wire cases, the RabbitMQ dial cases and the Snowflake key cases on Node 26.10.0
         run: |
           test "$(node --version)" = "v26.10.0"
           NODE_TRANSPORT_NODES="$(command -v node)" bun tests/run-tests.ts tests/unit/db/http/node-transport-runtimes.test.ts tests/unit/db/s3/client-wire.test.ts tests/unit/db/rabbitmq/dial-runtimes.test.ts tests/unit/db/snowflake/key-runtimes.test.ts
+
+      # OpenSSL 4 reports an ASN.1 wrong-tag code when a wrong passphrase decrypts PKCS#8 to invalid bytes.
+      - name: Setup Node 26.12.1 for the Snowflake key runtime cases
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "26.12.1"
+
+      - name: Run the Snowflake key runtime cases on Node 26.12.1
+        run: |
+          test "$(node --version)" = "v26.12.1"
+          NODE_TRANSPORT_NODES="$NODE24_BINARY:$NODE2610_BINARY:$(command -v node)" bun tests/run-tests.ts tests/unit/db/snowflake/key-runtimes.test.ts
 
       - name: Upload coverage artifact
         # always(): keep the lcov available for debugging when coverage:check
@@ -1182,7 +1199,7 @@ jobs:
 
       - name: Set up Python (for chart-testing)
         if: steps.chart-changes.outputs.changed == 'true'
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 

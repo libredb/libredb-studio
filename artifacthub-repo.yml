@@ -2,3 +2,7 @@ repositoryID: 9bb770ba-de64-4168-8ab5-bfc6b4a884e9
 owners:
   - name: cevheri
     email: cevheribozoglan@gmail.com
+# Chart versions 0.1.1 and 0.1.9 to 0.1.11 shipped a changes annotation Artifact Hub cannot parse, and released charts are immutable (#167).
+ignore:
+  - name: libredb-studio
+    version: ^0\.1\.(1|9|10|11)$

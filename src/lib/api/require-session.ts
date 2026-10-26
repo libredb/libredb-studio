@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getSession, type UserPayload } from "@/lib/auth";
+import { readSession, type UserPayload } from "@/lib/auth";
+import { ACCOUNT_STORE_UNAVAILABLE_BODY } from "@/lib/api/account-store-error";
 import { clientAddress } from "@/lib/api/client-address";
 import { createErrorResponse } from "@/lib/api/errors";
 import { consumeRateLimit, RateLimitError } from "@/lib/api/rate-limit";
@@ -18,9 +19,9 @@ import { logger } from "@/lib/logger";
  * framework-level bypass would expose every route that relies on it alone. Routes that reach a
  * database or an LLM provider verify the session themselves.
  *
- * Callers invoke this outside their own try/catch. That is safe because getSession() cannot throw:
- * a missing auth-token cookie makes it return null directly, and otherwise it awaits verifyJWT(),
- * whose try block wraps the JWT secret lookup and always degrades to a returned null.
+ * Callers invoke this outside their own try/catch. That is safe because readSession() cannot throw:
+ * a missing auth-token cookie makes it return anonymous directly, verifyJWT() degrades safely, and
+ * a registry read failure answers store_unavailable (503).
  *
  * The result is a discriminated union rather than the typed-error convention used elsewhere in
  * src/lib/api/errors.ts, because the success path must also return the session. The 429 body it
@@ -37,9 +38,15 @@ export async function guardRoute(opts: {
   request: Request;
 }): Promise<GuardResult> {
   const ip = clientAddress(opts.request);
-  const session = await getSession();
+  const reading = await readSession();
 
-  if (!session) {
+  if (reading.kind === "store_unavailable") {
+    return {
+      response: NextResponse.json(ACCOUNT_STORE_UNAVAILABLE_BODY, { status: 503 }),
+    };
+  }
+
+  if (reading.kind !== "authenticated") {
     // The denial is unconditional; only the audit line is metered. An internet scanner would
     // otherwise fill a container log volume with one line per probe.
     const notice = consumeRateLimit("anon", ip);
@@ -62,6 +69,8 @@ export async function guardRoute(opts: {
     }
     return { response: NextResponse.json(sessionRequiredBody("Authentication required"), { status: 401 }) };
   }
+
+  const session = reading.session;
 
   // Under governance the control plane's ai.enabled switches the whole AI bucket off
   // (docs/GOVERNANCE.md#runtime-settings). It is read after the session, so an anonymous caller learns nothing about

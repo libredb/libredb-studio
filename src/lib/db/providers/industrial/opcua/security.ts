@@ -3,7 +3,8 @@
  * O-S3, O-S7, O-S8).
  *
  * EVERY RULE HERE EXISTS BECAUSE THE LIBRARY'S DEFAULT IS THE OPPOSITE. Measured on
- * `node-opcua-client` 2.187.3: the shared default certificate manager is built with
+ * `node-opcua-client` 2.187.3, and re-read in the 2.187.16 source (`getDefaultCertificateManager`):
+ * the shared default certificate manager is built with
  * `automaticallyAcceptUnknownCertificate: true`, a SignAndEncrypt connect to a server nobody had
  * ever seen SUCCEEDED, and that server's certificate was written into `PKI/trusted/certs`. The
  * server was then recreated with a new certificate and the next connect trusted that one too, with

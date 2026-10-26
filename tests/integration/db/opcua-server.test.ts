@@ -4,7 +4,7 @@
  * WHY A SERVER AND NOT A FAKE. Everything between this provider and the wire is the library's:
  * GetEndpoints, the secure channel, CreateSession, ActivateSession, the encoder, the status codes.
  * A stand-in for it would agree with whatever the bridge happened to do, so the bridge's own module
- * is driven against `node-opcua-server` 2.187.3 started here on a loopback port — the same library
+ * is driven against `node-opcua-server` 2.187.16 started here on a loopback port — the same library
  * family the client speaks, which is the point: the two halves of OPC 10000-6 meet in this file.
  *
  * It needs no container and no plant: the server starts in `beforeAll`, serves a two-node address

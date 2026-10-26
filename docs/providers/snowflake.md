@@ -138,7 +138,7 @@ Paste the private key's contents into Private key: Studio reads no key file, and
 A PKCS#8 key (`PRIVATE KEY` or `ENCRYPTED PRIVATE KEY`) and a PKCS#1 key (`RSA PRIVATE KEY`, encrypted or not) are accepted; the key must be RSA, 2048 to 4096 bits, and at most 16 KiB of text.
 An encrypted PKCS#8 key must use PBES2 with PBKDF2 or scrypt and AES-CBC, at a cost no higher than 1,000,000 PBKDF2 iterations with hmacWithSHA256, 500,000 with hmacWithSHA1 (the PRF when none is named), 200,000 with hmacWithSHA384 or hmacWithSHA512, or scrypt N 16,384, r 8, p 1; the command above uses OpenSSL's default of 2,048 iterations.
 Under the Bun runtime, whose BoringSSL decrypts neither scrypt PBES2 nor PBKDF2 with hmacWithSHA384 or hmacWithSHA512, such a key is refused with `Studio could not read this private key. Nothing was sent.` once a passphrase is entered (with Passphrase empty, the passphrase sentence comes first).
-Node, which the Docker image, the Helm chart and `npx` run Studio on, opens them, and a PBKDF2 key with hmacWithSHA256 or hmacWithSHA1, such as the command above makes, opens under both (measured on Bun 1.4.2 and Node 24 and 26).
+Node, which the Docker image, the Helm chart and `npx` run Studio on, opens them, and a PBKDF2 key with hmacWithSHA256 or hmacWithSHA1, such as the command above makes, opens under both (measured on Bun 1.4.2 and Node 24, 26.10 and 26.12.1).
 Whether a key is encrypted is read from its contents, not its label: an encrypted PKCS#8 body armoured as `PRIVATE KEY` meets the same bound, and an `RSA PRIVATE KEY` body that is not a PKCS#1 key is refused as unreadable.
 Each refusal is one of these sentences:
 

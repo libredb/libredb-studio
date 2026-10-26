@@ -26,6 +26,7 @@ mock.module("@/lib/auth", () => ({
   signJWT: mock(async () => "mock-token"),
   verifyJWT: mock(async () => null),
   getSession: mock(async () => null),
+  readSession: mock(async () => ({ kind: "anonymous" })),
   logout: mock(async () => {}),
 }));
 

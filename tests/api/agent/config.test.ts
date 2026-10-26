@@ -41,7 +41,14 @@ const mockGetSession = mock(
 // Spread over the real module: a partial replacement stays installed process-wide
 // and breaks the next file that imports an export this one forgot (T9's lesson).
 function installMocks(): void {
-  mock.module("@/lib/auth", () => ({ ...realAuth, getSession: mockGetSession }));
+  mock.module("@/lib/auth", () => ({
+    ...realAuth,
+    getSession: mockGetSession,
+    readSession: mock(async () => {
+      const s = await mockGetSession();
+      return s ? { kind: "authenticated", session: s } : { kind: "anonymous" };
+    }),
+  }));
 }
 
 installMocks();

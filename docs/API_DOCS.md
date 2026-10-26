@@ -201,8 +201,16 @@ Get current authenticated user information.
 }
 ```
 
+**Response (503 Service Unavailable):**
+```json
+{
+  "error": "Account store unavailable",
+  "code": "ACCOUNT_STORE_UNAVAILABLE"
+}
+```
+
 > The `user` object is the JWT session payload (`role`, `username`, `sessionVersion` for an account in the server store, and `idpSubject` and `idpIssuer` for an OIDC sign-in, see [OIDC.md](./OIDC.md#session-identity)). It is a public route in the middleware but self-checks the cookie, returning `{ "authenticated": false }` when absent/invalid.
-> With `STORAGE_PROVIDER=sqlite` or `postgres` and local sign-in, a session whose stored account was disabled, deleted, demoted or password-reset since it was issued also answers `401`.
+> With `STORAGE_PROVIDER=sqlite` or `postgres` and local sign-in, a session whose stored account was disabled, deleted, demoted or password-reset since it was issued also answers `401`. If the account store suffers a read outage, it answers `503 ACCOUNT_STORE_UNAVAILABLE` while preserving the session cookie (#1942).
 
 #### GET /api/auth/totp
 
@@ -2647,6 +2655,7 @@ These are the values of the `code` field emitted by `createErrorResponse` (`src/
 | `TRANSACTION_CREDENTIAL_CHANGED` | Governance mode only: the caller's grant level or the connection's credential changed while the caller's transaction was open, so `POST /api/db/transaction` rolled it back and answered this instead of the request (409), with `rolledBack` saying whether the rollback was confirmed. Answered by the route rather than `createErrorResponse`; see [Connections under governance](#connections-under-governance) |
 | `AI_DISABLED` | Governance mode only: the control plane set the runtime setting `ai.enabled` to `false`, so a route of the AI bucket refused a signed-in caller before any LLM provider was built (403). Answered by the route guard rather than `createErrorResponse`; see [AI API](#ai-api) |
 | `AUTH_REQUIRED` | No Studio session, or one that no longer verifies (401). Answered by the middleware and the route-level session checks rather than `createErrorResponse`; the only 401 the browser answers by sending the user to sign in |
+| `ACCOUNT_STORE_UNAVAILABLE` | The account store could not be read to check whether the signed-in account is still permitted (503). Answered by the route guard (`guardRoute`), `GET /api/auth/me`, and `/api/mcp` without deleting the session cookie; a client keeps its credentials and retries (#1942) |
 | `IDENTITY_PROVIDER_UNAVAILABLE` | A bearer access token could not be verified because the identity provider's discovery document or key set could not be read (503). Answered by the middleware; a client keeps its token and retries ([OIDC.md](./OIDC.md#bearer-access-tokens-for-native-clients)) |
 | `BEARER_NO_ROLE` | A bearer access token verified, but its claims map to no role Studio accepts (403). Answered by the middleware; a fresh token is refused the same way until an administrator changes the account |
 | `BEARER_NO_IDENTITY` | A bearer access token verified, but it carries no `sub` or no username Studio can use (403). Answered by the middleware; a fresh token is refused the same way until an administrator changes the account |

@@ -83,7 +83,7 @@ const ETCD_ANSWERS: ReadonlyArray<readonly [number, string, EtcdErrorCategory]> 
 ];
 
 /**
- * grpc-js 1.14.5's deadline texts for a call that never had a stream to go out on
+ * grpc-js 1.14.6's deadline texts for a call that never had a stream to go out on
  * (`resolving-call.ts` and `load-balancing-call.ts` getDeadlineInfo). Only these are evidence
  * that a request was never sent; any other deadline may have met a sent request (spec 5.6).
  */
@@ -94,7 +94,7 @@ const PRE_SEND_DEADLINE_MARKERS: readonly string[] = [
 ];
 
 /**
- * grpc-js 1.14.5's UNAVAILABLE texts for a call that never started, by how they begin: its DNS resolver's
+ * grpc-js 1.14.6's UNAVAILABLE texts for a call that never started, by how they begin: its DNS resolver's
  * failure (`resolver-dns.ts` defaultResolutionError), and a call that `close()` found still waiting for its
  * pick (`internal-channel.ts` close), which only the client's own close makes.
  */
@@ -341,16 +341,16 @@ const UNKNOWN_OUTCOME = "The write may have been applied: read the key again bef
 const NO_SPACE_RECOVERY =
   "An admin compacts history, defragments every member that alarm list names, one at a time through a connection to each member, and then disarms the alarm, from the Global Operations cards of Admin > Operations.";
 
-/** Where grpc-js 1.14.5 places the runtime's error in its text for a channel that never connected (pick_first, round_robin). */
+/** Where grpc-js 1.14.6 places the runtime's error in its text for a channel that never connected (pick_first, round_robin). */
 const LAST_ERROR = "No connection established. Last error: ";
 
-/** A deadline's subchannel peer, the address the call went out on (grpc-js 1.14.5 `subchannel-call.ts` getDeadlineInfo). */
+/** A deadline's subchannel peer, the address the call went out on (grpc-js 1.14.6 `subchannel-call.ts` getDeadlineInfo). */
 const DEADLINE_PEER = /,remote_addr=[^,]*/g;
 
 /**
  * A runtime's or grpc-js's text without the address it carries (D-T11-12): through an SSH tunnel the
  * dialled address is the tunnel's local forward, so the provider's sentence names the configured
- * endpoint and the text after it names none. grpc-js 1.14.5 carries one in three places: the runtime's
+ * endpoint and the text after it names none. grpc-js 1.14.6 carries one in three places: the runtime's
  * error after LAST_ERROR, reduced to its system code as toEtcdError writes a system error, a deadline's
  * peer, dropped, and the target a name lookup failed for, dropped. Any other text is kept as it is, and
  * a last error that names no code names no address either (the TLS causes, Bun's "Failed to connect").

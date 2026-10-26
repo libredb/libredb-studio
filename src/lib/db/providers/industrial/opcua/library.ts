@@ -58,7 +58,7 @@ import type { OpcuaConnectionOptions } from "./connection";
 import { openReadOnlySession, OPCUA_TRANSPORT_SETTINGS, type OpcuaLibraryBridge } from "./session";
 
 /**
- * The bridge over `node-opcua-client` 2.187.3, and the only code in this repository that imports it.
+ * The bridge over `node-opcua-client` 2.187.16, and the only code in this repository that imports it.
  *
  * It is the three overrides at the top of this file in executable form: a STRICT certificate
  * manager rooted where the installation says, `endpointMustExist: false`, and the typed endpoint

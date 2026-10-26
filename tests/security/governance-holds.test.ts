@@ -88,6 +88,10 @@ beforeEach(() => {
   writeSeedFile(dir, [{ id: "shop", type: "sqlite", database: join(dir, "shop.db") }]);
   spies = [
     spyOn(auth, "getSession").mockResolvedValue(SESSION),
+    spyOn(auth, "readSession").mockImplementation(async () => {
+      const s = await auth.getSession();
+      return s ? { kind: "authenticated", session: s } : { kind: "anonymous" };
+    }),
     spyOn(accountCheck, "mcpTokenOwnerAllowed").mockResolvedValue(true),
     // The classifier and the classify route log a model they could not build; the count is what is read.
     spyOn(logger, "warn").mockImplementation(() => {}),

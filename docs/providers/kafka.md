@@ -10,7 +10,7 @@
 | **Status** | Implemented & shipped |
 | **Database type id** | `kafka` |
 | **Family** | Stream (`src/lib/db/providers/stream/kafka/`), the first provider in that family |
-| **Driver** | `@platformatic/kafka` 2.13.0, pinned exactly, pure TypeScript, loaded under Bun and Node alike ([§2.5](#25-the-client-and-why)) |
+| **Driver** | `@platformatic/kafka` 2.14.0, pinned exactly, pure TypeScript, loaded under Bun and Node alike ([§2.5](#25-the-client-and-why)) |
 | **Query language** | `json` with `queryDialect: "kafka"`: a JSON read request of this product's own schema, not MongoDB's JSON ([§5.1](#51-the-read-request)) |
 | **Default port** | `9092`, the port a stock broker listens on; the same number is the default under TLS, because a secured listener serves on whatever port its operator chose |
 | **Connection pooling** | One `Admin`, one `Consumer` and one fetch `ConnectionPool` per connection, all closed by `disconnect()` ([§3.4](#34-one-client-per-connection-and-no-fetch-session)) |
@@ -103,7 +103,7 @@ A connect that fails after the client was built closes it again.
 ### 2.5 The client, and why
 
 `@platformatic/kafka`, used fetch-only, was chosen at 2.11.0 by a broker-side measurement before any code was written (#1088, section 3.2 and Appendix B).
-2.12.0 and then 2.13.0 were each taken only after the live read-only check passed on them ([§11.4](#114-the-live-read-only-check)).
+2.12.0, 2.13.0 and then 2.14.0 were each taken only after the live read-only check passed on them ([§11.4](#114-the-live-read-only-check)).
 Reading by partition, offset and timestamp through its `listOffsets`, `listOffsetsWithTimestamps` and a fetch registered no consumer group and never created `__consumer_offsets`, under Bun and Node.
 Its `consume()` in MANUAL mode, with explicit offsets and `autocommit: false`, joins the group and leaves an `Empty` group registered after `close()`, so `consume()` is never called.
 All four codecs, gzip, snappy, lz4 and zstd, decode with no native addon: snappy and lz4 come from WebAssembly, gzip and zstd from `node:zlib`, and the optional `@node-rs/crc32` falls back to WebAssembly.
@@ -257,8 +257,9 @@ The client applies the lifetime inside its connection, where the adapter's only 
 The panel is checked whole, whatever its mode, before any of it is read: an `ssl` that is not an object, a `mode` the table does not name, a `caCert`, `clientCert` or `clientKey` that is not a string, or a `rejectUnauthorized` that is not a boolean is refused with a `DatabaseConfigError` naming the field and never its value.
 Such a panel is never guessed at: read as it came, `ssl: false` would turn TLS on, and a certificate that is not a string would reach Node, whose `TypeError` can quote the value.
 A `null` reads as an absent field, and a panel with no `mode`, which a seed file may carry, is read as a verifying one.
-With TLS on and a DNS name as the host, the client sends each connection's own host as its TLS server name (SNI) through its `tlsServerName` option, which SNI-routed listeners need; Node sends none without the option.
-An IP literal is no legal server name, and Node 26, the production runtime, throws on one, so when the first metadata read shows a broker advertised by IP literal, the adapter rebuilds its clients without the option: a cluster that advertises IP literals is not routed by server name.
+With TLS on, the adapter sets the client's `tlsServerName` option, so each broker connection sends its own host as its TLS server name (SNI), which SNI-routed listeners need.
+The option is set rather than left to the client's default, which turned on only in 2.14.0; Node itself sends no server name unasked.
+An IP literal is no legal server name, and Node 26, the production runtime, throws on one; since 2.14.0 the client decides per connection and sends none for an IP literal, so a broker advertised by IP is checked against the certificate's IP names while the brokers the same cluster advertises by name still get their server name.
 A handshake or verification failure is a `ConnectionError` carrying the Node error code, and no connection is retried without TLS.
 A verification failure is known by any name Node gives a refused certificate, such as `UNABLE_TO_VERIFY_LEAF_SIGNATURE`, `DEPTH_ZERO_SELF_SIGNED_CERT` or `INVALID_PURPOSE`.
 A client certificate the broker refuses, or none where the broker requires one, reads as a lost connection, not as a TLS failure: under TLS 1.3, which the `kafka-auth` fixture negotiates, a broker refuses a client certificate after the client's half of the handshake, and the client reports only that the connection closed, handing the socket's error, which carries the alert, to no caller.
@@ -667,6 +668,7 @@ Measured on 2026-09-25: every check passed on `kafka` (57, with the tripwire), o
 Measured again on 2026-09-28 with `@platformatic/kafka` 2.12.0: the same four counts, eight of eight with `--failover`, and every snapshot after a run equalled the one before it.
 The same day, under Node through `next start`, a connect, the topic listing and two reads on a broker never asked for a group coordinator left `__consumer_offsets` absent, and the group seed that followed created it.
 Measured again on 2026-10-05 with `@platformatic/kafka` 2.13.0: the same four counts, eight of eight with `--failover`, and every snapshot after a run equalled the one before it.
+Measured again on 2026-10-26 with `@platformatic/kafka` 2.14.0: the same four counts, eight of eight with `--failover`, and every snapshot after a run equalled the one before it.
 Against the provider with one rule broken at a time, the check failed each time: a `disconnect()` that closes nothing, `autocreateTopics: true`, a `metadata([])` answered from the cache, lag that ignores the committed offset, a transaction filter that keeps aborted records, a group listing without the `consumer` type, and a lag listing that shows one partition twice.
 A config write made during the run from outside the provider, setting `orders` to the `compression.type=gzip` line `codec-gzip` already holds, failed the check too; the check as first committed, which compared bare lines as a set, passed it.
 
@@ -782,7 +784,7 @@ The refusal reason it prints, verbatim:
 
 - Source: [`src/lib/db/providers/stream/kafka/`](../../src/lib/db/providers/stream/kafka/)
 - Design: [#1088](https://github.com/libredb/libredb-studio/issues/1088)
-- Client: [`@platformatic/kafka`](https://github.com/platformatic/kafka), version 2.13.0
+- Client: [`@platformatic/kafka`](https://github.com/platformatic/kafka), version 2.14.0
 - Kafka protocol: <https://kafka.apache.org/protocol>
 - KIP-848, the consumer group protocol: <https://cwiki.apache.org/confluence/display/KAFKA/KIP-848%3A+The+Next+Generation+of+the+Consumer+Rebalance+Protocol>
 - KIP-516, topic identifiers: <https://cwiki.apache.org/confluence/display/KAFKA/KIP-516%3A+Topic+Identifiers>

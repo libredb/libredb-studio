@@ -59,6 +59,10 @@ const realAuth = await import("@/lib/auth");
 mock.module("@/lib/auth", () => ({
   ...realAuth,
   getSession: mock(async () => ({ role: "admin", username: "admin" })),
+  readSession: mock(async () => ({
+    kind: "authenticated",
+    session: { role: "admin", username: "admin" },
+  })),
 }));
 
 mock.module("@/lib/db", () => ({

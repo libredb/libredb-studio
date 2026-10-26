@@ -105,7 +105,8 @@ const cancelledError = (cause?: unknown) =>
 /**
  * One turn of the event loop, by which a call handed to the channel has written its request. grpc-js opens a call's
  * HTTP/2 stream only after promises settle, so under Node a reset of another stream submitted in the same turn is
- * written first (measured with grpc-js 1.14.5 under Node 24.14.0; Bun 1.4.2 writes the call first either way).
+ * written first (measured with grpc-js 1.14.5 and 1.14.6 under Node 24.14.0; Bun 1.4.2 writes the call first either
+ * way).
  */
 const nextTurn = () =>
   new Promise<void>((resolve) => {

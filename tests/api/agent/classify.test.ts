@@ -41,7 +41,14 @@ const mockResolveConnection = mock(async (body: { connectionId?: string }) => ({
  * order the runner loaded the agent suites in.
  */
 function installMocks(): void {
-  mock.module("@/lib/auth", () => ({ ...realAuth, getSession: mockGetSession }));
+  mock.module("@/lib/auth", () => ({
+    ...realAuth,
+    getSession: mockGetSession,
+    readSession: mock(async () => {
+      const s = await mockGetSession();
+      return s ? { kind: "authenticated", session: s } : { kind: "anonymous" };
+    }),
+  }));
   mock.module("@/lib/agent/workflow-classifier", () => ({
     ...realClassifier,
     classifyAgentWorkflow: mockClassify,

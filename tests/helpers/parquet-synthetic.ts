@@ -46,6 +46,11 @@ export interface SyntheticChunk {
   readonly totalUncompressedSize?: number;
   /** ColumnMetaData fields that replace the written field of the same id, or are added, in id order. */
   readonly metaFields?: readonly ThriftField[];
+  /**
+   * Bytes written after the chunk and outside its total_compressed_size, as Arrow C++ before 18 and Polars write a
+   * copy of the chunk's metadata there, leaving a gap before the next chunk.
+   */
+  readonly trailingBytes?: number;
 }
 
 export interface SyntheticFile {
@@ -150,6 +155,7 @@ export function syntheticParquet(file: SyntheticFile): Uint8Array {
       }
       const compressed = out.length - start;
       groupBytes += compressed;
+      for (let gap = 0; gap < (chunk.trailingBytes ?? 0); gap++) out.push(0xee);
       const dataValues = chunk.pages
         .filter((page) => page.kind === "data")
         .reduce((sum, page) => sum + page.numValues, 0);
