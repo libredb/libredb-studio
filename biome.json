@@ -33,6 +33,8 @@
   },
   "css": { "formatter": { "enabled": false } },
   "json": { "formatter": { "enabled": false } },
+  "markdown": { "formatter": { "enabled": false } },
+  "yaml": { "formatter": { "enabled": false } },
   "linter": { "enabled": false },
   "assist": { "enabled": false }
 }
