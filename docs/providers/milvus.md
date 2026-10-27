@@ -103,7 +103,8 @@ A refusal that still happens is shown in the dialog that asked and written into 
 
 Every console request of this version is a read, so the mode changes nothing else.
 The mode binds a `user` only on a managed seed whose secret only the seed holds, and only when the server has authorization enabled: Milvus with `authorizationEnabled: false`, its default, accepts any credential or none, so a connection that works proves nothing about the server, and Studio cannot tell.
-Double the mode on the server with a Milvus role that holds `CollectionReadOnly` and `DatabaseReadOnly` and nothing more.
+Double the mode on the server with a Milvus role that holds `CollectionReadOnly` and, at the database level, `ShowCollections` and `DescribeDatabase`, and nothing more.
+Not the `DatabaseReadOnly` group: Milvus's own privilege-group table lists `CreateCollection` among its privileges, so a role holding it can create a collection.
 
 ### 3.5 Machine access
 
@@ -517,7 +518,7 @@ Copy the users' passwords out first, into a directory outside the repository: `d
 
 Keep the management port 9091 off the network: on 3.0.2 it answers without authentication, its metrics and its telemetry list included, and Studio never dials it.
 Turn authorization on (`common.security.authorizationEnabled: true`) and change the default root password before anyone connects; with authorization off, any credential or none connects.
-Give Studio's seeds a user of their own with `CollectionReadOnly` and `DatabaseReadOnly`, and the read-only mode on top.
+Give Studio's seeds a user of their own with `CollectionReadOnly`, `ShowCollections` and `DescribeDatabase`, and the read-only mode on top; `DatabaseReadOnly` would also grant `CreateCollection` (section 3.4).
 Milvus's RBAC hides neither the topology nor other databases' row counts from an authenticated user, because GetMetrics needs no privilege.
 
 ## 13. Known limitations
@@ -553,4 +554,5 @@ The refusal reason it prints, verbatim:
 
 - The design: the vector-family design under issue #424, sections 3 to 5.
 - Milvus's REST v2 reference (`rest-summary-v3.0.x`) and the milvus-proto `go-api/v3.0.2` definitions.
+- Milvus's built-in privilege groups and the privileges each holds: [Create Privilege Group](https://milvus.io/docs/privilege_group.md).
 - [`docker/milvus/README.md`](../../docker/milvus/README.md) and [`tests/fixtures/milvus/README.md`](../../tests/fixtures/milvus/README.md).
