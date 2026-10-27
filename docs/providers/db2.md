@@ -434,6 +434,8 @@ Every statement of the transaction runs there, and nothing else the provider sen
 COMMIT and ROLLBACK end the unit of work and close the session, whichever way they went; a refused BEGIN closes it too.
 One transaction is open per provider, and a second BEGIN, or one sent while the first is still opening, is refused with "Transaction already active".
 Disconnecting closes an open session without waiting, and Db2 rolls back what it did.
+A BEGIN still opening its session when the provider disconnects is refused, and that session is closed, even if the provider has reconnected by the time it opens.
+COMMIT and ROLLBACK forget the session before they are sent, so a statement sent while one is pending is refused rather than run on the closing session.
 No timer rolls back an abandoned transaction: it holds its session and its locks until COMMIT, ROLLBACK or the provider's disconnect.
 
 Measured on 12.1.0.0 through 1.0.25, each inside a transaction with a row inserted first and ROLLBACK last:

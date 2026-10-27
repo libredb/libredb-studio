@@ -93,12 +93,18 @@ interface Db2Session extends OpenedClient {
 const TRANSACTION_ENDED =
   "That ends this transaction: Db2 rolls back everything it did once the connection closes. Begin a new transaction to continue.";
 
+/** The refusal a BEGIN gets when the provider was disconnected while it opened its session. */
+const DISCONNECTED_WHILE_OPENING =
+  "The connection was closed while this transaction was opening, so it was not opened. Begin it again.";
+
 export class Db2Provider extends SQLBaseProvider {
   private client: Db2Client | null = null;
   /** The open transaction, or null. */
   private session: Db2Session | null = null;
   /** True while `beginTransaction()` opens a session, so a second BEGIN is refused before it opens another. */
   private opening = false;
+  /** Raised by every `disconnect()`, so a BEGIN that was opening across one knows its session is stale. */
+  private generation = 0;
   private caDir: string | undefined;
   private codePageValue: number | undefined;
   private readonly loadDriver: () => Promise<Db2Driver>;
@@ -153,6 +159,7 @@ export class Db2Provider extends SQLBaseProvider {
    * session is closed too, without waiting, and Db2 rolls back what the transaction did.
    */
   public async disconnect(): Promise<void> {
+    this.generation += 1;
     if (this.session !== null) this.retireSession(this.session);
     const client = this.client;
     const caDir = this.caDir;
@@ -204,20 +211,29 @@ export class Db2Provider extends SQLBaseProvider {
 
   /**
    * Opens the transaction's session: a client of its own, connected as the shared one is, with
-   * autocommit off. A refused BEGIN closes that client again.
+   * autocommit off. A refused BEGIN closes that client again, and so does a disconnect that ran
+   * while the session was opening: the transaction is refused rather than left on a provider that
+   * no longer holds it.
    */
   public async beginTransaction(): Promise<void> {
     this.ensureConnected();
     if (this.session !== null || this.opening) throw new QueryError("Transaction already active", "db2");
     this.opening = true;
+    const generation = this.generation;
     try {
       const opened = await openClient(this.config, this.loadDriver, this.caFileSystem);
+      let transaction: Db2Transaction;
       try {
-        this.session = { ...opened, transaction: await opened.client.beginTransaction() };
+        transaction = await opened.client.beginTransaction();
       } catch (error) {
         this.retireSession(opened);
         throw mapDb2Error(error);
       }
+      if (this.generation !== generation) {
+        this.retireSession(opened);
+        throw new QueryError(DISCONNECTED_WHILE_OPENING, "db2");
+      }
+      this.session = { ...opened, transaction };
     } finally {
       this.opening = false;
     }

@@ -507,6 +507,10 @@ interface TransactionCall {
 let transactionCalls: TransactionCall[] = [];
 let beginError: unknown;
 let endError: unknown;
+/** Holds the driver's BEGIN open until it settles, so a test can act while a transaction is opening. */
+let beginGate: Promise<void> | undefined;
+/** Holds COMMIT and ROLLBACK open until it settles, so a test can act while a transaction is ending. */
+let endGate: Promise<void> | undefined;
 /** What a statement inside a transaction answers; a test replaces it. */
 let transactionQuery: (sql: string) => Promise<Db2ArrayQueryResult> = async () => ({
   rows: [],
@@ -542,11 +546,13 @@ const driver: Db2Driver = {
       return { ...answer, rows } as EitherRows;
     }
     async beginTransaction(): Promise<Db2Transaction> {
+      if (beginGate !== undefined) await beginGate;
       if (beginError !== undefined) throw beginError;
       const session = this.session;
       transactionCalls.push({ session, call: "BEGIN" });
       const end = async (call: string) => {
         transactionCalls.push({ session, call });
+        if (endGate !== undefined) await endGate;
         if (endError !== undefined) throw endError;
       };
       return {
@@ -612,6 +618,8 @@ afterEach(() => {
   transactionCalls = [];
   beginError = undefined;
   endError = undefined;
+  beginGate = undefined;
+  endGate = undefined;
   transactionQuery = async () => ({ rows: [], rowCount: 1, columns: [], diagnostics: [] });
   userQuery = async (sql) => {
     throw new Error(`the fake catalog does not know this statement: ${sql}`);
@@ -1038,6 +1046,10 @@ describe("Db2Provider: query", () => {
 /** Lets the background close of a retired session run to its end. */
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+/** The refusal a BEGIN gets when the provider was disconnected while it opened its session. */
+const DISCONNECTED_WHILE_OPENING_MESSAGE =
+  "The connection was closed while this transaction was opening, so it was not opened. Begin it again.";
+
 describe("Db2Provider: transactions", () => {
   test("runs on a session of its own, opened like the shared one, and commits there", async () => {
     transactionQuery = async () => ({ rows: [[7]], rowCount: 1, columns: [column("ID", "Integer")], diagnostics: [] });
@@ -1233,6 +1245,97 @@ describe("Db2Provider: transactions", () => {
     } finally {
       warn.mockRestore();
     }
+  });
+
+  test("a statement that settles before the deadline leaves the transaction and its session alone", async () => {
+    let calls = 0;
+    transactionQuery = async () => {
+      calls += 1;
+      if (calls === 2) throw new Error('SQL Error [SQLSTATE=42704, SQLCODE=-204]: "APP.NOPE" is an undefined name.');
+      return { rows: [], rowCount: 1, columns: [], diagnostics: [] };
+    };
+    const provider = new Db2Provider(
+      baseConfig,
+      { queryTimeout: 20 },
+      { loadDriver: async () => driver, caFileSystem },
+    );
+    await provider.connect();
+    await provider.beginTransaction();
+
+    await provider.queryInTransaction("UPDATE APP.ORDERS SET QTY = 1");
+    await expect(provider.queryInTransaction("SELECT * FROM APP.NOPE")).rejects.toBeInstanceOf(DatabaseError);
+    // Past both statements' deadlines: a timer left running would retire the session now.
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    expect(provider.isInTransaction()).toBe(true);
+    expect(closedSessions).toEqual([]);
+    await provider.commitTransaction();
+    expect(transactionCalls.map((call) => call.call)).toEqual([
+      "BEGIN",
+      "UPDATE APP.ORDERS SET QTY = 1",
+      "SELECT * FROM APP.NOPE",
+      "COMMIT",
+    ]);
+  });
+
+  test.each([
+    ["commitTransaction", "COMMIT"],
+    ["rollbackTransaction", "ROLLBACK"],
+  ] as const)(
+    "a statement sent while %s is pending is refused, not run on the closing session",
+    async (method, word) => {
+      let release: () => void = () => {};
+      const provider = await connected();
+      await provider.beginTransaction();
+      endGate = new Promise((resolve) => (release = resolve));
+
+      const ending = provider[method]();
+      const refused = await provider.queryInTransaction("DELETE FROM APP.ORDERS").catch((caught: unknown) => caught);
+      expect(refused).toEqual(new QueryError(NO_ACTIVE_TRANSACTION, "db2"));
+
+      release();
+      await ending;
+      expect(transactionCalls.map((call) => call.call)).toEqual(["BEGIN", word]);
+    },
+  );
+
+  test("disconnect while the session is still connecting leaves no transaction and closes that session", async () => {
+    const provider = await connected();
+
+    const opening = provider.beginTransaction().catch((caught: unknown) => caught);
+    await provider.disconnect();
+    const refused = await opening;
+    await settle();
+
+    expect(refused).toEqual(new QueryError(DISCONNECTED_WHILE_OPENING_MESSAGE, "db2"));
+    expect(provider.isInTransaction()).toBe(false);
+    expect(closedSessions.sort()).toEqual([0, 1]);
+    expect(removed).toHaveLength(2);
+    await expect(provider.queryInTransaction("DELETE FROM APP.ORDERS")).rejects.toThrow(NO_ACTIVE_TRANSACTION);
+    expect(transactionCalls.map((call) => call.call)).not.toContain("DELETE FROM APP.ORDERS");
+  });
+
+  test("disconnect while BEGIN is pending leaves no transaction, even after a reconnect", async () => {
+    let release: () => void = () => {};
+    beginGate = new Promise((resolve) => (release = resolve));
+    const provider = await connected();
+
+    const opening = provider.beginTransaction().catch((caught: unknown) => caught);
+    await settle();
+    await provider.disconnect();
+    await provider.connect();
+    release();
+    const refused = await opening;
+    await settle();
+
+    expect(refused).toEqual(new QueryError(DISCONNECTED_WHILE_OPENING_MESSAGE, "db2"));
+    expect(provider.isInTransaction()).toBe(false);
+    expect(provider.isConnected()).toBe(true);
+    expect(closedSessions.sort()).toEqual([0, 1]);
+    await expect(provider.queryInTransaction("DELETE FROM APP.ORDERS")).rejects.toThrow(NO_ACTIVE_TRANSACTION);
+    // A new transaction opens on the reconnected provider.
+    await provider.beginTransaction();
+    expect(provider.isInTransaction()).toBe(true);
   });
 
   test("disconnect ends an open transaction by closing its session", async () => {
