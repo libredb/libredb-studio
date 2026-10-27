@@ -18,10 +18,13 @@ import {
   resultBytes,
   type ToolResult,
 } from "../output";
+import { mcpStatementToolFor } from "./statement-arms";
 
 /**
  * list_connections (#246): the connections this deployment opted in for MCP that the token's role
  * may use, without credentials and without a server-side file path, paged under the result cap.
+ * Each names its read_tool, the statement tool that serves its engine, read from the same
+ * served-engine resolver the tools register and gate on, or null where none does (ruling 20).
  *
  * Connection metadata comes from the operator's seed file, not from anyone who can write to a
  * database, so the result carries no untrusted-content notice. No provider is called, so one audit
@@ -40,6 +43,7 @@ const ListedConnectionSchema = z.object({
   engine: z.string(),
   database: z.string().optional(),
   environment: z.string().optional(),
+  read_tool: z.enum(["run_read_query", "run_mongo_command"]).nullable(),
 });
 
 const ListConnectionsOutputSchema = z.object({
@@ -54,7 +58,7 @@ type ListedConnection = z.infer<typeof ListedConnectionSchema>;
 
 const LIST_CONNECTIONS_TITLE = "List connections";
 export const LIST_CONNECTIONS_DESCRIPTION =
-  "List the database connections this deployment opted in for MCP that your token's role may use, without credentials. Works for every engine. An empty list means no connection is opted in: an operator adds mcp: true to a seed connection. Pages with offset; has_more and next_offset say when more connections exist.";
+  "List the database connections this deployment opted in for MCP that your token's role may use, without credentials. Works for every engine. Each connection's read_tool names the tool that runs a statement on it, or is null where inspect_schema is the only read. An empty list means no connection is opted in: an operator adds mcp: true to a seed connection. Pages with offset; has_more and next_offset say when more connections exist.";
 
 /** The file name alone, cut after the last / or \, so no server-side path reaches the client. */
 function fileName(path: string): string {
@@ -69,6 +73,7 @@ function listed(connection: ManagedConnection): ListedConnection {
     engine: connection.type,
     ...(database === undefined ? {} : { database: isFileBased(connection.type) ? fileName(database) : database }),
     ...(environment === undefined ? {} : { environment }),
+    read_tool: mcpStatementToolFor(connection.type),
   };
 }
 

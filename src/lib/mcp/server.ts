@@ -23,7 +23,7 @@ export const MCP_SERVER_NAME = "libredb-studio-mcp";
 export const MCP_SUPPORTED_PROTOCOL_VERSIONS = ["2026-07-28", "2025-11-25", "2025-06-18"];
 
 export const MCP_INSTRUCTIONS =
-  "LibreDB Studio serves the database connections this deployment opted in for MCP, filtered by the role your token carries. Start with list_connections, read a connection's tables with inspect_schema, then run SQL with run_read_query. An empty connection list means no connection is opted in for your role. Every call shares one per-user rate limit with the Studio UI.";
+  "LibreDB Studio serves the database connections this deployment opted in for MCP, filtered by the role your token carries. Start with list_connections, read a connection's tables with inspect_schema, then run a read with the tool its read_tool names. An empty connection list means no connection is opted in for your role. Every call shares one per-user rate limit with the Studio UI.";
 
 function createStudioMcpServer({ authInfo }: McpRequestContext): McpServer {
   if (authInfo === undefined) {

@@ -1,5 +1,5 @@
 /**
- * What an MCP client reads before it calls anything (#246): the three tool descriptions, which a
+ * What an MCP client reads before it calls anything (#246): the tool descriptions, which a
  * client may cut at 2,048 characters, so each says first what the tool does; the instructions,
  * at most 512 characters, which carry only server-wide facts; and the engine sentence, derived
  * from the one engine list rather than written out.
@@ -13,6 +13,7 @@ import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
 import { MCP_INSTRUCTIONS } from "@/lib/mcp/server";
 import { INSPECT_SCHEMA_DESCRIPTION } from "@/lib/mcp/tools/inspect-schema";
 import { LIST_CONNECTIONS_DESCRIPTION } from "@/lib/mcp/tools/list-connections";
+import { RUN_MONGO_COMMAND_ARM } from "@/lib/mcp/tools/statement-arms";
 import {
   RUN_READ_QUERY_DESCRIPTION,
   RUN_READ_QUERY_ENGINES,
@@ -31,6 +32,7 @@ const DESCRIPTIONS = [
   ["list_connections", LIST_CONNECTIONS_DESCRIPTION, "List the database connections"],
   ["inspect_schema", INSPECT_SCHEMA_DESCRIPTION, "List the tables of one connection"],
   ["run_read_query", RUN_READ_QUERY_DESCRIPTION, "Run one read-only SQL statement"],
+  ["run_mongo_command", RUN_MONGO_COMMAND_ARM.description, "Run one read-only MongoDB command"],
 ] as const;
 
 describe("the tool descriptions", () => {
@@ -39,9 +41,10 @@ describe("the tool descriptions", () => {
     expect(description.startsWith(opening)).toBe(true);
   });
 
-  test("the two tools that quote database content end with the notice, and list_connections carries none", () => {
+  test("the tools that quote database content end with the notice, and list_connections carries none", () => {
     expect(INSPECT_SCHEMA_DESCRIPTION.endsWith(MCP_UNTRUSTED_NOTICE)).toBe(true);
     expect(RUN_READ_QUERY_DESCRIPTION.endsWith(MCP_UNTRUSTED_NOTICE)).toBe(true);
+    expect(RUN_MONGO_COMMAND_ARM.description.endsWith(MCP_UNTRUSTED_NOTICE)).toBe(true);
     expect(LIST_CONNECTIONS_DESCRIPTION).not.toContain(MCP_UNTRUSTED_NOTICE);
   });
 
@@ -66,6 +69,11 @@ describe("the tool descriptions", () => {
       expect(RUN_READ_QUERY_TYPES).not.toContain(type);
       expect(RUN_READ_QUERY_ENGINES).not.toContain(getDBConfig(type).label);
     }
+  });
+
+  test("run_mongo_command names MongoDB, the one engine its handler gates on, and says it takes no offset", () => {
+    expect(RUN_MONGO_COMMAND_ARM.description).toContain("Runs on MongoDB; other engines refuse it.");
+    expect(RUN_MONGO_COMMAND_ARM.description).toContain("this tool takes no offset");
   });
 
   test("names no statement form, because the forms differ by engine and the refusal names them", () => {
@@ -93,6 +101,11 @@ describe("the instructions", () => {
     expect(MCP_INSTRUCTIONS.length).toBeLessThanOrEqual(512);
     expect(MCP_INSTRUCTIONS).not.toContain(MCP_UNTRUSTED_NOTICE);
     expect(MCP_INSTRUCTIONS.toLowerCase()).not.toContain("read-only");
+  });
+
+  test("send a statement to the tool a connection's read_tool names, not to one tool for every engine", () => {
+    expect(MCP_INSTRUCTIONS).toContain("then run a read with the tool its read_tool names");
+    expect(MCP_INSTRUCTIONS).not.toContain("run SQL with run_read_query");
   });
 
   test("reach a legacy client in the InitializeResult", async () => {

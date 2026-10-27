@@ -71,8 +71,21 @@ describe("the answer", () => {
       expect(result.isError ?? false).toBe(false);
       expect(result.structuredContent).toEqual({
         connections: [
-          { id: "seed:shop", name: "shop", engine: "sqlite", database: "shop.db", environment: "production" },
-          { id: "seed:analytics", name: "analytics", engine: "postgres", database: "analytics" },
+          {
+            id: "seed:shop",
+            name: "shop",
+            engine: "sqlite",
+            database: "shop.db",
+            environment: "production",
+            read_tool: "run_read_query",
+          },
+          {
+            id: "seed:analytics",
+            name: "analytics",
+            engine: "postgres",
+            database: "analytics",
+            read_tool: "run_read_query",
+          },
         ],
         total_connections: 2,
         has_more: false,
@@ -100,6 +113,35 @@ describe("the answer", () => {
       (connection: { database: string }) => connection.database,
     );
     expect(databases).toEqual(["warehouse.duckdb", "notes.libredb"]);
+  });
+
+  test("names the tool that runs a statement on each connection, and null where inspect_schema is the read", async () => {
+    // From the one served-engine resolver: MongoDB's command is read by run_mongo_command (B117), and an engine no
+    // statement tool serves, such as Redis, or Snowflake, whose agent reads stay closed to MCP, has none.
+    const WAREHOUSE = {
+      id: "warehouse",
+      type: "snowflake",
+      host: "org-account",
+      user: "svc",
+      role: "RO",
+      password: "token",
+      authMethod: "pat",
+    };
+    writeSeedFile(dir, [
+      SHOP,
+      { id: "mongo", type: "mongodb", host: "127.0.0.1", port: 27017, database: "app" },
+      { id: "cache", type: "redis", host: "127.0.0.1", port: 6379 },
+      WAREHOUSE,
+    ]);
+    const tools = (await list()).structuredContent?.connections.map(
+      (connection: { id: string; read_tool: string | null }) => [connection.id, connection.read_tool],
+    );
+    expect(tools).toEqual([
+      ["seed:shop", "run_read_query"],
+      ["seed:mongo", "run_mongo_command"],
+      ["seed:cache", null],
+      ["seed:warehouse", null],
+    ]);
   });
 
   test("with no seed file at all is the empty list", async () => {
