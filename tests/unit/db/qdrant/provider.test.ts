@@ -98,6 +98,7 @@ describe("declarations", () => {
       containerLevels: [],
       objectKinds: QDRANT_OBJECT_KINDS,
       enforcesReadOnly: true,
+      agentCredential: "token",
       schemaRefreshPattern: "(?!)",
     });
   });

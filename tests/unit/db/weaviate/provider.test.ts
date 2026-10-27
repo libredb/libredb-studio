@@ -133,6 +133,7 @@ describe("declarations", () => {
       containerLevels: [],
       objectKinds: WEAVIATE_OBJECT_KINDS,
       enforcesReadOnly: true,
+      agentCredential: "token",
       schemaRefreshPattern: "(?!)",
     });
   });
