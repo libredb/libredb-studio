@@ -1467,7 +1467,7 @@ Key testing patterns:
 | `tests/unit/lib/oidc.test.ts` | ~30 | All `oidc.ts` functions |
 | `tests/api/auth/oidc-login.test.ts` | ~4 | Login route redirect, PKCE state |
 | `tests/api/auth/oidc-callback.test.ts` | ~9 | Code exchange, role mapping, errors |
-| `tests/api/auth/oidc-rancher.test.ts` | ~13 | Login, callback and logout against a Rancher-shaped provider, unmocked `oidc.ts` and openid-client |
+| `tests/api/auth/oidc-rancher.test.ts` | ~14 | Login, callback and logout against a Rancher-shaped provider, unmocked `oidc.ts` and openid-client |
 | `tests/api/auth/logout.test.ts` | ~8 | Local + OIDC logout modes |
 | `tests/hooks/use-auth.test.ts` | ~12 | Including OIDC redirect test |
 | `tests/components/LoginPageOIDC.test.tsx` | ~7 | SSO button, error display |

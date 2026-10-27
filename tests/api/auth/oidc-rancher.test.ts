@@ -311,6 +311,25 @@ describe("Rancher as the OIDC identity provider", () => {
     }
   }
 
+  // Rancher refuses any scope its client does not allow, Studio's default `email` among them, by redirecting back with
+  // `error=invalid_scope`; the login page then shows its generic failure, which docs/OIDC.md#rancher explains.
+  test("Rancher's invalid_scope answer to the default OIDC_SCOPE ends on oidc_failed with no session", async () => {
+    useRancherEnv({ OIDC_SCOPE: undefined });
+    const authorize = await startSignIn();
+    expect(authorize.searchParams.get("scope")).toBe("openid profile email");
+
+    const state = authorize.searchParams.get("state") as string;
+    const res = await callback(
+      new Request(
+        `${STUDIO}/api/auth/oidc/callback?error=invalid_scope&error_description=invalid+scope%3A+email&state=${state}`,
+      ),
+    );
+
+    expect(res.headers.get("location")).toBe(`${STUDIO}/login?error=oidc_failed`);
+    expect(jar.has("auth-token")).toBe(false);
+    expect(next.tokenRequests).toHaveLength(0);
+  });
+
   test("logout ends only Studio's session, because Rancher's discovery has no end_session_endpoint", async () => {
     useRancherEnv();
     const { session } = await signIn("2.15", null);
