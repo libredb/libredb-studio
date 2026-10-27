@@ -94,7 +94,7 @@ import {
   QueryError,
   mapDatabaseError,
 } from "../../../errors";
-import { assertReadOnlyBudget, measureResultBytes } from "../read-only-budget";
+import { assertReadOnlyBudget, byteBudgetSentence, measureResultBytes, rowBudgetSentence } from "../read-only-budget";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
 import { findCodeWord } from "@/lib/sql/words";
@@ -932,19 +932,11 @@ export class DuckDBProvider extends SQLBaseProvider {
       });
 
       if (result.rows.length > budget.maxResultRows) {
-        throw new QueryError(
-          `Read-only execution exceeded the row budget: ${result.rows.length} rows > ${budget.maxResultRows} allowed`,
-          "duckdb",
-          sql,
-        );
+        throw new QueryError(rowBudgetSentence(result.rows.length, budget.maxResultRows), "duckdb", sql);
       }
       const resultBytes = measureResultBytes(result.rows);
       if (resultBytes > budget.maxResultBytes) {
-        throw new QueryError(
-          `Read-only execution exceeded the byte budget: ${resultBytes} bytes > ${budget.maxResultBytes} allowed`,
-          "duckdb",
-          sql,
-        );
+        throw new QueryError(byteBudgetSentence(resultBytes, budget.maxResultBytes), "duckdb", sql);
       }
       // DuckDB has no statement-level timeout setting, so the budget's timeout is a
       // post-execution deadline here: an overrunning statement is not preempted, but its

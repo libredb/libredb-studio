@@ -11,17 +11,15 @@
  * session, so one caller's deadline stops that caller waiting and never cancels the load the others are waiting on.
  */
 import { QueryError } from "@/lib/db/errors";
-import { assertReadOnlyBudget, measureResultBytes } from "@/lib/db/providers/sql/read-only-budget";
+import {
+  assertReadOnlyBudget,
+  byteBudgetSentence,
+  measureResultBytes,
+  rowBudgetSentence,
+} from "@/lib/db/providers/sql/read-only-budget";
 import type { QueryResult, ReadOnlyStatementBudget, ReadOnlyStatementMode } from "@/lib/db/types";
 import type { KubernetesSeams } from "./client";
-import {
-  byteBudgetSentence,
-  type ExplainCache,
-  type KubectlContext,
-  resultOf,
-  rowBudgetSentence,
-  statementCall,
-} from "./console/context";
+import { type ExplainCache, type KubectlContext, resultOf, statementCall } from "./console/context";
 import { runKubectl } from "./console/run";
 import { KUBERNETES_TYPE } from "./limits";
 import type { KubernetesSurface } from "./objects";

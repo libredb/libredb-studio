@@ -99,16 +99,6 @@ export function statementCall(signal: AbortSignal, deadline: number, now: () => 
   };
 }
 
-/** The SQL providers' sentence for a result past the row budget, so the agent's advice reads both the same way. */
-export function rowBudgetSentence(rows: number, allowed: number): string {
-  return `Read-only execution exceeded the row budget: ${rows} rows > ${allowed} allowed`;
-}
-
-/** The SQL providers' sentence for a result past the byte budget. */
-export function byteBudgetSentence(bytes: number, allowed: number): string {
-  return `Read-only execution exceeded the byte budget: ${bytes} bytes > ${allowed} allowed`;
-}
-
 /**
  * The most rows a command reads: its own limit on an editor run; on an agent run one past the budget at most, which is
  * enough to know the answer is refused without reading the rest.

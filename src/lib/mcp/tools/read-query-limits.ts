@@ -5,9 +5,11 @@ import type { DatabaseType } from "@/lib/types";
  * The pure rules run_read_query follows (#246).
  *
  * A provider's read-only budget refusal is recognised by the fixed opening of this repository's
- * own messages, under src/lib/db/providers/sql/, and answered in this server's words; a test reads
- * those provider files and fails when an opening no longer occurs, so a reworded message cannot
- * fall through to an engine error. A time-budget refusal, and any failure that settles once the
+ * own messages, and answered in this server's words. The row and byte refusals are built once, by
+ * the constructors in src/lib/db/providers/sql/read-only-budget.ts that every provider with a
+ * queryReadOnly calls; the rest are SQL Server's, SQLite's and DuckDB's own. A test reads those
+ * files and fails when an opening no longer occurs, so a reworded message cannot fall through to
+ * an engine error. A time-budget refusal, and any failure that settles once the
  * deadline has passed, is the timeout, so which of the two settles first never changes what the
  * client reads. The deadline race stops the wait for a statement, not the statement: no provider
  * can cancel a read-only statement yet (docs/BACKLOG.md D128).

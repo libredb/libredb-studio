@@ -35,6 +35,21 @@ export function assertReadOnlyBudget(budget: ReadOnlyStatementBudget, provider: 
 }
 
 /**
+ * The refusal of a result past the row budget, in the one sentence every provider with a
+ * `queryReadOnly` raises (D367). It is a parsed contract, not prose: MCP's `run_read_query`
+ * classifies a refusal by its opening (`READ_ONLY_REFUSALS`), and `rowBudgetIn` in
+ * `context-snapshot.ts` and the agent's advice read the two numbers back out of it.
+ */
+export function rowBudgetSentence(rows: number, allowed: number): string {
+  return `Read-only execution exceeded the row budget: ${rows} rows > ${allowed} allowed`;
+}
+
+/** The refusal of a result past the byte budget, the row sentence's twin. */
+export function byteBudgetSentence(bytes: number, allowed: number): string {
+  return `Read-only execution exceeded the byte budget: ${bytes} bytes > ${allowed} allowed`;
+}
+
+/**
  * Byte size of a result set as it would be serialized to the caller. BigInt
  * values (node:sqlite and pg both emit them for 64-bit integers) have no JSON
  * representation, so they are measured as their decimal text.

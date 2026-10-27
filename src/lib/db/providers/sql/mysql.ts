@@ -71,7 +71,7 @@ import {
   NO_ACTIVE_TRANSACTION,
 } from "../../errors";
 import type { ProviderExecutionContext, ReadOnlyStatementBudget, ReadOnlyStatementMode } from "../../types";
-import { assertReadOnlyBudget, measureRowBytes } from "./read-only-budget";
+import { assertReadOnlyBudget, byteBudgetSentence, measureRowBytes, rowBudgetSentence } from "./read-only-budget";
 import {
   applySourceBound,
   assertContainerPathShape,
@@ -3778,21 +3778,13 @@ export class MySQLProvider extends SQLBaseProvider {
       if (rows.length > budget.maxResultRows) {
         this.killReadOnlyStatement(conn.threadId);
         conn.destroy();
-        throw new QueryError(
-          `Read-only execution exceeded the row budget: ${rows.length} rows > ${budget.maxResultRows} allowed`,
-          "mysql",
-          sql,
-        );
+        throw new QueryError(rowBudgetSentence(rows.length, budget.maxResultRows), "mysql", sql);
       }
       bytes += measureRowBytes(row);
       if (bytes > budget.maxResultBytes) {
         this.killReadOnlyStatement(conn.threadId);
         conn.destroy();
-        throw new QueryError(
-          `Read-only execution exceeded the byte budget: ${bytes} bytes > ${budget.maxResultBytes} allowed`,
-          "mysql",
-          sql,
-        );
+        throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), "mysql", sql);
       }
     }
     // An OK-packet answer (no result set) never fires `fields` and streams no row, so

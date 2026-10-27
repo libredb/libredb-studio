@@ -45,7 +45,7 @@ import {
   QueryError,
   mapDatabaseError,
 } from "../../errors";
-import { assertReadOnlyBudget, measureResultBytes } from "./read-only-budget";
+import { assertReadOnlyBudget, byteBudgetSentence, measureResultBytes, rowBudgetSentence } from "./read-only-budget";
 import { formatBytes } from "../../utils/pool-manager";
 import {
   loadSQLiteDriver,
@@ -1801,19 +1801,11 @@ export class SQLiteProvider extends SQLBaseProvider {
       });
 
       if (rows.length > budget.maxResultRows) {
-        throw new QueryError(
-          `Read-only execution exceeded the row budget: ${rows.length} rows > ${budget.maxResultRows} allowed`,
-          "sqlite",
-          sql,
-        );
+        throw new QueryError(rowBudgetSentence(rows.length, budget.maxResultRows), "sqlite", sql);
       }
       const resultBytes = measureResultBytes(rows);
       if (resultBytes > budget.maxResultBytes) {
-        throw new QueryError(
-          `Read-only execution exceeded the byte budget: ${resultBytes} bytes > ${budget.maxResultBytes} allowed`,
-          "sqlite",
-          sql,
-        );
+        throw new QueryError(byteBudgetSentence(resultBytes, budget.maxResultBytes), "sqlite", sql);
       }
       // With the child-process worker the deadline above is preemptive: an overrunning
       // statement is killed and its promise rejects before this check. Under the

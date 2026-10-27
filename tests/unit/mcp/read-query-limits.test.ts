@@ -2,11 +2,14 @@
  * The pure rules of run_read_query (#246): the offset rule's answers, the mapping of this
  * repository's own provider refusals, the timeout classification, the deadline race and the texts
  * a caller reads. The provider files are read, never edited, so a reworded message breaks this
- * build instead of falling through to an engine error.
+ * build instead of falling through to an engine error, and a provider that types out the row or
+ * byte refusal again instead of calling the shared constructor breaks it too (D367).
  */
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { rowBudgetRefusal } from "@/lib/db/providers/document/mongodb/agent-read";
+import { byteBudgetSentence, rowBudgetSentence } from "@/lib/db/providers/sql/read-only-budget";
 import {
   classifyReadQueryFailure,
   fenceRefusalText,
@@ -21,7 +24,8 @@ import {
   timeoutText,
 } from "@/lib/mcp/tools/read-query-limits";
 
-const PROVIDERS = join(import.meta.dir, "../../../src/lib/db/providers/sql");
+const REPO = join(import.meta.dir, "../../..");
+const read = (file: string): string => readFileSync(join(REPO, file), "utf8");
 const ROWS =
   "The result has more than 1000 rows, the most this server reads for one call. Add a LIMIT of 1000 or less, or remove your own LIMIT and page with offset.";
 const BYTES =
@@ -130,14 +134,60 @@ describe("the provider refusal mapper", () => {
   });
 });
 
+describe("the budget sentences every provider shares (D367)", () => {
+  test("read the way the mapper and rowBudgetIn read them", () => {
+    expect(rowBudgetSentence(1001, 1000)).toBe("Read-only execution exceeded the row budget: 1001 rows > 1000 allowed");
+    expect(byteBudgetSentence(2000000, 1048576)).toBe(
+      "Read-only execution exceeded the byte budget: 2000000 bytes > 1048576 allowed",
+    );
+  });
+
+  // The two providers off the SQL arm reach the mapper too, MongoDB with its cursor-bound tail.
+  test.each([
+    ["kubectl's row refusal", rowBudgetSentence(201, 200), ROWS],
+    ["kubectl's byte refusal", byteBudgetSentence(2_000_000, 1_048_576), BYTES],
+    [
+      "MongoDB's row refusal at the cursor bound",
+      rowBudgetRefusal(201, { statementTimeoutMs: 1, maxResultRows: 200, maxResultBytes: 1 }, "{}", true).message,
+      ROWS,
+    ],
+  ] as const)("maps %s to too-large", (_name, message, text) => {
+    expect(classifyReadQueryFailure(new Error(message), 1_000, 10_000)).toEqual({ kind: "too-large", text });
+  });
+});
+
 describe("the prefixes the mapper matches still start a message in each provider that raises it", () => {
+  const SHARED = "src/lib/db/providers/sql/read-only-budget.ts";
+  const SHARED_PREFIXES = [
+    "Read-only execution exceeded the row budget",
+    "Read-only execution exceeded the byte budget",
+  ];
   const RAISED_IN: Record<string, readonly string[]> = {
-    "Read-only execution exceeded the row budget": ["sqlite.ts", "duckdb/index.ts", "postgres.ts", "mssql.ts"],
-    "Read-only execution exceeded the byte budget": ["sqlite.ts", "duckdb/index.ts", "postgres.ts", "mssql.ts"],
-    "Read-only execution refused a value the server cut at the byte budget": ["mssql.ts"],
-    "Read-only execution cannot bound a serialised result": ["mssql.ts"],
-    "Read-only execution exceeded the time budget": ["sqlite.ts", "duckdb/index.ts"],
-    "Read-only execution exceeded its time budget": ["mssql.ts"],
+    "Read-only execution exceeded the row budget": [SHARED],
+    "Read-only execution exceeded the byte budget": [SHARED],
+    "Read-only execution refused a value the server cut at the byte budget": ["src/lib/db/providers/sql/mssql.ts"],
+    "Read-only execution cannot bound a serialised result": ["src/lib/db/providers/sql/mssql.ts"],
+    "Read-only execution exceeded the time budget": [
+      "src/lib/db/providers/sql/sqlite.ts",
+      "src/lib/db/providers/sql/duckdb/index.ts",
+    ],
+    "Read-only execution exceeded its time budget": ["src/lib/db/providers/sql/mssql.ts"],
+  };
+  // Each provider with a queryReadOnly, by the files that raise its row or byte refusal.
+  const SHARED_USERS: Record<string, readonly string[]> = {
+    postgres: ["src/lib/db/providers/sql/postgres.ts"],
+    mysql: ["src/lib/db/providers/sql/mysql.ts"],
+    mssql: ["src/lib/db/providers/sql/mssql.ts"],
+    sqlite: ["src/lib/db/providers/sql/sqlite.ts"],
+    duckdb: ["src/lib/db/providers/sql/duckdb/index.ts"],
+    mongodb: ["src/lib/db/providers/document/mongodb/agent-read.ts"],
+    kubernetes: [
+      "src/lib/db/providers/platform/kubernetes/machine-read.ts",
+      "src/lib/db/providers/platform/kubernetes/console/describe.ts",
+      "src/lib/db/providers/platform/kubernetes/console/events.ts",
+      "src/lib/db/providers/platform/kubernetes/console/get-documents.ts",
+      "src/lib/db/providers/platform/kubernetes/console/logs.ts",
+    ],
   };
 
   test("every prefix the mapper matches is listed here", () => {
@@ -147,9 +197,32 @@ describe("the prefixes the mapper matches still start a message in each provider
   test.each(Object.entries(RAISED_IN).flatMap(([prefix, files]) => files.map((file) => [prefix, file] as const)))(
     "%p opens a message in %s",
     (prefix, file) => {
-      expect(readFileSync(join(PROVIDERS, file), "utf8")).toContain(`\`${prefix}`);
+      expect(read(file)).toContain(`\`${prefix}`);
     },
   );
+
+  test.each(SHARED_PREFIXES)("%p is written once, in the shared module", (prefix) => {
+    expect(read(SHARED).split(prefix)).toHaveLength(2);
+  });
+
+  test.each(SHARED_PREFIXES)("%p is written in no provider file but the shared module", (prefix) => {
+    const providers = join(REPO, "src/lib/db/providers");
+    const writers = readdirSync(providers, { recursive: true, encoding: "utf8" })
+      .filter((file) => file.endsWith(".ts"))
+      .map((file) => `src/lib/db/providers/${file}`)
+      .filter((file) => read(file).includes(prefix));
+    expect(writers).toEqual([SHARED]);
+  });
+
+  test.each(
+    Object.entries(SHARED_USERS).flatMap(([provider, files]) => files.map((file) => [provider, file] as const)),
+  )("%s builds its budget refusal with the shared constructor in %s", (_provider, file) => {
+    const source = read(file);
+    expect(source).toMatch(
+      /import \{[^}]*\b(rowBudgetSentence|byteBudgetSentence)\b[^}]*\} from "[^"]*read-only-budget";/,
+    );
+    expect(source).toMatch(/\b(rowBudgetSentence|byteBudgetSentence)\(/);
+  });
 });
 
 describe("raceDeadline", () => {

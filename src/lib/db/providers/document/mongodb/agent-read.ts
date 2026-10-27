@@ -46,7 +46,12 @@ import {
 // named export of the driver's CommonJS entry.
 import * as mongodbDriver from "mongodb";
 import { ConnectionError, QueryError, mapDatabaseError } from "../../../errors";
-import { assertReadOnlyBudget, MAX_STATEMENT_TIMEOUT_MS } from "../../sql/read-only-budget";
+import {
+  assertReadOnlyBudget,
+  byteBudgetSentence,
+  MAX_STATEMENT_TIMEOUT_MS,
+  rowBudgetSentence,
+} from "../../sql/read-only-budget";
 import type { ReadOnlyStatementBudget } from "../../../types";
 import { unionFields, uniquelyKeyedRows } from "../../../utils/result-fields";
 import type { RevivedMongoReadEnvelope } from "./extended-json";
@@ -155,20 +160,12 @@ export function rowBudgetRefusal(
   const total = stoppedAtBound
     ? `; the read stops one row past the budget, so at least ${rows} documents match and the total is not known (count it with "operation": "count", or narrow the read)`
     : "";
-  return new QueryError(
-    `Read-only execution exceeded the row budget: ${rows} rows > ${budget.maxResultRows} allowed${total}`,
-    "mongodb",
-    statement,
-  );
+  return new QueryError(`${rowBudgetSentence(rows, budget.maxResultRows)}${total}`, "mongodb", statement);
 }
 
 /** The byte-budget refusal, same sentence, counted in BSON bytes. */
 function byteBudgetRefusal(bytes: number, budget: ReadOnlyStatementBudget, statement: string): QueryError {
-  return new QueryError(
-    `Read-only execution exceeded the byte budget: ${bytes} bytes > ${budget.maxResultBytes} allowed`,
-    "mongodb",
-    statement,
-  );
+  return new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), "mongodb", statement);
 }
 
 function killedAtDeadline(budget: ReadOnlyStatementBudget, statement: string): QueryError {

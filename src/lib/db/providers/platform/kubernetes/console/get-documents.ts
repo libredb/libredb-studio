@@ -14,6 +14,7 @@
  */
 import { stringify } from "yaml";
 import { QueryError } from "@/lib/db/errors";
+import { byteBudgetSentence } from "@/lib/db/providers/sql/read-only-budget";
 import { ACCEPT_JSON } from "../client";
 import type { IndexedResource } from "../discovery";
 import { KubernetesRequestError, KubernetesResponseTooLargeError } from "../errors";
@@ -28,7 +29,6 @@ import { maskObjectForMachine } from "../machine-redaction";
 import { redactResponse } from "../redaction";
 import { type KubeTable, parseTable, scanTable } from "../table";
 import {
-  byteBudgetSentence,
   inTurn,
   type KubectlContext,
   type KubectlGrid,

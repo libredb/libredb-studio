@@ -90,7 +90,7 @@ import {
 } from "../../errors";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import type { QueryResultSet } from "@/lib/types";
-import { assertReadOnlyBudget, measureResultBytes } from "./read-only-budget";
+import { assertReadOnlyBudget, byteBudgetSentence, measureResultBytes, rowBudgetSentence } from "./read-only-budget";
 import { sendPgCancelRequest, type PgCancelTarget } from "./pg-wire-cancel";
 import { POSTGRES_CREATE_TABLE } from "./postgres-create-table";
 import { type PgFieldMetadata, postgresColumnTypes } from "./column-types";
@@ -3611,19 +3611,11 @@ export class PostgresProvider extends SQLBaseProvider {
       // measured on the keyed rows, which are what the caller receives.
       const result = pgQueryResult(answered as unknown as PgArrayAnswer, sql);
       if (result.rows.length > budget.maxResultRows) {
-        throw new QueryError(
-          `Read-only execution exceeded the row budget: ${result.rows.length} rows > ${budget.maxResultRows} allowed`,
-          "postgres",
-          sql,
-        );
+        throw new QueryError(rowBudgetSentence(result.rows.length, budget.maxResultRows), "postgres", sql);
       }
       const resultBytes = measureResultBytes(result.rows);
       if (resultBytes > budget.maxResultBytes) {
-        throw new QueryError(
-          `Read-only execution exceeded the byte budget: ${resultBytes} bytes > ${budget.maxResultBytes} allowed`,
-          "postgres",
-          sql,
-        );
+        throw new QueryError(byteBudgetSentence(resultBytes, budget.maxResultBytes), "postgres", sql);
       }
 
       return { ...result, executionTime };

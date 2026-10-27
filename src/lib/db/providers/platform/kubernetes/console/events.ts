@@ -14,6 +14,7 @@
  * and an involved Secret's name is withheld from the OBJECT cell.
  */
 import { QueryError } from "@/lib/db/errors";
+import { rowBudgetSentence } from "@/lib/db/providers/sql/read-only-budget";
 import { ACCEPT_JSON } from "../client";
 import { KUBERNETES_EVENTS_READ_MAX, KUBERNETES_EVENTS_SHOWN, KUBERNETES_PAGE_SIZE, KUBERNETES_TYPE } from "../limits";
 import { MACHINE_REDACTED, redactResponse } from "../redaction";
@@ -27,7 +28,6 @@ import {
   objectOf,
   redactionMode,
   resolveType,
-  rowBudgetSentence,
   stringOf,
   textGrid,
 } from "./context";

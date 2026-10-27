@@ -63,7 +63,7 @@ import {
   mapDatabaseError,
   NO_ACTIVE_TRANSACTION,
 } from "../../errors";
-import { assertReadOnlyBudget, measureResultBytes } from "./read-only-budget";
+import { assertReadOnlyBudget, byteBudgetSentence, measureResultBytes, rowBudgetSentence } from "./read-only-budget";
 import { formatBytes } from "../../utils/pool-manager";
 import { analyzeQuery, assertRowBounds, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../utils/query-limiter";
 import { measuredNullableAggregate } from "../../utils/measured-aggregate";
@@ -2388,18 +2388,14 @@ export class MSSQLProvider extends SQLBaseProvider {
       // statement's own complexity and then by the byte cap below, which is exactly how
       // PostgreSQL's one-row plan is bounded.
       if (mode !== "estimate-plan" && rows.length > budget.maxResultRows) {
-        throw new QueryError(
-          `Read-only execution exceeded the row budget: ${rows.length} rows > ${budget.maxResultRows} allowed`,
-          "mssql",
-          sql,
-        );
+        throw new QueryError(rowBudgetSentence(rows.length, budget.maxResultRows), "mssql", sql);
       }
       const resultBytes = measureResultBytes(rows);
       if (resultBytes > budget.maxResultBytes) {
         throw new QueryError(
           mode === "estimate-plan"
             ? `Read-only execution could not hold this query plan: ${resultBytes} bytes > ${budget.maxResultBytes} allowed. The plan is this statement's own shape, so a narrower statement is what makes it readable.`
-            : `Read-only execution exceeded the byte budget: ${resultBytes} bytes > ${budget.maxResultBytes} allowed`,
+            : byteBudgetSentence(resultBytes, budget.maxResultBytes),
           "mssql",
           sql,
         );
