@@ -463,7 +463,7 @@ const NAMED_CITATIONS = [
   {
     doc: "docs/providers/db2.md",
     source: "src/lib/db/providers/sql/db2/index.ts",
-    methods: ["connect", "disconnect", "query", "countObjects", "describeObjects"],
+    methods: ["connect", "disconnect", "query", "beginTransaction", "countObjects", "describeObjects"],
   },
   // etcd: the key-value provider over gRPC (#1259).
   {

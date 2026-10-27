@@ -1041,13 +1041,13 @@ describe("createDatabaseProvider", () => {
       }
     }
 
-    // MySQL and Oracle commit around DDL; PostgreSQL declares its own COMMIT synonyms; SQL
-    // Server rolls DDL back and has none.
-    expect(implicitCommitTypes.sort()).toEqual(["mysql", "oracle", "postgres"]);
+    // MySQL and Oracle commit around DDL; PostgreSQL declares its own COMMIT synonyms; Db2 a
+    // compound block and CALL, which can run COMMIT; SQL Server rolls DDL back and has none.
+    expect(implicitCommitTypes.sort()).toEqual(["db2", "mysql", "oracle", "postgres"]);
 
-    // The positive half, pinned by name: exactly four providers hold a transaction
-    // session, so a fifth (or a lost one) fails here and not only in the loop above.
-    expect(declaringTypes.sort()).toEqual(["mssql", "mysql", "oracle", "postgres"]);
+    // The positive half, pinned by name: exactly five providers hold a transaction
+    // session, so a sixth (or a lost one) fails here and not only in the loop above.
+    expect(declaringTypes.sort()).toEqual(["db2", "mssql", "mysql", "oracle", "postgres"]);
   });
 
   // ─── supportsQueryCancel, by name (#1364) ───
