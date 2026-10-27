@@ -7,9 +7,10 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { MCP_EXPOSABLE, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
 import { DB_UI_CONFIG } from "@/lib/db-ui-config";
 import { mcpClientConfigs } from "@/lib/mcp/client-config";
-import { RUN_READ_QUERY_ENGINES } from "@/lib/mcp/tools/run-read-query";
+import { RUN_READ_QUERY_ENGINES, RUN_READ_QUERY_TYPES } from "@/lib/mcp/tools/run-read-query";
 import type { DatabaseType } from "@/lib/types";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
@@ -49,12 +50,22 @@ describe("docs/MCP.md", () => {
     );
   });
 
-  test("claims no one engine's statement forms for every engine, and names the record that opens MCP read", () => {
+  test("claims only SELECT for every engine, and names the record that opens MCP read", () => {
     expect(MCP_DOC).toContain(
       "A `SELECT` (a `WITH` is fine) runs on every engine it serves; a refused statement's answer names what else that engine takes.",
     );
-    expect(MCP_DOC).not.toContain("`VALUES`, `TABLE`, or `EXPLAIN` without `ANALYZE`");
     expect(MCP_DOC).toContain("`MCP_STATEMENT_READ`");
+  });
+
+  test("names each served engine's statement forms from its READ_QUERY_FORMS row, and no other engine's", () => {
+    // One line per engine, in the row's own words; backticks are the doc's markup, not part of the claim.
+    const lines = MCP_DOC.split("\n")
+      .map((line) => line.replaceAll("`", ""))
+      .filter((line) => /^ {4}- .+: a SELECT \(a WITH is fine\)/.test(line));
+    const expected = RUN_READ_QUERY_TYPES.map(
+      (type) => `    - ${DB_UI_CONFIG[type].label}: ${readQueryFormsOf(type).statements}.`,
+    );
+    expect(lines.sort()).toEqual(expected.sort());
   });
 
   test("names the engines MCP is not offered for in both tool sentences, from MCP_EXPOSABLE (#1089 E12)", () => {

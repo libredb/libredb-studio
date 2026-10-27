@@ -7840,7 +7840,7 @@ Found 2026-10-14 while building agent execution on Kubernetes.
 
 ### B117. MongoDB has no MCP run_read_query arm
 
-MCP `run_read_query` takes one SQL statement (`sql` in `RunReadQueryInputSchema`, `src/lib/mcp/tools/run-read-query.ts`) and serves `RUN_READ_QUERY_TYPES` alone: the engines agent mode executes on whose statement language is SQL and that MCP is offered for.
+MCP `run_read_query` takes one SQL statement (`sql` in `RunReadQueryInputSchema`, `src/lib/mcp/tools/run-read-query.ts`) and serves `RUN_READ_QUERY_TYPES` alone: the engines agent mode executes on whose statement language is SQL, that MCP is offered for, and that `MCP_STATEMENT_READ` (`src/lib/db/compatibility.ts`) opens to MCP statement reads.
 MongoDB is offered to MCP for `inspect_schema`, and agent mode executes its JSON command, but `runReadQuery` refuses a MongoDB connection as soon as it resolves, before anything is acquired, with "this tool does not serve MongoDB; use inspect_schema there".
 So an MCP client can list a MongoDB database's collections and their fields and cannot read a document.
 What it needs is an arm for a statement language that is not SQL, and the MCP halves of B93, B94, B100, B104, B105, B107 and B108 wait on the same arm.
