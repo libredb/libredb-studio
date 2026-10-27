@@ -137,7 +137,6 @@ describe("the tool", () => {
       expect(tool?.annotations).toMatchObject({ readOnlyHint: true, openWorldHint: false });
       expect(Object.keys(tool?.inputSchema.properties ?? {})).toEqual([
         "connection_id",
-        "database",
         "command",
         "max_rows",
         "timeout_ms",
@@ -199,7 +198,7 @@ describe("a read", () => {
       truncated: true,
       truncated_by: "max_rows",
       pagination: { offset: 0, limit: 100, hasMore: true, nextOffset: null, wasLimited: false },
-      hint: `More rows exist than this result holds, and this tool does not page with offset. ${server.rowCapAdvice(JSON.stringify(find), "100")}`,
+      hint: `More rows exist than this result holds, and this tool does not page with offset. ${server.rowCapAdvice(JSON.stringify(find), "100")} To read past the 100 rows returned, skip them with a find's "skip" or a $skip stage.`,
     });
   });
 });
@@ -309,6 +308,26 @@ describe("the result cap", () => {
     expect(result).toEqual({ isError: true, content: [{ type: "text", text: RUN_MONGO_COMMAND_ARM.rowOverCap }] });
     // Sent as written: an arm that does not page never asks the provider to prepare it.
     expect(queryReadOnly).toHaveBeenCalledWith(find, expect.objectContaining({ maxResultRows: 1_000 }));
+  });
+
+  test("a result cut at 32 KiB names the rows that fitted and pages with skip, not with the limit it has", async () => {
+    const limited = JSON.stringify({ collection: "fat", operation: "find", options: { limit: 100 } });
+    const rows = Array.from({ length: 100 }, (_, index) => ({ _id: index, pad: "x".repeat(1_000) }));
+    const queryReadOnly = mock(async () => ({ rows, fields: ["_id", "pad"], rowCount: 100, executionTime: 0 }));
+    const provider = { getCapabilities: () => ({}), queryReadOnly };
+    const result = await direct(
+      { connection_id: "seed:fake", command: JSON.parse(limited), max_rows: 100 },
+      fakeContext(provider),
+    );
+    const shown = result.structuredContent?.row_count as number;
+    expect(shown).toBeGreaterThan(0);
+    expect(shown).toBeLessThan(100);
+    expect(result.structuredContent).toMatchObject({
+      truncated_by: "result_bytes",
+      hint: RUN_MONGO_COMMAND_ARM.moreRows(limited, "mongodb", { maxRows: 100, shown, cut: "result_bytes" }),
+    });
+    expect(result.structuredContent?.hint).toContain(`to read past the ${shown} rows returned`);
+    expect(result.structuredContent?.hint).not.toContain(`"limit": 100`);
   });
 
   test("a read past the provider's byte budget is refused in this arm's words", async () => {

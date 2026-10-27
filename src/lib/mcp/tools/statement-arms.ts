@@ -66,7 +66,14 @@ export interface McpStatementArm {
   /** The answer when even the first row does not fit the result cap. */
   readonly rowOverCap: string;
   /** The hint when more rows exist than the result holds and no next offset can be named. */
-  moreRows(statement: string, type: DatabaseType, maxRows: number): string;
+  moreRows(statement: string, type: DatabaseType, cut: MoreRowsCut): string;
+}
+
+/** Where a result that holds fewer rows than exist was cut: the rows asked for, the rows returned, and which cap cut. */
+export interface MoreRowsCut {
+  readonly maxRows: number;
+  readonly shown: number;
+  readonly cut: "max_rows" | "result_bytes";
 }
 
 const CONNECTION_ID = z.string().min(1, "connection_id is required");
@@ -100,7 +107,7 @@ export const RUN_READ_QUERY_ARM: McpStatementArm = Object.freeze({
   types: SQL_TYPES,
   engines: SQL_ENGINES,
   /** Names no statement form beyond SELECT, because the others differ by engine; the refusal names the engine's own. */
-  description: `Run one read-only SQL statement on a connection. A SELECT (a WITH is fine) runs on every engine it serves; a refused statement's answer names what else that engine takes. Runs on ${SQL_ENGINES}; other engines refuse it, so use inspect_schema there. ${SHARED_LIMITS}, and pagination.nextOffset is the offset of the next page when the query can be paged. ${MCP_UNTRUSTED_NOTICE}`,
+  description: `Run one read-only SQL statement on a connection. A SELECT (a WITH is fine) runs on every engine it serves; a refused statement's answer names what else that engine takes. Runs on ${SQL_ENGINES}; other engines refuse it, and list_connections' read_tool names the tool that reads each connection. ${SHARED_LIMITS}, and pagination.nextOffset is the offset of the next page when the query can be paged. ${MCP_UNTRUSTED_NOTICE}`,
   canonicalize: (raw: unknown) => (typeof raw === "string" ? raw : null),
   fence(statement: string, type: DatabaseType) {
     const violation = checkReadOnlyStatement(statement);
@@ -143,14 +150,23 @@ function nonSqlArm(
     }),
     rowOverCap:
       "One row of this result is larger than the 32 KiB result limit. Narrow the read to fewer or smaller fields, and run it again.",
-    moreRows: (statement: string, _type: DatabaseType, maxRows: number) =>
-      `More rows exist than this result holds, and this tool does not page with offset. ${server.rowCapAdvice(statement, String(maxRows))}`,
+    // A byte cut is not answered with the row-cap advice: a command already limited to max_rows would be told to set
+    // that limit again and be cut again, so it names the rows that fitted and the skip that reads past them.
+    moreRows(statement: string, _type: DatabaseType, { maxRows, shown, cut }: MoreRowsCut) {
+      const past = `read past the ${shown} rows returned, skip them with a find's "skip" or a $skip stage.`;
+      return cut === "result_bytes"
+        ? `More rows exist than the 32 KiB result limit holds, and ${shown} of them fitted; this tool does not page with offset. Project fewer fields to fit more rows, and to ${past}`
+        : `More rows exist than this result holds, and this tool does not page with offset. ${server.rowCapAdvice(statement, String(maxRows))} To ${past}`;
+    },
   });
 }
 
+/**
+ * No `database` key: a MongoDB connection reads the database it is bound to and declares no `catalogSessions`, so
+ * `providerInDatabase` would refuse every call that named one, as the agent's own MongoDB tool leaves it out.
+ */
 export const RunMongoCommandInputSchema = z.strictObject({
   connection_id: CONNECTION_ID,
-  database: DATABASE,
   command: z.record(z.string(), z.unknown()),
   max_rows: MAX_ROWS,
   timeout_ms: TIMEOUT_MS,
@@ -174,11 +190,15 @@ export const MCP_STATEMENT_ARMS: Readonly<Record<AgentStatementLanguageId, McpSt
   mongo: RUN_MONGO_COMMAND_ARM,
 } satisfies Record<AgentStatementLanguageId, McpStatementArm | null>);
 
-/** The arms that serve at least one engine, in record order: the statement tools this build registers. */
-export function servingStatementArms(): readonly McpStatementArm[] {
-  return Object.values(MCP_STATEMENT_ARMS).filter(
-    (arm): arm is McpStatementArm => arm !== null && arm.types.length > 0,
-  );
+/**
+ * The arms that serve at least one engine, in record order: the statement tools this build registers. An arm whose
+ * served set is empty, as one is while its engines' `MCP_STATEMENT_READ` rows are false, is never listed. `arms` is
+ * the record, and a test passes one of its own.
+ */
+export function servingStatementArms(
+  arms: Readonly<Record<AgentStatementLanguageId, McpStatementArm | null>> = MCP_STATEMENT_ARMS,
+): readonly McpStatementArm[] {
+  return Object.values(arms).filter((arm): arm is McpStatementArm => arm !== null && arm.types.length > 0);
 }
 
 /** The tool that runs a statement on `type`, or null where no statement tool serves it and inspect_schema is the read. */

@@ -44,7 +44,7 @@ import {
   raceDeadline,
   timeoutText,
 } from "./read-query-limits";
-import { mcpStatementToolFor, servingStatementArms, type McpStatementArm } from "./statement-arms";
+import { MCP_STATEMENT_ARMS, mcpStatementToolFor, servingStatementArms, type McpStatementArm } from "./statement-arms";
 
 /**
  * The one core every MCP statement tool runs (#246, all-providers design 6): one read-only statement, on an engine that
@@ -162,8 +162,8 @@ function resultOf(call: StatementCall, type: DatabaseType, prepared: PreparedQue
         hint:
           nextOffset !== null
             ? nextPageHint(nextOffset)
-            : hasMore
-              ? arm.moreRows(call.statement, type, args.max_rows)
+            : truncatedBy !== null
+              ? arm.moreRows(call.statement, type, { maxRows: args.max_rows, shown: count, cut: truncatedBy })
               : null,
         byte_size: 0,
         execution_time_ms: raw.executionTime,
@@ -319,8 +319,12 @@ export async function runStatement(
 }
 
 /** Every statement tool whose arm serves an engine, in record order; an arm that serves none is never listed. */
-export function registerStatementTools(server: McpServer, context: McpConnectionContext): void {
-  for (const arm of servingStatementArms()) {
+export function registerStatementTools(
+  server: McpServer,
+  context: McpConnectionContext,
+  arms: Parameters<typeof servingStatementArms>[0] = MCP_STATEMENT_ARMS,
+): void {
+  for (const arm of servingStatementArms(arms)) {
     server.registerTool(
       arm.tool,
       {

@@ -3,14 +3,17 @@
  * reading its engines from the one served-engine resolver, and each non-SQL arm reading and fencing its statement with
  * the agent's own adapter, so an MCP client meets the agent's sentences.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { AGENT_LANGUAGE_COPY, AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
 import { languageServer } from "@/lib/agent/languages/server";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import type { McpConnectionContext } from "@/lib/mcp/context";
 import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
 import { MCP_TOOL_INPUT_SCHEMAS } from "@/lib/mcp/tools";
 import { classifyReadQueryFailure } from "@/lib/mcp/tools/read-query-limits";
 import { RUN_READ_QUERY_DESCRIPTION, RUN_READ_QUERY_TYPES } from "@/lib/mcp/tools/run-read-query";
+import { registerStatementTools } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementEngines } from "@/lib/mcp/tools/served-engines";
 import {
   MCP_STATEMENT_ARMS,
@@ -80,6 +83,13 @@ describe("the SQL arm", () => {
     );
     expect(RUN_READ_QUERY_ARM.tooLarge("SELECT 1")).toEqual({});
   });
+
+  test("sends a client on another engine to the read_tool list_connections names, not to inspect_schema", () => {
+    expect(RUN_READ_QUERY_ARM.description).toContain(
+      `Runs on ${RUN_READ_QUERY_ARM.engines}; other engines refuse it, and list_connections' read_tool names the tool that reads each connection.`,
+    );
+    expect(RUN_READ_QUERY_ARM.description).not.toContain("inspect_schema");
+  });
 });
 
 describe("the MongoDB arm", () => {
@@ -92,6 +102,14 @@ describe("the MongoDB arm", () => {
     expect(RUN_MONGO_COMMAND_ARM.inputSchema.shape).not.toHaveProperty("offset");
     expect(
       RunMongoCommandInputSchema.safeParse({ connection_id: "seed:m", command: { operation: "find" }, offset: 5 })
+        .success,
+    ).toBe(false);
+  });
+
+  test("offers no database: a MongoDB connection reads the database it is bound to, as the agent's tool does", () => {
+    expect(RUN_MONGO_COMMAND_ARM.inputSchema.shape).not.toHaveProperty("database");
+    expect(
+      RunMongoCommandInputSchema.safeParse({ connection_id: "seed:m", command: { operation: "find" }, database: "app" })
         .success,
     ).toBe(false);
   });
@@ -138,12 +156,21 @@ describe("the MongoDB arm", () => {
     expect(RUN_MONGO_COMMAND_ARM.tooLarge(find).bytes).not.toContain("LIMIT");
   });
 
-  test("names no SQL clause where more rows exist, and says the tool takes no offset", () => {
-    const hint = RUN_MONGO_COMMAND_ARM.moreRows(find, "mongodb", 100);
+  test("names no SQL clause where more rows exist, says the tool takes no offset, and pages with skip", () => {
+    const hint = RUN_MONGO_COMMAND_ARM.moreRows(find, "mongodb", { maxRows: 100, shown: 100, cut: "max_rows" });
     expect(hint).toBe(
-      `More rows exist than this result holds, and this tool does not page with offset. ${server.rowCapAdvice(find, "100")}`,
+      `More rows exist than this result holds, and this tool does not page with offset. ${server.rowCapAdvice(find, "100")} To read past the 100 rows returned, skip them with a find's "skip" or a $skip stage.`,
     );
     expect(RUN_MONGO_COMMAND_ARM.rowOverCap).not.toContain("column");
+  });
+
+  test("a cut at the result cap advises fewer fields and skipping the rows that fitted, never the same limit", () => {
+    const limited = JSON.stringify({ collection: "orders", operation: "find", options: { limit: 100 } });
+    const hint = RUN_MONGO_COMMAND_ARM.moreRows(limited, "mongodb", { maxRows: 100, shown: 15, cut: "result_bytes" });
+    expect(hint).toBe(
+      `More rows exist than the 32 KiB result limit holds, and 15 of them fitted; this tool does not page with offset. Project fewer fields to fit more rows, and to read past the 15 rows returned, skip them with a find's "skip" or a $skip stage.`,
+    );
+    expect(hint).not.toContain(`"limit": 100`);
   });
 });
 
@@ -167,5 +194,14 @@ describe("the tool each engine is read with", () => {
   test("the tools registered are the arms that serve an engine", () => {
     expect(servingStatementArms()).toEqual(ARMS.filter((arm) => arm.types.length > 0));
     expect(servingStatementArms().map((arm) => arm.tool)).toEqual(["run_read_query", "run_mongo_command"]);
+  });
+
+  test("an arm that serves no engine is neither listed nor registered (all-providers design 6)", () => {
+    const idle = Object.freeze({ ...RUN_MONGO_COMMAND_ARM, types: [] });
+    const arms = { sql: RUN_READ_QUERY_ARM, kubectl: null, mongo: idle };
+    expect(servingStatementArms(arms)).toEqual([RUN_READ_QUERY_ARM]);
+    const registerTool = mock((_name: string) => undefined);
+    registerStatementTools({ registerTool } as unknown as McpServer, {} as McpConnectionContext, arms);
+    expect(registerTool.mock.calls.map(([name]) => name)).toEqual(["run_read_query"]);
   });
 });

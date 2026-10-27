@@ -24,7 +24,7 @@ It is off by default.
     On Apache Spark it lists the tables and views of one namespace, read with SHOW and DESCRIBE statements that start no Spark job on Studio's own session; a namespace is named in Spark's spelling, its parts joined by dots.
   - `run_read_query` runs one read-only SQL statement.
     A `SELECT` (a `WITH` is fine) runs on every engine it serves; a refused statement's answer names what else that engine takes.
-    Runs on PostgreSQL, SQLite, DuckDB, SQL Server and MySQL; other engines refuse it, so use inspect_schema there.
+    Runs on PostgreSQL, SQLite, DuckDB, SQL Server and MySQL; other engines refuse it, and list_connections' read_tool names the tool that reads each connection.
     It serves an engine only where agent mode executes statements on it, the engine is offered to MCP, and `MCP_STATEMENT_READ` in `src/lib/db/compatibility.ts` opens statement reads on it, so an engine that joins agent mode stays closed here until a change of its own opens it.
     It refuses every engine outside that list as soon as the connection resolves, before anything is acquired, answering "this tool does not serve <engine>; use <tool> there", where the tool is the one the connection's `read_tool` names, or `inspect_schema` where it is `null`.
     MongoDB is one of them, because its statement is a JSON command, which `run_mongo_command` reads.
@@ -39,6 +39,8 @@ It is off by default.
     Runs on MongoDB; other engines refuse it.
     It reads and admits the command with agent mode's own reader, so a write operation and a write stage of a pipeline (`$out`, `$merge`) are refused before anything is acquired, in the sentence an agent run reads.
     It takes no `offset`: a result cut at `max_rows` says how to narrow the command, and a read past the 1000-row provider budget is refused with the same advice, so page inside the command with a find's `skip` or a `$skip` stage.
+    A result cut at the 32 KiB result limit names how many rows fitted and says to project fewer fields or skip past them, never to set the limit the command already has.
+    It takes no `database`: a MongoDB connection reads the database it is bound to, as an agent run does.
 - Read-only is the database's own enforcement, not a filter over statement text: `run_read_query` and `run_mongo_command` take the connection under Studio's agent read-only execution profile and run through the provider's read-only statement path, which PostgreSQL enforces with a read-only transaction, SQLite and DuckDB with a read-only open, SQL Server by verifying the principal cannot write, MySQL and MariaDB by a least-privilege principal beside a read-only transaction, and MongoDB by proving at open that the user holds only reads of its database on a server that enforces authorization ([mongodb.md](./providers/mongodb.md)).
   A statement check runs first as defence in depth.
 - A result that carries database content starts with a text block telling the model to treat what follows as untrusted data.

@@ -47,7 +47,7 @@ describe("docs/API_DOCS.md documents every MCP route", () => {
 describe("docs/MCP.md", () => {
   test("carries the engine sentence derived from the one engine list", () => {
     expect(MCP_DOC).toContain(
-      `Runs on ${RUN_READ_QUERY_ENGINES}; other engines refuse it, so use inspect_schema there.`,
+      `Runs on ${RUN_READ_QUERY_ENGINES}; other engines refuse it, and list_connections' read_tool names the tool that reads each connection.`,
     );
   });
 
