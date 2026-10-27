@@ -14,9 +14,9 @@ import type { DatabaseType } from "@/lib/types";
  */
 export interface McpExposure {
   readonly executes: readonly DatabaseType[];
-  readonly exposable: Readonly<Record<DatabaseType, boolean>>;
-  readonly statementRead: Readonly<Record<DatabaseType, boolean>>;
-  readonly language: Readonly<Record<DatabaseType, AgentStatementLanguageId | null>>;
+  readonly exposable: typeof MCP_EXPOSABLE;
+  readonly statementRead: typeof MCP_STATEMENT_READ;
+  readonly language: typeof AGENT_STATEMENT_LANGUAGE;
 }
 
 const SHIPPED_EXPOSURE: McpExposure = {
