@@ -2683,8 +2683,8 @@ describe("object surface", () => {
    * answering nothing is a twisty that opens on nothing, and a kind answering columns while
    * declaring nothing hides them behind a leaf with nothing on screen to say so. On this engine
    * the fact is not a transcription: `describeObject` returns three empty arrays for anything
-   * whose role is not `relation` (`sql/duckdb/index.ts:1096-1098`), so `table` and `view` are the
-   * two kinds that can answer at all, and `macro` and `sequence` cannot.
+   * whose role is not `relation` (`DuckDBProvider.describeObject` in `sql/duckdb/index.ts`), so
+   * `table` and `view` are the two kinds that can answer at all, and `macro` and `sequence` cannot.
    */
   test("declares columns on exactly the kinds describeObject answers columns for", async () => {
     const kinds = new DuckDBProvider(makeConfig()).getCapabilities().objectKinds ?? [];
