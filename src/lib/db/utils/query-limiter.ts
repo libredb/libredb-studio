@@ -182,38 +182,68 @@ function clausePattern(clause: RegExp): RegExp {
  * unbounded. The same shape reaches a line comment, whose text can end in the
  * clause words (`-- FOR UPDATE\\nNOWAIT`).
  *
- * The span reader already knows where every comment is, so a match covered by one
- * is refused and the clause is left where it stands: the bound keeps its place at
- * the end. One start is legitimate, though - the NEWLINE that closes a line
- * comment. The comment's span includes that newline, and a match starting exactly
- * there is the handoff this module's own design describes: a comment the writer
- * put between the code and the clause travels with the run and lands between the
- * bound and the clause, which is why the patterns open with `\\s+` in the first
- * place. A match starting anywhere before that newline is inside the comment's
- * text and is refused.
+ * The comment and literal runs of the statement are collected ONCE here, as a
+ * sorted list of intervals, and each clause match is checked against it by binary
+ * search: the strip walks a chain one clause per pass (#1981), and a fresh span
+ * walk per pass made the chain quadratic again - the exact shape #1989 made
+ * linear, and the guard must not give it back. A match covered by an interval is
+ * refused and the clause is left where it stands: the bound keeps its place at
+ * the end.
+ *
+ * One start is legitimate, though - the NEWLINE that closes a line comment. The
+ * comment's interval includes that newline, and a match starting exactly there is
+ * the handoff this module's own design describes: a comment the writer put between
+ * the code and the clause travels with the run and lands between the bound and the
+ * clause, which is why the patterns open with `\\s+` in the first place. A match
+ * starting anywhere before that newline is inside the comment's text and is
+ * refused.
  */
-function matchStartsInComment(body: string, matchStart: number, grammar: SqlGrammar): boolean {
-  let i = 0;
+class NonCodeRuns {
+  /** Sorted [start, end) intervals of comments and literals; a line comment's includes its newline. */
+  private readonly intervals: ReadonlyArray<readonly [number, number, boolean]> = [];
 
-  while (i <= matchStart) {
-    const span = readSqlSpan(body, i, grammar);
-    if (span === null) {
-      i++;
-      continue;
+  constructor(statement: string, grammar: SqlGrammar) {
+    const intervals: Array<[number, number, boolean]> = [];
+    let i = 0;
+
+    while (i < statement.length) {
+      const span = readSqlSpan(statement, i, grammar);
+      if (span === null) {
+        i++;
+        continue;
+      }
+      // The newline that closes a line comment is the legitimate handoff, so the
+      // interval remembers whether its last character is one.
+      const endsInNewline = span.kind === "line-comment" && statement[span.end - 1] === "\n";
+      if (
+        span.kind === "block-comment" ||
+        span.kind === "line-comment" ||
+        span.kind === "string" ||
+        span.kind === "dollar-string"
+      ) {
+        intervals.push([i, span.end, endsInNewline]);
+      }
+      i = span.end;
     }
-    if (i <= matchStart && matchStart < span.end) {
-      if (span.kind === "block-comment") return true;
-      // A line comment's span includes the newline that closes it; a match
-      // starting on that newline is the between-code-and-clause handoff.
-      if (span.kind === "line-comment") return matchStart < span.end - 1;
-      // A literal the pattern reached into - a dollar-quoted body can end in
-      // the clause words - is not a clause start either.
-      return span.kind === "string" || span.kind === "dollar-string";
-    }
-    i = span.end;
+
+    this.intervals = intervals;
   }
 
-  return false;
+  /** Whether `at` sits inside a comment or a literal, the line comment's closing newline excepted. */
+  covers(at: number): boolean {
+    let lo = 0;
+    let hi = this.intervals.length - 1;
+
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      const [start, end, endsInNewline] = this.intervals[mid];
+      if (at < start) hi = mid - 1;
+      else if (at >= end) lo = mid + 1;
+      else return !(endsInNewline && at === end - 1);
+    }
+
+    return false;
+  }
 }
 
 /**
@@ -264,6 +294,8 @@ function stripTrailingClauses(
   let body = statement;
   let clauseRun = "";
   let clauses = 0;
+  // Built lazily: a statement with no clause match at all never pays for the walk.
+  let nonCode: NonCodeRuns | null = null;
 
   for (;;) {
     let stripped = false;
@@ -271,7 +303,11 @@ function stripTrailingClauses(
       if (clauses === MAX_TRAILING_CLAUSES) break;
       const match = body.match(clausePattern(clause));
       if (match === null || match.index === undefined) continue;
-      if (matchStartsInComment(body, match.index, grammar)) continue;
+      // A clause the pattern found inside a comment or a literal is not the
+      // statement's tail; the words stay where they are and the bound keeps
+      // its place at the end rather than being written into them.
+      if (nonCode === null) nonCode = new NonCodeRuns(statement, grammar);
+      if (nonCode.covers(match.index)) continue;
       clauseRun = match[0] + clauseRun;
       body = body.slice(0, match.index);
       stripped = true;
