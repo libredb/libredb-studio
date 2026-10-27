@@ -40,7 +40,14 @@
  */
 import { describe, expect, spyOn, test } from "bun:test";
 import { types } from "cassandra-driver";
-import { AuthenticationError, ConnectionError, DatabaseConfigError, QueryError, TimeoutError } from "@/lib/db/errors";
+import {
+  AuthenticationError,
+  ConnectionError,
+  DatabaseConfigError,
+  OffsetUnsupportedError,
+  QueryError,
+  TimeoutError,
+} from "@/lib/db/errors";
 import { CassandraDriverTransport, type CassandraSession } from "@/lib/db/providers/sql/cassandra/driver-transport";
 import { CassandraProvider } from "@/lib/db/providers/sql/cassandra/index";
 import type { DatabaseProvider } from "@/lib/db/types";
@@ -898,6 +905,10 @@ describe("prepareQuery", () => {
     // would return page ONE while the editor appends it to what it already shows -
     // duplicate rows presented as new ones, which is a wrong ANSWER.
     expect(() => provider.prepareQuery("SELECT * FROM probe.customers", { limit: 50, offset: 50 })).toThrow(QueryError);
+    // Its own class, so MCP run_read_query answers it as an offset refusal and every other failure as the engine's.
+    expect(() => provider.prepareQuery("SELECT * FROM probe.customers", { limit: 50, offset: 50 })).toThrow(
+      OffsetUnsupportedError,
+    );
   });
 
   test("a first page is not a second one, so no offset means no refusal", () => {

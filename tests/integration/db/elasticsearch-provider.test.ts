@@ -44,6 +44,7 @@ import {
   AuthenticationError,
   ConnectionError,
   DatabaseConfigError,
+  OffsetUnsupportedError,
   QueryCancelledError,
   QueryError,
   TimeoutError,
@@ -2081,6 +2082,8 @@ describe("ElasticsearchProvider query preparation", () => {
     const failing = () => provider().prepareQuery("SELECT * FROM probe_orders", { limit: 25, offset: 25 });
 
     expect(failing).toThrow(QueryError);
+    // Its own class, so MCP run_read_query answers it as an offset refusal and every other failure as the engine's.
+    expect(failing).toThrow(OffsetUnsupportedError);
     expect(failing).toThrow(/Elasticsearch SQL has no OFFSET clause/);
     expect(failing).toThrow(/Narrow the statement with a WHERE clause, or raise the row limit/);
   });

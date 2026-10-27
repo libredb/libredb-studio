@@ -154,6 +154,20 @@ export class QueryError extends DatabaseError {
 }
 
 /**
+ * What `prepareQuery()` raises for a positive offset on an engine whose SQL cannot page a result: Cassandra's CQL and
+ * Elasticsearch SQL have no OFFSET clause. A `QueryError`, so the query route answers it as before; its own class, so
+ * MCP `run_read_query` answers exactly this refusal as `mcp_offset_unsupported`, in the provider's own sentence, and
+ * every other failure of `prepareQuery()` as the engine's.
+ */
+export class OffsetUnsupportedError extends QueryError {
+  constructor(message: string, provider?: DatabaseType, query?: string) {
+    super(message, provider, query);
+    this.name = "OffsetUnsupportedError";
+    Object.setPrototypeOf(this, OffsetUnsupportedError.prototype);
+  }
+}
+
+/**
  * What `beginTransaction()` raises when the server accepted the BEGIN and its own status
  * says no transaction is open, the providers that can read that status (PostgreSQL's
  * ReadyForQuery byte, MySQL's `SERVER_STATUS_IN_TRANS`) share it. Measured 2026-10-04 on

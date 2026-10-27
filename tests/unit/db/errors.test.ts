@@ -7,6 +7,7 @@ import {
   PermissionDeniedError,
   PoolExhaustedError,
   QueryError,
+  OffsetUnsupportedError,
   TimeoutError,
   QueryCancelledError,
   isDatabaseError,
@@ -197,6 +198,19 @@ describe("QueryError", () => {
   test("is instanceof DatabaseError", () => {
     const err = new QueryError("fail");
     expect(err).toBeInstanceOf(DatabaseError);
+  });
+});
+
+describe("OffsetUnsupportedError", () => {
+  test("is a QueryError a caller can tell apart from any other, with the provider's own sentence", () => {
+    const err = new OffsetUnsupportedError("CQL has no OFFSET clause.", "cassandra", "SELECT * FROM t");
+    expect(err).toBeInstanceOf(QueryError);
+    expect(err.name).toBe("OffsetUnsupportedError");
+    expect(err.message).toBe("CQL has no OFFSET clause.");
+    expect(err.code).toBe("QUERY_ERROR");
+    expect(err.provider).toBe("cassandra");
+    expect(err.query).toBe("SELECT * FROM t");
+    expect(new QueryError("syntax")).not.toBeInstanceOf(OffsetUnsupportedError);
   });
 });
 

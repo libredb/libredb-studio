@@ -760,6 +760,8 @@ user's own bound is what runs. The trait is declared per product (`acceptsOffset
 [index.ts](../../src/lib/db/providers/sql/search/index.ts)) rather than branched on the type-id,
 so a third product declares its own answer instead of being added to a condition someone has to find.
 
+The refusal is an `OffsetUnsupportedError`, a `QueryError` of its own class (`src/lib/db/errors.ts`), so MCP `run_read_query` answers exactly this refusal as an offset refusal in this sentence, and any other failure of `prepareQuery` as the engine's.
+
 ### 5.6 This grammar does not write
 
 Every one of these is HTTP 400 with `parsing_exception`, measured verbatim on 9.1.4:

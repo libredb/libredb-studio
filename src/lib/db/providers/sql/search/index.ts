@@ -79,6 +79,7 @@ import {
   AuthenticationError,
   ConnectionError,
   DatabaseConfigError,
+  OffsetUnsupportedError,
   QueryCancelledError,
   QueryError,
   TimeoutError,
@@ -870,7 +871,7 @@ abstract class SearchProvider extends SQLBaseProvider {
     const prepared = super.prepareQuery(query, options);
     if (this.product.acceptsOffsetClause || !prepared.wasLimited || prepared.offset === 0) return prepared;
 
-    throw new QueryError(
+    throw new OffsetUnsupportedError(
       `${this.product.label} SQL has no OFFSET clause, so results after the first page cannot be requested here. ` +
         "Narrow the statement with a WHERE clause, or raise the row limit, instead of paging.",
       this.type,

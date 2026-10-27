@@ -54,7 +54,14 @@
  */
 
 import { SQLBaseProvider } from "../sql-base";
-import { AuthenticationError, ConnectionError, DatabaseConfigError, QueryError, TimeoutError } from "@/lib/db/errors";
+import {
+  AuthenticationError,
+  ConnectionError,
+  DatabaseConfigError,
+  OffsetUnsupportedError,
+  QueryError,
+  TimeoutError,
+} from "@/lib/db/errors";
 import {
   type ActiveSessionDetails,
   type Container,
@@ -372,7 +379,7 @@ export class CassandraProvider extends SQLBaseProvider {
     // with page one would let the editor append rows it is already showing, which the
     // user cannot tell from new ones.
     if (analyzeQuery(query, this.type).type === "SELECT" && prepared.offset > 0) {
-      throw new QueryError(
+      throw new OffsetUnsupportedError(
         "CQL has no OFFSET clause, so results after the first page cannot be requested here. Narrow the statement with a WHERE clause on the partition key, or raise the row limit, instead of paging.",
         this.type,
         query,

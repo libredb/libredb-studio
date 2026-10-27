@@ -543,6 +543,7 @@ alternatives are worse in a way that matters: sending the clause fails with an e
 keyword the user never typed, and dropping it silently returns page **one** while the editor appends
 it to what it already shows — duplicate rows presented as new ones, which is a wrong *answer*.
 `search/index.ts` refuses Elasticsearch's identical gap the same way.
+The refusal is an `OffsetUnsupportedError`, a `QueryError` of its own class (`src/lib/db/errors.ts`), so MCP `run_read_query` answers exactly this refusal as an offset refusal in this sentence, and any other failure of `prepareQuery` as the engine's.
 
 **2. `ALLOW FILTERING` must stay last.**
 

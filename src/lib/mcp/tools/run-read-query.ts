@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { namedList } from "@/lib/agent/engine-support";
 import { getDBConfig } from "@/lib/db-ui-config";
-import { ExecutionProfileError } from "@/lib/db/errors";
+import { ExecutionProfileError, OffsetUnsupportedError } from "@/lib/db/errors";
 import type { DatabaseProvider, PreparedQuery } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
 import type { ManagedConnection } from "@/lib/seed";
@@ -65,8 +65,8 @@ import { mcpStatementEngines } from "./served-engines";
  * Rows are fetched one past the page, so the extra row proves more exist, cut to max_rows, then
  * cut to the result cap by binary search. offset on a query the provider did not rewrite is
  * refused before anything runs, because the provider would answer the first page labelled with
- * the requested offset; so is an offset the provider's prepareQuery refuses by throwing, as the
- * Elasticsearch, OpenSearch and Cassandra overrides do.
+ * the requested offset; so is an offset the provider's prepareQuery refuses by throwing
+ * OffsetUnsupportedError, as the Elasticsearch and Cassandra overrides do, answered in their own words.
  */
 
 export const RunReadQueryInputSchema = z.object({
@@ -229,8 +229,11 @@ async function execute(
   try {
     prepared = provider.prepareQuery(args.sql, { limit: args.max_rows + 1, offset: args.offset });
   } catch (error) {
-    // An engine that cannot page with offset refuses it here; without an offset, the failure is the engine's.
-    if (args.offset > 0) return offsetRefused();
+    // An engine whose SQL cannot page refuses the offset here, and its sentence says what to do instead; any other
+    // failure, and this one with no offset asked for, is the engine's, never masked as an offset refusal.
+    if (error instanceof OffsetUnsupportedError && args.offset > 0) {
+      return [ownWordsError(error.message), "mcp_offset_unsupported"];
+    }
     throw error;
   }
   if (!prepared.wasLimited && args.offset > 0) return offsetRefused();
