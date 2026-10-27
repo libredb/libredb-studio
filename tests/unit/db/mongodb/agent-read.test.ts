@@ -27,6 +27,7 @@ import { serializeMongoDocument } from "@/lib/db/providers/document/mongodb/valu
 import { MAX_STATEMENT_TIMEOUT_MS } from "@/lib/db/providers/sql/read-only-budget";
 import { AGENT_HANDOVER_BUDGET } from "@/lib/agent/execution-policy";
 import { rowBudgetIn } from "@/lib/agent/context-snapshot";
+import { classifyReadQueryFailure } from "@/lib/mcp/tools/read-query-limits";
 
 type Doc = Record<string, unknown>;
 
@@ -502,6 +503,11 @@ describe("the streamed read", () => {
     expect((error as Error).message).toBe(
       `Read-only execution exceeded the byte budget: ${size * 5} bytes > ${size * 4 + 1} allowed`,
     );
+    // MCP's run_read_query reads this very refusal as too large, not as an engine error.
+    expect(classifyReadQueryFailure(error, 0, 1)).toMatchObject({
+      kind: "too-large",
+      text: expect.stringContaining("larger than 1 MiB"),
+    });
     expect(opened[0].pulled).toBe(5);
     expect(opened[0].closes).toBe(1);
     expect(BSON_DESERIALIZE).toHaveBeenCalledTimes(4);

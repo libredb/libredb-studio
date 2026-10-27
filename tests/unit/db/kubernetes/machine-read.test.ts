@@ -15,6 +15,7 @@ import {
   MACHINE_WATCH_SENTENCE,
   readKubectlForMachine,
 } from "@/lib/db/providers/platform/kubernetes/machine-read";
+import { classifyReadQueryFailure } from "@/lib/mcp/tools/read-query-limits";
 import { fakeCluster, manyRows, testSurface } from "../../../helpers/kubernetes-cluster";
 import {
   CONSOLE_NOW,
@@ -122,16 +123,35 @@ describe("readKubectlForMachine", () => {
     const { session, options } = machine(
       fakeCluster({ lists: { "/api/v1/namespaces/shop/pods": manyRows("web", 5) } }),
     );
-    await expect(
-      readKubectlForMachine(session, "get pods -n shop", { ...BUDGET, maxResultRows: 4 }, undefined, options),
-    ).rejects.toThrow("Read-only execution exceeded the row budget: 5 rows > 4 allowed");
+    const refusal = readKubectlForMachine(
+      session,
+      "get pods -n shop",
+      { ...BUDGET, maxResultRows: 4 },
+      undefined,
+      options,
+    );
+    await expect(refusal).rejects.toThrow("Read-only execution exceeded the row budget: 5 rows > 4 allowed");
+    // MCP's run_read_query reads this very refusal as too large, not as an engine error.
+    expect(classifyReadQueryFailure(await refusal.catch((error: unknown) => error), 0, 1)).toMatchObject({
+      kind: "too-large",
+      text: expect.stringContaining("more than 1000 rows"),
+    });
   });
 
   test("refuses past the byte budget with the SQL providers' sentence", async () => {
     const { session, options } = machine();
-    await expect(
-      readKubectlForMachine(session, "get pods -n shop", { ...BUDGET, maxResultBytes: 10 }, undefined, options),
-    ).rejects.toThrow(/Read-only execution exceeded the byte budget: \d+ bytes > 10 allowed/);
+    const refusal = readKubectlForMachine(
+      session,
+      "get pods -n shop",
+      { ...BUDGET, maxResultBytes: 10 },
+      undefined,
+      options,
+    );
+    await expect(refusal).rejects.toThrow(/Read-only execution exceeded the byte budget: \d+ bytes > 10 allowed/);
+    expect(classifyReadQueryFailure(await refusal.catch((error: unknown) => error), 0, 1)).toMatchObject({
+      kind: "too-large",
+      text: expect.stringContaining("larger than 1 MiB"),
+    });
   });
 
   test("a refusal is a QueryError, so the tool layer settles it as a repairable statement failure", async () => {
