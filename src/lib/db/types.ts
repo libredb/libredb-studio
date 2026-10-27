@@ -3200,7 +3200,8 @@ export interface ObjectKindSpec {
    * Read through `kindNamesWithheld()` in `src/lib/db/object-kinds.ts`. The walk knows such a kind's size only
    * through its count, so a provider that declares it counts it in `countObjects`. The declaration holds only where
    * no other machine surface lists the kind: the kind's role is not `relation` (MCP's `inspect_schema` and the app's
-   * schema read list relations, and `relationKindIds` refuses a withheld one), and the engine is not `MCP_EXPOSABLE`.
+   * schema read list relations, and `relationKindIds` refuses a withheld one), and every MCP statement tool reads
+   * through `queryReadOnly`, so an engine offered to MCP keeps it too (Kubernetes, B105).
    * The kind's names are withheld from grounding, and masked in `queryReadOnly` output where the provider has one,
    * which the provider declares in `ProviderCapabilities.machineRedaction.maskedNameKinds`; the census in
    * `tests/isolated/object-source-declarations.test.ts` holds that declaration static, and the behaviour is the

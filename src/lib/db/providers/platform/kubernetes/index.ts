@@ -11,8 +11,8 @@
  *
  * Read-only whatever `readOnly` says: no request path writes, and no maintenance is offered. `queryReadOnly` and
  * the curated `readClusterUsage` and `readWorkloadProfile` (`agent-readings.ts`) serve the agent under the read-only
- * profile (`machine-read.ts`, `machine-redaction.ts`); MCP is not offered (`MCP_EXPOSABLE.kubernetes`). The clock,
- * the randomness and the transport factory are seams.
+ * profile (`machine-read.ts`, `machine-redaction.ts`), and MCP's `run_kubectl_read` reads through the same
+ * `queryReadOnly`. The clock, the randomness and the transport factory are seams.
  *
  * The console is `console/`: `query()` runs one statement through `console/run.ts` under the run registry, so a
  * cancel stops it, and `prepareQuery` pages only the list form of a single-type get (`console/paging.ts`).

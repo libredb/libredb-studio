@@ -13,9 +13,9 @@ import { RUN_READ_QUERY_ARM, RunReadQueryInputSchema } from "./statement-arms";
  * them and the core refuses every other engine before anything is acquired, both from this one list, so the tool cannot
  * advertise an engine it refuses or run on one it does not name.
  *
- * The factory's profile does not draw this line: it refuses a provider with no read-only path at all. Kubernetes is
- * executed by the agent and closed to MCP. MongoDB is executed by the agent too, and its JSON command is read by its own
- * arm, run_mongo_command, so this tool refuses a MongoDB connection and names that tool.
+ * The factory's profile does not draw this line: it refuses a provider with no read-only path at all. Kubernetes and
+ * MongoDB are executed by the agent too, and each statement is read by its own arm, a kubectl line by run_kubectl_read
+ * and a JSON command by run_mongo_command, so this tool refuses either connection and names that tool.
  */
 
 export { RunReadQueryInputSchema };

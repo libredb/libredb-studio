@@ -43,7 +43,7 @@ const ListedConnectionSchema = z.object({
   engine: z.string(),
   database: z.string().optional(),
   environment: z.string().optional(),
-  read_tool: z.enum(["run_read_query", "run_mongo_command"]).nullable(),
+  read_tool: z.enum(["run_read_query", "run_kubectl_read", "run_mongo_command"]).nullable(),
 });
 
 const ListConnectionsOutputSchema = z.object({

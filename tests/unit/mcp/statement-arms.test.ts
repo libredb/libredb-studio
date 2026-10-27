@@ -18,8 +18,10 @@ import { mcpStatementEngines } from "@/lib/mcp/tools/served-engines";
 import {
   MCP_STATEMENT_ARMS,
   mcpStatementToolFor,
+  RUN_KUBECTL_READ_ARM,
   RUN_MONGO_COMMAND_ARM,
   RUN_READ_QUERY_ARM,
+  RunKubectlReadInputSchema,
   RunMongoCommandInputSchema,
   servingStatementArms,
 } from "@/lib/mcp/tools/statement-arms";
@@ -34,11 +36,11 @@ describe("MCP_STATEMENT_ARMS", () => {
     }
   });
 
-  test("kubectl decides no arm yet, and the other two are run_read_query and run_mongo_command", () => {
-    expect(MCP_STATEMENT_ARMS.kubectl).toBeNull();
+  test("every language has its arm: run_read_query, run_kubectl_read and run_mongo_command", () => {
     expect(MCP_STATEMENT_ARMS.sql).toBe(RUN_READ_QUERY_ARM);
+    expect(MCP_STATEMENT_ARMS.kubectl).toBe(RUN_KUBECTL_READ_ARM);
     expect(MCP_STATEMENT_ARMS.mongo).toBe(RUN_MONGO_COMMAND_ARM);
-    expect(ARMS.map((arm) => arm.tool)).toEqual(["run_read_query", "run_mongo_command"]);
+    expect(ARMS.map((arm) => arm.tool)).toEqual(["run_read_query", "run_kubectl_read", "run_mongo_command"]);
   });
 
   test.each(ARMS.map((arm) => [arm.tool, arm] as const))(
@@ -174,6 +176,94 @@ describe("the MongoDB arm", () => {
   });
 });
 
+describe("the kubectl arm", () => {
+  const server = languageServer("kubectl");
+
+  test("takes one statement line, no offset and no database, and sends it as written", () => {
+    expect(RUN_KUBECTL_READ_ARM.argument).toBe("statement");
+    expect(RUN_KUBECTL_READ_ARM.paging).toBe("none");
+    expect(RUN_KUBECTL_READ_ARM.types).toEqual(["kubernetes"]);
+    expect(RUN_KUBECTL_READ_ARM.inputSchema.shape).not.toHaveProperty("offset");
+    expect(RUN_KUBECTL_READ_ARM.inputSchema.shape).not.toHaveProperty("database");
+    for (const extra of [{ offset: 5 }, { database: "shop" }, { sql: "SELECT 1" }]) {
+      expect(
+        RunKubectlReadInputSchema.safeParse({ connection_id: "seed:k", statement: "get pods", ...extra }).success,
+      ).toBe(false);
+    }
+    expect(RunKubectlReadInputSchema.safeParse({ connection_id: "seed:k", statement: "" }).success).toBe(false);
+  });
+
+  test("reads its argument with the agent's canonicalize", () => {
+    expect(RUN_KUBECTL_READ_ARM.canonicalize("get pods -n shop")).toBe(server.canonicalize("get pods -n shop"));
+    expect(RUN_KUBECTL_READ_ARM.canonicalize({ statement: "get pods" })).toBeNull();
+  });
+
+  test.each([
+    ["exec", "exec web -- sh"],
+    ["a write", "delete pod web -n shop"],
+    ["the paging line", "get pods -n shop\n# libredb:page offset=0 limit=10"],
+  ])("fences %s with the agent's admission and quotes its sentence", (_what, line) => {
+    const refusal = server.admit?.(line);
+    expect(refusal).not.toBeNull();
+    expect(RUN_KUBECTL_READ_ARM.fence(line, "kubernetes")).toBe(
+      `The statement was refused before it reached the database (${refusal?.code}). ${refusal?.message}`,
+    );
+  });
+
+  test("admits a read", () => {
+    expect(RUN_KUBECTL_READ_ARM.fence("get pods -n shop", "kubernetes")).toBeNull();
+    expect(RUN_KUBECTL_READ_ARM.fence("kubectl get secrets -n shop", "kubernetes")).toBeNull();
+  });
+
+  test("answers a row refusal with the command's own row-cap advice", () => {
+    const rows = classifyReadQueryFailure(
+      new Error("Read-only execution exceeded the row budget: 1001 rows > 1000 allowed"),
+      1,
+      2,
+      RUN_KUBECTL_READ_ARM.tooLarge("get pods -A"),
+    );
+    expect(rows).toEqual({
+      kind: "too-large",
+      text: `The result has more than 1000 rows, the most this server reads for one call. ${server.rowCapAdvice("get pods -A", "1000")}`,
+    });
+  });
+
+  test("names neither a MongoDB stage nor a SQL clause where more rows exist, and says a kubectl read is not paged", () => {
+    const hint = RUN_KUBECTL_READ_ARM.moreRows("get pods -A", "kubernetes", {
+      maxRows: 100,
+      shown: 100,
+      cut: "max_rows",
+    });
+    expect(hint).toBe(
+      `More rows exist than this result holds, and this tool does not page with offset. ${server.rowCapAdvice("get pods -A", "100")} To read past the 100 rows returned, split the read into narrower ones, since a kubectl read is never paged.`,
+    );
+    const bytes = RUN_KUBECTL_READ_ARM.moreRows("get pods -A -o yaml", "kubernetes", {
+      maxRows: 100,
+      shown: 4,
+      cut: "result_bytes",
+    });
+    expect(bytes).toBe(
+      "More rows exist than the 32 KiB result limit holds, and 4 of them fitted; this tool does not page with offset. Read fewer fields, without -o wide, -o yaml or -o json, to fit more rows, and to read past the 4 rows returned, split the read into narrower ones, since a kubectl read is never paged.",
+    );
+    for (const text of [hint, bytes, RUN_KUBECTL_READ_ARM.rowOverCap]) {
+      expect(text).not.toContain("$skip");
+      expect(text).not.toContain("LIMIT");
+    }
+    expect(RUN_KUBECTL_READ_ARM.rowOverCap).toBe(
+      "One row of this result is larger than the 32 KiB result limit. Read it in a shorter form, without -o yaml or -o json, and run it again.",
+    );
+  });
+
+  test("describes the commands it takes, the refusals, the masking and its engine", () => {
+    const description = RUN_KUBECTL_READ_ARM.description;
+    expect(description.startsWith("Run one read-only kubectl read")).toBe(true);
+    expect(description).toContain("Runs on Kubernetes; other engines refuse it.");
+    expect(description).toContain("this tool takes no offset");
+    expect(description).toContain("exec");
+    expect(description).toContain("<redacted>");
+  });
+});
+
 describe("the tool each engine is read with", () => {
   test("is the tool whose arm serves it, and null where none does", () => {
     for (const type of SHIPPED_DATABASE_TYPES) {
@@ -183,17 +273,21 @@ describe("the tool each engine is read with", () => {
     }
   });
 
-  test("MongoDB is read with run_mongo_command, the SQL engines with run_read_query, the rest with none", () => {
+  test("MongoDB is read with run_mongo_command, Kubernetes with run_kubectl_read, the SQL engines with run_read_query, the rest with none", () => {
     expect(mcpStatementToolFor("mongodb")).toBe("run_mongo_command");
+    expect(mcpStatementToolFor("kubernetes")).toBe("run_kubectl_read");
     for (const type of RUN_READ_QUERY_TYPES) expect(mcpStatementToolFor(type)).toBe("run_read_query");
-    expect(mcpStatementToolFor("kubernetes")).toBeNull();
     expect(mcpStatementToolFor("redis")).toBeNull();
     expect(mcpStatementToolFor("snowflake")).toBeNull();
   });
 
   test("the tools registered are the arms that serve an engine", () => {
     expect(servingStatementArms()).toEqual(ARMS.filter((arm) => arm.types.length > 0));
-    expect(servingStatementArms().map((arm) => arm.tool)).toEqual(["run_read_query", "run_mongo_command"]);
+    expect(servingStatementArms().map((arm) => arm.tool)).toEqual([
+      "run_read_query",
+      "run_kubectl_read",
+      "run_mongo_command",
+    ]);
   });
 
   test("an arm that serves no engine is neither listed nor registered (all-providers design 6)", () => {

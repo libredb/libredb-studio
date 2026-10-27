@@ -70,7 +70,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { TreeRowModel } from "@/components/object-tree/flatten";
 import { rowActions, type TreeRowActionHandlers } from "@/components/object-tree/row-actions";
-import { EXTERNAL_DATABASE_TYPES, MCP_EXPOSABLE, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { EXTERNAL_DATABASE_TYPES, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { declaredKinds, findKind, relationKindIds } from "@/lib/db/object-kinds";
 import type { DatabaseObject, ObjectKindSpec, ProviderCapabilities } from "@/lib/db/types";
@@ -810,34 +810,30 @@ describe("the key-browser declaration", () => {
  *
  * `machineNames: "withheld"` keeps a kind's names out of the agent's grounding walk. So it keeps its promise only
  * where no other machine surface lists the kind: the kind is not a relation, which MCP's `inspect_schema` and the
- * app's schema read list whatever the declaration says; the engine is not offered to MCP; and where the provider has
- * `queryReadOnly`, the path the agent's read tool runs a statement through, its `machineRedaction.maskedNameKinds`
- * names the kind, so the output masks those names. This census holds that declaration static; the masking itself is
- * the provider's own redaction test.
+ * app's schema read list whatever the declaration says; and where the provider has `queryReadOnly`, the path the
+ * agent's read tool and every MCP statement tool run a statement through, its `machineRedaction.maskedNameKinds` names
+ * the kind, so the output masks those names. Being offered to MCP is no breach of its own: `inspect_schema` lists
+ * relations alone, and an MCP statement tool reads only through `queryReadOnly` (B105, all-providers ruling 21). This
+ * census holds that declaration static; the masking itself is the provider's own redaction test.
  *
  * `WITHHELD_KINDS` is the committed expectation, one `<type-id>/<kind id>` per such kind, and the registration of
  * an engine that declares one moves it.
  */
 const WITHHELD_KINDS: readonly string[] = Object.freeze(["kubernetes/secrets"]);
 
-/** The breaches of the three preconditions above in one declaration, one sentence each. */
+/** The breaches of the two preconditions above in one declaration, one sentence each. */
 function withheldNamesBreaches(
   type: string,
   capabilities: ProviderCapabilities,
   provider: { readonly queryReadOnly?: unknown },
-  mcpExposable: boolean,
 ): readonly string[] {
   const withheld = declaredKinds(capabilities).filter((kind) => kind.machineNames === "withheld");
   if (withheld.length === 0) return [];
-  const ids = withheld.map((kind) => kind.id).join(", ");
   const breaches: string[] = [];
   for (const kind of withheld) {
     if (kind.role === "relation") {
       breaches.push(`${type}/${kind.id} withholds its names and is a relation, which the schema surfaces list`);
     }
-  }
-  if (mcpExposable) {
-    breaches.push(`${type} withholds the names of ${ids} and is offered to MCP`);
   }
   if (provider.queryReadOnly !== undefined) {
     const masked = new Set(capabilities.machineRedaction?.maskedNameKinds ?? []);
@@ -861,7 +857,7 @@ describe("the withheld-names declaration", () => {
       for (const kind of declaredKinds(capabilities)) {
         if (kind.machineNames === "withheld") declaring.push(`${type}/${kind.id}`);
       }
-      breaches.push(...withheldNamesBreaches(type, capabilities, provider, MCP_EXPOSABLE[type]));
+      breaches.push(...withheldNamesBreaches(type, capabilities, provider));
     }
     expect(declaring).toEqual([...WITHHELD_KINDS]);
     expect(breaches).toEqual([]);
@@ -883,18 +879,12 @@ describe("the withheld-names declaration", () => {
     }) as unknown as ProviderCapabilities;
 
   test("a withheld config kind on an engine with no other machine path has no breach, the control", () => {
-    expect(withheldNamesBreaches("kv", declaring([SECRET]), {}, false)).toEqual([]);
+    expect(withheldNamesBreaches("kv", declaring([SECRET]), {})).toEqual([]);
   });
 
   test("a withheld relation is refused by name", () => {
-    expect(withheldNamesBreaches("kv", declaring([{ ...SECRET, role: "relation" }]), {}, false)).toEqual([
+    expect(withheldNamesBreaches("kv", declaring([{ ...SECRET, role: "relation" }]), {})).toEqual([
       "kv/secret withholds its names and is a relation, which the schema surfaces list",
-    ]);
-  });
-
-  test("an engine offered to MCP is refused by name", () => {
-    expect(withheldNamesBreaches("kv", declaring([SECRET]), {}, true)).toEqual([
-      "kv withholds the names of secret and is offered to MCP",
     ]);
   });
 
@@ -903,11 +893,11 @@ describe("the withheld-names declaration", () => {
       ...declaring([SECRET]),
       machineRedaction: { maskedNameKinds: ["secret"] },
     } as ProviderCapabilities;
-    expect(withheldNamesBreaches("kv", capabilities, { queryReadOnly: () => undefined }, false)).toEqual([]);
+    expect(withheldNamesBreaches("kv", capabilities, { queryReadOnly: () => undefined })).toEqual([]);
   });
 
   test("a provider with queryReadOnly whose machine redaction does not mask the kind is refused by name", () => {
-    expect(withheldNamesBreaches("kv", declaring([SECRET]), { queryReadOnly: () => undefined }, false)).toEqual([
+    expect(withheldNamesBreaches("kv", declaring([SECRET]), { queryReadOnly: () => undefined })).toEqual([
       "kv/secret withholds its names and has queryReadOnly, and its machine redaction does not mask them",
     ]);
   });

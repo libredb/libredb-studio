@@ -122,7 +122,7 @@ function direct(args: Record<string, unknown>, context: McpConnectionContext) {
 }
 
 describe("the tool", () => {
-  test("is listed after run_read_query, read-only, with the command schema and no offset", async () => {
+  test("is listed after run_kubectl_read, read-only, with the command schema and no offset", async () => {
     const session = await connectClient(serve, { negotiation: "legacy" });
     try {
       const tools = (await session.client.listTools()).tools;
@@ -130,6 +130,7 @@ describe("the tool", () => {
         "list_connections",
         "inspect_schema",
         "run_read_query",
+        "run_kubectl_read",
         "run_mongo_command",
       ]);
       const tool = tools.find((candidate) => candidate.name === "run_mongo_command");

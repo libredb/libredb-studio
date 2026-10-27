@@ -3,7 +3,7 @@ import type { McpConnectionContext } from "../context";
 import { InspectSchemaInputSchema, registerInspectSchema } from "./inspect-schema";
 import { ListConnectionsInputSchema, registerListConnections } from "./list-connections";
 import { registerStatementTools } from "./run-statement";
-import { RunMongoCommandInputSchema, RunReadQueryInputSchema } from "./statement-arms";
+import { RunKubectlReadInputSchema, RunMongoCommandInputSchema, RunReadQueryInputSchema } from "./statement-arms";
 
 /**
  * The one map from tool name to the zod object that tool registers (#246).
@@ -17,6 +17,7 @@ export const MCP_TOOL_INPUT_SCHEMAS = {
   list_connections: ListConnectionsInputSchema,
   inspect_schema: InspectSchemaInputSchema,
   run_read_query: RunReadQueryInputSchema,
+  run_kubectl_read: RunKubectlReadInputSchema,
   run_mongo_command: RunMongoCommandInputSchema,
 } as const;
 

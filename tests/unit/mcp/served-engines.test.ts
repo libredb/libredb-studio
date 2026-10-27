@@ -38,10 +38,10 @@ describe("mcpStatementEngines", () => {
     }
   });
 
-  test("serves MongoDB in its own language, and no engine of a language MCP read has not opened", () => {
-    // MongoDB opened with run_mongo_command; Kubernetes executes for the agent and is not offered to MCP.
+  test("serves MongoDB and Kubernetes each in its own language", () => {
+    // MongoDB opened with run_mongo_command, Kubernetes with run_kubectl_read (B105).
     expect(mcpStatementEngines("mongo")).toEqual(["mongodb"]);
-    expect(mcpStatementEngines("kubectl")).toEqual([]);
+    expect(mcpStatementEngines("kubectl")).toEqual(["kubernetes"]);
   });
 
   test("an agent engine whose MCP read row is false is not served, though every other record lets it through", () => {

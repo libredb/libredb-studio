@@ -17,7 +17,8 @@
  * What no rule reaches is the stated residue (`docs/providers/kubernetes.md` section 9): log lines and event messages,
  * status and condition messages, label values, and custom-resource fields with no rule.
  *
- * Only the agent's read path calls it; `query()` never does, so the editor's output is byte for byte what it was.
+ * Only the agent's read path calls it, `queryReadOnly`, which MCP's `run_kubectl_read` reads through too; `query()`
+ * never does, so the editor's output is byte for byte what it was.
  */
 import { QueryError } from "@/lib/db/errors";
 import { builtInKind } from "./kinds";
