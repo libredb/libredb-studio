@@ -152,7 +152,7 @@ every group under `spBv1.0`.
 The session can carry a user and a password and the encoder sets their flags, but nothing passes them
 from a connection yet, and this provider declares only the three fields it reads. A field that is
 collected and dropped is worse than one that is absent.
-A password would no longer travel in cleartext, since the provider reads TLS (below), so a credential field waits only on the connection passing it to the session.
+A password would still travel in cleartext whenever the socket is plain, with no SSL / TLS panel or the `disable` mode (below), so a credential field needs more than the connection passing it to the session: it also has to refuse, or warn on, a plain socket.
 
 TLS is not absent: the broker is dialled over TLS from the connection's SSL / TLS panel, which the dialog offers for this engine.
 `sparkplugTlsMaterial` in [`connection-options.ts`](../../src/lib/db/providers/industrial/sparkplug/connection-options.ts) reads the panel through the shared `nodeTlsMaterial`, so its mode, CA and client certificate are what the handshake uses, and a malformed panel is refused by name before any socket exists.
