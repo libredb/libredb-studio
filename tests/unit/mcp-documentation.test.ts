@@ -11,7 +11,7 @@ import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
 import { DB_UI_CONFIG } from "@/lib/db-ui-config";
 import { mcpClientConfigs } from "@/lib/mcp/client-config";
 import { RUN_READ_QUERY_ENGINES, RUN_READ_QUERY_TYPES } from "@/lib/mcp/tools/run-read-query";
-import { servingStatementArms, RUN_MONGO_COMMAND_ARM } from "@/lib/mcp/tools/statement-arms";
+import { RUN_KUBECTL_READ_ARM, RUN_MONGO_COMMAND_ARM, servingStatementArms } from "@/lib/mcp/tools/statement-arms";
 import type { DatabaseType } from "@/lib/types";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
@@ -64,6 +64,14 @@ describe("docs/MCP.md", () => {
     expect(MCP_DOC).not.toContain("B117");
   });
 
+  test("carries run_kubectl_read's engine sentence, derived from its arm, and says what inspect_schema lists there", () => {
+    expect(MCP_DOC).toContain(`Runs on ${RUN_KUBECTL_READ_ARM.engines}; other engines refuse it.`);
+    expect(MCP_DOC).toContain(
+      "On Kubernetes it lists no table, because no Kubernetes kind is one: a namespace is its schema, and `run_kubectl_read` reads its objects.",
+    );
+    expect(MCP_DOC).not.toContain("B105");
+  });
+
   test("claims only SELECT for every engine, and names the record that opens MCP read", () => {
     expect(MCP_DOC).toContain(
       "A `SELECT` (a `WITH` is fine) runs on every engine it serves; a refused statement's answer names what else that engine takes.",
@@ -86,11 +94,11 @@ describe("docs/MCP.md", () => {
     const refused = SHIPPED_DATABASE_TYPES.filter((type) => !MCP_EXPOSABLE[type]).map(
       (type) => DB_UI_CONFIG[type].label,
     );
-    // The control that the record answers: etcd, Oxia, S3, Kubernetes, MQTT, Firestore, OPC UA,
-    // Modbus, NETCONF and Sparkplug B are the engines it refuses today, with SNMP (#1721) the eighth: a Get is a read of one numbered object, and the
-    // tools answer schemas rather than objects.
+    // The control that the record answers: etcd, Oxia, S3, MQTT, Firestore, OPC UA, Modbus, NETCONF and Sparkplug B
+    // are the engines it refuses today, with SNMP (#1721) among them: a Get is a read of one numbered object, and the
+    // tools answer schemas rather than objects. Kubernetes left the list with run_kubectl_read (B105).
     expect(refused).toEqual(
-      ["etcd", "oxia", "s3", "kubernetes", "mqtt", "firestore", "opcua", "modbus", "netconf", "snmp", "sparkplug"].map(
+      ["etcd", "oxia", "s3", "mqtt", "firestore", "opcua", "modbus", "netconf", "snmp", "sparkplug"].map(
         (type) => DB_UI_CONFIG[type as DatabaseType].label,
       ),
     );

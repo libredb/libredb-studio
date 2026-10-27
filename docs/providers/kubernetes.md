@@ -398,7 +398,10 @@ What machine redaction leaves unmasked, the same six lines as `docs/AGENT.md` st
 - The connection's Namespaces field lists the tree; it does not bound a statement, which may use -A or any -n.
 
 MCP:
-- MCP is not offered for Kubernetes: the MCP fence reads SQL only, so `run_read_query` and `inspect_schema` refuse a Kubernetes connection (B105).
+- MCP clients read a Kubernetes connection with `run_kubectl_read`, the kubectl arm of `MCP_STATEMENT_ARMS` (`src/lib/mcp/tools/statement-arms.ts`): one line, read and admitted by the agent's own kubectl adapter, under the `agent-read-only` profile and `queryReadOnly`, so its answer is the machine projection above, Secret names included, and never the editor's.
+- Its admission refuses what an agent run's does, exec, writes and the paging line among them, before anything is acquired; a watch is refused by the machine read; a read past the 1000-row budget is refused with the command's own row-cap advice, and it takes no `offset` and no `database` ([`docs/MCP.md`](../MCP.md)).
+- `inspect_schema` lists no table on a Kubernetes connection: it lists the kinds an engine declares as relations, and every Kubernetes kind is `config`, so no object name, a Secret's included, reaches it, and the namespace it names as its schema is a name a statement has to name anyway.
+- A seed may opt a Kubernetes connection in with `mcp: true`; its `password`, the ServiceAccount token, is the identity every MCP read runs as, because a seed carries no separate agent token.
 - The operations workflow opens on Kubernetes in both modes, as on every engine, because it sends no statement; its reports of sessions, slow queries, health, storage, table statistics and index usage come back empty or N/A here.
 
 ### 9.1 Agent language pack
@@ -504,6 +507,7 @@ Kubernetes 1.30 and later is supported; 1.28 and 1.29 are read on a best-effort 
 
 ## 13. Testing and measurements
 
+[`tests/integration/mcp/run-kubectl-read.test.ts`](../../tests/integration/mcp/run-kubectl-read.test.ts) holds MCP `run_kubectl_read` on the real provider over a fake API server: a get answered, Secret names and a named Secret's values masked, exec, a write and the paging line refused before anything is acquired, a watch and a provider opened without the profile refused, and a read past the row budget refused with the command's advice; [`tests/integration/mcp/inspect-schema.test.ts`](../../tests/integration/mcp/inspect-schema.test.ts) holds that `inspect_schema` lists no object and sends no Secret list.
 The unit tests drive every module on a recording transport; the integration test replays what three k3s servers answered, captured by [`tests/live/kubernetes-evidence.ts`](../../tests/live/kubernetes-evidence.ts) from the clusters of [`docker/kubernetes/`](../../docker/kubernetes/) and described in [`tests/fixtures/kubernetes/README.md`](../../tests/fixtures/kubernetes/README.md).
 Measured on k3s 1.35.5 and 1.30.14, discovery answers the aggregated `v2` form; on 1.29.15 it answers `v2beta1`, which Studio reads the same way.
 Measured on k3s 1.29.15, 1.30.14 and 1.35.5, the log endpoint refuses an Accept of `text/plain` with a 406 NotAcceptable and answers the log as `text/plain` to the JSON Accept, so Studio asks for a log with the JSON Accept.
@@ -524,7 +528,7 @@ Not measured: an etcd-backed managed cluster, Rancher's proxy, OpenShift (its pr
 - `get -w` takes no `-o name`, `-o json` or `-o yaml` (D288), and `auth can-i --list` shows the server's rules without kubectl's compaction (D289).
 - Test Connection records no `Audit-Id` from the API server (D287).
 - One ServiceAccount token per connection makes every Studio user one identity in the cluster's audit log.
-- No MCP (B105).
+- Plan mode's safety strip and objective placeholder still speak of a database and an application query (B115).
 - No auto-execute on Kubernetes: a kubectl answer is never run in the editor, so the run route refuses `autoExecute`.
 - `inspect_usage` needs metrics-server: without `metrics.k8s.io` the run records that usage is unavailable and names metrics-server.
 - Restart counts are cumulative since a container started, so `profile_workloads` shows a count with the last termination time and reason, never a rate.
