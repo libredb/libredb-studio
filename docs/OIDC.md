@@ -321,15 +321,25 @@ No Studio code is specific to Rancher: it is the ordinary OIDC mode with the val
      redirectURIs:
        - https://studio.example.com/api/auth/oidc/callback
      tokenExpirationSeconds: 300
+     refreshTokenExpirationSeconds: 300
      scopes: [openid, profile, groups]   # 2.15; on 2.14 use [openid, profile]
    ```
+   Both lifetimes are required on 2.14, where the resource has no defaults and `kubectl apply` refuses a client without them.
+   Studio never asks for `offline_access`, so no refresh token is issued, and the short refresh lifetime only bounds a misconfiguration.
    Rancher writes the client id to `.status.clientID` and the client secret, under the key `client-secret-1`, to the Secret named after the client id in the namespace `cattle-oidc-client-secrets`:
    ```bash
    CLIENT_ID=$(kubectl get oidcclient libredb-studio -o jsonpath='{.status.clientID}')
    kubectl -n cattle-oidc-client-secrets get secret "$CLIENT_ID" -o jsonpath='{.data.client-secret-1}' | base64 -d
    ```
+   Reading the secret takes a Rancher administrator: the global role "Manage OIDC Clients" covers `OIDCClient` resources only, not Secrets, and Rancher's dashboard shows the secret only to users who can read Secrets.
    Keep the secret out of chart values and shell history: with the chart, write it as `oidc-client-secret` into the Secret that `secrets.existingSecret` names, which then supplies every key the chart reads.
-   To rotate it, annotate the `OIDCClient` with `cattle.io/oidc-client-secret-regenerate: client-secret-1` and copy the new value.
+   To rotate it without a failed sign-in, add a second secret, move Studio to it, then remove the first; Rancher accepts any secret the client's Secret holds:
+   ```bash
+   kubectl annotate oidcclient libredb-studio cattle.io/oidc-client-secret-create=true
+   # read client-secret-2 as above, give it to Studio and roll Studio out, then:
+   kubectl annotate oidcclient libredb-studio cattle.io/oidc-client-secret-remove=client-secret-1
+   ```
+   The annotation `cattle.io/oidc-client-secret-regenerate: client-secret-1` replaces the secret in place instead, so every sign-in fails until Studio restarts with the new value.
 
 3. **Environment Variables:**
    ```env
@@ -349,6 +359,7 @@ No Studio code is specific to Rancher: it is the ordinary OIDC mode with the val
      Rancher ignores `prompt`, so the default `prompt=login` would not force a new sign-in either.
    - `AUTH_SESSION_TTL_SECONDS=900` keeps a Studio session short, because signing out of Rancher does not end it (see logout below).
    - When Rancher's certificate comes from a private CA, Rancher's self-signed one included, give Studio that CA through `NODE_EXTRA_CA_CERTS` (the chart README's "Trusting a private CA"); Rancher serves the CA it uses at `https://rancher.example.com/cacerts`.
+     Never set `NODE_TLS_REJECT_UNAUTHORIZED=0` to get past that certificate: Studio takes the ID token straight from Rancher's token endpoint, and the TLS check on that connection is what vouches for it.
 
    Scopes by Rancher line:
 
@@ -356,7 +367,6 @@ No Studio code is specific to Rancher: it is the ordinary OIDC mode with the val
    |--------------|--------------|----------------|
    | 2.15 | `openid profile groups`, with `groups` in the client's `spec.scopes` | Sent only for the `groups` scope |
    | 2.14 | `openid profile` | Sent without being asked for |
-   | 2.12, 2.13 | `openid profile`; any other scope is refused | Sent without being asked for |
 
    On every line a user with no group principals, which includes every Rancher local user, gets no `groups` claim at all and signs in as a `user`.
 
@@ -372,7 +382,7 @@ No Studio code is specific to Rancher: it is the ordinary OIDC mode with the val
    OIDC_ADMIN_ROLES=keycloakoidc_group://libredb-admins
    ```
    A Studio admin holds every connection Studio has, so name a group that only the right people can join.
-   Leave `OIDC_ADMIN_ROLES` at its default only with care: `admin` would make any group principal named exactly `admin` an administrator.
+   Leave `OIDC_ADMIN_ROLES` at its default only with care: `admin` would make any group principal named `admin`, in any letter case, an administrator.
    With `OIDC_ROLE_CLAIM` unset, every Rancher user is a `user`, whatever groups they hold.
 
 6. **Logout:** Rancher's discovery document advertises no `end_session_endpoint`, so logout ends Studio's session only, and the server log notes once per logout that no provider logout URL could be built.
