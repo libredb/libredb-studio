@@ -18,6 +18,7 @@ import {
   EXTERNAL_DATABASE_TYPES,
   isExternalDatabaseType,
   MCP_EXPOSABLE,
+  MCP_STATEMENT_READ,
   OPENS_LOCAL_FILE,
   OPENS_SERVER_LEVEL_WITHOUT_DATABASE,
   READ_ONLY_ENFORCED,
@@ -25,6 +26,7 @@ import {
   SHIPPED_DATABASE_TYPES,
   SINGLE_WRITER_FILE,
 } from "@/lib/db/compatibility";
+import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { isFileBased } from "@/lib/db-ui-config";
 import type { DatabaseType } from "@/lib/types";
@@ -680,6 +682,43 @@ describe("MCP_EXPOSABLE (#1089)", () => {
       "netconf",
       "snmp",
       "sparkplug",
+    ]);
+  });
+});
+
+/**
+ * `MCP_STATEMENT_READ` (all-providers design 6.1): whether an MCP client may run a statement on an engine, a second
+ * record beside `MCP_EXPOSABLE` so that MCP read opens per engine by its own reviewed change, never as a side effect of
+ * the engine joining agent mode. It can only narrow what the two records it sits under allow.
+ */
+describe("MCP_STATEMENT_READ", () => {
+  test("answers for every shipped type-id and for nothing else", () => {
+    expect(Object.keys(MCP_STATEMENT_READ).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
+  });
+
+  test("is frozen, so no reader can open or close MCP read for an engine at run time", () => {
+    expect(Object.isFrozen(MCP_STATEMENT_READ)).toBe(true);
+  });
+
+  test("is false wherever MCP_EXPOSABLE is false", () => {
+    for (const type of SHIPPED_DATABASE_TYPES.filter((candidate) => !MCP_EXPOSABLE[candidate])) {
+      expect([type, MCP_STATEMENT_READ[type]]).toEqual([type, false]);
+    }
+  });
+
+  test("is true only for an engine agent mode executes statements on", () => {
+    const open = SHIPPED_DATABASE_TYPES.filter((type) => MCP_STATEMENT_READ[type]);
+    expect(open.filter((type) => !AGENT_EXECUTION_ENGINES.includes(type))).toEqual([]);
+  });
+
+  test("opens the five SQL engines run_read_query served before the record existed, and no other", () => {
+    // MongoDB and Kubernetes execute for the agent and stay closed until their own MCP PRs open them.
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => MCP_STATEMENT_READ[type])).toEqual([
+      "postgres",
+      "mysql",
+      "sqlite",
+      "duckdb",
+      "mssql",
     ]);
   });
 });

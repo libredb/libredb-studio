@@ -581,6 +581,64 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
 });
 
 /**
+ * Which shipped engines an MCP client may run a statement on (all-providers design 6.1): a second record beside
+ * `MCP_EXPOSABLE`, which also opens `list_connections` and `inspect_schema` and so cannot be turned false to keep a
+ * statement tool closed. An MCP statement tool serves an engine only where agent mode executes statements on it,
+ * `MCP_EXPOSABLE` offers it and this record answers true (`src/lib/mcp/tools/served-engines.ts`), so an engine that
+ * joins agent mode does not open to MCP as a side effect: its row stays false until a change of its own opens it.
+ *
+ * True for the five SQL engines `run_read_query` served before this record existed, so nothing moved when it landed.
+ * MongoDB and Kubernetes execute for the agent and answer false until their MCP tools exist. An exhaustive Record for
+ * the reason `EXTERNAL` gives, frozen like the records above it, and held false wherever `MCP_EXPOSABLE` is false and
+ * true only for an engine agent mode executes on by `tests/unit/db/compatibility.test.ts`.
+ */
+export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
+  postgres: true,
+  bigquery: false,
+  snowflake: false,
+  spark: false,
+  mysql: true,
+  sqlite: true,
+  libsql: false,
+  duckdb: true,
+  oracle: false,
+  db2: false,
+  mssql: true,
+  clickhouse: false,
+  druid: false,
+  trino: false,
+  cassandra: false,
+  elasticsearch: false,
+  opensearch: false,
+  mongodb: false,
+  couchbase: false,
+  redis: false,
+  prometheus: false,
+  kafka: false,
+  etcd: false,
+  neo4j: false,
+  milvus: false,
+  qdrant: false,
+  weaviate: false,
+  influxdb: false,
+  influxdb3: false,
+  oxia: false,
+  databend: false,
+  s3: false,
+  kubernetes: false,
+  mqtt: false,
+  firestore: false,
+  rabbitmq: false,
+  opcua: false,
+  mtconnect: false,
+  modbus: false,
+  netconf: false,
+  snmp: false,
+  sparkplug: false,
+  libredb: false,
+});
+
+/**
  * Which shipped engines' connection form offers a URI mode (Spec A section 7): the answer
  * `DB_UI_CONFIG[type].showConnectionStringToggle` gives in `src/lib/db-ui-config.ts`. Kept here because the seed
  * layer must not load `db-ui-config.ts`: it value-imports the React icon components, the reason

@@ -8,7 +8,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { AGENT_EXECUTION_ENGINES, namedList } from "@/lib/agent/engine-support";
 import { AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
 import { getDBConfig } from "@/lib/db-ui-config";
-import { MCP_EXPOSABLE } from "@/lib/db/compatibility";
+import { MCP_EXPOSABLE, MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
 import { MCP_INSTRUCTIONS } from "@/lib/mcp/server";
 import { INSPECT_SCHEMA_DESCRIPTION } from "@/lib/mcp/tools/inspect-schema";
@@ -53,24 +53,16 @@ describe("the tool descriptions", () => {
     );
   });
 
-  test("an execution engine MCP is not offered on is neither served nor named", () => {
-    const withheld = AGENT_EXECUTION_ENGINES.filter((candidate) => !MCP_EXPOSABLE[candidate]);
-    // Not vacuous: Kubernetes executes for the agent and is not offered to MCP.
-    expect(withheld).toEqual(["kubernetes"]);
-    for (const type of withheld) {
-      expect(RUN_READ_QUERY_TYPES).not.toContain(type);
-      expect(RUN_READ_QUERY_ENGINES).not.toContain(getDBConfig(type).label);
-    }
-  });
-
-  test("an execution engine whose statements are not SQL is neither served nor named", () => {
-    const otherLanguage = AGENT_EXECUTION_ENGINES.filter(
-      (candidate) => MCP_EXPOSABLE[candidate] && AGENT_STATEMENT_LANGUAGE[candidate] !== "sql",
+  // The engines left out are derived from the records rather than listed, so an engine that later opens MCP read, or
+  // joins agent mode with its MCP read row false, moves between these sets without editing this file (V9).
+  test("an execution engine the records keep out of this tool is neither served nor named", () => {
+    const withheld = AGENT_EXECUTION_ENGINES.filter(
+      (candidate) =>
+        !MCP_EXPOSABLE[candidate] || !MCP_STATEMENT_READ[candidate] || AGENT_STATEMENT_LANGUAGE[candidate] !== "sql",
     );
-    // Not vacuous: MongoDB executes for the agent and is offered to MCP for inspect_schema, but its
-    // statement is a JSON command and this tool's input is SQL (issue #1614, decision 2).
-    expect(otherLanguage).toEqual(["mongodb"]);
-    for (const type of otherLanguage) {
+    // Not vacuous while any execution engine is kept out; today Kubernetes and MongoDB are.
+    expect(withheld.length).toBeGreaterThan(0);
+    for (const type of withheld) {
       expect(RUN_READ_QUERY_TYPES).not.toContain(type);
       expect(RUN_READ_QUERY_ENGINES).not.toContain(getDBConfig(type).label);
     }
