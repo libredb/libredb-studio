@@ -7606,7 +7606,7 @@ Reproduced 2026-09-23 on `main` and on the #1085 branch: `readPlanStatement` ove
 Found 2026-09-23 in the #1085 review.
 Not fixed in #1085: the alias predates it, and that PR changes no existing arm's behaviour (#1085, section 3.5).
 
-**Done when:** `fenceTagEngine("cql")` is `"cassandra"`, a `cql` block before a `postgres` block on a PostgreSQL plan run records the PostgreSQL statement, a `cql`-only closing there records none and is asked for one, a `cql` block on a Cassandra run is still the deliverable, and the `cql` test in `tests/unit/lib/sql/fence-tags.test.ts` and the comment at the `cassandra` entry state the type-id rule.
+**Done when:** `fenceTagEngine("cql")` is `"cassandra"`, a `cql` block before a `postgres` block on a PostgreSQL plan run records the PostgreSQL statement, a `cql`-only closing there records none and is asked for one, a `cql` block on a Cassandra run is still the deliverable, the `cql` test in `tests/unit/lib/sql/fence-tags.test.ts` and the comment at the `cassandra` entry state the type-id rule, and the `KNOWN_GAPS` entry of that file's alias-registry test is deleted.
 
 ### B87. A run's inventory count names every kind with the engine's own noun
 

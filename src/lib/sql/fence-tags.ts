@@ -188,7 +188,8 @@ export const QUERY_FENCE_ALIASES: ReadonlySet<string> = new Set([
  *
  * `fenceTagEngine` reads only this record, so an alias that names an engine goes into both
  * registries; `tests/unit/lib/sql/fence-tags.test.ts` holds this record's keys equal to the
- * alias set less the language tags that name no engine, `sql` and `cql`.
+ * alias set less `sql`, and less `cql`, which is absent as a known defect rather than by design
+ * (docs/BACKLOG.md B86).
  */
 export const ALIAS_ENGINES: Readonly<Record<string, DatabaseType>> = Object.freeze({
   postgresql: "postgres",
