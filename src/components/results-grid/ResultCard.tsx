@@ -33,8 +33,7 @@ export function ResultCard({
 }: ResultCardProps) {
   const primaryValue: unknown = row[primaryColumn];
   const idValue: unknown = idColumn ? row[idColumn] : null;
-  const idMasked =
-    maskingActive && idColumn != null && idValue != null && sensitiveColumns?.has(idColumn) === true;
+  const idMasked = maskingActive && idColumn != null && idValue != null && sensitiveColumns?.has(idColumn) === true;
 
   // Mask primary value if sensitive
   const displayPrimary = useMemo(() => {
