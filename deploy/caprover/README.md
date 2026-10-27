@@ -73,6 +73,9 @@ What it adds to the plain template:
   `/var/run/docker.sock` is mounted into the companion only.
   Access to it is equivalent to root access on the host, which is why this is a separate catalog entry and `libredb-studio.yml` never mounts it.
   The exporter sends GET requests to two Docker Engine API paths only, but that is a property of its code, not of the socket.
+  A GET-only socket proxy was considered and not adopted ([#1543](https://github.com/libredb/libredb-studio/issues/1543)).
+  It would close the write paths, but `GET /services` still returns every app's environment, so which credentials leave the companion stays a property of the exporter's code either way.
+  That gain does not justify a third app holding the socket, from a third-party image: a TCP proxy would be reachable from every app on `captain-overlay-network`, and the proxies that serve a Unix socket need a `user:` field a one-click template cannot set.
 - **The shared volume.**
   `$$cap_appname-discovered` is mounted at `/app/discovery` in both apps, never under `/app/data`, because `docker-entrypoint.sh` chowns the directory of `STORAGE_SQLITE_PATH` to uid 1001 when it starts as root.
   The exporter refuses to start when that directory is not owned by its own uid or is writable by group or others.
