@@ -202,7 +202,7 @@ These were measured on 1.0.22, reported upstream at [gurungabit/db2-node#12](htt
 - K11: without TLS the driver fell back to sending the password in cleartext in silence. It now refuses unless asked by name, which is how the insecure opt-in asks (section 3.3).
 - K12: the `currentSchema` option had no effect. The provider still binds every catalog query's schema and passes none.
 - K13: `serverInfo()` answered the instance name. It now answers the server class, and the provider still reads the version from `SYSIBMADM.ENV_INST_INFO`.
-- K14: `queryTimeout` rejected on the client and left the statement running on the server. It now cancels it on the server, given the privileges section 7.4 names; the provider still sets none.
+- K14: `queryTimeout` rejected on the client and left the statement running on the server. It now cancels it on the server, given the privileges section 7.4 names; the provider still sets none, and bounds a transaction statement by closing its session instead (section 7.4).
 - K18: a statement that starts with a comment was refused with SQLSTATE 42612, SQLCODE -84.
 - K19: an UPDATE or DELETE that matched no row reported -2147221503 changed rows.
 - K20: a value truncated with a warning desynchronised the driver.
@@ -222,8 +222,8 @@ These were measured on 1.0.22, reported upstream at [gurungabit/db2-node#12](htt
 | Inline row edit | Yes | Tables only, and never a CLOB, DBCLOB or BLOB column, which db2-node does not write when bound (K24). Off on 1.0.22, where a read-then-write-back stored corrupted text (K1) and a DECIMAL that did not fit was stored wrong (K22); see section 7.5 |
 | Data import | Yes | Into an existing table, the one kind that declares `acceptsRowWrites`; not into a new table, as Create Table above |
 | Result pagination | Yes | Section 7.2 |
-| Transactions and SANDBOX | No | No held session in this version; 1.0.24's `beginTransaction()` makes one possible (D148) |
-| Query cancel | No | Not wired yet: 1.0.24's `Client.cancel()` and its `queryTimeout` cancel the statement on the server through `WLM_CANCEL_ACTIVITY`, which needs monitoring and cancel privileges a plain user may not hold (D148) |
+| Transactions and SANDBOX | Yes | On a session of its own, section 7.7; SANDBOX refuses `BEGIN` and `CALL`, which can commit |
+| Query cancel | No | Not wired yet: 1.0.24's `Client.cancel()` and its `queryTimeout` cancel the statement on the server through `WLM_CANCEL_ACTIVITY`, which needs monitoring and cancel privileges a plain user may not hold (D392) |
 | Foreign keys | Yes | Inherited |
 | Maintenance | Yes | Run Statistics and Reorganize Table, per table only |
 | Connection string | Yes | A `db2://` paste fills the fields |
@@ -233,7 +233,8 @@ These were measured on 1.0.22, reported upstream at [gurungabit/db2-node#12](htt
 | Container path shapes | Exact | Like Oracle |
 | Preview projection | Yes | `previewProjection` is `DB2_PREVIEW_PROJECTION`: the object browser's preview names each column and leaves CLOB, DBCLOB and BLOB columns out, named in a comment above the statement, because the grid does not edit them (K24); XML is read; a preview whose column list is not loaded yet still reads `SELECT *`, under a comment that says so |
 
-The application's query timeout is not forwarded to Db2: on 1.0.22 the driver's own timeout left the statement running on the server (K14), and on 1.0.24 it cancels it through a second session that needs privileges this version does not ask a user to hold.
+The application's query timeout is not forwarded to the driver: on 1.0.22 the driver's own timeout left the statement running on the server (K14), and on 1.0.24 it cancels it through a second session that needs privileges this version does not ask a user to hold.
+The provider bounds a transaction statement with it instead, section 7.4.
 
 ### SQL writing
 
@@ -392,10 +393,17 @@ A CLOB column can arrive described as `VarChar(32777)` (measured: a `CLOB(1M)` c
 Column keys are upper case, and an unnamed expression is keyed `1`, `2` and so on.
 A timestamp stays a string and is never turned into a `Date`, so no time zone shifts it.
 
-### 7.4 No timeout and no cancel
+### 7.4 Timeout and cancel
 
-Nothing bounds a statement on the Studio side: the app's query timeout is not applied to Db2 and there is no cancel.
-`db2-node` 1.0.24 makes both possible, through `Client.cancel()` and a `queryTimeout` that cancels on the server, given a user with monitoring privileges and `EXECUTE` on `SYSPROC.WLM_CANCEL_ACTIVITY`; wiring them is D148.
+A statement inside a transaction is bounded by the connection's query timeout (60 seconds unless the connection sets one), and nothing else is: `query()` on the shared client, the catalog reads and maintenance are not, and there is no cancel.
+The bound needs no privilege, because it sends nothing to the server: at the deadline the provider stops waiting, answers a timeout error, forgets the transaction's session and closes it (`boundByClose` in [`driver.ts`](../../src/lib/db/providers/sql/db2/driver.ts)).
+That ends the wait, not the work.
+Measured on 12.1.0.0 through 1.0.25: `close()` called while a statement runs returns only once that statement has ended on the server, 43.9 seconds later on a cross join that ran 45.9 seconds, and the connection closes then.
+`tests/live/db2-live-check.ts` runs it with a 2-second timeout: the wait ended at 2000 ms, the row the transaction had updated stayed locked until the statement ended on the server, 19968 ms after it began, and then read back unchanged.
+So the timeout error says the statement keeps running, that the transaction is over and is rolled back once the connection closes, and that a new transaction is needed to continue.
+The shared client is not bounded the same way, because closing it would wait for the statement just the same and then end every other request on it.
+
+Cancelling the statement on the server is D392: `db2-node` 1.0.24 does it through `Client.cancel()` and a `queryTimeout`, given a user with monitoring privileges and `EXECUTE` on `SYSPROC.WLM_CANCEL_ACTIVITY`, which this provider does not ask a user to hold.
 For a production database, bound statements on the server, with a Db2 workload management threshold such as `ACTIVITYTOTALTIME`, so an expensive query from any client ends there.
 
 ### 7.5 Writes
@@ -418,6 +426,25 @@ Block comments nest: `SELECT 1 AS a /* a /* b */ FROM SYSIBM.SYSDUMMY1 */ FROM S
 `q'[x]'` and `// note` are each SQLCODE -104, so there is no alternate quoting and no `//` comment.
 `readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.
 Redaction is `sql` with no name quote: a redacted statement keeps its words, and every literal and quoted run becomes `?`.
+
+### 7.7 Transactions and SANDBOX
+
+BEGIN opens a second client, the transaction's session, connected exactly as the shared one is, through the same tunnel and TLS settings, with its own CA file, and calls `db2-node`'s `beginTransaction()`, which turns autocommit off on it.
+Every statement of the transaction runs there, and nothing else the provider sends does, so the object browser and other tabs keep autocommitting on the shared client.
+COMMIT and ROLLBACK end the unit of work and close the session, whichever way they went; a refused BEGIN closes it too.
+One transaction is open per provider, and a second BEGIN, or one sent while the first is still opening, is refused with "Transaction already active".
+Disconnecting closes an open session without waiting, and Db2 rolls back what it did.
+No timer rolls back an abandoned transaction: it holds its session and its locks until COMMIT, ROLLBACK or the provider's disconnect.
+
+Measured on 12.1.0.0 through 1.0.25, each inside a transaction with a row inserted first and ROLLBACK last:
+
+- a ROLLBACK removed the row, a COMMIT kept it, and closing the connection without either removed it;
+- `CREATE TABLE` was rolled back, so Db2 DDL is transactional and is not refused by SANDBOX;
+- `BEGIN COMMIT; END` and a `CALL` of a procedure that runs `COMMIT` each kept the row, so SANDBOX refuses every `BEGIN` and `CALL` (`implicitCommitStatements`), as the provider reads no transaction state back to tell those that commit from those that do not;
+- `CALL SYSPROC.ADMIN_CMD('RUNSTATS ...')` committed nothing, and is refused all the same, by the `CALL` rule;
+- `TRUNCATE TABLE ... IMMEDIATE` is refused by the server inside a transaction, first statement or not (SQLSTATE 25001, SQLCODE -428).
+
+The server does not report whether a transaction is open, so a `COMMIT` sent as a statement inside the transaction commits and the session runs on in a new unit of work; SANDBOX refuses it before it is sent.
 
 ## 8. Maintenance
 
@@ -453,7 +480,7 @@ Plan mode drafts SQL for it and `inspect_schema` reads its schema through the pr
 The provider has no `queryReadOnly`, so an agent run executes nothing on Db2 and the MCP tool `run_read_query` refuses a Db2 connection.
 `READ_ONLY_ENFORCED` is false for Db2, so a seed that asks for a read-only Db2 connection is refused.
 
-`endOpenQueryTransaction()` is not implemented, because the engine has no transaction to leave open: `query()` autocommits every statement and holds no session for a later caller.
+`endOpenQueryTransaction()` is not implemented, because `query()` leaves no transaction open: it autocommits every statement on the shared client, and an interactive transaction runs on a session of its own (section 7.7).
 
 ## 11. Schema diff
 
@@ -486,7 +513,7 @@ Only linux x64 was measured; arm64, macOS and Windows load the addon in the rele
 
 - `tests/integration/db/db2-provider.test.ts` drives the provider against a mocked driver that mirrors the fixture, and ends with the shared object-surface conformance check.
 - `tests/unit/db/db2/` holds the unit tests of each module.
-- `tests/live/db2-known-issues.ts` prints `PRESENT` or `GONE` for every row of section 4 and for the K rows fixed in 1.0.24 and 1.0.25, so a regression back to a fixed defect shows as `PRESENT`, and `tests/live/db2-live-check.ts` runs the provider against a live Db2, writes included; neither runs in `bun run test`.
+- `tests/live/db2-known-issues.ts` prints `PRESENT` or `GONE` for every row of section 4 and for the K rows fixed in 1.0.24 and 1.0.25, so a regression back to a fixed defect shows as `PRESENT`, and `tests/live/db2-live-check.ts` runs the provider against a live Db2, writes, transactions and the transaction deadline included; neither runs in `bun run test`.
 
 The integration test needs no Db2, and runs on its own with:
 

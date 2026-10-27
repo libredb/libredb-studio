@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S9 · 6
-- [Drivers and connections](#drivers-and-connections) — D1-D391, U17 · 285
+- [Drivers and connections](#drivers-and-connections) — D1-D392, U17 · 286
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U148 · 134
@@ -1998,15 +1998,15 @@ Found 2026-10-03 while scoping the Db2 provider's first version (#786).
 
 **Done when:** `DB2_MIGRATION_DDL`'s `modifyColumn` emits `SET DATA TYPE`, `SET`/`DROP NOT NULL` and `SET`/`DROP DEFAULT` with the REORG advisory, each statement it emits runs on Db2 12.1 against the fixture, the REORG-pending advisory names the table, and `tests/unit/schema-diff/migration-generator.test.ts` moves `db2` out of the comment-only coverage.
 
-### D148. Db2 has no transactions, SANDBOX or query cancel
+### D148. Db2 transactions and a statement deadline that needs no privilege
 
-`db2Capabilities` sets `supportsTransactions` to false and the provider implements no `cancelQuery`: it holds one `Client` with no session of its own for a transaction.
-`db2-node` 1.0.22 offered no interrupt (K14 in `docs/providers/db2.md`); 1.0.24 offers `Client.cancel()`, a `queryTimeout` that cancels the statement on the server through `SYSPROC.WLM_CANCEL_ACTIVITY` on a second session and then closes the connection, and `beginTransaction()`, so the driver no longer stands in the way.
-Cancel needs the connecting user to hold activity-monitoring privileges and `EXECUTE` on `WLM_CANCEL_ACTIVITY`, which a plain application user may not, so what an unprivileged user sees has to be measured.
+`db2Capabilities` set `supportsTransactions` to false and no statement was bounded: the provider held one `Client` with no session of its own for a transaction.
+`db2-node` 1.0.24 added `beginTransaction()`, so the driver no longer stood in the way.
+Narrowed on 2026-10-28 to transactions and a client-side deadline: cancelling the statement on the server needs privileges a plain user may not hold, and is D392.
 
 Found 2026-10-03 by the Db2 provider's driver spike (#786).
 
-**Done when:** the provider implements `cancelQuery` over `Client.cancel()` and the transaction lifecycle on a held connection, a user without the cancel privileges gets a refusal that names them, and a live test cancels a long statement and sees it end on the server.
+**Done when:** an interactive transaction runs on a session of its own and COMMIT and ROLLBACK close it, a statement in it is bounded by the connection's query timeout by closing that session, with no `WLM_CANCEL_ACTIVITY` grant, and a live run on Db2 12.1 commits, rolls back and sees the deadline end the wait and the session's work rolled back.
 
 ### D149. Windows channels and the Visual C++ runtime the Db2 addon needs
 
@@ -3942,6 +3942,15 @@ The residue is stated in section 9 of `docs/providers/kubernetes.md`, in `docs/A
 Found 2026-10-27 in the review of the change that added MCP `run_kubectl_read` (#1996), and deferred there: that change masks only the fields defined to hold a Secret name.
 
 **Done when:** a Secret name the cluster holds is masked inside status, condition and event messages and log lines on the machine path, for agent mode and MCP by the same code, a test per message source pins a planted name, and the residue lines in `docs/providers/kubernetes.md`, `docs/AGENT.md` and the tool description drop the free-text messages.
+
+### D392. Db2 cannot cancel a running statement on the server
+
+A Db2 statement is bounded only on Studio's side: a transaction statement past the query timeout closes its session (D148), and `close()` returns only once the statement has ended on the server, so the work runs to its end; `query()` on the shared client is not bounded at all.
+`db2-node` 1.0.24 offers `Client.cancel()` and a `queryTimeout` that cancel the statement on the server through `SYSPROC.WLM_CANCEL_ACTIVITY` on a second session, which needs activity-monitoring privileges and `EXECUTE` on that procedure, so a plain application user may not be able to cancel at all.
+
+Found 2026-10-28 when D148 was narrowed to transactions and a client-side deadline.
+
+**Done when:** the provider implements `cancelQuery` over `Client.cancel()`, a user without the cancel privileges gets a refusal that names them, and a live test cancels a long statement and sees it end on the server.
 
 ## Value interpolation
 
