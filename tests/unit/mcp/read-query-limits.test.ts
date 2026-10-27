@@ -221,7 +221,8 @@ describe("the prefixes the mapper matches still start a message in each provider
   test.each(SHARED_PREFIXES)("%p is written in no source file but the shared module", (prefix) => {
     const writers = readdirSync(join(REPO, "src"), { recursive: true, encoding: "utf8" })
       .filter((file) => /\.tsx?$/.test(file))
-      .map((file) => `src/${file}`)
+      // readdirSync answers with the platform separator; the census names files with "/".
+      .map((file) => `src/${file.replaceAll("\\", "/")}`)
       .filter((file) => read(file).includes(prefix));
     expect(writers).toEqual([SHARED]);
   });
