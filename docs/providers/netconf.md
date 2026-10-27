@@ -159,6 +159,9 @@ A probe that matched replies to requests by arrival order blamed the wrong opera
 server began sending notifications: it reported 17 replies to 12 requests. Replies are matched by
 `message-id`, and a second request on a busy session is refused by the provider rather than queued.
 
+On an end-of-message session a request that holds the `]]>]]>` separator is refused and nothing is written, because RFC 6242 section 4.3 keeps the separator out of the data and a peer would read the first one as the end of the message.
+Chunked framing counts bytes, so the same text is ordinary data there and is framed as before.
+
 ### 3.5 Only implemented modules are listed
 
 A YANG library lists modules the device implements and modules it merely imports. The tree lists

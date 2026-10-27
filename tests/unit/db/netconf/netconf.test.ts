@@ -594,6 +594,22 @@ test("end-of-message framing ends the message at the separator, even mid-element
 });
 
 /**
+ * The writing side of the same clause. A payload that holds the separator would leave as two
+ * messages on a 1.0 session, so `frame` refuses it and writes nothing. Chunked framing counts
+ * bytes, so the same payload is ordinary data there and is framed as before.
+ */
+test("end-of-message framing refuses a payload that holds the separator, and chunked framing does not", () => {
+  const payload = `<rpc message-id="1"><get><filter type="subtree"><a${EOM}b/></filter></get></rpc>`;
+  expectThrows(() => frame(payload, "eom"), QueryError);
+  expectThrows(() => frame(payload, "eom"), /RFC 6242 section 4\.3/);
+  expectThrows(() => frame(EOM, "eom"), QueryError);
+  const step = new FrameReader("chunked", limits).feed(frame(payload, "chunked"));
+  expectEqual(step.messages, [payload]);
+  // A payload without it is framed exactly as before.
+  expectBe(frame("<rpc/>", "eom"), `<rpc/>${EOM}`);
+});
+
+/**
  * MEASURED against the pattern this replaced, `/message-id="(\d+)"/`, which searched the whole
  * message for a double-quoted integer.
  *

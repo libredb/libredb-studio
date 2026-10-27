@@ -14,6 +14,8 @@
  * repository and inherited here (decision K-10), so a message leaves this file as bytes.
  */
 
+import { QueryError } from "@/lib/db/errors";
+
 /** The end-of-message separator of RFC 6242 section 4.3. */
 export const EOM = "]]>]]>";
 
@@ -47,9 +49,22 @@ export interface FrameStep {
   readonly fault?: FrameFault;
 }
 
-/** Writes a request in the framing the session negotiated. */
+/**
+ * Writes a request in the framing the session negotiated.
+ *
+ * RFC 6242 section 4.3 says the end-of-message separator does not appear in the data, and a peer
+ * reads the first one as the end of the message, so a payload that holds it is refused rather than
+ * written as two messages. Chunked framing counts bytes, so the same payload is ordinary data there.
+ */
 export function frame(payload: string, framing: Framing): string {
-  if (framing === "eom") return payload + EOM;
+  if (framing === "eom") {
+    if (payload.includes(EOM)) {
+      throw new QueryError(
+        `this request holds the end-of-message separator ${EOM}, which RFC 6242 section 4.3 keeps out of the data, so it is not sent`,
+      );
+    }
+    return payload + EOM;
+  }
   const bytes = Buffer.byteLength(payload, "utf8");
   return `\n#${bytes}\n${payload}\n##\n`;
 }
