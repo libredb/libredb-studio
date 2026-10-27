@@ -4,6 +4,8 @@ import { machineColumns } from "@/lib/db/detailed-object";
 import { ExecutionProfileError } from "@/lib/db/errors";
 import { containerDepth, isIndexesUnavailable, relationKindIds } from "@/lib/db/object-kinds";
 import type { Container, DatabaseObject, DatabaseProvider } from "@/lib/db/types";
+import { getDBConfig } from "@/lib/db-ui-config";
+import type { DatabaseType } from "@/lib/types";
 import {
   newMcpCorrelationId,
   recordMcpDecision,
@@ -12,6 +14,7 @@ import {
   type McpToolAuditReason,
 } from "../audit";
 import { DATABASE_ARGUMENT_DESCRIPTION, McpDatabaseChoiceError, providerInDatabase } from "./database-choice";
+import { type McpStatementTool, mcpTablelessReadTool } from "./statement-arms";
 import {
   MCP_CONNECTIONS_UNREADABLE,
   MCP_CONNECTIONS_UNREADABLE_TEXT,
@@ -41,8 +44,10 @@ import {
  * database content someone else may have written.
  *
  * It lists the kinds an engine declares as relations and nothing else, and a kind whose names are withheld from
- * machine surfaces is never one (`relationKindIds`), so no such name reaches it: a Kubernetes cluster, whose kinds
- * are all `config`, lists no object at all, its Secrets included (all-providers ruling 21).
+ * machine surfaces is never one (`relationKindIds`), so no such name reaches it. An engine that holds no relation at
+ * all, as a Kubernetes cluster, whose kinds are all `config`, does not, is refused by name as soon as the connection
+ * resolves, before anything is acquired, and the refusal names the statement tool that reads it, which its arm
+ * declares (`holdsNoTables`), rather than answering an empty page (all-providers rulings 21 and 35).
  *
  * It acquires under agent-operations, which sends no statement and so runs on every engine. The
  * decision event is written before acquisition and the outcome after, and a call whose record
@@ -104,7 +109,7 @@ export type InspectSchemaInput = z.infer<typeof InspectSchemaInputSchema>;
 type InspectedTable = z.infer<typeof InspectedTableSchema>;
 
 const INSPECT_SCHEMA_TITLE = "Inspect schema";
-export const INSPECT_SCHEMA_DESCRIPTION = `List the tables of one connection with their columns and, on request, their indexes. Works on every engine. An engine whose objects are not tables, such as Kubernetes, lists none: list_connections' read_tool names the tool that reads it. Columns an engine only inferred from sampled data are left out, so a table may hold fields this list does not show. Pages with limit and offset; has_more and next_offset say when more tables exist. ${MCP_UNTRUSTED_NOTICE}`;
+export const INSPECT_SCHEMA_DESCRIPTION = `List the tables of one connection with their columns and, on request, their indexes. Works on every engine that holds tables. An engine whose objects are not tables, such as Kubernetes, refuses it, and the refusal names the tool that reads it, as list_connections' read_tool does. Columns an engine only inferred from sampled data are left out, so a table may hold fields this list does not show. Pages with limit and offset; has_more and next_offset say when more tables exist. ${MCP_UNTRUSTED_NOTICE}`;
 
 const MAX_COLUMNS = 50;
 const MAX_INDEXES = 25;
@@ -114,6 +119,11 @@ const FIRST_TABLE_OVER_CAP_TEXT =
   "The first table on this page is larger than the 32 KiB result limit on its own. Call inspect_schema again for it with limit 1 and include_columns and include_indexes set to false.";
 const FIRST_TABLE_OVER_CAP_BARE_TEXT =
   "The first table on this page does not fit the 32 KiB result limit even without its columns and indexes, so it cannot be listed here.";
+
+/** The refusal of an engine that holds no table, naming the statement tool that reads it. */
+function tablelessText(type: DatabaseType, tool: McpStatementTool): string {
+  return `${getDBConfig(type).label} holds no table for inspect_schema to list. Read this connection with ${tool}.`;
+}
 
 type ContainerChoice =
   | { readonly kind: "root" }
@@ -272,6 +282,13 @@ export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall)
   if (connection === null) return refuse("mcp_connection_not_visible", MCP_NOT_VISIBLE_TEXT);
 
   const resolved: McpCallRecord = { ...record, connectionName: connection.seedId };
+  // Ahead of any acquisition, so no provider is built or dialled for an engine with no table to list (ruling 35).
+  const tableless = mcpTablelessReadTool(connection.type);
+  if (tableless !== null)
+    return (
+      recordOrRefuse(() => recordMcpDecision(resolved, "mcp_execution_failed")) ??
+      ownWordsError(tablelessText(connection.type, tableless))
+    );
   const unrecorded = recordOrRefuse(() => recordMcpDecision(resolved));
   if (unrecorded !== null) return unrecorded;
 

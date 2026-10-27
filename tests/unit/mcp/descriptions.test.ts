@@ -89,10 +89,11 @@ describe("the tool descriptions", () => {
     expect(RUN_KUBECTL_READ_ARM.description).toContain("this tool takes no offset");
   });
 
-  test("inspect_schema says an engine with no tables lists none, and where to read it instead", () => {
+  test("inspect_schema says an engine with no tables refuses it, and where to read it instead (ruling 35)", () => {
     expect(INSPECT_SCHEMA_DESCRIPTION).toContain(
-      "An engine whose objects are not tables, such as Kubernetes, lists none: list_connections' read_tool names the tool that reads it.",
+      "Works on every engine that holds tables. An engine whose objects are not tables, such as Kubernetes, refuses it, and the refusal names the tool that reads it, as list_connections' read_tool does.",
     );
+    expect(INSPECT_SCHEMA_DESCRIPTION).not.toContain("Works on every engine.");
   });
 
   test("names no statement form, because the forms differ by engine and the refusal names them", () => {
@@ -103,8 +104,8 @@ describe("the tool descriptions", () => {
     );
   });
 
-  test("inspect_schema and list_connections say they work on every engine", () => {
-    expect(INSPECT_SCHEMA_DESCRIPTION).toContain("Works on every engine.");
+  test("list_connections says it works on every engine, and inspect_schema on every engine that holds tables", () => {
+    expect(INSPECT_SCHEMA_DESCRIPTION).toContain("Works on every engine that holds tables.");
     expect(LIST_CONNECTIONS_DESCRIPTION).toContain("Works for every engine.");
   });
 

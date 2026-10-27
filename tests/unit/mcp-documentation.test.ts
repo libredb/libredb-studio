@@ -64,11 +64,12 @@ describe("docs/MCP.md", () => {
     expect(MCP_DOC).not.toContain("B117");
   });
 
-  test("carries run_kubectl_read's engine sentence, derived from its arm, and says what inspect_schema lists there", () => {
+  test("carries run_kubectl_read's engine sentence, derived from its arm, and says inspect_schema refuses Kubernetes", () => {
     expect(MCP_DOC).toContain(`Runs on ${RUN_KUBECTL_READ_ARM.engines}; other engines refuse it.`);
     expect(MCP_DOC).toContain(
-      "On Kubernetes it lists no table, because no Kubernetes kind is one: a namespace is its schema, and `run_kubectl_read` reads its objects.",
+      "On Kubernetes it refuses the call by name, because no Kubernetes kind is a table: the refusal names `run_kubectl_read`, which reads its objects, and is answered as soon as the connection resolves, before anything is acquired.",
     );
+    expect(MCP_DOC).not.toContain("On Kubernetes it lists no table");
     expect(MCP_DOC).not.toContain("B105");
   });
 

@@ -8,6 +8,8 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { AGENT_LANGUAGE_COPY, AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
 import { languageServer } from "@/lib/agent/languages/server";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { createDatabaseProvider } from "@/lib/db/factory";
+import { relationKindIds } from "@/lib/db/object-kinds";
 import type { McpConnectionContext } from "@/lib/mcp/context";
 import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
 import { MCP_TOOL_INPUT_SCHEMAS } from "@/lib/mcp/tools";
@@ -18,6 +20,7 @@ import { mcpStatementEngines } from "@/lib/mcp/tools/served-engines";
 import {
   MCP_STATEMENT_ARMS,
   mcpStatementToolFor,
+  mcpTablelessReadTool,
   RUN_KUBECTL_READ_ARM,
   RUN_MONGO_COMMAND_ARM,
   RUN_READ_QUERY_ARM,
@@ -25,6 +28,7 @@ import {
   RunMongoCommandInputSchema,
   servingStatementArms,
 } from "@/lib/mcp/tools/statement-arms";
+import { CENSUS_CONNECTION } from "../../helpers/census-connection";
 
 const ARMS = Object.values(MCP_STATEMENT_ARMS).flatMap((arm) => (arm === null ? [] : [arm]));
 
@@ -297,5 +301,39 @@ describe("the tool each engine is read with", () => {
     const registerTool = mock((_name: string) => undefined);
     registerStatementTools({ registerTool } as unknown as McpServer, {} as McpConnectionContext, arms);
     expect(registerTool.mock.calls.map(([name]) => name)).toEqual(["run_read_query"]);
+  });
+});
+
+/**
+ * All-providers ruling 35: an engine that holds no object inspect_schema lists is refused there by name, and the
+ * refusal names its statement tool. The arm declares it for its language, and every engine it serves is held to its
+ * provider's own declaration: no relation kind where the arm says none, at least one where it does not.
+ */
+describe("the arms whose engines hold no table", () => {
+  test("kubectl declares it, SQL and MongoDB do not", () => {
+    expect(RUN_KUBECTL_READ_ARM.holdsNoTables).toBe(true);
+    expect(RUN_READ_QUERY_ARM.holdsNoTables).toBe(false);
+    expect(RUN_MONGO_COMMAND_ARM.holdsNoTables).toBe(false);
+  });
+
+  test.each(ARMS.flatMap((arm) => arm.types.map((type) => [arm.tool, type, arm] as const)))(
+    "%s on %s declares what the provider's own relation kinds say",
+    async (_tool, type, arm) => {
+      const capabilities = (await createDatabaseProvider(CENSUS_CONNECTION[type])).getCapabilities();
+      expect(relationKindIds(capabilities).length === 0).toBe(arm.holdsNoTables);
+    },
+  );
+
+  test("names the statement tool of an engine whose arm holds no table, and null everywhere else", () => {
+    for (const type of SHIPPED_DATABASE_TYPES) {
+      const language = AGENT_STATEMENT_LANGUAGE[type];
+      const arm = language === null ? null : MCP_STATEMENT_ARMS[language];
+      const served = arm !== null && arm.types.includes(type);
+      expect(mcpTablelessReadTool(type)).toBe(served && arm.holdsNoTables ? arm.tool : null);
+    }
+    expect(mcpTablelessReadTool("kubernetes")).toBe("run_kubectl_read");
+    expect(mcpTablelessReadTool("mongodb")).toBeNull();
+    expect(mcpTablelessReadTool("postgres")).toBeNull();
+    expect(mcpTablelessReadTool("redis")).toBeNull();
   });
 });

@@ -14,8 +14,9 @@ It is off by default.
     Each connection's `read_tool` names the tool that runs a statement on it, `run_read_query`, `run_kubectl_read` or `run_mongo_command`, and is `null` where `inspect_schema` is the only read.
   - `inspect_schema` lists one connection's tables with their columns and, on request, their indexes.
     It works on every engine but etcd, Oxia, S3-compatible object storage, MQTT, Firestore, OPC UA, Modbus, NETCONF, SNMP and Sparkplug B: it lists every object kind the engine reads rows from, such as views beside tables, MongoDB collections, Redis keyspaces and search indexes, and `kind` names which one each entry is.
-    On Kubernetes it lists no table, because no Kubernetes kind is one: a namespace is its schema, and `run_kubectl_read` reads its objects.
+    On Kubernetes it refuses the call by name, because no Kubernetes kind is a table: the refusal names `run_kubectl_read`, which reads its objects, and is answered as soon as the connection resolves, before anything is acquired.
     So no object name, a Secret's included, reaches it there ([kubernetes.md](./providers/kubernetes.md#9-capabilities-ai-and-mcp)).
+    The statement arm that serves an engine declares that its engines hold no table (`holdsNoTables` in `src/lib/mcp/tools/statement-arms.ts`), and a test holds that declaration to every served engine's own relation kinds.
     On RabbitMQ it lists the streams of one virtual host, at most the 500 its Streams folder shows, and matches a named virtual host case-insensitively ([rabbitmq.md](./providers/rabbitmq.md#8-ai-agent-and-mcp)).
     A column an engine only inferred from sampled data, rather than read from a declaration, is never listed, so a table may hold fields the answer does not show; `columns_omitted` counts only the columns beyond the 50-column cap, and agent grounding and the AI panels never receive such a column either.
     On Milvus it lists the collection's declared fields, with the dynamic field as one `$meta` column and never a key inside it.

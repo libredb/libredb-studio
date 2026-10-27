@@ -134,13 +134,16 @@ describe("the limits table is limits.ts", () => {
 });
 
 describe("the declarations the doc states", () => {
-  test("read-only enforced, and MCP offered through run_kubectl_read and a relation-free inspect_schema", () => {
+  test("read-only enforced, and MCP offered through run_kubectl_read, inspect_schema refused by name", () => {
     expect(READ_ONLY_ENFORCED.kubernetes).toBe(true);
     expect(MCP_EXPOSABLE.kubernetes).toBe(true);
     expect(MCP_STATEMENT_READ.kubernetes).toBe(true);
     const section = sectionOf("## 9. Capabilities, AI and MCP");
     expect(section).toContain("MCP clients read a Kubernetes connection with `run_kubectl_read`");
-    expect(section).toContain("`inspect_schema` lists no table on a Kubernetes connection");
+    expect(section).toContain(
+      "`inspect_schema` refuses a Kubernetes connection by name and names `run_kubectl_read` in its refusal",
+    );
+    expect(section).not.toContain("`inspect_schema` lists no table");
     expect(section).not.toContain("B105");
   });
 

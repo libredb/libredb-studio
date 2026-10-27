@@ -342,20 +342,20 @@ describe("the answer", () => {
 });
 
 /**
- * Kubernetes (all-providers ruling 21): every kind is `config`, none a relation, so inspect_schema lists no
- * object of any kind, a Secret's name included, and sends no list request; the namespace it names is the schema,
- * which a namespace name may be, because a kubectl read has to name it. The cluster below holds a Secret whose name
- * is the planted marker, so its absence is the tool's and not an empty cluster's.
+ * Kubernetes (all-providers rulings 21 and 35): every kind is `config`, none a relation, so inspect_schema holds no
+ * table to list there and refuses the call by name, pointing to run_kubectl_read, rather than answer an empty page. The
+ * refusal is a decision taken once the connection resolves: nothing is acquired and no request reaches the cluster,
+ * which holds a Secret whose name is the planted marker, so its absence is the refusal's and not an empty cluster's.
  */
 describe("on a Kubernetes connection", () => {
-  const SECRETS = "/api/v1/namespaces/shop/secrets";
+  const REFUSAL = "Kubernetes holds no table for inspect_schema to list. Read this connection with run_kubectl_read.";
 
   function kubernetes() {
     const transport = recordingKubernetesTransport(
       fakeCluster({
         lists: {
           "/api/v1/namespaces": [{ name: "default" }, { name: "shop" }],
-          [SECRETS]: [{ name: M.secretName }],
+          "/api/v1/namespaces/shop/secrets": [{ name: M.secretName }],
           "/api/v1/namespaces/shop/pods": [{ name: "web-0" }],
         },
       }),
@@ -368,15 +368,17 @@ describe("on a Kubernetes connection", () => {
       seedId: "cluster",
       createdAt: new Date(),
     };
+    const acquired = { calls: 0 };
     const context = {
       caller: { username: "alice", role: "admin" as const },
       resolve: async () => connection,
       acquire: async () => {
+        acquired.calls += 1;
         await provider.connect();
         return provider;
       },
     } as unknown as McpConnectionContext;
-    return { transport, context };
+    return { transport, context, acquired };
   }
 
   test.each([
@@ -384,16 +386,26 @@ describe("on a Kubernetes connection", () => {
     ["a named namespace, with columns and indexes", { schema: "shop", include_indexes: true }],
     ["the Secret's own name as the table", { schema: "shop", table: M.secretName }],
     ["Cluster", { schema: "Cluster" }],
-  ] as const)("lists no object on %s, and no Secret name reaches the answer", async (_what, extra) => {
-    const { transport, context } = kubernetes();
+  ] as const)("refuses %s by name, naming run_kubectl_read, and acquires nothing", async (_what, extra) => {
+    const { transport, context, acquired } = kubernetes();
     const result = await inspectSchema(InspectSchemaInputSchema.parse({ connection_id: "seed:cluster", ...extra }), {
       context,
       signal: new AbortController().signal,
     });
-    expect(result.isError ?? false).toBe(false);
-    expect(result.structuredContent).toMatchObject({ total_tables: 0, tables: [], has_more: false });
+    expect(result.isError).toBe(true);
+    expect(result.content).toEqual([{ type: "text", text: REFUSAL }]);
+    expect(result.structuredContent).toBeUndefined();
     expect(JSON.stringify(result)).not.toContain(M.secretName);
-    expect(transport.requests.some((request) => new URL(request.url).pathname === SECRETS)).toBe(false);
+    expect(acquired.calls).toBe(0);
+    expect(transport.requests).toEqual([]);
+    expect(mcpEvents()).toEqual([
+      expect.objectContaining({
+        target: "mcp/decision",
+        result: "failure",
+        reason: "mcp_execution_failed",
+        connectionName: "cluster",
+      }),
+    ]);
   });
 });
 
