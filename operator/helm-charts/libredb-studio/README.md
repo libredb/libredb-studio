@@ -40,7 +40,7 @@ helm install libredb libredb/libredb-studio \
 
 ```bash
 helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
-  --version 0.1.104 \
+  --version 0.1.105 \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123
 ```
@@ -191,6 +191,28 @@ helm install libredb libredb/libredb-studio \
 `secrets.adminPassword` is not part of an OIDC install: the issuer authenticates every user, and the app still signs its own session cookie with `secrets.jwtSecret`. Strict mode (`config.authBootstrap=off`) therefore requires only the JWT secret here.
 
 The optional single sign-on settings have typed values, each written only when set: `config.oidcUserRoles` (`OIDC_USER_ROLES`), `config.oidcPrompt` (`OIDC_PROMPT`, such as `omit` for silent single sign-on), `config.oidcAutoRedirect` and `config.oidcLogoutHint` (`true` writes the variable), and `config.sessionTtlSeconds` (`AUTH_SESSION_TTL_SECONDS`, 300 to 86400).
+
+### Rancher Manager as the identity provider
+
+Rancher's OIDC provider signs Studio users in with their Rancher identity once an administrator turns on the `oidc-provider` feature flag and creates an `OIDCClient` for Studio ([docs/OIDC.md](https://github.com/libredb/libredb-studio/blob/main/docs/OIDC.md#rancher) has the manifest and the scope each Rancher line accepts).
+Write the client id and secret Rancher generates into the Secret that `secrets.existingSecret` names, as `oidc-client-id` and `oidc-client-secret`, beside the other keys the chart reads from it:
+
+```yaml
+authProvider: oidc
+config:
+  oidcIssuer: https://rancher.example.com/oidc
+  oidcScope: openid profile groups   # 2.15; "openid profile" on 2.14
+  oidcPrompt: omit
+  oidcAutoRedirect: true
+  sessionTtlSeconds: 900
+secrets:
+  existingSecret: libredb-studio
+```
+
+`config.oidcScope` must be set, because Rancher refuses the default's `email` scope.
+The username is the Rancher user id, such as `u-abc12`, and every user is a `user` until `config.oidcRoleClaim: groups` and `config.oidcAdminRoles` name an admin group principal.
+Logout ends Studio's session only, since Rancher has no end-session endpoint.
+When Rancher's certificate comes from a private CA, Studio needs it through `NODE_EXTRA_CA_CERTS`, as [Trusting a private CA](#trusting-a-private-ca) shows.
 
 ## Governance
 
