@@ -90,6 +90,15 @@ data:
   {{- with get .Values.config "storagePostgresSchema" }}
   STORAGE_POSTGRES_SCHEMA: {{ . | quote }}
   {{- end }}
+  {{- /* Three-state on the authCookieSecure rule: null and "" write nothing and the app keeps
+         custom connections on; false is the value that matters, so truthiness cannot test it. */}}
+  {{- $customConnections := get .Values.config "allowCustomConnections" }}
+  {{- if and (not (kindIs "invalid" $customConnections)) (ne (toString $customConnections) "") }}
+  ALLOW_CUSTOM_CONNECTIONS: {{ $customConnections | toString | quote }}
+  {{- end }}
+  {{- if get .Values.config "seedLiteralValues" }}
+  SEED_LITERAL_VALUES: "true"
+  {{- end }}
   {{- /* Governance (docs/GOVERNANCE.md): nothing by default. Enabled, the non-secret values; the URL
          comes from the Secret and GOVERNANCE_INSTANCE_ID from the pod spec, in deployment.yaml. */}}
   {{- if include "libredb-studio.governanceEnabled" . }}

@@ -1,0 +1,20 @@
+{{- /*
+Rancher's link to Studio in the cluster's navigation. A NavLink is cluster-scoped, so the
+name carries the namespace to keep two releases of the same name apart. The link is always
+https, the only scheme the LibreDB Rancher extension opens. Rendered only where the cluster
+serves the API; NOTES.txt says when it does not. The guards live in _helpers.tpl.
+*/}}
+{{- $navLink := get (.Values.rancher | default dict) "navLink" | default dict }}
+{{- if and (get $navLink "enabled") (.Capabilities.APIVersions.Has "ui.cattle.io/v1/NavLink") }}
+apiVersion: ui.cattle.io/v1
+kind: NavLink
+metadata:
+  name: {{ printf "%s-%s" .Release.Namespace (include "libredb-studio.fullname" .) | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "libredb-studio.labels" . | nindent 4 }}
+spec:
+  label: {{ get $navLink "label" | quote }}
+  group: {{ get $navLink "group" | quote }}
+  target: {{ get $navLink "target" | quote }}
+  toURL: {{ printf "https://%s%s" (include "libredb-studio.navLinkHost" .) (.Values.config.basePath | default "") | quote }}
+{{- end }}

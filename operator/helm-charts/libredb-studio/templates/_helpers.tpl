@@ -467,6 +467,9 @@ with fails the render instead, naming the value to fix. Included from deployment
 {{- if .Values.config.oidcRolePrefix }}
 {{- fail "governance.enabled refuses config.oidcRolePrefix: governance mode reads connections from the governance source only" }}
 {{- end }}
+{{- if eq (get .Values.config "allowCustomConnections" | toString) "true" }}
+{{- fail "governance.enabled refuses config.allowCustomConnections=true: governance mode serves only the connections of the governance source; leave it unset or set it to false" }}
+{{- end }}
 {{- if get (.Values.mcp | default dict) "enabled" }}
 {{- fail "governance.enabled refuses mcp.enabled: MCP under governance is not supported in this release" }}
 {{- end }}
@@ -496,3 +499,44 @@ with fails the render instead, naming the value to fix. Included from deployment
 {{- end }}
 {{- end }}
 {{- end }}
+
+{{/*
+Guards for the values a Rancher-mode install sets (seedConnections.existingSecret,
+secrets.oidcExistingSecret, rancher.navLink). Each refuses a combination whose meaning would
+otherwise depend on a precedence nobody chose, naming the value to fix. Included from
+deployment.yaml.
+*/}}
+{{- define "libredb-studio.rancherModeGuards" -}}
+{{- $seed := .Values.seedConnections }}
+{{- if and $seed.enabled (get $seed "existingSecret") (or $seed.existingConfigMap $seed.config) }}
+{{- fail "seedConnections.existingSecret refuses seedConnections.existingConfigMap and seedConnections.config beside it: set one seed source only" }}
+{{- end }}
+{{- if get .Values.secrets "oidcExistingSecret" }}
+{{- if ne (.Values.authProvider | toString | trim | lower) "oidc" }}
+{{- fail (printf "secrets.oidcExistingSecret requires authProvider=oidc, not %q: no other provider reads the OIDC client credentials" (.Values.authProvider | toString)) }}
+{{- end }}
+{{- if .Values.secrets.existingSecret }}
+{{- fail "secrets.oidcExistingSecret refuses secrets.existingSecret beside it: put the OIDC client credentials in one of the two Secrets only" }}
+{{- end }}
+{{- if or .Values.secrets.oidcClientId .Values.secrets.oidcClientSecret }}
+{{- fail "secrets.oidcExistingSecret refuses secrets.oidcClientId and secrets.oidcClientSecret beside it: the client credentials come from that Secret only" }}
+{{- end }}
+{{- end }}
+{{- $navLink := get (get (.Values.rancher | default dict) "navLink" | default dict) "enabled" }}
+{{- if $navLink }}
+{{- if not .Values.ingress.enabled }}
+{{- fail "rancher.navLink.enabled requires ingress.enabled with a host: the NavLink points at the first ingress host" }}
+{{- end }}
+{{- if not (include "libredb-studio.navLinkHost" .) }}
+{{- fail "rancher.navLink.enabled requires ingress.hosts[0].host, the host the NavLink points at" }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
+The host the NavLink points at: the first ingress host, empty when there is none.
+*/}}
+{{- define "libredb-studio.navLinkHost" -}}
+{{- with .Values.ingress.hosts }}{{ (first .).host | default "" }}{{ end }}
+{{- end }}
+

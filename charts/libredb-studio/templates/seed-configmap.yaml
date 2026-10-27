@@ -1,4 +1,4 @@
-{{- if and .Values.seedConnections.enabled (not .Values.seedConnections.existingConfigMap) .Values.seedConnections.config }}
+{{- if and .Values.seedConnections.enabled (not .Values.seedConnections.existingConfigMap) (not (get .Values.seedConnections "existingSecret")) .Values.seedConnections.config }}
 apiVersion: v1
 kind: ConfigMap
 metadata:

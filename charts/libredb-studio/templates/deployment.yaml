@@ -11,9 +11,10 @@ The seed ConfigMap is only rendered from inline config; with neither an
 inline config nor an existing ConfigMap the pod would mount a ConfigMap
 that does not exist and never start. Refuse the combination instead.
 */}}
-{{- if and .Values.seedConnections.enabled (not .Values.seedConnections.config) (not .Values.seedConnections.existingConfigMap) }}
-{{- fail "seedConnections.enabled requires either seedConnections.config (inline) or seedConnections.existingConfigMap - with neither, the pod would mount a ConfigMap that does not exist" }}
+{{- if and .Values.seedConnections.enabled (not .Values.seedConnections.config) (not .Values.seedConnections.existingConfigMap) (not (get .Values.seedConnections "existingSecret")) }}
+{{- fail "seedConnections.enabled requires seedConnections.config (inline), seedConnections.existingConfigMap or seedConnections.existingSecret - with none, the pod would mount a ConfigMap that does not exist" }}
 {{- end }}
+{{- include "libredb-studio.rancherModeGuards" . }}
 {{- /*
 The permission-fix init container needs root, which OpenShift's restricted-v2
 SCC rejects - and where the SCC applies, the pod's UID/GID come from the
@@ -231,6 +232,20 @@ spec:
                   key: {{ .Values.secrets.existingSecretKeys.llmApiKey }}
                   optional: true
             {{- end }}
+            {{- /* secrets.oidcExistingSecret: the two client values from that Secret, not optional, so a
+                   missing Secret or key stops the pod instead of starting it without a client. */}}
+            {{- with get .Values.secrets "oidcExistingSecret" }}
+            - name: OIDC_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . }}
+                  key: {{ $.Values.secrets.existingSecretKeys.oidcClientId }}
+            - name: OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . }}
+                  key: {{ $.Values.secrets.existingSecretKeys.oidcClientSecret }}
+            {{- end }}
             {{- if or .Values.secrets.oidcClientId .Values.secrets.existingSecret }}
             - name: OIDC_CLIENT_ID
               valueFrom:
@@ -406,8 +421,13 @@ spec:
         {{- end }}
         {{- if .Values.seedConnections.enabled }}
         - name: seed-config
+          {{- with get .Values.seedConnections "existingSecret" }}
+          secret:
+            secretName: {{ . }}
+          {{- else }}
           configMap:
             name: {{ .Values.seedConnections.existingConfigMap | default (printf "%s-seed-connections" (include "libredb-studio.fullname" .)) }}
+          {{- end }}
         {{- end }}
         {{- if include "libredb-studio.agentTuningSet" . }}
         - name: agent-model-tuning

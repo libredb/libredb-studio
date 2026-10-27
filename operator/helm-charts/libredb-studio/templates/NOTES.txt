@@ -167,3 +167,10 @@ its own address, preferring a dual-stack "::" it verifies at startup:
 Or force it, if you would rather say it than leave it to the image:
   helm upgrade libredb libredb/libredb-studio --set-string config.bindAddress=::
 {{- end }}
+
+{{- if and (get (get (.Values.rancher | default dict) "navLink" | default dict) "enabled") (not (.Capabilities.APIVersions.Has "ui.cattle.io/v1/NavLink")) }}
+
+WARNING: rancher.navLink.enabled is set, but this cluster serves no ui.cattle.io/v1 NavLink
+API, so no link to Studio was created. NavLinks exist on clusters that Rancher Manager
+manages; install there, or turn the value off.
+{{- end }}

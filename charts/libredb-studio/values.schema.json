@@ -125,6 +125,11 @@
           "type": "string",
           "description": "OIDC client secret"
         },
+        "oidcExistingSecret": {
+          "type": "string",
+          "default": "",
+          "description": "A Secret holding only the OIDC client id and secret (keys from existingSecretKeys.oidcClientId and oidcClientSecret): OIDC_CLIENT_ID and OIDC_CLIENT_SECRET come from it and nothing else does. Needs authProvider=oidc; refuses existingSecret, oidcClientId and oidcClientSecret beside it"
+        },
         "storagePostgresUrl": {
           "type": "string",
           "description": "PostgreSQL connection URL for storage"
@@ -237,6 +242,15 @@
         "sessionTtlSeconds": {
           "anyOf": [{ "type": "null" }, { "type": "string", "maxLength": 0 }, { "type": "integer", "minimum": 300, "maximum": 86400 }],
           "description": "AUTH_SESSION_TTL_SECONDS: null (default) writes nothing and the app keeps 86400, otherwise whole seconds from 300 to 86400"
+        },
+        "allowCustomConnections": {
+          "type": ["boolean", "null"],
+          "description": "ALLOW_CUSTOM_CONNECTIONS: null (default) writes nothing and the app keeps custom connections on, false switches them off so only seed connections open, true writes true; governance refuses true"
+        },
+        "seedLiteralValues": {
+          "type": "boolean",
+          "default": false,
+          "description": "SEED_LITERAL_VALUES: false (default) writes nothing, true reads every seed value as written and resolves no ${ENV} or ${vault:...} reference"
         },
         "storagePostgresSchema": {
           "type": "string",
@@ -758,8 +772,35 @@
         "enabled": { "type": "boolean", "default": false },
         "config": { "type": "object" },
         "existingConfigMap": { "type": "string", "default": "" },
+        "existingSecret": {
+          "type": "string",
+          "default": "",
+          "description": "Mount the seed file from this existing Secret instead of a ConfigMap; set one source only"
+        },
         "configMapKey": { "type": "string", "default": "seed-connections.yaml" },
         "cacheTTL": { "type": "integer", "default": 60000, "minimum": 5000 }
+      }
+    },
+    "rancher": {
+      "type": "object",
+      "description": "Rancher Manager integration",
+      "additionalProperties": false,
+      "properties": {
+        "navLink": {
+          "type": "object",
+          "description": "A ui.cattle.io/v1 NavLink to Studio, rendered only when the cluster serves that API",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false,
+              "description": "Render the NavLink; needs ingress.enabled with a host"
+            },
+            "label": { "type": "string", "minLength": 1, "default": "LibreDB Studio", "description": "The link's text" },
+            "group": { "type": "string", "default": "Databases", "description": "The navigation group the link appears under" },
+            "target": { "type": "string", "default": "_blank", "description": "The browser target the link opens in" }
+          }
+        }
       }
     }
   }

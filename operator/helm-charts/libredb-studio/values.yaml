@@ -96,6 +96,15 @@ secrets:
   oidcClientId: ""
   # -- OIDC client secret (required when authProvider=oidc)
   oidcClientSecret: ""
+  # -- A Secret that holds only the OIDC client id and secret, under the keys
+  # existingSecretKeys.oidcClientId and existingSecretKeys.oidcClientSecret (oidc-client-id
+  # and oidc-client-secret by default). OIDC_CLIENT_ID and OIDC_CLIENT_SECRET come from it and
+  # nothing else does: the JWT secret and the admin password stay with this chart's own Secret
+  # or the zero-config bootstrap. Both keys are required, so the pod does not start until the
+  # Secret holds them. Needs authProvider=oidc, and refuses existingSecret, oidcClientId and
+  # oidcClientSecret beside it. Made for a setup tool that writes the client credentials of
+  # an identity provider it registered, such as Rancher Manager's OIDC provider.
+  oidcExistingSecret: ""
   # -- PostgreSQL connection URL for storage (required when storageProvider=postgres and postgresql.enabled=false)
   storagePostgresUrl: ""
   # -- The governance source for Studio's own role, as a postgresql:// URL that reaches the
@@ -228,6 +237,18 @@ config:
   # -- Session lifetime in seconds, from 300 to 86400. null (the default) writes nothing and
   # the app keeps 86400; governance installs use 28800.
   sessionTtlSeconds: null
+  # -- ALLOW_CUSTOM_CONNECTIONS, whether a signed-in user may open a connection of their own,
+  # one that is not a seed connection. null (the default) writes nothing and the app keeps
+  # them on. false switches them off: the server refuses a connection a request supplies and
+  # the editor lists seed connections only. Switch it off where Studio shares a network with
+  # services its users must not reach. A YAML boolean, not a string. Governance refuses true.
+  # See docs/SEED_CONNECTIONS.md (Custom Connections).
+  allowCustomConnections: null
+  # -- SEED_LITERAL_VALUES: false (the default) writes nothing; true writes
+  # SEED_LITERAL_VALUES=true, so no ${ENV} or ${vault:...} reference in the seed file is
+  # resolved and every value is used as written. Turn it on for a seed file a platform
+  # writes from data its users control. See docs/SEED_CONNECTIONS.md (Literal values).
+  seedLiteralValues: false
   # -- Schema of the PostgreSQL storage tables (storageProvider=postgres). Empty writes
   # nothing and the tables stay unqualified. Studio never creates the schema: create it
   # first, owned by the storage role. Required when governance.enabled=true.
@@ -706,7 +727,30 @@ seedConnections:
   config: {}
   # -- Use an existing ConfigMap instead of inline config
   existingConfigMap: ""
-  # -- Key within the ConfigMap containing the YAML config
+  # -- Use an existing Secret instead of inline config, for a seed file that holds passwords.
+  # It is mounted read-only at /app/config like the ConfigMap. Set one source only: config,
+  # existingConfigMap or existingSecret.
+  existingSecret: ""
+  # -- Key within the ConfigMap or Secret containing the YAML config
   configMapKey: "seed-connections.yaml"
   # -- Cache TTL in milliseconds for config reloading
   cacheTTL: 60000
+
+# =============================================================================
+# Rancher Manager
+# =============================================================================
+rancher:
+  navLink:
+    # -- Render a ui.cattle.io/v1 NavLink, Rancher's link in the cluster's navigation, to
+    # https://<first ingress host><config.basePath>. Rendered only when the cluster serves
+    # the NavLink API, and NOTES.txt says when it does not. Needs ingress.enabled with a
+    # host, and TLS for that host, since the link is always https. A NavLink is
+    # cluster-scoped, so installing it needs a cluster owner. Not offered through the OLM
+    # operator, whose role grants no NavLink.
+    enabled: false
+    # -- The link's text
+    label: "LibreDB Studio"
+    # -- The navigation group the link appears under
+    group: "Databases"
+    # -- The browser target the link opens in
+    target: "_blank"
