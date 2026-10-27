@@ -588,7 +588,7 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
  * joins agent mode does not open to MCP as a side effect: its row stays false until a change of its own opens it.
  *
  * True for the five SQL engines `run_read_query` served before this record existed, so nothing moved when it landed,
- * and for MongoDB, whose command `run_mongo_command` reads (B117). Kubernetes executes for the agent and answers false
+ * and for MongoDB, whose command `run_mongo_command` reads. Kubernetes executes for the agent and answers false
  * until its MCP tool exists (B105). An exhaustive Record for
  * the reason `EXTERNAL` gives, frozen like the records above it, and held false wherever `MCP_EXPOSABLE` is false and
  * true only for an engine agent mode executes on by `tests/unit/db/compatibility.test.ts`.

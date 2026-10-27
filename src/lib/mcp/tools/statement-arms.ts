@@ -22,7 +22,7 @@ import {
 import { mcpStatementEngines } from "./served-engines";
 
 /**
- * The MCP statement tools, one arm per statement language (all-providers design 6, B117).
+ * The MCP statement tools, one arm per statement language (all-providers design 6).
  *
  * The record is total over `AgentStatementLanguageId`, as `SERVER_PACKS` in `src/lib/agent/languages/server.ts` is, so
  * a language that joins agent mode does not compile until it decides its MCP arm: a tool, or null while none exists.

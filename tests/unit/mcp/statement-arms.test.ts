@@ -1,5 +1,5 @@
 /**
- * The MCP statement arms (all-providers design 6, B117): one per statement language, total over the language ids, each
+ * The MCP statement arms (all-providers design 6): one per statement language, total over the language ids, each
  * reading its engines from the one served-engine resolver, and each non-SQL arm reading and fencing its statement with
  * the agent's own adapter, so an MCP client meets the agent's sentences.
  */

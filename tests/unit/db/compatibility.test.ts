@@ -712,7 +712,7 @@ describe("MCP_STATEMENT_READ", () => {
   });
 
   test("opens the five SQL engines run_read_query served before the record existed, MongoDB, and no other", () => {
-    // MongoDB opened with run_mongo_command (B117); Kubernetes executes for the agent and stays closed until its own
+    // MongoDB opened with run_mongo_command; Kubernetes executes for the agent and stays closed until its own
     // MCP change opens it.
     expect(SHIPPED_DATABASE_TYPES.filter((type) => MCP_STATEMENT_READ[type])).toEqual([
       "postgres",

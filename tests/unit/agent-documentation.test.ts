@@ -520,7 +520,7 @@ const AGENT_ENGINE_CLAIM =
   /agent mode|agentモード|agent 모드|режим agent|agent 模式|read-only (?:investigation )?agent|(?:execut(?:es|ing)|runs) statements|statement path|agent read-only profile|queryReadOnly/i;
 
 /** A sentence naming SQL engines for MCP, whose `run_read_query` serves the SQL engines alone (#1614 decision 2). */
-const MCP_CLAIM = /\bMCP\b|run_read_query|Three read-only tools/;
+const MCP_CLAIM = /\bMCP\b|run_read_query|Four read-only tools/;
 
 /**
  * An engine count where the engines should be named (#1614: "Never write a count of engines; name them from the

@@ -331,7 +331,7 @@ describe("the boundary", () => {
     async (_sent, sql) => {
       // Agent mode executes MongoDB, so its provider has a read-only path; this tool's input is SQL,
       // and the provider handed out here would answer, so only the gate keeps the call off it. Its
-      // JSON command is read by its own arm, which the refusal names (B117).
+      // JSON command is read by its own arm, which the refusal names.
       const queryReadOnly = mock(async () => ({ rows: [{ one: 1 }], fields: ["one"], rowCount: 1, executionTime: 0 }));
       const provider = {
         getCapabilities: () => ({}),

@@ -2099,6 +2099,8 @@ The answers, in the order they are checked:
 | 404 | JSON-RPC `-32601`, `Method not found` | `subscriptions/listen`, which this server does not implement |
 | 200, 202 | The SDK's JSON-RPC answer, as JSON or as an event stream; 202 for a notification | Everything else |
 
+The tools it serves are `list_connections`, `inspect_schema`, `run_read_query` (SQL) and `run_mongo_command` (a MongoDB command envelope); `list_connections` names each connection's `read_tool`, and [`docs/MCP.md`](MCP.md) documents each tool's arguments and limits.
+
 #### `GET /api/mcp`, `DELETE /api/mcp`
 
 After the same Origin, Host, bearer, switch and version checks, 405 with the SDK's JSON-RPC body and `Allow: POST`: the server keeps no session and offers no stream.

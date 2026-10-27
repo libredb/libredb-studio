@@ -116,7 +116,7 @@ describe("the answer", () => {
   });
 
   test("names the tool that runs a statement on each connection, and null where inspect_schema is the read", async () => {
-    // From the one served-engine resolver: MongoDB's command is read by run_mongo_command (B117), and an engine no
+    // From the one served-engine resolver: MongoDB's command is read by run_mongo_command, and an engine no
     // statement tool serves, such as Redis, or Snowflake, whose agent reads stay closed to MCP, has none.
     const WAREHOUSE = {
       id: "warehouse",

@@ -11,6 +11,7 @@ import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
 import { DB_UI_CONFIG } from "@/lib/db-ui-config";
 import { mcpClientConfigs } from "@/lib/mcp/client-config";
 import { RUN_READ_QUERY_ENGINES, RUN_READ_QUERY_TYPES } from "@/lib/mcp/tools/run-read-query";
+import { servingStatementArms, RUN_MONGO_COMMAND_ARM } from "@/lib/mcp/tools/statement-arms";
 import type { DatabaseType } from "@/lib/types";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
@@ -48,6 +49,19 @@ describe("docs/MCP.md", () => {
     expect(MCP_DOC).toContain(
       `Runs on ${RUN_READ_QUERY_ENGINES}; other engines refuse it, so use inspect_schema there.`,
     );
+  });
+
+  test("names every statement tool this build registers, and counts the tools", () => {
+    const tools = ["list_connections", "inspect_schema", ...servingStatementArms().map((arm) => arm.tool)];
+    const COUNT_WORDS = ["Zero", "One", "Two", "Three", "Four", "Five", "Six"];
+    expect(MCP_DOC).toContain(`- ${COUNT_WORDS[tools.length]} tools, each annotated read-only and closed-world:`);
+    for (const tool of tools) expect(MCP_DOC).toMatch(new RegExp(`^ {2}- \`${tool}\` `, "m"));
+  });
+
+  test("carries run_mongo_command's engine sentence, derived from its arm, and the read_tool field", () => {
+    expect(MCP_DOC).toContain(`Runs on ${RUN_MONGO_COMMAND_ARM.engines}; other engines refuse it.`);
+    expect(MCP_DOC).toContain("`read_tool`");
+    expect(MCP_DOC).not.toContain("B117");
   });
 
   test("claims only SELECT for every engine, and names the record that opens MCP read", () => {

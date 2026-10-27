@@ -11,6 +11,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { AGENT_LANGUAGE_COPY, AGENT_WORKFLOW_VARIANTS } from "@/lib/agent/agent-manifest";
 import { agentPosture } from "@/lib/agent/posture";
+import { MCP_STATEMENT_ARMS } from "@/lib/mcp/tools/statement-arms";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 const read = (file: string): string => readFileSync(path.join(ROOT, file), "utf8");
@@ -96,10 +97,13 @@ describe("what a MongoDB run is not offered is not offered, and the backlog says
     expect(read("src/lib/agent/languages/mongo/client.ts")).toMatch(new RegExp(`BACKLOG\\.md\`?[\\s*]+${id}\\b`));
   });
 
-  test("MCP: the section cites the entry run_read_query names by its title", () => {
-    const title = "MongoDB has no MCP run_read_query arm";
-    expect(read("src/lib/mcp/tools/run-read-query.ts")).toContain(title);
-    expect(m2Title(citedFor(/\bMCP\b/))).toBe(title);
+  test("MCP: the section names the tool the mongo language's MCP arm registers, and cites no backlog entry for it", () => {
+    const tool = MCP_STATEMENT_ARMS.mongo?.tool;
+    expect(tool).toBe("run_mongo_command");
+    const sentence = SECTION.split("\n").find((line) => /\bMCP\b/.test(line)) ?? "";
+    expect(sentence).toContain(`\`${tool}\``);
+    expect(sentence).toContain("`MCP_STATEMENT_ARMS`");
+    expect(sentence).not.toMatch(/\bB\d+\b/);
   });
 });
 

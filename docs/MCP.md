@@ -1,16 +1,17 @@
 # MCP server
 
 LibreDB Studio serves the [Model Context Protocol](https://modelcontextprotocol.io) at `/api/mcp`.
-An AI client of your own, such as Claude Code, Codex, Cursor, VS Code or Gemini CLI, reads the schemas of the connections an operator opted in and runs bounded, read-only SQL through Studio, while the database credentials stay on the server.
+An AI client of your own, such as Claude Code, Codex, Cursor, VS Code or Gemini CLI, reads the schemas of the connections an operator opted in and runs bounded, read-only SQL and MongoDB commands through Studio, while the database credentials stay on the server.
 It is off by default.
 
 ## What it is
 
 - One endpoint, `POST /api/mcp`, served by the official MCP TypeScript SDK.
   It speaks revision 2026-07-28 and, without sessions, the 2025 revisions 2025-11-25 and 2025-06-18 that most clients still use.
-- Three tools, each annotated read-only and closed-world:
+- Four tools, each annotated read-only and closed-world:
   - `list_connections` lists the connections opted in for MCP that your token's role may use, without credentials.
     It works for every engine but etcd, Oxia, S3-compatible object storage, Kubernetes, MQTT, Firestore, OPC UA, Modbus, NETCONF, SNMP and Sparkplug B, whose connections the seed file cannot opt in.
+    Each connection's `read_tool` names the tool that runs a statement on it, `run_read_query` or `run_mongo_command`, and is `null` where `inspect_schema` is the only read.
   - `inspect_schema` lists one connection's tables with their columns and, on request, their indexes.
     It works on every engine but etcd, Oxia, S3-compatible object storage, Kubernetes, MQTT, Firestore, OPC UA, Modbus, NETCONF, SNMP and Sparkplug B: it lists every object kind the engine reads rows from, such as views beside tables, MongoDB collections, Redis keyspaces and search indexes, and `kind` names which one each entry is.
     On RabbitMQ it lists the streams of one virtual host, at most the 500 its Streams folder shows, and matches a named virtual host case-insensitively ([rabbitmq.md](./providers/rabbitmq.md#8-ai-agent-and-mcp)).
@@ -25,8 +26,8 @@ It is off by default.
     A `SELECT` (a `WITH` is fine) runs on every engine it serves; a refused statement's answer names what else that engine takes.
     Runs on PostgreSQL, SQLite, DuckDB, SQL Server and MySQL; other engines refuse it, so use inspect_schema there.
     It serves an engine only where agent mode executes statements on it, the engine is offered to MCP, and `MCP_STATEMENT_READ` in `src/lib/db/compatibility.ts` opens statement reads on it, so an engine that joins agent mode stays closed here until a change of its own opens it.
-    It refuses every engine outside that list as soon as the connection resolves, before anything is acquired, answering "this tool does not serve <engine>; use inspect_schema there".
-    MongoDB is one of them although agent mode executes on it, because its statement is a JSON command and this tool takes SQL (issue #1614); the MCP arm it lacks is `docs/BACKLOG.md` B117.
+    It refuses every engine outside that list as soon as the connection resolves, before anything is acquired, answering "this tool does not serve <engine>; use <tool> there", where the tool is the one the connection's `read_tool` names, or `inspect_schema` where it is `null`.
+    MongoDB is one of them, because its statement is a JSON command, which `run_mongo_command` reads.
     Kubernetes is executed by agent mode too and is not offered to MCP at all.
     Each engine takes these, as its row in `src/lib/db/providers/sql/read-query-forms.ts` names them:
     - PostgreSQL: a `SELECT` (a `WITH` is fine), `VALUES`, `TABLE`, or `EXPLAIN` without `ANALYZE`.
@@ -34,7 +35,11 @@ It is off by default.
     - DuckDB: a `SELECT` (a `WITH` is fine), `VALUES`, `TABLE`, or `EXPLAIN` without `ANALYZE`.
     - SQL Server: a `SELECT` (a `WITH` is fine).
     - MySQL: a `SELECT` (a `WITH` is fine), `VALUES`, `TABLE` (MySQL, not MariaDB), or `EXPLAIN` without `ANALYZE`.
-- Read-only is the database's own enforcement, not a filter over SQL text: `run_read_query` takes the connection under Studio's agent read-only execution profile and runs through the provider's read-only statement path, which PostgreSQL enforces with a read-only transaction, SQLite and DuckDB with a read-only open, SQL Server by verifying the principal cannot write, and MySQL and MariaDB by a least-privilege principal beside a read-only transaction.
+  - `run_mongo_command` runs one read-only MongoDB command, the JSON command envelope agent mode reads: `find`, `findOne`, `aggregate`, `count` or `distinct` on one collection, as `command`.
+    Runs on MongoDB; other engines refuse it.
+    It reads and admits the command with agent mode's own reader, so a write operation and a write stage of a pipeline (`$out`, `$merge`) are refused before anything is acquired, in the sentence an agent run reads.
+    It takes no `offset`: a result cut at `max_rows` says how to narrow the command, and a read past the 1000-row provider budget is refused with the same advice, so page inside the command with a find's `skip` or a `$skip` stage.
+- Read-only is the database's own enforcement, not a filter over statement text: `run_read_query` and `run_mongo_command` take the connection under Studio's agent read-only execution profile and run through the provider's read-only statement path, which PostgreSQL enforces with a read-only transaction, SQLite and DuckDB with a read-only open, SQL Server by verifying the principal cannot write, MySQL and MariaDB by a least-privilege principal beside a read-only transaction, and MongoDB by proving at open that the user holds only reads of its database on a server that enforces authorization ([mongodb.md](./providers/mongodb.md)).
   A statement check runs first as defence in depth.
 - A result that carries database content starts with a text block telling the model to treat what follows as untrusted data.
 

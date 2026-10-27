@@ -41,7 +41,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B128 · 61
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B128 · 60
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP3 · 3
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
@@ -7691,7 +7691,7 @@ Both execution paths guard a statement with SQL readers (`src/lib/db/operations/
 
 Found 2026-10-03 while designing the Neo4j provider (spec 6.4).
 
-**Done when:** `Neo4jProvider` implements `queryReadOnly` through the same policy, gate and READ session as the editor, `AGENT_EXECUTION_ENGINES` names Neo4j, MCP serves its Cypher through the non-SQL arm B117 records (`RUN_READ_QUERY_ENGINES` holds SQL engines alone), and an agent run and an MCP call each drive a `LOAD CSV` and a write to their refusal in a test.
+**Done when:** `Neo4jProvider` implements `queryReadOnly` through the same policy, gate and READ session as the editor, `AGENT_EXECUTION_ENGINES` names Neo4j, MCP serves its Cypher through its own arm in `MCP_STATEMENT_ARMS` (`src/lib/mcp/tools/statement-arms.ts`) (`RUN_READ_QUERY_ENGINES` holds SQL engines alone), and an agent run and an MCP call each drive a `LOAD CSV` and a write to their refusal in a test.
 
 ### B94. InfluxDB has no agent execution and no MCP `run_read_query`
 
@@ -7700,7 +7700,7 @@ Both execution paths guard a statement with SQL readers (`src/lib/db/operations/
 
 Found 2026-10-04 while designing the InfluxDB provider (ruling R10).
 
-**Done when:** each type implements `queryReadOnly` under a statement contract of its own (the InfluxQL policy for `influxdb`, the DataFusion policy for `influxdb3`), agent execution serves both, and MCP serves `influxdb3` through `run_read_query` and `influxdb`'s InfluxQL through the non-SQL arm B117 records, with tests.
+**Done when:** each type implements `queryReadOnly` under a statement contract of its own (the InfluxQL policy for `influxdb`, the DataFusion policy for `influxdb3`), agent execution serves both, and MCP serves `influxdb3` through `run_read_query` and `influxdb`'s InfluxQL through its own arm in `MCP_STATEMENT_ARMS` (`src/lib/mcp/tools/statement-arms.ts`), with tests.
 
 ### B100. Oxia has no agent execution and no MCP surface
 
@@ -7708,7 +7708,7 @@ Found 2026-10-04 while designing the InfluxDB provider (ruling R10).
 
 Found 2026-10-04 while designing the Oxia provider (DECISIONS O14).
 
-**Done when:** an MCP metadata surface that never returns a key value is designed and the non-SQL MCP arm B117 records serves a read command under the `oxia` grammar, with tests; cited in `docs/AGENT.md` beside B93.
+**Done when:** an MCP metadata surface that never returns a key value is designed and its own arm in `MCP_STATEMENT_ARMS` (`src/lib/mcp/tools/statement-arms.ts`) serves a read command under the `oxia` grammar, with tests; cited in `docs/AGENT.md` beside B93.
 
 B100 rather than the next free id: InfluxDB, built at the same time, took B94, and the gap kept the two from racing for an id.
 
@@ -7740,14 +7740,14 @@ Found 2026-10-07 while designing the Databend provider (design 5.7).
 
 Found 2026-10-09 while designing the S3 provider.
 
-**Done when:** an MCP metadata surface that lists buckets and never returns an object key is designed; `MCP_EXPOSABLE.s3` turns true for it; and agent execution serves a `queryReadOnly` that runs one console read command, which MCP serves through the non-SQL arm B117 records, with tests; cited in `docs/AGENT.md` beside B103.
+**Done when:** an MCP metadata surface that lists buckets and never returns an object key is designed; `MCP_EXPOSABLE.s3` turns true for it; and agent execution serves a `queryReadOnly` that runs one console read command, which MCP serves through its own arm in `MCP_STATEMENT_ARMS` (`src/lib/mcp/tools/statement-arms.ts`), with tests; cited in `docs/AGENT.md` beside B103.
 
 ### B105. Kubernetes has no MCP surface
 
 `MCP_EXPOSABLE.kubernetes` is false and the MCP fence reads SQL only, so MCP `run_read_query` and `inspect_schema` refuse a Kubernetes connection, while agent mode reads it through `kubectl.query.read` under machine redaction (`docs/providers/kubernetes.md` section 9).
 Found 2026-10-10 while designing the Kubernetes provider; narrowed to its MCP half when agent execution landed.
 
-**Done when:** an MCP surface for kubectl reads is designed that applies the agent's machine redaction to every answer, `MCP_EXPOSABLE.kubernetes` turns true for it, and the non-SQL MCP arm B117 records serves it, with tests; cited in `docs/AGENT.md` beside B104.
+**Done when:** an MCP surface for kubectl reads is designed that applies the agent's machine redaction to every answer, `MCP_EXPOSABLE.kubernetes` turns true for it, and its own arm in `MCP_STATEMENT_ARMS` (`src/lib/mcp/tools/statement-arms.ts`) serves it, with tests; cited in `docs/AGENT.md` beside B104.
 
 ### B107. Firestore has no agent execution and no MCP surface
 
@@ -7756,7 +7756,7 @@ Every Firestore read is billed, and no read contract for the query chain under a
 
 Found 2026-10-12 while designing the Firestore provider.
 
-**Done when:** an MCP metadata surface that reads no document is designed, `MCP_EXPOSABLE.firestore` turns true for it, and agent execution serves a `queryReadOnly` that runs one console statement under a per-run read bound, which MCP serves through the non-SQL arm B117 records, with tests; cited in `docs/AGENT.md` beside B105.
+**Done when:** an MCP metadata surface that reads no document is designed, `MCP_EXPOSABLE.firestore` turns true for it, and agent execution serves a `queryReadOnly` that runs one console statement under a per-run read bound, which MCP serves through its own arm in `MCP_STATEMENT_ARMS` (`src/lib/mcp/tools/statement-arms.ts`), with tests; cited in `docs/AGENT.md` beside B105.
 
 ### B108. RabbitMQ has no agent execution and no MCP `run_read_query`
 
@@ -7764,7 +7764,7 @@ Found 2026-10-12 while designing the Firestore provider.
 
 Found 2026-10-12 while designing the RabbitMQ provider.
 
-**Done when:** a stream read request is designed as an agent statement with its own read policy and bounds, `queryReadOnly` serves it, agent execution runs it and MCP runs it through the non-SQL arm B117 records, with tests; cited in `docs/AGENT.md` beside B105.
+**Done when:** a stream read request is designed as an agent statement with its own read policy and bounds, `queryReadOnly` serves it, agent execution runs it and MCP runs it through its own arm in `MCP_STATEMENT_ARMS` (`src/lib/mcp/tools/statement-arms.ts`), with tests; cited in `docs/AGENT.md` beside B105.
 
 ### B109. The schema docs route puts database-written names in the prompt without the untrusted-content fence
 
@@ -7837,17 +7837,6 @@ Found 2026-10-14 while building agent execution on Kubernetes.
 Found 2026-10-14 while building agent execution on Kubernetes.
 
 **Done when:** no em or en dash remains in `docs/FEATURES.md`; cited in `docs/AGENT.md`.
-
-### B117. MongoDB has no MCP run_read_query arm
-
-MCP `run_read_query` takes one SQL statement (`sql` in `RunReadQueryInputSchema`, `src/lib/mcp/tools/run-read-query.ts`) and serves `RUN_READ_QUERY_TYPES` alone: the engines agent mode executes on whose statement language is SQL, that MCP is offered for, and that `MCP_STATEMENT_READ` (`src/lib/db/compatibility.ts`) opens to MCP statement reads.
-MongoDB is offered to MCP for `inspect_schema`, and agent mode executes its JSON command, but `runReadQuery` refuses a MongoDB connection as soon as it resolves, before anything is acquired, with "this tool does not serve MongoDB; use inspect_schema there".
-So an MCP client can list a MongoDB database's collections and their fields and cannot read a document.
-What it needs is an arm for a statement language that is not SQL, and the MCP halves of B93, B94, B100, B104, B105, B107 and B108 wait on the same arm.
-
-Filed 2026-10-17 with agent execution on MongoDB (#1790), which kept MCP out of that change (issue #1614, decision 2).
-
-**Done when:** MCP serves a read in a non-SQL statement language through a tool whose input is that language's own, on MongoDB the agent's command envelope under the same admission and execution profile as `mongo.query.read`; its description and its handler gate read one list, as `RUN_READ_QUERY_TYPES` does; and a test drives a MongoDB read and a refused write through it; cited in `docs/AGENT.md`.
 
 ### B118. MongoDB auto-execute needs a plan reading and a working replay
 

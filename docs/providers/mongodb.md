@@ -1296,6 +1296,7 @@ driver). The live check is `tests/live/mongodb-agent-profile.ts`.
 `driver-stand-in.test.ts` holds the stand-in's own `$regexMatch` to a 9.0.4 server's answers.
 The agent runs themselves are [`tests/isolated/agent-mongodb-e2e.test.ts`](../../tests/isolated/agent-mongodb-e2e.test.ts), driven through the composition root over the stand-in: the four statement-sending workflows answered on the fixture, the admin, no-auth and FerretDB refusals with their run reasons, and plan mode and the operations workflow opening unverified.
 [`tests/integration/mcp/inspect-schema.test.ts`](../../tests/integration/mcp/inspect-schema.test.ts) holds MCP `inspect_schema` on MongoDB, which opens under `agent-operations` unverified on the admin seed, on a server without authorization and on FerretDB.
+[`tests/integration/mcp/run-mongo-command.test.ts`](../../tests/integration/mcp/run-mongo-command.test.ts) holds MCP `run_mongo_command` on MongoDB: a find and an aggregate answered, a `$out` stage and a write operation refused before anything is acquired, a principal that may write refused at open, and a read past the row budget refused with the run's row-cap advice.
 
 > ⚠️ **Mock isolation:** `bun`'s `mock.module()` is process-wide; files mocking different drivers
 > would cross-contaminate if they shared one. They never do: `bun run test` gives every test file its
@@ -1388,6 +1389,7 @@ MongoDB has no read-only session or transaction, so the boundary is the connecti
 The command a model writes is read by [`envelope.ts`](../../src/lib/db/providers/document/mongodb/envelope.ts), which both the run's tool path ([`mongo-admission.ts`](../../src/lib/db/operations/mongo-admission.ts)) and the provider use, so the two refuse the same commands with the same sentences.
 The checks run only on a connection opened to send statements (`sendsStatements` beside `readOnly` on the execution context).
 The operations workflow, MCP's `inspect_schema` and plan mode's grounding open under the operations profile, which sends no statement: unverified, as the editor's connection opens, but naming themselves to the server as the agent and retrying no write, as every execution-profile client does.
+MCP's `run_mongo_command` sends the command, so it opens under `agent-read-only` and proves the user at open as a run's read does; it reads the command with the run's own reader and calls `queryReadOnly()` under MCP's own budgets of 1000 rows and 1 MiB ([`docs/MCP.md`](../MCP.md)).
 
 #### Setting up the agent's user
 
