@@ -8,19 +8,21 @@
  * - M1 no LOB in a catalog row beside other columns, and catalog text read as HEX (`catalog.ts`);
  * - M3 an array or object parameter refused before the driver reads it as bytes (`params.ts`);
  * - M4 the schema always bound, never the session's; M5 padded CHAR trimmed (`catalog.ts`);
- * - M6 no `queryTimeout` and no `cancelQuery`; M7 a duplicate column kept, under a numbered name
+ * - M6 no `queryTimeout` and no `cancelQuery`, and a transaction statement bounded by closing its
+ *   session instead (`boundByClose`, `driver.ts`); M7 a duplicate column kept, under a numbered name
  *   (`values.ts`); a lost LOB edit named, and kept out of the preview (K24, `values.ts`);
  * - a driver failure classified by its `driverCode` (K17, `driver.ts`);
  * - TLS that fails closed, and a tunnel that is never dialled around (`connection.ts`).
  *
- * One client per provider, no pool: four concurrent queries on one client were measured
+ * One shared client per provider, no pool: four concurrent queries on one client were measured
  * correct, and a pool would multiply the cleartext-password exposure of a connection that opted
- * out of TLS.
+ * out of TLS. An interactive transaction opens a second client, its session, for its own life, so
+ * that nothing else this provider sends runs inside it; COMMIT and ROLLBACK close it.
  *
  * Absent on purpose: `queryReadOnly` and `endOpenQueryTransaction` (no read-only profile in this
- * version), `cancelQuery` (the driver's `Client.cancel()` and server-side `queryTimeout` need
- * monitoring and cancel privileges and are a change of their own, D148), interactive
- * transactions, and the object-edit pair.
+ * version, and `query()` autocommits on the shared client), `cancelQuery` (the driver's
+ * `Client.cancel()` and server-side `queryTimeout` need monitoring and cancel privileges and are a
+ * change of their own, D392), and the object-edit pair.
  */
 
 import type {
@@ -47,15 +49,29 @@ import type {
   StorageStats,
   TableStats,
 } from "../../../types";
-import { DatabaseConfigError, QueryError } from "../../../errors";
+import { DatabaseConfigError, NO_ACTIVE_TRANSACTION, QueryError } from "../../../errors";
 import { analyzeQuery, assertRowBounds, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../../utils/query-limiter";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { readStatementEnd } from "@/lib/sql/statement-end";
 import { SQLBaseProvider } from "../sql-base";
 import { db2Capabilities, db2Labels } from "./capabilities";
 import { CODE_PAGE_SQL, decodeCatalogRow } from "./catalog";
-import { type CaFileSystem, type Db2Connection, NODE_CA_FILE_SYSTEM, openClient, resolveTarget } from "./connection";
-import { type Db2Client, type Db2Driver, loadDb2Driver, mapDb2Error } from "./driver";
+import {
+  type CaFileSystem,
+  type Db2Connection,
+  NODE_CA_FILE_SYSTEM,
+  type OpenedClient,
+  openClient,
+  resolveTarget,
+} from "./connection";
+import {
+  type Db2Client,
+  type Db2Driver,
+  type Db2Transaction,
+  boundByClose,
+  loadDb2Driver,
+  mapDb2Error,
+} from "./driver";
 import { MAINTAINED_TABLE_TYPES, MAINTENANCE_TARGET_TYPE_SQL, maintenanceStatement } from "./maintenance";
 import { neutralHealth, readOverview, TABLE_STATS_SQL, tableStatsRow } from "./monitoring";
 import * as objects from "./objects";
@@ -68,8 +84,21 @@ export interface Db2ProviderSeams {
   caFileSystem?: CaFileSystem;
 }
 
+/** An interactive transaction: the client it holds for its own life, and its unit of work there. */
+interface Db2Session extends OpenedClient {
+  transaction: Db2Transaction;
+}
+
+/** What a statement past the deadline means to the transaction it ran in. */
+const TRANSACTION_ENDED =
+  "That ends this transaction: Db2 rolls back everything it did once the connection closes. Begin a new transaction to continue.";
+
 export class Db2Provider extends SQLBaseProvider {
   private client: Db2Client | null = null;
+  /** The open transaction, or null. */
+  private session: Db2Session | null = null;
+  /** True while `beginTransaction()` opens a session, so a second BEGIN is refused before it opens another. */
+  private opening = false;
   private caDir: string | undefined;
   private codePageValue: number | undefined;
   private readonly loadDriver: () => Promise<Db2Driver>;
@@ -119,8 +148,12 @@ export class Db2Provider extends SQLBaseProvider {
     }
   }
 
-  /** Closes the client and removes the CA file, whichever of the two fails. */
+  /**
+   * Closes the client and removes the CA file, whichever of the two fails. An open transaction's
+   * session is closed too, without waiting, and Db2 rolls back what the transaction did.
+   */
   public async disconnect(): Promise<void> {
+    if (this.session !== null) this.retireSession(this.session);
     const client = this.client;
     const caDir = this.caDir;
     this.client = null;
@@ -163,6 +196,114 @@ export class Db2Provider extends SQLBaseProvider {
       });
       return { ...readResult(result, sql), executionTime };
     });
+  }
+
+  // ============================================================================
+  // Transactions
+  // ============================================================================
+
+  /**
+   * Opens the transaction's session: a client of its own, connected as the shared one is, with
+   * autocommit off. A refused BEGIN closes that client again.
+   */
+  public async beginTransaction(): Promise<void> {
+    this.ensureConnected();
+    if (this.session !== null || this.opening) throw new QueryError("Transaction already active", "db2");
+    this.opening = true;
+    try {
+      const opened = await openClient(this.config, this.loadDriver, this.caFileSystem);
+      try {
+        this.session = { ...opened, transaction: await opened.client.beginTransaction() };
+      } catch (error) {
+        this.retireSession(opened);
+        throw mapDb2Error(error);
+      }
+    } finally {
+      this.opening = false;
+    }
+  }
+
+  public async commitTransaction(): Promise<void> {
+    await this.endTransaction("COMMIT", (transaction) => transaction.commit());
+  }
+
+  public async rollbackTransaction(): Promise<void> {
+    await this.endTransaction("ROLLBACK", (transaction) => transaction.rollback());
+  }
+
+  public isInTransaction(): boolean {
+    return this.session !== null;
+  }
+
+  /**
+   * One statement inside the transaction, read as `query()` reads one. It is bounded by the
+   * connection's query timeout: at the deadline the wait ends and the session is retired, which
+   * ends the transaction (`boundByClose`).
+   */
+  public async queryInTransaction(sql: string, params?: unknown[]): Promise<QueryResult> {
+    const session = this.heldSession();
+    return this.trackQuery(async () => {
+      const { result, executionTime } = await this.measureExecution(async () => {
+        try {
+          const statement = session.transaction.query(sql, normaliseParams(params), { rowMode: "array" });
+          return await boundByClose(
+            statement,
+            this.queryTimeout,
+            () => this.retireSession(session),
+            sql,
+            TRANSACTION_ENDED,
+          );
+        } catch (error) {
+          throw mapDb2Error(error, sql);
+        }
+      });
+      return { ...readResult(result, sql), executionTime };
+    });
+  }
+
+  /** The open transaction's session, or the refusal every engine gives without one. */
+  private heldSession(): Db2Session {
+    if (this.session === null) throw new QueryError(NO_ACTIVE_TRANSACTION, "db2");
+    return this.session;
+  }
+
+  /**
+   * COMMIT or ROLLBACK, then the session closed whichever way the statement went. The session is
+   * forgotten first, so a statement sent meanwhile is refused rather than run on a closing one.
+   */
+  private async endTransaction(word: string, end: (transaction: Db2Transaction) => Promise<void>): Promise<void> {
+    const session = this.heldSession();
+    this.session = null;
+    try {
+      await end(session.transaction);
+    } catch (error) {
+      throw mapDb2Error(error, word);
+    } finally {
+      await this.closeSession(session);
+    }
+  }
+
+  /**
+   * Forgets a session and closes it without waiting: a close returns only once the statement
+   * running on it has ended (`boundByClose`). A failed close has no caller left to answer, so it
+   * is logged.
+   */
+  private retireSession(session: OpenedClient): void {
+    if (this.session === session) this.session = null;
+    void this.closeSession(session).catch((error: unknown) => {
+      console.warn(`[Db2] Closing a transaction's connection failed: ${(error as Error).message}`);
+    });
+  }
+
+  /** Closes a session's client and removes its CA file, whichever of the two fails. */
+  private async closeSession(session: OpenedClient): Promise<void> {
+    try {
+      await session.client.close();
+    } catch (error) {
+      throw mapDb2Error(error);
+    } finally {
+      if (session.caDir !== undefined) await this.caFileSystem.rm(session.caDir, { recursive: true, force: true });
+    }
   }
 
   /**

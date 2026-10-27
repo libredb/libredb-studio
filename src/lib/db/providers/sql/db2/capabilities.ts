@@ -75,8 +75,13 @@ export function db2Capabilities(base: ProviderCapabilities): ProviderCapabilitie
     inlineEditRefusedColumns: { type: LARGE_OBJECT_TYPE_SOURCE, reason: LARGE_OBJECT_EDIT_REASON },
     // `OFFSET m ROWS FETCH NEXT n ROWS ONLY`, built by this provider's own `prepareQuery`.
     supportsResultPagination: true,
-    // No held session in this version.
-    supportsTransactions: false,
+    // An interactive transaction holds a session of its own (`index.ts`).
+    supportsTransactions: true,
+    // Measured on 12.1.0.0 through db2-node 1.0.25: inside a transaction, `BEGIN COMMIT; END` and a
+    // CALL of a procedure that runs COMMIT each made the row inserted before them permanent, and
+    // the ROLLBACK after undid nothing. The provider reads no transaction state back, so SANDBOX
+    // refuses both. DDL is transactional on Db2 and is not listed: a CREATE TABLE was rolled back.
+    implicitCommitStatements: ["BEGIN", "CALL"],
     supportsMaintenance: true,
     // RUNSTATS and REORG, each run per table: Db2 LUW has no whole-database form of either, so
     // neither is offered globally. A Db2 view is a relation and refuses both, so each names the

@@ -15,7 +15,8 @@
  * - `queryTimeout`: since 1.0.24 it cancels the statement on the server through
  *   `WLM_CANCEL_ACTIVITY` on a second session, which needs monitoring and cancel privileges a
  *   plain user may not hold, and then closes the connection. Wiring it, and `Client.cancel()`,
- *   is a change of its own (D148), measured with an unprivileged user.
+ *   is a change of its own (D392), measured with an unprivileged user. A transaction statement
+ *   is bounded instead by `boundByClose` below, which needs no privilege.
  * - `currentSchema`: honoured since 1.0.24, and still not needed: every catalog statement binds
  *   its schema (M4), and a session schema would only change how the user's own SQL resolves.
  *
@@ -29,7 +30,7 @@
  * their own statements give.
  */
 
-import { ConnectionError, DatabaseError, QueryError, mapDatabaseError } from "../../../errors";
+import { ConnectionError, DatabaseError, QueryError, TimeoutError, mapDatabaseError } from "../../../errors";
 
 /** One result column as db2-node describes it. */
 export interface Db2ColumnMeta {
@@ -85,7 +86,16 @@ export interface Db2Client {
   connect(): Promise<void>;
   query(sql: string, params?: unknown[]): Promise<Db2QueryResult>;
   query(sql: string, params: unknown[] | undefined, options: Db2ArrayRows): Promise<Db2ArrayQueryResult>;
+  /** Turns autocommit off on this connection until `commit()` or `rollback()`. */
+  beginTransaction(): Promise<Db2Transaction>;
   close(): Promise<void>;
+}
+
+/** One unit of work on one connection, as `Db2Client.beginTransaction()` opens it. */
+export interface Db2Transaction {
+  query(sql: string, params: unknown[] | undefined, options: Db2ArrayRows): Promise<Db2ArrayQueryResult>;
+  commit(): Promise<void>;
+  rollback(): Promise<void>;
 }
 
 export interface Db2Driver {
@@ -164,4 +174,51 @@ export async function loadDb2Driver(
     if (absence) throw absence;
     throw error;
   }
+}
+
+/**
+ * A statement's wait, bounded at `deadlineMs` by closing the connection it runs on.
+ *
+ * At the deadline `retire` is called, which forgets the connection and closes it without
+ * waiting, and the wait ends with a `TimeoutError` whose message ends with `consequence`, what
+ * closing that connection means to its caller. No server-side cancel is sent, so no privilege is
+ * needed.
+ *
+ * Closing ends the wait, not the work. Measured on 12.1.0.0 through 1.0.25: `close()` called
+ * while a statement runs returns only once that statement has ended on the server (43.9 s into a
+ * cross join that ran 45.9 s), and the connection closes then; a transaction's uncommitted insert
+ * was rolled back at that close. Cancelling the statement itself is D392's.
+ */
+export function boundByClose<T>(
+  statement: Promise<T>,
+  deadlineMs: number,
+  retire: () => void,
+  sql: string,
+  consequence: string,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      retire();
+      reject(
+        new TimeoutError(
+          `Db2 did not answer within ${deadlineMs} ms, so Studio stopped waiting and closed this statement's connection. ` +
+            `The statement is not cancelled: it runs on the server until it ends, and the connection closes then. ${consequence}`,
+          "db2",
+          deadlineMs,
+          sql,
+        ),
+      );
+    }, deadlineMs);
+    // A statement that settles after the deadline settles a promise already rejected, which is a no-op.
+    statement.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }

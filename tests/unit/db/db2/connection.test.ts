@@ -22,7 +22,7 @@ import {
   writeCaFile,
   type Db2Connection,
 } from "@/lib/db/providers/sql/db2/connection";
-import type { Db2ClientOptions, Db2Driver } from "@/lib/db/providers/sql/db2/driver";
+import type { Db2ClientOptions, Db2Driver, Db2Transaction } from "@/lib/db/providers/sql/db2/driver";
 import { TUNNEL_FAR_END, type SSLMode } from "@/lib/types";
 
 const PEM = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n";
@@ -389,6 +389,9 @@ function fakeDriver(connectError?: unknown) {
       }
       async query() {
         return { rows: [], rowCount: 0, columns: [], diagnostics: [] };
+      }
+      async beginTransaction(): Promise<Db2Transaction> {
+        throw new Error("openClient never begins a transaction");
       }
       async close() {}
     },

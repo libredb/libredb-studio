@@ -9,13 +9,14 @@
  * the test by name.
  */
 
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   ConnectionError,
   DatabaseConfigError,
   DatabaseError,
+  NO_ACTIVE_TRANSACTION,
   PermissionDeniedError,
   QueryError,
   TimeoutError,
@@ -62,6 +63,7 @@ import type {
   Db2ColumnMeta,
   Db2Driver,
   Db2QueryResult,
+  Db2Transaction,
 } from "@/lib/db/providers/sql/db2/driver";
 import { Db2Provider } from "@/lib/db/providers/sql/db2/index";
 import { MAINTENANCE_TARGET_TYPE_SQL } from "@/lib/db/providers/sql/db2/maintenance";
@@ -490,12 +492,36 @@ let userQuery: (sql: string, params?: unknown[]) => Promise<Db2QueryResult | Db2
 let refused = new Map<string, Error>();
 let connectError: unknown;
 let closeError: unknown;
+/** Each client's place in `built`, for every client whose `close()` was called. */
+let closedSessions: number[] = [];
+/** Holds every `close()` open until it settles, the way a statement still running on the connection does. */
+let closeGate: Promise<void> | undefined;
+
+/** What reached a transaction: its BEGIN, each statement, its COMMIT or ROLLBACK, on which session. */
+interface TransactionCall {
+  session: number;
+  call: string;
+  params?: unknown[];
+  options?: { rowMode: "array" };
+}
+let transactionCalls: TransactionCall[] = [];
+let beginError: unknown;
+let endError: unknown;
+/** What a statement inside a transaction answers; a test replaces it. */
+let transactionQuery: (sql: string) => Promise<Db2ArrayQueryResult> = async () => ({
+  rows: [],
+  rowCount: 1,
+  columns: [],
+  diagnostics: [],
+});
 
 type EitherRows = Db2QueryResult & Db2ArrayQueryResult;
 
 const driver: Db2Driver = {
   Client: class {
+    readonly session: number;
     constructor(options: Db2ClientOptions) {
+      this.session = built.length;
       built.push(options);
     }
     async connect() {
@@ -515,8 +541,27 @@ const driver: Db2Driver = {
       );
       return { ...answer, rows } as EitherRows;
     }
+    async beginTransaction(): Promise<Db2Transaction> {
+      if (beginError !== undefined) throw beginError;
+      const session = this.session;
+      transactionCalls.push({ session, call: "BEGIN" });
+      const end = async (call: string) => {
+        transactionCalls.push({ session, call });
+        if (endError !== undefined) throw endError;
+      };
+      return {
+        query: async (sql: string, params?: unknown[], options?: { rowMode: "array" }) => {
+          transactionCalls.push({ session, call: sql, params, ...(options === undefined ? {} : { options }) });
+          return (await transactionQuery(sql)) as EitherRows;
+        },
+        commit: () => end("COMMIT"),
+        rollback: () => end("ROLLBACK"),
+      };
+    }
     async close() {
       closed += 1;
+      closedSessions.push(this.session);
+      if (closeGate !== undefined) await closeGate;
       if (closeError !== undefined) throw closeError;
     }
   },
@@ -562,6 +607,12 @@ afterEach(() => {
   refused = new Map();
   connectError = undefined;
   closeError = undefined;
+  closedSessions = [];
+  closeGate = undefined;
+  transactionCalls = [];
+  beginError = undefined;
+  endError = undefined;
+  transactionQuery = async () => ({ rows: [], rowCount: 1, columns: [], diagnostics: [] });
   userQuery = async (sql) => {
     throw new Error(`the fake catalog does not know this statement: ${sql}`);
   };
@@ -638,15 +689,24 @@ describe("Db2Provider: declaration", () => {
     expect(refused!.reason).toContain("K24");
   });
 
+  // Measured on 12.1.0.0 through db2-node 1.0.25: inside a transaction, `BEGIN COMMIT; END` and a
+  // CALL of a procedure that runs COMMIT both made the row inserted before them permanent, and the
+  // ROLLBACK after them undid nothing. DDL is transactional (a CREATE TABLE was rolled back), and
+  // TRUNCATE ... IMMEDIATE is refused anywhere but first in a unit of work (SQLSTATE 25001).
+  test("holds a transaction, and SANDBOX refuses the compound block and CALL that can commit", () => {
+    const capabilities = makeProvider().getCapabilities();
+
+    expect(capabilities.supportsTransactions).toBe(true);
+    expect(capabilities.implicitCommitStatements).toEqual(["BEGIN", "CALL"]);
+    expect(capabilities.implicitCommitExceptions).toBeUndefined();
+  });
+
   test("declares none of the methods this version leaves out", () => {
     const provider = makeProvider() as unknown as Record<string, unknown>;
     for (const method of [
       "queryReadOnly",
       "endOpenQueryTransaction",
       "cancelQuery",
-      "beginTransaction",
-      "commitTransaction",
-      "rollbackTransaction",
       "buildObjectEdit",
       "applyObjectEdit",
       "scanKeysPage",
@@ -968,6 +1028,222 @@ describe("Db2Provider: query", () => {
       code: ApiErrorCode.PERMISSION_DENIED,
       statusCode: 403,
     });
+  });
+});
+
+// ============================================================================
+// Transactions
+// ============================================================================
+
+/** Lets the background close of a retired session run to its end. */
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+describe("Db2Provider: transactions", () => {
+  test("runs on a session of its own, opened like the shared one, and commits there", async () => {
+    transactionQuery = async () => ({ rows: [[7]], rowCount: 1, columns: [column("ID", "Integer")], diagnostics: [] });
+    const provider = await connected();
+    const shared = sent.length;
+
+    await provider.beginTransaction();
+    expect(provider.isInTransaction()).toBe(true);
+    expect(built).toHaveLength(2);
+    expect(built[1]).toEqual(built[0]);
+
+    const result = await provider.queryInTransaction("SELECT ID FROM APP.ORDERS WHERE ID = ?", [7]);
+    expect(result.rows).toEqual([{ ID: 7 }]);
+    expect(result.fields).toEqual(["ID"]);
+    expect(typeof result.executionTime).toBe("number");
+
+    await provider.commitTransaction();
+    expect(transactionCalls).toEqual([
+      { session: 1, call: "BEGIN" },
+      { session: 1, call: "SELECT ID FROM APP.ORDERS WHERE ID = ?", params: [7], options: { rowMode: "array" } },
+      { session: 1, call: "COMMIT" },
+    ]);
+    // Nothing of the transaction reached the shared client, and only the session was closed.
+    expect(sent.length).toBe(shared);
+    expect(closedSessions).toEqual([1]);
+    expect(removed).toEqual([join(tmpdir(), "libredb-db2-test")]);
+    expect(provider.isInTransaction()).toBe(false);
+    expect(provider.isConnected()).toBe(true);
+  });
+
+  test("rolls back on its session and closes it", async () => {
+    const provider = await connected();
+    await provider.beginTransaction();
+    await provider.queryInTransaction("DELETE FROM APP.ORDERS");
+    await provider.rollbackTransaction();
+
+    expect(transactionCalls.map((call) => call.call)).toEqual(["BEGIN", "DELETE FROM APP.ORDERS", "ROLLBACK"]);
+    expect(closedSessions).toEqual([1]);
+    expect(provider.isInTransaction()).toBe(false);
+  });
+
+  test("a second transaction is refused while one is open or opening, and opens no session", async () => {
+    const provider = await connected();
+    const [first, second] = await Promise.allSettled([provider.beginTransaction(), provider.beginTransaction()]);
+
+    expect(first.status).toBe("fulfilled");
+    expect(second).toEqual({ status: "rejected", reason: new QueryError("Transaction already active", "db2") });
+    await expect(provider.beginTransaction()).rejects.toThrow("Transaction already active");
+    expect(built).toHaveLength(2);
+  });
+
+  test("COMMIT, ROLLBACK and a statement with no transaction open are refused", async () => {
+    const provider = await connected();
+
+    for (const attempt of [
+      () => provider.commitTransaction(),
+      () => provider.rollbackTransaction(),
+      () => provider.queryInTransaction("SELECT 1 FROM SYSIBM.SYSDUMMY1"),
+    ]) {
+      const refused = await attempt().catch((caught: unknown) => caught);
+      expect(refused).toEqual(new QueryError(NO_ACTIVE_TRANSACTION, "db2"));
+    }
+    expect(transactionCalls).toEqual([]);
+  });
+
+  test("a transaction is refused before connect", async () => {
+    await expect(makeProvider().beginTransaction()).rejects.toThrow("not connected");
+    expect(built).toEqual([]);
+  });
+
+  test("a session that cannot be opened leaves no transaction", async () => {
+    const provider = await connected();
+    connectError = new Error("ECONNREFUSED");
+
+    const refused = await provider.beginTransaction().catch((caught: unknown) => caught);
+    expect(refused).toBeInstanceOf(ConnectionError);
+    expect((refused as Error).message).toBe("Failed to connect to Db2: ECONNREFUSED");
+    expect(provider.isInTransaction()).toBe(false);
+    connectError = undefined;
+    await provider.beginTransaction();
+    expect(provider.isInTransaction()).toBe(true);
+  });
+
+  test("a refused BEGIN is mapped, and its session is closed and its CA file removed", async () => {
+    const provider = await connected();
+    beginError = Object.assign(new Error("Protocol error: no reply"), { driverCode: "DB2_PROTOCOL" });
+
+    const refused = await provider.beginTransaction().catch((caught: unknown) => caught);
+    expect((refused as Error).constructor).toBe(DatabaseError);
+    expect((refused as Error).message).toBe("Protocol error: no reply");
+    await settle();
+    expect(closedSessions).toEqual([1]);
+    expect(removed).toHaveLength(1);
+    expect(provider.isInTransaction()).toBe(false);
+  });
+
+  test.each([
+    ["commitTransaction", "COMMIT"],
+    ["rollbackTransaction", "ROLLBACK"],
+  ] as const)("a failed %s is mapped, and the session is closed all the same", async (method, word) => {
+    const provider = await connected();
+    await provider.beginTransaction();
+    endError = new Error(`SQL30081N  A communication error ended ${word}`);
+
+    await expect(provider[method]()).rejects.toThrow(`ended ${word}`);
+    expect(closedSessions).toEqual([1]);
+    expect(removed).toHaveLength(1);
+    expect(provider.isInTransaction()).toBe(false);
+  });
+
+  test("a failed statement is mapped with its text, and the transaction stays open", async () => {
+    transactionQuery = async () => {
+      throw Object.assign(new Error('SQL Error [SQLSTATE=42704, SQLCODE=-204]: "APP.NOPE" is an undefined name.'), {
+        sqlstate: "42704",
+      });
+    };
+    const provider = await connected();
+    await provider.beginTransaction();
+
+    const refused = (await provider
+      .queryInTransaction("SELECT * FROM APP.NOPE")
+      .catch((e: unknown) => e)) as QueryError;
+    expect(refused).toBeInstanceOf(DatabaseError);
+    expect(refused.query).toBe("SELECT * FROM APP.NOPE");
+    expect(provider.isInTransaction()).toBe(true);
+  });
+
+  test("refuses an array parameter before anything is sent (M3)", async () => {
+    const provider = await connected();
+    await provider.beginTransaction();
+
+    await expect(provider.queryInTransaction("SELECT ?", [[1, 2]])).rejects.toBeInstanceOf(QueryError);
+    expect(transactionCalls.map((call) => call.call)).toEqual(["BEGIN"]);
+  });
+
+  // Measured on 12.1.0.0 through db2-node 1.0.25: `close()` called while a statement runs waits
+  // for that statement to end (43.9 s on a cross join), and only then closes the connection, and
+  // the server rolled back what the transaction had inserted. So the deadline ends the wait at
+  // once, retires the session, and the work ends on the server when the statement does.
+  test("a statement past the query timeout ends the wait and the transaction; the session closes when the statement ends", async () => {
+    let finish: (error: Error) => void = () => {};
+    transactionQuery = () => new Promise((_, reject) => (finish = reject));
+    let release: () => void = () => {};
+    closeGate = new Promise((resolve) => (release = resolve));
+    const provider = new Db2Provider(
+      baseConfig,
+      { queryTimeout: 20 },
+      { loadDriver: async () => driver, caFileSystem },
+    );
+    await provider.connect();
+    await provider.beginTransaction();
+
+    const refused = (await provider
+      .queryInTransaction("SELECT COUNT(*) FROM SYSCAT.COLUMNS A, SYSCAT.COLUMNS B")
+      .catch((caught: unknown) => caught)) as TimeoutError;
+
+    expect(refused).toBeInstanceOf(TimeoutError);
+    expect(refused.timeout).toBe(20);
+    expect(refused.query).toBe("SELECT COUNT(*) FROM SYSCAT.COLUMNS A, SYSCAT.COLUMNS B");
+    expect(refused.message).toBe(
+      "Db2 did not answer within 20 ms, so Studio stopped waiting and closed this statement's connection. " +
+        "The statement is not cancelled: it runs on the server until it ends, and the connection closes then. " +
+        "That ends this transaction: Db2 rolls back everything it did once the connection closes. Begin a new transaction to continue.",
+    );
+    expect(provider.isInTransaction()).toBe(false);
+    expect(closedSessions).toEqual([1]);
+    expect(removed).toEqual([]);
+    await expect(provider.commitTransaction()).rejects.toThrow(NO_ACTIVE_TRANSACTION);
+
+    finish(new Error("SQL30081N  the connection was closed"));
+    release();
+    await settle();
+    expect(removed).toHaveLength(1);
+  });
+
+  test("a session close that fails after the deadline is reported, not thrown", async () => {
+    transactionQuery = () => new Promise(() => {});
+    closeError = new Error("socket already gone");
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const provider = new Db2Provider(
+        baseConfig,
+        { queryTimeout: 5 },
+        { loadDriver: async () => driver, caFileSystem },
+      );
+      await provider.connect();
+      await provider.beginTransaction();
+
+      await expect(provider.queryInTransaction("VALUES SLEEP(60)")).rejects.toBeInstanceOf(TimeoutError);
+      await settle();
+      expect(warn).toHaveBeenCalledWith("[Db2] Closing a transaction's connection failed: socket already gone");
+      expect(removed).toHaveLength(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("disconnect ends an open transaction by closing its session", async () => {
+    const provider = await connected();
+    await provider.beginTransaction();
+
+    await provider.disconnect();
+    await settle();
+    expect(provider.isInTransaction()).toBe(false);
+    expect(closedSessions.sort()).toEqual([0, 1]);
+    expect(removed).toHaveLength(2);
   });
 });
 
