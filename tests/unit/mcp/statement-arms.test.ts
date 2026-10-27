@@ -206,7 +206,7 @@ describe("the kubectl arm", () => {
     const refusal = server.admit?.(line);
     expect(refusal).not.toBeNull();
     expect(RUN_KUBECTL_READ_ARM.fence(line, "kubernetes")).toBe(
-      `The statement was refused before it reached the database (${refusal?.code}). ${refusal?.message}`,
+      `The statement was refused before it reached the cluster (${refusal?.code}). ${refusal?.message}`,
     );
   });
 

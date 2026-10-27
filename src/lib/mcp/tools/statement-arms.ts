@@ -130,6 +130,8 @@ interface NonSqlArmWords {
   readonly readPast: (shown: number) => string;
   /** The answer when even the first row does not fit the result cap. */
   readonly rowOverCap: string;
+  /** What a refused statement never reached, as a noun phrase: "the cluster", "the database". */
+  readonly reached: string;
 }
 
 /** The parts every arm whose statement is not SQL shares: its reader, its fence and its budget texts are the agent's. */
@@ -152,7 +154,7 @@ function nonSqlArm(language: Exclude<AgentStatementLanguageId, "sql">, own: NonS
       const refusal = server.admit?.(statement) ?? null;
       return refusal === null
         ? null
-        : `The ${AGENT_LANGUAGE_COPY[language].noun} was refused before it reached the database (${refusal.code}). ${refusal.message}`;
+        : `The ${AGENT_LANGUAGE_COPY[language].noun} was refused before it reached ${own.reached} (${refusal.code}). ${refusal.message}`;
     },
     tooLarge: (statement: string) => ({
       rows: `The result has more than 1000 rows, the most this server reads for one call. ${server.rowCapAdvice(statement, "1000")}`,
@@ -183,20 +185,22 @@ export const RunKubectlReadInputSchema = z.strictObject({
 });
 
 /**
- * The kubectl arm (B105): the agent's own reader, admission and `queryReadOnly`, so every answer is the machine
- * projection `machine-redaction.ts` masks, Secret names included, and never the editor's.
+ * The kubectl arm (all-providers ruling 21): the agent's own reader, admission and `queryReadOnly`, so every answer is
+ * the machine projection `machine-redaction.ts` masks, Secret names in the fields defined to hold one included, and
+ * never the editor's. Free-text messages are that projection's residue, and the description says so.
  */
 export const RUN_KUBECTL_READ_ARM = nonSqlArm("kubectl", {
   tool: "run_kubectl_read",
   title: "Run a read-only kubectl read",
   inputSchema: RunKubectlReadInputSchema,
   describe: (engines) =>
-    `Run one read-only kubectl read on a connection: one line, with or without the kubectl word, such as "get pods -n shop", "describe deployment/web -n shop", "logs pod/web -n shop --tail=50", "top pod -n shop", "events -n shop --types=Warning", "api-resources", "explain deployment.spec", "auth can-i list pods -n shop", "auth whoami" or "version". Writes, exec, port-forward, proxy, a watch (-w) and Studio's paging line are refused before the cluster is reached. The answer is masked as an agent read is: a Secret's name wherever it appears, Secret and ConfigMap values, env and header values, a container's command and args, and annotation values read <redacted>. Runs on ${engines}; other engines refuse it. ${SHARED_LIMITS}; this tool takes no offset, so narrow the read with -n, -l or --field-selector. ${MCP_UNTRUSTED_NOTICE}`,
+    `Run one read-only kubectl read on a connection: one line, with or without the kubectl word, such as "get pods -n shop", "describe deployment/web -n shop", "logs pod/web -n shop --tail=50", "top pod -n shop", "events -n shop --types=Warning", "api-resources", "explain deployment.spec", "auth can-i list pods -n shop", "auth whoami" or "version". Writes, exec, port-forward, proxy, a watch (-w) and Studio's paging line are refused before the cluster is reached. The answer is masked as an agent read is: a Secret's name in every field defined to hold one, Secret and ConfigMap values, env and header values, a container's command and args, and annotation values read <redacted>. Free-text status, event and log messages are not masked, so a Secret's name or a value an application printed can reach you there. Runs on ${engines}; other engines refuse it. ${SHARED_LIMITS}; this tool takes no offset, so narrow the read with -n, -l or --field-selector. ${MCP_UNTRUSTED_NOTICE}`,
   fewerFields: "Read fewer fields, without -o wide, -o yaml or -o json,",
   readPast: (shown) =>
     `read past the ${shown} rows returned, split the read into narrower ones, since a kubectl read is never paged.`,
   rowOverCap:
     "One row of this result is larger than the 32 KiB result limit. Read it in a shorter form, without -o yaml or -o json, and run it again.",
+  reached: "the cluster",
 });
 
 /**
@@ -218,6 +222,7 @@ export const RUN_MONGO_COMMAND_ARM = nonSqlArm("mongo", {
   readPast: (shown) => `read past the ${shown} rows returned, skip them with a find's "skip" or a $skip stage.`,
   rowOverCap:
     "One row of this result is larger than the 32 KiB result limit. Narrow the read to fewer or smaller fields, and run it again.",
+  reached: "the database",
   describe: (engines) =>
     `Run one read-only MongoDB command on a connection: a JSON command envelope with the keys its operation takes and no others. find takes "filter" and "options" ("projection", "sort", "skip", "limit"); findOne takes "filter" and "options" ("projection" only); aggregate takes "pipeline" only; count takes "filter"; distinct takes "field" and "filter". For example {"collection": "orders", "operation": "find", "filter": {"status": "paid"}}. Write the collection by its bare name, a date as {"$date": "2026-03-01T00:00:00Z"} and an ObjectId as {"$oid": "<24 hex digits>"}. Writes and the write stages of a pipeline ($out, $merge) are refused before the database is reached. Runs on ${engines}; other engines refuse it. ${SHARED_LIMITS}; this tool takes no offset, so page inside the command with a find's "skip" or a $skip stage. ${MCP_UNTRUSTED_NOTICE}`,
 });

@@ -1,5 +1,5 @@
 /**
- * run_kubectl_read (all-providers design 6, B105): MCP's kubectl arm, run by the statement core over the real
+ * run_kubectl_read (all-providers design 6, ruling 21): MCP's kubectl arm, run by the statement core over the real
  * Kubernetes provider, through the real route, seed file and handler, with the fake API server of
  * tests/helpers/kubernetes-cluster.ts in place of a cluster.
  *
@@ -238,7 +238,7 @@ describe("a refusal", () => {
       content: [
         {
           type: "text",
-          text: `The statement was refused before it reached the database (${refusal?.code}). ${refusal?.message}`,
+          text: `The statement was refused before it reached the cluster (${refusal?.code}). ${refusal?.message}`,
         },
       ],
     });

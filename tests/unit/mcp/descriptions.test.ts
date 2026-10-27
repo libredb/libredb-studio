@@ -81,7 +81,11 @@ describe("the tool descriptions", () => {
 
   test("run_kubectl_read names Kubernetes, the one engine its handler gates on, and says what it masks", () => {
     expect(RUN_KUBECTL_READ_ARM.description).toContain("Runs on Kubernetes; other engines refuse it.");
-    expect(RUN_KUBECTL_READ_ARM.description).toContain("a Secret's name wherever it appears");
+    expect(RUN_KUBECTL_READ_ARM.description).toContain("a Secret's name in every field defined to hold one");
+    expect(RUN_KUBECTL_READ_ARM.description).not.toContain("wherever it appears");
+    expect(RUN_KUBECTL_READ_ARM.description).toContain(
+      "Free-text status, event and log messages are not masked, so a Secret's name or a value an application printed can reach you there.",
+    );
     expect(RUN_KUBECTL_READ_ARM.description).toContain("this tool takes no offset");
   });
 
