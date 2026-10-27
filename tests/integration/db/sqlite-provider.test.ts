@@ -3417,6 +3417,12 @@ describe("SQLiteProvider agent read-only execution profile (#328)", () => {
         (error: unknown) => error,
       );
     expect(thrown).toBeInstanceOf(QueryError);
+    // The whole sentence, numbers in order: [{"big":"<30 a>"}] is 42 bytes as JSON (D367).
+    expect((thrown as QueryError).message).toBe("Read-only execution exceeded the byte budget: 42 bytes > 8 allowed");
+
+    // PostgreSQL's byte call, pinned against the source like its row call above.
+    const postgresSource = readFileSync(join(REPO_ROOT, "src/lib/db/providers/sql/postgres.ts"), "utf8");
+    expect(postgresSource).toContain("byteBudgetSentence(resultBytes, budget.maxResultBytes)");
   });
 
   test("rejects a statement that overruns the timeout budget", async () => {

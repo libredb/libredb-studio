@@ -1631,9 +1631,10 @@ describe("queryReadOnly()", () => {
   test("a result over the byte budget is refused", async () => {
     provider = await readOnlyProvider();
 
+    // The whole sentence, numbers in order: the two seeded users are 52 bytes as JSON (D367).
     await expect(
       provider.queryReadOnly("SELECT * FROM users", { ...GENEROUS_BUDGET, maxResultBytes: 1 }),
-    ).rejects.toThrow(/exceeded the byte budget/);
+    ).rejects.toThrow(/^Read-only execution exceeded the byte budget: 52 bytes > 1 allowed$/);
   });
 
   test("a statement over the time budget has its result refused", async () => {
