@@ -125,6 +125,7 @@ A collection or alias name in a request is refused before it reaches a path when
 
 The API key or JWT travels as one `api-key` header on every request, never as `Authorization` as well and never in a URL; a key that holds CR, LF, NUL or a non-printable byte is refused naming the field.
 Use a read-only key (`service.read_only_api_key`) or a JWT scoped to the collections you need, with an expiry: an admin key or a manage token reads, and outside Studio writes, everything the server holds.
+The agent's own credential is a key or JWT in `agentPassword` alone, because Qdrant declares `agentCredential: "token"`; an `agentUser` beside it is refused before the provider connects, as a user is on the connection.
 The dialog reads a JWT locally, with no request and no signature check, and warns before Test Connection when it declares no expiry, manage access, or no access claim at all:
 
 > Credential warning: This token declares no expiry, or manage access to the whole server, so it stays valid, and as powerful, until the server's key changes. Prefer a read-only or collection-scoped key with an expiry.

@@ -925,6 +925,23 @@ export interface KindRowAction {
   readonly activates?: true;
 }
 
+/**
+ * The shapes an engine takes the agent's own credential in, `ProviderCapabilities.agentCredential`, read from
+ * `agentUser` and `agentPassword`. An agent credential beside a connection string is refused in every form, because
+ * the connection string's own credential would win.
+ *
+ * - absent: `agentUser` and `agentPassword`, both required.
+ * - `"token"`: `agentPassword` alone, as the bearer token the agent's acquisitions send instead of the connection's
+ *   own; an `agentUser` beside it is refused.
+ * - `"service-account-key"`: `agentPassword` alone, holding a service-account key JSON (`"type": "service_account"`),
+ *   from which the provider mints its own access token at the scope it asks for. An `agentUser`, an access token or
+ *   a user's own credential is refused, since a token minted elsewhere carries a scope Studio cannot read.
+ * - `"dedicated-user"`: `agentUser` and `agentPassword`, both required, where `agentUser` names a user other than the
+ *   connection's own, compared without case or surrounding space; the secret is that user's own.
+ * - `"none"`: the engine has no principal to sign an agent in as, so any agent credential is refused.
+ */
+export type AgentCredentialForm = "token" | "service-account-key" | "dedicated-user" | "none";
+
 export interface ProviderCapabilities {
   /**
    * The language this engine's statements are written in: what its editor tabs are typed and
@@ -1376,15 +1393,15 @@ export interface ProviderCapabilities {
    */
   readonly enforcesReadOnly?: true;
   /**
-   * How this engine takes the agent's own credential. Absent: `agentUser` and `agentPassword`, both required.
-   * `"token"`: `agentPassword` alone, as the bearer token the agent's acquisitions send instead of the connection's
-   * own; an `agentUser` beside it is refused. `acquireExecutionProfileProvider` in `src/lib/db/factory.ts` reads it
-   * from the provider it builds, before that provider connects, so no `connection.type` branch is needed (forbidden
-   * by `CLAUDE.md`), and `tests/unit/db/agent-credential-capability.test.ts` pins which engines declare it.
+   * How this engine takes the agent's own credential, one of the `AgentCredentialForm` forms; absent is the
+   * user-and-password form. `acquireExecutionProfileProvider` in `src/lib/db/factory.ts` reads it from the provider
+   * it builds and refuses a credential in a shape the form does not take before that provider connects, so no
+   * `connection.type` branch is needed (forbidden by `CLAUDE.md`), and
+   * `tests/unit/db/agent-credential-capability.test.ts` pins which engines declare which form.
    *
    * Optional for the same published-interface reason as `enforcesReadOnly`.
    */
-  readonly agentCredential?: "token";
+  readonly agentCredential?: AgentCredentialForm;
   /**
    * The object kinds whose names this provider masks in `queryReadOnly` output, the agent's read path, by kind id.
    * Absent: it masks none. A kind declared `machineNames: "withheld"` keeps that promise on a provider with

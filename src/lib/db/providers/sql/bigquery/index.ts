@@ -215,6 +215,9 @@ export class BigQueryProvider extends SQLBaseProvider {
       containerPathShapes: "exact",
       tablesNeedContainer: true,
       objectKinds: OBJECT_KINDS,
+      // The agent's identity is a service-account key of its own in `agentPassword`, from which `auth.ts` mints the
+      // token, so no token minted at a scope Studio cannot read is taken.
+      agentCredential: "service-account-key",
     };
   }
 

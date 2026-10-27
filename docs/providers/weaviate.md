@@ -134,6 +134,7 @@ An OIDC token is pasted, not obtained: v1 has no refresh flow, and an expired to
 The safest credential is the key of a database user that holds only the built-in `viewer` role: it reads every surface this provider shows, and the server refuses its writes (measured).
 A `viewer` user can also read `/v1/authz/roles` and `/v1/users/db`, which this provider never reads or shows.
 A role scoped to some collections cannot use GraphQL at all, because GraphQL introspection needs `read_collections` on every collection, so on a server below 1.39.7 such a role browses but cannot search.
+The agent's own credential is a key in `agentPassword` alone, because Weaviate declares `agentCredential: "token"`; an `agentUser` beside it is refused before the provider connects, as a user is on the connection.
 
 ### 4.3 TLS
 

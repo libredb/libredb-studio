@@ -427,6 +427,8 @@ export class LibreDBProvider extends BaseDatabaseProvider {
       supportsConnectionString: false,
       defaultPort: null,
       schemaRefreshPattern: "\\b(put|delete)\\b",
+      // An embedded file has no user to sign an agent in as, so any agent credential is refused.
+      agentCredential: "none",
     };
   }
 

@@ -2909,6 +2909,210 @@ describe("acquireExecutionProfileProvider", () => {
     }
   });
 
+  /**
+   * The agent credential forms past the user-and-password pair and the token (PR 0.7): `"none"`, which libredb
+   * declares, `"service-account-key"`, which BigQuery declares, the token form on Weaviate and Qdrant, and
+   * `"dedicated-user"`, which no shipped engine declares yet, so a PostgreSQL provider is given it here. Every refusal
+   * lands before the provider connects, which each test holds by stubbing `connect` and asserting it never ran.
+   */
+  describe("agent credential forms", () => {
+    async function connectStubbed(conn: DatabaseConnection) {
+      const prototype = Object.getPrototypeOf(await createDatabaseProvider(conn)) as DatabaseProvider;
+      return spyOn(prototype, "connect").mockImplementation(async function (this: DatabaseProvider) {
+        (this as unknown as { setConnected(value: boolean): void }).setConnected(true);
+      });
+    }
+
+    async function refusal(conn: DatabaseConnection): Promise<ExecutionProfileError> {
+      const error: unknown = await acquireExecutionProfileProvider(conn, "agent-operations").catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(ExecutionProfileError);
+      return error as ExecutionProfileError;
+    }
+
+    const SERVICE_ACCOUNT_KEY = JSON.stringify({
+      type: "service_account",
+      client_email: "agent@project.iam.gserviceaccount.com",
+      private_key: "-----BEGIN PRIVATE KEY-----\nMIIB\n-----END PRIVATE KEY-----\n",
+    });
+
+    const libredbConn = (overrides: Partial<DatabaseConnection> = {}) =>
+      makeConnection("libredb", { id: "libredb-agent", database: CENSUS_LIBREDB_FILE, ...overrides });
+    const bigqueryConn = (overrides: Partial<DatabaseConnection> = {}) =>
+      makeConnection("bigquery", {
+        id: "bq-agent",
+        host: undefined,
+        port: undefined,
+        user: undefined,
+        database: "project",
+        password: SERVICE_ACCOUNT_KEY,
+        ...overrides,
+      });
+
+    test.each([
+      ["an agent user and password", { agentUser: "agent", agentPassword: "secret" }],
+      ["an agent password alone", { agentPassword: "secret" }],
+      ["an agent user alone", { agentUser: "agent" }],
+    ] as const)("libredb takes no agent credential and refuses %s before it connects", async (_label, credential) => {
+      const conn = libredbConn(credential);
+      const connect = await connectStubbed(conn);
+      try {
+        const error = await refusal(conn);
+
+        expect(error.reasonCode).toBe("AGENT_CREDENTIAL_UNRESOLVABLE");
+        expect(error.message).toBe(
+          'Connection "libredb-agent" configures an agent credential, and this engine takes none: it has no user for the agent to sign in as, so clear the agent user and password',
+        );
+        expect(connect).not.toHaveBeenCalled();
+        expect(getExecutionProfileCacheStats().size).toBe(0);
+      } finally {
+        connect.mockRestore();
+      }
+    });
+
+    test("a service-account-key engine takes the agent's key alone as its password, and keeps the connection's", async () => {
+      const agentKey = SERVICE_ACCOUNT_KEY.replace("agent@", "reader@");
+      const conn = bigqueryConn({ agentPassword: agentKey });
+      const connect = await connectStubbed(conn);
+      try {
+        const agent = await acquireExecutionProfileProvider(conn, "agent-operations");
+
+        expect(agent.config.password).toBe(agentKey);
+        expect(agent.config.user).toBeUndefined();
+        expect(connect).toHaveBeenCalledTimes(1);
+      } finally {
+        connect.mockRestore();
+      }
+    });
+
+    test("a service-account-key engine refuses an agent user beside the key before it connects", async () => {
+      const conn = bigqueryConn({ agentUser: "agent", agentPassword: SERVICE_ACCOUNT_KEY });
+      const connect = await connectStubbed(conn);
+      try {
+        const error = await refusal(conn);
+
+        expect(error.reasonCode).toBe("AGENT_CREDENTIAL_UNRESOLVABLE");
+        expect(error.message).toBe(
+          `Connection "bq-agent" configures an agent user, and this engine takes the agent's service-account key alone: clear the agent user`,
+        );
+        expect(connect).not.toHaveBeenCalled();
+      } finally {
+        connect.mockRestore();
+      }
+    });
+
+    test.each([
+      ["an access token", "ya29.not-a-real-access-token"],
+      [
+        "a user's own credential",
+        JSON.stringify({ type: "authorized_user", client_id: "c", client_secret: "s", refresh_token: "r" }),
+      ],
+      ["a JSON value that is not an object", "null"],
+      ["text that is not JSON", "{not json"],
+    ])("a service-account-key engine refuses %s as the agent password before it connects", async (_label, secret) => {
+      const conn = bigqueryConn({ agentPassword: secret });
+      const connect = await connectStubbed(conn);
+      try {
+        const error = await refusal(conn);
+
+        expect(error.reasonCode).toBe("AGENT_CREDENTIAL_UNRESOLVABLE");
+        expect(error.message).toBe(
+          `Connection "bq-agent" configures an agent password that is not a service-account key, and this engine takes only a service-account key, whose access scope Studio requests itself`,
+        );
+        expect(error.message).not.toContain(secret);
+        expect(connect).not.toHaveBeenCalled();
+      } finally {
+        connect.mockRestore();
+      }
+    });
+
+    test.each(["weaviate", "qdrant"])("%s takes the agent's token alone and refuses an agent user", async (type) => {
+      const base = makeConnection(type, { id: `${type}-agent`, user: undefined, port: 6333 });
+      const connect = await connectStubbed(base);
+      try {
+        const agent = await acquireExecutionProfileProvider(
+          { ...base, agentPassword: "agent-key" },
+          "agent-operations",
+        );
+        expect(agent.config.password).toBe("agent-key");
+
+        const error = await refusal({ ...base, id: `${type}-agent-user`, agentUser: "a", agentPassword: "agent-key" });
+        expect(error.message).toContain("takes the agent's token alone");
+        expect(connect).toHaveBeenCalledTimes(1);
+      } finally {
+        connect.mockRestore();
+      }
+    });
+
+    describe("dedicated-user", () => {
+      let restoreCapabilities: () => void = () => {};
+      beforeEach(async () => {
+        const prototype = Object.getPrototypeOf(await createDatabaseProvider(pgConn())) as DatabaseProvider;
+        const original = prototype.getCapabilities;
+        const spy = spyOn(prototype, "getCapabilities").mockImplementation(function (this: DatabaseProvider) {
+          return { ...original.call(this), agentCredential: "dedicated-user" };
+        });
+        restoreCapabilities = () => spy.mockRestore();
+      });
+      afterEach(() => restoreCapabilities());
+
+      test("takes an agent user other than the connection's own with its secret", async () => {
+        const agent = await acquireExecutionProfileProvider(
+          pgConn({ id: "pg-dedicated", agentUser: "agent_ro", agentPassword: "agent-secret" }),
+          "agent-operations",
+        );
+
+        expect(agent.config.user).toBe("agent_ro");
+        expect(agent.config.password).toBe("agent-secret");
+      });
+
+      test.each(["test", "TEST", " Test "])(
+        "refuses the connection's own user %p as the agent user before it connects",
+        async (agentUser) => {
+          const conn = pgConn({ id: "pg-same-user", agentUser, agentPassword: "agent-secret" });
+          const connect = await connectStubbed(conn);
+          try {
+            const error = await refusal(conn);
+
+            expect(error.reasonCode).toBe("AGENT_CREDENTIAL_UNRESOLVABLE");
+            expect(error.message).toBe(
+              'Connection "pg-same-user" configures the connection\'s own user as the agent user, and this engine takes only an agent user of its own: name a dedicated agent user',
+            );
+            expect(connect).not.toHaveBeenCalled();
+          } finally {
+            connect.mockRestore();
+          }
+        },
+      );
+
+      test.each([
+        ["an agent secret alone", { agentPassword: "agent-secret" }],
+        ["an agent user alone", { agentUser: "agent_ro" }],
+      ] as const)("refuses %s as incomplete", async (_label, credential) => {
+        const error = await refusal(pgConn({ id: "pg-dedicated-half", ...credential }));
+
+        expect(error.message).toBe(
+          'Connection "pg-dedicated-half" configures an incomplete agent credential (user and password are both required)',
+        );
+      });
+    });
+
+    test.each([
+      ["none", () => libredbConn()],
+      ["service-account-key", () => bigqueryConn()],
+      ["token", () => makeConnection("weaviate", { id: "weaviate-agent", user: undefined })],
+    ] as const)(
+      "the %s form refuses an agent credential beside a connection string, before the provider is built",
+      async (_form, build) => {
+        const conn = { ...build(), connectionString: "scheme://host/db", agentPassword: "secret" };
+
+        const error = await refusal(conn);
+
+        expect(error.reasonCode).toBe("AGENT_CREDENTIAL_WITH_CONNECTION_STRING");
+        expect(getExecutionProfileCacheStats().size).toBe(0);
+      },
+    );
+  });
+
   test("denies an agent credential on a connection-string connection", async () => {
     // buildPoolConfig ignores user/password fields when a connection string is
     // present, so the credential would be silently dropped — running the agent
@@ -3692,13 +3896,18 @@ describe("single-writer file reuse", () => {
   test("a configured agent credential opts out of borrowing (fail closed)", async () => {
     // The borrowed handle was opened under the connection's own credentials. An
     // operator who configured `agentUser` asked for something this reuse cannot give,
-    // so it is not silently ignored: the acquisition opens its own handle and hits the
-    // lock, which leaves the run ungrounded and honest rather than grounded under a
-    // credential nobody asked for.
+    // so it is not silently ignored. LibreDB declares `agentCredential: "none"`, so
+    // the acquisition does not borrow, builds its own provider and refuses the
+    // credential before that provider opens the file: the run is ungrounded and
+    // honest rather than grounded under a credential nobody asked for.
     const conn = libredbConn({ agentUser: "agent_ro", agentPassword: "agent-secret" });
-    await getOrCreateProvider(conn);
+    const writable = await getOrCreateProvider(conn);
 
-    await expect(acquireExecutionProfileProvider(conn, "agent-operations")).rejects.toThrow(/exclusive lock/);
+    const error: unknown = await acquireExecutionProfileProvider(conn, "agent-operations").catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect((error as Error).message).toContain("this engine takes none");
+    expect(writable.isConnected()).toBe(true);
     expect(getExecutionProfileCacheStats().size).toBe(0);
   });
 

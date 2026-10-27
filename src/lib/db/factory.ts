@@ -1475,25 +1475,69 @@ function resolveAgentCredential(connection: DatabaseConnection): { user?: string
 }
 
 /**
- * Refuses an agent credential whose form the built provider does not take, before it connects. An engine declaring
- * `agentCredential: "token"` takes `agentPassword` alone; every other engine takes `agentUser` and `agentPassword`
- * together. Read from the provider rather than from `connection.type`, which `CLAUDE.md` forbids here.
+ * Refuses an agent credential whose form the built provider does not take, before it connects. The forms are
+ * `AgentCredentialForm` in `src/lib/db/types.ts`: absent takes `agentUser` and `agentPassword` together, `"token"`
+ * and `"service-account-key"` take `agentPassword` alone, `"dedicated-user"` takes both with a user other than the
+ * connection's own, and `"none"` takes nothing. Read from the provider rather than from `connection.type`, which
+ * `CLAUDE.md` forbids here. `password` is the agent secret `resolveAgentCredential` opened, never echoed.
  */
-function assertAgentCredentialForm(connection: DatabaseConnection, provider: DatabaseProvider): void {
+function assertAgentCredentialForm(
+  connection: DatabaseConnection,
+  provider: DatabaseProvider,
+  password: string | undefined,
+): void {
   const { agentUser, agentPassword } = connection;
-  const tokenOnly = provider.getCapabilities().agentCredential === "token";
-  if (tokenOnly && agentUser !== undefined) {
+  const form = provider.getCapabilities().agentCredential;
+  if (form === "none") {
     throw new ExecutionProfileError(
-      `Connection "${connection.id}" configures an agent user, and this engine takes the agent's token alone: clear the agent user`,
+      `Connection "${connection.id}" configures an agent credential, and this engine takes none: it has no user for the agent to sign in as, so clear the agent user and password`,
       "AGENT_CREDENTIAL_UNRESOLVABLE",
     );
   }
-  if (!agentPassword || (!tokenOnly && !agentUser)) {
+  const secretOnly = form === "token" || form === "service-account-key";
+  if (secretOnly && agentUser !== undefined) {
+    const secret = form === "token" ? "token" : "service-account key";
+    throw new ExecutionProfileError(
+      `Connection "${connection.id}" configures an agent user, and this engine takes the agent's ${secret} alone: clear the agent user`,
+      "AGENT_CREDENTIAL_UNRESOLVABLE",
+    );
+  }
+  if (!agentPassword || (!secretOnly && !agentUser)) {
     throw new ExecutionProfileError(
       `Connection "${connection.id}" configures an incomplete agent credential (user and password are both required)`,
       "AGENT_CREDENTIAL_UNRESOLVABLE",
     );
   }
+  if (form === "service-account-key" && !isServiceAccountKey(password)) {
+    throw new ExecutionProfileError(
+      `Connection "${connection.id}" configures an agent password that is not a service-account key, and this engine takes only a service-account key, whose access scope Studio requests itself`,
+      "AGENT_CREDENTIAL_UNRESOLVABLE",
+    );
+  }
+  if (form === "dedicated-user" && sameUser(agentUser, connection.user)) {
+    throw new ExecutionProfileError(
+      `Connection "${connection.id}" configures the connection's own user as the agent user, and this engine takes only an agent user of its own: name a dedicated agent user`,
+      "AGENT_CREDENTIAL_UNRESOLVABLE",
+    );
+  }
+}
+
+/** A service-account key JSON, the one Google credential whose token Studio mints itself, at the scope it asks for. */
+function isServiceAccountKey(secret: string | undefined): boolean {
+  try {
+    const parsed: unknown = JSON.parse(secret ?? "");
+    return typeof parsed === "object" && parsed !== null && (parsed as { type?: unknown }).type === "service_account";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether two user names name one user, compared without case or surrounding space: wider than any one engine's own
+ * folding, so a name the engine would fold onto the connection's own user is refused, fail closed.
+ */
+function sameUser(agentUser: string | undefined, user: string | undefined): boolean {
+  return agentUser?.trim().toLowerCase() === user?.trim().toLowerCase();
 }
 
 /**
@@ -1624,7 +1668,7 @@ export async function acquireExecutionProfileProvider(
   });
   if (credential !== null) {
     try {
-      assertAgentCredentialForm(connection, provider);
+      assertAgentCredentialForm(connection, provider, credential.password);
     } catch (error) {
       await closeFreshTunnel();
       throw error;

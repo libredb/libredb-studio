@@ -73,6 +73,9 @@ Without the flag and without a key, the connection is refused with a message tha
 `external_account` (Workload Identity Federation outside GKE) and `impersonated_service_account` credential files are refused with a message.
 
 Tokens are cached and refreshed a minute before they expire, and concurrent callers share one refresh instead of each minting a grant.
+
+The agent's own credential is a service-account key JSON in `agentPassword` alone, because BigQuery declares `agentCredential: "service-account-key"`: the provider mints that key's token itself, at the scope it asks for.
+An `agentUser`, an access token or an `authorized_user` JSON as the agent password is refused before the provider connects, since a token minted elsewhere carries a scope Studio cannot read.
 A server credentials file that cannot be read is reported without its path (the path goes to the server log).
 The provider cache key includes `location`, so changing it gets a new provider instead of the cached one.
 The shared transport treats `Authorization` as a connection header, so each token gets its own transport, and a replaced one closes once its in-flight requests finish.

@@ -179,6 +179,9 @@ export class WeaviateProvider extends BaseDatabaseProvider {
       containerLevels: [],
       objectKinds: WEAVIATE_OBJECT_KINDS,
       enforcesReadOnly: true,
+      // The secret alone signs in, so the agent's own key is `agentPassword` alone; a user is refused here as it is
+      // on the connection.
+      agentCredential: "token",
       // A Weaviate request changes no collection, so no request refreshes the schema.
       schemaRefreshPattern: "(?!)",
     };

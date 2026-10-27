@@ -335,6 +335,8 @@ condition as a clear `ConnectionError` (see [§10](#10-error-handling)):
   borrows (it sends no statement of the model's, so `agent-read-only` and `agent-handover` are
   still refused on this engine), and an acquisition is not borrowed for a connection that
   configures an `agentUser`, because a reuse cannot substitute one principal for another.
+  LibreDB declares `agentCredential: "none"`, since an embedded file has no user to sign an agent in
+  as, so such an acquisition refuses the agent credential before its own handle opens the file.
 
 > **DOWNGRADE WARNING:** a file written by `@libredb/libredb` 0.2.x must never be opened by 0.1.3
 > or older. The old recovery cannot parse the header, classifies the whole file as a torn tail,

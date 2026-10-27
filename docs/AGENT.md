@@ -325,6 +325,15 @@ database would investigate the seed and report on it as though it were the one o
 active database as `catalog`, the route requires it there, and the run records it, so its drives and
 its hand-over read that database alone and its connection identity names it.
 
+**Each engine declares the form of the agent's own credential** (`ProviderCapabilities.agentCredential`, the `AgentCredentialForm` forms in `src/lib/db/types.ts`), and `acquireExecutionProfileProvider` refuses a credential in a shape its form does not take before the provider connects, with `AGENT_CREDENTIAL_UNRESOLVABLE`.
+Absent, the form takes `agentUser` and `agentPassword` together.
+`"token"` takes `agentPassword` alone as a bearer token: Kubernetes, Weaviate and Qdrant.
+`"service-account-key"` takes `agentPassword` alone holding a service-account key JSON, and refuses an access token or a user's own credential, whose scope Studio cannot read: BigQuery.
+`"dedicated-user"` takes both, with an agent user other than the connection's own; no engine declares it yet, and Snowflake takes it when it joins agent mode, because its key-pair sign-in reads `privateKey`, which the agent credential does not reach today (D324).
+`"none"` refuses any agent credential, on an engine with no user to sign an agent in as: LibreDB.
+Every other engine keeps the user-and-password form until its own agent change decides otherwise, and in every form an agent credential beside a connection string is refused with `AGENT_CREDENTIAL_WITH_CONNECTION_STRING`, because the connection string's own credential would win.
+The forms bound what an agent credential may be; a run still reaches one only as B85 describes.
+
 ### The conversation a run belongs to
 
 **Every run belongs to a conversation**, and most belong to one of their own. A run opened on its own
