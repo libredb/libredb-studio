@@ -476,6 +476,61 @@ helm install libredb libredb/libredb-studio \
   --set secrets.existingSecret=my-vault-secret
 ```
 
+### Terraform (helm_release)
+
+There is no Terraform module: the chart is the configuration surface, and the `helm` provider installs it directly.
+This uses the provider's 3.x syntax, where `set` and `set_sensitive` are lists.
+
+```hcl
+terraform {
+  required_providers {
+    helm = {
+      source  = "hashicorp/helm"
+      version = "~> 3.0"
+    }
+  }
+}
+
+provider "helm" {
+  kubernetes = {
+    config_path = "~/.kube/config"
+  }
+}
+
+variable "jwt_secret" {
+  type      = string
+  sensitive = true
+}
+
+variable "admin_password" {
+  type      = string
+  sensitive = true
+}
+
+resource "helm_release" "libredb_studio" {
+  name             = "libredb"
+  namespace        = "libredb"
+  create_namespace = true
+  repository       = "oci://ghcr.io/libredb/charts"
+  chart            = "libredb-studio"
+
+  set = [
+    { name = "config.storageProvider", value = "sqlite" },
+  ]
+
+  set_sensitive = [
+    { name = "secrets.jwtSecret", value = var.jwt_secret },
+    { name = "secrets.adminPassword", value = var.admin_password },
+  ]
+}
+```
+
+Without `version` the release takes the latest chart; add `version = "<chart version>"` to pin it.
+`storageProvider=sqlite` creates the PVC on its own, so connections survive a pod restart without `persistence.enabled`.
+To source every secret from a Secret you manage (the Vault and External Secrets path), drop `set_sensitive` and set `secrets.existingSecret` instead.
+Any other value from `values.yaml` goes in `set` under the same name.
+`terraform destroy` removes the release and its PVC but leaves the namespace that `create_namespace` made.
+
 ## Known Limitations
 
 1. **SQLite + Multi-Replica**: SQLite is single-writer. `storageProvider=sqlite` with `replicaCount > 1` will cause write conflicts. Use `postgres` for multi-replica. With SQLite storage `autoscaling.enabled` is ignored: the HPA is not rendered (NOTES.txt warns) and the deployment falls back to `replicaCount`.
