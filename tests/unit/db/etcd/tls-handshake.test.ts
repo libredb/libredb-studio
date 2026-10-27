@@ -22,12 +22,13 @@
  * server name, which a control connection built here with @grpc/grpc-js directly, without the adapter's override,
  * shows, while the adapter's own connections pass on every runtime (spec E5, reconciliation D0-3).
  *
- * Spec E16: once the cases are done, no socket keeps the Node child running, and no listener whose peer never answers
- * holds a connection open, since its client closed it: not the TLS handshake, and not the HTTP/2 session waiting for
- * SETTINGS, plaintext or TLS, which grpc-js unrefs, so that `process.getActiveResourcesInfo` does not list it, and
- * which Bun lists nothing of anyway. Nor does a closed client dial again: the reset case's listener accepts nothing in
- * twice grpc-js's initial backoff after the case's close(), under either runtime, and a client closed in the turn of
- * its first call, before grpc-js's resolver has handed the IP address on, leaves the silent listener no connection.
+ * Spec E16: once the cases are done, no socket keeps the Node child of the dialled phase running, and no listener
+ * whose peer never answers holds a connection open, since its client closed it: not the TLS handshake, and not the
+ * HTTP/2 session waiting for SETTINGS, plaintext or TLS, which grpc-js unrefs, so that
+ * `process.getActiveResourcesInfo` does not list it, and which Bun lists nothing of anyway. Nor does a closed client
+ * dial again: the reset case's listener accepts nothing in twice grpc-js's initial backoff after the case's close(),
+ * under either runtime, and a client closed in the turn of its first call, before grpc-js's resolver has handed the IP
+ * address on, leaves the silent listener no connection.
  * The Node child reports on one line and lives until the parent has read the listeners, so what its close() left open
  * is still open then, and a dial its closed channel makes still reaches them.
  *
@@ -1133,12 +1134,14 @@ interface Run {
   readonly seenWhileDialled: Readonly<Record<string, number>>;
   /** `process.version` of the Node child; absent for the run under Bun. */
   readonly version?: string;
-  /** The sockets that still kept the Node child running after its cases, by resource type; absent under Bun. */
+  /** The sockets that still kept the dialled phase's Node child running after its cases, by type; absent under Bun. */
   readonly openSockets?: readonly string[];
 }
 
+type Phase = CaseDefinition["phase"];
+
 /** Runs both phases through `run`, reading every listener's count before and after each. */
-async function runPhases(run: (cases: readonly HandshakeCase[]) => Promise<HandshakeOutcome[]>) {
+async function runPhases(run: (cases: readonly HandshakeCase[], phase: Phase) => Promise<HandshakeOutcome[]>) {
   const outcomes = new Map<string, HandshakeOutcome>();
   const seen: Record<string, Record<string, number>> = {};
   for (const phase of ["undialled", "dialled"] as const) {
@@ -1147,7 +1150,7 @@ async function runPhases(run: (cases: readonly HandshakeCase[]) => Promise<Hands
       definition.make(listeners),
     );
     // oxlint-disable-next-line no-await-in-loop -- the undialled phase ends before the dialled one starts, so its counts are its own.
-    for (const outcome of await run(cases)) outcomes.set(outcome.name, outcome);
+    for (const outcome of await run(cases, phase)) outcomes.set(outcome.name, outcome);
     seen[phase] = Object.fromEntries(Object.keys(counts).map((name) => [name, counts[name] - before[name]]));
   }
   return { outcomes, seenWhileUndialled: seen.undialled, seenWhileDialled: seen.dialled };
@@ -1378,7 +1381,7 @@ describe("in a Node child, the production runtime (spec E5)", () => {
     if (!build.success) throw new Error(`Bun.build could not bundle the child: ${build.logs.join("\n")}`);
     let version: string | undefined;
     const openSockets: string[] = [];
-    const phases = await runPhases(async (cases) => {
+    const phases = await runPhases(async (cases, phase) => {
       writeFileSync(at("cases.json"), JSON.stringify(cases));
       const child = Bun.spawn([node, at("child.js"), at("cases.json")], {
         cwd: dir,
@@ -1404,7 +1407,11 @@ describe("in a Node child, the production runtime (spec E5)", () => {
       const exitCode = await child.exited;
       if (exitCode !== 0 || answer === undefined) throw new Error(`The Node child exited ${exitCode}: ${await stderr}`);
       version = answer.version;
-      openSockets.push(...answer.openSockets);
+      // Spec E16 is read from the dialled phase's child alone. The undialled phase dials nothing, which
+      // expectListeners proves, so what its child still holds is no client's of the adapter's: its four
+      // resolver-named hosts leave the system resolver's lookups in flight, which grpc-js cannot cancel and which
+      // end only when that resolver answers, long after the case where it is slow to say a name does not exist (#1511).
+      if (phase === "dialled") openSockets.push(...answer.openSockets);
       return answer.outcomes;
     });
     run = { ...phases, version, openSockets };
@@ -1419,7 +1426,7 @@ describe("in a Node child, the production runtime (spec E5)", () => {
   test("after close(), the reset case's client dials nothing within twice grpc-js's initial backoff (spec E16)", () => {
     expect(dialledAfterClose).toEqual([]);
   });
-  test("once its cases are done, no socket keeps the child running (spec E16)", () => {
+  test("once its cases are done, no socket keeps the dialled phase's child running (spec E16)", () => {
     expect(run?.openSockets).toEqual([]);
   });
   test("once its cases are done, no listener whose peer never answers holds a connection of the child's open, though the child lives (spec E16)", () => {
