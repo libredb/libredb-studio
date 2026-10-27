@@ -3677,16 +3677,14 @@ Found 2026-10-16 in the review of #1790 (issue #1614).
 
 **Done when:** the MongoDB editor path classes `MongoNetworkError`, `MongoNetworkTimeoutError` and `MongoServerSelectionError` as `ConnectionError` by class name, as `TRANSPORT_FAILURES` does, in `query()`, `runMaintenance()` and those four object methods alike, so an object route answers those three as a connection failure rather than an internal error, every other engine's classification is unchanged, and a test pins each class on `query()` and on an object route.
 
-### D367. The read-only budget refusal sentences are typed out in each provider
+### D367. MySQL's and MongoDB's deadline refusal is no prefix MCP classifies
 
-The row and byte refusals of `queryReadOnly` ("Read-only execution exceeded the row budget: N rows > M allowed", and its byte twin) are written out by hand in seven files: `postgres.ts`, `sqlite.ts`, `duckdb/index.ts`, `mssql.ts` and `mysql.ts` under `src/lib/db/providers/sql/`, `src/lib/db/providers/platform/kubernetes/console/context.ts` and `src/lib/db/providers/document/mongodb/agent-read.ts`.
-They are a parsed contract rather than prose: `otherStatementAdvice` in `src/lib/agent/tools.ts` and `rowBudgetIn` in `src/lib/agent/context-snapshot.ts` read the numbers back with one pattern, and MCP's `run_read_query` classifies a refusal by the prefixes of `READ_ONLY_REFUSALS` (`src/lib/mcp/tools/read-query-limits.ts`).
-The census that holds those prefixes to the files that write them (`RAISED_IN` in `tests/unit/mcp/read-query-limits.test.ts`) leaves out `mysql.ts`, which MCP reaches, and MySQL's deadline refusal ("exceeded the statement deadline", which MongoDB's reuses) is no prefix of `READ_ONLY_REFUSALS` at all.
-Each copy is pinned by its own provider's tests, so a reworded sentence fails there, but nothing makes the next provider write the same one.
+The row and byte refusals of `queryReadOnly` are built by `rowBudgetSentence` and `byteBudgetSentence` beside `assertReadOnlyBudget` in `src/lib/db/providers/sql/read-only-budget.ts`, which every provider with a `queryReadOnly` calls, and `tests/unit/mcp/read-query-limits.test.ts` fails when a provider file types either sentence out again.
+MySQL's deadline refusal ("Read-only execution exceeded the statement deadline", in `src/lib/db/providers/sql/mysql.ts`, which MongoDB's in `src/lib/db/providers/document/mongodb/agent-read.ts` reuses) is still no prefix of `READ_ONLY_REFUSALS` in `src/lib/mcp/tools/read-query-limits.ts`, so MCP's `run_read_query` classifies it as the timeout only when it settles at or after the call's own deadline, and as an engine error before it.
 
-Found 2026-10-16 in the review of #1790 (issue #1614), which added the MongoDB copy; the other six are older.
+Found 2026-10-16 in the review of #1790 (issue #1614).
 
-**Done when:** the sentences are built by constructors beside `assertReadOnlyBudget` in `src/lib/db/providers/sql/read-only-budget.ts`, or at a provider-neutral path it moves to, every provider that implements `queryReadOnly` uses them, `RAISED_IN` lists every provider MCP reaches, and MySQL's deadline refusal is either a `READ_ONLY_REFUSALS` prefix of kind `time` or worded with one that is.
+**Done when:** MySQL's deadline refusal is either a `READ_ONLY_REFUSALS` prefix of kind `time` or worded with one that is, and `RAISED_IN` in `tests/unit/mcp/read-query-limits.test.ts` names the files that raise it.
 
 ### D368. Agent connections on PostgreSQL, MySQL and SQL Server carry no application name
 
