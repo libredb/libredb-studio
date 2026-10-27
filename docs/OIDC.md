@@ -25,6 +25,7 @@ Browser → Redirect to app (/ or /admin based on role)
     - [Azure AD (Microsoft Entra ID)](#azure-ad-microsoft-entra-id)
     - [Zitadel](#zitadel)
     - [Google Workspace](#google-workspace)
+    - [Rancher](#rancher)
   - [Configuration Reference](#configuration-reference)
   - [Automatic redirect to the provider](#automatic-redirect-to-the-provider)
   - [Role Mapping](#role-mapping)
@@ -299,6 +300,88 @@ The difference is the realm role (`admin` or `user`), mapped through `OIDC_ROLE_
    ```
 
    > Google does not include role claims by default. Without `OIDC_ROLE_CLAIM`, all users are mapped to the `user` role.
+
+### Rancher
+
+Rancher Manager can act as the identity provider through its OIDC provider, so a user signed in to Rancher reaches Studio without a second sign-in form.
+The setup below follows Rancher's `pkg/oidc/provider` on the 2.14 and 2.15 lines, and `tests/api/auth/oidc-rancher.test.ts` runs Studio's login, callback and logout routes against a provider of that shape.
+No Studio code is specific to Rancher: it is the ordinary OIDC mode with the values below.
+
+1. **Turn on the OIDC provider** in Rancher, as an administrator: **Global Settings → Feature Flags → `oidc-provider` → Activate**.
+   It is on by default only on Rancher Prime, and it is not a dynamic flag, so Rancher restarts when it changes.
+
+2. **Create an `OIDCClient`** on Rancher's local cluster (cluster scoped, `management.cattle.io/v3`), as an administrator or a user with the global role "Manage OIDC Clients":
+   ```yaml
+   apiVersion: management.cattle.io/v3
+   kind: OIDCClient
+   metadata:
+     name: libredb-studio
+   spec:
+     description: LibreDB Studio
+     redirectURIs:
+       - https://studio.example.com/api/auth/oidc/callback
+     tokenExpirationSeconds: 300
+     scopes: [openid, profile, groups]   # 2.15; on 2.14 use [openid, profile]
+   ```
+   Rancher writes the client id to `.status.clientID` and the client secret, under the key `client-secret-1`, to the Secret named after the client id in the namespace `cattle-oidc-client-secrets`:
+   ```bash
+   CLIENT_ID=$(kubectl get oidcclient libredb-studio -o jsonpath='{.status.clientID}')
+   kubectl -n cattle-oidc-client-secrets get secret "$CLIENT_ID" -o jsonpath='{.data.client-secret-1}' | base64 -d
+   ```
+   Keep the secret out of chart values and shell history: with the chart, write it as `oidc-client-secret` into the Secret that `secrets.existingSecret` names, which then supplies every key the chart reads.
+   To rotate it, annotate the `OIDCClient` with `cattle.io/oidc-client-secret-regenerate: client-secret-1` and copy the new value.
+
+3. **Environment Variables:**
+   ```env
+   NEXT_PUBLIC_AUTH_PROVIDER=oidc
+   OIDC_ISSUER=https://rancher.example.com/oidc
+   OIDC_CLIENT_ID=client-xxxxxxxxxx
+   OIDC_CLIENT_SECRET=<client-secret-1>
+   OIDC_SCOPE=openid profile groups
+   OIDC_PROMPT=omit
+   OIDC_AUTO_REDIRECT=true
+   AUTH_SESSION_TTL_SECONDS=900
+   ```
+   - `OIDC_ISSUER` is Rancher's `server-url` followed by `/oidc`, exactly as the `iss` of its tokens.
+   - `OIDC_SCOPE` must be set: Studio's default `openid profile email` asks for `email`, which Rancher refuses with `invalid_scope` on every line, and the sign-in ends on "Authentication failed".
+     Request only scopes the client's `spec.scopes` lists, and never `offline_access`: Rancher issues a refresh token only for that scope, and Studio has no use for one.
+   - `OIDC_PROMPT=omit` and `OIDC_AUTO_REDIRECT=true` make the visit to Studio a single sign-on: Rancher answers with a code while its own session is live and shows its login page otherwise.
+     Rancher ignores `prompt`, so the default `prompt=login` would not force a new sign-in either.
+   - `AUTH_SESSION_TTL_SECONDS=900` keeps a Studio session short, because signing out of Rancher does not end it (see logout below).
+   - When Rancher's certificate comes from a private CA, Rancher's self-signed one included, give Studio that CA through `NODE_EXTRA_CA_CERTS` (the chart README's "Trusting a private CA"); Rancher serves the CA it uses at `https://rancher.example.com/cacerts`.
+
+   Scopes by Rancher line:
+
+   | Rancher line | `OIDC_SCOPE` | `groups` claim |
+   |--------------|--------------|----------------|
+   | 2.15 | `openid profile groups`, with `groups` in the client's `spec.scopes` | Sent only for the `groups` scope |
+   | 2.14 | `openid profile` | Sent without being asked for |
+   | 2.12, 2.13 | `openid profile`; any other scope is refused | Sent without being asked for |
+
+   On every line a user with no group principals, which includes every Rancher local user, gets no `groups` claim at all and signs in as a `user`.
+
+4. **Identity:** Rancher's ID token has `sub` (the Rancher user id, such as `u-abc12`), `name`, `groups` and `auth_provider`, and no `email` or `preferred_username`.
+   Studio's username is therefore the Rancher user id, which nobody can choose or edit; the display name in `name` is not used.
+   The session's subject and issuer are that `sub` and `https://rancher.example.com/oidc`.
+
+5. **Role Mapping (Optional):**
+
+   The `groups` claim holds the user's group principals as Rancher names them, such as `github_team://1234` or `keycloakoidc_group://dbas`, with `local://` stripped.
+   ```env
+   OIDC_ROLE_CLAIM=groups
+   OIDC_ADMIN_ROLES=keycloakoidc_group://libredb-admins
+   ```
+   A Studio admin holds every connection Studio has, so name a group that only the right people can join.
+   Leave `OIDC_ADMIN_ROLES` at its default only with care: `admin` would make any group principal named exactly `admin` an administrator.
+   With `OIDC_ROLE_CLAIM` unset, every Rancher user is a `user`, whatever groups they hold.
+
+6. **Logout:** Rancher's discovery document advertises no `end_session_endpoint`, so logout ends Studio's session only, and the server log notes once per logout that no provider logout URL could be built.
+   The next visit with a live Rancher session signs in again without a form, as single sign-on intends.
+   Signing out of Rancher does not end a Studio session; it lasts until `AUTH_SESSION_TTL_SECONDS` runs out.
+
+> From Rancher 2.14 the access token Rancher issues with the ID token names the user's Rancher token, and Rancher accepts it as a bearer credential, so it carries the user's full Rancher power.
+> Studio drops it: the callback keeps only the ID token, and neither the access token nor a refresh token reaches a cookie, a storage write or a log line, which `tests/api/auth/oidc-rancher.test.ts` pins.
+> Keep `tokenExpirationSeconds` short all the same, because the token exists in Studio's memory for the length of one callback request.
 
 ---
 
@@ -1384,6 +1467,7 @@ Key testing patterns:
 | `tests/unit/lib/oidc.test.ts` | ~30 | All `oidc.ts` functions |
 | `tests/api/auth/oidc-login.test.ts` | ~4 | Login route redirect, PKCE state |
 | `tests/api/auth/oidc-callback.test.ts` | ~9 | Code exchange, role mapping, errors |
+| `tests/api/auth/oidc-rancher.test.ts` | ~13 | Login, callback and logout against a Rancher-shaped provider, unmocked `oidc.ts` and openid-client |
 | `tests/api/auth/logout.test.ts` | ~8 | Local + OIDC logout modes |
 | `tests/hooks/use-auth.test.ts` | ~12 | Including OIDC redirect test |
 | `tests/components/LoginPageOIDC.test.tsx` | ~7 | SSO button, error display |
