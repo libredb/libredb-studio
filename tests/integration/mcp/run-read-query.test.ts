@@ -730,6 +730,30 @@ describe("a provider the profile seam should never hand out", () => {
     expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_execution_failed" });
   });
 
+  // Elasticsearch, OpenSearch and Cassandra refuse an offset they cannot page by throwing from prepareQuery, so the
+  // refusal is the offset rule's, recorded as such, and nothing runs (all-providers design 6.2).
+  test("whose preparation refuses an offset is answered by the offset rule, and nothing runs", async () => {
+    const queryReadOnly = mock(async () => ({ rows: [], fields: [], rowCount: 0, executionTime: 0 }));
+    const provider = {
+      getCapabilities: () => ({}),
+      queryReadOnly,
+      prepareQuery: () => {
+        throw new Error("this engine pages no SELECT with an offset");
+      },
+    };
+    const result = await direct(
+      { connection_id: "seed:fake", sql: "SELECT id FROM numbers", offset: 100 },
+      undefined,
+      fakeContext(provider as unknown as Partial<DatabaseProvider>),
+    );
+    expect(result).toEqual({
+      isError: true,
+      content: [{ type: "text", text: "This query cannot be paged with offset. Page it in SQL: LIMIT n OFFSET m." }],
+    });
+    expect(queryReadOnly).not.toHaveBeenCalled();
+    expect(mcpEvents().at(-1)).toMatchObject({ target: "mcp/execution", reason: "mcp_offset_unsupported" });
+  });
+
   test("on a connection that reaches a whole server, a call naming no database is told which to name (#1530)", async () => {
     const queryReadOnly = mock(async () => ({ rows: [], fields: [], rowCount: 0, executionTime: 0 }));
     const provider = {

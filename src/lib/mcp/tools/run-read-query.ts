@@ -65,7 +65,8 @@ import { mcpStatementEngines } from "./served-engines";
  * Rows are fetched one past the page, so the extra row proves more exist, cut to max_rows, then
  * cut to the result cap by binary search. offset on a query the provider did not rewrite is
  * refused before anything runs, because the provider would answer the first page labelled with
- * the requested offset.
+ * the requested offset; so is an offset the provider's prepareQuery refuses by throwing, as the
+ * Elasticsearch, OpenSearch and Cassandra overrides do.
  */
 
 export const RunReadQueryInputSchema = z.object({
@@ -220,10 +221,19 @@ async function execute(
     );
     return [ownWordsError(refusal), "mcp_execution_failed"];
   }
-  const prepared = provider.prepareQuery(args.sql, { limit: args.max_rows + 1, offset: args.offset });
-  if (!prepared.wasLimited && args.offset > 0) {
-    return [ownWordsError(offsetRefusalText(args.sql, connection.type)), "mcp_offset_unsupported"];
+  const offsetRefused = (): Answer => [
+    ownWordsError(offsetRefusalText(args.sql, connection.type)),
+    "mcp_offset_unsupported",
+  ];
+  let prepared: PreparedQuery;
+  try {
+    prepared = provider.prepareQuery(args.sql, { limit: args.max_rows + 1, offset: args.offset });
+  } catch (error) {
+    // An engine that cannot page with offset refuses it here; without an offset, the failure is the engine's.
+    if (args.offset > 0) return offsetRefused();
+    throw error;
   }
+  if (!prepared.wasLimited && args.offset > 0) return offsetRefused();
   const executed = await raceDeadline(
     () =>
       queryReadOnly(prepared.query, {
