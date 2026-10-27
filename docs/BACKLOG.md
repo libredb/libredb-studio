@@ -6770,6 +6770,9 @@ in the local contributor workflow could be dropped entirely.
 `LICENSE` states the project's own MIT terms, and nothing at the root of any packaged artefact says
 that not everything inside is under those terms. Two kinds of obligation sit behind that.
 
+`THIRD_PARTY_NOTICES.txt` now ships at the root of every image and payload, but it is narrower than this entry: it carries the db2-node crate notices (#1238) and elkjs's EPL-2.0 text and source location (#1292), and nothing else.
+The two obligations below are still open, and the generated file this entry asks for can take over that one or extend it.
+
 **Routine attribution.** A scan of the installed tree (1169 distinct packages) puts 1136 under MIT,
 Apache-2.0, ISC or BSD, all of which want the copyright notice to travel with redistributed copies.
 Two carry attribution as their whole purpose: `caniuse-lite` is CC-BY-4.0 and the `geist` font is

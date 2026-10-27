@@ -8,10 +8,13 @@ Two direct production dependencies carry terms beyond the MIT notice their packa
 | [`elkjs`](https://github.com/kieler/elkjs) | [EPL-2.0](https://www.eclipse.org/legal/epl-2.0/) (offered as `EPL-2.0 OR GPL-3.0-or-later`; this project takes it under EPL-2.0) | `src/components/schema-diagram/elk.worker.ts`, unmodified, for the schema diagram's layered orthogonal layout |
 | [`db2-node`](https://github.com/gurungabit/db2-node) | MIT for the package; its prebuilt `.node` addons statically link 62 Rust crates under MIT, Apache-2.0, ISC, BSD-3-Clause and ICU terms, among them `rustls` (Apache-2.0 OR ISC OR MIT), `rustls-webpki` (ISC), `ring` (Apache-2.0 AND ISC), `untrusted` (ISC), `subtle` (BSD-3-Clause), `dec` (Apache-2.0) and `decnumber-sys` (ICU) | the Db2 provider, loaded at runtime as `node_modules/db2-node/db2-node.<platform>.node` |
 
-EPL-2.0 is a file-level reciprocal license with a patent-retaliation clause. elkjs is used
-unmodified. Its license text ships with the package at `node_modules/elkjs/LICENSE.md`; the source
-is at the repository linked above. The distributed bundle is therefore MIT plus EPL-2.0, not pure
-MIT.
+EPL-2.0 is a file-level reciprocal license with a patent-retaliation clause.
+elkjs is used unmodified, and the distributed bundle is therefore MIT plus EPL-2.0, not pure MIT.
+The Next.js build bundles `lib/elk-api.js`, `lib/elk-worker.min.js` and `lib/elk.bundled.js` into the web client's chunks, and upstream's files carry no license header, so nothing inside the chunks names EPL-2.0.
+The EPL-2.0 text and the source location therefore travel at the end of [`THIRD_PARTY_NOTICES.txt`](../THIRD_PARTY_NOTICES.txt), which every image and payload carries at its root (see the db2-node paragraph below), with the source pointed at the upstream tag of the installed version and at the Eclipse Layout Kernel it is transpiled from.
+`scripts/generate-elkjs-notice.mjs` writes that section from `node_modules/elkjs`, `scripts/generate-db2-node-notices.sh` runs it last so a full regeneration keeps it, and `tests/unit/elkjs-notice.test.ts` fails when the committed section no longer matches the installed package (#1292).
+The published `@libredb/studio` package lists elkjs as a regular dependency and leaves it out of its bundle (`tsup.config.ts`), so npm installs it beside the package with its own `LICENSE.md`.
+The decision to keep elkjs rather than replace the schema diagram's layout engine is recorded on #1292.
 
 The db2-node npm tarball ships no LICENSE file and no notices for the crates compiled into its addons, so those notices travel in [`THIRD_PARTY_NOTICES.txt`](../THIRD_PARTY_NOTICES.txt) at the repository root.
 Every Docker image copies it into `/app`, and the standalone payload carries it at its root, so every tarball, package and desktop bundle built from the payload carries it too.
