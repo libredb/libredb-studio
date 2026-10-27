@@ -65,8 +65,8 @@ function nmdaSubtreeFilter(filter: SubtreeFilter): string {
  * The node chain itself, without the element that carries it.
  *
  * Every element name written here is held to the YANG identifier grammar again, whoever built the
- * node: the path parsers refuse a bad segment first, and key names arrive from module text the
- * device served. Key values are element bodies and are escaped instead.
+ * node: the path parsers refuse a bad segment first. Key names come from `PathNode.keyNames` when a
+ * caller sets one and default to `name`. Key values are element bodies and are escaped instead.
  */
 function filterBody(filter: SubtreeFilter): string {
   const build = (index: number): string => {

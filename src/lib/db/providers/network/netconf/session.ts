@@ -314,7 +314,8 @@ export class NetconfSession {
       return Promise.reject(new NetconfSessionError({ reason: "internal", detail: "a request is already in flight" }));
     }
     const messageId = this.nextId++;
-    const text = buildRpc(request, messageId);
+    // Framed before the request counts as in flight, so a body framing refuses leaves no state set.
+    const framed = frame(buildRpc(request, messageId), this.framing);
     return new Promise<string>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending = null;
@@ -323,7 +324,7 @@ export class NetconfSession {
         );
       }, this.limits.requestMs);
       this.pending = { messageId, resolve, reject, timer };
-      this.transport.write(frame(text, this.framing));
+      this.transport.write(framed);
     });
   }
 
