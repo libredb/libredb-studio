@@ -1441,9 +1441,10 @@ export function executionContextFor(
  *   credentials, still on a read-only statement path under a declared
  *   boundary: the engine's own read-only session, or on Kubernetes Studio's
  *   request allowlist with the connection token's RBAC);
- * - only one field present → deny, unless the engine declares
- *   `agentCredential: "token"` and the field is `agentPassword`: that engine
- *   takes the agent's bearer token alone, and refuses an `agentUser` beside it.
+ * - only one field present → deny, unless the engine declares a secret-only
+ *   form, `agentCredential: "token"` or `"service-account-key"`, and the field
+ *   is `agentPassword`: that engine takes the agent's bearer token or
+ *   service-account key alone, and refuses an `agentUser` beside it.
  *   A half-configured credential must not silently degrade to the more
  *   privileged default. The form is the provider's declaration, so it is
  *   decided by `assertAgentCredentialForm` once the provider is built and
@@ -1495,14 +1496,21 @@ function assertAgentCredentialForm(
     );
   }
   const secretOnly = form === "token" || form === "service-account-key";
-  if (secretOnly && agentUser !== undefined) {
+  if (secretOnly) {
     const secret = form === "token" ? "token" : "service-account key";
-    throw new ExecutionProfileError(
-      `Connection "${connection.id}" configures an agent user, and this engine takes the agent's ${secret} alone: clear the agent user`,
-      "AGENT_CREDENTIAL_UNRESOLVABLE",
-    );
-  }
-  if (!agentPassword || (!secretOnly && !agentUser)) {
+    if (agentUser !== undefined) {
+      throw new ExecutionProfileError(
+        `Connection "${connection.id}" configures an agent user, and this engine takes the agent's ${secret} alone: clear the agent user`,
+        "AGENT_CREDENTIAL_UNRESOLVABLE",
+      );
+    }
+    if (!agentPassword) {
+      throw new ExecutionProfileError(
+        `Connection "${connection.id}" configures an incomplete agent credential: this engine takes the agent's ${secret} alone, and it is empty`,
+        "AGENT_CREDENTIAL_UNRESOLVABLE",
+      );
+    }
+  } else if (!agentPassword || !agentUser) {
     throw new ExecutionProfileError(
       `Connection "${connection.id}" configures an incomplete agent credential (user and password are both required)`,
       "AGENT_CREDENTIAL_UNRESOLVABLE",

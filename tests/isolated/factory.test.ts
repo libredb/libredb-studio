@@ -59,6 +59,7 @@ import { supportsQueryCancel } from "@/lib/db/query-cancel";
 import { MACHINE_PROFILE_SENTENCE } from "@/lib/db/providers/platform/kubernetes/machine-read";
 import { removeOwnerProviders } from "@/lib/db/owner-removal";
 import { logger } from "@/lib/logger";
+import { encryptSecret } from "@/lib/storage/encryption";
 import type { SSHTunnelConfig } from "@/lib/types";
 
 // The SQLite agent-profile tests below construct the read-only profile for its
@@ -2984,6 +2985,58 @@ describe("acquireExecutionProfileProvider", () => {
       }
     });
 
+    test("a service-account-key engine opens a sealed agent key before it reads the key's type", async () => {
+      // Stored connections hold agentPassword sealed, so the key check must read the opened secret, never the field.
+      const agentKey = SERVICE_ACCOUNT_KEY.replace("agent@", "reader@");
+      const conn = bigqueryConn({ agentPassword: encryptSecret(agentKey) });
+      const connect = await connectStubbed(conn);
+      try {
+        const agent = await acquireExecutionProfileProvider(conn, "agent-operations");
+
+        expect(agent.config.password).toBe(agentKey);
+        expect(connect).toHaveBeenCalledTimes(1);
+      } finally {
+        connect.mockRestore();
+      }
+    });
+
+    test("a service-account-key engine refuses a sealed agent secret that opens to something other than a key", async () => {
+      const conn = bigqueryConn({ agentPassword: encryptSecret("ya29.not-a-real-access-token") });
+      const connect = await connectStubbed(conn);
+      try {
+        const error = await refusal(conn);
+
+        expect(error.reasonCode).toBe("AGENT_CREDENTIAL_UNRESOLVABLE");
+        expect(error.message).toContain("is not a service-account key");
+        expect(connect).not.toHaveBeenCalled();
+      } finally {
+        connect.mockRestore();
+      }
+    });
+
+    test.each([
+      ["a service-account-key engine", "service-account key", () => bigqueryConn({ agentPassword: "" })],
+      [
+        "a token engine",
+        "token",
+        () => makeConnection("weaviate", { id: "weaviate-agent", user: undefined, port: 6333, agentPassword: "" }),
+      ],
+    ] as const)("%s refuses an empty agent secret by naming the %s it takes", async (_label, secret, make) => {
+      const conn = make();
+      const connect = await connectStubbed(conn);
+      try {
+        const error = await refusal(conn);
+
+        expect(error.reasonCode).toBe("AGENT_CREDENTIAL_UNRESOLVABLE");
+        expect(error.message).toBe(
+          `Connection "${conn.id}" configures an incomplete agent credential: this engine takes the agent's ${secret} alone, and it is empty`,
+        );
+        expect(connect).not.toHaveBeenCalled();
+      } finally {
+        connect.mockRestore();
+      }
+    });
+
     test("a service-account-key engine refuses an agent user beside the key before it connects", async () => {
       const conn = bigqueryConn({ agentUser: "agent", agentPassword: SERVICE_ACCOUNT_KEY });
       const connect = await connectStubbed(conn);
@@ -4348,10 +4401,11 @@ describe("grounding a plan run while the writable provider holds the file (B49)"
   });
 
   test("the same run without the reuse is ungrounded, and nothing about it looks like a failure", async () => {
-    // The control arm, and the pre-fix behaviour exactly. An agent credential opts the
-    // acquisition out of borrowing (it cannot substitute one principal for another), so
-    // this run opens its own handle, hits the lock, and the `ConnectionError` becomes an
-    // unavailable capture instead of an error anyone sees.
+    // The control arm. An agent credential opts the acquisition out of borrowing (it
+    // cannot substitute one principal for another), and libredb declares the "none" agent
+    // credential form, so the credential is refused before a second handle opens the file:
+    // the refusal becomes an unavailable capture instead of an error anyone sees. Before
+    // PR 0.7 this run opened its own handle and hit the lock, which mapped to the same code.
     const connection = seededConn({ agentUser: "agent_ro", agentPassword: "secret" });
     const writable = await getOrCreateProvider(connection);
 
@@ -4360,6 +4414,7 @@ describe("grounding a plan run while the writable provider holds the file (B49)"
     expect(capture.kind).toBe("unavailable");
     if (capture.kind !== "unavailable") throw new Error("unreachable");
     expect(capture.reasonCode).toBe("CATALOG_READ_REFUSED");
+    expect(capture.detail).toContain("configures an agent credential that could not be resolved");
   });
 });
 
