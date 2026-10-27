@@ -546,6 +546,7 @@ At the first load in literal mode, one `info` line says so: `Seed config read in
 `true`, `1`, `on` and `yes` turn the mode on, trimmed and in any case.
 `false`, `0`, `off`, `no` and an empty value leave it off.
 Any other value leaves it off as well and logs one warning per process that names the value, so a typo shows in the log instead of passing silently.
+The Helm chart writes `SEED_LITERAL_VALUES=true` from `config.seedLiteralValues: true`.
 
 The mode exists for a seed file that a platform writes from data its users control, such as the database names, user names and passwords they choose when they create a database.
 Resolving a reference in such a file would hand Studio's own environment to whoever controls the field.
@@ -749,6 +750,7 @@ It is on when unset.
 One pair of matching surrounding quotes, single or double, is stripped first, since an env file can keep them, so `"false"` switches it off.
 Any other value fails closed: it switches custom connections off and logs one error naming the value and the accepted values, so a typo never leaves them open.
 In [governance mode](#governance-mode) custom connections are off whatever the variable says.
+The Helm chart writes the variable from `config.allowCustomConnections`: unset writes nothing, and `false` or `true` writes that value.
 
 Switch it off where Studio shares a network with services its users must not reach, such as a platform's overlay network or a cluster namespace: with custom connections on, any account that can sign in can connect to any host and port that network reaches.
 The switch limits the connections Studio itself opens, not what a seeded engine can reach on its own, for example through Postgres `dblink` or `postgres_fdw`, ClickHouse `remote()` or `url()`, MySQL `FEDERATED` tables or the brokers a Kafka cluster advertises, so grant a seed's account only what its users may reach from that engine.
@@ -907,6 +909,19 @@ extraEnvFrom:
   - secretRef:
       name: seed-db-credentials
 ```
+
+**Option C: External Secret**, for a seed file that holds its passwords as written, such as one a platform writes with `SEED_LITERAL_VALUES` on:
+
+```yaml
+seedConnections:
+  enabled: true
+  existingSecret: "my-seed-connections"  # Pre-created Secret, mounted read-only at /app/config
+  configMapKey: "connections.yaml"       # Key within the Secret
+config:
+  seedLiteralValues: true                # SEED_LITERAL_VALUES=true
+```
+
+Set one source only: the render fails when `existingSecret` is set beside `config` or `existingConfigMap`.
 
 ---
 

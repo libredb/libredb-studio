@@ -389,6 +389,7 @@ the chart values.
 The one value the spec does not mirror is `extraObjects`, which the CRD refuses with a CEL rule (#1526).
 The operator applies the release with its own cluster-wide service account, so a manifest listed there would be created with the operator's permissions instead of those of whoever wrote the resource, and the editor role is meant to grant no RBAC.
 Plain Helm applies a release with the installer's own credentials, and Argo CD within the limits of its AppProject, so the chart offers the value there.
+The chart's Rancher mode is not offered through the operator either: the operator's role grants no `ui.cattle.io` `NavLink`, so a resource with `rancher.navLink.enabled` fails to reconcile on a cluster Rancher manages, and Rancher installs go through Helm or Rancher's Apps page.
 
 Publishing works in two stages:
 

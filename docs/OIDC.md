@@ -332,7 +332,7 @@ No Studio code is specific to Rancher: it is the ordinary OIDC mode with the val
    kubectl -n cattle-oidc-client-secrets get secret "$CLIENT_ID" -o jsonpath='{.data.client-secret-1}' | base64 -d
    ```
    Reading the secret takes a Rancher administrator: the global role "Manage OIDC Clients" covers `OIDCClient` resources only, not Secrets, and Rancher's dashboard shows the secret only to users who can read Secrets.
-   Keep the secret out of chart values and shell history: with the chart, write it as `oidc-client-secret` into the Secret that `secrets.existingSecret` names, which then supplies every key the chart reads.
+   Keep the secret out of chart values and shell history: with the chart, write the client id and secret as `oidc-client-id` and `oidc-client-secret` into a Secret of their own and name it in `secrets.oidcExistingSecret`, which sources those two values only, so the JWT secret and the admin password stay where they were.
    To rotate it without a failed sign-in, add a second secret, move Studio to it, then remove the first; Rancher accepts any secret the client's Secret holds:
    ```bash
    kubectl annotate oidcclient libredb-studio cattle.io/oidc-client-secret-create=true

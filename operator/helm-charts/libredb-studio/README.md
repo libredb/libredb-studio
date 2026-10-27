@@ -195,7 +195,8 @@ The optional single sign-on settings have typed values, each written only when s
 ### Rancher Manager as the identity provider
 
 Rancher's OIDC provider signs Studio users in with their Rancher identity once an administrator turns on the `oidc-provider` feature flag and creates an `OIDCClient` for Studio ([docs/OIDC.md](https://github.com/libredb/libredb-studio/blob/main/docs/OIDC.md#rancher) has the manifest and the scope each Rancher line accepts).
-Write the client id and secret Rancher generates into the Secret that `secrets.existingSecret` names, as `oidc-client-id` and `oidc-client-secret`, beside the other keys the chart reads from it:
+Write the client id and secret Rancher generates into a Secret of their own, as `oidc-client-id` and `oidc-client-secret`, and name it in `secrets.oidcExistingSecret`.
+That value sources `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET` only, so the JWT secret and the admin password stay with the chart's own Secret or the zero-config bootstrap, and the pod does not start until the Secret holds both keys:
 
 ```yaml
 authProvider: oidc
@@ -206,13 +207,48 @@ config:
   oidcAutoRedirect: true
   sessionTtlSeconds: 900
 secrets:
-  existingSecret: libredb-studio
+  oidcExistingSecret: libredb-studio-oidc
 ```
 
 `config.oidcScope` must be set, because Rancher refuses the default's `email` scope.
 The username is the Rancher user id, such as `u-abc12`, and every user is a `user` until `config.oidcRoleClaim: groups` and `config.oidcAdminRoles` name an admin group principal.
 Logout ends Studio's session only, since Rancher has no end-session endpoint.
 When Rancher's certificate comes from a private CA, Studio needs it through `NODE_EXTRA_CA_CERTS`, as [Trusting a private CA](#trusting-a-private-ca) shows.
+`secrets.oidcExistingSecret` needs `authProvider=oidc`, and the render fails when `secrets.existingSecret`, `secrets.oidcClientId` or `secrets.oidcClientSecret` is set beside it.
+
+### Rancher mode values
+
+A default install sets none of these values; an install inside Rancher Manager sets them alongside the identity provider above:
+
+```yaml
+config:
+  allowCustomConnections: false   # ALLOW_CUSTOM_CONNECTIONS: seed connections only
+  seedLiteralValues: true         # SEED_LITERAL_VALUES: no ${ENV} or ${vault:...} in seeds
+seedConnections:
+  enabled: true
+  existingSecret: libredb-studio-seeds   # the seed file from a Secret, under configMapKey
+rancher:
+  navLink:
+    enabled: true
+    label: LibreDB Studio
+    group: Databases
+    target: _blank
+ingress:
+  enabled: true
+  hosts:
+    - host: studio.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+```
+
+`config.allowCustomConnections` is three-state like `config.authCookieSecure`: unset writes nothing and the app keeps custom connections on, and `false` keeps every user to the seed connections, which is the setting for a Studio that shares a cluster network with services its users must not reach ([docs/SEED_CONNECTIONS.md](https://github.com/libredb/libredb-studio/blob/main/docs/SEED_CONNECTIONS.md#custom-connections)).
+`seedConnections.existingSecret` mounts the seed file from a Secret instead of a ConfigMap, for a seed file that holds passwords; set exactly one of `seedConnections.config`, `seedConnections.existingConfigMap` and `seedConnections.existingSecret`.
+`rancher.navLink.enabled` renders a `ui.cattle.io/v1` `NavLink` to `https://<first ingress host><config.basePath>` in the cluster's navigation, only where the cluster serves that API; elsewhere nothing is rendered and the install notes say so.
+The link is always https, so serve TLS for that host, through `ingress.tls` or in front of the ingress.
+A `NavLink` is cluster-scoped, so installing it needs a cluster owner, and its name is the release namespace followed by the release's full name.
+The render fails when the link is on without `ingress.enabled` and a first host.
+Rancher mode is not offered through the OLM operator: its role grants no `NavLink`, so set these values with Helm or Rancher's Apps page.
 
 ## Governance
 
@@ -246,7 +282,7 @@ The readiness probe moves to `/api/ready`, which answers 503 until the first sna
 The instance id that Studio reports in its heartbeat (`GOVERNANCE_INSTANCE_ID`) is `governance.instanceId`, or the chart's fullname when it is empty, so a rollout updates the same heartbeat row.
 With more than one replica every pod reports its own name instead, and a set `governance.instanceId` fails the render.
 
-The render fails, naming the value to fix, for every combination Studio would refuse to start with: `authProvider` other than `oidc`, an empty `config.oidcRoleClaim`, `config.oidcUserRoles` or `config.storagePostgresSchema`, a governance URL or keyring with neither an inline value nor `secrets.existingSecret`, `seedConnections.enabled`, `mcp.enabled` or `agent.enabled=true`, a set `secrets.adminPassword` or `secrets.userPassword`, or an `extraEnv` entry named `GOVERNANCE_*`.
+The render fails, naming the value to fix, for every combination Studio would refuse to start with: `authProvider` other than `oidc`, an empty `config.oidcRoleClaim`, `config.oidcUserRoles` or `config.storagePostgresSchema`, a governance URL or keyring with neither an inline value nor `secrets.existingSecret`, `seedConnections.enabled`, `config.allowCustomConnections=true`, `mcp.enabled` or `agent.enabled=true`, a set `secrets.adminPassword` or `secrets.userPassword`, or an `extraEnv` entry named `GOVERNANCE_*`.
 Under governance the chart also writes no `ADMIN_PASSWORD`, `USER_EMAIL` or `USER_PASSWORD` from `secrets.existingSecret`.
 More than one replica, or `autoscaling.enabled`, renders only with `stickySessions.enabled=true`, which records that cookie affinity is configured at the ingress, because Studio keeps transactions, rate limits and per-user providers in process memory.
 The chart renders no affinity annotation itself.
