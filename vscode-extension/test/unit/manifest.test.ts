@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { CONNECTION_FORM } from "@/lib/db/connection-form";
+import { CONNECTION_FORM, CONNECTION_PICKER_ORDER } from "@/lib/db/connection-form";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { ICON_OUTPUT } from "../../scripts/marketplace-icon.mjs";
-import { ENABLED_PROVIDERS } from "../../src/host/channel";
+import { ENABLED_PROVIDERS, HELD_BACK } from "../../src/host/channel";
 import { CONNECTIONS_VIEW, RESULTS_CONTAINER, RESULTS_VIEW, VIEW_CONTAINER } from "../../src/host/names";
 import { FLOOR_NODE, STABLE_RUNTIME } from "../vscode-floor";
 
@@ -150,15 +150,23 @@ describe("the manifest", () => {
     assert.ok(existsSync(join(root, "media", "libredb.svg")));
   });
 
-  it("describes itself on the Marketplace card by the four engines it ships, in category Other", () => {
-    const labels = ENABLED_PROVIDERS.map((type) => CONNECTION_FORM[type].label);
-    assert.deepEqual(labels, ["PostgreSQL", "SQL Server", "MySQL", "MongoDB"]);
+  it("describes itself on the Marketplace card by engines it ships and no engine it holds back, in category Other", () => {
     assert.equal(
       manifest.description,
-      "Browse and query PostgreSQL, SQL Server, MySQL and MongoDB databases with LibreDB Studio.",
+      "Browse and query PostgreSQL, MySQL, SQL Server, MongoDB, Redis, ClickHouse, Elasticsearch, Kafka and many more databases with LibreDB Studio.",
     );
+    for (const type of Object.keys(HELD_BACK)) {
+      const label = CONNECTION_FORM[type as keyof typeof HELD_BACK].label;
+      assert.ok(!manifest.description.includes(label), label);
+    }
     assert.deepEqual(manifest.categories, ["Other"]);
-    assert.deepEqual(manifest.keywords, [...labels, "SQL"]);
+  });
+
+  it("lists the first 29 enabled engines' labels in picker order as keywords, then SQL: the Marketplace takes at most 30", () => {
+    const labels = CONNECTION_PICKER_ORDER.filter((type) => ENABLED_PROVIDERS.includes(type)).map(
+      (type) => CONNECTION_FORM[type].label,
+    );
+    assert.deepEqual(manifest.keywords, [...labels.slice(0, 29), "SQL"]);
   });
 
   it("names the 128x128 Marketplace icon the build writes, and lets it into the VSIX", () => {

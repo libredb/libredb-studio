@@ -66,7 +66,7 @@ A bundle that crosses its boundary fails the build.
 | Bundle | Entry | Runs in | What it holds | Boundary check |
 |--------|-------|---------|---------------|----------------|
 | `dist/extension.js` | `src/host/extension.ts` | VS Code's extension host (Node, CJS) | The host side: commands, tree, editors, connection store, supervisor, JSON-RPC client, Results view provider | `hostViolations`: `vscode` and Node builtins are the only externals, `vscode-jsonrpc` is the only package, and no provider, provider factory, component, `src/lib/sql`, `src/lib/editor`, query generator, `src/lib/db-ui-config.ts`, storage encryption, `connection-secrets.ts` or `auth-env.ts` |
-| `dist/backend.js` | `src/backend/main.ts` | The forked child (Node, CJS) | The JSON-RPC handlers, Studio's provider factory and providers, and the bundled drivers | `childViolations`: no `vscode`, `next`, React, Monaco, component, governance start or query-events sink; externals only from `CHILD_EXTERNALS` and `OPTIONAL_REQUIRES` |
+| `dist/backend.js` | `src/backend/main.ts` | The forked child (Node, CJS) | The JSON-RPC handlers, Studio's provider factory and providers, and the bundled drivers | `childViolations`: no `vscode`, `next`, React, Monaco, component, governance start or query-events sink; externals only from `CHILD_EXTERNALS` and `OPTIONAL_REQUIRES`; the build gives the CJS child an `import.meta.url` of its own file (`CHILD_IMPORT_META`), fails on any `import.meta` left empty, and aliases `@platformatic/wasm-utils` to its inline-wasm entry (`CHILD_ALIASES`) |
 | `dist/webview/results.js` | `src/webview/main.tsx` | The Results webview (browser, IIFE) | React, Studio's `ResultsGrid` and the small UI pieces it uses, the view's store and reducer | `webviewViolations` and `webviewOutputViolations`: nothing external, never `next`, Monaco, `sonner` or a driver, one copy each of `react`, `react-dom` and `get-nonce`, no host or backend code, one IIFE script with no `eval` or `new Function` |
 
 The same build also writes `dist/webview/results.css` with the Tailwind CLI from `src/webview/results.css` (checked by `stylesheetViolations`), renders the tree's engine logos into `media/engines/` from `DB_UI_CONFIG` through `scripts/engine-icons.tsx`, writes the Marketplace icon, copies the root `LICENSE`, and writes `THIRD_PARTY_NOTICES.txt` from the three metafiles.
@@ -369,7 +369,9 @@ Select Rows asks the child for `objects/selectStatement`, which writes the state
 - **No dangerous-query confirmation.** The web editor's safety check in `src/hooks/use-query-execution.ts` has no counterpart; `query/run` sends the target as written, held only to `checkEditorQuery`'s page bounds and console text bound.
 - **No query events or governance.** The child bundle refuses `src/lib/governance/start.ts` and `src/lib/query-events/sink.ts`, and `query/run` runs no admission gate.
 - **Masking starts off.** The view's saved state starts with `maskingEnabled: false` (`INITIAL_VIEW_STATE`); the person can switch it on and reveal values, since `EXTENSION_MASKING_CONFIG` gives the `user` role both rights.
-- **Four engines.** `ENABLED_PROVIDERS` in `src/host/channel.ts` is `postgres`, `mssql`, `mysql` and `mongodb`; the catalogue and the factory both follow it.
+- **Some engines are held back.** `ENABLED_PROVIDERS` in `src/host/channel.ts` is every engine of `EXTERNAL_DATABASE_TYPES` except the ones `HELD_BACK` lists with a reason; the catalogue and the factory both follow it.
+  The ones held back need a native module the VSIX does not ship, or a fix before they run under VS Code's binary.
+- **No certificates or SSH tunnels.** Add Connection offers an SSL mode but no CA, client certificate or SSH tunnel field.
 - **One target per run.** Run sends what the run target rule picks, and results show the first result set, with `resultSetCount` reporting how many there were.
 
 ## 9. Where to start reading

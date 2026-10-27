@@ -109,9 +109,9 @@ export const REGISTRIES: readonly Listed[] = [
   },
   {
     path: "vscode-extension/src/host/channel.ts",
-    declaration: "ENABLED_PROVIDERS",
+    declaration: "HELD_BACK",
     count: 1,
-    reason: "the VS Code channel's provider allowlist, a policy default, not engine behaviour",
+    reason: "the engines the VS Code channel holds back, a policy default, not engine behaviour",
   },
 ];
 

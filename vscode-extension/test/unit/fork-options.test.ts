@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { ENABLED_PROVIDERS } from "../../src/host/channel";
 import { backendForkOptions } from "../../src/host/fork-options";
 
 describe("backendForkOptions", () => {
@@ -12,14 +13,15 @@ describe("backendForkOptions", () => {
     assert.equal(options.windowsHide, true);
   });
 
-  it("hands the child this process's environment, Node mode, production and the four enabled providers", () => {
+  it("hands the child this process's environment, Node mode, production and the enabled providers", () => {
     const { env } = backendForkOptions("/ext");
     assert.ok(env);
     assert.equal(env.PATH, process.env.PATH);
     assert.equal(env.ELECTRON_RUN_AS_NODE, "1");
     assert.equal(env.ELECTRON_NO_ASAR, "1");
     assert.equal(env.NODE_ENV, "production");
-    assert.equal(env.LIBREDB_ENABLED_PROVIDERS, "postgres,mssql,mysql,mongodb");
+    assert.equal(env.LIBREDB_ENABLED_PROVIDERS, ENABLED_PROVIDERS.join(","));
+    assert.ok(!env.LIBREDB_ENABLED_PROVIDERS.split(",").includes("sqlite"));
   });
 
   it("uses the execPath it is given", () => {

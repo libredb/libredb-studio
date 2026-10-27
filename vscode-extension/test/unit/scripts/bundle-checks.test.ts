@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import {
   assertNoViolations,
+  CHILD_ALIASES,
+  CHILD_IMPORT_META,
   childViolations,
   hostViolations,
   inputPackage,
@@ -158,6 +160,12 @@ describe("childViolations", () => {
       "node_modules/ssh2/",
     ],
     ["an external on neither CHILD_EXTERNALS nor OPTIONAL_REQUIRES", [], ["better-sqlite3"], "better-sqlite3"],
+    [
+      "the wasm-utils entry that reads its .wasm by import.meta.url",
+      ["../node_modules/@platformatic/wasm-utils/dist/index.js"],
+      [],
+      "node_modules/@platformatic/wasm-utils/dist/index.js",
+    ],
   ];
   for (const [label, inputs, externals, prefix] of cases) {
     it(`refuses ${label}`, () => {
@@ -166,6 +174,21 @@ describe("childViolations", () => {
       assert.ok(violations[0].startsWith(prefix), violations[0]);
     });
   }
+
+  it("gives the CJS child an import.meta.url and filename of its own file, and fails the build on any other empty import.meta", () => {
+    assert.deepEqual(CHILD_IMPORT_META.inject, ["scripts/child-import-meta.mjs"]);
+    assert.deepEqual(CHILD_IMPORT_META.define, {
+      "import.meta.url": "libredbImportMetaUrl",
+      "import.meta.filename": "__filename",
+    });
+    assert.deepEqual(CHILD_IMPORT_META.logOverride, { "empty-import-meta": "error" });
+  });
+
+  it("keeps the wasm-utils entry that carries its .wasm inline, which CHILD_ALIASES points the Kafka driver at", () => {
+    assert.deepEqual(CHILD_ALIASES, { "@platformatic/wasm-utils": "@platformatic/wasm-utils/bundled" });
+    const clean = metafile(["src/backend/main.ts", "../node_modules/@platformatic/wasm-utils/dist/bundled.js"]);
+    assert.deepEqual(childViolations(clean, wd), []);
+  });
 
   it("keeps a child of the factory, a driver, Node built-ins and the listed externals", () => {
     const clean = metafile(

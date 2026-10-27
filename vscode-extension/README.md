@@ -1,6 +1,6 @@
 # LibreDB Studio for VS Code
 
-LibreDB Studio for VS Code browses and queries PostgreSQL, SQL Server, MySQL and MongoDB databases from the editor.
+LibreDB Studio for VS Code browses and queries databases, search engines, message brokers, object stores and industrial devices from the editor.
 It needs no account and no login.
 It requires VS Code 1.123 or later.
 
@@ -10,12 +10,22 @@ It requires VS Code 1.123 or later.
 
 ![Add Connection asking for the database engine](https://raw.githubusercontent.com/libredb/libredb-studio/main/vscode-extension/media/screenshots/add-connection.png)
 
+## Engines
+
+- Relational and analytical: PostgreSQL, MySQL, SQL Server, ClickHouse, Apache Druid, Trino, libSQL, Databend, BigQuery, Snowflake, Apache Spark.
+- Document, key-value and wide-column: MongoDB, Couchbase, Firestore, Redis, etcd, Oxia, Apache Cassandra.
+- Search and vector: Elasticsearch, OpenSearch, Milvus, Qdrant, Weaviate.
+- Graph and time series: Neo4j, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL).
+- Streams and messaging: Apache Kafka, RabbitMQ, MQTT.
+- Storage and platforms: S3-compatible object storage, Kubernetes.
+- Industrial and network: OPC UA, Sparkplug B, MTConnect, Modbus, SNMP, NETCONF.
+
 ## Getting started
 
 1. Select the LibreDB icon in the Activity Bar.
 2. In the empty **Connections** view, select **Add Connection**.
 3. Choose the database engine, then paste a connection string or enter the connection details one at a time (the gear button titled SSL and optional fields opens a review of every field), test the connection and give it a name.
-4. Expand the connection to its databases, schemas, tables and views, and a table to its columns.
+4. Expand the connection to its objects, such as databases, schemas and tables, and a table to its columns.
 5. Select **Select Rows** on a table or a view, or **New Query** on a connection, and run the editor's statement with **Run Query** in the editor title.
 6. The results open in the **LibreDB Results** view in the Panel, with the row count and the time the statement took.
 
@@ -30,7 +40,7 @@ Rows live only in the window's memory, so reloading the window empties the view.
 
 **Run Query** sends the selected text, or the statement at the cursor when nothing is selected.
 There is no confirmation before a statement runs, including one that changes data.
-**Cancel Query** stops a running statement on PostgreSQL, SQL Server and MySQL.
+**Cancel Query** stops a running statement on an engine that can cancel one, such as PostgreSQL, SQL Server and MySQL.
 A MongoDB command cannot be cancelled once it is sent.
 
 ## Keyboard shortcut
@@ -62,7 +72,8 @@ In Restricted Mode, every connection opens with external file access denied.
 - Exporting results.
 - Cancelling a MongoDB command, and loading more rows of a MongoDB result.
 - Editor bindings that survive a window reload: after a reload, **Change Connection** binds the editor again.
-- Engines beyond PostgreSQL, SQL Server, MySQL and MongoDB.
+- SSL client certificates, a custom certificate authority and SSH tunnels.
+- Engines not listed above.
 
 ## How it works
 

@@ -10,7 +10,9 @@ import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
 import {
   assertNoViolations,
+  CHILD_ALIASES,
   CHILD_EXTERNALS,
+  CHILD_IMPORT_META,
   childViolations,
   hostViolations,
   webviewOutputViolations,
@@ -61,7 +63,15 @@ const bundles = [
   },
   {
     label: "child",
-    options: { entryPoints: ["src/backend/main.ts"], outfile: "dist/backend.js", external: CHILD_EXTERNALS },
+    options: {
+      entryPoints: ["src/backend/main.ts"],
+      outfile: "dist/backend.js",
+      external: CHILD_EXTERNALS,
+      alias: CHILD_ALIASES,
+      inject: CHILD_IMPORT_META.inject,
+      define: CHILD_IMPORT_META.define,
+      logOverride: CHILD_IMPORT_META.logOverride,
+    },
     metafilePath: "dist/backend.meta.json",
     violations: childViolations,
   },

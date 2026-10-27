@@ -17,6 +17,24 @@ export const CHILD_EXTERNALS = [
 ];
 
 /**
+ * Imports the child resolves to another entry of the same package (esbuild's alias). @platformatic/wasm-utils, which
+ * the Kafka driver imports, reads its native.wasm through new URL(..., import.meta.url), and a CJS bundle has no
+ * import.meta.url; its ./bundled entry carries the same module inline.
+ */
+export const CHILD_ALIASES = { "@platformatic/wasm-utils": "@platformatic/wasm-utils/bundled" };
+
+/**
+ * The child is CJS, where esbuild leaves import.meta empty, so a driver's createRequire(import.meta.url) throws at load
+ * (the Kafka driver's schema registry module does). The injected module and the define give import.meta.url and
+ * filename the child's own file, and the override turns any import.meta still left empty into a build error.
+ */
+export const CHILD_IMPORT_META = {
+  inject: ["scripts/child-import-meta.mjs"],
+  define: { "import.meta.url": "libredbImportMetaUrl", "import.meta.filename": "__filename" },
+  logOverride: { "empty-import-meta": "error" },
+};
+
+/**
  * Optional packages the bundled drivers require inside their own try, none installed: import -> packages allowed to require it.
  * esbuild leaves such a require() for the runtime, where it throws MODULE_NOT_FOUND into the driver's own catch,
  * so the driver runs without that feature; the child accepts one only as a require() call from a package named here.
@@ -196,6 +214,10 @@ const CHILD_INPUT_RULES = [
   [(path) => path === "src/lib/query-events/sink.ts", "the child never bundles the query-events sink"],
   [(path) => path.startsWith("src/components/"), "the child never bundles a component"],
   [(path) => path.endsWith(".node"), "the child never bundles a native addon"],
+  [
+    (path) => path.endsWith("node_modules/@platformatic/wasm-utils/dist/index.js"),
+    "the child bundles wasm-utils through CHILD_ALIASES, since this entry reads its .wasm by import.meta.url",
+  ],
 ];
 
 function inputViolations(metafile, workingDir, rules) {
