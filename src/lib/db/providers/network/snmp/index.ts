@@ -1,24 +1,20 @@
 /**
  * The SNMP provider.
  *
- * WHAT IS DELIBERATELY ABSENT. Three lines that would register this provider are not here, and
- * their absence is why this file compiles before the registration change lands: there is no
- * `queryDialect` in the capabilities, no `QueryError(..., "snmp")`, and no member added to any
- * shared union. Measured on 13 October 2026: a provider class compiles and typechecks with none
- * of them, and adding a type-id to the shared records without a class and a factory case
- * produces 27 type errors and three broken factory tests, because the factory test walks every
- * shipped type-id and builds it. So the class lands first and the registration lands once, as
- * one change, with the factory case beside it.
+ * HOW IT WAS REGISTERED. The class landed before its registration, and the order was measured on
+ * 13 October 2026: a provider class compiles and typechecks with no `queryDialect`, no
+ * `QueryError(..., "snmp")` and no member added to any shared union, while adding a type-id to the
+ * shared records without a class and a factory case produced 27 type errors and three broken
+ * factory tests, because the factory test walks every shipped type-id and builds it. The
+ * registration has since landed: `snmp` is a member of `DatabaseType`, the factory
+ * builds this class, and the capabilities declare `queryDialect: "snmp"`, registered in
+ * `QUERY_DIALECTS`, so the editor gives this provider a tab type of its own rather than the one it
+ * gives a provider that declares no dialect.
  *
- * THE COST OF THAT, STATED RATHER THAN DISCOVERED. Without a dialect of its own, the editor
- * gives this provider the tab type it gives anything that declares none. Statements are still
- * read by this provider's own parser, so what a user types behaves correctly; what differs is
- * the editor's own treatment of the text. The sentence the user sees says exactly that, and a
- * test holds the capabilities to having no dialect so the two cannot drift.
- *
- * WHAT STILL NEEDS THE CLIENT. `connect` and `query` reach an agent, and the client library is
- * not a dependency of this package yet, because adding it edits `package.json`, which is a
- * shared file whose edit order is not this session's to choose. Those two refuse with a clear
+ * WHAT IS WIRED, AND WHAT IS NOT. The client is this provider's own, not a library: `client.ts`
+ * and `transport.ts` open one UDP socket with `node:dgram`, so nothing is added to `package.json`.
+ * `connect` and `query` reach an agent through it. The catalog surfaces (`listObjects`,
+ * `describeObject`, `describeObjects`) and `getHealth` still refuse through `notWired` with a clear
  * reason rather than returning something that looks like an answer: a provider that silently
  * answers nothing is worse than one that says it is not wired.
  */
@@ -58,7 +54,7 @@ import { buildTable, type Cell, type RowKeyInput } from "./table";
 import { allNotices } from "./mib";
 
 /**
- * Raised by the surfaces that cannot work until the client is a dependency.
+ * Raised by the surfaces this provider has not wired to its client yet: the catalog reads and `getHealth`.
  *
  * The prototype is restored in the constructor because the base does not leave it alone:
  * `DatabaseConfigError` ends with `Object.setPrototypeOf(this, DatabaseConfigError.prototype)`,
@@ -232,7 +228,7 @@ export class SnmpProvider extends BaseDatabaseProvider {
     return {
       // Not SQL and not this product's JSON: a statement here is `get 1.3.6.1.2.1.1.1.0`, a
       // small command grammar of this provider's own. `json` is the nearest of the five the
-      // union allows, and the absent `queryDialect` is what keeps that from being read as a
+      // union allows, and the `queryDialect` below is what keeps that from being read as a
       // claim about the text.
       queryLanguage: "json",
       // Declared, and the measurement is why. With this absent the registry fell back to
