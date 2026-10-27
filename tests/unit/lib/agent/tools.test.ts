@@ -3172,6 +3172,8 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
     const EXPECTED: Readonly<Record<string, "repairable" | "propagates">> = {
       DatabaseError: "repairable",
       QueryError: "repairable",
+      // A QueryError of its own class: dropping the offset, or narrowing the statement, is the repair.
+      OffsetUnsupportedError: "repairable",
       TimeoutError: "repairable",
       QueryCancelledError: "repairable",
       AuthenticationError: "repairable",
