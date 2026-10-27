@@ -21,7 +21,7 @@ describe("backendForkOptions", () => {
     assert.equal(env.ELECTRON_NO_ASAR, "1");
     assert.equal(env.NODE_ENV, "production");
     assert.equal(env.LIBREDB_ENABLED_PROVIDERS, ENABLED_PROVIDERS.join(","));
-    assert.ok(!env.LIBREDB_ENABLED_PROVIDERS.split(",").includes("sqlite"));
+    assert.ok(!env.LIBREDB_ENABLED_PROVIDERS.split(",").includes("oracle"));
   });
 
   it("uses the execPath it is given", () => {

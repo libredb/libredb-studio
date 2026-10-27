@@ -10,8 +10,8 @@ describe("ENABLED_PROVIDERS", () => {
     );
   });
 
-  it("holds back the engines whose driver the VSIX does not ship, and SQLite, whose worker cannot start in VS Code", () => {
-    assert.deepEqual(Object.keys(HELD_BACK).sort(), ["db2", "duckdb", "oracle", "sqlite"]);
+  it("holds back the engines whose driver the VSIX does not ship", () => {
+    assert.deepEqual(Object.keys(HELD_BACK).sort(), ["db2", "duckdb", "oracle"]);
     for (const reason of Object.values(HELD_BACK)) assert.ok(reason.length > 0);
   });
 

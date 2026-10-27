@@ -3,7 +3,7 @@
   "publisher": "libredb",
   "displayName": "LibreDB Studio",
   "description": "Browse and query PostgreSQL, MySQL, SQL Server, MongoDB, Redis, ClickHouse, Elasticsearch, Kafka and many more databases with LibreDB Studio.",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "private": true,
   "license": "MIT",
   "repository": {
@@ -25,6 +25,7 @@
   "keywords": [
     "PostgreSQL",
     "MySQL",
+    "SQLite",
     "SQL Server",
     "MongoDB",
     "Couchbase",
@@ -51,7 +52,6 @@
     "Kubernetes",
     "MQTT",
     "Firestore",
-    "RabbitMQ",
     "SQL"
   ],
   "capabilities": {

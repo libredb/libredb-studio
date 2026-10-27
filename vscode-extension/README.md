@@ -12,7 +12,7 @@ It requires VS Code 1.123 or later.
 
 ## Engines
 
-- Relational and analytical: PostgreSQL, MySQL, SQL Server, ClickHouse, Apache Druid, Trino, libSQL, Databend, BigQuery, Snowflake, Apache Spark.
+- Relational and analytical: PostgreSQL, MySQL, SQL Server, SQLite, ClickHouse, Apache Druid, Trino, libSQL, Databend, BigQuery, Snowflake, Apache Spark.
 - Document, key-value and wide-column: MongoDB, Couchbase, Firestore, Redis, etcd, Oxia, Apache Cassandra.
 - Search and vector: Elasticsearch, OpenSearch, Milvus, Qdrant, Weaviate.
 - Graph and time series: Neo4j, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL).
@@ -60,6 +60,7 @@ Connections live in the `libredb.connections` user setting, without passwords or
 Those stay in VS Code's secret storage on each machine.
 A workspace's `.vscode/settings.json` never adds a connection.
 In Restricted Mode, every connection opens with external file access denied.
+A SQLite database opens only in a trusted workspace, and its file is named by an absolute path.
 
 ## Settings
 

@@ -353,6 +353,7 @@ Select Rows asks the child for `objects/selectStatement`, which writes the state
 - **Restricted Mode.**
   The manifest declares `untrustedWorkspaces` as `limited`.
   Every `connection/test` and `connection/open` carries a posture whose `allowExternalFileAccess` is `workspace.isTrusted`, and the child refuses params without that boolean.
+  Before the factory builds anything, `checkLocalFile` in `src/backend/local-file.ts` refuses a connection to an engine that `OPENS_LOCAL_FILE` marks when that posture is false, naming workspace trust, and a database file given as a relative path, which would resolve inside the extension's own folder.
 - **Only enabled engines load.**
   The fork sets `LIBREDB_ENABLED_PROVIDERS` from `ENABLED_PROVIDERS`, and Studio's factory refuses any other type before it builds, loads or dials anything.
 - **The Results webview.**

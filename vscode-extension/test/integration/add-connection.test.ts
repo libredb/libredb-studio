@@ -7,6 +7,8 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { ResponseError } from "vscode-jsonrpc/node";
 import type { ConnectionField } from "@/lib/db/connection-fields";
+import { CONNECTION_FORM, CONNECTION_PICKER_ORDER } from "@/lib/db/connection-form";
+import { ENABLED_PROVIDERS } from "../../src/host/channel";
 import {
   AddConnectionFlow,
   BACK_TO_REVIEW,
@@ -220,7 +222,7 @@ describe("the add-connection flow on the built child against PostgreSQL, SQL Ser
     }
   });
 
-  it("lists the four enabled engines in the picker's order, and constructs no provider to list them", async () => {
+  it("lists the enabled engines in the picker's order, and constructs no provider to list them", async () => {
     const session = openSession(forkBackend(runtime));
     fresh.push(session);
     // Every byte the child wrote to stdout has been read once its pipes close.
@@ -229,12 +231,10 @@ describe("the add-connection flow on the built child against PostgreSQL, SQL Ser
     const listed = await session.connection.sendRequest<EngineCatalog>(METHODS.listEngines, {});
     assert.deepEqual(
       listed.engines.map((engine) => [engine.type, engine.label]),
-      [
-        ["postgres", "PostgreSQL"],
-        ["mysql", "MySQL"],
-        ["mssql", "SQL Server"],
-        ["mongodb", "MongoDB"],
-      ],
+      CONNECTION_PICKER_ORDER.filter((type) => ENABLED_PROVIDERS.includes(type)).map((type) => [
+        type,
+        CONNECTION_FORM[type].label,
+      ]),
     );
     assert.deepEqual(listed, catalog);
     assert.equal(await session.connection.sendRequest(METHODS.shutdown), null);

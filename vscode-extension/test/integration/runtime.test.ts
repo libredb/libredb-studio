@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
+import { ENABLED_PROVIDERS } from "../../src/host/channel";
 import { type BackendSession, openSession } from "../backend-session";
 import { type BackendRuntime, backendRuntime, forkBackend, runtimeName } from "./runtime";
 
@@ -31,7 +32,7 @@ describe("the backend child", () => {
     runtime = await backendRuntime();
   });
 
-  it("answers initialize with the runtime it was forked on and the four enabled providers", async () => {
+  it("answers initialize with the runtime it was forked on and the enabled providers", async () => {
     const session = openSession(forkBackend(runtime));
     const answer = await session.initialize();
     const { node, electron, modules } = answer.runtime;
@@ -45,7 +46,7 @@ describe("the backend child", () => {
       assert.equal(electron, null);
       assert.equal(node, process.versions.node);
     }
-    assert.deepEqual(answer.enabledProviders, ["postgres", "mssql", "mysql", "mongodb"]);
+    assert.deepEqual(answer.enabledProviders, ENABLED_PROVIDERS);
     assert.equal((await disconnect(session)).code, 0);
   });
 

@@ -39,6 +39,7 @@ import {
   METHODS,
   type OpenResult,
   type PastedConnection,
+  type Posture,
   PROTOCOL_VERSION,
   type QueryPage,
   type RunTargetResult,
@@ -46,6 +47,7 @@ import {
   type TestConnectionResult,
 } from "../protocol";
 import { engineCatalog } from "./engine-catalog";
+import { checkLocalFile } from "./local-file";
 import { ConnectionRegistry, notOpenSentence, type OpenRecord } from "./registry";
 
 /** The factory functions the handlers call, as one object. */
@@ -209,6 +211,13 @@ export function createHandlers(
     return record;
   };
 
+  // A type the channel leaves out gets the factory's own "not available" refusal, so the extension's file rules run
+  // only on an enabled one.
+  const checkEnabledLocalFile = (connection: DatabaseConnection, posture: Posture): void => {
+    const enabled = factory.enabledProviderTypes();
+    if (enabled === null || enabled.includes(connection.type)) checkLocalFile(connection, posture);
+  };
+
   // As handleObjectRequest (src/lib/api/object-route.ts) resolves it: the cached provider, or a new one opened from
   // the record after the idle sweep closed the old one. Engine-shape checks of a path stay with the provider.
   const providerOf = (record: OpenRecord) => factory.getOrCreateProvider(record.connection, {}, record.posture);
@@ -267,6 +276,7 @@ export function createHandlers(
     // cannot stop a tunnel that is still opening.
     async testConnection(params) {
       const { connection, posture } = readConnectionParams(params);
+      checkEnabledLocalFile(connection, posture);
       const stop = new AbortController();
       let timer: ReturnType<typeof setTimeout> | undefined;
       const deadline = new Promise<never>((_, reject) => {
@@ -288,6 +298,7 @@ export function createHandlers(
 
     async openConnection(params) {
       const record = readConnectionParams(params);
+      checkEnabledLocalFile(record.connection, record.posture);
       const { id } = record.connection;
       return await inTurn(id, async () => {
         // An edited connection closes its old pool now rather than at the idle sweep.

@@ -1323,7 +1323,7 @@ The extension's version is the `version` of [`vscode-extension/package.json`](..
 The Marketplace takes `major.minor.patch` only, with a pre-release as a flag rather than a suffix, and recommends an odd minor for pre-releases.
 So every 0.1.x is a pre-release, 0.1.0 included, and the first release is 0.2.0.
 A later pre-release takes the next odd minor, 0.3.x, and stays above the release users have, so only those who chose pre-releases get it.
-`vscode-extension/test/unit/manifest.test.ts` holds the version to the 0.2.x line, so a version that leaves it changes that case in the same PR, and `test/unit/readme.test.ts` holds the README to calling itself a pre-release exactly on an odd minor.
+`vscode-extension/test/unit/manifest.test.ts` holds the version to the 0.4.x line, the release after 0.2.x that opens every pure-JS engine, so a version that leaves it changes that case in the same PR, and `test/unit/readme.test.ts` holds the README to calling itself a pre-release exactly on an odd minor.
 
 ### Cutting a version
 

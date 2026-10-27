@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S9 · 6
-- [Drivers and connections](#drivers-and-connections) — D1-D391, U17 · 285
+- [Drivers and connections](#drivers-and-connections) — D1-D390, U17 · 284
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U148 · 134
@@ -3933,17 +3933,6 @@ Measured 2026-10-21 by the VS Code extension's e2e leg (PR 14): a find with `$wh
 Found 2026-10-21 during the VS Code extension work (PR 14), and deferred because it changes the MongoDB provider's query path for the web too.
 
 **Done when:** the provider passes the connection's `queryTimeout` as `maxTimeMS` on every query operation, a test per operation pins it, and the extension's MongoDB run ends with `TIMEOUT_ERROR` at that bound.
-
-### D391. The SQLite worker cannot start under VS Code's binary
-
-`workerEnvironment` in `src/lib/db/providers/sql/sqlite-worker.ts` copies only `WORKER_ENV_KEYS` into the worker's environment, and `ELECTRON_RUN_AS_NODE` is not one of them.
-The VS Code extension's backend runs on VS Code's own binary with that variable set, so the worker it spawns from `process.execPath` starts as the Electron app instead of Node, and dies.
-Measured 2026-10-27 on VS Code 1.143 (Electron 43.7.7): `connection/test` on an on-disk SQLite file answered `CONNECTION_ERROR` "SQLite worker exited (code null, signal SIGTRAP)", with "Missing X server or $DISPLAY" on the worker's stderr; the same bundle with `ELECTRON_RUN_AS_NODE` added to the key list answered success.
-On plain Node, the web app's runtime, the variable is absent and nothing changes.
-
-Found 2026-10-27 while enabling the VS Code extension's pure-JS engines, and deferred because the owner left SQLite out of that phase; `HELD_BACK` in `vscode-extension/src/host/channel.ts` keeps it out of the extension until then.
-
-**Done when:** `WORKER_ENV_KEYS` carries `ELECTRON_RUN_AS_NODE` (it holds no secret), a unit test pins it, SQLite leaves `HELD_BACK`, and an on-disk SQLite connection opens and runs a query in the extension's backend on the `vscode` runtime.
 
 ## Value interpolation
 

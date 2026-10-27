@@ -353,11 +353,23 @@ function workerExecutable(): string {
  * picks a node that predates `node:sqlite` (or no node at all) instead of the
  * runner's node 24. `SystemRoot`, `TEMP` and `TMP` (Windows) and `TMPDIR` and
  * `HOME` (POSIX) are the rest of what the child needs to load its own libraries
- * and place SQLite's temporary files. None of these keys carries a secret.
+ * and place SQLite's temporary files. `ELECTRON_RUN_AS_NODE` keeps an Electron
+ * parent's binary in Node mode: the VS Code extension's backend runs on VS Code's
+ * own binary with it set, and the worker spawned from that binary without it starts
+ * as the app and dies. None of these keys carries a secret.
  */
-const WORKER_ENV_KEYS = ["PATH", "SystemRoot", "TEMP", "TMP", "TMPDIR", "HOME", "USERPROFILE"] as const;
+const WORKER_ENV_KEYS = [
+  "PATH",
+  "SystemRoot",
+  "TEMP",
+  "TMP",
+  "TMPDIR",
+  "HOME",
+  "USERPROFILE",
+  "ELECTRON_RUN_AS_NODE",
+] as const;
 
-function workerEnvironment(): NodeJS.ProcessEnv {
+export function workerEnvironment(): NodeJS.ProcessEnv {
   const parent = process.env;
   const env: Record<string, string> = { LIBREDB_SQLITE_DRIVER: "node" };
   for (const key of WORKER_ENV_KEYS) {

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { type CancellationToken, CancellationTokenSource, ErrorCodes, ResponseError } from "vscode-jsonrpc/node";
 import type { Container, DatabaseObject, KindCount, ObjectDetail } from "@/lib/db/types";
+import { ENABLED_PROVIDERS } from "../../src/host/channel";
 import {
   type BackendErrorData,
   type CancelResult,
@@ -184,11 +185,11 @@ describe("the backend child against PostgreSQL, SQL Server, MySQL and MongoDB", 
     }
   });
 
-  it("answers initialize with protocol version 1, the four enabled providers and the runtime it runs on", async () => {
+  it("answers initialize with protocol version 1, the enabled providers and the runtime it runs on", async () => {
     const answer = await freshChild().initialize();
     console.log(`initialize answered ${JSON.stringify(answer)}`);
     assert.equal(answer.protocolVersion, 1);
-    assert.deepEqual(answer.enabledProviders, ["postgres", "mssql", "mysql", "mongodb"]);
+    assert.deepEqual(answer.enabledProviders, ENABLED_PROVIDERS);
     if (runtime.name === "node") {
       assert.equal(answer.runtime.electron, null);
       assert.equal(answer.runtime.node, process.versions.node);
@@ -388,12 +389,11 @@ describe("the backend child against PostgreSQL, SQL Server, MySQL and MongoDB", 
     assert.equal(await psql(engineOf("postgres"), "select to_regclass('public.it_after_begin') is not null"), "t");
   });
 
-  it("refuses the engines outside the four before their provider module or driver loads", async () => {
+  it("refuses the held-back engines before their provider module or driver loads", async () => {
     const session = freshChild();
     await session.initialize();
     const createdAt = new Date(0).toISOString();
     const outside: WireConnection[] = [
-      { id: "gate-sqlite", name: "it gate sqlite", type: "sqlite", database: "/nonexistent/never.db", createdAt },
       { id: "gate-duckdb", name: "it gate duckdb", type: "duckdb", host: "127.0.0.1", port: 1, createdAt },
       { id: "gate-db2", name: "it gate db2", type: "db2", host: "127.0.0.1", port: 1, createdAt },
       { id: "gate-oracle", name: "it gate oracle", type: "oracle", host: "127.0.0.1", port: 1, createdAt },
@@ -407,7 +407,7 @@ describe("the backend child against PostgreSQL, SQL Server, MySQL and MongoDB", 
       );
       assert.deepEqual(refused.data, { code: "CONFIG_ERROR" });
     }
-    assert.doesNotMatch(session.stdout(), /\[DB\] Creating (sqlite|duckdb|db2|oracle) provider/);
+    assert.doesNotMatch(session.stdout(), /\[DB\] Creating (duckdb|db2|oracle) provider/);
     assert.doesNotMatch(session.stderr(), /Cannot find module/);
   });
 

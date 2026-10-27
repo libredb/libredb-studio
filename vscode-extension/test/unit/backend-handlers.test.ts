@@ -68,6 +68,14 @@ const WIRE = {
   database: "orders",
   createdAt: "2026-10-20T10:00:00.000Z",
 } as const;
+/** An on-disk SQLite connection, the file-opening engine the extension enables. */
+const SQLITE_WIRE = {
+  id: "s1",
+  name: "Local",
+  type: "sqlite",
+  database: "/home/you/app.db",
+  createdAt: WIRE.createdAt,
+};
 const REVIVED = { ...WIRE, createdAt: new Date("2026-10-20T10:00:00.000Z") };
 const POSTURE = { allowExternalFileAccess: true };
 const RUNTIME = {
@@ -236,6 +244,27 @@ describe("connection/test", () => {
     assert.deepEqual(calls, []);
   });
 
+  it("refuses a file-opening connection the extension does not open, before any factory call", async () => {
+    const { handlers, calls } = backend(fakeProvider(), { enabledProviderTypes: () => ["sqlite"] });
+    const relative = { ...SQLITE_WIRE, database: "app.db" };
+    await assert.rejects(handlers.testConnection({ connection: relative, posture: POSTURE }), DatabaseConfigError);
+    await assert.rejects(
+      handlers.testConnection({ connection: SQLITE_WIRE, posture: { allowExternalFileAccess: false } }),
+      /Restricted Mode/,
+    );
+    assert.deepEqual(calls, []);
+  });
+
+  it("leaves a file-opening engine the channel does not enable to the factory's own refusal", async () => {
+    const { handlers, calls } = backend();
+    const restricted = {
+      connection: { ...SQLITE_WIRE, database: "app.db" },
+      posture: { allowExternalFileAccess: false },
+    };
+    await handlers.testConnection(restricted);
+    assert.equal(calls[0][0], "testConnection");
+  });
+
   describe("its deadline", () => {
     let clock: Clock;
 
@@ -329,7 +358,9 @@ describe("connection/open", () => {
   it("answers the commit keyword the execution UI registry declares for the connection's type", async () => {
     for (const type of ENABLED_PROVIDERS) {
       const { handlers } = backend();
-      const { description } = await handlers.openConnection({ connection: { ...WIRE, type }, posture: POSTURE });
+      // An absolute database, so a file-opening engine passes checkLocalFile and reaches the fake factory too.
+      const connection = { ...WIRE, type, database: "/srv/orders" };
+      const { description } = await handlers.openConnection({ connection, posture: POSTURE });
       assert.equal(description.commitKeyword, executionUiFor(type).commitKeyword);
     }
   });
@@ -362,6 +393,14 @@ describe("connection/open", () => {
       ["removeProvider", "c1"],
       ["getOrCreateProvider", { ...REVIVED, password: "n3w" }, {}, { allowExternalFileAccess: true }],
     ]);
+  });
+
+  it("refuses a file-opening connection the extension does not open, before any factory call, and stores nothing", async () => {
+    const { handlers, calls, registry } = backend(fakeProvider(), { enabledProviderTypes: () => ["sqlite"] });
+    const relative = { ...SQLITE_WIRE, database: "app.db" };
+    await assert.rejects(handlers.openConnection({ connection: relative, posture: POSTURE }), /absolute path/);
+    assert.deepEqual(calls, []);
+    assert.equal(registry.get(SQLITE_WIRE.id), undefined);
   });
 
   it("stores nothing when the open fails, and passes the factory's error on as it is", async () => {

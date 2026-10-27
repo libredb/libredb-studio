@@ -7,7 +7,6 @@ import type { DatabaseType } from "@/lib/types";
  * listed here, and the README test fails until the Marketplace README names it.
  */
 export const HELD_BACK: Readonly<Partial<Record<DatabaseType, string>>> = Object.freeze({
-  sqlite: "The SQLite worker drops ELECTRON_RUN_AS_NODE, so VS Code's binary starts as an app and dies (D391).",
   oracle: "oracledb is a child external, and the VSIX is packed without dependencies.",
   duckdb: "@duckdb/node-api is a native addon per platform, and the VSIX is packed without dependencies.",
   db2: "db2-node is a native addon per platform, and the VSIX is packed without dependencies.",

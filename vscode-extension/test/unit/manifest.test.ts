@@ -103,10 +103,10 @@ describe("the manifest", () => {
     assert.equal(lock.packages[""].version, manifest.version);
   });
 
-  it("is on the release line: 0.2.x, an even minor, the first release after the 0.1.x pre-releases", () => {
+  it("is on the release line: 0.4.x, an even minor, the release that opens every pure-JS engine", () => {
     const [major, minor] = triple(manifest.version);
     assert.equal(major, 0);
-    assert.equal(minor, 2);
+    assert.equal(minor, 4);
   });
 
   it("pins vscode-jsonrpc exactly, as the bundles' one runtime package", () => {
