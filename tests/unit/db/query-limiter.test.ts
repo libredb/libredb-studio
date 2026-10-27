@@ -2200,14 +2200,208 @@ describe("MySQL and MariaDB locking clauses follow the row bound (#1981)", () =>
   });
 
   test("a dialect without the locking clauses reads the words as before", () => {
-    // PostgreSQL takes a locking clause on either side of LIMIT/OFFSET, so the
-    // appended bound leaves a statement it still accepts; its own "bound before
-    // the clause" reading is #1964 and stays out of this change. The rest have
-    // no locking clause at all, and the words read as ordinary trailing words.
-    for (const type of ["postgres", "clickhouse", "duckdb", "sqlite", "trino"] as const) {
+    // PostgreSQL took a locking clause on either side of LIMIT/OFFSET when this
+    // landed, so the appended bound left a statement it still accepted; its own
+    // "bound before the clause" reading has since arrived (#1964) and is covered
+    // by its own block below. The rest have no locking clause at all, and the
+    // words read as ordinary trailing words.
+    for (const type of ["clickhouse", "duckdb", "sqlite", "trino"] as const) {
       const result = applyQueryLimit(`${read} FOR UPDATE`, 500, 0, {}, type);
       expect(result.sql).toBe(`${read} FOR UPDATE LIMIT 500`);
     }
+  });
+});
+
+// ─── PostgreSQL locking clauses take the row bound before them (#1964) ─────
+//
+// PostgreSQL's SELECT grammar spells the two shapes as
+// `for_locking_clause opt_select_limit` and `select_limit opt_for_locking_clause`
+// (gram.y, select_no_parens), so a locking clause is legal on either side of the
+// row bound - but the limiter writes one spelling only, and it must be the one
+// with the bound first: the locking tails are declared as trailing clauses, the
+// run comes off the end, the bound is written, the run re-attached verbatim
+// (#1398's path, as MySQL's tails are #1981). A bound that already stands before
+// one reads as the statement's own, instead of taking a second LIMIT past the
+// clause, which PostgreSQL refuses as two LIMIT clauses.
+describe("PostgreSQL locking clauses take the row bound before them (#1964)", () => {
+  const read = "SELECT * FROM t";
+
+  test.each([
+    ["FOR UPDATE", "SELECT * FROM t LIMIT 500 FOR UPDATE"],
+    ["FOR NO KEY UPDATE", "SELECT * FROM t LIMIT 500 FOR NO KEY UPDATE"],
+    ["FOR SHARE", "SELECT * FROM t LIMIT 500 FOR SHARE"],
+    ["FOR KEY SHARE", "SELECT * FROM t LIMIT 500 FOR KEY SHARE"],
+    ["FOR UPDATE SKIP LOCKED", "SELECT * FROM t LIMIT 500 FOR UPDATE SKIP LOCKED"],
+    ["FOR SHARE NOWAIT", "SELECT * FROM t LIMIT 500 FOR SHARE NOWAIT"],
+    ["FOR UPDATE OF t", "SELECT * FROM t LIMIT 500 FOR UPDATE OF t"],
+    ["FOR UPDATE OF t, u", "SELECT * FROM t LIMIT 500 FOR UPDATE OF t, u"],
+    ["FOR SHARE OF t SKIP LOCKED", "SELECT * FROM t LIMIT 500 FOR SHARE OF t SKIP LOCKED"],
+    ["FOR NO KEY UPDATE OF t NOWAIT", "SELECT * FROM t LIMIT 500 FOR NO KEY UPDATE OF t NOWAIT"],
+  ])("the bound is written before the %s tail", (tail, expected) => {
+    const result = applyQueryLimit(`${read} ${tail}`, 500, 0, {}, "postgres");
+    expect(result.sql).toBe(expected);
+    expect(result.wasLimited).toBe(true);
+  });
+
+  test("the tail keeps its place when an offset is applied", () => {
+    const result = applyQueryLimit(`${read} FOR UPDATE`, 20, 10, {}, "postgres");
+    expect(result.sql).toBe("SELECT * FROM t LIMIT 20 OFFSET 10 FOR UPDATE");
+  });
+
+  test.each([
+    ["LIMIT 10", "SELECT * FROM t LIMIT 10 FOR UPDATE"],
+    ["LIMIT 10 OFFSET 2", "SELECT * FROM t LIMIT 10 OFFSET 2 FOR SHARE"],
+    ["LIMIT 2, 10", "SELECT * FROM t LIMIT 2, 10 FOR UPDATE"],
+    ["LIMIT ALL", "SELECT * FROM t LIMIT ALL FOR UPDATE"],
+    ["FETCH FIRST 10 ROWS ONLY", "SELECT * FROM t FETCH FIRST 10 ROWS ONLY FOR UPDATE"],
+  ])("an existing %s before the locking clause is left alone", (form, sql) => {
+    expect(analyzeQuery(sql, "postgres").hasLimit).toBe(true);
+    const result = applyQueryLimit(sql, 500, 0, {}, "postgres");
+    expect(result.wasLimited).toBe(false);
+    expect(result.sql).toBe(sql);
+  });
+
+  test("forceLimit replaces the bound before the tail exactly once", () => {
+    const result = applyQueryLimit(`${read} LIMIT 10 FOR UPDATE SKIP LOCKED`, 20, 5, { forceLimit: true }, "postgres");
+    expect(result.sql).toBe("SELECT * FROM t LIMIT 20 OFFSET 5 FOR UPDATE SKIP LOCKED");
+  });
+
+  test("a chain of locking clauses keeps the order it was written in", () => {
+    const sql = "SELECT * FROM t1, t2 FOR UPDATE OF t1 FOR SHARE OF t2 SKIP LOCKED";
+    const result = applyQueryLimit(sql, 500, 0, {}, "postgres");
+    expect(result.sql).toBe("SELECT * FROM t1, t2 LIMIT 500 FOR UPDATE OF t1 FOR SHARE OF t2 SKIP LOCKED");
+  });
+
+  test("an existing bound before a chain is recognised as the statement's own", () => {
+    const sql = "SELECT * FROM t1, t2 LIMIT 10 FOR UPDATE OF t1 FOR SHARE OF t2";
+    expect(analyzeQuery(sql, "postgres").hasLimit).toBe(true);
+    expect(applyQueryLimit(sql, 500, 0, {}, "postgres").wasLimited).toBe(false);
+  });
+
+  test("a comment between two locking clauses travels with the run", () => {
+    const sql = "SELECT * FROM t1, t2 FOR UPDATE OF t1 /* gap */ FOR SHARE OF t2";
+    const result = applyQueryLimit(sql, 500, 0, {}, "postgres");
+    expect(result.sql).toBe("SELECT * FROM t1, t2 LIMIT 500 FOR UPDATE OF t1 /* gap */ FOR SHARE OF t2");
+  });
+
+  test("a line comment before the locking clause keeps the bound in code", () => {
+    const result = applyQueryLimit("SELECT * FROM t -- note\nFOR UPDATE", 500, 0, {}, "postgres");
+    expect(result.sql).toBe("SELECT * FROM t LIMIT 500 -- note\nFOR UPDATE");
+    expect(result.wasLimited).toBe(true);
+  });
+
+  test("a trailing comment is re-attached after the locking tail", () => {
+    const sql = "SELECT * FROM t FOR UPDATE; -- note";
+    const result = applyQueryLimit(sql, 500, 0, {}, "postgres");
+    expect(result.sql).toBe("SELECT * FROM t LIMIT 500 FOR UPDATE; -- note");
+  });
+
+  test("a quoted identifier in the OF list is read whole", () => {
+    for (const tail of [
+      'FOR UPDATE OF "order items"',
+      'FOR UPDATE OF "o""rder"',
+      'FOR SHARE OF "order items", plain SKIP LOCKED',
+    ]) {
+      const result = applyQueryLimit(`${read} ${tail}`, 500, 0, {}, "postgres");
+      expect(result.sql).toBe(`${read} LIMIT 500 ${tail}`);
+    }
+  });
+
+  test("a dollar-quoted body ending in the clause words is not a tail", () => {
+    // A dollar-quoted body is TEXT to the raw clause pattern, and the bare-token
+    // OF name excludes `$`, so the match cannot start inside the body: the bound
+    // lands after the closing `$$`, never inside it.
+    const sql = "SELECT $$x FOR UPDATE OF t$$";
+    const result = applyQueryLimit(sql, 500, 0, {}, "postgres");
+    expect(result.sql).toBe(`${sql} LIMIT 500`);
+    expect(result.wasLimited).toBe(true);
+  });
+
+  test("quoted text that merely ends in the clause words is not a tail", () => {
+    // A double-quoted identifier and a single-quoted literal can END in
+    // ` FOR UPDATE OF t`; the closing quote cannot ride on the OF list's name,
+    // so the tail is not stripped and the bound keeps its place at the end.
+    const quoted = 'SELECT * FROM t WHERE note = "x FOR UPDATE OF t"';
+    expect(applyQueryLimit(quoted, 500, 0, {}, "postgres").sql).toBe(`${quoted} LIMIT 500`);
+
+    const literal = "SELECT * FROM t WHERE note = 'x FOR UPDATE OF t'";
+    expect(applyQueryLimit(literal, 500, 0, {}, "postgres").sql).toBe(`${literal} LIMIT 500`);
+  });
+
+  test("a locking clause inside a subquery is not the statement's tail", () => {
+    const sql = "SELECT * FROM (SELECT * FROM u FOR UPDATE) t";
+    const result = applyQueryLimit(sql, 500, 0, {}, "postgres");
+    expect(result.sql).toBe(`${sql} LIMIT 500`);
+  });
+
+  test("an alias or column spelled like a locking word is not a tail", () => {
+    const sql = "SELECT for1, update2 FROM t";
+    expect(applyQueryLimit(sql, 500, 0, {}, "postgres").sql).toBe(`${sql} LIMIT 500`);
+
+    // `AS of` carries the words `AS OF`, and the Materialize pattern still must
+    // not eat the FROM that follows it.
+    const aliased = "SELECT a AS of FROM t";
+    expect(applyQueryLimit(aliased, 500, 0, {}, "postgres").sql).toBe(`${aliased} LIMIT 500`);
+  });
+
+  test("a dialect without the locking clauses reads the words as before", () => {
+    // MySQL declares its own locking tails (#1981), so the postgres declaration
+    // changes nothing there; the rest have no locking clause and the words read
+    // as ordinary trailing words the engine refuses bound or unbound.
+    for (const type of ["clickhouse", "duckdb", "sqlite", "trino"] as const) {
+      const result = applyQueryLimit(`${read} FOR UPDATE`, 500, 0, {}, type);
+      expect(result.sql).toBe(`${read} FOR UPDATE LIMIT 500`);
+    }
+  });
+
+  // A comment can END in the clause words, and the raw pattern would start its
+  // match inside one: NOWAIT is a table alias PostgreSQL accepts (an unreserved
+  // keyword), so the statement is a plain read the strip would otherwise take a
+  // non-clause off of and write the bound INTO the comment while reporting
+  // `wasLimited: true`. The strip refuses a match that starts inside a comment
+  // or a literal, so the clause-looking words stay where they are and the bound
+  // keeps its place at the end.
+  test.each([
+    ["a block comment ending in the clause words", "SELECT * FROM t /* FOR UPDATE OF t*/ NOWAIT"],
+    ["a line comment whose text ends in the clause words", "SELECT * FROM t -- FOR UPDATE\nNOWAIT"],
+  ])("%s is not a locking tail", (_label, sql) => {
+    const result = applyQueryLimit(sql, 500, 0, {}, "postgres");
+    expect(result.sql).toBe(`${sql} LIMIT 500`);
+    expect(result.wasLimited).toBe(true);
+
+    // The MySQL declaration is refused the same way: the guard lives in the
+    // shared strip, not in this dialect's pattern.
+    const mysql = applyQueryLimit("SELECT * FROM t /* FOR UPDATE OF t*/ NOWAIT", 500, 0, {}, "mysql");
+    expect(mysql.sql).toBe("SELECT * FROM t /* FOR UPDATE OF t*/ NOWAIT LIMIT 500");
+  });
+
+  test("a line comment before the clause is still the between-code-and-clause handoff", () => {
+    // The comment's span includes the newline that closes it, and a match
+    // starting exactly on that newline is the handoff the strip design keeps:
+    // the comment travels with the run and lands between the bound and the
+    // clause, even when more spaces follow the newline.
+    for (const sql of ["SELECT * FROM t -- note\nFOR UPDATE", "SELECT * FROM t -- note\n  FOR UPDATE"]) {
+      const result = applyQueryLimit(sql, 500, 0, {}, "postgres");
+      expect(result.sql).toBe(`SELECT * FROM t LIMIT 500 ${sql.slice("SELECT * FROM t ".length)}`);
+      expect(result.wasLimited).toBe(true);
+    }
+  });
+
+  test("a dollar-quoted body ending in the clause words is not a tail", () => {
+    // A dollar-quoted body is held whole by the span reader, and the strip
+    // refuses a match that starts inside one, so the bound lands after the
+    // closing `$$` and never inside the body. `$` stays legal inside an
+    // unquoted identifier after its first character, so a real OF name may
+    // carry one and still reads as the clause's own.
+    const body = "SELECT $$x FOR UPDATE OF t$$";
+    expect(applyQueryLimit(body, 500, 0, {}, "postgres").sql).toBe(`${body} LIMIT 500`);
+
+    const tagged = "SELECT $tag$ FOR UPDATE $tag$";
+    expect(applyQueryLimit(tagged, 500, 0, {}, "postgres").sql).toBe(`${tagged} LIMIT 500`);
+
+    const named = "SELECT * FROM t AS t$1 LIMIT 10 FOR UPDATE OF t$1";
+    expect(analyzeQuery(named, "postgres").hasLimit).toBe(true);
+    expect(applyQueryLimit(named, 500, 0, {}, "postgres").sql).toBe(named);
   });
 });
 

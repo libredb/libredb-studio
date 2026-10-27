@@ -56,7 +56,44 @@ const POSTGRES_GRAMMAR: SqlGrammar = {
   // `)` follows the timestamp) never match. Real PostgreSQL and RisingWave share
   // this row and have no such clause: a statement of theirs ending in these words
   // is one the server refuses bound or unbound, so the reading costs neither.
-  trailingLimitClauses: [/\s+AS\s+OF\s+(?:AT\s+LEAST\s+)?(?:\d+|'[^']*')\s*$/i],
+  //
+  // A locking clause takes the row bound on either side of it: PostgreSQL's SELECT
+  // grammar spells the two shapes as `for_locking_clause opt_select_limit` and
+  // `select_limit opt_for_locking_clause` (18 gram.y, select_no_parens), so
+  // `SELECT * FROM t LIMIT 5 FOR UPDATE` and `... FOR UPDATE LIMIT 5` are both the
+  // writer's to write. On a statement that ends in one, the limiter writes the
+  // first spelling: the locking
+  // tails are declared here as trailing clauses (#1398's strip/re-attach path), so
+  // the run comes off the end before the bound is written and is re-attached after
+  // it, and a bound that already stands before one reads as the statement's own
+  // instead of taking a second one past the clause (#1964) - which PostgreSQL
+  // refuses as two LIMIT clauses.
+  //
+  // The four strengths (FOR UPDATE, FOR NO KEY UPDATE, FOR SHARE, FOR KEY SHARE -
+  // 18 SELECT docs, The Locking Clause) and the NOWAIT / SKIP LOCKED option are
+  // options OF THE CLAUSE, not clauses of their own: a pattern that peeled
+  // `SKIP LOCKED` off separately would re-attach it before its `FOR UPDATE`. A
+  // chain - `FOR UPDATE OF t1 FOR SHARE OF t2` - keeps its order because each pass
+  // strips one clause from the end backward.
+  //
+  // A name in the OF list is a bare token or a double-quoted identifier (4.1.1,
+  // the quoted form is the only way a name carries a space, a `"` inside it
+  // doubled). The bare token excludes quotes, brackets and commas, so a closing
+  // quote cannot ride on a name: a literal or a quoted identifier that merely
+  // ENDS in the clause words (`WHERE note = "x FOR UPDATE OF t"`) fails the
+  // pattern's `\s*$` after the name, the tail is not stripped, and the bound
+  // keeps its place at the end rather than landing inside the quoted text. `$`
+  // is legal inside an unquoted PostgreSQL identifier after its first character
+  // (4.1.1), so a name may carry one; a DOLLAR-QUOTED BODY ending in the clause
+  // words (`SELECT $$x FOR UPDATE OF t$$`) is held whole by the span reader, and
+  // `stripTrailingClauses` refuses a match that starts inside one, so the bound
+  // lands after the closing `$$` and not inside the body. A `)` is excluded for
+  // the same reason as everywhere else: a locking clause written inside a
+  // subquery is never the statement's own tail.
+  trailingLimitClauses: [
+    /\s+AS\s+OF\s+(?:AT\s+LEAST\s+)?(?:\d+|'[^']*')\s*$/i,
+    /\s+FOR\s+(?:NO\s+KEY\s+UPDATE|KEY\s+SHARE|UPDATE|SHARE)(?:\s+OF\s+(?:"(?:[^"]|"")*"|[^\s()',;"`][^\s()',;"`]*)(?:\s*,\s*(?:"(?:[^"]|"")*"|[^\s()',;"`][^\s()',;"`]*))*)?(?:\s+(?:NOWAIT|SKIP\s+LOCKED))?\s*$/i,
+  ],
   // `LIMIT ALL` is PostgreSQL's own spelling of "no limit" (SELECT docs, LIMIT { count | ALL });
   // the parser takes the ALL alternative for the count only - the FETCH spelling has no ALL arm
   // (gram.y: select_limit_value has one, select_fetch_first_value does not). The count is a word,

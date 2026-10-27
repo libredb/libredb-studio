@@ -171,6 +171,52 @@ function clausePattern(clause: RegExp): RegExp {
 }
 
 /**
+ * Whether the whitespace run a clause match starts on is the statement's own code
+ * rather than the inside of a comment.
+ *
+ * A clause pattern matches from `\\s+` over the raw text, and a comment can END in
+ * the clause words - `SELECT * FROM t /* FOR UPDATE OF t*\\/ NOWAIT`, where NOWAIT
+ * is a table alias PostgreSQL accepts (an unreserved keyword) - so a match that
+ * STARTS inside that comment strips what is not a clause, and the bound is then
+ * written into the comment while `wasLimited: true` is reported: the statement runs
+ * unbounded. The same shape reaches a line comment, whose text can end in the
+ * clause words (`-- FOR UPDATE\\nNOWAIT`).
+ *
+ * The span reader already knows where every comment is, so a match covered by one
+ * is refused and the clause is left where it stands: the bound keeps its place at
+ * the end. One start is legitimate, though - the NEWLINE that closes a line
+ * comment. The comment's span includes that newline, and a match starting exactly
+ * there is the handoff this module's own design describes: a comment the writer
+ * put between the code and the clause travels with the run and lands between the
+ * bound and the clause, which is why the patterns open with `\\s+` in the first
+ * place. A match starting anywhere before that newline is inside the comment's
+ * text and is refused.
+ */
+function matchStartsInComment(body: string, matchStart: number, grammar: SqlGrammar): boolean {
+  let i = 0;
+
+  while (i <= matchStart) {
+    const span = readSqlSpan(body, i, grammar);
+    if (span === null) {
+      i++;
+      continue;
+    }
+    if (i <= matchStart && matchStart < span.end) {
+      if (span.kind === "block-comment") return true;
+      // A line comment's span includes the newline that closes it; a match
+      // starting on that newline is the between-code-and-clause handoff.
+      if (span.kind === "line-comment") return matchStart < span.end - 1;
+      // A literal the pattern reached into - a dollar-quoted body can end in
+      // the clause words - is not a clause start either.
+      return span.kind === "string" || span.kind === "dollar-string";
+    }
+    i = span.end;
+  }
+
+  return false;
+}
+
+/**
  * The statement with its trailing-clause run removed: the code, the trivia that
  * sat between the code and the clause, and the run itself (#1398).
  *
@@ -225,6 +271,7 @@ function stripTrailingClauses(
       if (clauses === MAX_TRAILING_CLAUSES) break;
       const match = body.match(clausePattern(clause));
       if (match === null || match.index === undefined) continue;
+      if (matchStartsInComment(body, match.index, grammar)) continue;
       clauseRun = match[0] + clauseRun;
       body = body.slice(0, match.index);
       stripped = true;

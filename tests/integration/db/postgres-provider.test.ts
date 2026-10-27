@@ -4174,6 +4174,41 @@ describe("PostgresProvider", () => {
       expect(result.wasLimited).toBe(false);
     });
 
+    // ── a locking clause takes the row bound before it (#1964) ──────────────
+    //
+    // PostgreSQL's SELECT grammar accepts the locking clause on either side of
+    // the row bound, so the bound this provider injects must stand before it,
+    // and a bound that already stands before one must be recognised as the
+    // statement's own. The assertions pin the emitted text the way the hash
+    // tests above do, because the shared limiter is the real caller of this
+    // dialect channel.
+    describe("locking clauses (#1964)", () => {
+      test.each<[string, string]>([
+        ["FOR UPDATE", "FOR UPDATE"],
+        ["FOR NO KEY UPDATE", "FOR NO KEY UPDATE"],
+        ["FOR SHARE OF users SKIP LOCKED", "FOR SHARE OF users SKIP LOCKED"],
+        ["FOR KEY SHARE NOWAIT", "FOR KEY SHARE NOWAIT"],
+      ])("the page bound is placed before %s", (tail, expected) => {
+        provider = new PostgresProvider(makePgConfig());
+        const result = provider.prepareQuery(`SELECT * FROM users ${tail}`, { limit: 5, offset: 2 });
+
+        expect(result.query).toBe(`SELECT * FROM users LIMIT 5 OFFSET 2 ${expected}`);
+        expect(result.wasLimited).toBe(true);
+      });
+
+      test.each<[string, string]>([
+        ["LIMIT 10", "LIMIT 10 FOR UPDATE"],
+        ["LIMIT ALL", "LIMIT ALL FOR SHARE"],
+        ["FETCH FIRST 10 ROWS ONLY", "FETCH FIRST 10 ROWS ONLY FOR UPDATE"],
+      ])("an existing %s before a locking clause is left alone", (form, sql) => {
+        provider = new PostgresProvider(makePgConfig());
+        const result = provider.prepareQuery(`SELECT * FROM users ${sql}`, { limit: 5 });
+
+        expect(result.query).toBe(`SELECT * FROM users ${sql}`);
+        expect(result.wasLimited).toBe(false);
+      });
+    });
+
     // CockroachDB connects as `postgres` and also takes an UPSERT as a CTE body.
     test("leaves a SELECT over an UPSERT ... RETURNING CTE unbounded, emitted intact", () => {
       provider = new PostgresProvider(makePgConfig());
