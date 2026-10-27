@@ -3268,6 +3268,7 @@ Found 2026-10-12 while designing the Snowflake provider.
 
 The provider declares no `queryReadOnly`, so an Agent-mode run and MCP `run_read_query` are refused for Snowflake before any statement is sent.
 A read-only path needs an enforcement Snowflake itself holds, such as a role that can only read, checked before each run, and a live adversarial probe of what that role can still change.
+The agent credential Snowflake will declare, `"dedicated-user"`, carries an agent user and a PAT as its password; the factory overlays only `user` and `password`, so an agent key pair, which Snowflake reads from `privateKey`, needs that form or the overlay extended in the same PR.
 
 Found 2026-10-12 while designing the Snowflake provider.
 
@@ -3624,17 +3625,17 @@ Found 2026-10-14 while merging #1759 and #1764; pre-existing since #1518.
 
 ### D362. A Spark connection takes no agent credential: the factory asks for a user Apache Spark refuses
 
-`assertAgentCredentialForm` in `src/lib/db/factory.ts` takes `agentPassword` alone only from a provider whose capabilities declare `agentCredential: "token"`, and asks every other engine for both `agentUser` and `agentPassword`, which the agent profile then opens with as the connection's user and password.
+`assertAgentCredentialForm` in `src/lib/db/factory.ts` takes `agentPassword` alone only from a provider whose capabilities declare a secret-only form, `agentCredential: "token"` or `"service-account-key"`, and asks every engine that declares no form for both `agentUser` and `agentPassword`, which the agent profile then opens with as the connection's user and password.
 `SparkProvider` declares no `agentCredential`, and `src/lib/db/providers/sql/spark/connection-options.ts` refuses any non-empty User with `SPARK_FIELD_SENTENCES.userNotTaken`, since a Spark Connect session's identity is its token.
 So no agent credential works on a Spark connection: an `agentPassword` alone is refused as an incomplete agent credential, and an `agentUser` beside it is refused by Spark's User check.
 Plan-mode grounding and the operations workflow, which both acquire through the `agent-operations` profile, then meet one of the two refusals instead of reading the schema.
 With no agent credential stored, both run under the connection's own token, and the connection dialog has no input for one, so only a record written through the API or storage reaches this.
-`tests/unit/db/agent-credential-capability.test.ts` pins `TOKEN_ENGINES` to Kubernetes alone.
+`tests/unit/db/agent-credential-capability.test.ts` pins each engine's form in `DECLARED_FORMS`, where the token engines are Kubernetes, Weaviate and Qdrant, and Spark has no row.
 Verified 2026-10-14 by reading `factory.ts`, `connection-options.ts` and that test on `main` at 59cdfd09b.
 
 Found 2026-10-14 in the integration review of #1759 and #1764; Spark behaved the same before #1764 added the token form.
 
-**Done when:** `SparkProvider.getCapabilities()` declares `agentCredential: "token"`, `TOKEN_ENGINES` includes `spark`, a factory test shows an `agentPassword` alone becoming the token of the agent's Spark session and an `agentUser` refused, and section 8.3 of `docs/providers/spark.md` says so in one sentence.
+**Done when:** `SparkProvider.getCapabilities()` declares `agentCredential: "token"`, `DECLARED_FORMS` has a `spark: "token"` row, a factory test shows an `agentPassword` alone becoming the token of the agent's Spark session and an `agentUser` refused, and section 8.3 of `docs/providers/spark.md` says so in one sentence.
 
 ### D363. Snowflake's first result partition is read uncompressed
 

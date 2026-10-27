@@ -1218,8 +1218,9 @@ reuse* (the borrow, the resolved-path identity, the control arm proving a second
 refused, and SQLite proving it is not borrowed from) and *grounding a plan run while the writable
 provider holds the file* (a real plan-mode `captureContextSnapshot` comes back `captured` via
 `provider-inventory` with the profiled cache owning nothing; its control arm — the same run with an
-`agentUser`, which opts out of the reuse — comes back `unavailable` / `CATALOG_READ_REFUSED`, which
-is what every run did before this was closed). What this file asserts is the provider's own half:
+`agentUser`, which opts out of the reuse — comes back `unavailable` / `CATALOG_READ_REFUSED`, now
+because the `"none"` agent credential form refuses the credential before a second handle opens the
+file, where before PR 0.7 that run hit the lock, the refusal every run met before this was closed). What this file asserts is the provider's own half:
 `getCapabilities().singleWriterFile === true`.
 
 A **0.2.x error mapping & locking** suite covers the hardened file boundary: a second open of a
