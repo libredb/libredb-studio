@@ -158,6 +158,9 @@ describe("the declarations the doc states", () => {
       "The connection's Namespaces field lists the tree; it does not bound a statement, which may use -A or any -n.",
     ])
       expect(nine).toContain(line);
+    expect(nine).toContain(
+      "Masking a Secret name inside free-text status, event and log messages, on agent and MCP reads alike, is D391 in [`docs/BACKLOG.md`](../BACKLOG.md).",
+    );
     expect(sectionOf("## 14. Known limitations")).not.toContain("No MCP");
     expect(sectionOf("## 14. Known limitations")).toContain("(B115)");
     expect(sectionOf("## 4. Connection")).toContain("agent token");

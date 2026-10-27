@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S9 · 6
-- [Drivers and connections](#drivers-and-connections) — D1-D390, U17 · 284
+- [Drivers and connections](#drivers-and-connections) — D1-D391, U17 · 285
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U148 · 134
@@ -3931,6 +3931,16 @@ Measured 2026-10-21 by the VS Code extension's e2e leg (PR 14): a find with `$wh
 Found 2026-10-21 during the VS Code extension work (PR 14), and deferred because it changes the MongoDB provider's query path for the web too.
 
 **Done when:** the provider passes the connection's `queryTimeout` as `maxTimeMS` on every query operation, a test per operation pins it, and the extension's MongoDB run ends with `TIMEOUT_ERROR` at that bound.
+
+### D391. A Secret's name in a free-text Kubernetes message reaches an agent and an MCP client unmasked
+
+Machine redaction (`src/lib/db/providers/platform/kubernetes/machine-redaction.ts`) masks a Secret's name in every field defined to hold one, and leaves free text as the server wrote it.
+A pod's status and condition messages, an event's `message` and a log line can carry a Secret's name, such as `secret "db-credentials" not found` in a pod's `FailedMount` event, so that name reaches an agent run and an MCP `run_kubectl_read` answer alike.
+The residue is stated in section 9 of `docs/providers/kubernetes.md`, in `docs/AGENT.md` and in `run_kubectl_read`'s description; Secret keys and label values pass as well, which is not this entry.
+
+Found 2026-10-27 in the review of the all-providers PR 0.4 (MCP `run_kubectl_read`), and deferred by the team lead's ruling 36, which narrowed that PR's acceptance to the fields defined to hold a Secret name.
+
+**Done when:** a Secret name the cluster holds is masked inside status, condition and event messages and log lines on the machine path, for agent mode and MCP by the same code, a test per message source pins a planted name, and the residue lines in `docs/providers/kubernetes.md`, `docs/AGENT.md` and the tool description drop the free-text messages.
 
 ## Value interpolation
 

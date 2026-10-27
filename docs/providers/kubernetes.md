@@ -397,6 +397,8 @@ What machine redaction leaves unmasked, the same six lines as `docs/AGENT.md` st
 - A guessed Secret name can be confirmed to exist through get secret NAME or auth can-i get secrets/NAME; RBAC decides that.
 - The connection's Namespaces field lists the tree; it does not bound a statement, which may use -A or any -n.
 
+Masking a Secret name inside free-text status, event and log messages, on agent and MCP reads alike, is D391 in [`docs/BACKLOG.md`](../BACKLOG.md).
+
 MCP:
 - MCP clients read a Kubernetes connection with `run_kubectl_read`, the kubectl arm of `MCP_STATEMENT_ARMS` (`src/lib/mcp/tools/statement-arms.ts`): one line, read and admitted by the agent's own kubectl adapter, under the `agent-read-only` profile and `queryReadOnly`, so its answer is the machine projection above, Secret names included, and never the editor's.
 - Its admission refuses what an agent run's does, exec, writes and the paging line among them, before anything is acquired; a watch is refused by the machine read; a read past the 1000-row budget is refused with the command's own row-cap advice, and it takes no `offset` and no `database` ([`docs/MCP.md`](../MCP.md)).
