@@ -151,8 +151,13 @@ every group under `spBv1.0`.
 
 The session can carry a user and a password and the encoder sets their flags, but nothing passes them
 from a connection yet, and this provider declares only the three fields it reads. A field that is
-collected and dropped is worse than one that is absent. Declaring credentials without TLS would be
-worse still: it would carry a password in cleartext, and half an authentication is worse than none.
+collected and dropped is worse than one that is absent.
+A password would no longer travel in cleartext, since the provider reads TLS (below), so a credential field waits only on the connection passing it to the session.
+
+TLS is not absent: the broker is dialled over TLS from the connection's SSL / TLS panel, which the dialog offers for this engine.
+`sparkplugTlsMaterial` in [`connection-options.ts`](../../src/lib/db/providers/industrial/sparkplug/connection-options.ts) reads the panel through the shared `nodeTlsMaterial`, so its mode, CA and client certificate are what the handshake uses, and a malformed panel is refused by name before any socket exists.
+With no panel, or the `disable` mode, the socket is plain.
+Through an SSH tunnel the certificate is checked against the broker the user named, not the local forward.
 
 ### Connection string
 
@@ -285,7 +290,7 @@ reporting every mutation caught looks identical to a run that measured nothing.
 
 - A Sparkplug 2.2 host's STATE is not read. 2.2 published it at `STATE/<scada_host_id>`, outside the
   `spBv1.0` namespace, and every filter this read sends is inside it.
-- No credential or TLS fields, as section 4.2 states.
+- No credential fields, as section 4.2 states; TLS comes from the SSL / TLS panel, not from a field of this engine's own.
 - The four connection refusals carry one error code and are told apart only by their sentences. The
   information exists one layer up as the read's end reason and is flattened at the throw; carrying it
   through waits on a typed failure field on the shared error.
