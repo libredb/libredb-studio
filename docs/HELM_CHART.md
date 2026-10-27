@@ -416,6 +416,10 @@ hide them from `helm search` consumers.**
 ## Deployment Examples
 
 ### Minimal (port-forward)
+
+Any cluster works.
+For a local throwaway one, `kind create cluster` or `k3d cluster create` is enough, and `kind delete cluster` or `k3d cluster delete` removes it afterwards.
+
 ```bash
 helm repo add libredb https://libredb.org/libredb-studio/
 helm install libredb libredb/libredb-studio \
