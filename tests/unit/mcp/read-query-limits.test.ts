@@ -9,7 +9,12 @@ import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { rowBudgetRefusal } from "@/lib/db/providers/document/mongodb/agent-read";
-import { byteBudgetSentence, rowBudgetSentence } from "@/lib/db/providers/sql/read-only-budget";
+import {
+  BYTE_BUDGET_PREFIX,
+  byteBudgetSentence,
+  ROW_BUDGET_PREFIX,
+  rowBudgetSentence,
+} from "@/lib/db/providers/sql/read-only-budget";
 import {
   classifyReadQueryFailure,
   fenceRefusalText,
@@ -142,29 +147,34 @@ describe("the budget sentences every provider shares (D367)", () => {
     );
   });
 
-  // The two providers off the SQL arm reach the mapper too, MongoDB with its cursor-bound tail.
-  test.each([
-    ["kubectl's row refusal", rowBudgetSentence(201, 200), ROWS],
-    ["kubectl's byte refusal", byteBudgetSentence(2_000_000, 1_048_576), BYTES],
-    [
-      "MongoDB's row refusal at the cursor bound",
-      rowBudgetRefusal(201, { statementTimeoutMs: 1, maxResultRows: 200, maxResultBytes: 1 }, "{}", true).message,
-      ROWS,
-    ],
-  ] as const)("maps %s to too-large", (_name, message, text) => {
-    expect(classifyReadQueryFailure(new Error(message), 1_000, 10_000)).toEqual({ kind: "too-large", text });
+  // The mapper matches the very openings the constructors write, so neither can be reworded alone.
+  test("the mapper's row and byte entries are the shared module's prefixes", () => {
+    expect(READ_ONLY_REFUSALS.filter(({ kind }) => kind === "rows" || kind === "bytes")).toEqual([
+      { prefix: ROW_BUDGET_PREFIX, kind: "rows" },
+      { prefix: BYTE_BUDGET_PREFIX, kind: "bytes" },
+    ]);
+    expect(rowBudgetSentence(1, 0).startsWith(`${ROW_BUDGET_PREFIX}: `)).toBe(true);
+    expect(byteBudgetSentence(1, 0).startsWith(`${BYTE_BUDGET_PREFIX}: `)).toBe(true);
+  });
+
+  // MongoDB's row refusal adds a cursor-bound tail after the shared sentence; the mapper still reads it.
+  // kubectl's own refusals are fed to the mapper in tests/unit/db/kubernetes/machine-read.test.ts.
+  test("maps MongoDB's row refusal at the cursor bound to too-large", () => {
+    const message = rowBudgetRefusal(
+      201,
+      { statementTimeoutMs: 1, maxResultRows: 200, maxResultBytes: 1 },
+      "{}",
+      true,
+    ).message;
+    expect(classifyReadQueryFailure(new Error(message), 1_000, 10_000)).toEqual({ kind: "too-large", text: ROWS });
   });
 });
 
 describe("the prefixes the mapper matches still start a message in each provider that raises it", () => {
   const SHARED = "src/lib/db/providers/sql/read-only-budget.ts";
-  const SHARED_PREFIXES = [
-    "Read-only execution exceeded the row budget",
-    "Read-only execution exceeded the byte budget",
-  ];
+  // The row and byte openings are constants of the shared module, so they are checked as declared there.
+  const SHARED_PREFIXES = [ROW_BUDGET_PREFIX, BYTE_BUDGET_PREFIX];
   const RAISED_IN: Record<string, readonly string[]> = {
-    "Read-only execution exceeded the row budget": [SHARED],
-    "Read-only execution exceeded the byte budget": [SHARED],
     "Read-only execution refused a value the server cut at the byte budget": ["src/lib/db/providers/sql/mssql.ts"],
     "Read-only execution cannot bound a serialised result": ["src/lib/db/providers/sql/mssql.ts"],
     "Read-only execution exceeded the time budget": [
@@ -191,7 +201,9 @@ describe("the prefixes the mapper matches still start a message in each provider
   };
 
   test("every prefix the mapper matches is listed here", () => {
-    expect(READ_ONLY_REFUSALS.map((refusal) => refusal.prefix).sort()).toEqual(Object.keys(RAISED_IN).sort());
+    expect(READ_ONLY_REFUSALS.map((refusal) => refusal.prefix).sort()).toEqual(
+      [...SHARED_PREFIXES, ...Object.keys(RAISED_IN)].sort(),
+    );
   });
 
   test.each(Object.entries(RAISED_IN).flatMap(([prefix, files]) => files.map((file) => [prefix, file] as const)))(
@@ -205,11 +217,11 @@ describe("the prefixes the mapper matches still start a message in each provider
     expect(read(SHARED).split(prefix)).toHaveLength(2);
   });
 
-  test.each(SHARED_PREFIXES)("%p is written in no provider file but the shared module", (prefix) => {
-    const providers = join(REPO, "src/lib/db/providers");
-    const writers = readdirSync(providers, { recursive: true, encoding: "utf8" })
-      .filter((file) => file.endsWith(".ts"))
-      .map((file) => `src/lib/db/providers/${file}`)
+  // The whole source tree, the MCP mapper included: it imports the prefixes rather than typing its own copy.
+  test.each(SHARED_PREFIXES)("%p is written in no source file but the shared module", (prefix) => {
+    const writers = readdirSync(join(REPO, "src"), { recursive: true, encoding: "utf8" })
+      .filter((file) => /\.tsx?$/.test(file))
+      .map((file) => `src/${file}`)
       .filter((file) => read(file).includes(prefix));
     expect(writers).toEqual([SHARED]);
   });

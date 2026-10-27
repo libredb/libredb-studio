@@ -1,3 +1,4 @@
+import { BYTE_BUDGET_PREFIX, ROW_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
 import { analyzeQuery } from "@/lib/db/utils/query-limiter";
 import type { DatabaseType } from "@/lib/types";
 
@@ -7,8 +8,9 @@ import type { DatabaseType } from "@/lib/types";
  * A provider's read-only budget refusal is recognised by the fixed opening of this repository's
  * own messages, and answered in this server's words. The row and byte refusals are built once, by
  * the constructors in src/lib/db/providers/sql/read-only-budget.ts that every provider with a
- * queryReadOnly calls; the rest are SQL Server's, SQLite's and DuckDB's own. A test reads those
- * files and fails when an opening no longer occurs, so a reworded message cannot fall through to
+ * queryReadOnly calls, and their openings are imported from there rather than typed again here; the
+ * rest are SQL Server's, SQLite's and DuckDB's own. A test reads those files and fails when an
+ * opening no longer occurs, so a reworded message cannot fall through to
  * an engine error. A time-budget refusal, and any failure that settles once the
  * deadline has passed, is the timeout, so which of the two settles first never changes what the
  * client reads. The deadline race stops the wait for a statement, not the statement: no provider
@@ -18,8 +20,8 @@ import type { DatabaseType } from "@/lib/types";
 export type ReadOnlyRefusalKind = "rows" | "bytes" | "cut-value" | "serialised" | "time";
 
 export const READ_ONLY_REFUSALS: readonly { readonly prefix: string; readonly kind: ReadOnlyRefusalKind }[] = [
-  { prefix: "Read-only execution exceeded the row budget", kind: "rows" },
-  { prefix: "Read-only execution exceeded the byte budget", kind: "bytes" },
+  { prefix: ROW_BUDGET_PREFIX, kind: "rows" },
+  { prefix: BYTE_BUDGET_PREFIX, kind: "bytes" },
   { prefix: "Read-only execution refused a value the server cut at the byte budget", kind: "cut-value" },
   { prefix: "Read-only execution cannot bound a serialised result", kind: "serialised" },
   { prefix: "Read-only execution exceeded the time budget", kind: "time" },
