@@ -80,7 +80,7 @@ The shared transport treats `Authorization` as a connection header, so each toke
 
 The agent's own credential is a service-account key JSON in `agentPassword` alone, because BigQuery declares `agentCredential: "service-account-key"`: the provider mints that key's token itself, so Studio chooses the scope the token carries.
 An `agentUser`, an access token or an `authorized_user` JSON as the agent password is refused before the provider connects, since Studio cannot choose the scope of a token minted elsewhere.
-Today that token carries the same `https://www.googleapis.com/auth/bigquery` scope as the connection's, so the form gives the agent no read-only property yet; moving the agent token to the `cloud-platform.read-only` scope is the work of the BigQuery agent PR (PR 2.1 of the all-providers design).
+Today that token carries the same `https://www.googleapis.com/auth/bigquery` scope as the connection's, so the form gives the agent no read-only property yet; moving the agent token to the `cloud-platform.read-only` scope is left to the change that brings BigQuery into agent execution.
 
 ### 3.3 Required IAM
 
