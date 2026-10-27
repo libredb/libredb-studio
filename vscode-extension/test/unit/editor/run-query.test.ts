@@ -12,6 +12,7 @@ import {
   NO_ACTIVE_EDITOR,
   NOTHING_TO_RUN,
   ROW_LIMIT_MAX,
+  RUN_ANYWAY,
   RowLimitError,
   readRowLimit,
   runQuery,
@@ -549,6 +550,58 @@ describe("runQuery", () => {
       await runQuery(deps);
       assert.deepEqual(decorationTypes, []);
       assert.deepEqual(editor.decorations, []);
+    });
+  });
+
+  describe("step 11b: the confirmation", () => {
+    const DELETE = "delete from t";
+    const asks = () => {
+      const env = bound(DELETE);
+      env.scripts.runTarget = () => Promise.resolve({ statement: DELETE, dangerous: true });
+      return env;
+    };
+
+    it("asks in a modal that shows the statement, and runs it once the person chooses Run Anyway", async () => {
+      const { deps, executed } = asks();
+      answerMessages(() => RUN_ANYWAY);
+      await runQuery(deps);
+      assert.deepEqual(shownMessages, [
+        {
+          level: "warning",
+          message:
+            "This statement may change data, database objects, or permissions. Review it before running it on shop.",
+          options: { modal: true, detail: DELETE },
+          items: ["Run Anyway"],
+        },
+      ]);
+      assert.equal(executed.length, 1);
+      assert.equal(executed[0][1].statement, DELETE);
+    });
+
+    it("sends nothing and settles the run when the person dismisses it", async () => {
+      const { deps, runs, executed } = asks();
+      await runQuery(deps);
+      assert.equal(shownMessages.length, 1);
+      assert.deepEqual(executed, []);
+      assert.deepEqual(runs.running(), []);
+    });
+
+    it("sends nothing when the run is cancelled during the question, whatever the person then chose", async () => {
+      const { deps, runs, executed } = asks();
+      answerMessages(() => {
+        runs.of(UNTITLED)?.tokenSource.cancel();
+        return RUN_ANYWAY;
+      });
+      await runQuery(deps);
+      assert.deepEqual(executed, []);
+      assert.deepEqual(runs.running(), []);
+    });
+
+    it("asks nothing for a target the child did not flag", async () => {
+      const { deps, executed } = bound("select 1;");
+      await runQuery(deps);
+      assert.deepEqual(shownMessages, []);
+      assert.equal(executed.length, 1);
     });
   });
 

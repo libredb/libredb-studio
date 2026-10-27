@@ -25,6 +25,7 @@ import type {
 } from "@/lib/db/types";
 import { type EditorLanguage, editorLanguageForTabType, resolveTabType } from "@/lib/editor/tab-language";
 import { generateTableQuery } from "@/lib/query-generators";
+import { isDangerousQuery } from "@/lib/sql/dangerous-query";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { runTarget } from "@/lib/sql/run-target";
 import { countCodeStatements } from "@/lib/sql/statement-splitter";
@@ -448,7 +449,8 @@ export function createHandlers(
     },
 
     // The web editor's run target rule on the offsets the host's editor reports; a target with no code under the sql
-    // editor language answers "", so the host's one blank check says "Nothing to run." (builder's call 4).
+    // editor language answers "", so the host's one blank check says "Nothing to run." (builder's call 4). The target
+    // also carries the web editor's confirmation gate's verdict, read under the connection's type, for the host to ask on.
     async runTarget(params) {
       const connectionId = connectionIdOf(params);
       const text = aString(fieldOf(params, "text"), "text");
@@ -476,7 +478,7 @@ export function createHandlers(
       if (rule.editorLanguage === "sql" && countCodeStatements(target.statement, rule.grammar) === 0) {
         return { statement: "" };
       }
-      return target;
+      return isDangerousQuery(target.statement, record.connection.type) ? { ...target, dangerous: true } : target;
     },
   };
 }
