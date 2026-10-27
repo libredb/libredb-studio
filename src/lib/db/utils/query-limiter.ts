@@ -155,6 +155,21 @@ function hasRepeatedCodeWord(sql: string, word: string, from: number, grammar: S
   return findCodeWord(sql, word, first.end, grammar) !== null;
 }
 
+/** The most trailing clauses one statement's run is stripped of; a longer run is refused (`applyQueryLimit`). */
+const MAX_TRAILING_CLAUSES = 64;
+
+const anchoredClauses = new WeakMap<RegExp, RegExp>();
+
+/** A declared clause pattern anchored behind a non-space, compiled once per pattern. */
+function clausePattern(clause: RegExp): RegExp {
+  let anchored = anchoredClauses.get(clause);
+  if (anchored === undefined) {
+    anchored = new RegExp(`(?<!\\s)${clause.source}`, clause.flags);
+    anchoredClauses.set(clause, anchored);
+  }
+  return anchored;
+}
+
 /**
  * The statement with its trailing-clause run removed: the code, the trivia that
  * sat between the code and the clause, and the run itself (#1398).
@@ -171,9 +186,16 @@ function hasRepeatedCodeWord(sql: string, word: string, from: number, grammar: S
  * statement carrying several of them keeps them in the order they were written.
  * The passes are not capped at the declaration's length: a dialect can name
  * the same clause twice in a chain (MySQL's `FOR SHARE OF t1 FOR UPDATE OF
- * t2`, #1981), so the loop runs until a pass strips nothing. Each pattern is
- * end-anchored and eats at least one word, so the index strictly decreases and
- * the loop terminates whatever the declaration says.
+ * t2`, #1981), so the loop runs until a pass strips nothing, or until it has
+ * stripped `MAX_TRAILING_CLAUSES` clauses: `exhausted` then says the run went on,
+ * and `applyQueryLimit` refuses the statement rather than write the bound inside
+ * it. Each pass reads the whole body, so the cap is what keeps a chain of clauses
+ * linear in the statement's length.
+ *
+ * Each pattern opens with `\s+` and is end-anchored, and an unanchored search
+ * retries it from every character of a whitespace run, which made a long run in
+ * front of a clause word quadratic. `clausePattern` anchors it behind a non-space,
+ * so a match can only start where a run starts.
  *
  * The clause patterns match from `\s+`, which also takes the NEWLINE that closes
  * a `--` or `//` comment, so the body left behind can end inside one: a comment
@@ -192,20 +214,23 @@ function hasRepeatedCodeWord(sql: string, word: string, from: number, grammar: S
 function stripTrailingClauses(
   statement: string,
   grammar: SqlGrammar,
-): { code: string; midTrivia: string; clauseRun: string } {
+): { code: string; midTrivia: string; clauseRun: string; exhausted: boolean } {
   let body = statement;
   let clauseRun = "";
+  let clauses = 0;
 
   for (;;) {
     let stripped = false;
     for (const clause of grammar.trailingLimitClauses) {
-      const match = body.match(clause);
+      if (clauses === MAX_TRAILING_CLAUSES) break;
+      const match = body.match(clausePattern(clause));
       if (match === null || match.index === undefined) continue;
       clauseRun = match[0] + clauseRun;
       body = body.slice(0, match.index);
       stripped = true;
+      clauses++;
     }
-    if (!stripped) break;
+    if (!stripped || clauses === MAX_TRAILING_CLAUSES) break;
 
     // The trivia a stripped clause left behind joins the run, so the next pass
     // sees the clause behind it; a comment the writer put between the code and
@@ -218,8 +243,10 @@ function stripTrailingClauses(
     }
   }
 
+  const exhausted =
+    clauses === MAX_TRAILING_CLAUSES && grammar.trailingLimitClauses.some((clause) => clausePattern(clause).test(body));
   const end = readStatementEnd(body, grammar);
-  return { code: body.slice(0, end.end), midTrivia: body.slice(end.end), clauseRun };
+  return { code: body.slice(0, end.end), midTrivia: body.slice(end.end), clauseRun, exhausted };
 }
 
 /**
@@ -568,7 +595,13 @@ export function applyQueryLimit(
   // so the bound is written in code rather than inside the comment. The analysis
   // above read the same run off the same statement, so an existing bound followed
   // by one never reaches this rewrite.
-  const { code, midTrivia, clauseRun } = stripTrailingClauses(statement, grammar);
+  const { code, midTrivia, clauseRun, exhausted } = stripTrailingClauses(statement, grammar);
+  if (exhausted) {
+    throw new QueryError(
+      `The statement ends in more than ${MAX_TRAILING_CLAUSES} clauses that must follow the row limit`,
+      type,
+    );
+  }
   statement = code;
 
   // Remove the existing LIMIT/OFFSET when forceLimit is set. These are anchored

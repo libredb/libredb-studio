@@ -12,6 +12,9 @@ import {
   type ParsedQueryInfo,
 } from "@/lib/db/utils/query-limiter";
 import { QueryError } from "@/lib/db/errors";
+import { SQL_GRAMMAR } from "@/lib/db/sql-grammar";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
+import type { DatabaseType } from "@/lib/types";
 
 // ─── analyzeQuery ───────────────────────────────────────────────────────────
 
@@ -2205,5 +2208,76 @@ describe("MySQL and MariaDB locking clauses follow the row bound (#1981)", () =>
       const result = applyQueryLimit(`${read} FOR UPDATE`, 500, 0, {}, type);
       expect(result.sql).toBe(`${read} FOR UPDATE LIMIT 500`);
     }
+  });
+});
+
+// ─── the trailing-clause strip stays linear in the statement's length ───────
+//
+// A clause pattern opens with `\s+` and is end-anchored, and an unanchored search
+// retries it from every character of a whitespace run, so a long run in front of
+// a clause word cost time quadratic in its length: 50,000 spaces took a second
+// under PostgreSQL and three under CQL, on the server, per statement. The strip
+// now only starts a clause where a whitespace run starts, and stops after a
+// bounded number of clauses, so neither shape grows faster than the text.
+describe("the trailing-clause strip stays linear in the statement's length", () => {
+  const run = " ".repeat(100_000);
+
+  test("every declared clause pattern opens with a whitespace run", () => {
+    // The strip anchors each pattern behind a non-space; a pattern that opened
+    // with anything else would lose its first character to that anchor.
+    for (const type of Object.keys(SQL_GRAMMAR) as DatabaseType[]) {
+      for (const clause of resolveSqlGrammar(type).trailingLimitClauses) {
+        expect(clause.source.startsWith("\\s+")).toBe(true);
+      }
+    }
+  });
+
+  test.each([
+    ["postgres", "AS"],
+    ["cassandra", "ALLOW"],
+    ["snowflake", "FOR"],
+    ["mysql", "FOR"],
+    ["mysql", "LOCK"],
+    ["databend", "FORMAT"],
+    ["spark", "OFFSET"],
+  ] as const)(
+    "%s: a long whitespace run before the word %s is read once",
+    (type, word) => {
+      const sql = `SELECT${run}1 ${word}`;
+      const result = applyQueryLimit(sql, 500, 0, {}, type);
+      expect(result.sql).toBe(`${sql} LIMIT 500`);
+      expect(analyzeQuery(sql, type).hasLimit).toBe(false);
+    },
+    1000,
+  );
+
+  test("a clause pattern still matches after a long whitespace run", () => {
+    const result = applyQueryLimit(`SELECT * FROM t${run}FOR UPDATE`, 500, 0, {}, "mysql");
+    expect(result.sql).toBe(`SELECT * FROM t LIMIT 500${run}FOR UPDATE`);
+  });
+
+  test("a chain of 64 clauses is still bounded before the first one", () => {
+    const chain = " FOR SHARE OF a".repeat(64);
+    const result = applyQueryLimit(`SELECT * FROM t${chain}`, 500, 0, {}, "mysql");
+    expect(result.sql).toBe(`SELECT * FROM t LIMIT 500${chain}`);
+  });
+
+  test("a chain of 65 clauses is refused rather than bounded inside it", () => {
+    const sql = `SELECT * FROM t${" FOR SHARE OF a".repeat(65)}`;
+    expect(() => applyQueryLimit(sql, 500, 0, {}, "mysql")).toThrow(QueryError);
+    expect(() => applyQueryLimit(sql, 500, 0, {}, "mysql")).toThrow(
+      "The statement ends in more than 64 clauses that must follow the row limit",
+    );
+  });
+
+  test("a long chain is read and refused in time linear in its length", () => {
+    // The analysis also feeds the safety dialog in the browser, so it keeps the
+    // conservative reading instead of throwing: the refusal belongs to the rewrite.
+    // Eight thousand clauses took twelve seconds when every pass read the whole body.
+    const sql = `SELECT * FROM t${" FOR SHARE OF a".repeat(8000)}`;
+    const info = analyzeQuery(sql, "mysql");
+    expect(info.type).toBe("SELECT");
+    expect(info.hasLimit).toBe(false);
+    expect(() => applyQueryLimit(sql, 500, 0, {}, "mysql")).toThrow(QueryError);
   });
 });

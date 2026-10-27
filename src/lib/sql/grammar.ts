@@ -292,6 +292,10 @@ export interface SqlGrammar {
    * clauses every bounded read was refused outright: Materialize
    * `Expected end of statement, found LIMIT`, ScyllaDB `line 1:38 : Syntax error`.
    *
+   * Every pattern opens with `\s+`: the limiter anchors it behind a non-space, so
+   * a match starts only where a whitespace run starts and a long run is read once
+   * instead of once per character. A run longer than 64 clauses is refused.
+   *
    * The patterns accept word-runs alone, and where the clause carries an argument
    * (Materialize's timestamp, ScyllaDB's duration) it is a number, a single-quoted
    * literal or one bracket-free token - never a free expression - so a closing
