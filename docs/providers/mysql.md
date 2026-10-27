@@ -795,6 +795,11 @@ double-apply it.
 Inherited from `SQLBaseProvider.prepareQuery()` (see [PostgreSQL doc §5.2](./postgres.md#52-automatic-limit-injection)).
 The shared `analyzeQuery()` recognises both standard `LIMIT n [OFFSET m]` and MySQL's
 `LIMIT offset, count` form, so an already-limited MySQL query is respected rather than double-limited.
+A locking clause that follows the row bound is stripped and re-attached after the injected bound, so the
+bound stands where the grammar places it, and a bound that already stands before one is respected rather
+than doubled past it (#1981). MySQL's spellings are `FOR UPDATE` and `FOR SHARE`, each optionally
+`OF tbl[, tbl]`, `NOWAIT` or `SKIP LOCKED`; both engines also take `LOCK IN SHARE MODE`, and MariaDB
+additionally accepts `WAIT n` there.
 Default page size `DEFAULT_QUERY_LIMIT = 500`; unlimited caps at `MAX_UNLIMITED_ROWS = 100000`.
 
 MySQL's `#` line comment is skipped when the statement type is read, alongside `--` and `/* … */`

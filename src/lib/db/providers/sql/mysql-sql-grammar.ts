@@ -16,7 +16,36 @@ const MYSQL_GRAMMAR: SqlGrammar = {
   // its own client cuts with `DELIMITER`, and no reading of them was measured here, so the
   // default stays and the gap is BACKLOG S7.
   script: DEFAULT_SQL_GRAMMAR.script,
-  trailingLimitClauses: DEFAULT_SQL_GRAMMAR.trailingLimitClauses,
+  // A locking clause follows the row bound in both engines' SELECT grammar
+  // (MySQL 8 SELECT: LIMIT ... FOR UPDATE | FOR SHARE [OF tbl[, tbl]]
+  // [NOWAIT | SKIP LOCKED], plus the LOCK IN SHARE MODE spelling; MariaDB adds
+  // WAIT n), so the bound the limiter writes must stand BEFORE it (#1981).
+  // Declaring the tails here gives them the same strip/re-attach path
+  // Materialize's `AS OF` and ScyllaDB's `BYPASS CACHE` use (#1398): the run
+  // comes off the end, the bound is written, the run is re-attached verbatim -
+  // and a bound that already stands before one reads as the statement's own
+  // instead of inviting a second one past the clause.
+  //
+  // Each pattern eats ONE clause of the run, so a statement carrying several -
+  // `FOR SHARE OF t1 FOR UPDATE OF t2` - keeps them in the order they were
+  // written. `SKIP LOCKED`, `NOWAIT`, `WAIT n` and the OF list are options OF
+  // THE CLAUSE, not clauses of their own: a pattern that peeled `SKIP LOCKED`
+  // off separately would re-attach it before `FOR UPDATE`.
+  //
+  // A name in the OF list is a bare token, a backtick-quoted identifier or a
+  // double-quoted one - the quoted forms are the only way a name carries a
+  // space, and MySQL escapes a quote inside them by doubling it. The bare token
+  // excludes quotes, brackets and commas, so a closing quote can never ride on
+  // a name: a literal or a backticked identifier that merely ENDS in the clause
+  // words (`WHERE note = "x FOR UPDATE OF t"`) fails the pattern's `\s*$` after
+  // the name, the tail is not stripped, and the bound keeps its place at the
+  // end rather than landing inside the quoted text. A `)` is excluded for the
+  // same reason: a locking clause written inside a subquery is never the
+  // statement's own tail.
+  trailingLimitClauses: [
+    /\s+FOR\s+(?:UPDATE|SHARE)(?:\s+OF\s+(?:`(?:[^`]|``)*`|"(?:[^"]|"")*"|[^\s()',;"`]+)(?:\s*,\s*(?:`(?:[^`]|``)*`|"(?:[^"]|"")*"|[^\s()',;"`]+))*)?(?:\s+(?:NOWAIT|SKIP\s+LOCKED|WAIT\s+\d+))?\s*$/i,
+    /\s+LOCK\s+IN\s+SHARE\s+MODE(?:\s+(?:NOWAIT|SKIP\s+LOCKED|WAIT\s+\d+))?\s*$/i,
+  ],
 };
 
 /** How MySQL statement text is read: grammar, SQL text, redaction, update target and completion. */

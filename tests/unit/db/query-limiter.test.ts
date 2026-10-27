@@ -2051,3 +2051,159 @@ describe("an error that points into the bound Studio added says so (SF-022)", ()
     expect(error.message.split("Studio added").length).toBe(2);
   });
 });
+
+// ─── MySQL and MariaDB locking clauses follow the row bound (#1981) ─────────
+//
+// The locking clauses come after LIMIT/OFFSET in both engines' SELECT grammar
+// (MySQL 8.4 SELECT: LIMIT ... FOR UPDATE | LOCK IN SHARE MODE | FOR SHARE
+// [OF tbl] [NOWAIT | SKIP LOCKED]; MariaDB adds WAIT n). The limiter appended
+// its bound at the very end, past the locking clause, and read a bound that
+// already stood before one as absent - so both shapes handed the engine a
+// syntax error while reporting a row bound. A locking clause is therefore a
+// trailing clause run like Materialize's AS OF (#1398): stripped from the end,
+// the bound written before it, and the run re-attached verbatim after it.
+describe("MySQL and MariaDB locking clauses follow the row bound (#1981)", () => {
+  const read = "SELECT * FROM t";
+  const locked = (tail: string) => `${read} ${tail}`;
+
+  test.each([
+    ["FOR UPDATE", "SELECT * FROM t LIMIT 500 FOR UPDATE"],
+    ["LOCK IN SHARE MODE", "SELECT * FROM t LIMIT 500 LOCK IN SHARE MODE"],
+    ["FOR SHARE", "SELECT * FROM t LIMIT 500 FOR SHARE"],
+    ["FOR UPDATE SKIP LOCKED", "SELECT * FROM t LIMIT 500 FOR UPDATE SKIP LOCKED"],
+    ["FOR UPDATE OF t", "SELECT * FROM t LIMIT 500 FOR UPDATE OF t"],
+    ["FOR UPDATE OF t, u", "SELECT * FROM t LIMIT 500 FOR UPDATE OF t, u"],
+    ["FOR UPDATE NOWAIT", "SELECT * FROM t LIMIT 500 FOR UPDATE NOWAIT"],
+    ["FOR SHARE OF t SKIP LOCKED", "SELECT * FROM t LIMIT 500 FOR SHARE OF t SKIP LOCKED"],
+    ["LOCK IN SHARE MODE NOWAIT", "SELECT * FROM t LIMIT 500 LOCK IN SHARE MODE NOWAIT"],
+    ["FOR UPDATE WAIT 10", "SELECT * FROM t LIMIT 500 FOR UPDATE WAIT 10"],
+    ["FOR SHARE OF t, u NOWAIT", "SELECT * FROM t LIMIT 500 FOR SHARE OF t, u NOWAIT"],
+  ])("the bound is written before the %s tail", (tail, expected) => {
+    const result = applyQueryLimit(locked(tail), 500, 0, {}, "mysql");
+    expect(result.sql).toBe(expected);
+    expect(result.wasLimited).toBe(true);
+  });
+
+  test("the tail keeps its place when an offset is applied", () => {
+    const result = applyQueryLimit(`${read} FOR UPDATE`, 20, 10, {}, "mysql");
+    expect(result.sql).toBe("SELECT * FROM t LIMIT 20 OFFSET 10 FOR UPDATE");
+  });
+
+  test.each([
+    ["FOR UPDATE", "SELECT * FROM t LIMIT 10 FOR UPDATE"],
+    ["LOCK IN SHARE MODE", "SELECT * FROM t LIMIT 10 LOCK IN SHARE MODE"],
+    ["FOR SHARE OF t SKIP LOCKED", "SELECT * FROM t LIMIT 10 FOR SHARE OF t SKIP LOCKED"],
+    ["LIMIT 2, 10", "SELECT * FROM t LIMIT 2, 10 FOR UPDATE"],
+    ["LIMIT 10 OFFSET 2", "SELECT * FROM t LIMIT 10 OFFSET 2 FOR UPDATE"],
+  ])("an existing bound before the %s tail is left alone", (form, sql) => {
+    expect(analyzeQuery(sql, "mysql").hasLimit).toBe(true);
+    const result = applyQueryLimit(sql, 500, 0, {}, "mysql");
+    expect(result.wasLimited).toBe(false);
+    expect(result.sql).toBe(sql);
+  });
+
+  test("forceLimit replaces the bound before the tail exactly once", () => {
+    const result = applyQueryLimit(`${read} LIMIT 10 FOR UPDATE SKIP LOCKED`, 20, 5, { forceLimit: true }, "mysql");
+    expect(result.sql).toBe("SELECT * FROM t LIMIT 20 OFFSET 5 FOR UPDATE SKIP LOCKED");
+  });
+
+  test("each locking clause in a chain keeps the order it was written in", () => {
+    const sql = "SELECT * FROM t1, t2 FOR SHARE OF t1 FOR UPDATE OF t2 SKIP LOCKED";
+    const result = applyQueryLimit(sql, 500, 0, {}, "mysql");
+    expect(result.sql).toBe("SELECT * FROM t1, t2 LIMIT 500 FOR SHARE OF t1 FOR UPDATE OF t2 SKIP LOCKED");
+  });
+
+  test("a chain of three locking clauses is bounded before the first one", () => {
+    const sql = "SELECT * FROM t1, t2, t3 FOR SHARE OF t1 FOR UPDATE OF t2 FOR SHARE OF t3 SKIP LOCKED";
+    const result = applyQueryLimit(sql, 500, 0, {}, "mysql");
+    expect(result.sql).toBe(
+      "SELECT * FROM t1, t2, t3 LIMIT 500 FOR SHARE OF t1 FOR UPDATE OF t2 FOR SHARE OF t3 SKIP LOCKED",
+    );
+  });
+
+  test("an existing bound before a chain of three is recognised as the statement's own", () => {
+    const sql = "SELECT * FROM t1, t2, t3 LIMIT 10 FOR SHARE OF t1 FOR UPDATE OF t2 FOR SHARE OF t3";
+    expect(analyzeQuery(sql, "mysql").hasLimit).toBe(true);
+    expect(applyQueryLimit(sql, 500, 0, {}, "mysql").wasLimited).toBe(false);
+  });
+
+  test("a comment between two locking clauses travels with the run", () => {
+    const sql = "SELECT * FROM t1, t2 FOR SHARE OF t1 /* gap */ FOR UPDATE OF t2";
+    const result = applyQueryLimit(sql, 500, 0, {}, "mysql");
+    expect(result.sql).toBe("SELECT * FROM t1, t2 LIMIT 500 FOR SHARE OF t1 /* gap */ FOR UPDATE OF t2");
+  });
+
+  test("a line comment before the locking clause keeps the bound in code", () => {
+    const result = applyQueryLimit("SELECT * FROM t -- note\nFOR UPDATE", 500, 0, {}, "mysql");
+    expect(result.sql).toBe("SELECT * FROM t LIMIT 500 -- note\nFOR UPDATE");
+    expect(result.wasLimited).toBe(true);
+  });
+
+  test("a quoted identifier in the OF list is read whole", () => {
+    for (const tail of [
+      "FOR UPDATE OF `order items`",
+      "FOR UPDATE OF `o``rder`",
+      'FOR SHARE OF "order items" SKIP LOCKED',
+      "FOR UPDATE OF `order items`, plain SKIP LOCKED",
+    ]) {
+      const result = applyQueryLimit(`${read} ${tail}`, 500, 0, {}, "mysql");
+      expect(result.sql).toBe(`${read} LIMIT 500 ${tail}`);
+    }
+  });
+
+  test("quoted text that merely ends in the clause words is not a tail", () => {
+    // A double-quoted string and a backticked name can END in ` FOR UPDATE OF
+    // t`; the closing quote cannot ride on the OF list's name, so the tail is
+    // not stripped and the bound keeps its place at the end of the statement.
+    const sql = 'SELECT * FROM t WHERE note = "x FOR UPDATE OF t"';
+    const result = applyQueryLimit(sql, 500, 0, {}, "mysql");
+    expect(result.sql).toBe(`${sql} LIMIT 500`);
+    expect(result.wasLimited).toBe(true);
+
+    const backticked = "SELECT * FROM t ORDER BY `x FOR UPDATE OF t`";
+    expect(applyQueryLimit(backticked, 500, 0, {}, "mysql").sql).toBe(`${backticked} LIMIT 500`);
+  });
+
+  test("a column reached by a qualifier named like a locking word is not a tail", () => {
+    // `update` and `for` are reserved words in MySQL, so a name carrying them
+    // needs a qualifier or a quote; both keep the words off the statement's end.
+    const sql = "SELECT * FROM t ORDER BY t.update";
+    const result = applyQueryLimit(sql, 500, 0, {}, "mysql");
+    expect(result.sql).toBe(`${sql} LIMIT 500`);
+  });
+
+  test("a locking clause inside a subquery is not the statement's tail", () => {
+    const sql = "SELECT * FROM (SELECT * FROM u FOR UPDATE) t";
+    const result = applyQueryLimit(sql, 500, 0, {}, "mysql");
+    expect(result.sql).toBe("SELECT * FROM (SELECT * FROM u FOR UPDATE) t LIMIT 500");
+  });
+
+  test("the locking words inside a literal are not a tail", () => {
+    const sql = "SELECT * FROM t WHERE note = 'FOR UPDATE'";
+    const result = applyQueryLimit(sql, 500, 0, {}, "mysql");
+    expect(result.sql).toBe("SELECT * FROM t WHERE note = 'FOR UPDATE' LIMIT 500");
+  });
+
+  test("an alias or column spelled like a locking word is not a tail", () => {
+    const sql = "SELECT for, update FROM t";
+    const result = applyQueryLimit(sql, 500, 0, {}, "mysql");
+    expect(result.sql).toBe("SELECT for, update FROM t LIMIT 500");
+  });
+
+  test("a trailing comment is re-attached after the locking tail", () => {
+    const sql = "SELECT * FROM t FOR UPDATE; -- note";
+    const result = applyQueryLimit(sql, 500, 0, {}, "mysql");
+    expect(result.sql).toBe("SELECT * FROM t LIMIT 500 FOR UPDATE; -- note");
+  });
+
+  test("a dialect without the locking clauses reads the words as before", () => {
+    // PostgreSQL takes a locking clause on either side of LIMIT/OFFSET, so the
+    // appended bound leaves a statement it still accepts; its own "bound before
+    // the clause" reading is #1964 and stays out of this change. The rest have
+    // no locking clause at all, and the words read as ordinary trailing words.
+    for (const type of ["postgres", "clickhouse", "duckdb", "sqlite", "trino"] as const) {
+      const result = applyQueryLimit(`${read} FOR UPDATE`, 500, 0, {}, type);
+      expect(result.sql).toBe(`${read} FOR UPDATE LIMIT 500`);
+    }
+  });
+});

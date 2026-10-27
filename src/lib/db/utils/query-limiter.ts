@@ -168,9 +168,12 @@ function hasRepeatedCodeWord(sql: string, word: string, from: number, grammar: S
  * the bound BEFORE the run it re-attaches verbatim, writer's spacing included.
  *
  * The run is stripped one clause per pattern, from the end backward, so a
- * statement carrying two of them keeps them in the order they were written. Each
- * pattern is end-anchored and eats at least one word, so the index strictly
- * decreases and the loop terminates whatever the declaration says.
+ * statement carrying several of them keeps them in the order they were written.
+ * The passes are not capped at the declaration's length: a dialect can name
+ * the same clause twice in a chain (MySQL's `FOR SHARE OF t1 FOR UPDATE OF
+ * t2`, #1981), so the loop runs until a pass strips nothing. Each pattern is
+ * end-anchored and eats at least one word, so the index strictly decreases and
+ * the loop terminates whatever the declaration says.
  *
  * The clause patterns match from `\s+`, which also takes the NEWLINE that closes
  * a `--` or `//` comment, so the body left behind can end inside one: a comment
@@ -179,7 +182,12 @@ function hasRepeatedCodeWord(sql: string, word: string, from: number, grammar: S
  * trivia - so the comment is returned between the code and the clause rather
  * than swallowing the bound that is about to be written into it, and the
  * end-anchored probes read code only: `-- LIMIT 5\nALLOW FILTERING` is not a
- * statement already limited to 5.
+ * statement already limited to 5. A comment BETWEEN two clauses of the run is
+ * part of the run the same way: after each pass the body left behind is cut at
+ * its code end and the trivia joins the run, so a `FOR SHARE OF t1` and a
+ * `FOR UPDATE OF t2` with a block comment between them strips both clauses and
+ * the comment keeps its place between them instead of hiding the second clause
+ * from the next pass.
  */
 function stripTrailingClauses(
   statement: string,
@@ -188,7 +196,7 @@ function stripTrailingClauses(
   let body = statement;
   let clauseRun = "";
 
-  for (let pass = 0; pass < grammar.trailingLimitClauses.length; pass++) {
+  for (;;) {
     let stripped = false;
     for (const clause of grammar.trailingLimitClauses) {
       const match = body.match(clause);
@@ -198,6 +206,16 @@ function stripTrailingClauses(
       stripped = true;
     }
     if (!stripped) break;
+
+    // The trivia a stripped clause left behind joins the run, so the next pass
+    // sees the clause behind it; a comment the writer put between the code and
+    // the FIRST clause travels the same way and lands in the same place it did
+    // when only `midTrivia` carried it - between the bound and the clause.
+    const rest = readStatementEnd(body, grammar);
+    if (rest.end < body.length) {
+      clauseRun = body.slice(rest.end) + clauseRun;
+      body = body.slice(0, rest.end);
+    }
   }
 
   const end = readStatementEnd(body, grammar);

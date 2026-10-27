@@ -3439,6 +3439,38 @@ describe("MySQLProvider", () => {
       expect(result.wasLimited).toBe(false);
     });
 
+    // A locking clause follows the row bound in MySQL and MariaDB, so the bound
+    // this provider injects must stand before it, and a bound that already
+    // stands before one must be recognised as the statement's own (#1981). The
+    // assertions pin the emitted text the way the hash-comment tests below do,
+    // because the shared limiter is the real caller of this dialect channel.
+    describe("locking clauses (#1981)", () => {
+      test.each<[string, string]>([
+        ["FOR UPDATE", "FOR UPDATE"],
+        ["LOCK IN SHARE MODE", "LOCK IN SHARE MODE"],
+        ["FOR SHARE OF users SKIP LOCKED", "FOR SHARE OF users SKIP LOCKED"],
+        ["LOCK IN SHARE MODE SKIP LOCKED", "LOCK IN SHARE MODE SKIP LOCKED"],
+      ])("the page bound is placed before %s", (tail, expected) => {
+        provider = new MySQLProvider(makeMySQLConfig());
+        const result = provider.prepareQuery(`SELECT * FROM users ${tail}`, { limit: 5, offset: 2 });
+
+        expect(result.query).toBe(`SELECT * FROM users LIMIT 5 OFFSET 2 ${expected}`);
+        expect(result.wasLimited).toBe(true);
+      });
+
+      test.each<[string, string]>([
+        ["LIMIT 10", "LIMIT 10 FOR UPDATE"],
+        ["LIMIT 2, 10", "LIMIT 2, 10 LOCK IN SHARE MODE"],
+        ["LIMIT 10 OFFSET 2", "LIMIT 10 OFFSET 2 FOR SHARE OF users"],
+      ])("an existing %s before a locking clause is left alone", (form, sql) => {
+        provider = new MySQLProvider(makeMySQLConfig());
+        const result = provider.prepareQuery(`SELECT * FROM users ${sql}`, { limit: 5 });
+
+        expect(result.query).toBe(`SELECT * FROM users ${sql}`);
+        expect(result.wasLimited).toBe(false);
+      });
+    });
+
     // `#` is MySQL's own second line-comment marker, and it is the reason
     // `lib/sql/leading-keyword.ts` skips such a run at all - on every dialect, since
     // none of them can OPEN a statement with one. Without it a `# note`-led SELECT
