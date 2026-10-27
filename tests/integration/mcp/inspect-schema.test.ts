@@ -342,7 +342,7 @@ describe("the answer", () => {
 });
 
 /**
- * Kubernetes (all-providers rulings 21 and 35): every kind is `config`, none a relation, so inspect_schema holds no
+ * Kubernetes: every kind is `config`, none a relation, so inspect_schema holds no
  * table to list there and refuses the call by name, pointing to run_kubectl_read, rather than answer an empty page. The
  * refusal is a decision taken once the connection resolves: nothing is acquired and no request reaches the cluster,
  * which holds a Secret whose name is the planted marker, so its absence is the refusal's and not an empty cluster's.

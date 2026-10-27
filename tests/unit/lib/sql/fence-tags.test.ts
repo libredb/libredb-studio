@@ -202,7 +202,7 @@ describe("fenceTagEngine", () => {
 
 describe("the two alias registries", () => {
   // `fenceTagEngine` reads only ALIAS_ENGINES, so an alias added to the query set alone is a block offered to the editor
-  // that never contradicts a connection (all-providers design 5.2, V13). `sql` is the one deliberate exception: it is a
+  // that never contradicts a connection, so every alias must be in both. `sql` is the one deliberate exception: it is a
   // language every SQL engine speaks, so it names none.
   const LANGUAGE_ONLY = ["sql"];
   // Known debt, not a rule: `cql` should name `cassandra`, the one type-id that runs CQL (docs/BACKLOG.md B86). Fixing

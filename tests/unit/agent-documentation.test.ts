@@ -863,7 +863,7 @@ describe("docs/AGENT.md names every language-pack resolver in its Language packs
   });
 
   // Derived from the record that is total over AgentStatementLanguageId, so a language's first-member change cannot
-  // land without moving this sentence (all-providers design 5.2, V24).
+  // land without moving this sentence.
   test("its opening sentence counts and names every statement language", () => {
     const ids = Object.keys(AGENT_LANGUAGE_COPY);
     const COUNT_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];

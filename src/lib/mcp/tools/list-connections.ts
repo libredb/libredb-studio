@@ -24,7 +24,7 @@ import { mcpStatementToolFor } from "./statement-arms";
  * list_connections (#246): the connections this deployment opted in for MCP that the token's role
  * may use, without credentials and without a server-side file path, paged under the result cap.
  * Each names its read_tool, the statement tool that serves its engine, read from the same
- * served-engine resolver the tools register and gate on, or null where none does (ruling 20).
+ * served-engine resolver the tools register and gate on, or null where none does.
  *
  * Connection metadata comes from the operator's seed file, not from anyone who can write to a
  * database, so the result carries no untrusted-content notice. No provider is called, so one audit

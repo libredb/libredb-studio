@@ -3939,7 +3939,7 @@ Machine redaction (`src/lib/db/providers/platform/kubernetes/machine-redaction.t
 A pod's status and condition messages, an event's `message` and a log line can carry a Secret's name, such as `secret "db-credentials" not found` in a pod's `FailedMount` event, so that name reaches an agent run and an MCP `run_kubectl_read` answer alike.
 The residue is stated in section 9 of `docs/providers/kubernetes.md`, in `docs/AGENT.md` and in `run_kubectl_read`'s description; Secret keys and label values pass as well, which is not this entry.
 
-Found 2026-10-27 in the review of the all-providers PR 0.4 (MCP `run_kubectl_read`), and deferred by the team lead's ruling 36, which narrowed that PR's acceptance to the fields defined to hold a Secret name.
+Found 2026-10-27 in the review of the change that added MCP `run_kubectl_read` (#1996), and deferred there: that change masks only the fields defined to hold a Secret name.
 
 **Done when:** a Secret name the cluster holds is masked inside status, condition and event messages and log lines on the machine path, for agent mode and MCP by the same code, a test per message source pins a planted name, and the residue lines in `docs/providers/kubernetes.md`, `docs/AGENT.md` and the tool description drop the free-text messages.
 

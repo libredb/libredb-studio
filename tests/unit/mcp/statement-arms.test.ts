@@ -1,5 +1,5 @@
 /**
- * The MCP statement arms (all-providers design 6): one per statement language, total over the language ids, each
+ * The MCP statement arms: one per statement language, total over the language ids, each
  * reading its engines from the one served-engine resolver, and each non-SQL arm reading and fencing its statement with
  * the agent's own adapter, so an MCP client meets the agent's sentences.
  */
@@ -294,7 +294,7 @@ describe("the tool each engine is read with", () => {
     ]);
   });
 
-  test("an arm that serves no engine is neither listed nor registered (all-providers design 6)", () => {
+  test("an arm that serves no engine is neither listed nor registered", () => {
     const idle = Object.freeze({ ...RUN_MONGO_COMMAND_ARM, types: [] });
     const arms = { sql: RUN_READ_QUERY_ARM, kubectl: null, mongo: idle };
     expect(servingStatementArms(arms)).toEqual([RUN_READ_QUERY_ARM]);
@@ -305,9 +305,9 @@ describe("the tool each engine is read with", () => {
 });
 
 /**
- * All-providers ruling 35: an engine that holds no object inspect_schema lists is refused there by name, and the
- * refusal names its statement tool. The arm declares it for its language, and every engine it serves is held to its
- * provider's own declaration: no relation kind where the arm says none, at least one where it does not.
+ * An engine that holds no object inspect_schema lists is refused there by name, rather than answered an empty page,
+ * and the refusal names its statement tool. The arm declares it for its language, and every engine it serves is held
+ * to its provider's own declaration: no relation kind where the arm says none, at least one where it does not.
  */
 describe("the arms whose engines hold no table", () => {
   test("kubectl declares it, SQL and MongoDB do not", () => {

@@ -1,5 +1,5 @@
 /**
- * The one served-engine resolver (all-providers design 6, V12): an MCP statement tool serves an engine only when agent
+ * The one served-engine resolver: an MCP statement tool serves an engine only when agent
  * mode executes statements on it, MCP_EXPOSABLE offers it, MCP_STATEMENT_READ opens it and its statement language is
  * the tool's. The records are passed in as well as read, so the case no shipped engine is in yet, an agent engine whose
  * MCP read row is still false, is pinned here rather than waiting for the first joiner.
@@ -39,7 +39,7 @@ describe("mcpStatementEngines", () => {
   });
 
   test("serves MongoDB and Kubernetes each in its own language", () => {
-    // MongoDB opened with run_mongo_command, Kubernetes with run_kubectl_read (all-providers ruling 21).
+    // MongoDB opened with run_mongo_command, Kubernetes with run_kubectl_read, offered only machine-redacted.
     expect(mcpStatementEngines("mongo")).toEqual(["mongodb"]);
     expect(mcpStatementEngines("kubectl")).toEqual(["kubernetes"]);
   });

@@ -87,7 +87,7 @@ describe("the texts", () => {
 /**
  * The statements each served engine takes, among those the fence admits, as measured on 2026-10-27: SQLite 3.53.4 and
  * SQL Server 2022 refuse `TABLE`, SQL Server also refuses a bare `VALUES` and has no `EXPLAIN`, and MariaDB 11.8
- * refuses `TABLE` where MySQL runs it (all-providers design 6.2, V11).
+ * refuses `TABLE` where MySQL runs it, so a refusal names only what the connection's engine runs.
  */
 describe("the accepted forms each engine's refusal names", () => {
   test.each([

@@ -60,7 +60,7 @@ describe("the tool descriptions", () => {
   });
 
   // The engines left out are derived from the records rather than listed, so an engine that later opens MCP read, or
-  // joins agent mode with its MCP read row false, moves between these sets without editing this file (V9).
+  // joins agent mode with its MCP read row false, moves between these sets without editing this file.
   test("an execution engine the records keep out of this tool is neither served nor named", () => {
     const withheld = AGENT_EXECUTION_ENGINES.filter(
       (candidate) =>
@@ -89,7 +89,7 @@ describe("the tool descriptions", () => {
     expect(RUN_KUBECTL_READ_ARM.description).toContain("this tool takes no offset");
   });
 
-  test("inspect_schema says an engine with no tables refuses it, and where to read it instead (ruling 35)", () => {
+  test("inspect_schema says an engine with no tables refuses it, and where to read it instead", () => {
     expect(INSPECT_SCHEMA_DESCRIPTION).toContain(
       "Works on every engine that holds tables. An engine whose objects are not tables, such as Kubernetes, refuses it, and the refusal names the tool that reads it, as list_connections' read_tool does.",
     );

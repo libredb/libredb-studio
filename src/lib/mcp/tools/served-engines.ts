@@ -4,7 +4,7 @@ import { MCP_EXPOSABLE, MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import type { DatabaseType } from "@/lib/types";
 
 /**
- * The one served-engine resolver of the MCP statement tools (all-providers design 6, V12). A tool's served set, its
+ * The one served-engine resolver of the MCP statement tools. A tool's served set, its
  * description and its call-time gate all read this, so a tool cannot name an engine it refuses or run on one it does
  * not name, and no type-id table is read outside the records below.
  *

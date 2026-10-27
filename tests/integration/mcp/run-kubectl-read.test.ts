@@ -1,5 +1,5 @@
 /**
- * run_kubectl_read (all-providers design 6, ruling 21): MCP's kubectl arm, run by the statement core over the real
+ * run_kubectl_read: MCP's kubectl arm, offered only machine-redacted, run by the statement core over the real
  * Kubernetes provider, through the real route, seed file and handler, with the fake API server of
  * tests/helpers/kubernetes-cluster.ts in place of a cluster.
  *
@@ -261,7 +261,7 @@ describe("a refusal", () => {
     expect(asked("/api/v1/namespaces/shop/pods")).toBe(false);
   });
 
-  test("a provider not opened under the agent read-only profile refuses the read (C6)", async () => {
+  test("a provider not opened under the agent read-only profile refuses the read", async () => {
     honourProfile = false;
     const result = await kubectl("get pods -n shop");
     expect(result.isError).toBe(true);

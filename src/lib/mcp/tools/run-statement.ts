@@ -47,7 +47,7 @@ import {
 import { MCP_STATEMENT_ARMS, mcpStatementToolFor, servingStatementArms, type McpStatementArm } from "./statement-arms";
 
 /**
- * The one core every MCP statement tool runs (#246, all-providers design 6): one read-only statement, on an engine that
+ * The one core every MCP statement tool runs (#246): one read-only statement, on an engine that
  * can bound it itself, in the arm's language.
  *
  * The order is run_read_query's, unchanged: signal, resolve, the served-engine gate, canonicalize, fence, the decision

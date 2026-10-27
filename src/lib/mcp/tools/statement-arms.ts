@@ -22,7 +22,7 @@ import {
 import { mcpStatementEngines } from "./served-engines";
 
 /**
- * The MCP statement tools, one arm per statement language (all-providers design 6).
+ * The MCP statement tools, one arm per statement language.
  *
  * The record is total over `AgentStatementLanguageId`, as `SERVER_PACKS` in `src/lib/agent/languages/server.ts` is, so
  * a language that joins agent mode does not compile until it decides its MCP arm: a tool, or null while none exists.
@@ -58,8 +58,8 @@ export interface McpStatementArm {
   readonly engines: string;
   /**
    * True where this language's engines hold no object inspect_schema lists, as no Kubernetes kind is a relation, so
-   * inspect_schema refuses them by name and points to this tool (all-providers ruling 35). The arm declares it for its
-   * language; `statement-arms.test.ts` holds it to every served engine's own relation kinds.
+   * inspect_schema refuses them by name and points to this tool rather than answering an empty page. The arm declares
+   * it for its language; `statement-arms.test.ts` holds it to every served engine's own relation kinds.
    */
   readonly holdsNoTables: boolean;
   readonly description: string;
@@ -194,9 +194,9 @@ export const RunKubectlReadInputSchema = z.strictObject({
 });
 
 /**
- * The kubectl arm (all-providers ruling 21): the agent's own reader, admission and `queryReadOnly`, so every answer is
- * the machine projection `machine-redaction.ts` masks, Secret names in the fields defined to hold one included, and
- * never the editor's. Free-text messages are that projection's residue, and the description says so.
+ * The kubectl arm, offered only machine-redacted: the agent's own reader, admission and `queryReadOnly`, so every
+ * answer is the machine projection `machine-redaction.ts` masks, Secret names in the fields defined to hold one
+ * included, and never the editor's. Free-text messages are that projection's residue, and the description says so.
  */
 export const RUN_KUBECTL_READ_ARM = nonSqlArm("kubectl", {
   tool: "run_kubectl_read",
@@ -271,7 +271,7 @@ export function mcpStatementToolFor(type: DatabaseType): McpStatementTool | null
 
 /**
  * The statement tool inspect_schema sends `type` to, when the arm that serves it holds no table, or null where
- * inspect_schema reads it (all-providers ruling 35).
+ * inspect_schema reads it.
  */
 export function mcpTablelessReadTool(type: DatabaseType): McpStatementTool | null {
   const arm = servingArmFor(type);

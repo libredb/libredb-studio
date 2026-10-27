@@ -816,7 +816,7 @@ describe("the key-browser declaration", () => {
  * agent's read tool and every MCP statement tool run a statement through, its `machineRedaction.maskedNameKinds` names
  * the kind, so the output masks those names. Being offered to MCP is no breach while every MCP tool is one this rule
  * already covers: `list_connections` names connections, `inspect_schema` lists relations alone, and each statement
- * tool reads only through `queryReadOnly` (all-providers ruling 21). A tool outside that set is a breach on an engine
+ * tool reads only through `queryReadOnly`. A tool outside that set is a breach on an engine
  * that withholds names and is offered to MCP, so a new MCP surface brings this census back up for review. This census
  * holds that declaration static; the masking itself is the provider's own redaction test.
  *

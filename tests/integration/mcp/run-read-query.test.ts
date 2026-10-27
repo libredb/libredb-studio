@@ -736,7 +736,7 @@ describe("a provider the profile seam should never hand out", () => {
   });
 
   // Elasticsearch and Cassandra refuse an offset they cannot page by throwing OffsetUnsupportedError from
-  // prepareQuery, so the refusal is the offset rule's, in the provider's own words, and nothing runs (design 6.2).
+  // prepareQuery, so the refusal is the offset rule's, in the provider's own words, and nothing runs.
   const CQL_REFUSAL =
     "CQL has no OFFSET clause, so results after the first page cannot be requested here. Narrow the statement with a WHERE clause on the partition key, or raise the row limit, instead of paging.";
   const preparingThrows = (error: Error) => {
@@ -815,7 +815,7 @@ describe("a provider the profile seam should never hand out", () => {
 
 describe("an engine whose paging clause is its own", () => {
   // SQL Server pages with ORDER BY ... OFFSET ... FETCH, so every text that names a paging clause must read the
-  // connection's engine, not one engine's words for all (all-providers design 6.2, V11).
+  // connection's engine, not one engine's words for all.
   const MSSQL_PAGING = "ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY";
   const sqlServer = (rows: Record<string, unknown>[]) => {
     const queryReadOnly = mock(async () => ({ rows, fields: ["id"], rowCount: rows.length, executionTime: 1 }));

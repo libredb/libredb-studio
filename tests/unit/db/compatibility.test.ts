@@ -504,7 +504,7 @@ describe("wire-compatibility registry", () => {
     expect(isExternalDatabaseType("kubernetes")).toBe(true);
     expect(compatibleEnginesFor("kubernetes")).toEqual([]);
     expect(READ_ONLY_ENFORCED.kubernetes).toBe(true);
-    // Offered with every answer machine-redacted (all-providers ruling 21).
+    // Offered with every answer machine-redacted.
     expect(MCP_EXPOSABLE.kubernetes).toBe(true);
     expect(READS_FILE_ACCESS_POSTURE.kubernetes).toBe(false);
     expect(CONNECTION_FORM_URI_MODE.kubernetes).toBe(false);
@@ -687,7 +687,7 @@ describe("MCP_EXPOSABLE (#1089)", () => {
 });
 
 /**
- * `MCP_STATEMENT_READ` (all-providers design 6.1): whether an MCP client may run a statement on an engine, a second
+ * `MCP_STATEMENT_READ`: whether an MCP client may run a statement on an engine, a second
  * record beside `MCP_EXPOSABLE` so that MCP read opens per engine by its own reviewed change, never as a side effect of
  * the engine joining agent mode. It can only narrow what the two records it sits under allow.
  */

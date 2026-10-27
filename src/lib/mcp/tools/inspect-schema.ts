@@ -47,7 +47,7 @@ import {
  * machine surfaces is never one (`relationKindIds`), so no such name reaches it. An engine that holds no relation at
  * all, as a Kubernetes cluster, whose kinds are all `config`, does not, is refused by name as soon as the connection
  * resolves, before anything is acquired, and the refusal names the statement tool that reads it, which its arm
- * declares (`holdsNoTables`), rather than answering an empty page (all-providers rulings 21 and 35).
+ * declares (`holdsNoTables`), rather than answering an empty page.
  *
  * It acquires under agent-operations, which sends no statement and so runs on every engine. The
  * decision event is written before acquisition and the outcome after, and a call whose record
@@ -282,7 +282,7 @@ export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall)
   if (connection === null) return refuse("mcp_connection_not_visible", MCP_NOT_VISIBLE_TEXT);
 
   const resolved: McpCallRecord = { ...record, connectionName: connection.seedId };
-  // Ahead of any acquisition, so no provider is built or dialled for an engine with no table to list (ruling 35).
+  // Ahead of any acquisition, so no provider is built or dialled for an engine with no table to list.
   const tableless = mcpTablelessReadTool(connection.type);
   if (tableless !== null)
     return (

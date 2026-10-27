@@ -1,5 +1,5 @@
 /**
- * run_mongo_command (all-providers design 6): MCP's MongoDB arm, run by the statement core over the real MongoDB provider and the real
+ * run_mongo_command: MCP's MongoDB arm, run by the statement core over the real MongoDB provider and the real
  * agent-read-only acquisition, with the driver stand-in of tests/helpers/mongodb-driver.ts in place of a server.
  *
  * The command is the agent's own envelope, read and admitted by the agent's own mongo adapter: a find and an aggregate

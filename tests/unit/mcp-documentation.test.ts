@@ -97,7 +97,7 @@ describe("docs/MCP.md", () => {
     );
     // The control that the record answers: etcd, Oxia, S3, MQTT, Firestore, OPC UA, Modbus, NETCONF and Sparkplug B
     // are the engines it refuses today, with SNMP (#1721) among them: a Get is a read of one numbered object, and the
-    // tools answer schemas rather than objects. Kubernetes left the list with run_kubectl_read (all-providers ruling 21).
+    // tools answer schemas rather than objects. Kubernetes left the list with run_kubectl_read, machine-redacted.
     expect(refused).toEqual(
       ["etcd", "oxia", "s3", "mqtt", "firestore", "opcua", "modbus", "netconf", "snmp", "sparkplug"].map(
         (type) => DB_UI_CONFIG[type as DatabaseType].label,

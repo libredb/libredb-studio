@@ -1,7 +1,7 @@
 import type { DatabaseType } from "@/lib/types";
 
 /**
- * What `run_read_query` tells a caller about one engine's SQL (all-providers design 6.2, V11): the statements the
+ * What `run_read_query` tells a caller about one engine's SQL: the statements the
  * engine runs among those the MCP execution fence admits (a `SELECT` or `WITH`, `VALUES`, `TABLE`, and `EXPLAIN`
  * without `ANALYZE`), and how the engine's own SQL pages a result. The fence is one rule for every engine, so a
  * refusal that listed its whole set would offer `TABLE` on SQLite, which has no such statement; the refusal reads the
