@@ -2,18 +2,26 @@
  * Rancher Manager's OIDC provider as Studio's identity provider (docs/OIDC.md#rancher).
  *
  * The other OIDC route tests replace `@/lib/oidc` wholesale, so they never run the role mapping, openid-client's ID
- * token checks or the logout URL builder. Here those run for real: the login, callback and logout routes, `@/lib/oidc`
- * and openid-client talk to a Rancher-shaped provider served by a stubbed `fetch`. Only the cookie store and the server
- * storage provider are replaced, so every cookie and every storage call the flow makes can be inspected.
+ * token claim checks or the logout URL builder. Here those run for real: the login, callback and logout routes,
+ * `@/lib/oidc` and openid-client talk to a Rancher-shaped provider served by a stubbed `fetch`. Only the cookie store and
+ * the server storage provider are replaced, so every cookie and every storage call the flow makes can be inspected.
+ *
+ * openid-client checks the ID token's claims (issuer, audience, expiry, nonce) but not its signature: an ID token taken
+ * straight from the token endpoint is vouched for by the TLS connection to it, which OIDC Core 3.1.3.7 allows. So no
+ * JWKS is served here, and docs/OIDC.md#rancher forbids turning TLS verification off to reach a self-signed Rancher.
+ *
+ * Like Rancher's token handler, the stub refuses a code verifier that does not match the authorization request's S256
+ * challenge, and a client secret that is wrong, whether it comes in a Basic header or in the form.
  *
  * The provider's shape follows Rancher's `pkg/oidc/provider` at v2.15.2 and v2.14.6: the issuer is `<server-url>/oidc`,
  * discovery lists `openid profile offline_access` and no `end_session_endpoint`, and the ID token carries `sub` (the
  * Rancher user id), `name` with the `profile` scope, `groups`, `auth_provider` and `nonce`, but no `email` and no
- * `preferred_username`. 2.15 sends `groups` only for the `groups` scope, 2.12 to 2.14 send it unasked, and on every line
+ * `preferred_username`. 2.15 sends `groups` only for the `groups` scope, 2.14 sends it unasked, and on every line
  * a user with no group principals, such as every local user, gets no `groups` claim at all.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { decodeJwt, exportJWK, generateKeyPair, SignJWT } from "jose";
+import { createHash } from "node:crypto";
+import { decodeJwt, generateKeyPair, SignJWT } from "jose";
 import { NextRequest } from "next/server";
 
 const SERVER_URL = "https://rancher.example.com";
@@ -29,6 +37,7 @@ const RANCHER_USER = "u-abc12";
 /** Unique markers, so a leak is found wherever it lands. */
 const ACCESS_TOKEN = "not-a-real-access-token-rancher-7f3a";
 const REFRESH_TOKEN = "not-a-real-refresh-token-rancher-9c1e";
+const RANCHER_SESSION = "not-a-real-rancher-session";
 
 // ─── The cookie store: an in-memory jar the routes read and write ──────────
 
@@ -81,7 +90,6 @@ mock.module("@/lib/storage/factory", () => ({
 // ─── The Rancher-shaped provider ────────────────────────────────────────────
 
 const signingKey = await generateKeyPair("RS256");
-const publicJwk = { ...(await exportJWK(signingKey.publicKey)), kid: "rancher-oidc-key", alg: "RS256", use: "sig" };
 
 /**
  * Rancher v2.15.2's discovery document, field for field (`openIDConfigurationEndpoint` in configuration.go): no
@@ -103,8 +111,23 @@ const discoveryDocument = {
 
 type Line = "2.15" | "2.14";
 
-/** What the next token request answers with; set by each sign-in. */
-const next = { idToken: "", tokenRequests: [] as URLSearchParams[] };
+/** What the next token request answers with, and the challenge it must match; set by each sign-in. */
+const next = { idToken: "", codeChallenge: "", tokenRequests: [] as URLSearchParams[] };
+
+/**
+ * Rancher's token handler (`pkg/oidc/provider/token.go`): the client secret comes from a Basic header first and the form
+ * otherwise, and the code verifier must hash to the challenge of the authorization request.
+ */
+function tokenRequestRefusal(form: URLSearchParams, headers: Headers): string | null {
+  const basic = headers.get("authorization");
+  const secret = basic?.startsWith("Basic ")
+    ? decodeURIComponent(Buffer.from(basic.slice(6), "base64").toString().split(":")[1] ?? "")
+    : form.get("client_secret");
+  if (secret !== CLIENT_SECRET) return "invalid client_secret";
+  const verifier = form.get("code_verifier") ?? "";
+  if (createHash("sha256").update(verifier).digest("base64url") !== next.codeChallenge) return "invalid code_verifier";
+  return null;
+}
 
 /**
  * The ID token Rancher's `createIDToken` writes. On 2.15 `groups` is present only when the scope asked for it; on 2.14
@@ -121,7 +144,7 @@ async function rancherIdToken(line: Line, scope: string, nonce: string, groups: 
     .setProtectedHeader({ alg: "RS256", kid: "rancher-oidc-key", typ: "JWT" })
     .setIssuer(ISSUER)
     .setSubject(RANCHER_USER)
-    .setAudience(CLIENT_ID)
+    .setAudience([CLIENT_ID])
     .setIssuedAt(now)
     .setExpirationTime(now + 300)
     .sign(signingKey.privateKey);
@@ -163,9 +186,12 @@ beforeAll(() => {
   ) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     if (url === DISCOVERY_URL) return Response.json(discoveryDocument);
-    if (url === JWKS_URL) return Response.json({ keys: [publicJwk] });
     if (url === TOKEN_URL) {
-      next.tokenRequests.push(new URLSearchParams(String(init?.body ?? "")));
+      const form = new URLSearchParams(String(init?.body ?? ""));
+      next.tokenRequests.push(form);
+      const refusal = tokenRequestRefusal(form, new Headers(init?.headers));
+      if (refusal !== null)
+        return Response.json({ error: "invalid_request", error_description: refusal }, { status: 400 });
       return Response.json({
         access_token: ACCESS_TOKEN,
         token_type: "Bearer",
@@ -223,6 +249,7 @@ beforeEach(() => {
   storageCalls.length = 0;
   printed.length = 0;
   next.idToken = "";
+  next.codeChallenge = "";
   next.tokenRequests.length = 0;
   oidc.resetDiscoveryCache();
 });
@@ -235,7 +262,9 @@ afterEach(() => {
 async function startSignIn(): Promise<URL> {
   const res = await login(new Request(`${STUDIO}/api/auth/oidc/login`));
   expect(res.status).toBe(307);
-  return new URL(res.headers.get("location") as string);
+  const authorize = new URL(res.headers.get("location") as string);
+  next.codeChallenge = authorize.searchParams.get("code_challenge") as string;
+  return authorize;
 }
 
 /** A whole sign-in: login route, Rancher's answer for `line` and `groups`, callback route. */
@@ -277,11 +306,9 @@ describe("Rancher as the OIDC identity provider", () => {
         idpSubject: RANCHER_USER,
         idpIssuer: ISSUER,
       });
-      // The token request named the code verifier and authenticated the client in the form, which Rancher accepts.
+      // One token request, which passed the stub's PKCE and client secret checks, as Rancher's would.
       expect(next.tokenRequests).toHaveLength(1);
       expect(next.tokenRequests[0].get("grant_type")).toBe("authorization_code");
-      expect(next.tokenRequests[0].get("code_verifier")).toBeTruthy();
-      expect(next.tokenRequests[0].get("client_id")).toBe(CLIENT_ID);
     });
 
     test(`${line}: a member of other groups only is a user`, async () => {
@@ -343,8 +370,30 @@ describe("Rancher as the OIDC identity provider", () => {
     expect(jar.has("auth-token")).toBe(false);
   });
 
-  test("the access token and refresh token reach no cookie, storage call, log line or session", async () => {
+  for (const wrong of ["code verifier", "client secret"] as const) {
+    test(`Rancher refuses a token request with the wrong ${wrong}, and the sign-in ends on oidc_failed`, async () => {
+      useRancherEnv(wrong === "client secret" ? { OIDC_CLIENT_SECRET: "not-the-client-secret" } : {});
+      const authorize = await startSignIn();
+      if (wrong === "code verifier") next.codeChallenge = "not-the-challenge-of-this-sign-in";
+      next.idToken = await rancherIdToken(
+        "2.15",
+        "openid profile groups",
+        authorize.searchParams.get("nonce") as string,
+        null,
+      );
+      const state = authorize.searchParams.get("state") as string;
+      const res = await callback(new Request(`${STUDIO}/api/auth/oidc/callback?code=not-a-real-code&state=${state}`));
+
+      expect(next.tokenRequests).toHaveLength(1);
+      expect(res.headers.get("location")).toBe(`${STUDIO}/login?error=oidc_failed`);
+      expect(jar.has("auth-token")).toBe(false);
+    });
+  }
+
+  test("the access token, refresh token and Rancher session cookie reach no cookie, storage call, log line or session", async () => {
     useRancherEnv({ OIDC_ROLE_CLAIM: "groups", OIDC_LOGOUT_HINT: "true" });
+    // A Rancher session cookie in the jar is copied nowhere either.
+    jar.set("R_SESS", RANCHER_SESSION);
     const { session } = await signIn("2.15", ["libredb-admins"]);
     await logout(new NextRequest(`${STUDIO}/api/auth/logout`, { method: "POST" }));
 
@@ -362,7 +411,7 @@ describe("Rancher as the OIDC identity provider", () => {
       session,
       idToken: decodeJwt(next.idToken),
     });
-    for (const secret of [ACCESS_TOKEN, REFRESH_TOKEN, CLIENT_SECRET]) {
+    for (const secret of [ACCESS_TOKEN, REFRESH_TOKEN, RANCHER_SESSION, CLIENT_SECRET]) {
       expect(everything).not.toContain(secret);
     }
   });
