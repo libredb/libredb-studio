@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { doc, open, table } from "@libredb/libredb";
 import { getServerAuditBuffer } from "@/lib/audit";
+import { KubernetesProvider } from "@/lib/db/providers/platform/kubernetes/index";
 import { SQLiteProvider } from "@/lib/db/providers/sql/sqlite";
 import { logger } from "@/lib/logger";
 import { McpConnectionContext } from "@/lib/mcp/context";
@@ -31,6 +32,10 @@ import {
   writeSeedFile,
 } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo, type Negotiation } from "../../helpers/mcp-harness";
+import { fakeCluster } from "../../helpers/kubernetes-cluster";
+import { kubernetesConnection } from "../../helpers/kubernetes-connection";
+import { KUBERNETES_SAMPLE_MARKERS as M } from "../../helpers/kubernetes-markers";
+import { recordingKubernetesTransport, testSeams } from "../../helpers/kubernetes-transport";
 import { mongoDriver, mongoDriverModule, resetMongoDriver } from "../../helpers/mongodb-driver";
 import type { ColumnSchema } from "@/lib/types";
 import { SAMPLED_MARKER } from "../../fixtures/sampled-schema";
@@ -333,6 +338,62 @@ describe("the answer", () => {
     expect(verifying).toEqual([]);
     // Opened as an execution profile's client all the same: it retries no write and names itself as the agent.
     expect(mongoDriver.lastOptions).toMatchObject({ retryWrites: false, appName: "libredb-studio-agent" });
+  });
+});
+
+/**
+ * Kubernetes (B105, all-providers ruling 21): every kind is `config`, none a relation, so inspect_schema lists no
+ * object of any kind, a Secret's name included, and sends no list request; the namespace it names is the schema,
+ * which a namespace name may be, because a kubectl read has to name it. The cluster below holds a Secret whose name
+ * is the planted marker, so its absence is the tool's and not an empty cluster's.
+ */
+describe("on a Kubernetes connection", () => {
+  const SECRETS = "/api/v1/namespaces/shop/secrets";
+
+  function kubernetes() {
+    const transport = recordingKubernetesTransport(
+      fakeCluster({
+        lists: {
+          "/api/v1/namespaces": [{ name: "default" }, { name: "shop" }],
+          [SECRETS]: [{ name: M.secretName }],
+          "/api/v1/namespaces/shop/pods": [{ name: "web-0" }],
+        },
+      }),
+    );
+    const provider = new KubernetesProvider(kubernetesConnection({ database: "shop" }), {}, testSeams(transport));
+    const connection = {
+      id: "seed:cluster",
+      name: "cluster",
+      type: "kubernetes" as const,
+      seedId: "cluster",
+      createdAt: new Date(),
+    };
+    const context = {
+      caller: { username: "alice", role: "admin" as const },
+      resolve: async () => connection,
+      acquire: async () => {
+        await provider.connect();
+        return provider;
+      },
+    } as unknown as McpConnectionContext;
+    return { transport, context };
+  }
+
+  test.each([
+    ["the session's namespace", {}],
+    ["a named namespace, with columns and indexes", { schema: "shop", include_indexes: true }],
+    ["the Secret's own name as the table", { schema: "shop", table: M.secretName }],
+    ["Cluster", { schema: "Cluster" }],
+  ] as const)("lists no object on %s, and no Secret name reaches the answer", async (_what, extra) => {
+    const { transport, context } = kubernetes();
+    const result = await inspectSchema(InspectSchemaInputSchema.parse({ connection_id: "seed:cluster", ...extra }), {
+      context,
+      signal: new AbortController().signal,
+    });
+    expect(result.isError ?? false).toBe(false);
+    expect(result.structuredContent).toMatchObject({ total_tables: 0, tables: [], has_more: false });
+    expect(JSON.stringify(result)).not.toContain(M.secretName);
+    expect(transport.requests.some((request) => new URL(request.url).pathname === SECRETS)).toBe(false);
   });
 });
 

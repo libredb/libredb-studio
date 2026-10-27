@@ -40,6 +40,10 @@ import {
  * behind the untrusted-content notice, because every name, type, default and comment here is
  * database content someone else may have written.
  *
+ * It lists the kinds an engine declares as relations and nothing else, and a kind whose names are withheld from
+ * machine surfaces is never one (`relationKindIds`), so no such name reaches it: a Kubernetes cluster, whose kinds
+ * are all `config`, lists no object at all, its Secrets included (B105).
+ *
  * It acquires under agent-operations, which sends no statement and so runs on every engine. The
  * decision event is written before acquisition and the outcome after, and a call whose record
  * cannot be written runs nothing. The page is fitted to the result cap at a table boundary, a
@@ -100,7 +104,7 @@ export type InspectSchemaInput = z.infer<typeof InspectSchemaInputSchema>;
 type InspectedTable = z.infer<typeof InspectedTableSchema>;
 
 const INSPECT_SCHEMA_TITLE = "Inspect schema";
-export const INSPECT_SCHEMA_DESCRIPTION = `List the tables of one connection with their columns and, on request, their indexes. Works on every engine. Columns an engine only inferred from sampled data are left out, so a table may hold fields this list does not show. Pages with limit and offset; has_more and next_offset say when more tables exist. ${MCP_UNTRUSTED_NOTICE}`;
+export const INSPECT_SCHEMA_DESCRIPTION = `List the tables of one connection with their columns and, on request, their indexes. Works on every engine. An engine whose objects are not tables, such as Kubernetes, lists none: list_connections' read_tool names the tool that reads it. Columns an engine only inferred from sampled data are left out, so a table may hold fields this list does not show. Pages with limit and offset; has_more and next_offset say when more tables exist. ${MCP_UNTRUSTED_NOTICE}`;
 
 const MAX_COLUMNS = 50;
 const MAX_INDEXES = 25;
