@@ -282,7 +282,7 @@ describe("rancher.navLink", () => {
     const [link, ...rest] = navLinks([...NAVLINK, ...NAVLINK_API]);
     expect(rest).toHaveLength(0);
     expect(link?.apiVersion).toBe("ui.cattle.io/v1");
-    expect(link?.metadata.name).toBe(`${NAMESPACE}-${RELEASE}-libredb-studio`);
+    expect(link?.metadata.name).toBe(`${NAMESPACE}.${RELEASE}-libredb-studio`);
     expect(link?.metadata.namespace).toBeUndefined();
     expect(link?.metadata.labels?.["app.kubernetes.io/name"]).toBe("libredb-studio");
     expect(link?.metadata.labels?.["app.kubernetes.io/instance"]).toBe(RELEASE);
@@ -313,10 +313,46 @@ describe("rancher.navLink", () => {
     expect(link?.spec?.toURL).toBe("https://studio.example.com/studio");
   });
 
-  test("the name stays within 63 characters", () => {
-    const [link] = navLinks([...NAVLINK, ...NAVLINK_API, "--set", `fullnameOverride=${"x".repeat(60)}`]);
-    expect(link?.metadata.name.length).toBeLessThanOrEqual(63);
-    expect(link?.metadata.name.endsWith("-")).toBe(false);
+  test("the name keeps the namespace and the full name apart, uncut", () => {
+    // Namespace a-b with full name c and namespace a with full name b-c would both be a-b-c
+    // with a hyphen. A namespace never holds a dot, so the dot cannot be read two ways.
+    const name = (namespace: string, fullname: string) => {
+      const run = Bun.spawnSync(
+        [
+          "helm",
+          "template",
+          RELEASE,
+          CHART_DIR,
+          "--namespace",
+          namespace,
+          ...NAVLINK,
+          ...NAVLINK_API,
+          "--set",
+          `fullnameOverride=${fullname}`,
+        ],
+        { stdout: "pipe", stderr: "pipe" },
+      );
+      expect(run.exitCode).toBe(0);
+      const link = parseAllDocuments(run.stdout.toString())
+        .map((doc) => doc.toJSON() as RenderedManifest)
+        .find((doc) => doc?.kind === "NavLink");
+      return link?.metadata.name;
+    };
+    expect(name("a-b", "c")).toBe("a-b.c");
+    expect(name("a", "b-c")).toBe("a.b-c");
+    const long = "x".repeat(62);
+    expect(name(NAMESPACE, `${long}1`)).toBe(`${NAMESPACE}.${long}1`);
+    expect(name(NAMESPACE, `${long}2`)).toBe(`${NAMESPACE}.${long}2`);
+  });
+
+  test("keeps the label the extension selects on when nameOverride is set", () => {
+    const [link] = navLinks([...NAVLINK, ...NAVLINK_API, "--set", "nameOverride=foo"]);
+    expect(link?.metadata.labels?.["app.kubernetes.io/name"]).toBe("libredb-studio");
+    expect(link?.metadata.labels?.["app.kubernetes.io/instance"]).toBe(RELEASE);
+    const deployment = render([...NAVLINK, ...NAVLINK_API, "--set", "nameOverride=foo"]).find(
+      (doc) => doc.kind === "Deployment",
+    );
+    expect(deployment?.metadata.labels?.["app.kubernetes.io/name"]).toBe("foo");
   });
 
   test("renders nothing where the cluster does not serve the API", () => {
@@ -337,6 +373,21 @@ describe("rancher.navLink", () => {
       ],
       "rancher.navLink",
       "ingress.hosts",
+    );
+  });
+
+  test("refuses a wildcard first ingress host, which is no address to open", () => {
+    refused(
+      [
+        "--set",
+        "rancher.navLink.enabled=true",
+        "--set",
+        "ingress.enabled=true",
+        "--set",
+        "ingress.hosts[0].host=*.example.com",
+        ...NAVLINK_API,
+      ],
+      "rancher.navLink.enabled requires a concrete first ingress host, not a wildcard",
     );
   });
 

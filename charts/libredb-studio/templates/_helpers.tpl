@@ -530,6 +530,9 @@ deployment.yaml.
 {{- if not (include "libredb-studio.navLinkHost" .) }}
 {{- fail "rancher.navLink.enabled requires ingress.hosts[0].host, the host the NavLink points at" }}
 {{- end }}
+{{- if contains "*" (include "libredb-studio.navLinkHost" .) }}
+{{- fail "rancher.navLink.enabled requires a concrete first ingress host, not a wildcard" }}
+{{- end }}
 {{- end }}
 {{- end }}
 

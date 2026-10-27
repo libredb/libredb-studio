@@ -246,8 +246,9 @@ ingress:
 `seedConnections.existingSecret` mounts the seed file from a Secret instead of a ConfigMap, for a seed file that holds passwords; set exactly one of `seedConnections.config`, `seedConnections.existingConfigMap` and `seedConnections.existingSecret`.
 `rancher.navLink.enabled` renders a `ui.cattle.io/v1` `NavLink` to `https://<first ingress host><config.basePath>` in the cluster's navigation, only where the cluster serves that API; elsewhere nothing is rendered and the install notes say so.
 The link is always https, so serve TLS for that host, through `ingress.tls` or in front of the ingress.
-A `NavLink` is cluster-scoped, so installing it needs a cluster owner, and its name is the release namespace followed by the release's full name.
-The render fails when the link is on without `ingress.enabled` and a first host.
+A `NavLink` is cluster-scoped, so installing it needs a cluster owner, and its name is the release namespace and the release's full name joined by a dot.
+Its `app.kubernetes.io/name` label stays `libredb-studio` whatever `nameOverride` says, because the LibreDB Rancher extension finds the link by that label.
+The render fails when the link is on without `ingress.enabled` and a concrete first host; a wildcard host such as `*.example.com` is refused.
 Rancher mode is not offered through the OLM operator: its role grants no `NavLink`, so set these values with Helm or Rancher's Apps page.
 
 ## Governance
