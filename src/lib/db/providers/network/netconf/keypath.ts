@@ -60,6 +60,21 @@ export function decodeSegment(text: string): string {
 }
 
 /**
+ * The YANG identifier grammar of RFC 7950 section 6.2, which every node name and module name
+ * follows. A node name becomes an element name in the subtree filter, so a segment outside it is
+ * refused before any request is built. Key values are data rather than names and are not held to it.
+ */
+const YANG_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_.-]*$/;
+
+/** Answers `name` when it is a YANG identifier, and refuses it naming `segment` otherwise. */
+export function assertYangIdentifier(name: string, segment: string = name): string {
+  if (YANG_IDENTIFIER.test(name)) return name;
+  throw new QueryError(
+    `the path segment ${JSON.stringify(segment)} is not a YANG identifier: a node or module name starts with a letter or an underscore and holds only letters, digits, underscores, hyphens and dots, and "/" separates segments`,
+  );
+}
+
+/**
  * UTF-8 byte order, by code point.
  *
  * The same comparison the Firestore provider performs. It is required rather than preferred: the
@@ -116,8 +131,8 @@ export function parseKeyPath(path: string): readonly PathNode[] {
     const at = piece.indexOf("=");
     const head = at === -1 ? piece : piece.slice(0, at);
     const colon = head.indexOf(":");
-    const moduleName = colon === -1 ? undefined : head.slice(0, colon);
-    const name = colon === -1 ? head : head.slice(colon + 1);
+    const moduleName = colon === -1 ? undefined : assertYangIdentifier(head.slice(0, colon), piece);
+    const name = assertYangIdentifier(colon === -1 ? head : head.slice(colon + 1), piece);
     if (at === -1) return moduleName ? { module: moduleName, name } : { name };
     const keys = piece
       .slice(at + 1)

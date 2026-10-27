@@ -127,6 +127,11 @@ is told which one. `limit` defaults to 1000 and is refused unless it is a positi
 segment may be module qualified (`module:node`) and may carry list keys (`node=key1,key2`,
 percent-decoded), which is the RFC 8040 api-path form.
 
+Every node name and module name in a path follows the YANG identifier grammar of RFC 7950 section 6.2: a letter or an underscore, then letters, digits, underscores, hyphens and dots.
+A node name becomes an element name in the subtree filter, so a segment outside that grammar is refused by name before any request is built, in the editor query, the Keys panel and the Source tab alike, and the request builder checks every element name it writes once more.
+Key values are data rather than names, so they keep any text: they are percent-decoded and written as an escaped element body.
+`/` always separates segments, so no name can hold one, and a read names a module on its first node (`ietf-interfaces:interfaces`), because the reader selects the module by it.
+
 The shape of the request is checked before any of its fields. An array parses as an object in
 JavaScript, so it is refused explicitly: without that, the message said the request named no
 datastore when the real problem was that it was not a request at all.
@@ -489,6 +494,7 @@ The refusal reason it prints, verbatim:
 - RFC 6242, NETCONF over SSH (framing, and the port)
 - RFC 6022, NETCONF monitoring (`<get-schema>`)
 - RFC 8040, RESTCONF (the api-path form the key paths use)
+- RFC 7950, YANG 1.1 (the identifier grammar path names follow)
 - RFC 8341, NACM (the access control the measurements ran under)
 - RFC 8525, YANG library
 - RFC 8526, NMDA (`<get-data>`, `<subtree-filter>`)

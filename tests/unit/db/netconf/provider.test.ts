@@ -406,7 +406,10 @@ test("a node's source is the module's YANG text, and it says the text is the dev
 
 test("a key's source is the entry's own XML, sliced from the reply rather than reprinted", async () => {
   const provider = await open();
-  const document = await provider.readObjectSource(["running/ietf-interfaces:interfaces/ge-0%2F0%2F1"], "key");
+  const document = await provider.readObjectSource(
+    ["running/ietf-interfaces:interfaces/interface=ge-0%2F0%2F1"],
+    "key",
+  );
   const part = document.parts[0];
   expectTruthy(part !== undefined && "text" in part);
   expectBe(part.language, "xml");

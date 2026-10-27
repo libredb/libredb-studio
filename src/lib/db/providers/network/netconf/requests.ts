@@ -14,7 +14,7 @@ import { QueryError } from "@/lib/db/errors";
  * half that does not depend on the device.
  */
 
-import type { PathNode } from "./keypath";
+import { assertYangIdentifier, type PathNode } from "./keypath";
 
 const BASE_NS = "urn:ietf:params:xml:ns:netconf:base:1.0";
 const NMDA_NS = "urn:ietf:params:xml:ns:yang:ietf-netconf-nmda";
@@ -61,18 +61,25 @@ function nmdaSubtreeFilter(filter: SubtreeFilter): string {
   return `<subtree-filter>${filterBody(filter)}</subtree-filter>`;
 }
 
-/** The node chain itself, without the element that carries it. */
+/**
+ * The node chain itself, without the element that carries it.
+ *
+ * Every element name written here is held to the YANG identifier grammar again, whoever built the
+ * node: the path parsers refuse a bad segment first, and key names arrive from module text the
+ * device served. Key values are element bodies and are escaped instead.
+ */
 function filterBody(filter: SubtreeFilter): string {
   const build = (index: number): string => {
     const node = filter.nodes[index];
     if (!node) return "";
     const ns = node.module ? ` xmlns="${escapeXml(moduleNamespace(node.module))}"` : "";
     const keys = (node.keys ?? []).map((value, position) => {
-      const name = node.keyNames?.[position] ?? "name";
+      const name = assertYangIdentifier(node.keyNames?.[position] ?? "name");
       return `<${name}>${escapeXml(value)}</${name}>`;
     });
     const inner = keys.join("") + build(index + 1);
-    return `<${node.name}${ns}>${inner}</${node.name}>`;
+    const name = assertYangIdentifier(node.name);
+    return `<${name}${ns}>${inner}</${name}>`;
   };
   return build(0);
 }

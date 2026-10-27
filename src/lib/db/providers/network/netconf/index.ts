@@ -48,7 +48,15 @@ import type {
   TableStats,
 } from "@/lib/db/types";
 import { NETCONF_PORT } from "./dial";
-import { buildKeyPath, encodeSegment, levelPage, parseKeyPath, type LevelEntry, type PathNode } from "./keypath";
+import {
+  assertYangIdentifier,
+  buildKeyPath,
+  encodeSegment,
+  levelPage,
+  parseKeyPath,
+  type LevelEntry,
+  type PathNode,
+} from "./keypath";
 import { NETCONF_KEY_SCAN, NETCONF_KEY_SEPARATOR, NETCONF_OBJECT_KINDS, assertDeclarationIsSound } from "./objectkinds";
 import { NETCONF_LABELS } from "./labels";
 import type { TopLevelNode } from "./reader";
@@ -583,8 +591,8 @@ function parsePathArgument(path: string): readonly PathNode[] {
       const at = piece.indexOf("=");
       const head = at === -1 ? piece : piece.slice(0, at);
       const colon = head.indexOf(":");
-      const name = colon === -1 ? head : head.slice(colon + 1);
-      const moduleName = colon === -1 ? undefined : head.slice(0, colon);
+      const name = assertYangIdentifier(colon === -1 ? head : head.slice(colon + 1), piece);
+      const moduleName = colon === -1 ? undefined : assertYangIdentifier(head.slice(0, colon), piece);
       const keys =
         at === -1
           ? undefined
