@@ -146,9 +146,9 @@ function fakeContext(provider: Partial<DatabaseProvider>, type: DatabaseType = "
   } as unknown as McpConnectionContext;
 }
 
-/** The answer to a call on an engine the tool does not serve. */
-const notServed = (label: string) =>
-  `run_read_query cannot run on this connection: this tool does not serve ${label}; use inspect_schema there. It runs on PostgreSQL, SQLite, DuckDB, SQL Server and MySQL.`;
+/** The answer to a call on an engine the tool does not serve, naming the tool that does serve it. */
+const notServed = (label: string, elsewhere = "inspect_schema") =>
+  `run_read_query cannot run on this connection: this tool does not serve ${label}; use ${elsewhere} there. It runs on PostgreSQL, SQLite, DuckDB, SQL Server and MySQL.`;
 
 const mcpEvents = () =>
   getServerAuditBuffer()
@@ -327,10 +327,11 @@ describe("the boundary", () => {
     ["a SELECT", "SELECT 1"],
     ["its own JSON command", '{"operation":"find","collection":"orders"}'],
   ])(
-    "a MongoDB connection sent %s is refused before the fence and before anything is acquired (#1614)",
+    "a MongoDB connection sent %s is refused before the fence and before anything is acquired, naming run_mongo_command",
     async (_sent, sql) => {
       // Agent mode executes MongoDB, so its provider has a read-only path; this tool's input is SQL,
-      // and the provider handed out here would answer, so only the gate keeps the call off it.
+      // and the provider handed out here would answer, so only the gate keeps the call off it. Its
+      // JSON command is read by its own arm, which the refusal names (B117).
       const queryReadOnly = mock(async () => ({ rows: [{ one: 1 }], fields: ["one"], rowCount: 1, executionTime: 0 }));
       const provider = {
         getCapabilities: () => ({}),
@@ -340,7 +341,10 @@ describe("the boundary", () => {
       const context = fakeContext(provider as unknown as Partial<DatabaseProvider>, "mongodb");
       const acquire = spyOn(context, "acquire");
       const result = await direct({ connection_id: "seed:fake", sql }, undefined, context);
-      expect(result).toEqual({ isError: true, content: [{ type: "text", text: notServed("MongoDB") }] });
+      expect(result).toEqual({
+        isError: true,
+        content: [{ type: "text", text: notServed("MongoDB", "run_mongo_command") }],
+      });
       expect(acquire).not.toHaveBeenCalled();
       expect(queryReadOnly).not.toHaveBeenCalled();
       expect(mcpEvents()).toEqual([
@@ -371,7 +375,7 @@ describe("the boundary", () => {
     try {
       const listed = (await session.client.callTool({ name: "list_connections", arguments: {} })) as Answered;
       expect(listed.structuredContent?.connections).toEqual([
-        { id: "seed:warehouse", name: "warehouse", engine: "snowflake" },
+        { id: "seed:warehouse", name: "warehouse", engine: "snowflake", read_tool: null },
       ]);
     } finally {
       await session.close();
@@ -391,8 +395,8 @@ describe("the boundary", () => {
     expect(result.content[0].text).toContain("cannot target an in-memory SQLite database");
   });
 
-  test("the tool module never calls query()", () => {
-    const source = readFileSync(join(import.meta.dir, "../../../src/lib/mcp/tools/run-read-query.ts"), "utf8");
+  test("the statement core never calls query()", () => {
+    const source = readFileSync(join(import.meta.dir, "../../../src/lib/mcp/tools/run-statement.ts"), "utf8");
     expect(source).not.toMatch(/\.query\(/);
     expect(source).toContain("queryReadOnly");
   });

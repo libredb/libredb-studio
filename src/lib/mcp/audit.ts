@@ -10,7 +10,7 @@ import { emitAuditEvent, type AuditReason } from "@/lib/audit";
  * failure through: the caller decides, and every caller refuses to run what it cannot record.
  */
 
-export type McpToolAction = "list_connections" | "inspect_schema" | "run_read_query";
+export type McpToolAction = "list_connections" | "inspect_schema" | "run_read_query" | "run_mongo_command";
 
 export const MCP_DECISION_TARGET = "mcp/decision";
 export const MCP_EXECUTION_TARGET = "mcp/execution";

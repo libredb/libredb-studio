@@ -71,7 +71,7 @@ afterAll(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-const TOOL_NAMES = ["list_connections", "inspect_schema", "run_read_query"];
+const TOOL_NAMES = ["list_connections", "inspect_schema", "run_read_query", "run_mongo_command"];
 const legacyInitialize = (protocolVersion: string) =>
   legacyPost(
     {
@@ -84,7 +84,7 @@ const legacyInitialize = (protocolVersion: string) =>
   );
 
 describe("the default legacy client", () => {
-  test("connects on 2025-11-25, lists the three tools in registration order and calls one", async () => {
+  test("connects on 2025-11-25, lists the four tools in registration order and calls one", async () => {
     const warn = spyOn(logger, "warn");
     const session = await connectClient(serve);
     try {
@@ -111,7 +111,7 @@ describe("the default legacy client", () => {
     const session = await connectClient(serve, { supportedProtocolVersions: ["2025-06-18"] });
     try {
       expect(session.client.getNegotiatedProtocolVersion()).toBe("2025-06-18");
-      expect((await session.client.listTools()).tools).toHaveLength(3);
+      expect((await session.client.listTools()).tools).toHaveLength(4);
     } finally {
       await session.close();
     }
@@ -182,7 +182,7 @@ describe("the capability objects", () => {
 });
 
 describe("the tool map", () => {
-  test("names the three tools and nothing an object inherits, so no other name reaches a tool's schema", () => {
+  test("names the four tools and nothing an object inherits, so no other name reaches a tool's schema", () => {
     for (const name of TOOL_NAMES) expect(isMcpToolName(name)).toBe(true);
     for (const name of ["toString", "constructor", "__proto__", "no_such_tool", 42, undefined]) {
       expect(isMcpToolName(name)).toBe(false);

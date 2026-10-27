@@ -47,12 +47,19 @@ export type ReadQueryFailure =
   | { readonly kind: "too-large"; readonly text: string }
   | { readonly kind: "engine"; readonly error: unknown };
 
-export function classifyReadQueryFailure(error: unknown, settledAt: number, deadline: number): ReadQueryFailure {
+/** `texts` answers a budget refusal in a statement language's own words; a refusal it leaves out keeps the SQL text. */
+export function classifyReadQueryFailure(
+  error: unknown,
+  settledAt: number,
+  deadline: number,
+  texts: Partial<Record<Exclude<ReadOnlyRefusalKind, "time">, string>> = {},
+): ReadQueryFailure {
   if (settledAt >= deadline) return { kind: "timeout" };
   const message = error instanceof Error ? error.message : String(error);
   const refusal = READ_ONLY_REFUSALS.find(({ prefix }) => message.startsWith(prefix));
   if (refusal === undefined) return { kind: "engine", error };
-  return refusal.kind === "time" ? { kind: "timeout" } : { kind: "too-large", text: TOO_LARGE_TEXTS[refusal.kind] };
+  if (refusal.kind === "time") return { kind: "timeout" };
+  return { kind: "too-large", text: texts[refusal.kind] ?? TOO_LARGE_TEXTS[refusal.kind] };
 }
 
 export function inSqlPaging(type: DatabaseType): string {
@@ -88,13 +95,13 @@ export function fenceRefusalText(code: string, type: DatabaseType): string {
   return `The statement was refused before it reached the database (${code}). On this engine run_read_query runs one read-only statement: ${readQueryFormsOf(type).statements}.`;
 }
 
-export function profileRefusalText(message: string, engines: string): string {
+export function profileRefusalText(message: string, engines: string, tool = "run_read_query"): string {
   // #1462: inspect_schema runs under the same role-checking profile on PostgreSQL, so
   // it is not true that inspect_schema works on every engine; and an ExecutionProfileError
   // message (postgres.ts's assertAgentRoleIsUnprivileged) already ends in a period, so
   // appending unconditionally produced a double period. Strip any trailing ones first.
   const sentence = message.replace(/\.+$/, "");
-  return `run_read_query cannot run on this connection: ${sentence}. It runs on ${engines}.`;
+  return `${tool} cannot run on this connection: ${sentence}. It runs on ${engines}.`;
 }
 
 export type Raced<T> =

@@ -587,8 +587,9 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
  * `MCP_EXPOSABLE` offers it and this record answers true (`src/lib/mcp/tools/served-engines.ts`), so an engine that
  * joins agent mode does not open to MCP as a side effect: its row stays false until a change of its own opens it.
  *
- * True for the five SQL engines `run_read_query` served before this record existed, so nothing moved when it landed.
- * MongoDB and Kubernetes execute for the agent and answer false until their MCP tools exist. An exhaustive Record for
+ * True for the five SQL engines `run_read_query` served before this record existed, so nothing moved when it landed,
+ * and for MongoDB, whose command `run_mongo_command` reads (B117). Kubernetes executes for the agent and answers false
+ * until its MCP tool exists (B105). An exhaustive Record for
  * the reason `EXTERNAL` gives, frozen like the records above it, and held false wherever `MCP_EXPOSABLE` is false and
  * true only for an engine agent mode executes on by `tests/unit/db/compatibility.test.ts`.
  */
@@ -610,7 +611,7 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   cassandra: false,
   elasticsearch: false,
   opensearch: false,
-  mongodb: false,
+  mongodb: true,
   couchbase: false,
   redis: false,
   prometheus: false,

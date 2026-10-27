@@ -38,9 +38,9 @@ describe("mcpStatementEngines", () => {
     }
   });
 
-  test("serves no engine of a language whose engines MCP read has not opened", () => {
-    // MongoDB is MCP-exposable and executes for the agent, but its MCP read row is false until PR 0.3.
-    expect(mcpStatementEngines("mongo")).toEqual([]);
+  test("serves MongoDB in its own language, and no engine of a language MCP read has not opened", () => {
+    // MongoDB opened with run_mongo_command (B117); Kubernetes executes for the agent and is not offered to MCP.
+    expect(mcpStatementEngines("mongo")).toEqual(["mongodb"]);
     expect(mcpStatementEngines("kubectl")).toEqual([]);
   });
 
