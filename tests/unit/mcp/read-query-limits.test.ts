@@ -9,6 +9,7 @@ import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { rowBudgetRefusal } from "@/lib/db/providers/document/mongodb/agent-read";
+import { READ_QUERY_FORMS, readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
 import {
   BYTE_BUDGET_PREFIX,
   byteBudgetSentence,
@@ -18,8 +19,8 @@ import {
 import {
   classifyReadQueryFailure,
   fenceRefusalText,
-  IN_SQL_PAGING,
-  MORE_ROWS_THAN_PAGEABLE_HINT,
+  inSqlPaging,
+  moreRowsThanPageableHint,
   nextPageHint,
   offsetRefusalText,
   profileRefusalText,
@@ -28,6 +29,7 @@ import {
   ROW_OVER_CAP_TEXT,
   timeoutText,
 } from "@/lib/mcp/tools/read-query-limits";
+import { RUN_READ_QUERY_TYPES } from "@/lib/mcp/tools/run-read-query";
 
 const REPO = join(import.meta.dir, "../../..");
 const read = (file: string): string => readFileSync(join(REPO, file), "utf8");
@@ -40,15 +42,16 @@ const CUT_VALUE =
 const SERIALISED =
   "SQL Server returns a FOR JSON or FOR XML result as one serialised value, which this server cannot bound. Select the rows themselves, without the FOR JSON or FOR XML clause.";
 const OWN_LIMIT =
-  "This query has its own LIMIT or TOP, so it cannot be paged with offset. Remove it and page with offset, or page it in SQL: LIMIT n OFFSET m, or on SQL Server ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY.";
+  "This query has its own LIMIT or TOP, so it cannot be paged with offset. Remove it and page with offset, or page it in SQL: LIMIT n OFFSET m.";
+const OWN_LIMIT_MSSQL =
+  "This query has its own LIMIT or TOP, so it cannot be paged with offset. Remove it and page with offset, or page it in SQL: ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY.";
 
 describe("the texts", () => {
   test("are the design's words", () => {
-    expect(IN_SQL_PAGING).toBe(
-      "Page it in SQL: LIMIT n OFFSET m, or on SQL Server ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY.",
-    );
-    expect(MORE_ROWS_THAN_PAGEABLE_HINT).toBe(
-      `More rows exist than this result holds, and this query cannot be paged with offset. ${IN_SQL_PAGING}`,
+    expect(inSqlPaging("postgres")).toBe("Page it in SQL: LIMIT n OFFSET m.");
+    expect(inSqlPaging("mssql")).toBe("Page it in SQL: ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY.");
+    expect(moreRowsThanPageableHint("sqlite")).toBe(
+      "More rows exist than this result holds, and this query cannot be paged with offset. Page it in SQL: LIMIT n OFFSET m.",
     );
     expect(nextPageHint(100)).toBe("Call again with offset 100 for the next page.");
     expect(timeoutText(500)).toBe(
@@ -57,8 +60,8 @@ describe("the texts", () => {
     expect(ROW_OVER_CAP_TEXT).toBe(
       "One row of this result is larger than the 32 KiB result limit. Select fewer or narrower columns, for example a substring of a long text column.",
     );
-    expect(fenceRefusalText("NON_READ_STATEMENT")).toBe(
-      "The statement was refused before it reached the database (NON_READ_STATEMENT). run_read_query runs one read-only statement: a SELECT (a WITH is fine), VALUES, TABLE, or EXPLAIN without ANALYZE.",
+    expect(fenceRefusalText("NON_READ_STATEMENT", "postgres")).toBe(
+      "The statement was refused before it reached the database (NON_READ_STATEMENT). On this engine run_read_query runs one read-only statement: a SELECT (a WITH is fine), VALUES, TABLE, or EXPLAIN without ANALYZE.",
     );
     expect(profileRefusalText("the engine has no read-only statement path", "PostgreSQL and SQLite")).toBe(
       "run_read_query cannot run on this connection: the engine has no read-only statement path. It runs on PostgreSQL and SQLite.",
@@ -81,11 +84,48 @@ describe("the texts", () => {
   });
 });
 
+/**
+ * The statements each served engine takes, among those the fence admits, as measured on 2026-10-27: SQLite 3.53.4 and
+ * SQL Server 2022 refuse `TABLE`, SQL Server also refuses a bare `VALUES` and has no `EXPLAIN`, and MariaDB 11.8
+ * refuses `TABLE` where MySQL runs it (all-providers design 6.2, V11).
+ */
+describe("the accepted forms each engine's refusal names", () => {
+  test.each([
+    ["postgres", "a SELECT (a WITH is fine), VALUES, TABLE, or EXPLAIN without ANALYZE"],
+    ["sqlite", "a SELECT (a WITH is fine), VALUES, or EXPLAIN"],
+    ["duckdb", "a SELECT (a WITH is fine), VALUES, TABLE, or EXPLAIN without ANALYZE"],
+    ["mssql", "a SELECT (a WITH is fine)"],
+    ["mysql", "a SELECT (a WITH is fine), VALUES, TABLE (MySQL, not MariaDB), or EXPLAIN without ANALYZE"],
+  ] as const)("%s: %s", (type, statements) => {
+    expect(fenceRefusalText("NON_READ_STATEMENT", type)).toBe(
+      `The statement was refused before it reached the database (NON_READ_STATEMENT). On this engine run_read_query runs one read-only statement: ${statements}.`,
+    );
+  });
+
+  test("a SQLite refusal no longer offers TABLE", () => {
+    expect(fenceRefusalText("NON_READ_STATEMENT", "sqlite")).not.toContain("TABLE");
+  });
+
+  test("every engine run_read_query serves has a row", () => {
+    for (const type of RUN_READ_QUERY_TYPES) expect(READ_QUERY_FORMS[type]).not.toBeNull();
+  });
+
+  test("an engine with no row is refused by name, never answered with another engine's forms", () => {
+    expect(READ_QUERY_FORMS.mongodb).toBeNull();
+    expect(() => readQueryFormsOf("mongodb")).toThrow("run_read_query has no accepted-forms row for mongodb");
+  });
+});
+
 describe("the offset rule", () => {
   test.each([
     ["SELECT id FROM numbers LIMIT 10", "sqlite", OWN_LIMIT],
-    ["SELECT TOP 5 id FROM numbers", "mssql", OWN_LIMIT],
-    ["SELECT id FROM numbers", "sqlite", `This query cannot be paged with offset. ${IN_SQL_PAGING}`],
+    ["SELECT TOP 5 id FROM numbers", "mssql", OWN_LIMIT_MSSQL],
+    ["SELECT id FROM numbers", "sqlite", "This query cannot be paged with offset. Page it in SQL: LIMIT n OFFSET m."],
+    [
+      "SELECT id FROM numbers",
+      "mssql",
+      "This query cannot be paged with offset. Page it in SQL: ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY.",
+    ],
     ["VALUES (1), (2), (3)", "sqlite", "This statement's result cannot be paged. Call again without offset."],
     ["TABLE numbers", "postgres", "This statement's result cannot be paged. Call again without offset."],
     ["EXPLAIN SELECT id FROM numbers", "duckdb", "This statement's result cannot be paged. Call again without offset."],

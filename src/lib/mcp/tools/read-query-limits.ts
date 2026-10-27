@@ -1,3 +1,4 @@
+import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
 import { BYTE_BUDGET_PREFIX, ROW_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
 import { analyzeQuery } from "@/lib/db/utils/query-limiter";
 import type { DatabaseType } from "@/lib/types";
@@ -15,6 +16,9 @@ import type { DatabaseType } from "@/lib/types";
  * deadline has passed, is the timeout, so which of the two settles first never changes what the
  * client reads. The deadline race stops the wait for a statement, not the statement: no provider
  * can cancel a read-only statement yet (docs/BACKLOG.md D128).
+ *
+ * The statements an engine takes and its own paging clause differ by engine, so every text that names either reads the
+ * engine's row in src/lib/db/providers/sql/read-query-forms.ts rather than one engine's words for all.
  */
 
 export type ReadOnlyRefusalKind = "rows" | "bytes" | "cut-value" | "serialised" | "time";
@@ -51,22 +55,25 @@ export function classifyReadQueryFailure(error: unknown, settledAt: number, dead
   return refusal.kind === "time" ? { kind: "timeout" } : { kind: "too-large", text: TOO_LARGE_TEXTS[refusal.kind] };
 }
 
-export const IN_SQL_PAGING =
-  "Page it in SQL: LIMIT n OFFSET m, or on SQL Server ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY.";
-export const MORE_ROWS_THAN_PAGEABLE_HINT = `More rows exist than this result holds, and this query cannot be paged with offset. ${IN_SQL_PAGING}`;
+export function inSqlPaging(type: DatabaseType): string {
+  return `Page it in SQL: ${readQueryFormsOf(type).paging}.`;
+}
+
+export function moreRowsThanPageableHint(type: DatabaseType): string {
+  return `More rows exist than this result holds, and this query cannot be paged with offset. ${inSqlPaging(type)}`;
+}
+
 export const ROW_OVER_CAP_TEXT =
   "One row of this result is larger than the 32 KiB result limit. Select fewer or narrower columns, for example a substring of a long text column.";
 
-const OWN_LIMIT_TEXT =
-  "This query has its own LIMIT or TOP, so it cannot be paged with offset. Remove it and page with offset, or page it in SQL: LIMIT n OFFSET m, or on SQL Server ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY.";
-const NO_CUT_TEXT = `This query cannot be paged with offset. ${IN_SQL_PAGING}`;
 const NOT_PAGEABLE_TEXT = "This statement's result cannot be paged. Call again without offset.";
 
 /** Which of the three cases kept the provider from rewriting the query, read with its own analyzer. */
 export function offsetRefusalText(sql: string, type: DatabaseType): string {
   const info = analyzeQuery(sql, type);
   if (info.type !== "SELECT") return NOT_PAGEABLE_TEXT;
-  return info.hasLimit ? OWN_LIMIT_TEXT : NO_CUT_TEXT;
+  if (!info.hasLimit) return `This query cannot be paged with offset. ${inSqlPaging(type)}`;
+  return `This query has its own LIMIT or TOP, so it cannot be paged with offset. Remove it and page with offset, or page it in SQL: ${readQueryFormsOf(type).paging}.`;
 }
 
 export function timeoutText(timeoutMs: number): string {
@@ -77,8 +84,8 @@ export function nextPageHint(nextOffset: number): string {
   return `Call again with offset ${nextOffset} for the next page.`;
 }
 
-export function fenceRefusalText(code: string): string {
-  return `The statement was refused before it reached the database (${code}). run_read_query runs one read-only statement: a SELECT (a WITH is fine), VALUES, TABLE, or EXPLAIN without ANALYZE.`;
+export function fenceRefusalText(code: string, type: DatabaseType): string {
+  return `The statement was refused before it reached the database (${code}). On this engine run_read_query runs one read-only statement: ${readQueryFormsOf(type).statements}.`;
 }
 
 export function profileRefusalText(message: string, engines: string): string {

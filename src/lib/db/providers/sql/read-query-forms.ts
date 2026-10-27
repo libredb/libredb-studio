@@ -1,0 +1,91 @@
+import type { DatabaseType } from "@/lib/types";
+
+/**
+ * What `run_read_query` tells a caller about one engine's SQL (all-providers design 6.2, V11): the statements the
+ * engine runs among those the MCP execution fence admits (a `SELECT` or `WITH`, `VALUES`, `TABLE`, and `EXPLAIN`
+ * without `ANALYZE`), and how the engine's own SQL pages a result. The fence is one rule for every engine, so a
+ * refusal that listed its whole set would offer `TABLE` on SQLite, which has no such statement; the refusal reads the
+ * engine's row instead (`src/lib/mcp/tools/read-query-limits.ts`).
+ *
+ * Measured on 2026-10-27 by running each form: SQLite 3.53.4 refuses `TABLE`; DuckDB 1.5.5 runs all four; SQL Server
+ * 2022 refuses a bare `VALUES` and `TABLE` and has no `EXPLAIN`; MySQL runs `VALUES ROW(...)` and `TABLE`, and MariaDB
+ * 11.8 a bare `VALUES` list but no `TABLE`.
+ */
+export interface ReadQueryForms {
+  /** The statements, as the refusal names them after "runs one read-only statement:". */
+  readonly statements: string;
+  /** The engine's own paging clause, as the answer names it after "Page it in SQL:". */
+  readonly paging: string;
+}
+
+const LIMIT_OFFSET = "LIMIT n OFFSET m";
+
+/**
+ * An exhaustive Record, so a new type-id cannot join without someone answering. `null` is an engine whose statements
+ * `run_read_query` does not run: an engine that opens there adds its row in the same change, and
+ * `tests/unit/mcp/read-query-limits.test.ts` holds every served engine to having one.
+ */
+export const READ_QUERY_FORMS: Readonly<Record<DatabaseType, ReadQueryForms | null>> = Object.freeze({
+  postgres: {
+    statements: "a SELECT (a WITH is fine), VALUES, TABLE, or EXPLAIN without ANALYZE",
+    paging: LIMIT_OFFSET,
+  },
+  bigquery: null,
+  snowflake: null,
+  spark: null,
+  // MariaDB has no TABLE statement; MySQL's VALUES is VALUES ROW(...), MariaDB's a bare VALUES list.
+  mysql: {
+    statements: "a SELECT (a WITH is fine), VALUES, TABLE (MySQL, not MariaDB), or EXPLAIN without ANALYZE",
+    paging: LIMIT_OFFSET,
+  },
+  // No TABLE statement, and EXPLAIN takes no ANALYZE.
+  sqlite: { statements: "a SELECT (a WITH is fine), VALUES, or EXPLAIN", paging: LIMIT_OFFSET },
+  libsql: null,
+  duckdb: {
+    statements: "a SELECT (a WITH is fine), VALUES, TABLE, or EXPLAIN without ANALYZE",
+    paging: LIMIT_OFFSET,
+  },
+  oracle: null,
+  db2: null,
+  // No bare VALUES, no TABLE statement and no EXPLAIN.
+  mssql: { statements: "a SELECT (a WITH is fine)", paging: "ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY" },
+  clickhouse: null,
+  druid: null,
+  trino: null,
+  cassandra: null,
+  elasticsearch: null,
+  opensearch: null,
+  mongodb: null,
+  couchbase: null,
+  redis: null,
+  prometheus: null,
+  kafka: null,
+  etcd: null,
+  neo4j: null,
+  milvus: null,
+  qdrant: null,
+  weaviate: null,
+  influxdb: null,
+  influxdb3: null,
+  oxia: null,
+  databend: null,
+  s3: null,
+  kubernetes: null,
+  mqtt: null,
+  firestore: null,
+  rabbitmq: null,
+  opcua: null,
+  mtconnect: null,
+  modbus: null,
+  netconf: null,
+  snmp: null,
+  sparkplug: null,
+  libredb: null,
+});
+
+/** The row of an engine `run_read_query` serves; an engine without one is a server fault, refused by name. */
+export function readQueryFormsOf(type: DatabaseType): ReadQueryForms {
+  const forms = READ_QUERY_FORMS[type];
+  if (forms === null) throw new Error(`run_read_query has no accepted-forms row for ${type}`);
+  return forms;
+}

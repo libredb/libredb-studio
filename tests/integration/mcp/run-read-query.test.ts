@@ -18,7 +18,7 @@ import type { DatabaseProvider } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
 import { McpConnectionContext } from "@/lib/mcp/context";
 import { MCP_CANCELLED_TEXT, MCP_NOT_VISIBLE_TEXT, MCP_RESULT_CAP_BYTES, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
-import { MORE_ROWS_THAN_PAGEABLE_HINT, ROW_OVER_CAP_TEXT, timeoutText } from "@/lib/mcp/tools/read-query-limits";
+import { moreRowsThanPageableHint, ROW_OVER_CAP_TEXT, timeoutText } from "@/lib/mcp/tools/read-query-limits";
 import {
   RUN_READ_QUERY_DESCRIPTION,
   RUN_READ_QUERY_ENGINES,
@@ -222,7 +222,7 @@ describe("paging and cutting", () => {
     expect(result.structuredContent).toMatchObject({
       row_count: 100,
       pagination: { hasMore: true, nextOffset: null, wasLimited: false },
-      hint: MORE_ROWS_THAN_PAGEABLE_HINT,
+      hint: moreRowsThanPageableHint("sqlite"),
     });
   });
 
@@ -287,7 +287,10 @@ describe("the boundary", () => {
       const result = await direct({ connection_id: "seed:shop", sql: "DROP TABLE numbers" });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain("NON_READ_STATEMENT");
-      expect(result.content[0].text).toContain("a SELECT (a WITH is fine), VALUES, TABLE, or EXPLAIN without ANALYZE");
+      // SQLite's own forms: it has no TABLE statement, so the refusal does not offer one.
+      expect(result.content[0].text).toContain(
+        "On this engine run_read_query runs one read-only statement: a SELECT (a WITH is fine), VALUES, or EXPLAIN.",
+      );
       expect(reads.calls).toBe(0);
       expect(mcpEvents()).toEqual([
         expect.objectContaining({ target: "mcp/decision", reason: "mcp_statement_refused", connectionName: "shop" }),

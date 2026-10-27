@@ -49,6 +49,14 @@ describe("docs/MCP.md", () => {
     );
   });
 
+  test("claims no one engine's statement forms for every engine, and names the record that opens MCP read", () => {
+    expect(MCP_DOC).toContain(
+      "A `SELECT` (a `WITH` is fine) runs on every engine it serves; a refused statement's answer names what else that engine takes.",
+    );
+    expect(MCP_DOC).not.toContain("`VALUES`, `TABLE`, or `EXPLAIN` without `ANALYZE`");
+    expect(MCP_DOC).toContain("`MCP_STATEMENT_READ`");
+  });
+
   test("names the engines MCP is not offered for in both tool sentences, from MCP_EXPOSABLE (#1089 E12)", () => {
     const refused = SHIPPED_DATABASE_TYPES.filter((type) => !MCP_EXPOSABLE[type]).map(
       (type) => DB_UI_CONFIG[type].label,

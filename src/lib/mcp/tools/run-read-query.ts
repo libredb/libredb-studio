@@ -42,7 +42,7 @@ import { redactError, safeSerialize } from "../serializer";
 import {
   classifyReadQueryFailure,
   fenceRefusalText,
-  MORE_ROWS_THAN_PAGEABLE_HINT,
+  moreRowsThanPageableHint,
   nextPageHint,
   offsetRefusalText,
   profileRefusalText,
@@ -116,7 +116,8 @@ const RUN_READ_QUERY_TITLE = "Run a read-only query";
 export const RUN_READ_QUERY_TYPES: readonly DatabaseType[] = mcpStatementEngines("sql");
 /** Derived from the list, as src/lib/agent/posture.ts derives its own sentence. */
 export const RUN_READ_QUERY_ENGINES = namedList(RUN_READ_QUERY_TYPES.map((type) => getDBConfig(type).label));
-export const RUN_READ_QUERY_DESCRIPTION = `Run one read-only SQL statement on a connection: a SELECT (a WITH is fine), VALUES, TABLE, or EXPLAIN without ANALYZE. Runs on ${RUN_READ_QUERY_ENGINES}; other engines refuse it, so use inspect_schema there. Returns at most max_rows rows (default 100, at most 500) and at most 32 KiB; truncated and pagination.hasMore say when rows were cut, and pagination.nextOffset is the offset of the next page when the query can be paged. ${MCP_UNTRUSTED_NOTICE}`;
+/** Names no statement form beyond SELECT, because the others differ by engine; the refusal names the engine's own. */
+export const RUN_READ_QUERY_DESCRIPTION = `Run one read-only SQL statement on a connection. A SELECT (a WITH is fine) runs on every engine it serves; a refused statement's answer names what else that engine takes. Runs on ${RUN_READ_QUERY_ENGINES}; other engines refuse it, so use inspect_schema there. Returns at most max_rows rows (default 100, at most 500) and at most 32 KiB; truncated and pagination.hasMore say when rows were cut, and pagination.nextOffset is the offset of the next page when the query can be paged. ${MCP_UNTRUSTED_NOTICE}`;
 
 /** A result, and the reason its outcome event records when it is a failure. */
 type Answer = readonly [ToolResult, McpToolAuditReason?];
@@ -147,7 +148,7 @@ function failureAnswer(
   return [engineError(MCP_ENGINE_ERROR_PREFIX, failure.error), "mcp_execution_failed"];
 }
 
-function resultOf(args: RunReadQueryInput, prepared: PreparedQuery, raw: QueryResult): Answer {
+function resultOf(args: RunReadQueryInput, type: DatabaseType, prepared: PreparedQuery, raw: QueryResult): Answer {
   const all = safeSerialize(raw.rows);
   const page = all.slice(0, args.max_rows);
   const columns = raw.fields.map((name) => {
@@ -168,7 +169,7 @@ function resultOf(args: RunReadQueryInput, prepared: PreparedQuery, raw: QueryRe
         truncated: truncatedBy !== null,
         truncated_by: truncatedBy,
         pagination: { offset: args.offset, limit: args.max_rows, hasMore, nextOffset, wasLimited: prepared.wasLimited },
-        hint: nextOffset !== null ? nextPageHint(nextOffset) : hasMore ? MORE_ROWS_THAN_PAGEABLE_HINT : null,
+        hint: nextOffset !== null ? nextPageHint(nextOffset) : hasMore ? moreRowsThanPageableHint(type) : null,
         byte_size: 0,
         execution_time_ms: raw.executionTime,
       },
@@ -238,7 +239,7 @@ async function execute(
   if (executed.kind === "failed") {
     return failureAnswer(executed.error, executed.settledAt, deadline, args.timeout_ms, record);
   }
-  return resultOf(args, prepared, executed.value);
+  return resultOf(args, connection.type, prepared, executed.value);
 }
 
 export async function runReadQuery(args: RunReadQueryInput, call: McpToolCall): Promise<ToolResult> {
@@ -265,7 +266,8 @@ export async function runReadQuery(args: RunReadQueryInput, call: McpToolCall): 
     return refuse(resolved, "mcp_execution_failed", profileRefusalText(notServed, RUN_READ_QUERY_ENGINES));
   }
   const violation = checkReadOnlyStatement(args.sql);
-  if (violation !== null) return refuse(resolved, "mcp_statement_refused", fenceRefusalText(violation));
+  if (violation !== null)
+    return refuse(resolved, "mcp_statement_refused", fenceRefusalText(violation, connection.type));
   const unrecorded = recordOrRefuse(() => recordMcpDecision(resolved));
   if (unrecorded !== null) return unrecorded;
 

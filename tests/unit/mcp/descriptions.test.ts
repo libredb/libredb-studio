@@ -68,6 +68,14 @@ describe("the tool descriptions", () => {
     }
   });
 
+  test("names no statement form, because the forms differ by engine and the refusal names them", () => {
+    expect(RUN_READ_QUERY_DESCRIPTION).not.toContain("VALUES");
+    expect(RUN_READ_QUERY_DESCRIPTION).not.toContain("TABLE");
+    expect(RUN_READ_QUERY_DESCRIPTION).toContain(
+      "A SELECT (a WITH is fine) runs on every engine it serves; a refused statement's answer names what else that engine takes.",
+    );
+  });
+
   test("inspect_schema and list_connections say they work on every engine", () => {
     expect(INSPECT_SCHEMA_DESCRIPTION).toContain("Works on every engine.");
     expect(LIST_CONNECTIONS_DESCRIPTION).toContain("Works for every engine.");
