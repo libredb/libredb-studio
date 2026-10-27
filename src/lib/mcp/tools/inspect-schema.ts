@@ -42,7 +42,7 @@ import {
  *
  * It lists the kinds an engine declares as relations and nothing else, and a kind whose names are withheld from
  * machine surfaces is never one (`relationKindIds`), so no such name reaches it: a Kubernetes cluster, whose kinds
- * are all `config`, lists no object at all, its Secrets included (B105).
+ * are all `config`, lists no object at all, its Secrets included (all-providers ruling 21).
  *
  * It acquires under agent-operations, which sends no statement and so runs on every engine. The
  * decision event is written before acquisition and the outcome after, and a call whose record

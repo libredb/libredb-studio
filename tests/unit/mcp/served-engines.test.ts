@@ -39,7 +39,7 @@ describe("mcpStatementEngines", () => {
   });
 
   test("serves MongoDB and Kubernetes each in its own language", () => {
-    // MongoDB opened with run_mongo_command, Kubernetes with run_kubectl_read (B105).
+    // MongoDB opened with run_mongo_command, Kubernetes with run_kubectl_read (all-providers ruling 21).
     expect(mcpStatementEngines("mongo")).toEqual(["mongodb"]);
     expect(mcpStatementEngines("kubectl")).toEqual(["kubernetes"]);
   });

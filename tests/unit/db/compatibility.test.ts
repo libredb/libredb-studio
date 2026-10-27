@@ -504,7 +504,7 @@ describe("wire-compatibility registry", () => {
     expect(isExternalDatabaseType("kubernetes")).toBe(true);
     expect(compatibleEnginesFor("kubernetes")).toEqual([]);
     expect(READ_ONLY_ENFORCED.kubernetes).toBe(true);
-    // Offered with every answer machine-redacted (all-providers ruling 21, B105).
+    // Offered with every answer machine-redacted (all-providers ruling 21).
     expect(MCP_EXPOSABLE.kubernetes).toBe(true);
     expect(READS_FILE_ACCESS_POSTURE.kubernetes).toBe(false);
     expect(CONNECTION_FORM_URI_MODE.kubernetes).toBe(false);

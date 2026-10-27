@@ -342,7 +342,7 @@ describe("the answer", () => {
 });
 
 /**
- * Kubernetes (B105, all-providers ruling 21): every kind is `config`, none a relation, so inspect_schema lists no
+ * Kubernetes (all-providers ruling 21): every kind is `config`, none a relation, so inspect_schema lists no
  * object of any kind, a Secret's name included, and sends no list request; the namespace it names is the schema,
  * which a namespace name may be, because a kubectl read has to name it. The cluster below holds a Secret whose name
  * is the planted marker, so its absence is the tool's and not an empty cluster's.
