@@ -915,7 +915,7 @@ describe("captureContextSnapshot — an environment failure on the composed path
     // The generic sentence names no cause, so what the operator gets is that sentence AND
     // the advice for this deny code. Asserted per code rather than by substring of a
     // shared prefix, because the whole point of the advice is that it DIFFERS per code.
-    expect(capture.detail).toContain("both a user and a password are required");
+    expect(capture.detail).toContain("it must have the form the engine takes");
     expect(capture.detail).not.toMatch(/so its schema was not read for this run\.$/);
   });
 
@@ -951,7 +951,7 @@ describe("captureContextSnapshot — an environment failure on the composed path
     // The generic sentence alone is not what a caller gets, and the advice is not the
     // credential code's: a shared sentence would make both assertions above vacuous.
     expect(capture.detail).not.toMatch(/so its schema was not read for this run\.$/);
-    expect(capture.detail).not.toContain("both a user and a password are required");
+    expect(capture.detail).not.toContain("it must have the form the engine takes");
     // The error's own message stays out of the note a run reads as the server's voice.
     expect(capture.detail).not.toContain("the session principal holds");
   });
@@ -1480,7 +1480,7 @@ describe("captureContextSnapshot — the provider's own inventory", () => {
     expect(capture.detail).toContain("under the execution profile a grounding read takes");
     expect(capture.detail).not.toContain("could not be decrypted");
     // Same refusal, same advice, on the other of the two paths that catch this error.
-    expect(capture.detail).toContain("both a user and a password are required");
+    expect(capture.detail).toContain("it must have the form the engine takes");
     expect(capture.detail).not.toMatch(/so its schema was not read for this run\.$/);
   });
 

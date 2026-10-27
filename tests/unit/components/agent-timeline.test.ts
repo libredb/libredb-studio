@@ -223,7 +223,7 @@ describe("foldLedgerEntries", () => {
 
     const detail = view.items.at(-1)?.detail ?? "";
     expect(detail).toBe(
-      "This connection's agent credential cannot be used: check that it is complete (an agent user and password, or where the database takes one, an agent token alone), that the password still decrypts under the current secret key, and that no connection string is set beside it.",
+      "This connection's agent credential cannot be used: check that it has the form its database takes (an agent user and password; an agent token or service-account key alone where the database takes one; an agent user other than the connection's own where it asks for one; none where it takes none), that the password still decrypts under the current secret key, and that no connection string is set beside it.",
     );
     // The whole point of the second reason: the sentence must not send the reader
     // after their engine, which is not what refused the run.
@@ -242,7 +242,7 @@ describe("foldLedgerEntries", () => {
     "model-unauthorized": "The model provider rejected the configured credentials.",
     "engine-unsupported": "The agent cannot run on this database engine: it offers no read-only execution profile.",
     "agent-credential-unusable":
-      "This connection's agent credential cannot be used: check that it is complete (an agent user and password, or where the database takes one, an agent token alone), that the password still decrypts under the current secret key, and that no connection string is set beside it.",
+      "This connection's agent credential cannot be used: check that it has the form its database takes (an agent user and password; an agent token or service-account key alone where the database takes one; an agent user other than the connection's own where it asks for one; none where it takes none), that the password still decrypts under the current secret key, and that no connection string is set beside it.",
     "agent-principal-refused":
       "The database user this run would execute as holds privileges the read-only boundary cannot contain, so the profile refused it. Connect as a user holding only read privileges.",
     "agent-principal-underprivileged":

@@ -805,7 +805,7 @@ const PROFILE_REFUSAL_ADVICE: Readonly<Record<ExecutionProfileDenyCode, string>>
     "This engine can grant the profile, but not against this target: a server on the engine's wire protocol that is not, or does not identify itself as, the server its read-only enforcement was measured on, or an in-memory database, where a read-only handle has nothing to read. Point the connection at the measured engine itself, or at a database file.",
   UNSUPPORTED_PROFILE: "The execution profile asked for is not one this server vends.",
   AGENT_CREDENTIAL_UNRESOLVABLE:
-    "The connection configures an agent credential that could not be resolved: both a user and a password are required, and a sealed password must be decryptable.",
+    "The connection configures an agent credential that could not be resolved: it must have the form the engine takes (a user and a password, unless the engine takes a token or key alone, a user other than the connection's own, or none), and a sealed password must be decryptable.",
   AGENT_CREDENTIAL_WITH_CONNECTION_STRING:
     "The connection configures an agent credential alongside a connection string, which would silently drop the credential, so acquisition was refused.",
 });
