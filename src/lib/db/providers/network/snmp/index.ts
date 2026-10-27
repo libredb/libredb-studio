@@ -14,9 +14,10 @@
  * WHAT IS WIRED, AND WHAT IS NOT. The client is this provider's own, not a library: `client.ts`
  * and `transport.ts` open one UDP socket with `node:dgram`, so nothing is added to `package.json`.
  * `connect` and `query` reach an agent through it. The catalog surfaces (`listObjects`,
- * `describeObject`, `describeObjects`) and `getHealth` still refuse through `notWired` with a clear
- * reason rather than returning something that looks like an answer: a provider that silently
- * answers nothing is worse than one that says it is not wired.
+ * `describeObject`, `describeObjects`) and `getHealth` still refuse through `notWired` rather than
+ * returning something that looks like an answer: a provider that silently answers nothing is worse
+ * than one that says it is not wired. The message `notWired` throws predates this client and still
+ * names a missing dependency; the refusal holds, its stated reason does not.
  */
 import { randomInt } from "node:crypto";
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
