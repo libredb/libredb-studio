@@ -41,7 +41,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B128 · 59
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B139 · 70
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP3 · 3
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
@@ -7950,6 +7950,109 @@ An engine whose statement text needs its own canonical form or its own advice ca
 Found 2026-10-19 while widening the engine overlays (#1821).
 
 **Done when:** the audited call and the drafted statement carry the connection's engine, every reader of the adapter and of the catalog advice resolves them through the run resolver, `adapter` and `catalogAdvice` join `ENGINE_OVERRIDABLE_SERVER_MEMBERS`, and a test proves an engine override of each reaches the fingerprint, the draft and the refusal while a ledger written before it keeps its step ids; cited in `docs/AGENT.md`.
+
+### B129. Apache Spark has no agent execution and no MCP `run_read_query`
+
+The Spark provider implements no `queryReadOnly`, so `AGENT_EXECUTION_ENGINES` does not name it, agent execution refuses it, and MCP `run_read_query` answers that the engine is not served; the MCP metadata tools work (`MCP_EXPOSABLE.spark` is true, `MCP_STATEMENT_READ.spark` is false).
+No read-only boundary exists to build one on: Spark has no engine-side read-only mode, Spark Connect authorizes nothing beyond a shared token, so no least-privilege principal can be proved, and `ADD JAR`, `CREATE FUNCTION USING JAR`, `SET spark.sql.catalog.*`, `reflect` and `TRANSFORM USING` reach code or processes from SQL, which defeats any statement classifier (`docs/providers/spark.md` section 10).
+
+Found 2026-10-27 while designing read-only agent and MCP execution for every provider (design section 8).
+
+**Done when:** an upstream Spark release offers an authorization feature or a read-only session that Studio can prove at open, a boundary test against it with a writable positive control shows `ADD JAR`, a code-loading function and a write refused, and Spark then joins agent execution through `queryReadOnly` with its `MCP_STATEMENT_READ` row false until the owner opens MCP read for it; cited in `docs/AGENT.md`.
+
+### B130. Trino has no agent execution and no MCP `run_read_query`
+
+The Trino provider implements no `queryReadOnly`, so agent execution refuses it and MCP `run_read_query` answers that the engine is not served; the MCP metadata tools work (`MCP_EXPOSABLE.trino` is true, `MCP_STATEMENT_READ.trino` is false).
+`START TRANSACTION READ ONLY` holds for Trino's own connectors, but a pass-through table function, `TABLE(<catalog>.system.query(...))`, sends its text to the remote source, where it runs under the catalog's own credential and outside the read-only transaction, and pinning reads to one catalog still admits it on that catalog.
+Studio cannot prove a catalog's connector credential read-only, so only a lexer fence could stop that path, and a lexer is defence in depth, never the boundary.
+
+Found 2026-10-27 while designing read-only agent and MCP execution for every provider (design section 8, which withdrew the planned Trino agent PR).
+
+**Done when:** either a way to prove each reachable catalog's connector credential read-only at open, or an engine switch that disables pass-through table functions, is found and measured, a boundary test with a writable positive control shows a pass-through write refused, and Trino then joins agent execution through `queryReadOnly` with its `MCP_STATEMENT_READ` row false until the owner opens MCP read for it; cited in `docs/AGENT.md`.
+
+### B131. Prometheus has no agent execution and no MCP statement read
+
+The Prometheus provider implements no `queryReadOnly`, so agent execution refuses it and no MCP tool runs PromQL; plan mode and the MCP metadata tools work (`MCP_EXPOSABLE.prometheus` is true, `MCP_STATEMENT_READ.prometheus` is false).
+Agent execute mode for PromQL is a recorded non-goal of #1085 and of the #424 epic (`docs/providers/prometheus.md`, Known limitations), so this is a product decision and not a missing boundary: the provider's closed `PATHS` table, whose only non-GET call is `POST /api/v1/query`, and a query language with no write construct would serve as a structural closed table.
+
+Found 2026-10-27 while designing read-only agent and MCP execution for every provider (design section 8, owner ruling 24).
+
+**Done when:** the owner reverses the #1085 non-goal, Prometheus implements `queryReadOnly` over the pinned `PATHS` table with a test that pins it, refuses a handle not opened under the agent profile, joins `AGENT_EXECUTION_ENGINES` under a `promql` statement language, and MCP serves it through its own arm in `MCP_STATEMENT_ARMS` (`src/lib/mcp/tools/statement-arms.ts`) once the owner opens its MCP read; cited in `docs/AGENT.md`.
+
+### B132. MTConnect has no agent execution and no MCP statement read
+
+The MTConnect provider implements no `queryReadOnly`, so agent execution refuses it and no MCP tool runs a request line; the MCP metadata tools work (`MCP_EXPOSABLE.mtconnect` is true, `MCP_STATEMENT_READ.mtconnect` is false).
+Its console text is one request line in the agent's own URL grammar, not a query language, and #424 gives such a provider no read-only statement path (`docs/providers/mtconnect.md` section 3.1); the nine GET routes the provider pins, with any non-GET and any second request refused, would serve as a structural closed table once that rule is lifted.
+
+Found 2026-10-27 while designing read-only agent and MCP execution for every provider (design section 8, owner ruling 24).
+
+**Done when:** the owner lifts the #424 request-line rule for MTConnect, the provider implements `queryReadOnly` over the pinned route table, refuses a handle not opened under the agent profile, joins `AGENT_EXECUTION_ENGINES` under a statement language of its own, and MCP serves it through its own arm in `MCP_STATEMENT_ARMS` once the owner opens its MCP read, with tests; `docs/providers/mtconnect.md` section 3.1 says what changed; cited in `docs/AGENT.md`.
+
+### B133. MQTT has no agent execution and no MCP surface
+
+`MCP_EXPOSABLE.mqtt` is false and the provider implements no `queryReadOnly`, so agent execution and every MCP tool refuse an MQTT connection.
+A read reports what the broker delivered during its window, and an agent asked whether a sensor is reporting would take a topic's absence as proof it does not exist, the inference the provider doc says cannot be drawn (`docs/providers/mqtt.md` section 9.1).
+The closed five-packet encoder and the outbound check in `valve.ts`, which send no PUBLISH and no will, would serve as a structural closed table; the open question is completeness, not the boundary.
+
+Found 2026-10-27 while designing read-only agent and MCP execution for every provider (design section 8, owner ruling 24).
+
+**Done when:** the owner overturns section 9.1 of the provider doc, D292 has brought the MQTT dial under `DB_HTTP_BLOCK_PRIVATE_HOSTS`, the provider implements `queryReadOnly` whose answers carry topic metadata and no payload, joins `AGENT_EXECUTION_ENGINES`, and MCP read is opened for it only on its own exposure ruling, with tests; cited in `docs/AGENT.md`.
+
+### B134. Sparkplug has no agent execution and no MCP surface
+
+`MCP_EXPOSABLE.sparkplug` is false and the provider implements no `queryReadOnly`, so agent execution and every MCP tool refuse a Sparkplug connection, for MQTT's reason (B133).
+Sparkplug has no command that lists edge nodes, so a read reports what it saw during its window, and an edge node that published nothing in that window cannot be told from one that is gone (`MCP_EXPOSABLE` in `src/lib/db/compatibility.ts`).
+
+Found 2026-10-27 while designing read-only agent and MCP execution for every provider (design section 8, owner ruling 24).
+
+**Done when:** the owner rules on completeness for Sparkplug as for MQTT (B133), the provider implements `queryReadOnly` over the same packet table with answers that carry metric metadata and no payload, joins `AGENT_EXECUTION_ENGINES`, and MCP read is opened for it only on its own exposure ruling, with tests; cited in `docs/AGENT.md`.
+
+### B135. OPC UA has no agent execution and no MCP surface
+
+`MCP_EXPOSABLE.opcua` is false and the provider implements no `queryReadOnly`, so agent execution and every MCP tool refuse an OPC UA connection.
+The console reads one JSON request and is read-only by construction, so the boundary is not what is missing: a node's value reaches a reader without its engineering units or its EU range, which live on nodes of their own that this version does not read, so an agent grounded on an address space would reason about figures it cannot qualify (`docs/providers/opcua.md`).
+The engine accepted an anonymous write in the measured fixture, so the provider's `OpcuaReadOnlyClient` seam of eight read services is the whole guarantee for any agent path.
+
+Found 2026-10-27 while designing read-only agent and MCP execution for every provider (design section 8, owner ruling 24).
+
+**Done when:** the engineering-units objection is answered, either by reading the units and the EU range beside each value or by an owner ruling, the provider implements `queryReadOnly` through the `OpcuaReadOnlyClient` seam with a test that pins its services, joins `AGENT_EXECUTION_ENGINES`, and MCP read is opened for it only on its own exposure ruling, with tests; cited in `docs/AGENT.md`.
+
+### B136. etcd has no agent execution and no MCP surface
+
+`MCP_EXPOSABLE.etcd` is false and the provider implements no `queryReadOnly` (E12), so agent execution refuses etcd and an etcd seed with `mcp: true` is refused when the seed file loads (`docs/providers/etcd.md` section 3.5).
+Key names and values can carry secrets that the withholding table (E9, section 3.3) does not recognise, such as a secret stored under a custom prefix in an envelope Studio does not know, so any agent or MCP answer has to start from names and sizes, not values.
+
+Found 2026-10-27 while designing read-only agent and MCP execution for every provider (design section 8, owner ruling 31).
+
+**Done when:** the provider implements `queryReadOnly` over a read-kind allowlist of its typed gRPC calls, with a test that pins it, whose answers carry key names, counts and sizes and no value, and joins `AGENT_EXECUTION_ENGINES`; MCP stays closed until a per-engine exposure ruling opens it, and that ruling's surface is tested to return no value; cited in `docs/AGENT.md`.
+
+### B137. Modbus has no agent execution and no MCP surface
+
+`MCP_EXPOSABLE.modbus` is false and the provider implements no `queryReadOnly`, so agent execution and every MCP tool refuse a Modbus connection.
+Modbus has no discovery, so a register means only what the connection's register map says, and an MCP client has nothing to form a read from on its own.
+A device that serves one client at a time left a second client's read unanswered for 3003 ms in the measured fixture, so an agent read can starve the plant's own HMI unless the provider paces it (`docs/providers/modbus.md`).
+
+Found 2026-10-27 while designing read-only agent and MCP execution for every provider (design section 8).
+
+**Done when:** the provider implements `queryReadOnly` through the read request builders in `pdu.ts` and the `valve.ts` allowlist, with a test that pins both, paces agent reads so a single-client device is never held past a stated bound, and joins `AGENT_EXECUTION_ENGINES`; MCP stays closed until a per-engine exposure ruling opens it; cited in `docs/AGENT.md`.
+
+### B138. NETCONF has no agent execution and no MCP surface
+
+`MCP_EXPOSABLE.netconf` is false and the provider implements no `queryReadOnly`, so agent execution and every MCP tool refuse a NETCONF connection.
+Its agent PR waits on prerequisite hardening work.
+
+Found 2026-10-27 while designing read-only agent and MCP execution for every provider (design section 8).
+
+**Done when:** the prerequisite hardening has landed, the provider implements `queryReadOnly` over a closed read-operation table with a test that pins it, and joins `AGENT_EXECUTION_ENGINES`; MCP stays closed until a per-engine exposure ruling opens it; cited in `docs/AGENT.md`.
+
+### B139. SNMP has no agent execution and no MCP surface
+
+`MCP_EXPOSABLE.snmp` is false and the provider implements no `queryReadOnly`, so agent execution and every MCP tool refuse an SNMP connection.
+`listObjects`, `describeObject`, `describeObjects` and `getHealth` in `src/lib/db/providers/network/snmp/index.ts` throw `notWired` today while `connect` and `query` work, so a plan run has no catalog to ground on and an agent path has no inventory to read first.
+
+Found 2026-10-27 while designing read-only agent and MCP execution for every provider (design section 8).
+
+**Done when:** the catalog is wired from the bundled MIB tree, the provider implements `queryReadOnly` over its closed four-command grammar and the `valve.ts` Read Class check, with a test that pins both, and joins `AGENT_EXECUTION_ENGINES`; MCP stays closed until a per-engine exposure ruling opens it; cited in `docs/AGENT.md`.
 
 ## Passkey deferrals (#785)
 
