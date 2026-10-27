@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { fenceTagEngine, isQueryFenceTag } from "@/lib/sql/fence-tags";
+import { ALIAS_ENGINES, fenceTagEngine, isQueryFenceTag, QUERY_FENCE_ALIASES } from "@/lib/sql/fence-tags";
 import type { DatabaseType } from "@/lib/types";
 
 /**
@@ -197,5 +197,24 @@ describe("fenceTagEngine", () => {
     // The control: the canonical tag names the same engine, so the two spellings cannot disagree.
     expect(isQueryFenceTag("prometheus")).toBe(true);
     expect(fenceTagEngine("prometheus")).toBe("prometheus");
+  });
+});
+
+describe("the two alias registries", () => {
+  // `fenceTagEngine` reads only ALIAS_ENGINES, so an alias added to the query set alone is a block offered to the editor
+  // that never contradicts a connection (all-providers design 5.2, V13). `sql` and `cql` are the deliberate exceptions:
+  // each is a language more than one engine speaks, so neither names one.
+  const LANGUAGE_ONLY = ["cql", "sql"];
+
+  test("every alias that names an engine is in both, and only the language tags are in the query set alone", () => {
+    const named = [...QUERY_FENCE_ALIASES].filter((alias) => !LANGUAGE_ONLY.includes(alias));
+    expect(named.sort()).toEqual(Object.keys(ALIAS_ENGINES).sort());
+  });
+
+  test("the language tags are query tags that name no engine", () => {
+    for (const alias of LANGUAGE_ONLY) {
+      expect(QUERY_FENCE_ALIASES.has(alias)).toBe(true);
+      expect(fenceTagEngine(alias)).toBeNull();
+    }
   });
 });

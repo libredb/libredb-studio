@@ -156,7 +156,7 @@ const ENGINE_FENCE_TAGS: Readonly<Record<DatabaseType, true>> = Object.freeze({
  * A tag missing from either costs the user a button and never a wrong one — the copy
  * control is offered on every block regardless.
  */
-const QUERY_FENCE_ALIASES: ReadonlySet<string> = new Set([
+export const QUERY_FENCE_ALIASES: ReadonlySet<string> = new Set([
   "sql",
   "postgresql",
   "pgsql",
@@ -185,8 +185,12 @@ const QUERY_FENCE_ALIASES: ReadonlySet<string> = new Set([
  *
  * `sql` is deliberately absent: it names no engine, and mapping it to the connection's
  * would turn a generic tag into a claim the model never made.
+ *
+ * `fenceTagEngine` reads only this record, so an alias that names an engine goes into both
+ * registries; `tests/unit/lib/sql/fence-tags.test.ts` holds this record's keys equal to the
+ * alias set less the language tags that name no engine, `sql` and `cql`.
  */
-const ALIAS_ENGINES: Readonly<Record<string, DatabaseType>> = Object.freeze({
+export const ALIAS_ENGINES: Readonly<Record<string, DatabaseType>> = Object.freeze({
   postgresql: "postgres",
   pgsql: "postgres",
   psql: "postgres",
