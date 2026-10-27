@@ -11,7 +11,9 @@
  * read it as bytes, that an inline row edit and a data import write non-ASCII text and a DECIMAL
  * that read back byte for byte, that a BOOLEAN edit bound as text is stored, that `SELECT *` over
  * a table with LOB and XML columns answers what each column read alone answers, that a duplicated
- * column keeps both values, that a parameter the driver refuses is a QueryError, and that
+ * column keeps both values, that a parameter the driver refuses is a QueryError, that a
+ * transaction on its own session commits and rolls back, that a transaction statement past the
+ * query timeout ends the wait at once and the server then rolls the transaction back, and that
  * `verify-ca` connects with a PEM held as text.
  *
  * Unlike the known-issue report, this one FAILS: every check prints PASS or FAIL with the
@@ -31,7 +33,7 @@
  */
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
+import { DatabaseConfigError, QueryError, TimeoutError } from "@/lib/db/errors";
 import { Db2Provider } from "@/lib/db/providers/sql/db2";
 import type { DatabaseObject } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
@@ -363,11 +365,75 @@ async function main(): Promise<void> {
     expect(row?.A === "98765.43", `AMT ${String(row?.A)}`);
   });
 
+  const txIds = async (): Promise<number[]> =>
+    (await provider.query(`SELECT ID FROM ${SCRATCH}.TX ORDER BY ID`)).rows.map((row) => Number(row.ID));
+
+  await check("a transaction runs on its own session: ROLLBACK discards and COMMIT keeps", async () => {
+    await provider.query(`CREATE TABLE ${SCRATCH}.TX (ID INTEGER NOT NULL)`);
+    await provider.beginTransaction();
+    await provider.queryInTransaction(`INSERT INTO ${SCRATCH}.TX VALUES (?)`, [1]);
+    const inside = await provider.queryInTransaction(`SELECT COUNT(*) AS N FROM ${SCRATCH}.TX`);
+    expect(Number(inside.rows[0]?.N) === 1, `inside the transaction ${JSON.stringify(inside.rows)}`);
+    // The shared client autocommits beside the open transaction and does not wait on its lock.
+    expect((await txIds()).length === 0, "the uncommitted row is visible outside the transaction");
+    await provider.rollbackTransaction();
+    expect((await txIds()).length === 0, `after ROLLBACK ${JSON.stringify(await txIds())}`);
+
+    await provider.beginTransaction();
+    await provider.queryInTransaction(`INSERT INTO ${SCRATCH}.TX VALUES (?)`, [2]);
+    await provider.commitTransaction();
+    expect(JSON.stringify(await txIds()) === "[2]", `after COMMIT ${JSON.stringify(await txIds())}`);
+  });
+
+  // An uncommitted change is invisible to the shared client either way (Db2 reads the currently
+  // committed row), so the transaction's row lock tells an open transaction from a rolled-back one:
+  // a write to that row times out while the transaction holds it.
+  const rowLocked = async (): Promise<boolean> => {
+    try {
+      await provider.query(`UPDATE ${SCRATCH}.TX SET ID = ID WHERE ID = 2`);
+      return false;
+    } catch (error) {
+      if (/SQLCODE=-91[13]/.test(errorText(error))) return true;
+      throw error;
+    }
+  };
+
+  await check("a transaction statement past the query timeout ends the wait, then the server rolls back", async () => {
+    const bounded = new Db2Provider({ ...CONNECTION, id: "live-db2-deadline" }, { queryTimeout: 2000 });
+    await bounded.connect();
+    await provider.query("SET CURRENT LOCK TIMEOUT 1");
+    try {
+      await bounded.beginTransaction();
+      await bounded.queryInTransaction(`UPDATE ${SCRATCH}.TX SET ID = ? WHERE ID = ?`, [3, 2]);
+      const started = Date.now();
+      const refused = await bounded
+        .queryInTransaction("SELECT COUNT(*) AS N FROM SYSCAT.COLUMNS A, SYSCAT.COLUMNS B, SYSCAT.TABLES C")
+        .catch((caught: unknown) => caught);
+      const waited = Date.now() - started;
+      expect(refused instanceof TimeoutError, `answered ${errorText(refused)}`);
+      expect(waited < 4000, `the wait ended after ${waited} ms`);
+      expect(!bounded.isInTransaction(), "the transaction is still open after the deadline");
+      console.log(`  the deadline ended the wait after ${waited} ms`);
+      // The statement runs on until it ends, and the connection closes then, releasing the lock.
+      expect(await rowLocked(), "the row lock was gone at the deadline: the statement did not run on");
+      while (await rowLocked()) {
+        expect(Date.now() - started < 300_000, "the row was still locked 300 s after the statement began");
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+      console.log(`  the server released the transaction ${Date.now() - started} ms after the statement began`);
+      expect(JSON.stringify(await txIds()) === "[2]", `after the close ${JSON.stringify(await txIds())}`);
+    } finally {
+      await provider.query("SET CURRENT LOCK TIMEOUT NULL");
+      await bounded.disconnect();
+    }
+  });
+
   await check("cleanup: the scratch schema is dropped", async () => {
     for (const view of ["LONG_VIEW", "HUGE_VIEW"]) {
       await provider.query(`DROP VIEW ${SCRATCH}.${view}`).catch(() => undefined);
     }
     await provider.query(`DROP TABLE ${SCRATCH}.EDITS`).catch(() => undefined);
+    await provider.query(`DROP TABLE ${SCRATCH}.TX`).catch(() => undefined);
     await provider.query(`DROP SCHEMA ${SCRATCH} RESTRICT`);
   });
 
