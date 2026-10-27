@@ -568,10 +568,9 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // the connection, because Modbus has no discovery and a name means only what that document
   // says it means, so an MCP client has nothing to form a read from on its own.
   modbus: false,
-  // Outside this provider's first version, as for etcd, Oxia, S3 and MQTT: the provider implements no
-  // `queryReadOnly`, and the configuration it reads carries values a read-only account can still read, password
-  // hashes and keystore entries among them (docs/providers/netconf.md 6.3), so no MCP surface is offered until one is
-  // designed for it.
+  // MCP is outside this provider's first version, as for etcd, Oxia, S3 and MQTT. A statement tool offered later
+  // has to deal with configuration values: a read-only account still reads password hashes and keystore entries
+  // out of the configuration, which is why the catalog carries names only (docs/providers/netconf.md 6.3).
   netconf: false,
   snmp: false,
   // Outside this version, for the reason MQTT's entry gives rather than for the absence of a read query path:
