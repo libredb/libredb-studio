@@ -1680,6 +1680,7 @@ export default function Studio() {
                               refreshToken={objectRefreshToken}
                               readAtToken={sourceTab.readAtToken}
                               readAt={sourceTab.readAt}
+                              readFor={sourceTab.readFor}
                               editingPartId={sourceTab.editingPartId}
                               dirty={sourceTab.dirty}
                               /*

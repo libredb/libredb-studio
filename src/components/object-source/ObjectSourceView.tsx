@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import { isObjectEditBuildResponseShape, isObjectEditOutcomeShape } from "@/lib/api/object-edit-wire";
 import { isSourcePartStatement, isSourcePartUnavailable, SOURCE_CHARACTER_LIMIT } from "@/lib/db/object-kinds";
 import { pathKey } from "@/lib/db/object-path";
+import { connectionResolutionKey } from "@/hooks/use-connection-payload";
 import type {
   ObjectEditConsequenceClass,
   ObjectEditOutcome,
@@ -44,6 +45,11 @@ import type { DatabaseConnection } from "@/lib/types";
 // `loader.config` is idempotent, so the second call rewrites the same path with the same value.
 configureMonacoLoader();
 
+/** What a Source read depends on besides its address: the connection's identity, reach and Read-only (#1443). */
+function sourceReadKey(connection: DatabaseConnection): string {
+  return JSON.stringify([connection.id, connectionResolutionKey(connection), connection.readOnly === true]);
+}
+
 /**
  * What a shell hands back to the tab when this viewer learns something (#789).
  *
@@ -61,6 +67,8 @@ export interface ObjectSourcePatch {
   readonly readAtToken?: number;
   /** The wall-clock moment this document was read, so the header can say when (#1407). */
   readonly readAt?: number;
+  /** What the connection was when this was read, from `sourceReadKey` (#1443). */
+  readonly readFor?: string;
   /**
    * WHICH part is being edited, and never a boolean (#789 Phase 3, from discussion #778).
    *
@@ -111,6 +119,8 @@ export interface ObjectSourceViewProps {
   readonly readAtToken?: number;
   /** The wall-clock moment this document was read, so the header can say when (#1407). */
   readonly readAt?: number;
+  /** What the connection was when this was read, from `sourceReadKey` (#1443). */
+  readonly readFor?: string;
   /** Absent means the standalone route. The embedded shell passes the host's reader. */
   readonly reader?: ObjectSourceReader;
   /** The tab's own edit state, mirrored from `SourceTabState`. Absent means nothing is being edited. */
@@ -610,6 +620,17 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
    * a check on the document rather than a race the reader cannot see.
    */
   const asked = useRef<Set<string>>(new Set());
+  const readFor = connection === null ? undefined : sourceReadKey(connection);
+  /*
+   * Read under settings the connection no longer has (#1443). Absent `readFor` is not judged: every
+   * read this viewer issues records one, so only a document a caller handed in arrives without it.
+   * With no connection there is nothing to read with, and the document in hand stays on screen.
+   */
+  const outdated =
+    readFor !== undefined &&
+    props.readFor !== undefined &&
+    props.readFor !== readFor &&
+    (sourceDocument !== undefined || failure !== undefined);
   const needsRead = sourceDocument === undefined && failure === undefined;
   const held = readHeld === true && needsRead && connection !== null;
 
@@ -637,6 +658,7 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
      * this object changed.
      */
     const tokenAtRead = refreshToken;
+    const readForAtRead = sourceReadKey(connection);
     /*
      * No cleanup, no mounted guard and NO DROP, deliberately. A viewer unmounted by a tab
      * switch still writes its answer through `onChange`, and that is wanted rather than
@@ -648,11 +670,11 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
     void (reader ?? httpSourceReader)(connection, path, kind).then(
       (answer) => {
         if (!isSourceDocumentShape(answer)) {
-          onChange({ failure: UNRENDERABLE, readAtToken: tokenAtRead });
+          onChange({ failure: UNRENDERABLE, readAtToken: tokenAtRead, readFor: readForAtRead });
           return;
         }
         if (!namesThisObject(answer, path, kind)) {
-          onChange({ failure: MISMATCHED, readAtToken: tokenAtRead });
+          onChange({ failure: MISMATCHED, readAtToken: tokenAtRead, readFor: readForAtRead });
           return;
         }
         /*
@@ -666,12 +688,13 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
          * stale, then pressing "Read again" silently put the reader back on the SPECIFICATION.
          * That write duplicated the fallback it sat above and could only ever lose a selection.
          */
-        onChange({ document: answer, readAtToken: tokenAtRead, readAt: Date.now() });
+        onChange({ document: answer, readAtToken: tokenAtRead, readAt: Date.now(), readFor: readForAtRead });
       },
       (error: unknown) => {
         onChange({
           failure: error instanceof Error ? error.message : String(error),
           readAtToken: tokenAtRead,
+          readFor: readForAtRead,
         });
       },
     );
@@ -738,7 +761,13 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
    * never "read at token zero". Zero is a real token: it is what every shell that counts no
    * DDL passes for the whole session.
    */
-  const stale = props.readAtToken !== undefined && props.readAtToken !== refreshToken;
+  const stale = outdated || (props.readAtToken !== undefined && props.readAtToken !== refreshToken);
+
+  // An unsaved edit is never replaced: the tab shows the stale banner, whose control is disabled
+  // until the edit is saved or discarded, and this read goes out once it is.
+  useEffect(() => {
+    if (outdated && props.dirty !== true) reread();
+  }, [outdated, props.dirty, reread]);
   const parts = renderableDocument?.parts ?? [];
   const showSwitcher = parts.length > 1;
   const tabId = (index: number) => `${baseId}-tab-${index}`;
@@ -1473,8 +1502,9 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
         >
           <TriangleAlert aria-hidden="true" strokeWidth={1.5} className="h-3.5 w-3.5 shrink-0" />
           {/*
-            Two ways in: a catalog change in this session, or a second View Source on a dirty
-            tab (`use-tab-manager.ts`). The wording covers both, and `Read again` waits on the
+            Three ways in: a catalog change in this session, a second View Source on a dirty
+            tab (`use-tab-manager.ts`), or an edit of the connection under a dirty tab (#1443).
+            The wording covers all three, and `Read again` waits on the
             edit like the header refresh does, because `reread` drops the document under it.
           */}
           <span className="min-w-0">

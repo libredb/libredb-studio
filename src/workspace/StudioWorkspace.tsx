@@ -1063,6 +1063,7 @@ export function StudioWorkspace({
                               refreshToken={objectRefreshToken}
                               readAtToken={sourceTab.readAtToken}
                               readAt={sourceTab.readAt}
+                              readFor={sourceTab.readFor}
                               reader={conn.sourceReader}
                               editingPartId={sourceTab.editingPartId}
                               dirty={sourceTab.dirty}

@@ -228,6 +228,7 @@ function editorValue(): string {
  */
 function Harness(props: {
   readonly reader: ObjectSourceReader;
+  readonly connection?: DatabaseConnection;
   readonly refreshToken?: number;
   readonly onPatch?: (patch: ObjectSourcePatch) => void;
 }) {
@@ -242,7 +243,7 @@ function Harness(props: {
   );
   return (
     <ObjectSourceView
-      connection={connection}
+      connection={props.connection ?? connection}
       path={[...PATH]}
       kind="package"
       kindLabel="Package"
@@ -253,6 +254,7 @@ function Harness(props: {
       refreshToken={props.refreshToken ?? 0}
       readAtToken={state.readAtToken}
       readAt={state.readAt}
+      readFor={state.readFor}
       dirty={state.dirty}
       reader={props.reader}
       onChange={onChange}
@@ -772,6 +774,124 @@ describe("ObjectSourceView", () => {
     expect(Object.hasOwn(clear!, "failure")).toBe(true);
     expect(Object.hasOwn(clear!, "readAtToken")).toBe(true);
     expect(Object.hasOwn(clear!, "readAt")).toBe(true);
+  });
+
+  test("re-reads when a saved edit changes who the connection reads as (#1443)", async () => {
+    const original = "CREATE OR REPLACE PACKAGE APP.APP_ORDERS_PKG AS\n  FUNCTION total RETURN NUMBER;\nEND;";
+    const changed = `${original}\n-- as the new user`;
+    const answers: ObjectSourceDocument[] = [
+      oneReadablePart,
+      { ...oneReadablePart, parts: [{ ...oneReadablePart.parts[0], text: changed }] },
+    ];
+    const reader = Object.assign(
+      async () => {
+        reader.calls += 1;
+        return answers[reader.calls - 1];
+      },
+      { calls: 0 },
+    );
+    const { rerender } = render(<Harness reader={reader} connection={{ ...connection, user: "root" }} />);
+    await waitFor(() => expect(editorValue()).toBe(original));
+
+    rerender(<Harness reader={reader} connection={{ ...connection, user: "app" }} />);
+
+    await waitFor(() => expect(reader.calls).toBe(2));
+    await waitFor(() => expect(editorValue()).toBe(changed));
+  });
+
+  test("re-reads when Read-only is turned on, since the edit offer is the server's answer (#1443)", async () => {
+    const reader = readerFor(oneReadablePart);
+    const { rerender } = render(<Harness reader={reader} connection={connection} />);
+    await waitFor(() => expect(screen.getByTestId("source-editor")).toBeTruthy());
+    expect(reader.calls).toBe(1);
+
+    rerender(<Harness reader={reader} connection={{ ...connection, readOnly: true }} />);
+
+    await waitFor(() => expect(reader.calls).toBe(2));
+  });
+
+  test("a cosmetic edit of the connection reads nothing (#1443)", async () => {
+    const reader = readerFor(oneReadablePart);
+    const { rerender } = render(<Harness reader={reader} connection={connection} />);
+    await waitFor(() => expect(screen.getByTestId("source-editor")).toBeTruthy());
+
+    rerender(<Harness reader={reader} connection={{ ...connection, name: "renamed", color: "#ff0000" }} />);
+
+    await waitFor(() => expect(screen.getByTestId("source-editor")).toBeTruthy());
+    expect(reader.calls).toBe(1);
+  });
+
+  test("clears a failure read under the previous settings, so it is read again (#1443)", async () => {
+    const reader = readerFor(oneReadablePart);
+    const patches: ObjectSourcePatch[] = [];
+    render(
+      <ObjectSourceView
+        connection={{ ...connection, user: "app" }}
+        path={[...PATH]}
+        kind="package"
+        kindLabel="Package"
+        displayName="APP_ORDERS_PKG"
+        failure="ORA-01031: insufficient privileges"
+        readFor="read under root"
+        refreshToken={0}
+        reader={reader}
+        onChange={(patch) => patches.push(patch)}
+      />,
+    );
+    await waitFor(() =>
+      expect(patches).toContainEqual({
+        document: undefined,
+        failure: undefined,
+        readAtToken: undefined,
+        readAt: undefined,
+      }),
+    );
+  });
+
+  test("an unsaved edit is not replaced when the connection changes: the tab is marked stale (#1443)", async () => {
+    const reader = readerFor(oneReadablePart);
+    const patches: ObjectSourcePatch[] = [];
+    render(
+      <ObjectSourceView
+        connection={{ ...connection, readOnly: true }}
+        path={[...PATH]}
+        kind="package"
+        kindLabel="Package"
+        displayName="APP_ORDERS_PKG"
+        document={oneReadablePart}
+        readFor="read before Read-only"
+        readAtToken={0}
+        refreshToken={0}
+        dirty
+        reader={reader}
+        onChange={(patch) => patches.push(patch)}
+      />,
+    );
+    expect(screen.getByTestId("object-source-stale")).toBeTruthy();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(reader.calls).toBe(0);
+    expect(patches.some((patch) => Object.hasOwn(patch, "document"))).toBe(false);
+  });
+
+  test("a document handed in with no record of what it was read under is not judged (#1443)", async () => {
+    const reader = readerFor(oneReadablePart);
+    render(
+      <ObjectSourceView
+        connection={connection}
+        path={[...PATH]}
+        kind="package"
+        kindLabel="Package"
+        displayName="APP_ORDERS_PKG"
+        document={oneReadablePart}
+        readAtToken={0}
+        refreshToken={0}
+        reader={reader}
+        onChange={() => {}}
+      />,
+    );
+    expect(screen.queryByTestId("object-source-stale")).toBeNull();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(reader.calls).toBe(0);
   });
 
   test("the refresh control is absent until a document is on screen", () => {

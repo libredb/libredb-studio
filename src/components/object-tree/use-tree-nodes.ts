@@ -21,7 +21,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { buildConnectionPayload } from "@/hooks/use-connection-payload";
+import { buildConnectionPayload, connectionResolutionKey } from "@/hooks/use-connection-payload";
 import { appFetch } from "@/lib/config/base-path";
 import {
   applicableKinds,
@@ -612,9 +612,10 @@ export function useTreeNodes(
   readsColumns = false,
   query = "",
 ): TreeNodes {
-  // The database is part of the key: emptying a saved connection's database turns it into a
-  // server-level one whose tree starts at its databases (#1530), and the edit keeps the id.
-  const connectionId = `${connection.id}\u0000${connection.database ?? ""}`;
+  // An edit keeps the id, so the key also carries every field that decides which database a read
+  // reaches and as whom: a new principal sees other databases and objects (#1443), and emptying
+  // the database turns a saved connection into a server-level one (#1530). A rename does not.
+  const connectionId = `${connection.id}\u0000${connectionResolutionKey(connection)}`;
   const [stored, setStored] = useState<TreeCache>(() => emptyCache(connectionId));
   const connectionRef = useRef(connectionId);
   const inFlight = useRef(new Set<string>());

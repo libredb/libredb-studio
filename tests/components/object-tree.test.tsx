@@ -231,6 +231,49 @@ describe("ObjectTree refresh token", () => {
   });
 });
 
+describe("ObjectTree after an edit of the same connection (#1443)", () => {
+  /*
+   * An edit keeps the connection's id. Measured on MySQL 26.7.0 before the fix: a switch from
+   * `root` to a user granted SELECT on one database kept the other database, its procedures and
+   * a dropped table's count on screen until a page reload.
+   */
+  test("a changed principal discards the tree and reads the new one", async () => {
+    let user = "root";
+    installFetch({
+      containers: () => (user === "root" ? [...appSchema, { path: ["other"], name: "other", level: 0 }] : appSchema),
+      counts: () => ({ table: { count: 1 } }),
+    });
+    const root = { ...connectionOf("my"), user: "root" };
+    const { rerender } = render(<ObjectTree connection={root} capabilities={oneLevel} />);
+    expect(await screen.findByRole("treeitem", { name: /other/ })).toBeTruthy();
+
+    user = "app";
+    rerender(<ObjectTree connection={{ ...root, user: "app" }} capabilities={oneLevel} />);
+
+    await waitFor(() => expect(screen.queryByRole("treeitem", { name: /other/ })).toBeNull());
+    expect(screen.getByRole("treeitem", { name: /app/ })).toBeTruthy();
+  });
+
+  test("a cosmetic edit keeps the tree and reads nothing", async () => {
+    const calls = installFetch(routesFor({}, { table: { count: 2 }, view: { count: 0 } }));
+    const before = connectionOf("pg");
+    const { rerender } = render(<ObjectTree connection={before} capabilities={oneLevel} />);
+    await expandApp();
+    const afterFirstPaint = calls.length;
+
+    rerender(
+      <ObjectTree
+        connection={{ ...before, name: "renamed", color: "#ff0000", group: "g", readOnly: true }}
+        capabilities={oneLevel}
+      />,
+    );
+
+    // The open container stays open: the cache was kept, not rebuilt.
+    expect(screen.getByRole("treeitem", { name: /Tables/ })).toBeTruthy();
+    await waitFor(() => expect(calls.length).toBe(afterFirstPaint));
+  });
+});
+
 describe("ObjectTree aria positions", () => {
   test("a sibling group of two reports a set size of two and distinct positions", async () => {
     installFetch({

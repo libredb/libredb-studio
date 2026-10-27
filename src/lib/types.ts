@@ -975,6 +975,13 @@ export interface SourceTabState {
    */
   readonly readAt?: number;
   /**
+   * What the connection was when this document or failure was read: its id, every field that
+   * decides which database a read reaches and as whom, and Read-only (#1443). An edit keeps the
+   * id, and the edit offer in a document is the server's answer under the old settings, so a
+   * document read under another value is read again. Not persisted, like `readAt`.
+   */
+  readonly readFor?: string;
+  /**
    * WHICH part the reader is editing, and never a boolean (#789 Phase 3, discussion #778).
    *
    * Per part and not per tab, so two parts of one Oracle package can hold two independent drafts,
