@@ -396,8 +396,8 @@ export function readMtconnectXml(bytes: Uint8Array, bounds: MtcXmlBounds = MTC_X
     if (!root) throw new Refused("malformed");
     return { ok: true, root };
   } catch (error) {
-    // Nothing in this walk calls out to a caller, so a Refused is the only throw expected here; any
-    // other one is a defect of ours and leaves as itself rather than as a reason the agent would wear.
+    // A Refused is the only throw this walk raises; any other one, a defect of ours or a throw from the
+    // caller's own bounds, leaves as itself rather than as a reason the agent would wear.
     if (!(error instanceof Refused)) throw error;
     return { ok: false, reason: error.reason };
   }
