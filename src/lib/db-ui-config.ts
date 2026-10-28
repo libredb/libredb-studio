@@ -316,8 +316,9 @@ export function isFileBased(type: DatabaseType): boolean {
 /**
  * Whether this engine takes a given addressing field at all.
  *
- * One list, two readers: `buildConnection` writes a field only when this says so, and the
- * connection modal renders an input for it only when this says so. They used to disagree -
+ * One list, two readers: `buildConnection` writes a field only when the engine's list names it, and the
+ * connection dialog draws a box only for a field that list names (src/lib/db/connection-field-layout.ts). They used
+ * to disagree -
  * the modal drew Username and Database for every networked engine while the write list
  * discarded them - so libSQL asked for a user name it has none of, and Druid and the two
  * search engines asked for a database they do not take. A box whose value is thrown away is
@@ -346,7 +347,7 @@ export function hostUriSchemes(type: DatabaseType): readonly HostUriScheme[] {
  * declares `showSshTunnel: false`, which Kafka does, because a tunnel forwards one address and
  * a Kafka client reaches every broker at the address the broker advertises.
  *
- * One rule, two readers, as `takesConnectionField` is: the connection modal renders the SSH
+ * One rule, two readers, as the engine's field list is: the connection modal renders the SSH
  * toggle only when this says so, and `buildConnection` writes `sshTunnel` only when this says
  * so. The second reader is the one that matters: the dialog keeps a tunnel switched on under
  * another type in its state, and a hidden panel would leave no control to turn it off. A

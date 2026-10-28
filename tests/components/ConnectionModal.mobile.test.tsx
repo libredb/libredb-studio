@@ -3,6 +3,7 @@ import "../helpers/mock-sonner";
 import "../helpers/mock-navigation";
 
 import { mock } from "bun:test";
+import { withFieldAccess } from "../helpers/mock-connection-form-fields";
 import React from "react";
 
 // ── Mock framer-motion before component imports ─────────────────────────────
@@ -107,7 +108,7 @@ mock.module("@/components/ui/label", () => ({
 let mockFormOverrides: Record<string, unknown> = {};
 
 function getDefaultForm() {
-  return {
+  return withFieldAccess({
     type: "postgres" as const,
     setType: mock(() => {}),
     name: "",
@@ -190,7 +191,7 @@ function getDefaultForm() {
       { value: "mysql", label: "MySQL", icon: () => React.createElement("span", null, "MY"), color: "text-hue-amber" },
     ],
     ...mockFormOverrides,
-  };
+  });
 }
 
 mock.module("@/hooks/use-connection-form", () => ({
