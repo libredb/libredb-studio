@@ -832,6 +832,19 @@ describe("BottomPanel", () => {
     expect(queryByTestId("pivottable")).not.toBeNull();
   });
 
+  test("the pivot view offers generated SQL only where the engine reads SQL, and says nothing before it knows", () => {
+    const offerFor = (metadata: unknown) => {
+      const props = createDefaultProps({ mode: "pivot", metadata });
+      render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
+      const offer = capturedPivotTableProps.offersGeneratedSql;
+      cleanup();
+      return offer;
+    };
+    expect(offerFor({ capabilities: { queryLanguage: "sql" } })).toBe(true);
+    expect(offerFor({ capabilities: { queryLanguage: "json" } })).toBe(false);
+    expect(offerFor(null)).toBeUndefined();
+  });
+
   test('Docs tab renders DatabaseDocs when mode="docs"', () => {
     const props = createDefaultProps({ mode: "docs" });
     const { queryByTestId } = render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
