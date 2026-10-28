@@ -39,6 +39,7 @@ import {
   readDbstatSizes,
 } from "@/lib/db/providers/sql/sqlite";
 import { resolveSQLiteDriverName } from "@/lib/db/providers/sql/sqlite-driver";
+import { SQLiteWorkerClient } from "@/lib/db/providers/sql/sqlite-worker";
 import { SQLITE_CREATE_TABLE } from "@/lib/db/providers/sql/sqlite-create-table";
 import {
   containerDepth,
@@ -1224,6 +1225,19 @@ describe("SQLiteProvider", () => {
   // Storage stats
   // --------------------------------------------------------------------------
 
+  describe("getHealth() when its reads fail", () => {
+    test("a refused integrity check reads FAILED and a refused journal mode reads unknown", async () => {
+      provider = new SQLiteProvider(makeSQLiteConfig());
+      await provider.connect();
+      failReadsMatching(provider, "integrity_check", "disk I/O error");
+      failReadsMatching(provider, "journal_mode", "disk I/O error");
+
+      const health = await provider.getHealth();
+
+      expect(health.slowQueries.map((entry) => entry.query)).toEqual(["Integrity: FAILED", "Journal Mode: unknown"]);
+    });
+  });
+
   describe("getStorageStats()", () => {
     test("returns storage info", async () => {
       provider = new SQLiteProvider(makeSQLiteConfig());
@@ -1352,6 +1366,92 @@ describe("SQLiteProvider", () => {
       expect(statSync(`${dbPath}-wal`).size).toBeGreaterThan(0);
       expect(statSync(dbPath).size + statSync(`${dbPath}-wal`).size).toBeGreaterThan(checkpointed.bytes);
       expect((await provider.getOverview()).databaseSizeBytes).toBe(checkpointed.bytes);
+    });
+
+    test("a worker build without dbstat lists table stats with the sizes absent", async () => {
+      const dbPath = join(fileTmpDir, "no-dbstat.db");
+      provider = new SQLiteProvider(makeSQLiteConfig({ database: dbPath }));
+      await provider.connect();
+      await provider.query("CREATE TABLE wide (id INTEGER PRIMARY KEY, payload TEXT)");
+      await provider.query("INSERT INTO wide VALUES (1, 'x')");
+      const realAll = SQLiteWorkerClient.prototype.all;
+      const all = spyOn(SQLiteWorkerClient.prototype, "all").mockImplementation(async function (
+        this: SQLiteWorkerClient,
+        sql: string,
+        params?: readonly unknown[],
+      ) {
+        if (sql.includes("FROM dbstat")) throw new Error("no such table: dbstat");
+        return realAll.call(this, sql, params);
+      });
+      try {
+        const [wide] = await provider.getTableStats();
+        expect(wide.tableName).toBe("wide");
+        expect(wide.rowCount).toBe(1);
+        expect(wide.tableSizeBytes).toBeUndefined();
+        expect(wide.totalSize).toBe("N/A");
+      } finally {
+        all.mockRestore();
+      }
+    });
+
+    test("a disconnect that lands while the stats are being read fails the read as not connected", async () => {
+      const dbPath = join(fileTmpDir, "disconnect-mid-read.db");
+      provider = new SQLiteProvider(makeSQLiteConfig({ database: dbPath }));
+      await provider.connect();
+      await provider.query("CREATE TABLE a (id INTEGER PRIMARY KEY)");
+      const realAll = SQLiteWorkerClient.prototype.all;
+      const closing = provider;
+      const all = spyOn(SQLiteWorkerClient.prototype, "all").mockImplementation(async function (
+        this: SQLiteWorkerClient,
+        sql: string,
+        params?: readonly unknown[],
+      ) {
+        const rows = await realAll.call(this, sql, params);
+        // The table list has answered; the person closes the connection before the counts.
+        if (sql.includes("sqlite_master") && sql.includes("ORDER BY name")) await closing.disconnect();
+        return rows;
+      });
+      try {
+        const failure = await provider.getTableStats().catch((error: unknown) => error);
+        expect(failure).toBeInstanceOf(DatabaseConfigError);
+        expect((failure as Error).message).toBe("Provider is not connected. Call connect() first.");
+      } finally {
+        all.mockRestore();
+      }
+    });
+
+    test("a worker restart refuses a path that is no longer a regular file", async () => {
+      const dbPath = join(fileTmpDir, "replaced.db");
+      provider = new SQLiteProvider(makeSQLiteConfig({ database: dbPath }));
+      await provider.connect();
+      const slow = provider.query(
+        "WITH RECURSIVE r(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM r WHERE i < 1000000000) SELECT count(*) FROM r",
+        undefined,
+        "replaced-q",
+      );
+      const slowOutcome = slow.then(
+        () => null,
+        (error: unknown) => error,
+      );
+      await Bun.sleep(50);
+      expect(await provider.cancelQuery("replaced-q")).toBe(true);
+      expect(await slowOutcome).toBeInstanceOf(Error);
+      // The path now names a directory: the restart must not hand it to the new child.
+      const realStat = fsNode.statSync;
+      const directory = realStat(fileTmpDir);
+      const stat = spyOn(fsNode, "statSync").mockImplementation(((
+        target: fsNode.PathLike,
+        options?: fsNode.StatSyncOptions,
+      ) => (String(target) === dbPath ? directory : realStat(target, options))) as typeof fsNode.statSync);
+      try {
+        const failure = await provider.query("SELECT 1").catch((error: unknown) => error);
+        expect(failure).toBeInstanceOf(ConnectionError);
+        expect((failure as Error).message).toBe(
+          `Failed to open SQLite database: ${dbPath} is a directory, not a regular file`,
+        );
+      } finally {
+        stat.mockRestore();
+      }
     });
 
     // ── disconnect() has to RELEASE the file, not schedule its release ────────
@@ -2105,6 +2205,22 @@ describe("SQLiteProvider object surface (#789)", () => {
 
     const notes = await objects.describeObject(["notes"], "table");
     expect(notes.columns.map((column) => column.name)).toEqual(["body"]);
+  });
+
+  test("a composite index lists every key column in order, on the single and the bulk read", async () => {
+    objects = await connectedWithObjects();
+    await objects.query("CREATE INDEX main.idx_orders_pair ON orders(customer_id, total)");
+
+    const single = (await objects.describeObject(["orders"], "table")).indexes;
+    if ("unavailable" in single) throw new Error(single.unavailable);
+    const bulk = (await objects.describeObjects([], "table")).details.find((detail) => detail.path[0] === "orders");
+
+    expect(single.find((index) => index.name === "idx_orders_pair")).toEqual({
+      name: "idx_orders_pair",
+      columns: ["customer_id", "total"],
+      unique: false,
+    });
+    expect(bulk?.indexes).toEqual(single);
   });
 
   test("a table's indexes exclude the implicit ones, and an expression key has no column name", async () => {
@@ -3325,6 +3441,60 @@ describe("SQLiteProvider agent read-only execution profile (#328)", () => {
       QueryError,
     );
     expect(await readBack(dbPath)).toEqual([{ id: 1, v: "seeded" }]);
+  });
+
+  test("a worker whose query_only does not read back enabled is refused, and its file released", async () => {
+    const dbPath = await seedDatabase();
+    const realAll = SQLiteWorkerClient.prototype.all;
+    const all = spyOn(SQLiteWorkerClient.prototype, "all").mockImplementation(async function (
+      this: SQLiteWorkerClient,
+      sql: string,
+      params?: readonly unknown[],
+    ) {
+      if (sql === "PRAGMA query_only") return [{ query_only: 0 }];
+      return realAll.call(this, sql, params);
+    });
+    const close = spyOn(SQLiteWorkerClient.prototype, "close");
+    try {
+      const profile = new SQLiteProvider(makeSQLiteConfig({ database: dbPath }), {}, { readOnly: true });
+      const failure = await profile.connect().catch((error: unknown) => error);
+
+      expect(failure).toBeInstanceOf(ConnectionError);
+      expect(close).toHaveBeenCalledTimes(1);
+      expect(profile.isConnected()).toBe(false);
+    } finally {
+      all.mockRestore();
+      close.mockRestore();
+    }
+  });
+
+  test("an in-process driver that refuses query_only is refused too, and its file released", async () => {
+    const dbPath = await seedDatabase();
+    const savedDriver = process.env.LIBREDB_SQLITE_DRIVER;
+    process.env.LIBREDB_SQLITE_DRIVER = "bun";
+    const realExec = BunDatabase.prototype.exec;
+    const exec = spyOn(BunDatabase.prototype, "exec").mockImplementation(function (
+      this: BunDatabase,
+      sql: string,
+      ...rest: unknown[]
+    ) {
+      if (sql === "PRAGMA query_only = true") throw new Error("query_only refused");
+      return (realExec as (sql: string, ...rest: unknown[]) => unknown).call(this, sql, ...rest);
+    } as typeof BunDatabase.prototype.exec);
+    const close = spyOn(BunDatabase.prototype, "close");
+    try {
+      const profile = new SQLiteProvider(makeSQLiteConfig({ database: dbPath }), {}, { readOnly: true });
+      const failure = await profile.connect().catch((error: unknown) => error);
+
+      expect((failure as Error).message).toContain("query_only refused");
+      expect(close).toHaveBeenCalledTimes(1);
+      expect(profile.isConnected()).toBe(false);
+    } finally {
+      exec.mockRestore();
+      close.mockRestore();
+      if (savedDriver === undefined) delete process.env.LIBREDB_SQLITE_DRIVER;
+      else process.env.LIBREDB_SQLITE_DRIVER = savedDriver;
+    }
   });
 
   test("refuses an in-memory database under the read-only profile", async () => {
@@ -5290,6 +5460,25 @@ describe("SQLiteProvider on a database file this process cannot write", () => {
       }
       // A read-only open leaves no sidecar behind, and could not create one anyway.
       expect(readdirSync(dir)).toEqual(["shop.db"]);
+    });
+
+    test("the in-process driver opens it read-only too, and lists no WAL or shared-memory file", async () => {
+      const file = join(root, "readonly", "shop.db");
+      const savedDriver = process.env.LIBREDB_SQLITE_DRIVER;
+      process.env.LIBREDB_SQLITE_DRIVER = "bun";
+      const spy = spyOn(logger, "info");
+      infoSpy = spy;
+      const db = new SQLiteProvider(makeSQLiteConfig({ database: file }));
+      try {
+        await db.connect();
+        expect(readOnlyDecisions(spy)).toHaveLength(1);
+        expect((await db.query("SELECT COUNT(*) AS n FROM orders")).rows).toEqual([{ n: 3 }]);
+        expect((await db.getStorageStats()).map((entry) => entry.name)).toEqual(["Main Database"]);
+      } finally {
+        await db.disconnect();
+        if (savedDriver === undefined) delete process.env.LIBREDB_SQLITE_DRIVER;
+        else process.env.LIBREDB_SQLITE_DRIVER = savedDriver;
+      }
     });
 
     test("an INSERT fails with SQLite's read-only error, named as such", async () => {
