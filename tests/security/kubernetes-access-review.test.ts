@@ -100,7 +100,9 @@ beforeEach(() => {
   api.reset();
   api.useEnv();
   // Alice may read the orders Secret; nobody may read the analytics one.
-  api.grants = [{ user: "u-alice", verb: "get", apiGroup: "", resource: "secrets", namespace: "team-a", name: "orders-app" }];
+  api.grants = [
+    { user: "u-alice", verb: "get", apiGroup: "", resource: "secrets", namespace: "team-a", name: "orders-app" },
+  ];
   seedIndex.resetCache();
   resetAccessReviewDecisions();
   resetGroupRecords();
@@ -198,7 +200,10 @@ describe("with the Kubernetes access review on, the review is the only way to a 
       const notFound = { status: 404, body: NOT_FOUND_BODY };
       expect(answers).toEqual(
         Object.fromEntries(
-          Object.keys(CONNECTION_ROUTES).map((route) => [route, { denied: notFound, unknown: notFound, hiddenByRole: notFound }]),
+          Object.keys(CONNECTION_ROUTES).map((route) => [
+            route,
+            { denied: notFound, unknown: notFound, hiddenByRole: notFound },
+          ]),
         ),
       );
       expect(providersBuilt(log)).toBe(0);
@@ -234,7 +239,13 @@ describe("with the Kubernetes access review on, the review is the only way to a 
     try {
       const fleet = await postHandler("admin/fleet-health");
       const checked = await answer(fleet, "admin/fleet-health", {
-        connections: Object.values(REVIEWED).map(({ id, name, type, managed, createdAt }) => ({ id, name, type, managed, createdAt })),
+        connections: Object.values(REVIEWED).map(({ id, name, type, managed, createdAt }) => ({
+          id,
+          name,
+          type,
+          managed,
+          createdAt,
+        })),
       });
       expect(checked.status).toBe(200);
       const results = (checked.body as { results: { connectionId: string; status: string; error?: string }[] }).results;

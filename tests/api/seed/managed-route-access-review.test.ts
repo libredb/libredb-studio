@@ -90,7 +90,9 @@ beforeEach(() => {
   process.env.KUBERNETES_ACCESS_REVIEW = "on";
   process.env.AUTH_SESSION_TTL_SECONDS = "900";
   recordGroups(ISSUER, "u-rjs2h", []);
-  api.grants = [{ user: "u-rjs2h", verb: "get", apiGroup: "", resource: "secrets", namespace: "team-a", name: "orders-app" }];
+  api.grants = [
+    { user: "u-rjs2h", verb: "get", apiGroup: "", resource: "secrets", namespace: "team-a", name: "orders-app" },
+  ];
 });
 
 afterEach(() => {
@@ -125,7 +127,16 @@ describe("GET /api/connections/managed under the access review", () => {
   });
 
   test("groups a session object carries are ignored: only the store's record reaches the review", async () => {
-    api.grants = [{ group: "okta_group://dbas", verb: "get", apiGroup: "", resource: "secrets", namespace: "team-b", name: "analytics-app" }];
+    api.grants = [
+      {
+        group: "okta_group://dbas",
+        verb: "get",
+        apiGroup: "",
+        resource: "secrets",
+        namespace: "team-b",
+        name: "analytics-app",
+      },
+    ];
     session = { ...DEV_A, groups: ["okta_group://dbas"], claimRoles: ["okta_group://dbas"] };
     expect((await listed()).map((connection) => connection.id)).toEqual(["seed:shared-pg"]);
     expect(api.seen.every((seen) => JSON.stringify(seen.body.spec?.groups) === "[]")).toBe(true);

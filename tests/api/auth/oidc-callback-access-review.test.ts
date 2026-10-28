@@ -111,7 +111,11 @@ afterEach(() => {
   warn.mockRestore();
   api.restoreEnv();
   process.env.NEXT_PUBLIC_AUTH_PROVIDER = "local";
-  for (const name of ["KUBERNETES_ACCESS_REVIEW", "KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT", "AUTH_SESSION_TTL_SECONDS"]) {
+  for (const name of [
+    "KUBERNETES_ACCESS_REVIEW",
+    "KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT",
+    "AUTH_SESSION_TTL_SECONDS",
+  ]) {
     delete process.env[name];
   }
   resetGroupRecords();
@@ -142,13 +146,24 @@ describe("with the access review on", () => {
   test("a Rancher local user without a groups claim signs in as a user, with an empty groups record", async () => {
     const response = await signIn();
     expect(response.headers.get("location")).toBe("https://studio.example.com/");
-    expect(await minted()).toMatchObject({ role: "user", username: "u-rjs2h", idpSubject: "u-rjs2h", idpIssuer: ISSUER });
+    expect(await minted()).toMatchObject({
+      role: "user",
+      username: "u-rjs2h",
+      idpSubject: "u-rjs2h",
+      idpIssuer: ISSUER,
+    });
     expect(recordedGroups(ISSUER, "u-rjs2h")).toEqual([]);
     expect(api.seen).toHaveLength(1);
     expect(api.seen[0].body.spec).toEqual({
       user: "u-rjs2h",
       groups: [],
-      resourceAttributes: { verb: "update", group: "apps", resource: "deployments", namespace: "libredb-studio", name: "libredb-studio" },
+      resourceAttributes: {
+        verb: "update",
+        group: "apps",
+        resource: "deployments",
+        namespace: "libredb-studio",
+        name: "libredb-studio",
+      },
     });
   });
 

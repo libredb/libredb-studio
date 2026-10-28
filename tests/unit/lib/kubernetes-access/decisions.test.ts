@@ -12,9 +12,22 @@ import { accessReviewAllows, resetAccessReviewDecisions } from "@/lib/kubernetes
 import type { ResourceAttributes } from "@/lib/kubernetes-access/review";
 import { logger } from "@/lib/logger";
 
-const ORDERS: ResourceAttributes = { verb: "get", group: "", resource: "secrets", namespace: "team-a", name: "orders-app" };
+const ORDERS: ResourceAttributes = {
+  verb: "get",
+  group: "",
+  resource: "secrets",
+  namespace: "team-a",
+  name: "orders-app",
+};
 const DEV_A = { user: "u-rjs2h", groups: ["okta_group://dbas", "github_team://7"] };
-const ORDERS_GRANT = { user: "u-rjs2h", verb: "get", apiGroup: "", resource: "secrets", namespace: "team-a", name: "orders-app" };
+const ORDERS_GRANT = {
+  user: "u-rjs2h",
+  verb: "get",
+  apiGroup: "",
+  resource: "secrets",
+  namespace: "team-a",
+  name: "orders-app",
+};
 
 const T = Date.parse("2026-10-28T08:00:00.000Z");
 
@@ -78,7 +91,10 @@ describe("the cache", () => {
   test("is keyed by the user, the groups as a set and every attribute", async () => {
     api.grants = [ORDERS_GRANT];
     await accessReviewAllows(DEV_A, ORDERS);
-    await accessReviewAllows({ user: "u-rjs2h", groups: ["github_team://7", "okta_group://dbas", "github_team://7"] }, ORDERS);
+    await accessReviewAllows(
+      { user: "u-rjs2h", groups: ["github_team://7", "okta_group://dbas", "github_team://7"] },
+      ORDERS,
+    );
     expect(api.seen).toHaveLength(1);
     await accessReviewAllows({ user: "u-rjs2h", groups: ["github_team://7"] }, ORDERS);
     await accessReviewAllows({ user: "u-other", groups: DEV_A.groups }, ORDERS);

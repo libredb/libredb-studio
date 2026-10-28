@@ -10,11 +10,7 @@
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { recordGroups, resetGroupRecords } from "@/lib/kubernetes-access/groups";
-import {
-  ACCESS_REVIEW_RETRY_COOKIE,
-  groupsRecordCheck,
-  retryLoopTripped,
-} from "@/lib/kubernetes-access/session-guard";
+import { ACCESS_REVIEW_RETRY_COOKIE, groupsRecordCheck, retryLoopTripped } from "@/lib/kubernetes-access/session-guard";
 
 const ISSUER = "https://rancher.example.com/oidc";
 const T = Date.parse("2026-10-28T08:00:00.000Z");
@@ -46,7 +42,7 @@ describe("a session whose subject has a live record", () => {
 
 describe("a session without an identity provider subject", () => {
   test("is kept: it was never reviewed, and every reviewed connection is denied to it", () => {
-    expect(groupsRecordCheck({ role: "admin", username: "admin@libredb.org" }, undefined, T)).toEqual({
+    expect(groupsRecordCheck({ iat: T_SECONDS - 60 }, undefined, T)).toEqual({
       kind: "kept",
       clearMarker: false,
     });
@@ -70,8 +66,14 @@ describe("a session whose record is missing", () => {
 
   test("a session minted at or after the marker missing again is the second miss in a row, which trips the loop", () => {
     const armed = String(T_SECONDS - 3);
-    expect(groupsRecordCheck({ ...SESSION, iat: T_SECONDS - 3 }, armed, T)).toEqual({ kind: "refused", marker: "loop" });
-    expect(groupsRecordCheck({ ...SESSION, iat: T_SECONDS - 1 }, armed, T)).toEqual({ kind: "refused", marker: "loop" });
+    expect(groupsRecordCheck({ ...SESSION, iat: T_SECONDS - 3 }, armed, T)).toEqual({
+      kind: "refused",
+      marker: "loop",
+    });
+    expect(groupsRecordCheck({ ...SESSION, iat: T_SECONDS - 1 }, armed, T)).toEqual({
+      kind: "refused",
+      marker: "loop",
+    });
   });
 
   test("a session minted before the marker, another tab after a restart, leaves the marker as it is", () => {
@@ -79,7 +81,7 @@ describe("a session whose record is missing", () => {
       kind: "refused",
       marker: null,
     });
-    expect(groupsRecordCheck({ role: "user", username: "u", idpSubject: "u", idpIssuer: ISSUER }, String(T_SECONDS), T)).toEqual({
+    expect(groupsRecordCheck({ idpSubject: "u", idpIssuer: ISSUER }, String(T_SECONDS), T)).toEqual({
       kind: "refused",
       marker: null,
     });

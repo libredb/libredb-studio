@@ -126,7 +126,9 @@ export async function GET(request: Request) {
     // this subject asserts, so a claim the store cannot hold refuses the sign-in, and the role claim is not read at
     // all: admin comes only from a review of update on Studio's own Deployment, decided here, once per sign-in.
     const reviewed = accessReviewEnabled();
-    const groupsReading = reviewed ? readGroupsClaim(claims as Record<string, unknown>) : { ok: true as const, groups: [] };
+    const groupsReading = reviewed
+      ? readGroupsClaim(claims as Record<string, unknown>)
+      : { ok: true as const, groups: [] };
     if (!groupsReading.ok) {
       logger.warn("OIDC callback: the groups claim cannot be used for the Kubernetes access review", {
         route: "oidc/callback",
@@ -141,7 +143,12 @@ export async function GET(request: Request) {
     const claimValues = reviewed ? [] : readRoleClaimValues(claims as Record<string, unknown>, oidcConfig.roleClaim);
     const role = reviewed
       ? await accessReviewRole(claims.sub, groupsReading.groups)
-      : mapOIDCRole(claims as Record<string, unknown>, oidcConfig.roleClaim, oidcConfig.adminRoles, oidcConfig.userRoles);
+      : mapOIDCRole(
+          claims as Record<string, unknown>,
+          oidcConfig.roleClaim,
+          oidcConfig.adminRoles,
+          oidcConfig.userRoles,
+        );
 
     if (role === null) {
       // The account holds none of OIDC_ADMIN_ROLES or OIDC_USER_ROLES, so it gets no session. The

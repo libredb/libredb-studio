@@ -90,7 +90,9 @@ beforeEach(() => {
   for (const [name, value] of Object.entries(ENV)) process.env[name] = value;
   api.reset();
   api.useEnv();
-  api.grants = [{ user: "u-alice", verb: "get", apiGroup: "", resource: "secrets", namespace: "team-a", name: "orders-app" }];
+  api.grants = [
+    { user: "u-alice", verb: "get", apiGroup: "", resource: "secrets", namespace: "team-a", name: "orders-app" },
+  ];
   seedIndex.resetCache();
   resetAccessReviewDecisions();
   resetGroupRecords();
@@ -129,7 +131,10 @@ describe("with the review on", () => {
     const unknown = await failureOf(resolveConnection({ connectionId: "seed:no-such-connection" }, ALICE));
     const hiddenByRole = await failureOf(resolveConnection({ connectionId: "seed:admin-only" }, ALICE));
     const claimed = await failureOf(
-      resolveConnection({ connection: { id: "seed:k8s-cnpg-analytics", name: "Copy", type: "postgres", createdAt: new Date(0) } }, ALICE),
+      resolveConnection(
+        { connection: { id: "seed:k8s-cnpg-analytics", name: "Copy", type: "postgres", createdAt: new Date(0) } },
+        ALICE,
+      ),
     );
     for (const error of [denied, unknown, hiddenByRole, claimed]) {
       expect(error).toBeInstanceOf(SeedConnectionError);
@@ -140,12 +145,16 @@ describe("with the review on", () => {
 
   test("a review that fails answers the same 404", async () => {
     api.answer = { status: 500, body: "{}" };
-    expect(await failureOf(resolveConnection({ connectionId: "seed:k8s-cnpg-orders" }, ALICE))).toMatchObject(NOT_FOUND);
+    expect(await failureOf(resolveConnection({ connectionId: "seed:k8s-cnpg-orders" }, ALICE))).toMatchObject(
+      NOT_FOUND,
+    );
   });
 
   test("a session without a groups record answers the same 404, and no review runs", async () => {
     resetGroupRecords();
-    expect(await failureOf(resolveConnection({ connectionId: "seed:k8s-cnpg-orders" }, ALICE))).toMatchObject(NOT_FOUND);
+    expect(await failureOf(resolveConnection({ connectionId: "seed:k8s-cnpg-orders" }, ALICE))).toMatchObject(
+      NOT_FOUND,
+    );
     expect(api.seen).toHaveLength(0);
   });
 

@@ -89,7 +89,11 @@ beforeEach(() => {
 
 afterEach(() => {
   api.restoreEnv();
-  for (const name of ["KUBERNETES_ACCESS_REVIEW", "KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT", "AUTH_SESSION_TTL_SECONDS"]) {
+  for (const name of [
+    "KUBERNETES_ACCESS_REVIEW",
+    "KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT",
+    "AUTH_SESSION_TTL_SECONDS",
+  ]) {
     delete process.env[name];
   }
   resetAccessReviewDecisions();
@@ -120,7 +124,16 @@ describe("connections, with the review on", () => {
   });
 
   test("takes the groups from the store only, whatever else the session object carries", async () => {
-    api.grants = [{ group: "okta_group://dbas", verb: "get", apiGroup: "", resource: "secrets", namespace: "team-a", name: "orders-app" }];
+    api.grants = [
+      {
+        group: "okta_group://dbas",
+        verb: "get",
+        apiGroup: "",
+        resource: "secrets",
+        namespace: "team-a",
+        name: "orders-app",
+      },
+    ];
     const forged = { ...DEV_A, groups: ["okta_group://dbas", "system:masters"], claimRoles: ["okta_group://dbas"] };
     expect(await connectionsUnderAccessReview(forged, [ORDERS])).toEqual([]);
     expect(api.seen[0].body.spec?.groups).toEqual([]);
@@ -134,7 +147,10 @@ describe("connections, with the review on", () => {
     ["no subject", { role: "user", idpIssuer: ISSUER }],
     ["no issuer", { role: "user", idpSubject: "u-rjs2h" }],
     ["no record", { role: "user", idpSubject: "u-no-record", idpIssuer: ISSUER }],
-    ["a record of another issuer", { role: "user", idpSubject: "u-rjs2h", idpIssuer: "https://other.example.com/oidc" }],
+    [
+      "a record of another issuer",
+      { role: "user", idpSubject: "u-rjs2h", idpIssuer: "https://other.example.com/oidc" },
+    ],
   ])("a session with %s is denied without a request", async (_case, principal) => {
     api.grants = [getSecret("u-rjs2h", "team-a", "orders-app"), getSecret("u-no-record", "team-a", "orders-app")];
     expect(await connectionsUnderAccessReview(principal, [ORDERS, PLAIN])).toEqual([PLAIN]);
@@ -181,16 +197,31 @@ describe("one connection", () => {
 });
 
 describe("the admin role at sign-in", () => {
-  const updateStudio = { verb: "update", apiGroup: "apps", resource: "deployments", namespace: "libredb-studio", name: "libredb-studio" };
+  const updateStudio = {
+    verb: "update",
+    apiGroup: "apps",
+    resource: "deployments",
+    namespace: "libredb-studio",
+    name: "libredb-studio",
+  };
 
   test("is admin when the review allows update on Studio's Deployment, for the user or one of its groups", async () => {
-    api.grants = [{ user: "user-mf77b", ...updateStudio }, { group: "okta_group://owners", ...updateStudio }];
+    api.grants = [
+      { user: "user-mf77b", ...updateStudio },
+      { group: "okta_group://owners", ...updateStudio },
+    ];
     expect(await accessReviewRole("user-mf77b", [])).toBe("admin");
     expect(await accessReviewRole("u-cjdkh", ["okta_group://owners"])).toBe("admin");
     expect(api.seen[0].body.spec).toEqual({
       user: "user-mf77b",
       groups: [],
-      resourceAttributes: { verb: "update", group: "apps", resource: "deployments", namespace: "libredb-studio", name: "libredb-studio" },
+      resourceAttributes: {
+        verb: "update",
+        group: "apps",
+        resource: "deployments",
+        namespace: "libredb-studio",
+        name: "libredb-studio",
+      },
     });
   });
 

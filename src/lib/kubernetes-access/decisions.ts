@@ -83,7 +83,12 @@ function noteFailure(outcome: Extract<ReviewOutcome, { kind: "failed" }>): void 
     return;
   }
   const status = outcome.status === undefined ? {} : { status: outcome.status };
-  logger.warn(FAILURE_MESSAGE, { route: "kubernetes-access", reason: outcome.reason, ...status, heldBack: last?.heldBack ?? 0 });
+  logger.warn(FAILURE_MESSAGE, {
+    route: "kubernetes-access",
+    reason: outcome.reason,
+    ...status,
+    heldBack: last?.heldBack ?? 0,
+  });
   failures.set(outcome.reason, { loggedAt: now, heldBack: 0 });
 }
 

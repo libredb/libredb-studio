@@ -66,7 +66,8 @@ export function readGroupsClaim(claims: Readonly<Record<string, unknown>>): Grou
   }
   const groups = [...new Set(value as string[])].sort();
   if (groups.length > MAX_GROUPS) return { ok: false, problem: TOO_MANY };
-  if (groups.some((group) => Buffer.byteLength(group, "utf8") > MAX_GROUP_BYTES)) return { ok: false, problem: TOO_LONG };
+  if (groups.some((group) => Buffer.byteLength(group, "utf8") > MAX_GROUP_BYTES))
+    return { ok: false, problem: TOO_LONG };
   if (groups.some((group) => group.startsWith(RESERVED_PREFIX))) return { ok: false, problem: RESERVED };
   return { ok: true, groups };
 }

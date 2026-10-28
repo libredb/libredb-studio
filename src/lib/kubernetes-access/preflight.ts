@@ -70,11 +70,18 @@ function caProblem(): string | null {
   } catch {
     return `KUBERNETES_ACCESS_REVIEW_CA_PATH: the CA file ${file} cannot be read; mount the cluster's CA there, such as the ca.crt of the kube-root-ca.crt ConfigMap`;
   }
+  return parsesAsCertificate(text)
+    ? null
+    : `KUBERNETES_ACCESS_REVIEW_CA_PATH: the CA file ${file} holds no certificate`;
+}
+
+/** Whether `text` starts with a PEM certificate node:crypto can parse. */
+function parsesAsCertificate(text: string): boolean {
   try {
-    new X509Certificate(text);
-    return null;
+    const certificate = new X509Certificate(text);
+    return certificate.raw.length > 0;
   } catch {
-    return `KUBERNETES_ACCESS_REVIEW_CA_PATH: the CA file ${file} holds no certificate`;
+    return false;
   }
 }
 

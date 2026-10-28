@@ -9,12 +9,7 @@
  * the store is bounded, evicting the oldest record first.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import {
-  readGroupsClaim,
-  recordedGroups,
-  recordGroups,
-  resetGroupRecords,
-} from "@/lib/kubernetes-access/groups";
+import { readGroupsClaim, recordedGroups, recordGroups, resetGroupRecords } from "@/lib/kubernetes-access/groups";
 
 const ISSUER = "https://rancher.example.com/oidc";
 const T = Date.parse("2026-10-28T08:00:00.000Z");

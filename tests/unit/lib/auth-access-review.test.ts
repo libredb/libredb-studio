@@ -20,7 +20,8 @@ let writes: { op: string; name: string; value?: string; options?: Record<string,
 mock.module("next/headers", () => ({
   cookies: async () => ({
     get: (name: string) => jar[name],
-    set: (name: string, value: string, options?: Record<string, unknown>) => writes.push({ op: "set", name, value, options }),
+    set: (name: string, value: string, options?: Record<string, unknown>) =>
+      writes.push({ op: "set", name, value, options }),
     delete: (cookie: string | { name: string }) =>
       writes.push({ op: "delete", name: typeof cookie === "string" ? cookie : cookie.name }),
   }),
@@ -28,6 +29,7 @@ mock.module("next/headers", () => ({
 }));
 
 const { getSession, signJWT } = await import("@/lib/auth");
+type UserPayload = import("@/lib/auth").UserPayload;
 const { recordGroups, resetGroupRecords } = await import("@/lib/kubernetes-access/groups");
 const { logger } = await import("@/lib/logger");
 
@@ -56,7 +58,7 @@ afterEach(() => {
 });
 
 /** Puts a session minted at `mintedAt` (ms) into the cookie jar. */
-async function signedInAt(mintedAt: number, payload = DEV_A): Promise<void> {
+async function signedInAt(mintedAt: number, payload: UserPayload = DEV_A): Promise<void> {
   setSystemTime(new Date(mintedAt));
   jar["auth-token"] = { value: await signJWT(payload) };
   setSystemTime(new Date(T));
@@ -113,7 +115,7 @@ describe("an OIDC session with the review on", () => {
 
 describe("what the review leaves alone", () => {
   test("a session without an identity provider subject, the break-glass password sign-in", async () => {
-    await signedInAt(T - 60_000, { role: "admin", username: "admin@libredb.org" } as typeof DEV_A);
+    await signedInAt(T - 60_000, { role: "admin", username: "admin@libredb.org" });
     expect(await getSession()).toMatchObject({ role: "admin", username: "admin@libredb.org" });
     expect(writes).toEqual([]);
   });

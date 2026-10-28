@@ -88,7 +88,13 @@ function transportFailure(error: unknown, signal: AbortSignal): ReviewOutcome {
 }
 
 /** POSTs the review body and collects the answer, up to the size cap and the deadline. */
-function post(url: URL, token: string, ca: string, body: string, timeoutMs: number): Promise<RawAnswer | ReviewOutcome> {
+function post(
+  url: URL,
+  token: string,
+  ca: string,
+  body: string,
+  timeoutMs: number,
+): Promise<RawAnswer | ReviewOutcome> {
   const signal = AbortSignal.timeout(timeoutMs);
   return new Promise((resolve) => {
     let settled = false;

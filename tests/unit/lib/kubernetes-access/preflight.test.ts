@@ -159,7 +159,11 @@ describe("verifyAccessReviewEnvAtBoot", () => {
 
   test.each(REFUSED)("$variable=$value stops the boot with a banner that names it", ({ variable, value, says }) => {
     const resolved =
-      value === "EMPTY" ? path.join(dir, "empty") : value === "NOT_A_CERTIFICATE" ? path.join(dir, "not-a-certificate") : value;
+      value === "EMPTY"
+        ? path.join(dir, "empty")
+        : value === "NOT_A_CERTIFICATE"
+          ? path.join(dir, "not-a-certificate")
+          : value;
     if (resolved === undefined) delete process.env[variable];
     else process.env[variable] = resolved;
     const run = runPreflight();

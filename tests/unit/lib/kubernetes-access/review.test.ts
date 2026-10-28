@@ -54,8 +54,13 @@ function reviewAnswer(status: Record<string, unknown>, user = DEV_A.user, kind =
 
 describe("the request", () => {
   test("is one POST of a SubjectAccessReview for the subject and the attributes, with the pod's bearer token", async () => {
-    api.grants = [{ user: "u-rjs2h", verb: "get", apiGroup: "", resource: "secrets", namespace: "team-a", name: "orders-app" }];
-    const outcome = await requestAccessReview({ user: "u-rjs2h", groups: ["github_team://7", "okta_group://dbas"] }, SECRET);
+    api.grants = [
+      { user: "u-rjs2h", verb: "get", apiGroup: "", resource: "secrets", namespace: "team-a", name: "orders-app" },
+    ];
+    const outcome = await requestAccessReview(
+      { user: "u-rjs2h", groups: ["github_team://7", "okta_group://dbas"] },
+      SECRET,
+    );
     expect(outcome).toEqual({ kind: "allowed" });
     expect(api.seen).toHaveLength(1);
     const [seen] = api.seen;
@@ -90,9 +95,22 @@ describe("the request", () => {
 
 describe("the answer", () => {
   test("allowed only when the review says allowed", async () => {
-    api.grants = [{ group: "okta_group://dbas", verb: "get", apiGroup: "", resource: "secrets", namespace: "team-a", name: "orders-app" }];
-    expect(await requestAccessReview({ user: "u-x", groups: ["okta_group://dbas"] }, SECRET)).toEqual({ kind: "allowed" });
-    expect(await requestAccessReview({ user: "u-x", groups: ["okta_group://other"] }, SECRET)).toEqual({ kind: "denied" });
+    api.grants = [
+      {
+        group: "okta_group://dbas",
+        verb: "get",
+        apiGroup: "",
+        resource: "secrets",
+        namespace: "team-a",
+        name: "orders-app",
+      },
+    ];
+    expect(await requestAccessReview({ user: "u-x", groups: ["okta_group://dbas"] }, SECRET)).toEqual({
+      kind: "allowed",
+    });
+    expect(await requestAccessReview({ user: "u-x", groups: ["okta_group://other"] }, SECRET)).toEqual({
+      kind: "denied",
+    });
     expect(await requestAccessReview({ user: "u-x", groups: [] }, { ...SECRET, name: "analytics-app" })).toEqual({
       kind: "denied",
     });
