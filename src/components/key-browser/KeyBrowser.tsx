@@ -183,13 +183,15 @@ function scopeChain(scope: readonly string[]): ReadonlySet<string> {
  */
 type PanelRow = KeyTreeRow | { readonly kind: "database"; readonly name: string; readonly label: string };
 
-/** One painted slot of the strip: which row it names and how that row is drawn. */
+/**
+ * One painted slot of the strip: which row it names and how that row is drawn. Every row it names is
+ * an ancestor of another row, so it is the database row or a folder, and is drawn as a folder.
+ */
 interface StickyRowItem {
   readonly index: number;
   readonly id: string;
   readonly label: string;
   readonly depth: number;
-  readonly folder: boolean;
 }
 
 export function KeyBrowser({ connection, capability, databaseLevel, request, onOpenKey }: KeyBrowserProps) {
@@ -622,7 +624,6 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
           id: row.kind === "database" ? "database" : pathKey(row.node.path),
           label: row.kind === "database" ? row.name : keyRowNames(row.node, row.folder, shape, levels).label,
           depth: stripDepths[entry.index].depth,
-          folder: row.kind === "database" || row.folder,
         };
         return [{ kind: "row" as const, slot, item }];
       }),
@@ -1072,11 +1073,7 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
               style={{ top: slot * KEY_ROW_HEIGHT, height: KEY_ROW_HEIGHT, paddingLeft: 8 + item.depth * 12 }}
               className="absolute inset-x-0 flex w-full items-center gap-1 bg-transparent pr-7 text-left outline-none hover:bg-accent"
             >
-              {item.folder ? (
-                <Folder strokeWidth={1.5} className="h-3.5 w-3.5 shrink-0 text-hue-yellow/70" />
-              ) : (
-                <KeyRound strokeWidth={1.5} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-              )}
+              <Folder strokeWidth={1.5} className="h-3.5 w-3.5 shrink-0 text-hue-yellow/70" />
               <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground">{item.label}</span>
             </button>
           )}
