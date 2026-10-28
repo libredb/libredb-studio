@@ -524,6 +524,12 @@ describe("query vectors in the field's dtype (5.4, E12, 3.3)", () => {
       message: '"seq" is not a vector field of docs_int64.',
     });
     expect(refusalOf(() => search("docs_int64", { annsField: "nope[x]", data: [VECTOR] })).key).toBe("annsField");
+    // A name the schema does not hold at all, with no struct[field] form to look inside.
+    expect(refusalOf(() => search("docs_int64", { annsField: "missing", data: [VECTOR] }))).toEqual({
+      phase: 1,
+      key: "annsField",
+      message: '"missing" is not a vector field of docs_int64.',
+    });
   });
 });
 
