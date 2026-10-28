@@ -22,7 +22,10 @@ import { createServer } from "node:net";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import golden from "../fixtures/kubernetes-discovery-golden.json";
 import { CNPG_CLUSTER, KUBERNETES_CONTRACT, mapKubernetesDatabase } from "@/lib/seed/kubernetes-discovery-contract";
-import { parseKubernetesDiscoveryExport } from "@/lib/seed/kubernetes-discovery-export";
+import {
+  parseKubernetesDiscoveryExport,
+  type KubernetesDiscoveredDatabase,
+} from "@/lib/seed/kubernetes-discovery-export";
 import {
   buildExport,
   classifyApiError,
@@ -52,6 +55,25 @@ const PASSWORD_B = "not-a-real-password-analytics";
 const EXPORT_PATH = "/api/v1/namespaces/libredb-studio/secrets/libredb-studio-discovery-export";
 
 let api: FakeDiscoveryApi;
+
+/** scanOnce's answer, typed for the assertions: the exporter is JavaScript, so the union TypeScript infers is loose. */
+interface Scan {
+  ok: boolean;
+  namespaces: { name: string; status: Record<string, unknown> }[];
+  databases: KubernetesDiscoveredDatabase[];
+  truncated: boolean;
+  leftOut: number;
+  status: { ok: boolean; code?: string; httpStatus?: number; message: string };
+}
+
+async function scan(options: { client: unknown; config: unknown; limits?: typeof LIMITS }): Promise<Scan> {
+  return (await scanOnce(options as never)) as unknown as Scan;
+}
+
+/** LIMITS with some bounds lowered, so a case reaches a bound without building thousands of objects. */
+function limitsWith(overrides: Partial<Record<keyof typeof LIMITS, number>>): typeof LIMITS {
+  return { ...LIMITS, ...overrides } as unknown as typeof LIMITS;
+}
 
 beforeAll(async () => {
   api = await startFakeDiscoveryApi();
@@ -464,8 +486,8 @@ describe("scanOnce", () => {
       port: "5432",
     });
     api.pageSize = 1;
-    const result = await scanOnce({ client: client(), config: config() });
-    expect(result).toEqual({
+    const result = await scan({ client: client(), config: config() });
+    expect<unknown>(result).toEqual({
       ok: true,
       namespaces: [
         { name: "team-a", status: { ok: true } },
@@ -519,7 +541,7 @@ describe("scanOnce", () => {
       bootstrap: { initdb: { database: "billing", secret: { name: "billing-owner" } } },
     });
     api.addSecret("team-a", "billing-owner", { username: "billing_owner", password: "not-a-real-password-billing" });
-    const result = await scanOnce({ client: client(), config: config() });
+    const result = await scan({ client: client(), config: config() });
     expect(result.databases[0].secret).toEqual({
       name: "billing-owner",
       data: { username: "billing_owner", password: "not-a-real-password-billing" },
@@ -529,7 +551,7 @@ describe("scanOnce", () => {
   test("withdraws a namespace that answers 403, with the reason, and scans the others", async () => {
     seedLab();
     api.forbiddenNamespaces.add("team-b");
-    const result = await scanOnce({ client: client(), config: config() });
+    const result = await scan({ client: client(), config: config() });
     expect(result.ok).toBe(true);
     expect(result.namespaces).toEqual([
       { name: "team-a", status: { ok: true } },
@@ -552,7 +574,7 @@ describe("scanOnce", () => {
   test("reports a kind the API server does not serve as crd_missing in every namespace", async () => {
     seedLab();
     api.crdMissing = true;
-    const result = await scanOnce({ client: client(), config: config() });
+    const result = await scan({ client: client(), config: config() });
     expect(result.ok).toBe(true);
     expect(result.databases).toEqual([]);
     for (const namespace of result.namespaces) {
@@ -573,7 +595,7 @@ describe("scanOnce", () => {
       status: 403,
       body: statusBody(403, "Forbidden", "secrets is forbidden"),
     });
-    const result = await scanOnce({ client: client(), config: config() });
+    const result = await scan({ client: client(), config: config() });
     expect(result.databases.map((entry: { secret: unknown }) => entry.secret)).toEqual([
       { name: "orders-app", problem: "not_found" },
       { name: "analytics-app", problem: "forbidden" },
@@ -585,7 +607,7 @@ describe("scanOnce", () => {
     api.addAppSecret("team-a", "orders", { username: "orders", password: "p".repeat(1025), dbname: "orders" });
     api.addCluster("team-b", "analytics");
     api.addAppSecret("team-b", "analytics", { username: Buffer.from([0xc3, 0x28]), password: PASSWORD_B });
-    const result = await scanOnce({ client: client(), config: config() });
+    const result = await scan({ client: client(), config: config() });
     expect(result.databases.map((entry: { secret: unknown }) => entry.secret)).toEqual([
       { name: "orders-app", problem: "invalid_value", key: "password" },
       { name: "analytics-app", problem: "invalid_value", key: "username" },
@@ -604,7 +626,7 @@ describe("scanOnce", () => {
         data: { username: 7, password: Buffer.from(PASSWORD_B).toString("base64") },
       }),
     });
-    const result = await scanOnce({ client: client(), config: config() });
+    const result = await scan({ client: client(), config: config() });
     expect(result.databases.map((entry: { secret: unknown }) => entry.secret)).toEqual([
       { name: "orders-app", data: {} },
       { name: "analytics-app", data: { password: PASSWORD_B } },
@@ -616,14 +638,14 @@ describe("scanOnce", () => {
       bootstrap: { initdb: { secret: { name: "../../namespaces/kube-system/secrets/x" } } },
     });
     api.clusters.get("team-a")?.push({ metadata: { namespace: "team-b", name: "elsewhere" } }, { metadata: {} });
-    const result = await scanOnce({ client: client(), config: config() });
+    const result = await scan({ client: client(), config: config() });
     expect(result).toMatchObject({ ok: true, databases: [], leftOut: 3 });
     expect(api.seen.some((seen) => seen.path.includes("/secrets/"))).toBe(false);
   });
 
   test("cuts the databases at the bound, in order, and says so", async () => {
     seedLab();
-    const result = await scanOnce({ client: client(), config: config(), limits: { ...LIMITS, databases: 1 } });
+    const result = await scan({ client: client(), config: config(), limits: limitsWith({ databases: 1 }) });
     expect(result).toMatchObject({ ok: true, truncated: true });
     expect(result.databases).toHaveLength(1);
     // team-b was read, and its database is the one past the bound.
@@ -637,7 +659,7 @@ describe("scanOnce", () => {
     seedLab();
     const listPath = "/apis/postgresql.cnpg.io/v1/namespaces/team-a/clusters";
     api.scripted.set(listPath, { status: 401, body: statusBody(401, "Unauthorized", "Unauthorized") });
-    expect(await scanOnce({ client: client(), config: config() })).toEqual({
+    expect<unknown>(await scan({ client: client(), config: config() })).toEqual({
       ok: false,
       status: {
         ok: false,
@@ -647,25 +669,25 @@ describe("scanOnce", () => {
       },
     });
     api.scripted.set(listPath, { status: 500, body: statusBody(500, "InternalError", "boom") });
-    expect((await scanOnce({ client: client(), config: config() })).status).toMatchObject({
+    expect((await scan({ client: client(), config: config() })).status).toMatchObject({
       code: "api_error",
       httpStatus: 500,
     });
     api.scripted.set(listPath, { status: 200, body: JSON.stringify({ items: "no" }) });
-    expect((await scanOnce({ client: client(), config: config() })).status).toEqual({
+    expect((await scan({ client: client(), config: config() })).status).toEqual({
       ok: false,
       code: "api_error",
       message: `GET ${listPath} answered with something other than a list`,
     });
     api.scripted.set(listPath, { status: 200, body: JSON.stringify({ items: [], metadata: { continue: "again" } }) });
-    expect((await scanOnce({ client: client(), config: config(), limits: { ...LIMITS, pages: 3 } })).status).toEqual({
+    expect((await scan({ client: client(), config: config(), limits: limitsWith({ pages: 3 }) })).status).toEqual({
       ok: false,
       code: "api_error",
       message: `GET ${listPath} did not end within 3 pages`,
     });
     api.scripted.set("/api/v1/namespaces/team-a/secrets/orders-app", { status: 500, body: statusBody(500, "x", "y") });
     api.scripted.delete(listPath);
-    expect((await scanOnce({ client: client(), config: config() })).status).toMatchObject({
+    expect((await scan({ client: client(), config: config() })).status).toMatchObject({
       code: "api_error",
       httpStatus: 500,
     });
@@ -673,7 +695,7 @@ describe("scanOnce", () => {
 
   test("fails the scan when the API server cannot be reached", async () => {
     const port = await closedPort();
-    const result = await scanOnce({
+    const result = await scan({
       client: createApiClient({ apiUrl: `https://127.0.0.1:${port}`, tokenPath: api.tokenPath, caPath: api.caPath }),
       config: config(),
     });
@@ -704,7 +726,7 @@ describe("Secret ownership", () => {
       ownerReferences: [{ apiVersion: "postgresql.cnpg.io/v1", kind: "Cluster", name: "other", uid: "uid-a-twin" }],
       labels: { "cnpg.io/cluster": "not-other" },
     });
-    const result = await scanOnce({ client: client(), config: config({ KUBERNETES_DISCOVERY_NAMESPACES: "team-a" }) });
+    const result = await scan({ client: client(), config: config({ KUBERNETES_DISCOVERY_NAMESPACES: "team-a" }) });
     expect(result.databases.map((entry: { secret: unknown }) => entry.secret)).toEqual([
       { name: "owned-app", data: DATA },
       { name: "labelled-app", data: DATA },
@@ -733,7 +755,7 @@ describe("Secret ownership", () => {
     ] as const) {
       api.addCluster("team-a", cluster, { bootstrap: { initdb: { secret: { name: secret } } } });
     }
-    const result = await scanOnce({ client: client(), config: config({ KUBERNETES_DISCOVERY_NAMESPACES: "team-a" }) });
+    const result = await scan({ client: client(), config: config({ KUBERNETES_DISCOVERY_NAMESPACES: "team-a" }) });
     expect(
       result.databases.map((entry: { resource: { metadata: { name: string } }; secret: unknown }) => [
         entry.resource.metadata.name,
@@ -752,7 +774,7 @@ describe("Secret ownership", () => {
     api.addSecret("team-a", "custom-owner", DATA);
     api.addCluster("team-a", "opaque", { bootstrap: { initdb: { secret: { name: "app-config" } } } });
     api.addSecret("team-a", "app-config", DATA, "Opaque");
-    const result = await scanOnce({ client: client(), config: config({ KUBERNETES_DISCOVERY_NAMESPACES: "team-a" }) });
+    const result = await scan({ client: client(), config: config({ KUBERNETES_DISCOVERY_NAMESPACES: "team-a" }) });
     expect(result.databases.map((entry: { secret: unknown }) => entry.secret)).toEqual([
       { name: "custom-owner", data: DATA },
       { name: "app-config", problem: "not_owned" },
@@ -766,7 +788,7 @@ describe("Secret ownership", () => {
     api.addSecret("team-a", "held-owner", DATA, "Opaque", {
       ownerReferences: [{ apiVersion: "postgresql.cnpg.io/v1", kind: "Cluster", name: "held", uid: "uid-team-a-held" }],
     });
-    const result = await scanOnce({ client: client(), config: config({ KUBERNETES_DISCOVERY_NAMESPACES: "team-a" }) });
+    const result = await scan({ client: client(), config: config({ KUBERNETES_DISCOVERY_NAMESPACES: "team-a" }) });
     expect(result.databases.map((entry: { secret: unknown }) => entry.secret)).toEqual([
       { name: "mine-owner", data: DATA },
       { name: "held-owner", data: DATA },
@@ -778,7 +800,7 @@ describe("Secret ownership", () => {
       bootstrap: { initdb: { database: "billing", secret: { name: "billing-owner" } } },
     });
     api.addSecret("team-a", "billing-owner", DATA);
-    const result = await scanOnce({ client: client(), config: config({ KUBERNETES_DISCOVERY_NAMESPACES: "team-a" }) });
+    const result = await scan({ client: client(), config: config({ KUBERNETES_DISCOVERY_NAMESPACES: "team-a" }) });
     const secretReads = api.seen.filter((seen) => seen.path.includes("/secrets/")).map((seen) => seen.path);
     expect(secretReads).toEqual(["/api/v1/namespaces/team-a/secrets/billing-owner"]);
     const mapped = mapKubernetesDatabase(result.databases[0]);
@@ -838,7 +860,7 @@ describe("buildExport and serializeExport", () => {
     const whole = { ...data, generatedAt: new Date(T0).toISOString(), databases: [database(0), database(1)] };
     expect(JSON.parse(serializeExport(whole))).toEqual(whole);
     const size = Buffer.byteLength(JSON.stringify({ ...whole, databases: [database(0)] }));
-    const cut = JSON.parse(serializeExport(whole, { ...LIMITS, exportBytes: size + 500 }));
+    const cut = JSON.parse(serializeExport(whole, limitsWith({ exportBytes: size + 500 })));
     expect(cut.databases).toEqual([database(0)]);
     expect(cut.status).toEqual({
       ok: false,
@@ -846,7 +868,9 @@ describe("buildExport and serializeExport", () => {
       message: `the export would exceed ${size + 500} bytes; the rest was left out`,
     });
     const failing = { ...whole, status: { ok: false, code: "api_error", message: "m" } };
-    expect(JSON.parse(serializeExport(failing, { ...LIMITS, exportBytes: size + 500 })).status).toEqual(failing.status);
+    expect(JSON.parse(serializeExport(failing, limitsWith({ exportBytes: size + 500 }))).status).toEqual(
+      failing.status,
+    );
   });
 });
 
@@ -940,7 +964,7 @@ describe("createExporter", () => {
       now: () => T0,
       info: (line: string) => out.stdout(`${line}\n`),
       warn: (line: string) => out.stderr(`${line}\n`),
-      limits: { ...LIMITS, databases: 1 },
+      limits: limitsWith({ databases: 1 }),
     });
     await exporter.scanAndWrite();
     await exporter.scanAndWrite();

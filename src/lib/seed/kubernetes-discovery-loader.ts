@@ -64,10 +64,11 @@ export interface KubernetesDiscoveryDeps extends DiscoverySourceDeps {
   fileSeedIds?: () => Promise<ReadonlySet<string>>;
 }
 
-interface Skipped {
+// A type and not an interface: the shared source's log line spreads it, so it must read as a record of strings.
+type Skipped = {
   readonly resource: string;
   readonly reason: string;
-}
+};
 
 function discoveryPath(): string | undefined {
   return process.env.SEED_KUBERNETES_DISCOVERY_PATH?.trim() || undefined;

@@ -248,7 +248,7 @@ describe("parseKubernetesDiscoveryExport", () => {
 
     it("reads a file of the exporter's size bound, and keeps exactly the keys its contract row keeps", () => {
       expect(LIMITS.exportBytes).toBeLessThanOrEqual(KUBERNETES_DISCOVERY_FILE_MAX_BYTES);
-      expect([...KUBERNETES_DISCOVERY_SECRET_KEYS]).toEqual([...CONTRACT[0].secretKeys]);
+      expect<string[]>([...KUBERNETES_DISCOVERY_SECRET_KEYS]).toEqual([...CONTRACT[0].secretKeys]);
     });
   });
 

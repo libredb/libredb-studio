@@ -54,10 +54,11 @@ export interface DiscoveryDeps extends DiscoverySourceDeps {
   fileSeedIds?: () => Promise<ReadonlySet<string>>;
 }
 
-interface Skipped {
+// A type and not an interface: the shared source's log line spreads it, so it must read as a record of strings.
+type Skipped = {
   readonly appName: string;
   readonly reason: string;
-}
+};
 
 interface Candidate {
   appName: string;
