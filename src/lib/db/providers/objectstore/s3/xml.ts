@@ -69,8 +69,10 @@ export function readXml(bytes: Uint8Array): XmlReadResult {
   try {
     return { ok: true, root: new Parser(text, start).document() };
   } catch (error) {
-    if (error instanceof Refused) return { ok: false, reason: error.reason };
-    throw error;
+    // The parser throws only Refused; anything else is a defect of ours and leaves as itself rather
+    // than as a reason the server's document would wear.
+    if (!(error instanceof Refused)) throw error;
+    return { ok: false, reason: error.reason };
   }
 }
 

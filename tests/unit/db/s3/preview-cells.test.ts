@@ -120,6 +120,13 @@ describe("serializeBounded", () => {
     expect(scalarJson(Uint8Array.of(0xab), 10)).toBe('"ab"');
   });
 
+  test("a value of a type no decoder yields is written as its text, bounded like a string", () => {
+    // No preview decoder produces one (JSON, CSV and Parquet values are all handled above); the cell
+    // writer takes `unknown`, so the last arm still writes a quoted string rather than throwing mid-row.
+    expect(scalarJson(Symbol("odd"))).toBe('"Symbol(odd)"');
+    expect(scalarJson(Symbol("a longer one"), 3)).toBe('"Symb');
+  });
+
   test("renderCell never calls JSON.stringify", () => {
     const spy = spyOn(JSON, "stringify");
     try {

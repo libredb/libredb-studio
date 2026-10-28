@@ -356,6 +356,19 @@ describe("the HEAD follow-up", () => {
     expect((toProviderError(error, "HeadObject", CONTEXT) as Error).message).toContain("(request id FOLLOWID)");
   });
 
+  test("the follow-up's x-amz-bucket-region is kept when the HEAD carried none", async () => {
+    const { client } = clientOf((request) =>
+      request.method === "HEAD"
+        ? { status: 400 }
+        : {
+            ...xmlAnswer(errorXml("AuthorizationHeaderMalformed", "the region is wrong"), 400),
+            headers: [["x-amz-bucket-region", "eu-central-1"]],
+          },
+    );
+    const error = (await failure(client.headObject("sales", "a.csv", CALL))) as S3ServerError;
+    expect(error).toMatchObject({ status: 400, code: "AuthorizationHeaderMalformed", bucketRegion: "eu-central-1" });
+  });
+
   test("a HEAD error carrying x-minio-error-code needs no follow-up", async () => {
     const { client, fake } = clientOf(() => ({
       status: 404,
