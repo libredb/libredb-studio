@@ -228,7 +228,7 @@ check (`bun run format`), linters (`bun run lint`, i.e. oxlint then ESLint), typ
 `build:lib`, then `attw`. oxlint is folded into `bun run lint` rather than a separate step. The pre-commit git
 hook (`.claude/settings.json`) runs `lint && typecheck && test && build` and now transitively enforces oxlint
 and the type-aware layer via `bun run lint`.
-The type check, `next build` and the Playwright runs whose first server builds run Node with `NODE_OPTIONS=--max-old-space-size=6144`, as the release payload build has since #1535, because `tsconfig.json` takes every TypeScript file, tests included, and that program peaks within tens of MB of Node's default heap of about 4 GB on a GitHub runner (`tests/unit/ci-node-heap.test.ts`).
+In every workflow, the type check, `next build` and the Playwright runs whose first server builds run Node with `NODE_OPTIONS=--max-old-space-size=6144`, as the release payload build has since #1535, because `tsconfig.json` takes every TypeScript file, tests included, and that program peaks within tens of MB of Node's default heap of about 4 GB on a GitHub runner (`tests/unit/ci-node-heap.test.ts`).
 
 `bun run lint` ends with one more step, added after the phases above: `node scripts/only-check.mjs`, the
 focused-test guard from #979, also reachable on its own as `bun run only:check`. A committed `.only` makes bun

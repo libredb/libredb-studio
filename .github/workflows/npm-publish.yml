@@ -69,6 +69,11 @@ jobs:
 
       - name: Typecheck
         run: bun run typecheck
+        env:
+          # The whole-tree type check, and `next build`'s below, peak near Node's
+          # default heap of about 4 GB on this runner, so both raise the heap as
+          # ci.yml does (tests/unit/ci-node-heap.test.ts).
+          NODE_OPTIONS: --max-old-space-size=6144
 
       - name: Test
         # `bun run test` is tests/run-tests.ts: one bun process per test file, so
@@ -85,6 +90,7 @@ jobs:
       - name: Build
         run: bun run build
         env:
+          NODE_OPTIONS: --max-old-space-size=6144
           NEXT_TELEMETRY_DISABLED: 1
           JWT_SECRET: test-secret-for-ci-build-only-32ch
           ADMIN_EMAIL: admin@libredb.org

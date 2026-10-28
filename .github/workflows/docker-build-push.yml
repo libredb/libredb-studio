@@ -83,6 +83,11 @@ jobs:
 
       - name: Run TypeScript type check
         run: bun run typecheck
+        env:
+          # The whole-tree type check peaks near Node's default heap of about 4 GB
+          # on this runner, so it raises the heap as ci.yml does
+          # (tests/unit/ci-node-heap.test.ts).
+          NODE_OPTIONS: --max-old-space-size=6144
 
       - name: Extract version from package.json or branch name
         id: extract-version
