@@ -102,6 +102,13 @@ jobs:
 
       - name: Run TypeScript type check
         run: bun run typecheck
+        env:
+          # tsconfig.json takes every TypeScript file, tests included, and that
+          # program peaks within tens of MB of Node's default heap of about 4 GB
+          # on this runner, so every step that checks it, `next build` and the
+          # Playwright runs that build included, raises the heap, as the payload
+          # build does since #1535 (docs/TOOLCHAIN.md, tests/unit/ci-node-heap.test.ts).
+          NODE_OPTIONS: --max-old-space-size=6144
 
       - name: Install the VS Code extension's dependencies for knip
         # knip's vscode-extension workspace reads the extension's own manifest:
@@ -116,6 +123,7 @@ jobs:
       - name: Build project
         run: bun run build
         env:
+          NODE_OPTIONS: --max-old-space-size=6144
           NEXT_TELEMETRY_DISABLED: 1
           JWT_SECRET: test-secret-for-ci-build-only-32ch
           ADMIN_EMAIL: admin@libredb.org
@@ -404,6 +412,7 @@ jobs:
         # saying so is worse than one that is openly not run.
         run: bunx playwright test --grep-invert "Functional smoke"
         env:
+          NODE_OPTIONS: --max-old-space-size=6144
           JWT_SECRET: test-secret-for-ci-build-only-32ch
           ADMIN_EMAIL: admin@libredb.org
           ADMIN_PASSWORD: test-admin
@@ -413,6 +422,8 @@ jobs:
       - name: Run subpath deployment E2E
         # Separate build, after the root-path servers have stopped.
         run: bun run test:e2e:base-path
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
 
       - name: Upload Playwright report
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -503,6 +514,7 @@ jobs:
       - name: Run functional smoke
         run: bunx playwright test --project=chromium --grep "Functional smoke"
         env:
+          NODE_OPTIONS: --max-old-space-size=6144
           JWT_SECRET: test-secret-for-ci-build-only-32ch
           ADMIN_EMAIL: admin@libredb.org
           ADMIN_PASSWORD: test-admin
