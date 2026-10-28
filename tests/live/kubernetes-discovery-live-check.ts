@@ -6,7 +6,7 @@
  * the exporter's tests say a kube-apiserver does. Only a real one shows that the RBAC the docs give the exporter is
  * enough and no more, that CloudNativePG's own `<name>-app` Secrets pass the ownership rule, that the update keeps
  * the Secret's metadata, that a namespace without the exporter's Role answers 403, and how long the kubelet takes to
- * show the export in a pod (probe P5).
+ * show the export in a pod.
  *
  * With the kubeconfig in LIBREDB_LIVE_KUBECONFIG, which must be allowed to create namespaces, Roles and RoleBindings,
  * and the namespaces of existing CloudNativePG Clusters in LIBREDB_LIVE_NAMESPACES (default `team-a,team-b`), the
@@ -17,9 +17,9 @@
  * namespaces plus the throwaway one, where the exporter has no list right. It then reads the export back and runs
  * Studio's own parser and mapping on it.
  *
- * With LIBREDB_LIVE_P5_SAMPLES=<n> it also starts a busybox pod that mounts the export Secret, runs the exporter <n>
- * more times, and prints how long each export took to show in the pod's file (the image must be on the node:
- * LIBREDB_LIVE_BUSYBOX_IMAGE, default docker.io/rancher/mirrored-library-busybox:1.37.0, a k3s system image).
+ * With LIBREDB_LIVE_KUBELET_DELAY_SAMPLES=<n> it also starts a busybox pod that mounts the export Secret, runs the
+ * exporter <n> more times, and prints how long each export took to show in the pod's file (the image must be on the
+ * node: LIBREDB_LIVE_BUSYBOX_IMAGE, default docker.io/rancher/mirrored-library-busybox:1.37.0, a k3s system image).
  *
  * It prints one line per check, `ok   <check>` or `FAIL <check>` with the reason, never a Secret value, exits non-zero
  * when any check failed, and deletes everything it created either way.
@@ -47,7 +47,7 @@ const NAMESPACE = NAME;
 const SERVICE_ACCOUNT = "discovery";
 const EXPORT_SECRET = "discovery-export";
 const DISCOVERED = (process.env.LIBREDB_LIVE_NAMESPACES ?? "team-a,team-b").split(",").map((item) => item.trim());
-const SAMPLES = Number(process.env.LIBREDB_LIVE_P5_SAMPLES ?? "0");
+const SAMPLES = Number(process.env.LIBREDB_LIVE_KUBELET_DELAY_SAMPLES ?? "0");
 const BUSYBOX = process.env.LIBREDB_LIVE_BUSYBOX_IMAGE ?? "docker.io/rancher/mirrored-library-busybox:1.37.0";
 const EXPORTER = path.join(import.meta.dir, "..", "..", "docker", "discover-kubernetes.mjs");
 const dir = mkdtempSync(path.join(tmpdir(), "libredb-kd-live-"));
@@ -201,15 +201,15 @@ function checkExport(env: Record<string, string>): void {
   );
 }
 
-async function probeP5(env: Record<string, string>): Promise<void> {
+async function measureKubeletDelay(env: Record<string, string>): Promise<void> {
   apply({
     apiVersion: "v1",
     kind: "Pod",
-    metadata: { name: "p5", namespace: NAMESPACE },
+    metadata: { name: "kubelet-delay", namespace: NAMESPACE },
     spec: {
       containers: [
         {
-          name: "p5",
+          name: "kubelet-delay",
           image: BUSYBOX,
           imagePullPolicy: "IfNotPresent",
           command: ["sleep", "3600"],
@@ -219,7 +219,7 @@ async function probeP5(env: Record<string, string>): Promise<void> {
       volumes: [{ name: "export", secret: { secretName: EXPORT_SECRET } }],
     },
   });
-  kubectl(["wait", "--for=condition=Ready", "pod/p5", "-n", NAMESPACE, "--timeout=120s"]);
+  kubectl(["wait", "--for=condition=Ready", "pod/kubelet-delay", "-n", NAMESPACE, "--timeout=120s"]);
   const delays: number[] = [];
   for (let sample = 0; sample < SAMPLES; sample += 1) {
     // oxlint-disable-next-line no-await-in-loop -- samples are taken one after another, as the kubelet syncs.
@@ -227,7 +227,7 @@ async function probeP5(env: Record<string, string>): Promise<void> {
     const run = runExporter(env);
     const written = Date.now();
     if (run.status !== 0) {
-      check(`P5 sample ${sample + 1}: the exporter wrote`, false, run.log.trim());
+      check(`kubelet delay sample ${sample + 1}: the exporter wrote`, false, run.log.trim());
       continue;
     }
     const checkedAt = JSON.parse(exportText()).checkedAt as string;
@@ -235,7 +235,17 @@ async function probeP5(env: Record<string, string>): Promise<void> {
     while (seen === 0 && Date.now() - written < 180_000) {
       const inPod = spawnSync(
         "kubectl",
-        ["--kubeconfig", kubeconfig as string, "exec", "-n", NAMESPACE, "p5", "--", "cat", "/export/export.json"],
+        [
+          "--kubeconfig",
+          kubeconfig as string,
+          "exec",
+          "-n",
+          NAMESPACE,
+          "kubelet-delay",
+          "--",
+          "cat",
+          "/export/export.json",
+        ],
         { encoding: "utf8" },
       );
       if (inPod.stdout.includes(`"checkedAt":"${checkedAt}"`)) seen = Date.now();
@@ -244,14 +254,17 @@ async function probeP5(env: Record<string, string>): Promise<void> {
     }
     const delay = seen === 0 ? Number.NaN : (seen - written) / 1000;
     delays.push(delay);
-    console.log(`     P5 sample ${sample + 1}: the pod showed the export after ${delay.toFixed(1)} s`);
+    console.log(`     kubelet delay sample ${sample + 1}: the pod showed the export after ${delay.toFixed(1)} s`);
   }
   const shown = delays.filter((delay) => Number.isFinite(delay)).sort((a, b) => a - b);
-  check(`P5: every export reached the pod within 180 s (${shown.length}/${SAMPLES})`, shown.length === SAMPLES);
+  check(
+    `kubelet delay: every export reached the pod within 180 s (${shown.length}/${SAMPLES})`,
+    shown.length === SAMPLES,
+  );
   if (shown.length > 0) {
     const median = shown[Math.floor((shown.length - 1) / 2)];
     console.log(
-      `     P5 summary: min ${shown[0].toFixed(1)} s, median ${median.toFixed(1)} s, max ${shown.at(-1)?.toFixed(1)} s`,
+      `     kubelet delay summary: min ${shown[0].toFixed(1)} s, median ${median.toFixed(1)} s, max ${shown.at(-1)?.toFixed(1)} s`,
     );
   }
 }
@@ -284,7 +297,7 @@ function tearDown(): void {
 try {
   const env = setUp();
   checkExport(env);
-  if (SAMPLES > 0) await probeP5(env);
+  if (SAMPLES > 0) await measureKubeletDelay(env);
 } catch (error) {
   check("the live check ran to its end", false, (error as Error).message.split("\n")[0]);
 } finally {
