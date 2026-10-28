@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { explainRequestEngine, NO_CONNECTION_EXPLAIN_ENGINE } from "@/lib/db/execution-ui/explain-request";
+import { DEFAULT_CONNECTION_TYPE } from "@/lib/db/default-connection-type";
+import { explainRequestEngine } from "@/lib/db/execution-ui/explain-request";
 
 describe("explain request engine", () => {
-  test('no connection type names postgres, as today\'s `databaseType || "postgres"` does', () => {
-    expect(NO_CONNECTION_EXPLAIN_ENGINE).toBe("postgres");
+  test('no connection type names the default connection type, as today\'s `databaseType || "postgres"` does', () => {
+    expect(DEFAULT_CONNECTION_TYPE).toBe("postgres");
     expect(explainRequestEngine(undefined)).toBe("postgres");
     expect(explainRequestEngine("")).toBe("postgres");
   });

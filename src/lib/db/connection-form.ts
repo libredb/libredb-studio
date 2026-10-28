@@ -19,6 +19,7 @@ import {
   type FieldPlacement,
   type PlaceableField,
 } from "@/lib/db/connection-fields";
+import { DEFAULT_CONNECTION_TYPE } from "@/lib/db/default-connection-type";
 import { CREDENTIAL_WARNINGS, type CredentialWarning } from "@/lib/db/credential-warnings";
 import { MODBUS_READ_ONLY_HINT } from "@/lib/db/providers/industrial/modbus/constants";
 import {
@@ -1411,7 +1412,7 @@ for (const type of Object.keys(CONNECTION_FORM) as DatabaseType[]) {
 }
 
 /** The engine a new connection opens on, the picker's first; the form hook holds it rather than spelling a type id. */
-export const DEFAULT_CONNECTION_TYPE: DatabaseType = "postgres";
+export { DEFAULT_CONNECTION_TYPE };
 
 /**
  * The order the connection dialog's engine picker offers the engines in, for display (the dialog renders them as a

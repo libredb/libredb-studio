@@ -5,7 +5,8 @@
 import { describe, expect, test } from "bun:test";
 import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { MIGRATION_DDL, migrationDdlFor, migrationDialectHeader } from "@/lib/db/migration-ddl";
-import { NO_CONNECTION_DIALECT, NO_CONNECTION_MIGRATION_DDL } from "@/lib/db/migration-ddl/no-connection";
+import { DEFAULT_CONNECTION_TYPE } from "@/lib/db/default-connection-type";
+import { NO_CONNECTION_MIGRATION_DDL } from "@/lib/db/migration-ddl/no-connection";
 import { UNKNOWN_TYPE_MIGRATION_DDL } from "@/lib/db/migration-ddl/unknown-type";
 import type { MigrationDdlSpec } from "@/lib/db/migration-ddl/types";
 import type { DatabaseType } from "@/lib/types";
@@ -128,12 +129,12 @@ describe("migration DDL registry census", () => {
     }
   });
 
-  test("the no-connection dialect is the word SchemaDiff passed", () => {
-    expect(NO_CONNECTION_DIALECT).toBe("postgres");
+  test("the no-connection dialect is the word SchemaDiff passed, the default connection type", () => {
+    expect(DEFAULT_CONNECTION_TYPE).toBe("postgres");
   });
 
   test("the header word is the no-connection dialect with no connection and the type string otherwise", () => {
-    expect(migrationDialectHeader(undefined)).toBe(NO_CONNECTION_DIALECT);
+    expect(migrationDialectHeader(undefined)).toBe(DEFAULT_CONNECTION_TYPE);
     for (const type of ["postgres", "mysql", "constructor", "not-an-engine"]) {
       expect(migrationDialectHeader(type)).toBe(type);
     }

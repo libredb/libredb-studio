@@ -1,7 +1,6 @@
-/** The engine an explain request names when the view has no connection type: today's `databaseType || "postgres"` (spec 5.5, T18). */
-export const NO_CONNECTION_EXPLAIN_ENGINE = "postgres";
+import { DEFAULT_CONNECTION_TYPE } from "@/lib/db/default-connection-type";
 
-/** The engine an explain request names: the view's connection type, or `NO_CONNECTION_EXPLAIN_ENGINE` when it has none, so `""` also gives `"postgres"`. */
+/** The engine an explain request names: the view's connection type, or the default connection type when it has none, so `""` gives it too. */
 export function explainRequestEngine(databaseType: string | undefined): string {
-  return databaseType || NO_CONNECTION_EXPLAIN_ENGINE;
+  return databaseType || DEFAULT_CONNECTION_TYPE;
 }

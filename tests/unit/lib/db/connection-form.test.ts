@@ -12,6 +12,7 @@ import * as uiConfig from "@/lib/db-ui-config";
 import { DB_UI_CONFIG } from "@/lib/db-ui-config";
 import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import * as form from "@/lib/db/connection-form";
+import { DEFAULT_CONNECTION_TYPE } from "@/lib/db/default-connection-type";
 import {
   CONNECTION_FORM,
   CONNECTION_PICKER_ORDER,
@@ -296,6 +297,11 @@ describe("src/lib/db/connection-form.ts", () => {
 });
 
 describe("CONNECTION_PICKER_ORDER", () => {
+  test("starts with the product's default connection type, the one constant every no-connection reader names", () => {
+    expect(form.DEFAULT_CONNECTION_TYPE).toBe(DEFAULT_CONNECTION_TYPE);
+    expect(CONNECTION_PICKER_ORDER[0]).toBe(DEFAULT_CONNECTION_TYPE);
+  });
+
   test("offers every database type a connection can carry, each once", () => {
     const expected = Object.entries(PICKER_COVERAGE)
       .filter(([, selectable]) => selectable)

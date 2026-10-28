@@ -19,9 +19,6 @@ import {
 } from "./shared";
 import type { MigrationDdlSpec } from "./types";
 
-/** The word the `-- Dialect:` header prints with no connection, which is what `SchemaDiff.tsx` passed. */
-export const NO_CONNECTION_DIALECT = "postgres";
-
 export const NO_CONNECTION_MIGRATION_DDL: MigrationDdlSpec = {
   tableDdl: "written",
   transactionWrapper: BEGIN_COMMIT,

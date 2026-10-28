@@ -45,8 +45,9 @@ import { PROMETHEUS_MIGRATION_DDL } from "@/lib/db/providers/timeseries/promethe
 import { MILVUS_MIGRATION_DDL } from "@/lib/db/providers/vector/milvus/migration-ddl";
 import { QDRANT_MIGRATION_DDL } from "@/lib/db/providers/vector/qdrant/migration-ddl";
 import { WEAVIATE_MIGRATION_DDL } from "@/lib/db/providers/vector/weaviate/migration-ddl";
+import { DEFAULT_CONNECTION_TYPE } from "@/lib/db/default-connection-type";
 import type { DatabaseType } from "@/lib/types";
-import { NO_CONNECTION_DIALECT, NO_CONNECTION_MIGRATION_DDL } from "./no-connection";
+import { NO_CONNECTION_MIGRATION_DDL } from "./no-connection";
 import type { MigrationDdlSpec } from "./types";
 import { UNKNOWN_TYPE_MIGRATION_DDL } from "./unknown-type";
 
@@ -108,9 +109,10 @@ export function migrationDdlFor(type: string | undefined): MigrationDdlSpec {
 }
 
 /**
- * The word the migration's `-- Dialect:` header prints: the no-connection dialect for `undefined`, the type string
- * as given otherwise, so the generator holds no type id of its own.
+ * The word the migration's `-- Dialect:` header prints: the default connection type for `undefined`, which is what
+ * `SchemaDiff.tsx` passed with no connection open, and the type string as given otherwise, so the generator holds no
+ * type id of its own.
  */
 export function migrationDialectHeader(type: string | undefined): string {
-  return type === undefined ? NO_CONNECTION_DIALECT : type;
+  return type === undefined ? DEFAULT_CONNECTION_TYPE : type;
 }

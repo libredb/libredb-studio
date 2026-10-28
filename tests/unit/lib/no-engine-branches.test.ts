@@ -70,7 +70,8 @@ const STORAGE_BACKEND = "the storage backend `STORAGE_PROVIDER` names, not an en
 const COMPATIBILITY = "a total per-engine compatibility table, compile-enforced over the type-id union";
 const FIELDS = "the UI-free connection field table, compile-enforced over the type-id union";
 const CONTRACT = "an engine contract's index, which collects the row each engine declares beside its provider";
-const NO_CONNECTION = "the engine a view with no connection open has always named, kept as the no-connection row";
+const DEFAULT_ENGINE =
+  "a view with no connection open names the product's default connection type, the one constant that names it";
 
 /** The registries of spec 5.6, which stay. */
 export const REGISTRIES: readonly Listed[] = [
@@ -122,13 +123,13 @@ export const REGISTRIES: readonly Listed[] = [
     path: "src/lib/db/execution-ui/explain-request.ts",
     declaration: "explainRequestEngine",
     count: 1,
-    reason: NO_CONNECTION,
+    reason: DEFAULT_ENGINE,
   },
   {
     path: "src/lib/db/migration-ddl/index.ts",
     declaration: "migrationDialectHeader",
     count: 1,
-    reason: NO_CONNECTION,
+    reason: DEFAULT_ENGINE,
   },
   {
     path: "src/lib/db/connection-form.ts",
