@@ -4260,7 +4260,7 @@ describe("recommendChangeTool — a change the run proposes and does not make", 
       change: "index",
       statement: INDEX_DDL,
       rationale: "the filtered column has no index",
-      evidence: [{ artifact: { correlationId: "corr-1" } }],
+      evidence: [{ artifact: "corr-1" }],
     });
 
     if (outcome.kind === "recommended") throw new Error("expected a refusal");
