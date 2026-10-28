@@ -7,6 +7,7 @@ import { consumeRateLimit } from "@/lib/api/rate-limit";
 import { emitAuditEvent } from "@/lib/audit";
 import { CUSTOM_CONNECTIONS_DISABLED_MESSAGE, customConnectionsAllowed } from "@/lib/config/custom-connections";
 import { governanceEnabled } from "@/lib/governance/config";
+import { accessReviewEnabled } from "@/lib/kubernetes-access/config";
 import {
   GovernanceUnavailableError,
   type Principal,
@@ -28,13 +29,15 @@ export class SeedConnectionError extends Error {
 
 /**
  * The one answer under governance for a connection the caller holds no grant on, whatever the reason: no such
- * connection, a grant to someone else, an expired grant or a row Studio did not admit. It names no id, so two misses
- * read the same.
+ * connection, a grant to someone else, an expired grant or a row Studio did not admit. With the Kubernetes access review
+ * on it is the one answer for every miss as well: no such connection, one the review keeps from the caller, one whose
+ * review failed, or a seed the caller's role may not see. It names no id, so two misses read the same.
  */
 const CONNECTION_NOT_FOUND_MESSAGE = "Connection not found: it does not exist or is not granted to you";
 
-/** Where a governed miss is recorded: a phase of the request, as the MCP audit names its phases, never a URL. */
+/** Where a uniform miss is recorded: a phase of the request, as the MCP audit names its phases, never a URL. */
 const GOVERNED_MISS_TARGET = "governance/connection";
+const REVIEWED_MISS_TARGET = "kubernetes-access/connection";
 
 /** The dispatcher's answer, with a governance snapshot that cannot be served turned into this module's refusal. */
 async function visibleSeedConnection(session: Principal, seedId: string, options?: VisibilityOptions) {
@@ -49,21 +52,22 @@ async function visibleSeedConnection(session: Principal, seedId: string, options
 }
 
 /**
- * The audit line of a governed miss, which is the only record of one: the 404 it answers is the same for every miss.
+ * The audit line of a uniform miss, under governance or the Kubernetes access review, which is the only record of one:
+ * the 404 it answers is the same for every miss.
  *
  * METERED on the `anon` bucket and keyed on the username, as `auditRoleDenial` in src/lib/api/require-session.ts is
  * and for its reason: a signed-in session can probe ids in a loop, and every line would fill a container log volume
  * and push real events out of the ring the admin UI reads. The refusal is unconditional; only its record is bounded.
  * Isolated in its own try/catch, so a broken audit sink never turns the decided 404 into a 500.
  */
-function auditGovernedMiss(seedId: string, username: string): void {
+function auditUniformMiss(seedId: string, username: string, target: string): void {
   const notice = consumeRateLimit("anon", username);
   if (!notice.allowed && !notice.tripped) return;
   try {
     emitAuditEvent({
       type: "permission_denied",
       action: "denied",
-      target: GOVERNED_MISS_TARGET,
+      target,
       user: username,
       result: "failure",
       reason: "connection_not_granted",
@@ -153,13 +157,14 @@ export async function resolveConnection(
 
     if (!seedConn) {
       /*
-       * UNDER GOVERNANCE, ONE ANSWER FOR EVERY MISS, AND NO LOOKUP TO TELL THEM APART. The 403 below confirms that an
-       * id exists for someone, which is exactly what a caller probing a catalog of governed connections must not
-       * learn, so an id that does not exist and one granted to another subject answer the same 404, decided from the
-       * caller's own grants alone. The audit line is where an operator sees which id was asked for.
+       * UNDER GOVERNANCE OR THE KUBERNETES ACCESS REVIEW, ONE ANSWER FOR EVERY MISS, AND NO LOOKUP TO TELL THEM APART.
+       * The 403 below confirms that an id exists for someone, which is exactly what a caller probing a catalog of
+       * governed or reviewed connections must not learn, so an id that does not exist and one granted to another
+       * subject, or one the review keeps from the caller, answer the same 404, decided from what the caller may see
+       * alone. The audit line is where an operator sees which id was asked for.
        */
-      if (governanceEnabled()) {
-        auditGovernedMiss(seedId, session.username);
+      if (governanceEnabled() || accessReviewEnabled()) {
+        auditUniformMiss(seedId, session.username, governanceEnabled() ? GOVERNED_MISS_TARGET : REVIEWED_MISS_TARGET);
         throw new SeedConnectionError(CONNECTION_NOT_FOUND_MESSAGE, 404, ApiErrorCode.CONNECTION_NOT_FOUND);
       }
       const exists = await getSeedConnectionByIdUnfiltered(seedId);

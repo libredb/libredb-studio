@@ -131,7 +131,10 @@ export type AuditReason =
   /**
    * Under governance (docs/GOVERNANCE.md), a request named a connection the session's identity provider subject holds
    * no grant on: one that does not exist, one granted to someone else, an expired grant or a row Studio did not admit,
-   * which the 404 CONNECTION_NOT_FOUND it answers leaves indistinguishable. The record names the id that was asked for.
+   * which the 404 CONNECTION_NOT_FOUND it answers leaves indistinguishable. With the Kubernetes access review on
+   * (docs/SEED_CONNECTIONS.md), target `kubernetes-access/connection`, it names a connection the caller may not use: one
+   * that does not exist, one the review keeps from the caller or one its role may not see. The record names the id that
+   * was asked for.
    */
   | "connection_not_granted"
   // Passkey sign-in and management (#785). Each code has one meaning, so an operator can tell a
