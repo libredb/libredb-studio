@@ -464,7 +464,7 @@ Whether any shipping device does is unmeasured.
 **`with-defaults` on the operational datastore is unsettled.** No published default exists for the
 setting, so none is assumed; this is specification section 11.3.
 The provider sends no `with-defaults` parameter at all.
-Measured 2026-10-13 on Netopeer2: on `operational`, `report-all` and `trim` in the NMDA namespace answered the same bytes as the request without the parameter, the older `ietf-netconf-with-defaults` namespace was refused with `operation-failed`, and that fixture holds too few default-valued leaves to tell "ignored" from "applied with nothing to add".
+Measured 2026-10-13 on Netopeer2: on `operational`, `report-all` and `trim` in the NMDA namespace answered the same bytes as the request without the parameter, the older `ietf-netconf-with-defaults` namespace was refused with `operation-failed`, an invalid mode was refused with `operation-failed` where RFC 8526 section 4 asks for `invalid-value`, and that fixture holds too few default-valued leaves to tell "ignored" from "applied with nothing to add".
 
 **Four session limits still carry their defaults.** They are bound to definitions and their sources
 are written down, but no real device has been measured against them.
