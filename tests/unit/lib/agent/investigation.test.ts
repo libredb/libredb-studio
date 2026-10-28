@@ -7,7 +7,12 @@ import { persistedRunFacts, workflowAvailability } from "@/lib/agent/agent-manif
 import { forgetHeldSnapshots } from "@/lib/agent/context-snapshot";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
-import { DATABASE_TOOL_HANDLERS, neutraliseAssistantMessages, runInvestigation } from "@/lib/agent/investigation";
+import {
+  DATABASE_TOOL_HANDLERS,
+  neutraliseAssistantMessages,
+  profileTable,
+  runInvestigation,
+} from "@/lib/agent/investigation";
 import { UNTRUSTED_CONTENT_BEGIN, UNTRUSTED_CONTENT_END } from "@/lib/agent/untrusted-content";
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
 import { AgentRunService } from "@/lib/agent/run-service";
@@ -669,6 +674,53 @@ describe("a kubectl resource-efficiency run", () => {
       goalVerdict: { outcome: "answered", verifier: "agent-query-optimization-kubectl.1" },
     });
   });
+
+  test("a reading refused before the cluster once the repair budget is spent writes no evidence event", async () => {
+    const drive = await kubectlDrive({
+      workflowType: "query-optimization",
+      usage: async () => {
+        throw new QueryError("the metrics API answered 500", "kubernetes");
+      },
+      turns: [
+        callsTool("inspect_usage", { namespace: "shop" }, "call_usage_1"),
+        callsTool("inspect_usage", { namespace: "web" }, "call_usage_2"),
+        callsTool("inspect_usage", { namespace: "api" }, "call_usage_3"),
+        callsTool("inspect_usage", { namespace: "jobs" }, "call_usage_4"),
+        answersProse("No report."),
+      ],
+    });
+
+    expect(promptText(drive.turns[4] as Turn)).toContain(
+      "This run has used all of its repair attempts. Stop drafting statements and report what has been established.",
+    );
+    expect(
+      drive.events.some(
+        (event) => (event.kind === "usage-read" || event.kind === "usage-unavailable") && event.namespace === "jobs",
+      ),
+    ).toBe(false);
+  });
+
+  test("a reading whose process died mid-call is not sent again after a resume, and the run is told why", async () => {
+    // A step's identity is its tool and arguments, so a completed drive names the step a dead one would have left.
+    const reference = await kubectlDrive({
+      workflowType: "query-optimization",
+      turns: [callsTool("inspect_usage", { namespace: "shop" }, "call_usage")],
+    });
+    const invoked = reference.events.find((event) => event.kind === "tool-invoked" && event.tool === "inspect_usage");
+    if (invoked?.kind !== "tool-invoked") throw new Error("the reference drive invoked no usage reading");
+
+    // The dead process's ledger: the step invoked, and no outcome after it.
+    const resumed = await kubectlDrive({
+      workflowType: "query-optimization",
+      prior: [invoked],
+      turns: [callsTool("inspect_usage", { namespace: "shop" }, "call_usage"), answersProse("No report.")],
+    });
+
+    expect(promptText(resumed.turns[1] as Turn)).toContain(
+      `Step ${invoked.stepId} (inspect_usage) was started before this run was interrupted and its outcome was never recorded`,
+    );
+    expect(resumed.events.some((event) => event.kind === "usage-read")).toBe(false);
+  });
 });
 
 /** One workload's state in a namespace, as `readWorkloadProfile` answers it. */
@@ -1194,6 +1246,15 @@ describe("the database tool dispatch", () => {
     );
     expect(() => DATABASE_TOOL_HANDLERS.inspect_plan(context, {}, null)).toThrow(
       "agent run loop: the kubectl language has no inspect_plan arm",
+    );
+  });
+
+  test("so is profile_table reaching a language with no profile arm", async () => {
+    const context = { runId: "arun_1", statementLanguage: "kubectl" } as unknown as AgentToolContext;
+    const service = { resume: async () => ({ record: { events: [] } }) } as unknown as AgentRunService;
+
+    await expect(profileTable(service, context, { input: { table: "orders" } }, new Set())).rejects.toThrow(
+      "agent run loop: the kubectl language has no profile_table arm",
     );
   });
 });

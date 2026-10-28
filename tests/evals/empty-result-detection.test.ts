@@ -237,3 +237,41 @@ describe("the scripted world does not contradict itself", () => {
     expect(everything.rows).toHaveLength(8);
   });
 });
+
+describe("a report citing only empty results, from a run that read rows elsewhere", () => {
+  test("is held back once and told which results did return rows", async () => {
+    const run = await open("empty-result");
+
+    const drive = await run.drive([
+      callsTool("run_read_query", { sql: LIST_UNNAMED, rationale: "list the unnamed rows" }),
+      callsTool("run_read_query", { sql: COUNT_ALL, rationale: "and how many rows there are at all" }, "call_2"),
+      // Cites the first reading only, which is the empty listing.
+      reportOn("Nobody in the legal table is missing a name."),
+      reportOnAll("All five rows in the legal table carry a name, so none is missing one."),
+    ]);
+
+    const [, counted] = drive.events.flatMap((event) =>
+      event.kind === "tool-completed" ? [event.artifact.correlationId] : [],
+    );
+    expect(drive.transcripts[3]).toContain("Every result your report cites came back with NO rows");
+    expect(drive.transcripts[3]).toContain(counted as string);
+    expect(drive.verdict.unmet).toEqual([]);
+  });
+});
+
+describe("a tool call whose arguments are not an object", () => {
+  test("is refused as bad input and the run goes on to answer", async () => {
+    const run = await open("empty-result");
+
+    const drive = await run.drive([
+      // The statement itself where the argument object belongs.
+      callsTool("run_read_query", COUNT_ALL),
+      callsTool("run_read_query", { sql: COUNT_ALL, rationale: "how many rows there are at all" }, "call_2"),
+      reportOn("All five rows in the legal table carry a name."),
+    ]);
+
+    expect(drive.transcripts[1]).toContain("did not match the shape this tool declares");
+    expect(drive.modelStatements).toEqual([COUNT_ALL]);
+    expect(drive.verdict.outcome).toBe("answered");
+  });
+});

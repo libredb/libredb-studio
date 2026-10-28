@@ -334,6 +334,24 @@ describe("a drive that dies after profiling does not profile again", () => {
     expect(resumed.statements).toEqual([]);
     expect(resumed.verdict.outcome).toBe("answered");
   });
+
+  test("a profile that found nothing is recalled as such, not as an empty finding list", async () => {
+    const complete = { row_count: 1000, present_0: 1000, distinct_0: 1000, present_1: 1000, distinct_1: 900 };
+    const run = await openEvalRun({
+      engine: "postgres",
+      workflowType: "database-assessment",
+      objective: "Where is this database's data incomplete or surprising?",
+      answer: async () => ({ rows: [complete], fields: Object.keys(complete), rowCount: 1, executionTime: 6 }),
+    });
+    runs.push(run);
+
+    await expect(run.drive([profiles("engineering", "basic")])).rejects.toThrow(/died before turn/);
+
+    const resumed = await run.drive([reportOn("The engineering table is complete.")]);
+
+    expect(resumed.transcripts[0] ?? "").toContain("nothing stood out");
+    expect(resumed.statements).toEqual([]);
+  });
 });
 
 describe("a profile that does not settle cleanly", () => {
