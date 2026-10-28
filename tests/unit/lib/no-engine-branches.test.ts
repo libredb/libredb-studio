@@ -3,11 +3,16 @@
  * contract spec 6.4).
  *
  * It reads every source file under `src/` and `vscode-extension/src/` that git lists (tracked, and untracked but not
- * ignored), outside `src/lib/db/**` and `src/lib/agent/languages/**`, and finds each branch shape
+ * ignored), outside the provider layer, and finds each branch shape
  * `./no-engine-branches/scan.ts` names: a table keyed by a type id, an array of type ids, a comparison or `case` label
  * with one, and one in default position. Every finding is held, by file and declaration name, to exactly one of three
  * lists, and each entry names how many findings its declaration holds, so a branch added inside a listed declaration
  * fails as one added anywhere else does:
+ *
+ * The provider layer is `src/lib/db/providers/**`, the statement-language packs under `src/lib/agent/languages/**`
+ * and the engine contract directories, whose index files collect one row per engine declared beside its provider.
+ * The rest of `src/lib/db/` is a shared core like any other and is scanned: its tables keyed by type id are listed as
+ * registries, and `factory.ts` as the composition root.
  *
  * 1. `REGISTRIES`, the mappings of spec 5.6 that stay, because their job is the mapping;
  * 2. `FALSE_POSITIVES`, a word spelled like a type id that names something else, each with what it names;
@@ -29,7 +34,15 @@ import { type BranchFinding, findEngineBranches } from "./no-engine-branches/sca
 
 const ROOT = join(import.meta.dir, "..", "..", "..");
 const SOURCE_FILE = /\.(c|m)?(t|j)sx?$/;
-const PROVIDER_LAYER = ["src/lib/db/", "src/lib/agent/languages/"];
+/** The engine contract directories: each index collects one row per engine, imported from beside its provider. */
+const CONTRACT_DIRECTORIES = [
+  "src/lib/db/connection-string/",
+  "src/lib/db/execution-ui/",
+  "src/lib/db/migration-ddl/",
+  "src/lib/db/sql-grammar/",
+  "src/lib/db/sql-writing/",
+];
+const PROVIDER_LAYER = ["src/lib/db/providers/", "src/lib/agent/languages/", ...CONTRACT_DIRECTORIES];
 const THIS_FILE = "tests/unit/lib/no-engine-branches.test.ts";
 const CREATE_TABLE_MODAL = "src/components/CreateTableModal.tsx";
 const TYPE_IDS: ReadonlySet<string> = new Set([...EXTERNAL_DATABASE_TYPES, "libredb"]);
@@ -54,9 +67,61 @@ const DISPLAY_ORDER = "display order only";
 const INBOUND = "an inbound mapping from an outside name to a type id";
 const AGENT_LEG = "the agent-leg pattern, guarded by its own tests";
 const STORAGE_BACKEND = "the storage backend `STORAGE_PROVIDER` names, not an engine";
+const COMPATIBILITY = "a total per-engine compatibility table, compile-enforced over the type-id union";
+const FIELDS = "the UI-free connection field table, compile-enforced over the type-id union";
 
 /** The registries of spec 5.6, which stay. */
 export const REGISTRIES: readonly Listed[] = [
+  ...[
+    "SHIPPED",
+    "EXTERNAL",
+    "READ_ONLY_ENFORCED",
+    "READS_FILE_ACCESS_POSTURE",
+    "SINGLE_WRITER_FILE",
+    "MCP_EXPOSABLE",
+    "MCP_STATEMENT_READ",
+    "CONNECTION_FORM_URI_MODE",
+    "CONNECTION_STRING_ACCEPTED",
+    "OPENS_LOCAL_FILE",
+    "OPENS_SERVER_LEVEL_WITHOUT_DATABASE",
+  ].map((declaration) => ({ path: "src/lib/db/compatibility.ts", declaration, count: 1, reason: COMPATIBILITY })),
+  ...["CONNECTION_FIELD_ROWS", "CONNECTION_FIELDS", "SEED_ONLY_FIELDS"].map((declaration) => ({
+    path: "src/lib/db/connection-fields.ts",
+    declaration,
+    count: 1,
+    reason: FIELDS,
+  })),
+  {
+    path: "src/lib/db/connection-form.ts",
+    declaration: "CONNECTION_FORM",
+    count: 1,
+    reason: "each engine's UI-free connection form row, compile-enforced over the type-id union",
+  },
+  { path: "src/lib/db/connection-form.ts", declaration: "CONNECTION_PICKER_ORDER", count: 1, reason: DISPLAY_ORDER },
+  {
+    path: "src/lib/db/credential-warnings.ts",
+    declaration: "CREDENTIAL_WARNINGS",
+    count: 1,
+    reason: "the credential warning each engine's form shows, one row per engine",
+  },
+  {
+    path: "src/lib/db/destructive-commands.ts",
+    declaration: "NON_SQL_DESTRUCTIVE_VOCABULARY",
+    count: 1,
+    reason: "the confirmation gate's registry, each row declared beside its provider",
+  },
+  {
+    path: "src/lib/db/factory.ts",
+    declaration: "createDatabaseProvider",
+    count: 43,
+    reason: "the composition root, which maps each type id to its provider class",
+  },
+  {
+    path: "src/lib/db/graph-policy-profiles.ts",
+    declaration: "GRAPH_POLICY_PROFILES",
+    count: 1,
+    reason: "the graph policy profile of each graph engine, a partial registry",
+  },
   {
     path: "src/components/admin/tabs/OverviewTab.tsx",
     declaration: "DB_TYPES_PREVIEW",
@@ -224,6 +289,17 @@ describe("type-id branches outside the provider layer", () => {
 
   test("scan the VS Code extension's sources as well as src/", () => {
     expect(scannedFiles().filter((path) => path.startsWith("vscode-extension/src/")).length).toBeGreaterThan(0);
+  });
+
+  test("scan the shared db core, the MCP server and the components", () => {
+    const scanned = scannedFiles();
+    for (const shared of ["src/lib/db/factory.ts", "src/lib/db/destructive-commands.ts", "src/lib/db/utils/"]) {
+      expect(scanned.some((path) => path.startsWith(shared)), shared).toBe(true);
+    }
+    for (const shared of ["src/lib/mcp/", "src/components/"]) {
+      expect(scanned.filter((path) => path.startsWith(shared)).length, shared).toBeGreaterThan(0);
+    }
+    expect(scanned.filter((path) => path.startsWith("src/lib/db/providers/"))).toEqual([]);
   });
 
   test("are each held by exactly one list", () => {
