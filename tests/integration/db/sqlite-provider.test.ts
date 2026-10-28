@@ -1251,6 +1251,18 @@ describe("SQLiteProvider", () => {
     });
   });
 
+  describe("getStorageStats() when the size read fails", () => {
+    test("an in-memory database whose size read is refused says N/A, not 0 B", async () => {
+      provider = new SQLiteProvider(makeSQLiteConfig());
+      await provider.connect();
+      failReadsMatching(provider, "page_count", "disk I/O error");
+
+      const [main] = await provider.getStorageStats();
+
+      expect(main).toEqual({ name: "Main Database", location: ":memory:", size: "N/A", sizeBytes: 0 });
+    });
+  });
+
   // --------------------------------------------------------------------------
   // File-backed database (statSync paths + WAL/SHM sidecar files)
   // --------------------------------------------------------------------------
@@ -1366,6 +1378,26 @@ describe("SQLiteProvider", () => {
       expect(statSync(`${dbPath}-wal`).size).toBeGreaterThan(0);
       expect(statSync(dbPath).size + statSync(`${dbPath}-wal`).size).toBeGreaterThan(checkpointed.bytes);
       expect((await provider.getOverview()).databaseSizeBytes).toBe(checkpointed.bytes);
+    });
+
+    test("a main file the size read cannot stat says N/A, not 0 B", async () => {
+      const dbPath = join(fileTmpDir, "unstatable.db");
+      provider = new SQLiteProvider(makeSQLiteConfig({ database: dbPath }));
+      await provider.connect();
+      const realStat = fsNode.statSync;
+      const stat = spyOn(fsNode, "statSync").mockImplementation(((
+        target: fsNode.PathLike,
+        options?: fsNode.StatSyncOptions,
+      ) => {
+        if (String(target) === dbPath) throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+        return realStat(target, options);
+      }) as typeof fsNode.statSync);
+      try {
+        const main = (await provider.getStorageStats()).find((entry) => entry.name === "Main Database");
+        expect(main).toEqual({ name: "Main Database", location: "unstatable.db", size: "N/A", sizeBytes: 0 });
+      } finally {
+        stat.mockRestore();
+      }
     });
 
     test("a worker build without dbstat lists table stats with the sizes absent", async () => {

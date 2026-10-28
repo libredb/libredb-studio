@@ -2596,8 +2596,9 @@ export class SQLiteProvider extends SQLBaseProvider {
     const stats: StorageStats[] = [];
     const dbPath = this.getDatabasePath();
 
-    // Main database file
-    let mainSizeBytes = 0;
+    // Main database file. A size that could not be read is "N/A", the word getOverview and
+    // getHealth use for the same failure, and never "0 B", which claims an empty database.
+    let mainSizeBytes: number | undefined;
     if (dbPath !== ":memory:") {
       try {
         const fileStats = fs.statSync(dbPath);
@@ -2617,8 +2618,8 @@ export class SQLiteProvider extends SQLBaseProvider {
     stats.push({
       name: "Main Database",
       location: dbPath === ":memory:" ? ":memory:" : path.basename(dbPath),
-      size: formatBytes(mainSizeBytes),
-      sizeBytes: mainSizeBytes,
+      size: mainSizeBytes === undefined ? "N/A" : formatBytes(mainSizeBytes),
+      sizeBytes: mainSizeBytes ?? 0,
     });
 
     // WAL file (if exists)

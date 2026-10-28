@@ -1059,7 +1059,7 @@ Minimal by nature — SQLite keeps almost no server-style runtime statistics.
 | `getActiveSessions()` | — | the single current process session; `state` and `activity` are both `active` |
 | `getTableStats()` | `COUNT(*)` per table, `dbstat` for the bytes | size is **measured page bytes wherever `dbstat` is compiled in, and absent where it is not** — see [§7.2](#72-per-table-size-depends-on-the-sqlite-build-behind-the-driver) |
 | `getIndexStats()` | `PRAGMA index_list`/`index_info` | `scans` always `0` (no usage counter); `indexSize` is `N/A` and `indexSizeBytes` is **omitted** — SQLite publishes no per-index size, and a `0` was summed by the Storage tab as an empty index |
-| `getStorageStats()` | `fs.statSync` on the DB / `-wal` / `-shm` files | per-file sizes (on disk only) |
+| `getStorageStats()` | `fs.statSync` on the DB / `-wal` / `-shm` files | per-file sizes (on disk only); the main row's `size` reads `"N/A"`, never a formatted `0`, when its size read fails, see [§7.3](#73-when-the-database-size-is-not-measurable) |
 
 Stats `COUNT(*)` and index PRAGMAs quote catalog names via `escapeIdentifier()`, including embedded double quotes.
 
@@ -1198,6 +1198,9 @@ breakdown instead, against a total that contradicted the real per-table bytes `g
 separately. The `getHealth()` half buys agreement between panels: before this, one unmeasurable SQLite
 database could show `"N/A"` on the Overview card and `"Unknown"` on Health, two sentences about the
 same absence.
+
+`getStorageStats()` reads the main file's size on its own (a `statSync` on disk, the same page PRAGMA on `:memory:`), and its main row follows the same rule.
+A read that fails gives `size: "N/A"` with `sizeBytes: 0`, the placeholder `StorageStats` requires, rather than a `"0 B"` that claims an empty file.
 
 **`databaseSize`, the formatted string, moves with the same figure in both methods.** Each initializes
 to `"N/A"` and only `formatBytes()` replaces it — one wording, from one reader, everywhere this size is
