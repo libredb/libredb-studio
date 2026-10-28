@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { getDBConfig } from "@/lib/db-ui-config";
 import { ExecutionProfileError, OffsetUnsupportedError } from "@/lib/db/errors";
+import { RunReadAllowance } from "@/lib/db/read-allowance";
 import type { DatabaseProvider, PreparedQuery } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
 import type { ManagedConnection } from "@/lib/seed";
@@ -21,6 +22,7 @@ import {
 } from "../context";
 import {
   engineError,
+  MCP_CALL_READ_ALLOWANCE,
   MCP_CANCELLED_TEXT,
   MCP_ENGINE_ERROR_PREFIX,
   MCP_NOT_VISIBLE_TEXT,
@@ -253,6 +255,8 @@ async function execute(
         maxResultRows: MCP_PROVIDER_ROW_CAP,
         maxResultBytes: MCP_PROVIDER_BYTE_CAP,
         statementTimeoutMs: Math.max(1, Math.floor(deadline - Date.now())),
+        // A call is its own run here: a fresh allowance per call, so one call's billed reads never reach the next.
+        readAllowance: new RunReadAllowance(MCP_CALL_READ_ALLOWANCE),
       }),
     tool.signal,
     deadline,

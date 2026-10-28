@@ -15,10 +15,17 @@ import { LibreDBProvider } from "@/lib/db/providers/embedded/libredb";
 import { DuckDBProvider } from "@/lib/db/providers/sql/duckdb";
 import { SnowflakeProvider } from "@/lib/db/providers/sql/snowflake/index";
 import { SQLiteProvider } from "@/lib/db/providers/sql/sqlite";
+import { READ_ALLOWANCE_PREFIX, RunReadAllowance } from "@/lib/db/read-allowance";
 import type { DatabaseProvider } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
 import { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_CANCELLED_TEXT, MCP_NOT_VISIBLE_TEXT, MCP_RESULT_CAP_BYTES, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import {
+  MCP_CALL_READ_ALLOWANCE,
+  MCP_CANCELLED_TEXT,
+  MCP_NOT_VISIBLE_TEXT,
+  MCP_RESULT_CAP_BYTES,
+  MCP_UNTRUSTED_NOTICE,
+} from "@/lib/mcp/output";
 import { moreRowsThanPageableHint, ROW_OVER_CAP_TEXT, timeoutText } from "@/lib/mcp/tools/read-query-limits";
 import {
   RUN_READ_QUERY_DESCRIPTION,
@@ -279,6 +286,55 @@ describe("the offset rule and the provider budgets", () => {
       sql: "SELECT id, hex(zeroblob(20000)) AS pad FROM many",
     });
     expect(result.content).toEqual([{ type: "text", text: BYTES }]);
+  });
+});
+
+describe("the read allowance", () => {
+  /** Patches SQLite's read so it charges `units` to the allowance its budget carries, and records each one. */
+  function billingSqlite(units: number) {
+    const original = SQLiteProvider.prototype.queryReadOnly;
+    const seen: Array<{ allowance: RunReadAllowance | undefined; remainingBefore: number | undefined }> = [];
+    SQLiteProvider.prototype.queryReadOnly = async function (
+      this: SQLiteProvider,
+      ...args: Parameters<typeof original>
+    ) {
+      const allowance = args[1].readAllowance;
+      seen.push({ allowance, remainingBefore: allowance?.remaining() });
+      allowance?.charge(units, "the statement");
+      return original.apply(this, args);
+    };
+    return { seen, restore: () => (SQLiteProvider.prototype.queryReadOnly = original) };
+  }
+
+  test("each call is handed an allowance of its own, so one call's spend never reaches the next", async () => {
+    const billing = billingSqlite(7);
+    try {
+      await direct({ connection_id: "seed:shop", sql: "SELECT id FROM numbers LIMIT 1" });
+      await direct({ connection_id: "seed:shop", sql: "SELECT id FROM numbers LIMIT 1" });
+    } finally {
+      billing.restore();
+    }
+    const [first, second] = billing.seen;
+    expect(first?.allowance).toBeInstanceOf(RunReadAllowance);
+    expect(second?.allowance).toBeInstanceOf(RunReadAllowance);
+    expect(second?.allowance).not.toBe(first?.allowance);
+    expect(first?.allowance?.limit).toBe(MCP_CALL_READ_ALLOWANCE);
+    expect(second?.remainingBefore).toBe(MCP_CALL_READ_ALLOWANCE);
+    expect(first?.allowance?.remaining()).toBe(MCP_CALL_READ_ALLOWANCE - 7);
+  });
+
+  test("a read past the call's allowance is refused before it is sent, in the refusal's own sentence", async () => {
+    const billing = billingSqlite(MCP_CALL_READ_ALLOWANCE + 1);
+    let result: Answered;
+    try {
+      result = await direct({ connection_id: "seed:shop", sql: "SELECT id FROM numbers LIMIT 1" });
+    } finally {
+      billing.restore();
+    }
+    expect(result.isError).toBe(true);
+    expect(result.content.map((block) => block.text).join("\n")).toContain(READ_ALLOWANCE_PREFIX);
+    expect(billing.seen[0]?.allowance?.remaining()).toBe(MCP_CALL_READ_ALLOWANCE);
+    expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_execution_failed" });
   });
 });
 

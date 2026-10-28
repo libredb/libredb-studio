@@ -21,6 +21,13 @@ export const MCP_UNTRUSTED_NOTICE =
 export const MCP_RESULT_CAP_BYTES = 32_768;
 export const MCP_PROVIDER_ROW_CAP = 1_000;
 export const MCP_PROVIDER_BYTE_CAP = 1_048_576;
+/**
+ * The billed reads one statement call may spend, on an engine that bills every read (`RunReadAllowance`). MCP has no
+ * run, so each call is given an allowance of its own. Twice the row cap: one call sends one statement, so a full
+ * result and the row past it that shows there is more fit with room for what the engine bills beyond the rows it
+ * returns.
+ */
+export const MCP_CALL_READ_ALLOWANCE = 2_000;
 export const MCP_ENGINE_MESSAGE_CAP_BYTES = 4_096;
 export const MCP_TABLE_COMMENT_CAP_BYTES = 2_048;
 export const MCP_ENGINE_MESSAGE_CUT_SUFFIX = " (message cut at 4 KiB)";
