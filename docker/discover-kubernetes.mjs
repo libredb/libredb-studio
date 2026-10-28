@@ -10,6 +10,8 @@
  * Its token reads the credentials of every opted-in namespace, so this file is kept small and dull on purpose:
  *   - it asks for three things only: a paged `list` of each contract kind per namespace, a `get` of each credential
  *     Secret by name, and a `get` and an `update` of the export Secret; it never lists Secrets and never watches;
+ *   - it keeps a Secret only when it belongs to the resource that names it (an ownerReference or CloudNativePG's
+ *     label, or the basic-auth type of an initdb Secret), so a Cluster cannot point it at another workload's Secret;
  *   - it keeps only the contract's keys of a Secret, decoded, each at most LIMITS.valueBytes and valid UTF-8, and of a
  *     resource only the contract's fields; it interprets nothing else: the mapping to a connection, the id rule,
  *     staleness and validation live in src/lib/seed/, where the coverage gate measures them;
@@ -62,6 +64,21 @@ export const CONTRACT = Object.freeze([
     /** `.spec.bootstrap.initdb.secret.name` when set, otherwise the `<name>-app` Secret CloudNativePG writes. */
     secretName(resource) {
       return text(resource?.spec?.bootstrap?.initdb?.secret?.name) ?? `${resource.metadata.name}-app`;
+    },
+    /**
+     * Whether `secret` belongs to `cluster`, so a Cluster cannot point the exporter at another workload's Secret of
+     * its namespace: the `<name>-app` Secret must carry an ownerReference to the Cluster's UID or the label
+     * cnpg.io/cluster=<name>, as CloudNativePG writes it, and a Secret named by initdb must be of type
+     * kubernetes.io/basic-auth, as CloudNativePG itself requires.
+     */
+    owns(secret, cluster) {
+      if (text(cluster?.spec?.bootstrap?.initdb?.secret?.name) !== undefined) {
+        return secret?.type === "kubernetes.io/basic-auth";
+      }
+      const uid = text(cluster?.metadata?.uid);
+      const references = Array.isArray(secret?.metadata?.ownerReferences) ? secret.metadata.ownerReferences : [];
+      const owned = uid !== undefined && references.some((reference) => reference?.uid === uid);
+      return owned || secret?.metadata?.labels?.["cnpg.io/cluster"] === cluster?.metadata?.name;
     },
     /** The resource with only the fields the contract reads, or null when it has no namespace and name. */
     prune(resource) {
@@ -410,10 +427,14 @@ function keepSecretData(row, secret) {
   return { data: kept };
 }
 
-/** The credential Secret of `resource`: its kept keys, or the problem that stopped the exporter reading them. */
-async function readCredentialSecret(client, row, namespace, secretName) {
+/**
+ * The credential Secret of the listed `item`: its kept keys, or the problem that stopped the exporter keeping them. A
+ * Secret that does not belong to the item is kept whole out of the export (decisions: S3 Secret ownership).
+ */
+async function readCredentialSecret(client, row, item, namespace, secretName) {
   try {
     const secret = await client.get(`/api/v1/namespaces/${namespace}/secrets/${secretName}`);
+    if (!row.owns(secret, item)) return { name: secretName, problem: "not_owned" };
     return { name: secretName, ...keepSecretData(row, secret) };
   } catch (error) {
     if (error?.statusCode === 404) return { name: secretName, problem: "not_found" };
@@ -487,7 +508,7 @@ export async function scanOnce({ client, config, limits = LIMITS }) {
               continue;
             }
             // oxlint-disable-next-line no-await-in-loop -- one request at a time keeps the API server's load flat.
-            const secret = await readCredentialSecret(client, row, namespace, secretName);
+            const secret = await readCredentialSecret(client, row, item, namespace, secretName);
             databases.push({ kind: row.slug, resource, secret });
           }
           continueToken = typeof list.metadata?.continue === "string" ? list.metadata.continue : "";

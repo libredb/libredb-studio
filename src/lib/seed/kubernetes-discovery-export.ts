@@ -83,7 +83,7 @@ const SecretSchema = z
         port: SECRET_VALUE.optional(),
       })
       .optional(),
-    problem: z.enum(["not_found", "forbidden", "invalid_value"]).optional(),
+    problem: z.enum(["not_found", "forbidden", "not_owned", "invalid_value"]).optional(),
     key: z.enum(KUBERNETES_DISCOVERY_SECRET_KEYS).optional(),
   })
   // The exporter writes the kept keys, or the reason it kept none, never both.

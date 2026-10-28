@@ -151,6 +151,22 @@ describe("mapKubernetesDatabase", () => {
     expect(problem({ name: "orders-app", problem: "invalid_value" })).toBe(
       "the credential Secret orders-app holds a value that is over 1024 bytes or not UTF-8 text",
     );
+    expect(problem({ name: "orders-app", problem: "not_owned" })).toBe(
+      "the credential Secret orders-app is neither owned by the Cluster nor labelled cnpg.io/cluster=orders, so the exporter did not export it",
+    );
+  });
+
+  it("names the rule a user-supplied initdb Secret failed when the exporter did not export it", () => {
+    const entry = database({
+      resource: {
+        metadata: { namespace: "prod", name: "billing-db" },
+        spec: { bootstrap: { initdb: { secret: { name: "billing-owner" } } } },
+      },
+      secret: { name: "billing-owner", problem: "not_owned" },
+    });
+    expect(refusalOf(entry)).toBe(
+      "the credential Secret billing-owner is not of type kubernetes.io/basic-auth, so the exporter did not export it",
+    );
   });
 
   it("skips a Secret without a username, a password, or, for <name>-app, a dbname or a valid port", () => {

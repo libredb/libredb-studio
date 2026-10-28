@@ -68,7 +68,7 @@ beforeEach(() => {
 /** The two lab databases: orders in team-a with its <name>-app Secret, analytics in team-b with its own. */
 function seedLab(): void {
   api.addCluster("team-a", "orders", { bootstrap: { initdb: { database: "orders", owner: "orders" } } });
-  api.addSecret("team-a", "orders-app", {
+  api.addAppSecret("team-a", "orders", {
     username: "orders",
     password: PASSWORD_A,
     dbname: "orders",
@@ -78,7 +78,7 @@ function seedLab(): void {
     "jdbc-uri": `jdbc:postgresql://orders-rw.team-a:5432/orders?password=${PASSWORD_A}&user=orders`,
   });
   api.addCluster("team-b", "analytics");
-  api.addSecret("team-b", "analytics-app", { username: "app", password: PASSWORD_B, dbname: "app", port: "5432" });
+  api.addAppSecret("team-b", "analytics", { username: "app", password: PASSWORD_B, dbname: "app", port: "5432" });
 }
 
 function config(extra: Record<string, string> = {}) {
@@ -457,7 +457,7 @@ describe("scanOnce", () => {
   test("lists every opted-in namespace page by page and keeps only the contract's Secret keys", async () => {
     seedLab();
     api.addCluster("team-a", "reports");
-    api.addSecret("team-a", "reports-app", {
+    api.addAppSecret("team-a", "reports", {
       username: "app",
       password: "not-a-real-password-reports",
       dbname: "app",
@@ -582,9 +582,9 @@ describe("scanOnce", () => {
 
   test("records a kept value over 1024 bytes or not UTF-8 text as invalid_value, naming the key only", async () => {
     api.addCluster("team-a", "orders");
-    api.addSecret("team-a", "orders-app", { username: "orders", password: "p".repeat(1025), dbname: "orders" });
+    api.addAppSecret("team-a", "orders", { username: "orders", password: "p".repeat(1025), dbname: "orders" });
     api.addCluster("team-b", "analytics");
-    api.addSecret("team-b", "analytics-app", { username: Buffer.from([0xc3, 0x28]), password: PASSWORD_B });
+    api.addAppSecret("team-b", "analytics", { username: Buffer.from([0xc3, 0x28]), password: PASSWORD_B });
     const result = await scanOnce({ client: client(), config: config() });
     expect(result.databases.map((entry: { secret: unknown }) => entry.secret)).toEqual([
       { name: "orders-app", problem: "invalid_value", key: "password" },
@@ -594,12 +594,13 @@ describe("scanOnce", () => {
 
   test("keeps a Secret with no data, or a value that is not a string, as it is: Studio names what is missing", async () => {
     api.addCluster("team-a", "orders");
-    api.addSecret("team-a", "orders-app", {});
+    api.addAppSecret("team-a", "orders", {});
     api.addCluster("team-b", "analytics");
     api.scripted.set("/api/v1/namespaces/team-b/secrets/analytics-app", {
       status: 200,
       body: JSON.stringify({
         kind: "Secret",
+        metadata: { labels: { "cnpg.io/cluster": "analytics" } },
         data: { username: 7, password: Buffer.from(PASSWORD_B).toString("base64") },
       }),
     });
@@ -678,6 +679,67 @@ describe("scanOnce", () => {
     });
     expect(result).toMatchObject({ ok: false, status: { code: "api_unreachable" } });
     expect(result.status.message).toContain("ECONNREFUSED");
+  });
+});
+
+/*
+ * A namespace editor can point a Cluster at any Secret of its namespace, and the exporter may get every one of them,
+ * while the Cluster's own read-write Service decides where Studio sends the credentials. So a Secret is exported only
+ * when it belongs to the resource (decisions: S3 Secret ownership): the <name>-app Secret by an ownerReference to the
+ * Cluster's UID or CloudNativePG's cnpg.io/cluster label, and an initdb Secret by the kubernetes.io/basic-auth type
+ * CloudNativePG itself requires.
+ */
+describe("Secret ownership", () => {
+  const DATA = { username: "u", password: "not-a-real-password-unowned", dbname: "d", port: "5432" };
+
+  test("exports a <name>-app Secret the Cluster owns by UID or labels with its name, and no other", async () => {
+    api.addCluster("team-a", "owned");
+    api.addAppSecret("team-a", "owned", DATA, { label: false });
+    api.addCluster("team-a", "labelled");
+    api.addAppSecret("team-a", "labelled", DATA, { owner: false });
+    api.addCluster("team-a", "foreign");
+    api.addSecret("team-a", "foreign-app", DATA);
+    api.addCluster("team-a", "other");
+    api.addSecret("team-a", "other-app", DATA, "kubernetes.io/basic-auth", {
+      ownerReferences: [{ apiVersion: "postgresql.cnpg.io/v1", kind: "Cluster", name: "other", uid: "uid-a-twin" }],
+      labels: { "cnpg.io/cluster": "not-other" },
+    });
+    const result = await scanOnce({ client: client(), config: config({ KUBERNETES_DISCOVERY_NAMESPACES: "team-a" }) });
+    expect(result.databases.map((entry: { secret: unknown }) => entry.secret)).toEqual([
+      { name: "owned-app", data: DATA },
+      { name: "labelled-app", data: DATA },
+      { name: "foreign-app", problem: "not_owned" },
+      { name: "other-app", problem: "not_owned" },
+    ]);
+  });
+
+  test("exports an initdb Secret only of type kubernetes.io/basic-auth", async () => {
+    api.addCluster("team-a", "custom", { bootstrap: { initdb: { secret: { name: "custom-owner" } } } });
+    api.addSecret("team-a", "custom-owner", DATA);
+    api.addCluster("team-a", "opaque", { bootstrap: { initdb: { secret: { name: "app-config" } } } });
+    api.addSecret("team-a", "app-config", DATA, "Opaque");
+    const result = await scanOnce({ client: client(), config: config({ KUBERNETES_DISCOVERY_NAMESPACES: "team-a" }) });
+    expect(result.databases.map((entry: { secret: unknown }) => entry.secret)).toEqual([
+      { name: "custom-owner", data: DATA },
+      { name: "app-config", problem: "not_owned" },
+    ]);
+  });
+
+  test("writes and logs no value of a Secret it did not export", async () => {
+    api.addCluster("team-a", "foreign");
+    api.addSecret("team-a", "foreign-app", DATA);
+    const out = logs();
+    expect(
+      await main({
+        env: api.env({ KUBERNETES_DISCOVERY_NAMESPACES: "team-a" }),
+        now: () => T0,
+        stdout: out.stdout,
+        stderr: out.stderr,
+      }),
+    ).toBe(0);
+    expect(JSON.stringify(api.writtenExport())).not.toContain(DATA.password);
+    expect(JSON.stringify(api.writtenExport())).toContain("not_owned");
+    expect(out.all()).not.toContain(DATA.password);
   });
 });
 
@@ -965,7 +1027,9 @@ describe("the golden fixture, end to end", () => {
   test("the exporter's export of the golden resources maps to the golden connections in Studio", async () => {
     for (const c of golden.cases) {
       api.addCluster(c.resource.metadata.namespace, c.resource.metadata.name, c.resource.spec);
-      api.addSecret(c.resource.metadata.namespace, c.secretName, c.secretData as Record<string, string>);
+      const { namespace, name } = c.resource.metadata;
+      if (c.secretName === `${name}-app`) api.addAppSecret(namespace, name, c.secretData as Record<string, string>);
+      else api.addSecret(namespace, c.secretName, c.secretData as Record<string, string>);
     }
     const namespaces = [...new Set(golden.cases.map((c) => c.resource.metadata.namespace))].join(",");
     expect(

@@ -47,6 +47,8 @@ export interface KubernetesContractRow {
   readonly secretKeys: readonly string[];
   /** The Secret the credentials are read from. */
   secretName(resource: KubernetesDiscoveredResource): string;
+  /** Why the exporter left the Secret out as not belonging to the resource: the tie the row requires. */
+  notOwned(resource: KubernetesDiscoveredResource, secretName: string): string;
   /** The connection fields the resource and its Secret give, the host included, or why they give none. */
   fields(resource: KubernetesDiscoveredResource, secretName: string, data: SecretData): Fields;
 }
@@ -80,6 +82,11 @@ export const CNPG_CLUSTER: KubernetesContractRow = Object.freeze({
   secretKeys: Object.freeze(["username", "password", "dbname", "port"]),
   secretName(resource: KubernetesDiscoveredResource): string {
     return present(resource.spec?.bootstrap?.initdb?.secret?.name) ?? `${resource.metadata.name}-app`;
+  },
+  notOwned(resource: KubernetesDiscoveredResource, secretName: string): string {
+    return present(resource.spec?.bootstrap?.initdb?.secret?.name) === undefined
+      ? `the credential Secret ${secretName} is neither owned by the Cluster nor labelled cnpg.io/cluster=${resource.metadata.name}, so the exporter did not export it`
+      : `the credential Secret ${secretName} is not of type kubernetes.io/basic-auth, so the exporter did not export it`;
   },
   fields(resource: KubernetesDiscoveredResource, secretName: string, data: SecretData): Fields {
     const user = present(data.username);
@@ -144,6 +151,7 @@ export function mapKubernetesDatabase(entry: KubernetesDiscoveredDatabase): Kube
     };
   }
   if (entry.secret.data === undefined) {
+    if (entry.secret.problem === "not_owned") return { ok: false, reason: row.notOwned(entry.resource, secretName) };
     const problem = entry.secret.problem as keyof typeof SECRET_PROBLEMS;
     return { ok: false, reason: SECRET_PROBLEMS[problem](secretName, entry.secret.key) };
   }

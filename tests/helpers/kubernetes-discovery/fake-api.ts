@@ -125,6 +125,35 @@ export class FakeDiscoveryApi {
     this.clusters.set(namespace, list);
   }
 
+  /**
+   * Stores the `<cluster>-app` Secret as CloudNativePG writes it: owned by the Cluster, by its UID, and labelled with
+   * its name. Either tie alone is what the exporter needs; `ties` drops one or both.
+   */
+  addAppSecret(
+    namespace: string,
+    cluster: string,
+    data: Record<string, string | Buffer>,
+    ties: { owner?: boolean; label?: boolean } = {},
+  ): void {
+    const { owner = true, label = true } = ties;
+    this.addSecret(namespace, `${cluster}-app`, data, "kubernetes.io/basic-auth", {
+      ...(label ? { labels: { "cnpg.io/cluster": cluster } } : {}),
+      ...(owner
+        ? {
+            ownerReferences: [
+              {
+                apiVersion: "postgresql.cnpg.io/v1",
+                kind: "Cluster",
+                name: cluster,
+                uid: `uid-${namespace}-${cluster}`,
+                controller: true,
+              },
+            ],
+          }
+        : {}),
+    });
+  }
+
   /** Stores a Secret with `data` given as text, encoded as the API server returns it. */
   addSecret(
     namespace: string,

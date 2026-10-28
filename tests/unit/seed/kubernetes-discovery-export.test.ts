@@ -84,6 +84,7 @@ describe("parseKubernetesDiscoveryExport", () => {
           database({ secret: { name: "orders-app", problem: "not_found" } }),
           database({ secret: { name: "orders-app", problem: "forbidden" } }),
           database({ secret: { name: "orders-app", problem: "invalid_value", key: "password" } }),
+          database({ secret: { name: "orders-app", problem: "not_owned" } }),
         ],
       }),
     );
