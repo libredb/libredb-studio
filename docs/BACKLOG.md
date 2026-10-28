@@ -7734,10 +7734,11 @@ Found 2026-10-09 while designing the S3 provider.
 
 `MCP_EXPOSABLE.firestore` is false and the provider implements no `queryReadOnly`, so agent execution and MCP `run_read_query` refuse it; plan mode works, grounding on collection names with no document read (`docs/providers/firestore.md` section 3.5).
 Every Firestore read is billed, and no read contract for the query chain under an agent's budget is designed yet.
+The run-scoped allowance such a contract needs exists: every budget an agent drive or an MCP call hands a provider carries a `RunReadAllowance` (`src/lib/db/read-allowance.ts`, "What bounds a run" in `docs/AGENT.md`), which the provider charges before each billed request, so what remains is the provider charging it.
 
 Found 2026-10-12 while designing the Firestore provider.
 
-**Done when:** an MCP metadata surface that reads no document is designed, `MCP_EXPOSABLE.firestore` turns true for it, and agent execution serves a `queryReadOnly` that runs one console statement under a per-run read bound, which MCP serves through its own MCP facet in its language pack (`src/lib/agent/languages/<statement-language>/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`), with tests; cited in `docs/AGENT.md` beside B104.
+**Done when:** an MCP metadata surface that reads no document is designed, `MCP_EXPOSABLE.firestore` turns true for it, and agent execution serves a `queryReadOnly` that runs one console statement under a per-run read bound, charging every billed read, grounding, sampling and catalog reads included, to the budget's `readAllowance`, which MCP serves through its own MCP facet in its language pack (`src/lib/agent/languages/<statement-language>/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`), with tests; cited in `docs/AGENT.md` beside B104.
 
 ### B108. RabbitMQ has no agent execution and no MCP `run_read_query`
 

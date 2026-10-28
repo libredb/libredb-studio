@@ -1970,12 +1970,23 @@ at least the longest deadline it wants to serve, and a stream cut mid-run has no
 | `maxConcurrentExecutions` | 1 | The loop is sequential; a run cannot fan out — and a second consequence rides on the same 1: a failed statement's recorded span is a DELTA over the run's charged total, so an execution in flight alongside it would have its time attributed to whichever one failed. |
 | One model call | 90 s | Whichever of this and the run's remaining time is smaller applies. Not per workflow: how long one request may hang is a property of the transport, not of the question. |
 | Repair attempts | 3 | Statements that failed **at the database**. |
+| Billed reads | 10,000 per drive | Every read the drive hands a provider, grounding, sampling and catalog reads included, on an engine that bills each read; no engine charges it yet. |
 
 The statement budget, the database time and the wall clock are enforced through the policy the run's
 workflow names, and the version carries the workflow so a recorded deny code traces back to the
 number that produced it. The turn ceiling is the backstop for a loop that never reaches the database
 at all, and it moves with the wall clock rather than alone: at a deadline that cannot pay for the
 turns, a larger turn ceiling only changes which word the ledger records.
+
+**The run read allowance** (`AGENT_RUN_READ_ALLOWANCE` in `src/lib/agent/execution-policy.ts`, the meter in `src/lib/db/read-allowance.ts`) bounds what a drive may spend on an engine that bills every read.
+The per-statement caps above bound one result, and a provider cannot count a run's reads itself, because one cached provider serves every run on its connection.
+So `runInvestigation` creates one `RunReadAllowance` per drive, and `readOnlyBudgetFor` in `src/lib/agent/tools.ts` puts it in every budget the drive hands a provider, as `ReadOnlyStatementBudget.readAllowance`: the model's statements, the grounding's catalog reads, the MongoDB catalog read and the two cluster readings all draw on the same one, and two runs never share one.
+An engine that bills its reads charges it before each request it sends, with what that request may cost at most, retries included, and its provider doc says what one billed read is; every other engine ignores it, and no engine charges it yet.
+A read on the editor's object surface (`listObjects`, `describeObject`) carries no budget, so a billed engine's grounding goes through `readCatalogReadOnly`, which does.
+A charge past what is left is refused before the request is sent, with `ReadAllowanceExceededError`, a `QueryError` whose sentence opens "Read-only execution exceeded the read allowance"; the run settles it as a repairable statement failure, as it does a result past the row budget, so the model is told and may ask for a smaller read.
+The 10,000 is 45 statements, the largest row's ceiling, times 201 rows, with room left: the allowance binds only where a request bills more than the rows it returns.
+A resumed drive starts with a fresh allowance, like its turn ceiling and repair ledger, because the spend is not yet recorded in the ledger.
+MCP has no run, so each statement call, `run_read_query` and the other statement tools alike, gets an allowance of its own (`MCP_CALL_READ_ALLOWANCE`, 2,000).
 
 **A run keeps its last turns back for its report.** Within `AGENT_REPORT_RESERVE_TURNS` (2) model
 turns of its turn ceiling, or `AGENT_REPORT_RESERVE_MS` (20 s) of its run deadline — whichever it
