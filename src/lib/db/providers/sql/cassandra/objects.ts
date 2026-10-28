@@ -288,14 +288,15 @@ export const SCYLLA_IDENTITY_CQL = "SELECT key FROM system.versions";
  * A refusal of any kind answers none: on Cassandra it is the expected answer, and on a
  * ScyllaDB role that may not read `system.versions` the cost is three keyspaces drawn as a
  * person's, which is the state before #1428 rather than a keyspace hidden on a guess.
+ * `execute()` rejects only with a `CassandraTransportError` (the driver transport classifies
+ * every fault into one), so every rejection here is such a refusal.
  */
 export async function readEngineKeyspaces(transport: CassandraTransport): Promise<readonly string[]> {
   try {
     await transport.execute(SCYLLA_IDENTITY_CQL);
     return SCYLLA_SYSTEM_KEYSPACES;
-  } catch (error) {
-    if (error instanceof CassandraTransportError) return [];
-    throw error;
+  } catch {
+    return [];
   }
 }
 

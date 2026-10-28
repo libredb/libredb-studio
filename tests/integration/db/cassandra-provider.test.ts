@@ -1115,6 +1115,20 @@ describe("getOverview", () => {
     await expect(provider.getOverview()).rejects.toThrow(QueryError);
   });
 
+  test("a connection pinning no keyspace refuses the overview and health panels before asking the server", async () => {
+    for (const database of [undefined, ""]) {
+      const { provider, session } = await connectedProvider(healthyReplies(), { database });
+      session.asked.length = 0;
+
+      for (const read of [() => provider.getOverview(), () => provider.getHealth()]) {
+        const error = await read().catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(DatabaseConfigError);
+        expect((error as Error).message).toContain("pins no keyspace");
+      }
+      expect(session.asked).toEqual([]);
+    }
+  });
+
   test("a real count of zero is kept, not read as an absence", async () => {
     // The distinction the fix has to get right in both directions: a row that says
     // `count: 0` is a measurement (nobody is connected right now), not the empty
