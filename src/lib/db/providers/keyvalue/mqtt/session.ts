@@ -14,6 +14,7 @@
 import { connect as netConnect, isIP, type Socket } from "node:net";
 import { checkServerIdentity, connect as tlsConnect, type PeerCertificate } from "node:tls";
 import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
+import { socketEgress } from "@/lib/db/http/egress-policy";
 import {
   MQTT_CLIENT_ID_PREFIX,
   MQTT_CLIENT_ID_RANDOM_BYTES,
@@ -193,13 +194,21 @@ export interface MqttSessionOptions {
  * The answer is the one `tlsAgentOptions` in `src/lib/db/http/node-transport.ts` already gives: send a server
  * name only when the identity is a DNS name, and check the certificate against the IDENTITY, which through a
  * tunnel is the far end and never the local forward. Node's own check reads an IP SAN for an IP identity.
+ *
+ * THE ADDRESS RULE IS THE SHARED ONE, AND THIS WRITES NO ADDRESS CHECK OF ITS OWN. `socketEgress` refuses a
+ * link-local or metadata literal whatever DB_HTTP_BLOCK_PRIVATE_HOSTS says, and with the flag on a blocked one, before
+ * any socket, because a literal never reaches a lookup; a name dials through the lookup it returns, which checks the
+ * address the socket is handed. Through an SSH tunnel `host` is the local forward, a loopback address, so the rule is
+ * checked against that address, as the shared node transport checks it: with the flag on a tunnelled connection is
+ * refused, and the far end, which the SSH server resolves, is not checked here.
  */
 const dialBroker: MqttTransportFactory = (options) => {
+  const lookup = socketEgress(options.host, { refusesLinkLocal: true });
+  const target = { host: options.host, port: options.port, ...(lookup === undefined ? {} : { lookup }) };
   const identity = options.tlsIdentity ?? options.host;
   const socket: Socket = options.tls
     ? (tlsConnect({
-        host: options.host,
-        port: options.port,
+        ...target,
         // SNI only for a DNS name; an IP literal is refused here and needs none.
         ...(isIP(identity) === 0 ? { servername: identity } : {}),
         rejectUnauthorized: options.rejectUnauthorized ?? true,
@@ -215,7 +224,7 @@ const dialBroker: MqttTransportFactory = (options) => {
         ...(options.clientCert === undefined ? {} : { cert: options.clientCert }),
         ...(options.clientKey === undefined ? {} : { key: options.clientKey }),
       }) as unknown as Socket)
-    : netConnect(options.port, options.host);
+    : netConnect(target);
   return {
     transport: socket as unknown as MqttTransport,
     readyEvent: options.tls ? "secureConnect" : "connect",
@@ -660,8 +669,13 @@ export async function readTopics(options: MqttSessionOptions): Promise<MqttReadO
       if (bytes >= MQTT_READ_BUDGET_BYTES) finish("budget-bytes");
     });
 
+    // The egress refusal the dial's lookup raised reaches the caller unchanged, so the reader sees the shared sentence.
     socket.on("error", (error: Error) =>
-      fail(new QueryError(`The broker could not be reached: ${error.message}`, MQTT_TYPE)),
+      fail(
+        error instanceof DatabaseConfigError
+          ? error
+          : new QueryError(`The broker could not be reached: ${error.message}`, MQTT_TYPE),
+      ),
     );
     socket.on("close", () => {
       if (settled) return;
