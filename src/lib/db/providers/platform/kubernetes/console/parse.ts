@@ -744,8 +744,9 @@ export function parseKubectl(text: string): KubectlParse {
         return { ok: true, statement: noArguments(scanned, { command: "version" }) };
     }
   } catch (error) {
-    if (error instanceof Refused) return { ok: false, refusal: error.refusal };
-    throw error;
+    // Every reader above throws only Refused; anything else is a defect of ours and leaves as itself.
+    if (!(error instanceof Refused)) throw error;
+    return { ok: false, refusal: error.refusal };
   }
 }
 
