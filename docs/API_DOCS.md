@@ -1781,7 +1781,7 @@ required", "code": "AUTH_REQUIRED" }` without a session). Never `500`, and never
 |-------|---------|
 | `enabled` | A literal boolean. The rail compares `=== true` |
 | `ledgerVerified` | `true` when the durable ledger's writable-path probe passed; `false` for the Postgres backend, which is accepted without being contacted |
-| `reason` | One code per operator action: `GOVERNANCE_HOLD`, `OPERATOR_DISABLED`, `NO_MODEL_CONFIGURED`, `LEDGER_UNAVAILABLE`, `LEDGER_INCOMPATIBLE`, `UNSANCTIONED_WORLD_TARGET`, `IMPLICIT_HOSTED_WORLD`. `GOVERNANCE_HOLD` means governance mode (`GOVERNANCE_SOURCE`) holds the agent off in this version. Sent to every session |
+| `reason` | One code per operator action: `GOVERNANCE_HOLD`, `ACCESS_REVIEW_HOLD`, `OPERATOR_DISABLED`, `NO_MODEL_CONFIGURED`, `LEDGER_UNAVAILABLE`, `LEDGER_INCOMPATIBLE`, `UNSANCTIONED_WORLD_TARGET`, `IMPLICIT_HOSTED_WORLD`. `GOVERNANCE_HOLD` means governance mode (`GOVERNANCE_SOURCE`) holds the agent off in this version, and `ACCESS_REVIEW_HOLD` that the Kubernetes access review (`KUBERNETES_ACCESS_REVIEW`) does. Sent to every session |
 | `detail` | The underlying message. **Admin sessions only** — the ledger codes' carry an absolute server path plus an OS error string or a quoted fragment of a file on that disk. Every other session gets one stable sentence instead |
 
 This route is **not** metered out of the `ai` bucket: a visibility probe must not spend a run's

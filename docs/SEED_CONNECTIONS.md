@@ -1128,6 +1128,129 @@ Pages that use the lighter connection list (the admin Overview and Operations ta
 
 ---
 
+## Kubernetes access review
+
+With `KUBERNETES_ACCESS_REVIEW=on`, Studio asks the Kubernetes API who may use a connection whose credentials come from a Kubernetes Secret, instead of deciding it from Studio roles.
+It is off by default, and with it off nothing on this page changes.
+
+### Who sees a reviewed connection
+
+A reviewed connection is one that names the Kubernetes Secret its credentials come from.
+Only a Kubernetes discovery source sets that, in code; a seed file cannot, because the seed schema has no such field.
+Its roles are `*`, so the review is its only gate, for admins and users alike:
+
+- It is listed, and opened by any route, only for a session the review allows to `get` that Secret.
+- The review is a SubjectAccessReview with `user` set to the session's identity provider subject, the ID token's `sub`, and `groups` set to the groups of the ID token's `groups` claim at sign-in, and nothing else: no header, cookie field or display name reaches it.
+- This is the identity Rancher impersonates on a downstream cluster, the Rancher user id with its group principals, so for the same Secret the review answers what Rancher answers. A Rancher user with no role in the cluster gets no reviewed connection.
+- Every error, timeout, answer that is not 2xx and answer that is malformed or for another review denies.
+- A session without an identity provider subject, the break-glass password sign-in included, and a session without a groups record are denied without a request.
+- Opening one the review denies answers exactly like an id that does not exist: `404 CONNECTION_NOT_FOUND`. With the review on, so does a seed the caller's role may not see, which answers 403 otherwise, so no answer tells a caller which ids exist; each miss is audited as `permission_denied` on the target `kubernetes-access/connection`.
+- An answer is kept for `KUBERNETES_ACCESS_REVIEW_CACHE_SECONDS`, 30 by default and at most 60, per subject, set of groups and Secret. A role or binding removed in the cluster reaches the next list or open within that time; an open tab drops the connection at its next list refresh after it ([In an open tab](#in-an-open-tab)).
+- With the review off, a reviewed connection is shown to the admin role only, as a discovered CapRover connection is.
+
+The review asserts no group that starts with `system:`.
+Rancher adds `system:authenticated` and `system:cattle:authenticated` to every request it impersonates, and a review asserting them would allow a Rancher user who has no role in the cluster at all, where Rancher refuses with 403, so Studio leaves them out.
+The price is the safe direction: a Secret readable only through a binding to one of those two groups is denied in Studio although Rancher allows it.
+An ID token whose `groups` claim names a `system:` group is refused at sign-in with `oidc_groups_refused`, and so is a claim that is not a list of names, lists more than 512 groups or one longer than 256 bytes.
+An absent claim, which Rancher sends every user without group principals and so every local user, is an empty list.
+
+### Admin
+
+With the review on, a Studio admin is whoever the review allows to `update` Studio's own Deployment, named in `KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT`, decided once at each sign-in.
+Whoever may update that Deployment can already change Studio's environment, image and mounts, so the rule grants nothing the pod spec does not.
+No identity provider claim makes an admin: `OIDC_ROLE_CLAIM` is refused at boot, and the callback does not read it.
+A sign-in whose review fails is a user.
+
+### Sessions
+
+The groups of each sign-in are kept in the server's memory, per issuer and subject, for the session lifetime; the newest sign-in of a subject replaces them.
+A restart empties that memory, so a session whose record is gone is refused once and the browser signs in again, silently with `OIDC_PROMPT=omit` and `OIDC_AUTO_REDIRECT=true` while the identity provider's own session is live.
+If the record is gone again right after that sign-in, the login page says so with `oidc_groups_lost` instead of going round again; that happens with more than one replica, which the review does not support.
+The memory holds the records of at most 4096 subjects; past that the oldest record goes first, and its session signs in again.
+A session keeps the groups it signed in with, and signing out of the identity provider does not end a Studio session, so the review's mode allows a session of at most 900 seconds (`AUTH_SESSION_TTL_SECONDS`).
+
+### What the review switches off
+
+MCP and the agent stay off while the review is on, whatever `LIBREDB_MCP_ENABLED`, `LIBREDB_AGENT_ENABLED` and the AI configuration say: an MCP token and an agent run carry no groups record, so no review could decide what they open.
+`GET /api/agent/config` answers `ACCESS_REVIEW_HOLD`.
+
+### Boot checks
+
+With the review on, the server refuses to start, naming every variable to fix, when:
+
+- `KUBERNETES_ACCESS_REVIEW` holds a value other than `on`, `true`, `1`, `off`, `false` or `0` (any other value counts as on, so a typo fails closed);
+- `GOVERNANCE_SOURCE` is set;
+- `NEXT_PUBLIC_AUTH_PROVIDER` is not `oidc`;
+- `OIDC_ROLE_CLAIM` or `OIDC_BEARER_AUDIENCE` is set;
+- `LIBREDB_MCP_ENABLED` or `LIBREDB_AGENT_ENABLED` switches either on;
+- `AUTH_SESSION_TTL_SECONDS` is unset, which keeps 86400, or above 900;
+- `KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT`, `KUBERNETES_ACCESS_REVIEW_API_URL` or `KUBERNETES_ACCESS_REVIEW_CACHE_SECONDS` is missing or invalid;
+- the token file cannot be read or is empty, or the CA file cannot be read or holds no certificate.
+
+### Setting it up
+
+| Variable | Meaning | Default |
+|----------|---------|---------|
+| `KUBERNETES_ACCESS_REVIEW` | `on`, `true` or `1` switches the review on | off |
+| `KUBERNETES_ACCESS_REVIEW_API_URL` | The Kubernetes API server, https only | `https://kubernetes.default.svc` |
+| `KUBERNETES_ACCESS_REVIEW_TOKEN_PATH` | The ServiceAccount token file, read again for every review | `/var/run/secrets/kubernetes.io/serviceaccount/token` |
+| `KUBERNETES_ACCESS_REVIEW_CA_PATH` | The CA the API server's certificate must chain to, read again for every review | `/var/run/secrets/kubernetes.io/serviceaccount/ca.crt` |
+| `KUBERNETES_ACCESS_REVIEW_CACHE_SECONDS` | How long an answer is kept, whole seconds from 0 to 60 | `30` |
+| `KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT` | Studio's own Deployment as `<namespace>/<name>`; required | none |
+
+Studio authenticates its reviews with its pod's ServiceAccount token and uses that token for nothing else; the Kubernetes database provider never reads it.
+The ServiceAccount needs one right, `create` on `subjectaccessreviews`:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: libredb-studio-access-review
+rules:
+  - apiGroups: ["authorization.k8s.io"]
+    resources: ["subjectaccessreviews"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: libredb-studio-access-review
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: libredb-studio-access-review
+subjects:
+  - kind: ServiceAccount
+    name: libredb-studio
+    namespace: libredb-studio
+```
+
+That right lets whoever holds the token ask what any person may do in the cluster, without doing it; a Studio admin, who can read the pod, can therefore probe permissions.
+A pod that does not mount its ServiceAccount token can mount a short-lived one with a projected volume, and the cluster's CA beside it:
+
+```yaml
+volumes:
+  - name: access-review
+    projected:
+      sources:
+        - serviceAccountToken:
+            path: token
+            expirationSeconds: 3600
+        - configMap:
+            name: kube-root-ca.crt
+            items:
+              - key: ca.crt
+                path: ca.crt
+# mounted read-only at /var/run/secrets/libredb/access-review, with
+#   KUBERNETES_ACCESS_REVIEW_TOKEN_PATH=/var/run/secrets/libredb/access-review/token
+#   KUBERNETES_ACCESS_REVIEW_CA_PATH=/var/run/secrets/libredb/access-review/ca.crt
+```
+
+The kubelet rotates a projected token before it expires, and Studio reads the file again for every review.
+Run one replica: the groups of each sign-in and the cached answers live in that replica's memory.
+
+---
+
 ## Error Handling
 
 | Scenario | Behavior |
@@ -1154,7 +1277,7 @@ Pages that use the lighter connection list (the admin Overview and Operations ta
 | `SEED_LITERAL_VALUES` set to a value it does not recognize | References stay resolved, as with the mode off, and one warning per process names the value. |
 | User role doesn't match any connection | Empty list returned. Normal behavior. |
 | Seed connection not found at query time | 404 response. |
-| User doesn't have access to seed connection | 403 response. |
+| User doesn't have access to seed connection | 403 response; with the Kubernetes access review on, the same 404 `CONNECTION_NOT_FOUND` as an unknown id ([Kubernetes access review](#kubernetes-access-review)). |
 | `SEED_DISCOVERY_PATH` set and the export file missing | No discovered connections and discovery state `waiting`, while file seeds and samples are unaffected. |
 | Export file unreadable, over 2 MiB, not JSON or not the expected shape | No discovered connections and state `error` with code `invalid_export`, whose message never quotes the file. |
 | Export older than `SEED_DISCOVERY_MAX_AGE_MS` (the exporter stopped or was deleted) | Discovered connections withdrawn; state `stale`. |

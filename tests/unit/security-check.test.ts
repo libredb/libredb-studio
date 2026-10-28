@@ -81,7 +81,7 @@ describe("parseTables and findControlTable", () => {
       "3.24",
       "3.25",
     ]);
-    expect(PROGRAMME_CONTROL_IDS).toHaveLength(48);
+    expect(PROGRAMME_CONTROL_IDS).toHaveLength(50);
   });
 
   test("ignores a table that is not the control table", () => {

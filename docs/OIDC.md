@@ -357,7 +357,7 @@ No Studio code is specific to Rancher: it is the ordinary OIDC mode with the val
      Request only scopes the client's `spec.scopes` lists, and never `offline_access`: Rancher issues a refresh token only for that scope, and Studio has no use for one.
    - `OIDC_PROMPT=omit` and `OIDC_AUTO_REDIRECT=true` make the visit to Studio a single sign-on: Rancher answers with a code while its own session is live and shows its login page otherwise.
      Rancher ignores `prompt`, so the default `prompt=login` would not force a new sign-in either.
-   - `AUTH_SESSION_TTL_SECONDS=900` keeps a Studio session short, because signing out of Rancher does not end it (see logout below).
+   - `AUTH_SESSION_TTL_SECONDS=900` keeps a Studio session short, because signing out of Rancher does not end it (see logout below); with the Kubernetes access review on (step 7), Studio refuses to start with a longer one.
    - When Rancher's certificate comes from a private CA, Rancher's self-signed one included, give Studio that CA through `NODE_EXTRA_CA_CERTS` (the chart README's "Trusting a private CA"); Rancher serves the CA it uses at `https://rancher.example.com/cacerts`.
      Never set `NODE_TLS_REJECT_UNAUTHORIZED=0` to get past that certificate: Studio takes the ID token straight from Rancher's token endpoint, and the TLS check on that connection is what vouches for it.
 
@@ -384,10 +384,17 @@ No Studio code is specific to Rancher: it is the ordinary OIDC mode with the val
    A Studio admin holds every connection Studio has, so name a group that only the right people can join.
    Leave `OIDC_ADMIN_ROLES` at its default only with care: `admin` would make any group principal named `admin`, in any letter case, an administrator.
    With `OIDC_ROLE_CLAIM` unset, every Rancher user is a `user`, whatever groups they hold.
+   With the Kubernetes access review on (step 7), leave `OIDC_ROLE_CLAIM` unset: the review decides who is an admin, and Studio refuses to start with a role claim.
 
 6. **Logout:** Rancher's discovery document advertises no `end_session_endpoint`, so logout ends Studio's session only, and the server log notes once per logout that no provider logout URL could be built.
    The next visit with a live Rancher session signs in again without a form, as single sign-on intends.
    Signing out of Rancher does not end a Studio session; it lasts until `AUTH_SESSION_TTL_SECONDS` runs out.
+
+7. **Kubernetes access review (optional):** when Studio runs in the cluster whose databases it opens, `KUBERNETES_ACCESS_REVIEW=on` lets the cluster's own RBAC decide, per person, which Kubernetes-discovered database they may open, and who is a Studio admin.
+   Each review asks as the Rancher user id in `sub` with the group principals of the `groups` claim, the identity Rancher impersonates the user with on that cluster, so Studio gives a person what their Rancher roles give them there.
+   A Studio admin is whoever may `update` Studio's own Deployment, the administrator and the cluster's owners in a default install, and a project member is a user.
+   Request `groups` in `OIDC_SCOPE` on 2.15 so a user with group principals is reviewed with them; a local user has none either way.
+   Setup, the boot checks and what the review switches off: [Kubernetes access review](SEED_CONNECTIONS.md#kubernetes-access-review).
 
 > From Rancher 2.14 the access token Rancher issues with the ID token names the user's Rancher token, and Rancher accepts it as a bearer credential, so it carries the user's full Rancher power.
 > Studio drops it: the callback keeps only the ID token, and neither the access token nor a refresh token reaches a cookie, a storage write or a log line, which `tests/api/auth/oidc-rancher.test.ts` pins.

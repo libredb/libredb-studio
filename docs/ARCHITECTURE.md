@@ -361,6 +361,13 @@ With the runtime setting `queryLog.onSinkFailure` at `refuse`, its admission gat
 Governance is off unless `GOVERNANCE_SOURCE=postgres` is set.
 The contract, its conformance files and its semantics: [`docs/GOVERNANCE.md`](GOVERNANCE.md).
 
+### 4.12. Kubernetes access review (`src/lib/kubernetes-access/`, off by default)
+
+With `KUBERNETES_ACCESS_REVIEW=on`, the cluster's own RBAC decides who may use a connection whose credentials come from a Kubernetes Secret, and who is a Studio admin.
+`review.ts` asks one SubjectAccessReview with the pod's ServiceAccount token, `decisions.ts` caches the answers and keeps one request in flight per key, `groups.ts` holds the groups of each OIDC sign-in per issuer and subject, `gate.ts` applies both decisions, `session-guard.ts` signs a session in again when its groups record is gone, and `preflight.ts` refuses a contradicting environment at boot.
+The gate sits in `src/lib/governance/visible.ts`, the one dispatcher the managed list and `resolveConnection` ask, so the list and every route that opens a connection decide alike; the caches live on `globalThis`, because each route handler is bundled apart.
+Behaviour and setup: [`docs/SEED_CONNECTIONS.md`](SEED_CONNECTIONS.md#kubernetes-access-review).
+
 ## 5. Directory Structure
 
 ```
@@ -440,6 +447,8 @@ src/
     ├── mcp/                 # MCP server: SDK handler, token, pre-processing, tools (docs/MCP.md)
     ├── governance/          # Governance (docs/GOVERNANCE.md): contract v1, the settings registry and the runtime that
     │                        #   reads the source: keyring, admission, pool, snapshot, freshness, refresher, listener
+    ├── kubernetes-access/   # Kubernetes access review (docs/SEED_CONNECTIONS.md): settings, the SubjectAccessReview
+    │                        #   client, the decision cache, the groups store, the gate, the session guard, the preflight
     ├── query-events/        # Query event rows under governance: the builder, statement redaction, UUIDv7 event ids,
     │                        #   the sink that queues the rows and inserts them in batches, and the admission gate
     │                        #   that refuses an execution while the sink cannot record it

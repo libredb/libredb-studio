@@ -74,6 +74,8 @@ A control plane may set the runtime setting `mcp.enabled`, which `/api/mcp` read
 `LIBREDB_MCP_URL`, `LIBREDB_MCP_TOKEN_LABEL` and `LIBREDB_MCP_TOKEN_TTL_DAYS` stay prerequisites in the environment, so `true` enables only what they configure.
 While the hold stands the setting has no effect, so a control plane shows it read-only and Studio's admin status reports it as held, with the note that MCP and agent governance ship in v1.1.
 
+The Kubernetes access review (`KUBERNETES_ACCESS_REVIEW`, see [Kubernetes access review](./SEED_CONNECTIONS.md#kubernetes-access-review)) holds MCP off the same way: an MCP token carries no groups record for a review to assert, so `/api/mcp` answers `404`, `GET /api/mcp/token` names the review's hold as its one problem, and the boot check refuses `LIBREDB_MCP_ENABLED` switched on.
+
 ### npx
 
 The launcher derives `LIBREDB_MCP_URL` from the address and port it serves on, so only the switch and the label are yours:
