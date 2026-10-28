@@ -191,18 +191,17 @@ let restatedPrefix: RegExp | undefined;
 
 /**
  * The strip, built once from every engine's declared estimating prefix (`planEstimate.prefix` in
- * `languages/sql/engines/<id>.ts`) that is not declared `strippedWhenRestated: false`, so the composer keeps no
- * prefix of its own. Anchored and case-insensitive. Each prefix's first word may stand alone, and the rest of it is
- * an optional tail, because a model that repeats a full prefix is the most common shape of the mistake. A tail is
- * stripped on every engine, not only on the one that declares it: a model that wrote another engine's prefix asked
- * for the same thing.
+ * `languages/sql/engines/<id>.ts`), so the composer keeps no prefix of its own. Anchored and case-insensitive. Each
+ * prefix's first word may stand alone, and the rest of it is an optional tail, because a model that repeats a full
+ * prefix is the most common shape of the mistake. A tail is stripped on every engine, not only on the one that
+ * declares it: a model that wrote another engine's prefix asked for the same thing.
  */
 function restatedEstimatingPrefix(): RegExp {
   if (restatedPrefix !== undefined) return restatedPrefix;
   const tails = new Map<string, Set<string>>();
   for (const dialect of everyEngineServerDialect()) {
     const estimate = dialect.planEstimate;
-    if (estimate === "unsupported" || estimate.kind !== "prefix" || estimate.strippedWhenRestated === false) continue;
+    if (estimate === "unsupported" || estimate.kind !== "prefix") continue;
     const [keyword, ...rest] = prefixTokens(estimate.prefix);
     const keywordTails = tails.get(keyword.toUpperCase()) ?? new Set<string>();
     if (rest.length > 0) keywordTails.add(rest.map((token, at) => tokenPattern(token, rest[at + 1])).join(""));

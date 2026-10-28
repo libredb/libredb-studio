@@ -45,16 +45,10 @@ const MYSQL_PROFILE_COMPOSITION: AgentProfileComposition = Object.freeze({
  * 13.0.2), and the JSON shapes differ (`query_plan` on MySQL, `query_block` on
  * MariaDB) without either refusing the prefix. `EXPLAIN ANALYZE` is deliberately
  * not composed: it EXECUTES, see `withoutEstimatingPrefix` in `composed-sql.ts`.
- *
- * Outside the restated-prefix strip, as it has been since this engine joined (B124): a model
- * that writes `EXPLAIN FORMAT=JSON` itself has only the leading `EXPLAIN` removed, so the
- * composed statement carries the format twice. Joining the strip changes what every engine
- * composes for that input, so it is a change of its own, made by deleting this flag.
  */
 const MYSQL_PLAN_ESTIMATE: AgentPlanEstimate = Object.freeze({
   kind: "prefix",
   prefix: "EXPLAIN FORMAT=JSON",
-  strippedWhenRestated: false,
 });
 
 /**

@@ -3720,6 +3720,14 @@ describe("inspectPlanTool — the estimating variant only", () => {
     expect(h.queryReadOnly.mock.calls[0][2]).toBe("estimate-plan");
   });
 
+  test("MySQL sends a plan request the model already wrote with the format once", async () => {
+    const h = harness({ connection: { ...connection, type: "mysql" } });
+
+    await inspectPlanTool(h.context, { sql: "EXPLAIN FORMAT=JSON SELECT id FROM orders" });
+
+    expect(h.queryReadOnly.mock.calls[0][0]).toBe("EXPLAIN FORMAT=JSON SELECT id FROM orders");
+  });
+
   test("the prefix engines are sent no mode, because their prefix is the request", async () => {
     const h = harness();
 

@@ -781,20 +781,38 @@ describe("composeEstimatingExplain", () => {
     );
   });
 
+  test("MySQL composes a restated EXPLAIN FORMAT=JSON with the format once, in any case and spacing", () => {
+    for (const restated of [
+      "EXPLAIN FORMAT=JSON SELECT 1",
+      "explain format=json select 1",
+      "EXPLAIN  FORMAT = JSON SELECT 1",
+      "Explain\nformat=JSON\tSELECT 1",
+    ]) {
+      expect(composeEstimatingExplain("mysql", restated).sql, restated).toBe(
+        `EXPLAIN FORMAT=JSON ${restated.slice(restated.search(/select/i))}`,
+      );
+    }
+    expect(composeEstimatingExplain("mysql", "SELECT 1").sql).toBe("EXPLAIN FORMAT=JSON SELECT 1");
+    expect(composeEstimatingExplain("mysql", "EXPLAIN SELECT 1").sql).toBe("EXPLAIN FORMAT=JSON SELECT 1");
+  });
+
+  test("MySQL's FORMAT=JSON is not taken for the start of a longer word", () => {
+    expect(composeEstimatingExplain("mysql", "EXPLAIN FORMAT=JSONB SELECT 1").sql).toBe(
+      "EXPLAIN FORMAT=JSON FORMAT=JSONB SELECT 1",
+    );
+  });
+
   /*
     The prefixes the strip removes are the engines' own declared ones (`planEstimate.prefix`), not a list the composer
-    keeps: an engine whose prefix joins declares it in its overlay and every engine strips it. One prefix opts out with
-    `strippedWhenRestated: false`, and only that declaration keeps it out.
+    keeps: an engine whose prefix joins declares it in its overlay and every engine strips it.
   */
   test("every declared estimating prefix a model restates is stripped on every engine that composes one", () => {
     const composing = SHIPPED_DATABASE_TYPES.filter((type) => engineServerDialect(type).planEstimate !== "unsupported");
     const stripped = composing.flatMap((type) => {
       const estimate = engineServerDialect(type).planEstimate;
-      return estimate !== "unsupported" && estimate.kind === "prefix" && estimate.strippedWhenRestated !== false
-        ? [estimate.prefix]
-        : [];
+      return estimate !== "unsupported" && estimate.kind === "prefix" ? [estimate.prefix] : [];
     });
-    expect(new Set(stripped)).toEqual(new Set(["EXPLAIN (FORMAT JSON)", "EXPLAIN QUERY PLAN"]));
+    expect(new Set(stripped)).toEqual(new Set(["EXPLAIN (FORMAT JSON)", "EXPLAIN FORMAT=JSON", "EXPLAIN QUERY PLAN"]));
     for (const type of composing) {
       for (const prefix of stripped) {
         expect(composeEstimatingExplain(type, `${prefix} SELECT 1`), `${type}: ${prefix}`).toEqual(

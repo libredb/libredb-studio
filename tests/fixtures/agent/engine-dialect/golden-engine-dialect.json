@@ -135,7 +135,7 @@
         {
           "sql": "EXPLAIN FORMAT=JSON SELECT 1",
           "composed": {
-            "sql": "EXPLAIN (FORMAT JSON) FORMAT=JSON SELECT 1",
+            "sql": "EXPLAIN (FORMAT JSON) SELECT 1",
             "mode": "execute"
           }
         },
@@ -328,7 +328,7 @@
         {
           "sql": "EXPLAIN FORMAT=JSON SELECT 1",
           "composed": {
-            "sql": "EXPLAIN QUERY PLAN FORMAT=JSON SELECT 1",
+            "sql": "EXPLAIN QUERY PLAN SELECT 1",
             "mode": "execute"
           }
         },
@@ -497,7 +497,7 @@
         {
           "sql": "EXPLAIN FORMAT=JSON SELECT 1",
           "composed": {
-            "sql": "EXPLAIN (FORMAT JSON) FORMAT=JSON SELECT 1",
+            "sql": "EXPLAIN (FORMAT JSON) SELECT 1",
             "mode": "execute"
           }
         },
@@ -675,7 +675,7 @@
         {
           "sql": "EXPLAIN FORMAT=JSON SELECT 1",
           "composed": {
-            "sql": "FORMAT=JSON SELECT 1",
+            "sql": "SELECT 1",
             "mode": "estimate-plan"
           }
         },
@@ -844,7 +844,7 @@
         {
           "sql": "EXPLAIN FORMAT=JSON SELECT 1",
           "composed": {
-            "sql": "EXPLAIN FORMAT=JSON FORMAT=JSON SELECT 1",
+            "sql": "EXPLAIN FORMAT=JSON SELECT 1",
             "mode": "execute"
           }
         },
