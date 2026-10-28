@@ -984,31 +984,32 @@ describe("the real drivers' declared types (#273)", () => {
   /**
    * The ORDER the bridge is documented to need, asserted rather than trusted.
    *
-   * bun:sqlite refuses `declaredTypes` until the statement has run, so a bridge that
-   * read it at `prepare()` would throw on every query. The wrapper reads it lazily, so
-   * preparing is safe and asking before the rows raises the driver's own message.
+   * bun:sqlite refused `declaredTypes` until the statement had run, through Bun 1.4.2, so a
+   * bridge that read it at `prepare()` threw on every query there. From 1.4.4, the pinned
+   * Bun, it answers before the rows as readily as after them, the same answer both times;
+   * the wrapper still reads it lazily, after the rows, so a Bun before 1.4.4 keeps working.
    */
-  test("bun:sqlite answers only after the rows, and the bridge is lazy enough for that", async () => {
+  test("bun:sqlite answers before the rows as readily as after them, from Bun 1.4.4", async () => {
     process.env.LIBREDB_SQLITE_DRIVER = "bun";
     const db = new (await loadSQLiteDriver())(":memory:", { create: true, readwrite: true });
     try {
       db.exec("CREATE TABLE d (id INTEGER PRIMARY KEY, price REAL)");
-      // Preparing must not read it: this is the line that would throw on every SELECT.
       const stmt = db.prepare("SELECT id, price FROM d");
-      expect(() => stmt.declaredColumns()).toThrow(/executed/);
-
+      const before = declaredPairs(stmt);
       stmt.all();
-      expect(declaredPairs(stmt)).toEqual([
+
+      expect(before).toEqual([
         ["id", "INTEGER"],
         ["price", "REAL"],
       ]);
+      expect(declaredPairs(stmt)).toEqual(before);
     } finally {
       db.close(true);
     }
   });
 
   /**
-   * node:sqlite has no such restriction, so the rule costs it nothing. Asserted because
+   * node:sqlite never had that restriction, so the rule costs it nothing. Asserted because
    * it is the other half of "after the rows is the one order BOTH drivers accept".
    */
   test("node:sqlite answers before the rows as readily as after them", async () => {

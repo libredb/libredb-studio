@@ -580,7 +580,9 @@ that into the field, as it already does for several other SQL providers.
 **It is read AFTER the rows.** Measured 2026-09-18: bun:sqlite THROWS *Statement must be executed
 before accessing declaredTypes* until the statement has run, while node:sqlite answers either way — so
 after the rows is the one order both drivers accept, and that is why the declarations are read off the
-same statement object that produced them. A statement that matched NO rows still answers
+same statement object that produced them. From Bun 1.4.4, the pinned version, bun:sqlite answers
+before the rows too, the same answer (measured 2026-10-28); the order stays, so an older Bun still works.
+A statement that matched NO rows still answers
 (`SELECT i, r FROM dt WHERE i = -1` → `INTEGER`, `REAL`, zero rows), so an empty result is described
 rather than guessed at, and a write answers an EMPTY list on both drivers.
 
@@ -1128,6 +1130,11 @@ Re-measured that day on Linux x86_64: `bun:sqlite` still reports `sqlite_version
 3.53.2 and `dbstat` still answers. So the 1.4.0 rows are the current behaviour as well
 as the record of what 1.4.0 did, and nothing here needed rewriting for the new pin.
 macOS is still unmeasured, on 1.4.2 exactly as on 1.4.0.
+
+**The pin moved on to Bun 1.4.4 on 2026-10-28.** Re-measured that day on Linux x86_64:
+`bun:sqlite` reports `sqlite_version()` 3.53.4 and `dbstat` still answers, so the rows above
+still hold. The one change this provider sees is the declared-types order described earlier:
+1.4.4 answers `declaredTypes` before the rows as well as after them.
 
 **macOS is not covered by the row above.** There `bun:sqlite` dlopens Apple's
 `/usr/lib/libsqlite3.dylib` instead of the amalgamation Bun links on Linux and Windows —

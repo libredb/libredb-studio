@@ -56,7 +56,8 @@ export type SQLiteStatement = {
    * CALL IT AFTER THE ROWS. Measured 2026-09-18 on bun:sqlite (Bun 1.4.0) and node:sqlite
    * (Node 24.14.0): bun THROWS "Statement must be executed before accessing declaredTypes"
    * until the statement has run, while node answers either way — so after the rows is the
-   * one order both drivers accept. A statement that matched NO rows still answers
+   * one order both drivers accept. Bun 1.4.4 answers before the rows too (measured
+   * 2026-10-28); the order stays, so an older Bun still works. A statement that matched NO rows still answers
    * (`SELECT id, r FROM t WHERE id = -1` → `INTEGER`, `REAL`), so an empty result is
    * described rather than guessed at, and a write answers an EMPTY list on both.
    *
@@ -416,9 +417,9 @@ export function createBunSQLiteDriver(DatabaseCtor: BunSQLiteConstructor): SQLit
         get: (...params) => stmt.get(...params),
         run: (...params) => stmt.run(...params),
       };
-      // Read lazily, never here: bun refuses `declaredTypes` until the statement has run
-      // (measured - see `SQLiteStatement.declaredColumns`), so reading it at `prepare()`
-      // would throw on every query the provider makes.
+      // Read lazily, never here: a Bun before 1.4.4 refuses `declaredTypes` until the
+      // statement has run (measured - see `SQLiteStatement.declaredColumns`), so reading it
+      // at `prepare()` would throw on every query the provider makes there.
       return withoutBigInts(
         raw,
         () => stmt.columnNames.map((name, index) => [name, stmt.declaredTypes[index] ?? undefined] as const),
