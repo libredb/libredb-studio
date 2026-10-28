@@ -95,6 +95,30 @@ describe("LoginPage (OIDC mode)", () => {
     expect(queryByText("Authentication failed. Please try again.")).toBeNull();
   });
 
+  // With the Kubernetes access review on, the ID token's groups are what every review asserts, so a claim no review
+  // could hold refuses the sign-in, and the page says it is the account's groups, not a failure to retry.
+  test("error=oidc_groups_refused shows the groups message", () => {
+    setMockSearchParams(new URLSearchParams("error=oidc_groups_refused"));
+    const { getByText, queryByText } = render(<LoginForm authProvider="oidc" passkey={null} />);
+    expect(
+      getByText("Your account's groups cannot be used for this server's access checks. Ask your administrator."),
+    ).not.toBeNull();
+    expect(queryByText("Authentication failed. Please try again.")).toBeNull();
+  });
+
+  // The loop guard: the groups record went missing again right after a silent sign-in, so the page is shown instead
+  // of another round trip, and it asks the user to sign in once more.
+  test("error=oidc_groups_lost shows the lost-sign-in message", () => {
+    setMockSearchParams(new URLSearchParams("error=oidc_groups_lost"));
+    const { getByText, queryByText } = render(<LoginForm authProvider="oidc" passkey={null} />);
+    expect(
+      getByText(
+        "This server could not keep your sign-in for its access checks. Sign in again, and ask your administrator if this repeats.",
+      ),
+    ).not.toBeNull();
+    expect(queryByText("Authentication failed. Please try again.")).toBeNull();
+  });
+
   test("renders the generic message for every other code", () => {
     for (const code of ["oidc_state_missing", "oidc_state_invalid", "oidc_no_claims", "constructor", "__proto__"]) {
       setMockSearchParams(new URLSearchParams(`error=${code}`));

@@ -46,6 +46,10 @@ function oidcErrorMessage(code: string): string {
       return "Your account has too many roles or a role name is too long. Ask your administrator.";
     case "oidc_session_revoked" satisfies AuditReason:
       return "An administrator has ended your sessions. Try again later, or ask your administrator.";
+    case "oidc_groups_refused" satisfies AuditReason:
+      return "Your account's groups cannot be used for this server's access checks. Ask your administrator.";
+    case "oidc_groups_lost" satisfies AuditReason:
+      return "This server could not keep your sign-in for its access checks. Sign in again, and ask your administrator if this repeats.";
     default:
       return "Authentication failed. Please try again.";
   }
