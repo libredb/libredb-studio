@@ -2355,6 +2355,18 @@ describe("evictIdleProviders", () => {
     expect(mockCloseSSHTunnel).toHaveBeenCalledWith("tunnel-evict");
   });
 
+  test("a tunnel that fails to close does not stop the sweep from evicting", async () => {
+    await getOrCreateProvider(makeConnection("sqlite", { id: "tunnel-close-fails" }));
+    await getOrCreateProvider(makeConnection("sqlite", { id: "tunnel-after" }));
+    mockCloseSSHTunnel.mockImplementationOnce(async () => {
+      throw new AggregateError([new Error("channel closed")], "Failed to close 1 SSH tunnel(s)");
+    });
+
+    expect(await evictIdleProviders(0)).toBe(2);
+    expect(getProviderCacheStats().size).toBe(0);
+    expect(mockCloseSSHTunnel).toHaveBeenCalledWith("tunnel-after");
+  });
+
   test("handles disconnect errors gracefully during eviction", async () => {
     const conn = makeConnection("sqlite", { id: "err-evict" });
     const provider = await getOrCreateProvider(conn);
@@ -3388,6 +3400,16 @@ describe("acquireExecutionProfileProvider", () => {
     expect(evicted).toBe(1);
     expect(getExecutionProfileCacheStats().size).toBe(0);
     expect(mockCloseSSHTunnel).toHaveBeenCalledWith("pg-profile");
+  });
+
+  test("an idle profile provider is evicted even when its connection's tunnel fails to close", async () => {
+    await acquireExecutionProfileProvider(pgConn(), "agent-read-only");
+    mockCloseSSHTunnel.mockImplementationOnce(async () => {
+      throw new AggregateError([new Error("channel closed")], "Failed to close 1 SSH tunnel(s)");
+    });
+
+    expect(await evictIdleProviders(0)).toBe(1);
+    expect(getExecutionProfileCacheStats().size).toBe(0);
   });
 
   test("clearProviderCache clears the profile cache too", async () => {
