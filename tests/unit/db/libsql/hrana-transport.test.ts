@@ -19,7 +19,11 @@
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { LibSQLHranaTransport } from "@/lib/db/providers/sql/libsql/hrana-transport";
-import { LibSQLBodyLimitError, LibSQLTransportError } from "@/lib/db/providers/sql/libsql/transport";
+import {
+  LibSQLBodyLimitError,
+  LibSQLDeadlineError,
+  LibSQLTransportError,
+} from "@/lib/db/providers/sql/libsql/transport";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
 import type { DatabaseConnection, DatabaseType } from "@/lib/db/types";
 
@@ -1233,5 +1237,58 @@ describe("LibSQLHranaTransport body cap", () => {
     expect(
       await captureError(() => transport().executeBatch([{ sql: "SELECT 1" }], { maxBodyBytes: 10 })),
     ).toBeInstanceOf(LibSQLBodyLimitError);
+  });
+});
+
+// ============================================================================
+// The deadline
+// ============================================================================
+
+/** A server that never answers: the request waits until its signal aborts it, the way fetch does. */
+function hanging(): void {
+  globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) =>
+    new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+    })) as unknown as typeof fetch;
+}
+
+describe("LibSQLHranaTransport deadline", () => {
+  test("a request its deadline ended leaves as a deadline error, still the seam's status 0", async () => {
+    hanging();
+
+    const error = await captureError(() => transport().execute("SELECT 1", { timeoutMs: 5 }));
+
+    expect(error).toBeInstanceOf(LibSQLDeadlineError);
+    expect(error).toBeInstanceOf(LibSQLTransportError);
+    expect((error as LibSQLDeadlineError).status).toBe(0);
+    expect((error as LibSQLDeadlineError).timeoutMs).toBe(5);
+    expect(error.message).toStartWith("libSQL request failed: ");
+  });
+
+  test("a capped read its deadline ended leaves as a deadline error too", async () => {
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.error(new DOMException("The operation timed out.", "TimeoutError"));
+      },
+    });
+    let signal: AbortSignal | undefined;
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      signal = init?.signal ?? undefined;
+      await new Promise((resolve) => signal?.addEventListener("abort", resolve));
+      return new Response(body, { status: 200 });
+    }) as unknown as typeof fetch;
+
+    expect(
+      await captureError(() => transport().execute("SELECT 1", { timeoutMs: 5, maxBodyBytes: 100 })),
+    ).toBeInstanceOf(LibSQLDeadlineError);
+  });
+
+  test("a refused connection within the deadline is not a deadline error", async () => {
+    globalThis.fetch = (() => Promise.reject(new Error("connect ECONNREFUSED"))) as unknown as typeof fetch;
+
+    const error = await captureError(() => transport().execute("SELECT 1", { timeoutMs: 60_000 }));
+
+    expect(error).not.toBeInstanceOf(LibSQLDeadlineError);
+    expect((error as LibSQLTransportError).status).toBe(0);
   });
 });

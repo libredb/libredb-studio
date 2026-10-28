@@ -184,3 +184,20 @@ export class LibSQLBodyLimitError extends LibSQLTransportError {
     Object.setPrototypeOf(this, LibSQLBodyLimitError.prototype);
   }
 }
+
+/**
+ * A request its own deadline (`LibSQLExecuteOptions.timeoutMs`) ended before the answer was read whole. Status 0, like
+ * every failure that got no answer, so a caller that does not ask reads it as before; one that does can tell a
+ * statement that ran out of time from a server it could not reach. The deadline ends the wait, not the work: Hrana
+ * offers no way to stop a statement the server is running.
+ */
+export class LibSQLDeadlineError extends LibSQLTransportError {
+  constructor(
+    message: string,
+    public readonly timeoutMs: number,
+  ) {
+    super(message, 0);
+    this.name = "LibSQLDeadlineError";
+    Object.setPrototypeOf(this, LibSQLDeadlineError.prototype);
+  }
+}

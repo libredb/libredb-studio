@@ -47,6 +47,7 @@ import {
   type LibSQLStatementResult,
   type LibSQLTransport,
   LibSQLBodyLimitError,
+  LibSQLDeadlineError,
   LibSQLTransportError,
 } from "./transport";
 
@@ -443,6 +444,19 @@ async function readCappedBody(response: Response, limit: number): Promise<string
   return Buffer.concat(chunks).toString("utf8");
 }
 
+/** A request that got no answer, as the seam's error: a deadline error when its own deadline is what ended it. */
+function failedRequest(
+  cause: unknown,
+  url: string,
+  signal: AbortSignal | undefined,
+  timeoutMs: number | undefined,
+): LibSQLTransportError {
+  const message = `libSQL request failed: ${describeFetchFailure(cause, url)}`;
+  return signal?.aborted === true && timeoutMs !== undefined
+    ? new LibSQLDeadlineError(message, timeoutMs)
+    : new LibSQLTransportError(message, 0);
+}
+
 // ============================================================================
 // Transport
 // ============================================================================
@@ -533,16 +547,6 @@ export class LibSQLHranaTransport implements LibSQLTransport {
     return Promise.resolve();
   }
 
-  /** The capped read, with a stream that fails part-way leaving as the seam's own error, as a failed fetch does. */
-  private async readCapped(response: Response, maxBodyBytes: number, url: string): Promise<string> {
-    try {
-      return await readCappedBody(response, maxBodyBytes);
-    } catch (cause) {
-      if (cause instanceof LibSQLBodyLimitError) throw cause;
-      throw new LibSQLTransportError(`libSQL request failed: ${describeFetchFailure(cause, url)}`, 0);
-    }
-  }
-
   private headers(): Record<string, string> {
     const headers: Record<string, string> = { "content-type": "application/json" };
     if (this.authorization) headers.authorization = this.authorization;
@@ -551,6 +555,9 @@ export class LibSQLHranaTransport implements LibSQLTransport {
 
   private async send(path: string, body: string, timeoutMs?: number, maxBodyBytes?: number): Promise<string> {
     const url = endpointUrl(this.origin, path);
+    // A statement that hangs would otherwise hang the request forever: fetch has no default timeout. The signal covers
+    // the connect and the read, which a timer wrapped around the promise would not.
+    const signal = timeoutMs === undefined ? undefined : AbortSignal.timeout(timeoutMs);
     let response: Response;
     try {
       response = await httpTransportFetch(url, {
@@ -559,20 +566,35 @@ export class LibSQLHranaTransport implements LibSQLTransport {
         body,
         // A followed redirect would carry the token to wherever it points.
         redirect: "manual",
-        // A statement that hangs would otherwise hang the request forever: fetch
-        // has no default timeout. The signal covers the connect and the read,
-        // which a timer wrapped around the promise would not.
-        signal: timeoutMs === undefined ? undefined : AbortSignal.timeout(timeoutMs),
+        signal,
       });
     } catch (cause) {
       if (cause instanceof DatabaseConfigError) throw cause;
-      throw new LibSQLTransportError(`libSQL request failed: ${describeFetchFailure(cause, url)}`, 0);
+      throw failedRequest(cause, url, signal, timeoutMs);
     }
 
     const text =
-      maxBodyBytes === undefined ? await response.text() : await this.readCapped(response, maxBodyBytes, url);
+      maxBodyBytes === undefined
+        ? await response.text()
+        : await this.readCapped(response, maxBodyBytes, url, signal, timeoutMs);
     rejectRedirect(response, url);
     if (!response.ok) throw httpError(response.status, text);
     return text;
+  }
+
+  /** The capped read, with a stream that fails part-way leaving as the seam's own error, as a failed fetch does. */
+  private async readCapped(
+    response: Response,
+    maxBodyBytes: number,
+    url: string,
+    signal: AbortSignal | undefined,
+    timeoutMs: number | undefined,
+  ): Promise<string> {
+    try {
+      return await readCappedBody(response, maxBodyBytes);
+    } catch (cause) {
+      if (cause instanceof LibSQLBodyLimitError) throw cause;
+      throw failedRequest(cause, url, signal, timeoutMs);
+    }
   }
 }
