@@ -162,17 +162,16 @@ export interface SqlGrammar {
    * Whether `//` opens a line comment.
    *
    * A form some dialects simply HAVE rather than a disagreement about a character,
-   * the same shape of question as `alternateQuoting` - except that two unrelated
-   * engines have this one: CQL and ClickHouse both read `//` to the end of the line,
-   * and everywhere else those two characters are refused outright or - in
-   * PostgreSQL, where `//` is a real operator NAME - are code the server tries to
-   * resolve.
+   * the same shape of question as `alternateQuoting` - except that engines with
+   * unrelated lexers have this one: where it holds, `//` runs to the end of the line,
+   * and elsewhere those two characters are refused outright or - in PostgreSQL,
+   * where `//` is a real operator NAME - are code the server tries to resolve.
    *
    * It is the fact this record said it could not carry, and the splitter is where
    * that cost was live rather than merely inconvenient. A comment is what a `;` can
    * hide inside, `statement-splitter.ts` reads its boundaries through `spans.ts`,
    * and `/api/db/multi-query` RUNS every fragment the splitter returns - so on the
-   * two engines that have the form, `SELECT … // note; DROP …` was cut into a read
+   * engines that have the form, `SELECT … // note; DROP …` was cut into a read
    * and a bare DROP out of text the server reads as one statement. Measured, not
    * argued: the probes are quoted on the rows below and in `grammar.test.ts`.
    */

@@ -526,9 +526,10 @@ export function readSqlSpan(sql: string, index: number, grammar: SqlGrammar = DE
   // DELETE FROM users` was typed a read and handed a bound, which MySQL applies to
   // the rows the DELETE removes. The grammar record answers it now (#292), and the
   // hybrid survives only as what a caller that named no dialect gets.
-  // The third form, `//`, is CQL's and ClickHouse's and nobody else's, and it is the
-  // fact this module was missing rather than one it resolved wrongly. Read as code,
-  // the `;` a `// note` hides is a statement BOUNDARY to `statement-splitter.ts`, and
+  // The third form, `//`, is a line comment only on a row that declares
+  // `doubleSlashComment`, and it is the fact this module was missing rather than one
+  // it resolved wrongly. Read as code, the `;` a `// note` hides is a statement
+  // BOUNDARY to `statement-splitter.ts`, and
   // `/api/db/multi-query` runs what that returns - so on three shipped engines
   // `SELECT … // note; DROP …` was cut into a read and a bare DROP out of text every
   // one of those servers reads as ONE statement (measured 2026-08-25 on Cassandra
@@ -567,10 +568,10 @@ export function readSqlSpan(sql: string, index: number, grammar: SqlGrammar = DE
   // insert. The grammar record answers it now (#300), and the flat reading survives
   // as MySQL's, SQLite's, Oracle's and what a caller that named no dialect gets.
   if (ch === "/" && sql[index + 1] === "*") {
-    // Spark lexes `/*+` as the opener of an optimizer hint, which is code (`hintsAreCode`), and every `*/` in code as
-    // one token, the hint's closer, so a `/` right after a code `*` opens nothing either: `*/*` is the closer and a
-    // `*`. Read as an opener there, any later `*/` would close it and turn the code between into comment text. No span
-    // ends with `*`, so the `*` before an index a walker asks about is code.
+    // Under `hintsAreCode` the lexer takes `/*+` as the opener of an optimizer hint, which is code, and every `*/` in
+    // code as one token, the hint's closer, so a `/` right after a code `*` opens nothing either: `*/*` is the closer
+    // and a `*`. Read as an opener there, any later `*/` would close it and turn the code between into comment text. No
+    // span ends with `*`, so the `*` before an index a walker asks about is code.
     if (grammar.hintsAreCode && (sql[index + 2] === "+" || sql[index - 1] === "*")) return null;
     if (grammar.blockComment === "nesting") return readNestedBlockComment(sql, index, grammar.hintsAreCode === true);
 
@@ -719,7 +720,7 @@ export function hasUnterminatedSpan(sql: string, grammar: SqlGrammar = DEFAULT_S
  *
  * The comment is read as running on to the line feed whatever `grammar` declares, which is the reading under which it
  * can hold the carriage return at all. That makes the answer the same in both directions: where the grammar ends the
- * comment at the carriage return (Spark), the two readings part at this same character. Every other span is read
+ * comment at the carriage return, the two readings part at this same character. Every other span is read
  * under `grammar`, so a carriage return inside a literal or a block comment is not counted.
  */
 export function hasLoneCarriageReturnInLineComment(sql: string, grammar: SqlGrammar = DEFAULT_SQL_GRAMMAR): boolean {
