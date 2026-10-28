@@ -30,6 +30,15 @@ spec:
     - ports:
         - port: 443
           protocol: TCP
+    {{- if include "libredb-studio.accessReviewEnabled" . }}
+    # The access review calls https://kubernetes.default.svc, which kube-proxy rewrites to the
+    # API server's endpoint port, 6443 on RKE2, k3s and kubeadm. A policy is matched after that
+    # rewrite, so 443 alone leaves every review failing closed. An API server on another port
+    # goes in networkPolicy.additionalEgress.
+    - ports:
+        - port: 6443
+          protocol: TCP
+    {{- end }}
     # Allow common database ports
     - ports:
         - port: 5432

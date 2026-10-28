@@ -578,9 +578,18 @@ that predates the block, as an upgrade with --reuse-values carries, rendering as
 /var/run/secrets/libredb/access-review
 {{- end }}
 
-{{/* The exporter's Deployment, ServiceAccount and per-namespace Role and RoleBinding. */}}
+{{/* The exporter's Deployment and ServiceAccount, and its Role and RoleBinding in the release namespace. */}}
 {{- define "libredb-studio.discoveryName" -}}
 {{- printf "%s-discovery" (include "libredb-studio.fullname" .) }}
+{{- end }}
+
+{{/*
+The exporter's Role and RoleBinding in each discovered namespace. Another release of the same name in
+another namespace may discover the same namespace, so the release namespace keeps the two apart, as
+for accessReviewName.
+*/}}
+{{- define "libredb-studio.discoveryRoleName" -}}
+{{- printf "%s.%s" .Release.Namespace (include "libredb-studio.discoveryName" .) }}
 {{- end }}
 
 {{/* The export Secret the exporter writes and Studio mounts. */}}
@@ -596,9 +605,11 @@ that predates the block, as an upgrade with --reuse-values carries, rendering as
 {{/*
 The exporter's selector labels. Its app.kubernetes.io/name is not Studio's, so Studio's Service,
 PodDisruptionBudget and NetworkPolicy, which select on Studio's name and instance, never match it.
+The name is cut to 53 characters before the suffix, so a long nameOverride never truncates the
+suffix away and leaves the two names equal.
 */}}
 {{- define "libredb-studio.discoverySelectorLabels" -}}
-app.kubernetes.io/name: {{ printf "%s-discovery" (include "libredb-studio.name" .) | trunc 63 | trimSuffix "-" }}
+app.kubernetes.io/name: {{ printf "%s-discovery" (include "libredb-studio.name" . | trunc 53 | trimSuffix "-") }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
@@ -646,6 +657,13 @@ Studio would refuse to start with fails the render instead, naming the value to 
 {{- end }}
 {{- if and (not .Values.serviceAccount.create) (not .Values.serviceAccount.name) }}
 {{- fail "accessReview.enabled requires serviceAccount.create=true or a serviceAccount.name: otherwise the namespace's default ServiceAccount, which every other pod there runs as, would be granted the review" }}
+{{- end }}
+{{- $account := include "libredb-studio.serviceAccountName" . }}
+{{- if eq $account "default" }}
+{{- fail "accessReview.enabled refuses serviceAccount.name=default: the namespace's default ServiceAccount, which every other pod there runs as, would be granted the review; name an account of Studio's own" }}
+{{- end }}
+{{- if and (include "libredb-studio.discoveryEnabled" .) (eq $account (include "libredb-studio.discoveryName" .)) }}
+{{- fail (printf "accessReview.enabled refuses serviceAccount.name=%s: that is the discovery exporter's account, which may read Secrets in the discovered namespaces, and Studio's own process never holds a token that can read a database Secret" $account) }}
 {{- end }}
 {{- range .Values.extraEnv }}
 {{- if hasPrefix "KUBERNETES_ACCESS_REVIEW" (.name | default "" | toString) }}

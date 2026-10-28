@@ -307,7 +307,11 @@ annotations:
   # miss: a data-modifying WITH list, EXPLAIN ANALYZE of a write, and a statement after a bare
   # carriage return in a line comment. No template, value or default moves, so the upgrade is the
   # image.
-  artifacthub.io/containsSecurityUpdates: "true"
+  # False: 0.1.107 adds the second half of Rancher mode: the Kubernetes access review
+  # (accessReview), the CloudNativePG discovery exporter with its RBAC (discovery.kubernetes),
+  # their render guards and questions.yaml for Rancher's Apps form. Every new block is off by
+  # default, so an install that sets none of them renders exactly as before.
+  artifacthub.io/containsSecurityUpdates: "false"
   artifacthub.io/images: |
     - name: libredb-studio
       image: ghcr.io/libredb/libredb-studio:1.1.0
@@ -322,7 +326,11 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - "Name Weaviate, read-only over its REST API, in the description and the keywords"
+    - "Add accessReview: the Kubernetes access review decides sign-in, admin and each connection, with create on subjectaccessreviews only"
+    - "Add discovery.kubernetes: the CloudNativePG discovery exporter, its per-namespace RBAC and the export Studio mounts read-only"
+    - "Fail the render for every access review and discovery combination Studio refuses to start with"
+    - "Add questions.yaml so Rancher's Apps page draws a form for the Rancher-mode values"
+    - "Track app release 1.1.0"
 dependencies:
   - name: postgresql
     version: "16.x.x"

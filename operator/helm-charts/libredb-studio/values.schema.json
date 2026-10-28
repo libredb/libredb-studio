@@ -820,7 +820,8 @@
         "signIn": {
           "type": "string",
           "default": "",
-          "description": "KUBERNETES_ACCESS_REVIEW_SIGN_IN: empty (default) writes nothing and the app keeps list navlinks.ui.cattle.io"
+          "pattern": "^\\s*$|^\\s*([a-z]+|\\*)\\s+[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*)?(/[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*)?(\\s+-n\\s+[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)?\\s*$",
+          "description": "KUBERNETES_ACCESS_REVIEW_SIGN_IN, as kubectl auth can-i takes it: <verb> <resource>[.<group>][/<name>] [-n <namespace>]. Empty (default) writes nothing and the app keeps list navlinks.ui.cattle.io"
         },
         "tokenExpirationSeconds": {
           "type": "integer",

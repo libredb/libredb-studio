@@ -10,6 +10,7 @@ mounts it read-only (deployment.yaml). The guards live in _helpers.tpl.
 {{- if include "libredb-studio.discoveryEnabled" . }}
 {{- $kube := .Values.discovery.kubernetes }}
 {{- $name := include "libredb-studio.discoveryName" . }}
+{{- $roleName := include "libredb-studio.discoveryRoleName" . }}
 {{- $export := include "libredb-studio.discoveryExportSecret" . }}
 apiVersion: v1
 kind: ServiceAccount
@@ -58,7 +59,7 @@ subjects:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: {{ $name }}
+  name: {{ $roleName }}
   namespace: {{ $namespace }}
   labels:
     {{- include "libredb-studio.discoveryLabels" $ | nindent 4 }}
@@ -73,14 +74,14 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ $name }}
+  name: {{ $roleName }}
   namespace: {{ $namespace }}
   labels:
     {{- include "libredb-studio.discoveryLabels" $ | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: {{ $name }}
+  name: {{ $roleName }}
 subjects:
   - kind: ServiceAccount
     name: {{ $name }}

@@ -285,17 +285,19 @@ The first half wires custom connections, literal seed values, a seed Secret, the
 - The access review's only right is `create` on `subjectaccessreviews`, through a ClusterRole and binding named `<namespace>.<fullname>-access-review`, cluster-scoped like the `NavLink`, so the namespace in the name keeps two releases apart.
   The reviews use a projected token of Studio's ServiceAccount with the cluster's CA from `kube-root-ca.crt`, so the pod's own token mount stays off and the token never outlives `accessReview.tokenExpirationSeconds`.
 - The exporter is a second Deployment from Studio's image with a ServiceAccount of its own, so Studio's process never holds a token that can read a database Secret.
-  Its pods carry the name `<name>-discovery` and the component `discovery-exporter`, so Studio's Service, PodDisruptionBudget and NetworkPolicy, which select on Studio's name, never match them.
+  Its pods carry the name `<name>-discovery`, with the name cut to 53 characters before the suffix, and the component `discovery-exporter`, so Studio's Service, PodDisruptionBudget and NetworkPolicy, which select on Studio's name, never match them.
+  Its Role and RoleBinding in each discovered namespace are named `<namespace>.<fullname>-discovery`, so two releases of one name may discover the same namespace.
+- With `networkPolicy.enabled`, the review opens egress on 6443 as well as 443: a policy is matched after kube-proxy rewrites `kubernetes.default.svc` to the API server's endpoint, which listens on 6443 on RKE2, k3s and kubeadm.
 - The export Secret is rendered with no `data` field: Helm's three-way merge then leaves what the exporter wrote alone on every upgrade, and the exporter, whose Role is limited to that name, never has to create it.
 - Studio mounts the whole export Secret rather than its `export.json` key, because the Secret starts with no key and a projection of a missing key would keep the pod from starting.
 
-**Render guards.** `rancherModeGuards` in `_helpers.tpl` refuses every values set the access review's boot check refuses (`src/lib/kubernetes-access/preflight.ts`), the namespace's default ServiceAccount as the review's account, discovery with no namespace or under governance, an `extraEnv` entry that would override a variable the chart writes for either, and more than one replica or autoscaling with either on, since the groups record and the caches live in one process.
+**Render guards.** `rancherModeGuards` in `_helpers.tpl` refuses every values set the access review's boot check refuses (`src/lib/kubernetes-access/preflight.ts`), the namespace's default ServiceAccount or the exporter's as the review's account, an `accessReview.signIn` Studio cannot parse, discovery with no namespace or under governance, an `extraEnv` entry that would override a variable the chart writes for either, and more than one replica or autoscaling with either on, since the groups record and the caches live in one process.
 With the review on the chart writes no `ADMIN_PASSWORD`, `USER_EMAIL` or `USER_PASSWORD` from `secrets.existingSecret`, as under governance.
 
 **Apps form.** `questions.yaml` asks for the Rancher-mode values only; Rancher sets each answer at a dotted path, so a list entry such as the ingress host is set in the form's YAML view.
 `tests/unit/helm-chart-rancher-questions.test.ts` holds every question to a key of `values.yaml` with the same type and default.
 
-**OLM operator.** Rancher mode is not offered through the operator in this release: its role grants none of the cluster-scoped or cross-namespace objects above, so [DISTRIBUTION.md](./DISTRIBUTION.md) and the chart README send Rancher installs to Helm or Rancher's Apps page.
+**OLM operator.** Rancher mode is not offered through the operator in this release: its role grants no `ui.cattle.io` `NavLink`, no ClusterRole or ClusterRoleBinding and no read on CloudNativePG Clusters, so it cannot create the access review's binding, and the API server refuses the exporter's Roles as an escalation, since they grant a read the operator does not hold. [DISTRIBUTION.md](./DISTRIBUTION.md) and the chart README send Rancher installs to Helm or Rancher's Apps page.
 
 `tests/unit/helm-chart-rancher-mode.test.ts`, `helm-chart-rancher-access-review.test.ts` and `helm-chart-rancher-discovery.test.ts` pin these rules.
 

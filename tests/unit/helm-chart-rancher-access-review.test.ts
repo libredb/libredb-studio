@@ -200,6 +200,29 @@ describe("accessReview.enabled", () => {
   });
 });
 
+describe("the chart's NetworkPolicy with the review on", () => {
+  const POLICY = ["--set", "networkPolicy.enabled=true"];
+  const egressPorts = (docs: Manifest[]): number[] => {
+    const policy = docs.find((doc) => doc.kind === "NetworkPolicy") as unknown as {
+      spec: { egress: Array<{ ports?: Array<{ port: number }> }> };
+    };
+    return policy.spec.egress.flatMap((rule) => (rule.ports ?? []).map((entry) => entry.port));
+  };
+
+  test("opens the API server's endpoint port 6443, which the reviews reach behind kubernetes.default.svc", () => {
+    const docs = render([...ON, ...POLICY]);
+    const policy = docs.find((doc) => doc.kind === "NetworkPolicy") as unknown as {
+      spec: { egress: Array<{ ports?: Array<{ port: number; protocol: string }> }> };
+    };
+    expect(policy.spec.egress).toContainEqual({ ports: [{ port: 6443, protocol: "TCP" }] });
+    expect(egressPorts(docs)).toContain(443);
+  });
+
+  test("leaves 6443 closed with the review off", () => {
+    expect(egressPorts(render(POLICY))).not.toContain(6443);
+  });
+});
+
 describe("access review guards", () => {
   test("authProvider other than oidc fails", () => {
     refused(
@@ -262,6 +285,51 @@ describe("access review guards", () => {
 
   test("the namespace's default ServiceAccount is refused", () => {
     refused([...ON, "--set", "serviceAccount.create=false"], "serviceAccount");
+  });
+
+  test("an account named default is refused, created or not", () => {
+    refused([...ON, "--set", "serviceAccount.name=default"], "serviceAccount", "default");
+    refused(
+      [...ON, "--set", "serviceAccount.create=false", "--set", "serviceAccount.name=default"],
+      "serviceAccount",
+      "default",
+    );
+  });
+
+  test("the discovery exporter's account is refused for Studio, so Studio never holds a token that reads a Secret", () => {
+    const discovery = [
+      "--set",
+      "discovery.kubernetes.enabled=true",
+      "--set",
+      "discovery.kubernetes.namespaces={team-a}",
+    ];
+    refused(
+      [...ON, ...discovery, "--set", "serviceAccount.name=libredb-studio-discovery"],
+      "serviceAccount",
+      "libredb-studio-discovery",
+    );
+    refused(
+      [
+        ...ON,
+        ...discovery,
+        "--set",
+        "serviceAccount.create=false",
+        "--set",
+        "serviceAccount.name=libredb-studio-discovery",
+      ],
+      "libredb-studio-discovery",
+    );
+  });
+
+  test("a signIn review Studio would refuse at boot is refused by the schema", () => {
+    for (const signIn of ["list", "get secrets -n Team_A", "list navlinks.ui.cattle.io extra", "get pods/a/b"]) {
+      refused([...ON, "--set-string", `accessReview.signIn=${signIn}`], "signIn");
+    }
+    for (const signIn of ["list navlinks.ui.cattle.io", "* pods -n team-a", "get deployments.apps/studio -n team-a"]) {
+      expect(
+        envMap(render([...ON, "--set-string", `accessReview.signIn=${signIn}`])).KUBERNETES_ACCESS_REVIEW_SIGN_IN,
+      ).toBe(signIn);
+    }
   });
 
   test("an extraEnv entry named KUBERNETES_ACCESS_REVIEW* fails", () => {

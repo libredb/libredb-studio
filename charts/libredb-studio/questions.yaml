@@ -20,9 +20,8 @@ questions:
         group: Rancher sign-in
       - variable: config.oidcScope
         label: OIDC scopes
-        description: openid profile groups on Rancher 2.15 and later, openid profile before; Rancher refuses the email scope.
+        description: "Replace the prefilled value: openid profile groups on Rancher 2.15 and later, openid profile before. Rancher refuses the email scope, so sign-in fails with the chart's default."
         type: string
-        default: "openid profile email"
         group: Rancher sign-in
       - variable: secrets.oidcExistingSecret
         label: OIDC client Secret
@@ -87,6 +86,12 @@ questions:
         description: Time between scans, at least 5000.
         type: int
         default: 30000
+        group: Kubernetes discovery
+      - variable: discovery.kubernetes.kinds
+        label: Kinds
+        description: The kinds to discover. Empty reads every supported kind; cnpg (CloudNativePG) is the only one today.
+        type: array
+        default: []
         group: Kubernetes discovery
       - variable: discovery.kubernetes.maxAgeMs
         label: Withdraw after milliseconds
@@ -154,7 +159,7 @@ questions:
         group: Rancher mode
   - variable: agent.enabled
     label: Agent
-    description: false switches the investigation agent off, which the access review requires.
+    description: The investigation agent. The access review refuses only true; unset or false both pass.
     type: boolean
     group: Rancher mode
   - variable: mcp.enabled

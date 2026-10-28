@@ -280,10 +280,12 @@ discovery:
 The reviews authenticate with a projected token of that ServiceAccount and the cluster's CA, mounted read-only at `/var/run/secrets/libredb/access-review`; the pod's own token mount stays off.
 `accessReview.cacheSeconds` (0 to 60), `accessReview.signIn` and `accessReview.tokenExpirationSeconds` (600 to 86400, 3600 when unset) are written only when set.
 With the review on, admin comes only from that review, so the chart writes no `ADMIN_PASSWORD`, `USER_EMAIL` or `USER_PASSWORD` from `secrets.existingSecret`.
-The render fails, naming the value, for every combination Studio refuses to start with: `authProvider` other than `oidc`, `config.oidcRoleClaim`, `mcp.enabled`, `agent.enabled=true`, `governance.enabled`, `secrets.adminPassword` or `secrets.userPassword`, `config.sessionTtlSeconds` unset or above 900, `serviceAccount.create=false` without a `serviceAccount.name`, which would grant the namespace's default account, and an `extraEnv` entry named `KUBERNETES_ACCESS_REVIEW*`.
+The render fails, naming the value, for every combination Studio refuses to start with: `authProvider` other than `oidc`, `config.oidcRoleClaim`, `mcp.enabled`, `agent.enabled=true`, `governance.enabled`, `secrets.adminPassword` or `secrets.userPassword`, `config.sessionTtlSeconds` unset or above 900, `serviceAccount.create=false` without a `serviceAccount.name` or a `serviceAccount.name` of `default`, either of which would grant the namespace's default account, the discovery exporter's account as Studio's, an `accessReview.signIn` that is not `<verb> <resource>[.<group>][/<name>] [-n <namespace>]`, and an `extraEnv` entry named `KUBERNETES_ACCESS_REVIEW*`.
+With `networkPolicy.enabled`, the review also opens egress on port 6443, where `kubernetes.default.svc` lands on RKE2, k3s and kubeadm; an API server on another port goes in `networkPolicy.additionalEgress`.
+Switching `accessReview.enabled` on for an install that already signs people in through OIDC: rotate `secrets.jwtSecret` in the same upgrade, because an earlier session keeps its role until it expires.
 
 `discovery.kubernetes.enabled` runs the exporter as a Deployment `<fullname>-discovery` of one replica, from Studio's image and with a ServiceAccount of its own.
-It gets `list` on `clusters.postgresql.cnpg.io` and `get` on Secrets in each namespace of `discovery.kubernetes.namespaces`, through a Role and RoleBinding `<fullname>-discovery` there, so those namespaces must exist first, and `get` and `update` on the export Secret by name; no rule lists or watches Secrets.
+It gets `list` on `clusters.postgresql.cnpg.io` and `get` on Secrets in each namespace of `discovery.kubernetes.namespaces`, through a Role and RoleBinding `<namespace>.<fullname>-discovery` there, named by the release namespace so two releases may discover one namespace, so those namespaces must exist first, and `get` and `update` on the export Secret by name; no rule lists or watches Secrets.
 The chart creates that Secret, `<fullname>-discovery-export`, with no data, so an upgrade keeps what the exporter wrote, and Studio mounts it read-only for `SEED_KUBERNETES_DISCOVERY_PATH`.
 `discovery.kubernetes.intervalMs` (30000), `discovery.kubernetes.kinds` (every supported kind when empty, `cnpg` today), `discovery.kubernetes.maxAgeMs` and `discovery.kubernetes.resources` tune it, and `seedConnections.cacheTTL` is written as `SEED_CACHE_TTL_MS` with discovery on.
 Without the access review, the discovered databases are listed for admins only.
@@ -292,7 +294,7 @@ The render fails with no namespace, with `governance.enabled`, and with an `extr
 The access review and discovery each run one replica, because the groups of each sign-in and the review and export caches live in one process: `replicaCount` above 1 or `autoscaling.enabled` fails the render.
 The ClusterRole, the Roles in other namespaces and the `NavLink` need a cluster owner to install.
 Rancher's Apps page draws a form for these values from `questions.yaml`; the form cannot name a list entry, so set the ingress host and TLS in its YAML view.
-Rancher mode is not offered through the OLM operator in this release: its role grants no `NavLink`, ClusterRole, ClusterRoleBinding, Role, RoleBinding or SubjectAccessReview, so set these values with Helm or Rancher's Apps page.
+Rancher mode is not offered through the OLM operator in this release: its role grants no `ui.cattle.io` `NavLink`, no ClusterRole or ClusterRoleBinding and no read on CloudNativePG Clusters, so the API server refuses the exporter's Roles as an escalation; set these values with Helm or Rancher's Apps page.
 
 ## Governance
 

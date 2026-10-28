@@ -109,12 +109,26 @@ describe("questions.yaml", () => {
       "discovery.kubernetes.enabled",
       "discovery.kubernetes.namespaces",
       "discovery.kubernetes.intervalMs",
+      "discovery.kubernetes.kinds",
       "discovery.kubernetes.maxAgeMs",
       "agent.enabled",
       "mcp.enabled",
     ]) {
       expect({ variable, present: variables.has(variable) }).toEqual({ variable, present: true });
     }
+  });
+
+  test("the OIDC scope states no default, since values.yaml's openid profile email is one Rancher refuses", () => {
+    const scope = all.find((question) => question.variable === "config.oidcScope");
+    expect(scope && "default" in scope).toBe(false);
+    expect(scope?.description).toStartWith(
+      "Replace the prefilled value: openid profile groups on Rancher 2.15 and later, openid profile before",
+    );
+  });
+
+  test("the agent question says only true is refused under the access review", () => {
+    const agent = all.find((question) => question.variable === "agent.enabled");
+    expect(agent?.description).toContain("refuses only true");
   });
 
   test("never asks for a value the access review refuses or a secret value", () => {

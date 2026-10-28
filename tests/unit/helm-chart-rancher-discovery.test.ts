@@ -113,6 +113,9 @@ function envOf(deployment: Manifest): Record<string, string | undefined> {
 
 const ON = ["--set", "discovery.kubernetes.enabled=true", "--set", "discovery.kubernetes.namespaces={team-a,team-b}"];
 
+/** The Role and RoleBinding in each discovered namespace carry the release namespace, as two releases may discover one namespace. */
+const NAMESPACED_ROLE = `${NAMESPACE}.libredb-studio-discovery`;
+
 describe("discovery.kubernetes is off by default", () => {
   test("the default install renders no exporter, RBAC, export Secret, mount or variable", () => {
     const docs = render([]);
@@ -197,15 +200,32 @@ describe("the exporter Deployment", () => {
   });
 });
 
+describe("the exporter's selector at a long name", () => {
+  test("a 63-character nameOverride keeps the -discovery suffix, so no Studio selector matches the exporter", () => {
+    const docs = render([...ON, "--set", `nameOverride=${"n".repeat(63)}`]);
+    const exporterDeployment = docs.find(
+      (doc) =>
+        doc.kind === "Deployment" &&
+        doc.spec?.template?.metadata.labels["app.kubernetes.io/component"] === "discovery-exporter",
+    );
+    const studioDeployment = docs.find((doc) => doc.kind === "Deployment" && doc !== exporterDeployment);
+    const exporterName = exporterDeployment?.spec?.selector?.matchLabels?.["app.kubernetes.io/name"] ?? "";
+    expect(exporterName.endsWith("-discovery")).toBe(true);
+    expect(exporterName.length).toBeLessThanOrEqual(63);
+    expect(exporterName).not.toBe(studioDeployment?.spec?.selector?.matchLabels?.["app.kubernetes.io/name"]);
+    const service = docs.find((doc) => doc.kind === "Service");
+    const selector = (service?.spec?.selector ?? {}) as Record<string, string>;
+    const labels = exporterDeployment?.spec?.template?.metadata.labels ?? {};
+    expect(Object.entries(selector).every(([key, value]) => labels[key] === value)).toBe(false);
+  });
+});
+
 describe("the exporter's RBAC", () => {
   test("each discovered namespace gets a Role with list on clusters and get on secrets, bound to the exporter", () => {
     const docs = render(ON);
     for (const namespace of ["team-a", "team-b"]) {
       const role = docs.find(
-        (doc) =>
-          doc.kind === "Role" &&
-          doc.metadata.name === "libredb-studio-discovery" &&
-          doc.metadata.namespace === namespace,
+        (doc) => doc.kind === "Role" && doc.metadata.name === NAMESPACED_ROLE && doc.metadata.namespace === namespace,
       );
       expect(role?.rules).toEqual([
         { apiGroups: ["postgresql.cnpg.io"], resources: ["clusters"], verbs: ["list"] },
@@ -213,19 +233,41 @@ describe("the exporter's RBAC", () => {
       ]);
       const binding = docs.find(
         (doc) =>
-          doc.kind === "RoleBinding" &&
-          doc.metadata.name === "libredb-studio-discovery" &&
-          doc.metadata.namespace === namespace,
+          doc.kind === "RoleBinding" && doc.metadata.name === NAMESPACED_ROLE && doc.metadata.namespace === namespace,
       );
       expect(binding?.roleRef).toEqual({
         apiGroup: "rbac.authorization.k8s.io",
         kind: "Role",
-        name: "libredb-studio-discovery",
+        name: NAMESPACED_ROLE,
       });
       expect(binding?.subjects).toEqual([
         { kind: "ServiceAccount", name: "libredb-studio-discovery", namespace: NAMESPACE },
       ]);
     }
+  });
+
+  test("two releases of one name in two namespaces render distinct Roles in a namespace both discover", () => {
+    const names = ["studio-prod", "studio-staging"].map((namespace) => {
+      const run = Bun.spawnSync(["helm", "template", RELEASE, CHART_DIR, "--namespace", namespace, ...ON], {
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(run.exitCode).toBe(0);
+      const docs = parseAllDocuments(run.stdout.toString())
+        .map((doc) => doc.toJSON() as Manifest)
+        .filter(Boolean);
+      return docs
+        .filter((doc) => (doc.kind === "Role" || doc.kind === "RoleBinding") && doc.metadata.namespace === "team-a")
+        .map((doc) => `${doc.kind}/${doc.metadata.name}`);
+    });
+    expect(names[0]).toEqual([
+      "Role/studio-prod.libredb-studio-discovery",
+      "RoleBinding/studio-prod.libredb-studio-discovery",
+    ]);
+    expect(names[1]).toEqual([
+      "Role/studio-staging.libredb-studio-discovery",
+      "RoleBinding/studio-staging.libredb-studio-discovery",
+    ]);
   });
 
   test("the release namespace gets get and update on the export Secret by name, and nothing else", () => {

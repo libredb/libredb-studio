@@ -1312,6 +1312,7 @@ If the record is gone again right after that sign-in, the login page says so wit
 The memory holds the records of at most 4096 subjects; past that the oldest record goes first, and its session signs in again.
 A session keeps the groups it signed in with, and signing out of the identity provider does not end a Studio session, so the review's mode allows a session of at most 900 seconds (`AUTH_SESSION_TTL_SECONDS`).
 A session without an identity provider subject, such as a password session minted before the review was switched on, was decided by no review, so it is refused and its cookie cleared.
+Once its subject signs in again, an OIDC session minted before the review was switched on keeps the role it was minted with until it expires, so switching the review on for an install that already signs people in through OIDC rotates `JWT_SECRET` (`secrets.jwtSecret` in the chart) in the same upgrade.
 
 ### What the review switches off
 
