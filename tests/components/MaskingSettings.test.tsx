@@ -607,6 +607,54 @@ describe("MaskingSettings", () => {
     expect(view.queryByText("Email")).toBeNull();
   });
 
+  test("editing a custom pattern shows its mask string and saves the changed one", () => {
+    mockLoadMaskingConfig.mockImplementation(() => ({
+      ...structuredClone(mockConfig),
+      patterns: [
+        {
+          id: "p3",
+          name: "Badge",
+          maskType: "custom" as const,
+          customMask: "###",
+          columnPatterns: ["badge"],
+          enabled: true,
+          isBuiltin: false,
+        },
+      ],
+    }));
+    const { container, baseElement } = render(<MaskingSettings />);
+    act(() => {
+      fireEvent.click(container.querySelector(".lucide-pencil")!.closest("button")!);
+    });
+
+    const customInput = within(baseElement).getByLabelText("Custom Mask String") as HTMLInputElement;
+    expect(customInput.value).toBe("###");
+    act(() => {
+      fireEvent.change(customInput, { target: { value: "XX" } });
+    });
+
+    const saveBtn = within(baseElement)
+      .getAllByText("Save")
+      .find((el) => el.closest('[data-slot="dialog-content"]'));
+    act(() => {
+      fireEvent.click(saveBtn!);
+    });
+    act(() => {
+      fireEvent.click(within(container).getByText("Save Config"));
+    });
+
+    const saved = mockSaveMaskingConfig.mock.calls[0][0];
+    expect(saved.patterns.find((p) => p.id === "p3")?.customMask).toBe("XX");
+  });
+
+  test("a non-custom pattern's dialog has no custom mask field", () => {
+    const { container, baseElement } = render(<MaskingSettings />);
+    act(() => {
+      fireEvent.click(container.querySelector(".lucide-pencil")!.closest("button")!);
+    });
+    expect(within(baseElement).queryByLabelText("Custom Mask String")).toBeNull();
+  });
+
   // ── Dialog cancel ────────────────────────────────────────────────────
 
   test("dialog cancel closes without saving", () => {
