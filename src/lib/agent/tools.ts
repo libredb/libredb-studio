@@ -726,13 +726,8 @@ function readSerializedClaims(input: unknown): unknown {
   if (typeof input !== "object" || input === null) return input;
   const { claims } = input as { claims?: unknown };
   if (typeof claims !== "string") return input;
-  try {
-    return { ...input, claims: JSON.parse(claims) };
-  } catch {
-    // Left as the string it was, for the sibling's reason: the schema refuses it, and reporting a
-    // parse failure here would replace the contract's own wording with this function's.
-    return input;
-  }
+  // Cannot throw: `composeReportTool` refuses a claims string that is not JSON before this runs.
+  return { ...input, claims: JSON.parse(claims) };
 }
 
 /**
@@ -3938,7 +3933,8 @@ function unverifiableCitation(
         .join(" — ");
     }
   }
-  return citableEvidence(events);
+  // No return past the loop: both callers ask only after a reference failed `verifiedAgainst`, so the loop always
+  // returns at it.
 }
 
 /**
