@@ -24,7 +24,8 @@
  *    `@/lib/db/execution-ui/shared`, its contract's shared building block, `migration-ddl.ts`, the engine's
  *    migration DDL contract module, from `@/lib/db/migration-ddl/*`, its contract's shared building blocks, and
  *    `sql-writing.ts` and its `typed-literals.ts` sibling, the engine's SQL writing contract modules, from
- *    `@/lib/db/sql-writing/*`.
+ *    `@/lib/db/sql-writing/*`, and `paste.ts`, the engine's connection string paste reader, from
+ *    `@/lib/db/connection-string/shared`.
  * 8. Only `account.ts` builds an origin: outside it, the only values imported from `@/lib/db/http/endpoint` are
  *    `endpointUrl` and `rejectForeignLink`, which act on an origin already built; and `account-host.ts`, which the
  *    browser bundles, imports nothing.
@@ -76,6 +77,7 @@ const CONTRACT_VALUES: Readonly<Record<string, string>> = {
   "migration-ddl": "src/lib/db/migration-ddl/",
   "sql-writing": "src/lib/db/sql-writing/",
   "typed-literals": "src/lib/db/sql-writing/",
+  paste: "src/lib/db/connection-string/shared.ts",
 };
 const PACKAGE_VALUES = new Set(["jose"]);
 const BUILTIN_VALUES = new Set(["node:crypto", "node:zlib"]);

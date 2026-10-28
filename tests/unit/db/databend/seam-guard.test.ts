@@ -21,7 +21,8 @@
  *    `@/lib/db/execution-ui/shared`, its contract's shared building block, `migration-ddl.ts`, the engine's
  *    migration DDL contract module, from `@/lib/db/migration-ddl/*`, its contract's shared building blocks, and
  *    `sql-writing.ts` and its `typed-literals.ts` sibling, the engine's SQL writing contract modules, from
- *    `@/lib/db/sql-writing/*`.
+ *    `@/lib/db/sql-writing/*`, and `paste.ts`, the engine's connection string paste reader, from
+ *    `@/lib/db/connection-string/shared`.
  * 8. Every value export has an importer other than its own file, so nothing is exported only for a test [12 #15].
  *    An importer is a module under `src/`, or `tests/unit/db/databend/provider-doc.test.ts`, which reads back what
  *    `docs/providers/databend.md` quotes (design section 10); no other test file counts. The doc test reaches only
@@ -71,6 +72,7 @@ const CONTRACT_VALUES: Readonly<Record<string, string>> = {
   "migration-ddl": "src/lib/db/migration-ddl/",
   "sql-writing": "src/lib/db/sql-writing/",
   "typed-literals": "src/lib/db/sql-writing/",
+  paste: "src/lib/db/connection-string/shared.ts",
 };
 const BUILTIN_VALUES = new Set(["node:crypto"]);
 const HEADER_FILES = new Set(["connection-options", "session", "http-transport"]);
