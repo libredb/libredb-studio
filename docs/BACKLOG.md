@@ -3514,7 +3514,7 @@ Found 2026-10-14 in the final review of the Apache Spark provider (#1759).
 ### D353. The Spark gRPC runtime cases never run on the Node major production uses
 
 `tests/unit/db/spark/grpc-runtimes.test.ts` runs its bundled child under `Bun.which("node")`, which in the `Unit & Integration Tests` job is the Node 24 that `.github/workflows/ci.yml` installs.
-The job's Node 26 step runs `tests/unit/db/http/node-transport-runtimes.test.ts`, `tests/unit/db/s3/client-wire.test.ts`, `tests/unit/db/rabbitmq/dial-runtimes.test.ts` and `tests/unit/db/snowflake/key-runtimes.test.ts`, and not the Spark file, while the `Dockerfile` runner stage is `node:26.11.1-trixie-slim`.
+The job's Node 26 step runs `tests/unit/db/http/node-transport-runtimes.test.ts`, `tests/unit/db/s3/client-wire.test.ts`, `tests/unit/db/rabbitmq/dial-runtimes.test.ts`, `tests/unit/db/mqtt/dial-runtimes.test.ts` and `tests/unit/db/snowflake/key-runtimes.test.ts`, and not the Spark file, while the `Dockerfile` runner stage is `node:26.11.1-trixie-slim`.
 A grpc-js or TLS behaviour that differs on Node 26 would reach users with every check green; the Bun parent already holds the stricter IP server-name rule, which narrows the gap.
 Verified 2026-10-14 by reading `ci.yml`, the `Dockerfile` and the test on `main` at 5b77948ee.
 

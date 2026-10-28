@@ -207,8 +207,8 @@ jobs:
       # Production runs on Node 26.10.0 (the Dockerfile's runner stage), and the byte transport's refusal of a
       # link-local DNS answer with DB_HTTP_BLOCK_PRIVATE_HOSTS off rests on that runtime's Agent using the
       # transport's own lookup, so the transport's runtime cases run once more on exactly that version, and so do
-      # the RabbitMQ AMQP dial's, whose egress rests on the same runtime's lookup handling. The suite and its
-      # coverage above stay on Node 24.
+      # the RabbitMQ AMQP dial's and the MQTT dial's, whose egress rests on the same runtime's lookup handling.
+      # The suite and its coverage above stay on Node 24.
       - name: Setup Node 26.10.0 for the transport runtime cases
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -217,10 +217,10 @@ jobs:
       - name: Record the Node 26.10.0 binary for Snowflake runtime coverage
         run: echo "NODE2610_BINARY=$(command -v node)" >> "$GITHUB_ENV"
 
-      - name: Run the transport runtime cases, the S3 client wire cases, the RabbitMQ dial cases and the Snowflake key cases on Node 26.10.0
+      - name: Run the transport runtime cases, the S3 client wire cases, the RabbitMQ and MQTT dial cases and the Snowflake key cases on Node 26.10.0
         run: |
           test "$(node --version)" = "v26.10.0"
-          NODE_TRANSPORT_NODES="$(command -v node)" bun tests/run-tests.ts tests/unit/db/http/node-transport-runtimes.test.ts tests/unit/db/s3/client-wire.test.ts tests/unit/db/rabbitmq/dial-runtimes.test.ts tests/unit/db/snowflake/key-runtimes.test.ts
+          NODE_TRANSPORT_NODES="$(command -v node)" bun tests/run-tests.ts tests/unit/db/http/node-transport-runtimes.test.ts tests/unit/db/s3/client-wire.test.ts tests/unit/db/rabbitmq/dial-runtimes.test.ts tests/unit/db/mqtt/dial-runtimes.test.ts tests/unit/db/snowflake/key-runtimes.test.ts
 
       # OpenSSL 4 reports an ASN.1 wrong-tag code when a wrong passphrase decrypts PKCS#8 to invalid bytes.
       - name: Setup Node 26.12.1 for the Snowflake key runtime cases
