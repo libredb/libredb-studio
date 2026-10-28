@@ -228,6 +228,25 @@ describe("the monitoring reads", () => {
     expect((await provider.getIndexStats()).map((row) => row.indexName)).toEqual(["person_name", "service_id"]);
   });
 
+  test("two labels no Cypher name can spell are counted in the plural, and both are named", async () => {
+    const logged = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { provider } = await connected({
+        [NEO4J_CATALOG_STATEMENTS.label]: {
+          fields: ["label"],
+          rows: [{ label: "A\u0001bad" }, { label: "B\u0002bad" }, { label: "Person" }],
+          truncated: false,
+        },
+      });
+      expect((await provider.getTableStats()).map((row) => row.tableName)).toEqual(["Person"]);
+      expect(String(logged.mock.calls[0]?.[0])).toBe(
+        '[DB:neo4j] table stats failed: 2 labels no Cypher name can spell were left out: "A\\u0001bad", "B\\u0002bad"',
+      );
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
   test("table stats log the labels no Cypher name can spell, which they leave out", async () => {
     const logged = spyOn(console, "error").mockImplementation(() => {});
     try {
