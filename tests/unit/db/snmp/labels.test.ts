@@ -72,6 +72,10 @@ describe("the count sentence says why there is no number", () => {
   test("it names the reason a zero would be wrong", () => {
     expect(SNMP_NO_COUNT).toContain("looks exactly like");
   });
+  test("it withholds instance counts only, since the object tree counts the bundled definitions", () => {
+    expect(SNMP_NO_COUNT).toContain("Instance counts are not read from the agent");
+    expect(SNMP_NO_COUNT).not.toContain("no number is shown");
+  });
   test("it does not promise a count later", () => {
     expect(SNMP_NO_COUNT.toLowerCase()).not.toContain("soon");
     expect(SNMP_NO_COUNT.toLowerCase()).not.toContain("will be");

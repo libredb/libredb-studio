@@ -54,6 +54,7 @@ import { PDU_GET, PDU_GET_BULK, PDU_GET_NEXT } from "./valve";
 import type { ResponseVarbind } from "./message";
 import { buildTable, type Cell, type RowKeyInput } from "./table";
 import { allNotices } from "./mib";
+import { failureFromStatus } from "./errors";
 
 /**
  * How long an exchange waits before it calls the agent silent, when nothing else is asked for.
@@ -544,6 +545,10 @@ export class SnmpProvider extends BaseDatabaseProvider {
     const answer = await exchange.send(PDU_GET, nextRequestId(), [SYS_DESCR, SYS_UPTIME], undefined);
     const roundTripMs = Date.now() - sent;
     if (!("varbinds" in answer)) throw new QueryError(`The agent did not answer the health read. ${answer.reason}`);
+    // A non-zero error-status sends the request's own varbinds back with NULL values. Read as
+    // values they would render as two empty strings, a healthy-looking nothing: the status is the answer.
+    const refused = failureFromStatus(answer.errorStatus);
+    if (refused !== undefined) throw new QueryError(`The agent refused the health read: ${refused.reason}`);
     const read = (oid: readonly number[], name: string): string => {
       const varbind = answer.varbinds.find((candidate) => candidate.oid.join(".") === oid.join("."));
       const exception = varbind === undefined ? "nothing" : EXCEPTION_TAGS[varbind.tag];
@@ -575,9 +580,11 @@ export class SnmpProvider extends BaseDatabaseProvider {
   /**
    * The agent's own description and uptime, read from it.
    *
-   * Every other figure is `0` or "unavailable" with a sentence, and that is not a placeholder:
-   * an agent is not a database and has no size, no tables and no connections of its own. The
-   * two values here are the two an agent really does report about itself.
+   * The table and index counts are the object tree's, from the bundled modules (one INDEX clause
+   * per table), so the overview and the tree agree about the same connection. Every other figure
+   * is `0` or a sentence, and that is not a placeholder: an agent is not a database server and
+   * has no size and no connections of its own. The two values read are the two an agent really
+   * does report about itself.
    */
   public async getOverview(): Promise<DatabaseOverview> {
     const exchange = this.exchange;
@@ -598,8 +605,8 @@ export class SnmpProvider extends BaseDatabaseProvider {
           : renderValue(syntaxFromTag(uptime.tag, uptime.value), uptime.value).display,
       maxConnections: 0,
       databaseSize: SNMP_NO_COUNT,
-      tableCount: 0,
-      indexCount: 0,
+      tableCount: catalogObjects("table").length,
+      indexCount: catalogObjects("table").length,
     } as DatabaseOverview;
   }
 

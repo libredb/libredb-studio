@@ -10,6 +10,7 @@ import {
   writeSequence,
 } from "@/lib/db/providers/network/snmp/ber";
 import { SnmpProvider } from "@/lib/db/providers/network/snmp";
+import { MIB_TABLES } from "@/lib/db/providers/network/snmp/mib-objects";
 import { StatementError } from "@/lib/db/providers/network/snmp/statement";
 import type { DatabaseConnection } from "@/lib/types";
 
@@ -53,8 +54,22 @@ interface Seen {
   readonly thirdInteger: number;
 }
 
+/**
+ * How a listener departs from a plain answer. `errorStatus` is read with the count of requests
+ * seen so far, so a test can let the connect probe through and fail only the read after it;
+ * `omit` names OIDs the answer leaves out of its varbind list altogether.
+ */
+interface AgentQuirks {
+  readonly errorStatus?: (requestNumber: number) => number;
+  readonly omit?: ReadonlySet<string>;
+}
+
 /** Answers a Get with one value per asked OID, and records what it was asked. */
-async function listeningAgent(seen: Seen[], values: Map<string, { tag: number; bytes: Uint8Array }>): Promise<number> {
+async function listeningAgent(
+  seen: Seen[],
+  values: Map<string, { tag: number; bytes: Uint8Array }>,
+  quirks: AgentQuirks = {},
+): Promise<number> {
   agent = createSocket("udp4");
   agent.on("message", (datagram, from) => {
     const bytes = Uint8Array.from(datagram);
@@ -69,15 +84,26 @@ async function listeningAgent(seen: Seen[], values: Map<string, { tag: number; b
       oids,
       requestId: [...bytes.slice(pdu[0].start, pdu[0].end)].reduce((n, b) => n * 256 + b, 0),
     });
-    const varbinds = oids.map((oid) => {
-      const value = values.get(oid) ?? { tag: 0x80, bytes: new Uint8Array(0) };
-      return writeSequence([writeOid(oid.split(".").map(Number)), writeField(value.tag, value.bytes)]);
-    });
+    const status = quirks.errorStatus?.(seen.length) ?? 0;
+    // A non-zero error-status comes back the way RFC 3416 has an agent send it: the request's own
+    // varbinds with NULL values, and the error index pointing at the first of them.
+    const varbinds = oids
+      .filter((oid) => !quirks.omit?.has(oid))
+      .map((oid) => {
+        const value =
+          status === 0 ? (values.get(oid) ?? { tag: 0x80, bytes: new Uint8Array(0) }) : { tag: 0x05, bytes: new Uint8Array(0) };
+        return writeSequence([writeOid(oid.split(".").map(Number)), writeField(value.tag, value.bytes)]);
+      });
     const answer = writeSequence([
       writeInteger(1),
       writeOctetString(new TextEncoder().encode("public")),
       writeSequence(
-        [writeInteger(seen[seen.length - 1].requestId), writeInteger(0), writeInteger(0), writeSequence(varbinds)],
+        [
+          writeInteger(seen[seen.length - 1].requestId),
+          writeInteger(status),
+          writeInteger(status === 0 ? 0 : 1),
+          writeSequence(varbinds),
+        ],
         0xa2,
       ),
     ]);
@@ -271,8 +297,11 @@ describe("a statement reaches a real agent and its answer reaches the caller", (
     const overview = await opened.getOverview();
     expect(overview.version).toBe("Linux agent 6.1");
     expect(overview.uptime).not.toBe("");
-    // An agent is not a database: these are zero because it HAS none, not as a placeholder.
-    expect(overview.tableCount).toBe(0);
+    // The tables are the ones the object tree lists, from the bundled modules, each with its one
+    // INDEX clause; the overview and the tree must not disagree about the same connection.
+    expect(overview.tableCount).toBe(MIB_TABLES.length);
+    expect(overview.indexCount).toBe(MIB_TABLES.length);
+    // An agent is not a database server: it takes no connections to count.
     expect(overview.maxConnections).toBe(0);
   });
 
@@ -494,6 +523,38 @@ describe("health is read from the agent, and claims nothing the agent did not sa
     const health = await opened.getHealth();
     expect(health.uptime).toBe("1");
     expect(health.description).toBe("unavailable: the agent answered noSuchObject for sysDescr.0");
+  });
+
+  test("an answer that leaves an object out is said to have answered nothing for it", async () => {
+    const port = await listeningAgent(
+      [],
+      new Map([[SYS_UPTIME.join("."), { tag: 0x43, bytes: Uint8Array.of(1) }]]),
+      { omit: new Set([SYS_DESCR.join(".")]) },
+    );
+    opened = new SnmpProvider(connectionTo(port));
+    await opened.connect();
+    const health = await opened.getHealth();
+    expect(health.uptime).toBe("1");
+    expect(health.description).toBe("unavailable: the agent answered nothing for sysDescr.0");
+  });
+
+  /**
+   * An agent that answers with a non-zero error-status sends the request's varbinds back with NULL
+   * values. Read as values they render as two empty strings, which is a healthy-looking nothing:
+   * the status is the answer, and it fails the read.
+   */
+  test("an answer carrying an error-status fails the health read rather than rendering its NULLs", async () => {
+    const port = await listeningAgent(
+      [],
+      new Map([[SYS_UPTIME.join("."), { tag: 0x43, bytes: Uint8Array.of(1) }]]),
+      // The connect probe is the first request and is answered normally; the health read gets genErr.
+      { errorStatus: (requestNumber) => (requestNumber === 2 ? 5 : 0) },
+    );
+    opened = new SnmpProvider(connectionTo(port));
+    await opened.connect();
+    await expect(opened.getHealth()).rejects.toThrow(
+      "The agent refused the health read: the agent answered error-status 5",
+    );
   });
 
   test("an agent that stops answering fails the health read rather than reporting a healthy nothing", async () => {

@@ -40,7 +40,7 @@ export const SNMP_LABELS: ProviderLabels = Object.freeze({
 });
 
 /**
- * Shown where a count would otherwise be.
+ * Shown where a count of the agent's instances would otherwise be.
  *
  * Measured against Net-SNMP snmpd 5.9.4 on 13 October 2026: a read outside the agent's view is
  * indistinguishable from absence, returning noSuchObject per varbind on a Get and stepping over
@@ -48,6 +48,6 @@ export const SNMP_LABELS: ProviderLabels = Object.freeze({
  * claim this provider has no evidence for.
  */
 export const SNMP_NO_COUNT =
-  "Counts are not read from the agent. The object tree comes from the MIB modules this build carries, and a " +
-  "read the agent refuses looks exactly like one that found nothing, so no number is shown rather than a " +
-  "number that might be wrong.";
+  "Instance counts are not read from the agent. The object tree counts the definitions in the MIB modules this " +
+  "build carries, and a read the agent refuses looks exactly like one that found nothing, so no instance count " +
+  "is shown rather than one that might be wrong.";

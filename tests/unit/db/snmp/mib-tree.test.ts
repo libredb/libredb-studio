@@ -112,6 +112,16 @@ describe("a description is what the module declares", () => {
     expect(detail.indexes).toEqual([{ name: "ifXEntry", columns: ["ifIndex"], unique: true }]);
   });
 
+  test("an index part naming another table's column is not one of this table's columns, AUGMENTS or not", () => {
+    const processor = describeCatalogObject("hrProcessorTable", "table");
+    expect(processor.columns.some((column) => column.isPrimary)).toBe(false);
+    expect(processor.indexes).toEqual([{ name: "hrProcessorEntry", columns: ["hrDeviceIndex"], unique: true }]);
+    const partition = describeCatalogObject("hrPartitionTable", "table");
+    expect(partition.columns.filter((column) => column.isPrimary).map((column) => column.name)).toEqual([
+      "hrPartitionIndex",
+    ]);
+  });
+
   test("a scalar group's columns are its scalars, with no index", () => {
     const detail = describeCatalogObject("system", "scalars");
     expect(detail.columns.map((column) => column.name)).toEqual([

@@ -9,7 +9,9 @@
  * WHERE THE DECLARATION GOES. A column carries its textual convention as `type` (what a person reads), the syntax that
  * convention is built on as `baseType` (what a reader deciding prefers), and the module's own three facts about it,
  * syntax, MAX-ACCESS and object identifier, as `declaredType`, which is the spelling the column tooltip shows. An index
- * column is primary and never absent, because its value is written into every instance's identifier; any other
+ * column the table holds is primary and never absent, because its value is written into every instance's identifier.
+ * An INDEX, own or by AUGMENTS, may name another table's column (`hrProcessorTable` is indexed by `hrDeviceIndex`), and
+ * that part of the index has no column here to mark; any other
  * column may be absent from a row, because an agent need not instantiate every column of every row. A column whose MAX-ACCESS is
  * `not-accessible` or `accessible-for-notify` cannot be read on its own, so it is not offered for projection.
  */
