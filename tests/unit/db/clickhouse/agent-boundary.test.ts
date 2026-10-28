@@ -269,6 +269,22 @@ describe("verifyAgentProfile refuses the principal", () => {
     expect(error.message).toContain("can read system.query_log");
   });
 
+  test("the object check names every local engine and refuses definer and NONE views", async () => {
+    const { query, sent } = server();
+    await verifyAgentProfile(query, "demo");
+    expect(sent.find((sql) => stepOf(sql) === "objects")).toBe(
+      "SELECT database, name, engine FROM system.tables WHERE engine NOT IN (" +
+        "'MergeTree', 'ReplacingMergeTree', 'SummingMergeTree', 'AggregatingMergeTree', 'CollapsingMergeTree', " +
+        "'VersionedCollapsingMergeTree', 'GraphiteMergeTree', 'CoalescingMergeTree', 'ReplicatedMergeTree', " +
+        "'ReplicatedReplacingMergeTree', 'ReplicatedSummingMergeTree', 'ReplicatedAggregatingMergeTree', " +
+        "'ReplicatedCollapsingMergeTree', 'ReplicatedVersionedCollapsingMergeTree', 'ReplicatedGraphiteMergeTree', " +
+        "'ReplicatedCoalescingMergeTree', 'Memory', 'Log', 'TinyLog', 'StripeLog', 'Null', 'Set', 'Join', 'View', " +
+        "'MaterializedView') " +
+        "OR (engine IN ('View', 'MaterializedView') AND (definer != '' OR match(create_table_query, 'SQL SECURITY (DEFINER|NONE)'))) " +
+        "ORDER BY database, name LIMIT 5",
+    );
+  });
+
   test("a visible table of a refused engine, named with its engine", async () => {
     const error = await refusal({
       objects: result([

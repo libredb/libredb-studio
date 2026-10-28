@@ -118,9 +118,22 @@ describe("assertNoRemoteTableFunction", () => {
 
 describe("rowOverflowRefusal", () => {
   test("names the server's own count when it is a whole number", () => {
-    const message = "Limit for result exceeded, max rows: 10.00, current rows: 11.00. (TOO_MANY_ROWS_OR_BYTES)";
-    expect(rowOverflowRefusal(message, { ...BUDGET, maxResultRows: 10 }, "SELECT 1").message).toBe(
-      "Read-only execution exceeded the row budget: 11 rows > 10 allowed",
+    const message = "Limit for result exceeded, max rows: 50.00, current rows: 65.00. (TOO_MANY_ROWS_OR_BYTES)";
+    expect(rowOverflowRefusal(message, { ...BUDGET, maxResultRows: 50 }, "SELECT 1").message).toBe(
+      "Read-only execution exceeded the row budget: 65 rows > 50 allowed",
+    );
+  });
+
+  test("names one past the budget when the message carries no count", () => {
+    expect(rowOverflowRefusal("Limit for result exceeded", { ...BUDGET, maxResultRows: 50 }, "SELECT 1").message).toBe(
+      "Read-only execution exceeded the row budget: 51 rows > 50 allowed",
+    );
+  });
+
+  test("names one past the budget when the server's count is not past it", () => {
+    const message = "Limit for result exceeded, max rows: 50.00, current rows: 50.00. (TOO_MANY_ROWS_OR_BYTES)";
+    expect(rowOverflowRefusal(message, { ...BUDGET, maxResultRows: 50 }, "SELECT 1").message).toBe(
+      "Read-only execution exceeded the row budget: 51 rows > 50 allowed",
     );
   });
 

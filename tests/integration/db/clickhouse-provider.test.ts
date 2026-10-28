@@ -4402,6 +4402,19 @@ describe("ClickHouseProvider agent read-only profile", () => {
     expect(sentSql).toEqual([]);
   });
 
+  test("the table-function fence reads the statement with ClickHouse's own grammar", async () => {
+    const provider = await agentProvider();
+    sentSql = [];
+
+    // `#` opens a line comment in ClickHouse only, so the call after it is no call here.
+    await provider.queryReadOnly("SELECT 1 # remote('h', system.one)", AGENT_BUDGET);
+    expect(sentSql).toEqual(["SELECT 1 # remote('h', system.one)"]);
+
+    const error = await readOnlyRefusal(provider.queryReadOnly("SELECT 1 + remote('h', system.one)", AGENT_BUDGET));
+    expect(error.message).toContain("reaches another server");
+    expect(sentSql).toHaveLength(1);
+  });
+
   test("an invalid budget is refused before anything is sent", async () => {
     const provider = await agentProvider();
     sentSql = [];
