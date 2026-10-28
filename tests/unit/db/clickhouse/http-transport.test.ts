@@ -14,7 +14,11 @@
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { ClickHouseHttpTransport } from "@/lib/db/providers/sql/clickhouse/http-transport";
-import { CLICKHOUSE_UNKNOWN_ERROR_NAME, ClickHouseTransportError } from "@/lib/db/providers/sql/clickhouse/transport";
+import {
+  CLICKHOUSE_UNKNOWN_ERROR_NAME,
+  ClickHouseBodyLimitError,
+  ClickHouseTransportError,
+} from "@/lib/db/providers/sql/clickhouse/transport";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
 import type { DatabaseConnection, DatabaseType } from "@/lib/db/types";
 
@@ -1176,6 +1180,106 @@ describe("ClickHouseHttpTransport transport failures", () => {
     expect((await captureError(() => makeTransport().query("SELECT 1"))).message).toBe(
       "ClickHouse request failed: socket hang up",
     );
+  });
+});
+
+// ============================================================================
+// The body cap
+// ============================================================================
+
+/** A response whose body arrives as `chunks`, recording how many were pulled and whether the reader cancelled. */
+function streamed(
+  chunks: string[],
+  headers: Record<string, string>,
+): { response: Response; pulled: () => number; cancelled: () => boolean } {
+  let index = 0;
+  let wasCancelled = false;
+  const encoder = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (index >= chunks.length) {
+        controller.close();
+        return;
+      }
+      controller.enqueue(encoder.encode(chunks[index++]));
+    },
+    cancel() {
+      wasCancelled = true;
+    },
+  });
+  return { response: new Response(body, { headers }), pulled: () => index, cancelled: () => wasCancelled };
+}
+
+describe("ClickHouseHttpTransport body cap", () => {
+  test("reads a body within the cap whole", async () => {
+    handler = () => respond(SELECT_BODY, { headers: jsonHeaders() });
+
+    const result = await makeTransport().query("SELECT id, big FROM tx_probe LIMIT 1", { maxBodyBytes: 4096 });
+
+    expect(result.rows).toEqual([{ id: 1, big: "18446744073709551615" }]);
+  });
+
+  test("a body of exactly the cap is read", async () => {
+    handler = () => respond(SELECT_BODY, { headers: jsonHeaders() });
+
+    const result = await makeTransport().query("SELECT 1", { maxBodyBytes: Buffer.byteLength(SELECT_BODY) });
+
+    expect(result.rows).toHaveLength(1);
+  });
+
+  // The cap stops the READ: the chunks after the one that crosses it are never pulled, and the
+  // stream is cancelled, which closes the connection the server is still writing to.
+  test("stops reading at the chunk that crosses the cap and names what it read", async () => {
+    const body = streamed(["a".repeat(600), "b".repeat(600), "c".repeat(600), "d".repeat(600)], jsonHeaders());
+    handler = () => body.response;
+
+    const error = await captureError(() => makeTransport().query("SELECT 1", { maxBodyBytes: 1000 }));
+
+    expect(error).toBeInstanceOf(ClickHouseBodyLimitError);
+    const limited = error as ClickHouseBodyLimitError;
+    expect(limited.bytesRead).toBe(1200);
+    expect(limited.limit).toBe(1000);
+    expect(limited.message).toBe("ClickHouse answered more than 1000 bytes");
+    expect(body.pulled()).toBeLessThan(4);
+    expect(body.cancelled()).toBe(true);
+  });
+
+  test("counts bytes, not characters", async () => {
+    handler = () => respond("ş".repeat(600), { headers: jsonHeaders() });
+
+    const error = await captureError(() => makeTransport().query("SELECT 1", { maxBodyBytes: 1000 }));
+
+    expect((error as ClickHouseBodyLimitError).bytesRead).toBe(1200);
+  });
+
+  test("an empty body under a cap is a write's empty answer", async () => {
+    handler = () => new Response(null, { status: 200, headers: { "x-clickhouse-summary": summaryHeader() } });
+
+    const result = await makeTransport().query("SELECT 1", { maxBodyBytes: 10 });
+
+    expect(result.rows).toEqual([]);
+  });
+
+  test("a failure body is capped too", async () => {
+    handler = () => respond("x".repeat(50), { status: 500, headers: { "x-clickhouse-exception-code": "62" } });
+
+    expect(await captureError(() => makeTransport().query("SELECT 1", { maxBodyBytes: 10 }))).toBeInstanceOf(
+      ClickHouseBodyLimitError,
+    );
+  });
+
+  test("a stream that fails part-way leaves as the seam's own error", async () => {
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.error(new Error("socket hang up"));
+      },
+    });
+    handler = () => new Response(body, { headers: jsonHeaders() });
+
+    const error = await captureError(() => makeTransport().query("SELECT 1", { maxBodyBytes: 100 }));
+
+    expect(error).not.toBeInstanceOf(ClickHouseBodyLimitError);
+    expect(error.message).toBe("ClickHouse request failed: socket hang up");
   });
 });
 

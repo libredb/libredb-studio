@@ -132,6 +132,15 @@ export interface ClickHouseQueryOptions {
    * server makes one up, which nothing outside it can know.
    */
   queryId?: string;
+
+  /**
+   * The most bytes this statement's answer may carry. The implementation stops reading at the first chunk that
+   * crosses it, closes the exchange, and throws `ClickHouseBodyLimitError`, so a result larger than the caller can
+   * use is never held whole in memory. Left out, the answer is read whole, as every editor statement is.
+   *
+   * Neutral rather than HTTP-specific: any implementation reads its answer in pieces it can count.
+   */
+  maxBodyBytes?: number;
 }
 
 /**
@@ -231,5 +240,20 @@ export class ClickHouseTransportError extends Error {
   /** True when a monitoring read should degrade to empty instead of surfacing this. */
   isMonitoringUnavailable(): boolean {
     return MONITORING_UNAVAILABLE_CODES.includes(this.code);
+  }
+}
+
+/**
+ * An answer that ran past `ClickHouseQueryOptions.maxBodyBytes`. A transport error like every other throw out of the
+ * seam, with code 0 because the server named nothing: the client stopped reading. `bytesRead` is what had arrived when
+ * it stopped, so it is past `limit` by at most one chunk.
+ */
+export class ClickHouseBodyLimitError extends ClickHouseTransportError {
+  constructor(
+    public readonly bytesRead: number,
+    public readonly limit: number,
+  ) {
+    super(`ClickHouse answered more than ${limit} bytes`, 0);
+    Object.setPrototypeOf(this, ClickHouseBodyLimitError.prototype);
   }
 }

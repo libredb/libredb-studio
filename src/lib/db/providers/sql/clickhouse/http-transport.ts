@@ -33,6 +33,7 @@ import {
   type ClickHouseQueryResult,
   type ClickHouseRow,
   type ClickHouseTransport,
+  ClickHouseBodyLimitError,
   ClickHouseTransportError,
 } from "./transport";
 
@@ -491,6 +492,29 @@ function midstreamError(outcome: HttpOutcome): ClickHouseTransportError | null {
   );
 }
 
+/**
+ * The body read in chunks, counted in bytes, and abandoned at the first chunk that takes it past `limit`: the reader is
+ * cancelled, which closes the exchange, so the rest of an oversized answer is never pulled into memory. A body read
+ * whole is decoded once, so a character split across two chunks still decodes as one.
+ */
+async function readCappedBody(response: Response, limit: number): Promise<string> {
+  if (response.body === null) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let bytesRead = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    bytesRead += value.byteLength;
+    if (bytesRead > limit) {
+      await reader.cancel();
+      throw new ClickHouseBodyLimitError(bytesRead, limit);
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 /** A failure that never reached the server, or never came back from it. */
 function transportError(cause: unknown, url: string): ClickHouseTransportError {
   return new ClickHouseTransportError(
@@ -527,7 +551,7 @@ export class ClickHouseHttpTransport implements ClickHouseTransport {
   }
 
   public async query(sql: string, opts: ClickHouseQueryOptions = {}): Promise<ClickHouseQueryResult> {
-    const outcome = await this.send(this.endpoint(opts), sql, opts.timeoutMs);
+    const outcome = await this.send(this.endpoint(opts), sql, opts.timeoutMs, opts.maxBodyBytes);
     if (!outcome.ok) throw statementError(outcome);
 
     return toQueryResult(outcome);
@@ -575,7 +599,7 @@ export class ClickHouseHttpTransport implements ClickHouseTransport {
     return endpointUrl(this.origin, "/", params);
   }
 
-  private async send(url: string, sql: string, timeoutMs?: number): Promise<HttpOutcome> {
+  private async send(url: string, sql: string, timeoutMs?: number, maxBodyBytes?: number): Promise<HttpOutcome> {
     // One signal for the request AND the body read: a response whose headers
     // arrive promptly can still stall mid-body, and awaiting text() below is
     // otherwise unbounded. Passing the signal to fetch covers both, which a
@@ -593,9 +617,9 @@ export class ClickHouseHttpTransport implements ClickHouseTransport {
         redirect: "manual",
         ...(signal ? { signal } : {}),
       });
-      text = await response.text();
+      text = maxBodyBytes === undefined ? await response.text() : await readCappedBody(response, maxBodyBytes);
     } catch (error) {
-      if (error instanceof DatabaseConfigError) throw error;
+      if (error instanceof DatabaseConfigError || error instanceof ClickHouseBodyLimitError) throw error;
       // A refused socket, an abort and a truncated body all arrive here, and all
       // have to leave as the seam's own error type.
       throw transportError(error, url);
