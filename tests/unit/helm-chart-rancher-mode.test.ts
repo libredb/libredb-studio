@@ -315,6 +315,24 @@ describe("rancher.navLink", () => {
     expect(link?.spec?.iconSrc).toBe("https://icons.example.com/studio.svg");
   });
 
+  test("iconSrc takes a data: image URI", () => {
+    const icon = "data:image/png;base64,iVBORw0KGgo=";
+    // --set-literal, since --set splits the value at the URI's comma.
+    const [link] = navLinks([...NAVLINK, ...NAVLINK_API, "--set-literal", `rancher.navLink.iconSrc=${icon}`]);
+    expect(link?.spec?.iconSrc).toBe(icon);
+  });
+
+  test("the schema refuses an iconSrc that is neither an https URL nor a data: image URI", () => {
+    for (const icon of [
+      "http://icons.example.com/studio.svg",
+      "javascript:alert(1)",
+      "data:text/html,x",
+      "studio.svg",
+    ]) {
+      refused(["--set-literal", `rancher.navLink.iconSrc=${icon}`], "/rancher/navLink/iconSrc");
+    }
+  });
+
   test("label, group and target are values", () => {
     const [link] = navLinks([
       ...NAVLINK,

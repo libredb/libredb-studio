@@ -799,7 +799,7 @@
             "label": { "type": "string", "minLength": 1, "default": "LibreDB Studio", "description": "The link's text" },
             "group": { "type": "string", "default": "Databases", "description": "The navigation group the link appears under" },
             "target": { "type": "string", "default": "_blank", "description": "The browser target the link opens in" },
-            "iconSrc": { "type": "string", "default": "", "description": "The link's icon, as an https URL or a data: URI; empty uses the LibreDB logo inline" }
+            "iconSrc": { "type": "string", "default": "", "pattern": "^$|^https://\\S+$|^data:image/\\S+$", "description": "The link's icon, as an https URL or a data:image URI; empty uses the LibreDB logo inline" }
           }
         }
       }

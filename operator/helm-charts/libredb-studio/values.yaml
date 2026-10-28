@@ -754,7 +754,7 @@ rancher:
     group: "Databases"
     # -- The browser target the link opens in
     target: "_blank"
-    # -- The link's icon, as an https URL or a data: URI. Empty uses the LibreDB logo,
+    # -- The link's icon, as an https URL or a data:image URI. Empty uses the LibreDB logo,
     # inline, so the browser fetches nothing; Rancher draws a book when a link has none.
     iconSrc: ""
 
