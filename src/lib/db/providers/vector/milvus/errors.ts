@@ -60,9 +60,9 @@ const PING_GOAWAY = "Bandwidth exhausted or memory limit exceeded";
 
 /** TLS causes inside "No connection established. Last error: ...", in Node's and Bun's texts; the first match decides. */
 const TLS_CAUSES: ReadonlyArray<readonly [RegExp, MilvusTlsFailure | undefined]> = [
-  [/alert certificate expired/, "client-certificate-expired"],
-  [/alert certificate required/, "client-certificate-required"],
-  [/alert (?:unknown ca|bad certificate)/, "client-certificate-refused"],
+  [/alert certificate expired|ALERT_CERTIFICATE_EXPIRED/, "client-certificate-expired"],
+  [/alert certificate required|ALERT_CERTIFICATE_REQUIRED/, "client-certificate-required"],
+  [/alert (?:unknown ca|bad certificate)|ALERT_(?:UNKNOWN_CA|BAD_CERTIFICATE)/, "client-certificate-refused"],
   [/does not match certificate's altnames/, "name"],
   [/unable to verify the first certificate|self[- ]signed certificate|unable to get local issuer certificate/, "chain"],
   [/wrong version number|WRONG_VERSION_NUMBER|packet length too long/, "not-tls"],

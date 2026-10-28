@@ -152,7 +152,8 @@ The five SSL modes map one way onto grpc-js credentials and are never retried we
 `require` sends the password to a peer whose certificate it does not verify.
 A client certificate and key are both present or both absent; a certificate whose extended key usage lacks clientAuth, an expired one and a key that does not match it are refused before any channel, naming the reason.
 An IP-literal host is verified against the IP in the certificate, and through an SSH tunnel the identity is the tunnel's far end, never its local forward.
-Under Bun the server's TLS alert is not reported, so a refusal names the client certificate when one is configured.
+Bun reports the server's client-certificate alerts from 1.4.4, in BoringSSL's words, and they are named as under Node.
+A TLS failure Bun reports no cause for, which is every alert before 1.4.4, names the client certificate when one is configured.
 
 ### 4.4 One endpoint
 
@@ -489,7 +490,7 @@ The engine declares `queryLanguage: "json"`, so no SQL statement is ever built f
 | Code 100, or success with `CollectionNotExists` | the collection does not exist in the database |
 | Code 800 | the database does not exist |
 | Code 2000, 2001 or 2099 | Milvus rejected the request on the query node, with no raw server text |
-| A TLS handshake failure | the cause, or the client certificate under Bun |
+| A TLS handshake failure | the cause, or the client certificate where Bun reports none |
 | Any other code | Studio's sentence naming the code, then Milvus's text |
 
 Studio's sentence comes first and the server's text after it; a server text that holds any form of the configured password or token is withheld whole.

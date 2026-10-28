@@ -116,6 +116,11 @@ describe("toMilvusError: gRPC codes (5.10)", () => {
       "ssl/tls alert certificate expired:../deps/openssl/openssl/ssl/record/rec_layer_s3.c:918:SSL alert number 45",
       "client-certificate-expired",
     ],
+    // BoringSSL, under Bun from 1.4.4, names the alerts in capitals.
+    ["error:10000415:SSL routines:OPENSSL_internal:SSLV3_ALERT_CERTIFICATE_EXPIRED", "client-certificate-expired"],
+    ["error:1000045c:SSL routines:OPENSSL_internal:TLSV1_ALERT_CERTIFICATE_REQUIRED", "client-certificate-required"],
+    ["error:10000418:SSL routines:OPENSSL_internal:TLSV1_ALERT_UNKNOWN_CA", "client-certificate-refused"],
+    ["error:10000412:SSL routines:OPENSSL_internal:SSLV3_ALERT_BAD_CERTIFICATE", "client-certificate-refused"],
     ["Hostname/IP does not match certificate's altnames: IP: 127.0.0.1 is not in the cert's list: 10.0.0.5", "name"],
     [
       "Error: unable to verify the first certificate; if the root CA is installed locally, try running Node.js with --use-system-ca.",

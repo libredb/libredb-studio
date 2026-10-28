@@ -282,31 +282,28 @@ function expected(
   runtime: Runtime,
   nodeMajor?: number,
 ): Partial<HandshakeOutcome> & { outcome: HandshakeOutcome["outcome"] } {
-  const namesCause = runtime === "node";
   switch (name) {
     case "a certificate for another IP":
       return { outcome: "failed", category: "tls", tlsFailure: "name", errorClass: "ConnectionError" };
     case "no CA, the runtime's roots":
     case "verify-full refuses a self-signed certificate":
       return { outcome: "failed", category: "tls", tlsFailure: "chain", errorClass: "ConnectionError" };
+    // Both runtimes report the server's alert: Node in OpenSSL's words, Bun from 1.4.4 in BoringSSL's (1.4.2 reported
+    // none, and the case read as not-connected there).
     case "no client certificate where one is required":
-      return namesCause
-        ? {
-            outcome: "failed",
-            category: "tls",
-            tlsFailure: "client-certificate-required",
-            errorClass: "ConnectionError",
-          }
-        : { outcome: "failed", category: "not-connected", errorClass: "ConnectionError" };
+      return {
+        outcome: "failed",
+        category: "tls",
+        tlsFailure: "client-certificate-required",
+        errorClass: "ConnectionError",
+      };
     case "a client certificate from another CA":
-      return namesCause
-        ? {
-            outcome: "failed",
-            category: "tls",
-            tlsFailure: "client-certificate-refused",
-            errorClass: "ConnectionError",
-          }
-        : { outcome: "failed", category: "not-connected", errorClass: "ConnectionError" };
+      return {
+        outcome: "failed",
+        category: "tls",
+        tlsFailure: "client-certificate-refused",
+        errorClass: "ConnectionError",
+      };
     case "a serverAuth-only client certificate":
       return {
         outcome: "refused",
