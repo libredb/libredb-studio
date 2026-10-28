@@ -18,6 +18,7 @@ import {
   CONNECTION_FIELD_GROUPS,
   type ConnectionField,
   type ConnectionFieldGroupName,
+  isBodyConnectionField,
   PLACEABLE_FIELDS,
   type PlaceableField,
 } from "@/lib/db/connection-fields";
@@ -46,10 +47,6 @@ export interface ConnectionFormLayout {
 
 const PLACEABLE: ReadonlySet<string> = new Set(PLACEABLE_FIELDS);
 
-function isBodyField(field: ConnectionField): field is BodyConnectionField {
-  return CONNECTION_FIELD_DESCRIPTORS[field].slot === "body";
-}
-
 /** The row a field is drawn in, or undefined where it stands alone: no group, or shown only under a condition. */
 function groupOf(config: ConnectionFormSpec, field: BodyConnectionField): ConnectionFieldGroupName | undefined {
   return config.fieldShownWhen?.[field] === undefined ? bodyFieldDescriptor(field).group : undefined;
@@ -67,7 +64,7 @@ export function connectionFormLayout(
   const advanced: BodyConnectionField[] = [];
   const drawnGroups = new Set<ConnectionFieldGroupName>();
   for (const field of fields) {
-    if (!isBodyField(field)) {
+    if (!isBodyConnectionField(field)) {
       if (CONNECTION_FIELD_DESCRIPTORS[field].slot === "address" && !body.some((slot) => slot.kind === "address")) {
         body.push({ kind: "address" });
       }
@@ -86,7 +83,7 @@ export function connectionFormLayout(
     if (drawnGroups.has(group)) continue;
     drawnGroups.add(group);
     const members = fields.filter((member): member is BodyConnectionField => {
-      return isBodyField(member) && groupOf(config, member) === group;
+      return isBodyConnectionField(member) && groupOf(config, member) === group;
     });
     body.push({ kind: "group", group, fields: members });
   }

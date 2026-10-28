@@ -24,7 +24,15 @@ import {
   type ConnectionField,
 } from "@/lib/db-ui-config";
 import { CONNECTION_FORM, CONNECTION_PICKER_ORDER, DEFAULT_CONNECTION_TYPE } from "@/lib/db/connection-form";
-import type { TypedConnectionField } from "@/lib/db/connection-fields";
+import {
+  BODY_CONNECTION_FIELDS,
+  type BodyConnectionField,
+  type BodyFieldValues,
+  initialFieldValues,
+  isBodyConnectionField,
+  savedFieldValue,
+} from "@/lib/db/connection-fields";
+import { connectionFormLayout } from "@/lib/db/connection-field-layout";
 import type { ImportedContext, ImportedField, ImportedSsl } from "@/lib/connection-import";
 import { databendNotAppliedNotice, parseConnectionString } from "@/lib/connection-string-parser";
 import { PASTE_FORMATS_TEXT } from "@/lib/connection-paste-formats";
@@ -57,16 +65,20 @@ import { credentialWarningFor } from "@/lib/db/credential-warnings";
  */
 type FieldOwnership = "edited" | "preserved" | "conditional";
 
+const DRAWN_FIELDS_EDITED = Object.fromEntries(BODY_CONNECTION_FIELDS.map((field) => [field, "edited"])) as Record<
+  BodyConnectionField,
+  "edited"
+>;
+
 const FIELD_OWNERSHIP: Record<keyof DatabaseConnection, FieldOwnership> = {
+  // Every field the dialog's one renderer draws: its box owns it, so emptying the box, or choosing None, has to CLEAR
+  // it. `preserved` would go on sending a credential, a context or a choice the user took away.
+  ...DRAWN_FIELDS_EDITED,
   id: "edited",
   name: "edited",
   type: "edited",
   host: "edited",
   port: "edited",
-  user: "edited",
-  password: "edited",
-  database: "edited",
-  schema: "edited",
   queryTimeout: "edited",
   connectionString: "edited",
   createdAt: "edited",
@@ -75,13 +87,6 @@ const FIELD_OWNERSHIP: Record<keyof DatabaseConnection, FieldOwnership> = {
   environment: "edited",
   ssl: "edited",
   sshTunnel: "edited",
-  serviceName: "edited",
-  instanceName: "edited",
-  localDataCenter: "edited",
-  authSource: "edited",
-  // The select owns it, so choosing None on an edit has to CLEAR it. `preserved` would keep a
-  // mechanism the user took away, and send the credential by it.
-  saslMechanism: "edited",
   // The checkbox owns it, so unticking it has to CLEAR it. `preserved` would make the
   // box unticked on screen while the saved connection still skipped its scan.
   skipObjectScan: "edited",
@@ -91,31 +96,6 @@ const FIELD_OWNERSHIP: Record<keyof DatabaseConnection, FieldOwnership> = {
   // The checkbox owns it, so unticking it has to CLEAR it (#786): `preserved` would keep a Db2
   // connection sending its password without TLS after the user took the consent back.
   allowInsecureAuth: "edited",
-  // The text box owns it, so emptying it has to CLEAR it: `preserved` would keep sending the token to servers the
-  // user took off the list.
-  dataServers: "edited",
-  // Databend's Warehouse box owns it, so emptying it has to CLEAR it, as dataServers.
-  warehouse: "edited",
-  // BigQuery's Location box owns it, so emptying it clears it and detection takes over again.
-  location: "edited",
-  // Snowflake's Sign-in select, Private key, Passphrase and Role boxes own them, so emptying one has to CLEAR it, as
-  // warehouse: `preserved` would go on signing in with a key or as a role the user took away.
-  authMethod: "edited",
-  privateKey: "edited",
-  privateKeyPassphrase: "edited",
-  role: "edited",
-  // S3's Region box owns it, so emptying it has to CLEAR it, as warehouse.
-  region: "edited",
-  // Kubernetes' API path (RabbitMQ's Path prefix), Namespaces and TLS server name boxes own them, so emptying one has
-  // to CLEAR it, as warehouse.
-  apiPath: "edited",
-  namespaces: "edited",
-  tlsServerName: "edited",
-  // The AMQP port box owns it, so emptying it has to CLEAR it, as warehouse.
-  amqpPort: "edited",
-  securityMode: "edited",
-  serverCertificateThumbprint: "edited",
-  hostKeyFingerprint: "edited",
   // OPC UA's three deployment fields have no box in this dialog - they come from a seed file - so
   // editing a seeded connection must hand them back unchanged rather than drop them. Preserved,
   // which is what every field the form does not own is.
@@ -127,10 +107,6 @@ const FIELD_OWNERSHIP: Record<keyof DatabaseConnection, FieldOwnership> = {
   seedId: "preserved",
   agentUser: "preserved",
   agentPassword: "preserved",
-  apiKeyId: "edited",
-  apiKeySecret: "edited",
-  // The register map is typed into the dialog like any other field, so the form owns it.
-  registerMap: "edited",
 };
 
 const SSL_OWNERSHIP: Record<keyof SSLConfig, FieldOwnership> = {
@@ -186,10 +162,6 @@ export const CONNECTION_FORM_DEFAULTS = {
   name: "",
   host: "localhost",
   port: CONNECTION_FORM[DEFAULT_CONNECTION_TYPE].defaultPort,
-  user: "",
-  password: "",
-  database: "",
-  schema: "",
   queryTimeout: "",
   connectionString: "",
   mongoConnectionMode: "host" as "host" | "connectionString",
@@ -204,22 +176,6 @@ export const CONNECTION_FORM_DEFAULTS = {
   clientKey: "",
   // Advanced (Oracle/MSSQL)
   showAdvanced: false,
-  serviceName: "",
-  instanceName: "",
-  // Cassandra topology, so a leftover is not cosmetic: the next new connection would
-  // dial its host with the previous ring's data centre, which the driver either refuses
-  // or - when the name exists on both rings - accepts as a silently wrong topology.
-  localDataCenter: "",
-  // A leftover auth database sends the next connection's credentials to a database
-  // that may not hold them, which reads as a wrong password.
-  authSource: "",
-  // A leftover key pair would authenticate the next connection - a different cluster,
-  // possibly a different owner's - as a principal nobody chose for it.
-  apiKeyId: "",
-  apiKeySecret: "",
-  // A leftover mechanism would send the next connection's credentials by a mechanism
-  // nobody chose for it, which the broker answers as a failed login.
-  saslMechanism: "" as NonNullable<DatabaseConnection["saslMechanism"]> | "",
   // A leftover choice would open the next connection with no object list and no
   // explanation, which reads as an engine that answered nothing.
   skipObjectScan: false,
@@ -229,35 +185,6 @@ export const CONNECTION_FORM_DEFAULTS = {
   // A leftover consent would send the next Db2 connection's password without TLS, a risk nobody
   // accepted for it (#786).
   allowInsecureAuth: false,
-  // A leftover list would let the next connection's token follow the previous cluster's addresses.
-  dataServers: "",
-  // A leftover warehouse would resume, and bill, the previous connection's compute for the next one.
-  warehouse: "",
-  location: "",
-  // Snowflake's: a leftover key, passphrase or role would sign the next connection in as a principal nobody chose for
-  // it, and the method a fresh dialog shows is the key pair.
-  authMethod: "keypair" as NonNullable<DatabaseConnection["authMethod"]>,
-  privateKey: "",
-  privateKeyPassphrase: "",
-  role: "",
-  // A leftover region would sign the next S3 connection's requests for the previous server's region, which it refuses.
-  region: "",
-  // A leftover API path would send the next connection's requests to another cluster or another broker behind the same
-  // proxy.
-  apiPath: "",
-  // A leftover list would draw the previous cluster's namespaces for the next connection.
-  namespaces: "",
-  // A leftover TLS server name would check the next connection's certificate against the previous cluster's name.
-  tlsServerName: "",
-  // A leftover AMQP port would send the next connection's reads to the previous server's listener.
-  amqpPort: "",
-  securityMode: "",
-  serverCertificateThumbprint: "",
-  // Modbus's register map. A leftover map would name the previous device's points on the next
-  // connection, and a point is a unit and an address: the same name would be read from somewhere
-  // nobody chose.
-  registerMap: "",
-  hostKeyFingerprint: "",
   // SSH tunnel. A leftover tunnel sends the next connection through the previous one's
   // bastion, with that bastion's password or private key.
   showSSH: false,
@@ -269,6 +196,9 @@ export const CONNECTION_FORM_DEFAULTS = {
   sshPassword: "",
   sshPrivateKey: "",
   sshPassphrase: "",
+  // Every field the dialog's one renderer draws, at its descriptor's start. A leftover credential, context or choice
+  // would reach the next connection, another server, as one nobody typed for it, so each is reset with the rest.
+  ...initialFieldValues(),
 };
 
 type ConnectionFormDefaults = typeof CONNECTION_FORM_DEFAULTS;
@@ -279,15 +209,13 @@ type ConnectionFormDefaults = typeof CONNECTION_FORM_DEFAULTS;
  * to `CONNECTION_FORM_DEFAULTS` fails the typecheck until someone decides which it is; see `startNewTarget`.
  */
 const TARGET_SCOPED: Record<keyof ConnectionFormDefaults, boolean> = {
+  // Every field the dialog's one renderer draws is typed for the server in the Host box, or names how to sign in to it.
+  ...(Object.fromEntries(BODY_CONNECTION_FIELDS.map((field) => [field, true])) as Record<BodyConnectionField, true>),
   type: false,
   name: false,
   // Set by the caller: kept, or the engine's `defaultHost`, or the pasted one.
   host: false,
   port: true,
-  user: true,
-  password: true,
-  database: true,
-  schema: true,
   queryTimeout: false,
   connectionString: true,
   mongoConnectionMode: true,
@@ -298,32 +226,9 @@ const TARGET_SCOPED: Record<keyof ConnectionFormDefaults, boolean> = {
   clientCert: false,
   clientKey: false,
   showAdvanced: true,
-  serviceName: true,
-  instanceName: true,
-  localDataCenter: true,
-  authSource: true,
-  apiKeyId: true,
-  apiKeySecret: true,
-  saslMechanism: true,
   skipObjectScan: false,
   readOnly: false,
   allowInsecureAuth: true,
-  dataServers: true,
-  warehouse: true,
-  location: true,
-  authMethod: true,
-  privateKey: true,
-  privateKeyPassphrase: true,
-  role: true,
-  region: true,
-  apiPath: true,
-  namespaces: true,
-  tlsServerName: true,
-  amqpPort: true,
-  securityMode: true,
-  serverCertificateThumbprint: true,
-  registerMap: true,
-  hostKeyFingerprint: true,
   showSSH: false,
   sshEnabled: false,
   sshHost: false,
@@ -582,16 +487,19 @@ function readImported(
  */
 const WHOLE_VALUE_INPUTS: ReadonlySet<string> = new Set(["insertFromPaste", "insertFromDrop"]);
 
+/** A drawn field's setter by its own name, `setRegisterMap` for `registerMap`. */
+type NamedFieldSetters = { readonly [F in BodyConnectionField as `set${Capitalize<F>}`]: (value: string) => void };
+
+function setterName(field: BodyConnectionField): string {
+  return `set${field.charAt(0).toUpperCase()}${field.slice(1)}`;
+}
+
 export function useConnectionForm({ isOpen, onConnect, editConnection, onTestConnection }: UseConnectionFormProps) {
   const D = CONNECTION_FORM_DEFAULTS;
   const [type, setType] = useState<DatabaseType>(D.type);
   const [name, setName] = useState(D.name);
   const [host, setHost] = useState(D.host);
   const [port, setPort] = useState(D.port);
-  const [user, setUser] = useState(D.user);
-  const [password, setPassword] = useState(D.password);
-  const [database, setDatabase] = useState(D.database);
-  const [schema, setSchema] = useState(D.schema);
   const [queryTimeout, setQueryTimeout] = useState(D.queryTimeout);
   const [isTesting, setIsTesting] = useState(false);
   const [connectionString, setConnectionString] = useState(D.connectionString);
@@ -619,25 +527,21 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
   const [clientCert, setClientCert] = useState(D.clientCert);
   const [clientKey, setClientKey] = useState(D.clientKey);
 
-  // Advanced (Oracle/MSSQL)
+  // The Advanced accordion, drawn for an engine that places a field there.
   const [showAdvanced, setShowAdvanced] = useState(D.showAdvanced);
-  const [serviceName, setServiceName] = useState(D.serviceName);
-  const [instanceName, setInstanceName] = useState(D.instanceName);
-  // Cassandra's required data centre. NOT behind the Advanced accordion that holds
-  // the two above: `cassandra-driver` refuses to connect without it, so a hidden
-  // field would be a connection nobody could open.
-  const [localDataCenter, setLocalDataCenter] = useState(D.localDataCenter);
-  // MongoDB's auth database. In the open for the same reason as the field above: it is
-  // what the ordinary deployment (users in `admin`) cannot connect without.
-  const [authSource, setAuthSource] = useState(D.authSource);
-  // Elasticsearch's API key pair (#708). Two fields, not one: an id and a secret are a
-  // generated pair, never typed together as one string, and Kibana itself shows them
-  // that way under its "Beats"/"Logstash" format.
-  const [apiKeyId, setApiKeyId] = useState(D.apiKeyId);
-  const [apiKeySecret, setApiKeySecret] = useState(D.apiKeySecret);
-  // Kafka's SASL mechanism (#1088), chosen from the select its UI entry declares; "" is the
-  // select's None, which writes no mechanism at all.
-  const [saslMechanism, setSaslMechanism] = useState<ConnectionFormDefaults["saslMechanism"]>(D.saslMechanism);
+  /**
+   * Every field the dialog's one renderer draws, in one record keyed by field, as typed: each is held, reset, loaded
+   * for an edit, imported and saved by its descriptor (src/lib/db/connection-fields.ts), so a new field is a
+   * descriptor row and never a new piece of state here. A value is stored as typed, because the field's `save` rule
+   * and the provider decide what of it is sent, and a provider's refusal names the field.
+   */
+  const [fieldValues, setFieldValues] = useState<BodyFieldValues>(initialFieldValues);
+  /** One field's setter, stable across renders as a state setter is. */
+  const setField = useCallback((field: BodyConnectionField, value: string) => {
+    setFieldValues((current) => (current[field] === value ? current : { ...current, [field]: value }));
+  }, []);
+  // The login, read by name for the credential warning.
+  const { user, password } = fieldValues;
   /**
    * Read no catalog when this connection opens (#765).
    *
@@ -659,48 +563,6 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
    * connection with no TLS unless this is set.
    */
   const [allowInsecureAuth, setAllowInsecureAuth] = useState(D.allowInsecureAuth);
-  /**
-   * A cluster's data-server addresses, as typed. Drawn only for an engine that takes the field; stored as typed,
-   * because the provider trims, parses and refuses it entry by entry.
-   */
-  const [dataServers, setDataServers] = useState(D.dataServers);
-  /**
-   * The warehouse, as typed: Databend's header, which Databend Cloud requires, or the warehouse of every Snowflake
-   * request, optional there. Drawn only for an engine that takes the field; stored as typed, because the provider
-   * checks it and names the field when it refuses it.
-   */
-  const [warehouse, setWarehouse] = useState(D.warehouse);
-  const [location, setLocation] = useState(D.location);
-  /**
-   * Snowflake's sign-in method, pasted private key, its passphrase and role, as typed. Drawn only for an engine that
-   * takes each field; the key is stored byte for byte, because the provider reads its armour and normalises it.
-   */
-  const [authMethod, setAuthMethod] = useState(D.authMethod);
-  const [privateKey, setPrivateKey] = useState(D.privateKey);
-  const [privateKeyPassphrase, setPrivateKeyPassphrase] = useState(D.privateKeyPassphrase);
-  const [role, setRole] = useState(D.role);
-  /**
-   * S3's signing region, as typed. Drawn only for an engine that takes the field; stored as typed, spaces included,
-   * because the field rule and the provider check it and name the field when they refuse it.
-   */
-  const [region, setRegion] = useState(D.region);
-  /**
-   * Kubernetes' API path (also RabbitMQ's Path prefix), Namespaces and TLS server name, as typed. Drawn only for an
-   * engine that takes each field;
-   * stored as typed, because the provider checks each and names the field when it refuses it.
-   */
-  const [apiPath, setApiPath] = useState(D.apiPath);
-  const [namespaces, setNamespaces] = useState(D.namespaces);
-  const [tlsServerName, setTlsServerName] = useState(D.tlsServerName);
-  /**
-   * The AMQP port, as typed. Drawn only for an engine that takes the field; stored as typed, because the provider checks
-   * it and names the field when it refuses it.
-   */
-  const [amqpPort, setAmqpPort] = useState(D.amqpPort);
-  const [securityMode, setSecurityMode] = useState(D.securityMode);
-  const [serverCertificateThumbprint, setServerCertificateThumbprint] = useState(D.serverCertificateThumbprint);
-  const [registerMap, setRegisterMap] = useState(D.registerMap);
-  const [hostKeyFingerprint, setHostKeyFingerprint] = useState(D.hostKeyFingerprint);
 
   // SSH Tunnel
   const [showSSH, setShowSSH] = useState(D.showSSH);
@@ -713,22 +575,21 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
   const [sshPrivateKey, setSSHPrivateKey] = useState(D.sshPrivateKey);
   const [sshPassphrase, setSSHPassphrase] = useState(D.sshPassphrase);
 
-  // Every connection-scoped setter, keyed like the defaults. A mapped type over the defaults'
+  // Every connection-scoped setter but the drawn fields', keyed like the defaults. A mapped type over the defaults'
   // keys, so a field added to CONNECTION_FORM_DEFAULTS without a setter here fails the
   // typecheck instead of silently surviving the reset below. Memoized over nothing
   // but the setters it maps, which `useState` keeps stable: the walk the map feeds
   // runs from `handleConnect`'s `useCallback`, so the map's identity has to hold
-  // still for that callback to stay valid across renders.
-  const resetSetters: { [K in keyof ConnectionFormDefaults]: (value: ConnectionFormDefaults[K]) => void } = useMemo(
+  // still for that callback to stay valid across renders. The drawn fields are reset
+  // through `setField`, by `resetField`.
+  const resetSetters: {
+    [K in Exclude<keyof ConnectionFormDefaults, BodyConnectionField>]: (value: ConnectionFormDefaults[K]) => void;
+  } = useMemo(
     () => ({
       type: setType,
       name: setName,
       host: setHost,
       port: setPort,
-      user: setUser,
-      password: setPassword,
-      database: setDatabase,
-      schema: setSchema,
       queryTimeout: setQueryTimeout,
       connectionString: setConnectionString,
       mongoConnectionMode: setMongoConnectionMode,
@@ -739,32 +600,9 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       clientCert: setClientCert,
       clientKey: setClientKey,
       showAdvanced: setShowAdvanced,
-      serviceName: setServiceName,
-      instanceName: setInstanceName,
-      localDataCenter: setLocalDataCenter,
-      authSource: setAuthSource,
-      apiKeyId: setApiKeyId,
-      apiKeySecret: setApiKeySecret,
-      saslMechanism: setSaslMechanism,
       skipObjectScan: setSkipObjectScan,
       readOnly: setReadOnly,
       allowInsecureAuth: setAllowInsecureAuth,
-      dataServers: setDataServers,
-      warehouse: setWarehouse,
-      location: setLocation,
-      authMethod: setAuthMethod,
-      privateKey: setPrivateKey,
-      privateKeyPassphrase: setPrivateKeyPassphrase,
-      role: setRole,
-      region: setRegion,
-      apiPath: setApiPath,
-      namespaces: setNamespaces,
-      tlsServerName: setTlsServerName,
-      amqpPort: setAmqpPort,
-      securityMode: setSecurityMode,
-      serverCertificateThumbprint: setServerCertificateThumbprint,
-      registerMap: setRegisterMap,
-      hostKeyFingerprint: setHostKeyFingerprint,
       showSSH: setShowSSH,
       sshEnabled: setSSHEnabled,
       sshHost: setSSHHost,
@@ -777,84 +615,72 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     }),
     [],
   );
-  /**
-   * The setter an imported value of each field goes to, keyed like the importable fields. A mapped type over them, so
-   * a field added to `connectionFields` without a setter here fails the typecheck instead of being dropped from an
-   * import. Memoized over nothing but setters, which `useState` keeps stable, as `resetSetters` is.
-   */
-  const importSetters: { readonly [K in ImportedField]: (value: string) => void } = useMemo(
-    () => ({
-      host: setHost,
-      port: setPort,
-      user: setUser,
-      password: setPassword,
-      database: setDatabase,
-      schema: setSchema,
-      // An imported connection string is the one connected with, as a pasted one is.
-      connectionString: (value) => {
-        setConnectionString(value);
-        setMongoConnectionMode("connectionString");
-      },
-      // The edit load opens the Advanced accordion for these two, so a value is never filled out of sight.
-      serviceName: (value) => {
-        setServiceName(value);
-        setShowAdvanced(true);
-      },
-      instanceName: (value) => {
-        setInstanceName(value);
-        setShowAdvanced(true);
-      },
-      localDataCenter: setLocalDataCenter,
-      authSource: setAuthSource,
-      apiKeyId: setApiKeyId,
-      apiKeySecret: setApiKeySecret,
-      // importRefusal lets through only a choice the type's select offers.
-      saslMechanism: (value) => setSaslMechanism(value as ConnectionFormDefaults["saslMechanism"]),
-      dataServers: setDataServers,
-      warehouse: setWarehouse,
-      region: setRegion,
-      apiPath: setApiPath,
-      namespaces: setNamespaces,
-      tlsServerName: setTlsServerName,
-      securityMode: setSecurityMode,
-      serverCertificateThumbprint: setServerCertificateThumbprint,
-      registerMap: setRegisterMap,
-      hostKeyFingerprint: setHostKeyFingerprint,
-      location: setLocation,
-      amqpPort: setAmqpPort,
-      // An imported method is stored as written; the provider refuses one it does not know, naming the field.
-      authMethod: (value) => setAuthMethod(value as NonNullable<DatabaseConnection["authMethod"]>),
-      privateKey: setPrivateKey,
-      privateKeyPassphrase: setPrivateKeyPassphrase,
-      role: setRole,
-    }),
-    [],
+  /** Puts one connection-scoped value back to its default, a drawn field through its record. */
+  const resetField = useCallback(
+    (key: keyof ConnectionFormDefaults) => {
+      if (isBodyConnectionField(key)) {
+        setField(key, CONNECTION_FORM_DEFAULTS[key]);
+        return;
+      }
+      (resetSetters[key] as (value: ConnectionFormDefaults[typeof key]) => void)(CONNECTION_FORM_DEFAULTS[key]);
+    },
+    [resetSetters, setField],
   );
   /**
-   * The Sign-in select's setter: the method, with every field the type draws only under another method
-   * (`fieldShownWhen`) cleared from form state, so the other method's secret is not kept out of sight. Switching
-   * Snowflake to a token and back asks for the key again; loading a connection to edit sets the method directly.
+   * The setter an imported value of each field the dialog lays out itself goes to. A mapped type over them, so a
+   * field added to `connectionFields` outside the descriptor registry's drawn fields without a setter here fails the
+   * typecheck instead of being dropped from an import; a drawn field goes to its record. Memoized over nothing but
+   * setters, which `useState` keeps stable, as `resetSetters` is.
    */
-  const applyAuthMethod = useCallback(
-    (forType: DatabaseType, value: NonNullable<DatabaseConnection["authMethod"]>) => {
-      setAuthMethod(value);
-      for (const [field, condition] of Object.entries(getDBConfig(forType).fieldShownWhen ?? {})) {
-        if (condition.field !== "authMethod" || condition.equals === value) continue;
-        const key = field as keyof ConnectionFormDefaults;
-        (resetSetters[key] as (cleared: ConnectionFormDefaults[typeof key]) => void)(CONNECTION_FORM_DEFAULTS[key]);
+  const importSetters: { readonly [K in Exclude<ImportedField, BodyConnectionField>]: (value: string) => void } =
+    useMemo(
+      () => ({
+        host: setHost,
+        port: setPort,
+        // An imported connection string is the one connected with, as a pasted one is.
+        connectionString: (value) => {
+          setConnectionString(value);
+          setMongoConnectionMode("connectionString");
+        },
+      }),
+      [],
+    );
+  /**
+   * A drawn field's setter for one type: the value, with every field the type draws only while this one holds
+   * another value (`fieldShownWhen`) cleared from form state, so a credential of a method no longer chosen is not
+   * kept out of sight. Switching Snowflake's Sign-in to a token and back asks for the key again; loading a connection
+   * to edit sets the record directly.
+   */
+  const applyFieldValue = useCallback(
+    (forType: DatabaseType, field: BodyConnectionField, value: string) => {
+      setField(field, value);
+      for (const [shown, condition] of Object.entries(getDBConfig(forType).fieldShownWhen ?? {})) {
+        if (condition.field !== field || condition.equals === value) continue;
+        resetField(shown as keyof ConnectionFormDefaults);
       }
     },
-    [resetSetters],
+    [setField, resetField],
   );
-  const selectAuthMethod = useCallback(
-    (value: NonNullable<DatabaseConnection["authMethod"]>) => applyAuthMethod(type, value),
-    [type, applyAuthMethod],
+  /** A drawn field's setter as the dialog's renderer calls it, for the type the dialog shows. */
+  const setFieldValue = useCallback(
+    (field: BodyConnectionField, value: string) => applyFieldValue(type, field, value),
+    [type, applyFieldValue],
   );
   const resetConnectionFields = useCallback(() => {
     for (const key of Object.keys(CONNECTION_FORM_DEFAULTS) as (keyof ConnectionFormDefaults)[]) {
-      (resetSetters[key] as (value: ConnectionFormDefaults[typeof key]) => void)(CONNECTION_FORM_DEFAULTS[key]);
+      resetField(key);
     }
-  }, [resetSetters]);
+  }, [resetField]);
+
+  /**
+   * Opens the Advanced accordion where a field the type places there holds a value, so a loaded or imported value is
+   * never filled out of sight.
+   */
+  const revealAdvanced = useCallback((forType: DatabaseType, values: BodyFieldValues) => {
+    if (connectionFormLayout(getDBConfig(forType), values).advanced.some((field) => values[field] !== "")) {
+      setShowAdvanced(true);
+    }
+  }, []);
 
   const isEditMode = !!editConnection;
 
@@ -901,39 +727,18 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       setName(editConnection.name);
       setHost(editConnection.host || "localhost");
       setPort(editConnection.port?.toString() || getDBConfig(editConnection.type).defaultPort);
-      setUser(editConnection.user || "");
-      setPassword(editConnection.password || "");
-      setDatabase(editConnection.database || "");
-      setSchema(editConnection.schema || "");
       setQueryTimeout(editConnection.queryTimeout?.toString() ?? "");
       setConnectionString(editConnection.connectionString || "");
       setEnvironment(editConnection.environment || CONNECTION_FORM_DEFAULTS.environment);
       if (editConnection.connectionString) {
         setMongoConnectionMode("connectionString");
       }
-      // Advanced fields
-      if (editConnection.serviceName) {
-        setServiceName(editConnection.serviceName);
-        setShowAdvanced(true);
-      }
-      if (editConnection.instanceName) {
-        setInstanceName(editConnection.instanceName);
-        setShowAdvanced(true);
-      }
-      // Overwritten, not conditionally set like the two Advanced fields above: a
-      // connection that carries no data centre must show an empty field, or the
-      // previously edited ring's name gets saved onto this one.
-      setLocalDataCenter(editConnection.localDataCenter || "");
-      // Overwritten for the same reason: a connection that names no auth database must
-      // show an empty field, not the last one edited.
-      setAuthSource(editConnection.authSource || "");
-      // Overwritten for the same reason: a connection carrying no API key pair must
-      // show empty fields, not the last one edited.
-      setApiKeyId(editConnection.apiKeyId || "");
-      setApiKeySecret(editConnection.apiKeySecret || "");
-      // Overwritten for the same reason: a connection that names no mechanism must show None,
-      // not the last one edited, or that mechanism is saved onto it.
-      setSaslMechanism(editConnection.saslMechanism ?? "");
+      // Every drawn field overwritten, not set only where the connection carries it: a connection that carries no
+      // value for a field must show the field's start, or the previously edited connection's value is saved onto it.
+      const loaded = initialFieldValues();
+      for (const field of BODY_CONNECTION_FIELDS) loaded[field] = editConnection[field] ?? loaded[field];
+      setFieldValues(loaded);
+      revealAdvanced(editConnection.type, loaded);
       // Overwritten, not set only when true: a connection that reads its catalog has to
       // show an unticked box, or the previously edited connection's choice is saved onto
       // it and the catalog silently stops being read.
@@ -944,34 +749,6 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       // Overwritten for the same reason: a connection that never accepted a cleartext password must
       // show an unticked box, or the last one edited is saved onto it.
       setAllowInsecureAuth(editConnection.allowInsecureAuth === true);
-      // Overwritten for the same reason: a connection that lists no data servers must show an empty box, or the last
-      // one edited is saved onto it.
-      setDataServers(editConnection.dataServers ?? "");
-      // Overwritten for the same reason: a connection that names no warehouse must show an empty box, or the last one
-      // edited is saved onto it.
-      setWarehouse(editConnection.warehouse ?? "");
-      setLocation(editConnection.location ?? "");
-      // Overwritten for the same reason: a connection that sets none of Snowflake's four fields must show the defaults,
-      // or the last one edited is saved onto it.
-      setAuthMethod(editConnection.authMethod ?? D.authMethod);
-      setPrivateKey(editConnection.privateKey ?? "");
-      setPrivateKeyPassphrase(editConnection.privateKeyPassphrase ?? "");
-      setRole(editConnection.role ?? "");
-      // Overwritten for the same reason: a connection that names no region must show an empty box, or the last one
-      // edited is saved onto it.
-      setRegion(editConnection.region ?? "");
-      // Overwritten for the same reason: a connection that sets none of Kubernetes' three fields must show empty
-      // boxes, or the last one edited is saved onto it.
-      setApiPath(editConnection.apiPath ?? "");
-      setNamespaces(editConnection.namespaces ?? "");
-      setTlsServerName(editConnection.tlsServerName ?? "");
-      // The reset above already empties the box for a connection that names no AMQP port; this sets the stored one.
-      setAmqpPort(editConnection.amqpPort ?? "");
-      // The same rule for OPC UA's two: a connection that pins no certificate must show an empty box.
-      setSecurityMode(editConnection.securityMode ?? "");
-      setServerCertificateThumbprint(editConnection.serverCertificateThumbprint ?? "");
-      setRegisterMap(editConnection.registerMap ?? "");
-      setHostKeyFingerprint(editConnection.hostKeyFingerprint ?? "");
       // SSL
       if (editConnection.ssl) {
         setSSLMode(editConnection.ssl.mode);
@@ -1054,16 +831,14 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
    */
   const startNewTarget = useCallback(
     (next: DatabaseType, nextHost: string) => {
-      for (const key of TARGET_SCOPED_FIELDS) {
-        (resetSetters[key] as (value: ConnectionFormDefaults[typeof key]) => void)(CONNECTION_FORM_DEFAULTS[key]);
-      }
+      for (const key of TARGET_SCOPED_FIELDS) resetField(key);
       setType(next);
       setHost(nextHost);
       setPort(getDBConfig(next).defaultPort);
       // The next server has not been warned about anything.
       setAcknowledgedCaution(null);
     },
-    [resetSetters],
+    [resetField],
   );
 
   /**
@@ -1182,6 +957,11 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       made the agent rail refuse a connection it had just accepted.
     */
     const addressedFields = new Set<string>(getDBConfig(type).connectionFields);
+    const savedFields: Partial<DatabaseConnection> = {};
+    for (const field of BODY_CONNECTION_FIELDS) {
+      const saved = addressedFields.has(field) ? savedFieldValue(field, fieldValues[field]) : undefined;
+      if (saved !== undefined) Object.assign(savedFields, { [field]: saved });
+    }
 
     // A field the type hides under the values below (`fieldShownWhen`) is dropped last, so one saved Snowflake
     // connection holds one credential.
@@ -1193,10 +973,9 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       type,
       ...(addressedFields.has("host") ? { host: address?.host ?? host } : {}),
       ...(addressedFields.has("port") ? { port: address?.port ?? parseInt(port) } : {}),
-      ...(addressedFields.has("user") ? { user } : {}),
-      ...(addressedFields.has("password") ? { password } : {}),
-      ...(addressedFields.has("database") ? { database } : {}),
-      ...(addressedFields.has("schema") && schema ? { schema } : {}),
+      // Every drawn field the engine takes, by its descriptor's `save` rule (src/lib/db/connection-fields.ts): before
+      // the connection-string mode below, which takes the login away again.
+      ...savedFields,
       ...(queryTimeout.trim() ? { queryTimeout: Number(queryTimeout) } : {}),
       createdAt: editConnection?.createdAt || new Date(),
       environment,
@@ -1219,15 +998,6 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
             password: undefined,
           }
         : {}),
-      ...(addressedFields.has("serviceName") && serviceName ? { serviceName } : {}),
-      ...(addressedFields.has("instanceName") && instanceName ? { instanceName } : {}),
-      ...(addressedFields.has("localDataCenter") && localDataCenter ? { localDataCenter } : {}),
-      ...(addressedFields.has("authSource") && authSource ? { authSource } : {}),
-      ...(addressedFields.has("apiKeyId") && apiKeyId ? { apiKeyId } : {}),
-      ...(addressedFields.has("apiKeySecret") && apiKeySecret ? { apiKeySecret } : {}),
-      // Written only for an engine that takes it and only when one is chosen: a mechanism left
-      // behind by a switch to another engine is not sent, and None writes nothing.
-      ...(addressedFields.has("saslMechanism") && saslMechanism ? { saslMechanism } : {}),
       // Written only when it says something, like every other optional field here: a
       // stored `false` is noise on every connection ever saved.
       ...(skipObjectScan ? { skipObjectScan } : {}),
@@ -1240,42 +1010,6 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       ...(allowInsecureAuth && addressedFields.has("allowInsecureAuth") && sslMode === "disable"
         ? { allowInsecureAuth: true }
         : {}),
-      // Only for an engine that takes it, and only when something is typed: a list left over from a type switch is
-      // not sent, and an empty box writes no key. Stored as typed; the provider trims and parses.
-      ...(addressedFields.has("dataServers") && dataServers.trim() !== "" ? { dataServers } : {}),
-      // The dataServers rule: only for an engine that takes it, and only when something is typed.
-      ...(addressedFields.has("warehouse") && warehouse.trim() !== "" ? { warehouse } : {}),
-      ...(addressedFields.has("location") && location.trim() !== "" ? { location: location.trim() } : {}),
-      // Snowflake's four, only for an engine that takes each. The method is always written there, so a saved
-      // connection says how it signs in; the key and the passphrase byte for byte when not empty, since the provider
-      // reads the armour; the role when typed, as written, since its quotes and case are the role's name.
-      ...(addressedFields.has("authMethod") ? { authMethod } : {}),
-      ...(addressedFields.has("privateKey") && privateKey !== "" ? { privateKey } : {}),
-      ...(addressedFields.has("privateKeyPassphrase") && privateKeyPassphrase !== "" ? { privateKeyPassphrase } : {}),
-      ...(addressedFields.has("role") && role.trim() !== "" ? { role } : {}),
-      // Only for an engine that takes it, and whenever the box is not empty: unlike warehouse, a box of spaces is
-      // written so the format rule refuses it, rather than signing for us-east-1 with no word.
-      ...(addressedFields.has("region") && region !== "" ? { region } : {}),
-      // The dataServers rule for Kubernetes' three fields: only for an engine that takes each, only when typed.
-      ...(addressedFields.has("apiPath") && apiPath.trim() !== "" ? { apiPath } : {}),
-      ...(addressedFields.has("namespaces") && namespaces.trim() !== "" ? { namespaces } : {}),
-      // The same rule for OPC UA's two. An empty security mode is not sent: the provider's own default
-      // is SignAndEncrypt, and writing "" here would save a connection whose mode reads as unset.
-      ...(addressedFields.has("securityMode") && securityMode.trim() !== ""
-        ? { securityMode: securityMode.trim() }
-        : {}),
-      ...(addressedFields.has("hostKeyFingerprint") && hostKeyFingerprint.trim() !== ""
-        ? { hostKeyFingerprint: hostKeyFingerprint.trim() }
-        : {}),
-      ...(addressedFields.has("serverCertificateThumbprint") && serverCertificateThumbprint.trim() !== ""
-        ? { serverCertificateThumbprint: serverCertificateThumbprint.trim() }
-        : {}),
-      // Byte for byte when not empty, like Snowflake's key: the provider parses this document and its
-      // own refusals quote what was written, so trimming would move the position they name.
-      ...(addressedFields.has("registerMap") && registerMap !== "" ? { registerMap } : {}),
-      ...(addressedFields.has("tlsServerName") && tlsServerName.trim() !== "" ? { tlsServerName } : {}),
-      // The dataServers rule for the AMQP port: only for an engine that takes it, only when typed.
-      ...(addressedFields.has("amqpPort") && amqpPort.trim() !== "" ? { amqpPort } : {}),
     });
   }, [
     sslMode,
@@ -1295,40 +1029,14 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     type,
     host,
     port,
-    user,
-    password,
-    database,
-    schema,
     queryTimeout,
     environment,
     mongoConnectionMode,
     connectionString,
-    serviceName,
-    instanceName,
-    localDataCenter,
-    authSource,
-    apiKeyId,
-    apiKeySecret,
-    saslMechanism,
     skipObjectScan,
     readOnly,
     allowInsecureAuth,
-    dataServers,
-    warehouse,
-    location,
-    authMethod,
-    privateKey,
-    privateKeyPassphrase,
-    role,
-    region,
-    apiPath,
-    namespaces,
-    tlsServerName,
-    amqpPort,
-    securityMode,
-    serverCertificateThumbprint,
-    registerMap,
-    hostKeyFingerprint,
+    fieldValues,
   ]);
 
   /**
@@ -1544,24 +1252,24 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     const newTarget = parsed.type !== type || (parsed.host !== undefined && identity(parsed.host) !== identity(host));
     if (newTarget) startNewTarget(parsed.type, getDBConfig(parsed.type).defaultHost ?? host);
     // The sign-in method first, clearing the other method's secret, so the credential the paste names below wins.
-    if (parsed.authMethod) applyAuthMethod(parsed.type, parsed.authMethod);
+    if (parsed.authMethod) applyFieldValue(parsed.type, "authMethod", parsed.authMethod);
     if (parsed.host) setHost(parsed.host);
     // A parse with no port (an np:/lpc: server, #1211) still switched the type above, so
     // the port is that type's default, as the type buttons in ConnectionModal set it,
     // rather than the previous engine's.
     const port = parsed.port || getDBConfig(parsed.type).defaultPort;
     if (port) setPort(port);
-    if (parsed.user) setUser(parsed.user);
-    if (parsed.password) setPassword(parsed.password);
-    if (parsed.database) setDatabase(parsed.database);
+    if (parsed.user) setField("user", parsed.user);
+    if (parsed.password) setField("password", parsed.password);
+    if (parsed.database) setField("database", parsed.database);
     // A paste that names a server names its warehouse too, or none: a leftover one would go to the new host and
     // resume, and bill, the previous DSN's compute there.
-    if (parsed.host) setWarehouse(parsed.warehouse ?? "");
+    if (parsed.host) setField("warehouse", parsed.warehouse ?? "");
     // Snowflake's schema and passphrase where the paste names them; its role by the warehouse rule, because a role
     // left from another account would sign this one in as a principal nobody chose for it.
-    if (parsed.schema) setSchema(parsed.schema);
-    if (parsed.privateKeyPassphrase) setPrivateKeyPassphrase(parsed.privateKeyPassphrase);
-    if (parsed.host && getDBConfig(parsed.type).connectionFields.includes("role")) setRole(parsed.role ?? "");
+    if (parsed.schema) setField("schema", parsed.schema);
+    if (parsed.privateKeyPassphrase) setField("privateKeyPassphrase", parsed.privateKeyPassphrase);
+    if (parsed.host && getDBConfig(parsed.type).connectionFields.includes("role")) setField("role", parsed.role ?? "");
     // A Databend paste names no consent to a cleartext password, so it clears one left ticked for another host; a
     // parse that says nothing of it leaves it as it was, db2:// among them, the one other paste whose form shows it.
     if (parsed.allowInsecureAuth !== undefined) setAllowInsecureAuth(parsed.allowInsecureAuth);
@@ -1659,7 +1367,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
         .filter(Boolean)
         .join(" "),
     });
-  }, [pasteInput, name, type, host, sslMode, applyAuthMethod, chooseType, startNewTarget]);
+  }, [pasteInput, name, type, host, sslMode, applyFieldValue, setField, chooseType, startNewTarget]);
 
   /**
    * Fills the form from one entry of the import the type declares (`connectionImport` in connection-form.ts). The entry
@@ -1693,9 +1401,16 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       setSkipObjectScan(kept.skipObjectScan);
       setQueryTimeout(kept.queryTimeout);
       setPort(getDBConfig(type).defaultPort);
+      const imported = initialFieldValues();
       for (const [field, value] of entry.fields) {
-        importSetters[field](value);
+        if (isBodyConnectionField(field)) {
+          setField(field, value);
+          imported[field] = value;
+        } else {
+          importSetters[field](value);
+        }
       }
+      revealAdvanced(type, imported);
       const ssl = entry.ssl;
       if (ssl?.mode !== undefined) {
         setSSLMode(ssl.mode);
@@ -1713,7 +1428,19 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       );
       return true;
     },
-    [isEditMode, type, environment, name, readOnly, skipObjectScan, queryTimeout, resetConnectionFields, importSetters],
+    [
+      isEditMode,
+      type,
+      environment,
+      name,
+      readOnly,
+      skipObjectScan,
+      queryTimeout,
+      resetConnectionFields,
+      importSetters,
+      setField,
+      revealAdvanced,
+    ],
   );
 
   const dbTypes = CONNECTION_PICKER_ORDER.map((t) => {
@@ -1731,77 +1458,15 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
   });
 
   /**
-   * Each typed field's value and setter, keyed by field, for the dialog's one field renderer: the same state and
-   * setters returned one by one below, so the dialog maps a field's descriptor to its box without naming the field.
-   * Keyed over every typed field, so a field added to `ConnectionField` without an entry here fails the typecheck.
+   * Each drawn field's value and setter by its own name (`registerMap`, `setRegisterMap`), derived from the record, for
+   * a caller that reads one field: the dialog itself reads the record through `fieldValues` and `setFieldValue`.
    */
-  const fieldValues: { readonly [F in TypedConnectionField]: string } = {
-    host,
-    port,
-    user,
-    password,
-    database,
-    schema,
-    connectionString,
-    serviceName,
-    instanceName,
-    localDataCenter,
-    authSource,
-    apiKeyId,
-    apiKeySecret,
-    saslMechanism,
-    dataServers,
-    warehouse,
-    location,
-    region,
-    apiPath,
-    namespaces,
-    tlsServerName,
-    amqpPort,
-    authMethod,
-    privateKey,
-    privateKeyPassphrase,
-    role,
-    securityMode,
-    serverCertificateThumbprint,
-    registerMap,
-    hostKeyFingerprint,
+  const fieldsByName = {
+    ...fieldValues,
+    ...(Object.fromEntries(
+      BODY_CONNECTION_FIELDS.map((field) => [setterName(field), (value: string) => setFieldValue(field, value)]),
+    ) as NamedFieldSetters),
   };
-  const fieldSetters: { readonly [F in TypedConnectionField]: (value: string) => void } = {
-    host: setHostFromInput,
-    port: setPort,
-    user: setUser,
-    password: setPassword,
-    database: setDatabase,
-    schema: setSchema,
-    connectionString: setConnectionString,
-    serviceName: setServiceName,
-    instanceName: setInstanceName,
-    localDataCenter: setLocalDataCenter,
-    authSource: setAuthSource,
-    apiKeyId: setApiKeyId,
-    apiKeySecret: setApiKeySecret,
-    // The select offers only the engine's declared choices and None.
-    saslMechanism: (value) => setSaslMechanism(value as ConnectionFormDefaults["saslMechanism"]),
-    dataServers: setDataServers,
-    warehouse: setWarehouse,
-    location: setLocation,
-    region: setRegion,
-    apiPath: setApiPath,
-    namespaces: setNamespaces,
-    tlsServerName: setTlsServerName,
-    amqpPort: setAmqpPort,
-    // The Sign-in select's own setter, which clears the credential the other method draws.
-    authMethod: (value) => selectAuthMethod(value as NonNullable<DatabaseConnection["authMethod"]>),
-    privateKey: setPrivateKey,
-    privateKeyPassphrase: setPrivateKeyPassphrase,
-    role: setRole,
-    securityMode: setSecurityMode,
-    serverCertificateThumbprint: setServerCertificateThumbprint,
-    registerMap: setRegisterMap,
-    hostKeyFingerprint: setHostKeyFingerprint,
-  };
-  const setFieldValue = (field: TypedConnectionField, value: string) => fieldSetters[field](value);
 
   return {
     // Connection fields
@@ -1809,6 +1474,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     setType: chooseType,
     fieldValues,
     setFieldValue,
+    ...fieldsByName,
     name,
     setName,
     host,
@@ -1818,14 +1484,6 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     hostError,
     port,
     setPort,
-    user,
-    setUser,
-    password,
-    setPassword,
-    database,
-    schema,
-    setDatabase,
-    setSchema,
     queryTimeout,
     setQueryTimeout,
     connectionString,
@@ -1858,68 +1516,15 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     clientKey,
     setClientKey,
 
-    // OPC UA: the security mode is the server's own word (None, Sign, SignAndEncrypt), which
-    // Studio's SSL modes do not map onto, and the thumbprint is the certificate this connection pins.
-    securityMode,
-    setSecurityMode,
-    serverCertificateThumbprint,
-    setServerCertificateThumbprint,
-    // Modbus: the register map, the only thing that can name a point on a device that answers no
-    // discovery request.
-    registerMap,
-    setRegisterMap,
-    // NETCONF: the device's SSH host key fingerprint, a different object from the certificate
-    // thumbprint above and checked by different code.
-    hostKeyFingerprint,
-    setHostKeyFingerprint,
-
-    // Advanced (Oracle/MSSQL)
+    // Advanced
     showAdvanced,
     setShowAdvanced,
-    serviceName,
-    setServiceName,
-    instanceName,
-    setInstanceName,
-    localDataCenter,
-    setLocalDataCenter,
-    authSource,
-    setAuthSource,
-    apiKeyId,
-    setApiKeyId,
-    apiKeySecret,
-    setApiKeySecret,
-    saslMechanism,
-    setSaslMechanism,
     skipObjectScan,
     setSkipObjectScan,
     readOnly,
     setReadOnly,
     allowInsecureAuth,
     setAllowInsecureAuth,
-    dataServers,
-    setDataServers,
-    warehouse,
-    setWarehouse,
-    location,
-    setLocation,
-    authMethod,
-    setAuthMethod: selectAuthMethod,
-    privateKey,
-    setPrivateKey,
-    privateKeyPassphrase,
-    setPrivateKeyPassphrase,
-    role,
-    setRole,
-    region,
-    setRegion,
-    apiPath,
-    setApiPath,
-    namespaces,
-    setNamespaces,
-    tlsServerName,
-    setTlsServerName,
-    amqpPort,
-    setAmqpPort,
 
     // SSH Tunnel
     showSSH,

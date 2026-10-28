@@ -1185,10 +1185,9 @@ Those three reach code and tests only; the four prose greps of the published blo
 
 **For a new connection field**, beside the three `Record<keyof DatabaseConnection, ...>` maps and `connection-filter.ts` that the note below names:
 
-- [ ] `src/lib/db/connection-fields.ts`: the field's row of `CONNECTION_FIELD_DESCRIPTORS`, which says how the dialog draws it (its control, its label and example, its icon and row); `src/components/ConnectionFieldControl.tsx` draws every descriptor, so `ConnectionModal.tsx` needs no edit.
-      The table is keyed by `ConnectionField`, so the union member does not compile without its row.
-- [ ] `src/hooks/use-connection-form.ts`: the dialog keeps each field in its own state and rebuilds the connection from those states, so a declared field alone never reaches the saved connection.
-      The field needs its state, its load on edit (always overwritten, so one connection's value never carries to the next), its reset on close, its line in `buildConnection` gated on `addressedFields`, its dependency entry, its returned pair, and its entry in `fieldValues` and `fieldSetters`, which the dialog's renderer reads it through.
+- [ ] `src/lib/db/connection-fields.ts`: the field's row of `CONNECTION_FIELD_DESCRIPTORS`, which says how the dialog draws it (its control, its label and example, its icon and row) and how a save writes it (`save`, and `initial` where a new form does not start empty); `src/components/ConnectionFieldControl.tsx` draws every descriptor, so `ConnectionModal.tsx` needs no edit.
+      The table is keyed by `ConnectionField`, so the union member does not compile without its row, and the field's name must be a text property of `DatabaseConnection`, the property its save writes.
+      `src/hooks/use-connection-form.ts` holds every drawn field in one record and loads, resets, imports and saves it by its row, so it needs no edit either.
 - [ ] `src/lib/seed/types.ts`: `SeedConnectionSchema`, the zod object a seed file is validated against before `connection-filter.ts` maps it; zod strips a key the object does not declare, so an undeclared field is dropped with no error.
 - [ ] `src/lib/seed/credential-resolver.ts`: `RESOLVABLE_FIELDS`, when the field is a credential or an address a deployment keeps out of the seed file; a name such as a SASL mechanism is neither, and takes a literal.
 - [ ] `src/lib/db/provider-cache-key.ts`: `credentialDigest`, a hand-kept list of every field that changes who a connection authenticates as, so two connections that differ only in that field never share a cached provider.

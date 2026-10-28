@@ -13,7 +13,7 @@
  * imports React icon components, which the seed loader must not load, the reason src/lib/db/credential-warnings.ts
  * is a module of its own.
  */
-import type { DatabaseType } from "@/lib/types";
+import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 
 /** One addressing field, named by the same list that decides whether a save writes it. */
 export type ConnectionField =
@@ -128,6 +128,17 @@ export type ConnectionFieldInput =
   /** A pasted private key, drawn as text only while it is being typed or after Show key. */
   | { readonly kind: "key" };
 
+/**
+ * Whether and how a save writes a field the engine takes, to the connection property named like the field:
+ * - `always`: as typed, even when empty, so a saved connection always says it;
+ * - `nonEmpty`: byte for byte unless the box is empty, for a key, a document or a choice whose provider reads it as
+ *   written, or a value whose format rule should see the spaces it holds and refuse them;
+ * - `typed`: as typed unless the box holds only spaces, for a name whose quotes, case and spacing are its own;
+ * - `trimmed`: trimmed, unless that leaves nothing, for a value the provider compares as a word.
+ * A box that writes nothing leaves the property out, so the provider's own default applies.
+ */
+export type ConnectionFieldSave = "always" | "nonEmpty" | "typed" | "trimmed";
+
 /** A row of the dialog that holds more than one field side by side. */
 export interface ConnectionFieldGroup {
   /**
@@ -166,6 +177,10 @@ export type ConnectionFieldDescriptor =
   | { readonly slot: "address" | "uri" | "consent" }
   | {
       readonly slot: "body";
+      /** Whether and how a save writes the field's value to the connection property of the same name. */
+      readonly save: ConnectionFieldSave;
+      /** The value a new form holds; absent, the empty box. */
+      readonly initial?: string;
       readonly label: string;
       /** The dialog's own example; absent, the box has no placeholder and an engine's declared one is not read. */
       readonly placeholder?: string;
@@ -192,6 +207,7 @@ const CONNECTION_FIELD_DESCRIPTOR_ROWS = {
   allowInsecureAuth: { slot: "consent" },
   user: {
     slot: "body",
+    save: "always",
     label: "Username",
     placeholder: "user",
     icon: "key",
@@ -200,6 +216,7 @@ const CONNECTION_FIELD_DESCRIPTOR_ROWS = {
   },
   password: {
     slot: "body",
+    save: "always",
     label: "Password",
     placeholder: "***",
     icon: "shield",
@@ -207,52 +224,103 @@ const CONNECTION_FIELD_DESCRIPTOR_ROWS = {
     group: "login",
     carriesCredentialWarning: true,
   },
-  saslMechanism: { slot: "body", label: "SASL Mechanism", icon: "key", control: { kind: "select", offerNone: true } },
-  authMethod: { slot: "body", label: "Sign-in", icon: "key", control: { kind: "select", offerNone: false } },
-  privateKey: { slot: "body", label: "Private key", placeholder: "", icon: "key", control: { kind: "key" } },
+  saslMechanism: {
+    slot: "body",
+    save: "nonEmpty",
+    label: "SASL Mechanism",
+    icon: "key",
+    control: { kind: "select", offerNone: true },
+  },
+  // Always saved, so a saved connection says how it signs in; a new form offers the key pair first.
+  authMethod: {
+    slot: "body",
+    save: "always",
+    initial: "keypair",
+    label: "Sign-in",
+    icon: "key",
+    control: { kind: "select", offerNone: false },
+  },
+  privateKey: {
+    slot: "body",
+    save: "nonEmpty",
+    label: "Private key",
+    placeholder: "",
+    icon: "key",
+    control: { kind: "key" },
+  },
   privateKeyPassphrase: {
     slot: "body",
+    save: "nonEmpty",
     label: "Passphrase",
     icon: "shield",
     control: { kind: "text", typing: "secret" },
   },
   hostKeyFingerprint: {
     slot: "body",
+    save: "trimmed",
     label: "Host key fingerprint",
     placeholder: "SHA256:...",
     icon: "shield",
     control: VERBATIM_MONO,
   },
-  database: { slot: "body", label: "Database Name", placeholder: "db", icon: "database", control: VERBATIM_MONO },
-  dataServers: { slot: "body", label: "Data servers", icon: "server", control: UNCHECKED_MONO },
-  warehouse: { slot: "body", label: "Warehouse", icon: "server", control: VERBATIM_MONO },
-  location: { slot: "body", label: "Location", placeholder: "", icon: "globe", control: UNCHECKED_MONO },
-  region: { slot: "body", label: "Region", placeholder: "us-east-1", icon: "globe", control: UNCHECKED_MONO },
-  namespaces: { slot: "body", label: "Namespaces", icon: "database", control: UNCHECKED_MONO },
+  database: {
+    slot: "body",
+    save: "always",
+    label: "Database Name",
+    placeholder: "db",
+    icon: "database",
+    control: VERBATIM_MONO,
+  },
+  dataServers: { slot: "body", save: "typed", label: "Data servers", icon: "server", control: UNCHECKED_MONO },
+  warehouse: { slot: "body", save: "typed", label: "Warehouse", icon: "server", control: VERBATIM_MONO },
+  location: {
+    slot: "body",
+    save: "trimmed",
+    label: "Location",
+    placeholder: "",
+    icon: "globe",
+    control: UNCHECKED_MONO,
+  },
+  // A box of spaces is saved, so the format rule refuses it rather than the provider signing for its default region.
+  region: {
+    slot: "body",
+    save: "nonEmpty",
+    label: "Region",
+    placeholder: "us-east-1",
+    icon: "globe",
+    control: UNCHECKED_MONO,
+  },
+  namespaces: { slot: "body", save: "typed", label: "Namespaces", icon: "database", control: UNCHECKED_MONO },
   amqpPort: {
     slot: "body",
+    save: "typed",
     label: "AMQP port",
     placeholder: "",
     icon: "server",
     control: { kind: "text", typing: "unchecked", monospace: true, numeric: true },
   },
-  apiPath: { slot: "body", label: "API path", icon: "server", control: UNCHECKED_MONO },
-  tlsServerName: { slot: "body", label: "TLS server name", icon: "server", control: UNCHECKED_MONO },
+  apiPath: { slot: "body", save: "typed", label: "API path", icon: "server", control: UNCHECKED_MONO },
+  tlsServerName: { slot: "body", save: "typed", label: "TLS server name", icon: "server", control: UNCHECKED_MONO },
+  // Saved byte for byte: the provider parses the document and its refusals quote positions in what was written.
   registerMap: {
     slot: "body",
+    save: "nonEmpty",
     label: "Register map",
     placeholder: "",
     icon: "database",
     control: { kind: "textarea", rows: 6 },
   },
+  // An empty mode is not saved, so the provider's own default, SignAndEncrypt, applies.
   securityMode: {
     slot: "body",
+    save: "trimmed",
     label: "Security mode",
     icon: "shield",
     control: { kind: "toggle", choices: ["None", "Sign", "SignAndEncrypt"], unset: "SignAndEncrypt" },
   },
   serverCertificateThumbprint: {
     slot: "body",
+    save: "trimmed",
     label: "Server certificate",
     placeholder: "",
     icon: "shield",
@@ -260,15 +328,17 @@ const CONNECTION_FIELD_DESCRIPTOR_ROWS = {
   },
   schema: {
     slot: "body",
+    save: "nonEmpty",
     label: "Schema Name",
     placeholder: "default",
     icon: "database",
     control: VERBATIM_MONO,
     note: "Used for unqualified table names in queries and Create Table. Leave empty to qualify names yourself. Run SHOW SCHEMAS to list the catalog's schemas.",
   },
-  role: { slot: "body", label: "Role", icon: "shield", control: VERBATIM_MONO },
+  role: { slot: "body", save: "typed", label: "Role", icon: "shield", control: VERBATIM_MONO },
   authSource: {
     slot: "body",
+    save: "nonEmpty",
     label: "Authentication Database",
     placeholder: "admin",
     icon: "key",
@@ -276,6 +346,7 @@ const CONNECTION_FIELD_DESCRIPTOR_ROWS = {
   },
   apiKeyId: {
     slot: "body",
+    save: "nonEmpty",
     label: "API Key ID",
     placeholder: "EWkMhKACjF5eHMlg6Car",
     icon: "key",
@@ -284,6 +355,7 @@ const CONNECTION_FIELD_DESCRIPTOR_ROWS = {
   },
   apiKeySecret: {
     slot: "body",
+    save: "nonEmpty",
     label: "API Key Secret",
     placeholder: "***",
     icon: "shield",
@@ -292,6 +364,7 @@ const CONNECTION_FIELD_DESCRIPTOR_ROWS = {
   },
   localDataCenter: {
     slot: "body",
+    save: "nonEmpty",
     label: "Local Data Center",
     placeholder: "datacenter1",
     icon: "server",
@@ -299,22 +372,19 @@ const CONNECTION_FIELD_DESCRIPTOR_ROWS = {
   },
   serviceName: {
     slot: "body",
+    save: "nonEmpty",
     label: "Service Name",
     placeholder: "ORCL or XEPDB1",
     control: { kind: "text", typing: "free", compact: true },
   },
   instanceName: {
     slot: "body",
+    save: "nonEmpty",
     label: "Instance Name",
     placeholder: "SQLEXPRESS",
     control: { kind: "text", typing: "free", compact: true },
   },
 } as const satisfies Record<ConnectionField, ConnectionFieldDescriptor>;
-
-/** A field whose value is text the dialog holds as typed: every field but a consent, which is a checkbox. */
-export type TypedConnectionField = {
-  [F in ConnectionField]: (typeof CONNECTION_FIELD_DESCRIPTOR_ROWS)[F] extends { readonly slot: "consent" } ? never : F;
-}[ConnectionField];
 
 /** A field the renderer draws, as opposed to one the dialog's own layout draws. */
 export type BodyConnectionField = {
@@ -329,6 +399,55 @@ export const CONNECTION_FIELD_DESCRIPTORS: Readonly<Record<ConnectionField, Conn
 /** The descriptor of a field the renderer draws, typed as one. */
 export function bodyFieldDescriptor(field: BodyConnectionField): BodyFieldDescriptor {
   return CONNECTION_FIELD_DESCRIPTOR_ROWS[field];
+}
+
+/**
+ * A drawn field whose save writes the `DatabaseConnection` text property of its own name. A field whose name is not
+ * such a property is left out of this union, so the list below, typed by it, fails the typecheck.
+ */
+type FieldWritingItsProperty = {
+  [F in BodyConnectionField]: NonNullable<DatabaseConnection[F]> extends string ? F : never;
+}[BodyConnectionField];
+
+/**
+ * Every field the renderer draws, in the registry's order: the fields the form holds in one record keyed by field,
+ * and resets, loads, imports and saves by their descriptors.
+ */
+export const BODY_CONNECTION_FIELDS: readonly FieldWritingItsProperty[] = Object.freeze(
+  (Object.keys(CONNECTION_FIELD_DESCRIPTOR_ROWS) as ConnectionField[]).filter(
+    (field): field is BodyConnectionField => CONNECTION_FIELD_DESCRIPTOR_ROWS[field].slot === "body",
+  ),
+);
+
+const BODY_FIELD_SET: ReadonlySet<string> = new Set(BODY_CONNECTION_FIELDS);
+
+/** Whether a name is a field the renderer draws. */
+export function isBodyConnectionField(name: string): name is BodyConnectionField {
+  return BODY_FIELD_SET.has(name);
+}
+
+/** The value of each field the renderer draws, as the form holds it: text, whatever the control. */
+export type BodyFieldValues = { [F in BodyConnectionField]: string };
+
+/** A new form's value of every field the renderer draws, as a fresh record. */
+export function initialFieldValues(): BodyFieldValues {
+  return Object.fromEntries(
+    BODY_CONNECTION_FIELDS.map((field) => [field, bodyFieldDescriptor(field).initial ?? ""]),
+  ) as BodyFieldValues;
+}
+
+/** What a save writes for a field the engine takes, by the field's `save` rule, or undefined where it writes nothing. */
+export function savedFieldValue(field: BodyConnectionField, value: string): string | undefined {
+  switch (bodyFieldDescriptor(field).save) {
+    case "always":
+      return value;
+    case "nonEmpty":
+      return value === "" ? undefined : value;
+    case "typed":
+      return value.trim() === "" ? undefined : value;
+    case "trimmed":
+      return value.trim() === "" ? undefined : value.trim();
+  }
 }
 
 /** Each type's connection fields as literals, so the compiler can ask what a given type takes. */

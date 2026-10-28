@@ -7,10 +7,13 @@
 import { describe, expect, test } from "bun:test";
 import { CONNECTION_FORM, type ConnectionFormSpec } from "@/lib/db/connection-form";
 import {
+  BODY_CONNECTION_FIELDS,
   CONNECTION_FIELD_DESCRIPTORS,
   CONNECTION_FIELD_GROUPS,
   CONNECTION_FIELDS,
   type ConnectionField,
+  initialFieldValues,
+  savedFieldValue,
 } from "@/lib/db/connection-fields";
 import { connectionFormLayout, type ConnectionFormSlot } from "@/lib/db/connection-field-layout";
 import type { DatabaseType } from "@/lib/types";
@@ -60,6 +63,50 @@ describe("the descriptor registry", () => {
     expect(CONNECTION_FIELD_DESCRIPTORS.port.slot).toBe("address");
     expect(CONNECTION_FIELD_DESCRIPTORS.connectionString.slot).toBe("uri");
     expect(CONNECTION_FIELD_DESCRIPTORS.allowInsecureAuth.slot).toBe("consent");
+  });
+});
+
+describe("what a field's descriptor says about its value", () => {
+  test("lists every field the renderer draws, and only those", () => {
+    const body = Object.entries(CONNECTION_FIELD_DESCRIPTORS)
+      .filter(([, descriptor]) => descriptor.slot === "body")
+      .map(([field]) => field)
+      .sort();
+    expect(([...BODY_CONNECTION_FIELDS] as string[]).sort()).toEqual(body);
+  });
+
+  test("starts every drawn field empty, but a select that has no None choice at its first choice", () => {
+    const initial = initialFieldValues();
+    expect(initial.authMethod).toBe("keypair");
+    for (const field of BODY_CONNECTION_FIELDS) {
+      if (field === "authMethod") continue;
+      expect({ field, value: initial[field] }).toEqual({ field, value: "" });
+    }
+  });
+
+  test("hands out a fresh record each time, so one form cannot change another's start", () => {
+    expect(initialFieldValues()).not.toBe(initialFieldValues());
+  });
+
+  test("saves an always-written field even when it is empty", () => {
+    expect(savedFieldValue("user", "")).toBe("");
+    expect(savedFieldValue("authMethod", "pat")).toBe("pat");
+  });
+
+  test("saves a field written when not empty byte for byte, and nothing for an empty box", () => {
+    expect(savedFieldValue("registerMap", "  {}\n")).toBe("  {}\n");
+    expect(savedFieldValue("region", "  ")).toBe("  ");
+    expect(savedFieldValue("registerMap", "")).toBeUndefined();
+  });
+
+  test("saves a field written when typed as typed, and nothing for a box of spaces", () => {
+    expect(savedFieldValue("warehouse", " wh ")).toBe(" wh ");
+    expect(savedFieldValue("warehouse", "   ")).toBeUndefined();
+  });
+
+  test("saves a trimmed field trimmed, and nothing for a box of spaces", () => {
+    expect(savedFieldValue("location", " EU ")).toBe("EU");
+    expect(savedFieldValue("securityMode", "  ")).toBeUndefined();
   });
 });
 
