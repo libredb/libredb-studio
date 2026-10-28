@@ -1051,8 +1051,9 @@ const EXPECTED: Readonly<Record<string, Expected>> = {
   "cut: rst at zero": TRUNCATED,
   "cut: rst at mid": TRUNCATED,
   "cut: rst at line": TRUNCATED,
-  // Bun reports this cut as ECONNRESET with no TLS code on either object, so only the network branch is left for it.
-  "TLS: a record corrupted after the headers": TRUNCATED,
+  // Both runtimes emit the TLS layer's own code before the answer's ECONNRESET (Bun from 1.4.4; 1.4.2 gave ECONNRESET
+  // alone), and a TLS code stays kind "tls" with `truncated: false` even after the response callback ran.
+  "TLS: a record corrupted after the headers": TLS_REFUSED,
   "429 with Retry-After 10": { ok: true, status: 429, retryAfter: "10" },
   "429 with no Retry-After": { ok: true, status: 429, retryAfter: null },
   "429 with a 200-character Retry-After": { ok: true, status: 429, retryAfter: "7".repeat(64) },
@@ -1094,14 +1095,6 @@ const EXPECTED: Readonly<Record<string, Expected>> = {
     message: BLOCKED,
   },
   "open sockets on the stopped listeners": OK,
-};
-
-/**
- * Where Node differs: its request emits the TLS layer's own code (ERR_SSL_WRONG_VERSION_NUMBER) before the answer's
- * ECONNRESET, and a TLS code stays kind "tls" with `truncated: false` even after the response callback ran.
- */
-const EXPECTED_ON_NODE: Readonly<Record<string, Expected>> = {
-  "TLS: a record corrupted after the headers": TLS_REFUSED,
 };
 
 const LINK_LOCAL =
@@ -1194,8 +1187,7 @@ const BYTE_EXPECTED: Readonly<Record<string, ByteOutcome>> = {
 
 function expectCase(report: Report | undefined, name: string): void {
   const outcome = report?.outcomes[name];
-  const expected =
-    (report?.runtime.startsWith("node ") === true ? EXPECTED_ON_NODE[name] : undefined) ?? EXPECTED[name];
+  const expected = EXPECTED[name];
   if (expected.ok) {
     expect({ name, ok: outcome?.ok, status: outcome?.status, message: outcome?.message }).toEqual({
       name,
