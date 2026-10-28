@@ -25,7 +25,7 @@ import {
   RUN_READ_QUERY_ENGINES,
   RunReadQueryInputSchema,
   runReadQuery,
-} from "@/lib/mcp/tools/run-read-query";
+} from "../../helpers/run-read-query";
 import type { McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseType } from "@/lib/types";

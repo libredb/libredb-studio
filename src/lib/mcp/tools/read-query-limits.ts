@@ -95,7 +95,7 @@ export function fenceRefusalText(code: string, type: DatabaseType): string {
   return `The statement was refused before it reached the database (${code}). On this engine run_read_query runs one read-only statement: ${readQueryFormsOf(type).statements}.`;
 }
 
-export function profileRefusalText(message: string, engines: string, tool = "run_read_query"): string {
+export function profileRefusalText(message: string, engines: string, tool: string): string {
   // #1462: inspect_schema runs under the same role-checking profile on PostgreSQL, so
   // it is not true that inspect_schema works on every engine; and an ExecutionProfileError
   // message (postgres.ts's assertAgentRoleIsUnprivileged) already ends in a period, so

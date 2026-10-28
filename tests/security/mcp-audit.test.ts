@@ -16,7 +16,7 @@ import { SQLiteProvider } from "@/lib/db/providers/sql/sqlite";
 import { logger } from "@/lib/logger";
 import { McpConnectionContext } from "@/lib/mcp/context";
 import { InspectSchemaInputSchema, inspectSchema } from "@/lib/mcp/tools/inspect-schema";
-import { RunReadQueryInputSchema, runReadQuery } from "@/lib/mcp/tools/run-read-query";
+import { RunReadQueryInputSchema, runReadQuery } from "../helpers/run-read-query";
 import type { McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import {
   countMethod,

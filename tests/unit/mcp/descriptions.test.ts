@@ -14,11 +14,7 @@ import { MCP_INSTRUCTIONS } from "@/lib/mcp/server";
 import { INSPECT_SCHEMA_DESCRIPTION } from "@/lib/mcp/tools/inspect-schema";
 import { LIST_CONNECTIONS_DESCRIPTION } from "@/lib/mcp/tools/list-connections";
 import { mcpStatementArm } from "@/lib/mcp/tools/statement-arms";
-import {
-  RUN_READ_QUERY_DESCRIPTION,
-  RUN_READ_QUERY_ENGINES,
-  RUN_READ_QUERY_TYPES,
-} from "@/lib/mcp/tools/run-read-query";
+import { RUN_READ_QUERY_DESCRIPTION, RUN_READ_QUERY_ENGINES, RUN_READ_QUERY_TYPES } from "../../helpers/run-read-query";
 import { pinMcpTestEnvironment, resetMcpTestState } from "../../helpers/mcp-fixtures";
 import { handlerServe, legacyPost, readJsonRpc } from "../../helpers/mcp-harness";
 

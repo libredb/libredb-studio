@@ -15,6 +15,9 @@
  * - R1d: a string or template part that names a MongoDB plan stage (`COLLSCAN`, `IXSCAN`).
  * - R1e: a string literal or literal type that starts with a pack id and a separator, or ends in `-<id>.<n>`: an
  *   operation id, a verifier id or a fingerprint prefix.
+ * - R1f: under `src/lib/mcp/` only, a string literal or literal type whose whole text is a tool a language's MCP facet
+ *   declares, `sql`'s too: the tool is the language's, so MCP reads it off an arm or the facet registry. The agent's
+ *   own tools are its tool registry's, not a facet's, so the agent core is not held to it.
  * - R2: an import of a module under `languages/` other than the shared entries: `pack.ts`, `client.ts`, `server.ts`,
  *   `index.ts`, `verifiers.ts`, `refusals.ts`, `mcp.ts` and `engines/{client,server,index}.ts`, matched by full path.
  * - R5a: a string literal, no-substitution template or literal type whose whole text is `sql`, unless R5b reads it.
@@ -86,6 +89,10 @@ const ANY_ID = new RegExp(IDS, "i");
 const ENGINE_IDS = new Set(Object.keys(AGENT_STATEMENT_LANGUAGE));
 const PLAN_STAGE = /COLLSCAN|IXSCAN/;
 const COMPOUND_ID = [new RegExp(`^(${IDS})[.:-]`), new RegExp(`-(${IDS})\\.\\d+$`)];
+/** The tools the languages' MCP facets declare: each is a language's, so a core file reads it off the registry. */
+const FACET_TOOLS: ReadonlySet<string> = new Set(
+  Object.values(languageMcpFacets.AGENT_LANGUAGE_MCP_FACETS).flatMap((facet) => (facet === null ? [] : [facet.tool])),
+);
 
 /** The id R1 leaves out: the default family's, whose literals and table reads are R5's. */
 const SQL = "sql";
@@ -388,6 +395,7 @@ const isSpecifierName = (node: ts.Node): boolean =>
 
 /** R1, R2, R5, R8 and R9 over one core file: every finding, once per occurrence. */
 function coreFileFindings(file: string, text: string, exemptEngineMap = true): string[] {
+  const inMcp = file.startsWith(`${MCP}/`);
   const source = parse(file, text);
   const findings: string[] = [];
   const add = (node: ts.Node, rule: string, detail: string): void => {
@@ -455,6 +463,7 @@ function coreFileFindings(file: string, text: string, exemptEngineMap = true): s
       const isSpecifier = ts.isImportDeclaration(node.parent) || ts.isExportDeclaration(node.parent);
       if (!isSpecifier && WHOLE_ID.test(node.text)) add(node, isPropertyName(node) ? "R1b" : "R1a", literal);
       if (!isSpecifier && COMPOUND_ID.some((pattern) => pattern.test(node.text))) add(node, "R1e", literal);
+      if (!isSpecifier && inMcp && FACET_TOOLS.has(node.text)) add(node, "R1f", literal);
       if (!isSpecifier && node.text === SQL) {
         const parent = node.parent;
         const tableRead =
@@ -1051,6 +1060,16 @@ describe("planted violations yield exactly their findings", () => {
     ).toEqual([`${arms}#servingStatementArms: R1a "kubectl"`]);
     const facet = prepend(arms, 'import * as facet from "@/lib/agent/languages/mongo/mcp";');
     expect(boundaryFindings(facet)).toEqual([`${arms}#<module>: R2 ${LANGUAGES}/mongo/mcp.ts`]);
+  });
+
+  test("a statement tool written out by name in the MCP module fails R1f, whichever language declares it", () => {
+    const arms = `${MCP}/tools/statement-arms.ts`;
+    expect(
+      boundaryFindings(plantInFunction(arms, "servingStatementArms", 'void mcpStatementArm("run_read_query");')),
+    ).toEqual([`${arms}#servingStatementArms: R1f "run_read_query"`]);
+    expect(
+      boundaryFindings(plantInFunction(arms, "servingStatementArms", 'const tools: "run_kubectl_read"[] = [];')),
+    ).toEqual([`${arms}#tools: R1f "run_kubectl_read"`]);
   });
 
   test("the default family's row read off the facet registry in the MCP module fails R5b", () => {

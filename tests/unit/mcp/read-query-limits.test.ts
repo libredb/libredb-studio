@@ -29,7 +29,7 @@ import {
   ROW_OVER_CAP_TEXT,
   timeoutText,
 } from "@/lib/mcp/tools/read-query-limits";
-import { RUN_READ_QUERY_TYPES } from "@/lib/mcp/tools/run-read-query";
+import { RUN_READ_QUERY_TYPES } from "../../helpers/run-read-query";
 
 const REPO = join(import.meta.dir, "../../..");
 const read = (file: string): string => readFileSync(join(REPO, file), "utf8");
@@ -63,7 +63,9 @@ describe("the texts", () => {
     expect(fenceRefusalText("NON_READ_STATEMENT", "postgres")).toBe(
       "The statement was refused before it reached the database (NON_READ_STATEMENT). On this engine run_read_query runs one read-only statement: a SELECT (a WITH is fine), VALUES, TABLE, or EXPLAIN without ANALYZE.",
     );
-    expect(profileRefusalText("the engine has no read-only statement path", "PostgreSQL and SQLite")).toBe(
+    expect(
+      profileRefusalText("the engine has no read-only statement path", "PostgreSQL and SQLite", "run_read_query"),
+    ).toBe(
       "run_read_query cannot run on this connection: the engine has no read-only statement path. It runs on PostgreSQL and SQLite.",
     );
   });
@@ -77,6 +79,7 @@ describe("the texts", () => {
       profileRefusalText(
         "The agent read-only execution profile requires a least-privilege PostgreSQL role; this role is unverified or too broad (is_superuser). A read-only transaction does not stop server-side file access or program execution.",
         "PostgreSQL, SQLite, DuckDB, SQL Server and MySQL",
+        "run_read_query",
       ),
     ).toBe(
       "run_read_query cannot run on this connection: The agent read-only execution profile requires a least-privilege PostgreSQL role; this role is unverified or too broad (is_superuser). A read-only transaction does not stop server-side file access or program execution. It runs on PostgreSQL, SQLite, DuckDB, SQL Server and MySQL.",

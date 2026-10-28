@@ -9,7 +9,7 @@ import { AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
 import { MCP_EXPOSABLE, MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { mcpStatementEngines, type McpExposure } from "@/lib/mcp/tools/served-engines";
-import { RUN_READ_QUERY_TYPES } from "@/lib/mcp/tools/run-read-query";
+import { RUN_READ_QUERY_TYPES } from "../../helpers/run-read-query";
 
 const SHIPPED: McpExposure = {
   executes: AGENT_EXECUTION_ENGINES,

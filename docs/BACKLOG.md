@@ -7701,7 +7701,7 @@ Both execution paths guard a statement with SQL readers (`src/lib/db/operations/
 
 Found 2026-10-03 while designing the Neo4j provider (spec 6.4).
 
-**Done when:** `Neo4jProvider` implements `queryReadOnly` through the same policy, gate and READ session as the editor, `AGENT_EXECUTION_ENGINES` names Neo4j, MCP serves its Cypher through its own MCP facet in its language pack (`src/lib/agent/languages/<statement-language>/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) (`RUN_READ_QUERY_ENGINES` holds SQL engines alone), and an agent run and an MCP call each drive a `LOAD CSV` and a write to their refusal in a test.
+**Done when:** `Neo4jProvider` implements `queryReadOnly` through the same policy, gate and READ session as the editor, `AGENT_EXECUTION_ENGINES` names Neo4j, MCP serves its Cypher through its own MCP facet in its language pack (`src/lib/agent/languages/<statement-language>/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) (`run_read_query` serves SQL engines alone), and an agent run and an MCP call each drive a `LOAD CSV` and a write to their refusal in a test.
 
 ### B94. InfluxDB has no agent execution and no MCP `run_read_query`
 
@@ -7742,7 +7742,7 @@ No statement classifier can be the boundary there: `nextval`, `EXECUTE IMMEDIATE
 
 Found 2026-10-07 while designing the Databend provider (design 5.7).
 
-**Done when:** a statement contract for Databend is measured and `queryReadOnly` implements it, `AGENT_EXECUTION_ENGINES` and `RUN_READ_QUERY_ENGINES` name Databend, and an agent run and an MCP call each drive a SELECT-shaped writer to its refusal in a test.
+**Done when:** a statement contract for Databend is measured and `queryReadOnly` implements it, `AGENT_EXECUTION_ENGINES` and the engines `run_read_query` serves name Databend, and an agent run and an MCP call each drive a SELECT-shaped writer to its refusal in a test.
 
 ### B104. S3-compatible object storage has no agent execution and no MCP surface
 

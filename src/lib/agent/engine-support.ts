@@ -57,7 +57,7 @@ export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = [
  *
  * It lives here because the list this module publishes is printed in three places: the login hero
  * (`src/components/login/hero-proof.tsx`), the agent posture popover (`src/lib/agent/posture.ts`)
- * and the MCP `run_read_query` description (`src/lib/mcp/tools/run-read-query.ts`), which
+ * and the MCP `run_read_query` description (`src/lib/mcp/tools/statement-arms.ts`), which
  * `docs/MCP.md` repeats under `tests/unit/mcp-documentation.test.ts`. The first two had each
  * written `join(" and ")`, which was indistinguishable from correct while the array held two
  * engines and became "PostgreSQL and SQLite and DuckDB" on the login page the moment it held three.

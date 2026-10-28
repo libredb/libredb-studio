@@ -18,7 +18,7 @@ import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
 import { MCP_TOOL_INPUT_SCHEMAS, type McpToolName } from "@/lib/mcp/tools";
 import { ListedConnectionSchema } from "@/lib/mcp/tools/list-connections";
 import { classifyReadQueryFailure } from "@/lib/mcp/tools/read-query-limits";
-import { RUN_READ_QUERY_DESCRIPTION, RUN_READ_QUERY_TYPES } from "@/lib/mcp/tools/run-read-query";
+import { RUN_READ_QUERY_DESCRIPTION, RUN_READ_QUERY_TYPES } from "../../helpers/run-read-query";
 import { registerStatementTools } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementEngines } from "@/lib/mcp/tools/served-engines";
 import {
