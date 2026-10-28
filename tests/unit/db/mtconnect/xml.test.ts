@@ -118,6 +118,22 @@ describe("the data behind the attributes", () => {
     ).toThrow(ours);
   });
 
+  test("an error thrown while reading the caller's own bounds leaves as itself, not as a refusal of the document", () => {
+    const ours = new Error("the bounds failed");
+    const bounds = Object.defineProperty({ ...MTC_XML_BOUNDS }, "maxDepth", {
+      get() {
+        throw ours;
+      },
+    });
+    let thrown: unknown;
+    try {
+      readMtconnectXml(bytes("current.xml"), bounds);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBe(ours);
+  });
+
   test("an asset document keeps its nested elements and their attributes", () => {
     const result = readMtconnectXml(bytes("assets.xml"));
     if (!result.ok) throw new Error(result.reason);

@@ -233,6 +233,18 @@ describe("countKinds", () => {
     }
     expect(stub.requests).toHaveLength(0);
   });
+
+  test("an error thrown while reading the caller's capabilities leaves as itself, not as this provider's refusal", async () => {
+    const { stub, client } = surface();
+    const ours = new Error("the capabilities failed");
+    const capabilities = Object.defineProperty({ ...CAPABILITIES }, "containerPathShapes", {
+      get() {
+        throw ours;
+      },
+    });
+    await expect(countKinds(client, capabilities, ["v"])).rejects.toBe(ours);
+    expect(stub.requests).toHaveLength(0);
+  });
 });
 
 describe("listKind", () => {
