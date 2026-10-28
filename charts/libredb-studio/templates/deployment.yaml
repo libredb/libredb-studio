@@ -349,10 +349,14 @@ spec:
             {{- end }}
             {{- /* The conversation off-switch, on the same rule as the flag above: unset
                    writes nothing and the app keeps its own default, which is on. Quoted for
-                   the same reason, and written before extraEnv for the same reason. */}}
-            {{- if not (kindIs "invalid" (get .Values.agent "threadContext")) }}
+                   the same reason, and written before extraEnv for the same reason. Only a
+                   boolean is written: Helm 4.2, which Rancher's Apps page installs with, drops
+                   the null default from the values, and `get` reads the missing key as "", so a
+                   null-only guard wrote an empty variable there and nothing under Helm 4.1. */}}
+            {{- $threadContext := get .Values.agent "threadContext" }}
+            {{- if kindIs "bool" $threadContext }}
             - name: LIBREDB_AGENT_THREAD_CONTEXT
-              value: {{ get .Values.agent "threadContext" | quote }}
+              value: {{ $threadContext | quote }}
             {{- end }}
             {{- /* Where the mounted tuning document lands. Its own directory rather than
                    /app/config, which the seed ConfigMap already claims: a second volume at

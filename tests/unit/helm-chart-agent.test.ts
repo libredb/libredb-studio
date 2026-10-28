@@ -31,8 +31,9 @@
  *
  * Exercises real `helm template` output — no reimplementation of the templates.
  */
-import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseAllDocuments } from "yaml";
 import { howItFailed } from "../helpers/spawn-outcome";
@@ -60,8 +61,11 @@ interface EnvVar {
   valueFrom?: unknown;
 }
 
-function helmTemplate(args: string[]): { exitCode: number; stdout: string; stderr: string } {
-  const run = Bun.spawnSync(["helm", "template", "release-under-test", CHART_DIR, ...args], {
+function helmTemplate(
+  args: string[],
+  chartDir: string = CHART_DIR,
+): { exitCode: number; stdout: string; stderr: string } {
+  const run = Bun.spawnSync(["helm", "template", "release-under-test", chartDir, ...args], {
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -69,8 +73,8 @@ function helmTemplate(args: string[]): { exitCode: number; stdout: string; stder
 }
 
 /** The container's env list from a render that must succeed. */
-function containerEnv(args: string[] = []): EnvVar[] {
-  const run = helmTemplate(args);
+function containerEnv(args: string[] = [], chartDir: string = CHART_DIR): EnvVar[] {
+  const run = helmTemplate(args, chartDir);
   if (run.exitCode !== 0) {
     throw new Error(`helm template ${howItFailed(run)}: ${run.stderr}`);
   }
@@ -159,6 +163,55 @@ describe("agent.enabled is the explicit off-switch", () => {
     expect(positions.length).toBe(2);
     expect(env[positions[0]].value).toBe("false");
     expect(env[positions[1]].value).toBe("true");
+  });
+});
+
+describe("agent.threadContext is written only as a boolean", () => {
+  // Helm releases disagree on a null chart default. Helm 4.1 keeps the key with a null
+  // value; the Helm 4.2 inside rancher/shell, which Rancher's Apps page installs with,
+  // drops it, and sprig's `get` answers "" for a missing key. A guard on null alone then
+  // wrote LIBREDB_AGENT_THREAD_CONTEXT="" on an Apps install and nothing on a helm
+  // upgrade with the same values, so moving between the two rolled the pod and ended
+  // every session. The chart copy below is the Apps install's view: no key at all.
+  let droppedKeyChart: string;
+
+  beforeAll(() => {
+    droppedKeyChart = mkdtempSync(join(tmpdir(), "libredb-thread-context-"));
+    cpSync(CHART_DIR, droppedKeyChart, { recursive: true });
+    const valuesPath = join(droppedKeyChart, "values.yaml");
+    const values = readFileSync(valuesPath, "utf8");
+    const line = /^ {2}threadContext: null\n/m;
+    if (!line.test(values)) throw new Error("values.yaml no longer holds the threadContext default line");
+    writeFileSync(valuesPath, values.replace(line, ""));
+  });
+
+  afterAll(() => rmSync(droppedKeyChart, { recursive: true, force: true }));
+
+  const threadContext = (args: string[], chartDir?: string) =>
+    named(containerEnv(args, chartDir), "LIBREDB_AGENT_THREAD_CONTEXT");
+
+  test("the null default writes nothing, so the app keeps its own default", () => {
+    expect(threadContext([])).toBeUndefined();
+    expect(threadContext(["--set", "agent.threadContext=null"])).toBeUndefined();
+  });
+
+  test("a missing key, which `get` reads as an empty string, writes nothing either", () => {
+    expect(threadContext([], droppedKeyChart)).toBeUndefined();
+    expect(threadContext(["--set", "agent.enabled=false"], droppedKeyChart)).toBeUndefined();
+  });
+
+  test("both views render the same pod template", () => {
+    const deployment = (chartDir: string) =>
+      helmTemplate(["--set", "agent.enabled=false"], chartDir)
+        .stdout.split(/^---$/m)
+        .find((doc) => /^kind: Deployment$/m.test(doc));
+    expect(deployment(droppedKeyChart)).toBe(deployment(CHART_DIR));
+  });
+
+  test("false and true are written as the strings the API server accepts", () => {
+    expect(threadContext(["--set", "agent.threadContext=false"])?.value).toBe("false");
+    expect(threadContext(["--set", "agent.threadContext=true"])?.value).toBe("true");
+    expect(threadContext(["--set", "agent.threadContext=false"], droppedKeyChart)?.value).toBe("false");
   });
 });
 
