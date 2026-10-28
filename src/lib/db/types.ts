@@ -946,7 +946,7 @@ export interface ProviderCapabilities {
   /**
    * The language this engine's statements are written in: what its editor tabs are typed and
    * highlighted as (`src/lib/editor/tab-language.ts`), and the arm the query generators take for a
-   * tree click and for "Generate Query" (`src/lib/db/query-generators/index.ts`).
+   * tree click and for "Generate Query" (`src/lib/query-generators.ts`).
    *
    * A CLOSED union, and a member added to it is not neutral: a reader written `=== "json"` sends
    * the new member into its SQL branch, and one written `!== "sql"` sends it into its JSON
@@ -1524,7 +1524,7 @@ export interface ProviderCapabilities {
    * Whether a statement this product runs may end with `;`.
    *
    * Absent means it may, which is every engine that shipped before #424 Phase 1 and
-   * is what `src/lib/db/query-generators/index.ts` has always emitted. `"none"` says the
+   * is what `src/lib/query-generators.ts` has always emitted. `"none"` says the
    * terminator is not in the grammar at all.
    *
    * Measured 2026-08-19 on Elasticsearch 9.1.4: the generator's own
@@ -3358,7 +3358,7 @@ export interface DatabaseObject {
    * the caller's grants do not cover, so a user who is not root, granted one key of a prefix
    * group, would meet a permission error on the group's own generated read. The tree click's read
    * and Generate Command are written in the browser from the listed object alone
-   * (`generateTableQuery` and `generateSelectQuery` in `src/lib/db/query-generators/index.ts`), so the
+   * (`generateTableQuery` and `generateSelectQuery` in `src/lib/query-generators.ts`), so the
    * pieces travel with it, and the generated read addresses the first piece rather than the group.
    *
    * A piece can be a single key, which makes this the one field of a listed object that may name

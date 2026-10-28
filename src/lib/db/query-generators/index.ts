@@ -1,4 +1,5 @@
 import { CYPHER_GENERATORS } from "@/lib/db/graph/cypher/generators";
+import { MONGODB_JSON_GENERATORS } from "@/lib/db/providers/document/mongodb/generators";
 import { COUCHBASE_SQL_GENERATORS } from "@/lib/db/providers/document/couchbase/generators";
 import { FIRESTORE_GENERATORS } from "@/lib/db/providers/document/firestore/console/generators";
 import { LIBREDB_GENERATORS } from "@/lib/db/providers/embedded/libredb-generators";
@@ -38,7 +39,7 @@ import type { DialectGenerators, LanguageGenerators, SqlPortGenerators } from ".
  */
 
 /**
- * Every query dialect's generators, read BEFORE the JSON language's arm: each dialect declares `queryLanguage: "json"`
+ * Every query dialect's generators, read BEFORE the JSON language's row: each dialect declares `queryLanguage: "json"`
  * too, and without its record a tree click auto-executes a MongoDB `find` its provider refuses (#427, #1088, #1089). A
  * `Record` over `QueryDialect`, so a dialect added to the union does not compile until it has its generators.
  */
@@ -64,17 +65,19 @@ export const DIALECT_GENERATORS: Readonly<Record<QueryDialect, DialectGenerators
   sparkplug: SPARKPLUG_GENERATORS,
 } satisfies Record<QueryDialect, DialectGenerators>);
 
-/** The query languages an engine writes its own text in, other than SQL and MongoDB's JSON. */
-type EngineQueryLanguage = Exclude<ProviderCapabilities["queryLanguage"], "sql" | "json">;
+/** The query languages an engine writes its own text in, every one but SQL. */
+type EngineQueryLanguage = Exclude<ProviderCapabilities["queryLanguage"], "sql">;
 
 /**
- * Every such language's generators, read after the JSON arm and before any SQL form. A `Record` over those languages,
- * so a language added to the union does not compile until it has its generators.
+ * Every such language's generators, read after a declared dialect's and before any SQL form. A `Record` over those
+ * languages, so a language added to the union does not compile until it has its generators. The `json` row's quoting
+ * is read for every JSON-language declaration, a dialect's included; its documents only where no dialect row answers.
  */
 export const LANGUAGE_GENERATORS: Readonly<Record<EngineQueryLanguage, LanguageGenerators>> = Object.freeze({
   promql: PROMQL_GENERATORS,
   cypher: CYPHER_GENERATORS,
   influxql: INFLUXQL_GENERATORS,
+  json: MONGODB_JSON_GENERATORS,
 } satisfies Record<EngineQueryLanguage, LanguageGenerators>);
 
 /**
@@ -96,7 +99,7 @@ export const SQL_PORT_GENERATORS: ReadonlyMap<number, SqlPortGenerators> = (() =
   return rows;
 })();
 
-/** The generators of the language a declaration names, looked up as an own key; undefined for SQL and JSON. */
+/** The generators of the language a declaration names, looked up as an own key; undefined for SQL. */
 export function languageGenerators(capabilities: ProviderCapabilities): LanguageGenerators | undefined {
   const language: string = capabilities.queryLanguage;
   return Object.hasOwn(LANGUAGE_GENERATORS, language)

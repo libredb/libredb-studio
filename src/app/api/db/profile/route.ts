@@ -16,13 +16,8 @@ import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
 import { editorProvider } from "@/lib/api/editor-provider";
-import {
-  jsonCommandAddress,
-  objectSegment,
-  outermostFieldPaths,
-  quoteIdentifier,
-  quoteObjectPath,
-} from "@/lib/query-generators";
+import { jsonCommandAddress, outermostFieldPaths } from "@/lib/db/providers/document/mongodb/generators";
+import { objectSegment, quoteIdentifier, quoteObjectPath } from "@/lib/query-generators";
 import type { ColumnProfile } from "@/lib/export/data-profile";
 import { renderValue } from "@/lib/export/csv";
 import { type RecordedUnit, runRecorded } from "@/lib/query-events/recorded-run";

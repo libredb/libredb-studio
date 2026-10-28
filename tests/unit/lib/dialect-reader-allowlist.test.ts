@@ -99,31 +99,6 @@ const ALLOWED: readonly Reader[] = [
     text: 'if (capabilities?.queryLanguage === "json") return "mongodb";',
     owner: "resolveTabType: MongoDB's rung, below the registry record's tabType",
   },
-  {
-    path: "src/lib/query-generators.ts",
-    text: 'if (capabilities.queryLanguage === "json") return name;',
-    owner: "quoteIdentifier: JSON names are never SQL-quoted",
-  },
-  {
-    path: "src/lib/query-generators.ts",
-    text: 'if (capabilities.queryLanguage === "json") return path.join(".");',
-    owner: "quoteObjectPath: JSON addresses are never SQL-quoted",
-  },
-  {
-    path: "src/lib/query-generators.ts",
-    text: 'if (capabilities.queryLanguage === "json") {',
-    owner: "generateTableQuery: MongoDB's find, below the DIALECT_GENERATORS record",
-  },
-  {
-    path: "src/lib/query-generators.ts",
-    text: 'if (capabilities.queryLanguage === "json") {',
-    owner: "generateSelectQuery: MongoDB's find, below the DIALECT_GENERATORS record",
-  },
-  {
-    path: "src/lib/query-generators.ts",
-    text: 'if (capabilities.queryLanguage === "json") {',
-    owner: "generateCountQuery: MongoDB's count, below the DIALECT_GENERATORS record's count",
-  },
 ];
 
 /**

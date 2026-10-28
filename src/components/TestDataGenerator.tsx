@@ -10,7 +10,7 @@ import { quoteLiteral, temporalLiteral } from "@/lib/sql/values";
 import { sqlWritingFor } from "@/lib/db/sql-writing";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import { objectPathLabel, pathKey } from "@/lib/db/object-path";
-import { jsonCommandAddress, quoteIdentifier, quoteObjectPath } from "@/lib/query-generators";
+import { quoteIdentifier, quoteObjectPath, requestAddress } from "@/lib/query-generators";
 
 interface TestDataGeneratorProps {
   isOpen: boolean;
@@ -468,7 +468,7 @@ export function TestDataGenerator({
       });
       // The database rides as its own key: without it the insert landed in the connected
       // database's same-named collection, a write to the wrong place (#843).
-      return insertDocuments(jsonCommandAddress(tablePath, capabilities), docs);
+      return insertDocuments(requestAddress(tablePath, capabilities), docs);
     }
 
     // SQL INSERT

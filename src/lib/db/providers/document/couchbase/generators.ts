@@ -44,6 +44,8 @@ const COUCHBASE_KEY_PROJECTION = `META(${COUCHBASE_ALIAS}).id AS ${COUCHBASE_DOC
  * Both statements are about the PROJECTION: the document key is not a column, so the grid has nothing to show
  * without the alias. Every field is reached through the keyspace alias, and the document key comes from META()
  * rather than from the document body.
+ *
+ * Generate Query ends in a literal `;`, which SQL++ accepts, rather than the declaration's terminator.
  */
 export const COUCHBASE_SQL_GENERATORS = Object.freeze({
   port: COUCHBASE_PORT,

@@ -1,4 +1,4 @@
-import type { ObjectReadRange } from "@/lib/db/types";
+import type { ObjectReadRange, ProviderCapabilities } from "@/lib/db/types";
 import type { ColumnSchema } from "@/lib/types";
 
 /**
@@ -50,20 +50,31 @@ export interface DialectGenerators {
   /**
    * The statement Generate Count Query writes for one object, on a dialect whose `QUERY_DIALECTS` record offers it.
    * Absent on every dialect whose record does not; `generateCountQuery` refuses a record that offers a count and
-   * writes none, rather than falling through to the JSON arm's MongoDB count document.
+   * writes none, rather than falling through to the JSON language's count document.
    */
   readonly count?: (path: readonly string[]) => string;
 }
 
 /**
  * What one query language an engine writes its own text in says, for a declaration with no dialect: the tree click
- * (`table`) and Generate Query (`select`) from the object's path, and, where the language spells names its own way,
- * how it quotes one name (`quote`) and a whole address (`quotePath`). Read after MongoDB's JSON arm and before any SQL
- * form.
+ * (`table`) and Generate Query (`select`) from the object's path, Generate Count Query (`count`) where the language
+ * writes its own count, and, where the language spells names its own way, how it quotes one name (`quote`) and a whole
+ * address (`quotePath`). Each form also receives the declaration it writes for. Read before any SQL form.
  */
 export interface LanguageGenerators {
-  readonly table: (path: readonly string[], columns: readonly ColumnSchema[] | undefined) => string;
-  readonly select: (path: readonly string[], columns: readonly ColumnSchema[]) => string;
+  readonly table: (
+    path: readonly string[],
+    columns: readonly ColumnSchema[] | undefined,
+    capabilities: ProviderCapabilities,
+  ) => string;
+  readonly select: (
+    path: readonly string[],
+    columns: readonly ColumnSchema[],
+    capabilities: ProviderCapabilities,
+  ) => string;
+  readonly count?: (path: readonly string[], capabilities: ProviderCapabilities) => string;
+  /** The address a request in the language carries for the object at `path`, where its requests carry one. */
+  readonly address?: (path: readonly string[], capabilities: ProviderCapabilities) => Readonly<Record<string, unknown>>;
   readonly quote?: (name: string) => string;
   readonly quotePath?: (path: readonly string[]) => string;
 }

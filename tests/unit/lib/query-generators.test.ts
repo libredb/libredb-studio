@@ -4,7 +4,6 @@ import {
   generateRowActionQuery,
   generateTableQuery,
   generateSelectQuery,
-  outermostFieldPaths,
   shouldRefreshSchema,
   quoteIdentifier,
   quoteObjectPath,
@@ -12,6 +11,7 @@ import {
 } from "@/lib/query-generators";
 // The whole module, for the one assertion that is about what it does NOT export.
 import * as generators from "@/lib/query-generators";
+import { outermostFieldPaths } from "@/lib/db/providers/document/mongodb/generators";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import type { ColumnSchema } from "@/lib/types";
 import { metricSelector } from "@/lib/db/providers/timeseries/prometheus/promql";
@@ -1809,6 +1809,23 @@ describe("the dialects that address one key or collection, not a qualified name"
     expect(() => generateTableQuery(["outer", "users"], noDatabaseLevel)).toThrow('"schema" container level');
   });
 
+  test("requestAddress is the language row's address: the database rides as its own key (#843)", () => {
+    expect(generators.requestAddress(["sample_shop", "users"], mongoCaps)).toEqual({
+      database: "sample_shop",
+      collection: "users",
+    });
+    expect(() => generators.requestAddress(["users"], mongoCaps)).toThrow("[schema, name]");
+  });
+
+  test("requestAddress refuses a language whose requests carry no address of their own", () => {
+    expect(() => generators.requestAddress(["public", "users"], makeCaps({ queryLanguage: "sql" }))).toThrow(
+      "the sql language writes no request address",
+    );
+    expect(() => generators.requestAddress(["up"], promqlCaps)).toThrow(
+      "the promql language writes no request address",
+    );
+  });
+
   test("Redis takes the bare key, never the database segment with it", () => {
     // A Redis key's path is [database index, key] (`redis.ts` listObjects), and a key
     // argument is a literal byte string: `GET 0.counter` reads a key nobody wrote.
@@ -2461,11 +2478,11 @@ describe("PromQL Generate Query (#1085)", () => {
  * only callers outside the Redis generator arm are the key browser's patterns, a surface offered only
  * where the provider declares `keyScan` (tests/components/sidebar/Sidebar.test.tsx, and Browse Keys in
  * tests/unit/components/object-tree-row-actions.test.ts), which Prometheus does not: its whole
- * capability object is pinned in tests/unit/db/prometheus/provider.test.ts. `jsonCommandAddress` is
- * read only inside a `queryLanguage === "json"` arm: the three generators' own, the profiler's after
- * the language refusal above, and Generate Test Data's, which no metric row offers. `outermostFieldPaths`
- * reduces MongoDB field paths for a projection and is read in the same two `json` places: the select
- * generator's arm and the profiler's MongoDB branch. `generateRowActionQuery` is read only by the tab
+ * capability object is pinned in tests/unit/db/prometheus/provider.test.ts. MongoDB's JSON documents,
+ * with their address and projection readers, are the `json` language's row beside the MongoDB provider and
+ * not this module's exports; `requestAddress` reads that row's address and refuses a PromQL connection (tested
+ * above), and its one caller, Generate Test Data's document insert, no metric row offers. `generateRowActionQuery` is
+ * read only by the tab
  * manager's `runRowAction`, which only a row menu item reaches, and the menu offers one only for a kind
  * the provider names in `rowActions`; Prometheus declares none (its capability object is pinned in
  * tests/unit/db/prometheus/provider.test.ts), and the function raises for a dialect with no `rowAction`.
@@ -2484,12 +2501,11 @@ describe("the module's exports, for a PromQL connection (#1085)", () => {
       "generateRowActionQuery",
       "generateSelectQuery",
       "generateTableQuery",
-      "jsonCommandAddress",
       "objectSegment",
-      "outermostFieldPaths",
       "quoteIdentifier",
       "quoteObjectPath",
       "quoteTypedName",
+      "requestAddress",
       "shouldRefreshSchema",
     ]);
   });

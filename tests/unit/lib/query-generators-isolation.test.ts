@@ -3,7 +3,7 @@
  * engine writes is a row declared beside its provider and collected by the registry in
  * `src/lib/db/query-generators/index.ts`, keyed by what the declaration says, its query dialect, its query language or
  * its default port. The dispatcher imports no provider module, and no string, identifier or number in it names an
- * engine, a dialect, a language other than SQL and MongoDB's JSON, or a port.
+ * engine, a dialect, a language other than SQL, or a port. MongoDB's JSON documents are the `json` language's row.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -46,6 +46,8 @@ const ENGINE_WORDS: readonly string[] = [
   "cypher",
   "influx",
   "prom",
+  "json",
+  "mongo",
 ];
 
 /** Every name, string and number of `file` that names an engine, read from the syntax tree, so comments never count. */
@@ -95,7 +97,7 @@ describe("the generator registry", () => {
   });
 
   test("holds a row for each query language an engine writes its own text in, and no other", () => {
-    expect(Object.keys(LANGUAGE_GENERATORS).sort()).toEqual(["cypher", "influxql", "promql"]);
+    expect(Object.keys(LANGUAGE_GENERATORS).sort()).toEqual(["cypher", "influxql", "json", "promql"]);
     expect(Object.isFrozen(LANGUAGE_GENERATORS)).toBe(true);
   });
 

@@ -71,10 +71,8 @@ export function quoteIdentifier(
   capabilities: ProviderCapabilities,
   { always = false }: { always?: boolean } = {},
 ): string {
-  // The JSON-language engines don't use SQL identifier quoting: MongoDB, and every engine that declares a JSON
-  // dialect of its own (#1088, #1089).
-  if (capabilities.queryLanguage === "json") return name;
-  // A language that spells names its own way quotes them with its own rule.
+  // A language that spells names its own way quotes them with its own rule, the JSON language's engines included:
+  // they don't use SQL identifier quoting (#1088, #1089).
   const language = languageGenerators(capabilities);
   if (language?.quote !== undefined) return language.quote(name);
 
@@ -217,7 +215,6 @@ export function quoteObjectPath(
   capabilities: ProviderCapabilities,
   options: { always?: boolean } = {},
 ): string {
-  if (capabilities.queryLanguage === "json") return path.join(".");
   // A language that addresses an object its own way writes the address with its own rule.
   const language = languageGenerators(capabilities);
   if (language?.quotePath !== undefined) return language.quotePath(path);
@@ -263,42 +260,6 @@ export function containerSpellingOf(capabilities: ProviderCapabilities): Contain
 }
 
 /**
- * The address a JSON command carries: the collection's own segment, and the database that
- * holds it as a key of its own (#843). `db.collection("sample_shop.users")` would name a
- * collection literally called that, so the database cannot ride inside `collection`.
- *
- * The database is the segment the declaration assigns to its `schema` level, never
- * `path[0]` (standing ruling 5g), and it is emitted unconditionally, including for the
- * connected database, for the reason `quoteObjectPath` qualifies unconditionally. A path
- * whose length does not match the declared levels is refused: a collection that lost its
- * database would otherwise read the connected database's same-named collection, which is
- * the wrong answer #843 was.
- *
- * The one reader for every statement the product writes for MongoDB: the three generators
- * below, the profiler route and the test data generator.
- */
-export function jsonCommandAddress(
-  path: readonly string[],
-  capabilities: ProviderCapabilities,
-): { database?: string; collection: string } {
-  const levels = declaredLevels(capabilities);
-  if (path.length !== levels.length + 1) {
-    const shape = [...levels.map((level) => level.id), "name"].join(", ");
-    throw new Error(`Cannot generate a query: the object path is [${shape}], received ${JSON.stringify(path)}.`);
-  }
-  const collection = objectSegment(path);
-  if (levels.length === 0) return { collection };
-  const index = levels.findIndex((level) => level.id === "schema");
-  if (index < 0) {
-    throw new Error(
-      `Cannot generate a query: a JSON command needs a "schema" container level for its database; ` +
-        `the declaration is [${levels.map((level) => level.id).join(", ")}].`,
-    );
-  }
-  return { database: path[index], collection };
-}
-
-/**
  * The terminator a generated statement ends with: `;` everywhere, and nothing on a
  * product whose grammar has none.
  *
@@ -306,11 +267,9 @@ export function jsonCommandAddress(
  * "Select Top N" and "Generate Query" - because those are the statements this file
  * writes on the user's behalf.
  *
- * `generateTableQuery`'s returns all ask this now. They did not always: Oracle and SQL
- * Server had branches of their own to spell their row bound, and #816 removed the bound,
- * which left the two branches doing nothing the shared return did not. `generateSelectQuery`
- * still keeps a literal `;` in its SQL Server and Couchbase branches, because both accept
- * one and neither branch has been touched.
+ * The shared SQL forms below ask this, and an SQL row receives it as `SqlFormContext.terminator`.
+ * A row may still write a literal `;` of its own where its engine accepts one; that choice is the
+ * row's, and its docblock says why.
  *
  * Oracle is the measurement that moved: `SELECT * FROM app_customers FETCH FIRST 50
  * ROWS ONLY;` answers ORA-00933, so clicking a table on Oracle had never once worked.
@@ -329,9 +288,9 @@ function sqlFormContext(capabilities: ProviderCapabilities): SqlFormContext {
  * The statement behind "Select Top 50", the one a CLICK on a tree row runs (#789).
  *
  * It takes the object's PATH, because that is what addresses an object; `name` is what
- * labels it (standing ruling 2). Every dialect below that addresses by qualification gets
- * the whole path, and each that addresses a single key, collection, topic or metric gets
- * the object's own segment.
+ * labels it (standing ruling 2). Every row that addresses by qualification reads the whole
+ * path, and each that addresses a single key, collection, topic or metric reads the object's
+ * own segment.
  *
  * NO SQL RETURN HERE CARRIES A ROW BOUND (#816). It used to: `LIMIT 50`, `FETCH FIRST 50
  * ROWS ONLY`, `SELECT TOP 50`. Nothing downstream could then tell that preview cap from a
@@ -341,17 +300,12 @@ function sqlFormContext(capabilities: ProviderCapabilities): SqlFormContext {
  * instead (`PREVIEW_PAGE_SIZE` in `use-tab-manager.ts`), which leaves a user-written
  * `LIMIT n` with exactly one meaning: a hard bound we do not page past.
  *
- * The four JSON-language branches keep their own bound, and that is not an exception to
- * the rule. None of MongoDB, Redis, Kafka and etcd can be asked for page two at all
- * (`supportsResultPagination: false`, measured), so their bound is the only one there is
- * and no control is offered that a preview cap in the text could disengage. Kafka's is
- * the read request's own `limit` (#1088), and etcd's the command's own `--limit` (#1089).
+ * A dialect's or a language's row decides its own bound, and that is not an exception to the
+ * rule: where an engine cannot be asked for page two at all (`supportsResultPagination: false`),
+ * the bound its row writes is the only one there is, and where its language has no bound to
+ * write, its row writes none. Each row's docblock says which, and why.
  *
- * The PromQL branch writes the metric's selector and no bound at all (#1085): PromQL has no row
- * bound to write, and the provider caps the series it returns (#1085, section 5.4).
- *
- * `scope` is read by the etcd arm alone (#1089): a group's `readRanges`, so a user who is not root
- * reads the first piece of the group they may read, and not the whole group etcd would refuse.
+ * `scope` is handed to the dialect rows only; each reads what of it the row needs.
  */
 
 export function generateTableQuery(
@@ -362,19 +316,12 @@ export function generateTableQuery(
 ): string {
   // Refuses an empty address before any row spells it.
   objectSegment(path);
-  // A query dialect's own command, from its `DIALECT_GENERATORS` record, BEFORE the JSON arm below.
+  // A query dialect's own command, from its `DIALECT_GENERATORS` record, BEFORE its language's row below.
   const dialect = registeredDialect(capabilities);
   if (dialect !== undefined) return DIALECT_GENERATORS[dialect].table(path, columns, scope);
-  if (capabilities.queryLanguage === "json") {
-    return JSON.stringify(
-      { ...jsonCommandAddress(path, capabilities), operation: "find", filter: {}, options: { limit: 50 } },
-      null,
-      2,
-    );
-  }
   // A language an engine writes its own text in, from its `LANGUAGE_GENERATORS` record.
   const language = languageGenerators(capabilities);
-  if (language !== undefined) return language.table(path, columns);
+  if (language !== undefined) return language.table(path, columns, capabilities);
   const table = quoteObjectPath(path, capabilities);
   // An SQL engine whose click reads a projection of its own, from its `SQL_PORT_GENERATORS` record.
   const engineTable = sqlPortGenerators(capabilities)?.table;
@@ -470,25 +417,6 @@ function projectedPreview(
 }
 
 /**
- * The field paths a MongoDB projection may name together: every path whose ancestor is also
- * listed is dropped, since projecting the subdocument already returns it.
- *
- * Inferred columns name a subdocument and its dotted children side by side (`address`,
- * `address.city`, `address.geo.lat`; docs/providers/mongodb.md section 3.3), and MongoDB
- * refuses a projection or `$project` that names a path beside one of its sub-paths:
- * `Path collision at address.city remaining portion city` (measured on mongo:8.2.12). An
- * ancestor is a whole segment, so `addressBook` survives `address`. Order is kept and
- * duplicates collapse.
- */
-export function outermostFieldPaths(names: readonly string[]): string[] {
-  const listed = new Set(names);
-  return [...listed].filter((name) => {
-    const segments = name.split(".");
-    return !segments.some((_, i) => i > 0 && listed.has(segments.slice(0, i).join(".")));
-  });
-}
-
-/**
  * The statement behind "Generate Query", which is written into a tab and NOT run.
  *
  * Takes the object's PATH for the same reason `generateTableQuery` does, and the two stay
@@ -502,16 +430,8 @@ export function outermostFieldPaths(names: readonly string[]): string[] {
  * statement they chose to execute and its bound is theirs: a hard bound, honoured, and not
  * paged past. Removing it would instead hand them an unbounded scan they never asked for.
  *
- * The Kafka branch keeps a bound for the same reason, in the read request's own `limit`: 50, the
- * click's and the request's default (#1088).
- *
- * The PromQL branch is the exception, for the tree click's reason: PromQL has no bound to write,
- * so the text is the metric's selector, with the two range forms that widen it written as
- * comments above it (#1085).
- *
- * The etcd branch keeps the click's bound, the command's own `--limit`, and writes its other forms as
- * comments below the read (#1089). `scope` is read by that branch alone: a group's `readRanges`, as
- * for the click, and the connection's `readOnly`, under which it writes the read alone.
+ * A dialect's or a language's row writes its own text and decides its own bound, for the same
+ * reasons and in the same row as its tree click; `scope` is handed to the dialect rows only.
  */
 
 export function generateSelectQuery(
@@ -522,31 +442,12 @@ export function generateSelectQuery(
 ): string {
   // Refuses an empty address before any row spells it.
   objectSegment(path);
-  // A query dialect's own text, from its `DIALECT_GENERATORS` record, BEFORE the JSON arm below.
+  // A query dialect's own text, from its `DIALECT_GENERATORS` record, BEFORE its language's row below.
   const dialect = registeredDialect(capabilities);
   if (dialect !== undefined) return DIALECT_GENERATORS[dialect].select(path, columns, scope);
-  if (capabilities.queryLanguage === "json") {
-    const projection: Record<string, number> = {};
-    outermostFieldPaths(columns.map((c) => c.name)).forEach((name) => {
-      projection[name] = 1;
-    });
-    return JSON.stringify(
-      {
-        ...jsonCommandAddress(path, capabilities),
-        operation: "find",
-        filter: {},
-        options: {
-          projection: Object.keys(projection).length > 0 ? projection : undefined,
-          limit: 100,
-        },
-      },
-      null,
-      2,
-    );
-  }
   // A language an engine writes its own text in, from its `LANGUAGE_GENERATORS` record.
   const language = languageGenerators(capabilities);
-  if (language !== undefined) return language.select(path, columns);
+  if (language !== undefined) return language.select(path, columns, capabilities);
   const table = quoteObjectPath(path, capabilities);
   const engine = sqlPortGenerators(capabilities);
   // An SQL engine whose starter statement is its own, from its `SQL_PORT_GENERATORS` record.
@@ -596,8 +497,8 @@ export function generateRowActionQuery(
 
 /**
  * Prepare an editable count statement, without a row limit or any execution (#702). A dialect's own count statement,
- * from its `DIALECT_GENERATORS` record, comes before the JSON arm, as the other two generators' do. `registry` is the
- * record this module holds; a test passes its own to reach the refusal no shipped record triggers.
+ * from its `DIALECT_GENERATORS` record, comes before its language's, as the other two generators' do. `registry` is
+ * the record this module holds; a test passes its own to reach the refusal no shipped record triggers.
  */
 export function generateCountQuery(
   path: readonly string[],
@@ -605,7 +506,7 @@ export function generateCountQuery(
   registry: Readonly<Partial<Record<QueryDialect, DialectGenerators>>> = DIALECT_GENERATORS,
 ): string | null {
   if (!offersCountQuery(capabilities)) return null;
-  // Refuses an empty address before any dialect spells it, the JSON arm's own check included.
+  // Refuses an empty address before any dialect or language spells it.
   objectSegment(path);
   const dialect = registeredDialect(capabilities);
   if (dialect !== undefined) {
@@ -615,12 +516,28 @@ export function generateCountQuery(
     }
     return count(path);
   }
-  if (capabilities.queryLanguage === "json") {
-    return JSON.stringify({ ...jsonCommandAddress(path, capabilities), operation: "count", filter: {} }, null, 2);
-  }
+  // A language that writes its own count, from its `LANGUAGE_GENERATORS` record.
+  const languageCount = languageGenerators(capabilities)?.count;
+  if (languageCount !== undefined) return languageCount(path, capabilities);
   // An SQL engine whose count is not `COUNT(*)`, from its `SQL_PORT_GENERATORS` record.
   const countExpression = sqlPortGenerators(capabilities)?.countExpression ?? "COUNT(*)";
   return `SELECT ${countExpression} AS row_count\nFROM ${quoteObjectPath(path, capabilities)}${terminator(capabilities)}`;
+}
+
+/**
+ * The address a request carries for the object at `path`, from the row of the language the declaration names: what a
+ * request written outside the generators, such as Generate Test Data's document insert, puts beside its operation.
+ * Raises for a language whose requests carry no address of their own, rather than writing a request to nowhere.
+ */
+export function requestAddress(
+  path: readonly string[],
+  capabilities: ProviderCapabilities,
+): Readonly<Record<string, unknown>> {
+  const address = languageGenerators(capabilities)?.address;
+  if (address === undefined) {
+    throw new Error(`the ${capabilities.queryLanguage} language writes no request address`);
+  }
+  return address(path, capabilities);
 }
 
 export function shouldRefreshSchema(query: string, schemaRefreshPattern: string): boolean {
