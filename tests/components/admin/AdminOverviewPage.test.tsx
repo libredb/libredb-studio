@@ -41,6 +41,7 @@ const DISCOVERY = {
       connected: [{ name: "pgtest (PostgreSQL)", type: "postgres" }],
       skipped: [],
     },
+    kubernetesDiscovery: null,
     transport: { plainHttp: false, cookieSecureOff: false },
   },
 };
@@ -139,7 +140,7 @@ describe("AdminOverviewPage", () => {
   test("renders the seed sources card when CapRover discovery is off", async () => {
     mockGlobalFetch({
       "/api/auth/me": AUTH_ME,
-      "/api/admin/discovery": { json: { discovery: null } },
+      "/api/admin/discovery": { json: { discovery: null, kubernetesDiscovery: null } },
       "/api/admin/seed-sources": SEED_SOURCES,
     });
 
@@ -175,7 +176,7 @@ describe("AdminOverviewPage", () => {
   test("renders the governance card after the seed sources card when governance is on", async () => {
     mockGlobalFetch({
       "/api/auth/me": AUTH_ME,
-      "/api/admin/discovery": { json: { discovery: null } },
+      "/api/admin/discovery": { json: { discovery: null, kubernetesDiscovery: null } },
       "/api/admin/seed-sources": SEED_SOURCES,
       "/api/admin/governance": GOVERNANCE,
     });

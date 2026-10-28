@@ -31,7 +31,7 @@ function answer(
   discovery: DiscoveryStatus,
   transport = { plainHttp: false, cookieSecureOff: false },
 ): MockFetchResponse {
-  return { json: { discovery, transport } };
+  return { json: { discovery, kubernetesDiscovery: null, transport } };
 }
 
 async function renderCard() {
@@ -106,7 +106,9 @@ describe("PlatformDiscoveryCard", () => {
   });
 
   test("renders nothing when discovery is off", async () => {
-    const fetchMock = mockGlobalFetch({ "/api/admin/discovery": { json: { discovery: null } } });
+    const fetchMock = mockGlobalFetch({
+      "/api/admin/discovery": { json: { discovery: null, kubernetesDiscovery: null } },
+    });
     const { container } = await renderCard();
 
     await waitFor(() => {
@@ -344,7 +346,11 @@ describe("PlatformDiscoveryCard", () => {
         ok: true,
         json: async () => {
           read = true;
-          return { discovery: status(), transport: { plainHttp: false, cookieSecureOff: false } };
+          return {
+            discovery: status(),
+            kubernetesDiscovery: null,
+            transport: { plainHttp: false, cookieSecureOff: false },
+          };
         },
       } as unknown as Response;
     });

@@ -1,5 +1,6 @@
 /**
- * GET /api/admin/discovery: the CapRover discovery status for the admin Overview card.
+ * GET /api/admin/discovery: the status of each platform discovery source, CapRover and Kubernetes, for the admin
+ * Overview card.
  *
  * The discovery loader runs for real against export files in a temp directory. Only getSession is
  * replaced, spread over the real @/lib/auth (pattern: tests/api/agent/config.test.ts), so
@@ -12,10 +13,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as realAuth from "@/lib/auth";
 import * as realLoader from "@/lib/seed/discovery-loader";
+import * as realKubernetesLoader from "@/lib/seed/kubernetes-discovery-loader";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { logger } from "@/lib/logger";
 import { resetSecurityConfigWarnings } from "@/lib/security/config";
 import { parseResponseJSON } from "../../helpers/mock-next";
+import { kubernetesExport } from "../../helpers/kubernetes-discovery-fixture";
 
 const ADMIN: realAuth.UserPayload = { role: "admin", username: "admin" };
 const mockGetSession = mock(async (): Promise<realAuth.UserPayload | null> => ADMIN);
@@ -23,6 +26,9 @@ const mockGetSession = mock(async (): Promise<realAuth.UserPayload | null> => AD
 const realGetDiscoveryStatus = realLoader.getDiscoveryStatus;
 let discoveryFailure: Error | null = null;
 let discoveryCalls = 0;
+const realGetKubernetesDiscoveryStatus = realKubernetesLoader.getKubernetesDiscoveryStatus;
+let kubernetesFailure: Error | null = null;
+let kubernetesCalls = 0;
 
 // Spread over the real modules: a partial replacement stays installed process-wide and breaks the
 // next import of an export this file forgot.
@@ -43,10 +49,20 @@ mock.module("@/lib/seed/discovery-loader", () => ({
   },
 }));
 
+mock.module("@/lib/seed/kubernetes-discovery-loader", () => ({
+  ...realKubernetesLoader,
+  getKubernetesDiscoveryStatus: async (deps?: realKubernetesLoader.KubernetesDiscoveryDeps) => {
+    kubernetesCalls += 1;
+    if (kubernetesFailure) throw kubernetesFailure;
+    return realGetKubernetesDiscoveryStatus(deps);
+  },
+}));
+
 const { GET } = await import("@/app/api/admin/discovery/route");
 
 interface DiscoveryBody {
   discovery: realLoader.DiscoveryStatus | null;
+  kubernetesDiscovery: realKubernetesLoader.KubernetesDiscoveryStatus | null;
   transport?: { plainHttp: boolean; cookieSecureOff: boolean };
 }
 
@@ -59,11 +75,14 @@ const ENV_KEYS = [
   "TRUST_PROXY_HEADERS",
   "RATE_LIMIT_QUERY_MAX",
   "GOVERNANCE_SOURCE",
+  "SEED_KUBERNETES_DISCOVERY_PATH",
+  "SEED_KUBERNETES_DISCOVERY_MAX_AGE_MS",
 ] as const;
 const savedEnv: Record<string, string | undefined> = {};
 
 const dir = mkdtempSync(join(tmpdir(), "libredb-admin-discovery-"));
 const exportPath = join(dir, "services.json");
+const kubernetesExportPath = join(dir, "export.json");
 const PG_PASSWORD = "pg-discovered-secret-value";
 
 function service(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -119,12 +138,16 @@ beforeEach(() => {
   process.env.SEED_CONFIG_PATH = join(dir, "no-seed-file.yaml");
   process.env.SEED_DISCOVERY_MAX_AGE_MS = "60000";
   rmSync(exportPath, { force: true });
+  rmSync(kubernetesExportPath, { force: true });
   realLoader.resetDiscoveryCache();
+  realKubernetesLoader.resetKubernetesDiscoveryCache();
   clearRateLimitState();
   resetSecurityConfigWarnings();
   realAuth.resetCookieSecurityWarning();
   discoveryFailure = null;
   discoveryCalls = 0;
+  kubernetesFailure = null;
+  kubernetesCalls = 0;
   mockGetSession.mockImplementation(async () => ADMIN);
 });
 
@@ -135,6 +158,7 @@ afterEach(() => {
     else process.env[key] = value;
   }
   realLoader.resetDiscoveryCache();
+  realKubernetesLoader.resetKubernetesDiscoveryCache();
 });
 
 afterAll(() => {
@@ -216,11 +240,11 @@ describe("GET /api/admin/discovery: access", () => {
 });
 
 describe("GET /api/admin/discovery: states", () => {
-  test("answers discovery null, and no transport, when SEED_DISCOVERY_PATH is unset", async () => {
+  test("answers both sources null, and no transport, when neither export path is set", async () => {
     const { status, body } = await answer();
 
     expect(status).toBe(200);
-    expect(body).toEqual({ discovery: null });
+    expect(body).toEqual({ discovery: null, kubernetesDiscovery: null });
   });
 
   test("answers state ok with the connected list and the skipped entries", async () => {
@@ -344,13 +368,17 @@ describe("GET /api/admin/discovery: governance", () => {
     writeExport();
     expect((await answer()).body.discovery?.state).toBe("ok");
     discoveryCalls = 0;
+    kubernetesCalls = 0;
 
     process.env.GOVERNANCE_SOURCE = "postgres";
+    process.env.SEED_KUBERNETES_DISCOVERY_PATH = kubernetesExportPath;
+    writeFileSync(kubernetesExportPath, JSON.stringify(kubernetesExport(Date.now())));
     const { status, body } = await answer();
 
     expect(status).toBe(200);
-    expect(body).toEqual({ discovery: null });
+    expect(body).toEqual({ discovery: null, kubernetesDiscovery: null });
     expect(discoveryCalls).toBe(0);
+    expect(kubernetesCalls).toBe(0);
   });
 
   test("governance keeps the admin check: a standard user gets the shared 403", async () => {
@@ -417,5 +445,62 @@ describe("GET /api/admin/discovery: transport", () => {
 
     delete process.env.AUTH_COOKIE_SECURE;
     expect((await answer()).body.transport?.cookieSecureOff).toBe(false);
+  });
+});
+
+describe("GET /api/admin/discovery: the Kubernetes source", () => {
+  test("answers the Kubernetes source alone, with transport, when only its export path is set", async () => {
+    process.env.SEED_KUBERNETES_DISCOVERY_PATH = kubernetesExportPath;
+    writeFileSync(kubernetesExportPath, JSON.stringify(kubernetesExport(Date.now())));
+
+    const { status, body } = await answer();
+
+    expect(status).toBe(200);
+    expect(body.discovery).toBeNull();
+    expect(body.kubernetesDiscovery?.state).toBe("ok");
+    expect(body.kubernetesDiscovery?.connected.map((entry) => entry.name)).toEqual([
+      "team-a/orders (CloudNativePG)",
+      "team-b/analytics (CloudNativePG)",
+      "prod/billing-db (CloudNativePG)",
+    ]);
+    expect(body.kubernetesDiscovery?.namespaces.map((entry) => entry.name)).toEqual(["prod", "team-a", "team-b"]);
+    expect(body.transport).toEqual({ plainHttp: false, cookieSecureOff: false });
+    // The route passes the loader's status through unchanged.
+    expect(body.kubernetesDiscovery).toEqual(JSON.parse(JSON.stringify(await realGetKubernetesDiscoveryStatus())));
+  });
+
+  test("answers both sources side by side", async () => {
+    process.env.SEED_DISCOVERY_PATH = exportPath;
+    writeExport();
+    process.env.SEED_KUBERNETES_DISCOVERY_PATH = kubernetesExportPath;
+
+    const { body } = await answer();
+
+    expect(body.discovery?.state).toBe("ok");
+    expect(body.kubernetesDiscovery?.state).toBe("waiting");
+  });
+
+  test("never carries a Secret value or a host name", async () => {
+    process.env.SEED_KUBERNETES_DISCOVERY_PATH = kubernetesExportPath;
+    writeFileSync(kubernetesExportPath, JSON.stringify(kubernetesExport(Date.now())));
+
+    const text = JSON.stringify((await answer()).body);
+
+    expect(text).toContain("team-a/orders (CloudNativePG)");
+    expect(text).not.toContain("not-a-real-password");
+    expect(text).not.toContain("-rw.");
+  });
+
+  test("answers 500 through createErrorResponse when reading the Kubernetes status throws", async () => {
+    process.env.SEED_KUBERNETES_DISCOVERY_PATH = kubernetesExportPath;
+    kubernetesFailure = new Error("boom");
+    const sink = spyOn(logger, "error").mockImplementation(() => {});
+
+    try {
+      const res = await GET(request());
+      expect(res.status).toBe(500);
+    } finally {
+      sink.mockRestore();
+    }
   });
 });
