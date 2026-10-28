@@ -2472,15 +2472,6 @@ Deferred by the CapRover auto-connect work.
 
 **Done when:** a second platform writes the same export contract under its own `platform` value, with its own exporter tests, or the decision not to support one is stated in `docs/SEED_CONNECTIONS.md` and this entry is deleted.
 
-### D230. `useAllConnections` loads the managed list once
-
-`useAllConnections` (`src/hooks/use-all-connections.ts`) fetches `/api/connections/managed` in its mount effect and never again, while `useConnectionManager` refreshes the same list on an interval and on focus.
-Its callers, the admin Overview and Operations tabs, Schema Diff and the Monitoring dashboard, keep showing a discovered database that was withdrawn, and miss one that appeared, until the page is reloaded.
-
-Deferred by the CapRover auto-connect work.
-
-**Done when:** `useAllConnections` refreshes on the schedule `useConnectionManager` uses (`MANAGED_REFRESH_DEFAULT_FLOOR_MS`, `MANAGED_REFRESH_MAX_MS`, visible tabs only), and a hook test shows a withdrawn connection disappearing without a reload.
-
 ### D231. The auto-connect template cannot place its two apps on one manager node
 
 `deploy/caprover/libredb-studio-autoconnect.yml` deploys Studio and its `-discovery` companion as two Swarm services that share a named volume, and a one-click template cannot express placement.
