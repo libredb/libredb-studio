@@ -19,6 +19,7 @@ const ENV_KEYS = [
   "AUTH_BOOTSTRAP",
   "LIBREDB_NO_BANNER",
   "GOVERNANCE_SOURCE",
+  "KUBERNETES_ACCESS_REVIEW",
 ] as const;
 
 /** The sqlite sample seeds fire-and-forget; poll for its observable effects. */
@@ -176,6 +177,41 @@ describe("instrumentation register()", () => {
     expect(getSqliteSampleSeedState()).toBe("idle");
     expect(fs.existsSync(path.join(tmpDir, "sample.libredb"))).toBe(false);
     expect(fs.existsSync(path.join(tmpDir, "sample-employees.db"))).toBe(false);
+    expect(output).not.toContain("Star the project");
+  });
+
+  test("hard-exits before seeding and the banner when the Kubernetes access review preflight refuses the environment", async () => {
+    process.env.NEXT_RUNTIME = "nodejs";
+    process.env.AUTH_BOOTSTRAP = "off";
+    // The review on, with none of the settings it requires.
+    process.env.KUBERNETES_ACCESS_REVIEW = "on";
+    process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = path.join(tmpDir, "sample.libredb");
+    process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(tmpDir, "sample-employees.db");
+    delete process.env.LIBREDB_NO_BANNER;
+
+    const originalExit = process.exit;
+    const exitCalls: Array<number | undefined> = [];
+    process.exit = ((code?: number) => {
+      exitCalls.push(code);
+    }) as unknown as typeof process.exit;
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    let banner = "";
+    let output = "";
+    try {
+      await register();
+      banner = errorSpy.mock.calls.flat().join("\n");
+      output = log.mock.calls.flat().join("\n");
+    } finally {
+      process.exit = originalExit;
+      errorSpy.mockRestore();
+      log.mockRestore();
+    }
+
+    expect(exitCalls).toEqual([1]);
+    expect(banner).toContain("KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT is not set");
+    expect(getSqliteSampleSeedState()).toBe("idle");
+    expect(fs.existsSync(path.join(tmpDir, "sample.libredb"))).toBe(false);
     expect(output).not.toContain("Star the project");
   });
 

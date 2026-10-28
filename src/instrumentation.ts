@@ -27,6 +27,13 @@ export async function register(): Promise<void> {
   const { verifyGovernanceEnvAtBoot } = await import("@/lib/governance/preflight");
   if (!verifyGovernanceEnvAtBoot()) return;
 
+  // Kubernetes access review preflight (docs/SEED_CONNECTIONS.md): with
+  // KUBERNETES_ACCESS_REVIEW on, refuse an environment that contradicts the
+  // review, such as a role claim, MCP or a session longer than 900 seconds,
+  // before anything acts on it. It checks nothing while the review is off.
+  const { verifyAccessReviewEnvAtBoot } = await import("@/lib/kubernetes-access/preflight");
+  if (!verifyAccessReviewEnvAtBoot()) return;
+
   // Governance snapshot (docs/GOVERNANCE.md#operating-notes): load the
   // governance source in the background and keep it current. Not awaited, so
   // the server serves at once and data routes answer 503 until the first load
