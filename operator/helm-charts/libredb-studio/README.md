@@ -40,7 +40,7 @@ helm install libredb libredb/libredb-studio \
 
 ```bash
 helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
-  --version 0.1.108 \
+  --version 0.1.109 \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123
 ```
@@ -802,6 +802,10 @@ helm upgrade libredb libredb/libredb-studio
 > With `serviceAccount.create=false`, the pod used to mount the API token of the account it ran as, usually the namespace's `default` one; it now mounts none.
 > Studio reads that token only for Vault Kubernetes auth (`VAULT_ROLE`), so an install with `serviceAccount.create=false` that logs in to Vault this way loses its Vault-backed seed connections on upgrade unless it takes one of two steps.
 > Set `serviceAccount.automountServiceAccountToken=true`, or project a token through `extraVolumes` and `extraVolumeMounts` and point `VAULT_K8S_TOKEN_PATH` at it through `extraEnv`.
+
+> **Behavior change (chart 0.1.109):** a release with a volume claim on `/app/data` (`persistence.enabled`, or `config.storageProvider=sqlite`) and one replica now stops the old pod before it creates the new one, on every upgrade and restart.
+> The rollout used to keep the old pod until the new one was ready, which never happens when the new pod cannot mount a ReadWriteOnce volume attached to another node, so such an upgrade failed once `helm --wait` gave up.
+> Expect a short outage while the new pod starts; a release with more than one replica rolls as before.
 
 ## Uninstalling
 
