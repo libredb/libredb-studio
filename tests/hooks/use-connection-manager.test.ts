@@ -977,7 +977,7 @@ describe("useConnectionManager", () => {
         managedCalls += 1;
         return managedCalls === 1
           ? { ok: true, json: { connections: [inUse], pendingSeeds: ["sqlite-embedded-sample"] } }
-          : { ok: true, json: { connections: [inUse, sampleSeed()], pendingSeeds: [] } };
+          : { ok: true, json: { connections: [sampleSeed(), inUse], pendingSeeds: [] } };
       },
       "/api/db/health": { ok: true, json: { status: "healthy" } },
     });
