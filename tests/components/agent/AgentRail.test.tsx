@@ -422,6 +422,24 @@ describe("AgentRail", () => {
     expect(getByTestId("agent-mode-planning").getAttribute("aria-pressed")).toBe("true");
   });
 
+  test("the run history toggle unfolds the finished conversations and folds them away", async () => {
+    globalThis.fetch = mock(async () =>
+      jsonResponse({ conversations: [], nextCursor: null }),
+    ) as unknown as typeof fetch;
+    const { getByTestId, findByText, queryByText } = render(<AgentRail {...DEFAULT_PROPS} />);
+    const toggle = getByTestId("agent-history-toggle");
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(queryByText(/No finished runs yet/)).toBeNull();
+
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    expect(await findByText(/No finished runs yet/)).toBeDefined();
+
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(queryByText(/No finished runs yet/)).toBeNull();
+  });
+
   test("the timeline is empty until a run has happened", () => {
     const { getByTestId, queryAllByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
 
