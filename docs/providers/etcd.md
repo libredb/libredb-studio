@@ -189,7 +189,8 @@ A panel with no mode, which a seed file may write, verifies as `verify-full`, an
 The certificate is checked against the connection's host, or against the far end of the SSH tunnel when one carries the connection, never against the tunnel's local `127.0.0.1`.
 A certificate that carries only an IP address verifies for that IP.
 A client certificate is entered in `verify-ca` or `verify-full`; the dialog still sends a certificate a later switch to another mode hid, a defect of the shared dialog filed as U60.
-Under Bun a chain failure, a name failure and a port that answers with bytes that are not TLS are named as under Node, but a handshake the server refused, for a missing client certificate or one from another CA, carries no cause: a TLS connection that fails with no cause named says that the runtime does not report why, and names a missing client certificate from the connection's own configuration.
+Under Bun a chain failure, a name failure and a port that answers with bytes that are not TLS are named as under Node, and from Bun 1.4.4 so is a handshake the server refused for a missing client certificate or one from another CA, in BoringSSL's words (`TLSV1_ALERT_CERTIFICATE_REQUIRED`, `TLSV1_ALERT_UNKNOWN_CA`).
+Bun 1.4.2 carried no cause for those two, and a TLS connection that fails with no cause named says that the runtime does not report why, and names a missing client certificate from the connection's own configuration.
 etcd's own plaintext port is not such a port: it closes the connection on a TLS hello, a failure that names no cause under either runtime, so it reads as a failure to connect, worded under Node as "No etcd answered a TLS connection at 10.0.0.5:2379: check the host, the port, the SSL mode and the tunnel." and under Bun as the sentence that the runtime does not report why.
 
 ### 4.4 One endpoint

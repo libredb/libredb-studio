@@ -575,8 +575,12 @@ interface Expected {
   readonly sentence?: string;
 }
 
-/** `nodeRefusesIpServerName` is true from Node 25 on, the branch production's Node 26 takes (spec E5). */
-type Expectation = (runtime: Runtime, nodeRefusesIpServerName: boolean) => Expected;
+/**
+ * `nodeRefusesIpServerName` is true from Node 25 on, the branch production's Node 26 takes (spec E5). MORE THAN ONE
+ * expectation where which answer arrives first is the runtime's and not ours (#1511 precedent); the case is held to the
+ * one whose gRPC code the runtime gave, the first where none matches.
+ */
+type Expectation = (runtime: Runtime, nodeRefusesIpServerName: boolean) => Expected | readonly Expected[];
 
 interface CaseDefinition {
   readonly name: string;
@@ -897,17 +901,27 @@ const CASES: readonly CaseDefinition[] = [
             text: /tlsv13 alert certificate required/,
             sentence: CLIENT_CERTIFICATE_REQUIRED,
           }
-        : {
-            outcome: "failed",
-            category: "not-connected",
-            // 14 with "Last error: Failed to connect" where Bun surfaces the TLS alert before the
-            // call's deadline, 4 with "Deadline exceeded ... Waiting for LB pick" where it does not.
-            // Which one arrives is Bun's, not ours (#1511 precedent): the loaded Windows CI runner
-            // reported 4 for both client-certificate refusals while the same file passed on macOS.
-            grpcCode: [14, 4],
-            text: /Last error: Failed to connect|Deadline exceeded/,
-            sentence: noTlsAnswer("bun", `localhost:${ports.alerting}`, false),
-          },
+        : [
+            // 14 with BoringSSL's name for the alert where Bun surfaces it before the call's deadline (from 1.4.4;
+            // 1.4.2 said only "Failed to connect"), 4 with "Deadline exceeded ... Waiting for LB pick" where it does
+            // not. Which one arrives is Bun's, not ours (#1511 precedent): the loaded Windows CI runner reported 4 for
+            // both client-certificate refusals while the same file passed on macOS.
+            {
+              outcome: "failed",
+              category: "tls",
+              tlsFailure: "client-certificate-required",
+              grpcCode: 14,
+              text: /TLSV1_ALERT_CERTIFICATE_REQUIRED/,
+              sentence: CLIENT_CERTIFICATE_REQUIRED,
+            },
+            {
+              outcome: "failed",
+              category: "not-connected",
+              grpcCode: 4,
+              text: /Deadline exceeded/,
+              sentence: noTlsAnswer("bun", `localhost:${ports.alerting}`, false),
+            },
+          ],
   ),
   adapterCase(
     "a server that requires a client certificate refuses one from another CA",
@@ -928,15 +942,25 @@ const CASES: readonly CaseDefinition[] = [
             text: /tlsv1 alert unknown ca/,
             sentence: CLIENT_CERTIFICATE_REFUSED,
           }
-        : {
-            outcome: "failed",
-            category: "not-connected",
+        : [
             // Same as the no-client-certificate case above: 14 where Bun surfaces the alert in
             // time, 4 where the call's deadline lands first on the loaded Windows runner.
-            grpcCode: [14, 4],
-            text: /Last error: Failed to connect|Deadline exceeded/,
-            sentence: noTlsAnswer("bun", `localhost:${ports.alerting}`, true),
-          },
+            {
+              outcome: "failed",
+              category: "tls",
+              tlsFailure: "client-certificate-refused",
+              grpcCode: 14,
+              text: /TLSV1_ALERT_UNKNOWN_CA/,
+              sentence: CLIENT_CERTIFICATE_REFUSED,
+            },
+            {
+              outcome: "failed",
+              category: "not-connected",
+              grpcCode: 4,
+              text: /Deadline exceeded/,
+              sentence: noTlsAnswer("bun", `localhost:${ports.alerting}`, true),
+            },
+          ],
   ),
   // -- spec E5: through a tunnel-shaped connection, the far end decides the name and the dial target never does
   adapterCase(
@@ -1157,9 +1181,16 @@ async function runPhases(run: (cases: readonly HandshakeCase[], phase: Phase) =>
 }
 
 /** The spec's expectation for a case under a runtime. */
-function expectationOf(definition: CaseDefinition, runtime: Runtime, version: string | undefined): Expected {
+function expectationOf(
+  definition: CaseDefinition,
+  runtime: Runtime,
+  version: string | undefined,
+  code: number | undefined,
+): Expected {
   const major = version === undefined ? 0 : Number(/^v(\d+)\./.exec(version)?.[1]);
-  return definition.expected(listeners)(runtime, major >= 25);
+  const expected = definition.expected(listeners)(runtime, major >= 25);
+  if ("outcome" in expected) return expected;
+  return expected.find((candidate) => [candidate.grpcCode].flat().includes(code)) ?? expected[0];
 }
 
 function expectCase(run: Run | undefined, runtime: Runtime, name: string): void {
@@ -1167,8 +1198,9 @@ function expectCase(run: Run | undefined, runtime: Runtime, name: string): void 
   const definition = CASES.find((candidate) => candidate.name === name);
   if (definition === undefined) throw new Error(`No case is named ${name}`);
   const made = definition.make(listeners);
-  const expected = expectationOf(definition, runtime, run.version);
   const outcome = run.outcomes.get(name);
+  const code = outcome?.outcome === "failed" ? outcome.raw?.code : undefined;
+  const expected = expectationOf(definition, runtime, run.version, code);
   // The whole outcome rides in every failure message, so a changed text shows itself without a second run.
   const shown = JSON.stringify(outcome);
   expect({ shown, outcome: outcome?.outcome }).toEqual({ shown, outcome: expected.outcome });

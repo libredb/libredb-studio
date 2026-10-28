@@ -220,6 +220,16 @@ describe("toEtcdError: TLS causes inside grpc-js's 'No connection established' (
       "client-certificate-refused",
     ],
     ["error:0A000412:SSL routines::sslv3 alert bad certificate", "client-certificate-refused"],
+    // BoringSSL, under Bun from 1.4.4, names the alerts in capitals (the first two measured in tls-handshake.test.ts).
+    [
+      "error:1000045c:SSL routines:OPENSSL_internal:TLSV1_ALERT_CERTIFICATE_REQUIRED (2026-10-28T15:16:30.867Z)",
+      "client-certificate-required",
+    ],
+    [
+      "error:10000418:SSL routines:OPENSSL_internal:TLSV1_ALERT_UNKNOWN_CA (2026-10-28T15:16:30.876Z)",
+      "client-certificate-refused",
+    ],
+    ["error:10000412:SSL routines:OPENSSL_internal:SSLV3_ALERT_BAD_CERTIFICATE", "client-certificate-refused"],
     ["error:0A00010B:SSL routines::wrong version number", "not-tls"],
     // BoringSSL, under Bun 1.4.2, names the same failure in capitals (measured in tls-handshake.test.ts).
     ["error:100000f7:SSL routines:OPENSSL_internal:WRONG_VERSION_NUMBER", "not-tls"],
