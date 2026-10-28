@@ -103,6 +103,7 @@ describe("what a MongoDB run is not offered is not offered, and the backlog says
     const sentence = SECTION.split("\n").find((line) => /\bMCP\b/.test(line)) ?? "";
     expect(sentence).toContain(`\`${tool}\``);
     expect(sentence).toContain("`MCP_STATEMENT_ARMS`");
+    expect(sentence).toContain("`src/lib/agent/languages/mongo/mcp.ts`");
     expect(sentence).not.toMatch(/\bB\d+\b/);
   });
 });

@@ -46,6 +46,33 @@ describe("docs/API_DOCS.md documents every MCP route", () => {
   });
 });
 
+/**
+ * A statement language declares its MCP tool in its own pack and `statement-arms.ts` names no language, so no doc may
+ * tell a future language to add an arm of its own there.
+ */
+describe("the docs say a language's MCP tool is a facet in its pack", () => {
+  const docs = [
+    "docs/BACKLOG.md",
+    "docs/AGENT.md",
+    "docs/MCP.md",
+    ...new Bun.Glob("docs/providers/*.md").scanSync(ROOT),
+  ];
+
+  test.each(docs)("%s sends no language to an arm of its own in MCP_STATEMENT_ARMS", (doc) => {
+    expect(
+      read(doc)
+        .split("\n")
+        .filter((line) => /own arm in `MCP_STATEMENT_ARMS`/.test(line)),
+    ).toEqual([]);
+  });
+
+  test("docs/BACKLOG.md names the facet where a future language's MCP tool lives", () => {
+    expect(read("docs/BACKLOG.md")).toContain(
+      "its own MCP facet in its language pack (`src/lib/agent/languages/<statement-language>/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`)",
+    );
+  });
+});
+
 describe("docs/MCP.md", () => {
   test("carries the engine sentence derived from the one engine list", () => {
     expect(MCP_DOC).toContain(

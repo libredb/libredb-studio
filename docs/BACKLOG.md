@@ -7701,7 +7701,7 @@ Both execution paths guard a statement with SQL readers (`src/lib/db/operations/
 
 Found 2026-10-03 while designing the Neo4j provider (spec 6.4).
 
-**Done when:** `Neo4jProvider` implements `queryReadOnly` through the same policy, gate and READ session as the editor, `AGENT_EXECUTION_ENGINES` names Neo4j, MCP serves its Cypher through its own arm in `MCP_STATEMENT_ARMS` (`src/lib/mcp/tools/statement-arms.ts`) (`RUN_READ_QUERY_ENGINES` holds SQL engines alone), and an agent run and an MCP call each drive a `LOAD CSV` and a write to their refusal in a test.
+**Done when:** `Neo4jProvider` implements `queryReadOnly` through the same policy, gate and READ session as the editor, `AGENT_EXECUTION_ENGINES` names Neo4j, MCP serves its Cypher through its own MCP facet in its language pack (`src/lib/agent/languages/<statement-language>/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) (`RUN_READ_QUERY_ENGINES` holds SQL engines alone), and an agent run and an MCP call each drive a `LOAD CSV` and a write to their refusal in a test.
 
 ### B94. InfluxDB has no agent execution and no MCP `run_read_query`
 
@@ -7710,7 +7710,7 @@ Both execution paths guard a statement with SQL readers (`src/lib/db/operations/
 
 Found 2026-10-04 while designing the InfluxDB provider (ruling R10).
 
-**Done when:** each type implements `queryReadOnly` under a statement contract of its own (the InfluxQL policy for `influxdb`, the DataFusion policy for `influxdb3`), agent execution serves both, and MCP serves `influxdb3` through `run_read_query` and `influxdb`'s InfluxQL through its own arm in `MCP_STATEMENT_ARMS` (`src/lib/mcp/tools/statement-arms.ts`), with tests.
+**Done when:** each type implements `queryReadOnly` under a statement contract of its own (the InfluxQL policy for `influxdb`, the DataFusion policy for `influxdb3`), agent execution serves both, and MCP serves `influxdb3` through `run_read_query` and `influxdb`'s InfluxQL through its own MCP facet in its language pack (`src/lib/agent/languages/<statement-language>/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`), with tests.
 
 ### B100. Oxia has no agent execution and no MCP surface
 
@@ -7718,7 +7718,7 @@ Found 2026-10-04 while designing the InfluxDB provider (ruling R10).
 
 Found 2026-10-04 while designing the Oxia provider (DECISIONS O14).
 
-**Done when:** an MCP metadata surface that never returns a key value is designed and its own arm in `MCP_STATEMENT_ARMS` (`src/lib/mcp/tools/statement-arms.ts`) serves a read command under the `oxia` grammar, with tests; cited in `docs/AGENT.md` beside B93.
+**Done when:** an MCP metadata surface that never returns a key value is designed and its own MCP facet in its language pack (`src/lib/agent/languages/<statement-language>/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) serves a read command under the `oxia` grammar, with tests; cited in `docs/AGENT.md` beside B93.
 
 B100 rather than the next free id: InfluxDB, built at the same time, took B94, and the gap kept the two from racing for an id.
 
@@ -7750,7 +7750,7 @@ Found 2026-10-07 while designing the Databend provider (design 5.7).
 
 Found 2026-10-09 while designing the S3 provider.
 
-**Done when:** an MCP metadata surface that lists buckets and never returns an object key is designed; `MCP_EXPOSABLE.s3` turns true for it; and agent execution serves a `queryReadOnly` that runs one console read command, which MCP serves through its own arm in `MCP_STATEMENT_ARMS` (`src/lib/mcp/tools/statement-arms.ts`), with tests; cited in `docs/AGENT.md` beside B103.
+**Done when:** an MCP metadata surface that lists buckets and never returns an object key is designed; `MCP_EXPOSABLE.s3` turns true for it; and agent execution serves a `queryReadOnly` that runs one console read command, which MCP serves through its own MCP facet in its language pack (`src/lib/agent/languages/<statement-language>/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`), with tests; cited in `docs/AGENT.md` beside B103.
 
 ### B107. Firestore has no agent execution and no MCP surface
 
@@ -7759,7 +7759,7 @@ Every Firestore read is billed, and no read contract for the query chain under a
 
 Found 2026-10-12 while designing the Firestore provider.
 
-**Done when:** an MCP metadata surface that reads no document is designed, `MCP_EXPOSABLE.firestore` turns true for it, and agent execution serves a `queryReadOnly` that runs one console statement under a per-run read bound, which MCP serves through its own arm in `MCP_STATEMENT_ARMS` (`src/lib/mcp/tools/statement-arms.ts`), with tests; cited in `docs/AGENT.md` beside B104.
+**Done when:** an MCP metadata surface that reads no document is designed, `MCP_EXPOSABLE.firestore` turns true for it, and agent execution serves a `queryReadOnly` that runs one console statement under a per-run read bound, which MCP serves through its own MCP facet in its language pack (`src/lib/agent/languages/<statement-language>/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`), with tests; cited in `docs/AGENT.md` beside B104.
 
 ### B108. RabbitMQ has no agent execution and no MCP `run_read_query`
 
@@ -7767,7 +7767,7 @@ Found 2026-10-12 while designing the Firestore provider.
 
 Found 2026-10-12 while designing the RabbitMQ provider.
 
-**Done when:** a stream read request is designed as an agent statement with its own read policy and bounds, `queryReadOnly` serves it, agent execution runs it and MCP runs it through its own arm in `MCP_STATEMENT_ARMS` (`src/lib/mcp/tools/statement-arms.ts`), with tests; cited in `docs/AGENT.md` beside B104.
+**Done when:** a stream read request is designed as an agent statement with its own read policy and bounds, `queryReadOnly` serves it, agent execution runs it and MCP runs it through its own MCP facet in its language pack (`src/lib/agent/languages/<statement-language>/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`), with tests; cited in `docs/AGENT.md` beside B104.
 
 ### B109. The schema docs route puts database-written names in the prompt without the untrusted-content fence
 
@@ -7977,7 +7977,7 @@ Agent execute mode for PromQL is a recorded non-goal of #1085 and of the #424 ep
 
 Found 2026-10-27 while designing read-only agent and MCP execution for every provider.
 
-**Done when:** the owner reverses the #1085 non-goal, Prometheus implements `queryReadOnly` over the pinned `PATHS` table with a test that pins it, refuses a handle not opened under the agent profile, joins `AGENT_EXECUTION_ENGINES` under a `promql` statement language, and MCP serves it through its own arm in `MCP_STATEMENT_ARMS` (`src/lib/mcp/tools/statement-arms.ts`) once the owner opens its MCP read; cited in `docs/AGENT.md`.
+**Done when:** the owner reverses the #1085 non-goal, Prometheus implements `queryReadOnly` over the pinned `PATHS` table with a test that pins it, refuses a handle not opened under the agent profile, joins `AGENT_EXECUTION_ENGINES` under a `promql` statement language, and MCP serves it through its own MCP facet in its language pack (`src/lib/agent/languages/<statement-language>/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) once the owner opens its MCP read; cited in `docs/AGENT.md`.
 
 ### B132. MTConnect has no agent execution and no MCP statement read
 
@@ -7986,7 +7986,7 @@ Its console text is one request line in the agent's own URL grammar, not a query
 
 Found 2026-10-27 while designing read-only agent and MCP execution for every provider.
 
-**Done when:** the owner lifts the #424 request-line rule for MTConnect, the provider implements `queryReadOnly` over the pinned route table, refuses a handle not opened under the agent profile, joins `AGENT_EXECUTION_ENGINES` under a statement language of its own, and MCP serves it through its own arm in `MCP_STATEMENT_ARMS` once the owner opens its MCP read, with tests; `docs/providers/mtconnect.md` section 3.1 says what changed; cited in `docs/AGENT.md`.
+**Done when:** the owner lifts the #424 request-line rule for MTConnect, the provider implements `queryReadOnly` over the pinned route table, refuses a handle not opened under the agent profile, joins `AGENT_EXECUTION_ENGINES` under a statement language of its own, and MCP serves it through its own MCP facet in its language pack (`src/lib/agent/languages/<statement-language>/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) once the owner opens its MCP read, with tests; `docs/providers/mtconnect.md` section 3.1 says what changed; cited in `docs/AGENT.md`.
 
 ### B133. MQTT has no agent execution and no MCP surface
 
