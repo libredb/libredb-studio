@@ -968,6 +968,37 @@ describe("useConnectionManager", () => {
     }
   });
 
+  test("a sample that lands mid-poll joins the list without taking over the connection already in use", async () => {
+    process.env.NEXT_PUBLIC_MANAGED_POLL_MS = "25";
+    const inUse = makeManagedConnection({ id: "managed-1", managed: true, seedId: "seed-managed" });
+    let managedCalls = 0;
+    mockGlobalFetch({
+      "/api/connections/managed": () => {
+        managedCalls += 1;
+        return managedCalls === 1
+          ? { ok: true, json: { connections: [inUse], pendingSeeds: ["sqlite-embedded-sample"] } }
+          : { ok: true, json: { connections: [inUse, sampleSeed()], pendingSeeds: [] } };
+      },
+      "/api/db/health": { ok: true, json: { status: "healthy" } },
+    });
+    try {
+      const { result } = renderHook(() => useConnectionManager(true));
+      await waitFor(() => {
+        expect(result.current.activeConnection?.id).toBe("managed-1");
+      });
+
+      await waitFor(
+        () => {
+          expect(result.current.connections.some((c) => c.seedId === "sqlite-embedded-sample")).toBe(true);
+        },
+        { timeout: 3000 },
+      );
+      expect(result.current.activeConnection?.id).toBe("managed-1");
+    } finally {
+      delete process.env.NEXT_PUBLIC_MANAGED_POLL_MS;
+    }
+  });
+
   test("a transient HTTP failure mid-poll does not stop the poll before the sample appears", async () => {
     process.env.NEXT_PUBLIC_MANAGED_POLL_MS = "25";
     let managedCalls = 0;
