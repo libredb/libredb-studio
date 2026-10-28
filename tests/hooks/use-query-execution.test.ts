@@ -8,6 +8,7 @@ import { mockGlobalFetch, restoreGlobalFetch, type MockFetchResponse } from "../
 import { installStandInVocabulary, STAND_IN_TYPE } from "../helpers/stand-in-vocabulary";
 import qdrantDocs from "../fixtures/vector/corpus/qdrant-docs.json";
 import { storage } from "@/lib/storage";
+import { logger } from "@/lib/logger";
 
 // ── Mock QuerySafetyDialog ──────────────────────────────────────────────────
 // The stub is deliberately more permissive than the real predicate - it answers for
@@ -3537,6 +3538,48 @@ describe("useQueryExecution", () => {
 
     const tabWithPlan = snapshots.map((snapshot) => snapshot[0]).find((t) => t.explainPlan);
     expect(tabWithPlan?.explainPlan).toEqual({ format: "postgres-json", raw: { plan: "Seq Scan" } });
+  });
+
+  // A null body names no plan format, so the run's own strategy reads it; that read
+  // throws, and the background catch logs a parse failure instead of breaking the run.
+  test("a background EXPLAIN answered with a null body is logged as a parse failure and the results stay", async () => {
+    mockGlobalFetch({
+      "/api/db/query": async (req) => {
+        const body = (await req.json()) as { explain?: unknown };
+        return body.explain === undefined
+          ? { ok: true, json: { rows: [{ id: 1 }], fields: ["id"], rowCount: 1, executionTime: 5 } }
+          : { ok: true, json: null };
+      },
+    });
+
+    const snapshots: QueryTab[][] = [];
+    const setTabsMock = mock((fn: unknown) => {
+      if (typeof fn === "function") {
+        snapshots.push(fn([createTab()]));
+      }
+    });
+    const params = createDefaultParams({ setTabs: setTabsMock });
+    const warnSpy = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const { result } = renderHook(() => useQueryExecution(params));
+
+      await act(async () => {
+        await result.current.executeQuery("SELECT * FROM users");
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      });
+
+      const tabs = snapshots.map((snapshot) => snapshot[0]);
+      expect(tabs.some((t) => t.result?.rows.length === 1)).toBe(true);
+      expect(tabs.some((t) => t.explainPlan)).toBe(false);
+      expect(warnSpy).toHaveBeenCalledWith(
+        "Background EXPLAIN parse failed",
+        expect.objectContaining({ route: "use-query-execution" }),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   // ── a background EXPLAIN that outlives BOTH runs (#422) ────────────────────
