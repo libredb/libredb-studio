@@ -51,6 +51,7 @@ interface RenderedManifest {
     group?: string;
     target?: string;
     toURL?: string;
+    iconSrc?: string;
     template?: {
       spec: {
         containers: Array<{ name: string; env?: EnvVar[]; volumeMounts?: Array<{ name: string; mountPath: string }> }>;
@@ -107,6 +108,8 @@ function refused(args: string[], ...needles: string[]): void {
 
 const OIDC = ["--set", "authProvider=oidc", "--set", "config.oidcIssuer=https://rancher.example.com/oidc"];
 const INGRESS = ["--set", "ingress.enabled=true", "--set", "ingress.hosts[0].host=studio.example.com"];
+const LOGO = readFileSync(join(import.meta.dir, "../../public/logo.svg"));
+const LOGO_DATA_URI = `data:image/svg+xml;base64,${LOGO.toString("base64")}`;
 
 describe("Rancher mode values are off by default", () => {
   test("the default install writes none of the new keys, objects or references", () => {
@@ -291,7 +294,25 @@ describe("rancher.navLink", () => {
       group: "Databases",
       target: "_blank",
       toURL: "https://studio.example.com",
+      iconSrc: LOGO_DATA_URI,
     });
+  });
+
+  test("the icon is the LibreDB logo the app serves, inline so no host has to reach a URL", () => {
+    // Without iconSrc Rancher draws its default book icon beside the link.
+    expect(readFileSync(join(CHART_DIR, "files/logo.svg"))).toEqual(LOGO);
+    const [link] = navLinks([...NAVLINK, ...NAVLINK_API]);
+    expect(link?.spec?.iconSrc).toBe(LOGO_DATA_URI);
+  });
+
+  test("iconSrc is a value", () => {
+    const [link] = navLinks([
+      ...NAVLINK,
+      ...NAVLINK_API,
+      "--set",
+      "rancher.navLink.iconSrc=https://icons.example.com/studio.svg",
+    ]);
+    expect(link?.spec?.iconSrc).toBe("https://icons.example.com/studio.svg");
   });
 
   test("label, group and target are values", () => {

@@ -22,6 +22,7 @@ charts/libredb-studio/
 ├── .helmignore                # Package exclusion patterns
 ├── README.md                  # Chart-level documentation
 ├── questions.yaml             # Rancher Apps form for the Rancher-mode values
+├── files/logo.svg             # Copy of public/logo.svg, the Rancher NavLink icon
 └── templates/
     ├── _helpers.tpl           # Named templates (labels, names, image, storage logic)
     ├── deployment.yaml        # App Deployment (checksum restart, emptyDir, probes)
