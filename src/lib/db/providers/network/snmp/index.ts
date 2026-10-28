@@ -512,7 +512,7 @@ export class SnmpProvider extends BaseDatabaseProvider {
   }
 
   public async describeObject(path: readonly string[], kind: string): Promise<ObjectDetail> {
-    return describeCatalogObject(path[path.length - 1] ?? "", requireKind(kind));
+    return describeCatalogObject(path.at(-1) ?? "", requireKind(kind));
   }
 
   /** Every object of one kind, from the same tree: no round trip at all, let alone one per object. */
