@@ -1,6 +1,6 @@
 /**
  * The Kubernetes discovery contract: one row per supported kind, the connection id rule, and the seed connection each
- * exported database becomes (design section 6.3; docs/SEED_CONNECTIONS.md, "Platform discovery (Kubernetes)").
+ * exported database becomes (docs/SEED_CONNECTIONS.md, "Platform discovery (Kubernetes)").
  *
  * The golden fixture (tests/fixtures/kubernetes-discovery-golden.json) is read in place: the Rancher extension copies
  * it from a released tag, so a case that fails here is a link the extension would build to a connection Studio does
@@ -181,17 +181,45 @@ describe("mapKubernetesDatabase", () => {
     }
   });
 
+  // A namespace of 63 characters and a Cluster name of 50, the longest Kubernetes and CloudNativePG accept, are 114
+  // characters with the slash, so `<namespace>/<name> (CloudNativePG)` would be over the seed schema's 128.
+  it("lists a Cluster with long names, cutting the start of its name to fit the seed schema's 128 characters", () => {
+    const named = (namespace: string, name: string) =>
+      mapKubernetesDatabase(
+        database({
+          resource: { metadata: { namespace, name } },
+          secret: { name: `${name}-app`, data: { username: "u", password: PASSWORD, dbname: "app", port: "5432" } },
+        }),
+      );
+    const namespace = `team-${"a".repeat(58)}`;
+    const name = `db-${"b".repeat(47)}`;
+    const long = named(namespace, name);
+    if (!long.ok) throw new Error(long.reason);
+    expect(long.connection.name).toBe(`…${`${namespace}/${name}`.slice(3)} (CloudNativePG)`);
+    expect(long.connection.name).toHaveLength(128);
+    // The group shows the namespace whole, and the id is the namespace's and the name's, whatever the name shows.
+    expect(long.connection).toMatchObject({ group: namespace, id: kubernetesConnectionId("cnpg", namespace, name) });
+
+    const longest = named(namespace, "d".repeat(253));
+    if (!longest.ok) throw new Error(longest.reason);
+    expect(longest.connection.name).toBe(`…${"d".repeat(111)} (CloudNativePG)`);
+
+    // 111 characters of namespace and name fit whole.
+    const fits = named(`ns-${"a".repeat(57)}`, "d".repeat(51));
+    if (!fits.ok) throw new Error(fits.reason);
+    expect(fits.connection.name).toBe(`ns-${"a".repeat(57)}/${"d".repeat(51)} (CloudNativePG)`);
+    expect(fits.connection.name).toHaveLength(128);
+  });
+
+  // The export's schema already refuses a namespace over 63 characters; the seed schema checks the connection again.
   it("skips a connection the seed schema refuses, naming the field and the issue, never a value", () => {
     const reason = refusalOf(
       database({
-        resource: { metadata: { namespace: "n".repeat(63), name: "d".repeat(70) } },
-        secret: {
-          name: `${"d".repeat(70)}-app`,
-          data: { username: "u", password: PASSWORD, dbname: "x", port: "5432" },
-        },
+        resource: { metadata: { namespace: "n".repeat(65), name: "orders" } },
+        secret: { name: "orders-app", data: { username: "u", password: PASSWORD, dbname: "x", port: "5432" } },
       }),
     );
-    expect(reason).toBe("the connection is not valid: name (too_big)");
+    expect(reason).toBe("the connection is not valid: group (too_big)");
     expect(reason).not.toContain(PASSWORD);
   });
 });

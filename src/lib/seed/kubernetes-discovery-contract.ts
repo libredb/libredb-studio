@@ -55,6 +55,8 @@ export interface KubernetesContractRow {
 
 /** The PostgreSQL port CloudNativePG serves on, the port of a Secret the user supplied. */
 const CNPG_PORT = 5432;
+/** The seed schema's bound on a connection's name. */
+const NAME_MAX_CHARS = 128;
 /** The database CloudNativePG's initdb creates when the resource names none. */
 const CNPG_DEFAULT_DATABASE = "app";
 const PORT_PATTERN = /^\d{1,5}$/;
@@ -124,6 +126,18 @@ export function kubernetesConnectionId(slug: string, namespace: string, name: st
   return `k8s-${slug}-${digest.slice(0, 12)}`;
 }
 
+/**
+ * `<namespace>/<name> (<label>)`, with the start of `<namespace>/<name>` cut to an ellipsis when the whole would be over
+ * the seed schema's 128 characters, so a Cluster with long names is listed, not skipped: the end names the resource,
+ * and the connection's group shows the namespace whole. Kubernetes names are ASCII, so no character is split.
+ */
+function connectionName(namespace: string, name: string, label: string): string {
+  const suffix = ` (${label})`;
+  const path = `${namespace}/${name}`;
+  const room = NAME_MAX_CHARS - suffix.length;
+  return path.length <= room ? `${path}${suffix}` : `…${path.slice(path.length - room + 1)}${suffix}`;
+}
+
 const SECRET_PROBLEMS = {
   not_found: (secret: string) => `the credential Secret ${secret} does not exist`,
   forbidden: (secret: string) => `the exporter may not read the credential Secret ${secret}`,
@@ -160,7 +174,7 @@ export function mapKubernetesDatabase(entry: KubernetesDiscoveredDatabase): Kube
 
   const result = SeedConnectionSchema.safeParse({
     id: kubernetesConnectionId(row.slug, namespace, name),
-    name: `${namespace}/${name} (${row.label})`,
+    name: connectionName(namespace, name, row.label),
     type: row.type,
     ...fields.fields,
     group: namespace,
