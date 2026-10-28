@@ -1,5 +1,6 @@
 import "../setup-dom";
 import React from "react";
+import ReactDOMServer from "react-dom/server";
 import { mock } from "bun:test";
 import {
   mockRouterPush,
@@ -79,6 +80,13 @@ describe("LoginPage passkey sign-in", () => {
     usableHere = true;
     const ready = renderLogin();
     expect((await passkeyButton(ready)).textContent?.trim()).toBe(PASSKEY_BUTTON);
+  });
+
+  test("the server-rendered form offers no passkey, because only the browser can tell whether it has one", () => {
+    const html = ReactDOMServer.renderToString(<LoginForm authProvider="local" passkey={{ origin: ORIGIN }} />);
+    expect(html).toContain("Sign in");
+    expect(html).not.toContain(PASSKEY_BUTTON);
+    expect(mockPasskeysUsableHere).not.toHaveBeenCalled();
   });
 
   test("the passkey button's accessible name does not contain sign in", async () => {
