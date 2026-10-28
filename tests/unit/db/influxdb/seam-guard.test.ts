@@ -62,6 +62,8 @@ const BROWSER = [
   "influxql-editor-syntax",
   "influxql-editor-completions",
   "influxql-editor-language",
+  // InfluxDB's row of the confirmation gate, which reads only the InfluxQL policy.
+  "influxdb-destructive",
 ];
 const INFLUXQL_SERVER = ["influxql-results", "influxql-objects", "influxql-provider"];
 const GRAMMAR = ["influxdb-sql-grammar", "influxdb3-sql-grammar"];

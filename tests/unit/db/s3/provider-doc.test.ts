@@ -683,6 +683,7 @@ const BROWSER_SET: ReadonlySet<string> = new Set([
   "preview-cells.ts",
   "preview-render.ts",
   "sql-writing.ts",
+  "destructive.ts",
 ]);
 
 /** Every `.ts` file under `directory`, as a path relative to it. */

@@ -1600,6 +1600,8 @@ const SPEC_3_1_MODULES: readonly string[] = [
   // The SQL writing contract's module (engine contract, SQL writing), which the registry under
   // src/lib/db/sql-writing/ reads.
   "sql-writing.ts",
+  // The engine's row of the confirmation gate's vocabulary, which src/lib/db/destructive-commands.ts collects.
+  "destructive.ts",
   // The editor's etcd language over the lexer, and its row in the editor language registry.
   "editor-syntax.ts",
   "editor-language.ts",

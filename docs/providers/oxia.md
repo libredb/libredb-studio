@@ -83,6 +83,7 @@ The console's modules are pure and shipped to the browser, because the editor, t
 | `execution-ui.ts` | The engine's execution UI row: the rolled-back notice names `COMMIT`, no consent deadline | browser |
 | `generators.ts` | The commands Generate Command writes | browser |
 | `sql-writing.ts` | The SQL writing row, the inert standard answer no generator calls | browser |
+| `destructive.ts` | The engine's row of the confirmation gate's vocabulary, which `src/lib/db/destructive-commands.ts` collects | browser |
 | `sql-grammar.ts` | The SQL grammar facts the editor and the query log read: not SQL text, nothing kept when redacted | browser |
 | `editor-syntax.ts` | The editor's `oxia` Monaco language over the console's lexer | browser |
 | `editor-language.ts` | The engine's editor language row: the `oxia` language, no completion, no formatter, its accent | browser |
