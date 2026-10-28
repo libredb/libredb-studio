@@ -1855,6 +1855,21 @@ describe("OracleProvider", () => {
       expect(health.activeSessions).toEqual([]);
     });
 
+    test("a refused USER_SEGMENTS read leaves the size N/A and every other figure read", async () => {
+      mockExecuteFn = async (sql: string) => {
+        if (sql.toUpperCase().includes("USER_SEGMENTS")) {
+          throw new Error("ORA-00942: table or view does not exist");
+        }
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const health = await provider.getHealth();
+
+      expect(health.databaseSize).toBe("N/A");
+      expect(typeof health.activeConnections).toBe("number");
+    });
+
     test("an unprivileged V$SESSION leaves activeConnections absent, never a measured 0", async () => {
       // A user granted only CREATE SESSION cannot read the V$ views at all. What was
       // measured 2026-08-23 on Oracle AI Database 26ai Free is the same ORA-00942 on
@@ -2012,6 +2027,50 @@ describe("OracleProvider", () => {
       expect(captured).toContain('ALTER INDEX "REPORTING"."IDX_RPT_CITY" REBUILD');
       // The unqualified spelling is what rebuilt in the wrong schema; it must not appear.
       expect(captured.some((sql) => sql.includes('ALTER INDEX "IDX_RPT_CITY" REBUILD'))).toBe(false);
+    });
+
+    test("optimize with an owner and no table rebuilds every normal index THAT schema owns", async () => {
+      const captured: string[] = [];
+      let indexQueryBinds: unknown;
+      mockExecuteFn = async (sql: string, binds?: unknown) => {
+        captured.push(sql);
+        const upper = sql.toUpperCase();
+        if (upper.includes("ALL_INDEXES") && upper.includes("INDEX_TYPE")) {
+          indexQueryBinds = binds;
+          return { rows: [{ INDEX_NAME: "IDX_RPT_CITY" }], metaData: [{ name: "INDEX_NAME" }] };
+        }
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const result = await provider.runMaintenance("optimize", undefined, "REPORTING");
+
+      expect(result.success).toBe(true);
+      expect(indexQueryBinds).toEqual(["REPORTING"]);
+      expect(captured).toContain('ALTER INDEX "REPORTING"."IDX_RPT_CITY" REBUILD');
+      expect(captured.some((sql) => sql.includes("USER_INDEXES"))).toBe(false);
+    });
+
+    test("optimize with an owner on a table that schema does not own names that schema", async () => {
+      let existenceBinds: unknown;
+      mockExecuteFn = async (sql: string, binds?: unknown) => {
+        const upper = sql.toUpperCase();
+        if (upper.includes("ALL_INDEXES") && upper.includes("TABLE_NAME =")) {
+          return { rows: [], metaData: [{ name: "INDEX_NAME" }] };
+        }
+        if (upper.includes("ALL_TABLES") && upper.includes("TABLE_NAME =")) {
+          existenceBinds = binds;
+          return { rows: [], metaData: [{ name: "TABLE_NAME" }] };
+        }
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const result = await provider.runMaintenance("optimize", "NO_SUCH", "REPORTING");
+
+      expect(result.success).toBe(false);
+      expect(existenceBinds).toEqual(["REPORTING", "NO_SUCH"]);
+      expect(result.message).toContain('the schema "REPORTING" owns no TABLE named NO_SUCH');
     });
 
     test("analyze with an owner gathers statistics FOR that owner", async () => {
@@ -4789,6 +4848,15 @@ describe("Oracle bulk column read", () => {
     await provider.disconnect();
   });
 
+  test("a target read answered with no rows array reads as an empty owner", async () => {
+    mockExecuteFn = async (sql: string) => (sql.includes("WITH described AS") ? {} : { rows: [] });
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+
+    expect(await provider.describeObjects(["APP"], "table")).toEqual({ details: [] });
+    await provider.disconnect();
+  });
+
   test("a kind this engine does not declare is refused, not answered empty", async () => {
     mockExecuteFn = async () => ({ rows: [] });
     const provider = makeProvider({ user: "app" });
@@ -4888,6 +4956,33 @@ describe("Oracle bulk column read", () => {
     // and loses the outer segment at depth 2 in BOTH readings at once, so the listing and the
     // bulk read still agreed with each other while both were wrong (Task 28a, minor 6).
     expect(batch.details.map((detail) => detail.path)).toEqual([["XEPDB1", "APP", "APP_ORDERS"]]);
+    await provider.disconnect();
+  });
+
+  test("a declaration with no schema level raises naming it, rather than binding no owner", async () => {
+    // The guard a provider copying this file inherits: its levels are not Oracle's, and an
+    // owner read off a position it does not declare would bind `undefined` and answer an
+    // empty folder.
+    const issued: string[] = [];
+    mockExecuteFn = async (sql: string) => {
+      issued.push(sql);
+      return { rows: [] };
+    };
+    const provider = makeProvider({ user: "app" });
+    await provider.connect();
+    spyOn(provider, "getCapabilities").mockReturnValue({
+      ...provider.getCapabilities(),
+      containerLevels: [{ id: "catalog", label: "Catalog", labelPlural: "Catalogs" }],
+    });
+    issued.length = 0;
+
+    const failure = await provider.describeObject(["APP", "APP_ORDERS"], "table").catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(QueryError);
+    expect((failure as Error).message).toBe(
+      'An Oracle path needs a "schema" container level and a segment for it; the declaration is [catalog] and the path is ["APP","APP_ORDERS"]',
+    );
+    expect(issued).toEqual([]);
     await provider.disconnect();
   });
 
