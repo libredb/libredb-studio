@@ -812,7 +812,9 @@ describe("composeEstimatingExplain", () => {
       const estimate = engineServerDialect(type).planEstimate;
       return estimate !== "unsupported" && estimate.kind === "prefix" ? [estimate.prefix] : [];
     });
-    expect(new Set(stripped)).toEqual(new Set(["EXPLAIN (FORMAT JSON)", "EXPLAIN FORMAT=JSON", "EXPLAIN QUERY PLAN"]));
+    expect(new Set(stripped)).toEqual(
+      new Set(["EXPLAIN (FORMAT JSON)", "EXPLAIN FORMAT=JSON", "EXPLAIN QUERY PLAN", "EXPLAIN json = 1, indexes = 1"]),
+    );
     for (const type of composing) {
       for (const prefix of stripped) {
         expect(composeEstimatingExplain(type, `${prefix} SELECT 1`), `${type}: ${prefix}`).toEqual(

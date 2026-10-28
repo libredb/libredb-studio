@@ -20,15 +20,10 @@ import type { AgentEngineServerOverlay, SqlServerDialect } from "../../pack";
  * The estimating plan, the one the editor's EXPLAIN asks for (`clickhouse-json.ts`): ClickHouse's EXPLAIN describes a
  * statement without running it, and `indexes = 1` names the primary-key and skipping-index ranges it would select.
  * Measured as the least-privilege user under `readonly = 1`: one row whose `explain` cell is the plan as JSON text.
- *
- * Outside the restated-prefix strip, as MySQL's is: joining it would change what every engine composes for a
- * statement that restates this prefix, so a model that writes the full prefix itself has only the leading `EXPLAIN`
- * removed.
  */
 const CLICKHOUSE_PLAN_ESTIMATE: AgentPlanEstimate = Object.freeze({
   kind: "prefix",
   prefix: "EXPLAIN json = 1, indexes = 1",
-  strippedWhenRestated: false,
 });
 
 /** The schemas ClickHouse keeps for itself, excluded from every catalog read below. */

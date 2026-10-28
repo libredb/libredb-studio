@@ -207,8 +207,7 @@ describe("engineServerDialect", () => {
       sqlite: { kind: "prefix", prefix: "EXPLAIN QUERY PLAN" },
       duckdb: { kind: "prefix", prefix: "EXPLAIN (FORMAT JSON)" },
       mssql: { kind: "session-mode", mode: "estimate-plan" },
-      // Outside the restated-prefix strip, as MySQL's is.
-      clickhouse: { kind: "prefix", prefix: "EXPLAIN json = 1, indexes = 1", strippedWhenRestated: false },
+      clickhouse: { kind: "prefix", prefix: "EXPLAIN json = 1, indexes = 1" },
     });
     for (const type of SQL_ENGINES) expect(Object.isFrozen(engineServerDialect(type).planEstimate)).toBe(true);
   });
