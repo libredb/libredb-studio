@@ -1692,6 +1692,25 @@ describe("PostgresProvider", () => {
       expect(provider.isInTransaction()).toBe(false);
     });
 
+    test("expireTransaction still ends the transaction when the ROLLBACK itself fails", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      await provider.beginTransaction();
+      mockQueryFn = async (sql: string) => {
+        if (/^\s*ROLLBACK/i.test(sql)) throw new Error("Connection terminated unexpectedly");
+        return defaultMockQuery(sql);
+      };
+      const warn = spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        await provider.expireTransaction();
+      } finally {
+        warn.mockRestore();
+      }
+
+      expect(provider.isInTransaction()).toBe(false);
+      await expect(provider.queryInTransaction("SELECT 1")).rejects.toThrow("No active transaction");
+    });
+
     test("expireTransaction is no-op when no active transaction", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
@@ -3017,6 +3036,35 @@ describe("PostgresProvider", () => {
       expect(overview.databaseSize).toBe("0 B");
     });
 
+    test("every overview read the server refuses degrades to its absent value, and the version still answers", async () => {
+      mockQueryFn = async (sql: string) => {
+        const normalized = sql.trim().toLowerCase();
+        if (
+          normalized.includes("pg_postmaster_start_time") ||
+          normalized.includes("max_connections") ||
+          normalized.includes("pg_database_size") ||
+          normalized.includes("as table_count")
+        ) {
+          throw Object.assign(new Error("permission denied"), { code: "42501" });
+        }
+        return defaultMockQuery(sql);
+      };
+
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      expect(overview.version).toContain("PostgreSQL");
+      expect(overview.uptime).toBe("N/A");
+      expect(overview.startTime).toBeUndefined();
+      expect(overview.activeConnections).toBeUndefined();
+      expect(overview.maxConnections).toBe(0);
+      expect("databaseSizeBytes" in overview).toBe(false);
+      expect(overview.databaseSize).toBe("N/A");
+      expect(overview.tableCount).toBe(0);
+      expect(overview.indexCount).toBe(0);
+    });
+
     test("the overview size read asks for the byte figure only", async () => {
       const seen: string[] = [];
       mockQueryFn = async (sql: string) => {
@@ -3074,6 +3122,24 @@ describe("PostgresProvider", () => {
       expect("bufferPoolUsage" in metrics).toBe(false);
       expect(typeof metrics.deadlocks).toBe("number");
       expect(metrics.deadlocks).toBe(3);
+      expect(metrics.checkpointWriteTime).toBe("10.5s");
+    });
+
+    test("a refused cache or transaction read leaves that metric absent rather than zero", async () => {
+      mockQueryFn = async (sql: string) => {
+        const normalized = sql.trim().toLowerCase();
+        if (normalized.includes("pg_statio_user_tables") || normalized.includes("from pg_stat_database")) {
+          throw Object.assign(new Error('relation "pg_stat_database" does not exist'), { code: "42P01" });
+        }
+        return defaultMockQuery(sql);
+      };
+
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const metrics = await provider.getPerformanceMetrics();
+
+      expect("cacheHitRatio" in metrics).toBe(false);
+      expect("deadlocks" in metrics).toBe(false);
       expect(metrics.checkpointWriteTime).toBe("10.5s");
     });
 
@@ -3289,6 +3355,21 @@ describe("PostgresProvider", () => {
       expect(slowQueries[0].maxTime).toBeUndefined();
     });
 
+    test("no pg_stat_statements and no readable pg_stat_activity is an empty list, not a failure", async () => {
+      mockQueryFn = async (sql: string) => {
+        const normalized = sql.trim().toLowerCase();
+        if (normalized.includes("pg_stat_statements") || normalized.includes("pg_stat_activity")) {
+          throw Object.assign(new Error('relation "pg_stat_activity" does not exist'), { code: "42P01" });
+        }
+        return defaultMockQuery(sql);
+      };
+
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      expect(await provider.getSlowQueries()).toEqual([]);
+    });
+
     test("respects limit option", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
@@ -3304,6 +3385,19 @@ describe("PostgresProvider", () => {
   // --------------------------------------------------------------------------
 
   describe("getActiveSessions()", () => {
+    test("a pg_stat_activity the role cannot read is an empty list, not a failure", async () => {
+      mockQueryFn = async (sql: string) => {
+        if (sql.toLowerCase().includes("from pg_stat_activity")) {
+          throw Object.assign(new Error("permission denied for view pg_stat_activity"), { code: "42501" });
+        }
+        return defaultMockQuery(sql);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      expect(await provider.getActiveSessions()).toEqual([]);
+    });
+
     test("returns session details", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
@@ -9757,6 +9851,36 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
         expect(build.refusal.refusal).toBe("identity");
         expect(mockWire).not.toContain("BEGIN");
         expect(mockWire).not.toContain("SELECT 1/0");
+        await provider.disconnect();
+      });
+
+      test("a BEGIN the server opened but whose reply was lost still sends the client home idle", async () => {
+        // The server took the BEGIN and reported `T`, and the reply never reached this client, so
+        // the inner ROLLBACK never runs. The last-resort ROLLBACK is what keeps the open block out
+        // of the pool, where the next borrower would meet it.
+        const provider = await connected();
+        let definitionRead = false;
+        mockQueryFn = async (sql) => {
+          // Only the probe's own BEGIN, which follows the definition read.
+          if (sql === "BEGIN" && definitionRead) throw new Error("Connection terminated unexpectedly");
+          if (sql.includes("pg_get_functiondef")) definitionRead = true;
+          return { rows: [ROUTINE_ROW] };
+        };
+        mockWire = [];
+        const outcome = await provider
+          .buildObjectEdit({
+            path: ["app", "order_total(integer)"],
+            kind: "function",
+            partId: "definition",
+            text: EDITED,
+          })
+          .catch((error: unknown) => error);
+
+        expect((outcome as Error).message).toContain("Connection terminated unexpectedly");
+        const begin = mockWire.indexOf("BEGIN");
+        expect(begin).toBeGreaterThan(-1);
+        expect(mockWire.slice(begin + 1)).toEqual(["ROLLBACK"]);
+        expect(mockTxStatus).toBe("I");
         await provider.disconnect();
       });
     });
