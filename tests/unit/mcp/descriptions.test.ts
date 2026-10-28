@@ -90,9 +90,11 @@ describe("the tool descriptions", () => {
 
   test("inspect_schema says an engine with no tables refuses it, and where to read it instead", () => {
     expect(INSPECT_SCHEMA_DESCRIPTION).toContain(
-      "Works on every engine that holds tables. An engine whose objects are not tables, such as Kubernetes, refuses it, and the refusal names the tool that reads it, as list_connections' read_tool does.",
+      "Works on every engine that holds tables. An engine whose objects are not tables refuses it, and the refusal names the tool that reads it, as list_connections' read_tool does.",
     );
     expect(INSPECT_SCHEMA_DESCRIPTION).not.toContain("Works on every engine.");
+    // Shared copy names no engine: the refusal names the engine's own tool.
+    expect(INSPECT_SCHEMA_DESCRIPTION).not.toContain("Kubernetes");
   });
 
   test("names no statement form, because the forms differ by engine and the refusal names them", () => {
