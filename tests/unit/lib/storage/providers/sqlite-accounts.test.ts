@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -56,5 +56,22 @@ describe("SQLiteStorageProvider accounts", () => {
     await expect(provider.deleteAccount(account.email)).rejects.toThrow(/row delete refused/);
     expect((await provider.getAccount(account.email))?.email).toBe(account.email);
     expect(await provider.getCollection(account.email, "connections")).toEqual([{ id: "c1" }] as never);
+  });
+});
+
+describe("SQLiteStorageProvider store path", () => {
+  test("initialize creates a STORAGE_SQLITE_PATH directory that does not exist yet", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "libredb-sqlite-path-"));
+    const nested = join(dir, "data", "studio", "store.db");
+    const provider = new SQLiteStorageProvider(nested);
+    try {
+      await provider.initialize();
+      await provider.insertAccount(account);
+      expect(existsSync(nested)).toBe(true);
+      expect((await provider.getAccount(account.email))?.email).toBe(account.email);
+    } finally {
+      await provider.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

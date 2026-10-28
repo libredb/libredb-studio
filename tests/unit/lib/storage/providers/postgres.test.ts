@@ -351,6 +351,24 @@ describe("PostgresStorageProvider", () => {
     expect(result.history).toBeUndefined();
   });
 
+  test("initialize names sslmode=disable when the server refuses SSL", async () => {
+    // pg's own sentence when it asked for SSL and the server answered that it has none.
+    const refused = new Error("The server does not support SSL connections");
+    mockQuery.mockImplementationOnce(async () => {
+      throw refused;
+    });
+    const remote = new PostgresStorageProvider("postgresql://db.internal:5432/test");
+    try {
+      const error = await remote.initialize().catch((caught: unknown) => caught);
+      expect((error as Error).message).toBe(
+        "PostgreSQL storage connection failed: server does not support SSL. Add ?sslmode=disable to STORAGE_POSTGRES_URL for local PostgreSQL.",
+      );
+      expect((error as Error).cause).toBe(refused);
+    } finally {
+      await remote.close();
+    }
+  });
+
   test("initialize throws when no connection string", async () => {
     const origEnv = process.env.STORAGE_POSTGRES_URL;
     delete process.env.STORAGE_POSTGRES_URL;
