@@ -21,6 +21,7 @@ charts/libredb-studio/
 ├── values.schema.json         # JSON Schema validation (helm lint --strict)
 ├── .helmignore                # Package exclusion patterns
 ├── README.md                  # Chart-level documentation
+├── questions.yaml             # Rancher Apps form for the Rancher-mode values
 └── templates/
     ├── _helpers.tpl           # Named templates (labels, names, image, storage logic)
     ├── deployment.yaml        # App Deployment (checksum restart, emptyDir, probes)
@@ -36,6 +37,9 @@ charts/libredb-studio/
     ├── pvc.yaml               # PersistentVolumeClaim (SQLite mode)
     ├── networkpolicy.yaml     # Ingress/egress rules (DB ports, DNS, HTTPS)
     ├── extra-objects.yaml     # extraObjects: user manifests rendered through tpl (default none)
+    ├── navlink.yaml           # Rancher NavLink (rancher.navLink, default off)
+    ├── access-review.yaml     # ClusterRole and binding for the Kubernetes access review (default off)
+    ├── kubernetes-discovery.yaml # Discovery exporter, its RBAC and the export Secret (default off)
     └── NOTES.txt              # Post-install usage instructions
 ```
 
@@ -272,6 +276,28 @@ Under governance the chart also takes no `ADMIN_PASSWORD`, `USER_EMAIL` or `USER
 That value only records that the operator configured cookie affinity at the ingress or load balancer: the chart renders no affinity annotation and has no cookie name value, because the affinity belongs to the ingress controller.
 
 `tests/unit/helm-chart-governance.test.ts` pins these rules, and the block is read through `default dict`, so a values set that predates it keeps rendering.
+
+### 12. Rancher mode
+
+A Rancher-mode install sets values that every other install leaves alone, and the default install renders none of their objects.
+The first half wires custom connections, literal seed values, a seed Secret, the OIDC client Secret and the `NavLink`; the second half, `accessReview` and `discovery.kubernetes`, renders the Kubernetes access review and the discovery exporter ([chart README](../charts/libredb-studio/README.md#rancher-mode-values), [SEED_CONNECTIONS.md](./SEED_CONNECTIONS.md#kubernetes-access-review)).
+
+- The access review's only right is `create` on `subjectaccessreviews`, through a ClusterRole and binding named `<namespace>.<fullname>-access-review`, cluster-scoped like the `NavLink`, so the namespace in the name keeps two releases apart.
+  The reviews use a projected token of Studio's ServiceAccount with the cluster's CA from `kube-root-ca.crt`, so the pod's own token mount stays off and the token never outlives `accessReview.tokenExpirationSeconds`.
+- The exporter is a second Deployment from Studio's image with a ServiceAccount of its own, so Studio's process never holds a token that can read a database Secret.
+  Its pods carry the name `<name>-discovery` and the component `discovery-exporter`, so Studio's Service, PodDisruptionBudget and NetworkPolicy, which select on Studio's name, never match them.
+- The export Secret is rendered with no `data` field: Helm's three-way merge then leaves what the exporter wrote alone on every upgrade, and the exporter, whose Role is limited to that name, never has to create it.
+- Studio mounts the whole export Secret rather than its `export.json` key, because the Secret starts with no key and a projection of a missing key would keep the pod from starting.
+
+**Render guards.** `rancherModeGuards` in `_helpers.tpl` refuses every values set the access review's boot check refuses (`src/lib/kubernetes-access/preflight.ts`), the namespace's default ServiceAccount as the review's account, discovery with no namespace or under governance, an `extraEnv` entry that would override a variable the chart writes for either, and more than one replica or autoscaling with either on, since the groups record and the caches live in one process.
+With the review on the chart writes no `ADMIN_PASSWORD`, `USER_EMAIL` or `USER_PASSWORD` from `secrets.existingSecret`, as under governance.
+
+**Apps form.** `questions.yaml` asks for the Rancher-mode values only; Rancher sets each answer at a dotted path, so a list entry such as the ingress host is set in the form's YAML view.
+`tests/unit/helm-chart-rancher-questions.test.ts` holds every question to a key of `values.yaml` with the same type and default.
+
+**OLM operator.** Rancher mode is not offered through the operator in this release: its role grants none of the cluster-scoped or cross-namespace objects above, so [DISTRIBUTION.md](./DISTRIBUTION.md) and the chart README send Rancher installs to Helm or Rancher's Apps page.
+
+`tests/unit/helm-chart-rancher-mode.test.ts`, `helm-chart-rancher-access-review.test.ts` and `helm-chart-rancher-discovery.test.ts` pin these rules.
 
 ## Release Pipeline
 
