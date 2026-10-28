@@ -3,6 +3,12 @@ import { SignJWT, jwtVerify } from "jose";
 import { cookies, headers } from "next/headers";
 import { logger } from "@/lib/logger";
 import { getJwtSecret, sessionTtlSeconds } from "@/lib/config/auth-env";
+import { accessReviewEnabled } from "@/lib/kubernetes-access/config";
+import {
+  ACCESS_REVIEW_RETRY_COOKIE,
+  ACCESS_REVIEW_RETRY_MAX_AGE_SECONDS,
+  groupsRecordCheck,
+} from "@/lib/kubernetes-access/session-guard";
 import { storedAccountAllows } from "@/lib/local-accounts";
 import { authenticateBearer } from "@/lib/oidc-bearer";
 
@@ -115,7 +121,30 @@ export async function readSession(): Promise<SessionReading> {
     logger.error("Could not read the account registry, store unavailable", error, { route: "auth" });
     return { kind: "store_unavailable", error };
   }
-  if (allowed) return { kind: "authenticated", session };
+  if (allowed && !accessReviewEnabled()) return { kind: "authenticated", session };
+  if (allowed) {
+    // With the Kubernetes access review on, no review runs without the groups record of the session's subject, which
+    // only this process's memory holds: a session that lost it signs in again (src/lib/kubernetes-access/session-guard.ts).
+    const check = groupsRecordCheck(session, cookieStore.get(ACCESS_REVIEW_RETRY_COOKIE)?.value);
+    const markerPath = getBasePath() || "/";
+    if (check.kind === "kept") {
+      if (check.clearMarker) cookieStore.delete({ name: ACCESS_REVIEW_RETRY_COOKIE, path: markerPath });
+      return { kind: "authenticated", session };
+    }
+    if (check.marker !== null) {
+      cookieStore.set(ACCESS_REVIEW_RETRY_COOKIE, check.marker, {
+        httpOnly: true,
+        secure: await shouldMarkCookieSecure(),
+        sameSite: "lax",
+        maxAge: ACCESS_REVIEW_RETRY_MAX_AGE_SECONDS,
+        path: markerPath,
+      });
+    }
+    logger.info("Kubernetes access review: the session's groups record is gone, so it signs in again", {
+      route: "auth",
+      loop: check.marker === "loop",
+    });
+  }
   // The proxy verifies only the signature, so a refused cookie would keep sending /login back to
   // the editor. Clearing it here, on the route's response, lets the next navigation reach login.
   await logout();

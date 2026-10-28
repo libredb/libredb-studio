@@ -29,6 +29,12 @@ delete process.env.AGENT_MODEL_TUNING_PATH;
   fail on a machine whose code is fine. The tests that need the mode set it themselves.
 */
 delete process.env.SEED_LITERAL_VALUES;
+/*
+  And for the Kubernetes access review. A developer's `.env` that switches it on would refuse every OIDC session
+  without a groups record, hide reviewed connections and hold MCP and the agent off, and suites that never set it would
+  fail on a machine whose code is fine. The tests that need the review switch it on themselves.
+*/
+delete process.env.KUBERNETES_ACCESS_REVIEW;
 
 // ─── In-memory localStorage mock (SSR/test environment) ────────────────────
 if (typeof globalThis.localStorage === "undefined") {

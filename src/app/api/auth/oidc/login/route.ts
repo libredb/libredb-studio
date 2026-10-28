@@ -8,6 +8,8 @@ import { clientAddress } from "@/lib/api/client-address";
 import { emitAuditEvent, type AuditReason } from "@/lib/audit";
 import { AuthConfigError } from "@/lib/auth-errors";
 import { RETURN_PATH_PARAM, safeReturnPath } from "@/lib/api/session-ended";
+import { accessReviewEnabled } from "@/lib/kubernetes-access/config";
+import { ACCESS_REVIEW_RETRY_COOKIE, retryLoopTripped } from "@/lib/kubernetes-access/session-guard";
 
 const ROUTE = "GET /api/auth/oidc/login";
 
@@ -37,6 +39,17 @@ export async function GET(request: Request) {
   // is still built in exactly one place.
   let discovered = false;
   try {
+    const cookieStore = await cookies();
+
+    // The Kubernetes access review's loop guard (src/lib/kubernetes-access/session-guard.ts): a session's groups record
+    // went missing again right after the silent sign-in that wrote it, so another round trip to the provider would only
+    // repeat it. The sign-in page says so instead, and the marker is consumed, so signing in by hand tries once more.
+    if (accessReviewEnabled() && retryLoopTripped(cookieStore.get(ACCESS_REVIEW_RETRY_COOKIE)?.value)) {
+      cookieStore.delete({ name: ACCESS_REVIEW_RETRY_COOKIE, path: getBasePath() || "/" });
+      auditFailure("oidc_groups_lost", ip);
+      return NextResponse.redirect(`${origin}${withBasePath("/login")}?error=oidc_groups_lost`);
+    }
+
     const oidcConfig = getOIDCConfig();
     const config = await discoverProvider(oidcConfig);
     discovered = true;
@@ -51,7 +64,6 @@ export async function GET(request: Request) {
     // in the same signed cookie, so the provider round trip cannot alter it.
     const returnTo = safeReturnPath(new URL(request.url).searchParams.get(RETURN_PATH_PARAM));
     const stateCookie = await encryptState(returnTo === null ? state : { ...state, return_to: returnTo });
-    const cookieStore = await cookies();
     cookieStore.set("oidc-state", stateCookie, {
       httpOnly: true,
       secure: await shouldMarkCookieSecure(),
