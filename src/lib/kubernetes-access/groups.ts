@@ -7,10 +7,13 @@
  * same group principals it impersonates a user with on a downstream cluster, without its two system groups, and sends
  * no claim at all to a user without group principals, every local user included: an absent claim is an empty list.
  *
- * A claim that is not a list of non-empty strings, holds more than 512 groups or one longer than 256 bytes, or names a
- * group under Kubernetes' reserved `system:` prefix is refused, and the callback refuses the sign-in with it: a review
- * that asserted `system:authenticated` would allow what the cluster grants every authenticated user, which Rancher
- * measured as more than it lets that user reach, and `system:masters` would allow everything.
+ * A claim that is not a list of non-empty strings, holds more than 512 groups, one longer than 1024 bytes or more than
+ * 64 KiB of names in all, or names a group under Kubernetes' reserved `system:` prefix is refused, and the callback
+ * refuses the sign-in with it: a review that asserted `system:authenticated` would allow what the cluster grants every
+ * authenticated user, which Rancher measured as more than it lets that user reach, and `system:masters` would allow
+ * everything. Kubernetes sets no length on a group, and an LDAP or Active Directory group principal carries its
+ * distinguished name, so the bound on one group is generous and the bound on the record keeps the store's memory
+ * bounded.
  *
  * A record serves the sessions its subject's sign-ins minted, so it expires with the session lifetime, and the newest
  * verified sign-in replaces it. The store holds at most 4096 records and evicts the oldest written first; a session
@@ -22,7 +25,8 @@ import { sessionTtlSeconds } from "@/lib/config/auth-env";
 const STORE_KEY = Symbol.for("libredb-studio.kubernetes-access-groups");
 const MAX_RECORDS = 4096;
 const MAX_GROUPS = 512;
-const MAX_GROUP_BYTES = 256;
+const MAX_GROUP_BYTES = 1024;
+const MAX_NAMES_KIB = 64;
 const RESERVED_PREFIX = "system:";
 /** OpenID Connect Core 1.0, section 2: a `sub` must not exceed 255 ASCII characters. */
 const MAX_SUBJECT_BYTES = 255;
@@ -30,6 +34,7 @@ const MAX_SUBJECT_BYTES = 255;
 const NOT_A_LIST = "the ID token's groups claim is not a list of group names";
 const TOO_MANY = `the ID token's groups claim lists more than ${MAX_GROUPS} groups`;
 const TOO_LONG = `the ID token's groups claim lists a group longer than ${MAX_GROUP_BYTES} bytes`;
+const TOO_LARGE = `the ID token's groups claim holds more than ${MAX_NAMES_KIB} KiB of group names`;
 const RESERVED = `the ID token's groups claim lists a group that starts with ${RESERVED_PREFIX}, which only Kubernetes assigns`;
 
 export type GroupsClaimReading =
@@ -68,8 +73,9 @@ export function readGroupsClaim(claims: Readonly<Record<string, unknown>>): Grou
   }
   const groups = [...new Set(value as string[])].sort();
   if (groups.length > MAX_GROUPS) return { ok: false, problem: TOO_MANY };
-  if (groups.some((group) => Buffer.byteLength(group, "utf8") > MAX_GROUP_BYTES))
-    return { ok: false, problem: TOO_LONG };
+  const sizes = groups.map((group) => Buffer.byteLength(group, "utf8"));
+  if (sizes.some((size) => size > MAX_GROUP_BYTES)) return { ok: false, problem: TOO_LONG };
+  if (sizes.reduce((total, size) => total + size, 0) > MAX_NAMES_KIB * 1024) return { ok: false, problem: TOO_LARGE };
   if (groups.some((group) => group.startsWith(RESERVED_PREFIX))) return { ok: false, problem: RESERVED };
   return { ok: true, groups };
 }

@@ -119,8 +119,9 @@ export type AuditReason =
   | "oidc_role_overflow"
   /**
    * With the Kubernetes access review on (docs/SEED_CONNECTIONS.md), the provider authenticated the account, but its ID
-   * token's groups claim is not a list of group names, lists more than 512 groups or one longer than 256 bytes, or
-   * names a group under Kubernetes' reserved `system:` prefix, so no review could assert it and no session was created.
+   * token's groups claim is not a list of group names, lists more than 512 groups, one longer than 1024 bytes or more
+   * than 64 KiB of names in all, or names a group under Kubernetes' reserved `system:` prefix, so no review could assert
+   * it and no session was created.
    */
   | "oidc_groups_refused"
   /**

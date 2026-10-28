@@ -152,8 +152,19 @@ describe("the answer", () => {
   });
 
   test("a body over the size cap fails without being parsed", async () => {
-    api.answer = { status: 201, body: reviewAnswer({ allowed: true, reason: "x".repeat(70 * 1024) }) };
+    api.answer = { status: 201, body: reviewAnswer({ allowed: true, reason: "x".repeat(520 * 1024) }) };
     expect(await requestAccessReview(DEV_A, SECRET)).toEqual({ kind: "failed", reason: "too-large" });
+  });
+
+  test("an answer echoing the largest groups record the store keeps, escaped as the API server writes it, is read", async () => {
+    // 64 KiB of group names, each byte an ampersand, which the API server's JSON writes as six bytes.
+    const subject = { user: DEV_A.user, groups: Array.from({ length: 64 }, (_, n) => `${n}`.padEnd(1024, "&")) };
+    api.answer = (body) => {
+      const echoed = JSON.stringify({ kind: "SubjectAccessReview", spec: body.spec, status: { allowed: true } });
+      return { status: 201, body: echoed.replaceAll("&", "\\u0026") };
+    };
+    expect(await requestAccessReview(subject, SECRET)).toEqual({ kind: "allowed" });
+    expect(api.seen[0].body.spec?.groups).toEqual(subject.groups);
   });
 
   test("an API server that does not answer within the deadline fails", async () => {

@@ -1151,7 +1151,8 @@ Its roles are `*`, so the review is its only gate, for admins and users alike:
 The review asserts no group that starts with `system:`.
 Rancher adds `system:authenticated` and `system:cattle:authenticated` to every request it impersonates, and a review asserting them would allow a Rancher user who has no role in the cluster at all, where Rancher refuses with 403, so Studio leaves them out.
 The price is the safe direction: a Secret readable only through a binding to one of those two groups is denied in Studio although Rancher allows it.
-An ID token whose `groups` claim names a `system:` group is refused at sign-in with `oidc_groups_refused`, and so is a claim that is not a list of names, lists more than 512 groups or one longer than 256 bytes.
+An ID token whose `groups` claim names a `system:` group is refused at sign-in with `oidc_groups_refused`, and so is a claim that is not a list of names, lists more than 512 groups or one longer than 1024 bytes, or holds more than 64 KiB of names in all.
+A group principal of an LDAP or Active Directory provider carries its distinguished name, so a group may be long; Kubernetes sets no limit on one.
 An absent claim, which Rancher sends every user without group principals and so every local user, is an empty list.
 
 ### Sign-in

@@ -52,8 +52,12 @@ export type ReviewOutcome =
 
 /** How long one review may take, connection included. */
 const REVIEW_TIMEOUT_MS = 2000;
-/** A review's answer is a few hundred bytes; anything this large is not one. */
-const MAX_RESPONSE_BYTES = 64 * 1024;
+/**
+ * An answer echoes the review it decides, groups included. The groups store keeps at most 64 KiB of group names per
+ * person, and the API server's JSON can write one byte as six (`\u0026` for `&`), so an answer to any review Studio
+ * sends fits in this cap with room to spare, and anything larger is not one.
+ */
+const MAX_RESPONSE_BYTES = 512 * 1024;
 const REVIEW_PATH = "/apis/authorization.k8s.io/v1/subjectaccessreviews";
 /** What a PEM CA bundle holds at least once. */
 const CERTIFICATE_BLOCK = "-----BEGIN CERTIFICATE-----";

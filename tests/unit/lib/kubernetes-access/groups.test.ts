@@ -44,11 +44,17 @@ describe("the groups claim", () => {
     });
   });
 
-  test("keeps 512 groups of up to 256 bytes", () => {
-    const groups = Array.from({ length: 512 }, (_, n) => `g${String(n).padStart(3, "0")}${"x".repeat(252)}`);
+  test("keeps 512 groups within 64 KiB of names, and a group of up to 1024 bytes", () => {
+    const groups = Array.from({ length: 512 }, (_, n) => `g${String(n).padStart(3, "0")}${"x".repeat(124)}`);
     const reading = readGroupsClaim({ groups });
     expect(reading.ok && reading.groups.length).toBe(512);
-    expect(readGroupsClaim({ groups: ["é".repeat(128)] }).ok).toBe(true);
+    expect(readGroupsClaim({ groups: ["é".repeat(512)] }).ok).toBe(true);
+  });
+
+  test("keeps an LDAP or Active Directory group whose distinguished name runs past 256 bytes", () => {
+    const dn = `activedirectory_group://CN=Database Operators,${"OU=Regional Platform Teams,".repeat(10)}DC=corp,DC=example,DC=com`;
+    expect(Buffer.byteLength(dn)).toBeGreaterThan(300);
+    expect(readGroupsClaim({ groups: [dn] })).toEqual({ ok: true, groups: [dn] });
   });
 
   test.each([
@@ -57,7 +63,12 @@ describe("the groups claim", () => {
     ["a number in the list", ["okta_group://dbas", 7], "is not a list of group names"],
     ["an empty name", [""], "is not a list of group names"],
     ["more than 512 groups", Array.from({ length: 513 }, (_, n) => `group-${n}`), "more than 512 groups"],
-    ["a group over 256 bytes", ["é".repeat(129)], "longer than 256 bytes"],
+    ["a group over 1024 bytes", ["é".repeat(513)], "longer than 1024 bytes"],
+    [
+      "more than 64 KiB of names",
+      Array.from({ length: 65 }, (_, n) => `g${String(n).padStart(2, "0")}${"x".repeat(1021)}`),
+      "more than 64 KiB of group names",
+    ],
     ["a reserved Kubernetes group", ["okta_group://dbas", "system:masters"], "starts with system:"],
     ["system:authenticated", ["system:authenticated"], "starts with system:"],
   ])("is refused when it holds %s", (_case, groups, reason) => {
