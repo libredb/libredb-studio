@@ -696,14 +696,12 @@ export function OperationsTab() {
         <Select value={selectedConnection?.id || ""} onValueChange={handleConnectionChange}>
           <SelectTrigger className="w-full sm:w-[280px] bg-panel border-hairline-strong text-fg-secondary">
             <SelectValue placeholder="Select connection">
-              {selectedConnection ? (
+              {selectedConnection && (
                 <div className="flex items-center gap-2">
                   <Database className="h-4 w-4 flex-shrink-0" />
                   <span className="truncate">{selectedConnection.name}</span>
                   <span className="text-xs text-fg-muted hidden sm:inline">({selectedConnection.type})</span>
                 </div>
-              ) : (
-                "Select connection"
               )}
             </SelectValue>
           </SelectTrigger>
