@@ -1157,6 +1157,7 @@ The price is the safe direction: a Secret readable only through a binding to one
 An ID token whose `groups` claim names a `system:` group is refused at sign-in with `oidc_groups_refused`, and so is a claim that is not a list of names, lists more than 512 groups or one longer than 1024 bytes, or holds more than 64 KiB of names in all.
 A group principal of an LDAP or Active Directory provider carries its distinguished name, so a group may be long; Kubernetes sets no limit on one.
 An absent claim, which Rancher sends every user without group principals and so every local user, is an empty list.
+The review's answers were compared with Rancher's for local Rancher users, who carry no group principals; access bound to the group principals of an external identity provider connected to Rancher, such as Keycloak or Active Directory, is not tested yet.
 
 ### Sign-in
 

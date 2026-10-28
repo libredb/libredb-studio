@@ -396,6 +396,7 @@ No Studio code is specific to Rancher: it is the ordinary OIDC mode with the val
    A Studio admin is whoever may `update` Studio's own Deployment, the administrator and the cluster's owners in a default install, and a project member is a user.
    With the review on, Rancher is the only way in: leave `ADMIN_PASSWORD` and `USER_PASSWORD` unset, since Studio refuses to start with either, and password sign-in answers 403.
    Request `groups` in `OIDC_SCOPE` on 2.15 so a user with group principals is reviewed with them; a local user has none either way.
+   Access bound to the group principals of an external identity provider connected to Rancher is not tested yet; local users are.
    Setup, the boot checks and what the review switches off: [Kubernetes access review](SEED_CONNECTIONS.md#kubernetes-access-review).
 
 > From Rancher 2.14 the access token Rancher issues with the ID token names the user's Rancher token, and Rancher accepts it as a bearer credential, so it carries the user's full Rancher power.
