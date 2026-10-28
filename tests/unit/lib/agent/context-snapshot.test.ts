@@ -3784,6 +3784,10 @@ describe("the identity a held inventory is filed under", () => {
     );
     expect(connectionIdentity({ ...bigquery, location: "EU" })).not.toBe(connectionIdentity(bigquery));
     expect(connectionIdentity({ ...bigquery, location: "" })).toBe(connectionIdentity(bigquery));
+    // The tag keeps the value from reading as another field that holds the same text.
+    expect(connectionIdentity({ ...bigquery, location: "EU" })).not.toBe(
+      connectionIdentity({ ...bigquery, role: "EU" }),
+    );
   });
 
   test("a reading held under one BigQuery location is not served under another", async () => {
