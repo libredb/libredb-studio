@@ -133,6 +133,7 @@ describe("mapSqlTypeToPython", () => {
   test("TIMESTAMP → datetime", () => expect(mapSqlTypeToPython("TIMESTAMP")).toBe("datetime"));
   test("JSON → dict", () => expect(mapSqlTypeToPython("JSON")).toBe("dict"));
   test("TEXT → str", () => expect(mapSqlTypeToPython("TEXT")).toBe("str"));
+  test("UUID → str", () => expect(mapSqlTypeToPython("UUID")).toBe("str"));
 });
 
 // ============================================================================
