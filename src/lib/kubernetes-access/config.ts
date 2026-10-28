@@ -2,9 +2,10 @@
  * The Kubernetes access review's switch and settings (docs/SEED_CONNECTIONS.md, "Kubernetes access review").
  *
  * The review asks the Kubernetes API, through a SubjectAccessReview, whether the signed-in identity provider subject
- * may do one thing: `get` the Secret a Kubernetes-discovered connection's credentials come from, or `update` Studio's
- * own Deployment, which makes a Studio admin. It authenticates with the pod's ServiceAccount token and uses it for
- * SubjectAccessReviews only; the Kubernetes database provider never reads that token.
+ * may do one thing: `get` the Secret a Kubernetes-discovered connection's credentials come from, the sign-in review
+ * every person must pass to use Studio at all, or `update` Studio's own Deployment, which makes a Studio admin. It
+ * authenticates with the pod's ServiceAccount token and uses it for SubjectAccessReviews only; the Kubernetes database
+ * provider never reads that token.
  *
  * `KUBERNETES_ACCESS_REVIEW` switches it on. Unset, empty or a value that switches it off leaves Studio exactly as it
  * is without this module. A value Studio does not know counts as on, so a typo fails closed: the review gates what it
@@ -41,8 +42,8 @@ const MAX_CACHE_SECONDS = 60;
 /** A namespace name: an RFC 1123 label. */
 const NAMESPACE_NAME = /^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/;
 /** A Deployment name, an object name or an API group: an RFC 1123 subdomain. */
-const DEPLOYMENT_NAME = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$/;
-const MAX_DEPLOYMENT_NAME = 253;
+const SUBDOMAIN = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$/;
+const MAX_SUBDOMAIN = 253;
 /** A resource's plural name: an RFC 1123 label. */
 const RESOURCE_NAME = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
 const VERB = /^([a-z]+|\*)$/;
@@ -130,15 +131,15 @@ export function accessReviewAdminDeployment(): DeploymentRef {
   const valid =
     parts.length === 2 &&
     NAMESPACE_NAME.test(namespace) &&
-    name.length <= MAX_DEPLOYMENT_NAME &&
-    DEPLOYMENT_NAME.test(name);
+    name.length <= MAX_SUBDOMAIN &&
+    SUBDOMAIN.test(name);
   if (!valid) throw new AccessReviewConfigError(ADMIN_DEPLOYMENT_INVALID_MESSAGE);
   return { namespace, name };
 }
 
 /** Whether `value` is "" or an RFC 1123 subdomain of at most 253 characters. */
 const optionalSubdomain = (value: string): boolean =>
-  value === "" || (value.length <= MAX_DEPLOYMENT_NAME && DEPLOYMENT_NAME.test(value));
+  value === "" || (value.length <= MAX_SUBDOMAIN && SUBDOMAIN.test(value));
 
 /**
  * The review a person must pass to sign in at all, from `KUBERNETES_ACCESS_REVIEW_SIGN_IN` in the form `kubectl auth
