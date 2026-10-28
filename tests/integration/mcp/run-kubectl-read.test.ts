@@ -22,7 +22,7 @@ import { KubernetesProvider } from "@/lib/db/providers/platform/kubernetes/index
 import { MACHINE_PROFILE_SENTENCE, MACHINE_WATCH_SENTENCE } from "@/lib/db/providers/platform/kubernetes/machine-read";
 import { McpConnectionContext } from "@/lib/mcp/context";
 import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
-import { RUN_KUBECTL_READ_ARM } from "@/lib/mcp/tools/statement-arms";
+import { mcpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseConnection } from "@/lib/types";
 import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
@@ -37,6 +37,7 @@ pinMcpTestEnvironment();
 const dir = mkdtempSync(join(tmpdir(), "libredb-mcp-kubectl-"));
 const serve = handlerServe(testAuthInfo());
 const server = languageServer("kubectl");
+const RUN_KUBECTL_READ_ARM = mcpStatementArm("run_kubectl_read");
 const SECRET_PATH = `/api/v1/namespaces/shop/secrets/${M.secretName}`;
 /** A seed is plain data, so its token is written as the operator writes it. */
 const CLUSTER_SEED = {

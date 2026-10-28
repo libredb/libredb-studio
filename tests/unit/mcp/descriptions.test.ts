@@ -13,7 +13,7 @@ import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
 import { MCP_INSTRUCTIONS } from "@/lib/mcp/server";
 import { INSPECT_SCHEMA_DESCRIPTION } from "@/lib/mcp/tools/inspect-schema";
 import { LIST_CONNECTIONS_DESCRIPTION } from "@/lib/mcp/tools/list-connections";
-import { RUN_KUBECTL_READ_ARM, RUN_MONGO_COMMAND_ARM } from "@/lib/mcp/tools/statement-arms";
+import { mcpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import {
   RUN_READ_QUERY_DESCRIPTION,
   RUN_READ_QUERY_ENGINES,
@@ -23,6 +23,9 @@ import { pinMcpTestEnvironment, resetMcpTestState } from "../../helpers/mcp-fixt
 import { handlerServe, legacyPost, readJsonRpc } from "../../helpers/mcp-harness";
 
 pinMcpTestEnvironment();
+
+const RUN_KUBECTL_READ_ARM = mcpStatementArm("run_kubectl_read");
+const RUN_MONGO_COMMAND_ARM = mcpStatementArm("run_mongo_command");
 
 afterEach(async () => {
   await resetMcpTestState();

@@ -26,6 +26,7 @@ import {
   RunReadQueryInputSchema,
   runReadQuery,
 } from "@/lib/mcp/tools/run-read-query";
+import type { McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseType } from "@/lib/types";
 import {
@@ -123,7 +124,7 @@ function direct(
   context?: McpConnectionContext,
 ) {
   const caller = context ?? new McpConnectionContext({ username: "alice", role: "admin" });
-  return runReadQuery(RunReadQueryInputSchema.parse(args), { context: caller, signal });
+  return runReadQuery(RunReadQueryInputSchema.parse(args) as McpStatementInput, { context: caller, signal });
 }
 
 /** A context over one opted-in connection of the given engine that hands out the given provider. */

@@ -6,10 +6,16 @@ import {
   type AgentStatementLanguageId,
 } from "@/lib/agent/agent-manifest";
 import { namedList } from "@/lib/agent/engine-support";
+import {
+  AGENT_LANGUAGE_MCP_FACETS,
+  type AgentLanguageMcpDeclaredFacet,
+  type AgentLanguageMcpFacet,
+  type AgentLanguageMcpTool,
+  type AgentLanguageMcpWords,
+} from "@/lib/agent/languages/mcp";
 import { languageServer } from "@/lib/agent/languages/server";
 import { getDBConfig } from "@/lib/db-ui-config";
 import type { DatabaseType } from "@/lib/types";
-import type { McpToolAction } from "../audit";
 import { checkReadOnlyStatement } from "../guards/execution-fence";
 import { MCP_UNTRUSTED_NOTICE } from "../output";
 import { DATABASE_ARGUMENT_DESCRIPTION } from "./database-choice";
@@ -22,24 +28,24 @@ import {
 import { mcpStatementEngines } from "./served-engines";
 
 /**
- * The MCP statement tools, one arm per statement language.
+ * The MCP statement tools, one arm per statement language, built from the languages' MCP facets.
  *
- * The record is total over `AgentStatementLanguageId`, as `SERVER_PACKS` in `src/lib/agent/languages/server.ts` is, so
- * a language that joins agent mode does not compile until it decides its MCP arm: a tool, or null while none exists.
- * It is keyed by language only and names no engine; an arm's engines come from the one served-engine resolver
- * (`served-engines.ts`), so registration, the handler's gate, the description and `list_connections`' `read_tool` all
- * read one list.
+ * The record is total over `AgentStatementLanguageId` because the facet registry (`AGENT_LANGUAGE_MCP_FACETS` in
+ * `src/lib/agent/languages/mcp.ts`) is, so a language that joins agent mode does not compile until it decides its MCP
+ * arm: a tool, or null while none exists. This module names no language: the tool, its words and its input field come
+ * from the language's own facet, and an arm's engines come from the one served-engine resolver (`served-engines.ts`),
+ * so registration, the handler's gate, the description and `list_connections`' `read_tool` all read one list.
  *
- * The SQL arm keeps the name `run_read_query`, the `sql` argument, `checkReadOnlyStatement` as its fence and offset
- * paging, so a SQL client sees no change. Every other arm reads its argument with the agent's own `canonicalize` and
- * fences it with the agent's own `admit`, both from `languageServer(language)`, so an MCP client is refused the
- * commands an agent run is refused with the same sentence; it takes no offset, and its row refusals carry the
- * language's own `rowCapAdvice`. The fence is defence in depth in every arm: the boundary is the agent read-only
- * acquisition and the provider's `queryReadOnly` (`run-statement.ts`).
+ * An arm whose facet pages with offset keeps `checkReadOnlyStatement` as its fence and the shared refusal texts, so a
+ * SQL client sees no change. Every other arm reads its argument with the agent's own `canonicalize` and fences it with
+ * the agent's own `admit`, both from `languageServer(language)`, so an MCP client is refused the commands an agent run
+ * is refused with the same sentence; it takes no offset, and its row refusals carry the language's own `rowCapAdvice`.
+ * The fence is defence in depth in every arm: the boundary is the agent read-only acquisition and the provider's
+ * `queryReadOnly` (`run-statement.ts`).
  */
 
-/** The statement tools' names: each is an audit action of its own. */
-export type McpStatementTool = Extract<McpToolAction, "run_read_query" | "run_kubectl_read" | "run_mongo_command">;
+/** The statement tools' names, from the facets: each is an audit action of its own. */
+export type McpStatementTool = AgentLanguageMcpTool;
 
 /** The texts a refusal past one of the provider's budgets answers with, by refusal. */
 export type TooLargeTexts = Partial<Record<Exclude<ReadOnlyRefusalKind, "time">, string>>;
@@ -57,9 +63,9 @@ export interface McpStatementArm {
   readonly types: readonly DatabaseType[];
   readonly engines: string;
   /**
-   * True where this language's engines hold no object inspect_schema lists, as no Kubernetes kind is a relation, so
-   * inspect_schema refuses them by name and points to this tool rather than answering an empty page. The arm declares
-   * it for its language; `statement-arms.test.ts` holds it to every served engine's own relation kinds.
+   * True where this language's engines hold no object inspect_schema lists, so inspect_schema refuses them by name and
+   * points to this tool rather than answering an empty page. The language's facet declares it; `statement-arms.test.ts`
+   * holds it to every served engine's own relation kinds.
    */
   readonly holdsNoTables: boolean;
   readonly description: string;
@@ -85,36 +91,31 @@ export interface MoreRowsCut {
 const CONNECTION_ID = z.string().min(1, "connection_id is required");
 const DATABASE = z.string().min(1).optional().describe(DATABASE_ARGUMENT_DESCRIPTION);
 const MAX_ROWS = z.number().int().min(1).max(500).default(100);
+const OFFSET = z.number().int().min(0).default(0);
 const TIMEOUT_MS = z.number().int().min(500).max(30000).default(10000);
 const SHARED_LIMITS =
   "Returns at most max_rows rows (default 100, at most 500) and at most 32 KiB; truncated and pagination.hasMore say when rows were cut";
 
 const engineNames = (types: readonly DatabaseType[]) => namedList(types.map((type) => getDBConfig(type).label));
 
-export const RunReadQueryInputSchema = z.object({
-  connection_id: CONNECTION_ID,
-  database: DATABASE,
-  sql: z.string().min(1, "SQL cannot be empty"),
-  max_rows: MAX_ROWS,
-  offset: z.number().int().min(0).default(0),
-  timeout_ms: TIMEOUT_MS,
-});
+/**
+ * An arm's input: the connection, a `database` where the facet takes one, the statement under the language's own
+ * argument, the row cap, an `offset` where the arm pages, and the timeout, in the order tools/list shows them.
+ */
+function statementInputSchema(facet: AgentLanguageMcpFacet, argument: AgentStatementArgument): z.ZodObject {
+  const shape = {
+    connection_id: CONNECTION_ID,
+    ...(facet.takesDatabase ? { database: DATABASE } : {}),
+    [argument]: facet.statementInput,
+    max_rows: MAX_ROWS,
+    ...(facet.paging === "offset" ? { offset: OFFSET } : {}),
+    timeout_ms: TIMEOUT_MS,
+  };
+  return facet.strictInput ? z.strictObject(shape) : z.object(shape);
+}
 
-const SQL_TYPES = mcpStatementEngines("sql");
-const SQL_ENGINES = engineNames(SQL_TYPES);
-
-export const RUN_READ_QUERY_ARM: McpStatementArm = Object.freeze({
-  language: "sql",
-  tool: "run_read_query",
-  title: "Run a read-only query",
-  argument: AGENT_LANGUAGE_COPY.sql.argument,
-  inputSchema: RunReadQueryInputSchema,
-  paging: "offset",
-  types: SQL_TYPES,
-  engines: SQL_ENGINES,
-  holdsNoTables: false,
-  /** Names no statement form beyond SELECT, because the others differ by engine; the refusal names the engine's own. */
-  description: `Run one read-only SQL statement on a connection. A SELECT (a WITH is fine) runs on every engine it serves; a refused statement's answer names what else that engine takes. Runs on ${SQL_ENGINES}; other engines refuse it, and list_connections' read_tool names the tool that reads each connection. ${SHARED_LIMITS}, and pagination.nextOffset is the offset of the next page when the query can be paged. ${MCP_UNTRUSTED_NOTICE}`,
+/** How an arm under MCP's own read-only statement fence reads, fences and answers: the shared texts. */
+const READ_ONLY_STATEMENT_READER = {
   canonicalize: (raw: unknown) => (typeof raw === "string" ? raw : null),
   fence(statement: string, type: DatabaseType) {
     const violation = checkReadOnlyStatement(statement);
@@ -123,41 +124,15 @@ export const RUN_READ_QUERY_ARM: McpStatementArm = Object.freeze({
   tooLarge: () => ({}),
   rowOverCap: ROW_OVER_CAP_TEXT,
   moreRows: (_statement: string, type: DatabaseType) => moreRowsThanPageableHint(type),
-});
+} satisfies Pick<McpStatementArm, "canonicalize" | "fence" | "tooLarge" | "rowOverCap" | "moreRows">;
 
-/** What a non-SQL arm says in its own words: how to fit more rows, how to read past them, and the oversized row. */
-interface NonSqlArmWords {
-  readonly tool: McpStatementTool;
-  readonly title: string;
-  readonly inputSchema: z.ZodObject;
-  readonly holdsNoTables: boolean;
-  readonly describe: (engines: string) => string;
-  /** How a byte-cut result fits more rows, as the opening of a clause: "Project fewer fields". */
-  readonly fewerFields: string;
-  /** How to read past the rows a cut result returned, as the end of a sentence that starts "To ". */
-  readonly readPast: (shown: number) => string;
-  /** The answer when even the first row does not fit the result cap. */
-  readonly rowOverCap: string;
-  /** What a refused statement never reached, as a noun phrase: "the cluster", "the database". */
-  readonly reached: string;
-}
-
-/** The parts every arm whose statement is not SQL shares: its reader, its fence and its budget texts are the agent's. */
-function nonSqlArm(language: Exclude<AgentStatementLanguageId, "sql">, own: NonSqlArmWords): McpStatementArm {
-  const types = mcpStatementEngines(language);
-  const engines = engineNames(types);
+/** How an arm fenced by its language's own admission reads, fences and answers: the agent's reader, in its words. */
+function languageAdmissionReader(
+  language: AgentStatementLanguageId,
+  own: AgentLanguageMcpWords,
+): Pick<McpStatementArm, "canonicalize" | "fence" | "tooLarge" | "rowOverCap" | "moreRows"> {
   const server = languageServer(language);
-  return Object.freeze({
-    language,
-    tool: own.tool,
-    title: own.title,
-    argument: AGENT_LANGUAGE_COPY[language].argument,
-    inputSchema: own.inputSchema,
-    paging: "none",
-    types,
-    engines,
-    holdsNoTables: own.holdsNoTables,
-    description: own.describe(engines),
+  return {
     canonicalize: server.canonicalize,
     fence(statement: string) {
       const refusal = server.admit?.(statement) ?? null;
@@ -178,73 +153,59 @@ function nonSqlArm(language: Exclude<AgentStatementLanguageId, "sql">, own: NonS
         ? `More rows exist than the 32 KiB result limit holds, and ${shown} of them fitted; this tool does not page with offset. ${own.fewerFields} to fit more rows, and to ${own.readPast(shown)}`
         : `More rows exist than this result holds, and this tool does not page with offset. ${server.rowCapAdvice(statement, String(maxRows))} To ${own.readPast(shown)}`;
     },
+  };
+}
+
+/** The arm `facet` declares for `language`: its engines from the resolver, its description closed by the notice. */
+function statementArm(language: AgentStatementLanguageId, facet: AgentLanguageMcpDeclaredFacet): McpStatementArm {
+  const types = mcpStatementEngines(language);
+  const engines = engineNames(types);
+  const argument = AGENT_LANGUAGE_COPY[language].argument;
+  return Object.freeze({
+    language,
+    tool: facet.tool,
+    title: facet.title,
+    argument,
+    inputSchema: statementInputSchema(facet, argument),
+    paging: facet.paging,
+    types,
+    engines,
+    holdsNoTables: facet.holdsNoTables,
+    description: `${facet.describe({ engines, limits: SHARED_LIMITS })} ${MCP_UNTRUSTED_NOTICE}`,
+    ...(facet.fence === "read-only-statement"
+      ? READ_ONLY_STATEMENT_READER
+      : languageAdmissionReader(language, facet.words)),
   });
 }
 
-/**
- * No `database` key: a Kubernetes connection names its namespace in the statement (`-n`, `-A`) and declares no
- * `catalogSessions`, so `providerInDatabase` would refuse every call that named one, as the agent's own kubectl tool
- * leaves it out. The statement's length is the admission's to refuse, in the sentence an agent run reads.
- */
-export const RunKubectlReadInputSchema = z.strictObject({
-  connection_id: CONNECTION_ID,
-  statement: z.string().min(1, "statement cannot be empty"),
-  max_rows: MAX_ROWS,
-  timeout_ms: TIMEOUT_MS,
-});
+/** Each statement language's MCP arm, in the facet registry's order, which is the order tools/list answers in. */
+export const MCP_STATEMENT_ARMS: Readonly<Record<AgentStatementLanguageId, McpStatementArm | null>> = Object.freeze(
+  Object.fromEntries(
+    (
+      Object.entries(AGENT_LANGUAGE_MCP_FACETS) as [AgentStatementLanguageId, AgentLanguageMcpDeclaredFacet | null][]
+    ).map(([language, facet]) => [language, facet === null ? null : statementArm(language, facet)]),
+  ) as Record<AgentStatementLanguageId, McpStatementArm | null>,
+);
 
-/**
- * The kubectl arm, offered only machine-redacted: the agent's own reader, admission and `queryReadOnly`, so every
- * answer is the machine projection `machine-redaction.ts` masks, Secret names in the fields defined to hold one
- * included, and never the editor's. Free-text messages are that projection's residue, and the description says so.
- */
-export const RUN_KUBECTL_READ_ARM = nonSqlArm("kubectl", {
-  tool: "run_kubectl_read",
-  title: "Run a read-only kubectl read",
-  inputSchema: RunKubectlReadInputSchema,
-  // Every Kubernetes kind is `config`, none a relation, so inspect_schema has nothing to list and refuses it by name.
-  holdsNoTables: true,
-  describe: (engines) =>
-    `Run one read-only kubectl read on a connection: one line, with or without the kubectl word, such as "get pods -n shop", "describe deployment/web -n shop", "logs pod/web -n shop --tail=50", "top pod -n shop", "events -n shop --types=Warning", "api-resources", "explain deployment.spec", "auth can-i list pods -n shop", "auth whoami" or "version". Writes, exec, port-forward, proxy, a watch (-w) and Studio's paging line are refused before the cluster is reached. The answer is masked as an agent read is: a Secret's name in every field defined to hold one, Secret and ConfigMap values, env and header values, a container's command and args, and annotation values read <redacted>. Free-text status, event and log messages are not masked, so a Secret's name or a value an application printed can reach you there. Runs on ${engines}; other engines refuse it. ${SHARED_LIMITS}; this tool takes no offset, so narrow the read with -n, -l or --field-selector. ${MCP_UNTRUSTED_NOTICE}`,
-  fewerFields: "Read fewer fields, without -o wide, -o yaml or -o json,",
-  readPast: (shown) =>
-    `read past the ${shown} rows returned, split the read into narrower ones, since a kubectl read is never paged.`,
-  rowOverCap:
-    "One row of this result is larger than the 32 KiB result limit. Read it in a shorter form, without -o yaml or -o json, and run it again.",
-  reached: "the cluster",
-});
+/** Every arm the record declares, serving or not, in record order. */
+const DECLARED_ARMS: readonly McpStatementArm[] = Object.values(MCP_STATEMENT_ARMS).filter(
+  (arm): arm is McpStatementArm => arm !== null,
+);
 
-/**
- * No `database` key: a MongoDB connection reads the database it is bound to and declares no `catalogSessions`, so
- * `providerInDatabase` would refuse every call that named one, as the agent's own MongoDB tool leaves it out.
- */
-export const RunMongoCommandInputSchema = z.strictObject({
-  connection_id: CONNECTION_ID,
-  command: z.record(z.string(), z.unknown()),
-  max_rows: MAX_ROWS,
-  timeout_ms: TIMEOUT_MS,
-});
+/** Every statement tool's name, in record order: the values `list_connections`' `read_tool` may take. */
+export const MCP_STATEMENT_TOOLS: readonly McpStatementTool[] = Object.freeze(DECLARED_ARMS.map((arm) => arm.tool));
 
-export const RUN_MONGO_COMMAND_ARM = nonSqlArm("mongo", {
-  tool: "run_mongo_command",
-  title: "Run a read-only MongoDB command",
-  inputSchema: RunMongoCommandInputSchema,
-  holdsNoTables: false,
-  fewerFields: "Project fewer fields",
-  readPast: (shown) => `read past the ${shown} rows returned, skip them with a find's "skip" or a $skip stage.`,
-  rowOverCap:
-    "One row of this result is larger than the 32 KiB result limit. Narrow the read to fewer or smaller fields, and run it again.",
-  reached: "the database",
-  describe: (engines) =>
-    `Run one read-only MongoDB command on a connection: a JSON command envelope with the keys its operation takes and no others. find takes "filter" and "options" ("projection", "sort", "skip", "limit"); findOne takes "filter" and "options" ("projection" only); aggregate takes "pipeline" only; count takes "filter"; distinct takes "field" and "filter". For example {"collection": "orders", "operation": "find", "filter": {"status": "paid"}}. Write the collection by its bare name, a date as {"$date": "2026-03-01T00:00:00Z"} and an ObjectId as {"$oid": "<24 hex digits>"}. Writes and the write stages of a pipeline ($out, $merge) are refused before the database is reached. Runs on ${engines}; other engines refuse it. ${SHARED_LIMITS}; this tool takes no offset, so page inside the command with a find's "skip" or a $skip stage. ${MCP_UNTRUSTED_NOTICE}`,
-});
+/** Each statement tool's input schema by name, the entries the route's schema map spreads after the other tools. */
+export const MCP_STATEMENT_INPUT_SCHEMAS: Readonly<Record<McpStatementTool, z.ZodObject>> = Object.freeze(
+  Object.fromEntries(DECLARED_ARMS.map((arm) => [arm.tool, arm.inputSchema])) as Record<McpStatementTool, z.ZodObject>,
+);
 
-/** Each statement language's MCP arm. */
-export const MCP_STATEMENT_ARMS: Readonly<Record<AgentStatementLanguageId, McpStatementArm | null>> = Object.freeze({
-  sql: RUN_READ_QUERY_ARM,
-  kubectl: RUN_KUBECTL_READ_ARM,
-  mongo: RUN_MONGO_COMMAND_ARM,
-} satisfies Record<AgentStatementLanguageId, McpStatementArm | null>);
+/** The arm whose tool is `tool`, or a named error when no language declares that tool. */
+export function mcpStatementArm(tool: McpStatementTool): McpStatementArm {
+  const arm = DECLARED_ARMS.find((declared) => declared.tool === tool);
+  if (arm === undefined) throw new Error(`no MCP statement arm for ${tool}`);
+  return arm;
+}
 
 /**
  * The arms that serve at least one engine, in record order: the statement tools this build registers. An arm whose

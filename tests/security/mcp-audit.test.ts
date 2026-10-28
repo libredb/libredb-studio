@@ -17,6 +17,7 @@ import { logger } from "@/lib/logger";
 import { McpConnectionContext } from "@/lib/mcp/context";
 import { InspectSchemaInputSchema, inspectSchema } from "@/lib/mcp/tools/inspect-schema";
 import { RunReadQueryInputSchema, runReadQuery } from "@/lib/mcp/tools/run-read-query";
+import type { McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import {
   countMethod,
   createDuckdbFile,
@@ -169,10 +170,13 @@ describe("every refusal exit writes one event with its reason", () => {
     const controller = new AbortController();
     controller.abort();
     const context = new McpConnectionContext({ username: "alice", role: "admin" });
-    await runReadQuery(RunReadQueryInputSchema.parse({ connection_id: "seed:shop", sql: "SELECT 1" }), {
-      context,
-      signal: controller.signal,
-    });
+    await runReadQuery(
+      RunReadQueryInputSchema.parse({ connection_id: "seed:shop", sql: "SELECT 1" }) as McpStatementInput,
+      {
+        context,
+        signal: controller.signal,
+      },
+    );
     expect(mcpLines()).toEqual([expect.objectContaining({ route: "mcp/decision", reason: "mcp_cancelled" })]);
   });
 

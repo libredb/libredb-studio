@@ -18,7 +18,7 @@ import type { DatabaseProvider } from "@/lib/db/types";
 import { McpConnectionContext } from "@/lib/mcp/context";
 import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
-import { RUN_MONGO_COMMAND_ARM, RunMongoCommandInputSchema } from "@/lib/mcp/tools/statement-arms";
+import { mcpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseType } from "@/lib/types";
 import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
@@ -34,6 +34,7 @@ pinMcpTestEnvironment();
 const dir = mkdtempSync(join(tmpdir(), "libredb-mcp-mongo-"));
 const serve = handlerServe(testAuthInfo());
 const server = languageServer("mongo");
+const RUN_MONGO_COMMAND_ARM = mcpStatementArm("run_mongo_command");
 const ORDERS = Array.from({ length: 150 }, (_, index) => ({
   _id: index + 1,
   status: index % 2 === 0 ? "paid" : "open",
@@ -117,7 +118,7 @@ function fakeContext(provider: object, type: DatabaseType = "mongodb"): McpConne
 }
 
 function direct(args: Record<string, unknown>, context: McpConnectionContext) {
-  const parsed = RunMongoCommandInputSchema.parse(args) as McpStatementInput;
+  const parsed = RUN_MONGO_COMMAND_ARM.inputSchema.parse(args) as McpStatementInput;
   return runStatement(RUN_MONGO_COMMAND_ARM, parsed, { context, signal: new AbortController().signal });
 }
 

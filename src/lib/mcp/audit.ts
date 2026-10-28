@@ -1,3 +1,4 @@
+import type { AgentLanguageMcpTool } from "@/lib/agent/languages/mcp";
 import { emitAuditEvent, type AuditReason } from "@/lib/audit";
 
 /**
@@ -10,12 +11,8 @@ import { emitAuditEvent, type AuditReason } from "@/lib/audit";
  * failure through: the caller decides, and every caller refuses to run what it cannot record.
  */
 
-export type McpToolAction =
-  | "list_connections"
-  | "inspect_schema"
-  | "run_read_query"
-  | "run_kubectl_read"
-  | "run_mongo_command";
+/** The tools' names: the two every engine shares, and each statement tool its language's MCP facet declares. */
+export type McpToolAction = "list_connections" | "inspect_schema" | AgentLanguageMcpTool;
 
 export const MCP_DECISION_TARGET = "mcp/decision";
 export const MCP_EXECUTION_TARGET = "mcp/execution";

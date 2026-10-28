@@ -1,9 +1,8 @@
-import type { z } from "zod";
 import type { DatabaseType } from "@/lib/types";
 import type { ToolResult } from "../output";
 import type { McpToolCall } from "../context";
-import { runStatement } from "./run-statement";
-import { RUN_READ_QUERY_ARM, RunReadQueryInputSchema } from "./statement-arms";
+import { runStatement, type McpStatementInput } from "./run-statement";
+import { mcpStatementArm } from "./statement-arms";
 
 /**
  * run_read_query (#246): the SQL arm of the MCP statement tools, run by the core in `run-statement.ts`.
@@ -18,14 +17,15 @@ import { RUN_READ_QUERY_ARM, RunReadQueryInputSchema } from "./statement-arms";
  * and a JSON command by run_mongo_command, so this tool refuses either connection and names that tool.
  */
 
-export { RunReadQueryInputSchema };
-export type RunReadQueryInput = z.infer<typeof RunReadQueryInputSchema>;
+const RUN_READ_QUERY_ARM = mcpStatementArm("run_read_query");
+
+export const RunReadQueryInputSchema = RUN_READ_QUERY_ARM.inputSchema;
 
 export const RUN_READ_QUERY_TYPES: readonly DatabaseType[] = RUN_READ_QUERY_ARM.types;
 /** Derived from the list, as src/lib/agent/posture.ts derives its own sentence. */
 export const RUN_READ_QUERY_ENGINES = RUN_READ_QUERY_ARM.engines;
 export const RUN_READ_QUERY_DESCRIPTION = RUN_READ_QUERY_ARM.description;
 
-export function runReadQuery(args: RunReadQueryInput, call: McpToolCall): Promise<ToolResult> {
+export function runReadQuery(args: McpStatementInput, call: McpToolCall): Promise<ToolResult> {
   return runStatement(RUN_READ_QUERY_ARM, args, call);
 }

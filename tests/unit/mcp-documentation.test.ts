@@ -11,9 +11,11 @@ import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
 import { DB_UI_CONFIG } from "@/lib/db-ui-config";
 import { mcpClientConfigs } from "@/lib/mcp/client-config";
 import { RUN_READ_QUERY_ENGINES, RUN_READ_QUERY_TYPES } from "@/lib/mcp/tools/run-read-query";
-import { RUN_KUBECTL_READ_ARM, RUN_MONGO_COMMAND_ARM, servingStatementArms } from "@/lib/mcp/tools/statement-arms";
+import { mcpStatementArm, servingStatementArms } from "@/lib/mcp/tools/statement-arms";
 import type { DatabaseType } from "@/lib/types";
 
+const RUN_KUBECTL_READ_ARM = mcpStatementArm("run_kubectl_read");
+const RUN_MONGO_COMMAND_ARM = mcpStatementArm("run_mongo_command");
 const ROOT = path.resolve(import.meta.dir, "../..");
 const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
 const MCP_DOC = read("docs/MCP.md");

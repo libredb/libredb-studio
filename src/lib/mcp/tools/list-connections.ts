@@ -18,7 +18,7 @@ import {
   resultBytes,
   type ToolResult,
 } from "../output";
-import { mcpStatementToolFor } from "./statement-arms";
+import { MCP_STATEMENT_TOOLS, mcpStatementToolFor } from "./statement-arms";
 
 /**
  * list_connections (#246): the connections this deployment opted in for MCP that the token's role
@@ -37,13 +37,13 @@ export const ListConnectionsInputSchema = z.object({
   offset: z.number().int().min(0).default(0),
 });
 
-const ListedConnectionSchema = z.object({
+export const ListedConnectionSchema = z.object({
   id: z.string(),
   name: z.string(),
   engine: z.string(),
   database: z.string().optional(),
   environment: z.string().optional(),
-  read_tool: z.enum(["run_read_query", "run_kubectl_read", "run_mongo_command"]).nullable(),
+  read_tool: z.enum(MCP_STATEMENT_TOOLS).nullable(),
 });
 
 const ListConnectionsOutputSchema = z.object({

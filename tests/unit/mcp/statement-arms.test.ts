@@ -1,36 +1,48 @@
 /**
- * The MCP statement arms: one per statement language, total over the language ids, each
- * reading its engines from the one served-engine resolver, and each non-SQL arm reading and fencing its statement with
- * the agent's own adapter, so an MCP client meets the agent's sentences.
+ * The MCP statement arms: one per statement language, total over the language ids, each built from its language's MCP
+ * facet, reading its engines from the one served-engine resolver, and each non-SQL arm reading and fencing its statement
+ * with the agent's own adapter, so an MCP client meets the agent's sentences. Every tool-name list MCP keeps is derived
+ * from the arms.
  */
 import { describe, expect, mock, test } from "bun:test";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { AGENT_LANGUAGE_COPY, AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
+import { AGENT_LANGUAGE_MCP_FACETS, type AgentLanguageMcpTool } from "@/lib/agent/languages/mcp";
 import { languageServer } from "@/lib/agent/languages/server";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { relationKindIds } from "@/lib/db/object-kinds";
+import type { McpToolAction } from "@/lib/mcp/audit";
 import type { McpConnectionContext } from "@/lib/mcp/context";
 import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
-import { MCP_TOOL_INPUT_SCHEMAS } from "@/lib/mcp/tools";
+import { MCP_TOOL_INPUT_SCHEMAS, type McpToolName } from "@/lib/mcp/tools";
+import { ListedConnectionSchema } from "@/lib/mcp/tools/list-connections";
 import { classifyReadQueryFailure } from "@/lib/mcp/tools/read-query-limits";
 import { RUN_READ_QUERY_DESCRIPTION, RUN_READ_QUERY_TYPES } from "@/lib/mcp/tools/run-read-query";
 import { registerStatementTools } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementEngines } from "@/lib/mcp/tools/served-engines";
 import {
   MCP_STATEMENT_ARMS,
+  MCP_STATEMENT_TOOLS,
+  type McpStatementTool,
+  mcpStatementArm,
   mcpStatementToolFor,
   mcpTablelessReadTool,
-  RUN_KUBECTL_READ_ARM,
-  RUN_MONGO_COMMAND_ARM,
-  RUN_READ_QUERY_ARM,
-  RunKubectlReadInputSchema,
-  RunMongoCommandInputSchema,
   servingStatementArms,
 } from "@/lib/mcp/tools/statement-arms";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
 
 const ARMS = Object.values(MCP_STATEMENT_ARMS).flatMap((arm) => (arm === null ? [] : [arm]));
+const RUN_READ_QUERY_ARM = mcpStatementArm("run_read_query");
+const RUN_KUBECTL_READ_ARM = mcpStatementArm("run_kubectl_read");
+const RUN_MONGO_COMMAND_ARM = mcpStatementArm("run_mongo_command");
+const RunKubectlReadInputSchema = RUN_KUBECTL_READ_ARM.inputSchema;
+const RunMongoCommandInputSchema = RUN_MONGO_COMMAND_ARM.inputSchema;
+
+/** True only when `A` and `B` are the same union, member for member. */
+type SameUnion<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+/** The tools every engine shares, which no language's facet declares. */
+const SHARED_TOOLS = ["list_connections", "inspect_schema"] as const;
 
 describe("MCP_STATEMENT_ARMS", () => {
   test("is total over the statement languages, and keyed by the language each arm reads", () => {
@@ -45,6 +57,25 @@ describe("MCP_STATEMENT_ARMS", () => {
     expect(MCP_STATEMENT_ARMS.kubectl).toBe(RUN_KUBECTL_READ_ARM);
     expect(MCP_STATEMENT_ARMS.mongo).toBe(RUN_MONGO_COMMAND_ARM);
     expect(ARMS.map((arm) => arm.tool)).toEqual(["run_read_query", "run_kubectl_read", "run_mongo_command"]);
+  });
+
+  test("is built from the languages' MCP facets, one arm per declared facet, in the registry's order", () => {
+    expect(Object.keys(MCP_STATEMENT_ARMS)).toEqual(Object.keys(AGENT_LANGUAGE_MCP_FACETS));
+    for (const [language, facet] of Object.entries(AGENT_LANGUAGE_MCP_FACETS)) {
+      const arm = MCP_STATEMENT_ARMS[language as keyof typeof MCP_STATEMENT_ARMS];
+      expect(arm === null).toBe(facet === null);
+      expect(arm?.tool).toBe(facet?.tool);
+      expect(arm?.title).toBe(facet?.title);
+      expect(arm?.paging).toBe(facet?.paging);
+      expect(arm?.holdsNoTables).toBe(facet?.holdsNoTables);
+      expect(arm?.inputSchema.shape[arm.argument]).toBe(facet?.statementInput as never);
+      expect(Object.hasOwn(arm?.inputSchema.shape ?? {}, "database")).toBe(facet?.takesDatabase);
+    }
+  });
+
+  test("finds an arm by its tool, and names the tool no language declares", () => {
+    for (const arm of ARMS) expect(mcpStatementArm(arm.tool)).toBe(arm);
+    expect(() => mcpStatementArm("run_nothing" as McpStatementTool)).toThrow("no MCP statement arm for run_nothing");
   });
 
   test.each(ARMS.map((arm) => [arm.tool, arm] as const))(
@@ -72,6 +103,28 @@ describe("MCP_STATEMENT_ARMS", () => {
       expect(arm.description.endsWith(MCP_UNTRUSTED_NOTICE)).toBe(true);
     },
   );
+});
+
+/**
+ * MCP writes no tool name by hand: the audit actions, the route's schema map and `list_connections`' `read_tool` are
+ * all derived from the arms, so a language that declares a facet reaches every one of them and edits none.
+ */
+describe("the tool names MCP keeps are the arms' own", () => {
+  test("the statement tools are the facets' tools, and the audit actions are those and the shared tools", () => {
+    const statementTools: SameUnion<McpStatementTool, AgentLanguageMcpTool> = true;
+    const actions: SameUnion<McpToolAction, (typeof SHARED_TOOLS)[number] | AgentLanguageMcpTool> = true;
+    const names: SameUnion<McpToolName, McpToolAction> = true;
+    expect([statementTools, actions, names]).toEqual([true, true, true]);
+    expect(MCP_STATEMENT_TOOLS).toEqual(ARMS.map((arm) => arm.tool));
+  });
+
+  test("list_connections' read_tool takes exactly the arms' tools, in record order", () => {
+    expect(ListedConnectionSchema.shape.read_tool.unwrap().options).toEqual(ARMS.map((arm) => arm.tool));
+  });
+
+  test("the route's schema map holds the shared tools, then exactly the arms' tools, in record order", () => {
+    expect(Object.keys(MCP_TOOL_INPUT_SCHEMAS)).toEqual([...SHARED_TOOLS, ...ARMS.map((arm) => arm.tool)]);
+  });
 });
 
 describe("the SQL arm", () => {
