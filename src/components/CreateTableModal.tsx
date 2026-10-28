@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Plus, Trash2, Table as TableIcon, Type, Settings2, LoaderCircle } from "lucide-react";
+import { Plus, Trash2, Table as TableIcon, Type, Settings2 } from "lucide-react";
 import { toast } from "sonner";
 import type { CreateTableSpec, ProviderCapabilities } from "@/lib/db/types";
 import { objectPathLabel } from "@/lib/db/object-path";
@@ -116,7 +116,6 @@ function CreateTableForm({
 }: CreateTableModalProps & { capabilities: ProviderCapabilities; spec: CreateTableSpec }) {
   const [tableName, setTableName] = useState("");
   const [columns, setColumns] = useState<ColumnDefinition[]>(() => defaultColumns(spec));
-  const [isSubmitting] = useState(false);
   const tableNameError = tableName.trim()
     ? lengthError(tableName, "Table", capabilities.maxIdentifierBytes)
     : "Table name is required";
@@ -441,14 +440,10 @@ function CreateTableForm({
           </Button>
           <Button
             onClick={handleCreate}
-            disabled={isSubmitting || !tableName.trim()}
+            disabled={!tableName.trim()}
             className="bg-brand-solid hover:bg-brand-solid-hover text-white text-xs font-medium gap-2 px-6"
           >
-            {isSubmitting ? (
-              <LoaderCircle strokeWidth={1.5} className="w-3 h-3 animate-spin" />
-            ) : (
-              <Plus strokeWidth={1.5} className="w-3 h-3" />
-            )}
+            <Plus strokeWidth={1.5} className="w-3 h-3" />
             CREATE TABLE
           </Button>
         </DialogFooter>
