@@ -138,6 +138,22 @@ describe("sanitizeAuditInput's duration exemption is keyed on the field name", (
     expect(result.target).toBe("42");
   });
 
+  test("writes a fixed marker for a value JSON.stringify refuses, so the field is still a string", () => {
+    const circular: Record<string, unknown> = { name: "loop" };
+    circular.self = circular;
+    const result = sanitizeAuditInput({
+      type: "maintenance",
+      action: "vacuum",
+      // Neither shape can come out of JSON.parse; a hand-built event could carry either.
+      target: circular as unknown as string,
+      user: BigInt(10) as unknown as string,
+      result: "success",
+    });
+
+    expect(result.target).toBe("[unserializable]");
+    expect(result.user).toBe("[unserializable]");
+  });
+
   test("leaves a genuine duration number untouched", () => {
     const result = sanitizeAuditInput({
       type: "maintenance",
