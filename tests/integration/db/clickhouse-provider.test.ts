@@ -1863,6 +1863,15 @@ describe("ClickHouseProvider maintenance", () => {
     expect(sqlWith("partCount")).toContain("database = 'demo' AND table = 'orders'");
   });
 
+  test("analyze with a container reads that database whole, without splitting a dotted name", async () => {
+    const provider = await connectProvider();
+
+    const result = await provider.runMaintenance("analyze", "a.b", "my.db");
+
+    expect(result.message).toBe("a.b: 2 active parts, 5 rows, 2.55 KB on disk");
+    expect(sqlWith("partCount")).toContain("database = 'my.db' AND table = 'a.b'");
+  });
+
   test("analyze reports honestly when the table has no parts at all", async () => {
     const provider = await connectProvider();
     replyFor = (sql) =>
