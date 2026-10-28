@@ -505,10 +505,10 @@ await check("the key walk folds the list into one entry, and the bare key value 
         "entries, the walk was fixed and this check, its docblock and scanKeysPage's all have to be rewritten",
     );
 
-    // And the documented spelling, measured: the bare key value becomes an XML element name, so
-    // the read is built as `<ge-0%2F0%2F1>` and the device's answer cannot be parsed. The user is
-    // shown the parser's own sentence rather than a stated refusal, which is the second half of
-    // the entry in SONRAKI-PRLAR.md.
+    // And the documented spelling, measured: the bare key value would become an XML element name,
+    // which is no YANG identifier, so the key path is refused before any read with a sentence that
+    // names the segment. Before the identifier rule the read was built as `<ge-0%2F0%2F1>` and the
+    // user saw the XML parser's sentence instead; the walk itself is still the gap above.
     let refused: Error | null = null;
     try {
       await provider.readObjectSource([`running/${MODULE}:interfaces/ge-0%2F0%2F1`], "key");
@@ -518,8 +518,8 @@ await check("the key walk folds the list into one entry, and the bare key value 
     assert(refused !== null, "the bare key value was accepted, so the documented walk now works");
     assert(refused instanceof QueryError, `it failed as a ${refused.constructor.name}, which reaches no user`);
     assert(
-      /Invalid character sequence|expected element tag end/.test(refused.message),
-      `the refusal is no longer the parser's sentence but: ${refused.message}`,
+      /the path segment "ge-0%2F0%2F1" is not a YANG identifier/.test(refused.message),
+      `the refusal no longer names the segment as no YANG identifier: ${refused.message}`,
     );
   });
 });
