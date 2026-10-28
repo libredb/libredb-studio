@@ -73,7 +73,7 @@ describe("resolveSqlGrammar", () => {
   // dialect's rule from a neighbouring one is exactly what this milestone forbids.
   // They keep today's reading, which costs them nothing they had.
 
-  test.each<DatabaseType>(["couchbase", "druid", "libredb", "mongodb", "redis"])(
+  test.each<DatabaseType>(["druid", "libredb", "mongodb", "redis"])(
     "%s is left at the compatibility default",
     (type) => {
       expect(resolveSqlGrammar(type)).toBe(DEFAULT_SQL_GRAMMAR);
@@ -413,9 +413,12 @@ const GRAMMAR_COVERAGE: Record<DatabaseType, "established" | "default"> = {
   // must be closed by a newline (at end of input it is a syntax error), which the
   // provider's own `prepareQuery` handles because no field here can express it.
   cassandra: "established",
+  // Read off the SQL++ lexer (`n1ql.nex`) and probed 2026-10-28 on Couchbase Server 8.0.2 Community over
+  // `POST /query/service`; see the couchbase block below and COUCHBASE_GRAMMAR in
+  // `providers/document/couchbase/sql-grammar.ts` for the statement behind each fact.
+  couchbase: "established",
   // No authoritative source was established for these, so they read as SQL under
   // the compatibility grammar. See the module doc in `grammar.ts`.
-  couchbase: "default",
   druid: "default",
   libredb: "default",
   // Not SQL at all - see SQL_TEXT_COVERAGE below.
@@ -637,13 +640,14 @@ describe("backslashAlwaysEscapes", () => {
     expect(DEFAULT_SQL_GRAMMAR.backslashAlwaysEscapes).toBe(false);
   });
 
-  test.each(["databend", "bigquery", "snowflake", "spark"] as const)("%s declares true", (type) => {
+  test.each(["databend", "bigquery", "snowflake", "spark", "couchbase"] as const)("%s declares true", (type) => {
     expect(resolveSqlGrammar(type).backslashAlwaysEscapes).toBe(true);
   });
 
   test.each(
     (Object.keys(GRAMMAR_COVERAGE) as DatabaseType[]).filter(
-      (type) => type !== "databend" && type !== "bigquery" && type !== "snowflake" && type !== "spark",
+      (type) =>
+        type !== "databend" && type !== "bigquery" && type !== "snowflake" && type !== "spark" && type !== "couchbase",
     ),
   )("%s declares false", (type) => {
     expect(resolveSqlGrammar(type).backslashAlwaysEscapes).toBe(false);
@@ -673,10 +677,10 @@ describe("dollarTags and doubleQuoteBackslashEscapes", () => {
   );
 });
 
-// Four facts only Spark's lexer has, each absent (false) on every other row: raw strings (`rawStrings`), optimizer
+// Four facts Spark's lexer has, each absent (false) on every other row but one: raw strings (`rawStrings`), optimizer
 // hints lexed as code (`hintsAreCode`), a `--` comment a backslash continues (`lineCommentBackslashContinues`) and one
-// a lone carriage return ends (`lineCommentEndsAtCarriageReturn`).
-describe("the reader facts only Spark's row declares", () => {
+// a lone carriage return ends (`lineCommentEndsAtCarriageReturn`), which the SQL++ lexer shares.
+describe("the reader facts Spark's row declares", () => {
   test("the compatibility default declares none of the four", () => {
     expect(DEFAULT_SQL_GRAMMAR.rawStrings).toBeUndefined();
     expect(DEFAULT_SQL_GRAMMAR.hintsAreCode).toBeUndefined();
@@ -684,15 +688,22 @@ describe("the reader facts only Spark's row declares", () => {
     expect(DEFAULT_SQL_GRAMMAR.lineCommentEndsAtCarriageReturn).toBeUndefined();
   });
 
-  test.each((Object.keys(GRAMMAR_COVERAGE) as DatabaseType[]).filter((type) => type !== "spark"))(
-    "%s declares none of the four",
-    (type) => {
-      expect(resolveSqlGrammar(type).rawStrings).toBeUndefined();
-      expect(resolveSqlGrammar(type).hintsAreCode).toBeUndefined();
-      expect(resolveSqlGrammar(type).lineCommentBackslashContinues).toBeUndefined();
-      expect(resolveSqlGrammar(type).lineCommentEndsAtCarriageReturn).toBeUndefined();
-    },
-  );
+  test.each(
+    (Object.keys(GRAMMAR_COVERAGE) as DatabaseType[]).filter((type) => type !== "spark" && type !== "couchbase"),
+  )("%s declares none of the four", (type) => {
+    expect(resolveSqlGrammar(type).rawStrings).toBeUndefined();
+    expect(resolveSqlGrammar(type).hintsAreCode).toBeUndefined();
+    expect(resolveSqlGrammar(type).lineCommentBackslashContinues).toBeUndefined();
+    expect(resolveSqlGrammar(type).lineCommentEndsAtCarriageReturn).toBeUndefined();
+  });
+
+  test("couchbase declares only that a carriage return ends a `--` comment", () => {
+    // The SQL++ line comment is `--[^\n\r]*`, so a carriage return ends it and a backslash continues nothing.
+    expect(resolveSqlGrammar("couchbase").rawStrings).toBeUndefined();
+    expect(resolveSqlGrammar("couchbase").hintsAreCode).toBeUndefined();
+    expect(resolveSqlGrammar("couchbase").lineCommentBackslashContinues).toBeUndefined();
+    expect(resolveSqlGrammar("couchbase").lineCommentEndsAtCarriageReturn).toBe(true);
+  });
 
   test("spark declares all four", () => {
     expect(resolveSqlGrammar("spark").rawStrings).toBe(true);

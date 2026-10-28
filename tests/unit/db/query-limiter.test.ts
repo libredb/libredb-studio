@@ -1334,7 +1334,8 @@ describe("a named dialect changes the reading; naming none does not", () => {
   // an answer this milestone owes its readers rather than an accident.
   test("a dialect left at the compatibility default answers as a dialect-less call does", () => {
     expect(analyzeQuery(HIDDEN_DELETE, "druid").type).toBe("SELECT");
-    expect(applyQueryLimit("SELECT * FROM t # note", 500, 0, {}, "couchbase").wasLimited).toBe(false);
+    // LibreDB rather than Couchbase, whose `#` rule is established now: SQL++ reads it as code.
+    expect(applyQueryLimit("SELECT * FROM t # note", 500, 0, {}, "libredb").wasLimited).toBe(false);
   });
 });
 

@@ -1266,6 +1266,34 @@ describe("CouchbaseProvider query preparation", () => {
     expect(prepared.wasLimited).toBe(true);
   });
 
+  // The limiter reads the statement under the SQL++ grammar row, so a subscript key holding a `]` and a literal
+  // holding a backslash-escaped quote end where Couchbase ends them, and the bound is written after them. The
+  // compatibility default read both as unterminated and left the read unbounded.
+  test("bounds a read whose subscript key or literal the default could not close", () => {
+    const provider = new CouchbaseProvider(makeConnection());
+
+    for (const query of [
+      "SELECT h.reviews[0]['a]b'] FROM `travel`.`inventory`.`hotel` AS h",
+      "SELECT * FROM `travel`.`inventory`.`hotel` WHERE name = 'O\\'Brien'",
+      'SELECT * FROM `travel`.`inventory`.`hotel` WHERE name = "say \\"hi\\""',
+    ]) {
+      const prepared = provider.prepareQuery(query, { limit: 25 });
+
+      expect(prepared.query).toBe(`${query} LIMIT 25`);
+      expect(prepared.wasLimited).toBe(true);
+    }
+  });
+
+  test("keeps a SQL++ bound written after its OFFSET", () => {
+    const provider = new CouchbaseProvider(makeConnection());
+
+    const query = "SELECT * FROM `travel`.`inventory`.`hotel` OFFSET 5 LIMIT 10";
+    const prepared = provider.prepareQuery(query, { limit: 25 });
+
+    expect(prepared.query).toBe(query);
+    expect(prepared.wasLimited).toBe(false);
+  });
+
   test("leaves a mutation untouched", () => {
     const provider = new CouchbaseProvider(makeConnection());
 
