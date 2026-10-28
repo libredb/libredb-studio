@@ -326,7 +326,9 @@ describe("inspect_schema on mongo", () => {
     const readAllowance = new RunReadAllowance(10);
     const h = harness({ readAllowance });
     await mongoInspectSchemaTool(h.context, {}, null);
-    expect((h.readCatalogReadOnly.mock.calls[0]?.[1] as ReadOnlyStatementBudget).readAllowance).toBe(readAllowance);
+    expect((h.readCatalogReadOnly.mock.calls[0]?.[1] as ReadOnlyStatementBudget | undefined)?.readAllowance).toBe(
+      readAllowance,
+    );
   });
 
   test("a database-scoped read asks the provider for the bound database's collections, never a guessed one", async () => {

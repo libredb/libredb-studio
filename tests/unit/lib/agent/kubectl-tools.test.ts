@@ -324,9 +324,8 @@ describe("inspect_usage", () => {
     const readAllowance = new RunReadAllowance(10);
     await inspectUsageTool({ ...h.context, readAllowance }, { namespace: "shop" });
 
-    expect(
-      ((h.readClusterUsage.mock.calls[0] as unknown[] | undefined)?.[1] as ReadOnlyStatementBudget).readAllowance,
-    ).toBe(readAllowance);
+    const [, budget] = h.readClusterUsage.mock.calls[0] as unknown as [unknown, ReadOnlyStatementBudget];
+    expect(budget.readAllowance).toBe(readAllowance);
   });
 
   test("metrics unavailable is a reading-refused METRICS_UNAVAILABLE naming metrics-server", async () => {
@@ -468,9 +467,8 @@ describe("profile_workloads", () => {
     const readAllowance = new RunReadAllowance(10);
     await profileWorkloadsTool({ ...h.context, readAllowance }, { namespace: "shop" });
 
-    expect(
-      ((h.readWorkloadProfile.mock.calls[0] as unknown[] | undefined)?.[1] as ReadOnlyStatementBudget).readAllowance,
-    ).toBe(readAllowance);
+    const [, budget] = h.readWorkloadProfile.mock.calls[0] as unknown as [unknown, ReadOnlyStatementBudget];
+    expect(budget.readAllowance).toBe(readAllowance);
   });
 
   test("an empty namespace is a completed profile of no rows", async () => {
