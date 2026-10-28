@@ -5,8 +5,8 @@
  * or an eviction, is refused: its cookie is cleared, so the browser signs in again silently, and the retry marker
  * remembers the second of that miss. A session minted at or after the marker that misses again trips the loop guard,
  * so the OIDC login route shows the sign-in page instead of another round trip. A live record clears the marker. A
- * session without a subject, the break-glass password sign-in, is served as before, and with the review off nothing
- * changes.
+ * session without a subject, such as a password session minted before the review was switched on, is refused and its
+ * cookie cleared, because no review decided its role, and with the review off nothing changes.
  */
 import { afterEach, beforeEach, describe, expect, mock, setSystemTime, spyOn, test } from "bun:test";
 
@@ -113,13 +113,16 @@ describe("an OIDC session with the review on", () => {
   });
 });
 
-describe("what the review leaves alone", () => {
-  test("a session without an identity provider subject, the break-glass password sign-in", async () => {
+describe("a session without an identity provider subject, with the review on", () => {
+  test("is refused and its cookie cleared, an admin password session minted before the switch included", async () => {
     await signedInAt(T - 60_000, { role: "admin", username: "admin@libredb.org" });
-    expect(await getSession()).toMatchObject({ role: "admin", username: "admin@libredb.org" });
-    expect(writes).toEqual([]);
+    expect(await getSession()).toBeNull();
+    expect(names("delete")).toEqual(["auth-token"]);
+    expect(names("set")).toEqual([]);
   });
+});
 
+describe("what the review leaves alone", () => {
   test("every session while the review is off", async () => {
     process.env.KUBERNETES_ACCESS_REVIEW = "off";
     await signedInAt(T - 600_000);

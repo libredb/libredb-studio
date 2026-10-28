@@ -13,8 +13,10 @@
  * so a person who signs in by hand gets one more silent attempt. A session minted before the marker, another tab of
  * the same browser refused after the same restart, never escalates it, and a session with a live record clears it.
  *
- * A session without an identity provider subject, such as the break-glass password sign-in, was never reviewed and is
- * kept: every reviewed connection is denied to it (gate.ts).
+ * A session without an identity provider subject was signed in by no review, so no review decided its role either: a
+ * password session minted before the review was switched on, which may be an admin. It is refused as well, leaving the
+ * marker as it is, so it reaches no route while the review is on, as a session without a subject reaches none under
+ * governance; the password route refuses to sign anyone in while the review is on.
  */
 import { recordedGroups } from "./groups";
 
@@ -50,7 +52,7 @@ export function groupsRecordCheck(
   marker: string | undefined,
   nowMs = Date.now(),
 ): GroupsRecordCheck {
-  if (!session.idpSubject) return { kind: "kept", clearMarker: false };
+  if (!session.idpSubject) return { kind: "refused", marker: null };
   if (recordedGroups(session.idpIssuer, session.idpSubject, nowMs) !== null) {
     return { kind: "kept", clearMarker: marker !== undefined };
   }

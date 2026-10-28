@@ -10,6 +10,7 @@ import { consumeRateLimit, resetRateLimit } from "@/lib/api/rate-limit";
 import { hmacHex, secretsMatch } from "@/lib/auth-compare";
 import { emitAuditEvent, MAX_AUDIT_FIELD_LENGTH, type AuditReason } from "@/lib/audit";
 import { governanceEnabled } from "@/lib/governance/config";
+import { accessReviewEnabled } from "@/lib/kubernetes-access/config";
 import { logger } from "@/lib/logger";
 import { claimTotpStep, verifyTotp } from "@/lib/totp";
 
@@ -41,11 +42,12 @@ export async function POST(request: NextRequest) {
     // which the catch below cannot reach for the same reason it cannot be enforced afterwards.
     enforceLoginLimit("login_client", clientKey, "anonymous", ip, ROUTE);
 
-    // Under governance the identity provider is the only way in (docs/GOVERNANCE.md), so every caller is refused here,
-    // before the body is read, even when the boot check that refuses ADMIN_PASSWORD was bypassed. The refusal is a
-    // wasted attempt from this address, as a malformed body is: it spends the client bucket, so a flood is refused
-    // with 429 and its audit lines stay bounded.
-    if (governanceEnabled()) {
+    // Under governance the identity provider is the only way in (docs/GOVERNANCE.md), and so it is with the Kubernetes
+    // access review on, where every sign-in passes the review and admin comes only from it (docs/SEED_CONNECTIONS.md).
+    // So every caller is refused here, before the body is read, even when the boot check that refuses ADMIN_PASSWORD
+    // was bypassed. The refusal is a wasted attempt from this address, as a malformed body is: it spends the client
+    // bucket, so a flood is refused with 429 and its audit lines stay bounded.
+    if (governanceEnabled() || accessReviewEnabled()) {
       consumeRateLimit("login_client", clientKey);
       // Isolated like every other emit in this route: the 403 below is already decided.
       try {

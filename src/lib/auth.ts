@@ -124,7 +124,8 @@ export async function readSession(): Promise<SessionReading> {
   if (allowed && !accessReviewEnabled()) return { kind: "authenticated", session };
   if (allowed) {
     // With the Kubernetes access review on, no review runs without the groups record of the session's subject, which
-    // only this process's memory holds: a session that lost it signs in again (src/lib/kubernetes-access/session-guard.ts).
+    // only this process's memory holds: a session that lost it signs in again, and one without a subject has none
+    // (src/lib/kubernetes-access/session-guard.ts).
     const check = groupsRecordCheck(session, cookieStore.get(ACCESS_REVIEW_RETRY_COOKIE)?.value);
     const markerPath = getBasePath() || "/";
     if (check.kind === "kept") {
@@ -140,7 +141,7 @@ export async function readSession(): Promise<SessionReading> {
         path: markerPath,
       });
     }
-    logger.info("Kubernetes access review: the session's groups record is gone, so it signs in again", {
+    logger.info("Kubernetes access review: the session has no groups record, so it signs in again", {
       route: "auth",
       loop: check.marker === "loop",
     });

@@ -476,6 +476,63 @@ describe("POST /api/auth/login", () => {
     });
   });
 
+  // With the Kubernetes access review on, a Studio admin is only a person the review allows to update Studio's
+  // Deployment, and every sign-in passes the sign-in review, both at the OIDC callback (docs/SEED_CONNECTIONS.md), so
+  // the password route refuses every caller before it reads a credential, as under governance, even when the boot
+  // check that refuses ADMIN_PASSWORD and USER_PASSWORD was bypassed, as here.
+  describe("with the Kubernetes access review on", () => {
+    const DISABLED_MESSAGE = "Password sign-in is disabled: this server signs in through the identity provider only";
+    const savedSwitch = process.env.KUBERNETES_ACCESS_REVIEW;
+    let logSpy: ReturnType<typeof spyOn<Console, "log">>;
+
+    beforeEach(() => {
+      process.env.KUBERNETES_ACCESS_REVIEW = "on";
+      logSpy = spyOn(console, "log").mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      logSpy.mockRestore();
+      if (savedSwitch === undefined) delete process.env.KUBERNETES_ACCESS_REVIEW;
+      else process.env.KUBERNETES_ACCESS_REVIEW = savedSwitch;
+    });
+
+    function attempt(email: string): Promise<Response> {
+      return POST(
+        new Request("http://localhost:3000/api/auth/login", {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-forwarded-for": "203.0.113.91" },
+          body: JSON.stringify({ email, password: "LibreDB.2026" }),
+        }) as never,
+      );
+    }
+
+    test("answers 403 to valid admin and user credentials, mints no session and audits password_login_disabled", async () => {
+      const admin = await attempt("admin@libredb.org");
+      const user = await attempt("user@libredb.org");
+
+      const refused = { status: 403, body: { success: false, message: DISABLED_MESSAGE } };
+      expect({ status: admin.status, body: await parseResponseJSON(admin) }).toEqual(refused);
+      expect({ status: user.status, body: await parseResponseJSON(user) }).toEqual(refused);
+      expect(mockLogin).not.toHaveBeenCalled();
+      const reasons = logSpy.mock.calls.map((call) => (JSON.parse(String(call[0])) as { reason?: string }).reason);
+      expect(reasons).toEqual(["password_login_disabled", "password_login_disabled"]);
+    });
+
+    test("a switch value Studio does not know counts as on and refuses too", async () => {
+      process.env.KUBERNETES_ACCESS_REVIEW = "enabled";
+
+      expect((await attempt("admin@libredb.org")).status).toBe(403);
+      expect(mockLogin).not.toHaveBeenCalled();
+    });
+
+    test("the control: with the review off the same credentials sign in", async () => {
+      process.env.KUBERNETES_ACCESS_REVIEW = "off";
+
+      expect((await attempt("admin@libredb.org")).status).toBe(200);
+      expect(mockLogin).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe("TOTP second factor", () => {
     /** RFC 6238 Appendix B seed; "287082" is its six-digit code for the step containing T=59. */
     const SECRET = RFC6238_SECRET;

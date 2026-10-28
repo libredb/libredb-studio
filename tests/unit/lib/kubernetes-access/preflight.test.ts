@@ -3,9 +3,9 @@
  *
  * With `KUBERNETES_ACCESS_REVIEW` on, or set to a value Studio does not know, an environment that contradicts the
  * review refuses to start, naming every variable to fix in one banner and never quoting a secret: governance beside
- * it, a sign-in that is not OIDC, a role claim, the bearer channel, MCP or the agent switched on, a session longer than
- * 900 seconds, a setting of the review that is missing or invalid, and a token or CA file that cannot be used. With the
- * review off it checks nothing.
+ * it, a sign-in that is not OIDC, a password, a role claim, the bearer channel, MCP or the agent switched on, a session
+ * longer than 900 seconds, a setting of the review that is missing or invalid, and a token or CA file that cannot be
+ * used. With the review off it checks nothing.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -17,6 +17,7 @@ import { loadTlsFixtures } from "../../../helpers/tls-fixtures";
 /** Recognisable on sight as test values; the banner must never carry one. */
 const TOKEN = "not-a-real-token-preflight";
 const SECRET = "not-a-real-secret-preflight";
+const PASSWORD = "not-a-real-password-preflight";
 
 const dir = mkdtempSync(path.join(tmpdir(), "libredb-access-review-preflight-"));
 
@@ -44,7 +45,10 @@ function reviewed(): Record<string, string> {
   };
 }
 
+// tests/setup.ts sets both passwords for every suite; a Rancher-mode install has neither.
 const UNSET = [
+  "ADMIN_PASSWORD",
+  "USER_PASSWORD",
   "GOVERNANCE_SOURCE",
   "OIDC_ROLE_CLAIM",
   "OIDC_BEARER_AUDIENCE",
@@ -107,6 +111,8 @@ const REFUSED: readonly { readonly variable: string; readonly value: string | un
   { variable: "GOVERNANCE_SOURCE", value: "postgres", says: "GOVERNANCE_SOURCE is set" },
   { variable: "NEXT_PUBLIC_AUTH_PROVIDER", value: "local", says: 'NEXT_PUBLIC_AUTH_PROVIDER is "local"' },
   { variable: "NEXT_PUBLIC_AUTH_PROVIDER", value: undefined, says: "NEXT_PUBLIC_AUTH_PROVIDER is unset" },
+  { variable: "ADMIN_PASSWORD", value: PASSWORD, says: "ADMIN_PASSWORD is set" },
+  { variable: "USER_PASSWORD", value: PASSWORD, says: "USER_PASSWORD is set" },
   { variable: "OIDC_ROLE_CLAIM", value: "groups", says: "OIDC_ROLE_CLAIM is set" },
   { variable: "OIDC_BEARER_AUDIENCE", value: "libredb-studio-api", says: "OIDC_BEARER_AUDIENCE is set" },
   { variable: "LIBREDB_MCP_ENABLED", value: "true", says: 'LIBREDB_MCP_ENABLED is "true"' },
@@ -182,6 +188,7 @@ describe("verifyAccessReviewEnvAtBoot", () => {
 
   test("every problem is named in one banner, which quotes no secret", () => {
     process.env.GOVERNANCE_SOURCE = "postgres";
+    process.env.ADMIN_PASSWORD = PASSWORD;
     process.env.OIDC_ROLE_CLAIM = "groups";
     process.env.LIBREDB_AGENT_ENABLED = "true";
     process.env.AUTH_SESSION_TTL_SECONDS = "86400";
@@ -190,13 +197,20 @@ describe("verifyAccessReviewEnvAtBoot", () => {
     expect(run.exitCalls).toEqual([1]);
     expect(run.problems.map((problem) => problem.split(" ")[0])).toEqual([
       "GOVERNANCE_SOURCE",
+      "ADMIN_PASSWORD",
       "OIDC_ROLE_CLAIM",
       "LIBREDB_AGENT_ENABLED",
       "AUTH_SESSION_TTL_SECONDS",
       "KUBERNETES_ACCESS_REVIEW_API_URL",
     ]);
     expect(run.banner).toContain("KUBERNETES_ACCESS_REVIEW switches the Kubernetes access review on");
-    for (const secret of [SECRET, TOKEN]) expect(run.banner).not.toContain(secret);
+    for (const secret of [SECRET, TOKEN, PASSWORD]) expect(run.banner).not.toContain(secret);
+  });
+
+  test("an empty password counts as unset, as it does for sign-in", () => {
+    process.env.ADMIN_PASSWORD = "";
+    process.env.USER_PASSWORD = "";
+    expect(runPreflight().passed).toBe(true);
   });
 
   test("the switch's own spellings that turn MCP or the agent off pass", () => {

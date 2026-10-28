@@ -6,7 +6,8 @@
  * anew; the retry marker cookie remembers when that first miss happened. A session minted at or after that moment that
  * misses again is the second miss in a row: re-authenticating would loop, so the marker is set to `loop`, and the OIDC
  * login route then shows the sign-in page instead of going to the provider. A session minted before the marker,
- * another tab of the same browser after a restart, never escalates it, and a live record clears it.
+ * another tab of the same browser after a restart, never escalates it, and a live record clears it. A session without
+ * an identity provider subject was signed in by no review, so it is refused without touching the marker.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { recordGroups, resetGroupRecords } from "@/lib/kubernetes-access/groups";
@@ -41,10 +42,11 @@ describe("a session whose subject has a live record", () => {
 });
 
 describe("a session without an identity provider subject", () => {
-  test("is kept: it was never reviewed, and every reviewed connection is denied to it", () => {
-    expect(groupsRecordCheck({ iat: T_SECONDS - 60 }, undefined, T)).toEqual({
-      kind: "kept",
-      clearMarker: false,
+  test("is refused, leaving the marker as it is: no review decided its role, so it is no session of this mode", () => {
+    expect(groupsRecordCheck({ iat: T_SECONDS - 60 }, undefined, T)).toEqual({ kind: "refused", marker: null });
+    expect(groupsRecordCheck({ idpSubject: "", idpIssuer: ISSUER }, String(T_SECONDS - 3), T)).toEqual({
+      kind: "refused",
+      marker: null,
     });
   });
 });

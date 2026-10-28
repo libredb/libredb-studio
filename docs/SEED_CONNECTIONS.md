@@ -1143,7 +1143,7 @@ Its roles are `*`, so the review is its only gate, for admins and users alike:
 - The review is a SubjectAccessReview with `user` set to the session's identity provider subject, the ID token's `sub`, and `groups` set to the groups of the ID token's `groups` claim at sign-in, and nothing else: no header, cookie field or display name reaches it.
 - This is the identity Rancher impersonates on a downstream cluster, the Rancher user id with its group principals, so for the same Secret the review answers what Rancher answers. A Rancher user with no role in the cluster gets no reviewed connection.
 - Every error, timeout, answer that is not 2xx and answer that is malformed or for another review denies.
-- A session without an identity provider subject, the break-glass password sign-in included, and a session without a groups record are denied without a request.
+- A session without an identity provider subject or a groups record is denied without a request.
 - Opening one the review denies answers exactly like an id that does not exist: `404 CONNECTION_NOT_FOUND`. With the review on, so does a seed the caller's role may not see, which answers 403 otherwise, so no answer tells a caller which ids exist; each miss is audited as `permission_denied` on the target `kubernetes-access/connection`.
 - An answer is kept for `KUBERNETES_ACCESS_REVIEW_CACHE_SECONDS`, 30 by default and at most 60, per subject, set of groups and Secret. A role or binding removed in the cluster reaches the next list or open within that time; an open tab drops the connection at its next list refresh after it ([In an open tab](#in-an-open-tab)).
 - With the review off, a reviewed connection is shown to the admin role only, as a discovered CapRover connection is.
@@ -1161,12 +1161,13 @@ The callback refuses, with `oidc_no_role`, a subject that is empty, starts with 
 It then asks the sign-in review, `KUBERNETES_ACCESS_REVIEW_SIGN_IN`, and refuses with `oidc_no_role` a person it does not allow, a failed review included.
 The review is written as `kubectl auth can-i` takes it, `<verb> <resource>[.<group>][/<name>] [-n <namespace>]`, and defaults to `list navlinks.ui.cattle.io`: on Rancher every role a cluster grants allows it, and a Rancher user without a role in the cluster does not.
 On a cluster without Rancher, set it to something every person meant to use Studio may do, such as `get services/libredb-studio -n libredb-studio` with a RoleBinding for them, or only cluster administrators will pass.
+The identity provider is the only way in: password sign-in, which no review would see, answers 403 with reason `password_login_disabled` before it reads a credential, as under governance.
 
 ### Admin
 
 With the review on, a Studio admin is whoever the review allows to `update` Studio's own Deployment, named in `KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT`, decided once at each sign-in.
 Whoever may update that Deployment can already change Studio's environment, image and mounts, so the rule grants nothing the pod spec does not.
-No identity provider claim makes an admin: `OIDC_ROLE_CLAIM` is refused at boot, and the callback does not read it.
+No identity provider claim and no password makes an admin: `OIDC_ROLE_CLAIM`, `ADMIN_PASSWORD` and `USER_PASSWORD` are refused at boot, the callback does not read a role claim, and password sign-in is off.
 A sign-in whose review fails is a user.
 
 ### Sessions
@@ -1176,6 +1177,7 @@ A restart empties that memory, so a session whose record is gone is refused once
 If the record is gone again right after that sign-in, the login page says so with `oidc_groups_lost` instead of going round again; that happens with more than one replica, which the review does not support.
 The memory holds the records of at most 4096 subjects; past that the oldest record goes first, and its session signs in again.
 A session keeps the groups it signed in with, and signing out of the identity provider does not end a Studio session, so the review's mode allows a session of at most 900 seconds (`AUTH_SESSION_TTL_SECONDS`).
+A session without an identity provider subject, such as a password session minted before the review was switched on, was decided by no review, so it is refused and its cookie cleared.
 
 ### What the review switches off
 
@@ -1189,6 +1191,7 @@ With the review on, the server refuses to start, naming every variable to fix, w
 - `KUBERNETES_ACCESS_REVIEW` holds a value other than `on`, `true`, `1`, `off`, `false` or `0` (any other value counts as on, so a typo fails closed);
 - `GOVERNANCE_SOURCE` is set;
 - `NEXT_PUBLIC_AUTH_PROVIDER` is not `oidc`;
+- `ADMIN_PASSWORD` or `USER_PASSWORD` is set;
 - `OIDC_ROLE_CLAIM` or `OIDC_BEARER_AUDIENCE` is set;
 - `LIBREDB_MCP_ENABLED` or `LIBREDB_AGENT_ENABLED` switches either on;
 - `AUTH_SESSION_TTL_SECONDS` is unset, which keeps 86400, or above 900;

@@ -2,11 +2,11 @@
  * Boot-time Kubernetes access review preflight (docs/SEED_CONNECTIONS.md, "Kubernetes access review").
  *
  * With the review on, a connection that names its Kubernetes Secret is the review's alone and a Studio admin is
- * whoever may update Studio's Deployment. An environment that also runs governance, signs in without OIDC, maps an
- * admin role from an identity provider claim, takes bearer access tokens, runs MCP or the agent, keeps a session longer
- * than 900 seconds, or leaves a setting of the review unusable contradicts that, and each would surface later as a way
- * around the review or as a review that denies everyone while the health check stays green. So this check refuses to
- * start instead, naming every variable to fix in one banner and never quoting a secret.
+ * whoever may update Studio's Deployment. An environment that also runs governance, signs in without OIDC, keeps a
+ * password account, maps an admin role from an identity provider claim, takes bearer access tokens, runs MCP or the
+ * agent, keeps a session longer than 900 seconds, or leaves a setting of the review unusable contradicts that, and each
+ * would surface later as a way around the review or as a review that denies everyone while the health check stays
+ * green. So this check refuses to start instead, naming every variable to fix in one banner and never quoting a secret.
  *
  * The session bound is the owner's rule for this mode: signing out of the identity provider does not end a Studio
  * session, and a review asserts the groups the session's sign-in recorded, so the session lifetime is how long a
@@ -104,6 +104,14 @@ function accessReviewEnvProblems(): string[] {
     problems.push(
       `NEXT_PUBLIC_AUTH_PROVIDER is ${shown(process.env.NEXT_PUBLIC_AUTH_PROVIDER)}: the access review asks about the identity provider subject an OIDC sign-in gives a session, so set it to oidc`,
     );
+  }
+  // An empty password counts as unset, as it does for sign-in (src/lib/local-auth.ts).
+  for (const name of ["ADMIN_PASSWORD", "USER_PASSWORD"] as const) {
+    if (process.env[name]) {
+      problems.push(
+        `${name} is set: with the access review on, every sign-in goes through the identity provider and its reviews, and a Studio admin is whoever may update Studio's Deployment, so unset it`,
+      );
+    }
   }
   if (process.env.OIDC_ROLE_CLAIM?.trim()) {
     problems.push(
