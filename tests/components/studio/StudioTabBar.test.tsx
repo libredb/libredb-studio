@@ -514,6 +514,17 @@ describe("StudioTabBar", () => {
       expect(onSetActiveTabId).toHaveBeenCalledWith("tab-1");
     });
 
+    test("any other key leaves the active tab alone and keeps its default action", () => {
+      const onSetActiveTabId = mock(() => {});
+      const props = createDefaultProps({ activeTabId: "tab-1", onSetActiveTabId });
+      const { getAllByRole } = render(<StudioTabBar {...props} />);
+      const tabs = getAllByRole("tab");
+      // fireEvent answers false only when a handler called preventDefault.
+      expect(fireEvent.keyDown(tabs[0], { key: "ArrowDown" })).toBe(true);
+      expect(fireEvent.keyDown(tabs[0], { key: "a" })).toBe(true);
+      expect(onSetActiveTabId).not.toHaveBeenCalled();
+    });
+
     test("the tab accessible name is not contaminated by nested controls", () => {
       const props = createDefaultProps();
       const { getAllByRole } = render(<StudioTabBar {...props} />);
