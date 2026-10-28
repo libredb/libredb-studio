@@ -2923,6 +2923,30 @@ describe("ConnectionModal: a field is drawn where its declared placement says", 
     expect(queryByRole("button", { name: /Advanced/ })).toBeNull();
   });
 
+  /** The SET mark on the Advanced button: there while a field the engine places behind it holds a value. */
+  const setMark = (container: HTMLElement) =>
+    Array.from(container.querySelectorAll("button span")).filter((span) => span.textContent === "SET");
+
+  test.each([
+    ["oracle", "serviceName", "XEPDB1"],
+    ["mssql", "instanceName", "SQLEXPRESS"],
+  ] as const)("%s's Advanced button is marked SET while %s holds a value, and only then", (type, field, value) => {
+    mockFormOverrides = { type, [field]: value };
+    const { container, getByRole, rerender } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    expect(setMark(container)).toHaveLength(1);
+    expect(getByRole("button", { name: /Advanced/ }).contains(setMark(container)[0] ?? null)).toBe(true);
+
+    mockFormOverrides = { type, [field]: "" };
+    rerender(React.createElement(ConnectionModal, createDefaultProps()));
+    expect(setMark(container)).toHaveLength(0);
+  });
+
+  test("a value in a field drawn in the open does not mark the Advanced button", () => {
+    mockFormOverrides = { type: "oracle", serviceName: "", database: "ORCL", user: "scott" };
+    const { container } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    expect(setMark(container)).toHaveLength(0);
+  });
+
   test.each(FIELDS)(
     "%s's %s declared advanced is drawn inside the Advanced accordion only",
     (type, field, selector) => {
