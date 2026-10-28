@@ -177,7 +177,7 @@ It needs the first Studio release after 1.1.0, because the 1.1.0 image has neith
 - **Navigation.** A `NavLink` puts LibreDB Studio in the cluster's menu, and Studio opens in a new browser tab on its own HTTPS host; it is never framed into Rancher.
 - **Containment.** Set `config.allowCustomConnections: false`, as the chart README's Rancher-mode values do and the extension's setup wizard will; Studio does not force it.
   The review gates only discovered databases: with custom connections on, which is the default when the value is unset, a signed-in user can point Studio at any Service its pod reaches.
-  MCP and the agent stay off while the review is on ([SEED_CONNECTIONS.md, What the review switches off](SEED_CONNECTIONS.md#what-the-review-switches-off)).
+  MCP and the agent stay off while the review is on, and so does the built-in LibreDB sample connection, unless `LIBREDB_EMBEDDED_SAMPLE` is set to `true` through `extraEnv` ([SEED_CONNECTIONS.md, What the review switches off](SEED_CONNECTIONS.md#what-the-review-switches-off)).
 
 ### Setting it up
 

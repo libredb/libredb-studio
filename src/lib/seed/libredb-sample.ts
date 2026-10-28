@@ -11,15 +11,21 @@ import * as path from "path";
 import type { ManagedConnection } from "./types";
 import { getDataDir } from "@/lib/data-dir";
 import { governanceEnabled } from "@/lib/governance/config";
+import { accessReviewEnabled } from "@/lib/kubernetes-access/config";
 
 export const SAMPLE_SEED_ID = "libredb-embedded-sample";
 
 /**
  * Default on; only the literal "false" disables. Server-side env. Off under governance whatever
  * the variable says (docs/GOVERNANCE.md), so a governance install neither seeds nor lists it.
+ *
+ * With the Kubernetes access review on (Rancher mode) the default is off and only the literal "true" enables it: the
+ * sample is listed to every signed-in person and names no Secret, so no review gates it, and an install that promises
+ * people only the databases the review allows must not list it unless its operator asks.
  */
 export function isSampleEnabled(): boolean {
   if (governanceEnabled()) return false;
+  if (accessReviewEnabled()) return process.env.LIBREDB_EMBEDDED_SAMPLE === "true";
   return process.env.LIBREDB_EMBEDDED_SAMPLE !== "false";
 }
 

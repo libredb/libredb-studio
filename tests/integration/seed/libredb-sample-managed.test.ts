@@ -16,6 +16,7 @@ afterEach(() => {
   tmpDir = undefined;
   delete process.env.LIBREDB_EMBEDDED_SAMPLE;
   delete process.env.LIBREDB_EMBEDDED_SAMPLE_PATH;
+  delete process.env.KUBERNETES_ACCESS_REVIEW;
 });
 
 function useTempSamplePath(): void {
@@ -50,5 +51,25 @@ describe("getManagedConnections — embedded sample", () => {
     process.env.LIBREDB_EMBEDDED_SAMPLE = "false";
     const conns = await getManagedConnections(["*"]);
     expect(conns.find((c) => c.seedId === SAMPLE_SEED_ID)).toBeUndefined();
+  });
+
+  // Rancher mode: no review gates the sample, so with the review on it is listed to no one by default.
+  test("excludes the sample for every role when the access review is on", async () => {
+    useTempSamplePath();
+    fs.writeFileSync(file, "");
+    process.env.KUBERNETES_ACCESS_REVIEW = "on";
+    for (const roles of [["*"], ["user"], ["admin"]]) {
+      const conns = await getManagedConnections(roles);
+      expect(conns.find((c) => c.seedId === SAMPLE_SEED_ID)).toBeUndefined();
+    }
+  });
+
+  test("includes the sample with the access review on when LIBREDB_EMBEDDED_SAMPLE is true", async () => {
+    useTempSamplePath();
+    fs.writeFileSync(file, "");
+    process.env.KUBERNETES_ACCESS_REVIEW = "on";
+    process.env.LIBREDB_EMBEDDED_SAMPLE = "true";
+    const conns = await getManagedConnections(["user"]);
+    expect(conns.find((c) => c.seedId === SAMPLE_SEED_ID)).toBeDefined();
   });
 });

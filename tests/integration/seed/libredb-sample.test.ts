@@ -31,6 +31,7 @@ afterEach(() => {
   delete process.env.LIBREDB_EMBEDDED_SAMPLE;
   delete process.env.LIBREDB_EMBEDDED_SAMPLE_PATH;
   delete process.env.GOVERNANCE_SOURCE;
+  delete process.env.KUBERNETES_ACCESS_REVIEW;
 });
 
 describe("libredb-sample", () => {
@@ -50,6 +51,35 @@ describe("libredb-sample", () => {
     expect(isSampleEnabled()).toBe(false);
     // Unset is on by default, and still off under governance.
     delete process.env.LIBREDB_EMBEDDED_SAMPLE;
+    expect(isSampleEnabled()).toBe(false);
+  });
+
+  // With the Kubernetes access review on (Rancher mode), the sample is not offered unless LIBREDB_EMBEDDED_SAMPLE is
+  // exactly "true": every signed-in person would see it, and no review gates it, since it names no Secret.
+  test("with the access review on isSampleEnabled() is off unless LIBREDB_EMBEDDED_SAMPLE is exactly true", () => {
+    process.env.KUBERNETES_ACCESS_REVIEW = "on";
+    expect(isSampleEnabled()).toBe(false);
+    process.env.LIBREDB_EMBEDDED_SAMPLE = "";
+    expect(isSampleEnabled()).toBe(false);
+    process.env.LIBREDB_EMBEDDED_SAMPLE = "TRUE";
+    expect(isSampleEnabled()).toBe(false);
+    process.env.LIBREDB_EMBEDDED_SAMPLE = "false";
+    expect(isSampleEnabled()).toBe(false);
+    process.env.LIBREDB_EMBEDDED_SAMPLE = "true";
+    expect(isSampleEnabled()).toBe(true);
+    // A switch value Studio does not know counts as on, so the sample stays off.
+    delete process.env.LIBREDB_EMBEDDED_SAMPLE;
+    process.env.KUBERNETES_ACCESS_REVIEW = "maybe";
+    expect(isSampleEnabled()).toBe(false);
+    // Switched off, the default is on again.
+    process.env.KUBERNETES_ACCESS_REVIEW = "off";
+    expect(isSampleEnabled()).toBe(true);
+  });
+
+  test("governance wins over an explicit true with the access review on", () => {
+    process.env.KUBERNETES_ACCESS_REVIEW = "on";
+    process.env.LIBREDB_EMBEDDED_SAMPLE = "true";
+    process.env.GOVERNANCE_SOURCE = "postgres";
     expect(isSampleEnabled()).toBe(false);
   });
 

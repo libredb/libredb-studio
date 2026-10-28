@@ -1319,6 +1319,9 @@ Once its subject signs in again, an OIDC session minted before the review was sw
 MCP and the agent stay off while the review is on, whatever `LIBREDB_MCP_ENABLED`, `LIBREDB_AGENT_ENABLED` and the AI configuration say: an MCP token and an agent run carry no groups record, so no review could decide what they open.
 `GET /api/agent/config` answers `ACCESS_REVIEW_HOLD`.
 
+The built-in LibreDB sample is neither created nor listed while the review is on, unless `LIBREDB_EMBEDDED_SAMPLE` is exactly `true` ([Built-in Sample Connections](#built-in-sample-connections)).
+It names no Secret, so no review gates it, and every signed-in person would see it.
+
 ### Boot checks
 
 With the review on, the server refuses to start, naming every variable to fix, when:
@@ -1507,12 +1510,14 @@ Standalone deployments also get automatic, code-defined seed connections (none o
 `getManagedConnections()` appends each sample to the managed-connections list once its file exists (`managed: false`). LibreDB is offered to all roles (`roles: ["*"]`); SQLite is offered only to administrators (`roles: ["admin"]`) because its adapters cannot confine statement-level file access. Both behave like other unmanaged seeds: editable, and if deleted they go to the dismissed list rather than reappearing.
 Neither sample is ever visible to an MCP client, because neither carries `mcp: true`.
 In [governance mode](#governance-mode) neither sample is created or listed, whatever `LIBREDB_EMBEDDED_SAMPLE` and `SQLITE_EMBEDDED_SAMPLE` say.
+With the [Kubernetes access review](#kubernetes-access-review) on, the LibreDB sample is off unless `LIBREDB_EMBEDDED_SAMPLE` is exactly `true`: it is offered to all roles and names no Secret, so no review gates it, and an operator who wants every signed-in person to see it opts in.
+The SQLite sample keeps its own default there, because it is offered only to administrators, and with the review on only the review makes an administrator.
 
 This is separate from the `SEED_CONFIG_PATH` file and needs no config of its own:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LIBREDB_EMBEDDED_SAMPLE` | `true` | Set to `false` (exact match) to disable the LibreDB sample |
+| `LIBREDB_EMBEDDED_SAMPLE` | `true`, or `false` with the access review on | Set to `false` (exact match) to disable the LibreDB sample; with `KUBERNETES_ACCESS_REVIEW` on, only `true` (exact match) enables it |
 | `LIBREDB_EMBEDDED_SAMPLE_PATH` | `<data dir>/sample.libredb` | Override the LibreDB sample file's location |
 | `SQLITE_EMBEDDED_SAMPLE` | `true` | Set to `false` (exact match) to disable the SQLite sample |
 | `SQLITE_EMBEDDED_SAMPLE_PATH` | `<data dir>/sample-employees.db` | Override the SQLite sample file's location |

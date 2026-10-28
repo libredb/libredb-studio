@@ -358,7 +358,7 @@ package inside libredb-platform.
 
 | Variable | Default | Notes |
 |----------|---------|-------|
-| `LIBREDB_EMBEDDED_SAMPLE` | `true` | Set to `"false"` to disable the sample connection entirely. |
+| `LIBREDB_EMBEDDED_SAMPLE` | `true` | Set to `"false"` to disable the sample connection entirely. With `KUBERNETES_ACCESS_REVIEW` on the default is off, and only `"true"` enables it. |
 | `LIBREDB_EMBEDDED_SAMPLE_PATH` | `<data dir>/sample.libredb` | Optional override for the path of the generated sample file. |
 
 ### Connection string
