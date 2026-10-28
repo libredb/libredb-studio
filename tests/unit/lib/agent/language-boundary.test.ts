@@ -2,7 +2,8 @@
  * The language boundary of the agent core (issue #1821, PR 1): the core names no statement language a pack owns, and
  * the packs load in tiers that cannot form an import cycle.
  *
- * R1, R2, R5, R8 and R9 hold every `.ts` and `.tsx` file under `src/lib/agent/` except `src/lib/agent/languages/**`.
+ * R1, R2, R5, R8 and R9 hold every `.ts` and `.tsx` file under `src/lib/agent/` except `src/lib/agent/languages/**`,
+ * and every one under `src/lib/mcp/`, which reads a language's MCP facet through the shared registry and never a pack.
  * The pack ids R1 looks for are the keys of `AGENT_LANGUAGE_COPY` other than `sql`, whose rules are R5's, so a fourth
  * pack is covered the day it lands. Only AST nodes are visited, so a comment never counts, and the specifier of an
  * import or export is never a literal any rule reads.
@@ -15,12 +16,12 @@
  * - R1e: a string literal or literal type that starts with a pack id and a separator, or ends in `-<id>.<n>`: an
  *   operation id, a verifier id or a fingerprint prefix.
  * - R2: an import of a module under `languages/` other than the shared entries: `pack.ts`, `client.ts`, `server.ts`,
- *   `index.ts`, `verifiers.ts`, `refusals.ts` and `engines/{client,server,index}.ts`, matched by full path.
+ *   `index.ts`, `verifiers.ts`, `refusals.ts`, `mcp.ts` and `engines/{client,server,index}.ts`, matched by full path.
  * - R5a: a string literal, no-substitution template or literal type whose whole text is `sql`, unless R5b reads it.
  * - R5b: `sql` read off a language-keyed table: a `.sql` or `["sql"]` access, or a binding-pattern key, whose receiver
  *   is such a table, a namespace member of that name, or a same-file alias of one (a `const`, or an import renamed). The
- *   tables are derived, not listed: every value export of `languages/{client,server,index}.ts` and `agent-manifest.ts`
- *   whose own keys are exactly the pack ids. A statement text's `.sql` field is never one.
+ *   tables are derived, not listed: every value export of `languages/{client,server,index,mcp}.ts` and
+ *   `agent-manifest.ts` whose own keys are exactly the pack ids. A statement text's `.sql` field is never one.
  * - R5c: a reference to `DEFAULT_STATEMENT_LANGUAGE` or `CURATED_CALL_LANGUAGE`, so neither constant becomes a hidden
  *   `sql` branch.
  * - R5e: a string literal or literal type that starts with `sql` and a `.`, `:` or `-`: an operation, requirement or
@@ -38,7 +39,8 @@
  * - R3: the tiers, each finding the first forbidden module a chain meets, not every module past it. The server modules never reach the execution tier; the client packs never reach a server module, an
  *   execution module or a `node:`/`bun:` builtin; the language verifiers and `goal-claims.ts` never reach
  *   `goal-verifier.ts`; `goal-verifier.ts`, `goal-claims.ts` and every verifier module never reach `tools.ts` or a
- *   server, adapter or definitions module; and no runtime cycle among the agent modules passes through `languages/` or
+ *   server, adapter or definitions module; the MCP facets, `languages/mcp.ts` and each pack's `mcp.ts`, never reach the
+ *   execution tier or a module under `src/lib/mcp/`, which reads them; and no runtime cycle among the agent modules passes through `languages/` or
  *   a shared module. A dynamic `import("x")` or `require("x")` with a literal specifier counts as an import, for R2
  *   and R3 alike.
  * - R6: every `*_SERVER_OVERLAY` and `*_CLIENT_OVERLAY` an engine module under `languages/<family>/engines/` declares,
@@ -66,12 +68,15 @@ import * as manifest from "@/lib/agent/agent-manifest";
 import { AGENT_LANGUAGE_COPY, AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
 import * as languages from "@/lib/agent/languages";
 import * as languageClients from "@/lib/agent/languages/client";
+import * as languageMcpFacets from "@/lib/agent/languages/mcp";
 import { ENGINE_OVERRIDABLE_SERVER_MEMBERS } from "@/lib/agent/languages/overlay";
 import * as languageServers from "@/lib/agent/languages/server";
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const AGENT = "src/lib/agent";
 const LANGUAGES = `${AGENT}/languages`;
+/** The MCP module, held to the same boundary as the agent core: it reads each language through the shared registry. */
+const MCP = "src/lib/mcp";
 
 const PACK_IDS = Object.keys(AGENT_LANGUAGE_COPY).filter((id) => id !== "sql");
 const IDS = PACK_IDS.join("|");
@@ -90,7 +95,7 @@ const DEFAULT_LANGUAGE_CONSTANTS = new Set(["DEFAULT_STATEMENT_LANGUAGE", "CURAT
 
 /** Every value export of the shared language entries and the manifest whose own keys are exactly the pack ids. */
 const LANGUAGE_TABLES: ReadonlySet<string> = new Set(
-  [languageClients, languageServers, languages, manifest].flatMap((module) =>
+  [languageClients, languageServers, languages, languageMcpFacets, manifest].flatMap((module) =>
     Object.entries(module)
       .filter(
         ([, value]) =>
@@ -117,6 +122,7 @@ const SHARED_ENTRIES = new Set(
     "index.ts",
     "verifiers.ts",
     "refusals.ts",
+    "mcp.ts",
     "engines/client.ts",
     "engines/server.ts",
     "engines/index.ts",
@@ -137,6 +143,7 @@ const SHARED_ENTRIES = new Set(
  * - the execution gate, which the spec keeps in `AGENT_EXECUTION_ENGINES`;
  * - `postgres` as the `@workflow` durable world, which is no `DatabaseType`;
  * - the plan readers keyed by the provider-declared `ExplainFormat`, which the spec says a plan format is read from.
+ * - `libredb` as the MCP server's name in each client's configuration snippet, which names the product, not the engine.
  *
  * The operation and verifier ids a family owns are its rows in `AgentFamilyOperationIds` and `AgentFamilyVerifierIds`
  * in `languages/pack.ts`.
@@ -193,6 +200,7 @@ const ALLOWLIST: Readonly<Record<string, number>> = Object.freeze({
   [`${AGENT}/plan-summary.ts#summariseSqlite: R8c SQLITE_SCAN_STEP`]: 1,
   [`${AGENT}/plan-summary.ts#PLAN_READINGS: R8c summarisePostgres`]: 1,
   [`${AGENT}/plan-summary.ts#PLAN_READINGS: R8c summariseSqlite`]: 1,
+  [`${MCP}/client-config.ts#mcpClientConfigs: R8b libredb`]: 5,
 });
 
 /** Declarations too wide to key an allowlist entry on: one entry would excuse a whole run loop or file. */
@@ -521,6 +529,9 @@ function coreFileFindings(file: string, text: string, exemptEngineMap = true): s
 /** The core files: every agent module outside `languages/`. */
 const coreFiles = (): string[] => sourcesUnder(AGENT).filter((file) => !file.startsWith(`${LANGUAGES}/`));
 
+/** The files R1, R2, R5, R8 and R9 hold: the core files and every MCP module. */
+const boundaryFiles = (): string[] => [...coreFiles(), ...sourcesUnder(MCP)];
+
 /** R1 and R2 checked against the allowlist (R4): every finding it does not excuse, and every stale entry. */
 /**
  * Each core file's findings on its text as committed, scanned once. A plant changes one file, so every other file is
@@ -539,7 +550,7 @@ function committedFindings(file: string): readonly string[] {
 
 function boundaryFindings(planted: Planted = {}): string[] {
   const counts = new Map<string, number>();
-  for (const file of coreFiles()) {
+  for (const file of boundaryFiles()) {
     const fileFindings = Object.hasOwn(planted, file) ? coreFileFindings(file, planted[file]) : committedFindings(file);
     for (const finding of fileFindings) {
       counts.set(finding, (counts.get(finding) ?? 0) + 1);
@@ -634,6 +645,11 @@ const SHARED_MODULES = new Set(
   ].map((name) => `${AGENT}/${name}`),
 );
 
+/** The MCP facets: the shared registry and each pack's own facet, the language's words that `src/lib/mcp/` reads. */
+const isMcpFacet = (file: string): boolean => new RegExp(`^${LANGUAGES}/([^/]+/)?mcp\\.ts$`).test(file);
+/** What a facet never loads: the execution tier, and the MCP module that depends on it, never the reverse. */
+const isMcpForbidden = (file: string): boolean => isExecution(file) || file.startsWith(`${MCP}/`);
+
 /** The runtime import graph among the agent modules, `languages/**` included. */
 function agentGraph(planted: Planted): Map<string, string[]> {
   const files = sourcesUnder(AGENT);
@@ -692,6 +708,7 @@ function layeringFindings(planted: Planted = {}): string[] {
   ]) {
     forbid(file, isServerFacet, "verifier");
   }
+  for (const file of files.filter(isMcpFacet)) forbid(file, isMcpForbidden, "mcp");
   const graph = agentGraph(planted);
   for (const file of files.filter((path) => path.startsWith(`${LANGUAGES}/`) || SHARED_MODULES.has(path))) {
     const cycle = shortestCycle(graph, file);
@@ -847,7 +864,7 @@ describe("the agent core names no language a pack owns", () => {
   });
 
   test("the scan reads real code: the core holds every allowlisted finding, and the packs hold many more", () => {
-    const core = coreFiles().flatMap((file) => coreFileFindings(file, read(file)));
+    const core = boundaryFiles().flatMap((file) => coreFileFindings(file, read(file)));
     const expanded = Object.entries(ALLOWLIST).flatMap(([finding, count]) => Array<string>(count).fill(finding));
     expect(core.sort()).toEqual(expanded.sort());
     const packs = sourcesUnder(LANGUAGES).flatMap((file) => coreFileFindings(file, read(file)));
@@ -1027,6 +1044,22 @@ describe("planted violations yield exactly their findings", () => {
     expect(boundaryFindings(required)).toEqual([`${INVESTIGATION}#<module>: R2 ${LANGUAGES}/kubectl/adapter.ts`]);
   });
 
+  test("a pack id compared as a string in the MCP module fails R1a, and its facet imported there fails R2", () => {
+    const arms = `${MCP}/tools/statement-arms.ts`;
+    expect(
+      boundaryFindings(plantInFunction(arms, "servingStatementArms", 'if (String(arms) === "kubectl") {}')),
+    ).toEqual([`${arms}#servingStatementArms: R1a "kubectl"`]);
+    const facet = prepend(arms, 'import * as facet from "@/lib/agent/languages/mongo/mcp";');
+    expect(boundaryFindings(facet)).toEqual([`${arms}#<module>: R2 ${LANGUAGES}/mongo/mcp.ts`]);
+  });
+
+  test("the default family's row read off the facet registry in the MCP module fails R5b", () => {
+    const arms = `${MCP}/tools/statement-arms.ts`;
+    expect(
+      boundaryFindings(plantInFunction(arms, "servingStatementArms", "void AGENT_LANGUAGE_MCP_FACETS.sql;")),
+    ).toEqual([`${arms}#servingStatementArms: R5b sql`]);
+  });
+
   test("a MongoDB plan stage in a sentence fails R1d", () => {
     const planted = plantInFunction(GOAL_VERIFIER, "goalFor", 'void "the plan reads a COLLSCAN";');
     expect(boundaryFindings(planted)).toEqual([`${GOAL_VERIFIER}#goalFor: R1d "the plan reads a COLLSCAN"`]);
@@ -1069,6 +1102,7 @@ describe("planted violations yield exactly their findings", () => {
   test("the derived language-keyed tables are the ones the core reads by family", () => {
     expect([...LANGUAGE_TABLES].sort()).toEqual([
       "AGENT_LANGUAGE_COPY",
+      "AGENT_LANGUAGE_MCP_FACETS",
       "AGENT_PLAN_ESTIMATE_OPERATION",
       "AGENT_WORKFLOW_VARIANTS",
       "LANGUAGE_TOOL_ARMS",
@@ -1359,6 +1393,20 @@ describe("planted violations yield exactly their findings", () => {
     const snapshot = `${AGENT}/context-snapshot.ts`;
     expect(layeringFindings(prepend(postgres, 'import "../../../context-snapshot";'))).toEqual([
       `R3 cycle: ${snapshot} -> ${server} -> ${postgres} -> ${snapshot}`,
+    ]);
+  }, 60_000);
+
+  test("the MCP module or the execution tier imported by an MCP facet fails the mcp tier", () => {
+    const facet = `${LANGUAGES}/kubectl/mcp.ts`;
+    const registry = `${LANGUAGES}/mcp.ts`;
+    const output = `${MCP}/output.ts`;
+    expect(layeringFindings(prepend(facet, 'import "@/lib/mcp/output";'))).toEqual([
+      `R3 mcp: ${facet} reaches ${output} through ${facet} -> ${output}`,
+      `R3 mcp: ${registry} reaches ${output} through ${registry} -> ${facet} -> ${output}`,
+    ]);
+    const index = `${LANGUAGES}/index.ts`;
+    expect(layeringFindings(prepend(registry, 'import "./index";'))).toEqual([
+      `R3 mcp: ${registry} reaches ${index} through ${registry} -> ${index}`,
     ]);
   }, 60_000);
 
