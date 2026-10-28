@@ -368,6 +368,16 @@ describe("trinoJsonStrategy.toRenderModel", () => {
     expect(root.children.map((child) => child.label)).toEqual(["Fragment 1", "Fragment 2", "Fragment 10"]);
   });
 
+  test("orders fragments textually once any id is not a number", () => {
+    // No Trino release measured here keys a fragment by anything but a number; this is the
+    // fallback a future one would meet, and it still has to give a stable order.
+    const many: Record<string, unknown> = {};
+    for (const id of ["stage-b", "2", "stage-a"]) many[id] = { id, name: "Output", children: [] };
+    const root = treeOf(many);
+
+    expect(root.children.map((child) => child.label)).toEqual(["Fragment 2", "Fragment stage-a", "Fragment stage-b"]);
+  });
+
   test("stops at a nesting ceiling rather than following a plan that never ends", () => {
     // Not a shape Trino emits - the deepest live plan here is four nodes - but the
     // walk is recursive over server data, so the ceiling makes truncation visible
