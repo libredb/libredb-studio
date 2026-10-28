@@ -14,11 +14,13 @@
  *    users who can see a URL-engine table, a dictionary and a definer view over the URL table, are each refused by the
  *    step that names them; the operations profile opens the writable admin unproven;
  *  - the boundary, with Studio's client admission bypassed: each write, DDL, SYSTEM statement, grant, temporary table,
- *    source table function, trailing `SETTINGS readonly = 0` and second statement is sent as the least-privilege user
+ *    source table function (url, remote, file, s3, mysql), trailing `SETTINGS readonly = 0` and second statement is sent as the least-privilege user
  *    through `queryReadOnly` and through the transport, and as the writable admin under `readonly = 1`, and each is
  *    refused with a read-only (164) or authorization (497) code, never a syntax error but for the second statement,
  *    which the server refuses as such; the same statements run as the writable admin without `readonly` on a scratch
- *    copy, the positive control that shows each one would work; the engine's tables, rows, users, roles and named
+ *    copy, the positive control that shows each one would work (a source function's control is that it fails on the
+ *    unreachable source, past every check); a BACKUP and an ON CLUSTER KILL, which `readonly = 1` leaves usable, are
+ *    refused the least-privilege user (497) by its grants; the engine's tables, rows, users, roles and named
  *    collections read back the same before and after;
  *  - the budgets: a result past the row budget, one past the byte budget and a statement past its deadline are
  *    refused, and a result in a format the statement chose is refused.
@@ -62,6 +64,8 @@ const PORT = Number(env("LIBREDB_LIVE_CLICKHOUSE_PORT"));
 const ADMIN = { user: env("LIBREDB_LIVE_CLICKHOUSE_USER"), password: env("LIBREDB_LIVE_CLICKHOUSE_PASSWORD") };
 /** One password for every seeded user, made for the run. */
 const SEEDED_PASSWORD = randomBytes(12).toString("hex");
+/** A name for the run's in-memory backups, which the server keeps until it restarts. */
+const RUN = randomBytes(4).toString("hex");
 
 function connection(user: string, password: string, database = DB): DatabaseConnection {
   return {
@@ -179,8 +183,12 @@ const REFUSED_USERS: readonly { name: string; grants: string[]; reason: string; 
   },
 ];
 
-/** `{db}` is the database a statement targets: the agent's, or the control copy. */
-const BOUNDARY_STATEMENTS: readonly string[] = [
+/**
+ * `{db}` is the database a statement targets: the agent's, or the control copy. A statement the positive control
+ * cannot run to the end, because it reads a source the test server does not have, is marked `source`: its control is
+ * that the writable admin gets past every read-only and authorization check and fails on the source itself.
+ */
+const BOUNDARY_STATEMENTS: readonly (string | { source: string })[] = [
   "INSERT INTO {db}.t VALUES (99, 99)",
   "ALTER TABLE {db}.t UPDATE x = 0 WHERE 1",
   "ALTER TABLE {db}.t DELETE WHERE k = 1",
@@ -197,6 +205,22 @@ const BOUNDARY_STATEMENTS: readonly string[] = [
   "CREATE FUNCTION libredb_lb_f AS x -> x",
   "SELECT count() FROM url('http://127.0.0.1:8123/ping', LineAsString)",
   "SELECT count() FROM remote('127.0.0.1', system.one)",
+  { source: "SELECT count() FROM file('libredb_lb_missing.csv', CSV, 'x Int8')" },
+  { source: "SELECT count() FROM s3('http://127.0.0.1:1/libredb-lb/k.csv', NOSIGN, 'CSV', 'x Int8')" },
+  { source: "SELECT count() FROM mysql('127.0.0.1:1', 'd', 't', 'u', 'not-a-real-password')" },
+];
+
+function boundaryText(statement: string | { source: string }, database: string): string {
+  return (typeof statement === "string" ? statement : statement.source).replaceAll("{db}", database);
+}
+
+/**
+ * Statements `readonly = 1` leaves usable, so the agent user is held off them by its grants alone, and the open
+ * refuses a user that holds the grant: a backup, and a KILL sent to every node of a cluster.
+ */
+const READONLY_EXEMPT_STATEMENTS: readonly string[] = [
+  `BACKUP TABLE {db}.t TO Memory('${PREFIX}b_${RUN}')`,
+  "KILL QUERY ON CLUSTER default WHERE query_id = 'libredb-lb-none' SYNC",
 ];
 
 async function tableState(): Promise<string> {
@@ -291,8 +315,8 @@ async function main(): Promise<void> {
   const before = await tableState();
   const readonly = agentRequestSettings(BUDGET);
   const refusedCodes = new Set([164, 497]);
-  for (const template of BOUNDARY_STATEMENTS) {
-    const sql = template.replaceAll("{db}", DB);
+  for (const statement of BOUNDARY_STATEMENTS) {
+    const sql = boundaryText(statement, DB);
     const viaProvider = await refusalOf(() => (agent as DatabaseProvider).queryReadOnly!(sql, BUDGET));
     check(viaProvider !== null, `boundary: queryReadOnly refuses ${sql} (${viaProvider?.message.slice(0, 90)})`);
     const agentCode = await codeOf(ro, SEEDED_PASSWORD, sql, readonly);
@@ -320,14 +344,34 @@ async function main(): Promise<void> {
     killOwn === 497,
     `boundary: KILL QUERY needs SELECT on system.processes, which the agent user lacks -> ${killOwn}`,
   );
+  for (const template of READONLY_EXEMPT_STATEMENTS) {
+    const sql = template.replaceAll("{db}", DB);
+    const viaProvider = await refusalOf(() => (agent as DatabaseProvider).queryReadOnly!(sql, BUDGET));
+    check(viaProvider !== null, `boundary: queryReadOnly refuses ${sql} (${viaProvider?.message.slice(0, 90)})`);
+    const agentCode = await codeOf(ro, SEEDED_PASSWORD, sql, readonly);
+    check(agentCode === 497, `boundary: the agent user over the transport: ${sql} -> ${agentCode}`);
+    const adminCode = await codeOf(ADMIN.user, ADMIN.password, sql, readonly);
+    check(
+      adminCode !== 164,
+      `boundary: readonly = 1 does not refuse the writable admin: ${sql} -> ${adminCode ?? "answered"}`,
+    );
+  }
   const after = await tableState();
   check(before === after, "boundary: tables, rows, users, roles, collections and functions read back the same");
 
   // The positive control: the same statements, as the writable admin without readonly, on the control copy.
-  for (const template of BOUNDARY_STATEMENTS) {
-    const sql = template.replaceAll("{db}", CTL);
-    const code = await codeOf(ADMIN.user, ADMIN.password, sql, {});
-    check(code === null, `control: the writable admin runs ${sql} -> ${code ?? "answered"}`);
+  for (const statement of BOUNDARY_STATEMENTS) {
+    const sql = boundaryText(statement, CTL);
+    if (typeof statement === "string") {
+      const code = await codeOf(ADMIN.user, ADMIN.password, sql, {});
+      check(code === null, `control: the writable admin runs ${sql} -> ${code ?? "answered"}`);
+    } else {
+      const code = await codeOf(ADMIN.user, ADMIN.password, sql, { max_execution_time: 5 });
+      check(
+        code !== null && ![62, 164, 497].includes(code),
+        `control: the writable admin reaches the source of ${sql} -> ${code ?? "answered"}`,
+      );
+    }
   }
 
   // The budgets.

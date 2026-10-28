@@ -954,7 +954,7 @@ Grant `SELECT` per table, or per database where every table in it uses a local e
 
 #### Boundary record
 
-Measured on `clickhouse/clickhouse-server:26.7.1.1315` (2026-10-29) by [`tests/live/clickhouse-agent-boundary.ts`](../../tests/live/clickhouse-agent-boundary.ts), with Studio's agent admission bypassed: 92 checks, all passing.
+Measured on `clickhouse/clickhouse-server:26.7.1.1315` (2026-10-29) by [`tests/live/clickhouse-agent-boundary.ts`](../../tests/live/clickhouse-agent-boundary.ts), with Studio's agent admission bypassed: 110 checks, all passing.
 
 | Probe | Least-privilege user | Writable admin under `readonly = 1` | Writable admin, positive control |
 | --- | --- | --- | --- |
@@ -962,13 +962,17 @@ Measured on `clickhouse/clickhouse-server:26.7.1.1315` (2026-10-29) by [`tests/l
 | `CREATE TABLE`, `RENAME TABLE`, `DROP TABLE`, `CREATE TEMPORARY TABLE`, `CREATE FUNCTION` | `497` | `164` | ran |
 | `INSERT INTO FUNCTION null(...)`, `SYSTEM FLUSH LOGS`, `GRANT` | `497` | `164` | ran |
 | `SELECT` from `url(...)` and `remote(...)` | `497` | `164` | ran |
+| `SELECT` from `file(...)`, `s3(..., NOSIGN, ...)` and `mysql(...)` on unreachable sources | `497` | `164` | reached the source and failed there: `107`, `159` (deadline), `279` |
 | `SELECT` from `cluster(...)` | `497` | answered | answered |
 | trailing `SETTINGS readonly = 0` | `164` | `164` | not sent |
 | a second statement | `62` | `62` | `62` |
 | `KILL QUERY` | `497` | not sent | not sent |
+| `BACKUP TABLE ... TO Memory(...)` | `497` | answered | not sent |
+| `KILL QUERY ON CLUSTER default` | `497` | `139` (the server has no Keeper) | not sent |
 
 The engine's tables, row counts, users, roles, named collections and functions read back the same before and after the refused statements.
-Through `queryReadOnly` each statement above was refused too, the table functions by the provider fence before anything was sent.
+Through `queryReadOnly` each statement above was refused too, `remote(...)` by the provider fence before anything was sent and the rest by the server.
+BACKUP answers under `readonly = 1`, so only the grant check holds the least-privilege user off it, and the open refuses a BACKUP grant; the ON CLUSTER KILL never reached a read-only check on a server without Keeper, and the open refuses the CLUSTER grant it needs.
 At open, the least-privilege user was admitted, and these were refused, each by the step that names it: a user whose profile marks `readonly` changeable (step 2); users holding REMOTE, `READ ON URL`, BACKUP, NAMED COLLECTION, ALTER DATABASE SETTINGS, UNDROP TABLE, INSERT, `SELECT ON system.query_log` or a grant option, and users holding BACKUP and REMOTE only through a role, one of them not a default role (step 4); users who could see a URL-engine table, a dictionary and a definer view over the URL table (step 6).
 The operations profile opened the writable admin unproven.
 The budgets: 51 rows under a budget of 50, 100,010 bytes under 65,536, an answer past the body cap, a statement past a one-second deadline and a `FORMAT TSV` result were each refused.
