@@ -70,6 +70,9 @@ export class FakeKubernetesApi {
   answer: FakeAnswer = "grants";
   /** Milliseconds to wait before answering from the grants or the script. */
   delayMs = 0;
+  /** Reviews received and not answered yet, and the most there were at once since the last reset. */
+  open = 0;
+  maxOpen = 0;
   readonly seen: SeenReview[] = [];
   private readonly saved = new Map<string, string | undefined>();
 
@@ -115,6 +118,8 @@ export class FakeKubernetesApi {
     this.grants = [];
     this.answer = "grants";
     this.delayMs = 0;
+    this.open = 0;
+    this.maxOpen = 0;
     this.seen.length = 0;
     this.setToken(FAKE_TOKEN);
     writeFileSync(this.caPath, this.ca);
@@ -181,7 +186,10 @@ export async function startFakeKubernetesApi(): Promise<FakeKubernetesApi> {
       });
       const answer = typeof fake.answer === "function" ? fake.answer(body) : fake.answer;
       if (answer === "hang") return;
+      fake.open += 1;
+      fake.maxOpen = Math.max(fake.maxOpen, fake.open);
       const reply = () => {
+        fake.open -= 1;
         if (answer === "grants") {
           response.writeHead(201, { "content-type": "application/json" });
           response.end(fake.answerFromGrants(body));

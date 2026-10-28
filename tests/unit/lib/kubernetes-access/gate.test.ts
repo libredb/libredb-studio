@@ -172,6 +172,21 @@ describe("connections, with the review on", () => {
     }
   });
 
+  // A list asks about every reviewed connection it holds, up to 500 discovered databases, and a review the API server
+  // answers late denies, so one list keeps a bounded number of reviews in flight rather than all of them at once.
+  test("keeps at most 16 reviews of one list in flight, and the list in its order", async () => {
+    const connections = Array.from({ length: 40 }, (_, index) =>
+      reviewed(`k8s-cnpg-db-${index}`, "team-a", `db-${index}-app`),
+    );
+    const allowed = connections.filter((_, index) => index % 3 !== 1);
+    api.grants = allowed.map((connection) => getSecret("u-rjs2h", "team-a", connection.kubernetesSecret?.name ?? ""));
+    api.delayMs = 50;
+    expect(await connectionsUnderAccessReview(DEV_A, [PLAIN, ...connections])).toEqual([PLAIN, ...allowed]);
+    expect(api.seen).toHaveLength(40);
+    expect(api.maxOpen).toBeLessThanOrEqual(16);
+    expect(api.maxOpen).toBeGreaterThan(1);
+  });
+
   test("an invalid switch counts as on", async () => {
     process.env.KUBERNETES_ACCESS_REVIEW = "enabled";
     expect(await connectionsUnderAccessReview(ADMIN, [ORDERS, PLAIN])).toEqual([PLAIN]);

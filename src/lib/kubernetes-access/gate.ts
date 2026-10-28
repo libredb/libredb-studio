@@ -24,6 +24,12 @@ import { accessReviewAllows } from "./decisions";
 import { recordedGroups, reviewSubjectProblem } from "./groups";
 import type { ResourceAttributes } from "./review";
 
+/**
+ * The most reviews one list keeps in flight. A list asks about every reviewed connection it holds, as many as a
+ * discovery source exports, and a review the API server answers late denies, so they are not all sent at once.
+ */
+const MAX_REVIEWS_IN_FLIGHT = 16;
+
 /** Who asks: the signed session's role, and the identity provider subject and issuer an OIDC sign-in gave it. */
 export interface ReviewedPrincipal {
   readonly role: string;
@@ -44,12 +50,25 @@ async function mayUse(principal: ReviewedPrincipal, connection: ManagedConnectio
   );
 }
 
-/** The connections `principal` may use, in their order; the reviews of one list run together. */
+/**
+ * The connections `principal` may use, in their order; the reviews of one list run together, at most
+ * MAX_REVIEWS_IN_FLIGHT at a time.
+ */
 export async function connectionsUnderAccessReview(
   principal: ReviewedPrincipal,
   connections: ManagedConnection[],
 ): Promise<ManagedConnection[]> {
-  const verdicts = await Promise.all(connections.map((connection) => mayUse(principal, connection)));
+  const verdicts: boolean[] = [];
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < connections.length) {
+      const index = next;
+      next += 1;
+      // oxlint-disable-next-line no-await-in-loop -- each worker holds one review in flight at a time, which is the bound.
+      verdicts[index] = await mayUse(principal, connections[index]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(MAX_REVIEWS_IN_FLIGHT, connections.length) }, worker));
   return connections.filter((_, index) => verdicts[index]);
 }
 
