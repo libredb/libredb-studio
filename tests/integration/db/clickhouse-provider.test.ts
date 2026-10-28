@@ -4247,6 +4247,15 @@ function agentReply(answer: (sql: string) => Reply): (sql: string) => Reply {
       );
     }
     if (sql.startsWith("SELECT database, name FROM system.dictionaries")) return DENIED();
+    if (sql.startsWith("SELECT name, origin FROM system.functions")) {
+      return jsonReply(
+        [],
+        [
+          { name: "name", type: "String" },
+          { name: "origin", type: "String" },
+        ],
+      );
+    }
     return answer(sql);
   };
 }
@@ -4303,6 +4312,7 @@ describe("ClickHouseProvider agent read-only profile", () => {
       "SELECT 1 FROM system.query_log LIMIT 0",
       sqlWith("FROM system.tables"),
       "SELECT database, name FROM system.dictionaries LIMIT 1",
+      sqlWith("FROM system.functions"),
     ]);
     for (const url of sentUrls.slice(1)) expect(new URL(url).searchParams.get("readonly")).toBe("1");
   });
@@ -4318,6 +4328,21 @@ describe("ClickHouseProvider agent read-only profile", () => {
 
     expect(error).toBeInstanceOf(ExecutionProfileError);
     expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+    expect(provider.isConnected()).toBe(false);
+  });
+
+  test("an open on a server with an executable user-defined function is refused, naming it", async () => {
+    replyFor = (sql) =>
+      sql.startsWith("SELECT name, origin FROM system.functions")
+        ? jsonReply([{ name: "libredb_lb_udf_echo", origin: "ExecutableUserDefined" }])
+        : agentReply(() => jsonReply([]))(sql);
+    const provider = new ClickHouseProvider(makeConnection({ user: "agent_ro" }), {}, AGENT_PROFILE);
+
+    const error = await readOnlyRefusal(provider.connect());
+
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+    expect(error.message).toContain("can call libredb_lb_udf_echo (ExecutableUserDefined)");
     expect(provider.isConnected()).toBe(false);
   });
 

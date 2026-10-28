@@ -16,7 +16,9 @@
  * - SELECT on a table whose engine reads an external source (a URL-engine table answered under `readonly = 1`), on a
  *   view whose SQL SECURITY is DEFINER or NONE over such a table (it answered too, the definer's grants standing in
  *   for the caller's), and on a dictionary, which loads from its source under the dictionary's own credential;
- * - SELECT on `system.query_log`, which holds every user's statement text.
+ * - SELECT on `system.query_log`, which holds every user's statement text;
+ * - a call to an executable user-defined function from the server's configuration, which needs no grant: it answered
+ *   the least-privilege user and its program ran.
  *
  * So the open runs, each under the agent's own request settings, and refuses the profile on any answer it cannot
  * read (fail closed):
@@ -42,6 +44,10 @@
  * 5. **The principal reads no external source.** Every table `system.tables` shows the principal must use a local
  *    storage engine (`CLICKHOUSE_LOCAL_TABLE_ENGINES`), and a view among them no SQL SECURITY of DEFINER or NONE;
  *    `system.dictionaries` must be unreadable to the principal (497) or empty.
+ * 6. **The principal can call no function that runs code outside SQL.** `system.functions` must list no function
+ *    whose origin is neither `System` nor `SQLUserDefined`: an executable function (`ExecutableUserDefined`), a
+ *    WebAssembly one, or an origin from a later release. The check reads what `system.functions` shows the principal,
+ *    so a row policy an operator sets on it can hide a function from it.
  */
 import { ExecutionProfileError } from "@/lib/db/errors";
 import { type ClickHouseQueryResult, ClickHouseTransportError } from "./transport";
@@ -231,6 +237,11 @@ const LOWER_READONLY_SQL = "SELECT 1 SETTINGS readonly = 0";
 const GRANTS_SQL = "SHOW GRANTS FINAL";
 const QUERY_LOG_SQL = "SELECT 1 FROM system.query_log LIMIT 0";
 const DICTIONARIES_SQL = "SELECT database, name FROM system.dictionaries LIMIT 1";
+
+/** The functions a caller reaches without any grant that run code outside SQL: any origin but built in and SQL. */
+const FUNCTIONS_SQL =
+  "SELECT name, origin FROM system.functions WHERE origin NOT IN ('System', 'SQLUserDefined') " +
+  `ORDER BY name LIMIT ${OBJECT_REFUSAL_LIMIT}`;
 
 function stringLiteral(value: string): string {
   return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
@@ -464,6 +475,16 @@ async function verifyNoExternalObject(query: AgentProofQuery, user: string): Pro
   }
 }
 
+async function verifyNoExecutableFunction(query: AgentProofQuery, user: string): Promise<void> {
+  const { rows } = await query(FUNCTIONS_SQL);
+  if (rows.length > 0) {
+    const named = rows.map((row) => `${String(row.name)} (${String(row.origin)})`).join(", ");
+    throw tooBroad(
+      `ClickHouse user "${user}" can call ${named}, each a user-defined function that runs code outside SQL, which readonly does not hold; the agent read-only profile takes a server whose functions are built in or SQL only, so it is refused`,
+    );
+  }
+}
+
 /** Every check of the module docblock, in its order; the first that fails throws. */
 export async function verifyAgentProfile(query: AgentProofQuery, database: string): Promise<void> {
   const user = await verifyServer(query);
@@ -471,4 +492,5 @@ export async function verifyAgentProfile(query: AgentProofQuery, database: strin
   await verifyGrants(query, user);
   await verifyQueryLogUnreadable(query, user);
   await verifyNoExternalObject(query, user);
+  await verifyNoExecutableFunction(query, user);
 }

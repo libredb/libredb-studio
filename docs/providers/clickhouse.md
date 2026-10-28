@@ -928,9 +928,12 @@ Each step runs under the request settings above, and any answer the proof cannot
 4. `SHOW GRANTS FINAL` lists the user's grants merged with every role granted to it, default or not: a role granted with `SET DEFAULT ROLE NONE` still lists its grants. Each privilege must be `SELECT` or `SHOW` and its four parts (`CLICKHOUSE_AGENT_PRIVILEGES`), on one named database or table outside `system` and `INFORMATION_SCHEMA`, without the grant option. Any other privilege is refused `PROFILE_PRIVILEGES_TOO_BROAD` by name: a source grant (`CLICKHOUSE_SOURCE_PRIVILEGES`: SOURCES, READ, WRITE and every source 26.7 lists) and a grant `readonly` leaves usable (`CLICKHOUSE_READONLY_EXEMPT_PRIVILEGES`: BACKUP, UNDROP TABLE, ALTER DATABASE SETTINGS, the named-collection group, KILL QUERY and CLUSTER) are said as such.
 5. `SELECT 1 FROM system.query_log LIMIT 0` must answer `497`, or `60` where the log is off: the query log holds every user's statements.
 6. `system.tables` must show the user no table outside the local engines (`CLICKHOUSE_LOCAL_TABLE_ENGINES`: the MergeTree family, `Memory`, the log engines, `Null`, `Set`, `Join` and the two view engines), and no view or materialized view whose SQL SECURITY is `DEFINER` or `NONE`. `system.dictionaries` must be unreadable to it (`497`) or empty. Every other engine 26.7 lists is in `CLICKHOUSE_REFUSED_TABLE_ENGINES`, and the two lists are held to cover 26.7's `system.table_engines` exactly.
+7. `system.functions` must list no function whose `origin` is neither `System` nor `SQLUserDefined`, and one that does is refused `PROFILE_PRIVILEGES_TOO_BROAD` by name. An executable function declared in the server's configuration (`user_defined_executable_functions_config`, listed with origin `ExecutableUserDefined`, `executable` and `executable_pool` alike) needs no grant to call, and `readonly = 1` does not refuse it: the least-privilege user called one and its program ran. A WebAssembly function (`WasmUserDefined`) and an origin a later release adds are refused the same way.
 
 The check is of what `system.tables` shows, so a `SHOW TABLES` grant that makes a URL-engine table visible refuses the user even without `SELECT` on it.
 The proof runs at open only: a grant added to the user after the open is seen at the next open of a profiled handle, not before.
+The same holds for a function: one the server loads after the open is seen at the next open.
+Steps 6 and 7 read what `system.tables` and `system.functions` show the user, so a row policy the operator sets on either for that user hides rows from them; the user itself cannot read `system.row_policies` (`497`) to tell.
 
 #### The agent user
 
@@ -944,6 +947,8 @@ GRANT SELECT ON demo.orders, SELECT ON demo.customers TO libredb_agent;
 ```
 
 Grant `SELECT` per table, or per database where every table in it uses a local engine; a database holding a URL-engine table, a dictionary or a definer view refuses a user who can see it.
+A server that declares an executable function refuses every agent user, since no grant governs the call.
+Grant the `SELECT` to the user itself: a user whose only `SELECT` comes through a role that is not a default role is admitted, because `SHOW GRANTS FINAL` lists the role's grants, but its reads answer `497`, since the role is not active.
 
 #### What only the fence or the operator stops
 
@@ -954,7 +959,7 @@ Grant `SELECT` per table, or per database where every table in it uses a local e
 
 #### Boundary record
 
-Measured on `clickhouse/clickhouse-server:26.7.1.1315` (2026-10-29) by [`tests/live/clickhouse-agent-boundary.ts`](../../tests/live/clickhouse-agent-boundary.ts), with Studio's agent admission bypassed: 110 checks, all passing.
+Measured on `clickhouse/clickhouse-server:26.7.1.1315` (2026-10-29) by [`tests/live/clickhouse-agent-boundary.ts`](../../tests/live/clickhouse-agent-boundary.ts), with Studio's agent admission bypassed: 115 checks, all passing.
 
 | Probe | Least-privilege user | Writable admin under `readonly = 1` | Writable admin, positive control |
 | --- | --- | --- | --- |
@@ -974,15 +979,18 @@ The engine's tables, row counts, users, roles, named collections and functions r
 Through `queryReadOnly` each statement above was refused too, `remote(...)` by the provider fence before anything was sent and the rest by the server.
 BACKUP answers under `readonly = 1`, so only the grant check holds the least-privilege user off it, and the open refuses a BACKUP grant; the ON CLUSTER KILL never reached a read-only check on a server without Keeper, and the open refuses the CLUSTER grant it needs.
 At open, the least-privilege user was admitted, and these were refused, each by the step that names it: a user whose profile marks `readonly` changeable (step 2); users holding REMOTE, `READ ON URL`, BACKUP, NAMED COLLECTION, ALTER DATABASE SETTINGS, UNDROP TABLE, INSERT, `SELECT ON system.query_log` or a grant option, and users holding BACKUP and REMOTE only through a role, one of them not a default role (step 4); users who could see a URL-engine table, a dictionary and a definer view over the URL table (step 6).
+With an executable echo function declared in the server's configuration, the least-privilege user called it under `readonly = 1` with no grant and the server ran its script; the open then refused that user naming the function (step 7), and admitted it again once the function was removed.
+A user whose only `SELECT` came through a role set with `SET DEFAULT ROLE NONE` was admitted (`SHOW GRANTS FINAL` printed the role's grant as the user's), and its read answered `497`, which leaves it without reads rather than with more.
 The operations profile opened the writable admin unproven.
 The budgets: 51 rows under a budget of 50, 100,010 bytes under 65,536, an answer past the body cap, a statement past a one-second deadline and a `FORMAT TSV` result were each refused.
 
 Run it against a server you may write to, as a user with access management and `named_collection_control`; on the compose service that takes a `users.d` snippet such as `<clickhouse><users><libredb><named_collection_control>1</named_collection_control></libredb></users></clickhouse>` in `/etc/clickhouse-server/users.d/`.
-Everything it creates carries the `libredb_lb_` prefix and is dropped on exit.
+The function case needs a directory the server reads its function files and scripts from, mounted from the machine that runs the script, writable there and readable by the server: a `config.d` snippet such as `<clickhouse><user_defined_executable_functions_config>/etc/clickhouse-server/udf/*_function.xml</user_defined_executable_functions_config><user_scripts_path>/etc/clickhouse-server/udf/</user_scripts_path></clickhouse>`, with that directory mounted and named by `LIBREDB_LIVE_CLICKHOUSE_FUNCTIONS_DIR`.
+Everything it creates carries the `libredb_lb_` prefix and is dropped on exit, the function's two files included.
 
 ```sh
 LIBREDB_LIVE_CLICKHOUSE_PORT=8123 LIBREDB_LIVE_CLICKHOUSE_USER=<admin> LIBREDB_LIVE_CLICKHOUSE_PASSWORD=<secret> \
-  bun tests/live/clickhouse-agent-boundary.ts
+  LIBREDB_LIVE_CLICKHOUSE_FUNCTIONS_DIR=<host path of the mounted directory> bun tests/live/clickhouse-agent-boundary.ts
 ```
 
 #### Agent language pack

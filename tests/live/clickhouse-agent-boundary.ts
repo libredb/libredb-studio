@@ -13,6 +13,12 @@
  *    SELECT on `system.query_log`, a grant option, BACKUP and REMOTE held only through a role, default or not), and
  *    users who can see a URL-engine table, a dictionary and a definer view over the URL table, are each refused by the
  *    step that names them; the operations profile opens the writable admin unproven;
+ *  - an executable user-defined function: the script writes one (an echo) into the directory the server reads its
+ *    function configuration and scripts from, and reloads the functions; the least-privilege user, admitted before,
+ *    can call it under `readonly = 1`, and is refused at open naming it; with the function removed it is admitted
+ *    again;
+ *  - a user whose only SELECT comes through a role that is not a default role is admitted (`SHOW GRANTS FINAL` lists
+ *    the role's grant), and its read is refused with 497, since the role is not active;
  *  - the boundary, with Studio's client admission bypassed: each write, DDL, SYSTEM statement, grant, temporary table,
  *    source table function (url, remote, file, s3, mysql), trailing `SETTINGS readonly = 0` and second statement is sent as the least-privilege user
  *    through `queryReadOnly` and through the transport, and as the writable admin under `readonly = 1`, and each is
@@ -30,13 +36,19 @@
  * snippet granting the latter, `docs/providers/clickhouse.md` section 5.6 shows it):
  *
  *   LIBREDB_LIVE_CLICKHOUSE_PORT=8123 LIBREDB_LIVE_CLICKHOUSE_USER=... LIBREDB_LIVE_CLICKHOUSE_PASSWORD=... \
- *     bun tests/live/clickhouse-agent-boundary.ts
+ *     LIBREDB_LIVE_CLICKHOUSE_FUNCTIONS_DIR=... bun tests/live/clickhouse-agent-boundary.ts
+ *
+ * `LIBREDB_LIVE_CLICKHOUSE_FUNCTIONS_DIR` is this machine's path of a directory the server reads as both
+ * `user_defined_executable_functions_config` (`<dir>/*_function.xml`) and `user_scripts_path`, writable here and
+ * readable by the server; the provider doc shows the `config.d` snippet.
  *
  * Every user, role, profile, collection and database it creates carries the `libredb_lb_` prefix and is dropped on
  * exit. Each check prints one line, and the first that fails ends the run non-zero.
  */
 // oxlint-disable no-await-in-loop -- the checks run one at a time on purpose: each reads what the server holds after the one before.
 import { randomBytes } from "node:crypto";
+import { rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { ExecutionProfileError } from "@/lib/db/errors";
 import { createDatabaseProvider, executionContextFor } from "@/lib/db/factory";
 import { agentRequestSettings } from "@/lib/db/providers/sql/clickhouse/agent-read";
@@ -62,6 +74,10 @@ function env(name: string): string {
 const HOST = process.env.LIBREDB_LIVE_CLICKHOUSE_HOST ?? "127.0.0.1";
 const PORT = Number(env("LIBREDB_LIVE_CLICKHOUSE_PORT"));
 const ADMIN = { user: env("LIBREDB_LIVE_CLICKHOUSE_USER"), password: env("LIBREDB_LIVE_CLICKHOUSE_PASSWORD") };
+/** The server's function configuration and scripts directory, as this machine reaches it. */
+const FUNCTIONS_DIR = env("LIBREDB_LIVE_CLICKHOUSE_FUNCTIONS_DIR");
+const UDF = `${PREFIX}udf_echo`;
+const UDF_FILES = [join(FUNCTIONS_DIR, `${UDF}_function.xml`), join(FUNCTIONS_DIR, `${UDF}.sh`)];
 /** One password for every seeded user, made for the run. */
 const SEEDED_PASSWORD = randomBytes(12).toString("hex");
 /** A name for the run's in-memory backups, which the server keeps until it restarts. */
@@ -254,6 +270,11 @@ async function seed(): Promise<void> {
   await admin(`GRANT BACKUP ON ${DB}.* TO ${PREFIX}r_backup`);
   await admin(`CREATE ROLE ${PREFIX}r_remote`);
   await admin(`GRANT REMOTE ON *.* TO ${PREFIX}r_remote`);
+  await admin(`CREATE ROLE ${PREFIX}r_select`);
+  await admin(`GRANT SELECT ON ${DB}.t TO ${PREFIX}r_select`);
+  await admin(`CREATE USER ${PREFIX}nondefault IDENTIFIED WITH sha256_password BY '${SEEDED_PASSWORD}'`);
+  await admin(`GRANT ${PREFIX}r_select TO ${PREFIX}nondefault`);
+  await admin(`SET DEFAULT ROLE NONE TO ${PREFIX}nondefault`);
   await admin(`CREATE SETTINGS PROFILE ${PREFIX}p_changeable SETTINGS readonly = 0 CHANGEABLE_IN_READONLY`);
   const users = ["ro", ...REFUSED_USERS.map((user) => user.name)];
   for (const name of users) {
@@ -266,15 +287,30 @@ async function seed(): Promise<void> {
   }
 }
 
+/** Writes the echo function and its script, or removes them, and has the server read its function files again. */
+async function executableFunction(present: boolean): Promise<void> {
+  for (const file of UDF_FILES) rmSync(file, { force: true });
+  if (present) {
+    writeFileSync(
+      UDF_FILES[0],
+      `<functions><function><type>executable</type><name>${UDF}</name><return_type>String</return_type><argument><type>String</type></argument><format>TabSeparated</format><command>${UDF}.sh</command></function></functions>\n`,
+      { mode: 0o644 },
+    );
+    writeFileSync(UDF_FILES[1], "#!/bin/sh\ncat\n", { mode: 0o755 });
+  }
+  await admin("SYSTEM RELOAD FUNCTIONS");
+}
+
 async function cleanup(): Promise<void> {
+  await executableFunction(false);
   const drops = [
     `DROP DATABASE IF EXISTS ${DB} SYNC`,
     `DROP DATABASE IF EXISTS ${CTL} SYNC`,
     `DROP NAMED COLLECTION IF EXISTS ${PREFIX}nc`,
     `DROP FUNCTION IF EXISTS ${PREFIX}f`,
     `DROP SETTINGS PROFILE IF EXISTS ${PREFIX}p_changeable`,
-    `DROP ROLE IF EXISTS ${PREFIX}r_backup, ${PREFIX}r_remote`,
-    `DROP USER IF EXISTS ${["ro", ...REFUSED_USERS.map((user) => user.name)].map((name) => PREFIX + name).join(", ")}`,
+    `DROP ROLE IF EXISTS ${PREFIX}r_backup, ${PREFIX}r_remote, ${PREFIX}r_select`,
+    `DROP USER IF EXISTS ${["ro", "nondefault", ...REFUSED_USERS.map((user) => user.name)].map((name) => PREFIX + name).join(", ")}`,
   ];
   for (const sql of drops) await admin(sql);
 }
@@ -307,6 +343,34 @@ async function main(): Promise<void> {
       error instanceof ExecutionProfileError && error.reasonCode === user.reason && error.message.includes(user.says);
     check(ok, `open: ${PREFIX}${user.name} is refused ${user.reason} naming "${user.says}" (${error?.message})`);
   }
+  const nondefault = await open(`${PREFIX}nondefault`, SEEDED_PASSWORD, "agent-read-only");
+  check(nondefault.isConnected(), `open: ${PREFIX}nondefault, whose SELECT is a non-default role's, is admitted`);
+  const inactive = await refusalOf(() => nondefault.queryReadOnly!(`SELECT count() FROM ${DB}.t`, BUDGET));
+  check(
+    inactive?.message.includes("Code: 497") === true,
+    `read: ${PREFIX}nondefault's read is refused, the role not being active (${inactive?.message.slice(0, 90)})`,
+  );
+  await nondefault.disconnect();
+  await executableFunction(true);
+  const called = await new ClickHouseHttpTransport(connection(ro, SEEDED_PASSWORD))
+    .query(`SELECT ${UDF}('agent') AS echoed`, { settings: agentRequestSettings(BUDGET), timeoutMs: 30_000 })
+    .then((answer) => JSON.stringify(answer.rows))
+    .catch((error: Error) => error.message.slice(0, 120));
+  check(
+    called === '[{"echoed":"agent"}]',
+    `function: ${ro} calls the executable ${UDF} under readonly = 1 with no grant -> ${called}`,
+  );
+  const udfRefusal = await refusalOf(() => open(ro, SEEDED_PASSWORD, "agent-read-only"));
+  check(
+    udfRefusal instanceof ExecutionProfileError &&
+      udfRefusal.reasonCode === "PROFILE_PRIVILEGES_TOO_BROAD" &&
+      udfRefusal.message.includes(`can call ${UDF} (ExecutableUserDefined)`),
+    `open: ${ro} is refused while the server holds ${UDF} (${udfRefusal?.message})`,
+  );
+  await executableFunction(false);
+  const readmitted = await open(ro, SEEDED_PASSWORD, "agent-read-only");
+  check(readmitted.isConnected(), `open: ${ro} is admitted again once ${UDF} is removed`);
+  await readmitted.disconnect();
   const operations = await open(ADMIN.user, ADMIN.password, "agent-operations");
   check(operations.isConnected(), "open: the operations profile opens the writable admin unproven");
   await operations.disconnect();

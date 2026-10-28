@@ -68,6 +68,7 @@ function leastPrivilege(): Record<string, Answer> {
     queryLog: refused(497),
     objects: result([], ["database", "name", "engine"]),
     dictionaries: refused(497),
+    functions: result([], ["name", "origin"]),
   };
 }
 
@@ -79,6 +80,7 @@ function stepOf(sql: string): string {
   if (sql.includes("system.query_log")) return "queryLog";
   if (sql.includes("system.tables")) return "objects";
   if (sql.includes("system.dictionaries")) return "dictionaries";
+  if (sql.includes("system.functions")) return "functions";
   throw new Error(`unscripted statement: ${sql}`);
 }
 
@@ -123,6 +125,7 @@ describe("verifyAgentProfile admits", () => {
       "queryLog",
       "objects",
       "dictionaries",
+      "functions",
     ]);
     expect(sent[2]).toBe("CREATE DATABASE IF NOT EXISTS `demo`");
   });
@@ -303,6 +306,29 @@ describe("verifyAgentProfile refuses the principal", () => {
 
   test("dictionaries refused with another code than 497", async () => {
     expect((await refusal({ dictionaries: refused(60) })).message).toContain("answered code 60");
+  });
+
+  test("the function check reads every function that is neither built in nor SQL", async () => {
+    const { query, sent } = server();
+    await verifyAgentProfile(query, "demo");
+    expect(sent.find((sql) => stepOf(sql) === "functions")).toBe(
+      "SELECT name, origin FROM system.functions WHERE origin NOT IN ('System', 'SQLUserDefined') ORDER BY name LIMIT 5",
+    );
+  });
+
+  // Measured: an executable function from the server's configuration answered the least-privilege user under
+  // readonly = 1 with no grant, and its program ran.
+  test("a visible executable user-defined function, by name", async () => {
+    const error = await refusal({
+      functions: result([
+        { name: "libredb_lb_udf_echo", origin: "ExecutableUserDefined" },
+        { name: "libredb_lb_udf_pool", origin: "ExecutableUserDefined" },
+      ]),
+    });
+    expect(error.reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+    expect(error.message).toBe(
+      'ClickHouse user "agent_ro" can call libredb_lb_udf_echo (ExecutableUserDefined), libredb_lb_udf_pool (ExecutableUserDefined), each a user-defined function that runs code outside SQL, which readonly does not hold; the agent read-only profile takes a server whose functions are built in or SQL only, so it is refused',
+    );
   });
 });
 
