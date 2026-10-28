@@ -2526,6 +2526,23 @@ describe("ObjectSourceView edit mode", () => {
     expect(screen.getByTestId("object-source-apply-rebuild")).toBeTruthy();
   });
 
+  test("an applier the host withdrew while the preview was open applies nothing", async () => {
+    // An embedding host hands the applier in per connection, and nothing stops it from taking it
+    // back while the dialog is up. The press must then do nothing rather than call into nothing.
+    const { applier, apply } = applierDouble();
+    const view = render(<EditHarness applier={applier} document={withPart(READABLE)} />);
+    await enterEditMode();
+    await type("edited");
+    await click("object-source-preview");
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-confirm")).toBeTruthy());
+
+    view.rerender(<EditHarness document={withPart(READABLE)} />);
+    await click("object-source-apply-confirm");
+
+    expect(apply).not.toHaveBeenCalled();
+    expect(screen.getByTestId("object-source-apply-confirm").textContent).toBe("Apply");
+  });
+
   test("a malformed answer from the applier is a FAILED apply carrying our own sentence", async () => {
     // A read that lies shows the wrong text; an apply that lies tells a reader their change landed
     // when it did not. This is the only thing standing on the embedded seam.
