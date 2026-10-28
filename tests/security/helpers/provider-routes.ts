@@ -75,7 +75,7 @@ export const ROUTES_WITHOUT_A_PROVIDER: Record<string, string> = {
   "auth/oidc/callback": "completes the OIDC exchange that CREATES the session (GET, no POST export)",
   "auth/oidc/login": "starts the OIDC redirect before a session exists (GET, no POST export)",
   "connections/managed":
-    "reads seed config metadata and the CapRover discovery export, or under governance the in-process governance snapshot; never opens a database connection, and its only network use is a bare node:net reachability probe for built-image candidates when SEED_DISCOVERY_PATH is set (GET, no POST export)",
+    "reads seed config metadata and the CapRover discovery export, or under governance the in-process governance snapshot; never opens a database connection, and its only network use is a bare node:net reachability probe for built-image candidates when SEED_DISCOVERY_PATH is set and, with KUBERNETES_ACCESS_REVIEW on, one SubjectAccessReview to the Kubernetes API per connection that names its Kubernetes Secret (GET, no POST export)",
   "connections/policy":
     "answers whether custom connections are allowed, from process.env alone (ALLOW_CUSTOM_CONNECTIONS); no database or LLM provider (GET, no POST export). It requires a session, a bare getSession() answering the session-required 401 like connections/managed, and tests/api/seed/policy-route.test.ts proves an unauthenticated caller learns nothing about the policy",
   health:
