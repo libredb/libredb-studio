@@ -3775,6 +3775,26 @@ describe("the identity a held inventory is filed under", () => {
     expect(repointed({ role: "" })).toBe(connectionIdentity(CONNECTION));
   });
 
+  test("a moved BigQuery location is a different identity; an unset one moves nothing", () => {
+    // The location decides where a job runs and which regional datasets answer, so a moved location is another
+    // catalog view. Tagged and appended only when set, so a connection without one keeps the identity it had.
+    const bigquery: DatabaseConnection = { ...CONNECTION, type: "bigquery", port: undefined };
+    expect(connectionIdentity({ ...bigquery, location: "EU" })).not.toBe(
+      connectionIdentity({ ...bigquery, location: "US" }),
+    );
+    expect(connectionIdentity({ ...bigquery, location: "EU" })).not.toBe(connectionIdentity(bigquery));
+    expect(connectionIdentity({ ...bigquery, location: "" })).toBe(connectionIdentity(bigquery));
+  });
+
+  test("a reading held under one BigQuery location is not served under another", async () => {
+    forgetHeldSnapshots();
+    const snapshot = await captured("postgres");
+    holdSnapshotForConnection(snapshot, repointed({ location: "EU" }));
+
+    expect(heldSnapshotForConnection(repointed({ location: "US" }))).toBeNull();
+    expect(heldSnapshotForConnection(repointed({ location: "EU" }))).toEqual(snapshot);
+  });
+
   test("a rotated Snowflake key or passphrase is the SAME identity, on the password rule", () => {
     expect(repointed({ privateKey: "k-2", privateKeyPassphrase: "p-2" })).toBe(
       repointed({ privateKey: "k-1", privateKeyPassphrase: "p-1" }),

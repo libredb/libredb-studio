@@ -171,7 +171,7 @@ export function deriveThreadContext(
  *
  * The identity is `connectionIdentity`'s and not a second fingerprint, and its two
  * exclusions are what make it the right one here. It carries engine, host, port,
- * database, service, instance, role and the SSH tunnel the database is reached through,
+ * database, service, instance, role, BigQuery location and the SSH tunnel the database is reached through,
  * so re-pointing any of those ends the conversation. It does NOT carry the password, so rotating a credential does not — a
  * rotation changes who may reach the database, never which database it is, and it must
  * not cost a user the conversation they were having.

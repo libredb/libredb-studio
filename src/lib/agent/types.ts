@@ -1853,7 +1853,7 @@ export interface AgentRunRecord {
   /**
    * WHICH DATABASE that connection addressed when this run opened, as
    * `connectionIdentity` fingerprints it: engine, host, port, database, service,
-   * instance, role and the SSH tunnel it is reached through, and deliberately not the
+   * instance, role, BigQuery location and the SSH tunnel it is reached through, and deliberately not the
    * password.
    *
    * The id above names the RECORD; this names the database behind it, and the two

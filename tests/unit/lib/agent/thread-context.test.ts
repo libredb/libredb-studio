@@ -374,6 +374,21 @@ describe("the database a conversation was established against", () => {
     expect(renamed.steps).toHaveLength(1);
   });
 
+  test("a follow-up after a BigQuery location moved carries no steps, because another region answers", () => {
+    const bigquery: DatabaseConnection = { ...PROD, type: "bigquery", location: "EU" };
+    const inEu = record({
+      runId: "arun_1",
+      objective: "count orders by region",
+      connectionIdentity: connectionIdentity(bigquery),
+      events: [reportEvent("Orders in EMEA outnumber every other region")],
+    });
+
+    const moved = threadContextFor(inEu, connectionIdentity({ ...bigquery, location: "US" }));
+    expect(moved.declined).toBe("repointed");
+    expect(moved.steps).toEqual([]);
+    expect(threadContextFor(inEu, connectionIdentity(bigquery)).steps).toHaveLength(1);
+  });
+
   test("a predecessor whose ledger recorded no database identity is carried, not refused", () => {
     /*
       The compatibility half, and the same rule every other optional header field

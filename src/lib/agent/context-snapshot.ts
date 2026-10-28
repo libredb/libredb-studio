@@ -984,6 +984,10 @@ export function connectionIdentity(connection: DatabaseConnection): string {
         // on the password rule.
         ...(connection.role ? [`role=${connection.role}`] : []),
         ...(connection.authMethod ? [`authMethod=${connection.authMethod}`] : []),
+        // BigQuery's location decides where a job runs and which regional datasets answer, so a moved location is
+        // another catalog view; the provider cache key frames it too. Tagged and only when set, so no connection
+        // without one moves.
+        ...(connection.location ? [`location=${connection.location}`] : []),
       ]),
     )
     .digest("hex");
