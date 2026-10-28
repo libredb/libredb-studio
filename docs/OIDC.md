@@ -391,10 +391,10 @@ No Studio code is specific to Rancher: it is the ordinary OIDC mode with the val
    Signing out of Rancher does not end a Studio session; it lasts until `AUTH_SESSION_TTL_SECONDS` runs out.
 
 7. **Kubernetes access review (optional):** when Studio runs in the cluster whose databases it opens, `KUBERNETES_ACCESS_REVIEW=on` lets the cluster's own RBAC decide, per person, which Kubernetes-discovered database they may open, and who is a Studio admin.
-   Each review asks as the Rancher user id in `sub` with the group principals of the `groups` claim, the identity Rancher impersonates the user with on that cluster, so Studio gives a person what their Rancher roles give them there.
+   Each review asks as the Rancher user id in `sub` with the group principals of the `groups` claim, the identity Rancher impersonates the user with on that cluster, so Studio never allows a person more than their Rancher roles do there, and denies a Secret that Rancher grants only through `system:authenticated` or `system:cattle:authenticated`.
    Only a member of the cluster signs in, by default whoever may list its NavLinks, so a Rancher user without a role in the cluster is refused with `oidc_no_role`.
    A Studio admin is whoever may `update` Studio's own Deployment, the administrator and the cluster's owners in a default install, and a project member is a user.
-   Rancher is then the only way in: leave `ADMIN_PASSWORD` and `USER_PASSWORD` unset, since Studio refuses to start with either, and password sign-in answers 403.
+   With the review on, Rancher is the only way in: leave `ADMIN_PASSWORD` and `USER_PASSWORD` unset, since Studio refuses to start with either, and password sign-in answers 403.
    Request `groups` in `OIDC_SCOPE` on 2.15 so a user with group principals is reviewed with them; a local user has none either way.
    Setup, the boot checks and what the review switches off: [Kubernetes access review](SEED_CONNECTIONS.md#kubernetes-access-review).
 

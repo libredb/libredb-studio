@@ -1141,10 +1141,13 @@ Its roles are `*`, so the review is its only gate, for admins and users alike:
 
 - It is listed, and opened by any route, only for a session the review allows to `get` that Secret.
 - The review is a SubjectAccessReview with `user` set to the session's identity provider subject, the ID token's `sub`, and `groups` set to the groups of the ID token's `groups` claim at sign-in, and nothing else: no header, cookie field or display name reaches it.
-- This is the identity Rancher impersonates on a downstream cluster, the Rancher user id with its group principals, so for the same Secret the review answers what Rancher answers. A Rancher user with no role in the cluster gets no reviewed connection.
-- Every error, timeout, answer that is not 2xx and answer that is malformed or for another review denies.
+- This is the identity Rancher impersonates on a downstream cluster, the Rancher user id with its group principals, so for the same Secret the review never allows more than Rancher does, and denies a Secret Rancher grants only through `system:authenticated` or `system:cattle:authenticated` (below).
+  A Rancher user with no role in the cluster gets no reviewed connection.
+- Every error, timeout, answer that is not 2xx and answer that is malformed or for another user denies.
 - A session without an identity provider subject or a groups record is denied without a request.
-- Opening one the review denies answers exactly like an id that does not exist: `404 CONNECTION_NOT_FOUND`. With the review on, so does a seed the caller's role may not see, which answers 403 otherwise, so no answer tells a caller which ids exist; each miss is audited as `permission_denied` on the target `kubernetes-access/connection`.
+- Opening one the review denies answers with the same body as an id that does not exist: `404 CONNECTION_NOT_FOUND`.
+  With the review on, so does a seed the caller's role may not see, which answers 403 otherwise; each miss is audited as `permission_denied` on the target `kubernetes-access/connection`.
+  Only the timing differs: the first open of an existing reviewed id within one cache lifetime waits one review round trip, which an unknown id never does, so a caller who times its requests can tell that a reviewed id exists, though not what it holds.
 - An answer is kept for `KUBERNETES_ACCESS_REVIEW_CACHE_SECONDS`, 30 by default and at most 60, per subject, set of groups and Secret. A role or binding removed in the cluster reaches the next list or open within that time; an open tab drops the connection at its next list refresh after it ([In an open tab](#in-an-open-tab)).
 - With the review off, a reviewed connection is shown to the admin role only, as a discovered CapRover connection is.
 
@@ -1158,7 +1161,7 @@ An absent claim, which Rancher sends every user without group principals and so 
 ### Sign-in
 
 With the review on, signing in through the identity provider is not enough to use Studio.
-The callback refuses, with `oidc_no_role`, a subject that is empty, starts with `system:`, is longer than the 255 characters OpenID Connect allows or holds a control character, before any review runs, because a review asserting it would ask as a Kubernetes system user or ServiceAccount.
+The callback refuses, with `oidc_no_role`, a subject that is empty, starts with `system:`, is longer than 255 bytes, the most OpenID Connect allows, or holds a control character, before any review runs, because a review asserting it would ask as a Kubernetes system user or ServiceAccount.
 It then asks the sign-in review, `KUBERNETES_ACCESS_REVIEW_SIGN_IN`, and refuses with `oidc_no_role` a person it does not allow, a failed review included.
 The review is written as `kubectl auth can-i` takes it, `<verb> <resource>[.<group>][/<name>] [-n <namespace>]`, and defaults to `list navlinks.ui.cattle.io`: on Rancher every role a cluster grants allows it, and a Rancher user without a role in the cluster does not.
 On a cluster without Rancher, set it to something every person meant to use Studio may do, such as `get services/libredb-studio -n libredb-studio` with a RoleBinding for them, or only cluster administrators will pass.
