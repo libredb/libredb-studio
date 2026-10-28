@@ -3321,106 +3321,102 @@ export class MSSQLProvider extends SQLBaseProvider {
   public async getHealth(): Promise<HealthInfo> {
     this.ensureConnected();
 
+    // Left UNDEFINED, and spread conditionally into the return below.
+    // `HealthInfo.activeConnections` is optional precisely so a server whose session
+    // DMV was denied omits the figure instead of sending a fabricated 0, and this is
+    // the reading the agent forwards to the model (`src/lib/agent/tools.ts` projects
+    // it with `?? null`), so an initial 0 made a denial indistinguishable from an
+    // idle instance. Reading every session from sys.dm_exec_sessions needs
+    // VIEW SERVER STATE on SQL Server 2019 and earlier and VIEW SERVER PERFORMANCE
+    // STATE on 2022 and later (Microsoft's reference for the view; VIEW SERVER STATE
+    // implies the newer grant, so it still covers this) - on the 2022 CU26 instance
+    // whose refusal was measured 2026-08-23 that is the SAME permission the
+    // performance-counter DMV wanted, not a sibling grant (`Msg 300 ... VIEW SERVER
+    // PERFORMANCE STATE permission was denied on object 'server', database
+    // 'master'`). Azure SQL Database wants VIEW DATABASE STATE and restricts the
+    // same server-scoped DMVs. See docs/providers/mssql.md section 7.2.
+    let activeConnections: number | undefined;
+    let databaseSize = "N/A";
+    let cacheHitRatio: string = CACHE_HIT_RATIO_UNAVAILABLE;
+    const slowQueries: SlowQuery[] = [];
+    const activeSessions: ActiveSession[] = [];
+
+    // Active connections
     try {
-      // Left UNDEFINED, and spread conditionally into the return below.
-      // `HealthInfo.activeConnections` is optional precisely so a server whose session
-      // DMV was denied omits the figure instead of sending a fabricated 0, and this is
-      // the reading the agent forwards to the model (`src/lib/agent/tools.ts` projects
-      // it with `?? null`), so an initial 0 made a denial indistinguishable from an
-      // idle instance. Reading every session from sys.dm_exec_sessions needs
-      // VIEW SERVER STATE on SQL Server 2019 and earlier and VIEW SERVER PERFORMANCE
-      // STATE on 2022 and later (Microsoft's reference for the view; VIEW SERVER STATE
-      // implies the newer grant, so it still covers this) - on the 2022 CU26 instance
-      // whose refusal was measured 2026-08-23 that is the SAME permission the
-      // performance-counter DMV wanted, not a sibling grant (`Msg 300 ... VIEW SERVER
-      // PERFORMANCE STATE permission was denied on object 'server', database
-      // 'master'`). Azure SQL Database wants VIEW DATABASE STATE and restricts the
-      // same server-scoped DMVs. See docs/providers/mssql.md section 7.2.
-      let activeConnections: number | undefined;
-      let databaseSize = "N/A";
-      let cacheHitRatio: string = CACHE_HIT_RATIO_UNAVAILABLE;
-      const slowQueries: SlowQuery[] = [];
-      const activeSessions: ActiveSession[] = [];
-
-      // Active connections
-      try {
-        const connRes = await this.pool!.request().query(
-          `SELECT COUNT(*) AS cnt FROM sys.dm_exec_sessions WHERE is_user_process = 1`,
-        );
-        // measuredNumber, not `|| 0`: a genuinely idle instance answers 0 and that 0 is
-        // a reading, so the falsy test would have thrown away the very figure it was
-        // meant to publish. Only an unanswered COUNT stays absent.
-        activeConnections = measuredNumber(connRes.recordset[0]?.cnt);
-      } catch {
-        /* The figure stays absent, never 0. Which grant this DMV wants is in the note
-           above; that an ungranted login is documented as row-filtered rather than
-           refused - so this guard may never run for one - is in section 7.2. */
-      }
-
-      // Database size
-      try {
-        const sizeRes = await this.pool!.request().query(DATABASE_SIZE_MB_SQL);
-        const mb = Number(sizeRes.recordset[0]?.size_mb || 0);
-        databaseSize = mb > 1024 ? `${(mb / 1024).toFixed(2)} GB` : `${mb} MB`;
-      } catch {
-        /* ignore */
-      }
-
-      // Cache hit ratio. `|| 0` used to publish "0%" for a reading SQL Server never
-      // gave, and the Overview card rates 0 as "Needs tuning". Both absences are
-      // ordinary and both were measured 2026-08-23 on SQL Server 2022 CU26: a login
-      // with only CONNECT gets `Msg 300 ... VIEW SERVER PERFORMANCE STATE permission
-      // was denied on object 'server', database 'master'` (the catch below), and a
-      // zero counter base gives one `NULL` row through NULLIF (measuredNumber).
-      try {
-        const cacheRes = await this.pool!.request().query(BUFFER_CACHE_HIT_RATIO_SQL);
-        const ratio = measuredNumber(cacheRes.recordset[0]?.hit_ratio);
-        if (ratio !== undefined) cacheHitRatio = `${formatCacheHitRatio(ratio)}%`;
-      } catch {
-        /* The DMV needs VIEW SERVER PERFORMANCE STATE; the initial "N/A" stands. */
-      }
-
-      // Slow queries
-      try {
-        const slowRes = await this.pool!.request().query(HEALTH_SLOW_QUERIES_SQL);
-        for (const row of slowRes.recordset || []) {
-          slowQueries.push({
-            query: String(row.query || ""),
-            calls: Number(row.calls || 0),
-            avgTime: `${row.avg_time_ms}ms`,
-          });
-        }
-      } catch {
-        /* DMV permissions */
-      }
-
-      // Active sessions
-      try {
-        const sessRes = await this.pool!.request().query(HEALTH_ACTIVE_SESSIONS_SQL);
-        for (const row of sessRes.recordset || []) {
-          activeSessions.push({
-            pid: Number(row.pid || 0),
-            user: String(row.user || "unknown"),
-            database: String(row.database || ""),
-            state: String(row.state || "unknown"),
-            query: String(row.query || ""),
-            duration: String(row.duration || "N/A"),
-          });
-        }
-      } catch {
-        /* ignore */
-      }
-
-      return {
-        ...(activeConnections === undefined ? {} : { activeConnections }),
-        databaseSize,
-        cacheHitRatio,
-        slowQueries,
-        activeSessions,
-      };
-    } catch (error) {
-      throw mapDatabaseError(error, "mssql");
+      const connRes = await this.pool!.request().query(
+        `SELECT COUNT(*) AS cnt FROM sys.dm_exec_sessions WHERE is_user_process = 1`,
+      );
+      // measuredNumber, not `|| 0`: a genuinely idle instance answers 0 and that 0 is
+      // a reading, so the falsy test would have thrown away the very figure it was
+      // meant to publish. Only an unanswered COUNT stays absent.
+      activeConnections = measuredNumber(connRes.recordset[0]?.cnt);
+    } catch {
+      /* The figure stays absent, never 0. Which grant this DMV wants is in the note
+         above; that an ungranted login is documented as row-filtered rather than
+         refused - so this guard may never run for one - is in section 7.2. */
     }
+
+    // Database size
+    try {
+      const sizeRes = await this.pool!.request().query(DATABASE_SIZE_MB_SQL);
+      const mb = Number(sizeRes.recordset[0]?.size_mb || 0);
+      databaseSize = mb > 1024 ? `${(mb / 1024).toFixed(2)} GB` : `${mb} MB`;
+    } catch {
+      /* ignore */
+    }
+
+    // Cache hit ratio. `|| 0` used to publish "0%" for a reading SQL Server never
+    // gave, and the Overview card rates 0 as "Needs tuning". Both absences are
+    // ordinary and both were measured 2026-08-23 on SQL Server 2022 CU26: a login
+    // with only CONNECT gets `Msg 300 ... VIEW SERVER PERFORMANCE STATE permission
+    // was denied on object 'server', database 'master'` (the catch below), and a
+    // zero counter base gives one `NULL` row through NULLIF (measuredNumber).
+    try {
+      const cacheRes = await this.pool!.request().query(BUFFER_CACHE_HIT_RATIO_SQL);
+      const ratio = measuredNumber(cacheRes.recordset[0]?.hit_ratio);
+      if (ratio !== undefined) cacheHitRatio = `${formatCacheHitRatio(ratio)}%`;
+    } catch {
+      /* The DMV needs VIEW SERVER PERFORMANCE STATE; the initial "N/A" stands. */
+    }
+
+    // Slow queries
+    try {
+      const slowRes = await this.pool!.request().query(HEALTH_SLOW_QUERIES_SQL);
+      for (const row of slowRes.recordset || []) {
+        slowQueries.push({
+          query: String(row.query || ""),
+          calls: Number(row.calls || 0),
+          avgTime: `${row.avg_time_ms}ms`,
+        });
+      }
+    } catch {
+      /* DMV permissions */
+    }
+
+    // Active sessions
+    try {
+      const sessRes = await this.pool!.request().query(HEALTH_ACTIVE_SESSIONS_SQL);
+      for (const row of sessRes.recordset || []) {
+        activeSessions.push({
+          pid: Number(row.pid || 0),
+          user: String(row.user || "unknown"),
+          database: String(row.database || ""),
+          state: String(row.state || "unknown"),
+          query: String(row.query || ""),
+          duration: String(row.duration || "N/A"),
+        });
+      }
+    } catch {
+      /* ignore */
+    }
+
+    return {
+      ...(activeConnections === undefined ? {} : { activeConnections }),
+      databaseSize,
+      cacheHitRatio,
+      slowQueries,
+      activeSessions,
+    };
   }
 
   // ============================================================================
@@ -3520,159 +3516,151 @@ export class MSSQLProvider extends SQLBaseProvider {
   public async getOverview(): Promise<DatabaseOverview> {
     this.ensureConnected();
 
+    let version = "SQL Server";
+    let uptime = "N/A";
+    let startTime: Date | undefined;
+    // Left UNDEFINED and spread conditionally into the return below, mirroring
+    // getHealth() above: `DatabaseOverview.activeConnections` is optional for the
+    // same reason, so a server whose session DMV was denied omits the figure
+    // instead of publishing a fabricated 0. getHealth() does NOT compose from this
+    // reading - it runs its own COUNT over the same DMV - and the agent's curated
+    // `health` reading is getHealth() too (`method: "getHealth"` in
+    // src/lib/agent/tools.ts; nothing under src/lib/agent reads getOverview()). This
+    // count's readers are the monitoring Connections card, its trend chart and the
+    // connection-threshold rating over them, so an initial 0 made a denial
+    // indistinguishable from an idle instance for all three.
+    // OverviewTab.tsx renders "N/A" over "not published" for the absence and drops
+    // the sample from the connection trend; the 0 printed as the figure 0 on that
+    // card and each refresh added a real 0 point to the trend. No percentage was
+    // involved: the ceiling comes from the SAME statement, so a refused read left
+    // maxConnections at its 0 initialiser and the card said "no limit published",
+    // with no "/32767" and no bar. See docs/providers/mssql.md section 7.2.
+    let activeConnections: number | undefined;
+    // maxConnections stays a required number: 0 MEANS "no limit published" here,
+    // so unlike the count above, 0 and absence are the SAME fact for the ceiling.
+    let maxConnections = 0;
+    // Left UNDEFINED and spread conditionally too, for the reason the count above is:
+    // `DatabaseOverview.databaseSizeBytes` is optional because absence and zero are
+    // different facts, and a `sys.database_files` read that does not answer says
+    // nothing about the database's size. Unlike the count above this is NOT a
+    // permission story - that view is database-scoped, so §7.2's server-level
+    // refusal does not gate it, and no failure of this statement has been measured
+    // on a live instance; whatever reaches the catch, the catch cannot name it.
+    // StorageTab.tsx keys its whole breakdown off `databaseSizeBytes !== undefined`,
+    // so the old `0` initialiser drew that breakdown over a database it never
+    // measured, instead of "No storage size information available." - and drew it
+    // against per-table bytes from getTableStats(), a separate read that does not
+    // share this statement's failure, so the rows contradicted the total they were
+    // shares of. `databaseSize` moves with the figure for the same reason: both
+    // monitoring tabs render that string as the headline size, so a leftover
+    // "0 bytes" printed a confident zero beside that message. "N/A" while the bytes
+    // are unknown is the shape merged for libSQL (#569) and the search provider
+    // (#517). See docs/providers/mssql.md section 7.3.
+    let databaseSize = "N/A";
+    let databaseSizeBytes: number | undefined;
+    let tableCount = 0;
+    let indexCount = 0;
+
+    // Version
     try {
-      let version = "SQL Server";
-      let uptime = "N/A";
-      let startTime: Date | undefined;
-      // Left UNDEFINED and spread conditionally into the return below, mirroring
-      // getHealth() above: `DatabaseOverview.activeConnections` is optional for the
-      // same reason, so a server whose session DMV was denied omits the figure
-      // instead of publishing a fabricated 0. getHealth() does NOT compose from this
-      // reading - it runs its own COUNT over the same DMV - and the agent's curated
-      // `health` reading is getHealth() too (`method: "getHealth"` in
-      // src/lib/agent/tools.ts; nothing under src/lib/agent reads getOverview()). This
-      // count's readers are the monitoring Connections card, its trend chart and the
-      // connection-threshold rating over them, so an initial 0 made a denial
-      // indistinguishable from an idle instance for all three.
-      // OverviewTab.tsx renders "N/A" over "not published" for the absence and drops
-      // the sample from the connection trend; the 0 printed as the figure 0 on that
-      // card and each refresh added a real 0 point to the trend. No percentage was
-      // involved: the ceiling comes from the SAME statement, so a refused read left
-      // maxConnections at its 0 initialiser and the card said "no limit published",
-      // with no "/32767" and no bar. See docs/providers/mssql.md section 7.2.
-      let activeConnections: number | undefined;
-      // maxConnections stays a required number: 0 MEANS "no limit published" here,
-      // so unlike the count above, 0 and absence are the SAME fact for the ceiling.
-      let maxConnections = 0;
-      // Left UNDEFINED and spread conditionally too, for the reason the count above is:
-      // `DatabaseOverview.databaseSizeBytes` is optional because absence and zero are
-      // different facts, and a `sys.database_files` read that does not answer says
-      // nothing about the database's size. Unlike the count above this is NOT a
-      // permission story - that view is database-scoped, so §7.2's server-level
-      // refusal does not gate it, and no failure of this statement has been measured
-      // on a live instance; whatever reaches the catch, the catch cannot name it.
-      // StorageTab.tsx keys its whole breakdown off `databaseSizeBytes !== undefined`,
-      // so the old `0` initialiser drew that breakdown over a database it never
-      // measured, instead of "No storage size information available." - and drew it
-      // against per-table bytes from getTableStats(), a separate read that does not
-      // share this statement's failure, so the rows contradicted the total they were
-      // shares of. `databaseSize` moves with the figure for the same reason: both
-      // monitoring tabs render that string as the headline size, so a leftover
-      // "0 bytes" printed a confident zero beside that message. "N/A" while the bytes
-      // are unknown is the shape merged for libSQL (#569) and the search provider
-      // (#517). See docs/providers/mssql.md section 7.3.
-      let databaseSize = "N/A";
-      let databaseSizeBytes: number | undefined;
-      let tableCount = 0;
-      let indexCount = 0;
-
-      // Version
-      try {
-        const vRes = await this.pool!.request().query(`SELECT @@VERSION AS version`);
-        version = String(vRes.recordset[0]?.version || "").split("\n")[0];
-      } catch {
-        /* ignore */
-      }
-
-      // Uptime
-      try {
-        const upRes = await this.pool!.request().query(OVERVIEW_UPTIME_SQL);
-        if (upRes.recordset[0]) {
-          const secs = Number(upRes.recordset[0].uptime_seconds || 0);
-          const days = Math.floor(secs / 86400);
-          const hours = Math.floor((secs % 86400) / 3600);
-          const minutes = Math.floor((secs % 3600) / 60);
-          uptime = days > 0 ? `${days}d ${hours}h ${minutes}m` : hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
-          startTime = new Date(upRes.recordset[0].sqlserver_start_time);
-        }
-      } catch {
-        /* ignore */
-      }
-
-      // Connections
-      try {
-        const connRes = await this.pool!.request().query(OVERVIEW_CONNECTIONS_SQL);
-        // measuredNumber, not `|| 0`: an idle instance answers COUNT(*) = 0 and that
-        // 0 is a reading, so the falsy test threw away the very figure it published.
-        // Only an unanswered COUNT stays absent.
-        activeConnections = measuredNumber(connRes.recordset[0]?.active_connections);
-        maxConnections = Number(connRes.recordset[0]?.max_connections || 32767);
-        if (maxConnections === 0) maxConnections = 32767; // 0 means unlimited
-      } catch {
-        /* The count stays absent, never 0, and the ceiling stays 0, which already
-           reads as "no limit published". Which half of this statement refuses is
-           version-dependent, and Microsoft documents only one of them plainly:
-           sys.configurations requires membership in `public` on SQL Server 2019 and
-           earlier but VIEW SERVER PERFORMANCE STATE on 2022 and later, so on 2022+ an
-           ungranted login lands here on the ceiling lookup alone. sys.dm_exec_sessions
-           is documented as row-filtered rather than refused - "Everyone can see their
-           own session information", the server-state grant only widening that to ALL
-           sessions - so on 2019 and earlier the same login may instead SUCCEED with a
-           COUNT of its own session, an under-reading no guard here can see because
-           nothing failed. That case is unmeasured and unfixed; see
-           docs/providers/mssql.md section 7.2. */
-      }
-
-      // Database size
-      try {
-        const sizeRes = await this.pool!.request().query(OVERVIEW_DATABASE_SIZE_SQL);
-        databaseSizeBytes = measuredNullableAggregate(sizeRes.recordset[0], "size_bytes");
-        if (databaseSizeBytes !== undefined) databaseSize = formatBytes(databaseSizeBytes);
-      } catch {
-        /* The size stays absent, never 0, and `databaseSize` keeps the "N/A" it was
-           initialised with. */
-      }
-
-      // Table/index counts
-      try {
-        const cntRes = await this.pool!.request().query(OVERVIEW_OBJECT_COUNTS_SQL);
-        tableCount = Number(cntRes.recordset[0]?.table_count || 0);
-        indexCount = Number(cntRes.recordset[0]?.index_count || 0);
-      } catch {
-        /* ignore */
-      }
-
-      return {
-        version,
-        uptime,
-        startTime,
-        ...(activeConnections === undefined ? {} : { activeConnections }),
-        maxConnections,
-        databaseSize,
-        ...(databaseSizeBytes === undefined ? {} : { databaseSizeBytes }),
-        tableCount,
-        indexCount,
-      };
-    } catch (error) {
-      throw mapDatabaseError(error, "mssql");
+      const vRes = await this.pool!.request().query(`SELECT @@VERSION AS version`);
+      version = String(vRes.recordset[0]?.version || "").split("\n")[0];
+    } catch {
+      /* ignore */
     }
+
+    // Uptime
+    try {
+      const upRes = await this.pool!.request().query(OVERVIEW_UPTIME_SQL);
+      if (upRes.recordset[0]) {
+        const secs = Number(upRes.recordset[0].uptime_seconds || 0);
+        const days = Math.floor(secs / 86400);
+        const hours = Math.floor((secs % 86400) / 3600);
+        const minutes = Math.floor((secs % 3600) / 60);
+        uptime = days > 0 ? `${days}d ${hours}h ${minutes}m` : hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+        startTime = new Date(upRes.recordset[0].sqlserver_start_time);
+      }
+    } catch {
+      /* ignore */
+    }
+
+    // Connections
+    try {
+      const connRes = await this.pool!.request().query(OVERVIEW_CONNECTIONS_SQL);
+      // measuredNumber, not `|| 0`: an idle instance answers COUNT(*) = 0 and that
+      // 0 is a reading, so the falsy test threw away the very figure it published.
+      // Only an unanswered COUNT stays absent.
+      activeConnections = measuredNumber(connRes.recordset[0]?.active_connections);
+      maxConnections = Number(connRes.recordset[0]?.max_connections || 32767);
+      if (maxConnections === 0) maxConnections = 32767; // 0 means unlimited
+    } catch {
+      /* The count stays absent, never 0, and the ceiling stays 0, which already
+         reads as "no limit published". Which half of this statement refuses is
+         version-dependent, and Microsoft documents only one of them plainly:
+         sys.configurations requires membership in `public` on SQL Server 2019 and
+         earlier but VIEW SERVER PERFORMANCE STATE on 2022 and later, so on 2022+ an
+         ungranted login lands here on the ceiling lookup alone. sys.dm_exec_sessions
+         is documented as row-filtered rather than refused - "Everyone can see their
+         own session information", the server-state grant only widening that to ALL
+         sessions - so on 2019 and earlier the same login may instead SUCCEED with a
+         COUNT of its own session, an under-reading no guard here can see because
+         nothing failed. That case is unmeasured and unfixed; see
+         docs/providers/mssql.md section 7.2. */
+    }
+
+    // Database size
+    try {
+      const sizeRes = await this.pool!.request().query(OVERVIEW_DATABASE_SIZE_SQL);
+      databaseSizeBytes = measuredNullableAggregate(sizeRes.recordset[0], "size_bytes");
+      if (databaseSizeBytes !== undefined) databaseSize = formatBytes(databaseSizeBytes);
+    } catch {
+      /* The size stays absent, never 0, and `databaseSize` keeps the "N/A" it was
+         initialised with. */
+    }
+
+    // Table/index counts
+    try {
+      const cntRes = await this.pool!.request().query(OVERVIEW_OBJECT_COUNTS_SQL);
+      tableCount = Number(cntRes.recordset[0]?.table_count || 0);
+      indexCount = Number(cntRes.recordset[0]?.index_count || 0);
+    } catch {
+      /* ignore */
+    }
+
+    return {
+      version,
+      uptime,
+      startTime,
+      ...(activeConnections === undefined ? {} : { activeConnections }),
+      maxConnections,
+      databaseSize,
+      ...(databaseSizeBytes === undefined ? {} : { databaseSizeBytes }),
+      tableCount,
+      indexCount,
+    };
   }
 
   public async getPerformanceMetrics(): Promise<PerformanceMetrics> {
     this.ensureConnected();
 
+    let cacheHitRatio: number | undefined;
+
     try {
-      let cacheHitRatio: number | undefined;
-
-      try {
-        const cacheRes = await this.pool!.request().query(BUFFER_CACHE_HIT_RATIO_SQL);
-        cacheHitRatio = measuredNumber(cacheRes.recordset[0]?.hit_ratio);
-      } catch {
-        /* DMV permissions; nothing was measured, so nothing is reported. */
-      }
-
-      return {
-        ...(cacheHitRatio === undefined ? {} : { cacheHitRatio }),
-        // bufferPoolUsage is gone rather than merely absent. It used to be assigned
-        // `cacheHitRatio` itself - the same number under a second name, drawn and
-        // rated as a separate gauge. SQL Server does publish pool occupancy, through
-        // sys.dm_os_buffer_descriptors against max server memory, but this method
-        // does not query it and that scan is not free; until it does there is nothing
-        // here to report.
-      };
-    } catch (error) {
-      throw mapDatabaseError(error, "mssql");
+      const cacheRes = await this.pool!.request().query(BUFFER_CACHE_HIT_RATIO_SQL);
+      cacheHitRatio = measuredNumber(cacheRes.recordset[0]?.hit_ratio);
+    } catch {
+      /* DMV permissions; nothing was measured, so nothing is reported. */
     }
+
+    return {
+      ...(cacheHitRatio === undefined ? {} : { cacheHitRatio }),
+      // bufferPoolUsage is gone rather than merely absent. It used to be assigned
+      // `cacheHitRatio` itself - the same number under a second name, drawn and
+      // rated as a separate gauge. SQL Server does publish pool occupancy, through
+      // sys.dm_os_buffer_descriptors against max server memory, but this method
+      // does not query it and that scan is not free; until it does there is nothing
+      // here to report.
+    };
   }
 
   public async getSlowQueries(options?: { limit?: number }): Promise<SlowQueryStats[]> {

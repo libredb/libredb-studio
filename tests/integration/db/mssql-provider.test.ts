@@ -715,6 +715,25 @@ describe("MSSQLProvider", () => {
       expect(provider.isConnected()).toBe(false);
     });
 
+    test("a named instance is handed to the driver and the port left to SQL Server Browser", async () => {
+      provider = new MSSQLProvider({ ...baseConfig, instanceName: "SQLEXPRESS" });
+      await provider.connect();
+
+      const config = lastPoolConfig as { options?: { instanceName?: string }; port?: number };
+      expect(config.options?.instanceName).toBe("SQLEXPRESS");
+      expect("port" in config).toBe(false);
+    });
+
+    test("a pool that fails to close still leaves the provider disconnected", async () => {
+      await provider.connect();
+      const close = spyOn(lastPool!, "close").mockRejectedValue(new Error("socket hang up"));
+
+      await provider.disconnect();
+
+      expect(close).toHaveBeenCalledTimes(1);
+      expect(provider.isConnected()).toBe(false);
+    });
+
     test("double connect is idempotent", async () => {
       await provider.connect();
       await provider.connect(); // should not throw
@@ -1483,6 +1502,22 @@ describe("MSSQLProvider", () => {
       expect(health.activeConnections).toBe(0);
     });
 
+    test("every health read the login is refused leaves its figure unavailable, and the call still answers", async () => {
+      await provider.connect();
+      mockQueryFn = async (sql: string) => {
+        if (sql.toUpperCase().includes("COUNT(*) AS CNT FROM SYS.DM_EXEC_SESSIONS")) return defaultQuery(sql);
+        throw new Error("VIEW SERVER PERFORMANCE STATE permission was denied on object 'server', database 'master'");
+      };
+
+      const health = await provider.getHealth();
+
+      expect(typeof health.activeConnections).toBe("number");
+      expect(health.databaseSize).toBe("N/A");
+      expect(health.cacheHitRatio).toBe(CACHE_HIT_RATIO_UNAVAILABLE);
+      expect(health.slowQueries).toEqual([]);
+      expect(health.activeSessions).toEqual([]);
+    });
+
     test("reports an unreadable cache hit ratio as unavailable, not as 0%", async () => {
       // `${recordset[0]?.hit_ratio || 0}%` published "0%" for a NULL, and the
       // Overview card rates 0 as "Needs tuning" - a fault SQL Server never
@@ -1611,6 +1646,36 @@ describe("MSSQLProvider", () => {
       expect(capturedSql).toContain("DBCC CHECKDB");
     });
 
+    test("optimize without a target rebuilds every index of every table", async () => {
+      let capturedSql = "";
+      mockQueryFn = async (sql: string) => {
+        capturedSql = sql;
+        return defaultQuery(sql);
+      };
+      await provider.connect();
+
+      const result = await provider.runMaintenance("optimize");
+
+      expect(result.success).toBe(true);
+      expect(capturedSql).toContain("ALTER INDEX ALL ON [");
+      expect(capturedSql).toContain("FROM sys.tables t");
+    });
+
+    test("kill with a numeric target issues KILL for that session, and refuses one that is not a number", async () => {
+      let capturedSql = "";
+      mockQueryFn = async (sql: string) => {
+        capturedSql = sql;
+        return defaultQuery(sql);
+      };
+      await provider.connect();
+
+      expect((await provider.runMaintenance("kill", "55")).success).toBe(true);
+      expect(capturedSql).toBe("KILL 55");
+      capturedSql = "";
+      await expect(provider.runMaintenance("kill", "not-a-spid")).rejects.toThrow("Invalid SPID for kill operation");
+      expect(capturedSql).toBe("");
+    });
+
     test("kill without target throws QueryError", async () => {
       await provider.connect();
       await expect(provider.runMaintenance("kill")).rejects.toThrow(QueryError);
@@ -1672,6 +1737,25 @@ describe("MSSQLProvider", () => {
 
       await provider.rollbackTransaction();
       expect(provider.isInTransaction()).toBe(false);
+    });
+
+    test("a statement the server refuses inside the transaction is mapped, and the transaction stays open", async () => {
+      await provider.connect();
+      await provider.beginTransaction();
+      mockQueryFn = async (sql: string) => {
+        if (sql.startsWith("SELECT nope")) {
+          throw Object.assign(new Error("Invalid column name 'nope'."), { number: 207, class: 16 });
+        }
+        return defaultQuery(sql);
+      };
+
+      const failure = await provider.queryInTransaction("SELECT nope").catch((error: unknown) => error);
+
+      expect(failure).toBeInstanceOf(DatabaseError);
+      expect((failure as DatabaseError).message).toContain("Invalid column name 'nope'");
+      expect((failure as DatabaseError).query).toBe("SELECT nope");
+      expect(provider.isInTransaction()).toBe(true);
+      await provider.rollbackTransaction();
     });
 
     test("queryInTransaction binds positional parameters as p1..pN inputs", async () => {
@@ -2065,6 +2149,41 @@ describe("MSSQLProvider", () => {
   // =========================================================================
   // 14. getPerformanceMetrics()
   // =========================================================================
+
+  describe("monitoring reads the login is refused", () => {
+    const refuseAll = () => {
+      mockQueryFn = async () => {
+        throw new Error("VIEW SERVER STATE permission was denied on object 'server', database 'master'");
+      };
+    };
+
+    test("getOverview keeps its defaults for every read that fails", async () => {
+      await provider.connect();
+      refuseAll();
+
+      const overview = await provider.getOverview();
+
+      expect(overview.version).toBe("SQL Server");
+      expect(overview.uptime).toBe("N/A");
+      expect(overview.startTime).toBeUndefined();
+      expect("activeConnections" in overview).toBe(false);
+      expect(overview.databaseSize).toBe("N/A");
+      expect("databaseSizeBytes" in overview).toBe(false);
+      expect(overview.tableCount).toBe(0);
+      expect(overview.indexCount).toBe(0);
+    });
+
+    test("the list reads answer empty rather than failing the panel", async () => {
+      await provider.connect();
+      refuseAll();
+
+      expect(await provider.getSlowQueries()).toEqual([]);
+      expect(await provider.getActiveSessions()).toEqual([]);
+      expect(await provider.getTableStats()).toEqual([]);
+      expect(await provider.getIndexStats()).toEqual([]);
+      expect(await provider.getStorageStats()).toEqual([]);
+    });
+  });
 
   describe("getPerformanceMetrics()", () => {
     test("returns cache hit ratio and deadlocks", async () => {
@@ -3989,6 +4108,23 @@ describe("SQL Server object containers, listings and detail", () => {
     // "the engine refused" against all seven kinds.
     mockQueryFn = async () => ({ recordset: {}, rowsAffected: [0] });
     await expect(provider.countObjects(["libredb_objects", "app"])).rejects.toThrow(/is not iterable/);
+    await provider.disconnect();
+  });
+
+  test("a catalog read the server refuses is raised, mapped, quoting the statement it sent", async () => {
+    const provider = await connectedForObjects();
+    mockQueryFn = async () => {
+      throw Object.assign(new Error("The SELECT permission was denied on the object 'objects'."), {
+        number: 229,
+        class: 14,
+      });
+    };
+
+    const failure = await provider.listObjects(["libredb_objects", "app"], "table").catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(DatabaseError);
+    expect((failure as DatabaseError).message).toContain("SELECT permission was denied");
+    expect((failure as DatabaseError).query).toContain("sys.");
     await provider.disconnect();
   });
 
