@@ -6,7 +6,7 @@
  */
 
 import type * as Monaco from "monaco-editor";
-import type { SchemaCompletionCache } from "./sql-completions";
+import type { SchemaCompletionCache } from "@/lib/editor/sql-completions";
 
 // ---------------------------------------------------------------------------
 // Static constants

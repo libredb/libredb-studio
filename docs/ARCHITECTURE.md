@@ -213,7 +213,8 @@ A descriptor field that only one engine sets is a sign that its rule belongs in 
 
 The editor's query dialects follow the same rule through three registries, each a `Record` the compiler holds complete.
 `QUERY_DIALECTS` (`src/lib/db/query-dialects.ts`) gives each declared `queryDialect` its tab type and its three row-menu answers.
-`DIALECT_EDITORS` (`src/lib/editor/dialect-editors.ts`) gives each tab type its Monaco language and its formatter, keyed by tab type because that is what a restored tab carries.
+`DIALECT_EDITORS` (`src/lib/editor/dialect-editors.ts`) gives each tab type its Monaco language, keyed by tab type because that is what a restored tab carries.
+`EDITOR_LANGUAGES` (`src/lib/db/editor-language/index.ts`) gives each Monaco language its registration, completion source, formatter and answer card accent, each row declared beside the provider that owns the language, so the shared editor imports the registry and never a provider module.
 `DIALECT_GENERATORS` (`src/lib/query-generators.ts`) gives each dialect what a tree click and Generate Query write, and, for a provider that declares `rowActions`, what each declared row action runs.
 A dialect is one record in each, and no reader branches on its name: `tests/unit/lib/dialect-reader-allowlist.test.ts` holds every other reader of `queryDialect`, of the JSON language and of a negated language to a closed list with its owner.
 
@@ -447,8 +448,9 @@ src/
     ├── launch/              # Launch-token sign-in (docs/LAUNCH.md): config (LAUNCH_TOKEN_* reader), the token
     │                        #   verifier (jose, HS256 pinned) and the in-process jti replay cache
     ├── llm/                 # LLM provider module
-    ├── editor/              # Monaco completions (SQL + MongoDB), the tab-type/language ladder, the
-    │                       # editor registry (dialect-editors.ts), the LibreDB, Redis, etcd, Oxia, S3 and kubectl command languages, Cypher, InfluxQL, and the Milvus, Qdrant and Weaviate console languages
+    ├── editor/              # SQL completion, the tab-type/language ladder, the tab-type registry
+    │                       # (dialect-editors.ts) and the shared console language; each other language is a row of
+    │                       # EDITOR_LANGUAGES (src/lib/db/editor-language/), declared beside its provider
     ├── schema-diff/         # Diff engine + migration SQL generator
     ├── export/              # The writers behind every "save this to disk": RFC 4180 CSV,
     │                        #   the SQL INSERT/DDL forms, and the one blob-download path

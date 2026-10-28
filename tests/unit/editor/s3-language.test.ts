@@ -5,7 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import type * as Monaco from "monaco-editor";
 import { INITIAL_SHELL_LINE_STATE } from "@/lib/db/console/shell-words";
-import { registerS3Language, S3_LANGUAGE_ID, S3TokensState } from "@/lib/editor/s3-language";
+import { registerS3Language, S3_LANGUAGE_ID, S3TokensState } from "@/lib/db/providers/objectstore/s3/editor-syntax";
 
 // Mock Monaco: the harness of oxia-language.test.ts, kept local so no mock module is shared between test files.
 interface MockMonacoState {

@@ -232,6 +232,8 @@ const BROWSER_SET: ReadonlySet<string> = new Set([
   "execution-ui.ts",
   "migration-ddl.ts",
   "sql-grammar.ts",
+  "editor-syntax.ts",
+  "editor-language.ts",
 ]);
 
 /** The version note of contract section 23 (SB1-6.6), the one text three files hold identically. */

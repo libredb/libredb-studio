@@ -24,7 +24,7 @@ import {
   s3Words,
 } from "@/lib/db/providers/objectstore/s3/console/lexer";
 import { shellSpelling } from "@/lib/db/providers/objectstore/s3/names";
-import { S3_LANGUAGE_ID } from "./s3-language";
+import { S3_LANGUAGE_ID } from "./editor-syntax";
 
 /** The bucket names of the editor's schema context: each object's first path segment, else its name. */
 export function s3CompletionBucketsOf(objects: readonly { name: string; path?: string[] }[]): readonly string[] {

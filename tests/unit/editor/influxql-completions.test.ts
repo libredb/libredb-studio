@@ -7,8 +7,8 @@ import {
   influxqlCompletionContext,
   influxqlCompletionSchemaOf,
   registerInfluxqlCompletionProvider,
-} from "@/lib/editor/influxql-completions";
-import { INFLUXQL_LANGUAGE_ID } from "@/lib/editor/influxql-language";
+} from "@/lib/db/providers/timeseries/influxdb/influxql-editor-completions";
+import { INFLUXQL_LANGUAGE_ID } from "@/lib/db/providers/timeseries/influxdb/influxql-editor-syntax";
 
 const KIND = { Keyword: 17, Class: 5, Field: 3, Property: 9 } as const;
 

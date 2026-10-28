@@ -29,7 +29,7 @@ import {
 import { CypherNameError, quoteCypherName } from "@/lib/db/graph/cypher/quote";
 import { parseGraphObjectSegment } from "@/lib/db/graph/objects";
 import type { GraphPolicyProfile } from "@/lib/db/graph/profile";
-import { CYPHER_LANGUAGE_ID } from "./cypher-language";
+import { CYPHER_LANGUAGE_ID } from "./editor-syntax";
 
 /** The names Cypher completion offers, each list sorted. */
 export interface CypherCompletionSchema {

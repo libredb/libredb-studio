@@ -9,7 +9,7 @@ import {
 /**
  * Monaco language for InfluxQL, the editor text of an InfluxDB (InfluxQL) connection (InfluxDB spec 6.7, I12).
  *
- * Not a Monarch grammar, for the reason `etcd-language.ts` gives: the tokens provider calls the provider's own
+ * Not a Monarch grammar, for the reason `keyvalue/etcd/editor-syntax.ts` gives: the tokens provider calls the provider's own
  * browser-safe lexer, `tokenizeInfluxqlLine`, one physical line at a time, and the read policy reads the text
  * through the same lexer, so what the editor colours as a comment or a regex is what the policy skips. The
  * state carried from line to line is the lexer's own `InfluxqlLineState`: whether a block comment is open, and

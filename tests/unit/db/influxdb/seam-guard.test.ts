@@ -53,7 +53,16 @@ const SHARED = [
   "influxdb-execution-ui",
   "influxdb3-execution-ui",
 ];
-const BROWSER = ["influxql-lexer", "influxql-policy", "influxql-quote", "influxql-generators"];
+const BROWSER = [
+  "influxql-lexer",
+  "influxql-policy",
+  "influxql-quote",
+  "influxql-generators",
+  // The editor's InfluxQL language, its completion and its editor language row, which read only the lexer and quoter.
+  "influxql-editor-syntax",
+  "influxql-editor-completions",
+  "influxql-editor-language",
+];
 const INFLUXQL_SERVER = ["influxql-results", "influxql-objects", "influxql-provider"];
 const GRAMMAR = ["influxdb-sql-grammar", "influxdb3-sql-grammar"];
 /** Each type-id's declaration of a per-engine contract, which reads its contract and nothing of this directory. */

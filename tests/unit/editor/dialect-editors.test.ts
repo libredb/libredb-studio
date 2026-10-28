@@ -1,34 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type * as Monaco from "monaco-editor";
-import type { ConsoleLanguage } from "@/lib/editor/console-language";
-import { formatConsole } from "@/lib/db/console/format";
-import { MTC_CONSOLE_DIALECT, MTC_CONSOLE_ROUTES } from "@/lib/db/providers/industrial/mtconnect/routes";
-import { MILVUS_CONSOLE, MILVUS_ROUTES } from "@/lib/db/providers/vector/milvus/routes";
-import { QDRANT_CONSOLE, QDRANT_ROUTES as QDRANT_ROUTES_REAL } from "@/lib/db/providers/vector/qdrant/routes";
-import { WEAVIATE_CONSOLE, WEAVIATE_ROUTES } from "@/lib/db/providers/vector/weaviate/routes";
-import { DIALECT_EDITORS, formatterForLanguage, registerDialectConsoles } from "@/lib/editor/dialect-editors";
-import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
-import { resolveSqlGrammar } from "@/lib/sql/grammar";
-import type { EditorLanguage } from "@/lib/editor/tab-language";
-import { QDRANT_ROUTES, QDRANT_STAND_IN } from "../../helpers/console-stand-ins";
-
-const EDITOR_LANGUAGES: readonly EditorLanguage[] = [
-  "sql",
-  "json",
-  "libredb",
-  "redis",
-  "promql",
-  "etcd",
-  "graph-cypher",
-  "milvus",
-  "qdrant",
-  "weaviate",
-  "influxql",
-  "oxia",
-  "s3",
-  "kubectl",
-  "firestore",
-];
+import { EDITOR_LANGUAGES } from "@/lib/db/editor-language";
+import { DIALECT_EDITORS } from "@/lib/editor/dialect-editors";
 
 describe("DIALECT_EDITORS", () => {
   test("holds one record per tab type, the dialect-less ones included", () => {
@@ -92,38 +64,9 @@ describe("DIALECT_EDITORS", () => {
     });
   });
 
-  test("only the SQL tab, the eight JSON tabs and the Milvus, Qdrant and Weaviate consoles have a formatter", () => {
-    const formatted = Object.entries(DIALECT_EDITORS)
-      .filter(([, editor]) => editor.format !== undefined)
-      .map(([type]) => type)
-      .sort();
-    expect(formatted).toEqual([
-      "kafka",
-      "milvus",
-      "modbus",
-      "mongodb",
-      "mqtt",
-      "netconf",
-      "opcua",
-      "qdrant",
-      "rabbitmq",
-      "snmp",
-      "sparkplug",
-      "sql",
-      "weaviate",
-    ]);
-  });
-
-  test("tab types that render in one Monaco language share one formatter, or all have none", () => {
-    // formatterForLanguage answers by Monaco id, which is all QueryEditor is told, so two tab types in one id
-    // with different formatters would make the Format button's answer depend on which record is found first.
-    for (const language of EDITOR_LANGUAGES) {
-      const formats = new Set(
-        Object.values(DIALECT_EDITORS)
-          .filter((editor) => editor.monacoId === language)
-          .map((editor) => editor.format),
-      );
-      expect(formats.size, `the tab types rendering in ${language} disagree about their formatter`).toBe(1);
+  test("every tab type renders in a language the editor language registry holds", () => {
+    for (const [tabType, editor] of Object.entries(DIALECT_EDITORS)) {
+      expect(Object.hasOwn(EDITOR_LANGUAGES, editor.monacoId), `the ${tabType} tab's language has no row`).toBe(true);
     }
   });
 
@@ -131,136 +74,9 @@ describe("DIALECT_EDITORS", () => {
     expect(Object.isFrozen(DIALECT_EDITORS)).toBe(true);
   });
 
-  test("freezes every record too, so no reader can change a tab type's language or formatter at run time", () => {
+  test("freezes every record too, so no reader can change a tab type's language at run time", () => {
     for (const [tabType, editor] of Object.entries(DIALECT_EDITORS)) {
       expect(Object.isFrozen(editor), `the ${tabType} record is mutable`).toBe(true);
     }
-  });
-});
-
-describe("the formatters", () => {
-  test("SQL formats with the options QueryEditor always passed sql-formatter", () => {
-    expect(DIALECT_EDITORS.sql.format?.("select id, name from users where id = 1 and name = 'a'")).toBe(
-      "SELECT    id,\n          name\nFROM      users\nWHERE     id = 1\nAND       name = 'a'",
-    );
-  });
-
-  // SF-041: formatted as PostgreSQL, QUALIFY was lower-cased and joined to the GROUP BY list.
-  test("SQL on Snowflake's grammar formats QUALIFY as a clause of its own", () => {
-    const typed =
-      "select p.pid,p.name,count(*) from d_parent p join d_child c on c.pid=p.pid where p.pid>1 group by 1,2 qualify row_number() over (order by p.pid)<=5 order by 1";
-    const formatted = DIALECT_EDITORS.sql.format?.(typed, resolveSqlGrammar("snowflake")) ?? "";
-    expect(formatted).toContain("GROUP BY  1,\n          2\nQUALIFY   row_number()");
-    expect(formatted).not.toContain(" qualify ");
-    // A stage reference the PostgreSQL language broke into `@ stage` is refused instead, so the text stays as written.
-    expect(() => DIALECT_EDITORS.sql.format?.("SELECT $1 FROM @stage t", resolveSqlGrammar("snowflake"))).toThrow();
-  });
-
-  test("every dialect but Snowflake formats SQL exactly as before", () => {
-    const typed = "select a, b from t where a = 1 group by 1 qualify x = 1 order by 2";
-    const before = DIALECT_EDITORS.sql.format?.(typed);
-    for (const type of SHIPPED_DATABASE_TYPES.filter((t) => t !== "snowflake")) {
-      expect(DIALECT_EDITORS.sql.format?.(typed, resolveSqlGrammar(type)), type).toBe(before);
-    }
-  });
-
-  test("a MongoDB query and a Kafka read request format as two-space JSON", () => {
-    const typed = '{"topic":"orders","partition":0,"from":"earliest","limit":50}';
-    const expected = '{\n  "topic": "orders",\n  "partition": 0,\n  "from": "earliest",\n  "limit": 50\n}';
-    expect(DIALECT_EDITORS.kafka.format?.(typed)).toBe(expected);
-    expect(DIALECT_EDITORS.mongodb.format?.(typed)).toBe(expected);
-  });
-
-  test("text that is not JSON throws, so the editor leaves it as written", () => {
-    expect(() => DIALECT_EDITORS.mongodb.format?.("{ not json")).toThrow(SyntaxError);
-  });
-});
-
-describe("formatterForLanguage", () => {
-  test("answers each Monaco language's formatter, and none for a language without one", () => {
-    expect(formatterForLanguage("sql")).toBe(DIALECT_EDITORS.sql.format);
-    expect(formatterForLanguage("json")).toBe(DIALECT_EDITORS.mongodb.format);
-    for (const language of ["libredb", "redis", "promql", "etcd", "graph-cypher", "influxql"] as const) {
-      expect(formatterForLanguage(language)).toBeUndefined();
-    }
-  });
-});
-
-describe("the console field", () => {
-  test("the four console records carry their console languages, and no other record carries one", () => {
-    const carrying = Object.entries(DIALECT_EDITORS)
-      .filter(([, editor]) => editor.console !== undefined)
-      .map(([tabType]) => tabType);
-    expect(carrying).toEqual(["milvus", "qdrant", "weaviate", "mtconnect"]);
-    // MTConnect's routes are DERIVED from the table its guard runs, so the identity checked here is
-    // that the record carries that derived table and not a second hand-written one (#1722).
-    expect(DIALECT_EDITORS.mtconnect.console?.spec).toBe(MTC_CONSOLE_DIALECT);
-    expect(DIALECT_EDITORS.mtconnect.console?.routes).toBe(MTC_CONSOLE_ROUTES);
-    // And no formatter: the console formatter writes a method, a route and a JSON body, and this
-    // dialect has no body at all.
-    expect(DIALECT_EDITORS.mtconnect.format).toBeUndefined();
-    expect(DIALECT_EDITORS.milvus.console?.spec).toBe(MILVUS_CONSOLE);
-    expect(DIALECT_EDITORS.milvus.console?.routes).toBe(MILVUS_ROUTES);
-    expect(DIALECT_EDITORS.qdrant.console?.spec).toBe(QDRANT_CONSOLE);
-    expect(DIALECT_EDITORS.qdrant.console?.routes).toBe(QDRANT_ROUTES_REAL);
-    expect(DIALECT_EDITORS.weaviate.console?.spec).toBe(WEAVIATE_CONSOLE);
-    expect(DIALECT_EDITORS.weaviate.console?.routes).toBe(WEAVIATE_ROUTES);
-  });
-
-  test("a weaviate tab formats through formatConsole bound to WEAVIATE_CONSOLE", () => {
-    const text = 'POST /v1/search/Article/bm25\n{"query":"vector","limit":5}';
-    expect(DIALECT_EDITORS.weaviate.format?.(text)).toBe(formatConsole(WEAVIATE_CONSOLE, text));
-    expect(formatterForLanguage("weaviate")?.(text)).toBe(formatConsole(WEAVIATE_CONSOLE, text));
-  });
-
-  test("a milvus tab formats through formatConsole bound to MILVUS_CONSOLE", () => {
-    const text = 'POST /v2/vectordb/entities/query\n{"collectionName":"docs_int64","limit":10}';
-    expect(DIALECT_EDITORS.milvus.format?.(text)).toBe(formatConsole(MILVUS_CONSOLE, text));
-    expect(formatterForLanguage("milvus")?.(text)).toBe(formatConsole(MILVUS_CONSOLE, text));
-  });
-
-  test("a qdrant tab formats through formatConsole bound to QDRANT_CONSOLE", () => {
-    const text = 'POST /collections/docs/points/scroll\n{"limit":1,"with_payload":true}';
-    expect(DIALECT_EDITORS.qdrant.format?.(text)).toBe(formatConsole(QDRANT_CONSOLE, text));
-    expect(formatterForLanguage("qdrant")?.(text)).toBe(formatConsole(QDRANT_CONSOLE, text));
-  });
-});
-
-describe("registerDialectConsoles", () => {
-  /** A Monaco that records the ids it registers, answering the registered ones back as `getLanguages` does. */
-  function recordingMonaco() {
-    const registered: { id: string }[] = [];
-    const monaco = {
-      languages: {
-        getLanguages: () => registered,
-        register: (language: { id: string }) => registered.push(language),
-        setTokensProvider: () => ({ dispose: () => {} }),
-        setLanguageConfiguration: () => ({ dispose: () => {} }),
-        registerCompletionItemProvider: () => ({ dispose: () => {} }),
-        CompletionItemKind: { Value: 13 },
-      },
-    } as unknown as typeof Monaco;
-    return { monaco, registered };
-  }
-
-  const synthetic = (id: string): ConsoleLanguage => ({ spec: { ...QDRANT_STAND_IN, id }, routes: QDRANT_ROUTES });
-
-  test("registers each record's console language once, and skips the records that carry none", () => {
-    const { monaco, registered } = recordingMonaco();
-    const editors = {
-      first: { console: synthetic("first-console") },
-      plain: {},
-      second: { console: synthetic("second-console") },
-    };
-    registerDialectConsoles(monaco, editors);
-    registerDialectConsoles(monaco, editors);
-    expect(registered.map((language) => language.id)).toEqual(["first-console", "second-console"]);
-  });
-
-  test("registers the four console languages for the shipped records, once each", () => {
-    const { monaco, registered } = recordingMonaco();
-    registerDialectConsoles(monaco);
-    registerDialectConsoles(monaco);
-    expect(registered.map((language) => language.id)).toEqual(["milvus", "qdrant", "weaviate", "mtconnect"]);
   });
 });

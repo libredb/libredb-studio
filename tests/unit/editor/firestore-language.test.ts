@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import type * as Monaco from "monaco-editor";
-import { FIRESTORE_CHAIN } from "@/lib/editor/firestore-completions";
+import { FIRESTORE_CHAIN } from "@/lib/db/providers/document/firestore/editor-completions";
 import {
   FIRESTORE_LANGUAGE_ID,
   FIRESTORE_METHODS,
   FIRESTORE_MONARCH,
   registerFirestoreLanguage,
-} from "@/lib/editor/firestore-language";
+} from "@/lib/db/providers/document/firestore/editor-syntax";
 
 // A local mock, as every language test here keeps its own: a shared mock module is the documented
 // `mock.module()` contamination trap in this repository.

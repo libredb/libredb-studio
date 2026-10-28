@@ -7,28 +7,15 @@ import type * as Monaco from "monaco-editor";
 import { Zap, LoaderCircle, TextAlignStart, Trash2, Copy, Play, Hash } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { DIALECT_EDITORS, formatterForLanguage, registerDialectConsoles } from "@/lib/editor/dialect-editors";
-import { registerSQLCompletionProvider } from "@/lib/editor/sql-completions";
-import type { SchemaCompletionCache, SchemaColumnItem } from "@/lib/editor/sql-completions";
-import { registerMongoDBCompletionProvider } from "@/lib/editor/mongodb-completions";
-import { registerLibreDBLanguage } from "@/lib/editor/libredb-language";
-import { registerRedisLanguage } from "@/lib/editor/redis-language";
-import { registerEtcdLanguage } from "@/lib/editor/etcd-language";
-import { registerOxiaLanguage } from "@/lib/editor/oxia-language";
-import { registerKubectlLanguage } from "@/lib/editor/kubectl-language";
-import { registerS3Language, S3_LANGUAGE_ID } from "@/lib/editor/s3-language";
-import { registerS3CompletionProvider, s3CompletionBucketsOf } from "@/lib/editor/s3-completions";
-import { FIRESTORE_LANGUAGE_ID, registerFirestoreLanguage } from "@/lib/editor/firestore-language";
 import {
-  firestoreCompletionCollectionsOf,
-  registerFirestoreCompletionProvider,
-} from "@/lib/editor/firestore-completions";
-import { registerPromqlLanguage } from "@/lib/editor/promql-language";
-import { CYPHER_LANGUAGE_ID, registerCypherLanguage } from "@/lib/editor/cypher-language";
-import { cypherCompletionSchemaOf, registerCypherCompletionProvider } from "@/lib/editor/cypher-completions";
-import { INFLUXQL_LANGUAGE_ID, registerInfluxqlLanguage } from "@/lib/editor/influxql-language";
-import { influxqlCompletionSchemaOf, registerInfluxqlCompletionProvider } from "@/lib/editor/influxql-completions";
-import { graphPolicyProfileOf } from "@/lib/db/graph-policy-profiles";
+  EDITOR_LANGUAGES,
+  type EditorLanguage,
+  formatterForLanguage,
+  registerEditorCompletions,
+  registerEditorLanguages,
+} from "@/lib/db/editor-language";
+import type { EditorSchemaObject } from "@/lib/db/editor-language/types";
+import type { SchemaCompletionCache, SchemaColumnItem } from "@/lib/editor/sql-completions";
 import { configureMonacoLoader } from "@/lib/editor/monaco-loader";
 import { defineStudioThemes, STUDIO_THEME_DARK, STUDIO_THEME_LIGHT } from "@/lib/editor/monaco-theme";
 import { useEffectiveTheme } from "@/hooks/use-effective-theme";
@@ -87,23 +74,7 @@ interface QueryEditorProps {
   /** Called when content changes in real-time. Use sparingly as it triggers on every keystroke. */
   onContentChange?: (val: string) => void;
   onExplain?: () => void;
-  language?:
-    | "sql"
-    | "json"
-    | "libredb"
-    | "redis"
-    | "promql"
-    | "etcd"
-    | "graph-cypher"
-    | "milvus"
-    | "qdrant"
-    | "weaviate"
-    | "influxql"
-    | "oxia"
-    | "s3"
-    | "kubectl"
-    | "firestore"
-    | "mtconnect";
+  language?: EditorLanguage;
   /**
    * The connected engine, whose grammar decides where a statement ends.
    *
@@ -123,27 +94,15 @@ interface QueryEditorProps {
 
 /**
  * What the Format button's tooltip names, for each language that has a formatter: JSON for MongoDB and Kafka, a
- * request of its dialect for a tab whose editor record carries a console language (vector-family spec 3.5; the dialect id
+ * request of its dialect for a language whose registry row carries a console (vector-family spec 3.5; the dialect id
  * is the engine's name in lower case, so `qdrant` reads "Qdrant request"), and SQL for the rest, the only other
- * formatter. Read from the records, so no engine is named here.
+ * formatter. Read from the rows, so no engine is named here.
  */
 function formatTitleNoun(language: QueryEditorProps["language"]): string {
   if (language === "json") return "JSON";
-  const consoleSpec = Object.values(DIALECT_EDITORS).find((editor) => editor.monacoId === language)?.console?.spec;
+  const consoleSpec = Object.values(EDITOR_LANGUAGES).find((editor) => editor.monacoId === language)?.console?.spec;
   if (consoleSpec === undefined) return "SQL";
   return `${consoleSpec.id.charAt(0).toUpperCase()}${consoleSpec.id.slice(1)} request`;
-}
-
-interface ParsedTable {
-  name: string;
-  /** The object's address; Cypher completion reads a label or relationship type from its last segment. */
-  path?: string[];
-  rowCount?: number | null;
-  columns?: Array<{
-    name: string;
-    type: string;
-    isPrimary?: boolean;
-  }>;
 }
 
 // Static editor options - defined outside component to prevent re-creation on every render
@@ -310,7 +269,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
       }
     }, [showLineNumbers]);
 
-    const parsedSchema = useMemo((): ParsedTable[] => {
+    const parsedSchema = useMemo((): EditorSchemaObject[] => {
       if (!schemaContext) return [];
       try {
         return JSON.parse(schemaContext);
@@ -393,7 +352,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
       };
     }, [parsedSchema, defaultContainer, capabilities]);
 
-    // The formatter of the tab's language, from its `DIALECT_EDITORS` record: SQL's, the JSON one MongoDB and
+    // The formatter of the tab's language, from its editor language row: SQL's, the JSON one MongoDB and
     // Kafka share, or none, in which case the toolbar draws no Format button and the shortcut does nothing.
     // A provider that declares `supportsSqlFormat: false` gets none either, so its tabs show no Format button and the
     // shortcut does nothing.
@@ -560,22 +519,10 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
     }, []);
 
     const handleBeforeMount = (monacoInstance: typeof Monaco) => {
-      // Register the LibreDB, Redis, etcd, Oxia, S3, kubectl and Firestore command languages, PromQL, Cypher and
-      // InfluxQL (each idempotent) so their tabs highlight correctly instead of being treated as JSON or SQL
-      // (#427, #1085, #1089, #424, Neo4j spec 6.5, InfluxDB spec 6.7).
-      registerLibreDBLanguage(monacoInstance);
-      registerRedisLanguage(monacoInstance);
-      registerPromqlLanguage(monacoInstance);
-      registerEtcdLanguage(monacoInstance);
-      registerOxiaLanguage(monacoInstance);
-      registerS3Language(monacoInstance);
-      registerKubectlLanguage(monacoInstance);
-      registerFirestoreLanguage(monacoInstance);
-      registerCypherLanguage(monacoInstance);
-      registerInfluxqlLanguage(monacoInstance);
-      // Every console dialect's language, from its editor record (vector-family spec 3.5): the records are the
-      // only input, so nothing here names a dialect.
-      registerDialectConsoles(monacoInstance);
+      // Every language Monaco does not ship, from the editor language registry, each idempotent, so a tab of any
+      // of them highlights as its own language instead of as JSON or SQL. The rows are the only input, so nothing
+      // here names a language.
+      registerEditorLanguages(monacoInstance);
 
       // Suppress Monaco's "Canceled" errors in console (with cleanup tracking)
       if (!originalConsoleErrorRef.current) {
@@ -595,74 +542,19 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
       defineStudioThemes(monacoInstance);
     };
 
-    // SQL completion provider
+    // The completion source of the tab's language, from its registry row: SQL's on the connected engine's grammar,
+    // MongoDB's for MongoDB's JSON only, and each console language's own. Registered again whenever the schema
+    // context or the connection changes, and taken down when the language does.
     useEffect(() => {
-      if (monaco && language === "sql") {
-        const disposable = registerSQLCompletionProvider(monaco, schemaCompletionCache, databaseType);
-        return () => disposable.dispose();
-      }
-    }, [monaco, language, schemaCompletionCache, databaseType]);
-
-    // MongoDB JSON completion provider, for MongoDB's JSON only (#1088). A json editor also holds
-    // JSON of a dialect of its own, a Kafka read request, and there the provider's snippets are
-    // MongoDB documents that dialect refuses, while its field items offer a topic's result columns
-    // as if they were keys of the request. So it registers only where the declared capabilities name
-    // no dialect, the rule `offersColumnProfiling` reads, and still where none are passed, as the
-    // published component's callers always had it.
-    const completesMongoDB = capabilities?.queryDialect === undefined;
-    useEffect(() => {
-      if (monaco && language === "json" && completesMongoDB) {
-        const disposable = registerMongoDBCompletionProvider(monaco, schemaCompletionCache);
-        return () => disposable.dispose();
-      }
-    }, [monaco, language, schemaCompletionCache, completesMongoDB]);
-
-    // Cypher completion provider (Neo4j spec 6.5, SR6). Its names are read from the schema objects'
-    // kind-qualified paths, never from the SQL cache's lowercased table names, and its CALL and SHOW
-    // allowlists from the connected engine's policy profile, looked up by type as the SQL provider
-    // gets its dialect.
-    const graphPolicy = graphPolicyProfileOf(databaseType);
-    useEffect(() => {
-      if (monaco && language === CYPHER_LANGUAGE_ID) {
-        const disposable = registerCypherCompletionProvider(
-          monaco,
-          cypherCompletionSchemaOf(parsedSchema),
-          graphPolicy,
-        );
-        return () => disposable.dispose();
-      }
-    }, [monaco, language, parsedSchema, graphPolicy]);
-
-    // InfluxQL completion provider (InfluxDB spec 6.7). Its sources and keys are read from the schema
-    // objects' `[database, measurement]` paths and typed columns, and every insert is quoted by the
-    // provider's own quoter, so an inserted name passes the read policy.
-    useEffect(() => {
-      if (monaco && language === INFLUXQL_LANGUAGE_ID) {
-        const disposable = registerInfluxqlCompletionProvider(monaco, influxqlCompletionSchemaOf(parsedSchema));
-        return () => disposable.dispose();
-      }
-    }, [monaco, language, parsedSchema]);
-
-    // S3 completion provider. It reads bucket names from the schema context only, never by a request, and an S3
-    // connection's schema holds no bucket, because S3 declares no relation kind, so it offers commands, flags and
-    // closed values only. Every insert is quoted by the shared shell quoter.
-    useEffect(() => {
-      if (monaco && language === S3_LANGUAGE_ID) {
-        const disposable = registerS3CompletionProvider(monaco, s3CompletionBucketsOf(parsedSchema));
-        return () => disposable.dispose();
-      }
-    }, [monaco, language, parsedSchema]);
-
-    // Firestore completion provider (Firestore spec 5.4): the chain's method names by state, the operator strings, and
-    // the collection ids the tree has already listed, read from the schema context on each request, so it sends no request.
-    useEffect(() => {
-      if (monaco && language === FIRESTORE_LANGUAGE_ID) {
-        const disposable = registerFirestoreCompletionProvider(monaco, () =>
-          firestoreCompletionCollectionsOf(parsedSchema),
-        );
-        return () => disposable.dispose();
-      }
-    }, [monaco, language, parsedSchema]);
+      if (!monaco) return;
+      const disposable = registerEditorCompletions(monaco, language, {
+        schemaCache: schemaCompletionCache,
+        schemaObjects: parsedSchema,
+        databaseType,
+        capabilities,
+      });
+      return () => disposable?.dispose();
+    }, [monaco, language, schemaCompletionCache, parsedSchema, databaseType, capabilities]);
 
     // Every model change reaches here: a keystroke, and equally the writes Format, Clear
     // and the imperative setValue make, since Monaco reports those through the same

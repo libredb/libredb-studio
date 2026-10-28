@@ -29,7 +29,7 @@ import {
   influxqlSource,
   quoteInfluxqlIdentifier,
 } from "@/lib/db/providers/timeseries/influxdb/influxql-quote";
-import { INFLUXQL_LANGUAGE_ID } from "./influxql-language";
+import { INFLUXQL_LANGUAGE_ID } from "./influxql-editor-syntax";
 
 /** One measurement as completion offers it. */
 export interface InfluxqlCompletionMeasurement {

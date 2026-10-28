@@ -75,12 +75,12 @@ import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { declaredKinds } from "@/lib/db/object-kinds";
 import type { DatabaseConnection } from "@/lib/db/types";
-import { CYPHER_LANGUAGE_ID } from "@/lib/editor/cypher-language";
-import { ETCD_LANGUAGE_ID } from "@/lib/editor/etcd-language";
-import { FIRESTORE_LANGUAGE_ID } from "@/lib/editor/firestore-language";
-import { INFLUXQL_LANGUAGE_ID } from "@/lib/editor/influxql-language";
-import { KUBECTL_LANGUAGE_ID } from "@/lib/editor/kubectl-language";
-import { PROMQL_LANGUAGE_ID } from "@/lib/editor/promql-language";
+import { CYPHER_LANGUAGE_ID } from "@/lib/db/providers/graph/neo4j/editor-syntax";
+import { ETCD_LANGUAGE_ID } from "@/lib/db/providers/keyvalue/etcd/editor-syntax";
+import { FIRESTORE_LANGUAGE_ID } from "@/lib/db/providers/document/firestore/editor-syntax";
+import { INFLUXQL_LANGUAGE_ID } from "@/lib/db/providers/timeseries/influxdb/influxql-editor-syntax";
+import { KUBECTL_LANGUAGE_ID } from "@/lib/db/providers/platform/kubernetes/editor-syntax";
+import { PROMQL_LANGUAGE_ID } from "@/lib/db/providers/timeseries/prometheus/editor-syntax";
 import type { DatabaseType } from "@/lib/types";
 import { SOURCE_PART_FALLBACK_LANGUAGE } from "../helpers/object-surface-conformance";
 

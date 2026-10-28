@@ -8,7 +8,7 @@
  * completion never sends a request. Every inserted id is escaped for the quote it goes into, so it reads back as that id.
  */
 import type * as Monaco from "monaco-editor";
-import { FIRESTORE_LANGUAGE_ID } from "./firestore-language";
+import { FIRESTORE_LANGUAGE_ID } from "./editor-syntax";
 
 export type FirestoreChainState = "root" | "collection" | "query" | "vector" | "aggregation" | "document" | "end";
 

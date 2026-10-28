@@ -7,7 +7,7 @@ import {
 } from "@/lib/db/providers/platform/kubernetes/console/lexer";
 
 /**
- * Monaco language for the Kubernetes console text, one kubectl read command, in Oxia's shape (`oxia-language.ts`).
+ * Monaco language for the Kubernetes console text, one kubectl read command, in Oxia's shape (`keyvalue/oxia/editor-syntax.ts`).
  *
  * Not a Monarch grammar: the tokens provider calls the console's own lexer, `tokenizeKubectlLine`, one physical line
  * at a time, and the parser reads the text through the same shell-word reader, so a word the editor draws as one word

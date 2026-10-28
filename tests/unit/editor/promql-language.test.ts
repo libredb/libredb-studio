@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type * as Monaco from "monaco-editor";
-import { PROMQL_LANGUAGE_ID, registerPromqlLanguage } from "@/lib/editor/promql-language";
+import { PROMQL_LANGUAGE_ID, registerPromqlLanguage } from "@/lib/db/providers/timeseries/prometheus/editor-syntax";
 import { editorLanguageForTabType } from "@/lib/editor/tab-language";
 import { fixtureDocument } from "../../helpers/prometheus-fixtures";
 

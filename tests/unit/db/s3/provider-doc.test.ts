@@ -661,6 +661,9 @@ const BROWSER_SET: ReadonlySet<string> = new Set([
   "headers.ts",
   "labels.ts",
   "sql-grammar.ts",
+  "editor-syntax.ts",
+  "editor-completions.ts",
+  "editor-language.ts",
   "console/constants.ts",
   "console/lexer.ts",
   "console/paths.ts",
@@ -1767,7 +1770,7 @@ describe("the architecture, provider, editor and guide docs", () => {
     expect(architecture).toContain("        ObjectStore --> S3[(S3-compatible object storage)]");
     expect(architecture).toContain("    BaseDatabaseProvider <|-- S3Provider");
     expect(architecture).toContain("│   │   ├── objectstore/ # s3/");
-    expect(architecture).toContain("the LibreDB, Redis, etcd, Oxia, S3 and kubectl command languages");
+    expect(architecture).toContain("each other language is a row of");
     const providers = read("docs/DATABASE_PROVIDERS.md");
     // Two pairs of type-ids share one module each: elasticsearch and opensearch, influxdb and influxdb3.
     expect(providers).toContain(`${Word(ids)} type-ids are supported by ${word(ids - 2)} provider modules:`);
@@ -1799,7 +1802,7 @@ describe("the architecture, provider, editor and guide docs", () => {
 
   test("58. the editor and schema-diff docs name the S3 module, the non-SQL count and the pagination count", () => {
     expect(read("docs/editor/README.md")).toContain(
-      "`src/lib/editor/oxia-language.ts`, `src/lib/editor/s3-language.ts`, `src/lib/editor/kubectl-language.ts` |",
+      "`src/lib/db/providers/keyvalue/oxia/editor-syntax.ts`, `src/lib/db/providers/objectstore/s3/editor-syntax.ts`, `src/lib/db/providers/platform/kubernetes/editor-syntax.ts` |",
     );
     const nonSql = SHIPPED_DATABASE_TYPES.filter((type) => !readsSqlText(type)).length;
     const optimization = read("docs/editor/query-optimization.md");

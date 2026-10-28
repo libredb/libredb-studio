@@ -6,7 +6,7 @@ import {
   firestoreCompletionCollectionsOf,
   firestoreCompletionContext,
   registerFirestoreCompletionProvider,
-} from "@/lib/editor/firestore-completions";
+} from "@/lib/db/providers/document/firestore/editor-completions";
 
 describe("firestoreCompletionCollectionsOf", () => {
   test("reads top-level collection names from the schema context, deduplicated in first-seen order", () => {

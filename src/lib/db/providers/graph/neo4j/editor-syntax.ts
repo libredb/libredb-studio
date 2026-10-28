@@ -10,7 +10,7 @@ import {
 /**
  * Monaco language for Cypher, the editor text of a graph connection (Neo4j spec 6.5).
  *
- * Not a Monarch grammar, for the reason `etcd-language.ts` gives: the tokens provider calls the graph
+ * Not a Monarch grammar, for the reason `keyvalue/etcd/editor-syntax.ts` gives: the tokens provider calls the graph
  * layer's own lexer, `tokenizeCypherLine`, one physical line at a time, and the read policy reads the
  * text through the same lexer, so a word the editor draws as a word is the word the policy judges (N9).
  * The state carried from line to line is the lexer's own `CypherLineState`, which is bounded.

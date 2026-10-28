@@ -1,10 +1,10 @@
 /**
- * `QueryEditor` formats through the dialect registry and through nothing else (vector-family spec 3.8): whether
- * a tab has a Format button, and what Format writes, are its `DIALECT_EDITORS` formatter.
+ * `QueryEditor` formats through the editor language registry and through nothing else (vector-family spec 3.8):
+ * whether a tab has a Format button, and what Format writes, are its language row's formatter.
  *
  * The registry is replaced by a stand-in that gives PromQL a formatter and takes SQL's away, which no real record
  * does, so an editor that still branched on its language could not draw these buttons. A module mock is
- * process-wide, so the real formatters are pinned in `tests/unit/editor/dialect-editors.test.ts` and the real
+ * process-wide, so the real formatters are pinned in `tests/unit/editor/editor-language-registry.test.ts` and the real
  * toolbar in `QueryEditor.test.tsx`. The Monaco double here is the smallest that mounts the editor.
  */
 import "../setup-dom";
@@ -19,8 +19,8 @@ const formatted: string[] = [];
 /** The last value the editor set on each Monaco context key, by key name. */
 const contextKeys = new Map<string, unknown>();
 
-mock.module("@/lib/editor/dialect-editors", () => ({
-  DIALECT_EDITORS: {},
+mock.module("@/lib/db/editor-language", () => ({
+  EDITOR_LANGUAGES: {},
   formatterForLanguage: (language: string) =>
     language === "promql"
       ? (text: string) => {
@@ -28,8 +28,9 @@ mock.module("@/lib/editor/dialect-editors", () => ({
           return text.toUpperCase();
         }
       : undefined,
-  // The stand-in registry carries no console language, so registering its consoles before mount does nothing.
-  registerDialectConsoles: () => {},
+  // The stand-in registry carries no language of its own to register, and no completion source.
+  registerEditorLanguages: () => {},
+  registerEditorCompletions: () => undefined,
 }));
 
 mock.module("@monaco-editor/react", () => ({

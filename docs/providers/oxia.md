@@ -84,6 +84,8 @@ The console's modules are pure and shipped to the browser, because the editor, t
 | `generators.ts` | The commands Generate Command writes | browser |
 | `sql-writing.ts` | The SQL writing row, the inert standard answer no generator calls | browser |
 | `sql-grammar.ts` | The SQL grammar facts the editor and the query log read: not SQL text, nothing kept when redacted | browser |
+| `editor-syntax.ts` | The editor's `oxia` Monaco language over the console's lexer | browser |
+| `editor-language.ts` | The engine's editor language row: the `oxia` language, no completion, no formatter, its accent | browser |
 | `index.ts` | The composition root: the session, the declarations, the snapshot cache, the order verdict's lifetime, the run registry and the one failure path | server |
 
 ### 2.3 Registration & lifecycle
@@ -318,6 +320,7 @@ The URL is not pasted whole: type `host` in Host, `6648` in Port and `ns` in Nam
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `oxia` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/keyvalue/oxia/execution-ui.ts).
+Its editor language, `oxia`, is the row in `EDITOR_LANGUAGES` declared in [`editor-language.ts`](../../src/lib/db/providers/keyvalue/oxia/editor-language.ts): how the editor registers and tints it, and its completion source and formatter where it has one.
 
 ## 5. Query interface
 

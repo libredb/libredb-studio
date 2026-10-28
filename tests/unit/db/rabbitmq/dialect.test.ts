@@ -10,6 +10,7 @@ import {
 } from "@/lib/db/destructive-commands";
 import { rabbitmqSelectQuery, rabbitmqTableQuery } from "@/lib/db/providers/stream/rabbitmq/generators";
 import { RabbitMQProvider } from "@/lib/db/providers/stream/rabbitmq/index";
+import { formatterForLanguage } from "@/lib/db/editor-language";
 import { QUERY_DIALECTS } from "@/lib/db/query-dialects";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import { DIALECT_EDITORS } from "@/lib/editor/dialect-editors";
@@ -49,8 +50,8 @@ describe("the rabbitmq dialect's records", () => {
     expect(resolveTabType(RABBITMQ)).toBe("rabbitmq");
     expect(editorLanguageForTabType("rabbitmq")).toBe("json");
     expect(DIALECT_EDITORS.rabbitmq.monacoId).toBe("json");
-    expect(DIALECT_EDITORS.rabbitmq.format).toBe(DIALECT_EDITORS.kafka.format);
-    expect(DIALECT_EDITORS.rabbitmq.format?.('{"limit":1}')).toBe('{\n  "limit": 1\n}');
+    expect(DIALECT_EDITORS.kafka.monacoId).toBe("json");
+    expect(formatterForLanguage(DIALECT_EDITORS.rabbitmq.monacoId)?.('{"limit":1}')).toBe('{\n  "limit": 1\n}');
   });
 
   test("offers no profile, model, count statement or SQL export", () => {

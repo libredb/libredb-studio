@@ -5,7 +5,11 @@
 import { describe, expect, test } from "bun:test";
 import type * as Monaco from "monaco-editor";
 import { INITIAL_SHELL_LINE_STATE, type ShellLineState } from "@/lib/db/console/shell-words";
-import { KUBECTL_LANGUAGE_ID, KubectlTokensState, registerKubectlLanguage } from "@/lib/editor/kubectl-language";
+import {
+  KUBECTL_LANGUAGE_ID,
+  KubectlTokensState,
+  registerKubectlLanguage,
+} from "@/lib/db/providers/platform/kubernetes/editor-syntax";
 
 // ---------------------------------------------------------------------------
 // Mock Monaco: the harness of oxia-language.test.ts, kept local for the reason that file gives, so no mock module

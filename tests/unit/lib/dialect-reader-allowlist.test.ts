@@ -57,9 +57,9 @@ const ALLOWED: readonly Reader[] = [
     owner: "the profile route's refusal sentence, which names the declared dialect after offersColumnProfiling refused",
   },
   {
-    path: "src/components/QueryEditor.tsx",
-    text: "const completesMongoDB = capabilities?.queryDialect === undefined;",
-    owner: "QueryEditor: the MongoDB completion provider registers only where no dialect is declared",
+    path: "src/lib/db/providers/document/mongodb/editor-language.ts",
+    text: "context.capabilities?.queryDialect === undefined",
+    owner: "the json editor language: the MongoDB completion provider registers only where no dialect is declared",
   },
   {
     path: "src/components/TestDataGenerator.tsx",

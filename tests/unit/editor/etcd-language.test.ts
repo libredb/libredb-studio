@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type * as Monaco from "monaco-editor";
 import { INITIAL_LEX_STATE, splitWords, tokenizeLine, type Word } from "@/lib/db/providers/keyvalue/etcd/lexer";
-import { ETCD_LANGUAGE_ID, EtcdTokensState, registerEtcdLanguage } from "@/lib/editor/etcd-language";
+import {
+  ETCD_LANGUAGE_ID,
+  EtcdTokensState,
+  registerEtcdLanguage,
+} from "@/lib/db/providers/keyvalue/etcd/editor-syntax";
 import { editorLanguageForTabType } from "@/lib/editor/tab-language";
 import { type CorpusWord, GRAMMAR_CORPUS } from "../../fixtures/etcd/grammar-corpus";
 

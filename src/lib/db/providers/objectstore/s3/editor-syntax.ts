@@ -8,7 +8,7 @@ import {
 
 /**
  * Monaco language for the S3 editor text, one AWS CLI read command or Studio's own preview,
- * in Oxia's shape (`oxia-language.ts`).
+ * in Oxia's shape (`keyvalue/oxia/editor-syntax.ts`).
  *
  * Not a Monarch grammar: the tokens provider calls the provider's own lexer, `tokenizeS3Line`, one physical line at a
  * time, and the parser reads the text through the same shell-word reader, so a word the editor draws as one word is

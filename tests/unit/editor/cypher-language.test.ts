@@ -8,7 +8,11 @@ import {
   lexCypher,
   tokenizeCypherLine,
 } from "@/lib/db/graph/cypher/lexer";
-import { CYPHER_LANGUAGE_ID, CypherTokensState, registerCypherLanguage } from "@/lib/editor/cypher-language";
+import {
+  CYPHER_LANGUAGE_ID,
+  CypherTokensState,
+  registerCypherLanguage,
+} from "@/lib/db/providers/graph/neo4j/editor-syntax";
 import { editorLanguageForTabType } from "@/lib/editor/tab-language";
 import { CYPHER_CORPUS } from "../../fixtures/graph/cypher-corpus";
 

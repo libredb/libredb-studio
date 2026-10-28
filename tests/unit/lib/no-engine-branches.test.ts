@@ -54,9 +54,6 @@ const DISPLAY_ORDER = "display order only";
 const INBOUND = "an inbound mapping from an outside name to a type id";
 const AGENT_LEG = "the agent-leg pattern, guarded by its own tests";
 const STORAGE_BACKEND = "the storage backend `STORAGE_PROVIDER` names, not an engine";
-const AWS_CLI_SERVICE = "the AWS CLI service name `s3` in a typed command, not the engine";
-const MONACO_LANGUAGE =
-  "a Monaco language id the editor registers, which the dialect editor table picks, not the engine";
 
 /** The registries of spec 5.6, which stay. */
 export const REGISTRIES: readonly Listed[] = [
@@ -142,15 +139,6 @@ export const FALSE_POSITIVES: readonly Listed[] = [
     count: 2,
     reason: "the governance source setting, which names where policy is stored",
   },
-  { path: "src/lib/editor/s3-completions.ts", declaration: "operationOf", count: 1, reason: AWS_CLI_SERVICE },
-  { path: "src/lib/editor/s3-completions.ts", declaration: "s3CompletionContext", count: 1, reason: AWS_CLI_SERVICE },
-  { path: "src/lib/editor/s3-completions.ts", declaration: "itemsOf", count: 1, reason: AWS_CLI_SERVICE },
-  {
-    path: "src/lib/editor/firestore-language.ts",
-    declaration: "FIRESTORE_MONARCH",
-    count: 1,
-    reason: "the `firestore` namespace of the Firestore SDK, highlighted as a type name",
-  },
   {
     path: "src/lib/distribution/channels.generated.ts",
     declaration: "LIVE_PLATFORMS",
@@ -169,23 +157,6 @@ export const FALSE_POSITIVES: readonly Listed[] = [
     count: 1,
     reason: "keyed by the channel showcase groups, one of which is `kubernetes`",
   },
-  { path: "src/components/QueryEditor.tsx", declaration: "QueryEditor", count: 2, reason: MONACO_LANGUAGE },
-  { path: "src/lib/editor/etcd-language.ts", declaration: "registerEtcdLanguage", count: 1, reason: MONACO_LANGUAGE },
-  {
-    path: "src/lib/editor/firestore-language.ts",
-    declaration: "registerFirestoreLanguage",
-    count: 1,
-    reason: MONACO_LANGUAGE,
-  },
-  {
-    path: "src/lib/editor/libredb-language.ts",
-    declaration: "registerLibreDBLanguage",
-    count: 1,
-    reason: MONACO_LANGUAGE,
-  },
-  { path: "src/lib/editor/oxia-language.ts", declaration: "registerOxiaLanguage", count: 1, reason: MONACO_LANGUAGE },
-  { path: "src/lib/editor/redis-language.ts", declaration: "registerRedisLanguage", count: 1, reason: MONACO_LANGUAGE },
-  { path: "src/lib/editor/s3-language.ts", declaration: "registerS3Language", count: 1, reason: MONACO_LANGUAGE },
   {
     path: "src/lib/seed/vault-client.ts",
     declaration: "authPath",
@@ -197,12 +168,6 @@ export const FALSE_POSITIVES: readonly Listed[] = [
     declaration: "user",
     count: 1,
     reason: "the PostgreSQL image's default role name `postgres`, when POSTGRES_USER is unset",
-  },
-  {
-    path: "src/components/agent/AnswerCard.tsx",
-    declaration: "LANGUAGE_ACCENTS",
-    count: 1,
-    reason: "keyed by the agent statement language, some of whose names are spelled like type ids",
   },
   {
     path: "src/lib/seed/types.ts",

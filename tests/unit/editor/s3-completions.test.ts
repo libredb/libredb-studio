@@ -6,7 +6,11 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import type * as Monaco from "monaco-editor";
 import * as shellWords from "@/lib/db/console/shell-words";
-import { registerS3CompletionProvider, s3CompletionBucketsOf, s3CompletionContext } from "@/lib/editor/s3-completions";
+import {
+  registerS3CompletionProvider,
+  s3CompletionBucketsOf,
+  s3CompletionContext,
+} from "@/lib/db/providers/objectstore/s3/editor-completions";
 
 describe("s3CompletionBucketsOf", () => {
   test("reads each object's first path segment, else its name, deduplicated in first-seen order", () => {

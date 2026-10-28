@@ -19,7 +19,7 @@ import { storage } from "@/lib/storage";
 import type { DatabaseConnection } from "@/lib/types";
 import { rowWritableObjects } from "@/lib/db/detailed-object";
 import { S3_OBJECT_KINDS } from "@/lib/db/providers/objectstore/s3/objects";
-import { s3CompletionBucketsOf } from "@/lib/editor/s3-completions";
+import { s3CompletionBucketsOf } from "@/lib/db/providers/objectstore/s3/editor-completions";
 import type { ObjectReadRange, ProviderCapabilities } from "@/lib/db/types";
 import { SAMPLED_MARKER } from "../fixtures/sampled-schema";
 

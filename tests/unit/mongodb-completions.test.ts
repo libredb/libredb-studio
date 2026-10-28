@@ -1,7 +1,7 @@
 import "../setup";
 import { describe, test, expect } from "bun:test";
 import type * as Monaco from "monaco-editor";
-import { registerMongoDBCompletionProvider } from "@/lib/editor/mongodb-completions";
+import { registerMongoDBCompletionProvider } from "@/lib/db/providers/document/mongodb/editor-completions";
 import type { SchemaCompletionCache } from "@/lib/editor/sql-completions";
 
 // ---------------------------------------------------------------------------

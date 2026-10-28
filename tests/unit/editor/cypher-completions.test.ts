@@ -10,8 +10,8 @@ import {
   cypherCompletionContext,
   cypherCompletionSchemaOf,
   registerCypherCompletionProvider,
-} from "@/lib/editor/cypher-completions";
-import { CYPHER_LANGUAGE_ID } from "@/lib/editor/cypher-language";
+} from "@/lib/db/providers/graph/neo4j/editor-completions";
+import { CYPHER_LANGUAGE_ID } from "@/lib/db/providers/graph/neo4j/editor-syntax";
 
 // ---------------------------------------------------------------------------
 // Mock Monaco: only the completion registration and the item kinds, local to this file.

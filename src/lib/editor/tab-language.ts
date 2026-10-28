@@ -1,26 +1,11 @@
+import type { EditorLanguage } from "@/lib/db/editor-language";
 import { dialectSpec } from "@/lib/db/query-dialects";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import { DIALECT_EDITORS } from "@/lib/editor/dialect-editors";
 import type { QueryTab } from "@/lib/types";
 
-/** The Monaco language ids a query tab renders in, `QueryEditor`'s `language` prop. */
-export type EditorLanguage =
-  | "sql"
-  | "json"
-  | "libredb"
-  | "redis"
-  | "promql"
-  | "etcd"
-  | "graph-cypher"
-  | "milvus"
-  | "qdrant"
-  | "weaviate"
-  | "influxql"
-  | "oxia"
-  | "s3"
-  | "kubectl"
-  | "firestore"
-  | "mtconnect";
+/** The Monaco language ids a query tab renders in, `QueryEditor`'s `language` prop: the editor language registry's keys. */
+export type { EditorLanguage };
 
 /**
  * The tab type a connection's tabs take.
@@ -45,13 +30,13 @@ export type EditorLanguage =
  *
  * `"cypher"` (Neo4j spec 6.5) has a rung of its own for PromQL's reason: Cypher declares no dialect
  * and is not JSON, so without the rung a Neo4j tab would be typed `sql`. It renders in the
- * `graph-cypher` language `cypher-language.ts` registers over the graph layer's own lexer; the id is not
+ * `graph-cypher` language Neo4j's editor contribution registers over the graph layer's own lexer; the id is not
  * `cypher`, which Monaco's own bundle registers.
  *
  * `"influxql"` (InfluxDB spec 6.7) has a rung of its own for PromQL's reason: InfluxQL declares no dialect
  * and is not JSON, so without the rung an InfluxDB (InfluxQL) tab would be typed `sql`, and its `/.../`
  * regexes and backslash escapes highlighted and completed as SQL. It renders in the `influxql` language
- * `influxql-language.ts` registers over the provider's own lexer.
+ * InfluxDB's editor contribution registers over the provider's own lexer.
  */
 export function resolveTabType(capabilities?: ProviderCapabilities | null): QueryTab["type"] {
   const dialect = dialectSpec(capabilities ?? undefined);

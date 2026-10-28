@@ -238,7 +238,7 @@ const mockRegisterMongoDBCompletionProvider = mock<(...args: unknown[]) => { dis
   mockMongoDBCompletionDisposals.push(dispose);
   return { dispose };
 });
-mock.module("@/lib/editor/mongodb-completions", () => ({
+mock.module("@/lib/db/providers/document/mongodb/editor-completions", () => ({
   registerMongoDBCompletionProvider: mockRegisterMongoDBCompletionProvider,
 }));
 

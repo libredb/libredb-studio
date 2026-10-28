@@ -5,7 +5,11 @@
 import { describe, expect, test } from "bun:test";
 import type * as Monaco from "monaco-editor";
 import { INITIAL_SHELL_LINE_STATE, type ShellLineState } from "@/lib/db/console/shell-words";
-import { OXIA_LANGUAGE_ID, OxiaTokensState, registerOxiaLanguage } from "@/lib/editor/oxia-language";
+import {
+  OXIA_LANGUAGE_ID,
+  OxiaTokensState,
+  registerOxiaLanguage,
+} from "@/lib/db/providers/keyvalue/oxia/editor-syntax";
 
 // ---------------------------------------------------------------------------
 // Mock Monaco: the harness of etcd-language.test.ts, kept local for the reason that file gives, so no mock module

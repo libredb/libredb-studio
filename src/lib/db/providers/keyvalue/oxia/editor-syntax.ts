@@ -4,7 +4,7 @@ import { INITIAL_OXIA_LEX_STATE, type OxiaTokenRole, tokenizeOxiaLine } from "@/
 
 /**
  * Monaco language for the Oxia editor text, one `oxia client` read command (SB2-4.6), in etcd's shape
- * (`etcd-language.ts`).
+ * (`keyvalue/etcd/editor-syntax.ts`).
  *
  * Not a Monarch grammar: the tokens provider calls the provider's own lexer, `tokenizeOxiaLine`, one physical line at
  * a time, and the parser reads the text through the same shell-word reader, so a word the editor draws as one word

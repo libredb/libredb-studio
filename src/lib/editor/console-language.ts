@@ -14,9 +14,9 @@ import {
  *
  * Not a Monarch grammar: the tokens provider calls the console's own lexer, `tokenizeLine`, one physical line at a
  * time, with its bounded line state, so the editor draws exactly the tokens the parser reads (the etcd shape,
- * `etcd-language.ts`). The route completion provider is registered for the dialect's id alone, so no other
- * language's model ever offers a route. A dialect arrives as data, through the `console` field of its
- * `DIALECT_EDITORS` record, and nothing here names one.
+ * `keyvalue/etcd/editor-syntax.ts`). The route completion provider is registered for the dialect's id alone, so no
+ * other language's model ever offers a route. A dialect arrives as data, through the `console` field of its editor
+ * language row (`src/lib/db/editor-language/`), and nothing here names one.
  */
 export interface ConsoleLanguage {
   readonly spec: ConsoleDialectSpec;

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type * as Monaco from "monaco-editor";
-import { registerRedisLanguage } from "@/lib/editor/redis-language";
+import { registerRedisLanguage } from "@/lib/db/providers/keyvalue/redis-editor-syntax";
 
 // ---------------------------------------------------------------------------
 // Mock Monaco — a local copy of the harness in libredb-language.test.ts. Kept

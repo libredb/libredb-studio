@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type * as Monaco from "monaco-editor";
-import { registerLibreDBLanguage } from "@/lib/editor/libredb-language";
+import { registerLibreDBLanguage } from "@/lib/db/providers/embedded/libredb-editor-syntax";
 
 // ---------------------------------------------------------------------------
 // Mock Monaco

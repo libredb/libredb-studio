@@ -228,20 +228,24 @@ const CONSOLE_ALLOWED: readonly RegExp[] = [
   /^@\/lib\/db\/utils\/(json-integers|result-fields)$/,
 ];
 
-const EDITOR_MODULES = ["src/lib/editor/s3-language.ts", "src/lib/editor/s3-completions.ts"] as const;
+const EDITOR_MODULES = [
+  "src/lib/db/providers/objectstore/s3/editor-syntax.ts",
+  "src/lib/db/providers/objectstore/s3/editor-completions.ts",
+  "src/lib/db/providers/objectstore/s3/editor-language.ts",
+] as const;
 
 /** A foreign provider's module, spliced into a planted import so no source line reads as a real one. */
 const OXIA_LEXER = "@/lib/db/providers/keyvalue/oxia/lexer";
 
 /**
  * What an editor module may import by value: the console's browser-safe modules, the provider's names module (a
- * row of BROWSER_MODULES), the shared set, its sibling.
+ * row of BROWSER_MODULES), the shared set, its siblings.
  */
 const EDITOR_ALLOWED: readonly RegExp[] = [
   new RegExp(`^@/lib/db/providers/objectstore/s3/console/(${CONSOLE_SET})$`),
   /^@\/lib\/db\/providers\/objectstore\/s3\/names$/,
   /^@\/lib\/db\/console\/[a-z-]+$/,
-  /^\.\/s3-language$/,
+  /^\.\/editor-(syntax|completions)$/,
 ];
 
 function browserFindings(file: string, source: string, allowed: readonly RegExp[]): string[] {
@@ -285,15 +289,19 @@ describe("the S3 console's and editor's browser-shipped modules", () => {
   test("a planted server import or Buffer in an editor module fails by name", () => {
     expect(
       browserFindings(
-        "src/lib/editor/s3-completions.ts",
+        "src/lib/db/providers/objectstore/s3/editor-completions.ts",
         'import { runS3Command } from "@/lib/db/providers/objectstore/s3/console/execute";\n',
         EDITOR_ALLOWED,
       ),
     ).toEqual([
-      "src/lib/editor/s3-completions.ts imports @/lib/db/providers/objectstore/s3/console/execute, which is not browser-safe",
+      "src/lib/db/providers/objectstore/s3/editor-completions.ts imports @/lib/db/providers/objectstore/s3/console/execute, which is not browser-safe",
     ]);
-    expect(browserFindings("src/lib/editor/s3-language.ts", "const b = Buffer.from([]);\n", EDITOR_ALLOWED)).toEqual([
-      "src/lib/editor/s3-language.ts names Buffer, which the browser does not have",
-    ]);
+    expect(
+      browserFindings(
+        "src/lib/db/providers/objectstore/s3/editor-syntax.ts",
+        "const b = Buffer.from([]);\n",
+        EDITOR_ALLOWED,
+      ),
+    ).toEqual(["src/lib/db/providers/objectstore/s3/editor-syntax.ts names Buffer, which the browser does not have"]);
   });
 });

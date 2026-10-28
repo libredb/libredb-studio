@@ -1600,6 +1600,9 @@ const SPEC_3_1_MODULES: readonly string[] = [
   // The SQL writing contract's module (engine contract, SQL writing), which the registry under
   // src/lib/db/sql-writing/ reads.
   "sql-writing.ts",
+  // The editor's etcd language over the lexer, and its row in the editor language registry.
+  "editor-syntax.ts",
+  "editor-language.ts",
 ];
 
 const SPEC_3_1_DIRECTORY = join(import.meta.dir, "../../../../src/lib/db/providers/keyvalue/etcd");

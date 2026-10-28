@@ -8,7 +8,11 @@ import {
   type InfluxqlTokenKind,
   lexInfluxql,
 } from "@/lib/db/providers/timeseries/influxdb/influxql-lexer";
-import { INFLUXQL_LANGUAGE_ID, InfluxqlTokensState, registerInfluxqlLanguage } from "@/lib/editor/influxql-language";
+import {
+  INFLUXQL_LANGUAGE_ID,
+  InfluxqlTokensState,
+  registerInfluxqlLanguage,
+} from "@/lib/db/providers/timeseries/influxdb/influxql-editor-syntax";
 import { editorLanguageForTabType } from "@/lib/editor/tab-language";
 
 // ---------------------------------------------------------------------------
