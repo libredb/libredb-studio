@@ -72,6 +72,8 @@ import {
 } from "./history";
 import type { AgentStatementLanguageId } from "./agent-manifest";
 import type { AgentGoalVerifierId } from "./goal-verifier";
+import { AGENT_EVIDENCE_EVENTS } from "./languages/client";
+import type { AgentPackEvidenceEvent } from "./languages/pack";
 import { assertPersistableState } from "./state-guard";
 import {
   type AgentThreadHeader,
@@ -93,7 +95,7 @@ import {
 export const AGENT_LEDGER_STREAM_PREFIX = "agent-ledger-";
 
 /**
- * Which event kinds a ledger line may carry.
+ * Which event kinds a ledger line may carry: the core's own, and every kind a language pack declares.
  *
  * Derived from a total record rather than written as an array, because the failure
  * mode of the array was demonstrated: adding `closing-statement` to `AgentRunEvent`
@@ -102,8 +104,8 @@ export const AGENT_LEDGER_STREAM_PREFIX = "agent-ledger-";
  * of the union's own type does not catch that; only exhaustiveness does. Add a kind to
  * the contract now and `bun run typecheck` fails here until it is admitted.
  */
-const EVENT_KINDS: ReadonlySet<string> = new Set(
-  Object.keys({
+const EVENT_KINDS: ReadonlySet<string> = new Set([
+  ...Object.keys({
     "run-started": true,
     "run-paused": true,
     "run-resumed": true,
@@ -117,9 +119,6 @@ const EVENT_KINDS: ReadonlySet<string> = new Set(
     "tool-refused": true,
     "report-composed": true,
     "table-profiled": true,
-    "usage-read": true,
-    "usage-unavailable": true,
-    "workloads-profiled": true,
     "plan-comparison": true,
     recommendation: true,
     "call-held": true,
@@ -130,8 +129,10 @@ const EVENT_KINDS: ReadonlySet<string> = new Set(
     "plan-statement-drafted": true,
     "answer-composed": true,
     "run-finished": true,
-  } satisfies Record<AgentRunEvent["kind"], true>),
-);
+  } satisfies Record<Exclude<AgentRunEvent["kind"], AgentPackEvidenceEvent["kind"]>, true>),
+  // A pack's kinds are total in `AGENT_EVIDENCE_EVENTS` for the same reason this record is total over the core's.
+  ...Object.keys(AGENT_EVIDENCE_EVENTS),
+]);
 
 /**
  * What a ledger line can be. The header is written once; `event` carries one of

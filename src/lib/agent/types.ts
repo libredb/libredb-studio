@@ -52,6 +52,7 @@ import type { ObjectRole } from "@/lib/db/types";
 import type { editorLanguageForTabType } from "@/lib/editor/tab-language";
 import type { AgentStatementLanguageId } from "./agent-manifest";
 import type { AgentContextCharge, AgentContextRowBudget, AgentContextUnavailableCode } from "./context-snapshot";
+import type { AgentPackEvidenceEvent } from "./languages/pack";
 import type { AgentGoalShortfall, AgentGoalVerifierId } from "./goal-verifier";
 import type { AgentToolName } from "./tools";
 import type { AgentInventoryNoun } from "./inventory-noun";
@@ -1533,44 +1534,12 @@ export type AgentRunEvent =
       readonly artifact: AgentArtifactReference;
       readonly profile: AgentTableProfile;
     })
-  | (AgentRunEventBase & {
-      /**
-       * Container usage in one namespace was read against requests and limits, so a report or a resources
-       * recommendation can CITE it.
-       *
-       * Its own kind for the reason `table-profiled` has one: the artifact is this reading's evidence, and the
-       * resource-efficiency verdict asks for a usage reading by kind rather than for any read. The namespace and the
-       * selector are what the reading covered, recorded so a resumed run is told what it already measured.
-       */
-      readonly kind: "usage-read";
-      readonly artifact: AgentArtifactReference;
-      readonly namespace: string;
-      readonly selector?: string;
-    })
-  | (AgentRunEventBase & {
-      /**
-       * The cluster serves no usage metrics for this namespace: metrics.k8s.io is absent, or its backend
-       * (metrics-server) does not answer.
-       *
-       * A fact about the cluster, recorded as one, rather than only a refused step: the verdict reads it to say the
-       * run could not measure usage and why, which a refusal code alone cannot tell apart from a reading the run
-       * chose not to keep.
-       */
-      readonly kind: "usage-unavailable";
-      readonly namespace: string;
-    })
-  | (AgentRunEventBase & {
-      /**
-       * One namespace's workloads were profiled, so a report can CITE the profile.
-       *
-       * Its own kind for the reason `usage-read` has one: the cluster-health verdict asks for a workload profile by
-       * kind rather than for any read. The namespace is what the profile covered, recorded so a resumed run is told
-       * what it already profiled.
-       */
-      readonly kind: "workloads-profiled";
-      readonly artifact: AgentArtifactReference;
-      readonly namespace: string;
-    })
+  /*
+    The evidence events a language pack writes beside a reading its verdict asks for. Each pack declares its own, with
+    what the timeline and a resumed run say of it, in its client facet; the core reads them through
+    `AGENT_EVIDENCE_EVENTS` in `languages/client.ts` and names none of their kinds.
+  */
+  | (AgentRunEventBase & AgentPackEvidenceEvent)
   | (AgentRunEventBase & {
       /**
        * This artifact IS the answer, and this is how it should be shown.

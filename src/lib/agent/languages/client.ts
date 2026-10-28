@@ -1,7 +1,8 @@
 /**
  * The statement language packs' client facets (#1821): what a browser bundle may hold of each language.
  *
- * Client tier. `agent-manifest.ts` and `posture.ts` read it, so it reaches no server module: each `<id>/client.ts`
+ * Client tier. `agent-manifest.ts`, `posture.ts` and every reader of a pack's evidence events, the rail's timeline
+ * among them, read it, so it reaches no server module: each `<id>/client.ts`
  * imports only the leaves `workflow-tool-sets.ts` and `execution-policy.ts`. The whole pack in `index.ts` holds the
  * very objects this record holds, which `tests/unit/lib/agent/languages.test.ts` asserts.
  *
@@ -9,9 +10,16 @@
  * client facet here. Its keys are declared in the order the projections in `agent-manifest.ts` list them.
  */
 import type { AgentStatementLanguageId } from "../agent-manifest";
+import { mergeDisjoint } from "../disjoint-merge";
+import type { AgentRunEvent } from "../types";
 import { KUBECTL_CLIENT_PACK } from "./kubectl/client";
 import { MONGO_CLIENT_PACK } from "./mongo/client";
-import type { AgentLanguageClientPack } from "./pack";
+import type {
+  AgentEvidenceEventSpec,
+  AgentEvidenceEventSpecs,
+  AgentLanguageClientPack,
+  AgentPackEvidenceEvent,
+} from "./pack";
 import { SQL_CLIENT_PACK } from "./sql/client";
 
 /**
@@ -53,4 +61,28 @@ export function projectClientPacks<Value>(
       Value
     >,
   );
+}
+
+/**
+ * Every pack's evidence events, keyed by kind: what the ledger admits beside the core's kinds, what the timeline and a
+ * resumed run say of each, and which a claim may cite. Global by kind, because a ledger line names its kind and not its
+ * language, so a kind two packs both declare fails at load; and total over `AgentPackEvidenceEvent`, so a kind a pack
+ * adds to its events does not compile until the pack declares it.
+ */
+export const AGENT_EVIDENCE_EVENTS = mergeDisjoint(
+  [SQL_CLIENT_PACK.evidenceEvents, KUBECTL_CLIENT_PACK.evidenceEvents, MONGO_CLIENT_PACK.evidenceEvents],
+  "AGENT_EVIDENCE_EVENTS",
+) satisfies AgentEvidenceEventSpecs<AgentPackEvidenceEvent>;
+
+/** A ledger event a pack declares, rather than one of the core's own kinds. */
+export type AgentPackEvidenceRunEvent = Extract<AgentRunEvent, AgentPackEvidenceEvent>;
+
+/** Whether `event` is of a kind a pack declares. Every core reader asks this before it reads one of the core's kinds. */
+export function isPackEvidenceEvent(event: AgentRunEvent): event is AgentPackEvidenceRunEvent {
+  return Object.hasOwn(AGENT_EVIDENCE_EVENTS, event.kind);
+}
+
+/** The declaration of a pack evidence event's kind. Keyed by the event's own kind, so it reads that kind's fields. */
+export function evidenceEventSpec(event: AgentPackEvidenceEvent): AgentEvidenceEventSpec<AgentPackEvidenceEvent> {
+  return AGENT_EVIDENCE_EVENTS[event.kind] as AgentEvidenceEventSpec<AgentPackEvidenceEvent>;
 }

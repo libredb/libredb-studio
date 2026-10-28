@@ -147,7 +147,7 @@ import {
 } from "./execution-policy";
 import type { AgentRepairDenyCode, AgentRepairLedger } from "./repair-ledger";
 import { fingerprintStatement } from "./repair-ledger";
-import { statementFamilyOf } from "./languages/client";
+import { AGENT_EVIDENCE_EVENTS, statementFamilyOf } from "./languages/client";
 import { engineServerDialect, runServerPack } from "./languages/engines/server";
 import type { AgentFamilyOperationIds, AgentRecommendationCard } from "./languages/pack";
 import {
@@ -3734,14 +3734,14 @@ export function recommendChangeTool(
 }
 
 /**
- * The event kinds that carry an artifact this run produced. A set rather than two comparisons, so a later reading
- * that produces an artifact of its own is added here once and is citable everywhere `producedArtifact` is read.
+ * The event kinds that carry an artifact this run produced: the core's two, and every evidence kind a language pack
+ * declares citable. A set rather than comparisons, so a later reading that produces an artifact of its own is added
+ * once and is citable everywhere `producedArtifact` is read.
  */
-const ARTIFACT_EVENTS: ReadonlySet<AgentRunEvent["kind"]> = new Set([
+const ARTIFACT_EVENTS: ReadonlySet<string> = new Set([
   "tool-completed",
   "table-profiled",
-  "usage-read",
-  "workloads-profiled",
+  ...Object.entries(AGENT_EVIDENCE_EVENTS).flatMap(([kind, spec]) => (spec.citable ? [kind] : [])),
 ]);
 
 /**

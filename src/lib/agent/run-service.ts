@@ -49,6 +49,7 @@ import { AGENT_WORKFLOW_BUDGETS } from "./execution-policy";
 import type { AgentStatementLanguageId } from "./agent-manifest";
 import { type AgentGoalVerifierId, verifyRunGoal } from "./goal-verifier";
 import type { AgentHistoryCursor, AgentHistoryPage } from "./history";
+import type { AgentPackEvidenceRunEvent } from "./languages/client";
 import type { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import type { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import type { QueryResult } from "@/lib/types";
@@ -85,8 +86,13 @@ export interface AgentRunEnding {
  * The events a run TELLS, as opposed to the ones that happen to it. Everything
  * outside this set is written by the lifecycle methods below, which is what keeps
  * the write-ahead ordering in one place.
+ *
+ * The core's own narrative kinds, and every evidence event a language pack declares: each of those is written by the
+ * drive beside a step that settles on its own, so none settles one.
  */
-export type AgentRunNarrativeEvent = Extract<
+export type AgentRunNarrativeEvent = CoreNarrativeEvent | AgentPackEvidenceRunEvent;
+
+type CoreNarrativeEvent = Extract<
   AgentRunEvent,
   {
     kind:
@@ -129,12 +135,6 @@ export type AgentRunNarrativeEvent = Extract<
       | "plan-comparison"
       | "recommendation"
       | "table-profiled"
-      // A usage reading's evidence, and the cluster's own fact that it serves no usage metrics: both written by the
-      // drive beside a step that settles on its own, so neither settles one.
-      | "usage-read"
-      | "usage-unavailable"
-      // A workload profile's evidence, written beside its settled step for the same reason.
-      | "workloads-profiled"
       // Which result IS the answer: a decision about a read already on the ledger,
       // reaching nothing and settling no step, like the three above it.
       | "answer-composed"

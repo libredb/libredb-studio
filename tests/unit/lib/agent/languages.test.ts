@@ -7,7 +7,13 @@ import {
 } from "@/lib/agent/agent-manifest";
 import { mergeDisjoint } from "@/lib/agent/disjoint-merge";
 import { verifyRunGoal } from "@/lib/agent/goal-verifier";
-import { languageClientPack, projectClientPacks } from "@/lib/agent/languages/client";
+import {
+  AGENT_EVIDENCE_EVENTS,
+  evidenceEventSpec,
+  isPackEvidenceEvent,
+  languageClientPack,
+  projectClientPacks,
+} from "@/lib/agent/languages/client";
 import { AGENT_EVIDENCE_TOOLS, LANGUAGE_TOOL_ARMS, agentLanguagePack } from "@/lib/agent/languages/index";
 import {
   LANGUAGE_BASE_DEFINITIONS,
@@ -23,7 +29,7 @@ import { LANGUAGE_GOAL_RULES } from "@/lib/agent/languages/verifiers";
 import { READING_REFUSAL_TEXT, UNAVAILABLE_TEXT } from "@/lib/agent/tool-contracts";
 import { AGENT_TOOL_DEFINITIONS, type AgentToolUnavailableCode, agentToolDefinition } from "@/lib/agent/tools";
 import { OPERATIONS_VARIANT, READ_CLASS_TOOLS } from "@/lib/agent/workflow-tool-sets";
-import type { AgentReadingDenyCode } from "@/lib/agent/types";
+import type { AgentArtifactReference, AgentReadingDenyCode, AgentRunEvent } from "@/lib/agent/types";
 
 /**
  * The language packs (#1821): the shared tables the core and the packs build together.
@@ -247,7 +253,108 @@ describe("the language packs", () => {
     expect(AGENT_EVIDENCE_TOOLS.inspect_usage.event).toBe("usage-read");
     expect(AGENT_EVIDENCE_TOOLS.profile_workloads.event).toBe("workloads-profiled");
   });
+
+  const ARTIFACT: AgentArtifactReference = {
+    correlationId: "a1",
+    runId: "run-1",
+    operationId: "cluster.usage.read",
+    summary: { rowCount: 2, columnNames: ["container"], elapsedMs: 3 },
+  };
+
+  test("each evidence tool's completed reading writes the kind its row names, with what the input covered", () => {
+    expect(AGENT_EVIDENCE_TOOLS.inspect_usage.completed(ARTIFACT, { namespace: "web", selector: "app=api" })).toEqual({
+      kind: "usage-read",
+      artifact: ARTIFACT,
+      namespace: "web",
+      selector: "app=api",
+    });
+    expect(AGENT_EVIDENCE_TOOLS.inspect_usage.completed(ARTIFACT, { namespace: "web" })).toEqual({
+      kind: "usage-read",
+      artifact: ARTIFACT,
+      namespace: "web",
+    });
+    expect(AGENT_EVIDENCE_TOOLS.profile_workloads.completed(ARTIFACT, { namespace: "shop" })).toEqual({
+      kind: "workloads-profiled",
+      artifact: ARTIFACT,
+      namespace: "shop",
+    });
+  });
+
+  test("a refused reading writes usage-unavailable only when the cluster serves no usage metrics", () => {
+    for (const tool of Object.values(AGENT_EVIDENCE_TOOLS)) {
+      expect(
+        tool.refused({ class: "reading-refused", reasonCode: "METRICS_UNAVAILABLE" }, { namespace: "web" }),
+      ).toEqual({ kind: "usage-unavailable", namespace: "web" });
+      expect(tool.refused({ class: "reading-refused", reasonCode: "READING_OVER_BUDGET" }, { namespace: "web" })).toBe(
+        null,
+      );
+    }
+  });
 });
+
+describe("the evidence events the packs declare", () => {
+  test("they are kubectl's three, frozen, each the very declaration its client facet holds", () => {
+    expect(Object.keys(AGENT_EVIDENCE_EVENTS)).toEqual(["usage-read", "usage-unavailable", "workloads-profiled"]);
+    expect(Object.isFrozen(AGENT_EVIDENCE_EVENTS)).toBe(true);
+    expect(AGENT_EVIDENCE_EVENTS["usage-read"]).toBe(
+      languageClientPack("kubectl").evidenceEvents["usage-read"] as (typeof AGENT_EVIDENCE_EVENTS)["usage-read"],
+    );
+    expect(Object.keys(languageClientPack("sql").evidenceEvents)).toEqual([]);
+    expect(Object.keys(languageClientPack("mongo").evidenceEvents)).toEqual([]);
+  });
+
+  test("a reading that carries an artifact is citable, and the cluster's own fact is not", () => {
+    expect(Object.entries(AGENT_EVIDENCE_EVENTS).flatMap(([kind, spec]) => (spec.citable ? [kind] : []))).toEqual([
+      "usage-read",
+      "workloads-profiled",
+    ]);
+  });
+
+  test("a pack's kind is told apart from the core's, and resolves to its own declaration", () => {
+    const usage: Extract<AgentRunEvent, { kind: "usage-unavailable" }> = {
+      kind: "usage-unavailable",
+      atMs: 1,
+      namespace: "web",
+    };
+    const core: AgentRunEvent = { kind: "run-resumed", atMs: 1 };
+    expect(isPackEvidenceEvent(usage)).toBe(true);
+    expect(isPackEvidenceEvent(core)).toBe(false);
+    expect<unknown>(evidenceEventSpec(usage)).toBe(AGENT_EVIDENCE_EVENTS["usage-unavailable"]);
+  });
+
+  test("a resumed run is told each reading in its pack's words", () => {
+    const read: AgentRunEvent = {
+      kind: "usage-read",
+      atMs: 1,
+      artifact: ARTIFACT_OF_RUN,
+      namespace: "web",
+      selector: "app=api",
+    };
+    const bare: AgentRunEvent = { kind: "usage-read", atMs: 1, artifact: ARTIFACT_OF_RUN, namespace: "web" };
+    const profiled: AgentRunEvent = {
+      kind: "workloads-profiled",
+      atMs: 1,
+      artifact: ARTIFACT_OF_RUN,
+      namespace: "shop",
+    };
+    const told = (event: AgentRunEvent) =>
+      isPackEvidenceEvent(event) ? evidenceEventSpec(event).priorProgress(event) : "";
+    expect(told(read)).toBe(
+      "Container usage in namespace web (selector app=api) was already read, artifact a2. That reading is recorded; read it again only for a different namespace or selector.",
+    );
+    expect(told(bare)).toStartWith("Container usage in namespace web was already read, artifact a2.");
+    expect(told(profiled)).toBe(
+      "The workloads of namespace shop were already profiled, artifact a2. That profile is recorded; profile again only a different namespace.",
+    );
+  });
+});
+
+const ARTIFACT_OF_RUN: AgentArtifactReference = {
+  correlationId: "a2",
+  runId: "run-1",
+  operationId: "cluster.workloads.read",
+  summary: { rowCount: 1, columnNames: ["workload"], elapsedMs: 2 },
+};
 
 describe("the prompt tables the packs hold", () => {
   const ids = Object.keys(LANGUAGE_IDS) as AgentStatementLanguageId[];

@@ -28,13 +28,16 @@ import type {
   AgentToolOutcome,
 } from "../tools";
 import type {
+  AgentArtifactReference,
   AgentContextSnapshot,
   AgentEvidenceReference,
   AgentInventory,
   AgentRunEvent,
   AgentRunRecord,
   AgentRunWorkflowType,
+  AgentToolRefusal,
 } from "../types";
+import type { KubectlEvidenceEvent } from "./kubectl/client";
 import type { ENGINE_OVERRIDABLE_SERVER_MEMBERS } from "./overlay";
 
 /** SQL's operations. `sql.explain.analyze` is a member for the reason `AgentOperationId` in `tools.ts` gives. */
@@ -366,11 +369,57 @@ export interface AgentEvidenceTool {
   readonly input: z.ZodType<ClusterUsageInput>;
   readonly run: (context: AgentToolContext, input: unknown) => Promise<AgentToolOutcome>;
   /**
-   * The event the tool writes when it completes. Typed through the event union, so a kind the ledger does not admit
-   * cannot be named here.
+   * The kind of the event the tool writes when it completes. Typed through the packs' evidence events, so a kind the
+   * ledger does not admit cannot be named here.
    */
-  readonly event: Extract<AgentRunEvent["kind"], "usage-read" | "workloads-profiled">;
+  readonly event: Extract<AgentPackEvidenceEvent, { readonly artifact: AgentArtifactReference }>["kind"];
+  /** The event a completed reading writes: its artifact and what the parsed `input` covered. Of the kind `event`. */
+  readonly completed: (artifact: AgentArtifactReference, input: ClusterUsageInput) => AgentPackEvidenceEvent;
+  /**
+   * The event a refused reading writes, or null for none: a refusal that is a fact about the engine rather than about
+   * the call, which a verdict reads to tell the engine apart from the run.
+   */
+  readonly refused: (refusal: AgentToolRefusal, input: ClusterUsageInput) => AgentPackEvidenceEvent | null;
 }
+
+/**
+ * The evidence events each family writes on the ledger, by family, each without its timestamp. `AgentRunEvent` in
+ * `types.ts` holds every row here beside the core's own kinds, so a family's events are written once, in its pack, and
+ * the core names none of them. Every one is narrative: it is written beside a step that settles on its own, so none
+ * settles one.
+ */
+export interface AgentFamilyEvidenceEvents {
+  readonly sql: never;
+  readonly kubectl: KubectlEvidenceEvent;
+  readonly mongo: never;
+}
+
+/** Every pack's evidence event, as the ledger stores it less its timestamp. */
+export type AgentPackEvidenceEvent = AgentFamilyEvidenceEvents[keyof AgentFamilyEvidenceEvents];
+
+/** What the timeline shows of one pack evidence event, all of it the app's own words. */
+export interface AgentEvidenceTimelineEntry {
+  readonly tone: "neutral" | "progress";
+  readonly headline: string;
+  readonly detail: string;
+  /** The artifact the event carries, so the rail can resolve a citation of it. */
+  readonly artifactId?: string;
+}
+
+/** What a pack declares of one of its evidence events, for the core readers that dispatch on its kind. */
+export interface AgentEvidenceEventSpec<Event> {
+  /** Whether the event carries an artifact this run produced, so a claim may cite it. */
+  readonly citable: boolean;
+  /** What the timeline shows for it. */
+  readonly timeline: (event: Event) => AgentEvidenceTimelineEntry;
+  /** The sentence a resumed run is told of it, so it does not read again what it already holds. */
+  readonly priorProgress: (event: Event) => string;
+}
+
+/** One declaration per kind of `Event`, total, so a kind a family adds does not compile until it is declared. */
+export type AgentEvidenceEventSpecs<Event extends { readonly kind: string }> = {
+  readonly [Kind in Event["kind"]]: AgentEvidenceEventSpec<Extract<Event, { readonly kind: Kind }>>;
+};
 
 /**
  * One verifier id's rule. A language's rules live in `<id>/verifiers.ts` and reach `goal-verifier.ts` only through
@@ -400,6 +449,11 @@ export interface AgentLanguageClientPack {
   readonly variants: Readonly<Partial<Record<AgentRunWorkflowType, AgentWorkflowVariant>>>;
   /** The operation the language's `inspect_plan` drives, or null with no plan to read: `AGENT_PLAN_ESTIMATE_OPERATION`. */
   readonly planEstimateOperation: AgentOperationId | null;
+  /**
+   * The evidence events the language writes, keyed by kind: `AGENT_EVIDENCE_EVENTS` in `client.ts` merges every
+   * language's, and holds the merge total over `AgentPackEvidenceEvent`.
+   */
+  readonly evidenceEvents: Readonly<Record<string, AgentEvidenceEventSpec<never>>>;
   /** What `posture.ts` says of an agent-mode run in this language. */
   readonly posture: {
     /**

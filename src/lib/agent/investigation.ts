@@ -141,7 +141,7 @@ import {
   presentableArtifact,
 } from "./tools";
 import { AGENT_EVIDENCE_CONTRACT, capturedSnapshot, citeSnapshot, handoverText } from "./tool-contracts";
-import { statementFamilyOf } from "./languages/client";
+import { evidenceEventSpec, isPackEvidenceEvent, statementFamilyOf } from "./languages/client";
 import { runServerPack } from "./languages/engines/server";
 import { AGENT_EVIDENCE_TOOLS, agentLanguagePack } from "./languages/index";
 import type { EvidenceToolName, ShortfallAdvice, ShortfallContext, ShortfallNotice } from "./languages/pack";
@@ -1994,22 +1994,9 @@ function describePriorProgress(record: AgentRunRecord): string | null {
           },
         )}`,
       );
-    } else if (event.kind === "usage-read") {
-      // Durable and non-terminal like the profile above: a resumed run that was not told would spend a statement
-      // measuring what it already measured, and could not cite the reading it holds. The namespace is a validated
-      // DNS label and the selector is the model's own argument, so neither is cluster content.
-      lines.push(
-        `Container usage in namespace ${event.namespace}${event.selector === undefined ? "" : ` (selector ${event.selector})`} was already read, artifact ${event.artifact.correlationId}. That reading is recorded; read it again only for a different namespace or selector.`,
-      );
-    } else if (event.kind === "workloads-profiled") {
-      // Durable and non-terminal like the usage reading above, and told for the same reason.
-      lines.push(
-        `The workloads of namespace ${event.namespace} were already profiled, artifact ${event.artifact.correlationId}. That profile is recorded; profile again only a different namespace.`,
-      );
-    } else if (event.kind === "usage-unavailable") {
-      lines.push(
-        `Usage could not be read in namespace ${event.namespace}: this cluster serves no usage metrics (metrics.k8s.io), because metrics-server is not installed or not answering. Asking again will not change that.`,
-      );
+    } else if (isPackEvidenceEvent(event)) {
+      // Durable and non-terminal like the profile above, so a resumed run is told in the words its pack declares.
+      lines.push(evidenceEventSpec(event).priorProgress(event));
     } else if (event.kind === "recommendation") {
       lines.push(describePriorRecommendation(event));
     }
@@ -4260,7 +4247,7 @@ export async function runInvestigation(
         }
         if (call.toolName === "inspect_usage" && holdsTool("inspect_usage") && !usageBarAnnounced) {
           const { record: sofar } = await service.resume(context.runId);
-          if (sofar.events.some((event) => event.kind === "usage-read")) usageBarDue = true;
+          if (sofar.events.some((event) => event.kind === AGENT_EVIDENCE_TOOLS.inspect_usage.event)) usageBarDue = true;
         }
       }
       // After every result this turn owes, never between two of them.
@@ -4469,9 +4456,9 @@ export async function profileTable(
  *
  * Modelled on `profileTable`: the step settles through `service.runStep`, so a replay, a cancellation and the audit
  * trail treat it as every other reach, and the event is written inside the settled step, so a reader never sees
- * evidence whose read was not also recorded. A completed reading writes `AGENT_EVIDENCE_TOOLS[tool].event` with its
- * artifact and what it covered. A cluster that serves no usage metrics writes `usage-unavailable`: the refusal alone
- * cannot tell the verdict that the cluster, not the run, is why usage was never measured.
+ * evidence whose read was not also recorded. A completed reading writes the event its tool builds from the artifact
+ * and what it covered, of the kind `AGENT_EVIDENCE_TOOLS[tool].event`. A refusal writes the event its tool builds for
+ * it, if any: a refusal alone cannot tell the verdict that the engine, not the run, is why the reading was never taken.
  *
  * The step id is derived from the PARSED arguments where they parse, so two calls that differ only in key order are
  * one step; arguments that do not parse keep their raw form and the tool answers them as invalid.
@@ -4496,21 +4483,15 @@ async function readEvidence(
     async () => {
       const outcome = await AGENT_EVIDENCE_TOOLS[tool].run(context, call.input);
       modelText = outcome.modelText;
-      if (outcome.kind === "completed" && covered !== undefined) {
-        await service.recordEvent(context.runId, {
-          kind: AGENT_EVIDENCE_TOOLS[tool].event,
-          artifact: outcome.artifact,
-          namespace: covered.namespace,
-          ...(covered.selector === undefined ? {} : { selector: covered.selector }),
-        });
-      } else if (
-        outcome.kind === "refused" &&
-        covered !== undefined &&
-        outcome.refusal.class === "reading-refused" &&
-        outcome.refusal.reasonCode === "METRICS_UNAVAILABLE"
-      ) {
-        await service.recordEvent(context.runId, { kind: "usage-unavailable", namespace: covered.namespace });
-      }
+      const event =
+        covered === undefined
+          ? null
+          : outcome.kind === "completed"
+            ? AGENT_EVIDENCE_TOOLS[tool].completed(outcome.artifact, covered)
+            : outcome.kind === "refused"
+              ? AGENT_EVIDENCE_TOOLS[tool].refused(outcome.refusal, covered)
+              : null;
+      if (event !== null) await service.recordEvent(context.runId, event);
       return settlementOf(outcome);
     },
   );

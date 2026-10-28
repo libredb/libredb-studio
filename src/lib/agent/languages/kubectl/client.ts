@@ -5,8 +5,104 @@
 import type { AgentVariantRequirement } from "../../agent-manifest";
 import type { AgentPosture } from "../../posture";
 import type { AgentToolName } from "../../tools";
+import type { AgentArtifactReference } from "../../types";
 import { OPERATIONS_VARIANT } from "../../workflow-tool-sets";
-import type { AgentLanguageClientPack, StatementBudgets } from "../pack";
+import type {
+  AgentEvidenceEventSpecs,
+  AgentEvidenceTimelineEntry,
+  AgentLanguageClientPack,
+  StatementBudgets,
+} from "../pack";
+
+/** kubectl's evidence events, as the ledger stores them less their timestamp. */
+export type KubectlEvidenceEvent =
+  | {
+      /**
+       * Container usage in one namespace was read against requests and limits, so a report or a resources
+       * recommendation can CITE it.
+       *
+       * Its own kind for the reason `table-profiled` has one: the artifact is this reading's evidence, and the
+       * resource-efficiency verdict asks for a usage reading by kind rather than for any read. The namespace and the
+       * selector are what the reading covered, recorded so a resumed run is told what it already measured.
+       */
+      readonly kind: "usage-read";
+      readonly artifact: AgentArtifactReference;
+      readonly namespace: string;
+      readonly selector?: string;
+    }
+  | {
+      /**
+       * The cluster serves no usage metrics for this namespace: metrics.k8s.io is absent, or its backend
+       * (metrics-server) does not answer.
+       *
+       * A fact about the cluster, recorded as one, rather than only a refused step: the verdict reads it to say the
+       * run could not measure usage and why, which a refusal code alone cannot tell apart from a reading the run
+       * chose not to keep.
+       */
+      readonly kind: "usage-unavailable";
+      readonly namespace: string;
+    }
+  | {
+      /**
+       * One namespace's workloads were profiled, so a report can CITE the profile.
+       *
+       * Its own kind for the reason `usage-read` has one: the cluster-health verdict asks for a workload profile by
+       * kind rather than for any read. The namespace is what the profile covered, recorded so a resumed run is told
+       * what it already profiled.
+       */
+      readonly kind: "workloads-profiled";
+      readonly artifact: AgentArtifactReference;
+      readonly namespace: string;
+    };
+
+/**
+ * What the timeline and a resumed run say of each kubectl evidence event. The namespace is spoken in the headline the
+ * way a profiled table's name is, because it is the subject of the entry; it is a validated DNS label and the selector
+ * is the model's own argument, so neither is cluster content.
+ */
+type UsageRead = Extract<KubectlEvidenceEvent, { readonly kind: "usage-read" }>;
+type UsageUnavailable = Extract<KubectlEvidenceEvent, { readonly kind: "usage-unavailable" }>;
+type WorkloadsProfiled = Extract<KubectlEvidenceEvent, { readonly kind: "workloads-profiled" }>;
+
+const KUBECTL_EVIDENCE_EVENTS = Object.freeze({
+  "usage-read": Object.freeze({
+    citable: true,
+    timeline: (event: UsageRead): AgentEvidenceTimelineEntry => ({
+      tone: "progress",
+      headline: `Read container usage in ${event.namespace}`,
+      detail: `${event.artifact.summary.rowCount} container(s), against their requests and limits.`,
+      artifactId: event.artifact.correlationId,
+    }),
+    // Durable and non-terminal like a table profile: a resumed run that was not told would spend a statement
+    // measuring what it already measured, and could not cite the reading it holds.
+    priorProgress: (event: UsageRead): string =>
+      `Container usage in namespace ${event.namespace}${event.selector === undefined ? "" : ` (selector ${event.selector})`} was already read, artifact ${event.artifact.correlationId}. That reading is recorded; read it again only for a different namespace or selector.`,
+  }),
+  "usage-unavailable": Object.freeze({
+    citable: false,
+    // `neutral`, for the reason a schema that was not captured is: the run continues without the reading, so
+    // `progress` would claim it got somewhere and `refused` would claim the server turned a call back.
+    timeline: (): AgentEvidenceTimelineEntry => ({
+      tone: "neutral",
+      headline: "No usage metrics",
+      detail: "This cluster serves no metrics.k8s.io, so usage could not be read: install metrics-server.",
+    }),
+    priorProgress: (event: UsageUnavailable): string =>
+      `Usage could not be read in namespace ${event.namespace}: this cluster serves no usage metrics (metrics.k8s.io), because metrics-server is not installed or not answering. Asking again will not change that.`,
+  }),
+  "workloads-profiled": Object.freeze({
+    citable: true,
+    timeline: (event: WorkloadsProfiled): AgentEvidenceTimelineEntry => ({
+      tone: "progress",
+      headline: `Profiled the workloads of ${event.namespace}`,
+      detail: `${event.artifact.summary.rowCount} workload(s).`,
+      artifactId: event.artifact.correlationId,
+    }),
+    // Durable and non-terminal like the usage reading above, and told for the same reason.
+    priorProgress: (event: WorkloadsProfiled): string =>
+      `The workloads of namespace ${event.namespace} were already profiled, artifact ${event.artifact.correlationId}. That profile is recorded; profile again only a different namespace.`,
+  }),
+} satisfies AgentEvidenceEventSpecs<KubectlEvidenceEvent>);
 
 /**
  * Agent mode on a cluster: Studio's allowlist and the identity's RBAC bound it, not the engine.
@@ -122,6 +218,7 @@ export const KUBECTL_CLIENT_PACK = Object.freeze({
     }),
   }),
   planEstimateOperation: null,
+  evidenceEvents: KUBECTL_EVIDENCE_EVENTS,
   posture: Object.freeze({
     reads: kubectlReadsPosture,
     widened: kubectlReadsPosture,
