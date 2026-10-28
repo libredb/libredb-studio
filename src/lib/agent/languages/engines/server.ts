@@ -72,6 +72,13 @@ export function engineServerDialect(type: DatabaseType): AgentEngineServerDialec
   return engineServerOverlay(type).dialect ?? NO_SERVER_DIALECT;
 }
 
+/** Every registered engine's server dialect, in registry order: what a rule derived across engines reads. */
+export function everyEngineServerDialect(): readonly AgentEngineServerDialect[] {
+  return Object.values(SERVER_OVERLAYS).flatMap((overlay: EngineServerOverlay) =>
+    overlay.dialect === undefined ? [] : [overlay.dialect],
+  );
+}
+
 /** The server facet of one engine, as `runServerPack` answers it. */
 type EngineServerFacet = Readonly<AgentLanguageServerPack & { readonly dialect?: AgentEngineServerDialect }>;
 

@@ -6,6 +6,7 @@ import {
   composeStatisticsAvailabilityProbe,
 } from "@/lib/agent/composed-sql";
 import { AgentComposedSqlError, MAX_CATALOG_SELECTOR_LENGTH } from "@/lib/agent/composed-sql-primitives";
+import { engineServerDialect } from "@/lib/agent/languages/engines/server";
 import { withoutExtensionOwnershipTest } from "@/lib/agent/languages/sql/engines/postgres";
 import { agentReadSqlInput, inspectAgentStatement } from "@/lib/db/operations/statement-guard";
 import { AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
@@ -778,6 +779,29 @@ describe("composeEstimatingExplain", () => {
     expect(composeEstimatingExplain("postgres", "EXPLAIN (FORMAT JSON) SELECT id FROM orders").sql).toBe(
       "EXPLAIN (FORMAT JSON) SELECT id FROM orders",
     );
+  });
+
+  /*
+    The prefixes the strip removes are the engines' own declared ones (`planEstimate.prefix`), not a list the composer
+    keeps: an engine whose prefix joins declares it in its overlay and every engine strips it. One prefix opts out with
+    `strippedWhenRestated: false`, and only that declaration keeps it out.
+  */
+  test("every declared estimating prefix a model restates is stripped on every engine that composes one", () => {
+    const composing = SHIPPED_DATABASE_TYPES.filter((type) => engineServerDialect(type).planEstimate !== "unsupported");
+    const stripped = composing.flatMap((type) => {
+      const estimate = engineServerDialect(type).planEstimate;
+      return estimate !== "unsupported" && estimate.kind === "prefix" && estimate.strippedWhenRestated !== false
+        ? [estimate.prefix]
+        : [];
+    });
+    expect(new Set(stripped)).toEqual(new Set(["EXPLAIN (FORMAT JSON)", "EXPLAIN QUERY PLAN"]));
+    for (const type of composing) {
+      for (const prefix of stripped) {
+        expect(composeEstimatingExplain(type, `${prefix} SELECT 1`), `${type}: ${prefix}`).toEqual(
+          composeEstimatingExplain(type, "SELECT 1"),
+        );
+      }
+    }
   });
 
   test("EXPLAIN ANALYZE is left alone, because it asks to EXECUTE", () => {

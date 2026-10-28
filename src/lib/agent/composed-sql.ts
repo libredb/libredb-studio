@@ -41,7 +41,7 @@ import {
   AgentComposedSqlError,
   type AgentEstimatingExplain,
 } from "./composed-sql-primitives";
-import { engineServerDialect } from "./languages/engines/server";
+import { engineServerDialect, everyEngineServerDialect } from "./languages/engines/server";
 import type { DatabaseType } from "@/lib/types";
 
 /**
@@ -169,11 +169,49 @@ export function composesEstimatingExplainFor(dialect: DatabaseType): boolean {
  * of the guard that exists to refuse it.
  */
 function withoutEstimatingPrefix(statement: string): string {
-  // Anchored, case-insensitive, and requiring whitespace after the keyword so a column
-  // called `explained` cannot be mistaken for the keyword. `QUERY PLAN` and `(FORMAT JSON)`
-  // are matched as optional tails: a model that repeats this layer's own full prefix is the
-  // most common shape of the mistake.
-  const estimating = /^EXPLAIN\s+(?:QUERY\s+PLAN\s+|\(\s*FORMAT\s+JSON\s*\)\s*)?(?!ANALYZE\b)/i;
-  const match = estimating.exec(statement);
+  const match = restatedEstimatingPrefix().exec(statement);
   return match === null ? statement : statement.slice(match[0].length).trim();
+}
+
+/** A prefix's words and punctuation, in order: `EXPLAIN (FORMAT JSON)` is `EXPLAIN`, `(`, `FORMAT`, `JSON`, `)`. */
+const prefixTokens = (prefix: string): string[] => prefix.match(/\w+|[^\s\w]/g) ?? [];
+
+const isWord = (token: string): boolean => /^\w+$/.test(token);
+
+/**
+ * One token's pattern and the whitespace after it: at least one space between two words, so `EXPLAINED` is no
+ * `EXPLAIN`, and any amount beside punctuation, so `( FORMAT JSON )` is the same prefix.
+ */
+function tokenPattern(token: string, next: string | undefined): string {
+  const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return `${escaped}${isWord(token) && (next === undefined || isWord(next)) ? "\\s+" : "\\s*"}`;
+}
+
+let restatedPrefix: RegExp | undefined;
+
+/**
+ * The strip, built once from every engine's declared estimating prefix (`planEstimate.prefix` in
+ * `languages/sql/engines/<id>.ts`) that is not declared `strippedWhenRestated: false`, so the composer keeps no
+ * prefix of its own. Anchored and case-insensitive. Each prefix's first word may stand alone, and the rest of it is
+ * an optional tail, because a model that repeats a full prefix is the most common shape of the mistake. A tail is
+ * stripped on every engine, not only on the one that declares it: a model that wrote another engine's prefix asked
+ * for the same thing.
+ */
+function restatedEstimatingPrefix(): RegExp {
+  if (restatedPrefix !== undefined) return restatedPrefix;
+  const tails = new Map<string, Set<string>>();
+  for (const dialect of everyEngineServerDialect()) {
+    const estimate = dialect.planEstimate;
+    if (estimate === "unsupported" || estimate.kind !== "prefix" || estimate.strippedWhenRestated === false) continue;
+    const [keyword, ...rest] = prefixTokens(estimate.prefix);
+    const keywordTails = tails.get(keyword.toUpperCase()) ?? new Set<string>();
+    if (rest.length > 0) keywordTails.add(rest.map((token, at) => tokenPattern(token, rest[at + 1])).join(""));
+    tails.set(keyword.toUpperCase(), keywordTails);
+  }
+  const forms = [...tails].map(([keyword, keywordTails]) => {
+    const tail = keywordTails.size === 0 ? "" : `(?:${[...keywordTails].join("|")})?`;
+    return `${tokenPattern(keyword, undefined)}${tail}`;
+  });
+  restatedPrefix = new RegExp(`^(?:${forms.join("|")})(?!ANALYZE\\b)`, "i");
+  return restatedPrefix;
 }

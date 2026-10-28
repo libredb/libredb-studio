@@ -201,7 +201,8 @@ describe("engineServerDialect", () => {
   test("planEstimate is supplied on every SQL engine: a prefix on four, SQL Server's session mode", () => {
     expect(Object.fromEntries(SQL_ENGINES.map((type) => [type, engineServerDialect(type).planEstimate]))).toEqual({
       postgres: { kind: "prefix", prefix: "EXPLAIN (FORMAT JSON)" },
-      mysql: { kind: "prefix", prefix: "EXPLAIN FORMAT=JSON" },
+      // Outside the restated-prefix strip: a model's own `EXPLAIN FORMAT=JSON` is kept as written.
+      mysql: { kind: "prefix", prefix: "EXPLAIN FORMAT=JSON", strippedWhenRestated: false },
       sqlite: { kind: "prefix", prefix: "EXPLAIN QUERY PLAN" },
       duckdb: { kind: "prefix", prefix: "EXPLAIN (FORMAT JSON)" },
       mssql: { kind: "session-mode", mode: "estimate-plan" },

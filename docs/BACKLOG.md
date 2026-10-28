@@ -7905,12 +7905,13 @@ Found 2026-10-19 while splitting the agent core into language packs (#1821).
 ### B124. MySQL's estimating plan doubles a FORMAT=JSON the model already wrote
 
 `composeEstimatingExplain("mysql", "EXPLAIN FORMAT=JSON SELECT 1")` in `src/lib/agent/composed-sql.ts` returns `EXPLAIN FORMAT=JSON FORMAT=JSON SELECT 1`.
-`withoutEstimatingPrefix` strips a leading `EXPLAIN`, `EXPLAIN QUERY PLAN` and `EXPLAIN (FORMAT JSON)`, the PostgreSQL, DuckDB and SQLite spellings, and not MySQL's `FORMAT=JSON` tail, so MySQL's prefix from its engine overlay (`src/lib/agent/languages/sql/engines/mysql.ts`) is put in front of a format clause that is still there.
+`withoutEstimatingPrefix` strips every engine's declared estimating prefix (`planEstimate.prefix`), so a leading `EXPLAIN`, `EXPLAIN QUERY PLAN` and `EXPLAIN (FORMAT JSON)`, the PostgreSQL, DuckDB and SQLite spellings.
+MySQL's prefix is declared `strippedWhenRestated: false` in its engine overlay (`src/lib/agent/languages/sql/engines/mysql.ts`), which keeps its `FORMAT=JSON` tail out of the strip, so the prefix is put in front of a format clause that is still there.
 The engine-dialect golden (`tests/fixtures/agent/engine-dialect/`) pins this as current behaviour.
 
 Found 2026-10-19 while moving the estimating prefixes onto the engine overlays (#1821).
 
-**Done when:** a statement that already carries MySQL's estimating prefix is composed with it once, the golden entry is regenerated in that change with the reason, and a test covers `EXPLAIN FORMAT=JSON` in upper and lower case; cited in `docs/AGENT.md`.
+**Done when:** the `strippedWhenRestated: false` declaration is gone from MySQL's overlay, a statement that already carries MySQL's estimating prefix is composed with it once, the golden entry is regenerated in that change with the reason, and a test covers `EXPLAIN FORMAT=JSON` in upper and lower case; cited in `docs/AGENT.md`.
 
 ### B125. A catalog read's declared schema is folded on SQLite only
 

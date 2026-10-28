@@ -2681,6 +2681,8 @@ The agent reads it through `runServerPack` and `agentEnginePack`, and the dialec
 | `statistics` | Dialect-bound | `"unsupported"` |
 | `catalogCapture` | Dialect-bound | `"unsupported"` |
 
+Its `planEstimate` prefix is declared `strippedWhenRestated: false`, so a model that writes `EXPLAIN FORMAT=JSON` itself has only the leading `EXPLAIN` removed and the composed plan request carries the format twice (B124).
+
 This overlay overrides no Shared member, so every Shared member is the `sql` statement-language family's own.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
 

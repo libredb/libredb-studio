@@ -26,7 +26,16 @@ export interface AgentEstimatingExplain {
  * statement it is given unchanged (`composeEstimatingExplain` in `composed-sql.ts`).
  */
 export type AgentPlanEstimate =
-  | { readonly kind: "prefix"; readonly prefix: string }
+  | {
+      readonly kind: "prefix";
+      readonly prefix: string;
+      /**
+       * Absent: a model that writes this prefix in front of its statement has it removed on every engine before the
+       * composer adds its own (`withoutEstimatingPrefix` in `composed-sql.ts`). `false` leaves it out of that set, so a
+       * restated one reaches the engine as written.
+       */
+      readonly strippedWhenRestated?: false;
+    }
   | { readonly kind: "session-mode"; readonly mode: "estimate-plan" };
 
 export type AgentComposedSqlDenyCode =
