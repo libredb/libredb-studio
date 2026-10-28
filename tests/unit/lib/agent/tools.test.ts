@@ -3174,6 +3174,8 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
       QueryError: "repairable",
       // A QueryError of its own class: dropping the offset, or narrowing the statement, is the repair.
       OffsetUnsupportedError: "repairable",
+      // Refused before the read was sent: a smaller read that fits what the run's read allowance has left is the repair.
+      ReadAllowanceExceededError: "repairable",
       TimeoutError: "repairable",
       QueryCancelledError: "repairable",
       AuthenticationError: "repairable",

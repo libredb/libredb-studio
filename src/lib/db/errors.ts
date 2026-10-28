@@ -168,6 +168,19 @@ export class OffsetUnsupportedError extends QueryError {
 }
 
 /**
+ * A read refused because it would spend more billed reads than its run has left (`RunReadAllowance` in
+ * `read-allowance.ts`). A QueryError of its own class, raised before the request is sent: a smaller read that fits
+ * what is left is the repair, so every caller that settles a statement failure settles this one the same way.
+ */
+export class ReadAllowanceExceededError extends QueryError {
+  constructor(message: string, provider?: DatabaseType) {
+    super(message, provider);
+    this.name = "ReadAllowanceExceededError";
+    Object.setPrototypeOf(this, ReadAllowanceExceededError.prototype);
+  }
+}
+
+/**
  * What `beginTransaction()` raises when the server accepted the BEGIN and its own status
  * says no transaction is open, the providers that can read that status (PostgreSQL's
  * ReadyForQuery byte, MySQL's `SERVER_STATUS_IN_TRANS`) share it. Measured 2026-10-04 on
