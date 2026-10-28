@@ -390,10 +390,10 @@ export class TrinoProvider extends SQLBaseProvider {
       maintenanceOperationSpecs: {
         kill: { label: "Terminate Query", perEntity: false, global: false },
       },
-      // Trino's own JDBC URL is `jdbc:trino://host:port/catalog/schema`, which the
-      // shared parser in `connection-string-parser.ts` does not accept. Rather than
-      // advertise a field that would reject everything a user pastes, this stays
-      // false until that parser learns the scheme.
+      // Trino's own JDBC URL is `jdbc:trino://host:port/catalog/schema`, and Trino's
+      // connection string row (`./connection-string.ts`) has no `paste` to read it. Rather
+      // than advertise a field that would reject everything a user pastes, this stays
+      // false until that row reads the scheme.
       supportsConnectionString: false,
       // The coordinator's HTTP port, and the same number for TLS: a secured
       // deployment serves on whatever port its operator chose, and inventing a

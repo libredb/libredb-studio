@@ -1607,7 +1607,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     }
     // A file-path TLS parameter (#842) is read on the machine running the server, which in
     // a container is not the one the string was pasted on. It stays in the URI, and a CA
-    // pasted into the form wins over it (see connection-string-parser.ts).
+    // pasted into the form wins over it (see `tlsFileParam` in src/lib/db/connection-string/types.ts).
     if (parsed.tlsFileParam) {
       setTestResult({
         tone: "warning",
@@ -1619,7 +1619,8 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     // successfully" must not swallow: the user asked for encryption and the form is still
     // showing whatever mode it held. Postgres's `prefer`/`allow` and MySQL's `PREFERRED`
     // mean "encrypt if the server offers it", which SSL Mode cannot express, and guessing
-    // either end is measurably wrong in both directions (see connection-string-parser.ts).
+    // either end is measurably wrong in both directions (see the postgres and mysql
+    // connection string rows beside their providers).
     // So name the parameter, name the mode that is actually in force, and say where to fix it.
     //
     // The paste itself worked - every other field is filled in - so this is not a

@@ -693,7 +693,9 @@ const connection = {
 `supportsConnectionString` is `true`. Two related but distinct paths exist:
 
 - **A pasted URL** goes through the shared parser, `parseConnectionString()`
-  ([`connection-string-parser.ts`](../../src/lib/connection-string-parser.ts)), which decomposes
+  ([`connection-string-parser.ts`](../../src/lib/connection-string-parser.ts)), which hands it to
+  ClickHouse's connection string row
+  ([`connection-string.ts`](../../src/lib/db/providers/sql/clickhouse/connection-string.ts)); the row decomposes
   it into discrete fields (host/port/user/password/database) before the provider ever sees it, and
   stores no `connectionString` on the connection.
 - **A hand-typed connection string** (the ConnectionModal's URI tab clears host, port, user and

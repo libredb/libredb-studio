@@ -271,7 +271,7 @@ export const ENVIRONMENT_LABELS: Record<ConnectionEnvironment, string> = {
  * for a file the user does not have is a connection they cannot complete. `verify-system` is
  * what a managed endpoint (Neon, Supabase, Atlas, RDS, Capella) can satisfy as pasted, which
  * is why it is the mode a boolean `?ssl=true` / `?tls=true` in a connection string maps onto
- * (see `readBooleanTLS` in src/lib/connection-string-parser.ts for the rule).
+ * (see `readBooleanTLS` in src/lib/db/connection-string/shared.ts for the rule).
  *
  * `verify-ca` checks the chain and `verify-full` also the server name. That split is honoured
  * only where the driver exposes the name check on its own - Oracle's `sslServerDNMatch` is

@@ -585,7 +585,7 @@ export const CONNECTION_FORM: {
     defaultPort: "8888",
     // No URI convention exists for Druid's HTTP SQL API - its JDBC driver addresses
     // Avatica (jdbc:avatica:remote:url=...), and http:// / https:// already resolve to
-    // ClickHouse in connection-string-parser.ts. There is nothing to paste.
+    // ClickHouse's connection string row. There is nothing to paste.
     showConnectionStringToggle: false,
     // Deliberately no "database": INFORMATION_SCHEMA.SCHEMATA reports exactly one
     // catalog, always named `druid`, so a database selector would be a control with no
@@ -600,8 +600,8 @@ export const CONNECTION_FORM: {
     // no 8443-shaped alternative (the provider's SEARCH_DEFAULT_PORT says the same).
     defaultPort: "9200",
     // No URI convention to paste: the provider is addressed by host and port like
-    // Druid, and http:// / https:// already resolve to ClickHouse in
-    // connection-string-parser.ts. Nothing was added there for these two ids.
+    // Druid, and http:// / https:// already resolve to ClickHouse's connection string
+    // row. Neither id's row has a `paste`.
     showConnectionStringToggle: false,
     // Deliberately no "database": an index has no namespace above it - measured, ES's
     // SHOW TABLES reports only a catalog (the cluster name) and OpenSearch reports
@@ -633,8 +633,8 @@ export const CONNECTION_FORM: {
     defaultPort: "8080",
     // No URI to paste. Trino's canonical URL is a JDBC one
     // (`jdbc:trino://host:port/catalog/schema`), which the shared parser does not
-    // accept, and http:// / https:// already resolve to ClickHouse in
-    // connection-string-parser.ts. Two engines cannot own one scheme.
+    // accept, and http:// / https:// already resolve to ClickHouse's connection string
+    // row. Two engines cannot own one scheme.
     showConnectionStringToggle: false,
     // `database` IS offered here, which is where this id parts company with Druid and
     // the two search engines: a coordinator fronts MANY catalogs (measured on 476,
@@ -673,9 +673,9 @@ export const CONNECTION_FORM: {
     // port (9160) is gone from 4.0 onwards, and 7000/7001 are internode.
     defaultPort: "9042",
     // No URI to paste. The driver takes contact points plus a REQUIRED
-    // `localDataCenter`, and no URI convention in use carries the second; `cassandra://`
-    // is in no branch of connection-string-parser.ts, so the toggle would promise a
-    // paste the form cannot honour.
+    // `localDataCenter`, and no URI convention in use carries the second; Cassandra's
+    // connection string row has no `paste`, so the toggle would promise a paste the
+    // form cannot honour.
     showConnectionStringToggle: false,
     // `database` IS offered and it holds a KEYSPACE - the same mapping Trino makes
     // onto a catalog. Measured on 5.0.9: with no keyspace pinned, `SELECT … FROM
@@ -714,8 +714,8 @@ export const CONNECTION_FORM: {
     // serves on whatever port its operator chose, so inventing an HTTPS alternative would point
     // credentials at a port nothing is listening on.
     defaultPort: "9090",
-    // No URI convention to paste, and http:// / https:// already resolve to ClickHouse in
-    // connection-string-parser.ts. Two engines cannot own one scheme.
+    // No URI convention to paste, and http:// / https:// already resolve to ClickHouse's
+    // connection string row. Two engines cannot own one scheme.
     showConnectionStringToggle: false,
     // Deliberately no "database": the server holds one TSDB and every API read is addressed to
     // it, so a selector would be a control with no effect (#1085 6.1), the Druid shape. `user` and
@@ -732,8 +732,8 @@ export const CONNECTION_FORM: {
     // The broker port a stock install listens on, and the same number under TLS: a secured
     // listener serves on whatever port its operator chose.
     defaultPort: "9092",
-    // No URI convention to paste: a Kafka client takes a bootstrap address, and nothing in
-    // connection-string-parser.ts reads a Kafka URI.
+    // No URI convention to paste: a Kafka client takes a bootstrap address, and Kafka's
+    // connection string row has no `paste`.
     showConnectionStringToggle: false,
     // No SSH tunnel: a tunnel forwards one address, and a Kafka client reads from every broker at
     // the address the broker advertises (docs/providers/kafka.md). Read through offersSshTunnel, so
@@ -775,7 +775,7 @@ export const CONNECTION_FORM: {
     // The Bolt port. The HTTP port (7474) serves the browser and the HTTP API, which this provider never uses.
     defaultPort: "7687",
     // No URI scheme to paste: the provider builds its bolt:// URI from Host, Port and the SSL panel, and
-    // connection-string-parser.ts reads no Neo4j URI (spec 6.1).
+    // Neo4j's connection string row has no `paste` (spec 6.1).
     showConnectionStringToggle: false,
     // The SSL panel and the SSH tunnel stay offered: a bolt:// URI dials the one server it names, unlike a
     // routing neo4j:// URI, which this provider never builds. An empty database is the server's home database.

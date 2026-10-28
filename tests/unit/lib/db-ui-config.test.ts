@@ -293,8 +293,7 @@ describe("db-ui-config", () => {
     test("cassandra offers no connection-string paste, because there is no URI to paste", () => {
       // `cassandra-driver` takes contact points plus a REQUIRED localDataCenter, and no
       // URI convention carries the second. Offering the toggle would promise a paste
-      // the parser refuses (`cassandra://` is in no branch of
-      // connection-string-parser.ts).
+      // the parser refuses (Cassandra's connection string row has no `paste`).
       expect(getDBConfig("cassandra").showConnectionStringToggle).toBe(false);
     });
 
@@ -311,7 +310,7 @@ describe("db-ui-config", () => {
 
     test("duckdb offers no connection-string paste, because a DuckDB connection is a path", () => {
       // There is no `duckdb://` scheme in any DuckDB tooling, so the toggle would
-      // promise a paste `connection-string-parser.ts` has no branch for.
+      // promise a paste DuckDB's connection string row has no `paste` for.
       expect(getDBConfig("duckdb").showConnectionStringToggle).toBe(false);
     });
 

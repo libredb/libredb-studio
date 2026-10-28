@@ -648,8 +648,8 @@ The check follows a symlink to its target, so a symlink to a FIFO is refused lik
 ### 4.2 There is no connection string
 
 `supportsConnectionString` is `false`. DuckDB publishes no URI scheme: its own tooling takes a path
-argument, and this repo's parser
-([`src/lib/connection-string-parser.ts`](../../src/lib/connection-string-parser.ts)) deliberately
+argument, and this repo's connection string registry
+([`src/lib/db/connection-string/index.ts`](../../src/lib/db/connection-string/index.ts)) deliberately
 lists a scheme only for engines that actually have one — the same reason `sqlite://` and `druid://`
 are absent. Inventing `duckdb://` would put a scheme on a field that can only ever hold a filesystem
 path.

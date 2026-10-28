@@ -272,9 +272,9 @@ export class CassandraProvider extends SQLBaseProvider {
       supportsMaintenance: false,
       maintenanceOperations: [],
       // The driver takes contact points plus a REQUIRED `localDataCenter`, and no URI
-      // convention carries the second. `connection-string-parser.ts` has no branch
-      // for a `cassandra://` scheme, so advertising this would reject everything a
-      // user pastes.
+      // convention carries the second. Its connection string row has no `paste` for a
+      // `cassandra://` scheme, so advertising this would reject everything a user
+      // pastes.
       supportsConnectionString: false,
       defaultPort: CASSANDRA_DEFAULT_PORT,
       // `identifierQuoting` is deliberately ABSENT: the field exists for engines whose

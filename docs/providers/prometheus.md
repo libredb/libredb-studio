@@ -378,7 +378,7 @@ Each case is exercised by a real handshake against a local `node:https` server i
 
 ### 4.5 No connection string
 
-`showConnectionStringToggle: false`: `http://` and `https://` already parse as ClickHouse in `src/lib/connection-string-parser.ts`, and two engines cannot own one scheme.
+`showConnectionStringToggle: false`: `http://` and `https://` already parse as ClickHouse through its connection string row, and two engines cannot own one scheme.
 There is no path-prefix field either, so Grafana Mimir (`/prometheus`), Grafana Cloud's hosted Prometheus (its query URL ends in `/api/prom` or `/prometheus`), GreptimeDB (`/v1/prometheus`) and proxies that mount the API under a prefix are not reachable in this version (maintainer decision, 2026-09-23).
 The host field cannot carry the prefix instead: a host holding `/` is refused before any request is sent.
 

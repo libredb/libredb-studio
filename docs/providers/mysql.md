@@ -664,7 +664,8 @@ discrete-fields form** (the `connectionString` path bypasses it entirely). Note 
 
 #### `ssl-mode` in a pasted URL
 
-The paste box ([`connection-string-parser.ts`](../../src/lib/connection-string-parser.ts)) reads the
+The paste box, through MySQL's connection string row
+([`mysql-connection-string.ts`](../../src/lib/db/providers/sql/mysql-connection-string.ts)), reads the
 query string, so `mysql://host/db?ssl-mode=REQUIRED` arrives with SSL Mode already set. The values are
 matched case-insensitively (MySQL writes them upper-case) and `sslmode` is accepted as an alias:
 `DISABLED` → `disable`, `REQUIRED` → `require`, `VERIFY_CA` → `verify-ca`, `VERIFY_IDENTITY` →

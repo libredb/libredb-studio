@@ -461,8 +461,10 @@ const connection = {
 ### 4.2 Connection strings
 
 `supportsConnectionString` is `true`, and the UI parser, `parseConnectionString()`
-([`connection-string-parser.ts`](../../src/lib/connection-string-parser.ts)), decomposes the URL
-into discrete fields before the provider sees it:
+([`connection-string-parser.ts`](../../src/lib/connection-string-parser.ts)), hands the URL to
+Couchbase's connection string row
+([`connection-string.ts`](../../src/lib/db/providers/document/couchbase/connection-string.ts)), which
+decomposes it into discrete fields before the provider sees it:
 
 | Input | host | port | database (bucket) |
 |-------|------|------|-------------------|

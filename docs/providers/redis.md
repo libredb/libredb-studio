@@ -393,8 +393,10 @@ The modal's **Username** field is the Redis 6 ACL user. `connect()` passes it as
 `username` (the field is `user` on the connection, `username` in `RedisOptions`), and passes
 **nothing at all** when it is empty — a plain `requirepass` server has no ACL user to name, and
 ioredis only authenticates as `default` when `username` is absent. A pasted
-`redis://analytics:pw@host:6379/0` fills the same field: `parseGenericURL`
-([`src/lib/connection-string-parser.ts`](../../src/lib/connection-string-parser.ts)) decomposes the
+`redis://analytics:pw@host:6379/0` fills the same field: Redis's connection string row
+([`src/lib/db/providers/keyvalue/redis-connection-string.ts`](../../src/lib/db/providers/keyvalue/redis-connection-string.ts))
+hands it to `parseGenericURL`
+([`src/lib/db/connection-string/shared.ts`](../../src/lib/db/connection-string/shared.ts)), which decomposes the
 userinfo into `user` / `password` ([§4.2](#42-connection-string-nuance)).
 
 **A connection saved before the field was writable keeps authenticating as `default`, and there is
@@ -433,9 +435,9 @@ or expect the monitoring panels to stay empty for that user.
 ### 4.2 Connection-string nuance
 
 `getCapabilities().supportsConnectionString` is **`false`** — the provider itself only consumes
-discrete fields. However, the UI connection-string parser
-([`src/lib/connection-string-parser.ts`](../../src/lib/connection-string-parser.ts)) *does*
-recognise `redis://` and `rediss://` URLs and **decomposes** them into `host` / `port` (default
+discrete fields. However, Redis's connection string row
+([`src/lib/db/providers/keyvalue/redis-connection-string.ts`](../../src/lib/db/providers/keyvalue/redis-connection-string.ts)),
+which the UI parser offers a paste to, *does* recognise `redis://` and `rediss://` URLs and **decomposes** them into `host` / `port` (default
 `6379`) / `user` / `password` / `database` before they reach the provider. So a user can paste a
 `redis://:pw@host:6379/0` URL into the modal, but the provider never sees the raw string. A userinfo
 name becomes the ACL user ([§4.1a](#41a-acl-users-d29)).

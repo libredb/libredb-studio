@@ -522,11 +522,11 @@ paste tab. Two independent reasons, the same pair Druid records:
 - **There is no URI convention for this HTTP surface.** A cluster is addressed by host and port; the
   official client takes a `node` URL, which is not a credential-carrying DSN the shared parser could
   round-trip.
-- **`http://` and `https://` are already claimed by ClickHouse** in
-  [`connection-string-parser.ts`](../../src/lib/connection-string-parser.ts) (#264), where an HTTP URL
-  *is* the canonical connection target.
+- **`http://` and `https://` are already claimed by ClickHouse** in its connection string row
+  ([`src/lib/db/providers/sql/clickhouse/connection-string.ts`](../../src/lib/db/providers/sql/clickhouse/connection-string.ts), #264),
+  where an HTTP URL *is* the canonical connection target.
 
-`connection-string-parser.ts` is therefore **not touched** by this provider, and the consequence is
+This provider's connection string row therefore has **no `paste`**, and the consequence is
 recorded rather than hidden: pasting `http://localhost:9200` selects ClickHouse. The connection-form
 hook says so too — its unparseable-string message lists the schemes that do exist and deliberately
 omits these two (`handlePasteConnectionString` in [`use-connection-form.ts`](../../src/hooks/use-connection-form.ts)).

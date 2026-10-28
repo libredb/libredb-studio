@@ -362,8 +362,8 @@ libsql://<database>-<org>.turso.io?authToken=<jwt>
 
 That is the URL `turso db show --url` and the dashboard print. `libsql://` implies TLS and 443, and
 there is no plaintext form of the scheme: a self-hosted server on plain HTTP is reached through the
-host/port fields with TLS off, because `http://` already resolves to ClickHouse in
-`src/lib/connection-string-parser.ts` and two engines cannot own one scheme.
+host/port fields with TLS off, because `http://` already resolves to ClickHouse's connection string
+row and two engines cannot own one scheme.
 
 ### 4.3 Getting a token
 

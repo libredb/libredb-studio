@@ -1406,7 +1406,8 @@ names one, and every connection string, behaves exactly as before.
 
 #### `sslmode` in a pasted URL
 
-The paste box ([`connection-string-parser.ts`](../../src/lib/connection-string-parser.ts)) reads the
+The paste box, through Postgres's connection string row
+([`postgres-connection-string.ts`](../../src/lib/db/providers/sql/postgres-connection-string.ts)), reads the
 query string, so `postgresql://host/db?sslmode=verify-full` arrives on the form with SSL Mode already
 set. `disable`, `require`, `verify-ca` and `verify-full` map one-to-one. `verify-system` is not in
 that table: it is the form's own mode name, not a libpq one, so `?sslmode=verify-system` is reported
