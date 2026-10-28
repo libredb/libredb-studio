@@ -3,6 +3,8 @@
  * queries, and the plan-mode sentence. Pure and browser-safe; every generated statement re-parses to its path.
  */
 import { LIMITS } from "../constants";
+import { objectSegment } from "@/lib/db/query-generators/shared";
+import type { DialectGenerators } from "@/lib/db/query-generators/types";
 
 // The plan-mode sentence lives in labels.ts (spec 3.1) and names one example (spec 7).
 export { FIRESTORE_STATEMENT_LANGUAGE } from "../labels";
@@ -57,3 +59,15 @@ export function previewStatement(collectionPath: readonly string[]): string {
 export function countStatement(collectionPath: readonly string[]): string {
   return `db.collection(${jsString(collectionPath.join("/"))}).count()`;
 }
+
+/**
+ * Firestore reads a collection through one statement of its console's read-only Admin SDK subset: a tree click and
+ * Generate Query are both the 100-document preview of the clicked collection, addressed by the object's own segment,
+ * the collection id the tree lists. Generate Count Query writes the count() aggregation of the same collection. The
+ * dialect's row in `DIALECT_GENERATORS` (`src/lib/db/query-generators/index.ts`).
+ */
+export const FIRESTORE_GENERATORS: DialectGenerators = Object.freeze<DialectGenerators>({
+  table: (path) => previewStatement([objectSegment(path)]),
+  select: (path) => previewStatement([objectSegment(path)]),
+  count: (path) => countStatement([objectSegment(path)]),
+});

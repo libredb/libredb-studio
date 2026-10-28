@@ -247,6 +247,7 @@ Enterprise connects too; the monitoring differences are in section 7.
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `neo4j` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/graph/neo4j/execution-ui.ts).
+What a tree click and Generate Query write is `CYPHER_GENERATORS`, the `cypher` row of `LANGUAGE_GENERATORS`, declared in [`generators.ts`](../../src/lib/db/graph/cypher/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 Its editor language, `graph-cypher`, is the row in `EDITOR_LANGUAGES` declared in [`editor-language.ts`](../../src/lib/db/providers/graph/neo4j/editor-language.ts): how the editor registers and tints it, and its completion source and formatter where it has one.
 
 ## 5. Query interface

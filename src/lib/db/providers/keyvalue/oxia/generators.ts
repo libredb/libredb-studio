@@ -1,6 +1,6 @@
 /**
  * What a tree click and Generate Command write for an Oxia object (SB2-4.5), read through `DIALECT_GENERATORS.oxia`
- * in `src/lib/query-generators.ts`.
+ * in `src/lib/db/query-generators/index.ts`.
  *
  * Pure, and shipped to the browser. No shipped click reaches these in v1 (SB2-12 D2): a key row of the Keys panel
  * opens the key's Source tab, a folder row only opens and closes, and a shard row opens its Source tab. They exist
@@ -10,6 +10,7 @@
  * comment.
  */
 import { quoteShellWord } from "@/lib/db/console/shell-words";
+import type { DialectGenerators } from "@/lib/db/query-generators/types";
 
 const CR_NOTE = "# This key holds a carriage return, which a command line cannot spell: open it from the Keys panel.";
 const NUL_NOTE = "# This key holds a NUL character, which a command line cannot pass: open it from the Keys panel.";
@@ -48,3 +49,14 @@ export function oxiaSelectQuery(path: readonly string[]): string {
   const prefix = quoteShellWord(`${key}/`);
   return [getCommand(key), `# list --prefix ${prefix}`, `# range-scan --prefix ${prefix} --limit 50`].join("\n");
 }
+
+/**
+ * Oxia reads a key through an oxia client command (SB2-4.5): the click is `get <key>`, and "Generate Command" that get
+ * with the `list --prefix` and `range-scan --prefix` forms as comments. No shipped click reaches them in v1 (a key row
+ * opens its Source tab, SB2-12 D2). Neither reads the columns or the scope. The dialect's row in `DIALECT_GENERATORS`
+ * (`src/lib/db/query-generators/index.ts`).
+ */
+export const OXIA_GENERATORS: DialectGenerators = Object.freeze<DialectGenerators>({
+  table: (path) => oxiaTableQuery(path),
+  select: (path) => oxiaSelectQuery(path),
+});

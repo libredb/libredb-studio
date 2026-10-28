@@ -1,7 +1,7 @@
 /**
  * The Milvus texts the object tree writes: the tree click's query, run on the user's behalf,
  * and Generate Command's search, written into a tab and not run. `DIALECT_GENERATORS.milvus` in
- * `src/lib/query-generators.ts` names them as `table` and `select` once the type is registered.
+ * `src/lib/db/query-generators/index.ts` names them as `table` and `select` once the type is registered.
  *
  * Pure and browser-safe. It reads the collection's path, `[database, collection]`, and the columns describeObject
  * answered, whose type spelling carries each vector field's kind and dimension (`FloatVector(8)`, read by
@@ -17,6 +17,7 @@ import { probeVector } from "@/lib/db/vector/probe";
 import type { ColumnSchema } from "@/lib/types";
 import { shortestFloat32 } from "./float32-text";
 import { functionOfType, STRUCT_ARRAY_TYPE, vectorTargetOfType } from "./type-spelling";
+import type { DialectGenerators } from "@/lib/db/query-generators/types";
 
 /** The click's page: the REST default and etcd's first page; an empty filter needs an explicit limit. */
 export const MILVUS_CLICK_LIMIT = 100;
@@ -174,3 +175,14 @@ export function milvusSelectQuery(path: readonly string[], columns: readonly Col
   }
   return commentTemplate(path, vectors, outputs);
 }
+
+/**
+ * Milvus reads a collection through its own console request (vector-family spec 5.7): the tree click is an
+ * entities/query naming the clicked database and collection, and "Generate Command" a runnable search over the first
+ * dense vector field. Neither reads the scope. The dialect's row in `DIALECT_GENERATORS`
+ * (`src/lib/db/query-generators/index.ts`).
+ */
+export const MILVUS_GENERATORS: DialectGenerators = Object.freeze<DialectGenerators>({
+  table: (path) => milvusTableQuery(path),
+  select: (path, columns) => milvusSelectQuery(path, columns),
+});

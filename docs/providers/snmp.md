@@ -58,6 +58,7 @@ Reaching past this machine with a community needs the operator's explicit consen
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `snmp` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/network/snmp/execution-ui.ts).
+What a tree click and Generate Query write is `SNMP_GENERATORS`, the `snmp` row of `DIALECT_GENERATORS`, declared in [`generators.ts`](../../src/lib/db/providers/network/snmp/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 
 ## 4. Refusals carry a reason a caller can branch on
 

@@ -177,6 +177,7 @@ the connection under Node, and under Bun it never reaches the application.
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `modbus` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/industrial/modbus/execution-ui.ts).
+What a tree click and Generate Query write is `MODBUS_GENERATORS`, the `modbus` row of `DIALECT_GENERATORS`, declared in [`generators.ts`](../../src/lib/db/providers/industrial/modbus/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 
 ## 5. Query interface
 

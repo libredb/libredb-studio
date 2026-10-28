@@ -278,7 +278,7 @@ skipping that check reports a failed statement as "0 rows".
 
 `SELECT * FROM hotel` yields `[{ "hotel": { ... } }]` — the document is nested under the keyspace
 name, and the key is not part of the result at all. Generated queries therefore alias the keyspace
-and project the key ([`query-generators.ts`](../../src/lib/query-generators.ts)):
+and project the key ([`generators.ts`](../../src/lib/db/providers/document/couchbase/generators.ts), its row of `SQL_PORT_GENERATORS`):
 
 ```sql
 SELECT META(d).id AS __id, d.* FROM `travel`.`inventory`.`hotel` AS d;
@@ -549,6 +549,7 @@ It runs no seed load check.
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `couchbase` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/document/couchbase/execution-ui.ts).
+What a tree click and Generate Query write is `COUCHBASE_SQL_GENERATORS`, its row of `SQL_PORT_GENERATORS` keyed by its default port, declared in [`generators.ts`](../../src/lib/db/providers/document/couchbase/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 
 ---
 

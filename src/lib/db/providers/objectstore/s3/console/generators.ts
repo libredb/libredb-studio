@@ -1,6 +1,6 @@
 /**
  * What the S3 generators write for a bucket or an object, read through `DIALECT_GENERATORS.s3` in
- * `src/lib/query-generators.ts`, and the read-on command the read-on notice names for `ls`. No shipped click reaches
+ * `src/lib/db/query-generators/index.ts`, and the read-on command the read-on notice names for `ls`. No shipped click reaches
  * the two generators in v1: both kinds are config kinds, so a bucket or object row opens its Source tab.
  *
  * Pure, and shipped to the browser, in the shape of Oxia's generators. The path is the provider's own, one segment:
@@ -11,6 +11,7 @@
  */
 import { quoteShellWord } from "@/lib/db/console/shell-words";
 import { objectAddressRefusal, splitVirtualKey } from "../names";
+import type { DialectGenerators } from "@/lib/db/query-generators/types";
 
 const CR_NOTE = "# This key holds a carriage return, which a command line cannot spell: open it from the Keys panel.";
 const NUL_NOTE = "# This key holds a NUL character, which a command line cannot pass: open it from the Keys panel.";
@@ -103,3 +104,14 @@ export function s3ReadOnCommand(input: {
   parts.push(s3FlagValue("--starting-token", input.startingToken));
   return parts.join(" ");
 }
+
+/**
+ * S3 reads through its console's commands: a bucket's listing, or an object's preview, and Generate Command adds reads
+ * as comments. The path is the provider's own, [bucket] or [<bucket>/<key>]. No shipped click reaches them in v1 (a
+ * bucket or object row opens its Source tab). Every text is a command the console's parser accepts, or a note. The
+ * dialect's row in `DIALECT_GENERATORS` (`src/lib/db/query-generators/index.ts`).
+ */
+export const S3_GENERATORS: DialectGenerators = Object.freeze<DialectGenerators>({
+  table: (path) => s3TableQuery(path),
+  select: (path) => s3SelectQuery(path),
+});

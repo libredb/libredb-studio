@@ -216,7 +216,9 @@ The editor's query dialects follow the same rule through three registries, each 
 `QUERY_DIALECTS` (`src/lib/db/query-dialects.ts`) gives each declared `queryDialect` its tab type and its three row-menu answers.
 `DIALECT_EDITORS` (`src/lib/editor/dialect-editors.ts`) gives each tab type its Monaco language, keyed by tab type because that is what a restored tab carries.
 `EDITOR_LANGUAGES` (`src/lib/db/editor-language/index.ts`) gives each Monaco language its registration, completion source, formatter and answer card accent, each row declared beside the provider that owns the language (`sql` and `json`, which no one engine owns, in that directory), so the shared editor imports the registry and never a provider module.
-`DIALECT_GENERATORS` (`src/lib/query-generators.ts`) gives each dialect what a tree click and Generate Query write, and, for a provider that declares `rowActions`, what each declared row action runs.
+`DIALECT_GENERATORS` (`src/lib/db/query-generators/index.ts`) gives each dialect what a tree click and Generate Query write, and, for a provider that declares `rowActions`, what each declared row action runs.
+`LANGUAGE_GENERATORS` beside it does the same for each query language an engine writes its own text in, and `SQL_PORT_GENERATORS` holds the SQL forms and identifier quoting one SQL engine writes apart from the shared ones, keyed by the default port the generators have always read them by.
+Every row is declared beside its provider, so `src/lib/query-generators.ts` is the engine-agnostic dispatcher and names no engine, which `tests/unit/lib/query-generators-isolation.test.ts` holds.
 A dialect is one record in each, and no reader branches on its name: `tests/unit/lib/dialect-reader-allowlist.test.ts` holds every other reader of `queryDialect`, of the JSON language and of a negated language to a closed list with its owner.
 
 How a generated statement spells a literal, a name and a bind follows the same rule beside `QUERY_DIALECTS`, keyed by type id rather than by dialect.

@@ -1,53 +1,26 @@
-import { cypherForSegment } from "@/lib/db/graph/cypher/generators";
-import { quoteCypherName } from "@/lib/db/graph/cypher/quote";
 import { declaredLevels } from "@/lib/db/object-kinds";
-import { type QueryDialect, registeredDialect } from "@/lib/db/query-dialects";
-import { countStatement, previewStatement } from "@/lib/db/providers/document/firestore/console/generators";
-import { encodeKey } from "@/lib/db/providers/keyvalue/etcd/keys";
-import { oxiaSelectQuery, oxiaTableQuery } from "@/lib/db/providers/keyvalue/oxia/generators";
-import { kubectlGetQuery, kubectlRowActionQuery } from "@/lib/db/providers/platform/kubernetes/generators";
-import { s3SelectQuery, s3TableQuery } from "@/lib/db/providers/objectstore/s3/console/generators";
-import { quoteGoString, quoteTxnWord, quoteWord } from "@/lib/db/providers/keyvalue/etcd/lexer";
-import { rabbitmqSelectQuery, rabbitmqTableQuery } from "@/lib/db/providers/stream/rabbitmq/generators";
-import { influxqlSelectQuery, influxqlTableQuery } from "@/lib/db/providers/timeseries/influxdb/influxql-generators";
-import { influxqlSource, quoteInfluxqlIdentifier } from "@/lib/db/providers/timeseries/influxdb/influxql-quote";
-import { metricSelector } from "@/lib/db/providers/timeseries/prometheus/promql";
-import { milvusSelectQuery, milvusTableQuery } from "@/lib/db/providers/vector/milvus/generators";
-import { qdrantSelectQuery, qdrantTableQuery } from "@/lib/db/providers/vector/qdrant/generators";
-import { weaviateSelectQuery, weaviateTableQuery } from "@/lib/db/providers/vector/weaviate/generators";
-import {
-  type ObjectReadRange,
-  offersCountQuery,
-  type PreviewTimeWindow,
-  type ProviderCapabilities,
-} from "@/lib/db/types";
+import { registeredDialect } from "@/lib/db/query-dialects";
+import { DIALECT_GENERATORS, languageGenerators, sqlPortGenerators } from "@/lib/db/query-generators";
+import { commentName, objectSegment } from "@/lib/db/query-generators/shared";
+import type { DialectGenerators, GeneratorScope, SqlFormContext } from "@/lib/db/query-generators/types";
+import type { QueryDialect } from "@/lib/db/query-dialects";
+import { offersCountQuery, type PreviewTimeWindow, type ProviderCapabilities } from "@/lib/db/types";
 import type { ColumnSchema } from "@/lib/types";
 
-/** Couchbase management port, the capability signal for the SQL++ dialect. */
-const COUCHBASE_PORT = 8091;
-
-/** Apache Druid Router port, the capability signal for the Druid SQL dialect. */
-const DRUID_PORT = 8888;
+export { escapeGlob, objectSegment } from "@/lib/db/query-generators/shared";
+export type { DialectGenerators, GeneratorScope } from "@/lib/db/query-generators/types";
 
 /**
- * Alias every generated Couchbase statement binds its keyspace to. SQL++ needs a
- * name to hang `META()` and field references off, and the generator has only the
- * collection name to work from, so the alias is fixed rather than derived: `d`
- * for document. It never collides with a field, because fields are only ever
- * referenced through it.
+ * The query generators, the engine-agnostic dispatcher: what a tree click runs, what Generate Query and Generate Count
+ * Query write, what a declared row action runs, and how a name or an address is quoted. Every text one engine writes is
+ * a row declared beside its provider and collected by the registry in `src/lib/db/query-generators/index.ts`, read
+ * here by what the declaration says: its query dialect, its query language, or the default port an SQL engine's forms
+ * have always been keyed by. Nothing here names an engine; `tests/unit/lib/query-generators-isolation.test.ts` holds
+ * that.
  */
-const COUCHBASE_ALIAS = "d";
 
-/**
- * Column carrying the document key. Kept in step with
- * `COUCHBASE_DOCUMENT_KEY_COLUMN` in the provider's introspection: the schema tree
- * and the generated projection must name the key identically, or the grid shows a
- * column the query never produces.
- */
-const COUCHBASE_DOCUMENT_KEY_COLUMN = "__id";
-
-/** Backtick-quote a SQL++ identifier, doubling any backtick it contains. */
-function couchbaseQuote(name: string): string {
+/** Backtick-quote an identifier, doubling any backtick it contains. */
+function backtickQuote(name: string): string {
   return `\`${name.replaceAll("`", "``")}\``;
 }
 
@@ -65,18 +38,11 @@ const DECLARED_QUOTING: Record<
   NonNullable<ProviderCapabilities["identifierQuoting"]>,
   (name: string, always: boolean) => string
 > = {
-  backtick: (name, always) => (!always && /^[A-Za-z_][\w$]*$/.test(name) ? name : couchbaseQuote(name)),
+  backtick: (name, always) => (!always && /^[A-Za-z_][\w$]*$/.test(name) ? name : backtickQuote(name)),
   double: (name, always) => (!always && /^[a-z_][a-z0-9_$]*$/.test(name) ? name : `"${name.replaceAll('"', '""')}"`),
   "double-always": (name) => `"${name.replaceAll('"', '""')}"`,
-  "backtick-always": (name) => couchbaseQuote(name),
+  "backtick-always": (name) => backtickQuote(name),
 };
-
-/**
- * The document key projection. `SELECT *` nests whole documents under the
- * keyspace name and never yields the key at all (issue #262, decision 5), so
- * every generated statement projects it explicitly through the alias.
- */
-const COUCHBASE_KEY_PROJECTION = `META(${COUCHBASE_ALIAS}).id AS ${COUCHBASE_DOCUMENT_KEY_COLUMN}`;
 
 /**
  * Quote a SQL identifier (table/column) for the target dialect, but ONLY when
@@ -84,20 +50,13 @@ const COUCHBASE_KEY_PROJECTION = `META(${COUCHBASE_ALIAS}).id AS ${COUCHBASE_DOC
  * SQL stays readable and existing behavior is preserved; mixed-case / special /
  * fold-sensitive names get the dialect's quoting.
  *
- * Dialect is derived from the provider capabilities (same signals the generators
- * already branch on), so no provider code needs to change:
- *  - Oracle (1521): unquoted folds to UPPERCASE  → quote unless plain UPPER
- *  - SQL Server (1433): case-insensitive          → bracket-quote only specials
- *  - MySQL (3306): case-preserving                → backtick-quote only specials
- *  - Couchbase (8091): SQL++                      → always backtick-quote
- *  - Druid (8888): Calcite SQL                    → always double-quote
- *  - PostgreSQL (5432) / SQLite / ClickHouse (8123) / default: unquoted folds to
- *    lowercase (pg)                                → quote unless plain lower
+ * The rule is read from the provider capabilities, in order: a language that spells names its own way quotes with
+ * its row in `LANGUAGE_GENERATORS`; a declared `identifierQuoting` comes next; then the SQL engine whose default port
+ * the declaration names, with its row in `SQL_PORT_GENERATORS`; and every other engine gets the default below, where
+ * an unquoted name folds to lowercase, so a name is quoted unless it is plain lower case.
  *
- * ClickHouse deliberately has no branch of its own: it never folds case and its
- * quote character is the double quote, so the default branch is already exactly
- * right — both `SELECT "id" FROM "probe"` and the bare form parse (issue #264).
- * Adding a branch would only duplicate it.
+ * An engine that never folds case and quotes with the double quote needs no row of its own: the default is already
+ * exactly right for it, as both `SELECT "id" FROM "probe"` and the bare form parse (issue #264).
  *
  * `always` quotes a name that would round-trip bare as well. The bare test is about case and
  * characters only, so a lowercase reserved word passes it: `when`, `order`, `user` and `group`
@@ -106,58 +65,29 @@ const COUCHBASE_KEY_PROJECTION = `META(${COUCHBASE_ALIAS}).id AS ${COUCHBASE_DOC
  * engine folds a bare name to. A statement that names columns it is about to create, as an
  * import into a new table does, asks for this.
  */
+
 export function quoteIdentifier(
   name: string,
   capabilities: ProviderCapabilities,
   { always = false }: { always?: boolean } = {},
 ): string {
-  // The JSON-language engines don't use SQL identifier quoting: MongoDB, and Redis, LibreDB, Kafka
-  // and etcd, which declare a JSON dialect of their own (#1088, #1089).
+  // The JSON-language engines don't use SQL identifier quoting: MongoDB, and every engine that declares a JSON
+  // dialect of its own (#1088, #1089).
   if (capabilities.queryLanguage === "json") return name;
-  // Cypher writes every name in backticks, a backtick doubled, as its generators do (Neo4j spec 6.5).
-  if (capabilities.queryLanguage === "cypher") return quoteCypherName(name);
-  // InfluxQL always double-quotes a name, with the scanner's escapes (InfluxDB spec 6.7, C6).
-  if (capabilities.queryLanguage === "influxql") return quoteInfluxqlIdentifier(name);
+  // A language that spells names its own way quotes them with its own rule.
+  const language = languageGenerators(capabilities);
+  if (language?.quote !== undefined) return language.quote(name);
 
-  // An explicit declaration wins over the port heuristic below, because the port
-  // stopped being a faithful proxy for the dialect: Elasticsearch and OpenSearch
-  // both ship on 9200 and disagree about the quote character. Measured on
-  // OpenSearch 3.8.0, a double-quoted identifier is a STRING LITERAL - the
-  // generated query answers 200 with zero rows instead of failing - so the
-  // fall-through default would produce silently wrong results here, not an error.
-  // See `ProviderCapabilities.identifierQuoting`.
+  // An explicit declaration wins over the port, because the port stopped being a faithful proxy for the dialect:
+  // two search engines ship on one port and disagree about the quote character, and where a double-quoted
+  // identifier is a STRING LITERAL the generated query answers 200 with zero rows instead of failing, so the
+  // default would produce silently wrong results there, not an error. See `ProviderCapabilities.identifierQuoting`.
   const declared = capabilities.identifierQuoting;
   if (declared !== undefined) return DECLARED_QUOTING[declared](name, always);
 
-  if (capabilities.defaultPort === COUCHBASE_PORT) {
-    // Couchbase (SQL++): quote unconditionally. Reserved words (`bucket`, `scope`,
-    // ...) are a syntax error unquoted, and a schemaless document may name a field
-    // anything at all, so there is no safe unquoted subset worth detecting.
-    return couchbaseQuote(name);
-  }
-  if (capabilities.defaultPort === DRUID_PORT) {
-    // Druid (Calcite SQL): quote unconditionally, same reasoning as Couchbase above.
-    // A bare reserved word is a SYNTAX error, not a column-not-found: `SELECT count
-    // FROM libredb_demo` fails with "Received an unexpected token [count FROM]",
-    // while `SELECT "count" FROM libredb_demo` parses (issue #265). `count` is
-    // Druid's conventional rollup metric name, so the standard rollup ingestion
-    // produces a datasource that has one. Calcite's reserved list is large and
-    // version-dependent, so no safe unquoted subset is worth detecting.
-    return `"${name.replaceAll('"', '""')}"`;
-  }
-  if (capabilities.defaultPort === 1521) {
-    // Oracle
-    return !always && /^[A-Z_][A-Z0-9_$#]*$/.test(name) ? name : `"${name.replaceAll('"', '""')}"`;
-  }
-  if (capabilities.defaultPort === 1433) {
-    // SQL Server
-    return !always && /^[A-Za-z_]\w*$/.test(name) ? name : `[${name.replaceAll("]", "]]")}]`;
-  }
-  if (capabilities.defaultPort === 3306) {
-    // MySQL
-    return !always && /^[A-Za-z_][\w$]*$/.test(name) ? name : `\`${name.replaceAll("`", "``")}\``;
-  }
-  // PostgreSQL / SQLite / default
+  const engine = sqlPortGenerators(capabilities);
+  if (engine !== undefined) return engine.quote(name, always);
+  // The default: an unquoted name folds to lowercase.
   return !always && /^[a-z_][a-z0-9_$]*$/.test(name) ? name : `"${name.replaceAll('"', '""')}"`;
 }
 
@@ -281,22 +211,16 @@ function quoteSpelledSegment(
  *
  * `options.always` is `quoteIdentifier`'s, applied to every segment.
  */
+
 export function quoteObjectPath(
   path: readonly string[],
   capabilities: ProviderCapabilities,
   options: { always?: boolean } = {},
 ): string {
   if (capabilities.queryLanguage === "json") return path.join(".");
-  // An InfluxQL measurement is `[database, measurement]`, written `"db".."m"`: the database's default retention
-  // policy (InfluxDB spec 6.7). No object is the empty string, as on every other dialect: a modal mounted before an
-  // object is chosen renders with the empty path.
-  if (capabilities.queryLanguage === "influxql") {
-    if (path.length === 0) return "";
-    if (path.length !== 2) {
-      throw new RangeError(`An InfluxQL source path is [database, measurement]; received ${path.length} segment(s)`);
-    }
-    return influxqlSource(path[0], path[1]);
-  }
+  // A language that addresses an object its own way writes the address with its own rule.
+  const language = languageGenerators(capabilities);
+  if (language?.quotePath !== undefined) return language.quotePath(path);
   const spelled = spelledSegmentIndex(path, capabilities);
   return path
     .map((segment, index) =>
@@ -339,25 +263,6 @@ export function containerSpellingOf(capabilities: ProviderCapabilities): Contain
 }
 
 /**
- * The object's own segment, which is the LAST one and is never read by index 0 (standing
- * ruling 5g): at container depth 2 the object is `path[2]`, and a positional read there
- * addresses a container instead.
- *
- * An empty path is refused rather than rendered. It is a caller that lost the address, and
- * every dialect below would otherwise spell it silently: `FROM ` on SQL, `get ` on LibreDB,
- * `"collection": undefined` on MongoDB. Both generators resolve it before they branch, so
- * one refusal covers every dialect.
- *
- * Exported for `useTabManager`, which names the tab it opens after the object and has the
- * same two reasons to read the last segment and to refuse an empty address.
- */
-export function objectSegment(path: readonly string[]): string {
-  const segment = path[path.length - 1];
-  if (segment === undefined) throw new Error("Cannot generate a query: the object address has no segments.");
-  return segment;
-}
-
-/**
  * The address a JSON command carries: the collection's own segment, and the database that
  * holds it as a key of its own (#843). `db.collection("sample_shop.users")` would name a
  * collection literally called that, so the database cannot ride inside `collection`.
@@ -394,355 +299,6 @@ export function jsonCommandAddress(
 }
 
 /**
- * Render a schema-tree node name for a `#` comment line. A node name is a real
- * key/collection name taken from the server, and a Redis key is an arbitrary
- * byte string — so a name containing a newline used to END the header comment
- * and turn its own remainder into the first RUNNABLE line of the cheatsheet,
- * which the provider then executed (`a\nDEL user:1 x` ran `DEL user:1`). The
- * per-argument defence never engaged, because the injection travelled through
- * the comment rather than through a command.
- *
- * JSON quoting is the fix: it escapes CR, LF and the quote character in one
- * lossless step, and for an ordinary name it renders exactly the `"name"` the
- * headers already wrote by hand. Any name entering a comment line must go
- * through this (#427), a PromQL metric's name included (#1085).
- */
-function commentName(name: string): string {
-  return JSON.stringify(name);
-}
-
-/**
- * Resolve a key-value schema-tree node name to its command shape. A node is
- * either a `:`-prefix group (e.g. `users:*`, whose rows live under the `users:`
- * prefix) or a bare single key with no colon. The `*` is stripped so the base is
- * the literal prefix used in commands (`users:*` -> `users:`).
- *
- * Shared by the LibreDB and Redis branches: both build their tree from the same
- * `keyGrouping` grouping, so a future change to what a prefix node looks like
- * must not be able to make the two dialects disagree (#427).
- */
-function prefixGroup(name: string): { isPrefixGroup: boolean; base: string } {
-  if (name.endsWith(":*")) return { isPrefixGroup: true, base: name.slice(0, -1) };
-  return { isPrefixGroup: false, base: name };
-}
-
-/**
- * An etcd key-prefix group's prefix (#1089, section 6.4): the row name without its final `*` where the
- * name ends in `/*`, the only name keys.ts `groupLabel` writes (`/app/config/*` reads `/app/config/`).
- * Any other segment is the prefix as it stands, so a hand-built path still reads a bounded prefix, and
- * never a key with a `*` in it.
- */
-function etcdGroupPrefix(name: string): string {
-  return name.endsWith("/*") ? name.slice(0, -1) : name;
-}
-
-/** The rows a generated etcd read asks for: the preview page the other arms read (#1089 6.4). */
-const ETCD_READ_LIMIT_FLAG = "--limit=50";
-
-/** The sample key's last segment and the sample value of Generate Command's write forms (#1089 6.4). */
-const ETCD_SAMPLE_NAME = "example";
-const ETCD_SAMPLE_VALUE = "value";
-
-/**
- * Whether a word holds a character Studio's editor does not keep as the etcd command line spells it: a
- * carriage return, which has no spelling there, since the editor ends a line at it and the lexer's
- * `quoteWord` throws for one, or a line or paragraph separator, U+2028 or U+2029, which Monaco offers to
- * remove from the text the moment it lands, as an unusual line terminator, so a form that kept it raw
- * between single quotes would name other bytes once the offer is taken. A form that names one is written
- * as a txn request instead, whose Go quoting escapes each of them (#1089 6.4).
- */
-const holdsUnkeptCharacter = (word: string): boolean => /[\r\u2028\u2029]/.test(word);
-
-/**
- * A group's name as an etcd note names it: `commentName`'s JSON quoting, with a line or paragraph separator,
- * which JSON leaves raw and the editor does not keep (`holdsUnkeptCharacter`), written as its `\u` escape, which
- * JSON reads back as the same character (#1089 6.4).
- */
-const etcdCommentName = (name: string): string =>
-  commentName(name).replace(/[\u2028\u2029]/g, (char) => `\\u${char.charCodeAt(0).toString(16)}`);
-
-/**
- * One etcd request: the command, then its arguments through `quote`, the word rule of the place the
- * request lands, then the flags; or, where an argument begins with `-`, the flags, `--` and the arguments,
- * because etcdctl reads a word that begins with `-` as a flag (#1089 6.4, R11 ETCD-6).
- */
-function etcdRequest(
-  command: string,
-  args: readonly string[],
-  flags: readonly string[],
-  quote: (word: string) => string,
-): string {
-  const words = args.map(quote);
-  const dashed = args.some((arg) => arg.startsWith("-"));
-  return [command, ...(dashed ? [...flags, "--", ...words] : [...words, ...flags])].join(" ");
-}
-
-/** A word of a txn request: bare when it is safe text, else Go-quoted (lexer.ts `quoteTxnWord`). */
-const etcdTxnWord = (word: string): string => quoteTxnWord(encodeKey(word));
-
-/** A piece of a group's range as a get names it: its keys, and `--prefix` for a prefix (#1089 4.7). */
-function etcdPieceGet(piece: ObjectReadRange): { readonly keys: readonly string[]; readonly flags: readonly string[] } {
-  if ("key" in piece) return { keys: [piece.key], flags: [] };
-  if ("prefix" in piece) return { keys: [piece.prefix], flags: ["--prefix"] };
-  return { keys: [piece.start, piece.end], flags: [] };
-}
-
-/**
- * The read of one piece (#1089 6.4): a get on the command line with the preview's `--limit`, or, where a
- * key holds a character the editor does not keep as the command line spells it (`holdsUnkeptCharacter`),
- * a txn whose success list holds the Go-quoted get with no `--limit`, since the provider sends a txn's
- * ranged get with its own page size (#1089 5.1.4). The txn closes its success and failure lists with a
- * blank line each, so no line below it is read as one of its requests.
- */
-function etcdRead(piece: ObjectReadRange): string {
-  const { keys, flags } = etcdPieceGet(piece);
-  if (keys.some(holdsUnkeptCharacter)) {
-    return ["txn", "", etcdRequest("get", keys, flags, etcdTxnWord), "", ""].join("\n");
-  }
-  return etcdRequest("get", keys, [...flags, ETCD_READ_LIMIT_FLAG], quoteWord);
-}
-
-/**
- * A form written as comment lines (#1089 6.4): every physical line behind `# `, and a blank one as `#`, so a
- * form that spans lines, a quoted key holding a newline or a txn, is commented on each of them and never
- * leaves a runnable remainder.
- */
-function etcdCommented(form: string): string {
-  return form
-    .split("\n")
-    .map((line) => (line === "" ? "#" : `# ${line}`))
-    .join("\n");
-}
-
-/**
- * Blocks a blank line apart; a block that ends in a line break, the closed txn of `etcdRead`, already ends
- * on a blank line, so it takes one line break more.
- */
-function etcdBlocks(blocks: readonly string[]): string {
-  return blocks.reduce((text, block) => `${text}${text.endsWith("\n") ? "\n" : "\n\n"}${block}`);
-}
-
-/**
- * What a tree click on an etcd group runs (#1089 6.4, 4.7): the read of the first piece this connection may
- * read, the whole prefix where the listing named none, and each further piece as a commented read below it.
- * A group whose every readable piece starts or ends at a key that is not UTF-8 text lists no piece
- * (keyvalue/etcd/objects.ts `groupReadRanges`), and gets a note and no read.
- */
-function etcdReadText(tableName: string, scope: GeneratorScope | undefined): string {
-  const [first, ...rest] = scope?.readRanges ?? [{ prefix: etcdGroupPrefix(tableName) }];
-  if (first === undefined) {
-    return `# No read is written for ${etcdCommentName(tableName)}: each part of it this connection may read starts or ends at a key that is not UTF-8 text.`;
-  }
-  return etcdBlocks([etcdRead(first), ...rest.map((piece) => etcdCommented(etcdRead(piece)))]);
-}
-
-/**
- * The txn template of Generate Command (#1089 6.4): create the key where it does not exist, else read it.
- * The compare's key is Go-quoted, as etcdctl's compare reads it, and each request word takes the txn rule.
- */
-function etcdTxnTemplate(key: string): string {
-  return [
-    "txn",
-    `create(${quoteGoString(encodeKey(key))}) = "0"`,
-    "",
-    etcdRequest("put", [key, ETCD_SAMPLE_VALUE], [], etcdTxnWord),
-    "",
-    etcdRequest("get", [key], [], etcdTxnWord),
-  ].join("\n");
-}
-
-/**
- * Generate Command's other forms (#1089 6.4), each on a sample key under the group's prefix: a put, a
- * del, a watch of the prefix and the txn template. A prefix holding a character the editor does not keep
- * as the command line spells it has no command-line form, so the txn template, which spells it, is its
- * one form. A prefix that begins with `-` gets no watch: on `watch`, a `--` introduces the command etcdctl
- * runs for each event, so no watch of such a prefix parses.
- */
-function etcdOtherForms(prefix: string): readonly string[] {
-  const key = `${prefix}${ETCD_SAMPLE_NAME}`;
-  const template = etcdTxnTemplate(key);
-  if (holdsUnkeptCharacter(prefix)) return [template];
-  return [
-    etcdRequest("put", [key, ETCD_SAMPLE_VALUE], [], quoteWord),
-    etcdRequest("del", [key], [], quoteWord),
-    ...(prefix.startsWith("-") ? [] : [etcdRequest("watch", [prefix], ["--prefix"], quoteWord)]),
-    template,
-  ];
-}
-
-/**
- * Generate Command on an etcd group (#1089 6.4): the click's read, then the other forms as comments, so
- * running the whole buffer runs the read and a write needs an edit first. On a read-only connection it is
- * the read alone, with its pieces, and no form that writes (E6).
- */
-function etcdCommandText(tableName: string, scope: GeneratorScope | undefined): string {
-  const read = etcdReadText(tableName, scope);
-  if (scope?.readOnly === true) return read;
-  return etcdBlocks([read, ...etcdOtherForms(etcdGroupPrefix(tableName)).map(etcdCommented)]);
-}
-
-/** A concrete example JSON scalar for a catalog column type (LibreDB column
- * types are `string` | `number` | `boolean` | `object`; unknowns read as text). */
-function libredbExampleForType(type: string): unknown {
-  switch (type.toLowerCase()) {
-    case "number":
-      return 1;
-    case "boolean":
-      return true;
-    case "object":
-      return {};
-    default:
-      return "example";
-  }
-}
-
-/**
- * A concrete, runnable example VALUE for a `put` against a group, shaped by the
- * group's columns so the generated command works as-is when selected and run:
- *  - raw kv (`key`/`value` columns) → a plain string value
- *  - document collection (`id`/`document`) → a small JSON object
- *  - relational table → a JSON object built from the declared columns
- */
-function libredbExampleValue(columns: readonly ColumnSchema[]): string {
-  if (columns.length === 2 && columns[0]?.name === "key" && columns[1]?.name === "value") {
-    return "example";
-  }
-  if (columns.length === 2 && columns[1]?.name === "document") {
-    return `'{"name":"example"}'`;
-  }
-  const obj: Record<string, unknown> = {};
-  for (const c of columns) obj[c.name] = libredbExampleForType(c.type);
-  return `'${JSON.stringify(obj)}'`;
-}
-
-/**
- * Redis key types this generator can produce a read/write command for. `TYPE`
- * also replies `none`, which falls into the unknown bucket and emits
- * `TYPE <key>` rather than guessing a reader (#427). `stream` and the
- * `ReJSON-RL` reply a RedisJSON key gives have their own readers (#1454).
- */
-type RedisKeyType = "string" | "hash" | "list" | "set" | "zset" | "stream" | "rejson-rl";
-
-/**
- * The read and write command each key type gets, with the use-case comment that
- * introduces it in the generated cheatsheet. A lookup table rather than a
- * `switch` so every arm is one attributable line.
- */
-const REDIS_COMMANDS: Record<
-  RedisKeyType,
-  { readComment: string; read: (key: string) => string[]; writeComment: string; write: (key: string) => string[] }
-> = {
-  string: {
-    readComment: "# Read the value",
-    read: (key) => ["GET", key],
-    writeComment: "# Create or update it — this overwrites an existing value",
-    write: (key) => ["SET", key, "example"],
-  },
-  hash: {
-    readComment: "# Read every field of the hash",
-    read: (key) => ["HGETALL", key],
-    writeComment: "# Create or update one field — this overwrites an existing field",
-    write: (key) => ["HSET", key, "field", "example"],
-  },
-  list: {
-    readComment: "# Read the whole list",
-    read: (key) => ["LRANGE", key, "0", "-1"],
-    writeComment: "# Append an element to the list",
-    write: (key) => ["RPUSH", key, "example"],
-  },
-  set: {
-    readComment: "# Read every member",
-    read: (key) => ["SMEMBERS", key],
-    writeComment: "# Add a member to the set",
-    write: (key) => ["SADD", key, "example"],
-  },
-  zset: {
-    readComment: "# Read every member with its score",
-    read: (key) => ["ZRANGE", key, "0", "-1", "WITHSCORES"],
-    writeComment: "# Add a member with a score",
-    write: (key) => ["ZADD", key, "1", "example"],
-  },
-  stream: {
-    readComment: "# Read the first entries of the stream",
-    read: (key) => ["XRANGE", key, "-", "+", "COUNT", "100"],
-    writeComment: "# Append an entry to the stream",
-    write: (key) => ["XADD", key, "*", "field", "example"],
-  },
-  "rejson-rl": {
-    readComment: "# Read the JSON document",
-    read: (key) => ["JSON.GET", key],
-    writeComment: "# Create or update the JSON document",
-    write: (key) => ["JSON.SET", key, "$", '{"example":true}'],
-  },
-};
-
-/**
- * Whether an argument survives a round-trip through the provider's plain-command
- * tokenizer. That tokenizer splits on unquoted whitespace and has NO escape
- * handling: it toggles quote mode on every `"` or `'` and drops the character.
- * So `DEL "say"hi""` reaches the driver as the key `sayhi` — a DIFFERENT key —
- * and a quote inside a MATCH pattern swallows the rest of the line. A backslash
- * or a newline is treated the same way for safety (#427).
- */
-function redisPlainSafe(value: string): boolean {
-  return !/["'\\\n]/.test(value);
-}
-
-/**
- * Render one Redis command in the form the provider can actually run it in.
- *
- * Plain form (`SET key value`, quoting an argument that contains whitespace) is
- * the readable default. When any argument cannot round-trip through the plain
- * tokenizer, this line — and only this line — is emitted in the lossless JSON
- * form the provider also accepts, `{"command":"DEL","args":["say\"hi\""]}`.
- * The two forms mix freely inside one cheatsheet: the provider decides per run,
- * and every line is run on its own via "Run Selected" (#427).
- */
-function renderRedisCommand(parts: string[]): string {
-  if (parts.every(redisPlainSafe)) {
-    return parts.map((part) => (/\s/.test(part) ? `"${part}"` : part)).join(" ");
-  }
-  return JSON.stringify({ command: parts[0], args: parts.slice(1) });
-}
-
-/**
- * Escape Redis glob metacharacters. Applied ONLY to the prefix half of a MATCH
- * pattern, never to a key argument: a real key `a[b:1` groups to `a[b:*`, and an
- * unescaped `[` opens a glob class that matches the wrong set. Escaping a key
- * argument would instead corrupt a literal key that genuinely contains `*` (#427).
- */
-export function escapeGlob(value: string): string {
-  return value.replace(/[\\*?[\]^]/g, String.raw`\$&`);
-}
-
-/**
- * The single Redis key type a schema node's sample resolves to, or `null` for the
- * unknown bucket. The source is the `type` column's own `type` field, which
- * `redis.ts` `getSchema()` builds as `types.join(", ")` over the DISTINCT `TYPE`
- * replies it sampled — it issues `TYPE` for every key of a prefix until it has
- * seen 3 distinct types (or the 1000-key scan cap ends the walk), so a uniform
- * prefix costs one blocking round-trip per key and still yields one type — so `"string"` resolves, and `""` (every TYPE call threw) or
- * `"string, hash"` (a mixed prefix) deliberately do not. The `value` column
- * carries the same sample joined with `/` and exists for display only (#427).
- */
-function redisKeyType(columns?: readonly ColumnSchema[]): RedisKeyType | null {
-  const sample = columns?.find((c) => c.name === "type")?.type;
-  const parts = (sample || "")
-    .split(",")
-    .map((part) => part.trim().toLowerCase())
-    .filter((part) => part !== "");
-  // Redis TYPE replies are lowercase already; normalising keeps a hand-authored
-  // schema from reading as a silent unknown.
-  if (parts.length !== 1) return null;
-  return parts[0] in REDIS_COMMANDS ? (parts[0] as RedisKeyType) : null;
-}
-
-/** The SCAN command listing a prefix group's keys — the only place a glob is interpreted. */
-function redisScan(base: string): string {
-  return renderRedisCommand(["SCAN", "0", "MATCH", `${escapeGlob(base)}*`, "COUNT", "50"]);
-}
-
-/**
  * The terminator a generated statement ends with: `;` everywhere, and nothing on a
  * product whose grammar has none.
  *
@@ -764,327 +320,10 @@ function terminator(capabilities: ProviderCapabilities): string {
   return capabilities.statementTerminator === "none" ? "" : ";";
 }
 
-/**
- * The one refusal both LibreDB generators give for a name they cannot address:
- * a `#` note and no command line. A schema-tree node name is a real key name,
- * LibreDB keys are arbitrary byte strings, and every LibreDB command is
- * line-oriented — `get`/`put`/`delete`/`prefix` interpolate the name raw, so a
- * key named `x\ndelete billing:2024` renders its own second half as a runnable
- * `delete billing:2024` line. LibreDB has no lossless JSON command form to fall
- * back to the way Redis does, so emit no command line at all and say why. Both
- * callers go through here so the two branches cannot drift (#427, U11).
- */
-function libredbNewlineNote(base: string): string | null {
-  if (!/[\r\n]/.test(base)) return null;
-  // No "write it by hand" advice: `firstCommandLine` splits the buffer on LF before tokenizing
-  // (providers/embedded/libredb.ts), so a key whose name contains a LINE FEED cannot be reached
-  // from this editor at all, quoted or not. A carriage return survives inside quotes and could be
-  // typed by hand - but one note covers both characters, and promising an action that fails for
-  // half of them is worse than promising none.
-  return "# This key's name contains a line break. LibreDB commands are line-oriented, so no generated line can address it.";
+/** What an SQL row reads of the declaration it writes for: its quoting and its terminator. */
+function sqlFormContext(capabilities: ProviderCapabilities): SqlFormContext {
+  return { quote: (name) => quoteIdentifier(name, capabilities), terminator: terminator(capabilities) };
 }
-
-/**
- * What only the etcd arms of the two generators read (#1089, sections 3.3, 4.7 and 6.4), handed over by
- * `useTabManager` from the schema entry and the active connection. Every other arm ignores it, so no other
- * engine's text moves with it.
- */
-export interface GeneratorScope {
-  /** The pieces of a group's range this connection may read, `DatabaseObject.readRanges`, where they do not cover it. */
-  readonly readRanges?: readonly ObjectReadRange[];
-  /** The active connection's public `readOnly`: Generate Command then writes the read alone (#1089 E6). */
-  readonly readOnly?: boolean;
-  /** The object's kind, `DatabaseObject.kind`, handed to `rowAction`, whose statement depends on what the row is. */
-  readonly kind?: string;
-  /**
-   * The path names one key the key browser listed, and never a prefix group. Read by the Redis arm alone: a key
-   * may be named `cache:*`, which is how the tree spells the group of the same name, and only the caller knows
-   * which of the two it activated.
-   */
-  readonly namesKey?: boolean;
-}
-
-/**
- * What one query dialect writes for a tree click (`table`, run on the user's behalf) and for "Generate Query"
- * (`select`, written into a tab and not run), each from the object's path, and, for a dialect whose provider
- * declares `ProviderCapabilities.rowActions`, what each declared row action runs (`rowAction`).
- */
-export interface DialectGenerators {
-  readonly table: (
-    path: readonly string[],
-    columns: readonly ColumnSchema[] | undefined,
-    scope: GeneratorScope | undefined,
-  ) => string;
-  readonly select: (
-    path: readonly string[],
-    columns: readonly ColumnSchema[],
-    scope: GeneratorScope | undefined,
-  ) => string;
-  /**
-   * The statement one declared row action runs on one object, by the action's id, with the object's kind
-   * on `scope.kind`. Absent on every dialect whose provider declares no row action.
-   *
-   * The statement reads and never writes, and honours `scope.readOnly`: it runs on click with no role
-   * asked and no editing step. Every segment of `path` is an object name taken from a listing, which a
-   * user of the database can choose, so it is quoted by the dialect's own quoting rule and never
-   * concatenated.
-   */
-  readonly rowAction?: (path: readonly string[], actionId: string, scope: GeneratorScope) => string;
-  /**
-   * The statement Generate Count Query writes for one object, on a dialect whose `QUERY_DIALECTS` record offers it.
-   * Absent on every dialect whose record does not; `generateCountQuery` refuses a record that offers a count and
-   * writes none, rather than falling through to the JSON arm's MongoDB count document.
-   */
-  readonly count?: (path: readonly string[]) => string;
-}
-
-/**
- * Every query dialect's generators, read by `generateTableQuery` and `generateSelectQuery` BEFORE their JSON arm:
- * each dialect declares `queryLanguage: "json"` too, and without its record a tree click auto-executes a MongoDB
- * `find` its provider refuses (#427, #1088, #1089). A `Record` over `QueryDialect`, so a dialect added to the
- * union does not compile until it has its generators. Module-internal: the two generators, `generateCountQuery`
- * and `generateRowActionQuery` are its only readers, and this module's export list is pinned
- * (`tests/unit/lib/query-generators.test.ts`).
- */
-/**
- * Every query dialect's generators, read by `generateTableQuery` and `generateSelectQuery` BEFORE their JSON arm:
- * each dialect declares `queryLanguage: "json"` too, and without its record a tree click auto-executes a MongoDB
- * `find` its provider refuses (#427, #1088, #1089). A `Record` over `QueryDialect`, so a dialect added to the
- * union does not compile until it has its generators. Module-internal: the two generators, `generateCountQuery`
- * and `generateRowActionQuery` are its only readers, and this module's export list is pinned
- * (`tests/unit/lib/query-generators.test.ts`).
- */
-/** The object a tree click landed on: the last segment, which is the numbered name itself. */
-function snmpObjectName(path: readonly string[]): string {
-  return path[path.length - 1] ?? "";
-}
-
-const DIALECT_GENERATORS: Readonly<Record<QueryDialect, DialectGenerators>> = Object.freeze({
-  // LibreDB speaks its own command grammar (get/put/delete/prefix/range), not SQL and not MongoDB JSON. "Scan"
-  // lists everything under the group's prefix, and "Scan Keys" AUTO-EXECUTES, so a newline in the name, which
-  // used to leave a second, plausible command one "Run Selected" away, gets the shared refusal (U11). "Generate
-  // Command" writes an explanatory cheatsheet, a use-case comment above each command and every command line a
-  // concrete, directly runnable example; the provider skips `#` comment and blank lines, so running the whole
-  // buffer runs its first real command.
-  libredb: {
-    table: (path) => {
-      const { isPrefixGroup, base } = prefixGroup(objectSegment(path));
-      const note = libredbNewlineNote(base);
-      if (note !== null) return note;
-      return isPrefixGroup ? `prefix ${base}` : `get ${base}`;
-    },
-    select: (path, columns) => libredbCheatsheet(objectSegment(path), columns),
-  },
-  // Redis speaks its own command grammar, and it silently got MongoDB documents its driver answered with HTTP 400
-  // before it had a record (#427). A prefix group is not addressable (`tablesAreDerivedGroupings`), so it always
-  // SCANs; a bare key gets the reader its sampled type calls for, or `TYPE` when unknown. A key the key browser
-  // names (`scope.namesKey`) is a key whatever its name ends in, so `cache:*` reads the key and scans nothing.
-  redis: {
-    table: (path, columns, scope) => {
-      const name = objectSegment(path);
-      const { isPrefixGroup, base } = prefixGroup(name);
-      if (isPrefixGroup && scope?.namesKey !== true) return redisScan(base);
-      const keyType = redisKeyType(columns);
-      return renderRedisCommand(keyType ? REDIS_COMMANDS[keyType].read(name) : ["TYPE", name]);
-    },
-    select: (path, columns) => redisCheatsheet(objectSegment(path), columns),
-  },
-  // Kafka reads a topic through a JSON read request (#1088 3.3), and the name goes through JSON.stringify with the
-  // rest, so no topic name leaves its string. "Generate Query" writes ONE read request, because the tab's whole
-  // buffer is sent as one request (`handleGenerateSelect` in use-tab-manager.ts) and JSON has no comments to hold
-  // the other forms: it names a partition and reads it from its earliest offset, which exists on any retention,
-  // and the result's `offset` column shows the offsets the `{"offset": n}` form takes. The offset and timestamp
-  // forms are documented in docs/providers/kafka.md. The columns are the fields each message comes back with, not
-  // keys of the request, so none is written.
-  kafka: {
-    table: (path) => JSON.stringify({ topic: objectSegment(path), from: "latest", limit: 50 }, null, 2),
-    select: (path) =>
-      JSON.stringify({ topic: objectSegment(path), partition: 0, from: "earliest", limit: 50 }, null, 2),
-  },
-  // etcd reads a group through an etcdctl command (#1089, section 6.4). A row is one group, so the click reads its
-  // prefix, or the first piece of it this connection may read, bounded by the command's own `--limit`; "Generate
-  // Command" writes that read on the first line and the other forms as comments below it. A group's columns are
-  // the fixed shape of a get row, so none reaches the text.
-  etcd: {
-    table: (path, _columns, scope) => etcdReadText(objectSegment(path), scope),
-    select: (path, _columns, scope) => etcdCommandText(objectSegment(path), scope),
-  },
-  // Milvus reads a collection through its own console request (vector-family spec 5.7), written by the provider's
-  // browser-safe generators.ts: the tree click is an entities/query naming the clicked database and collection, and
-  // "Generate Command" a runnable search over the first dense vector field. Neither reads the scope.
-  milvus: {
-    table: (path) => milvusTableQuery(path),
-    select: (path, columns) => milvusSelectQuery(path, columns),
-  },
-  // Qdrant reads a collection through its own console request (vector-family spec 6.7), written by the provider's
-  // browser-safe generators.ts: the tree click is a 100-point scroll of the clicked collection, without vectors, and
-  // "Generate Command" a runnable query over the first dense vector. Neither reads the scope.
-  qdrant: {
-    table: (path) => qdrantTableQuery(path),
-    select: (path, columns) => qdrantSelectQuery(path, columns),
-  },
-  // Weaviate reads a collection through its own console request (#1566 spec 6.4), written by the provider's
-  // generators: the click lists the first objects, Generate Request writes a near-vector search without running it.
-  weaviate: {
-    table: (path) => weaviateTableQuery(path),
-    select: (path, columns) => weaviateSelectQuery(path, columns),
-  },
-  // Oxia reads a key through an oxia client command (SB2-4.5), written by the provider's browser-safe generators.ts:
-  // the click is `get <key>`, and "Generate Command" that get with the `list --prefix` and `range-scan --prefix` forms
-  // as comments. No shipped click reaches them in v1 (a key row opens its Source tab, SB2-12 D2). Neither reads the
-  // columns or the scope.
-  oxia: {
-    table: (path) => oxiaTableQuery(path),
-    select: (path) => oxiaSelectQuery(path),
-  },
-  // S3 reads through its console's commands, written by the provider's browser-safe generators.ts: a bucket's
-  // listing, or an object's preview, and Generate Command adds reads as comments. The path is the provider's own,
-  // [bucket] or [<bucket>/<key>]. No shipped click reaches them in v1 (a bucket or object row opens its Source tab).
-  // Every text is a command the console's parser accepts, or a note.
-  // MQTT has no query console at all: its surface is the Keys panel, and a declared key-browser kind opens a
-  // topic's value in its Source tab rather than a generated read, so these are reached only by a path that
-  // asks for text where there is none. They answer a sentence saying so, never a statement, because a
-  // statement would be a command this provider cannot send.
-  mqtt: {
-    table: (path) =>
-      `// MQTT has no query console. ${objectSegment(path)} opens in its Source tab from the Keys panel.`,
-    select: (path) =>
-      `// MQTT has no query console. ${objectSegment(path)} opens in its Source tab from the Keys panel.`,
-  },
-  // Firestore reads a collection through one statement of its console's read-only Admin SDK subset, written by the
-  // provider's browser-safe console/generators.ts: a tree click and Generate Query are both the 100-document preview of
-  // the clicked collection, addressed by the object's own segment, the collection id the tree lists. Generate Count
-  // Query writes the count() aggregation of the same collection.
-  firestore: {
-    table: (path) => previewStatement([objectSegment(path)]),
-    select: (path) => previewStatement([objectSegment(path)]),
-    count: (path) => countStatement([objectSegment(path)]),
-  },
-  // RabbitMQ reads a stream through its own JSON read request, written by the provider's browser-safe generators.ts:
-  // the click reads the last chunk ("Read Last Chunk") and Generate Read Request the first message, 50 rows each.
-  // Neither reads the columns or the scope, and neither throws.
-  rabbitmq: {
-    table: (path) => rabbitmqTableQuery(path),
-    select: (path) => rabbitmqSelectQuery(path),
-  },
-  s3: {
-    table: (path) => s3TableQuery(path),
-    select: (path) => s3SelectQuery(path),
-  },
-  // Kubernetes reads an object through a kubectl statement, written by the provider's browser-safe generators.ts: the
-  // click and Generate Command are one get of the object (a built-in row opens its YAML instead, so the click reaches
-  // this only from a custom resource type's row), and a declared row action writes Describe, Logs or List. None reads
-  // the columns or the scope.
-  kubectl: {
-    table: (path) => kubectlGetQuery(path),
-    select: (path) => kubectlGetQuery(path),
-    rowAction: (path, actionId) => kubectlRowActionQuery(path, actionId),
-  },
-  /**
-   * OPC UA generates nothing, and the two members below are unreachable rather than useful.
-   *
-   * Its dialect declares `offersCodeGeneration: false`, which is what `row-actions.ts` and
-   * `TableItem.tsx` read: the button is never drawn, so neither function is called. They exist
-   * because the record is exhaustive over dialects and `DialectGenerators` requires both.
-   *
-   * WHY NOTHING CAN BE GENERATED. A generator is handed the object's PATH, and a path's last segment
-   * is a BrowseName. A read request names a NODE ID, which a BrowseName is not: measured on the
-   * pinned fixture, 1,299 of its 6,769 node ids cannot be built from their own browse name, and 41
-   * nodes have more than one path. So a statement built from a path would name a node the reader did not
-   * choose, or none. A click on a key opens the node's own value in a Source tab instead, which is
-   * `readObjectSource`, and that reaches the node id by browsing down the path.
-   */
-  opcua: Object.freeze({
-    table: () => UNREACHABLE_OPCUA_GENERATOR,
-    select: () => UNREACHABLE_OPCUA_GENERATOR,
-  }),
-  /**
-   * MTConnect writes one request line, the route MEASURED to answer the clicked row.
-   *
-   * A path is `[device]` for a device and `[device, dataItemId]` for an item under it, and the route
-   * that answers either is the device's `current`: one row per observation of that device, the
-   * clicked item's among them. The item is named in a comment above the line rather than written
-   * into a `path=` filter, because the filter would be an XPath predicate on `@id` and THAT WAS NOT
-   * MEASURED: `@type` and `@category` predicates were run against the pinned agent and answered 200,
-   * an `@id` one was not, and a generator is not the place to find out. The comment marker is the
-   * dialect's own `#`, which the provider's guard drops before it reads the route.
-   *
-   * `offersCodeGeneration: false`, so `select` is never drawn; it answers the same line as `table`
-   * rather than a sentence, because the line is correct wherever it lands.
-   */
-  mtconnect: Object.freeze({
-    table: (path: readonly string[]) => mtconnectCurrentRequest(path),
-    select: (path: readonly string[]) => mtconnectCurrentRequest(path),
-  }),
-  modbus: Object.freeze({
-    table: (path: readonly string[]) => modbusReadRequest(path),
-    select: (path: readonly string[]) => modbusReadRequest(path),
-  }),
-  netconf: Object.freeze({
-    table: (path: readonly string[]) => netconfReadRequest(path),
-    select: (path: readonly string[]) => netconfReadRequest(path),
-  }),
-  // A tree click writes the statement this provider's own grammar reads, and nothing else: four
-  // words and a numbered name. `walk` rather than `get`, because a click lands on a subtree and
-  // a Get of a subtree answers one object or nothing at all.
-  snmp: Object.freeze({
-    table: (path: readonly string[]) => `walk ${snmpObjectName(path)}`,
-    select: (path: readonly string[]) => `walk ${snmpObjectName(path)}`,
-  }),
-
-  /*
-   * A tree click writes the read request for what was clicked, which is a JSON object rather than a
-   * statement: a Sparkplug read names a group, an edge node and a device and takes a window, and
-   * there is nothing to compose. The deeper the click the narrower the read, and a click on nothing
-   * reads every group, which is what an empty request means.
-   */
-  sparkplug: Object.freeze({
-    table: (path: readonly string[]) => sparkplugReadRequest(path),
-    select: (path: readonly string[]) => sparkplugReadRequest(path),
-  }),
-});
-
-/**
- * One JSON read request for the clicked point.
- *
- * A point's path is its unit id and its name (`src/lib/db/providers/industrial/modbus/index.ts`),
- * and the name is the only thing a read needs: the map already holds the unit, the table, the
- * address and the type. Where the path stops at the unit there is no point to name, so the
- * request written is the one shape that needs no map - a range by address - with the unit filled
- * in and the rest left for the reader to say.
- */
-function modbusReadRequest(path: readonly string[]): string {
-  const unit = path[0];
-  const name = path.length > 1 ? path[path.length - 1] : undefined;
-  if (name !== undefined) return JSON.stringify({ read: [name] }, null, 2);
-  const unitId = unit === undefined || unit === "" ? 1 : Number(unit);
-  return JSON.stringify(
-    { unit: Number.isInteger(unitId) ? unitId : 1, table: "holding_register", address: 0, count: 1 },
-    null,
-    2,
-  );
-}
-
-/** The device's `current`, with the clicked item named in a comment where the path holds one. */
-function mtconnectCurrentRequest(path: readonly string[]): string {
-  const device = path[0];
-  if (device === undefined || device === "") {
-    return "# A request names a device from the tree.\nGET /current";
-  }
-  const item = path.length > 1 ? path[path.length - 1] : undefined;
-  const route = `GET /${encodeURIComponent(device)}/current`;
-  return item === undefined ? route : `# ${item}: one row of this answer\n${route}`;
-}
-
-/**
- * What the OPC UA generators answer if they are ever reached, which would be a defect elsewhere.
- *
- * A sentence rather than empty text: empty text in the editor reads as "this engine generated
- * nothing useful", where this says what happened and where the value actually is.
- */
-const UNREACHABLE_OPCUA_GENERATOR =
-  "// An OPC UA node's value is read from the node itself, not from a generated statement: click the key " +
-  "to open its value, or name the node id in a read request.";
 
 /**
  * The statement behind "Select Top 50", the one a CLICK on a tree row runs (#789).
@@ -1114,13 +353,15 @@ const UNREACHABLE_OPCUA_GENERATOR =
  * `scope` is read by the etcd arm alone (#1089): a group's `readRanges`, so a user who is not root
  * reads the first piece of the group they may read, and not the whole group etcd would refuse.
  */
+
 export function generateTableQuery(
   path: readonly string[],
   capabilities: ProviderCapabilities,
   columns?: readonly ColumnSchema[],
   scope?: GeneratorScope,
 ): string {
-  const tableName = objectSegment(path);
+  // Refuses an empty address before any row spells it.
+  objectSegment(path);
   // A query dialect's own command, from its `DIALECT_GENERATORS` record, BEFORE the JSON arm below.
   const dialect = registeredDialect(capabilities);
   if (dialect !== undefined) return DIALECT_GENERATORS[dialect].table(path, columns, scope);
@@ -1131,31 +372,13 @@ export function generateTableQuery(
       2,
     );
   }
-  // PromQL (#1085). A metric is addressed by a SELECTOR, never by a quoted path: the bare name
-  // where the lexer reads it as one and a `__name__` matcher for every other name, both written
-  // by `metricSelector`, the one PromQL builder (#1085 S4). An instant selector evaluates at now
-  // and answers one row per series; the provider caps the series (#1085, section 5.4), so no
-  // bound is written here, and PromQL has no statement terminator to append.
-  if (capabilities.queryLanguage === "promql") {
-    return metricSelector(tableName);
-  }
-  // Cypher (Neo4j spec 6.5, SR5). A label or a relationship type is addressed by its kind-qualified
-  // segment, so the two of one name never read each other's rows: a label reads a bounded sample of its
-  // nodes and a relationship type its relationships with their ends, each name backticked. Without this
-  // arm a tree click would auto-execute `SELECT * FROM ...`. An index or a constraint has no generator
-  // in v1 and no click action (role `config`), so its segment writes no statement.
-  if (capabilities.queryLanguage === "cypher") {
-    return cypherForSegment(tableName) ?? "";
-  }
-  // InfluxQL (InfluxDB spec 6.6, I20): the newest points of the last hour, `LIMIT 50` per series written in the
-  // text, because the type declares no external limiting. The path must be `[database, measurement]`.
-  if (capabilities.queryLanguage === "influxql") return influxqlTableQuery(path);
+  // A language an engine writes its own text in, from its `LANGUAGE_GENERATORS` record.
+  const language = languageGenerators(capabilities);
+  if (language !== undefined) return language.table(path, columns);
   const table = quoteObjectPath(path, capabilities);
-  // Couchbase (SQL++). The one SQL branch left, and it is about the PROJECTION: the
-  // document key is not a column, so the grid has nothing to show without the alias.
-  if (capabilities.defaultPort === COUCHBASE_PORT) {
-    return `SELECT ${COUCHBASE_KEY_PROJECTION}, ${COUCHBASE_ALIAS}.* FROM ${table} AS ${COUCHBASE_ALIAS}${terminator(capabilities)}`;
-  }
+  // An SQL engine whose click reads a projection of its own, from its `SQL_PORT_GENERATORS` record.
+  const engineTable = sqlPortGenerators(capabilities)?.table;
+  if (engineTable !== undefined) return engineTable(table, sqlFormContext(capabilities));
   // An engine whose driver misreads some column types declares how its preview reads each one
   // (#786), so the preview names its columns rather than asking for `*`.
   const projection = capabilities.previewProjection;
@@ -1165,11 +388,9 @@ export function generateTableQuery(
   // An engine whose preview reads a recent window, newest first (InfluxDB spec 6.6, I20).
   const window = capabilities.previewTimeWindow;
   if (window !== undefined) return windowedPreview(table, window, capabilities);
-  // Every other SQL dialect, Oracle and SQL Server included. They had branches of their
-  // own only to spell their row bound — `FETCH FIRST 50 ROWS ONLY` and `SELECT TOP 50` —
-  // and with no bound to spell, one statement serves all of them. Issue #264's rule, that
-  // a ClickHouse bound must sit after any `FORMAT` or `SETTINGS` clause, is moot for the
-  // same reason: there is no generated bound to misplace.
+  // Every other SQL dialect. Some once had branches of their own only to spell their row bound, and with no bound to
+  // spell, one statement serves all of them. Issue #264's rule, that a bound must sit after any `FORMAT` or
+  // `SETTINGS` clause, is moot for the same reason: there is no generated bound to misplace.
   return `SELECT * FROM ${table}${terminator(capabilities)}`;
 }
 
@@ -1249,102 +470,6 @@ function projectedPreview(
 }
 
 /**
- * The LibreDB cheatsheet: a use-case comment over each command, where every
- * command line is a concrete, directly-runnable example (so "Run Selected" on
- * any line works as-is). The provider skips `#` comment and blank lines, so
- * running the whole buffer runs its first real command.
- */
-function libredbCheatsheet(tableName: string, columns: readonly ColumnSchema[]): string {
-  const { isPrefixGroup, base } = prefixGroup(tableName);
-  const value = libredbExampleValue(columns);
-  const header = `# LibreDB commands for ${commentName(tableName)} — select a line and Run Selected.`;
-  // The header is JSON-quoted so a newline in a name cannot end it; the command
-  // lines have no such protection, so a name carrying one gets the shared refusal.
-  const note = libredbNewlineNote(base);
-  if (note !== null) {
-    return [header, "", note].join("\n");
-  }
-  if (isPrefixGroup) {
-    const key = `${base}1`; // a concrete example key (e.g. users:1)
-    return [
-      header,
-      "",
-      "# List every key under this prefix",
-      `prefix ${base}`,
-      "",
-      "# Read one entry by key",
-      `get ${key}`,
-      "",
-      "# Create or update an entry",
-      `put ${key} ${value}`,
-      "",
-      "# Delete an entry",
-      `delete ${key}`,
-    ].join("\n");
-  }
-  return [
-    header,
-    "",
-    "# Read the value",
-    `get ${base}`,
-    "",
-    "# Create or update it",
-    `put ${base} ${value}`,
-    "",
-    "# Delete it",
-    `delete ${base}`,
-  ].join("\n");
-}
-
-/**
- * Redis: the same cheatsheet shape as LibreDB above — a use-case comment over
- * each command, every command line runnable on its own via "Run Selected". The
- * provider skips `#` and blank lines, so running the whole buffer runs its
- * first real command. A group name never appears as a key argument: Redis key
- * arguments are literal byte strings, so `DEL user:*` would delete nothing (or
- * the wrong thing) rather than the group (#427).
- */
-function redisCheatsheet(tableName: string, columns: readonly ColumnSchema[]): string {
-  const { isPrefixGroup, base } = prefixGroup(tableName);
-  const key = isPrefixGroup ? `${base}1` : base;
-  const keyType = redisKeyType(columns);
-  const lines = [`# Redis commands for ${commentName(tableName)} — select a line and Run Selected.`, ""];
-  if (isPrefixGroup) {
-    // SCAN is a cursor step, not a listing: one call returns one page and the
-    // next cursor, and on a large keyspace the first page can be EMPTY with a
-    // non-zero cursor. A one-line command cannot loop, so say how to continue
-    // rather than pretend the first reply is the whole answer (#427).
-    lines.push(
-      "# List keys under this prefix — ONE scan iteration, not the whole set.",
-      "# 0 is the start cursor; the reply's cursor column holds the next one. Re-run",
-      "# with that value in place of 0 until it comes back 0 (a page may be empty).",
-      redisScan(base),
-      "",
-    );
-  }
-  lines.push("# Check the key's type", renderRedisCommand(["TYPE", key]), "");
-  if (keyType) {
-    const commands = REDIS_COMMANDS[keyType];
-    lines.push(
-      commands.readComment,
-      renderRedisCommand(commands.read(key)),
-      "",
-      commands.writeComment,
-      renderRedisCommand(commands.write(key)),
-      "",
-    );
-  }
-  lines.push(
-    "# Time to live in seconds (-1 no expiry, -2 no such key)",
-    renderRedisCommand(["TTL", key]),
-    "",
-    "# Delete the key (DEL takes a literal key name, never a pattern)",
-    renderRedisCommand(["DEL", key]),
-  );
-  return lines.join("\n");
-}
-
-/**
  * The field paths a MongoDB projection may name together: every path whose ancestor is also
  * listed is dropped, since projecting the subdocument already returns it.
  *
@@ -1388,13 +513,15 @@ export function outermostFieldPaths(names: readonly string[]): string[] {
  * comments below the read (#1089). `scope` is read by that branch alone: a group's `readRanges`, as
  * for the click, and the connection's `readOnly`, under which it writes the read alone.
  */
+
 export function generateSelectQuery(
   path: readonly string[],
   columns: readonly ColumnSchema[],
   capabilities: ProviderCapabilities,
   scope?: GeneratorScope,
 ): string {
-  const tableName = objectSegment(path);
+  // Refuses an empty address before any row spells it.
+  objectSegment(path);
   // A query dialect's own text, from its `DIALECT_GENERATORS` record, BEFORE the JSON arm below.
   const dialect = registeredDialect(capabilities);
   if (dialect !== undefined) return DIALECT_GENERATORS[dialect].select(path, columns, scope);
@@ -1417,51 +544,13 @@ export function generateSelectQuery(
       2,
     );
   }
-  // PromQL (#1085): exactly ONE runnable expression, the metric's selector on the last line,
-  // and the two range forms #1085 section 5.1 teaches as `#` comments above it. PromQL reads
-  // `#` as a comment to the end of the line, so the whole buffer, run as it stands, is that one
-  // expression. The name reaches its comment through `commentName`, which escapes CR and LF;
-  // the selector reaches its comments already escaped, because `metricSelector` writes any name
-  // that is not a bare identifier as a JSON-quoted `__name__` matcher. So neither can end a
-  // comment line early and turn its remainder into a second expression. The label columns are
-  // not read: a label name is server text too, and nothing here needs one. The rate form is
-  // written whatever the metric's type, because nothing this function receives says it, so its
-  // comment says it is the form for a counter.
-  if (capabilities.queryLanguage === "promql") {
-    const selector = metricSelector(tableName);
-    return [
-      `# PromQL for the metric ${commentName(tableName)}. Only the last line runs: a line starting with # is a comment.`,
-      "# To try a form below, select it after its # and use Run Selected.",
-      "#",
-      "# Every raw sample from the last five minutes, one column per series:",
-      `#   ${selector}[5m]`,
-      "# For a counter: its per-second rate over the last hour, one row a minute:",
-      `#   rate(${selector}[5m])[1h:1m]`,
-      "#",
-      "# Every series of the metric as of now, one row per series:",
-      selector,
-    ].join("\n");
-  }
-  // Cypher (Neo4j spec 6.5): the click's read, which keeps its own `LIMIT 100` for the reason the SQL
-  // one does below. The columns are not spelled: a node is returned whole, its properties in one cell.
-  if (capabilities.queryLanguage === "cypher") {
-    return cypherForSegment(tableName) ?? "";
-  }
-  // InfluxQL (InfluxDB spec 6.6): the click's preview with its example lines as `--` comments, naming a field and
-  // a tag from the described columns.
-  if (capabilities.queryLanguage === "influxql") return influxqlSelectQuery(path, columns);
+  // A language an engine writes its own text in, from its `LANGUAGE_GENERATORS` record.
+  const language = languageGenerators(capabilities);
+  if (language !== undefined) return language.select(path, columns);
   const table = quoteObjectPath(path, capabilities);
-  // Couchbase (SQL++): every field is reached through the keyspace alias, and the
-  // document key comes from META() rather than from the document body.
-  if (capabilities.defaultPort === COUCHBASE_PORT) {
-    const fields = columns.filter((c) => c.name !== COUCHBASE_DOCUMENT_KEY_COLUMN);
-    const projected =
-      fields.length > 0
-        ? fields.map((c) => `  ${COUCHBASE_ALIAS}.${quoteIdentifier(c.name, capabilities)}`)
-        : [`  ${COUCHBASE_ALIAS}.*`];
-    const projection = [`  ${COUCHBASE_KEY_PROJECTION}`, ...projected].join(",\n");
-    return `SELECT\n${projection}\nFROM ${table} AS ${COUCHBASE_ALIAS}\nWHERE 1=1\nLIMIT 100;`;
-  }
+  const engine = sqlPortGenerators(capabilities);
+  // An SQL engine whose starter statement is its own, from its `SQL_PORT_GENERATORS` record.
+  if (engine?.select !== undefined) return engine.select(table, columns, sqlFormContext(capabilities));
   // The windowed preview with its example lines below it (InfluxDB spec 6.6, I20).
   const window = capabilities.previewTimeWindow;
   if (window !== undefined) {
@@ -1473,14 +562,8 @@ export function generateSelectQuery(
   // are omitted so the starter query runs; an index holding only unprojectable columns falls back to `*`.
   const projectable = columns.filter((c) => c.projectable !== false);
   const cols = projectable.map((c) => `  ${quoteIdentifier(c.name, capabilities)}`).join(",\n") || "  *";
-  // Oracle
-  if (capabilities.defaultPort === 1521) {
-    return `SELECT\n${cols}\nFROM ${table}\nWHERE 1=1\nFETCH FIRST 100 ROWS ONLY${terminator(capabilities)}`;
-  }
-  // MSSQL
-  if (capabilities.defaultPort === 1433) {
-    return `SELECT TOP 100\n${cols}\nFROM ${table}\nWHERE 1=1;`;
-  }
+  // An SQL engine that spells its row bound its own way, from its `SQL_PORT_GENERATORS` record.
+  if (engine?.selectList !== undefined) return engine.selectList(table, cols, sqlFormContext(capabilities));
   // A grammar with no constant predicate (CQL, #1410) gets no WHERE clause rather than one it refuses.
   const where = capabilities.supportsConstantPredicate === false ? "" : "\nWHERE 1=1";
   return `SELECT\n${cols}\nFROM ${table}${where}\nLIMIT 100${terminator(capabilities)}`;
@@ -1535,52 +618,11 @@ export function generateCountQuery(
   if (capabilities.queryLanguage === "json") {
     return JSON.stringify({ ...jsonCommandAddress(path, capabilities), operation: "count", filter: {} }, null, 2);
   }
-  // COUNT returns an int on SQL Server; COUNT_BIG preserves billion-row counts.
-  const count = capabilities.defaultPort === 1433 ? "COUNT_BIG(*)" : "COUNT(*)";
-  return `SELECT ${count} AS row_count\nFROM ${quoteObjectPath(path, capabilities)}${terminator(capabilities)}`;
+  // An SQL engine whose count is not `COUNT(*)`, from its `SQL_PORT_GENERATORS` record.
+  const countExpression = sqlPortGenerators(capabilities)?.countExpression ?? "COUNT(*)";
+  return `SELECT ${countExpression} AS row_count\nFROM ${quoteObjectPath(path, capabilities)}${terminator(capabilities)}`;
 }
 
 export function shouldRefreshSchema(query: string, schemaRefreshPattern: string): boolean {
   return new RegExp(schemaRefreshPattern, "i").test(query);
-}
-
-/**
- * One JSON read request for the clicked node.
- *
- * A node's path is `[datastore, module, node]` - what `listObjects` builds in
- * `src/lib/db/providers/network/netconf/index.ts` - and that is what the console's own parser
- * needs: the datastore by name, and the node written `module:node`, the module-qualified form
- * `parsePathArgument` reads. The bound goes into the text because the type declares
- * `supportsExternalQueryLimiting: false`; the number written is the parser's own default, so the
- * line states what an omitted bound would have done rather than changing it.
- *
- * A shorter path names no node. No shipped row reaches that arm - every object row this provider
- * lists carries all three segments - so rather than inventing a datastore or a module it writes
- * the request with an empty path, which the console refuses BY NAME ("this request names no
- * path"). The alternative, filling in a plausible module, would read a node nobody clicked.
- *
- * `offersCodeGeneration: false`, so `select` is never drawn; it answers the same request as
- * `table` rather than a sentence, because the request is correct wherever it lands.
- */
-function netconfReadRequest(path: readonly string[]): string {
-  const datastore = path[0] ?? "";
-  const moduleName = path[1];
-  const node = path.length > 2 ? path[path.length - 1] : undefined;
-  const addressed = moduleName === undefined || node === undefined ? "" : `${moduleName}:${node}`;
-  return JSON.stringify({ datastore, path: addressed, limit: 1000 }, null, 2);
-}
-
-/**
- * The read request for a clicked path: group, then edge node, then device, as far as the path goes.
- *
- * The window and the row limit are left out rather than written with their defaults: a number a user
- * did not choose, printed in the console they are about to run, reads as a measurement of something.
- */
-function sparkplugReadRequest(path: readonly string[]): string {
-  const [group, edgeNode, device] = path;
-  const request: Record<string, string> = {};
-  if (group !== undefined && group !== "") request.group = group;
-  if (edgeNode !== undefined && edgeNode !== "") request.edgeNode = edgeNode;
-  if (device !== undefined && device !== "") request.device = device;
-  return JSON.stringify(request, null, 2);
 }

@@ -239,6 +239,7 @@ credential all end in the same refusal.
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `netconf` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/network/netconf/execution-ui.ts).
+What a tree click and Generate Query write is `NETCONF_GENERATORS`, the `netconf` row of `DIALECT_GENERATORS`, declared in [`generators.ts`](../../src/lib/db/providers/network/netconf/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 
 ## 5. Query interface
 

@@ -1,6 +1,6 @@
 /**
  * What a tree click and Generate Command write for a Qdrant collection (vector-family spec 6.7), read through
- * `DIALECT_GENERATORS.qdrant` in `src/lib/query-generators.ts`.
+ * `DIALECT_GENERATORS.qdrant` in `src/lib/db/query-generators/index.ts`.
  *
  * The click runs at once: a scroll of the collection's first 100 points with their payloads and without vectors,
  * an explicit limit, so the absent-limit rule does not apply. Generate Command opens without running: a query over
@@ -18,6 +18,7 @@ import type { VectorTarget } from "@/lib/db/vector/dense";
 import { type ProbeVector, probeVector } from "@/lib/db/vector/probe";
 import type { ColumnSchema } from "@/lib/types";
 import { vectorNameOfColumn, vectorTargetOfType } from "./type-spelling";
+import type { DialectGenerators } from "@/lib/db/query-generators/types";
 
 /** The rows the tree click reads, the first page of the approved design. */
 const QDRANT_CLICK_LIMIT = 100;
@@ -89,3 +90,13 @@ export function qdrantSelectQuery(path: readonly string[], columns: readonly Col
     `{"query": ${query}, ${using}"limit": ${QDRANT_GENERATED_QUERY_LIMIT}, "with_payload": true}`,
   ].join("\n");
 }
+
+/**
+ * Qdrant reads a collection through its own console request (vector-family spec 6.7): the tree click is a 100-point
+ * scroll of the clicked collection, without vectors, and "Generate Command" a runnable query over the first dense
+ * vector. Neither reads the scope. The dialect's row in `DIALECT_GENERATORS` (`src/lib/db/query-generators/index.ts`).
+ */
+export const QDRANT_GENERATORS: DialectGenerators = Object.freeze<DialectGenerators>({
+  table: (path) => qdrantTableQuery(path),
+  select: (path, columns) => qdrantSelectQuery(path, columns),
+});

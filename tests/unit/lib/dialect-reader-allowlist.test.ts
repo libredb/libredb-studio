@@ -2,7 +2,7 @@
  * Every reader of a query dialect outside the dialect registries, held to a closed list (vector-family spec 3.8).
  *
  * The registries (`src/lib/db/query-dialects.ts`, `src/lib/editor/dialect-editors.ts`, and `DIALECT_GENERATORS`
- * in `src/lib/query-generators.ts`) answer what the per-dialect arms used to: a tab type, a Monaco language, a
+ * in `src/lib/db/query-generators/index.ts`) answer what the per-dialect arms used to: a tab type, a Monaco language, a
  * formatter, three row-menu gates and the generated statements. A comparison of `queryDialect` anywhere else, a
  * read of the JSON language that would take a dialect's text for MongoDB's, or a negated read of the language that
  * would send a new member into one branch (#1085), is the #427 class coming back, so every such line under `src/`

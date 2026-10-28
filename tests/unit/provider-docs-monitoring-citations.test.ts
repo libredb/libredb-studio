@@ -687,7 +687,7 @@ describe("redis provider doc", () => {
     expect(read("docs/providers/redis.md")).toContain(
       "`keyGrouping()` ([`redis.ts`](../../src/lib/db/providers/keyvalue/redis.ts))",
     );
-    expect(read("src/lib/query-generators.ts")).toContain("`keyGrouping` grouping");
+    expect(read("src/lib/db/query-generators/shared.ts")).toContain("`keyGrouping` grouping");
     expect(read("src/lib/db/providers/keyvalue/redis.ts")).toMatch(/^function keyGrouping\(/m);
   });
 

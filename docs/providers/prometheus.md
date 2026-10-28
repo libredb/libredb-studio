@@ -390,6 +390,7 @@ The host field cannot carry the prefix instead: a host holding `/` is refused be
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `prometheus` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/timeseries/prometheus/execution-ui.ts).
+What a tree click and Generate Query write is `PROMQL_GENERATORS`, the `promql` row of `LANGUAGE_GENERATORS`, declared in [`generators.ts`](../../src/lib/db/providers/timeseries/prometheus/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 Its editor language, `promql`, is the row in `EDITOR_LANGUAGES` declared in [`editor-language.ts`](../../src/lib/db/providers/timeseries/prometheus/editor-language.ts): how the editor registers and tints it, and its completion source and formatter where it has one.
 
 ---

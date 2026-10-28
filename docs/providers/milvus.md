@@ -215,6 +215,7 @@ A search that names no metric and no search parameter runs without the IndexDeta
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `milvus` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/vector/milvus/execution-ui.ts).
+What a tree click and Generate Query write is `MILVUS_GENERATORS`, the `milvus` row of `DIALECT_GENERATORS`, declared in [`generators.ts`](../../src/lib/db/providers/vector/milvus/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 Its editor language, `milvus`, is the row in `EDITOR_LANGUAGES` declared in [`editor-language.ts`](../../src/lib/db/providers/vector/milvus/editor-language.ts): how the editor registers and tints it, and its completion source and formatter where it has one.
 
 ## 5. Query interface

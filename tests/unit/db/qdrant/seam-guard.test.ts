@@ -20,7 +20,7 @@ const PROVIDER = "src/lib/db/providers/vector/qdrant";
 const BROWSER_MODULES = ["routes.ts", "request.ts", "guard.ts", "generators.ts", "labels.ts", "type-spelling.ts"].map(
   (name) => `${PROVIDER}/${name}`,
 );
-const SHARED_DIRECTORIES = ["src/lib/db/console/", "src/lib/db/vector/"];
+const SHARED_DIRECTORIES = ["src/lib/db/console/", "src/lib/db/vector/", "src/lib/db/query-generators/"];
 const TYPES_ONLY = ["src/lib/types.ts", "src/lib/db/types.ts", `${PROVIDER}/client.ts`];
 const ANY_IMPORT = ["src/lib/db/errors.ts"];
 

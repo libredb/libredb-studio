@@ -902,7 +902,7 @@ export interface KeyScanPage {
  * One action a row of a NON-RELATION kind offers, declared by the provider that writes its statement.
  *
  * The row menu offers it on every object of a kind named in `kinds`, and choosing it opens a new tab
- * that runs what the dialect's `rowAction` generator writes for that object (`src/lib/query-generators.ts`).
+ * that runs what the dialect's `rowAction` generator writes for that object (`src/lib/db/query-generators/index.ts`).
  * `id` is what the generator is asked for and stays stable; `label` is what the menu and the tab read.
  *
  * A row action reads and never writes: it runs on click, with no role asked and no editing step, so
@@ -946,7 +946,7 @@ export interface ProviderCapabilities {
   /**
    * The language this engine's statements are written in: what its editor tabs are typed and
    * highlighted as (`src/lib/editor/tab-language.ts`), and the arm the query generators take for a
-   * tree click and for "Generate Query" (`src/lib/query-generators.ts`).
+   * tree click and for "Generate Query" (`src/lib/db/query-generators/index.ts`).
    *
    * A CLOSED union, and a member added to it is not neutral: a reader written `=== "json"` sends
    * the new member into its SQL branch, and one written `!== "sql"` sends it into its JSON
@@ -1018,7 +1018,7 @@ export interface ProviderCapabilities {
    *
    * Those arms are now records: a member added here does not compile until it has one in each of
    * `QUERY_DIALECTS` (`src/lib/db/query-dialects.ts`), `DIALECT_EDITORS` (`src/lib/editor/dialect-editors.ts`)
-   * and `DIALECT_GENERATORS` (`src/lib/query-generators.ts`), and every other reader of this field and of
+   * and `DIALECT_GENERATORS` (`src/lib/db/query-generators/index.ts`), and every other reader of this field and of
    * `queryLanguage` is held to a closed list by `tests/unit/lib/dialect-reader-allowlist.test.ts`.
    */
   queryDialect?:
@@ -1480,7 +1480,7 @@ export interface ProviderCapabilities {
   /**
    * How this engine quotes an identifier, when the port cannot say.
    *
-   * `src/lib/query-generators.ts` has always derived the dialect from
+   * `src/lib/db/query-generators/index.ts` has always derived the dialect from
    * `defaultPort`, which worked only because every engine had a distinct one. That
    * assumption broke with #424 Phase 1: Elasticsearch and OpenSearch BOTH ship on
    * 9200 and they disagree about the quote character, so one port had to answer for
@@ -1524,7 +1524,7 @@ export interface ProviderCapabilities {
    * Whether a statement this product runs may end with `;`.
    *
    * Absent means it may, which is every engine that shipped before #424 Phase 1 and
-   * is what `src/lib/query-generators.ts` has always emitted. `"none"` says the
+   * is what `src/lib/db/query-generators/index.ts` has always emitted. `"none"` says the
    * terminator is not in the grammar at all.
    *
    * Measured 2026-08-19 on Elasticsearch 9.1.4: the generator's own
@@ -3358,7 +3358,7 @@ export interface DatabaseObject {
    * the caller's grants do not cover, so a user who is not root, granted one key of a prefix
    * group, would meet a permission error on the group's own generated read. The tree click's read
    * and Generate Command are written in the browser from the listed object alone
-   * (`generateTableQuery` and `generateSelectQuery` in `src/lib/query-generators.ts`), so the
+   * (`generateTableQuery` and `generateSelectQuery` in `src/lib/db/query-generators/index.ts`), so the
    * pieces travel with it, and the generated read addresses the first piece rather than the group.
    *
    * A piece can be a single key, which makes this the one field of a listed object that may name

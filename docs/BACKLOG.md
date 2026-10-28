@@ -5015,7 +5015,7 @@ Not fixed there: the other engines' arms are outside the etcd PR, and so is the 
 
 ### U68. LibreDB's click and Generate Select write a key bare, so a line for a key that holds white space or a quote mark does not reach that key
 
-The LibreDB arm of `generateTableQuery` and `libredbCheatsheet` in `src/lib/query-generators.ts` write the key or prefix bare into their `prefix`, `get`, `put` and `delete` lines.
+The LibreDB row of `generateTableQuery` and `libredbCheatsheet` in `src/lib/db/providers/embedded/libredb-generators.ts` write the key or prefix bare into their `prefix`, `get`, `put` and `delete` lines.
 `tokenize` in `src/lib/db/providers/embedded/libredb.ts` splits a line at any white space outside quotes and reads `'` and `"` as quoting, which it removes, so those lines name another key or none, and a click on a tree row runs the line it writes.
 It needs neither U67's unusual character nor its dialog: a plain space is enough.
 Measured 2026-10-02 through the generators and the provider's `query` on a scratch store holding the keys `a b` and `a`: the click `get a b` shows the value of `a`, `put a b example` sets `a` to `b example`, and `delete a b` deletes `a` while `a b` stays.
@@ -7445,19 +7445,19 @@ says which.
 ### B78. Generated Redis and LibreDB command text carries em dashes
 
 House style forbids em and en dashes in anything that lands in the repo or in front of a user.
-`src/lib/query-generators.ts` emits five of them into text a user reads in the editor, reproduced in
+The Redis and LibreDB generator rows (`src/lib/db/providers/keyvalue/redis-generators.ts` and `src/lib/db/providers/embedded/libredb-generators.ts`) emit five of them into text a user reads in the editor, reproduced in
 the browser on a live Redis 8 during task 28b by pressing Generate Command on a key-prefix row:
 
     # Redis commands for "bulk:*" — select a line and Run Selected.
     # List keys under this prefix — ONE scan iteration, not the whole set.
     # Create or update it — this overwrites an existing value
 
-plus `:229` for the hash variant and `:411` for the LibreDB header. Eleven more sit in that file's
+plus the hash variant's line and the LibreDB header. More sit in those files'
 doc comments. Pre-existing rather than #789's, and named here because task 27 found it and it would
 otherwise disappear: it is not one edit but a small sweep, and
 `tests/unit/lib/query-generators.test.ts` pins the exact strings.
 
-**Done when:** no emitted line in that file carries an em or en dash, and its tests assert the new
+**Done when:** no emitted line in those files carries an em or en dash, and its tests assert the new
 wording.
 
 ### B80. The inventory's two bounds do not reach the container enumeration

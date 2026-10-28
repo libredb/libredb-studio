@@ -150,8 +150,8 @@ function syntheticDeclarations(): Record<string, ProviderCapabilities> {
   }
   out["json schema-level"] = base({
     queryLanguage: "json",
-    containerLevels: [{ id: "schema", label: "Database" }],
-  } as Partial<ProviderCapabilities>);
+    containerLevels: [{ id: "schema", label: "Database", labelPlural: "Databases" }],
+  } as unknown as Partial<ProviderCapabilities>);
   out["host dialect constructor"] = base({
     queryLanguage: "json",
     queryDialect: "constructor" as ProviderCapabilities["queryDialect"],

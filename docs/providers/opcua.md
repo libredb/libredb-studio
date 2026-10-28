@@ -431,6 +431,7 @@ A server with a trust list of its own has to be given a stable client certificat
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `opcua` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/industrial/opcua/execution-ui.ts).
+What a tree click and Generate Query write is `OPCUA_GENERATORS`, the `opcua` row of `DIALECT_GENERATORS`, declared in [`generators.ts`](../../src/lib/db/providers/industrial/opcua/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 
 ## 5. Query interface
 

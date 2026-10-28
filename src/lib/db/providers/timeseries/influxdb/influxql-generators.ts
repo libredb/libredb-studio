@@ -13,6 +13,7 @@
  */
 import type { ColumnSchema } from "@/lib/types";
 import { influxqlSource, quoteInfluxqlIdentifier } from "./influxql-quote";
+import type { LanguageGenerators } from "@/lib/db/query-generators/types";
 
 /** Held equal to `PREVIEW_PAGE_SIZE` (`src/hooks/use-tab-manager.ts`) by a test. */
 export const INFLUXQL_PREVIEW_LIMIT = 50;
@@ -71,3 +72,25 @@ export function influxqlSelectQuery(path: readonly string[], columns: readonly C
     "-- For the Charts tab: ORDER BY time ASC, and choose time as the x axis.",
   ].join("\n");
 }
+
+/**
+ * The InfluxQL language's generators (InfluxDB spec 6.6 and 6.7, I20, C6), collected as its row by
+ * `LANGUAGE_GENERATORS` in `src/lib/db/query-generators/index.ts`. A tree click reads the newest points of the last
+ * hour, `LIMIT 50` per series written in the text, because the type declares no external limiting, and Generate Query
+ * writes that preview with its example lines as `--` comments, naming a field and a tag from the described columns.
+ * The path must be `[database, measurement]`. A name is always double-quoted, with the scanner's escapes, and a
+ * measurement is written `"db".."m"`, the database's default retention policy; no object is the empty string, as on
+ * every other dialect, because a modal mounted before an object is chosen renders with the empty path.
+ */
+export const INFLUXQL_GENERATORS: LanguageGenerators = Object.freeze<LanguageGenerators>({
+  table: (path: readonly string[]) => influxqlTableQuery(path),
+  select: (path: readonly string[], columns: readonly ColumnSchema[]) => influxqlSelectQuery(path, columns),
+  quote: (name: string) => quoteInfluxqlIdentifier(name),
+  quotePath: (path: readonly string[]) => {
+    if (path.length === 0) return "";
+    if (path.length !== 2) {
+      throw new RangeError(`An InfluxQL source path is [database, measurement]; received ${path.length} segment(s)`);
+    }
+    return influxqlSource(path[0], path[1]);
+  },
+});

@@ -369,6 +369,7 @@ LibreDB is embedded in the process, so there is no address to write a scheme for
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `libredb` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is declared in [`libredb-execution-ui.ts`](../../src/lib/db/providers/embedded/libredb-execution-ui.ts).
+What a tree click and Generate Query write is `LIBREDB_GENERATORS`, the `libredb` row of `DIALECT_GENERATORS`, declared in [`libredb-generators.ts`](../../src/lib/db/providers/embedded/libredb-generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 Its editor language, `libredb`, is the row in `EDITOR_LANGUAGES` declared in [`libredb-editor-language.ts`](../../src/lib/db/providers/embedded/libredb-editor-language.ts): how the editor registers and tints it, and its completion source and formatter where it has one.
 
 ---
@@ -430,7 +431,8 @@ internal metadata.
 Right-clicking a node in the schema tree (or its `⋮` menu) offers commands generated for that
 node, so you do not have to type the grammar from memory. The generation is driven by the
 `queryDialect: 'libredb'` capability, which routes the shared client-side query generators
-(`src/lib/query-generators.ts`) to LibreDB output instead of the MongoDB-JSON that
+(`src/lib/query-generators.ts`) to the dialect's row, `LIBREDB_GENERATORS` in
+`src/lib/db/providers/embedded/libredb-generators.ts`, and so to LibreDB output instead of the MongoDB-JSON that
 `queryLanguage: 'json'` otherwise implies. Redis took the same route in #427 with
 `queryDialect: 'redis'`; MongoDB is now the only provider that reaches the JSON branch:
 

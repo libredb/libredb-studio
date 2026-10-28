@@ -275,6 +275,7 @@ Create the mapping with `influx v1 dbrp create --bucket-id <bucket-id> --db <dat
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `influxdb` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is declared in [`influxdb-execution-ui.ts`](../../src/lib/db/providers/timeseries/influxdb/influxdb-execution-ui.ts).
+What a tree click and Generate Query write is `INFLUXQL_GENERATORS`, the `influxql` row of `LANGUAGE_GENERATORS`, declared in [`influxql-generators.ts`](../../src/lib/db/providers/timeseries/influxdb/influxql-generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 Its editor language, `influxql`, is the row in `EDITOR_LANGUAGES` declared in [`influxql-editor-language.ts`](../../src/lib/db/providers/timeseries/influxdb/influxql-editor-language.ts): how the editor registers and tints it, and its completion source and formatter where it has one.
 
 ## 5. Query interface

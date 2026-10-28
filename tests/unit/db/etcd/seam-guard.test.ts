@@ -1602,6 +1602,8 @@ const SPEC_3_1_MODULES: readonly string[] = [
   "sql-writing.ts",
   // The engine's row of the confirmation gate's vocabulary, which src/lib/db/destructive-commands.ts collects.
   "destructive.ts",
+  // The dialect's row of the query generators, which src/lib/db/query-generators/index.ts collects.
+  "generators.ts",
   // The editor's etcd language over the lexer, and its row in the editor language registry.
   "editor-syntax.ts",
   "editor-language.ts",

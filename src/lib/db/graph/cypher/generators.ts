@@ -8,6 +8,8 @@
  */
 import { parseGraphObjectSegment } from "../objects";
 import { quoteCypherName } from "./quote";
+import { objectSegment } from "@/lib/db/query-generators/shared";
+import type { LanguageGenerators } from "@/lib/db/query-generators/types";
 
 export const GRAPH_SAMPLE_LIMIT = 100;
 
@@ -35,3 +37,19 @@ export function cypherForSegment(segment: string, limit?: number): string | unde
   if (parsed?.kind === "relationship_type") return cypherSelectRelationship(parsed.name, limit);
   return undefined;
 }
+
+/**
+ * The Cypher language's generators (Neo4j spec 6.5, SR5), collected as its row by `LANGUAGE_GENERATORS` in
+ * `src/lib/db/query-generators/index.ts`. A label or a relationship type is addressed by its kind-qualified segment, so
+ * the two of one name never read each other's rows: a label reads a bounded sample of its nodes and a relationship
+ * type its relationships with their ends, each name backticked. Without this row a tree click would auto-execute
+ * `SELECT * FROM ...`. An index or a constraint has no generator in v1 and no click action (role `config`), so its
+ * segment writes no statement. Generate Query writes the click's read, which keeps its own `LIMIT 100`; the columns
+ * are not spelled, because a node is returned whole, its properties in one cell. Every name is backticked, a backtick
+ * doubled, as the generators do.
+ */
+export const CYPHER_GENERATORS: LanguageGenerators = Object.freeze<LanguageGenerators>({
+  table: (path: readonly string[]) => cypherForSegment(objectSegment(path)) ?? "",
+  select: (path: readonly string[]) => cypherForSegment(objectSegment(path)) ?? "",
+  quote: (name: string) => quoteCypherName(name),
+});

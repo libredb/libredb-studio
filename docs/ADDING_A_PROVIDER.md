@@ -901,7 +901,7 @@ Every field and what it controls:
 | Field | Type | Controls |
 |-------|------|----------|
 | `queryLanguage` | `'sql' \| 'json' \| 'promql' \| 'cypher' \| 'influxql'` | Monaco editor language mode, AI prompt style, query template format. A closed union: a new member needs an arm, or a test pinning its branch, in every reader (#1085) |
-| `queryDialect` | `'libredb' \| 'redis' \| 'kafka' \| 'etcd' \| 'milvus' \| 'qdrant' \| 'opcua' \| 'oxia' \| 's3' \| 'mqtt' \| 'firestore' \| 'rabbitmq' \| 'kubectl' \| undefined` | Optional. Names the dialect's records in three registries, which the tab type, the Monaco language, the formatter, the generated statements and the Generate Code and Generate Count Query gates consult **before** `queryLanguage` (only Profile answers an SQL language first, `offersColumnProfiling` in `src/lib/db/types.ts`): `QUERY_DIALECTS` (`src/lib/db/query-dialects.ts`, the tab type and the row-menu gates), `DIALECT_EDITORS` (`src/lib/editor/dialect-editors.ts`, the Monaco language; the formatter is that language's row in `EDITOR_LANGUAGES`, `src/lib/db/editor-language/index.ts`) and `DIALECT_GENERATORS` (`query-generators.ts`, what a tree click and Generate Query write). A new dialect adds its three records, not a check in each reader: `queryLanguage: 'json'` alone means MongoDB, which is how Redis silently got MongoDB documents until #427. Left undefined by SQL and MongoDB |
+| `queryDialect` | `'libredb' \| 'redis' \| 'kafka' \| 'etcd' \| 'milvus' \| 'qdrant' \| 'opcua' \| 'oxia' \| 's3' \| 'mqtt' \| 'firestore' \| 'rabbitmq' \| 'kubectl' \| undefined` | Optional. Names the dialect's records in three registries, which the tab type, the Monaco language, the formatter, the generated statements and the Generate Code and Generate Count Query gates consult **before** `queryLanguage` (only Profile answers an SQL language first, `offersColumnProfiling` in `src/lib/db/types.ts`): `QUERY_DIALECTS` (`src/lib/db/query-dialects.ts`, the tab type and the row-menu gates), `DIALECT_EDITORS` (`src/lib/editor/dialect-editors.ts`, the Monaco language; the formatter is that language's row in `EDITOR_LANGUAGES`, `src/lib/db/editor-language/index.ts`) and `DIALECT_GENERATORS` (`src/lib/db/query-generators/index.ts`, what a tree click and Generate Query write, each row declared beside its provider). A new dialect adds its three records, not a check in each reader: `queryLanguage: 'json'` alone means MongoDB, which is how Redis silently got MongoDB documents until #427. Left undefined by SQL and MongoDB |
 | `supportsExplain` | `boolean` | EXPLAIN button visibility in QueryEditor toolbar |
 | `explainFormat` | `ExplainFormat \| undefined` | **Required whenever `supportsExplain` is true.** Selects the strategy in `src/lib/explain/index.ts`. Setting the flag without the format leaves the control visible and dead — the UI resets out of explain mode when metadata lacks it |
 | `supportsSqlFormat` | `false?` | False where the shared SQL formatter rewrites this engine's valid text: the editor offers no Format for its tabs. Absent: the tab's language decides, as before. |
@@ -1178,7 +1178,7 @@ Those three reach code and tests only; the four prose greps of the published blo
       A console whose grammar takes credential flags declares them as `historyMask` on the record, so query history stores their values masked (`src/lib/history-mask.ts`).
 - [ ] `src/lib/editor/dialect-editors.ts`: a record in `DIALECT_EDITORS` for the dialect's tab type, the Monaco language it renders in.
       A language of its own also takes an `editor-language.ts` row beside the provider and a key in `EDITOR_LANGUAGES` (`src/lib/db/editor-language/index.ts`), which carries its formatter, if it has one.
-- [ ] `src/lib/query-generators.ts`: a record in `DIALECT_GENERATORS`, what a tree click and Generate Query write, read before the `json` arm, or a tree click auto-executes a MongoDB document.
+- [ ] `generators.ts` beside the provider: the dialect's `DialectGenerators` row, what a tree click and Generate Query write, and its key in `DIALECT_GENERATORS` (`src/lib/db/query-generators/index.ts`), read before the `json` arm, or a tree click auto-executes a MongoDB document.
       `docs/providers/kafka.md` section 3.1 is the worked case.
 - [ ] `src/lib/db/providers/document/mongodb/editor-language.ts`: the MongoDB completion source of the shared `json` row (`src/lib/db/editor-language/json.ts`) registers only where the declared capabilities name no JSON dialect.
 - [ ] `tests/unit/lib/dialect-reader-allowlist.test.ts`: every other line under `src/` that compares `queryDialect`, reads `queryLanguage === "json"` or negates `queryLanguage` is on its closed list with its owner.
@@ -1205,7 +1205,8 @@ Those three reach code and tests only; the four prose greps of the published blo
       The `Record<ExplainFormat, …>` registry is exhaustive, so this and the next item must land
       together or neither compiles
 - [ ] `src/lib/explain/index.ts` — register the strategy
-- [ ] `src/lib/query-generators.ts` — only if the dialect needs its own branch; the default is
+- [ ] `src/lib/db/query-generators/index.ts`: only if the engine needs its own forms or quoting, a
+      `SqlPortGenerators` row beside the provider, keyed by its default port; the default is
       PostgreSQL-shaped, so check before assuming it fits
 - [ ] `src/lib/db/sql-grammar/`: write your engine's grammar module, `<family>/<id>/sql-grammar.ts`
       under `src/lib/db/providers/` (or `<family>/<id>-sql-grammar.ts` beside a provider that is one

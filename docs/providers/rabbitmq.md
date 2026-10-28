@@ -150,6 +150,7 @@ A `readOnly: true` seed with the `guest`/`guest` pair is refused, as the dialog 
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `rabbitmq` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/stream/rabbitmq/execution-ui.ts).
+What a tree click and Generate Query write is `RABBITMQ_GENERATORS`, the `rabbitmq` row of `DIALECT_GENERATORS`, declared in [`generators.ts`](../../src/lib/db/providers/stream/rabbitmq/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 
 ## 5. Query interface
 

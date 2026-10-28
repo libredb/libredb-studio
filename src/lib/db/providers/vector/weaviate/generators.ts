@@ -1,6 +1,6 @@
 /**
  * What a tree click and Generate Request write for a Weaviate collection (#1566 spec 6.4), read through
- * `DIALECT_GENERATORS.weaviate` in `src/lib/query-generators.ts`.
+ * `DIALECT_GENERATORS.weaviate` in `src/lib/db/query-generators/index.ts`.
  *
  * The click runs at once: `GET /v1/objects` of the collection's first 50 objects. The generator is handed the path
  * and the columns, which carry no tenancy, and a click never names a tenant, so on a multi-tenant collection phase
@@ -16,6 +16,7 @@
 import { toJsonText } from "@/lib/db/console/tagged-json";
 import { type ProbeVector, probeVector } from "@/lib/db/vector/probe";
 import type { ColumnSchema } from "@/lib/types";
+import type { DialectGenerators } from "@/lib/db/query-generators/types";
 
 /** The rows the tree click reads. */
 const WEAVIATE_CLICK_LIMIT = 50;
@@ -96,3 +97,13 @@ export function weaviateSelectQuery(path: readonly string[], columns: readonly C
     `{"vector": ${vectorText(chosen.dimension)}, ${target}"limit": ${WEAVIATE_GENERATED_LIMIT}, "returnMetadata": ["distance"]}`,
   ].join("\n");
 }
+
+/**
+ * Weaviate reads a collection through its own console request (#1566 spec 6.4): the click lists the first objects,
+ * Generate Request writes a near-vector search without running it. The dialect's row in `DIALECT_GENERATORS`
+ * (`src/lib/db/query-generators/index.ts`).
+ */
+export const WEAVIATE_GENERATORS: DialectGenerators = Object.freeze<DialectGenerators>({
+  table: (path) => weaviateTableQuery(path),
+  select: (path, columns) => weaviateSelectQuery(path, columns),
+});

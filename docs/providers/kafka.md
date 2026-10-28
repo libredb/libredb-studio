@@ -291,6 +291,7 @@ An `sshTunnel` that is not an object, such as `true`, is refused the same way, a
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `kafka` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/stream/kafka/execution-ui.ts).
+What a tree click and Generate Query write is `KAFKA_GENERATORS`, the `kafka` row of `DIALECT_GENERATORS`, declared in [`generators.ts`](../../src/lib/db/providers/stream/kafka/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 
 ---
 

@@ -713,6 +713,7 @@ It runs no seed load check.
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `mysql` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is declared in [`mysql-execution-ui.ts`](../../src/lib/db/providers/sql/mysql-execution-ui.ts).
+What a tree click and Generate Query write is `MYSQL_SQL_GENERATORS`, its row of `SQL_PORT_GENERATORS` keyed by its default port (its identifier quoting), declared in [`mysql-generators.ts`](../../src/lib/db/providers/sql/mysql-generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 How `mapDatabaseError` classifies its driver's errors, its account-limit and access-refusal error numbers and its interrupted-query words, is the `mysql2` row of `DRIVER_ERROR_CLASSIFIERS`, declared in [`mysql-driver-errors.ts`](../../src/lib/db/providers/sql/mysql-driver-errors.ts).
 
 ---
