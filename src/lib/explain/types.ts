@@ -74,6 +74,12 @@ export interface ExplainStrategy {
    * means the editor asks for an estimate plan in the background beside every run of a statement the strategy explains.
    */
   readonly backgroundPlan?: false;
+  /**
+   * `true` where the plan request is a free dry run that prices the statement without running or billing it, so the
+   * editor asks for it while the person types and shows what the statement would process. Absent means the plan is
+   * asked for only on demand.
+   */
+  readonly liveEstimate?: true;
   /** Dialect EXPLAIN SQL for a SELECT statement, or null when not explainable. */
   buildSql(sql: string, mode: ExplainMode): string | null;
   /**

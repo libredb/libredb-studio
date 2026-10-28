@@ -27,6 +27,20 @@ const EVERY_FORMAT: Record<ExplainFormat, true> = {
 };
 
 /**
+ * The editor asks for a live estimate while the person types only where the strategy's plan request is a free dry
+ * run: BigQuery's validates and prices the statement without running or billing it. Every other format's plan is
+ * asked for on demand, so the shared editor names no format of its own.
+ */
+describe("the live estimate", () => {
+  test("is declared by exactly the formats whose plan request is a free dry run", () => {
+    const live = (Object.keys(EVERY_FORMAT) as ExplainFormat[]).filter(
+      (format) => getExplainStrategy(format)?.liveEstimate === true,
+    );
+    expect(live).toEqual(["bigquery-dryrun"]);
+  });
+});
+
+/**
  * The estimate is what the editor asks for in the background beside every run of a
  * SELECT, so no strategy may build an executing form for it. `postgres-json` once
  * ignored the mode and answered `EXPLAIN (ANALYZE, ...)`, which ran every SELECT twice

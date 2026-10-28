@@ -22,6 +22,8 @@ function isDryRunRow(value: unknown): value is DryRunRow {
 
 export const bigqueryDryRunStrategy: ExplainStrategy = {
   format: "bigquery-dryrun",
+  // A dry run is free, so the editor prices the statement while it is typed.
+  liveEstimate: true,
   // A dry run never executes, so every statement kind is safe and estimate equals analyze.
   buildSql(sql) {
     return `${BIGQUERY_DRY_RUN_MARKER}${sql}`;

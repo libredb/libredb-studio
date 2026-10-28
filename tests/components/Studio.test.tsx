@@ -215,6 +215,13 @@ mock.module("@/hooks/use-tab-manager", () => ({
 
 const mockHandleTransaction = mock(() => {});
 
+// The dry-run estimate's own fetch is pinned in tests/hooks/use-dry-run-estimate.test.ts; here only whether Studio
+// turns it on.
+const mockUseDryRunEstimate = mock((_connection: unknown, _sql: string, _enabled: boolean) => ({
+  state: "idle" as const,
+}));
+mock.module("@/hooks/use-dry-run-estimate", () => ({ useDryRunEstimate: mockUseDryRunEstimate }));
+
 mock.module("@/hooks/use-transaction-control", () => ({
   useTransactionControl: mock(() => ({
     transactionActive: false,
@@ -1564,6 +1571,40 @@ describe("Studio", () => {
     expect(capturedSidebarProps.objectScanDeferred).toBe(true);
     expect(capturedSidebarProps.onLoadObjects).toBe(mockLoadObjects);
     expect(capturedSidebarProps.deferredForBilledCompute).toBe(false);
+  });
+
+  // The live bytes-processed estimate runs only where the connection's explain strategy declares its plan request a
+  // free dry run (BigQuery's), and only for a SQL tab; Studio names no explain format of its own.
+  describe("the live dry-run estimate", () => {
+    const lastEnabled = () => mockUseDryRunEstimate.mock.calls.at(-1)?.[2];
+
+    test("is turned on for a connection whose explain format is a free dry run", () => {
+      mockUseDryRunEstimate.mockClear();
+      connMgrOverride = { activeConnection: { ...pgConn, type: "bigquery" } };
+      capabilitiesOverride = { explainFormat: "bigquery-dryrun" };
+      render(<Studio />);
+      expect(lastEnabled()).toBe(true);
+    });
+
+    test("control: stays off for any other explain format, for none, and for a tab that is not SQL", () => {
+      for (const explainFormat of ["postgres-json", "snowflake-json", undefined]) {
+        cleanup();
+        mockUseDryRunEstimate.mockClear();
+        connMgrOverride = { activeConnection: pgConn };
+        capabilitiesOverride = { explainFormat };
+        render(<Studio />);
+        expect(lastEnabled()).toBe(false);
+      }
+      cleanup();
+      mockUseDryRunEstimate.mockClear();
+      connMgrOverride = { activeConnection: { ...pgConn, type: "bigquery" } };
+      capabilitiesOverride = { explainFormat: "bigquery-dryrun" };
+      tabMgrOverride = {
+        currentTab: { id: "tab-1", name: "Query 1", query: "{}", result: null, isExecuting: false, type: "mongodb" },
+      };
+      render(<Studio />);
+      expect(lastEnabled()).toBe(false);
+    });
   });
 
   // CL-CORE-2: the manager holds the inventory of a connection the page opened by itself whose requests resume billed

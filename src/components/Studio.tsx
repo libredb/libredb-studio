@@ -84,6 +84,7 @@ import { cn } from "@/lib/utils";
 import { Database, Plus } from "lucide-react";
 import { DryRunBadge } from "@/components/studio/DryRunBadge";
 import { useDryRunEstimate } from "@/hooks/use-dry-run-estimate";
+import { getExplainStrategy } from "@/lib/explain";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { Button } from "@/components/ui/button";
 /*
@@ -150,11 +151,11 @@ export default function Studio() {
     schema: conn.schema,
   });
 
-  // BigQuery-style live scan estimate, only where EXPLAIN is a free dry run.
+  // A live scan estimate, only where the connection's explain strategy declares its plan request a free dry run.
   const dryRun = useDryRunEstimate(
     conn.activeConnection,
     tabMgr.currentTab.query,
-    metadata?.capabilities.explainFormat === "bigquery-dryrun" && tabMgr.currentTab.type === "sql",
+    getExplainStrategy(metadata?.capabilities.explainFormat)?.liveEstimate === true && tabMgr.currentTab.type === "sql",
   );
 
   // 4. Transaction Control

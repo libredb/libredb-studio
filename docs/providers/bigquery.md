@@ -217,7 +217,7 @@ The dry run validates the statement and returns `totalBytesProcessed` without ru
 The editor uses it twice:
 
 - **Explain** renders "Dry run: 1.2 GB would be processed".
-- **Live badge**: while the person types, a debounced dry run (800 ms) shows "This query will process 1.2 GB when run." in the editor's corner, or the validation error in red. It is drawn only for connections whose EXPLAIN format is `bigquery-dryrun`.
+- **Live badge**: while the person types, a debounced dry run (800 ms) shows "This query will process 1.2 GB when run." in the editor's corner, or the validation error in red. It is drawn only for connections whose EXPLAIN strategy declares `liveEstimate: true`, which `bigquery-dryrun` alone does.
 
 ### 6.1 AI clients
 
