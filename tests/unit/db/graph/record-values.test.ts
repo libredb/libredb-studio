@@ -298,6 +298,16 @@ describe("cell bound (SR16)", () => {
     });
   });
 
+  test("a conversion that fails for any reason but depth is raised, not reported as a deep value", () => {
+    const failure = new Error("toString failed");
+    class Opaque {
+      toString(): string {
+        throw failure;
+      }
+    }
+    expect(() => boundedJsonCell(new Opaque())).toThrow(failure);
+  });
+
   test("a cell over 1 MiB of JSON is replaced, naming its size", () => {
     const text = "x".repeat(MAX_CELL_JSON_BYTES);
     const cell = boundedJsonCell(text);
