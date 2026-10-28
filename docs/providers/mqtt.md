@@ -262,6 +262,8 @@ encrypts the credential the broker cannot.
 With TLS on as well, the certificate is checked against the tunnel's far end rather than against the local
 forward, which is the second bullet in 4.5.
 
+With `DB_HTTP_BLOCK_PRIVATE_HOSTS` on, a tunnelled connection is refused, for the reason in 4.8.
+
 ### 4.7 Server versions
 
 MQTT 5.0 only. The CONNECT declares version 5 and the decoder is built for version 5, so a broker that does
@@ -269,6 +271,18 @@ not speak 5.0 refuses the handshake rather than half-working: a 5.0 broker refus
 (Unsupported Protocol Version), and a 3.1.1 broker answers the older CONNACK's return code 1. Studio names
 both. A code outside the fourteen in 10.1 is reported as itself in both bases. The brokers measured are in
 section 8.
+
+### 4.8 Where the dial may connect
+
+The dial applies the shared egress rule, `socketEgress` in `src/lib/db/http/egress-policy.ts`, and writes no address check of its own.
+A link-local address or AWS's IPv6 instance metadata address (`169.254.0.0/16`, also in its IPv4-mapped and NAT64 forms, `fe80::/10`, `fd00:ec2::254`, and any IPv6 address with a zone index) is never reached, whatever `DB_HTTP_BLOCK_PRIVATE_HOSTS` says.
+With the flag on, a loopback, private, unique-local or special-use address is refused as well, as it is for the HTTP transports and RabbitMQ's AMQP dial.
+An IP literal is refused before any socket opens, and a name is dialled through a lookup that checks every address it resolves to and hands the socket the address it checked, so a second lookup cannot answer differently.
+The refusal is the shared sentence, unchanged, under plain TCP and TLS alike.
+
+Through an SSH tunnel the socket dials the local forward, a loopback address, and the rule is checked against that address, as the shared node transport checks it.
+So with the flag on a tunnelled connection is refused, and with it off the forward is dialled.
+The broker at the far end is not checked here: a name is resolved by the SSH server, where Studio cannot check it.
 
 ### Connection string
 
@@ -519,6 +533,7 @@ bun tests/run-tests.ts tests/unit/db/mqtt/ tests/integration/db/mqtt-provider.te
 | `tests/unit/db/mqtt/inbound-limit.test.ts` | The 8 MiB skip, including a body spanning chunks and the heap it does not grow |
 | `tests/unit/db/mqtt/key-scan.test.ts` | The page, its truncation report and every end-reason sentence |
 | `tests/unit/db/mqtt/provider.test.ts` | The declarations, the refusals, and the dial against a loopback server |
+| `tests/unit/db/mqtt/egress.test.ts` | Where the dial may connect: link-local and metadata addresses, the flag, and a tunnel |
 | `tests/integration/db/mqtt-provider.test.ts` | The four captures, replayed |
 | `tests/unit/key-browser-line-contrast.test.ts` | The panel's text colours, as contrast ratios |
 | `e2e/mqtt-provider.spec.ts` | The connection dialog in a browser |
