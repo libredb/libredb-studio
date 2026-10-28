@@ -47,6 +47,12 @@ export interface ConnectionFormSpec {
    */
   connectionFields: readonly ConnectionField[];
   /**
+   * The order the connection dialog draws this engine's fields in, where it differs from `connectionFields`, which
+   * stays the order the VS Code extension prompts in. Each of the engine's fields once; a field left out is drawn
+   * after the ones named. Read by src/lib/db/connection-field-layout.ts.
+   */
+  dialogOrder?: readonly ConnectionField[];
+  /**
    * The connection dialog's label for a field, where this engine names the field differently from
    * the dialog's own word (#1085). Read through `connectionFieldLabel`, so an engine relabels a
    * field by declaring it here rather than by another per-type branch in `ConnectionModal.tsx`.
@@ -934,6 +940,8 @@ export const CONNECTION_FORM: {
     defaultPort: "",
     showConnectionStringToggle: false,
     connectionFields: CONNECTION_FIELDS.bigquery,
+    // The credential first and the location beside the project, as the dialog has always drawn them.
+    dialogOrder: ["password", "database", "location", "schema"],
     fieldLabels: {
       database: "Project ID",
       schema: "Default dataset",
@@ -1402,6 +1410,9 @@ for (const type of Object.keys(CONNECTION_FORM) as DatabaseType[]) {
   });
 }
 
+/** The engine a new connection opens on, the picker's first; the form hook holds it rather than spelling a type id. */
+export const DEFAULT_CONNECTION_TYPE: DatabaseType = "postgres";
+
 /**
  * The order the connection dialog's engine picker offers the engines in, for display (the dialog renders them as a
  * two-column grid).
@@ -1413,7 +1424,7 @@ for (const type of Object.keys(CONNECTION_FORM) as DatabaseType[]) {
  * tests/unit/lib/db/connection-form.test.ts enforces the coverage.
  */
 export const CONNECTION_PICKER_ORDER: readonly DatabaseType[] = Object.freeze([
-  "postgres",
+  DEFAULT_CONNECTION_TYPE,
   "mysql",
   "sqlite",
   "oracle",

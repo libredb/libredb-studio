@@ -2,10 +2,12 @@
  * Each connection type's connection fields and the fields only its provider reads, declared as data.
  *
  * `CONNECTION_FIELDS` names the fields the connection dialog draws for a type and `buildConnection` saves, in the
- * order the dialog draws them; `CONNECTION_FORM` (src/lib/db/connection-form.ts) takes each type's array from here by
+ * order the dialog draws them unless the type's form entry declares a `dialogOrder`; `CONNECTION_FORM` (src/lib/db/connection-form.ts) takes each type's array from here by
  * reference, so the list exists once, and the reason a list holds what it does stays beside that type's entry there.
  * `SEED_ONLY_FIELDS` names, per type, the fields a seed of any other type is refused for, with the sentence it is
  * refused with.
+ *
+ * `CONNECTION_FIELD_DESCRIPTORS` says how the dialog draws each field, as data its one renderer reads.
  *
  * Pure, browser-safe and UI-free: it imports types only. It is not in src/lib/db-ui-config.ts because that module
  * imports React icon components, which the seed loader must not load, the reason src/lib/db/credential-warnings.ts
@@ -91,6 +93,244 @@ export type PlaceableField = (typeof PLACEABLE_FIELDS)[number];
 /** Where the connection dialog draws a placeable field. */
 export type FieldPlacement = "open" | "advanced";
 
+/** The icon drawn beside a field's label, named rather than imported so this module stays UI-free. */
+export type ConnectionFieldIcon = "key" | "shield" | "server" | "globe" | "database";
+
+/**
+ * What the browser may do with the text typed into a box:
+ * - `free`: nothing is switched off;
+ * - `unfilled`: no autofill;
+ * - `unchecked`: no autofill and no spell check;
+ * - `verbatim`: no autofill, spell check, autocorrection or capitalisation, for a name or a document that is not prose;
+ * - `secret`: masked, never offered a saved site password, and verbatim.
+ */
+export type ConnectionFieldTyping = "free" | "unfilled" | "unchecked" | "verbatim" | "secret";
+
+/** The control the connection dialog draws for a field. */
+export type ConnectionFieldInput =
+  /**
+   * A one-line box. `numeric` asks a touch keyboard for digits; `compact` is the smaller box with no icon and no
+   * label association that the Advanced accordion's fields have always had.
+   */
+  | {
+      readonly kind: "text";
+      readonly typing: ConnectionFieldTyping;
+      readonly monospace?: true;
+      readonly numeric?: true;
+      readonly compact?: true;
+    }
+  /** A select of the engine's declared `fieldOptions`, after a None choice that stores nothing where `offerNone`. */
+  | { readonly kind: "select"; readonly offerNone: boolean }
+  /** A row of buttons, one per choice; an empty value presses `unset`, the choice the provider makes for it. */
+  | { readonly kind: "toggle"; readonly choices: readonly string[]; readonly unset: string }
+  /** A verbatim multi-line box, for a document such as a register map. */
+  | { readonly kind: "textarea"; readonly rows: number }
+  /** A pasted private key, drawn as text only while it is being typed or after Show key. */
+  | { readonly kind: "key" };
+
+/** A row of the dialog that holds more than one field side by side. */
+export interface ConnectionFieldGroup {
+  /**
+   * Drawn even where the engine takes none of its fields, right after the address row, or first where the engine
+   * takes no address: the place, and the spacing, the login row has always had.
+   */
+  readonly alwaysDrawn: boolean;
+  /** The dialog's own sentence under the whole row. */
+  readonly note?: string;
+}
+
+const CONNECTION_FIELD_GROUP_ROWS = {
+  login: { alwaysDrawn: true },
+  apiKey: {
+    alwaysDrawn: false,
+    note: 'Kibana shows this pair under the key\'s "Beats" or "Logstash" format. Preferred over username/password when both are set; leave either half empty to fall back to them.',
+  },
+} as const satisfies Record<string, ConnectionFieldGroup>;
+export type ConnectionFieldGroupName = keyof typeof CONNECTION_FIELD_GROUP_ROWS;
+
+/** The dialog's rows of more than one field. A field in a row leaves it while the engine shows it under a condition. */
+export const CONNECTION_FIELD_GROUPS: Readonly<Record<ConnectionFieldGroupName, ConnectionFieldGroup>> =
+  Object.freeze(CONNECTION_FIELD_GROUP_ROWS);
+
+/**
+ * How the connection dialog draws one field: declared once, here, and drawn by one renderer
+ * (src/components/ConnectionFieldControl.tsx), so a new field is a row of this table rather than markup in the dialog.
+ * An engine's `fieldLabels`, `fieldPlaceholders`, `fieldHints`, `fieldOptions` and `fieldRules` in
+ * src/lib/db/connection-form.ts win over the words here, which are the dialog's own.
+ */
+export type ConnectionFieldDescriptor =
+  /**
+   * Drawn by the dialog's own layout rather than the renderer: `address` in the Host row with its port, `uri` in the
+   * connection-string mode, and `consent` in the SSL / TLS panel, where it means something only while SSL is off.
+   */
+  | { readonly slot: "address" | "uri" | "consent" }
+  | {
+      readonly slot: "body";
+      readonly label: string;
+      /** The dialog's own example; absent, the box has no placeholder and an engine's declared one is not read. */
+      readonly placeholder?: string;
+      readonly icon?: ConnectionFieldIcon;
+      readonly control: ConnectionFieldInput;
+      readonly group?: ConnectionFieldGroupName;
+      /** A sentence of the dialog's own under the box, drawn only while the engine declares no placeholder for it. */
+      readonly note?: string;
+      /** The credential warning (src/lib/db/credential-warnings.ts) is drawn under this field. */
+      readonly carriesCredentialWarning?: true;
+    };
+
+/** The descriptor of a field the renderer draws. */
+export type BodyFieldDescriptor = Extract<ConnectionFieldDescriptor, { readonly slot: "body" }>;
+
+const VERBATIM_MONO = Object.freeze({ kind: "text", typing: "verbatim", monospace: true } as const);
+const UNCHECKED_MONO = Object.freeze({ kind: "text", typing: "unchecked", monospace: true } as const);
+
+/** Each field's descriptor as literals, so the compiler can tell the fields the renderer draws from the rest. */
+const CONNECTION_FIELD_DESCRIPTOR_ROWS = {
+  host: { slot: "address" },
+  port: { slot: "address" },
+  connectionString: { slot: "uri" },
+  allowInsecureAuth: { slot: "consent" },
+  user: {
+    slot: "body",
+    label: "Username",
+    placeholder: "user",
+    icon: "key",
+    control: { kind: "text", typing: "verbatim" },
+    group: "login",
+  },
+  password: {
+    slot: "body",
+    label: "Password",
+    placeholder: "***",
+    icon: "shield",
+    control: { kind: "text", typing: "secret" },
+    group: "login",
+    carriesCredentialWarning: true,
+  },
+  saslMechanism: { slot: "body", label: "SASL Mechanism", icon: "key", control: { kind: "select", offerNone: true } },
+  authMethod: { slot: "body", label: "Sign-in", icon: "key", control: { kind: "select", offerNone: false } },
+  privateKey: { slot: "body", label: "Private key", placeholder: "", icon: "key", control: { kind: "key" } },
+  privateKeyPassphrase: {
+    slot: "body",
+    label: "Passphrase",
+    icon: "shield",
+    control: { kind: "text", typing: "secret" },
+  },
+  hostKeyFingerprint: {
+    slot: "body",
+    label: "Host key fingerprint",
+    placeholder: "SHA256:...",
+    icon: "shield",
+    control: VERBATIM_MONO,
+  },
+  database: { slot: "body", label: "Database Name", placeholder: "db", icon: "database", control: VERBATIM_MONO },
+  dataServers: { slot: "body", label: "Data servers", icon: "server", control: UNCHECKED_MONO },
+  warehouse: { slot: "body", label: "Warehouse", icon: "server", control: VERBATIM_MONO },
+  location: { slot: "body", label: "Location", placeholder: "", icon: "globe", control: UNCHECKED_MONO },
+  region: { slot: "body", label: "Region", placeholder: "us-east-1", icon: "globe", control: UNCHECKED_MONO },
+  namespaces: { slot: "body", label: "Namespaces", icon: "database", control: UNCHECKED_MONO },
+  amqpPort: {
+    slot: "body",
+    label: "AMQP port",
+    placeholder: "",
+    icon: "server",
+    control: { kind: "text", typing: "unchecked", monospace: true, numeric: true },
+  },
+  apiPath: { slot: "body", label: "API path", icon: "server", control: UNCHECKED_MONO },
+  tlsServerName: { slot: "body", label: "TLS server name", icon: "server", control: UNCHECKED_MONO },
+  registerMap: {
+    slot: "body",
+    label: "Register map",
+    placeholder: "",
+    icon: "database",
+    control: { kind: "textarea", rows: 6 },
+  },
+  securityMode: {
+    slot: "body",
+    label: "Security mode",
+    icon: "shield",
+    control: { kind: "toggle", choices: ["None", "Sign", "SignAndEncrypt"], unset: "SignAndEncrypt" },
+  },
+  serverCertificateThumbprint: {
+    slot: "body",
+    label: "Server certificate",
+    placeholder: "",
+    icon: "shield",
+    control: UNCHECKED_MONO,
+  },
+  schema: {
+    slot: "body",
+    label: "Schema Name",
+    placeholder: "default",
+    icon: "database",
+    control: VERBATIM_MONO,
+    note: "Used for unqualified table names in queries and Create Table. Leave empty to qualify names yourself. Run SHOW SCHEMAS to list the catalog's schemas.",
+  },
+  role: { slot: "body", label: "Role", icon: "shield", control: VERBATIM_MONO },
+  authSource: {
+    slot: "body",
+    label: "Authentication Database",
+    placeholder: "admin",
+    icon: "key",
+    control: { kind: "text", typing: "free", monospace: true },
+  },
+  apiKeyId: {
+    slot: "body",
+    label: "API Key ID",
+    placeholder: "EWkMhKACjF5eHMlg6Car",
+    icon: "key",
+    control: { kind: "text", typing: "unfilled", monospace: true },
+    group: "apiKey",
+  },
+  apiKeySecret: {
+    slot: "body",
+    label: "API Key Secret",
+    placeholder: "***",
+    icon: "shield",
+    control: { kind: "text", typing: "secret", monospace: true },
+    group: "apiKey",
+  },
+  localDataCenter: {
+    slot: "body",
+    label: "Local Data Center",
+    placeholder: "datacenter1",
+    icon: "server",
+    control: { kind: "text", typing: "free", monospace: true },
+  },
+  serviceName: {
+    slot: "body",
+    label: "Service Name",
+    placeholder: "ORCL or XEPDB1",
+    control: { kind: "text", typing: "free", compact: true },
+  },
+  instanceName: {
+    slot: "body",
+    label: "Instance Name",
+    placeholder: "SQLEXPRESS",
+    control: { kind: "text", typing: "free", compact: true },
+  },
+} as const satisfies Record<ConnectionField, ConnectionFieldDescriptor>;
+
+/** A field whose value is text the dialog holds as typed: every field but a consent, which is a checkbox. */
+export type TypedConnectionField = {
+  [F in ConnectionField]: (typeof CONNECTION_FIELD_DESCRIPTOR_ROWS)[F] extends { readonly slot: "consent" } ? never : F;
+}[ConnectionField];
+
+/** A field the renderer draws, as opposed to one the dialog's own layout draws. */
+export type BodyConnectionField = {
+  [F in ConnectionField]: (typeof CONNECTION_FIELD_DESCRIPTOR_ROWS)[F] extends { readonly slot: "body" } ? F : never;
+}[ConnectionField];
+
+/** Every connection field's descriptor, keyed by field so a field added to `ConnectionField` fails the typecheck. */
+export const CONNECTION_FIELD_DESCRIPTORS: Readonly<Record<ConnectionField, ConnectionFieldDescriptor>> = Object.freeze(
+  CONNECTION_FIELD_DESCRIPTOR_ROWS,
+);
+
+/** The descriptor of a field the renderer draws, typed as one. */
+export function bodyFieldDescriptor(field: BodyConnectionField): BodyFieldDescriptor {
+  return CONNECTION_FIELD_DESCRIPTOR_ROWS[field];
+}
+
 /** Each type's connection fields as literals, so the compiler can ask what a given type takes. */
 const CONNECTION_FIELD_ROWS = {
   postgres: ["host", "port", "user", "password", "database"],
@@ -152,7 +392,7 @@ const CONNECTION_FIELD_ROWS = {
 /** The connection fields one type takes, as a union of literals. */
 export type ConnectionFieldOf<T extends DatabaseType> = (typeof CONNECTION_FIELD_ROWS)[T][number];
 
-/** Each type's connection fields, in the order the connection dialog draws them. */
+/** Each type's connection fields, in the order the connection dialog draws them unless the entry says otherwise. */
 export const CONNECTION_FIELDS: Readonly<Record<DatabaseType, readonly ConnectionField[]>> =
   Object.freeze(CONNECTION_FIELD_ROWS);
 
