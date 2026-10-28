@@ -1722,6 +1722,24 @@ describe("CouchbaseProvider object surface (#789)", () => {
     expect(detail.indexes).toEqual([{ name: "ix_name", columns: ["name"], unique: false }]);
   });
 
+  test("an index row that carries no index_key is described with no columns of its own, not refused", async () => {
+    // Every measured server sends the field, empty on a primary index; a row without it is read the same way.
+    queryHandler = (statement) =>
+      statement.includes("object_name") && statement.includes("system:indexes")
+        ? queryPayload([
+            {
+              bucket_id: BUCKET,
+              scope_id: "inventory",
+              collection_id: "hotel",
+              object_name: "ix_bare",
+              is_primary: false,
+            },
+          ])
+        : objectQueryPayload(statement);
+    const detail = await objectProvider.describeObject([BUCKET, "inventory", "hotel"], "collection");
+    expect(detail.indexes).toEqual([{ name: "ix_bare", columns: [], unique: false }]);
+  });
+
   test("keeps two same-named collections of two scopes apart when reading their indexes", async () => {
     // `airline` exists in BOTH `_default` and `inventory`, each with its own `ix_name`
     // over a different key. A filter on the collection name alone answers the same two
