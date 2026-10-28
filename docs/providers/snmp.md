@@ -157,8 +157,9 @@ The shared column shape has no field for an access level or an object identifier
 A column whose MAX-ACCESS is `not-accessible` or `accessible-for-notify` cannot be read on its own, and is marked not projectable.
 
 A table's index is its entry's INDEX clause, reported as one unique index named after the entry; an AUGMENTS entry carries the INDEX of the entry it augments (`ifXTable` is indexed by `ifIndex`).
-An index column is primary and never absent, because its value is part of every instance's identifier; every other column may be absent from a row.
-An augmenting table's index names a column it does not hold, so none of its own columns is primary.
+An index column the table holds is primary and never absent, because its value is part of every instance's identifier; every other column may be absent from a row.
+A table whose INDEX, its own or one taken through AUGMENTS, names another table's column holds no column for that part of the index.
+`ifXTable` (indexed by `ifIndex` through AUGMENTS) and `hrProcessorTable` (indexed by `hrDeviceIndex`) have no primary column at all; `hrPartitionTable` marks only `hrPartitionIndex`.
 
 A name the bundled modules do not define is refused with the reason `explainUnknown` gives, and a name of the other kind (`system` asked for as a table) is refused by its kind rather than described as the wrong one.
 
@@ -166,7 +167,8 @@ A name the bundled modules do not define is refused with the reason `explainUnkn
 
 `getHealth` sends one Get of `sysDescr.0` and `sysUpTime.0` through the same exchange and valve as every read, and times it.
 It answers the shared health shape plus three fields of its own: `uptime` (hundredths of a second, as `sysUpTime.0` reads), `description` (`sysDescr.0`) and `roundTripMs`.
-An object the agent answers with an exception is named in place of its value (`unavailable: the agent answered noSuchObject for sysDescr.0`), never rendered as one.
+An object the agent answers with an exception, or leaves out of its answer, is named in place of its value (`unavailable: the agent answered noSuchObject for sysDescr.0`), never rendered as one.
+An answer carrying a non-zero error-status, such as `genErr`, fails the read and names the status, because such an answer sends the request's own names back with NULL values that would otherwise render as an empty description and uptime.
 The shared figures an agent has no notion of are sentences that say so: `databaseSize` and `cacheHitRatio`.
 `activeConnections` is left out rather than sent as a zero, slow queries and sessions are empty, and an agent that does not answer fails the read rather than reporting a healthy nothing.
 Measured on 28 October 2026 against the pinned fixture under Bun 1.4.2 and Node 26.12.1: the description read back as the fixture's `sysDescr` and the round trip took 0 to 1 ms on loopback.
@@ -230,15 +232,19 @@ in `QueryResult.warnings`, which is the repository's own surface for this.
 
 ## 11. How it is tested
 
-Ten tests drive the provider against a UDP listener that reads each datagram with the BER reader
-and answers by building one. That listener is not a mock of this provider's encoder: a request
-never sent cannot be received, and an answer this provider cannot parse cannot pass.
+The end-to-end tests in `tests/unit/db/snmp/provider-end-to-end.test.ts` drive the provider against a UDP listener that reads each datagram with the BER reader and answers by building one.
+That listener is not a mock of this provider's encoder: a request never sent cannot be received, and an answer this provider cannot parse cannot pass.
 
-Both ends are asserted. What the agent got: version 1 on the wire, the community, the OIDs, two
-objects in one request. What the caller got: the values, the type each was rendered as, and a
-short table column reported as an absence rather than shifting the rows below it. A refused
-statement sends nothing, and that is proved by counting the agent's datagrams rather than by
-watching the throw.
+Both ends are asserted.
+What the agent got: version 1 on the wire, the community, the OIDs, two objects in one request.
+What the caller got: the values, the type each was rendered as, and a short table column reported as an absence rather than shifting the rows below it.
+A refused statement sends nothing, and that is proved by counting the agent's datagrams rather than by watching the throw.
+
+The health read is driven the same way: a full answer, an object answered with an exception, an object left out of the answer, an answer carrying a non-zero error-status, and an agent that stops answering.
+The catalog needs no listener, because it sends nothing: `tests/unit/db/snmp/mib-tree.test.ts` and `tests/unit/db/snmp/provider.test.ts` hold the listing order, the batch limit, the column and index shapes and the refusals to the bundled modules.
+
+`tests/live/snmp-live-check.ts` runs the same surfaces against the pinned Net-SNMP fixture in CI.
+Beside the reads, it lists the catalog on a provider that never connected, checks that a described table's columns are the ones a walk of that table returns, and reads health from the agent.
 
 ## 12. What it still does not do
 
@@ -255,8 +261,8 @@ known defect; they are the places where the evidence stops.
   authPriv needs the privacy key and would be testing our own encryptor against itself.
 - **The window against an agent that has been up for weeks.** The captured engine reports boots 0
   and time 10, so every window case is driven from constructed values.
-- **MIB descriptors.** Names are resolved numerically. A descriptor reaching the read path is a
-  defect rather than a condition, and says so.
+- **Modules this build does not carry.** A descriptor resolves against the index generated from the bundled MIB modules, and the catalog lists only what they define.
+  A name from any other module is refused with the reason `explainUnknown` gives, and a table the catalog lists may hold no rows on a given agent.
 - **IPv6 end to end.** Measured only against the library's own in-process agent.
 
 ## Migration DDL
