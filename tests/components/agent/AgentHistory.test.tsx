@@ -316,6 +316,50 @@ describe("AgentHistory", () => {
     expect(await screen.findByText("The run history could not be read.")).toBeDefined();
   });
 
+  test("a refused list without a sentence of its own reports the fallback sentence", async () => {
+    mockGlobalFetch({
+      "/api/agent/runs": { ok: false, status: 500, json: { message: "not the error field" } },
+    });
+    render(<AgentHistory />);
+
+    expect(await screen.findByText("The run history could not be read.")).toBeDefined();
+  });
+
+  test("a plan run's report shows the drafted statement", async () => {
+    mockGlobalFetch({
+      "/api/agent/runs/arun_t_1": json({
+        record: recordWith([
+          {
+            kind: "plan-statement-drafted",
+            atMs: 1,
+            sql: "SELECT id FROM orders;",
+            dialect: "postgres",
+            readOnly: true,
+            identifiers: { tables: [], columns: [], unknown: false },
+          },
+        ]),
+        cancellationRequested: false,
+      }),
+      "/api/agent/runs": json(conversationPayload),
+    });
+    render(<AgentHistory />);
+
+    fireEvent.click(await screen.findByText("Why is checkout slow?"));
+    const report = await screen.findByTestId("agent-history-report");
+    expect(report.textContent).toBe("SELECT id FROM orders;");
+  });
+
+  test("a run that recorded nothing to report says so", async () => {
+    mockGlobalFetch({
+      "/api/agent/runs/arun_t_1": json({ record: recordWith([]), cancellationRequested: false }),
+      "/api/agent/runs": json(conversationPayload),
+    });
+    render(<AgentHistory />);
+
+    fireEvent.click(await screen.findByText("Why is checkout slow?"));
+    expect(await screen.findByText("This run recorded no report.")).toBeDefined();
+  });
+
   test("offers Load more when the server returns a next cursor, and appends the next page", async () => {
     const secondPage = {
       conversations: [
