@@ -1,11 +1,16 @@
 import { NextResponse } from "next/server";
-import { AGENT_HANDOVER_BUDGET, AGENT_HANDOVER_PROFILE } from "@/lib/agent/execution-policy";
+import {
+  AGENT_HANDOVER_BUDGET,
+  AGENT_HANDOVER_PROFILE,
+  AGENT_HANDOVER_READ_ALLOWANCE,
+} from "@/lib/agent/execution-policy";
 import type { AgentRunEvent } from "@/lib/agent/types";
 import { accessAgentRun } from "@/lib/api/agent-run-access";
 import { createErrorResponse } from "@/lib/api/errors";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { catalogSessionConnection } from "@/lib/db/catalog-scope";
 import { acquireExecutionProfileProvider } from "@/lib/db/factory";
+import { RunReadAllowance } from "@/lib/db/read-allowance";
 import { logger } from "@/lib/logger";
 import { rowsWithNonFiniteWords } from "@/lib/non-finite";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
@@ -112,7 +117,11 @@ export async function POST(req: Request, context?: HandoverParams) {
       throw new Error("agent hand-over: the acquired provider exposes no read-only execution path");
     }
 
-    const result = await provider.queryReadOnly(answer.sql, AGENT_HANDOVER_BUDGET);
+    // A read allowance of this request's own: the run has ended, and the replay is the editor's read, not the run's.
+    const result = await provider.queryReadOnly(answer.sql, {
+      ...AGENT_HANDOVER_BUDGET,
+      readAllowance: new RunReadAllowance(AGENT_HANDOVER_READ_ALLOWANCE, { scope: "call" }),
+    });
     logger.info("Agent hand-over replayed in the editor", {
       route: ROUTE,
       runId,

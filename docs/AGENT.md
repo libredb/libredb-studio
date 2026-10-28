@@ -1969,8 +1969,8 @@ at least the longest deadline it wants to serve, and a stream cut mid-run has no
 | `maxResultRows` / `maxResultBytes` | 200 / 256 KiB | Compared after the driver has materialised the rows, so an oversized read is refused but still paid for at the database. |
 | `maxConcurrentExecutions` | 1 | The loop is sequential; a run cannot fan out — and a second consequence rides on the same 1: a failed statement's recorded span is a DELTA over the run's charged total, so an execution in flight alongside it would have its time attributed to whichever one failed. |
 | One model call | 90 s | Whichever of this and the run's remaining time is smaller applies. Not per workflow: how long one request may hang is a property of the transport, not of the question. |
-| Repair attempts | 3 | Statements that failed **at the database**. |
-| Billed reads | 10,000 per drive | Every read the drive hands a provider, grounding, sampling and catalog reads included, on an engine that bills each read; no engine charges it yet. |
+| Repair attempts | 3 | Statements that failed **at the database**, and reads the run read allowance refused before sending. |
+| Billed reads | 10,000 per run | Every budget-taking read the run hands a provider (statements, `readCatalogReadOnly`, the cluster readings), grounding and sampling statements included, on an engine that bills each read; carried across resumes; no engine charges it yet. |
 
 The statement budget, the database time and the wall clock are enforced through the policy the run's
 workflow names, and the version carries the workflow so a recorded deny code traces back to the
@@ -1978,15 +1978,20 @@ number that produced it. The turn ceiling is the backstop for a loop that never 
 at all, and it moves with the wall clock rather than alone: at a deadline that cannot pay for the
 turns, a larger turn ceiling only changes which word the ledger records.
 
-**The run read allowance** (`AGENT_RUN_READ_ALLOWANCE` in `src/lib/agent/execution-policy.ts`, the meter in `src/lib/db/read-allowance.ts`) bounds what a drive may spend on an engine that bills every read.
+**The run read allowance** (`AGENT_RUN_READ_ALLOWANCE` in `src/lib/agent/execution-policy.ts`, the meter in `src/lib/db/read-allowance.ts`) bounds what a run may spend on an engine that bills every read.
 The per-statement caps above bound one result, and a provider cannot count a run's reads itself, because one cached provider serves every run on its connection.
-So `runInvestigation` creates one `RunReadAllowance` per drive, and `readOnlyBudgetFor` in `src/lib/agent/tools.ts` puts it in every budget the drive hands a provider, as `ReadOnlyStatementBudget.readAllowance`: the model's statements, the grounding's catalog reads, the MongoDB catalog read and the two cluster readings all draw on the same one, and two runs never share one.
+So `runInvestigation` creates one `RunReadAllowance` per drive, and `readOnlyBudgetFor` in `src/lib/agent/tools.ts` puts it in every budget the drive hands a provider, as `ReadOnlyStatementBudget.readAllowance`: the model's statements, the grounding's statements and catalog reads, the MongoDB catalog read and the two cluster readings all draw on the same one, and two runs never share one.
+Each settled step records what the run has spent so far as `readsSpent` on its `tool-completed` or `tool-refused` entry, and a resumed drive opens its allowance with the largest figure the ledger holds (`billedReadsSpent` in `src/lib/agent/drive-budget.ts`), so a resume continues the run's allowance as it continues the statement count and the database time.
+What a drive spends after its last settled step, when the process dies, is not recorded, as the database time of a statement that never settled is not.
 An engine that bills its reads charges it before each request it sends, with what that request may cost at most, retries included, and its provider doc says what one billed read is; every other engine ignores it, and no engine charges it yet.
-A read on the editor's object surface (`listObjects`, `describeObject`) carries no budget, so a billed engine's grounding goes through `readCatalogReadOnly`, which does.
-A charge past what is left is refused before the request is sent, with `ReadAllowanceExceededError`, a `QueryError` whose sentence opens "Read-only execution exceeded the read allowance"; the run settles it as a repairable statement failure, as it does a result past the row budget, so the model is told and may ask for a smaller read.
+Two kinds of read a drive sends take no budget and so are never charged: the grounding's object-inventory walk (`listContainers`, `countObjects`, `listObjects`, `describeObjects`) and the curated operation reads (`getActiveSessions`, `getSlowQueries` and the rest).
+An engine that bills its reads must keep both off billed requests, or route them through a budget-taking read such as `readCatalogReadOnly`.
+A charge past what is left is refused before the request is sent, with `ReadAllowanceExceededError`, a `QueryError` whose sentence opens "Read-only execution exceeded the read allowance".
+The run tells the model in this server's own voice, not fenced as the database's error, and adds that the database was not asked and a smaller read may fit.
+It is settled as a repairable statement failure and costs one of the three repair attempts, although it never reached the database, because the repair is a smaller read the model has to write.
 The 10,000 is 45 statements, the largest row's ceiling, times 201 rows, with room left: the allowance binds only where a request bills more than the rows it returns.
-A resumed drive starts with a fresh allowance, like its turn ceiling and repair ledger, because the spend is not yet recorded in the ledger.
-MCP has no run, so each statement call, `run_read_query` and the other statement tools alike, gets an allowance of its own (`MCP_CALL_READ_ALLOWANCE`, 2,000).
+MCP has no run, so each statement call, `run_read_query` and the other statement tools alike, gets an allowance of its own (`MCP_CALL_READ_ALLOWANCE`, 2,000), and its refusal is answered in Studio's own words.
+The editor's replay of a run's answer (the hand-over) is not a step of the run either, so each replay gets its own (`AGENT_HANDOVER_READ_ALLOWANCE`, 1,000, twice the editor's row limit).
 
 **A run keeps its last turns back for its report.** Within `AGENT_REPORT_RESERVE_TURNS` (2) model
 turns of its turn ceiling, or `AGENT_REPORT_RESERVE_MS` (20 s) of its run deadline — whichever it

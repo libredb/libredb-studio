@@ -131,6 +131,17 @@ export const AGENT_HANDOVER_BUDGET: ReadOnlyStatementBudget = Object.freeze({
 });
 
 /**
+ * The billed reads ONE replay may spend, on an engine that bills every read (`RunReadAllowance` in
+ * `src/lib/db/read-allowance.ts`).
+ *
+ * The replay is the editor's action after the run, not a step of it, so it does not draw on the run's allowance: each
+ * request is handed one of its own beside the frozen caps above, which never carry one, so no two replays share it.
+ * Twice the row cap, as an MCP call's is: one statement, a full result and the row past it that shows there is more,
+ * with room for what the engine bills beyond the rows it returns.
+ */
+export const AGENT_HANDOVER_READ_ALLOWANCE = 2 * DEFAULT_QUERY_LIMIT;
+
+/**
  * Everything one workflow's run is bounded by, in one reviewable row.
  *
  * The three fields are enforced in three different places — the policy by the
@@ -360,7 +371,7 @@ export const AGENT_WORKFLOW_BUDGETS: Readonly<Record<AgentRunWorkflowType, Agent
 } satisfies Record<AgentRunWorkflowType, AgentWorkflowBudget>);
 
 /**
- * The most billed reads one drive of a run may spend, on an engine that bills every read (`RunReadAllowance` in
+ * The most billed reads one run may spend, across all its drives, on an engine that bills every read (`RunReadAllowance` in
  * `src/lib/db/read-allowance.ts`).
  *
  * One figure for every workflow, sized from the rows above rather than chosen beside them: the largest statement
@@ -370,9 +381,9 @@ export const AGENT_WORKFLOW_BUDGETS: Readonly<Record<AgentRunWorkflowType, Agent
  * request bills more than the rows it returns. It is a starting figure the first engine that bills its reads
  * measures, and the unit is that engine's own: its provider doc says what one billed read is.
  *
- * A drive is given a fresh allowance, like its turn ceiling and repair ledger: the spend is not yet recorded in the
- * ledger, so a resumed drive starts whole. An engine that charges it reads it off the budget it is handed; no engine
- * charges it yet.
+ * Each settled step records what the run has spent, and a resumed drive opens its allowance with that figure, so a
+ * resume continues the run's allowance rather than starting a fresh one, as the statement count and the database time
+ * do. An engine that charges it reads it off the budget it is handed; no engine charges it yet.
  */
 export const AGENT_RUN_READ_ALLOWANCE = 10_000;
 

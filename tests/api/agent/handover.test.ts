@@ -24,7 +24,8 @@ import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
 import { configureAgentModel, restoreAgentModel } from "../../helpers/agent-model-env";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { AGENT_ENABLED_ENV } from "@/lib/agent/config";
-import { AGENT_HANDOVER_BUDGET } from "@/lib/agent/execution-policy";
+import { AGENT_HANDOVER_BUDGET, AGENT_HANDOVER_READ_ALLOWANCE } from "@/lib/agent/execution-policy";
+import { RunReadAllowance } from "@/lib/db/read-allowance";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
 import * as realAuth from "@/lib/auth";
@@ -212,10 +213,29 @@ describe("POST /api/agent/runs/[runId]/handover", () => {
     await POST(request(), params());
 
     const budget = mockQueryReadOnly.mock.calls[0][1];
-    expect(budget).toEqual(AGENT_HANDOVER_BUDGET);
+    // The caps the checkbox names; the replay's own read allowance rides beside them.
+    expect({
+      statementTimeoutMs: budget.statementTimeoutMs,
+      maxResultRows: budget.maxResultRows,
+      maxResultBytes: budget.maxResultBytes,
+    }).toEqual(AGENT_HANDOVER_BUDGET);
     expect(budget.maxResultRows).toBe(500);
     // "No time limit", as far as a positive-integer field can express it.
     expect(budget.statementTimeoutMs).toBe(2_147_483_647);
+  });
+
+  test("each replay carries a read allowance of its own, so an engine that bills its reads can bound it", async () => {
+    await POST(request(), params());
+    await POST(request(), params());
+
+    const first = mockQueryReadOnly.mock.calls[0][1].readAllowance;
+    const second = mockQueryReadOnly.mock.calls[1][1].readAllowance;
+    expect(first).toBeInstanceOf(RunReadAllowance);
+    expect(first?.limit).toBe(AGENT_HANDOVER_READ_ALLOWANCE);
+    expect(first?.remaining()).toBe(AGENT_HANDOVER_READ_ALLOWANCE);
+    expect(second).not.toBe(first);
+    // The frozen budget itself never carries one, so no two replays can share it.
+    expect(AGENT_HANDOVER_BUDGET.readAllowance).toBeUndefined();
   });
 
   test("the connection is the run's own, resolved under the run's persisted actor", async () => {
