@@ -4,7 +4,7 @@ import "../helpers/mock-navigation";
 
 import React from "react";
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { VisualExplain, type ExplainPlanResult } from "@/components/VisualExplain";
 import { schemaContextOf } from "@/lib/db/detailed-object";
@@ -519,6 +519,38 @@ describe("VisualExplain", () => {
       expect(queryByText("Performance")).not.toBeNull();
       expect(queryByText(/sequential scan/)).not.toBeNull();
     });
+  });
+
+  test("AI tab says it is still generating while the answer streams in", async () => {
+    const user = userEvent.setup();
+    const encoder = new TextEncoder();
+    let finish: () => void = () => {};
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode("## Performance\nThe first part of the answer."));
+        finish = () => controller.close();
+      },
+    });
+    globalThis.fetch = mock(() =>
+      Promise.resolve({ ok: true, body: stream, json: () => Promise.resolve({}) }),
+    ) as unknown as typeof fetch;
+
+    const { queryByText } = render(<VisualExplain plan={samplePlan} query="SELECT * FROM users" />);
+    fireEvent.click(queryByText("AI Explain")!);
+    await user.click(queryByText("Analyze with AI")!);
+
+    await waitFor(() => {
+      expect(queryByText(/The first part of the answer/)).not.toBeNull();
+      expect(queryByText("Still generating...")).not.toBeNull();
+    });
+
+    await act(async () => {
+      finish();
+    });
+    await waitFor(() => {
+      expect(queryByText("Still generating...")).toBeNull();
+    });
+    expect(queryByText(/The first part of the answer/)).not.toBeNull();
   });
 
   test("AI tab shows error on API failure", async () => {
@@ -1256,6 +1288,20 @@ describe("tree render model (sqlite-queryplan)", () => {
     expect(getByText("cost 7")).toBeTruthy();
     // no fabricated actuals for an estimate-only node
     expect(queryByText(/0 rows/)).toBeNull();
+  });
+
+  test("a node that carries only a planner cost shows the cost badge alone", () => {
+    const costTree = {
+      kind: "tree" as const,
+      root: {
+        label: "Query Plan",
+        children: [{ label: "SCAN employee", metrics: { estCost: 42 }, children: [] }],
+      },
+      raw: [],
+    };
+    const { getByText, queryByText } = render(<VisualExplain plan={costTree} />);
+    expect(getByText("cost 42")).toBeTruthy();
+    expect(queryByText(/rows$/)).toBeNull();
   });
 
   test("parent tree rows are native buttons; leaf rows are non-interactive", () => {
