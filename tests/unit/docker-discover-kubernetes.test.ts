@@ -20,6 +20,7 @@
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
+import { readFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import golden from "../fixtures/kubernetes-discovery-golden.json";
@@ -71,6 +72,16 @@ interface Scan {
 
 async function scan(options: { client: unknown; config: unknown; limits?: typeof LIMITS }): Promise<Scan> {
   return (await scanOnce(options as never)) as unknown as Scan;
+}
+
+/** What a promise rejected with, awaited rather than waited for in place (see "the harness"); a fulfilment fails. */
+function rejection(promise: Promise<unknown>): Promise<unknown> {
+  return promise.then(
+    (value) => {
+      throw new Error(`expected a rejection, the promise fulfilled with ${JSON.stringify(value)}`);
+    },
+    (error: unknown) => error,
+  );
 }
 
 /** LIMITS with some bounds lowered, so a case reaches a bound without building thousands of objects. */
@@ -140,6 +151,40 @@ async function closedPort(): Promise<number> {
   await new Promise<void>((resolve) => server.close(() => resolve()));
   return port;
 }
+
+/*
+ * bun:test's expect(promise).rejects and .resolves wait for a pending promise by running the event loop inside the
+ * caller. A case that starts right after an await settled in a socket's callback (every answer of the fake API) then
+ * runs that nested loop inside the socket's dispatch, and Bun 1.4.2 on Windows frees the socket under it: a segfault
+ * in us_internal_ssl_close or us_internal_dispatch_ready_poll (oven-sh/bun#39643, relanded in 1.4.4 by #42667). A
+ * case here awaits the promise and asserts on what it settled to instead, so no case runs a loop inside another.
+ */
+describe("the harness", () => {
+  test("expect().rejects runs the event loop inside the caller, which is why no case here uses it", async () => {
+    let inCaller = true;
+    let firedInCaller = false;
+    const late = new Promise((_, reject) =>
+      setTimeout(() => {
+        firedInCaller = inCaller;
+        reject(new Error("late"));
+      }, 1),
+    );
+    const asserted = expect(late).rejects.toThrow("late");
+    inCaller = false;
+    await asserted;
+    expect(firedInCaller).toBe(true);
+  });
+
+  test("no case waits on a promise with expect().rejects or expect().resolves", () => {
+    const lines = readFileSync(fileURLToPath(import.meta.url), "utf8").split("\n");
+    // The case above is the one use, on purpose: it runs before any socket is opened.
+    const first = lines.findIndex((line) => line.startsWith('describe("the reviewed constants"'));
+    const waits = lines.flatMap((line, index) =>
+      index > first && /\.(rejects|resolves)\./.test(line) ? [index + 1] : [],
+    );
+    expect(waits).toEqual([]);
+  });
+});
 
 describe("the reviewed constants", () => {
   test("defaults and limits", () => {
@@ -341,23 +386,23 @@ describe("the API client", () => {
 
   test("refuses to send anything without a token or a CA certificate", async () => {
     const missing = createApiClient({ apiUrl: api.url, tokenPath: "/nonexistent/token", caPath: api.caPath });
-    await expect(missing.get(EXPORT_PATH)).rejects.toMatchObject({
+    expect(await rejection(missing.get(EXPORT_PATH))).toMatchObject({
       code: "ETOKEN",
       message: "the token file /nonexistent/token cannot be read",
     });
     api.setToken("   ");
-    await expect(client().get(EXPORT_PATH)).rejects.toMatchObject({
+    expect(await rejection(client().get(EXPORT_PATH))).toMatchObject({
       code: "ETOKEN",
       message: `the token file ${api.tokenPath} is empty`,
     });
     api.setToken(FAKE_DISCOVERY_TOKEN);
     api.setCa("not a certificate");
-    await expect(client().get(EXPORT_PATH)).rejects.toMatchObject({
+    expect(await rejection(client().get(EXPORT_PATH))).toMatchObject({
       code: "ECA",
       message: `the CA file ${api.caPath} holds no certificate`,
     });
     const noCa = createApiClient({ apiUrl: api.url, tokenPath: api.tokenPath, caPath: "/nonexistent/ca.crt" });
-    await expect(noCa.get(EXPORT_PATH)).rejects.toMatchObject({
+    expect(await rejection(noCa.get(EXPORT_PATH))).toMatchObject({
       code: "ECA",
       message: "the CA file /nonexistent/ca.crt cannot be read",
     });
@@ -374,12 +419,12 @@ describe("the API client", () => {
 
   test("rejects a non-2xx answer with its status and the API server's message, never a 2xx body", async () => {
     api.scripted.set(EXPORT_PATH, { status: 500, body: statusBody(500, "InternalError", "etcd is unhappy") });
-    await expect(client().get(EXPORT_PATH)).rejects.toMatchObject({
+    expect(await rejection(client().get(EXPORT_PATH))).toMatchObject({
       statusCode: 500,
       message: `GET ${EXPORT_PATH} answered HTTP 500: etcd is unhappy`,
     });
     api.scripted.set(EXPORT_PATH, { status: 502, body: "<html>bad gateway</html>" });
-    await expect(client().get(EXPORT_PATH)).rejects.toMatchObject({
+    expect(await rejection(client().get(EXPORT_PATH))).toMatchObject({
       statusCode: 502,
       message: `GET ${EXPORT_PATH} answered HTTP 502`,
     });
@@ -395,12 +440,12 @@ describe("the API client", () => {
   });
 
   test("bounds every answer in size and every request in time, and aborts what is in flight", async () => {
-    await expect(client({ maxBytes: 10 }).get(EXPORT_PATH)).rejects.toMatchObject({
+    expect(await rejection(client({ maxBytes: 10 }).get(EXPORT_PATH))).toMatchObject({
       code: "ERESPONSETOOLARGE",
       message: `GET ${EXPORT_PATH} answered with more than 10 bytes`,
     });
     api.scripted.set(EXPORT_PATH, "hang");
-    await expect(client({ timeoutMs: 50 }).get(EXPORT_PATH)).rejects.toMatchObject({
+    expect(await rejection(client({ timeoutMs: 50 }).get(EXPORT_PATH))).toMatchObject({
       code: "ETIMEDOUT",
       message: `the API server did not answer GET ${EXPORT_PATH} within 50 ms`,
     });
@@ -417,7 +462,7 @@ describe("the API client", () => {
       tokenPath: api.tokenPath,
       caPath: api.caPath,
     });
-    await expect(prefixed.get(EXPORT_PATH)).rejects.toMatchObject({ statusCode: 404 });
+    expect(await rejection(prefixed.get(EXPORT_PATH))).toMatchObject({ statusCode: 404 });
     expect(api.seen[0].path).toBe(`/k8s/clusters/local${EXPORT_PATH}`);
   });
 
@@ -427,7 +472,7 @@ describe("the API client", () => {
         throw Object.assign(new Error("no socket"), { code: "EMFILE" });
       },
     });
-    await expect(broken.get(EXPORT_PATH)).rejects.toMatchObject({ code: "EMFILE" });
+    expect(await rejection(broken.get(EXPORT_PATH))).toMatchObject({ code: "EMFILE" });
   });
 });
 
@@ -1129,7 +1174,7 @@ describe("writeExport", () => {
 
     api.seen.length = 0;
     api.conflictsBeforePut = 2;
-    await expect(writeExport({ client: client(), config: config(), text: '{"try":2}' })).rejects.toMatchObject({
+    expect(await rejection(writeExport({ client: client(), config: config(), text: '{"try":2}' }))).toMatchObject({
       statusCode: 409,
     });
     expect(api.seen.map((seen) => seen.method)).toEqual(["GET", "PUT", "GET", "PUT"]);
@@ -1138,7 +1183,7 @@ describe("writeExport", () => {
 
   test("fails without creating anything when the export Secret does not exist", async () => {
     api.secrets.clear();
-    await expect(writeExport({ client: client(), config: config(), text: "{}" })).rejects.toMatchObject({
+    expect(await rejection(writeExport({ client: client(), config: config(), text: "{}" }))).toMatchObject({
       statusCode: 404,
       message: `GET ${EXPORT_PATH} answered HTTP 404: secrets "libredb-studio-discovery-export" not found`,
     });
