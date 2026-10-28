@@ -410,6 +410,18 @@ describe("DataCharts", () => {
   // Axis selectors
   // -----------------------------------------------------------------------
 
+  test("a text field with too many distinct values to group is offered with the unknown-type icon", () => {
+    const result: QueryResult = {
+      rows: Array.from({ length: 60 }, (_, i) => ({ code: `order-${i}`, total: i * 10 })),
+      fields: ["code", "total"],
+      rowCount: 60,
+      executionTime: 1,
+    };
+    const { getByTestId } = render(React.createElement(DataCharts, { result }));
+    expect(getByTestId("select-item-code").querySelector(".lucide-circle-alert")).not.toBeNull();
+    expect(getByTestId("select-item-total").querySelector(".lucide-hash")).not.toBeNull();
+  });
+
   test("X-Axis selector renders with field options", () => {
     const { queryByText, queryByTestId } = render(React.createElement(DataCharts, { result: mockNumericResult }));
     expect(queryByText("X-Axis")).not.toBeNull();
@@ -1075,6 +1087,40 @@ describe("DataCharts", () => {
     const chartName = queryByText("Line View");
     expect(chartName).not.toBeNull();
     fireEvent.click(chartName!);
+  });
+
+  test("a saved chart whose aggregation and date grouping this build has no rule for draws each date's first value", () => {
+    // Saved charts live in the user's store and outlast the build that wrote them.
+    const savedCharts = [
+      {
+        id: "1",
+        name: "Median View",
+        chartType: "bar",
+        xAxis: "date",
+        yAxis: ["units"],
+        aggregation: "median",
+        dateGrouping: "quarter",
+      },
+    ];
+    localStorage.setItem("libredb_saved_charts", JSON.stringify(savedCharts));
+    const result: QueryResult = {
+      rows: [
+        { date: "2025-01-01", units: 100 },
+        { date: "2025-01-01", units: 50 },
+        { date: "2025-02-01", units: 70 },
+      ],
+      fields: ["date", "units"],
+      rowCount: 3,
+      executionTime: 1,
+    };
+
+    const { queryByText, queryByTestId } = render(React.createElement(DataCharts, { result }));
+    capturedChartProps.length = 0;
+    fireEvent.click(queryByText("Median View")!);
+
+    expect(queryByTestId("mock-bar-chart")).not.toBeNull();
+    const data = capturedChartProps.at(-1)!.data as Record<string, unknown>[];
+    expect(data.map((point) => point.units)).toEqual([100, 70]);
   });
 
   test("deletes saved chart removes from localStorage", async () => {
