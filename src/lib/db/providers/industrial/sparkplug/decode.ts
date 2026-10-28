@@ -436,6 +436,7 @@ function readField(
   }
 }
 
+/** Skips one unknown field. `walk` has already refused every wire type outside these four. */
 function skipField(reader: Reader, wireType: number): void {
   switch (wireType) {
     case WIRE_VARINT:
@@ -450,14 +451,6 @@ function skipField(reader: Reader, wireType: number): void {
     case WIRE_LENGTH:
       reader.take(reader.varint());
       return;
-    case WIRE_GROUP_START:
-    case WIRE_GROUP_END:
-      // Groups were removed from proto3 and the Sparkplug schema is proto2 without them. A group
-      // marker is either a corrupt payload or a different schema, and skipping one correctly means
-      // matching start to end, which is a second parser. Refused instead (SP-S5).
-      throw new PayloadRefused("group-wire-type", "the payload uses protobuf groups, which this reader refuses");
-    default:
-      throw new PayloadRefused("unknown-wire-type", `wire type ${wireType} is not one of the five`);
   }
 }
 
@@ -487,6 +480,10 @@ function walk(
     // message a user sees. The first draft looked the field up first, so a group marker on a known
     // field was reported as "wire type does not match this field" and the real cause, a payload
     // using protobuf groups, was never named. Its own test caught that.
+    //
+    // Groups were removed from proto3 and the Sparkplug schema is proto2 without them. A group
+    // marker is either a corrupt payload or a different schema, and skipping one correctly means
+    // matching start to end, which is a second parser. Refused instead (SP-S5).
     if (wireType === WIRE_GROUP_START || wireType === WIRE_GROUP_END) {
       throw new PayloadRefused("group-wire-type", "the payload uses protobuf groups, which this reader refuses");
     }

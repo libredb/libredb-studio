@@ -258,6 +258,25 @@ describe("what it refuses before any socket exists", () => {
     }
   });
 
+  test("a death that carries no bdSeq is still a death, and the sentence names no bdSeq it does not have", async () => {
+    const died = new ReadState();
+    died.takeBirth(topic("spBv1.0/G1/NBIRTH/E1"), { origin: "live", receivedAt: 1, metrics: [] });
+    died.takeDeath(topic("spBv1.0/G1/NDEATH/E1"), undefined, 2);
+
+    const provider = new SparkplugProvider(connection(), {}, async () => ({
+      state: died,
+      endReason: "time-budget",
+      messagesSeen: 2,
+      bytesSeen: 20,
+    }));
+    await provider.connect();
+    const document = await provider.readObjectSource(["G1", "E1"], "node");
+    const liveness = document.parts.find((part) => part.id === "liveness");
+    expect(liveness !== undefined && "text" in liveness ? liveness.text : undefined).toBe(
+      "A death message arrived during this read.",
+    );
+  });
+
   test("the four connection refusals each send a reader somewhere different", async () => {
     /*
      * MEASURED, AND THE MEASUREMENT SAYS WHY THIS TEST IS THE SENTENCES AND NOT A FIELD. All four
@@ -638,6 +657,19 @@ describe("the console read", () => {
     expect((await provider.query('{"group":"G2"}')).rowCount).toBe(1);
     expect((await provider.query('{"group":"G1","edgeNode":"E1","device":"D1"}')).rowCount).toBe(1);
   });
+
+  test.each([["group"], ["edgeNode"], ["device"]])(
+    "an empty or non-string %s filter is refused by name",
+    async (key) => {
+      const provider = await openProvider();
+      const scope = key === "device" ? { group: "G1", edgeNode: "E1" } : key === "edgeNode" ? { group: "G1" } : {};
+      for (const value of ["", 7]) {
+        await expect(provider.query(JSON.stringify({ ...scope, [key]: value }))).rejects.toThrow(
+          `"${key}" is a non-empty string when it is given.`,
+        );
+      }
+    },
+  );
 
   test.each([[0], [10_001], [1.5]])("a limit outside 1 to 10,000 is refused (%s)", async (limit) => {
     const provider = await openProvider();

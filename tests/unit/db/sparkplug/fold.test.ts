@@ -196,6 +196,16 @@ describe("a read's messages become the state the panels answer from", () => {
     expect(state.summary().deathsSeen).toBe(0);
   });
 
+  test("a command another client sent is not traffic from the node it names", () => {
+    const { state, refusals } = foldMessages([
+      received("spBv1.0/G1/NCMD/E1", payload({ metrics: [{ name: "Node Control/Rebirth", longValue: 1 }] })),
+      received("spBv1.0/G1/DCMD/E1/D1", payload({ metrics: [{ name: "Setpoint", longValue: 5 }] })),
+    ]);
+    // No node was heard from: a write by someone else must not make the node look as if it published.
+    expect(state.all().filter((node) => node.liveness.kind === "published-during-read")).toEqual([]);
+    expect(refusals).toEqual({});
+  });
+
   test("a death is applied, and the node says a death was seen rather than going quiet", () => {
     const { state } = foldMessages([
       received("spBv1.0/G1/NBIRTH/E1", payload({ metrics: [{ name: "bdSeq", datatype: INT64, longValue: 4 }] })),

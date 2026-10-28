@@ -179,6 +179,13 @@ describe("what the reader refuses rather than guesses", () => {
     expect(refusal(() => decodePayload(payload)).reason).toBe("unknown-wire-type");
   });
 
+  test("an unknown field is refused on its wire type before the skip could reach it", () => {
+    // Field 99 is in no message, so it would be skipped; a group or an out-of-range wire type on it is refused instead.
+    expect(refusal(() => decodePayload(new Uint8Array([...tag(99, 3)]))).reason).toBe("group-wire-type");
+    expect(refusal(() => decodePayload(new Uint8Array([...tag(99, 4)]))).reason).toBe("group-wire-type");
+    expect(refusal(() => decodePayload(new Uint8Array([...tag(99, 7)]))).reason).toBe("unknown-wire-type");
+  });
+
   test("a known field arriving with the wrong wire type is refused, not coerced", () => {
     // `timestamp` is a varint; here it arrives length-delimited. The wire type is one of the five,
     // so the refusal comes from the field dispatch rather than from the wire-type check.
