@@ -6256,7 +6256,8 @@ Amended 2026-10-19: its mongodb half closed when the connection dialog's two `==
 
 ### DOC20. docs/ADDING_A_PROVIDER.md carries stale counts and an incomplete label table
 
-The guide says seven translated READMEs are gated by `readme:check` where `scripts/readme-check.mjs` gates eight (`README_ko.md` joined in 3d9689aaf); its `getCapabilities()` bullet names two query languages (`sql` | `json`) where its own `ProviderCapabilities` table lists all five; says `QueryEditor` registers six language modules where it registers seven plus `registerDialectConsoles`; has no row for `sessionsEmptyState`, `tableStatsCaption` or `vacuumActionOperation` in its `ProviderLabels` table; and gives two driver-free counts, thirteen in its first decision and fifteen in its checklist.
+The guide says seven translated READMEs are gated by `readme:check` where `scripts/readme-check.mjs` gates eight (`README_ko.md` joined in 3d9689aaf); its `getCapabilities()` bullet names two query languages (`sql` | `json`) where its own `ProviderCapabilities` table lists all five; has no row for `sessionsEmptyState`, `tableStatsCaption` or `vacuumActionOperation` in its `ProviderLabels` table; and gives two driver-free counts, thirteen in its first decision and fifteen in its checklist.
+Its count of the language modules `QueryEditor` registers is gone: the guide now names the editor language registry, `EDITOR_LANGUAGES`, in place of a count.
 
 Found 2026-10-09 while designing the S3 provider; pre-existing.
 

@@ -3,6 +3,8 @@
  * what the editor registers, completes, formats and tints from them.
  */
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type * as Monaco from "monaco-editor";
 import { formatConsole } from "@/lib/db/console/format";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
@@ -244,6 +246,24 @@ describe("registerEditorLanguages", () => {
       "weaviate",
       "mtconnect",
     ]);
+  });
+});
+
+describe("the json row", () => {
+  test("is declared in the shared layer, and MongoDB contributes its completion source alone", async () => {
+    const { JSON_EDITOR_LANGUAGE } = await import("@/lib/db/editor-language/json");
+    const { MONGODB_JSON_COMPLETIONS } = await import("@/lib/db/providers/document/mongodb/editor-language");
+    // Format and the accent are the shared row's: every JSON read request (Kafka's, MQTT's, the industrial engines')
+    // formats through it, so no engine's module may change them.
+    expect(EDITOR_LANGUAGES.json.format).toBe(JSON_EDITOR_LANGUAGE.format);
+    expect(EDITOR_LANGUAGES.json.accent).toBe(JSON_EDITOR_LANGUAGE.accent);
+    expect(JSON_EDITOR_LANGUAGE.completions).toBeUndefined();
+    expect(EDITOR_LANGUAGES.json.completions).toBe(MONGODB_JSON_COMPLETIONS);
+  });
+
+  test("the shared json row imports no provider module", () => {
+    const text = readFileSync(join(import.meta.dir, "..", "..", "..", "src/lib/db/editor-language/json.ts"), "utf8");
+    expect(text).not.toMatch(/providers\//);
   });
 });
 

@@ -6,8 +6,10 @@
  * 1. No file under `src/components/`, `src/hooks/` or `src/lib/editor/` imports a module under
  *    `src/lib/db/providers/`. A language's lexer, route table or completion source is reached through its
  *    contribution in `src/lib/db/editor-language/`, never by the shared UI naming a provider's internals.
- * 2. A `register<Name>Language(...)` call appears in the registry module only. Every other mention is the function's
- *    own declaration, so a mount that registers one language by hand fails here.
+ * 2. A `register<Name>Language(...)` call appears in the registry module only, and a
+ *    `register<Name>CompletionProvider(...)` call only in an editor language row (a file under
+ *    `src/lib/db/editor-language/` or a provider's `editor-language.ts`). Every other mention is the function's own
+ *    declaration, so a mount that registers one language or one completion source by hand fails here.
  * 3. The shared UI spells no union of editor language ids: `EditorLanguage` is the registry's key set, and every
  *    other language type is derived from it, so a new language is one registry row and no hand-kept union.
  */
@@ -22,6 +24,8 @@ const SHARED_UI = ["src/components/", "src/hooks/", "src/lib/editor/"];
 const PROVIDERS = "src/lib/db/providers/";
 const REGISTRY_DIR = "src/lib/db/editor-language/";
 const REGISTRY_MODULE = "src/lib/db/editor-language/index.ts";
+/** A provider's editor language row: the file that declares the contribution, `editor-language.ts` or `<x>-editor-language.ts`. */
+const PROVIDER_ROW = /^src\/lib\/db\/providers\/.+(?:\/|-)editor-language\.ts$/;
 
 /** Every source file git lists under `src/`, tracked or untracked but not ignored. */
 function sourceFiles(): string[] {
@@ -49,17 +53,26 @@ export function importedPaths(path: string, text: string): string[] {
   return paths;
 }
 
-const REGISTER_LANGUAGE_CALL = /\bregister[A-Za-z0-9]*Language\s*\(/g;
-const REGISTER_LANGUAGE_DECLARATION = /\bfunction\s+register[A-Za-z0-9]*Language\s*\($/;
+/** The `register<Name><suffix>(` calls in a text, its declarations left out. */
+function registerCalls(text: string, suffix: string): string[] {
+  const call = new RegExp(`\\bregister[A-Za-z0-9]*${suffix}\\s*\\(`, "g");
+  const declaration = new RegExp(`\\bfunction\\s+register[A-Za-z0-9]*${suffix}\\s*\\($`);
+  const calls: string[] = [];
+  for (const match of text.matchAll(call)) {
+    const upTo = text.slice(Math.max(0, match.index - 20), match.index + match[0].length);
+    if (!declaration.test(upTo)) calls.push(match[0].replace(/\s*\($/, ""));
+  }
+  return calls;
+}
 
 /** The `register<Name>Language(` calls in a text, its declarations left out. */
 export function registerLanguageCalls(text: string): string[] {
-  const calls: string[] = [];
-  for (const match of text.matchAll(REGISTER_LANGUAGE_CALL)) {
-    const upTo = text.slice(Math.max(0, match.index - 20), match.index + match[0].length);
-    if (!REGISTER_LANGUAGE_DECLARATION.test(upTo)) calls.push(match[0].replace(/\s*\($/, ""));
-  }
-  return calls;
+  return registerCalls(text, "Language");
+}
+
+/** The `register<Name>CompletionProvider(` calls in a text, its declarations left out. */
+export function registerCompletionCalls(text: string): string[] {
+  return registerCalls(text, "CompletionProvider");
 }
 
 const UNION_RUN = /(?:\|\s*"[\w-]+"\s*)+/g;
@@ -99,6 +112,15 @@ describe("the helpers read what they claim", () => {
     expect(registerLanguageCalls(text)).toEqual(["registerEtcdLanguage", "registerConsoleLanguage"]);
   });
 
+  test("registerCompletionCalls finds calls and skips a declaration", () => {
+    const text = [
+      "export function registerSQLCompletionProvider(monaco, cache) {}",
+      "const disposable = registerSQLCompletionProvider(monaco, cache);",
+      "registerS3CompletionProvider (monaco, buckets);",
+    ].join("\n");
+    expect(registerCompletionCalls(text)).toEqual(["registerSQLCompletionProvider", "registerS3CompletionProvider"]);
+  });
+
   test("literalUnionsOver finds a run that spells the ids and ignores one that spells too few", () => {
     const ids = new Set(["sql", "json", "redis"]);
     expect(literalUnionsOver('type A = | "sql" | "json" | "redis";', ids, 3)).toEqual([["sql", "json", "redis"]]);
@@ -135,6 +157,21 @@ describe("the editor language boundary", () => {
     expect(offenders).toEqual([]);
     // The control: the registry module does register, so an empty list above is not a scan that reads nothing.
     expect(registerLanguageCalls(readFileSync(join(ROOT, REGISTRY_MODULE), "utf8")).length).toBeGreaterThan(0);
+  });
+
+  test("a register<Name>CompletionProvider call appears in an editor language row only", () => {
+    const isRow = (path: string) => path.startsWith(REGISTRY_DIR) || PROVIDER_ROW.test(path);
+    const offenders = files
+      .filter((path) => !isRow(path))
+      .flatMap((path) =>
+        registerCompletionCalls(readFileSync(join(ROOT, path), "utf8")).map((call) => `${path}: ${call}`),
+      );
+    expect(offenders).toEqual([]);
+    // The control: the rows do register completion sources, so an empty list above is not a scan that reads nothing.
+    const fromRows = files
+      .filter(isRow)
+      .flatMap((path) => registerCompletionCalls(readFileSync(join(ROOT, path), "utf8")));
+    expect(fromRows.length).toBeGreaterThan(0);
   });
 
   test("the shared UI spells no union of editor language ids", async () => {

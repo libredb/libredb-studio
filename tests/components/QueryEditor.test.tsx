@@ -2082,8 +2082,8 @@ describe("QueryEditor", () => {
   test("registers the four console languages after the custom languages, before the editor mounts (vector-family spec 3.8)", () => {
     render(React.createElement(QueryEditor, createDefaultProps({ language: "sql", value: "SELECT 1" })));
 
-    // registerDialectConsoles runs on every mount, and the Milvus, Qdrant, Weaviate and MTConnect records are the ones that carry a console
-    // language, registered in the record's order.
+    // registerEditorLanguages runs on every mount, and the Milvus, Qdrant, Weaviate and MTConnect rows are the ones that carry a console
+    // language, registered in the registry's order.
     expect(capturedLanguageRegistrations).toEqual([
       "libredb",
       "redis",

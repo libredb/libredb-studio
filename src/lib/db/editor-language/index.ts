@@ -1,5 +1,5 @@
 import type * as Monaco from "monaco-editor";
-import { JSON_EDITOR_LANGUAGE } from "@/lib/db/providers/document/mongodb/editor-language";
+import { MONGODB_JSON_COMPLETIONS } from "@/lib/db/providers/document/mongodb/editor-language";
 import { FIRESTORE_EDITOR_LANGUAGE } from "@/lib/db/providers/document/firestore/editor-language";
 import { LIBREDB_EDITOR_LANGUAGE } from "@/lib/db/providers/embedded/libredb-editor-language";
 import { CYPHER_EDITOR_LANGUAGE } from "@/lib/db/providers/graph/neo4j/editor-language";
@@ -15,6 +15,7 @@ import { MILVUS_EDITOR_LANGUAGE } from "@/lib/db/providers/vector/milvus/editor-
 import { QDRANT_EDITOR_LANGUAGE } from "@/lib/db/providers/vector/qdrant/editor-language";
 import { WEAVIATE_EDITOR_LANGUAGE } from "@/lib/db/providers/vector/weaviate/editor-language";
 import { registerConsoleLanguage } from "@/lib/editor/console-language";
+import { JSON_EDITOR_LANGUAGE } from "./json";
 import { SQL_EDITOR_LANGUAGE } from "./sql";
 import type { EditorCompletionContext, EditorLanguageContribution } from "./types";
 
@@ -23,12 +24,13 @@ import type { EditorCompletionContext, EditorLanguageContribution } from "./type
  *
  * The one list: `EditorLanguage` is its key set, a tab type's language in `DIALECT_EDITORS` must be one of its keys,
  * and the editor registers, completes, formats and tints from these rows alone, so a new language is one row here and
- * its contribution beside its provider. The order is the order the languages register in before an editor mounts:
+ * its contribution beside its provider. `sql` and `json`, which Monaco ships and no one engine owns, are declared in
+ * this directory, and an engine's completion source joins the shared row here. The order is the order the languages register in before an editor mounts:
  * the custom languages first, then the console dialects.
  */
 export const EDITOR_LANGUAGES = Object.freeze({
   sql: SQL_EDITOR_LANGUAGE,
-  json: JSON_EDITOR_LANGUAGE,
+  json: Object.freeze<EditorLanguageContribution>({ ...JSON_EDITOR_LANGUAGE, completions: MONGODB_JSON_COMPLETIONS }),
   libredb: LIBREDB_EDITOR_LANGUAGE,
   redis: REDIS_EDITOR_LANGUAGE,
   promql: PROMQL_EDITOR_LANGUAGE,

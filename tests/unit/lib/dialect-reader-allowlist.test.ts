@@ -59,7 +59,7 @@ const ALLOWED: readonly Reader[] = [
   {
     path: "src/lib/db/providers/document/mongodb/editor-language.ts",
     text: "context.capabilities?.queryDialect === undefined",
-    owner: "the json editor language: the MongoDB completion provider registers only where no dialect is declared",
+    owner: "MongoDB's completion source for the shared json language: it registers only where no dialect is declared",
   },
   {
     path: "src/components/TestDataGenerator.tsx",
