@@ -195,7 +195,6 @@ export const REGISTRIES: readonly Listed[] = [
     reason: "the total name registry of code fence tags",
   },
   { path: "src/lib/agent/agent-manifest.ts", declaration: "AGENT_STATEMENT_LANGUAGE", count: 1, reason: AGENT_LEG },
-  { path: "src/lib/agent/agent-manifest.ts", declaration: "AGENT_REQUIREMENT_ENGINES", count: 2, reason: AGENT_LEG },
   {
     path: "src/lib/agent/agent-manifest.ts",
     declaration: "AgentAvailabilityTables",

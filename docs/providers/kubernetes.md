@@ -416,7 +416,7 @@ The agent reads it through `runServerPack` and `agentEnginePack`.
 Both overlays are empty, so the engine resolves to the `kubectl` family pack itself.
 The `kubectl` statement-language family has no dialect-bound member.
 This overlay overrides no Shared member, so every Shared member is the `kubectl` statement-language family's own.
-The cluster-* requirements hold here: `AGENT_REQUIREMENT_ENGINES` mirrors `cluster-usage-reading` and `cluster-workload-reading` from this provider's `agentReadings`, which the client tier cannot reach.
+The cluster-* requirements hold here: the `kubectl` pack's client facet names this engine for `cluster-usage-reading` and `cluster-workload-reading`, mirroring this provider's `agentReadings`, which the client tier cannot reach, and `AGENT_REQUIREMENT_ENGINES` reads them through `AGENT_PACK_REQUIREMENTS`.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
 
 ### 9.2 SQL writing

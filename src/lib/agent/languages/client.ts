@@ -19,6 +19,10 @@ import type {
   AgentEvidenceEventSpecs,
   AgentLanguageClientPack,
   AgentPackEvidenceEvent,
+  AgentPackReadingDenyCode,
+  AgentPackShortfall,
+  AgentPackVariantRequirement,
+  AgentVariantRequirementSpec,
 } from "./pack";
 import { SQL_CLIENT_PACK } from "./sql/client";
 
@@ -73,6 +77,35 @@ export const AGENT_EVIDENCE_EVENTS = mergeDisjoint(
   [SQL_CLIENT_PACK.evidenceEvents, KUBECTL_CLIENT_PACK.evidenceEvents, MONGO_CLIENT_PACK.evidenceEvents],
   "AGENT_EVIDENCE_EVENTS",
 ) satisfies AgentEvidenceEventSpecs<AgentPackEvidenceEvent>;
+
+/**
+ * What the timeline says of every shortfall a pack's verifiers report, keyed by shortfall. Global, because a verdict
+ * names its shortfall and not its language, so a shortfall two packs both declare fails at load; and total over
+ * `AgentPackShortfall`, so a shortfall a pack adds does not compile until the pack says it.
+ */
+export const AGENT_PACK_SHORTFALL_SENTENCES = mergeDisjoint(
+  [SQL_CLIENT_PACK.shortfallSentences, KUBECTL_CLIENT_PACK.shortfallSentences, MONGO_CLIENT_PACK.shortfallSentences],
+  "AGENT_PACK_SHORTFALL_SENTENCES",
+) satisfies Record<AgentPackShortfall, string>;
+
+/** What the timeline calls every reading refusal a pack raises, keyed by code, global and total as the shortfalls are. */
+export const AGENT_PACK_READING_REFUSAL_HEADLINES = mergeDisjoint(
+  [
+    SQL_CLIENT_PACK.readingRefusalHeadlines,
+    KUBECTL_CLIENT_PACK.readingRefusalHeadlines,
+    MONGO_CLIENT_PACK.readingRefusalHeadlines,
+  ],
+  "AGENT_PACK_READING_REFUSAL_HEADLINES",
+) satisfies Record<AgentPackReadingDenyCode, string>;
+
+/**
+ * Every variant requirement a pack names, with the engines it holds on and its refusal, global and total as the
+ * shortfalls are. `agent-manifest.ts` reads it beside the requirements the core derives.
+ */
+export const AGENT_PACK_REQUIREMENTS = mergeDisjoint(
+  [SQL_CLIENT_PACK.requirements, KUBECTL_CLIENT_PACK.requirements, MONGO_CLIENT_PACK.requirements],
+  "AGENT_PACK_REQUIREMENTS",
+) satisfies Record<AgentPackVariantRequirement, AgentVariantRequirementSpec>;
 
 /** A ledger event a pack declares, rather than one of the core's own kinds. */
 export type AgentPackEvidenceRunEvent = Extract<AgentRunEvent, AgentPackEvidenceEvent>;

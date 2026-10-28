@@ -2,6 +2,7 @@
  * kubectl's client facet (#1821): its copy, its workflow variants and its posture, as data a browser bundle may hold.
  * Client-safe: it reads only the leaf `workflow-tool-sets.ts`.
  */
+import type { DatabaseType } from "@/lib/types";
 import type { AgentVariantRequirement } from "../../agent-manifest";
 import type { AgentPosture } from "../../posture";
 import type { AgentToolName } from "../../tools";
@@ -11,8 +12,64 @@ import type {
   AgentEvidenceEventSpecs,
   AgentEvidenceTimelineEntry,
   AgentLanguageClientPack,
+  AgentVariantRequirementSpec,
   StatementBudgets,
 } from "../pack";
+
+/**
+ * The curated cluster readings whose result is EVIDENCE of a kind a verdict asks for, so the drive writes an event of
+ * that kind beside the settled step: container usage against requests and limits in one namespace
+ * (`inspect_usage`, resource efficiency), and one namespace's workloads, their readiness, restarts, missing resources
+ * and probes, and events (`profile_workloads`, cluster health).
+ */
+export type KubectlEvidenceToolName = "inspect_usage" | "profile_workloads";
+
+/**
+ * The reading refusal only the cluster usage reading raises: the cluster serves no metrics.k8s.io, or serves one whose
+ * backend does not answer. It is the cluster's fact rather than a failure of the read, so no rewording of the call
+ * could change it and it costs no repair attempt. The ledger persists it, so it is a member of the core's
+ * `AgentReadingDenyCode` through `AgentPackReadingDenyCode`.
+ */
+export type KubectlReadingDenyCode = "METRICS_UNAVAILABLE";
+
+/** The verdict shortfalls only the kubectl verifiers report. */
+export type KubectlShortfall =
+  /**
+   * A resource-efficiency run never read usage.
+   *
+   * The template's own artifact. Whether a container is sized for what it uses can only be said from what it uses,
+   * and a run that reported from the cluster's objects alone has described the requests and not measured them.
+   */
+  | "no-usage-reading"
+  /**
+   * A resource-efficiency run read usage, and its answer does not rest on that reading: the resources recommendation
+   * cites something else, or the report recommends nothing and cites no usage reading.
+   *
+   * The link between the reading and the conclusion, kept apart from `no-usage-reading` because the run here did
+   * the measuring and then answered beside it.
+   */
+  | "no-usage-evidence"
+  /**
+   * A resource-efficiency run could not read usage because the cluster serves no usage metrics, and read none.
+   *
+   * Kept apart from `no-usage-reading` because the cause is the cluster and not the run: metrics.k8s.io is absent or
+   * metrics-server does not answer, and the reader is owed that sentence rather than one about the model.
+   */
+  | "no-usage-metrics"
+  /**
+   * A cluster-health run never profiled a namespace's workloads.
+   *
+   * The template's own artifact, as `no-table-profile` is the SQL assessment's: reads the model composed may describe
+   * a few objects, and only the profile establishes every workload's state in one place.
+   */
+  | "no-workload-profile";
+
+/**
+ * What the kubectl workflow variants need of an engine beyond its language: a usage reading and a workload profile.
+ * Mirrored onto the engines whose provider declares those `agentReadings`, because that declaration reaches server
+ * code; `agent-manifest.test.ts` holds each to those providers.
+ */
+export type KubectlVariantRequirement = "cluster-usage-reading" | "cluster-workload-reading";
 
 /** kubectl's evidence events, as the ledger stores them less their timestamp. */
 export type KubectlEvidenceEvent =
@@ -219,6 +276,27 @@ export const KUBECTL_CLIENT_PACK = Object.freeze({
   }),
   planEstimateOperation: null,
   evidenceEvents: KUBECTL_EVIDENCE_EVENTS,
+  shortfallSentences: Object.freeze({
+    "no-usage-reading": "No usage was read, so how the containers use their requests was never established.",
+    "no-usage-evidence": "The report rests on no usage reading of this run.",
+    "no-usage-metrics": "This cluster serves no usage metrics: install metrics-server to measure usage.",
+    "no-workload-profile": "No workloads were profiled, so the namespace's health was never established.",
+  } satisfies Record<KubectlShortfall, string>),
+  readingRefusalHeadlines: Object.freeze({
+    METRICS_UNAVAILABLE: "This cluster serves no usage metrics",
+  } satisfies Record<KubectlReadingDenyCode, string>),
+  requirements: Object.freeze({
+    "cluster-usage-reading": Object.freeze({
+      engines: Object.freeze<DatabaseType[]>(["kubernetes"]),
+      sentence:
+        "This engine serves no usage reading, so this workflow's tools could only refuse. The operations workflow runs here, and plan mode drafts here.",
+    }),
+    "cluster-workload-reading": Object.freeze({
+      engines: Object.freeze<DatabaseType[]>(["kubernetes"]),
+      sentence:
+        "This engine serves no workload profile, so this workflow's tools could only refuse. The operations workflow runs here, and plan mode drafts here.",
+    }),
+  } satisfies Record<KubectlVariantRequirement, AgentVariantRequirementSpec>),
   posture: Object.freeze({
     reads: kubectlReadsPosture,
     widened: kubectlReadsPosture,

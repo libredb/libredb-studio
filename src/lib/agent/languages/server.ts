@@ -17,7 +17,7 @@ import { mergeDisjoint } from "../disjoint-merge";
 import type { AgentRunWorkflowType } from "../types";
 import { KUBECTL_SERVER_PACK } from "./kubectl/server";
 import { MONGO_SERVER_PACK } from "./mongo/server";
-import type { AgentLanguageServerAdapter, AgentLanguageServerPack } from "./pack";
+import type { AgentLanguageServerAdapter, AgentLanguageServerPack, EvidenceToolName } from "./pack";
 import { SQL_STATEMENT_DEFINITIONS } from "./sql/definitions";
 import { SQL_RECOMMEND_CHANGE } from "./sql/recommendation";
 import { SQL_SERVER_PACK } from "./sql/server";
@@ -97,7 +97,12 @@ export const LANGUAGE_SHORTFALL_NOTICES = mergeDisjoint(
 
 /**
  * What a run is told the moment it holds a usage reading. kubectl is the one pack that supplies it, which
- * `tests/unit/lib/agent/languages.test.ts` holds, so the run loop reads it here, beside the bar's trigger, which is
- * core vocabulary: a held tool and a ledger event kind.
+ * `tests/unit/lib/agent/languages.test.ts` holds, so the run loop reads it here.
  */
 export const LANGUAGE_USAGE_BAR_NOTICE: string = KUBECTL_SERVER_PACK.usageBarNotice;
+
+/**
+ * The bar's trigger: the evidence tool whose reading, once it lands as that tool's event, makes the bar due. Supplied
+ * by the pack that supplies the notice, so the run loop names no tool of its own for it.
+ */
+export const LANGUAGE_USAGE_BAR_TOOL: EvidenceToolName = KUBECTL_SERVER_PACK.usageBarTool;

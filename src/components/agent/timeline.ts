@@ -1,9 +1,16 @@
 import type { AgentContextCharge } from "@/lib/agent/context-snapshot";
+import { mergeDisjoint } from "@/lib/agent/disjoint-merge";
 import { AGENT_MAX_REPAIR_ATTEMPTS, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import type { AgentGoalShortfall } from "@/lib/agent/goal-verifier";
 import { type AgentInventoryNoun, TABLE_INVENTORY_NOUN } from "@/lib/agent/inventory-noun";
 import type { AgentPlanAccess, AgentPlanSummary } from "@/lib/agent/plan-summary";
-import { evidenceEventSpec, isPackEvidenceEvent } from "@/lib/agent/languages/client";
+import {
+  AGENT_PACK_READING_REFUSAL_HEADLINES,
+  AGENT_PACK_SHORTFALL_SENTENCES,
+  evidenceEventSpec,
+  isPackEvidenceEvent,
+} from "@/lib/agent/languages/client";
+import type { AgentPackReadingDenyCode, AgentPackShortfall } from "@/lib/agent/languages/pack";
 import { readPlanStatement } from "@/lib/agent/plan-draft";
 import type { AgentLedgerEntry } from "@/lib/agent/run-store";
 import {
@@ -928,11 +935,14 @@ type AgentGoalVerdictRecord = NonNullable<Extract<AgentRunEvent, { kind: "run-fi
 const answeredHeadline = (verdict: AgentGoalVerdictRecord): string =>
   verdict.outcome === "answered" ? "Run answered" : "Run did not answer";
 
+/** The shortfalls whose sentence the timeline says itself; a language pack says the rest. */
+type CoreShortfall = Exclude<AgentGoalShortfall, AgentPackShortfall>;
+
 /**
- * What each shortfall means, in the app's own words. Total over the union, so a
- * shortfall added to the contract cannot reach a user as a raw code.
+ * What each shortfall the core reports means, in the app's own words. Total over the core's shortfalls, and merged
+ * below with the sentences the packs declare, so a shortfall added to the contract cannot reach a user as a raw code.
  */
-const SHORTFALL_SENTENCES: Readonly<Record<AgentGoalShortfall, string>> = {
+const CORE_SHORTFALL_SENTENCES: Readonly<Record<CoreShortfall, string>> = {
   "no-report": "The run finished without composing a cited report, so nothing it found was written down.",
   "empty-evidence": "Every result the report cited came back empty, so the answer rests on nothing.",
   "no-plan": "The run produced no plan at all.",
@@ -960,12 +970,14 @@ const SHORTFALL_SENTENCES: Readonly<Record<AgentGoalShortfall, string>> = {
     "The run reported what it found but never produced an answer to show, so there is nothing to put in front of you.",
   "answer-uncited":
     "The run presented one result as the answer and its report rests on other evidence entirely, so the claims and the picture are not about the same thing.",
-  "no-usage-reading": "No usage was read, so how the containers use their requests was never established.",
-  "no-usage-evidence": "The report rests on no usage reading of this run.",
-  "no-usage-metrics": "This cluster serves no usage metrics: install metrics-server to measure usage.",
-  "no-workload-profile": "No workloads were profiled, so the namespace's health was never established.",
   cancelled: "The run was stopped before it could finish.",
 };
+
+/** Every shortfall's sentence: the core's and each pack's, where a shortfall said twice fails at load. */
+const SHORTFALL_SENTENCES: Readonly<Record<AgentGoalShortfall, string>> = mergeDisjoint(
+  [CORE_SHORTFALL_SENTENCES, AGENT_PACK_SHORTFALL_SENTENCES],
+  "SHORTFALL_SENTENCES",
+);
 
 /**
  * What a refused reading is called in the rail. The reason code is shown as the
@@ -973,11 +985,18 @@ const SHORTFALL_SENTENCES: Readonly<Record<AgentGoalShortfall, string>> = {
  * than repeating the constant.
  *
  */
-const READING_REFUSAL_HEADLINES: Readonly<Record<AgentReadingDenyCode, string>> = {
+const CORE_READING_REFUSAL_HEADLINES: Readonly<
+  Record<Exclude<AgentReadingDenyCode, AgentPackReadingDenyCode>, string>
+> = {
   KIND_UNSUPPORTED_BY_PROVIDER: "This engine serves no reading of that kind",
   READING_OVER_BUDGET: "The reading was larger than the run may carry",
-  METRICS_UNAVAILABLE: "This cluster serves no usage metrics",
 };
+
+/** Every refusal's headline: the core's and those of the codes a pack raises. */
+const READING_REFUSAL_HEADLINES: Readonly<Record<AgentReadingDenyCode, string>> = mergeDisjoint(
+  [CORE_READING_REFUSAL_HEADLINES, AGENT_PACK_READING_REFUSAL_HEADLINES],
+  "READING_REFUSAL_HEADLINES",
+);
 
 /**
  * The sentence for a reason, for a surface that shows it outside the timeline.

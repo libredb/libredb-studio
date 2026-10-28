@@ -149,7 +149,7 @@ import type { AgentRepairDenyCode, AgentRepairLedger } from "./repair-ledger";
 import { fingerprintStatement } from "./repair-ledger";
 import { AGENT_EVIDENCE_EVENTS, statementFamilyOf } from "./languages/client";
 import { engineServerDialect, runServerPack } from "./languages/engines/server";
-import type { AgentFamilyOperationIds, AgentRecommendationCard } from "./languages/pack";
+import type { AgentFamilyOperationIds, AgentRecommendationCard, EvidenceToolName } from "./languages/pack";
 import {
   CURATED_CALL_LANGUAGE,
   LANGUAGE_BASE_DEFINITIONS,
@@ -214,10 +214,8 @@ export type AgentToolName =
   | "recommend_change"
   /** Operations only: one curated reading of what the engine says about itself. */
   | "inspect_operations"
-  /** Resource efficiency on a cluster: container usage against requests and limits in one namespace. */
-  | "inspect_usage"
-  /** Cluster health: one namespace's workloads, their readiness, restarts, missing resources and probes, and events. */
-  | "profile_workloads"
+  /** A pack's evidence readings, which the pack that offers them declares (`EvidenceToolName`). */
+  | EvidenceToolName
   /**
    * Which result IS the answer, and how it should be shown. Reaches no database.
    *

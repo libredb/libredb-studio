@@ -14,8 +14,14 @@
  */
 import type { DatabaseType } from "@/lib/types";
 import type { AgentGoalVerifierId } from "./goal-verifier";
-import { DEFAULT_STATEMENT_LANGUAGE, projectClientPacks, statementFamilyOf } from "./languages/client";
+import {
+  AGENT_PACK_REQUIREMENTS,
+  DEFAULT_STATEMENT_LANGUAGE,
+  projectClientPacks,
+  statementFamilyOf,
+} from "./languages/client";
 import { enginesSupporting } from "./languages/engines/client";
+import type { AgentPackVariantRequirement, AgentVariantRequirementSpec } from "./languages/pack";
 import type { AgentOperationId, AgentToolName } from "./tools";
 import type { AgentRunMode, AgentRunWorkflowType } from "./types";
 import { OPERATIONS_VARIANT } from "./workflow-tool-sets";
@@ -114,24 +120,33 @@ export const PLAN_ESTIMATE_OPERATIONS: ReadonlySet<string> = new Set(
   Object.values(AGENT_PLAN_ESTIMATE_OPERATION).filter((operation): operation is AgentOperationId => operation !== null),
 );
 
+/** One member of every requirement a pack names, keyed by requirement in the order the packs declare them. */
+function packRequirementProjection<Value>(
+  pick: (spec: AgentVariantRequirementSpec) => Value,
+): Record<AgentPackVariantRequirement, Value> {
+  return Object.fromEntries(
+    Object.entries(AGENT_PACK_REQUIREMENTS).map(([requirement, spec]) => [requirement, pick(spec)]),
+  ) as Record<AgentPackVariantRequirement, Value>;
+}
+
 /**
  * What a workflow variant needs of an engine beyond its language, evaluated over the engine TYPE so a client can
- * answer it with no provider in hand.
+ * answer it with no provider in hand. A requirement only one language's variants name is its pack's own
+ * (`AgentPackVariantRequirement`).
  */
-export type AgentVariantRequirement = "sql-composers" | "cluster-usage-reading" | "cluster-workload-reading";
+export type AgentVariantRequirement = "sql-composers" | AgentPackVariantRequirement;
 
 /**
  * The engines each requirement holds on. `sql-composers` is read from the engines' client dialects
  * (`enginesSupporting` in `languages/engines/client.ts`), which say client-safe what each server overlay supplies:
- * the engines that compose both a catalog read and an estimating plan. The cluster readings are mirrored, because the
- * providers declaring `agentReadings` reach server code. `agent-manifest.test.ts` holds `sql-composers` to the
- * composed-SQL entry points in `composed-sql.ts` and each cluster reading to those providers.
+ * the engines that compose both a catalog read and an estimating plan. A pack's requirement holds on the engines its
+ * pack names (`AGENT_PACK_REQUIREMENTS`). `agent-manifest.test.ts` holds `sql-composers` to the composed-SQL entry
+ * points in `composed-sql.ts` and each pack requirement to the providers that declare its reading.
  */
 export const AGENT_REQUIREMENT_ENGINES: Readonly<Record<AgentVariantRequirement, readonly DatabaseType[]>> =
   Object.freeze({
     "sql-composers": enginesSupporting("catalogRead", "planEstimate"),
-    "cluster-usage-reading": Object.freeze<DatabaseType[]>(["kubernetes"]),
-    "cluster-workload-reading": Object.freeze<DatabaseType[]>(["kubernetes"]),
+    ...packRequirementProjection((spec) => spec.engines),
   } satisfies Record<AgentVariantRequirement, readonly DatabaseType[]>);
 
 /**
@@ -300,11 +315,8 @@ const NO_VARIANT_SENTENCE =
 const REQUIREMENT_SENTENCES: Readonly<Record<AgentVariantRequirement, string>> = Object.freeze({
   "sql-composers":
     "Agent mode has no verified catalog or plan composition for this engine, so this workflow's tools could only refuse. The operations workflow runs here, and plan mode drafts here.",
-  "cluster-usage-reading":
-    "This engine serves no usage reading, so this workflow's tools could only refuse. The operations workflow runs here, and plan mode drafts here.",
-  "cluster-workload-reading":
-    "This engine serves no workload profile, so this workflow's tools could only refuse. The operations workflow runs here, and plan mode drafts here.",
-});
+  ...packRequirementProjection((spec) => spec.sentence),
+} satisfies Record<AgentVariantRequirement, string>);
 
 /** `agentVariant` over the given tables, guarded the same way against a workflow naming an inherited property. */
 function variantIn(

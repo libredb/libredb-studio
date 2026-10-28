@@ -110,4 +110,5 @@ export const KUBECTL_SERVER_PACK = Object.freeze({
   workflowToolRules: KUBECTL_WORKFLOW_TOOL_RULES,
   shortfallNotices: KUBECTL_SHORTFALL_NOTICES,
   usageBarNotice: KUBECTL_USAGE_BAR_NOTICE,
+  usageBarTool: "inspect_usage",
 } satisfies AgentLanguageServerPack);

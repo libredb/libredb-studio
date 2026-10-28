@@ -15,6 +15,10 @@
  * - R1d: a string or template part that names a MongoDB plan stage (`COLLSCAN`, `IXSCAN`).
  * - R1e: a string literal or literal type that starts with a pack id and a separator, or ends in `-<id>.<n>`: an
  *   operation id, a verifier id or a fingerprint prefix.
+ * - R1g: a string literal, no-substitution template or literal type whose whole text is another name a pack owns: an
+ *   evidence tool (`AGENT_EVIDENCE_TOOLS`), or a reading refusal code, a verdict shortfall or a workflow variant
+ *   requirement a pack declares in its client facet. The core reads each through the registry that merges the packs'
+ *   rows, so a language that brings its own adds them to its pack and edits no core file.
  * - R1f: under `src/lib/mcp/` only, a string literal or literal type whose whole text is a tool a language's MCP facet
  *   declares, `sql`'s too: the tool is the language's, so MCP reads it off an arm or the facet registry. The agent's
  *   own tools are its tool registry's, not a facet's, so the agent core is not held to it.
@@ -101,6 +105,14 @@ const FACET_TOOLS: ReadonlySet<string> = new Set(
   Object.values(languageMcpFacets.AGENT_LANGUAGE_MCP_FACETS).flatMap((facet) => (facet === null ? [] : [facet.tool])),
 );
 
+/** The names a pack owns beside its id (R1g): its evidence tools, refusal codes, shortfalls and requirements. */
+const PACK_NAMES: ReadonlySet<string> = new Set([
+  ...Object.keys(languages.AGENT_EVIDENCE_TOOLS),
+  ...Object.keys(languageClients.AGENT_PACK_READING_REFUSAL_HEADLINES),
+  ...Object.keys(languageClients.AGENT_PACK_SHORTFALL_SENTENCES),
+  ...Object.keys(languageClients.AGENT_PACK_REQUIREMENTS),
+]);
+
 /** The id R1 leaves out: the default family's, whose literals and table reads are R5's. */
 const SQL = "sql";
 const SQL_COMPOUND = /^sql[.:-]/;
@@ -153,7 +165,6 @@ const SHARED_ENTRIES = new Set(
  * - persisted ids: the `sql-composers` requirement, whose engines are derived from the overlays, and the operation ids
  *   of the SQL arm runtime, which stays in the core. The one in `describePriorProgress` is temporary: it marks B127,
  *   and the B127 fix removes it;
- * - `kubernetes` in the cluster-* requirements, the mirror of the provider's `agentReadings`;
  * - the execution gate, which the spec keeps in `AGENT_EXECUTION_ENGINES`;
  * - `postgres` as the `@workflow` durable world, which is no `DatabaseType`;
  * - `libredb` as the MCP server's name in each client's configuration snippet, and as the first word of the MCP server's
@@ -191,7 +202,6 @@ const ALLOWLIST: Readonly<Record<string, number>> = Object.freeze({
   [`${AGENT}/tools.ts#outcome: R5e "sql.table.profile"`]: 1,
   [`${AGENT}/tools.ts#profileTableTool: R5e "sql.table.profile"`]: 2,
   [`${AGENT}/investigation.ts#describePriorProgress: R5e "sql.table.profile"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AGENT_REQUIREMENT_ENGINES: R8a "kubernetes"`]: 2,
   [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "postgres"`]: 1,
   [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "sqlite"`]: 1,
   [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "duckdb"`]: 1,
@@ -477,6 +487,7 @@ function coreFileFindings(file: string, text: string, exemptEngineMap = true): s
       if (!isSpecifier && WHOLE_ID.test(node.text)) add(node, isPropertyName(node) ? "R1b" : "R1a", literal);
       if (!isSpecifier && COMPOUND_ID.some((pattern) => pattern.test(node.text))) add(node, "R1e", literal);
       if (!isSpecifier && inMcp && FACET_TOOLS.has(node.text)) add(node, "R1f", literal);
+      if (!isSpecifier && PACK_NAMES.has(node.text)) add(node, "R1g", literal);
       if (!isSpecifier && node.text === SQL) {
         const parent = node.parent;
         const tableRead =
@@ -1088,6 +1099,27 @@ describe("planted violations yield exactly their findings", () => {
     expect(
       boundaryFindings(plantInFunction(arms, "servingStatementArms", 'const tools: "run_kubectl_read"[] = [];')),
     ).toEqual([`${arms}#tools: R1f "run_kubectl_read"`]);
+  });
+
+  test("a name a pack owns, written in a core module or the MCP module, fails R1g", () => {
+    expect(
+      boundaryFindings({
+        ...plantInFunction(TOOLS, "agentToolDefinition", 'if (name === "profile_workloads") {}'),
+        ...plantInTypeAlias(`${AGENT}/types.ts`, "AgentReadingDenyCode", '"METRICS_UNAVAILABLE"'),
+        ...plantInFunction(GOAL_VERIFIER, "verifyRunGoal", 'const shortfall = "no-usage-reading";'),
+      }),
+    ).toEqual([
+      `${GOAL_VERIFIER}#shortfall: R1g "no-usage-reading"`,
+      `${TOOLS}#agentToolDefinition: R1g "profile_workloads"`,
+      `${AGENT}/types.ts#AgentReadingDenyCode: R1g "METRICS_UNAVAILABLE"`,
+    ]);
+    const arms = `${MCP}/tools/statement-arms.ts`;
+    expect(
+      boundaryFindings(plantInFunction(arms, "servingStatementArms", 'const requirement = "cluster-usage-reading";')),
+    ).toEqual([`${arms}#requirement: R1g "cluster-usage-reading"`]);
+    expect(PACK_NAMES.has("inspect_usage")).toBe(true);
+    expect(PACK_NAMES.has("no-usage-metrics")).toBe(true);
+    expect(PACK_NAMES.has("cluster-workload-reading")).toBe(true);
   });
 
   test("the default family's row read off the facet registry in the MCP module fails R5b", () => {

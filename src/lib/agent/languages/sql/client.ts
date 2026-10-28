@@ -105,6 +105,9 @@ export const SQL_CLIENT_PACK = Object.freeze({
   } satisfies Record<AgentRunWorkflowType, AgentWorkflowVariant>),
   planEstimateOperation: "sql.explain.estimate",
   evidenceEvents: Object.freeze({}),
+  shortfallSentences: Object.freeze({}),
+  readingRefusalHeadlines: Object.freeze({}),
+  requirements: Object.freeze({}),
   posture: Object.freeze({
     reads: sqlReadsPosture,
     widened: (bounds: StatementBudgets): AgentPosture => ({

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   AGENT_LANGUAGE_COPY,
   AGENT_PLAN_ESTIMATE_OPERATION,
+  AGENT_REQUIREMENT_ENGINES,
   AGENT_WORKFLOW_VARIANTS,
   type AgentStatementLanguageId,
 } from "@/lib/agent/agent-manifest";
@@ -9,6 +10,9 @@ import { mergeDisjoint } from "@/lib/agent/disjoint-merge";
 import { verifyRunGoal } from "@/lib/agent/goal-verifier";
 import {
   AGENT_EVIDENCE_EVENTS,
+  AGENT_PACK_READING_REFUSAL_HEADLINES,
+  AGENT_PACK_REQUIREMENTS,
+  AGENT_PACK_SHORTFALL_SENTENCES,
   evidenceEventSpec,
   isPackEvidenceEvent,
   languageClientPack,
@@ -19,12 +23,14 @@ import {
   LANGUAGE_BASE_DEFINITIONS,
   LANGUAGE_SHORTFALL_NOTICES,
   LANGUAGE_USAGE_BAR_NOTICE,
+  LANGUAGE_USAGE_BAR_TOOL,
   REFERENCE_RECOMMENDATION_CARD,
   WORKFLOW_TOOL_RULES,
   languageServer,
   languageServerPack,
 } from "@/lib/agent/languages/server";
 import { OPERATIONS_TOOL_RULE } from "@/lib/agent/languages/shared";
+import { LANGUAGE_READING_REFUSAL_TEXT } from "@/lib/agent/languages/refusals";
 import { LANGUAGE_GOAL_RULES } from "@/lib/agent/languages/verifiers";
 import { READING_REFUSAL_TEXT, UNAVAILABLE_TEXT } from "@/lib/agent/tool-contracts";
 import { AGENT_TOOL_DEFINITIONS, type AgentToolUnavailableCode, agentToolDefinition } from "@/lib/agent/tools";
@@ -364,6 +370,13 @@ describe("the prompt tables the packs hold", () => {
     expect(LANGUAGE_USAGE_BAR_NOTICE).toBe(languageServerPack("kubectl").usageBarNotice as string);
   });
 
+  test("the usage bar's trigger is an evidence tool of the pack that supplies the bar", () => {
+    expect(ids.filter((id) => languageServerPack(id).usageBarTool !== undefined)).toEqual(["kubectl"]);
+    expect(LANGUAGE_USAGE_BAR_TOOL).toBe(languageServerPack("kubectl").usageBarTool as typeof LANGUAGE_USAGE_BAR_TOOL);
+    expect(Object.keys(agentLanguagePack("kubectl").execution.evidenceTools)).toContain(LANGUAGE_USAGE_BAR_TOOL);
+    expect(LANGUAGE_USAGE_BAR_TOOL).toBe("inspect_usage");
+  });
+
   test("the workflow rules projection holds each pack's own frozen record, in the order the packs are declared", () => {
     expect(Object.keys(WORKFLOW_TOOL_RULES)).toEqual(["sql", "kubectl", "mongo"]);
     expect(Object.isFrozen(WORKFLOW_TOOL_RULES)).toBe(true);
@@ -482,5 +495,61 @@ describe("the client packs", () => {
     );
     expect(run.stderr.toString()).toBe("");
     expect(run.exitCode).toBe(0);
+  });
+});
+
+describe("the names a pack owns are declared in the pack and merged for the core", () => {
+  const ids = Object.keys(LANGUAGE_IDS) as AgentStatementLanguageId[];
+
+  test("the evidence tools are kubectl's two readings, and no other pack has one", () => {
+    expect(Object.keys(AGENT_EVIDENCE_TOOLS)).toEqual(["inspect_usage", "profile_workloads"]);
+    expect(ids.filter((id) => Object.keys(agentLanguagePack(id).execution.evidenceTools).length > 0)).toEqual([
+      "kubectl",
+    ]);
+  });
+
+  test("the timeline's shortfall sentences are each pack's own, merged, with the words the core used to hold", () => {
+    expect(ids.filter((id) => Object.keys(languageClientPack(id).shortfallSentences).length > 0)).toEqual(["kubectl"]);
+    expect(AGENT_PACK_SHORTFALL_SENTENCES).toEqual({
+      "no-usage-reading": "No usage was read, so how the containers use their requests was never established.",
+      "no-usage-evidence": "The report rests on no usage reading of this run.",
+      "no-usage-metrics": "This cluster serves no usage metrics: install metrics-server to measure usage.",
+      "no-workload-profile": "No workloads were profiled, so the namespace's health was never established.",
+    });
+    expect(Object.isFrozen(AGENT_PACK_SHORTFALL_SENTENCES)).toBe(true);
+  });
+
+  test("the reading refusal headlines a pack owns are its own, with the words the core used to hold", () => {
+    expect(ids.filter((id) => Object.keys(languageClientPack(id).readingRefusalHeadlines).length > 0)).toEqual([
+      "kubectl",
+    ]);
+    expect(AGENT_PACK_READING_REFUSAL_HEADLINES).toEqual({
+      METRICS_UNAVAILABLE: "This cluster serves no usage metrics",
+    });
+    expect(Object.keys(AGENT_PACK_READING_REFUSAL_HEADLINES)).toEqual(Object.keys(LANGUAGE_READING_REFUSAL_TEXT));
+  });
+
+  test("the variant requirements a pack owns hold on its engines, with the sentences the core used to hold", () => {
+    expect(ids.filter((id) => Object.keys(languageClientPack(id).requirements).length > 0)).toEqual(["kubectl"]);
+    expect(AGENT_PACK_REQUIREMENTS).toEqual({
+      "cluster-usage-reading": {
+        engines: ["kubernetes"],
+        sentence:
+          "This engine serves no usage reading, so this workflow's tools could only refuse. The operations workflow runs here, and plan mode drafts here.",
+      },
+      "cluster-workload-reading": {
+        engines: ["kubernetes"],
+        sentence:
+          "This engine serves no workload profile, so this workflow's tools could only refuse. The operations workflow runs here, and plan mode drafts here.",
+      },
+    });
+    for (const [requirement, spec] of Object.entries(AGENT_PACK_REQUIREMENTS)) {
+      expect(AGENT_REQUIREMENT_ENGINES[requirement as keyof typeof AGENT_REQUIREMENT_ENGINES]).toBe(spec.engines);
+    }
+    expect(Object.keys(AGENT_REQUIREMENT_ENGINES)).toEqual([
+      "sql-composers",
+      "cluster-usage-reading",
+      "cluster-workload-reading",
+    ]);
   });
 });

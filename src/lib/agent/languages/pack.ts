@@ -37,7 +37,13 @@ import type {
   AgentRunWorkflowType,
   AgentToolRefusal,
 } from "../types";
-import type { KubectlEvidenceEvent } from "./kubectl/client";
+import type {
+  KubectlEvidenceEvent,
+  KubectlEvidenceToolName,
+  KubectlReadingDenyCode,
+  KubectlShortfall,
+  KubectlVariantRequirement,
+} from "./kubectl/client";
 import type { ENGINE_OVERRIDABLE_SERVER_MEMBERS } from "./overlay";
 
 /** SQL's operations. `sql.explain.analyze` is a member for the reason `AgentOperationId` in `tools.ts` gives. */
@@ -291,6 +297,11 @@ export interface AgentLanguageServerPack {
    * Read through `LANGUAGE_USAGE_BAR_NOTICE` in `server.ts`, which exactly one pack supplies.
    */
   readonly usageBarNotice?: string;
+  /**
+   * The evidence tool whose reading makes the usage bar due, supplied with `usageBarNotice`. Read through
+   * `LANGUAGE_USAGE_BAR_TOOL` in `server.ts`.
+   */
+  readonly usageBarTool?: EvidenceToolName;
 }
 
 /** A catalog arm: the selector it parses, and the read. `snapshot` is the inventory this run captured, or null. */
@@ -354,11 +365,55 @@ export interface LanguageToolArms {
 }
 
 /**
- * The curated cluster readings whose result is EVIDENCE of a kind a verdict asks for, so the drive writes an event of
- * that kind beside the settled step. They reach the cluster through `service.runStep` like any database tool and are
+ * The readings each family offers whose result is EVIDENCE of a kind a verdict asks for, so the drive writes an event of
+ * that kind beside the settled step. They reach the engine through `service.runStep` like any database tool and are
  * handled apart only because of that event; see `readEvidence` in `investigation.ts`.
  */
-export type EvidenceToolName = "inspect_usage" | "profile_workloads";
+export interface AgentFamilyEvidenceTools {
+  readonly sql: never;
+  readonly kubectl: KubectlEvidenceToolName;
+  readonly mongo: never;
+}
+
+/** Every pack's evidence tool: a member of the core's `AgentToolName`, declared by the pack that offers it. */
+export type EvidenceToolName = AgentFamilyEvidenceTools[keyof AgentFamilyEvidenceTools];
+
+/** The reading refusal codes only one family's readings raise, by family; the core's own are in `types.ts`. */
+export interface AgentFamilyReadingDenyCodes {
+  readonly sql: never;
+  readonly kubectl: KubectlReadingDenyCode;
+  readonly mongo: never;
+}
+
+/** Every pack's reading refusal code: a member of the core's `AgentReadingDenyCode`, declared by its pack. */
+export type AgentPackReadingDenyCode = AgentFamilyReadingDenyCodes[keyof AgentFamilyReadingDenyCodes];
+
+/** The verdict shortfalls only one family's verifiers report, by family; the core's own are in `goal-verifier.ts`. */
+export interface AgentFamilyShortfalls {
+  readonly sql: never;
+  readonly kubectl: KubectlShortfall;
+  readonly mongo: never;
+}
+
+/** Every pack's verdict shortfall: a member of the core's `AgentGoalShortfall`, declared by its pack. */
+export type AgentPackShortfall = AgentFamilyShortfalls[keyof AgentFamilyShortfalls];
+
+/** What one family's workflow variants need of an engine beyond its language, by family. */
+export interface AgentFamilyVariantRequirements {
+  readonly sql: never;
+  readonly kubectl: KubectlVariantRequirement;
+  readonly mongo: never;
+}
+
+/** Every pack's variant requirement: a member of the core's `AgentVariantRequirement`, declared by its pack. */
+export type AgentPackVariantRequirement = AgentFamilyVariantRequirements[keyof AgentFamilyVariantRequirements];
+
+/** What a pack states of one of its variant requirements: the engines it holds on, and the refusal where it does not. */
+export interface AgentVariantRequirementSpec {
+  readonly engines: readonly DatabaseType[];
+  /** The refusal, naming what the engine lacks and both ways forward that remain. */
+  readonly sentence: string;
+}
 
 /** One evidence tool, as the run loop executes it. */
 export interface AgentEvidenceTool {
@@ -454,6 +509,21 @@ export interface AgentLanguageClientPack {
    * language's, and holds the merge total over `AgentPackEvidenceEvent`.
    */
   readonly evidenceEvents: Readonly<Record<string, AgentEvidenceEventSpec<never>>>;
+  /**
+   * What the timeline says of each shortfall only this language's verifiers report: `AGENT_PACK_SHORTFALL_SENTENCES` in
+   * `client.ts` merges every language's, total over `AgentPackShortfall`.
+   */
+  readonly shortfallSentences: Readonly<Record<string, string>>;
+  /**
+   * What the timeline calls each reading refusal only this language raises: `AGENT_PACK_READING_REFUSAL_HEADLINES` in
+   * `client.ts` merges every language's, total over `AgentPackReadingDenyCode`.
+   */
+  readonly readingRefusalHeadlines: Readonly<Record<string, string>>;
+  /**
+   * The requirements only this language's workflow variants name: `AGENT_PACK_REQUIREMENTS` in `client.ts` merges every
+   * language's, total over `AgentPackVariantRequirement`, and `agent-manifest.ts` reads the merge.
+   */
+  readonly requirements: Readonly<Record<string, AgentVariantRequirementSpec>>;
   /** What `posture.ts` says of an agent-mode run in this language. */
   readonly posture: {
     /**

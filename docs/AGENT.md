@@ -2818,7 +2818,8 @@ The core (`investigation.ts`, `tools.ts` and the modules beside them) names no s
 - **Optional:** the adapter's `inventoryProblem` and `planDraftIdentifiers`, which a pack with no such check leaves out.
 
 Some members are global by name, because a reader dispatches on the name before it reads a run's language: every pack's `baseDefinitions`, `shortfallNotices` and `evidenceTools` are merged into `LANGUAGE_BASE_DEFINITIONS`, `LANGUAGE_SHORTFALL_NOTICES` and `AGENT_EVIDENCE_TOOLS`, and every pack's `evidenceEvents` into `AGENT_EVIDENCE_EVENTS` by event kind; a name two packs both hold fails at load.
-`LANGUAGE_USAGE_BAR_NOTICE` is the one pack's `usageBarNotice` that supplies one.
+`LANGUAGE_USAGE_BAR_NOTICE` is the one pack's `usageBarNotice` that supplies one, and `LANGUAGE_USAGE_BAR_TOOL` that pack's `usageBarTool`, the evidence tool whose reading makes the bar due.
+The other names a pack owns are its own too: its evidence tools (`EvidenceToolName`), the reading refusal codes, verdict shortfalls and workflow variant requirements only it raises, each a row of a family record in `languages/pack.ts`, and the timeline's words for them and the requirements' engines and refusals in its client facet, merged into `AGENT_PACK_READING_REFUSAL_HEADLINES`, `AGENT_PACK_SHORTFALL_SENTENCES` and `AGENT_PACK_REQUIREMENTS`.
 `REFERENCE_STATEMENT_DEFINITIONS` are the default statement-language family's definitions of `inspect_schema`, `run_read_query`, `inspect_plan` and `profile_table`: `AGENT_TOOL_DEFINITIONS` spreads them first, and every family's `toolOverrides` replace them by name.
 
 **Evidence events.** A pack whose readings are evidence a verdict asks for by kind writes events of its own kinds on the ledger: kubectl's `usage-read`, `usage-unavailable` and `workloads-profiled`.

@@ -1,8 +1,8 @@
 /**
  * The refusal sentence only the kubectl readings say (#1821).
  *
- * Its code stays in the core's `AgentReadingDenyCode`, because the ledger persists it. Only the words live here,
- * merged into `READING_REFUSAL_TEXT` by `../refusals.ts`.
+ * Its code is kubectl's own `KubectlReadingDenyCode`, a member of the core's `AgentReadingDenyCode` because the ledger
+ * persists it. The words live here, merged into `READING_REFUSAL_TEXT` by `../refusals.ts`.
  */
 
 import type { AgentReadingDenyCode } from "../../types";

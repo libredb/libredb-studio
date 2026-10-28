@@ -23,8 +23,8 @@ import type { FacetOverrides } from "./pack";
  *   ids and repair identity depend on them (B128);
  * - `toolOverrides`, `recommendationCard` and the statement definitions make the offer, which is computed from the
  *   run record with no connection, and a card's schema must equal the offered one;
- * - `baseDefinitions`, `shortfallNotices`, `usageBarNotice` and `evidenceTools` are merged by name across every
- *   family in `languages/server.ts`.
+ * - `baseDefinitions`, `shortfallNotices`, `usageBarNotice`, `usageBarTool` and `evidenceTools` are merged by name
+ *   across every family in `languages/server.ts`.
  *
  * Client overlays stay dialect-only: `copy`, `variants` and `planEstimateOperation` are projected per family into
  * browser tables, and `posture.handoverTerms` is read by language (B123).

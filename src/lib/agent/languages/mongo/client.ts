@@ -136,6 +136,9 @@ export const MONGO_CLIENT_PACK = Object.freeze({
   }),
   planEstimateOperation: "mongo.plan.estimate",
   evidenceEvents: Object.freeze({}),
+  shortfallSentences: Object.freeze({}),
+  readingRefusalHeadlines: Object.freeze({}),
+  requirements: Object.freeze({}),
   posture: Object.freeze({
     reads: mongoReadsPosture,
     widened: mongoReadsPosture,

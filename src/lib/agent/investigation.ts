@@ -145,7 +145,12 @@ import { evidenceEventSpec, isPackEvidenceEvent, statementFamilyOf } from "./lan
 import { runServerPack } from "./languages/engines/server";
 import { AGENT_EVIDENCE_TOOLS, agentLanguagePack } from "./languages/index";
 import type { EvidenceToolName, ShortfallAdvice, ShortfallContext, ShortfallNotice } from "./languages/pack";
-import { LANGUAGE_SHORTFALL_NOTICES, LANGUAGE_USAGE_BAR_NOTICE, languageServer } from "./languages/server";
+import {
+  LANGUAGE_SHORTFALL_NOTICES,
+  LANGUAGE_USAGE_BAR_NOTICE,
+  LANGUAGE_USAGE_BAR_TOOL,
+  languageServer,
+} from "./languages/server";
 import {
   AGENT_WORKFLOW_PRESENTS_ANSWER,
   AGENT_WORKFLOW_SENDS_STATEMENTS,
@@ -4245,9 +4250,10 @@ export async function runInvestigation(
           if (call.toolName === "inspect_plan") planBarDue = true;
           else if (++planlessCalls >= 2) planBarDue = true;
         }
-        if (call.toolName === "inspect_usage" && holdsTool("inspect_usage") && !usageBarAnnounced) {
+        if (call.toolName === LANGUAGE_USAGE_BAR_TOOL && holdsTool(LANGUAGE_USAGE_BAR_TOOL) && !usageBarAnnounced) {
           const { record: sofar } = await service.resume(context.runId);
-          if (sofar.events.some((event) => event.kind === AGENT_EVIDENCE_TOOLS.inspect_usage.event)) usageBarDue = true;
+          const barEvent = AGENT_EVIDENCE_TOOLS[LANGUAGE_USAGE_BAR_TOOL].event;
+          if (sofar.events.some((event) => event.kind === barEvent)) usageBarDue = true;
         }
       }
       // After every result this turn owes, never between two of them.

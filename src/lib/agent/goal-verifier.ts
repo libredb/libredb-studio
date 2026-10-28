@@ -44,7 +44,7 @@
 import { type AgentStatementLanguageId, requiredVariant } from "./agent-manifest";
 import { mergeDisjoint } from "./disjoint-merge";
 import { composedClaims, planArtifacts, recommendsIndex, verifyInvestigationGoal } from "./goal-claims";
-import type { AgentFamilyVerifierIds, AgentGoalRule } from "./languages/pack";
+import type { AgentFamilyVerifierIds, AgentGoalRule, AgentPackShortfall } from "./languages/pack";
 import { LANGUAGE_GOAL_RULES } from "./languages/verifiers";
 import { readPlanStatement } from "./plan-draft";
 import type { AgentRunMode, AgentRunRecord, AgentRunWorkflowType } from "./types";
@@ -216,35 +216,8 @@ export type AgentGoalShortfall =
    * beside a picture, and every field this ledger holds would have called it answered.
    */
   | "answer-uncited"
-  /**
-   * A resource-efficiency run never read usage.
-   *
-   * The template's own artifact. Whether a container is sized for what it uses can only be said from what it uses,
-   * and a run that reported from the cluster's objects alone has described the requests and not measured them.
-   */
-  | "no-usage-reading"
-  /**
-   * A resource-efficiency run read usage, and its answer does not rest on that reading: the resources recommendation
-   * cites something else, or the report recommends nothing and cites no usage reading.
-   *
-   * The link between the reading and the conclusion, kept apart from `no-usage-reading` because the run here did
-   * the measuring and then answered beside it.
-   */
-  | "no-usage-evidence"
-  /**
-   * A resource-efficiency run could not read usage because the cluster serves no usage metrics, and read none.
-   *
-   * Kept apart from `no-usage-reading` because the cause is the cluster and not the run: metrics.k8s.io is absent or
-   * metrics-server does not answer, and the reader is owed that sentence rather than one about the model.
-   */
-  | "no-usage-metrics"
-  /**
-   * A cluster-health run never profiled a namespace's workloads.
-   *
-   * The template's own artifact, as `no-table-profile` is the SQL assessment's: reads the model composed may describe
-   * a few objects, and only the profile establishes every workload's state in one place.
-   */
-  | "no-workload-profile"
+  /** A shortfall only one language's verifiers report, which its pack declares (`AgentPackShortfall`). */
+  | AgentPackShortfall
   /**
    * The run was stopped before it could conclude. Substituted for the missing
    * output rather than reported alongside it: a user's stop is not a defect of the

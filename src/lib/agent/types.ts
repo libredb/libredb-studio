@@ -52,7 +52,7 @@ import type { ObjectRole } from "@/lib/db/types";
 import type { editorLanguageForTabType } from "@/lib/editor/tab-language";
 import type { AgentStatementLanguageId } from "./agent-manifest";
 import type { AgentContextCharge, AgentContextRowBudget, AgentContextUnavailableCode } from "./context-snapshot";
-import type { AgentPackEvidenceEvent } from "./languages/pack";
+import type { AgentPackEvidenceEvent, AgentPackReadingDenyCode } from "./languages/pack";
 import type { AgentGoalShortfall, AgentGoalVerifierId } from "./goal-verifier";
 import type { AgentToolName } from "./tools";
 import type { AgentInventoryNoun } from "./inventory-noun";
@@ -783,11 +783,10 @@ export interface AgentContextSnapshot extends AgentInventory {
  * absence, an engine with no `objectKinds`, is answered before anything is charged, so
  * it never reaches a settlement either.
  *
- * `METRICS_UNAVAILABLE` is the cluster usage reading's own: the cluster serves no metrics.k8s.io, or serves one whose
- * backend does not answer. It is the cluster's fact rather than a failure of the read, so no rewording of the call
- * could change it and it costs no repair attempt.
+ * A code only one language's readings raise is that pack's own (`AgentPackReadingDenyCode`), declared beside the words
+ * it is said in; the ledger persists it like the core's.
  */
-export type AgentReadingDenyCode = "KIND_UNSUPPORTED_BY_PROVIDER" | "READING_OVER_BUDGET" | "METRICS_UNAVAILABLE";
+export type AgentReadingDenyCode = "KIND_UNSUPPORTED_BY_PROVIDER" | "READING_OVER_BUDGET" | AgentPackReadingDenyCode;
 
 /**
  * Why a tool call produced no result. The four variants are distinct in TYPE,
