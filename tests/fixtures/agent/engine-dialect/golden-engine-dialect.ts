@@ -11,8 +11,7 @@
  * family, so a refusal is pinned as exactly as a statement.
  *
  * `golden-engine-dialect.json` beside this file is this module's output on the commit before the engine overlays
- * existed, except where a later change moved an answer on purpose and said why in its commit (a restated
- * `EXPLAIN FORMAT=JSON` is now stripped on every engine like the other declared prefixes), and
+ * existed, except where a later change moved an answer on purpose and said why in its commit, and
  * `tests/unit/lib/agent/engine-dialect-golden.test.ts` holds today's output to it byte for byte. A change that means to
  * move an answer regenerates the file from the base it starts from, with that base's code, and commits it on its own
  * first:
