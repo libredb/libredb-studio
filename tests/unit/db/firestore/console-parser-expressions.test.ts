@@ -177,6 +177,11 @@ describe("timestamps", () => {
     expect(parseDateText("2000-02-29")).not.toBeNull();
     expect(parseDateText("2023-02-29")).toBeNull();
     expect(parseDateText("1900-02-29")).toBeNull();
+    // The thirty-day months end at 30, and the rest at 31.
+    expect(parseDateText("2026-04-30")).not.toBeNull();
+    expect(parseDateText("2026-04-31")).toBeNull();
+    expect(parseDateText("2026-11-31")).toBeNull();
+    expect(parseDateText("2026-12-31")).not.toBeNull();
   });
 
   test("the same text gives the same instant under two server time zones", () => {
