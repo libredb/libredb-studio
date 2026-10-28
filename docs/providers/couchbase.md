@@ -572,11 +572,8 @@ The request carries `metrics: true`, the effective statement timeout, and
 including where the clause is placed: at the end of the statement, before a trailing comment or `;`
 ([`query-optimization.md`](../editor/query-optimization.md#where-the-bound-is-placed)).
 
-The limiter is told which dialect it is reading (#292), and Couchbase is one of the dialects
-deliberately left at the **compatibility default**: no authoritative source was established for how
-SQL++ reads `#`, and guessing it from a neighbouring dialect is what that channel exists to stop. So
-the reading here is unchanged — `#` opens a line comment unless the next character makes a PostgreSQL
-operator — and a statement ending in a `#` run is returned unbounded rather than bounded on a guess
+The limiter is told which dialect it is reading (#292), and reads Couchbase under its own SQL++ grammar ([§5.6](#56-sql-grammar)):
+a subscript key holding a `]` and a literal holding a backslash-escaped quote end where Couchbase ends them, so the bound is written after them, and an existing `LIMIT`, written before or after its `OFFSET`, is kept
 ([which dialect the readers are reading](../editor/query-optimization.md#which-dialect-the-readers-are-reading)).
 
 ### 5.2 Result shaping
@@ -664,9 +661,29 @@ caller shape-checks for the method and this provider does not answer it.
 ### 5.6 SQL grammar
 
 How this engine's statement text is read is declared once, in [`src/lib/db/providers/document/couchbase/sql-grammar.ts`](../../src/lib/db/providers/document/couchbase/sql-grammar.ts), the `couchbase` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
-Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, because no rule was established for SQL++, not because SQL++ agrees with the default.
-`readsSqlText` is `true`: the editor text is SQL++, which the SQL readers read under that default.
-Redaction is `none`, since the engine has no grammar of its own: a redacted statement is stored as `?`, because a reader guessing where a literal ends can store the literal.
+Its grammar is `COUCHBASE_GRAMMAR`.
+Every fact was read off the query service's own lexer (`parser/n1ql/n1ql.nex` in couchbase/query, the 8.0 branch) and the SQL++ language reference (Identifiers, Literals, the LIMIT and OFFSET clauses and the `n1ql.ebnf` and `dql.ebnf` grammar they include), and each was probed on 2026-10-28 on `couchbase:community-8.0.2` over `POST /query/service`, the endpoint the provider sends on:
+
+| Fact | Reading | Probe |
+|------|---------|-------|
+| `#` | code, never a comment | `SELECT 1 AS a # note` is 3000 "syntax error ... at: #" |
+| `[…]` | an array literal or subscript: it nests and a literal inside it is a literal | `SELECT [1,[2,3]][1][0] AS a` answers 2, `SELECT {"a]b": 7}.["a]b"] AS a` answers 7, `SELECT 1 AS [a]` is a syntax error |
+| `/* … */` | flat: the first `*/` closes it, and a `/*+` hint has the same extent | `SELECT /* a /* b */ 1 AS a` answers 1, `SELECT /* a /* b */ c */ 1 AS a` is a syntax error, `SELECT /*+ 'x */ 1 AS a` answers 1 |
+| `q'…'` | not a form | `SELECT q'[x]' AS a` is a syntax error |
+| `//` | code, never a comment | `SELECT 4 // 2 AS a` is a syntax error |
+| `\` in `'…'` and `"…"` | always an escape, and a doubled `'` still is one | `SELECT 'it\'s' AS a` and `SELECT 'it''s' AS a` answer `it's`, `SELECT "it\"s" AS a` answers `it"s` |
+| `\` in a backtick name | an escape, and a doubled backtick still is one | ``SELECT "a" AS `x\`y` `` and ``SELECT "a" AS `x``y` `` both answer a field named ``x`y`` |
+| a carriage return in a `--` comment | ends it, and a backslash continues nothing | `SELECT 1 AS a -- note<CR>, 2 AS b` answers both columns, and so does `SELECT 1 AS a -- note \<LF>, 2 AS b` |
+| script | one statement per request, no procedural body | `SELECT 1 AS a; SELECT 2 AS b` is a syntax error |
+| clauses after the row bound | none: a SELECT ends at its LIMIT and OFFSET | `SELECT 1 AS a OFFSET 1 LIMIT 500` succeeds, and `LIMIT NULL` and `LIMIT MISSING` are 5030 "Invalid LIMIT" |
+
+A `"…"` run is a string literal in SQL++, not a name, but the span reader's quoted-name reading of it ends in the same place under the escape rule above, which is all the readers ask.
+Three readings stay the shared reader's, each in the fail-safe direction.
+A `$$` or `$tag$` run is a dollar string to the span reader, while SQL++ has no dollar string and refuses a `$` that no parameter name or number follows (`SELECT $$x$$ AS a` is a syntax error), so such text stays one statement, which the engine refuses.
+A backslash before a line feed leaves a literal unterminated to the span reader, and SQL++ refuses that escape too ("invalid escape sequence").
+A `LIMIT` whose count is an expression or a parameter (`LIMIT $n`, `LIMIT 2 * 3`) is not read as a bound, so the limiter appends one and the engine refuses the second `LIMIT` ("syntax error ... at: LIMIT (reserved word)") rather than running the read unbounded.
+`readsSqlText` is `true`: the editor text is SQL++, which the SQL readers read under that grammar.
+Redaction is `none`: a redacted statement is stored as `?`, because no SQL++ redaction reader exists, and a reader guessing where a literal ends can store the literal.
 
 ## 6. Schema introspection
 
