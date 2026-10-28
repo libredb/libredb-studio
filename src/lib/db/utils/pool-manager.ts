@@ -191,29 +191,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// ============================================================================
-// SQL Utilities
-// ============================================================================
-
-/**
- * Escape SQL identifier (table name, column name)
- * Prevents SQL injection in dynamic queries
- */
-export function escapeIdentifier(identifier: string, provider: DatabaseType): string {
-  // Remove any existing quotes and escape internal quotes
-  const cleaned = identifier.replace(/["'`]/g, "");
-
-  switch (provider) {
-    case "postgres":
-      return `"${cleaned}"`;
-    case "mysql":
-      return `\`${cleaned}\``;
-    case "sqlite":
-      return `"${cleaned}"`;
-  }
-  return `"${cleaned}"`;
-}
-
 const ROW_COUNT_FORMATTER = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
 
 /** Compact catalog figures consistently across the desktop and mobile explorers (#702). */

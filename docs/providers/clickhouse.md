@@ -1420,7 +1420,7 @@ curl -s "http://127.0.0.1:8123/?user=libredb&password=$CH_PASSWORD&database=demo
 ### 6.3 Object edit (#789)
 
 This engine is a REFUSAL, recorded because no escaper for its identifiers had been measured.
-A backslash inside a quoted identifier is an ESCAPE in both the double-quote and the backtick form on 26.7.1.1315, and the shared quoters (the default branch of `SQLBaseProvider.escapeIdentifier`, `quoteIdentifier` in [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) and `escapeIdentifier` in [`pool-manager.ts`](../../src/lib/db/utils/pool-manager.ts)) emit `"x\"` for the name `x\`, so a statement built through any of them is not the statement the author addressed.
+A backslash inside a quoted identifier is an ESCAPE in both the double-quote and the backtick form on 26.7.1.1315, and the shared quoters (the default branch of `SQLBaseProvider.escapeIdentifier` and `quoteIdentifier` in [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts)) emit `"x\"` for the name `x\`, so a statement built through any of them is not the statement the author addressed.
 Since #1091 this provider's own `escapeIdentifier()` escapes the backslash as well, and it is measured ([§8](#8-maintenance)).
 No edit statement is built through it and none has been measured, so the refusal stands.
 One question here is UNMEASURED and is recorded as such rather than answered: whether a dictionary's credential is really redacted in the text the Phase 2 read returns.

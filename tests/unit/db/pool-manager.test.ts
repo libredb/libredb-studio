@@ -5,7 +5,6 @@ import {
   withTimeout,
   formatBytes,
   formatDuration,
-  escapeIdentifier,
 } from "@/lib/db/utils/pool-manager";
 import { TimeoutError } from "@/lib/db/errors";
 import { DEFAULT_POOL_CONFIG, type PoolConfig } from "@/lib/db/types";
@@ -260,34 +259,6 @@ describe("formatDuration", () => {
 
   test('7200000ms returns "2.00h"', () => {
     expect(formatDuration(7200000)).toBe("2.00h");
-  });
-});
-
-// ============================================================================
-// escapeIdentifier
-// ============================================================================
-
-describe("escapeIdentifier", () => {
-  test("postgres wraps in double quotes", () => {
-    expect(escapeIdentifier("users", "postgres")).toBe('"users"');
-  });
-
-  test("mysql wraps in backticks", () => {
-    expect(escapeIdentifier("users", "mysql")).toBe("`users`");
-  });
-
-  test("sqlite wraps in double quotes", () => {
-    expect(escapeIdentifier("users", "sqlite")).toBe('"users"');
-  });
-
-  test("default (unknown provider) wraps in double quotes", () => {
-    expect(escapeIdentifier("users", "mongodb")).toBe('"users"');
-  });
-
-  test("strips existing quotes from identifier", () => {
-    expect(escapeIdentifier('"my_table"', "postgres")).toBe('"my_table"');
-    expect(escapeIdentifier("`my_table`", "mysql")).toBe("`my_table`");
-    expect(escapeIdentifier("'my_table'", "sqlite")).toBe('"my_table"');
   });
 });
 
