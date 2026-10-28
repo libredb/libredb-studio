@@ -1,6 +1,7 @@
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { classifySelectPrefix, hasDataModifyingStatement } from "./select-prefix";
-import { type AccessTally, type AgentPlanSummary, accessOf, isRecord, reportedNumber } from "./plan-access";
+import { isRecord } from "@/lib/is-record";
+import { type AccessTally, type AgentPlanSummary, accessOf, reportedNumber } from "./plan-access";
 import type { ExplainAgentReading, ExplainPlanResult, ExplainStrategy } from "./types";
 
 /**

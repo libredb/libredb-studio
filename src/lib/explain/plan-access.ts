@@ -60,9 +60,6 @@ export function accessOf(tally: AccessTally): AgentPlanAccess {
   return tally.scanned ? "full-scan" : "unknown";
 }
 
-export const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
 /** A number the engine reported, or nothing. `Number.isFinite` excludes NaN and Infinity alike. */
 export function reportedNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
