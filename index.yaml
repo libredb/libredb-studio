@@ -4,6 +4,116 @@ entries:
   - annotations:
       artifacthub.io/category: database
       artifacthub.io/changes: |
+        - "Add accessReview: the Kubernetes access review decides sign-in, admin and each connection, with create on subjectaccessreviews only"
+        - "Add discovery.kubernetes: the CloudNativePG discovery exporter, its per-namespace RBAC and the export Studio mounts read-only"
+        - "Fail the render for every access review and discovery combination Studio refuses to start with"
+        - "Add questions.yaml so Rancher's Apps page draws a form for the Rancher-mode values"
+        - "Track app release 1.1.0"
+      artifacthub.io/containsSecurityUpdates: "false"
+      artifacthub.io/images: |
+        - name: libredb-studio
+          image: ghcr.io/libredb/libredb-studio:1.1.0
+          platforms:
+            - linux/amd64
+            - linux/arm64
+      artifacthub.io/license: MIT
+      artifacthub.io/links: |
+        - name: Documentation
+          url: https://github.com/libredb/libredb-studio#readme
+        - name: Container Image
+          url: https://github.com/libredb/libredb-studio/pkgs/container/libredb-studio
+        - name: Source
+          url: https://github.com/libredb/libredb-studio
+      artifacthub.io/prerelease: "false"
+    apiVersion: v2
+    appVersion: 1.1.0
+    created: "2026-10-28T08:36:29.194332935Z"
+    dependencies:
+    - condition: postgresql.enabled
+      name: postgresql
+      repository: https://charts.bitnami.com/bitnami
+      version: 16.x.x
+    description: Web-based SQL IDE for cloud-native teams supporting forty-two engines
+      - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis,
+      Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino,
+      BigQuery, Snowflake, Apache Spark, Apache Cassandra, libSQL, Prometheus, Apache
+      Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, Weaviate, InfluxDB, InfluxDB
+      3, Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA, MTConnect,
+      Modbus, NETCONF, SNMP and Sparkplug B
+    digest: dbbe3aef650e54f005fef3fef67e06b6181e3c84928d0e71c4291eb1764a3ce6
+    home: https://github.com/libredb/libredb-studio
+    icon: https://raw.githubusercontent.com/libredb/libredb-studio/main/public/logo.svg
+    keywords:
+    - sql
+    - ide
+    - database
+    - postgresql
+    - mysql
+    - mongodb
+    - redis
+    - sqlite
+    - oracle
+    - mssql
+    - couchbase
+    - clickhouse
+    - druid
+    - elasticsearch
+    - opensearch
+    - trino
+    - cassandra
+    - libsql
+    - turso
+    - duckdb
+    - prometheus
+    - promql
+    - kafka
+    - etcd
+    - db2
+    - ibm-db2
+    - neo4j
+    - cypher
+    - victoriametrics
+    - redpanda
+    - milvus
+    - qdrant
+    - weaviate
+    - influxdb
+    - influxql
+    - influxdb3
+    - oxia
+    - databend
+    - s3
+    - object-storage
+    - minio
+    - kubernetes
+    - bigquery
+    - snowflake
+    - spark
+    - mqtt
+    - firestore
+    - rabbitmq
+    - amqp
+    - opcua
+    - mtconnect
+    - modbus
+    - netconf
+    - snmp
+    - sparkplug
+    - web-ide
+    kubeVersion: '>=1.26.0-0'
+    maintainers:
+    - name: cevheri
+      url: https://github.com/cevheri
+    name: libredb-studio
+    sources:
+    - https://github.com/libredb/libredb-studio
+    type: application
+    urls:
+    - https://github.com/libredb/libredb-studio/releases/download/libredb-studio-0.1.107/libredb-studio-0.1.107.tgz
+    version: 0.1.107
+  - annotations:
+      artifacthub.io/category: database
+      artifacthub.io/changes: |
         - "Name Weaviate, read-only over its REST API, in the description and the keywords"
       artifacthub.io/containsSecurityUpdates: "true"
       artifacthub.io/images: |
@@ -7681,4 +7791,4 @@ entries:
     urls:
     - https://github.com/libredb/libredb-studio/releases/download/libredb-studio-0.1.0/libredb-studio-0.1.0.tgz
     version: 0.1.0
-generated: "2026-10-28T01:59:13.197566049Z"
+generated: "2026-10-28T08:36:29.185688491Z"
