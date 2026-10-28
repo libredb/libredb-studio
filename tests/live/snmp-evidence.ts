@@ -89,6 +89,9 @@ for (const statement of STATEMENTS) {
     notes.push(`${statement} -> refused: ${(error as Error).message.slice(0, 80)}`);
   }
 }
+// The health read is its own Get of two objects, which no statement above sends.
+const health = await provider.getHealth();
+notes.push(`getHealth -> uptime ${health.uptime}, ${health.roundTripMs} ms`);
 await provider.disconnect();
 
 const out = {

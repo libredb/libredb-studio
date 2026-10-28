@@ -451,3 +451,57 @@ async function rawAgent(answer: () => Uint8Array): Promise<number> {
   await new Promise<void>((resolve) => agent?.bind(0, "127.0.0.1", () => resolve()));
   return (agent.address() as { port: number }).port;
 }
+
+/**
+ * Health is a real read of the agent: one Get of the two objects every agent answers about itself.
+ *
+ * Only what an agent reports is filled in. Every figure of the shared shape an agent has no notion
+ * of says so in a sentence, and the count of connections is left out rather than sent as a zero,
+ * which the shared shape's own docblock asks of a provider that cannot measure it.
+ */
+describe("health is read from the agent, and claims nothing the agent did not say", () => {
+  test("one Get of the description and the uptime, answered with both and the round trip", async () => {
+    const seen: Seen[] = [];
+    const port = await listeningAgent(
+      seen,
+      new Map([
+        [SYS_DESCR.join("."), { tag: 0x04, bytes: new TextEncoder().encode("Linux agent 6.1") }],
+        [SYS_UPTIME.join("."), { tag: 0x43, bytes: Uint8Array.of(0, 0x98, 0x96, 0x80) }],
+      ]),
+    );
+    opened = new SnmpProvider(connectionTo(port));
+    await opened.connect();
+    const health = await opened.getHealth();
+    // The probe at connect, then the health read and nothing else.
+    expect(seen.map((request) => request.oids)).toEqual([
+      [SYS_UPTIME.join(".")],
+      [SYS_DESCR.join("."), SYS_UPTIME.join(".")],
+    ]);
+    expect(health.description).toBe("Linux agent 6.1");
+    expect(health.uptime).toBe("10000000");
+    expect(health.roundTripMs).toBeGreaterThanOrEqual(0);
+    expect(health).not.toHaveProperty("activeConnections");
+    expect(health.databaseSize).toMatch(/An SNMP agent reports no database size/);
+    expect(health.cacheHitRatio).toMatch(/An SNMP agent reports no cache/);
+    expect(health.slowQueries).toEqual([]);
+    expect(health.activeSessions).toEqual([]);
+  });
+
+  test("an object the agent does not serve is said to be missing, not rendered as a value", async () => {
+    const port = await listeningAgent([], new Map([[SYS_UPTIME.join("."), { tag: 0x43, bytes: Uint8Array.of(1) }]]));
+    opened = new SnmpProvider(connectionTo(port));
+    await opened.connect();
+    const health = await opened.getHealth();
+    expect(health.uptime).toBe("1");
+    expect(health.description).toBe("unavailable: the agent answered noSuchObject for sysDescr.0");
+  });
+
+  test("an agent that stops answering fails the health read rather than reporting a healthy nothing", async () => {
+    const port = await listeningAgent([], new Map([[SYS_UPTIME.join("."), { tag: 0x43, bytes: Uint8Array.of(1) }]]));
+    opened = new SnmpProvider({ ...connectionTo(port), queryTimeout: 300 });
+    await opened.connect();
+    agent?.close();
+    agent = undefined;
+    await expect(opened.getHealth()).rejects.toThrow(/did not answer the health read/);
+  });
+});

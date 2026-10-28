@@ -13,7 +13,10 @@ import type { DatabaseConnection } from "@/lib/types";
 import { QUERY_DIALECTS } from "@/lib/db/query-dialects";
 import { SNMP_LABELS, SNMP_NO_COUNT } from "@/lib/db/providers/network/snmp/labels";
 import { SNMP_KINDS } from "@/lib/db/providers/network/snmp/objects";
-import { SnmpNotWired, SnmpProvider } from "@/lib/db/providers/network/snmp";
+import { SnmpProvider } from "@/lib/db/providers/network/snmp";
+import { QueryError } from "@/lib/db/errors";
+import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
+import { MIB_SCALAR_GROUPS, MIB_TABLES } from "@/lib/db/providers/network/snmp/mib-objects";
 import { StatementError } from "@/lib/db/providers/network/snmp/statement";
 import { ConnectionRefused } from "@/lib/db/providers/network/snmp/connection-options";
 
@@ -111,36 +114,75 @@ describe("maintenance is refused as a write, not as unimplemented", () => {
   });
 });
 
-describe("the three ends that answer with the same sentence as listObjects", () => {
-  // `listObjects` already had a case and these three did not, so the sentence a reader meets was
-  // only ever measured on one of the four ends that give it. They are separate methods with
-  // separate strings, and a wrong word in one of them would have cost nothing to keep.
-  test("describing one object says what is missing", async () => {
-    await expect(provider().describeObject()).rejects.toThrow(SnmpNotWired);
-    await expect(provider().describeObject()).rejects.toThrow(/Describing an object needs the SNMP client/);
+describe("the catalog answers from the bundled modules, with no connection and no traffic", () => {
+  // Every case here runs on a provider that was never connected: there is no socket to send on, so
+  // an answer at all is the proof that the catalog asks the agent nothing.
+  test("both kinds declare columns, so the tree opens an object", () => {
+    const kinds = provider().getCapabilities().objectKinds ?? [];
+    expect(kinds.map((kind) => [kind.id, kind.hasColumns])).toEqual([
+      ["table", true],
+      ["scalars", true],
+    ]);
   });
 
-  test("describing many objects says the same", async () => {
-    await expect(provider().describeObjects()).rejects.toThrow(/Describing objects needs the SNMP client/);
+  test("listing tables answers every bundled table, addressed by its descriptor", async () => {
+    const tables = await provider().listObjects([], "table");
+    expect(tables).toHaveLength(MIB_TABLES.length);
+    expect(tables[0]).toEqual({ path: ["sysORTable"], name: "sysORTable", kind: "table" });
+    expect(tables.find((object) => object.name === "udpTable")?.status).toBe("deprecated");
   });
 
-  test("reading health says the same", async () => {
-    await expect(provider().getHealth()).rejects.toThrow(/Reading health needs the SNMP client/);
+  test("listing scalar groups answers every bundled group", async () => {
+    const groups = await provider().listObjects([], "scalars");
+    expect(groups).toHaveLength(MIB_SCALAR_GROUPS.length);
+    expect(groups[0]).toEqual({ path: ["system"], name: "system", kind: "scalars" });
   });
 
-  test("and every one of them names the socket as the missing piece", async () => {
-    // The second half of that sentence is the half that tells a reader this is wiring rather
-    // than a refusal: the parsing, the bounds and the refusals are in place, the socket is not.
-    await expect(provider().getHealth()).rejects.toThrow(/what is missing is the socket/);
+  test("describing a table answers its columns and its INDEX clause", async () => {
+    const detail = await provider().describeObject(["ifTable"], "table");
+    expect(detail.columns[0]?.name).toBe("ifIndex");
+    expect(detail.indexes).toEqual([{ name: "ifEntry", columns: ["ifIndex"], unique: true }]);
+  });
+
+  test("describing a name the modules do not define is refused, not answered empty", async () => {
+    await expect(provider().describeObject(["noSuchTable"], "table")).rejects.toThrow(QueryError);
+  });
+
+  test("describing an unknown kind names the kinds this provider has", async () => {
+    await expect(provider().describeObject(["ifTable"], "collection")).rejects.toThrow(/table and scalars/);
+    await expect(provider().describeObjects([], "collection")).rejects.toThrow(/table and scalars/);
+  });
+
+  test("describing a whole kind answers one detail per listed object, path for path", async () => {
+    const p = provider();
+    const listed = await p.listObjects([], "scalars");
+    const batch = await p.describeObjects([], "scalars");
+    expect(batch.details.map((detail) => detail.path)).toEqual(listed.map((object) => object.path));
+    expect(batch).not.toHaveProperty("truncated");
+  });
+
+  test("a caller's limit is applied and said, in the shared sentence", async () => {
+    const batch = await provider().describeObjects([], "table", 2);
+    expect(batch.details.map((detail) => detail.path)).toEqual([["sysORTable"], ["ifTable"]]);
+    expect(batch.truncated).toEqual({ limit: 2, reason: callerBoundTruncationReason(2) });
+  });
+
+  test("a limit the kind fits inside is not a truncation", async () => {
+    const batch = await provider().describeObjects([], "scalars", MIB_SCALAR_GROUPS.length);
+    expect(batch).not.toHaveProperty("truncated");
+  });
+});
+
+describe("health is read from the agent, so it needs an open connection", () => {
+  test("reading health before connecting says the connection is closed", async () => {
+    await expect(provider().getHealth()).rejects.toThrow(DatabaseConfigError);
+    await expect(provider().getHealth()).rejects.toThrow(/not open/);
   });
 });
 
 describe("an unknown object kind is named, not guessed at", () => {
   test("it lists the kinds this provider has", async () => {
     await expect(provider().listObjects([], "collection")).rejects.toThrow(/table and scalars/);
-  });
-  test("a known kind gets past the check and refuses for the wiring", async () => {
-    await expect(provider().listObjects([], "table")).rejects.toThrow(SnmpNotWired);
   });
 });
 

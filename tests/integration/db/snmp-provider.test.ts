@@ -49,6 +49,8 @@ const BOOK = new Map(CAPTURES.exchanges.map((entry) => [entry.key, Buffer.from(e
 
 let agent: Socket | undefined;
 let opened: SnmpProvider | undefined;
+/** Every datagram the replaying agent received, answered or not, so a case can say nothing was sent. */
+let received = 0;
 
 afterEach(async () => {
   await opened?.disconnect();
@@ -61,6 +63,7 @@ afterEach(async () => {
 async function recordedAgent(missed: string[]): Promise<number> {
   agent = createSocket("udp4");
   agent.on("message", (datagram, from) => {
+    received += 1;
     const bytes = Uint8Array.from(datagram);
     const request = readRequest(bytes);
     const answer = BOOK.get(keyOf(request));
@@ -264,4 +267,38 @@ describe("the provider reads what a real agent answered", () => {
     expect([...BOOK.keys()].some((key) => key.startsWith("pdu=165 max=50"))).toBe(true);
     expect([...BOOK.keys()].some((key) => key.startsWith("pdu=165 max=0"))).toBe(false);
   });
+
+  test(
+    "health is one recorded Get, and carries what the fixture says about itself",
+    async () => {
+      const missed: string[] = [];
+      const provider = await open(missed);
+      const health = await provider.getHealth();
+      expect(missed).toEqual([]);
+      // The description the fixture's snmpd.conf sets, read back through the provider.
+      expect(health.description).toBe("LibreDB live-check agent, net-snmp, 127.0.0.1 port 1161");
+      expect(Number(health.uptime)).toBeGreaterThan(0);
+      expect(health).not.toHaveProperty("activeConnections");
+    },
+    CASE_BUDGET_MS,
+  );
+
+  test(
+    "listing and describing send the agent nothing",
+    async () => {
+      const missed: string[] = [];
+      const provider = await open(missed);
+      const before = received;
+      const tables = await provider.listObjects([], "table");
+      const groups = await provider.listObjects([], "scalars");
+      const detail = await provider.describeObject(["system"], "scalars");
+      const batch = await provider.describeObjects([], "table");
+      expect(received).toBe(before);
+      expect(tables.map((object) => object.name)).toContain("ifTable");
+      expect(groups.map((object) => object.name)).toContain("system");
+      expect(detail.columns.map((column) => column.name)).toContain("sysDescr");
+      expect(batch.details).toHaveLength(tables.length);
+    },
+    CASE_BUDGET_MS,
+  );
 });

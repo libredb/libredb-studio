@@ -61,7 +61,7 @@ const PLAYPEN = "1.3.6.1.4.1.8072.9999.9999";
  * from what ran can only ever agree with itself. Adding or removing a check means changing it,
  * and that is the point of it.
  */
-const EXPECTED_CHECKS = 9;
+const EXPECTED_CHECKS = 12;
 
 let failures = 0;
 let ran = 0;
@@ -225,6 +225,45 @@ await check("the uptime the overview reports is read again, not remembered", asy
   measure("uptime, first read", first);
   measure("uptime, second read", second);
   expect(Number(second) > Number(first), `uptime did not move: ${first} then ${second}`);
+});
+
+await check("the catalog lists the bundled tree on a provider that never connected", async () => {
+  // Never connected, so there is no socket to send on: an answer here is the proof that listing
+  // asks the agent nothing.
+  const provider = new SnmpProvider(connection(), {});
+  const tables = (await provider.listObjects([], "table")).map((object) => object.name);
+  const groups = (await provider.listObjects([], "scalars")).map((object) => object.name);
+  measure("catalog tables", tables.length);
+  measure("catalog scalar groups", groups.length);
+  expect(tables.includes("ifTable") && groups.includes("system"), `listed ${tables[0]} and ${groups[0]} first`);
+});
+
+await check("a described table's columns are the ones a walk of it returns", async () => {
+  // The module's declaration against the living agent: every column the agent answers under
+  // ifTable must be one the description names, so the description is the agent's shape and not
+  // only the module's.
+  const detail = await new SnmpProvider(connection(), {}).describeObject(["ifTable"], "table");
+  const declared = new Set(detail.columns.map((column) => column.name));
+  const walked = await withProvider({}, async (p) => p.query("table ifEntry"));
+  const answered = walked.fields.filter((field) => field !== "index");
+  measure("ifTable columns declared", declared.size);
+  measure("ifTable columns the agent answered", answered.length);
+  expect(answered.length > 0, "the agent answered no ifTable column");
+  const subIds = new Map(detail.columns.map((column) => [String(column.declaredType).split(".").at(-1), column.name]));
+  const unknown = answered.filter((field) => !subIds.has(field.replace("column", "")));
+  expect(unknown.length === 0, `the agent answered columns the description lacks: ${unknown.join(",")}`);
+});
+
+await check("health is read from the agent, and the agent's own description comes back", async () => {
+  const health = await withProvider({}, async (p) => p.getHealth());
+  measure("health uptime", health.uptime);
+  measure("health round trip ms", health.roundTripMs);
+  expect(
+    health.description === "LibreDB live-check agent, net-snmp, 127.0.0.1 port 1161",
+    `sysDescr read as ${JSON.stringify(health.description)}`,
+  );
+  expect(Number(health.uptime) > 0, `uptime read as ${JSON.stringify(health.uptime)}`);
+  expect(!("activeConnections" in health), "health claimed a connection count an agent does not report");
 });
 
 console.log(`${ran - failures} of ${ran} checks passed`);

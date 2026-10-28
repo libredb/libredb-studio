@@ -11,17 +11,17 @@
  * `QUERY_DIALECTS`, so the editor gives this provider a tab type of its own rather than the one it
  * gives a provider that declares no dialect.
  *
- * WHAT IS WIRED, AND WHAT IS NOT. The client is this provider's own, not a library: `client.ts`
- * and `transport.ts` open one UDP socket with `node:dgram`, so nothing is added to `package.json`.
- * `connect` and `query` reach an agent through it. The catalog surfaces (`listObjects`,
- * `describeObject`, `describeObjects`) and `getHealth` still refuse through `notWired` rather than
- * returning something that looks like an answer: a provider that silently answers nothing is worse
- * than one that says it is not wired. The message `notWired` throws predates this client and still
- * names a missing dependency; the refusal holds, its stated reason does not.
+ * WHAT IS WIRED. The client is this provider's own, not a library: `client.ts` and
+ * `transport.ts` open one UDP socket with `node:dgram`, so nothing is added to `package.json`.
+ * `connect`, `query`, `getOverview` and `getHealth` reach an agent through it, behind the valve
+ * that lets only a Get, a GetNext or a GetBulk leave. The catalog surfaces (`listObjects`,
+ * `describeObject`, `describeObjects`) send nothing at all: they answer from the bundled MIB
+ * modules through `mib-tree.ts`, so they work before `connect` and cost the agent no request.
  */
 import { randomInt } from "node:crypto";
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import { DatabaseConfigError } from "@/lib/db/errors";
+import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
+import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
 import type {
   ActiveSessionDetails,
   Container,
@@ -43,7 +43,8 @@ import type {
 } from "@/lib/db/types";
 import type { DatabaseConnection, QueryWarning } from "@/lib/types";
 import { SNMP_LABELS, SNMP_NO_COUNT } from "./labels";
-import { isWithinSubtree, SNMP_KINDS } from "./objects";
+import { isWithinSubtree, SNMP_KINDS, type SnmpKind } from "./objects";
+import { catalogObjects, describeCatalogObject } from "./mib-tree";
 import { checkConnection, type SnmpConnectionInput } from "./connection-options";
 import { openExchange, resolveTarget, type Exchange, type ResolvedTarget } from "./client";
 import { describeEnd, firstRequest, resolveName, startWalk, stepWalk, type Varbind, type WalkState } from "./read";
@@ -55,16 +56,6 @@ import { buildTable, type Cell, type RowKeyInput } from "./table";
 import { allNotices } from "./mib";
 
 /**
- * Raised by the surfaces this provider has not wired to its client yet: the catalog reads and `getHealth`.
- *
- * The prototype is restored in the constructor because the base does not leave it alone:
- * `DatabaseConfigError` ends with `Object.setPrototypeOf(this, DatabaseConfigError.prototype)`,
- * which rewrites the prototype of whatever is being constructed, so a subclass of it is not an
- * instance of itself unless it puts its own prototype back. Measured here: without this line,
- * `new SnmpNotWired(...) instanceof SnmpNotWired` is false and every catch that tries to tell
- * this failure from an ordinary configuration error silently matches the wrong one.
- */
-/**
  * How long an exchange waits before it calls the agent silent, when nothing else is asked for.
  *
  * Five seconds rather than the sixty of `DEFAULT_QUERY_TIMEOUT`: over UDP there is no refusal to
@@ -73,13 +64,26 @@ import { allNotices } from "./mib";
  */
 const SILENCE_DEADLINE_MS = 5000;
 
-export class SnmpNotWired extends DatabaseConfigError {
-  constructor(message: string) {
-    super(message);
-    this.name = "SnmpNotWired";
-    Object.setPrototypeOf(this, SnmpNotWired.prototype);
-  }
+/**
+ * The health this provider reads: the shared shape, plus the three things an agent does report.
+ *
+ * The shared shape was written for a database and has no field for any of them, so they ride beside
+ * it rather than inside a field that means something else. Every shared figure an agent has no notion
+ * of is a sentence saying so, and `activeConnections` is left out, which is how the shared shape asks
+ * a provider that cannot measure it to say so.
+ */
+export interface SnmpHealth extends HealthInfo {
+  /** `sysUpTime.0` as rendered, in hundredths of a second, or why it is missing. */
+  readonly uptime: string;
+  /** `sysDescr.0` as rendered, or why it is missing. */
+  readonly description: string;
+  /** From sending the health read to its answer, measured here. */
+  readonly roundTripMs: number;
 }
+
+/** Why the two shared figures are not numbers. One line each, for the coverage reason `runMaintenance` gives. */
+const NO_DATABASE_SIZE = "An SNMP agent reports no database size: it serves managed objects, not stored data.";
+const NO_CACHE_RATIO = "An SNMP agent reports no cache hit ratio: no standard object publishes one.";
 
 /**
  * What the wire says a value is.
@@ -193,16 +197,13 @@ function tableRows(subtree: readonly number[], varbinds: readonly ResponseVarbin
   });
 }
 
-const notWired = (what: string): never => {
-  throw new SnmpNotWired(
-    // ONE LINE ON PURPOSE. Split over two with `+`, the second line is a record the coverage tool
-    // never marks: the expression runs, the continuation is not counted, and no case can make it
-    // green. Measured on this branch - it was one of thirteen such lines when the gate was first
-    // run. The sentence is what matters and it is unchanged.
-    // oxlint-disable-next-line max-len -- see above: splitting this string hides a line from the coverage gate
-    `${what} needs the SNMP client, which is not a dependency of this build yet. The provider's own parsing, bounds, value rendering and refusals are in place and tested; what is missing is the socket.`,
-  );
-};
+/** The kind a caller named, or the sentence that lists the two this provider has. */
+function requireKind(kind: string): SnmpKind {
+  if (!(SNMP_KINDS as readonly string[]).includes(kind)) {
+    throw new DatabaseConfigError(`\`${kind}\` is not a kind this provider has: it has ${SNMP_KINDS.join(" and ")}`);
+  }
+  return kind as SnmpKind;
+}
 
 export class SnmpProvider extends BaseDatabaseProvider {
   /**
@@ -263,7 +264,15 @@ export class SnmpProvider extends BaseDatabaseProvider {
       // declared there is no path shape to declare either, which is why that member is absent
       // rather than set: the union has no value for "there are no containers".
       containerLevels: [],
-      objectKinds: SNMP_KINDS.map((kind) => ({ id: kind, label: kind, labelPlural: kind, role: "relation" as const })),
+      // Both kinds have columns: a table's are the columns its entry declares, and a group's are its
+      // scalars. Both come from the bundled modules, so opening one in the tree sends nothing.
+      objectKinds: SNMP_KINDS.map((kind) => ({
+        id: kind,
+        label: kind,
+        labelPlural: kind,
+        role: "relation" as const,
+        hasColumns: true,
+      })),
       // Nothing a read runs changes the tree.
       schemaRefreshPattern: "(?!)",
     };
@@ -483,30 +492,80 @@ export class SnmpProvider extends BaseDatabaseProvider {
     return Object.fromEntries(SNMP_KINDS.map((kind) => [kind, { unavailable: SNMP_NO_COUNT }]));
   }
 
+  /**
+   * The bundled tree's objects of one kind, in agent order, with no request sent.
+   *
+   * A path is the descriptor alone: one connection is one agent, and an agent has no level above
+   * its objects. A deprecated or obsolete table carries that status, the case a reader has
+   * something to act on.
+   */
   public async listObjects(_container: readonly string[], kind: string): Promise<DatabaseObject[]> {
-    if (!(SNMP_KINDS as readonly string[]).includes(kind)) {
-      throw new DatabaseConfigError(`\`${kind}\` is not a kind this provider has: it has ${SNMP_KINDS.join(" and ")}`);
+    return catalogObjects(requireKind(kind)).map((object) => ({
+      path: [object.name],
+      name: object.name,
+      kind: object.kind,
+      ...(object.status === undefined ? {} : { status: object.status }),
+    }));
+  }
+
+  public async describeObject(path: readonly string[], kind: string): Promise<ObjectDetail> {
+    return describeCatalogObject(path[path.length - 1] ?? "", requireKind(kind));
+  }
+
+  /** Every object of one kind, from the same tree: no round trip at all, let alone one per object. */
+  public async describeObjects(
+    _container: readonly string[],
+    kind: string,
+    limit?: number,
+  ): Promise<ObjectDetailBatch> {
+    const objects = catalogObjects(requireKind(kind));
+    const taken = limit === undefined ? objects : objects.slice(0, limit);
+    const details = taken.map((object) => describeCatalogObject(object.name, object.kind));
+    return taken.length === objects.length
+      ? { details }
+      : { details, truncated: { limit: taken.length, reason: callerBoundTruncationReason(taken.length) } };
+  }
+
+  /**
+   * One Get of `sysDescr.0` and `sysUpTime.0`, through the same exchange and valve as every read.
+   *
+   * An agent that does not answer fails the read: a health answer built from nothing would tell the
+   * connection test and the fleet view that a silent device is fine. An agent that answers one of the
+   * two with an exception has that exception named in place of the value.
+   */
+  public async getHealth(): Promise<SnmpHealth> {
+    const exchange = this.exchange;
+    if (exchange === undefined) {
+      throw new DatabaseConfigError("This connection is not open: `connect` comes before a health read.");
     }
-    return notWired("Listing objects");
-  }
-
-  public async describeObject(): Promise<ObjectDetail> {
-    return notWired("Describing an object");
-  }
-
-  public async describeObjects(): Promise<ObjectDetailBatch> {
-    return notWired("Describing objects");
-  }
-
-  public async getHealth(): Promise<HealthInfo> {
-    return notWired("Reading health");
+    const sent = Date.now();
+    const answer = await exchange.send(PDU_GET, nextRequestId(), [SYS_DESCR, SYS_UPTIME], undefined);
+    const roundTripMs = Date.now() - sent;
+    if (!("varbinds" in answer)) throw new QueryError(`The agent did not answer the health read. ${answer.reason}`);
+    const read = (oid: readonly number[], name: string): string => {
+      const varbind = answer.varbinds.find((candidate) => candidate.oid.join(".") === oid.join("."));
+      const exception = varbind === undefined ? "nothing" : EXCEPTION_TAGS[varbind.tag];
+      if (varbind === undefined || exception !== undefined)
+        return `unavailable: the agent answered ${exception} for ${name}`;
+      return renderValue(syntaxFromTag(varbind.tag, varbind.value), varbind.value).display;
+    };
+    return {
+      uptime: read(SYS_UPTIME, "sysUpTime.0"),
+      description: read(SYS_DESCR, "sysDescr.0"),
+      roundTripMs,
+      databaseSize: NO_DATABASE_SIZE,
+      cacheHitRatio: NO_CACHE_RATIO,
+      slowQueries: [],
+      activeSessions: [],
+    };
   }
 
   public async runMaintenance(): Promise<never> {
     // Not "not implemented": maintenance is a write, and this provider has no code that writes.
     throw new DatabaseConfigError(
-      // One line, for the reason `notWired` above carries.
-      // oxlint-disable-next-line max-len -- see notWired: a split string hides a line from the coverage gate
+      // ONE LINE ON PURPOSE. Split over two with `+`, the second line is a record the coverage tool
+      // never marks: the expression runs, the continuation is not counted, and no case can make it green.
+      // oxlint-disable-next-line max-len -- see above: splitting this string hides a line from the coverage gate
       "This provider performs no maintenance. Maintenance would be a write, and this provider has no code that writes: its client sits behind a seam reaching GetRequest, GetNextRequest and GetBulkRequest and nothing else.",
     );
   }
