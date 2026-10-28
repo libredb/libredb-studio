@@ -2802,7 +2802,7 @@ The core (`investigation.ts`, `tools.ts` and the modules beside them) names no s
 
 | Facet | Tier rule | What it holds | Read through |
 | --- | --- | --- | --- |
-| `client` | Browser-safe: it reaches no server module and no `node:` builtin | the copy, the workflow variants, the plan-estimate operation and the posture sentences | `languageClientPack` |
+| `client` | Browser-safe: it reaches no server module and no `node:` builtin | the copy, the workflow variants, the plan-estimate operation, the posture sentences and the evidence events it writes | `languageClientPack` |
 | `server` | Below `tools.ts`: it never reaches the execution tier | the adapter, the tool overrides and base definitions, the recommendation card, grounding, the tool rules and the shortfall notices | `languageServerPack` |
 | `execution` | Above `tools.ts`: only the run loop reads it | the tool arms and the evidence tools | `agentLanguagePack` |
 | `mcp` | Data only: it never reaches the execution tier or `src/lib/mcp/`, which reads it | the MCP statement tool's name and title, the statement argument's input field, the `database` key and paging mode, `holdsNoTables`, the description, and the words its refusals and cut results use | `AGENT_LANGUAGE_MCP_FACETS` in `languages/mcp.ts` |
@@ -2814,9 +2814,15 @@ The core (`investigation.ts`, `tools.ts` and the modules beside them) names no s
   Each SQL engine's overlay supplies each one or says `"unsupported"`, and the compiler refuses an overlay that leaves one out.
 - **Optional:** the adapter's `inventoryProblem` and `planDraftIdentifiers`, which a pack with no such check leaves out.
 
-Some members are global by name, because a reader dispatches on the name before it reads a run's language: every pack's `baseDefinitions`, `shortfallNotices` and `evidenceTools` are merged into `LANGUAGE_BASE_DEFINITIONS`, `LANGUAGE_SHORTFALL_NOTICES` and `AGENT_EVIDENCE_TOOLS`, and a name two packs both hold fails at load.
+Some members are global by name, because a reader dispatches on the name before it reads a run's language: every pack's `baseDefinitions`, `shortfallNotices` and `evidenceTools` are merged into `LANGUAGE_BASE_DEFINITIONS`, `LANGUAGE_SHORTFALL_NOTICES` and `AGENT_EVIDENCE_TOOLS`, and every pack's `evidenceEvents` into `AGENT_EVIDENCE_EVENTS` by event kind; a name two packs both hold fails at load.
 `LANGUAGE_USAGE_BAR_NOTICE` is the one pack's `usageBarNotice` that supplies one.
 `REFERENCE_STATEMENT_DEFINITIONS` are the default statement-language family's definitions of `inspect_schema`, `run_read_query`, `inspect_plan` and `profile_table`: `AGENT_TOOL_DEFINITIONS` spreads them first, and every family's `toolOverrides` replace them by name.
+
+**Evidence events.** A pack whose readings are evidence a verdict asks for by kind writes events of its own kinds on the ledger: kubectl's `usage-read`, `usage-unavailable` and `workloads-profiled`.
+The pack declares their shapes in its client facet, as its row of `AgentFamilyEvidenceEvents` in `languages/pack.ts`, and `AgentRunEvent` holds every row beside the core's own kinds, so a stored ledger line keeps the shape it was written in.
+Its client facet's `evidenceEvents` also declares, per kind, what the timeline shows, the sentence a resumed run is told, and whether a claim may cite the event's artifact.
+Its evidence tools build the event a completed reading writes and the one a refusal writes, if any.
+The ledger's admitted kinds, the timeline, the resume narration and the citation check read those declarations through `AGENT_EVIDENCE_EVENTS`, `isPackEvidenceEvent` and `evidenceEventSpec` in `languages/client.ts`, and name none of the kinds.
 
 **Engine overlays.** An engine that speaks a statement language has an overlay module at `languages/<statement-language>/engines/<type-id>.ts` and a client row in that directory's `client.ts`.
 `defineOverlay` applies an overlay to one facet of the family pack: a value replaces the member, a function derives it from the base member, nothing is merged deeper than one member, the result is frozen, and an empty overlay returns the base itself.
@@ -2878,6 +2884,8 @@ The tool serves an engine only once that engine's `MCP_STATEMENT_READ` row in `s
 - R8: no engine id as a literal, a property or a segment of an identifier.
 - R9: no read of an overridable server member through a family resolver, which would bypass an engine's override.
 
+`tests/unit/lib/agent/evidence-event-boundary.test.ts` holds the evidence events the same way, with no allowlist: no file under `src/lib/agent/` outside `languages/`, under `src/components/agent/` or under `src/app/api/agent/` writes a kind `AGENT_EVIDENCE_EVENTS` declares as a literal.
+
 ## Module map
 
 ```
@@ -2894,7 +2902,7 @@ src/lib/agent/
 ├── tools.ts              # the four tools + server-side selection; the only database reach,
                           #   the model's tools and the server's own grounding reads alike
 ├── composed-sql.ts # the type-keyed entry points to the SQL the SERVER writes, each dispatched to an engine's dialect: the engines `enginesSupporting("catalogRead", "planEstimate")` answers
-├── languages/            # the statement language packs and their resolvers (see Language packs)
+├── languages/            # the statement language packs, their resolvers and their evidence events (see Language packs)
 ├── languages/sql/engines/ # each SQL engine's own compositions, read through `engineServerDialect`
 ├── languages/sql/engines/sqlite-ddl.ts # reading SQLite's stored DDL back into an inventory
 ├── execution-policy.ts   # the frozen policy and the run-level ceilings
