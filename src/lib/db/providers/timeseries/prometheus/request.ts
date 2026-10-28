@@ -27,8 +27,8 @@
  * - A TLS failure stays a failure carrying the runtime's code, and nothing is retried over
  *   plain HTTP (#1085 S8).
  * - A failure message is made of a status, a code, an origin or a number, never of a header
- *   value, a response body or the runtime's own message: `fetch` quotes a header value it
- *   refuses (measured on bun 1.4.2), and these messages reach the log and the client.
+ *   value, a response body or the runtime's own message: `fetch` quoted a header value it
+ *   refused (measured on bun 1.4.2), and these messages reach the log and the client.
  *
  * `tlsMaterialFor` is the Couchbase transport's mapping, written again here because this
  * provider touches no other provider (#1085, section 3.4; docs/BACKLOG.md D37).

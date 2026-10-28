@@ -262,7 +262,7 @@ Point Studio at a production Prometheus knowing that a query it runs is a query 
 
 `fetch` follows redirects by default, and a 307 or 308 replays a POST and its body wherever `Location` points, keeping the `Authorization` header on a same-origin hop.
 Every request here refuses redirects on both paths, through the shared `rejectRedirect` of `src/lib/db/http/endpoint.ts`: any 3xx is a `ConnectionError` naming the status and the `Location` origin only, and its body is released unread (#1085 S2).
-A header value containing a line feed makes `fetch` throw a `TypeError` whose message contains the whole header, and error messages reach both the log and the client.
+A header value containing a line feed makes `fetch` throw a `TypeError`, whose message contained the whole header through Bun 1.4.2 (from 1.4.4 it names only the header), and error messages reach both the log and the client.
 So before any header is built the transport refuses CR, LF, NUL and any character outside the token68 set in a bearer token, and `:` in a Basic user (RFC 7617), with a `DatabaseConfigError` that never contains the value (#1085 S3).
 Nothing is trimmed silently, credentials never appear in a URL, and a response body that is not the API envelope is never copied into an error message.
 

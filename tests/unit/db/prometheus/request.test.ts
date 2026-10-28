@@ -10,9 +10,9 @@
  * `fetch` only to keep its answers from being collected (holdResponses). `mock.module()` is not
  * used: it is process-wide in bun.
  *
- * The codes asserted against real servers (ConnectionRefused, ECONNREFUSED, ECONNRESET,
- * UNABLE_TO_VERIFY_LEAF_SIGNATURE, ERR_SSL_WRONG_VERSION_NUMBER, ERR_OSSL_PEM_NO_START_LINE,
- * ERR_INVALID_CHAR, ERR_INVALID_PROTOCOL) are what bun 1.4.2 reports, the runtime this suite runs on.
+ * The codes asserted against real servers (ECONNREFUSED, ECONNRESET, UNABLE_TO_VERIFY_LEAF_SIGNATURE,
+ * ERR_SSL_WRONG_VERSION_NUMBER, ERR_OSSL_PEM_NO_START_LINE, ERR_INVALID_CHAR, ERR_INVALID_PROTOCOL)
+ * are what bun 1.4.4 reports, the runtime this suite runs on.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { createPrivateKey, X509Certificate } from "node:crypto";
@@ -230,13 +230,13 @@ interface Path {
   readonly name: string;
   readonly scheme: "http" | "https";
   readonly send: SendRequest;
-  /** Bun's fetch names a refusal in its own words; node:https reports the socket's errno. */
+  /** Both report the socket's errno: Bun's fetch from 1.4.4, where 1.4.2 named a refusal "ConnectionRefused". */
   readonly refusedCode: string;
 }
 
 // A mutable array: bun's describe.each takes a readonly table only when its rows are tuples.
 const PATHS: Path[] = [
-  { name: "plaintext through fetch", scheme: "http", send: createSendRequest(null), refusedCode: "ConnectionRefused" },
+  { name: "plaintext through fetch", scheme: "http", send: createSendRequest(null), refusedCode: "ECONNREFUSED" },
   { name: "TLS through node:https", scheme: "https", send: createSendRequest(VERIFYING), refusedCode: "ECONNREFUSED" },
 ];
 
@@ -365,17 +365,18 @@ describe("the plaintext path", () => {
     expect(calls[0].init?.signal).toBe(signal);
   });
 
-  test("a header value fetch refuses never reaches the failure, though fetch's own message quotes it", async () => {
+  test("a header value fetch refuses never reaches the failure, whatever fetch's own message says", async () => {
     const served = await serve("http", (response) => response.end("answered"));
     // The line feed sits inside the value: fetch strips a leading or trailing one, and then sends.
     const headers = { authorization: `Bearer ${PLANTED_HEADER}\ncontinued` };
-    // The control: Bun's fetch refuses the value and quotes it whole in its own message.
+    // The control: Bun's fetch refuses the value. Its own message quoted the value whole through 1.4.2 and names only
+    // the header from 1.4.4, so the guard is asserted below either way rather than through that message.
     const raw = await originalFetch(served.origin, { headers }).then(
       () => undefined,
       (error: unknown) => error,
     );
     expect(raw).toBeInstanceOf(TypeError);
-    expect((raw as TypeError).message).toContain(PLANTED_HEADER);
+    expect((raw as TypeError).message).toBe("Header 'Authorization' has invalid value");
 
     const failure = await failureOf(createSendRequest(null)(outbound(served.origin, { headers })));
 
