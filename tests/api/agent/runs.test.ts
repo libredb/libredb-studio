@@ -1374,6 +1374,17 @@ describe("GET /api/agent/runs/[runId]", () => {
     expect(body.error).toBe("No such agent run");
   });
 
+  test("a malformed ledger is not answered as a missing run: the route raises it for a server error", async () => {
+    // Only INVALID_RUN_ID joins the 404 bucket. Turning a broken ledger into "No such
+    // agent run" would tell the owner their run is gone while it is still on disk.
+    const malformed = new AgentRunStoreError("MALFORMED_LEDGER", "agent run ledger line 3 is not JSON");
+    mockStatus.mockImplementationOnce(async () => {
+      throw malformed;
+    });
+
+    await expect(GET(createMockRequest("/api/agent/runs/arun_1"), params("arun_1"))).rejects.toBe(malformed);
+  });
+
   test("an unauthenticated caller is refused", async () => {
     mockGetSession.mockResolvedValue(null);
 
