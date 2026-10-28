@@ -3,9 +3,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createLocalWorld } from "@workflow/world-local";
+import { foldLedgerEntries, parseLedgerLine } from "@/components/agent/timeline";
 import { verifyRunGoal } from "@/lib/agent/goal-verifier";
 import { AgentRunStore, ledgerStreamName } from "@/lib/agent/run-store";
 import { selectAgentTools } from "@/lib/agent/tools";
+import type { AgentLedgerEntry } from "@/lib/agent/run-store";
 
 /**
  * The #330 T2 gate: **a ledger written before `workflowType` existed still folds to
@@ -36,6 +38,13 @@ const FIXTURE = path.resolve(import.meta.dir, "../../../fixtures/agent/pre-workf
  * `AgentRunService` on the commit before that layer, so every entry is in the writer's own shape.
  */
 const PRE_LANGUAGE = path.resolve(import.meta.dir, "../../../fixtures/agent/pre-statement-language-ledger.ndjson");
+
+/**
+ * A kubectl resource-efficiency run's evidence events as the ledger wrote them while the agent core still declared
+ * them itself: captured through `AgentRunStore` on the commit before the pack declared them, so each line is in the
+ * writer's own shape.
+ */
+const PRE_PACK_EVIDENCE = path.resolve(import.meta.dir, "../../../fixtures/agent/pre-pack-evidence-ledger.ndjson");
 
 const dataDirs: string[] = [];
 
@@ -204,5 +213,53 @@ describe("a kubectl run resumed in a fresh process", () => {
     expect(record.statementLanguage).toBe("kubectl");
     expect(selectAgentTools(record).map((tool) => tool.name)).toEqual(["run_read_query", "compose_report"]);
     expect(verifyRunGoal(record).verifier).toBe("agent-investigation.1");
+  });
+});
+
+describe("a ledger written before a language pack declared its evidence events", () => {
+  test("still folds, each event in the shape it was written", async () => {
+    const view = await foldFixture(PRE_PACK_EVIDENCE);
+
+    expect(view?.record.statementLanguage).toBe("kubectl");
+    expect(view?.record.events.map((event) => event.kind)).toEqual([
+      "run-started",
+      "usage-unavailable",
+      "usage-read",
+      "workloads-profiled",
+    ]);
+    expect(view?.record.events[2]).toMatchObject({ namespace: "shop", selector: "app=api" });
+  });
+
+  test("renders on the timeline in the words it always had", () => {
+    const entries = fs
+      .readFileSync(PRE_PACK_EVIDENCE, "utf8")
+      .split("\n")
+      .filter((line) => line.trim().length > 0)
+      .map(parseLedgerLine)
+      .filter((entry): entry is AgentLedgerEntry => entry !== null);
+    const items = foldLedgerEntries(entries).items;
+
+    expect(
+      items.slice(2).map(({ tone, headline, detail, artifactId }) => ({ tone, headline, detail, artifactId })),
+    ).toEqual([
+      {
+        tone: "neutral",
+        headline: "No usage metrics",
+        detail: "This cluster serves no metrics.k8s.io, so usage could not be read: install metrics-server.",
+        artifactId: undefined,
+      },
+      {
+        tone: "progress",
+        headline: "Read container usage in shop",
+        detail: "3 container(s), against their requests and limits.",
+        artifactId: "art_usage",
+      },
+      {
+        tone: "progress",
+        headline: "Profiled the workloads of shop",
+        detail: "2 workload(s).",
+        artifactId: "art_profile",
+      },
+    ]);
   });
 });

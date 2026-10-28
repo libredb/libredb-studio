@@ -1,0 +1,5 @@
+{"kind":"run-opened","atMs":1793150802049,"runId":"arun_3a4a0ace0e7d4d268e42c17ecb1ddd29","mode":"agent","workflowType":"query-optimization","workflowSource":"chosen","workflowReading":"unrecorded","autoExecute":false,"statementLanguage":"kubectl","actor":{"sessionId":"sess_fixture","role":"user"},"connectionId":"conn_k8s","objective":"Which containers in shop use far less than they request?"}
+{"kind":"event","event":{"kind":"run-started","atMs":1793150802053,"mode":"agent"}}
+{"kind":"event","event":{"kind":"usage-unavailable","atMs":1793150802054,"namespace":"web"}}
+{"kind":"event","event":{"kind":"usage-read","atMs":1793150802055,"artifact":{"correlationId":"art_usage","runId":"arun_3a4a0ace0e7d4d268e42c17ecb1ddd29","operationId":"cluster.usage.read","summary":{"rowCount":3,"columnNames":["namespace","name"],"elapsedMs":4}},"namespace":"shop","selector":"app=api"}}
+{"kind":"event","event":{"kind":"workloads-profiled","atMs":1793150802056,"artifact":{"correlationId":"art_profile","runId":"arun_3a4a0ace0e7d4d268e42c17ecb1ddd29","operationId":"cluster.workloads.read","summary":{"rowCount":2,"columnNames":["namespace","name"],"elapsedMs":4}},"namespace":"shop"}}
