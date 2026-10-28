@@ -1460,13 +1460,11 @@ export class RedisProvider extends BaseDatabaseProvider {
       this.setConnected(true);
     } catch (error) {
       this.setError(error instanceof Error ? error : new Error(String(error)));
-      // A database the config cannot name or the server does not have is a request fault, not an
-      // unreachable host, and a refused connect already carries its typed reason.
-      if (error instanceof DatabaseError) throw error;
-      throw new ConnectionError(
-        `Failed to connect to Redis: ${error instanceof Error ? error.message : String(error)}`,
-        "redis",
-      );
+      // Every failure here is already typed, so it leaves as it is: `sessionDatabase` raises a
+      // DatabaseConfigError, `openClient` turns a refused connect into `connectFailure`'s
+      // AuthenticationError or ConnectionError and a refused SELECT into a QueryError, and the
+      // ioredis constructor itself opens nothing (`lazyConnect`).
+      throw error;
     }
   }
 
@@ -1475,12 +1473,9 @@ export class RedisProvider extends BaseDatabaseProvider {
       try {
         await this.client.quit();
       } catch {
-        // quit() may fail if already disconnected; force disconnect
-        try {
-          this.client.disconnect();
-        } catch {
-          /* ignore */
-        }
+        // quit() fails on a connection that is already closed. disconnect() closes it either way
+        // and does not throw: ioredis 5.11.1 only sets state and ends the stream there.
+        this.client.disconnect();
       } finally {
         this.client = null;
       }
@@ -1684,18 +1679,12 @@ export class RedisProvider extends BaseDatabaseProvider {
       return { rows: [{ result: `(integer) ${result}` }], fields: ["result"], rowCount: 1 };
     }
 
-    // Handle strings
-    if (typeof result === "string") {
-      // INFO command — parse into structured output
-      if (command === "INFO") {
-        return this.parseInfoResult(result);
-      }
-      return { rows: [{ result }], fields: ["result"], rowCount: 1 };
-    }
-
-    // Fallback
+    // A string is all that is left: `decodeReply` turns every bulk or status reply into one, and a
+    // RESP2 reply is otherwise an integer, an array or nil, all handled above. Anything else would be
+    // shown as its JSON in the same one-cell shape.
+    if (typeof result === "string" && command === "INFO") return this.parseInfoResult(result);
     return {
-      rows: [{ result: JSON.stringify(result) }],
+      rows: [{ result: typeof result === "string" ? result : stringifyReply(result) }],
       fields: ["result"],
       rowCount: 1,
     };

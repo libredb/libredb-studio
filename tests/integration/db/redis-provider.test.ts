@@ -68,7 +68,8 @@ const MOCK_PLAIN_CLUSTER_INFO = ["# Cluster", "cluster_enabled:0", "cluster_stat
 // two used to be conflated in getActiveSessions(), which read `name` for the user column.
 const MOCK_CLIENT_LIST =
   "id=1 addr=127.0.0.1:6379 name= db=0 flags=N cmd=get idle=5 user=studio\nid=2 addr=127.0.0.1:6380 name= db=0 flags=N cmd=set idle=10 user=default";
-let mockClientList = MOCK_CLIENT_LIST;
+/** `null` makes `CLIENT LIST` refused, as it is for an ACL user without `+client|list`. */
+let mockClientList: string | null = MOCK_CLIENT_LIST;
 
 // SLOWLOG GET entries: [id, timestamp, duration-in-microseconds, args, clientAddr, clientName]
 // The second entry carries a non-array args payload to exercise the String() fallback.
@@ -360,6 +361,12 @@ let discardFailure: Error | null = null;
  */
 let pingFailure: Error | null = null;
 
+/** When set, `SLOWLOG` is refused with this sentence, as it is for an ACL user without `+slowlog`. */
+let slowlogRefusal: string | null = null;
+
+/** Keys whose `TYPE` the server refuses, as an ACL user without `+type` is refused. */
+const typeRefusals = new Set<string>();
+
 /** When set, `SCAN` rejects with this sentence, whatever database it was opened on. */
 let scanRefusal: string | null = null;
 
@@ -637,6 +644,7 @@ mock.module("ioredis", () => {
      * `queue:jobs` a list, so the table below is the fixture's own shape (#789).
      */
     async type(key: string) {
+      if (typeRefusals.has(key)) throw replyError("NOPERM User probe has no permissions to run the 'type' command");
       return MOCK_KEY_TYPES[key] ?? "string";
     }
 
@@ -691,6 +699,9 @@ mock.module("ioredis", () => {
     }
 
     async client(subcommand: string) {
+      if (subcommand === "LIST" && mockClientList === null) {
+        throw replyError("NOPERM User probe has no permissions to run the 'client|list' command");
+      }
       if (subcommand === "LIST") return mockClientList;
       return "OK";
     }
@@ -727,6 +738,7 @@ mock.module("ioredis", () => {
       // mock has to make it or a provider that never asks would pass.
       if (this._inMulti) return "QUEUED";
       if (cmd === "CONFIG") return databasesReply;
+      if (cmd === "SLOWLOG" && slowlogRefusal !== null) throw replyError(slowlogRefusal);
       if (cmd === "FUNCTION") {
         if (mockCall !== null) return await mockCall(command, ...args);
         if (functionTransportFailure !== null) throw functionTransportFailure;
@@ -2428,6 +2440,17 @@ describe("RedisProvider", () => {
       await provider.connect();
     });
 
+    test("analyze on a server that refuses INFO answers a failed result carrying the server's sentence", async () => {
+      infoRefusal = "NOPERM User probe has no permissions to run the 'info' command";
+      try {
+        const result = await provider.runMaintenance("analyze");
+        expect(result.success).toBe(false);
+        expect(result.message).toBe(infoRefusal);
+      } finally {
+        infoRefusal = null;
+      }
+    });
+
     test("analyze returns one row per key:value metric", async () => {
       const result = await provider.runMaintenance("analyze");
       const metrics = MOCK_INFO_STRING.split("\n").filter((line) => {
@@ -2530,6 +2553,15 @@ describe("RedisProvider", () => {
       expect(slow).toBeArray();
     });
 
+    test("a SLOWLOG the server refuses answers no slow queries rather than failing the panel", async () => {
+      slowlogRefusal = "NOPERM this user has no permissions to run the 'slowlog' command";
+      try {
+        expect(await provider.getSlowQueries()).toEqual([]);
+      } finally {
+        slowlogRefusal = null;
+      }
+    });
+
     test("maps SLOWLOG entries to SlowQueryStats", async () => {
       const slow = await provider.getSlowQueries();
       expect(slow.length).toBe(2);
@@ -2556,6 +2588,11 @@ describe("RedisProvider", () => {
   describe("getActiveSessions()", () => {
     beforeEach(async () => {
       await provider.connect();
+    });
+
+    test("a CLIENT LIST the server refuses answers no sessions rather than failing the panel", async () => {
+      mockClientList = null;
+      expect(await provider.getActiveSessions()).toEqual([]);
     });
 
     test("returns client list as sessions", async () => {
@@ -2621,6 +2658,19 @@ describe("RedisProvider", () => {
   describe("getStorageStats()", () => {
     beforeEach(async () => {
       await provider.connect();
+    });
+
+    test("a configured maxmemory gives the memory row its share, and none without one", async () => {
+      infoOverride = MOCK_INFO_STRING.replace("maxmemory:0", "maxmemory:4096000");
+      try {
+        const [memory] = await provider.getStorageStats();
+        expect(memory.name).toBe("Memory");
+        expect(memory.usagePercent).toBe(50);
+      } finally {
+        infoOverride = null;
+      }
+      const [unbounded] = await provider.getStorageStats();
+      expect(unbounded.usagePercent).toBeUndefined();
     });
 
     test("returns memory usage info", async () => {
@@ -3171,6 +3221,31 @@ describe("RedisProvider", () => {
 
       expect(counts.keyspace).toEqual({ count: keyspaces.length });
       expect(counts.function).toEqual({ count: functions.length });
+    });
+
+    test("a key with no colon is a grouping of its own, under its own name", async () => {
+      scanPages = ["counter", "user:1"];
+      try {
+        const objects = await provider.listObjects(["0"], "keyspace");
+        expect(objects.map((object) => object.name)).toEqual(["counter", "user:*"]);
+      } finally {
+        scanPages = null;
+      }
+    });
+
+    test("a key whose TYPE is refused still leaves its grouping described, with no type guessed", async () => {
+      typeRefusals.add("user:1");
+      typeRefusals.add("user:2");
+      try {
+        const detail = await provider.describeObject(["0", "user:*"], "keyspace");
+        expect(detail.columns.map((column) => [column.name, column.type])).toEqual([
+          ["key", "string"],
+          ["value", ""],
+          ["type", ""],
+        ]);
+      } finally {
+        typeRefusals.clear();
+      }
     });
 
     test("lists key groupings with their sampled key count", async () => {
