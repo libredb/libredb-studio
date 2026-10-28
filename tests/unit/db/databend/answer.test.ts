@@ -727,7 +727,8 @@ describe("the Databend Cloud gateway's envelope (I19, C4)", () => {
 
   test.each([
     ["no JSON after message:", "status: 401, message: not json: Authorization failed"],
-    ["JSON that does not parse", 'status: 401, message: {"error":{"code":5100,: Authorization failed'],
+    ["a brace that never closes", 'status: 401, message: {"error":{"code":5100,: Authorization failed'],
+    ["JSON that does not parse", 'status: 401, message: {"error":{"code":5100,}}: Authorization failed'],
     ["a __proto__ key", 'status: 401, message: {"__proto__":{"code":5100,"message":"x"}}: Authorization failed'],
     ["no error object", 'status: 401, message: {"code":5100,"message":"x"}: Authorization failed'],
     [

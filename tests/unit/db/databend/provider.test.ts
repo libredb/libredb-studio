@@ -712,6 +712,24 @@ describe("query", () => {
     ]);
   });
 
+  test("a logout that gets no answer in time is a warning that says so", async () => {
+    const fake = fakeDatabend({
+      answer: withConnect((sql) => (sql === "SELECT 1" ? session({ need_keep_alive: true }) : undefined)),
+      close: (path) =>
+        path === "/v1/session/logout"
+          ? Promise.reject(new TransportError("timeout", "The request did not finish within its time limit"))
+          : EMPTY_OK,
+    });
+    const { provider } = build(fake);
+    await provider.connect();
+    const result = await provider.query("SELECT 1");
+    expect(result.warnings).toEqual([{ message: DATABEND_PROVIDER_SENTENCES.closeFailed("logout") }]);
+    expect(DATABEND_PROVIDER_SENTENCES.closeFailed("logout")).toStartWith(
+      "The statement finished, but Studio's request to",
+    );
+    expect(DATABEND_PROVIDER_SENTENCES.closeFailed("logout")).toEndWith("got no answer within 5 seconds.");
+  });
+
   test("warnings past the first 100 different ones are one warning that counts them (F4)", async () => {
     const warnings = Array.from({ length: 103 }, (_, n) => `w${n}`);
     const { provider } = await connected((sql) => (sql === "SELECT 1" ? { warnings } : undefined));
