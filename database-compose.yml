@@ -1371,7 +1371,7 @@ services:
     # One-shot seed on the repository's own Bun, with the repository mounted read-only. The seed
     # talks to the broker over the network only, and refuses a broker that is already seeded:
     # a stream publish appends, so removing the two containers resets the fixture.
-    image: &rabbitmq-seed oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895
+    image: &rabbitmq-seed oven/bun:1.4.4@sha256:1d22548f177f4ff38e0c15baa3c2c46c6c2060ba2d1bc573bb4720b407548f1d
     container_name: libredb-rabbitmq-init
     restart: "no"
     depends_on:

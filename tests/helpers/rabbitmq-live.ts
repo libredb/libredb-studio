@@ -20,7 +20,7 @@ export const RABBITMQ_NIGHTLY_IMAGE =
   "pivotalrabbitmq/rabbitmq@sha256:0a34c75c447856b52770f6e19cd58b0431427c263de2b89d531c686f0cdf0e50";
 /** The seed one-shot's runtime, the repository's own Bun. */
 export const RABBITMQ_SEED_IMAGE =
-  "oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895";
+  "oven/bun:1.4.4@sha256:1d22548f177f4ff38e0c15baa3c2c46c6c2060ba2d1bc573bb4720b407548f1d";
 /** The digests a live script accepts, with the broker version each one is. */
 export const RABBITMQ_PINNED_DIGESTS: Readonly<Record<string, string>> = {
   [RABBITMQ_436_DIGEST]: "4.3.6",
