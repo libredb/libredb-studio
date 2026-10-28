@@ -2324,11 +2324,14 @@ Every change, and every refused one, is an `account` event in the audit log nami
 
 #### GET /api/admin/discovery
 
-The status of the CapRover discovery source ([SEED_CONNECTIONS.md](./SEED_CONNECTIONS.md)), read by the admin Overview page.
+The status of each platform discovery source, CapRover and Kubernetes ([SEED_CONNECTIONS.md](./SEED_CONNECTIONS.md)), read by the admin Overview page.
 It goes through the shared route guard: `401` with no session, `403` for a non-admin.
-With `SEED_DISCOVERY_PATH` unset it answers `{ "discovery": null }`, and so it does in governance mode (`GOVERNANCE_SOURCE` set), whatever `SEED_DISCOVERY_PATH` says ([`docs/SEED_CONNECTIONS.md`](./SEED_CONNECTIONS.md#governance-mode)).
-Otherwise it answers `{ "discovery": { "platform": "caprover", "state", "message", "generatedAt", "checkedAt", "error": { "code", "message" } | null, "connected": [{ "name", "type" }], "skipped": [{ "appName", "reason" }] }, "transport": { "plainHttp", "cookieSecureOff" } }`, where `state` is `ok`, `waiting`, `stale` or `error`.
-It names apps and engine types only, never a host name or an environment value.
+It answers `{ "discovery": <CapRover status> | null, "kubernetesDiscovery": <Kubernetes status> | null }`, and adds `"transport": { "plainHttp", "cookieSecureOff" }` while either source is on.
+The CapRover status is null while `SEED_DISCOVERY_PATH` is unset, the Kubernetes status while `SEED_KUBERNETES_DISCOVERY_PATH` is unset, and both are null in governance mode (`GOVERNANCE_SOURCE` set), whatever those variables say ([`docs/SEED_CONNECTIONS.md`](./SEED_CONNECTIONS.md#governance-mode)).
+The CapRover status is `{ "platform": "caprover", "state", "message", "generatedAt", "checkedAt", "error": { "code", "message" } | null, "connected": [{ "name", "type" }], "skipped": [{ "appName", "reason" }] }`.
+The Kubernetes status is `{ "state", "message", "generatedAt", "checkedAt", "error": { "code", "message" } | null, "namespaces": [{ "name", "error": { "code", "message" } | null }], "connected": [{ "name", "type" }], "skipped": [{ "resource", "reason" }] }`, where `resource` is `<namespace>/<name>` and `namespaces` holds the namespaces of the export it serves.
+In both, `state` is `ok`, `waiting`, `stale` or `error`.
+It names apps, namespaces, databases and engine types only, never a host name, an environment value or a Secret value.
 `plainHttp` is true when the request arrived over http on a host that is not loopback; `X-Forwarded-Proto` and `X-Forwarded-Host` are read unless `TRUST_PROXY_HEADERS` is `false`, `off` or `0`, in any letter case.
 `cookieSecureOff` is true when `AUTH_COOKIE_SECURE` is `false`, `off` or `0`, in any letter case.
 Both flags drive a display warning and never a security decision.

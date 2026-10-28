@@ -43,7 +43,7 @@ docker run \
 
 ## Sources
 
-Studio builds the managed list from operator sources first, then adds the connections [platform discovery](#platform-discovery-caprover) finds, then the [built-in samples](#built-in-sample-connections).
+Studio builds the managed list from operator sources first, then adds the connections platform discovery finds, on [CapRover](#platform-discovery-caprover) and then on [Kubernetes](#platform-discovery-kubernetes), then the [built-in samples](#built-in-sample-connections).
 The operator sources are read in a fixed order; in this version there is one, the seed file.
 Two connections with one id inside the seed file fail it as an invalid config, and the error names the repeated id.
 Two operator sources that declare one id stop the whole list, naming the id and where each one was declared, because neither may shadow the other.
@@ -56,7 +56,7 @@ Studio then reads none of the sources on this page, whatever their variables say
 It creates no sample file at startup either.
 Custom connections are off as well, whatever `ALLOW_CUSTOM_CONNECTIONS` says, so a connection a request supplies is refused with `403` and the code `CUSTOM_CONNECTIONS_DISABLED`, as described under [Custom Connections](#custom-connections).
 The [boot checks](./GOVERNANCE.md#boot-checks) refuse an environment that switches any of these on, and all of them stay off on a server where those checks were bypassed.
-`GET /api/admin/seed-sources` answers `{ "sources": [] }` and `GET /api/admin/discovery` answers `{ "discovery": null }`, so the admin Overview shows neither the Seed sources card nor the Platform Discovery (CapRover) card.
+`GET /api/admin/seed-sources` answers `{ "sources": [] }` and `GET /api/admin/discovery` answers `{ "discovery": null, "kubernetesDiscovery": null }`, so the admin Overview shows neither the Seed sources card nor a Platform Discovery card.
 
 ### The seed file
 
@@ -1128,6 +1128,126 @@ Pages that use the lighter connection list (the admin Overview and Operations ta
 
 ---
 
+## Platform discovery (Kubernetes)
+
+Studio can list the CloudNativePG databases of a Kubernetes cluster as managed connections, with no seed file and no typed password.
+An exporter with a ServiceAccount of its own reads each database's credential Secret in the namespaces a cluster owner opted in, and writes them into one Secret, which the kubelet projects into Studio's pod as a file.
+Studio's own pod never holds a token that can read a database Secret.
+It is off unless `SEED_KUBERNETES_DISCOVERY_PATH` is set, and always off in [governance mode](#governance-mode).
+With the [Kubernetes access review](#kubernetes-access-review) on, a discovered database is listed and opened only for a person the cluster lets `get` its credential Secret; with the review off, for the admin role only, as a [CapRover](#platform-discovery-caprover) database is.
+The chart does not render the exporter yet, so deploy it as described below.
+
+### The Kubernetes exporter
+
+`docker/discover-kubernetes.mjs` ships in every image as `/usr/local/lib/libredb-studio/discover-kubernetes.mjs`, owned by root.
+Run it from the same image version as Studio, as a Deployment of its own with one replica, the command `["node", "/usr/local/lib/libredb-studio/discover-kubernetes.mjs"]` and a ServiceAccount of its own, whose token it reads from the default path, or from `KUBERNETES_DISCOVERY_TOKEN_PATH` and `KUBERNETES_DISCOVERY_CA_PATH` when a projected volume mounts them elsewhere.
+It has no dependency and no listening port, writes nothing to its filesystem, and runs as any non-root user.
+
+Every `KUBERNETES_DISCOVERY_INTERVAL_MS` (30 seconds by default) it:
+
+1. lists the CloudNativePG `Cluster` objects of each namespace in `KUBERNETES_DISCOVERY_NAMESPACES`, 50 per page;
+2. gets each Cluster's credential Secret by the name [the contract](#the-cloudnativepg-contract) gives it, and keeps it only when it belongs to that Cluster;
+3. keeps the Secret's `username`, `password`, `dbname` and `port`, decoded, and of the Cluster only its namespace, its name and the two initdb fields the contract reads;
+4. writes one export into the Secret `KUBERNETES_DISCOVERY_EXPORT_SECRET` names, under the key `export.json`: it reads that Secret, replaces only its data, keeps its labels, annotations and type, and updates it with the resourceVersion it read as the precondition, so a write that crosses another one is refused, read again and retried once.
+
+The export Secret must exist before the exporter starts: create it empty in Studio's namespace.
+The exporter never creates it, because a Role limited to its name cannot.
+The exporter needs these rights and no others, each Role bound to its ServiceAccount by a RoleBinding in the Role's namespace:
+
+```yaml
+# In each discovered namespace, team-a here:
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: libredb-studio-discovery
+  namespace: team-a
+rules:
+  - apiGroups: ["postgresql.cnpg.io"]
+    resources: ["clusters"]
+    verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+---
+# In Studio's namespace:
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: libredb-studio-discovery-export
+  namespace: libredb-studio
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["libredb-studio-discovery-export"]
+    verbs: ["get", "update"]
+```
+
+It needs no `watch`, and no `list` on Secrets.
+Studio mounts the export Secret read-only and points `SEED_KUBERNETES_DISCOVERY_PATH` at the `export.json` file in that mount.
+
+A Secret is exported only when it belongs to its Cluster.
+The `<name>-app` Secret must carry an ownerReference to the Cluster's UID or the label `cnpg.io/cluster=<name>`, as CloudNativePG writes it, and a Secret named by `.spec.bootstrap.initdb.secret.name` must be of type `kubernetes.io/basic-auth`, as CloudNativePG requires.
+Whoever may create a Cluster in a discovered namespace chooses the read-write Service Studio sends that Cluster's credentials to, so without this rule a Cluster could name another workload's Secret and have its credentials sent to a server of their choosing.
+A Secret that fails the rule is exported as `not_owned`, without its values.
+
+A 403 on a namespace's list, where the exporter's Role is missing, and a 404, where the CloudNativePG CRD is not installed, are answers about that namespace: its databases are withdrawn, the export says why, and the other namespaces are exported.
+Any other failure fails the whole scan: an unreachable API server, a 401, a 5xx or an answer that is not a list.
+The export then keeps the namespaces, databases and `generatedAt` of the last good scan and updates only the status and `checkedAt`, as the CapRover exporter does.
+A Secret that is missing, forbidden, or holds a kept value over 1024 bytes or one that is not UTF-8 text is exported with that problem and without its values.
+A Cluster whose name, namespace or initdb Secret name is not a Kubernetes name is left out, and no request is built from it.
+Past 500 databases, or past 983040 bytes of export (a Secret holds at most 1 MiB), the rest is cut in order and the status is `limit_exceeded`.
+It reads its token and CA files again for every request, so a rotated projected token is used at once, and it refuses a CA file that holds no certificate before any connection.
+It never logs a value: its log has one summary line per changed scan outcome, and the API server's own message for a refusal.
+Its variables are listed in `.env.example` under "Kubernetes Discovery Exporter".
+A value it cannot honour stops it at start with exit code 2 and a line naming the variable.
+
+### The CloudNativePG contract
+
+| Field | From the `<name>-app` Secret | With a Secret `.spec.bootstrap.initdb.secret.name` names |
+|-------|------------------------------|-----------------------------------------------------------|
+| user | `username` | `username` |
+| password | `password` | `password` |
+| database | `dbname` | `.spec.bootstrap.initdb.database`, else `app` |
+| port | `port` | 5432 |
+| host | `<name>-rw.<namespace>.svc` | `<name>-rw.<namespace>.svc` |
+
+Every field the table takes from a Secret is required, and a database whose Secret lacks one is skipped with its reason.
+The host is the Cluster's read-write Service by its namespaced name, because Studio runs in a namespace of its own and the Secret's `host` is the short name.
+CloudNativePG serves TLS with a CA of its own, whose Secret also holds that CA's private key, so the exporter never reads it, and Studio connects with `ssl: { mode: "require" }`, which encrypts without verifying the server's certificate.
+The table is data in three places that must agree: the exporter, Studio's mapping in `src/lib/seed/kubernetes-discovery-contract.ts`, and the LibreDB Rancher extension, which builds the link that opens a database.
+The golden fixture `tests/fixtures/kubernetes-discovery-golden.json` pins the three together, and the extension copies it from a released Studio tag.
+
+### What every Kubernetes-discovered connection gets
+
+- id `k8s-cnpg-` followed by the first 12 hex characters of sha256 of `<namespace>/<name>`, name `<namespace>/<name> (CloudNativePG)`, group `<namespace>`; one Studio serves one cluster, so the cluster is not part of the id;
+- the link `/?connection=seed%3A<id>` opens it ([Linking to a Connection](#linking-to-a-connection));
+- `ssl: { mode: "require" }`, `managed: true`, no `mcp`, no `readOnly` and no `connectionString`, all set in code and never read from the export;
+- roles `*` while `KUBERNETES_ACCESS_REVIEW` is on, so the review is its only gate, and `admin` while it is off, read from the switch on every request;
+- the Secret its credentials came from, which the review asks about, and the literal marker, so a value written as `${NAME}` or `${vault:...}` is used as written, as for CapRover; `GET /api/connections/managed` strips both markers.
+
+### Kubernetes precedence
+
+The managed list holds the seed-file connections, then CapRover's, then the Kubernetes ones, then the built-in samples.
+A Kubernetes id that an operator source declares is dropped and reported as skipped, with the reason "id taken by the seed file", and an export that lists one database twice keeps the first.
+Naming a Kubernetes-discovered id the caller may not open answers the same 404 as an unknown id.
+
+### Kubernetes freshness and state
+
+The export's cache, freshness and states are [CapRover's](#freshness-and-state), with `SEED_KUBERNETES_DISCOVERY_MAX_AGE_MS`, 180 seconds by default, in place of `SEED_DISCOVERY_MAX_AGE_MS`.
+The default is longer because a changed Secret reaches the pod only at the kubelet's next sync: on k3s with its defaults, a sync period of one minute, it took 41 to 85 seconds after the write, so the file Studio reads can be one exporter interval plus about 90 seconds old.
+Keep `SEED_KUBERNETES_DISCOVERY_MAX_AGE_MS` above `KUBERNETES_DISCOVERY_INTERVAL_MS` plus 90 seconds.
+A role removed in the cluster does not wait for the export: with the access review on, the review decides each list and open within its own cache lifetime.
+A namespace removed from `KUBERNETES_DISCOVERY_NAMESPACES`, which restarts the exporter, leaves the export at its next scan, and Studio withdraws its databases once the kubelet shows that export.
+The exporter's codes are `api_unreachable`, `credentials_unavailable`, `unauthorized`, `api_error` and `limit_exceeded`; a namespace it could not read carries `forbidden` or `crd_missing`.
+A write the exporter cannot make, to an export Secret that is missing or that its Role may not update, writes nothing, so Studio reads the last export it wrote until that turns stale; the exporter logs each failed write.
+
+### Kubernetes admin status
+
+`GET /api/admin/discovery` reports this source under `kubernetesDiscovery` ([`docs/API_DOCS.md`](./API_DOCS.md#admin-api)), and the admin Overview page shows it in a card of its own beside CapRover's: the state and its message, the last successful scan, the exporter's error, each namespace with the reason it could not be read, the connected databases, and the skipped ones with their reasons.
+Neither carries a host or a Secret value.
+
+---
+
 ## Kubernetes access review
 
 With `KUBERNETES_ACCESS_REVIEW=on`, Studio asks the Kubernetes API who may use a connection whose credentials come from a Kubernetes Secret, instead of deciding it from Studio roles.
@@ -1136,7 +1256,7 @@ It is off by default, and with it off nothing on this page changes.
 ### Who sees a reviewed connection
 
 A reviewed connection is one that names the Kubernetes Secret its credentials come from.
-Only a Kubernetes discovery source sets that, in code; a seed file cannot, because the seed schema has no such field.
+Only the [Kubernetes discovery source](#platform-discovery-kubernetes) sets that, in code; a seed file cannot, because the seed schema has no such field.
 Its roles are `*`, so the review is its only gate, for admins and users alike:
 
 - It is listed, and opened by any route, only for a session the review allows to `get` that Secret.
@@ -1298,6 +1418,9 @@ Run one replica: the groups of each sign-in and the cached answers live in that 
 | `SEED_DISCOVERY_PATH` set and the export file missing | No discovered connections and discovery state `waiting`, while file seeds and samples are unaffected. |
 | Export file unreadable, over 2 MiB, not JSON or not the expected shape | No discovered connections and state `error` with code `invalid_export`, whose message never quotes the file. |
 | Export older than `SEED_DISCOVERY_MAX_AGE_MS` (the exporter stopped or was deleted) | Discovered connections withdrawn; state `stale`. |
+| `SEED_KUBERNETES_DISCOVERY_PATH` set and the export file missing | No Kubernetes-discovered connections and state `waiting`, while every other source is unaffected. |
+| Kubernetes export unreadable, over 1 MiB, not JSON or not the expected shape | No Kubernetes-discovered connections and state `error` with code `invalid_export`, whose message never quotes the file. |
+| Kubernetes export older than `SEED_KUBERNETES_DISCOVERY_MAX_AGE_MS` | Kubernetes-discovered connections withdrawn; state `stale`. |
 | The exporter reports a Docker error (socket, swarm, network, API) | The last good scan stays listed while it is fresh; state `error` with the exporter's code. |
 | One discovered service maps to an invalid connection, or its id is taken by the seed file or by another discovered service | That service is skipped with a reason in the admin status; the others are listed. |
 | An environment-matched candidate does not accept a TCP connection | Not listed and reported as skipped; listed on a later read once it accepts connections. |
@@ -1350,10 +1473,13 @@ This is the standard application logger (`src/lib/logger.ts`), not a persisted a
 | `SEED_LITERAL_VALUES` | unset | `true`, `1`, `on` or `yes` (trimmed, any case) reads every seed value as written: no `${ENV_VAR}` or `${vault:...}` reference is resolved and the plaintext-password warning is not logged. `false`, `0`, `off`, `no` or empty keep references resolved, and so does any other value, with one warning ([Literal values written by a platform](#literal-values-written-by-a-platform)) |
 | `SEED_DISCOVERY_PATH` | unset (off) | Path of the discovery export file inside the Studio container; see [Platform discovery (CapRover)](#platform-discovery-caprover) |
 | `SEED_DISCOVERY_MAX_AGE_MS` | `60000` | Age of the export's `generatedAt` after which discovered connections are withdrawn; keep it well above the exporter's `DISCOVERY_INTERVAL_MS` (10000 by default) |
+| `SEED_KUBERNETES_DISCOVERY_PATH` | unset (off) | Path of the Kubernetes discovery export file, the `export.json` of the mounted export Secret; see [Platform discovery (Kubernetes)](#platform-discovery-kubernetes) |
+| `SEED_KUBERNETES_DISCOVERY_MAX_AGE_MS` | `180000` | Age of the Kubernetes export's `generatedAt` after which its connections are withdrawn; keep it above the exporter's `KUBERNETES_DISCOVERY_INTERVAL_MS` (30000 by default) plus 90000 |
 | `NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS` | `5000` | Shortest interval of an open tab's managed-list refresh, inlined at build time, so it only affects source builds and tests, not packaged artifacts |
 
 The `VAULT_*` variables that back `${vault:...}` references are listed under [Vault Environment Variables](#vault-environment-variables).
 The exporter's own variables (`DISCOVERY_*` and `DOCKER_SOCKET`) are read by `docker/discover.mjs` only, never by the Studio server, and are listed in `.env.example`.
+The Kubernetes exporter's (`KUBERNETES_DISCOVERY_*`) are read by `docker/discover-kubernetes.mjs` only, and are listed there too.
 `NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS` is inlined at build time like `NEXT_PUBLIC_MANAGED_POLL_MS` (see [Built-in Sample Connections](#built-in-sample-connections)), so it is not in `.env.example` and setting it on a running container has no effect.
 
 These are unrelated to the embedded sample connection described below, which uses its own `LIBREDB_EMBEDDED_SAMPLE` / `LIBREDB_EMBEDDED_SAMPLE_PATH` variables.
@@ -1450,6 +1576,16 @@ This is expected: deleting a `managed: false` connection adds its seed ID to `li
    To connect it after all, remove it from `DISCOVERY_EXCLUDE` under the `-discovery` app's **App Configs** and save.
 11. A database whose image is neither in the [detection table](#engine-detection) nor built by CapRover is not recognised: add it as a seed connection or by hand.
 
+### Discovered Kubernetes databases don't appear
+
+1. With the Kubernetes access review off, sign in as the admin; with it on, sign in as a person the cluster lets `get` the database's credential Secret, which `kubectl auth can-i get secret/<name>-app -n <namespace> --as <user>` answers.
+2. Open the admin Overview page and read the Kubernetes discovery card; there is none while `SEED_KUBERNETES_DISCOVERY_PATH` is unset.
+3. `waiting`: the export file does not exist yet.
+   Check that Studio mounts the export Secret where `SEED_KUBERNETES_DISCOVERY_PATH` points, and that the exporter's log says `scan ok`.
+4. `stale`: the exporter stopped writing, or its writes fail, and its log says `write failed` with the reason, such as an export Secret that does not exist or a Role without `update` on it.
+5. A namespace with `forbidden`: the exporter's ServiceAccount may not `list` `clusters.postgresql.cnpg.io` there; with `crd_missing`, CloudNativePG is not installed.
+6. A database in the skipped list carries its reason: a credential Secret that does not exist, that the exporter may not read, or that does not belong to its Cluster, a field the Secret lacks, or an id the seed file already uses.
+
 ---
 
 ## Architecture
@@ -1474,6 +1610,11 @@ seed-connections.yaml (SEED_CONFIG_PATH)
         │         │ reads SEED_DISCOVERY_PATH)             │  it is set; admin role only, literal
         │         └───────────────────────────────────────┘
         │         ┌───────────────────────────────────────┐
+        ├─────────┤ Kubernetes discovery (kubernetes-      │  Appended after CapRover when it is
+        │         │ discovery-*.ts, reads                  │  set; roles * under the access review,
+        │         │ SEED_KUBERNETES_DISCOVERY_PATH)        │  else admin; literal, Secret marker
+        │         └───────────────────────────────────────┘
+        │         ┌───────────────────────────────────────┐
         ├─────────┤ Embedded samples (libredb-sample.ts,   │  Appended if enabled and the
         │         │ sqlite-sample.ts)                      │  sample file exists
         │         └───────────────────────────────────────┘
@@ -1494,7 +1635,7 @@ seed-connections.yaml (SEED_CONFIG_PATH)
   └──────────────────────────┘
 ```
 
-**Module:** `src/lib/seed/` (17 files)
+**Module:** `src/lib/seed/` (22 files)
 
 | File | Responsibility |
 |------|---------------|
@@ -1511,9 +1652,14 @@ seed-connections.yaml (SEED_CONFIG_PATH)
 | `libredb-sample.ts` | Built-in "Sample (LibreDB)" connection: file seeding + descriptor |
 | `sqlite-sample.ts` | Built-in "Sample (Employees)" connection: vendored template copy + descriptor |
 | `index.ts` | Public API: `getManagedConnections()`, `getPendingSeeds()`, `getSeedConnectionById()`, `getSeedConnectionByIdUnfiltered()` and `resetCache()` |
+| `roles.ts` | `seedRolesOf()`: the session's role and the claim roles that carry `OIDC_ROLE_PREFIX`, which seed roles are matched against |
 | `discovery-export.ts` | Zod schema and parser of the platform discovery export file, with its 2 MiB cap |
 | `discovery-fingerprint.ts` | Image repository parsing, engine detection and credential mapping of discovered services |
 | `discovery-probe.ts` | TCP probe for environment-matched candidates: 1 s timeout, 30 s positive cache, 16 at a time |
-| `discovery-loader.ts` | Platform discovery source: cached read, freshness state, validation, admin status |
+| `discovery-source.ts` | What every platform discovery source shares: the bounded file read, the cache, freshness and staleness, the states and the change log |
+| `discovery-loader.ts` | The CapRover discovery source: mapping, probe, admin status |
+| `kubernetes-discovery-export.ts` | Zod schema and parser of the Kubernetes discovery export, with its 1 MiB cap |
+| `kubernetes-discovery-contract.ts` | The contract table (CloudNativePG), the connection id rule and the mapping of an exported database to a seed connection |
+| `kubernetes-discovery-loader.ts` | The Kubernetes discovery source: mapping, id collisions, admin status |
 
-The exporter, `docker/discover.mjs`, lives outside `src/`: it ships in the container images only, and Studio never imports it.
+The exporters, `docker/discover.mjs` and `docker/discover-kubernetes.mjs`, live outside `src/`: they ship in the container images only, and Studio never imports them.
