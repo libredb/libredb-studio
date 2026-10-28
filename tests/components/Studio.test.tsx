@@ -1499,12 +1499,15 @@ describe("Studio", () => {
     });
     expect(mockExecuteQuery).toHaveBeenLastCalledWith("INSERT 1", undefined, false, { catalog: "shop" });
 
-    // A table created from a folder in another database is created there too.
-    act(() => sidebarActions().onCreateObject?.(["shop", "dbo"]));
+    // A table created from a folder in another database is created there too, not where the
+    // test data above went.
+    act(() => sidebarActions().onCreateObject?.(["archive", "dbo"]));
     await act(async () => {
       await (capturedCreateTableProps.onTableCreated as (sql: string) => unknown)("CREATE TABLE t (id int)");
     });
-    expect(mockExecuteQuery).toHaveBeenLastCalledWith("CREATE TABLE t (id int)", undefined, false, { catalog: "shop" });
+    expect(mockExecuteQuery).toHaveBeenLastCalledWith("CREATE TABLE t (id int)", undefined, false, {
+      catalog: "archive",
+    });
 
     // The tree is where the database is chosen and shown: activating a database or anything inside
     // one makes it active, the active one again changes nothing, and its row is the current one.
