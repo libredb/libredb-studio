@@ -1260,6 +1260,64 @@ describe("TestDataGenerator value typing (#1468)", () => {
   });
 });
 
+describe("TestDataGenerator name rules for people, pictures and secrets", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  const profile: DetailedObject = {
+    name: "people",
+    kind: "table",
+    path: ["public", "people"],
+    indexes: [],
+    columns: [
+      { name: "surname", type: "VARCHAR(100)", nullable: true, isPrimary: false },
+      { name: "avatar", type: "TEXT", nullable: true, isPrimary: false },
+      { name: "password_hash", type: "VARCHAR(64)", nullable: true, isPrimary: false },
+    ],
+  };
+
+  test("a surname, an avatar and a password hash column each get their own generator", () => {
+    const { container } = render(
+      <TestDataGenerator
+        isOpen
+        onClose={mock(() => {})}
+        tablePath={profile.path}
+        tableSchema={profile}
+        databaseType="postgres"
+        capabilities={postgresCaps}
+        onExecuteQuery={mock(() => {})}
+      />,
+    );
+    const text = container.textContent || "";
+    expect(text).toContain("surname: lastName");
+    expect(text).toContain("avatar: imageUrl");
+    expect(text).toContain("password_hash: hash");
+  });
+
+  test("their generated values are a family name, a picture URL and a hex digest", () => {
+    const statement = executed(profile, postgresCaps);
+    const firstRow = statement.split("\n")[2];
+    expect(firstRow).toMatch(/^ {2}\('[A-Z][a-z]+', 'https:\/\/picsum\.photos\/200\?id=\d+', '[0-9a-f]+'\),$/);
+  });
+
+  test("a MongoDB double whose name picks a text generator is written as a decimal", () => {
+    const doubles: DetailedObject = {
+      name: "devices",
+      kind: "collection",
+      path: ["shop", "devices"],
+      indexes: [],
+      columns: [{ name: "phone", type: "double", nullable: true, isPrimary: false }],
+    };
+    const docs = (JSON.parse(executed(doubles, jsonCaps)) as { documents: Record<string, unknown>[] }).documents;
+    for (const doc of docs) {
+      // The phone generator writes "+1-555-0123"-style text, which is no number at all.
+      expect(typeof doc.phone).toBe("number");
+      expect(doc.phone as number).toBeLessThan(1000);
+    }
+  });
+});
+
 const SQL_EVERYTHING_BEFORE_1468 = [
   'INSERT INTO public.everything ("address.zip", "geo.lat", email, city, active, qty, price, born, created_at, ref, tags, meta)',
   "VALUES",
@@ -1397,6 +1455,18 @@ describe("TestDataGenerator foreign keys and unique columns (#1400)", () => {
     const statement = executed(accounts, postgresCaps);
     expect(statement).not.toMatch(/\d-[0-9a-f]{6}-\d/);
     expect(statement).toMatch(/', \d{2}, '/);
+  });
+
+  test("a table whose index list could not be read still writes rows, suffixing only its primary key", () => {
+    const unreadable: DetailedObject = {
+      ...accounts,
+      indexes: { unavailable: "The user lacks the grant to read system tables." },
+      columns: [column("code", "varchar(20)", { nullable: false, isPrimary: true }), column("email", "varchar(255)")],
+    };
+    const statement = executed(unreadable, postgresCaps);
+    expect(statement).toMatch(/^INSERT INTO app\.accounts \(code, email\)/);
+    expect(statement.match(/'[^']*-[0-9a-f]{6}-\d+'/g) ?? []).toHaveLength(10);
+    expect(statement).toContain("'user1@example.com'");
   });
 
   test("a column in no unique index keeps the plain email", () => {
