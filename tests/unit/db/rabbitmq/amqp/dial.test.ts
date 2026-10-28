@@ -165,18 +165,22 @@ describe("TLS dials", () => {
   test("a DNS host sends its identity, a host with a trailing dot included; an IP literal sends none", async () => {
     const secure = await listen(certificates.local);
     // connection-options.ts gives a host with a trailing dot the identity without it; the dialled host keeps it.
-    for (const [host, identity] of [
-      ["localhost", "localhost"],
-      ["localhost.", "localhost"],
-      ["127.0.0.1", "127.0.0.1"],
-    ] as const) {
+    for (const [index, [host, identity]] of (
+      [
+        ["localhost", "localhost"],
+        ["localhost.", "localhost"],
+        ["127.0.0.1", "127.0.0.1"],
+      ] as const
+    ).entries()) {
       const socket = await dialAmqp(
         endpoint(host, secure.port, tlsTo(identity, certificates.ca)),
         new AbortController().signal,
       );
+      // The client's handshake ends before the server's: destroyed at once, the socket resets before the server reads
+      // the client's Finished, and the server never completes its side. Node does that, and so does Bun from 1.4.4.
+      await until(() => secure.names.length === index + 1, "the server's side of the handshake");
       socket.destroy();
     }
-    await until(() => secure.names.length === 3, "three handshakes");
     expect(secure.names).toEqual(["localhost", "localhost", false]);
   });
 
