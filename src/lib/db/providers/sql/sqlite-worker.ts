@@ -579,16 +579,13 @@ export class SQLiteWorkerClient implements SQLiteHandle {
    * Kill the child now; every request in flight and queued is rejected.
    *
    * `child.kill()` alone can leave the child's readline loop alive on some runtimes,
-   * so the child's stdin is ended first and the kill is a SIGKILL (R15).
+   * so the child's stdin is ended first and the kill is a SIGKILL (R15). `end()` on a
+   * pipe that is already closed does not throw on Node or Bun, so nothing guards it.
    */
   terminate(): void {
     if (!this.alive) return;
     this.alive = false;
-    try {
-      this.child.stdin.end();
-    } catch {
-      // The pipe may already be closed; the kill below still runs.
-    }
+    this.child.stdin.end();
     this.child.kill("SIGKILL");
     this.failAll(new SQLiteWorkerError("SQLite worker was terminated"));
   }

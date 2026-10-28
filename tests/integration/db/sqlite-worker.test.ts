@@ -277,6 +277,57 @@ describe("SQLite child-process worker (#1623)", () => {
     }
   });
 
+  test("LIBREDB_SQLITE_WORKER_TIMEOUT_MS bounds every request; a value that is not a positive number sets none", async () => {
+    const dbPath = join(dir, "env-timeout.db");
+    const saved = process.env.LIBREDB_SQLITE_WORKER_TIMEOUT_MS;
+    const client = await SQLiteWorkerClient.start({ dbPath, readonly: false, queryOnly: false });
+    try {
+      process.env.LIBREDB_SQLITE_WORKER_TIMEOUT_MS = "not-a-number";
+      expect(await client.all("SELECT 1 AS one")).toEqual([{ one: 1 }]);
+
+      process.env.LIBREDB_SQLITE_WORKER_TIMEOUT_MS = "50";
+      const killed = await client.all(SLOW).then(
+        () => null,
+        (error: unknown) => error,
+      );
+      expect((killed as Error).message).toBe("SQLite worker timed out after 50ms (all)");
+      expect(client.isAlive()).toBe(false);
+    } finally {
+      if (saved === undefined) delete process.env.LIBREDB_SQLITE_WORKER_TIMEOUT_MS;
+      else process.env.LIBREDB_SQLITE_WORKER_TIMEOUT_MS = saved;
+      client.terminate();
+    }
+  });
+
+  test("a request after the child was terminated is refused at once rather than written to a dead pipe", async () => {
+    const dbPath = join(dir, "dead.db");
+    const client = await SQLiteWorkerClient.start({ dbPath, readonly: false, queryOnly: false });
+    client.terminate();
+
+    const refused = await client.all("SELECT 1 AS one").then(
+      () => null,
+      (error: unknown) => error,
+    );
+
+    expect((refused as Error).message).toBe("SQLite worker is not running");
+  });
+
+  test("a stdout line that is not a response is skipped, and the next answer still arrives", async () => {
+    // The child writes only JSON lines, so this is the parent's guard against anything else
+    // that reaches the pipe; it is fed here straight into the child's stdout stream.
+    const dbPath = join(dir, "noise.db");
+    const client = await SQLiteWorkerClient.start({ dbPath, readonly: false, queryOnly: false });
+    try {
+      const stdout = (client as unknown as { child: { stdout: { emit(event: string, chunk: string): void } } }).child
+        .stdout;
+      stdout.emit("data", "not a response line\n");
+
+      expect(await client.all("SELECT 1 AS one")).toEqual([{ one: 1 }]);
+    } finally {
+      await client.close();
+    }
+  });
+
   test("disconnect returns at once while a long statement runs", async () => {
     const dbPath = await seedFile(dir, "disconnect.db");
     const provider = new SQLiteProvider(makeConfig(dbPath));
