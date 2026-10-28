@@ -1724,26 +1724,29 @@ function enumerated over all eight combinations by its test):
    the agent path refuses rather than truncates: an artifact exists only for a statement that
    provably came back inside the row, byte and time ceilings. A statement the run only *explained* is
    not a statement it executed.
-2. **The plan reads as safe**, per engine, with unknown resolving to risky. **PostgreSQL:** the
-   access path is `index` or `mixed` — never `full-scan`, never `unknown` — and the reported
-   `estimatedCost` is at most 50 000. **SQLite:** every step a `SEARCH`; any `SCAN`, a mixed plan or
-   an unreadable one is risky. SQLite is stricter on purpose: `EXPLAIN QUERY PLAN` reports no cost
-   and no row estimate to weigh, and an overrunning read is stopped only by killing the child process
-   that runs it, not by an interrupt inside the engine. Any other dialect is risky, the same
-   fail-closed posture `summarisePlan` takes.
+2. **The plan reads as safe** by its format's own reading, with unknown resolving to risky. The gate
+   asks the format's explain strategy (`agentReading` in `src/lib/explain/<format>.ts`) and names no
+   format and no engine; a format whose strategy carries no reading is risky, the same fail-closed
+   posture `summarisePlan` takes. The reading's `costed` flag picks one of two rules. **Costed**
+   (PostgreSQL's `postgres-json` today): the access path is `index` or `mixed`, never `full-scan`,
+   never `unknown`, and the reported `estimatedCost` is at most 50 000. **Uncosted** (SQLite's
+   `sqlite-queryplan` today): every step a `SEARCH`; any `SCAN`, a mixed plan or an unreadable one is
+   risky. The uncosted rule is stricter on purpose: `EXPLAIN QUERY PLAN` reports no cost and no row
+   estimate to weigh, and an overrunning read is stopped only by killing the child process that runs
+   it, not by an interrupt inside the engine.
 
    **A plan the server could only PARTLY read is risky too**, which is the same rule one level down.
-   `summariseSqlite` recognises `SEARCH` and `SCAN`, so a plan holding either of those beside a step
+   SQLite's reading recognises `SEARCH` and `SCAN`, so a plan holding either of those beside a step
    it does not interpret — `USE TEMP B-TREE FOR ORDER BY`, or anything a later SQLite emits —
    summarised as a flat `index` and passed the gate: "said nothing about that step" read as "said it
    was cheap". The summary now carries `uninterpretedStep` beside `access`, and the gate refuses on
-   it before either engine's rule. The flag sits beside `access` rather than collapsing it to
+   it before either rule. The flag sits beside `access` rather than collapsing it to
    `unknown`, because what the recognised steps said is still true and `compare_plans` still wants
-   it — the comparison is described exactly as it was before the field existed. **PostgreSQL sets no
-   such flag,** deliberately: a PG plan is mostly nodes this reading does not tally (`Sort`,
+   it — the comparison is described exactly as it was before the field existed. **A costed reading
+   sets no such flag,** deliberately: a PG plan is mostly nodes this reading does not tally (`Sort`,
    `Hash Join`, `Aggregate`), none of them a relation access, and the engine both reports a whole-plan
-   `Total Cost` this gate already weighs and preempts a statement that overruns. On SQLite the access
-   reading is the gate's entire evidence, and a reading that skipped a step is not evidence.
+   `Total Cost` this gate already weighs and preempts a statement that overruns. Under an uncosted
+   reading the access is the gate's entire evidence, and a reading that skipped a step is not evidence.
 3. **The measured elapsed time**, `artifact.summary.elapsedMs` for that very result, at most 2 000 ms.
    Already on the ledger, so it costs nothing to read.
 
@@ -2918,6 +2921,8 @@ src/lib/agent/
 ├── goal-verifier.ts      # did this run ANSWER? a pure fold over the ledger, per workflow
 ├── er-diagram.ts         # the schema's relations as text, quoted so a name cannot forge one
 ├── plan-summary.ts       # how an engine reaches its rows, read from an ESTIMATING plan
+                          #   through the format's explain strategy (`agentReading`)
+├── auto-execute.ts       # the pure gate on handing the answer to the editor to run
 ├── table-profile.ts      # composed per-table aggregates, and the findings derived from them
 ├── capability-probe.ts   # tool calling / structured output / streaming, established positively
 ├── capability-labels.ts  # what those three are called in front of a user; shared with the rail

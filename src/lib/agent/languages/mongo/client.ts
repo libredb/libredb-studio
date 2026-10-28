@@ -116,8 +116,8 @@ export const MONGO_CLIENT_PACK = Object.freeze({
     /**
      * The analysis template, with the auto-execute hand-over not offered, as on a cluster. The gate that would run
      * the answer in the editor weighs the answer's own plan by a reading of the engine's explain format
-     * (`planRefusal` in `auto-execute.ts`). No `ExplainFormat` names a MongoDB plan and `plan-summary.ts` has no
-     * reading of one, so every ticked run would be declined, and the hand-over's replay of a MongoDB command has never
+     * (`planRefusal` in `auto-execute.ts`). No `ExplainFormat` names a MongoDB plan and no explain strategy carries
+     * an `agentReading` of one, so every ticked run would be declined, and the hand-over's replay of a MongoDB command has never
      * been verified end to end either. A setting that can only ever be declined is a consent it cannot honour, so the
      * route refuses it and the rail raises no consent step. What would turn it on is one change, recorded as
      * `docs/BACKLOG.md` B118: a MongoDB plan reading, its rule in the gate and a verified replay, together.

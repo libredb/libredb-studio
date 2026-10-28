@@ -7001,7 +7001,7 @@ and the editor's Explain button stays hidden on this engine.
 
 Two agent-side consequences follow from the same missing half, and both are the honest reading rather
 than a defect. `ExplainFormat` has no SQL Server member, so the plan the run holds travels with
-`format: undefined`; `summarisePlan` finds no `PLAN_READINGS` arm and answers `{ access: "unknown" }`;
+`format: undefined`; `summarisePlan` finds no strategy `agentReading` and answers `{ access: "unknown" }`;
 and `planRefusal` in `auto-execute.ts` falls through to `unverified-dialect`. So `inspect_plan`
 answers, the model reads the plan and recommends against it - measured, it recommended a nonclustered
 index off a Clustered Index Scan - and auto-execute never hands a result over on the plan's strength.
@@ -7009,7 +7009,7 @@ DuckDB already ships in that state for the other reason: `duckdb-json` IS an `Ex
 no reading either.
 
 **Done when:** a SQL Server EXPLAIN strategy exists that a session mode can be expressed through
-(#126's dialect wrapper), and `plan-summary.ts` gains a reading verified against a real
+(#126's dialect wrapper), and its strategy gains an `agentReading` verified against a real
 `SET SHOWPLAN_ALL` result set, in the same change. Either half alone is worse than neither: a button
 with no reading gives the editor a plan the agent still cannot weigh, and a reading with no
 `ExplainFormat` member has nothing to key on.
@@ -7017,8 +7017,8 @@ with no reading gives the editor a plan the agent still cannot weigh, and a read
 Amended 2026-10-17 (#1614): MongoDB does not offer auto-execute at all (`canAutoExecute` is false on every mongo variant in `src/lib/agent/agent-manifest.ts`), because both halves are missing there too and a third with them, a verified replay of a MongoDB answer in the editor; B118 records the three as one change.
 
 Amended 2026-10-17 (#1614): MySQL is in DuckDB's state (#1629).
-A run on MySQL or MariaDB asks for `EXPLAIN FORMAT=JSON` and holds the plan as `mysql-json`, the format the connect probe measures there, and that `ExplainFormat` has no `PLAN_READINGS` arm, so `planRefusal` answers `unverified-dialect` and a ticked run's answer is put in the editor unrun.
-`mysql-text`, the plain plan of a MySQL-wire server that refuses that grammar, is left unread on purpose (#574, the comment above `PLAN_READINGS` in `src/lib/agent/plan-summary.ts`).
+A run on MySQL or MariaDB asks for `EXPLAIN FORMAT=JSON` and holds the plan as `mysql-json`, the format the connect probe measures there, and that format's strategy carries no `agentReading`, so `planRefusal` answers `unverified-dialect` and a ticked run's answer is put in the editor unrun.
+`mysql-text`, the plain plan of a MySQL-wire server that refuses that grammar, is left unread on purpose (#574, `summarisePlan` in `src/lib/agent/plan-summary.ts`).
 
 ### A7. The agent's byte budget TOTAL is measured after the result exists, on every engine that has one
 
@@ -7846,12 +7846,12 @@ Found 2026-10-14 while building agent execution on Kubernetes.
 
 No mongo variant offers auto-execute: `canAutoExecute` is false on every `AGENT_WORKFLOW_VARIANTS.mongo` entry (`src/lib/agent/agent-manifest.ts`), so the run route refuses `autoExecute` on a MongoDB connection, the rail raises no consent step, and the run's rules never state `AUTO_EXECUTE_RULE`.
 Three things are missing, and A6 is why they land together.
-No `ExplainFormat` member names a MongoDB plan (`MongoDBProvider.getCapabilities` answers `supportsExplain: false`), and `PLAN_READINGS` in `src/lib/agent/plan-summary.ts` has no arm for one, so `planRefusal` in `src/lib/agent/auto-execute.ts` would answer `unverified-dialect` for every ticked run.
+No `ExplainFormat` member names a MongoDB plan (`MongoDBProvider.getCapabilities` answers `supportsExplain: false`), and no explain strategy carries an `agentReading` for one (`src/lib/explain/<format>.ts`), so `planRefusal` in `src/lib/agent/auto-execute.ts` would answer `unverified-dialect` for every ticked run.
 And the hand-over's replay of a MongoDB answer through `POST /api/agent/runs/{runId}/handover` has never been driven end to end.
 
 Filed 2026-10-17 with agent execution on MongoDB (#1790), which turned the setting off on every mongo variant rather than offer a consent it could not honour; cross-referenced from A6.
 
-**Done when:** one change adds an `ExplainFormat` member for MongoDB's `queryPlanner` explain, a `PLAN_READINGS` arm that reads its winning plan (an `IXSCAN` against a `COLLSCAN`), verified against explain output from the servers `tests/live/mongodb-agent-profile.ts` measures, a `planRefusal` rule for it, and a test that drives the hand-over replay of a MongoDB answer, and turns `canAutoExecute` on for mongo `data-analysis`; cited in `docs/AGENT.md`.
+**Done when:** one change adds an `ExplainFormat` member for MongoDB's `queryPlanner` explain, a strategy `agentReading` that reads its winning plan (an `IXSCAN` against a `COLLSCAN`), verified against explain output from the servers `tests/live/mongodb-agent-profile.ts` measures, with the `costed` rule that fits it, and a test that drives the hand-over replay of a MongoDB answer, and turns `canAutoExecute` on for mongo `data-analysis`; cited in `docs/AGENT.md`.
 
 ### B119. `compare_plans` is not offered on MongoDB
 

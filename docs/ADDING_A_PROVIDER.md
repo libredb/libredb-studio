@@ -752,6 +752,18 @@ control that only emits invalid input. That is the defect class
   flat reading of `/* a /* b */ SELECT 1 */ DELETE …` reports `SELECT`; verified on 18, the rows were
   deleted). If your engine's comment or quoting rules differ from the compatibility default, pass its
   grammar too.
+- **The agent reads your plan only through the strategy's `agentReading`**
+  ([`explain/types.ts`](../src/lib/explain/types.ts), `ExplainAgentReading`), and a strategy without one
+  is read as `unknown`: plan comparisons describe nothing and the auto-execute gate refuses it as an
+  unverified dialect. Add one only once the reader is verified against the engine's own plans, in the
+  strategy's own file (`postgres-json.ts` and `sqlite-queryplan.ts` carry the two today), with a
+  `summarise(rows)` that never throws and a `costed` flag: `true` when the plan reports a cost for the
+  whole plan and the engine preempts an overrun, so the gate weighs that cost; `false` when it reports
+  none, so only a wholly indexed plan passes and a step the reader does not interpret is flagged
+  `uninterpretedStep`. The agent core names no format, and the language boundary guard (R8d in
+  `tests/unit/lib/agent/language-boundary.test.ts`) refuses a format id there, so the strategy is the
+  only place the reading can go. `tests/unit/lib/explain/agent-reading.test.ts` pins which formats
+  carry a reading and which rule each asks for.
 - A capability can be absent because the **grammar** lacks it rather than because nobody implemented
   it, and the flag reads the same either way — so check, and then say so. Druid answers
   `CREATE TABLE t (id BIGINT)` with a syntax error, because `CREATE` is not one of its statements at
