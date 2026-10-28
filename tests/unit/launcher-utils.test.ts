@@ -28,6 +28,7 @@ import {
   resolvePathVariables,
   sha256File,
   URL_PATH_VARIABLES,
+  OTHER_PROGRAM_PATH_VARIABLES,
 } from "../../bin/lib/launcher-utils.mjs";
 import { describeIf, missingUnixTool, resolveUnixTool } from "../helpers/posix-tools";
 import { howItFailed } from "../helpers/spawn-outcome";
@@ -653,6 +654,26 @@ describe("resolvePathVariables", () => {
     },
   );
 
+  test("leaves alone a path another program in the image reads, which the server never does", () => {
+    const env = {
+      KUBERNETES_DISCOVERY_TOKEN_PATH: "token",
+      KUBERNETES_DISCOVERY_CA_PATH: "ca.crt",
+      SEED_CONFIG_PATH: "s.yaml",
+    };
+    const resolved = resolvePathVariables(env, cwd);
+    expect(resolved.KUBERNETES_DISCOVERY_TOKEN_PATH).toBe("token");
+    expect(resolved.KUBERNETES_DISCOVERY_CA_PATH).toBe("ca.crt");
+    expect(resolved.SEED_CONFIG_PATH).toBe(path.join(cwd, "s.yaml"));
+    expect(Object.keys(OTHER_PROGRAM_PATH_VARIABLES)).toEqual([
+      "KUBERNETES_DISCOVERY_TOKEN_PATH",
+      "KUBERNETES_DISCOVERY_CA_PATH",
+    ]);
+  });
+
+  test("resolves the Kubernetes discovery export path, which the server reads", () => {
+    expect(PATH_VARIABLES).toContain("SEED_KUBERNETES_DISCOVERY_PATH");
+  });
+
   test("never resolves a URL path, even a relative-looking one", () => {
     const env = { BASE_PATH: "tools/libredb", NEXT_PUBLIC_MONACO_VS_PATH: "monaco/vs", SEED_CONFIG_PATH: "s.yaml" };
     const resolved = resolvePathVariables(env, cwd);
@@ -673,7 +694,8 @@ describe("resolvePathVariables", () => {
   /*
     The guard that keeps the list honest: a new *_PATH, *_DIR or *_FILE variable documented in
     .env.example must be classified here, either resolved (PATH_VARIABLES) or left alone with a
-    reason (URL_PATH_VARIABLES), so it cannot silently keep the old cwd-relative behaviour.
+    reason (URL_PATH_VARIABLES, OTHER_PROGRAM_PATH_VARIABLES), so it cannot silently keep the old
+    cwd-relative behaviour.
   */
   test("every *_PATH, *_DIR or *_FILE variable in .env.example is classified", () => {
     const example = fs.readFileSync(path.resolve(import.meta.dir, "../../.env.example"), "utf8");
@@ -681,12 +703,17 @@ describe("resolvePathVariables", () => {
     // The control: the pattern does find the variables this fix was written for.
     expect(documented).toContain("SEED_CONFIG_PATH");
     expect(documented).toContain("BASE_PATH");
-    const classified = new Set([...PATH_VARIABLES, ...Object.keys(URL_PATH_VARIABLES)]);
+    const classified = new Set([
+      ...PATH_VARIABLES,
+      ...Object.keys(URL_PATH_VARIABLES),
+      ...Object.keys(OTHER_PROGRAM_PATH_VARIABLES),
+    ]);
     expect(documented.filter((name) => !classified.has(name))).toEqual([]);
   });
 
   test("no variable is both resolved and excluded", () => {
     expect(PATH_VARIABLES.filter((name) => Object.hasOwn(URL_PATH_VARIABLES, name))).toEqual([]);
+    expect(PATH_VARIABLES.filter((name) => Object.hasOwn(OTHER_PROGRAM_PATH_VARIABLES, name))).toEqual([]);
   });
 });
 

@@ -61,9 +61,10 @@ export function mcpUrlFor(hostname, port) {
  * - GOVERNANCE_PRIVATE_KEYS_FILE: src/lib/governance/keyring.ts, read only under governance
  * - KUBERNETES_ACCESS_REVIEW_TOKEN_PATH, KUBERNETES_ACCESS_REVIEW_CA_PATH: src/lib/kubernetes-access/config.ts, read
  *   only with the Kubernetes access review on
+ * - SEED_KUBERNETES_DISCOVERY_PATH: src/lib/seed/kubernetes-discovery-loader.ts
  *
  * The guard in tests/unit/launcher-utils.test.ts fails when .env.example documents a *_PATH, *_DIR
- * or *_FILE variable that is in neither this list nor URL_PATH_VARIABLES.
+ * or *_FILE variable that is in none of this list, URL_PATH_VARIABLES and OTHER_PROGRAM_PATH_VARIABLES.
  */
 export const PATH_VARIABLES = Object.freeze([
   "SEED_CONFIG_PATH",
@@ -81,6 +82,7 @@ export const PATH_VARIABLES = Object.freeze([
   "GOVERNANCE_PRIVATE_KEYS_FILE",
   "KUBERNETES_ACCESS_REVIEW_TOKEN_PATH",
   "KUBERNETES_ACCESS_REVIEW_CA_PATH",
+  "SEED_KUBERNETES_DISCOVERY_PATH",
 ]);
 
 /**
@@ -91,6 +93,15 @@ export const URL_PATH_VARIABLES = Object.freeze({
   BASE_PATH: "the URL prefix the app is served under behind a reverse proxy",
   NEXT_PUBLIC_MONACO_VS_PATH: "the URL the browser loads the Monaco editor from",
   VAULT_K8S_AUTH_PATH: "the mount of the Kubernetes auth method inside the Vault API URL",
+});
+
+/**
+ * Variables named like a filesystem path that the server never reads, with the program in the image that does. The
+ * launcher runs the server only, so it leaves them as they are.
+ */
+export const OTHER_PROGRAM_PATH_VARIABLES = Object.freeze({
+  KUBERNETES_DISCOVERY_TOKEN_PATH: "docker/discover-kubernetes.mjs, the Kubernetes discovery exporter",
+  KUBERNETES_DISCOVERY_CA_PATH: "docker/discover-kubernetes.mjs, the Kubernetes discovery exporter",
 });
 
 /**
