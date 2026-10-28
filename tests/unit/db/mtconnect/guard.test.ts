@@ -327,7 +327,10 @@ describe("sequence numbers and count", () => {
   });
 
   test("to may not be below from", () => {
-    expect(code(() => guardRequestLine("/sample?from=29516500&to=29516400", OPTIONS))).toBe("window");
+    // Both ends inside the buffer, so the refusal is the ordering and not the window: a to of 29516400
+    // here was refused for falling below firstSequence, and the ordering check never ran.
+    expect(() => guardRequestLine("/sample?from=29516500&to=29516480", OPTIONS)).toThrow("to may not be below from.");
+    expect(code(() => guardRequestLine("/sample?from=29516500&to=29516480", OPTIONS))).toBe("window");
     expect(guardRequestLine("/sample?from=29516500&to=29516600", OPTIONS).query.to).toBe("29516600");
   });
 });

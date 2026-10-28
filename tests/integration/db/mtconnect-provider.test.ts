@@ -100,6 +100,9 @@ const PROXY_PAGES: ReadonlySet<string> = new Set(["/sample?count=2", `/current?a
 /** The Path prefix a reverse proxy puts in front of the agent; the fixture server answers under it too. */
 const PROXY_PREFIX = "/mtc";
 
+/** A Path prefix under which `/probe` answers a Streams document, which is MTConnect but no device model. */
+const NOT_A_MODEL_PREFIX = "/not-a-model";
+
 /** Every request the server was asked for, so a case can assert what never reached the agent. */
 const seen: string[] = [];
 
@@ -118,7 +121,13 @@ const connected = async (): Promise<MTConnectProvider> => {
 function answer(request: IncomingMessage, response: ServerResponse): void {
   const line = request.url ?? "";
   seen.push(line);
-  const route = line.startsWith(`${PROXY_PREFIX}/`) ? line.slice(PROXY_PREFIX.length) : line;
+  if (line === `${NOT_A_MODEL_PREFIX}/probe`) {
+    response.writeHead(200, { "content-type": "application/xml" });
+    response.end(capture("current"));
+    return;
+  }
+  const prefix = [PROXY_PREFIX, NOT_A_MODEL_PREFIX].find((each) => line.startsWith(`${each}/`));
+  const route = prefix === undefined ? line : line.slice(prefix.length);
   const refusal = REFUSALS.get(route);
   if (refusal !== undefined) {
     response.writeHead(400, { "content-type": "application/xml" });
@@ -350,6 +359,17 @@ describe("the connection's Path prefix", () => {
     const result = await provider.query("GET /current");
     expect(result.rowCount).toBeGreaterThan(0);
     expect(seen).toEqual([`${PROXY_PREFIX}/current`, `${PROXY_PREFIX}/probe`, `${PROXY_PREFIX}/current`]);
+    await provider.disconnect();
+  });
+});
+
+describe("a probe that answers no device model", () => {
+  test("is refused by name, before any observation is read against it", async () => {
+    const provider = new MTConnectProvider({ ...connection(), apiPath: `${NOT_A_MODEL_PREFIX}/` }, {});
+    await provider.connect();
+    await expect(provider.query("GET /current")).rejects.toThrow(
+      "This address answered a document that is not an MTConnect device model.",
+    );
     await provider.disconnect();
   });
 });

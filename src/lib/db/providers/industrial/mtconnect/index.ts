@@ -472,20 +472,22 @@ export class MTConnectProvider extends BaseDatabaseProvider {
    * each has columns of its own: the model's columns come from `probe` and the asset's from the
    * asset element, and neither shares the observation row's shape.
    */
-  private rowsOfDocument(root: MtcElement, op: MtcOp, model: MtcModel, device?: string): QueryResult["rows"] {
+  private rowsOfDocument(
+    root: MtcElement,
+    op: Exclude<MtcOp, "sample" | "current">,
+    model: MtcModel,
+    device?: string,
+  ): QueryResult["rows"] {
     if (op === "probe") return rowsFromModel(model, device).map((row) => ({ ...row }));
-    if (op === "assets" || op === "asset") {
-      return rowsFromAssets(root).map((row) => ({
-        assetId: row.assetId,
-        type: row.type,
-        deviceUuid: row.deviceUuid,
-        timestamp: row.timestamp,
-        removed: row.removed,
-        hash: row.hash,
-        ...row.attributes,
-      }));
-    }
-    return [];
+    return rowsFromAssets(root).map((row) => ({
+      assetId: row.assetId,
+      type: row.type,
+      deviceUuid: row.deviceUuid,
+      timestamp: row.timestamp,
+      removed: row.removed,
+      hash: row.hash,
+      ...row.attributes,
+    }));
   }
 
   /**

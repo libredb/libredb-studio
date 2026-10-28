@@ -109,6 +109,15 @@ describe("the data behind the attributes", () => {
     expect(ids.size).toBe(244);
   });
 
+  test("an error thrown by the caller's own callback leaves as itself, not as a refusal of the document", () => {
+    const ours = new Error("the consumer failed");
+    expect(() =>
+      streamMtconnectObservations(bytes("current.xml"), () => {
+        throw ours;
+      }),
+    ).toThrow(ours);
+  });
+
   test("an asset document keeps its nested elements and their attributes", () => {
     const result = readMtconnectXml(bytes("assets.xml"));
     if (!result.ok) throw new Error(result.reason);
@@ -345,6 +354,11 @@ describe("MT-S5: a document is parsed as untrusted input", () => {
 
   test("a comment is refused by name", () => {
     expect(refusal("<MTConnectDevices><!-- hello --></MTConnectDevices>")).toBe("comment");
+  });
+
+  test("any other <! construct is refused as markup, not skipped", () => {
+    expect(refusal("<MTConnectDevices><!ATTLIST a b CDATA #IMPLIED></MTConnectDevices>")).toBe("markup");
+    expect(refusal("<MTConnectDevices><!ELEMENT a ANY></MTConnectDevices>")).toBe("markup");
   });
 
   test("a processing instruction inside the document is refused", () => {

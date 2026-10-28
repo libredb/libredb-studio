@@ -304,6 +304,25 @@ describe("a sample read", () => {
     expect(seen).toHaveLength(200);
   });
 
+  test("a Streams answer the walker cannot read is refused with the reader's reason and the status", async () => {
+    // Cut before its root end tag, as a connection dropped mid-answer leaves it.
+    const { transport } = standIn("<MTConnectStreams><Streams>");
+    try {
+      await readObservations(
+        options(transport, { count: 0 }),
+        guardRequestLine("/sample?count=200", GUARD),
+        10_000,
+        () => {},
+      );
+      throw new Error("should have refused");
+    } catch (error) {
+      if (!(error instanceof MtcClientError)) throw error;
+      expect(error.failure).toBe("unreadable");
+      expect(error.message).toContain("(malformed)");
+      expect(error.message).toContain("The agent answered 200 with application/xml.");
+    }
+  });
+
   test("the row cap stops the walk while reading, not afterwards", async () => {
     const { transport } = standIn(fixture("sample-count-200.xml"));
     let seen = 0;
