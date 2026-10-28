@@ -267,6 +267,17 @@ describe("the surfaces compose and never reshape", () => {
     await expect(provider.describeObject(["docs"], "collection")).rejects.toThrow(ConnectionError);
   });
 
+  test("a surface read whose request fails before any answer is worded by errors.ts, not passed through raw", async () => {
+    const { provider } = await connected((request) => {
+      if (request.op === "get_collection") throw new Error("socket closed");
+      return recordedAnswer(request);
+    });
+    const failure = await provider.describeObject(["docs"], "collection").catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain("in a way Studio does not recognise");
+    expect((failure as Error).message).not.toBe("socket closed");
+  });
+
   test("a surface read takes one permit each: twenty descriptions never put five in flight", async () => {
     const names = Array.from({ length: 20 }, (_, index) => `c${index}`);
     const { provider, clients } = await connected(async (request) => {

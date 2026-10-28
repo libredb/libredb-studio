@@ -321,6 +321,41 @@ describe("query keys (QE15)", () => {
   });
 });
 
+describe("a query body read in phase 0 names what it refuses", () => {
+  const q = (json: string) => refusal(`POST /collections/docs/points/query\n${json}`);
+
+  test("a number given as text is refused as not a number", () => {
+    const refused = q('{"query": [0.1], "params": {"quantization": {"oversampling": "2"}}}');
+    expect(refused.message).toBe("params.quantization.oversampling must be a number, found a string.");
+  });
+
+  test("a word outside its enum is refused naming the words it takes", () => {
+    const refused = q('{"query": {"order_by": {"key": "seq", "direction": "up"}}}');
+    expect(refused.message).toContain("query.order_by.direction takes one of");
+    expect(refused.message).toContain('not "up"');
+  });
+
+  test("an empty row of a multivector is refused naming its index", () => {
+    expect(q('{"query": [[0.1, 0.2], []]}').message).toBe(
+      "query[1] is an empty row: a multivector row holds at least one number.",
+    );
+  });
+
+  test("an order_by start past the signed 64-bit range is refused before it reaches the server", () => {
+    const refused = q('{"query": {"order_by": {"key": "seq", "start_from": 9223372036854775808}}}');
+    expect(refused.message).toBe("query.order_by.start_from is 9223372036854775808, outside the signed 64-bit range.");
+    expect(refused.key).toBe("start_from");
+  });
+
+  test("an object that is no query form is refused, naming the stray key", () => {
+    const stray = q('{"query": {"nearestt": [0.1]}}');
+    expect(stray.message).toContain("query is not a query Qdrant reads");
+    expect(stray.message).toContain('found the key "nearestt"');
+    expect(stray.key).toBe("nearestt");
+    expect(q('{"query": {}}').key).toBe("query");
+  });
+});
+
 describe("Review Focus: a text pasted with Windows line endings", () => {
   test("reads as the same request, its // comments read out, and is refused with the same sentence", () => {
     const lf =
