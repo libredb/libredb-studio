@@ -278,6 +278,21 @@ describe("bigquery job cancel", () => {
     expect(cancel.signal).not.toBe(signal);
   });
 
+  test("a cancel that never reaches the API is swallowed, and the poll's own error is what surfaces", async () => {
+    api = (req) =>
+      req.method === "POST" && req.url.includes("/cancel")
+        ? Promise.reject(new TransportError("network", "connection reset"))
+        : req.url.includes("/queries/")
+          ? json({ error: { message: "boom" } }, 500)
+          : json({ jobComplete: false, jobReference: { jobId: "j/1" } });
+    const err = await createBigQueryTransport("p", creds)
+      .query("SELECT 1", opts)
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(BigQueryApiError);
+    expect(err).toMatchObject({ message: "boom" });
+    expect(cancels()).toHaveLength(1);
+  });
+
   test("a job without a location cancels without the parameter", async () => {
     failing();
     await createBigQueryTransport("p", creds)
