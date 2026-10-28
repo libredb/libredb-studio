@@ -322,7 +322,7 @@ No Studio code is specific to Rancher: it is the ordinary OIDC mode with the val
        - https://studio.example.com/api/auth/oidc/callback
      tokenExpirationSeconds: 300
      refreshTokenExpirationSeconds: 300
-     scopes: [openid, profile, groups]   # 2.15; on 2.14 use [openid, profile]
+     scopes: [openid, profile, groups]   # 2.14 and 2.15; groups is granted only when listed here
    ```
    Both lifetimes are required on 2.14, where the resource has no defaults and `kubectl apply` refuses a client without them.
    Studio never asks for `offline_access`, so no refresh token is issued, and the short refresh lifetime only bounds a misconfiguration.
@@ -366,7 +366,7 @@ No Studio code is specific to Rancher: it is the ordinary OIDC mode with the val
    | Rancher line | `OIDC_SCOPE` | `groups` claim |
    |--------------|--------------|----------------|
    | 2.15 | `openid profile groups`, with `groups` in the client's `spec.scopes` | Sent only for the `groups` scope |
-   | 2.14 | `openid profile` | Sent without being asked for |
+   | 2.14 | `openid profile groups`, with `groups` in the client's `spec.scopes` (measured on 2.14.3); `openid profile` also signs in | Sent without being asked for |
 
    On every line a user with no group principals, which includes every Rancher local user, gets no `groups` claim at all and signs in as a `user`.
 

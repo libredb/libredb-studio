@@ -47,6 +47,19 @@ function section(markdown: string, title: string): string {
   return end < 0 ? rest : rest.slice(0, end);
 }
 
+/** Checks every relative link of `text`, read as part of `from`, and returns how many there were. */
+function localLinksResolve(text: string, from: string): number {
+  const links = [...text.matchAll(/\]\(([^)\s]+)\)/g)].map((m) => m[1]);
+  const local = links.filter((href) => !/^https?:/.test(href));
+  for (const href of local) {
+    const [path, anchor] = href.split("#");
+    const target = path === "" ? from : join(dirname(from), path);
+    expect(existsSync(join(REPO_ROOT, target)), `${href}: ${target} exists`).toBe(true);
+    if (anchor) expect(anchors(read(target)).has(anchor), `${href}: #${anchor} in ${target}`).toBe(true);
+  }
+  return local.length;
+}
+
 describe("slug", () => {
   test("follows GitHub's anchor rule", () => {
     expect(slug("Rancher mode values")).toBe("rancher-mode-values");
@@ -96,18 +109,46 @@ describe("docs/RANCHER.md", () => {
     expect(supported).toMatch(/Prime/);
   });
 
+  test("keeps the chart's Rancher range apart from Rancher mode, validated on 2.15 only", () => {
+    const supported = section(doc, "Supported versions");
+    expect(supported).toMatch(
+      /That range is the chart's\. Rancher mode and the LibreDB Rancher extension are validated on Rancher 2\.15 only/,
+    );
+  });
+
+  test("claims no Rancher-mode validation for 2.12.3 and 2.13.3, which were never measured", () => {
+    const supported = section(doc, "Supported versions");
+    expect(supported).not.toMatch(/support for their later patches rests on it/);
+    expect(supported).toMatch(/v2\.14\.3 is validated/);
+    expect(supported).toMatch(/2\.12 and 2\.13 install the chart, not validated in Rancher mode/);
+  });
+
   const embedding = section(doc, "Embedding in Rancher");
 
   test("every link of the Embedding in Rancher section lands on a file and heading that exist", () => {
-    const links = [...embedding.matchAll(/\]\(([^)\s]+)\)/g)].map((m) => m[1]);
-    const local = links.filter((href) => !/^https?:/.test(href));
-    expect(local.length).toBeGreaterThan(4);
-    for (const href of local) {
-      const [path, anchor] = href.split("#");
-      const target = path === "" ? "docs/RANCHER.md" : join(dirname("docs/RANCHER.md"), path);
-      expect(existsSync(join(REPO_ROOT, target)), `${href}: ${target} exists`).toBe(true);
-      if (anchor) expect(anchors(read(target)).has(anchor), `${href}: #${anchor} in ${target}`).toBe(true);
-    }
+    expect(localLinksResolve(embedding, "docs/RANCHER.md")).toBeGreaterThan(4);
+  });
+
+  test("states that Rancher mode is validated on 2.15 only, and why 2.12 and 2.13 fail", () => {
+    expect(embedding).toMatch(/It is validated on Rancher 2\.15 only, community v2\.15\.2\./);
+    expect(embedding).toMatch(/On 2\.12 and 2\.13 Rancher refuses the `groups` scope its values request\./);
+  });
+
+  test("states only what is enforced about custom connections", () => {
+    expect(embedding).not.toMatch(/Custom connections are off/);
+    expect(embedding).toMatch(/Set `config\.allowCustomConnections: false`/);
+    expect(embedding).toMatch(/Studio does not force it/);
+    const setup = embedding.slice(embedding.indexOf("### Setting it up"), embedding.indexOf("### What we measured"));
+    expect(setup).toContain("`config.allowCustomConnections: false`");
+  });
+
+  test("gives the Studio-side revocation bound as a design bound that R5 measures", () => {
+    const measured = embedding.slice(
+      embedding.indexOf("### What we measured"),
+      embedding.indexOf("### Not tested yet"),
+    );
+    expect(measured).toMatch(/By design Studio then follows/);
+    expect(measured).toMatch(/scenario R5 of the E2E task measures it/);
   });
 
   test("claims no listing or release for the Rancher extension", () => {
@@ -133,5 +174,30 @@ describe("deploy/rancher/E2E_VALIDATION_TASK.md", () => {
       const next = task.indexOf("\n### ", start + 1);
       expect(task.slice(start, next < 0 ? undefined : next)).toContain("Expect:");
     }
+  });
+
+  const rancherMode = task.slice(task.indexOf("## Phase 3b"), task.indexOf("## Phase 4"));
+
+  test("every link of the Rancher-mode phase lands on a file and heading that exist", () => {
+    expect(localLinksResolve(rancherMode, "deploy/rancher/E2E_VALIDATION_TASK.md")).toBe(3);
+  });
+
+  test("installs Studio with custom connections off, the precondition of R3", () => {
+    expect(rancherMode).toContain("`config.allowCustomConnections: false`");
+  });
+
+  test("expects the password_login_disabled reason in the audit log, not in the 403 body", () => {
+    const r4 = rancherMode.slice(rancherMode.indexOf("### R4"), rancherMode.indexOf("### R5"));
+    expect(r4).not.toMatch(/403 with reason/);
+    expect(r4).toMatch(/audit log records a `login_failure` with reason `password_login_disabled`/);
+  });
+});
+
+describe("docs/OIDC.md", () => {
+  const oidc = read("docs/OIDC.md");
+
+  test("matches the 2.14.3 measurement: groups is granted when the client lists it", () => {
+    expect(oidc).not.toMatch(/on 2\.14 use \[openid, profile\]/);
+    expect(oidc).toMatch(/\| 2\.14 \| `openid profile groups`, with `groups` in the client's `spec\.scopes`/);
   });
 });

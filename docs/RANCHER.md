@@ -35,7 +35,8 @@ upstream.
 
 The Rancher range follows [SUSE's lifecycle](https://www.suse.com/lifecycle/): 2.9 to 2.11 are end of life, so 2.12 is the oldest line declared.
 Rancher publishes community builds of 2.12, 2.13 and 2.14 only up to v2.12.3, v2.13.3 and v2.14.3; the later patches of those lines are Rancher Prime builds, which we cannot run.
-On those lines we test the last community build, and support for their later patches rests on it.
+Of those, v2.14.3 is validated (see [Validated combinations](#validated-combinations)); 2.12 and 2.13 install the chart, not validated in Rancher mode, and are supported on the same chart-only terms as any version without a row.
+That range is the chart's. Rancher mode and the LibreDB Rancher extension are validated on Rancher 2.15 only (see [Embedding in Rancher](#embedding-in-rancher)).
 
 ## Commercial support
 
@@ -163,6 +164,7 @@ are added as each release is validated.
 Inside Rancher Manager, Studio can serve one downstream cluster as its database tool.
 People sign in with their Rancher identity, see the CloudNativePG databases of the namespaces a cluster owner chose, and open only those their own Rancher roles let them read; no database password is typed or shown.
 This is Rancher mode: a set of chart values that a default install leaves off.
+It is validated on Rancher 2.15 only, community v2.15.2. On 2.12 and 2.13 Rancher refuses the `groups` scope its values request.
 It needs the first Studio release after 1.1.0, because the 1.1.0 image has neither the Kubernetes access review nor Kubernetes discovery and ignores their settings.
 
 ### How the pieces fit
@@ -173,7 +175,9 @@ It needs the first Studio release after 1.1.0, because the 1.1.0 image has neith
 - **Admin.** A Studio admin is whoever may `update` Studio's own Deployment, which in a default Rancher install is the administrator and the cluster's owners; no group claim and no password makes an admin ([SEED_CONNECTIONS.md, Admin](SEED_CONNECTIONS.md#admin)).
 - **Sign-in.** Only a member of the cluster signs in, by default whoever may list its `NavLink`s, so a Rancher user with no role in the cluster is refused ([SEED_CONNECTIONS.md, Sign-in](SEED_CONNECTIONS.md#sign-in)).
 - **Navigation.** A `NavLink` puts LibreDB Studio in the cluster's menu, and Studio opens in a new browser tab on its own HTTPS host; it is never framed into Rancher.
-- **Containment.** Custom connections are off, so a user reaches only the databases the review allows, and MCP and the agent stay off while the review is on ([SEED_CONNECTIONS.md, What the review switches off](SEED_CONNECTIONS.md#what-the-review-switches-off)).
+- **Containment.** Set `config.allowCustomConnections: false`, as the chart README's Rancher-mode values do and the extension's setup wizard will; Studio does not force it.
+  The review gates only discovered databases: with custom connections on, which is the default when the value is unset, a signed-in user can point Studio at any Service its pod reaches.
+  MCP and the agent stay off while the review is on ([SEED_CONNECTIONS.md, What the review switches off](SEED_CONNECTIONS.md#what-the-review-switches-off)).
 
 ### Setting it up
 
@@ -181,6 +185,7 @@ It needs the first Studio release after 1.1.0, because the 1.1.0 image has neith
 2. As the cluster's owner, create a namespace for Studio outside every Rancher project, so project members cannot read its Secrets, and write the client id and secret into a Secret there as `oidc-client-id` and `oidc-client-secret`.
 3. When Rancher's certificate comes from a private CA, give Studio that CA ([chart README, Trusting a private CA](../charts/libredb-studio/README.md#trusting-a-private-ca)).
 4. Install the chart into that namespace with the Rancher-mode values, through Helm or Rancher's Apps page, whose form covers them and takes the ingress host in its YAML view ([chart README, Rancher mode values](../charts/libredb-studio/README.md#rancher-mode-values); the reasons behind each value are in [HELM_CHART.md, Rancher mode](HELM_CHART.md#12-rancher-mode)).
+   Keep `config.allowCustomConnections: false` from those values, so users reach only the databases the review allows.
    The discovered namespaces must exist first, and the access review's ClusterRole and the `NavLink` need a cluster owner.
 5. Open LibreDB Studio from the cluster's menu.
 
@@ -191,7 +196,7 @@ On community Rancher v2.15.2 with an imported K3s v1.35.5 cluster, CloudNativePG
 - With a live Rancher session, Studio signs in without a form, and a link that names a database keeps it through Rancher's sign-in page.
 - The administrator and the cluster owner sign in as Studio admins; a project member signs in as a user and sees only the database of the project they may read; a Rancher user with no role in the cluster is refused.
 - Compared with Rancher's own answers for local users, the review never allowed more; it denied only Secrets that Rancher grants through `system:authenticated` or `system:cattle:authenticated` alone (see Limits).
-- A Rancher role removed or granted reached the cluster within about a second in that lab; Studio follows within the review cache lifetime (`accessReview.cacheSeconds`, 15 in the chart README's Rancher-mode example, 30 when unset), and an open tab's list within that plus the list refresh (`seedConnections.cacheTTL`).
+- A Rancher role removed or granted reached the cluster within about a second in that lab. By design Studio then follows within the review cache lifetime (`accessReview.cacheSeconds`, 15 in the chart README's Rancher-mode example, 30 when unset), and an open tab's list within that plus the list refresh (`seedConnections.cacheTTL`); scenario R5 of the E2E task measures it.
   A loaded Rancher or many clusters can be slower, so the bound is Rancher's own propagation plus those two times.
 - A changed export Secret reached Studio's pod in 41 to 85 seconds, the kubelet's sync delay, so a new database appears within the exporter's interval plus that delay.
 - Signing out of Rancher does not end a Studio session; it lasts until the session lifetime, at most 900 seconds with the review on, after which Studio sends the browser back to Rancher.

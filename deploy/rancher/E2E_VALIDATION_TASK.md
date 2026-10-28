@@ -291,7 +291,7 @@ They need more than Phase 1 sets up, and the R workers share it, so run them ser
 - The `oidc-provider` feature flag on (enabling it restarts Rancher) and an `OIDCClient` with Studio's callback URL and the scopes of the Rancher line ([OIDC.md, Rancher](../../docs/OIDC.md#rancher)).
 - A cluster managed by that Rancher, with CloudNativePG installed with `rbac.aggregateClusterRoles=true`, the Cluster `orders` in a namespace of project `team-a` and `analytics` in a namespace of project `team-b`, each holding a few rows.
 - Four Rancher users: `admin` (administrator), `cluster-owner` (Cluster Owner, not an administrator), `dev-a` (Member of team-a, Read Only in team-b) and `no-role` (only the global role "user").
-- Studio installed in its own namespace outside every project, on an HTTPS host that both the browser and the cluster's pods resolve, with Rancher's CA when it is private, and the Rancher-mode values of the [chart README](../../charts/libredb-studio/README.md#rancher-mode-values): `accessReview.cacheSeconds: 15`, `seedConnections.cacheTTL: 10000`, discovery of the two namespaces and the `NavLink`.
+- Studio installed in its own namespace outside every project, on an HTTPS host that both the browser and the cluster's pods resolve, with Rancher's CA when it is private, and the Rancher-mode values of the [chart README](../../charts/libredb-studio/README.md#rancher-mode-values): `config.allowCustomConnections: false` (the precondition of R3), `accessReview.cacheSeconds: 15`, `seedConnections.cacheTTL: 10000`, discovery of the two namespaces and the `NavLink`.
 
 Sign-in steps drive a real browser (Playwright), because single sign-on rides on Rancher's own session; take a screenshot of every landing page.
 Users' passwords are read from files under `results/`, as the admin token is, and never appear in a verdict.
@@ -317,7 +317,7 @@ Every database id below is the `seed:` id Studio's managed list shows for that C
 ### R4 - Sign-in gate and admin rule
 
 - Sign in to Studio as each of the four users, and try password sign-in with `POST /api/auth/login`.
-- Expect: `admin` and `cluster-owner` get role `admin`, `dev-a` gets role `user`, `no-role` is sent back to the login page with `oidc_no_role`; password sign-in answers 403 with reason `password_login_disabled`.
+- Expect: `admin` and `cluster-owner` get role `admin`, `dev-a` gets role `user`, `no-role` is sent back to the login page with `oidc_no_role`; password sign-in answers 403, and the audit log records a `login_failure` with reason `password_login_disabled`.
 
 ### R5 - Revocation
 
