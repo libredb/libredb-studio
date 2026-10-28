@@ -729,6 +729,33 @@ describe("the query pipeline (spec 5.2)", () => {
     for (const failure of await Promise.all(held)) expect(failure).toBeInstanceOf(QueryCancelledError);
   });
 
+  test("a run cancelled while it waits for a permit is a cancellation, not a timeout, and sent nothing", async () => {
+    const hanging = hangingAfter(2);
+    const waiting = await connected([], {}, {}, hanging);
+    const { perEngine, perProvider } = INFLUX_LIMITER_OPTIONS;
+    const fillers: Harness[] = [];
+    for (let index = 0; index < perEngine / perProvider; index += 1) {
+      // oxlint-disable-next-line no-await-in-loop -- each filler connects before the next, so the permits fill in order.
+      fillers.push(await connected([], {}, {}, hangingAfter(2)));
+    }
+    const ids = (index: number) => Array.from({ length: perProvider }, (_, run) => `q3-hold-${index}-${run}`);
+    const held = fillers.flatMap((filler, index) =>
+      ids(index).map((id) => rejection(filler.provider.query("SELECT 1", undefined, id))),
+    );
+    const pending = rejection(waiting.provider.query("SELECT 1", undefined, "q3-waiting"));
+    await Bun.sleep(5);
+    expect(await waiting.provider.cancelQuery("q3-waiting")).toBe(true);
+    const error = await pending;
+    expect(error).toBeInstanceOf(QueryCancelledError);
+    expect(error).not.toBeInstanceOf(TimeoutError);
+    expect(hanging.held()).toBe(0);
+    for (const [index, filler] of fillers.entries()) {
+      // oxlint-disable-next-line no-await-in-loop -- each run is cancelled in turn.
+      for (const id of ids(index)) expect(await filler.provider.cancelQuery(id)).toBe(true);
+    }
+    await Promise.all(held);
+  });
+
   test("a failure the provider did not expect is worded without its text", async () => {
     const { provider } = await connected([], {}, {}, (transport) => ({
       request: (request) =>

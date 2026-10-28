@@ -189,6 +189,8 @@ describe("influxqlCompletionContext", () => {
     expect(at("SELECT ", " FROM (SELECT * FROM cpu)")).toEqual({ kind: "keyword", start: 7 });
     expect(at("SELECT ", ' FROM "cpu')).toEqual({ kind: "keyword", start: 7 });
     expect(at("SELECT ", " FROM a.b.c.d")).toEqual({ kind: "keyword", start: 7 });
+    // Two names touching with no dot between them are no source the server reads.
+    expect(at("SELECT ", ' FROM "cpu""mem"')).toEqual({ kind: "keyword", start: 7 });
     expect(at("SELECT ", " FROM")).toEqual({ kind: "keyword", start: 7 });
   });
 
