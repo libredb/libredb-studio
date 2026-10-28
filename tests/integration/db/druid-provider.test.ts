@@ -1200,6 +1200,34 @@ describe("DruidProvider query preparation", () => {
     expect(withoutOffset.wasLimited).toBe(false);
   });
 
+  // The limiter reads the statement under the Druid SQL grammar row, so an array literal holding a `]`, a quoted name
+  // ending in a backslash and a `//` comment end where Druid ends them, and the bound is written after the first two
+  // and before the third. The compatibility default left the first two unbounded and wrote the bound into the comment.
+  test.each([
+    ["an array literal holding a close bracket", "SELECT ARRAY_OFFSET(ARRAY['a]b'], 0) AS a FROM libredb_demo", ""],
+    ["a quoted name ending in a backslash", 'SELECT id AS "x\\" FROM libredb_demo', ""],
+    ["a trailing // comment", "SELECT id FROM libredb_demo", " // daily check"],
+  ])("bounds a read with %s", (_label, code, comment) => {
+    const prepared = provider().prepareQuery(`${code}${comment}`, { limit: 25 });
+
+    expect(prepared.query).toBe(`${code} LIMIT 25${comment}`);
+    expect(prepared.wasLimited).toBe(true);
+  });
+
+  test.each([
+    // Live-verified: `SELECT 1 AS a LIMIT 5 OFFSET 0 ROWS` answers the row, and a LIMIT after it is a 400.
+    ["a LIMIT before an OFFSET n ROWS", "SELECT id FROM libredb_demo LIMIT 3 OFFSET 2 ROWS"],
+    // `LIMIT ALL` is Calcite's spelling of no bound; a second LIMIT after it is a 400.
+    ["LIMIT ALL", "SELECT id FROM libredb_demo LIMIT ALL"],
+    // An OFFSET with no LIMIT, spelled with ROWS, is left alone like the bare form above.
+    ["an OFFSET n ROWS with no LIMIT", "SELECT id FROM libredb_demo ORDER BY __time OFFSET 2 ROWS"],
+  ])("leaves %s untouched", (_label, sql) => {
+    const prepared = provider().prepareQuery(sql, { limit: 25 });
+
+    expect(prepared.query).toBe(sql);
+    expect(prepared.wasLimited).toBe(false);
+  });
+
   test("paginates with LIMIT n OFFSET m, which is correct Druid SQL in that order", () => {
     const prepared = provider().prepareQuery('SELECT * FROM "libredb_demo"', { limit: 25, offset: 50 });
 

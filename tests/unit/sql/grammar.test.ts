@@ -73,12 +73,9 @@ describe("resolveSqlGrammar", () => {
   // dialect's rule from a neighbouring one is exactly what this milestone forbids.
   // They keep today's reading, which costs them nothing they had.
 
-  test.each<DatabaseType>(["druid", "libredb", "mongodb", "redis"])(
-    "%s is left at the compatibility default",
-    (type) => {
-      expect(resolveSqlGrammar(type)).toBe(DEFAULT_SQL_GRAMMAR);
-    },
-  );
+  test.each<DatabaseType>(["libredb", "mongodb", "redis"])("%s is left at the compatibility default", (type) => {
+    expect(resolveSqlGrammar(type)).toBe(DEFAULT_SQL_GRAMMAR);
+  });
 
   test("a call that names no dialect gets the compatibility default", () => {
     expect(resolveSqlGrammar(undefined)).toBe(DEFAULT_SQL_GRAMMAR);
@@ -302,6 +299,9 @@ describe("resolveSqlGrammar", () => {
   test.each<[DatabaseType, boolean]>([
     ["cassandra", true],
     ["clickhouse", true],
+    // Druid (37.0.0, `POST /druid/v2/sql`): `SELECT 4 // 2 AS a` answers 4, so the rest
+    // of the line is hidden, and Calcite's line comment token is `("//"|"--")…`.
+    ["druid", true],
     ["postgres", false],
     ["mysql", false],
     ["oracle", false],
@@ -417,9 +417,10 @@ const GRAMMAR_COVERAGE: Record<DatabaseType, "established" | "default"> = {
   // `POST /query/service`; see the couchbase block below and COUCHBASE_GRAMMAR in
   // `providers/document/couchbase/sql-grammar.ts` for the statement behind each fact.
   couchbase: "established",
-  // No authoritative source was established for these, so they read as SQL under
-  // the compatibility grammar. See the module doc in `grammar.ts`.
-  druid: "default",
+  // Read off Druid's Calcite parser (`Parser.jj` at druid-37.0.0) and probed 2026-10-28 on apache/druid:37.0.0 over
+  // `POST /druid/v2/sql`; see DRUID_GRAMMAR in `providers/sql/druid/sql-grammar.ts` and `druid-grammar.test.ts` for
+  // the statement behind each fact.
+  druid: "established",
   libredb: "default",
   // Not SQL at all - see SQL_TEXT_COVERAGE below.
   mongodb: "default",
@@ -663,23 +664,23 @@ describe("dollarTags and doubleQuoteBackslashEscapes", () => {
     expect(DEFAULT_SQL_GRAMMAR.doubleQuoteBackslashEscapes).toBeUndefined();
   });
 
-  test("snowflake declares both false", () => {
-    expect(resolveSqlGrammar("snowflake").dollarTags).toBe(false);
-    expect(resolveSqlGrammar("snowflake").doubleQuoteBackslashEscapes).toBe(false);
+  test.each(["snowflake", "druid"] as const)("%s declares both false", (type) => {
+    expect(resolveSqlGrammar(type).dollarTags).toBe(false);
+    expect(resolveSqlGrammar(type).doubleQuoteBackslashEscapes).toBe(false);
   });
 
-  test.each((Object.keys(GRAMMAR_COVERAGE) as DatabaseType[]).filter((type) => type !== "snowflake"))(
-    "%s declares neither",
-    (type) => {
-      expect(resolveSqlGrammar(type).dollarTags).toBeUndefined();
-      expect(resolveSqlGrammar(type).doubleQuoteBackslashEscapes).toBeUndefined();
-    },
-  );
+  test.each(
+    (Object.keys(GRAMMAR_COVERAGE) as DatabaseType[]).filter((type) => type !== "snowflake" && type !== "druid"),
+  )("%s declares neither", (type) => {
+    expect(resolveSqlGrammar(type).dollarTags).toBeUndefined();
+    expect(resolveSqlGrammar(type).doubleQuoteBackslashEscapes).toBeUndefined();
+  });
 });
 
 // Four facts Spark's lexer has, each absent (false) on every other row but one: raw strings (`rawStrings`), optimizer
 // hints lexed as code (`hintsAreCode`), a `--` comment a backslash continues (`lineCommentBackslashContinues`) and one
-// a lone carriage return ends (`lineCommentEndsAtCarriageReturn`), which the SQL++ lexer shares.
+// a lone carriage return ends (`lineCommentEndsAtCarriageReturn`). The SQL++ lexer shares the fourth; Druid's Calcite
+// lexer shares the second and fourth.
 describe("the reader facts Spark's row declares", () => {
   test("the compatibility default declares none of the four", () => {
     expect(DEFAULT_SQL_GRAMMAR.rawStrings).toBeUndefined();
@@ -689,7 +690,9 @@ describe("the reader facts Spark's row declares", () => {
   });
 
   test.each(
-    (Object.keys(GRAMMAR_COVERAGE) as DatabaseType[]).filter((type) => type !== "spark" && type !== "couchbase"),
+    (Object.keys(GRAMMAR_COVERAGE) as DatabaseType[]).filter(
+      (type) => type !== "spark" && type !== "couchbase" && type !== "druid",
+    ),
   )("%s declares none of the four", (type) => {
     expect(resolveSqlGrammar(type).rawStrings).toBeUndefined();
     expect(resolveSqlGrammar(type).hintsAreCode).toBeUndefined();
@@ -703,6 +706,14 @@ describe("the reader facts Spark's row declares", () => {
     expect(resolveSqlGrammar("couchbase").hintsAreCode).toBeUndefined();
     expect(resolveSqlGrammar("couchbase").lineCommentBackslashContinues).toBeUndefined();
     expect(resolveSqlGrammar("couchbase").lineCommentEndsAtCarriageReturn).toBe(true);
+  });
+
+  test("druid declares that a hint is code and that a carriage return ends a line comment", () => {
+    // `/*+` is Calcite's `HINT_BEG` token, and its line comment is `("//"|"--")(~["\n","\r"])*`.
+    expect(resolveSqlGrammar("druid").rawStrings).toBeUndefined();
+    expect(resolveSqlGrammar("druid").hintsAreCode).toBe(true);
+    expect(resolveSqlGrammar("druid").lineCommentBackslashContinues).toBeUndefined();
+    expect(resolveSqlGrammar("druid").lineCommentEndsAtCarriageReturn).toBe(true);
   });
 
   test("spark declares all four", () => {

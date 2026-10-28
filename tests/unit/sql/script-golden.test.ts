@@ -62,7 +62,7 @@ const ROW_CLASS: Readonly<Record<string, string>> = {
   db2: "every-code-semicolon",
   mssql: "go-batches",
   clickhouse: "every-code-semicolon",
-  druid: "every-code-semicolon",
+  druid: "pair-dollar-plain-quote",
   trino: "every-code-semicolon",
   cassandra: "every-code-semicolon",
   elasticsearch: "every-code-semicolon",
