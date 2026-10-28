@@ -148,6 +148,29 @@ describe("field tags", () => {
     expect(values.Ae).toEqual({ tag: "A", items: [] });
   });
 
+  test("a table or an array inside an array is kept in place, the shape x-death arrives in", () => {
+    // RabbitMQ writes x-death as an array of tables; an array inside an array is the same path.
+    const table = rawTable([
+      [
+        "x-death",
+        "A",
+        rawArray([
+          ["F", rawTable([["count", "l", i64(BigInt(2))]])],
+          ["A", rawArray([["I", u32(7)]])],
+        ]),
+      ],
+    ]);
+    const [entry] = walk(withHeaders(table)).header.properties.headers ?? [];
+    expect(text(entry?.name ?? new Uint8Array(0))).toBe("x-death");
+    expect(entry?.value).toEqual({
+      tag: "A",
+      items: [
+        { tag: "F", entries: [{ name: name("count"), value: { tag: "l", value: BigInt(2) } }] },
+        { tag: "A", items: [{ tag: "I", value: 7 }] },
+      ],
+    });
+  });
+
   test("an unknown tag, U included, is a protocol violation with 501", () => {
     for (const tag of ["U", "Z"]) {
       const error = violationOf(() => walk(withHeaders(rawTable([["k", tag, new Uint8Array(0)]]))));

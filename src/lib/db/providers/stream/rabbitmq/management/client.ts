@@ -562,8 +562,9 @@ export function createManagementClient(options: ManagementClientOptions): Manage
       try {
         return (DECODERS[id] as (value: unknown) => RouteAnswers[R])(body);
       } catch (error) {
-        if (error instanceof WrongShape) throw managementWrongShape(context);
-        throw error;
+        // The decoders throw only WrongShape; anything else is a defect of ours and leaves as itself.
+        if (!(error instanceof WrongShape)) throw error;
+        throw managementWrongShape(context);
       }
     },
     async status(id, parts, call = {}) {

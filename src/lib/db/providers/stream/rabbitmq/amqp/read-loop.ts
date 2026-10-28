@@ -321,8 +321,9 @@ export async function readStream(input: StreamReadInput): Promise<StreamReadOutc
     } catch (error) {
       connection.drop();
       if (aborted()) throw phaseError("handshake");
-      if (error instanceof AmqpFailure) throw handshakeError(error.failure, input, context);
-      throw error;
+      // The connection rejects only with AmqpFailure; anything else is a defect of ours and leaves as itself.
+      if (!(error instanceof AmqpFailure)) throw error;
+      throw handshakeError(error.failure, input, context);
     }
     consuming = true;
     if (stopped === null) armIdle();

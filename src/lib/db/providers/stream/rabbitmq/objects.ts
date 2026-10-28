@@ -120,8 +120,9 @@ function ownRefusal(check: () => void): void {
   try {
     check();
   } catch (error) {
-    if (error instanceof QueryError) throw queryError(error.message);
-    throw error;
+    // Both path checks throw only QueryError; anything else is a defect of ours and leaves as itself.
+    if (!(error instanceof QueryError)) throw error;
+    throw queryError(error.message);
   }
 }
 
