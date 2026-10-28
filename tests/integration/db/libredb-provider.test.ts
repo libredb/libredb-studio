@@ -89,13 +89,18 @@ function seedWithCatalog(file: string): void {
   db.close();
 }
 
+let tmpDir: string;
+
 beforeEach(() => {
-  tmpFile = path.join(os.tmpdir(), `libredb-test-${Math.random().toString(36).slice(2)}.libredb`);
+  // A directory of our own (mode 0700), so no other user of the temp dir can plant or swap the file.
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "libredb-test-"));
+  tmpFile = path.join(tmpDir, "test.libredb");
   seed(tmpFile);
 });
 
 afterEach(() => {
   rmDbFile(tmpFile);
+  fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
 describe("LibreDBProvider — lifecycle & metadata", () => {
