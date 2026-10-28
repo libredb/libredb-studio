@@ -256,7 +256,7 @@ async function execute(
         maxResultBytes: MCP_PROVIDER_BYTE_CAP,
         statementTimeoutMs: Math.max(1, Math.floor(deadline - Date.now())),
         // A call is its own run here: a fresh allowance per call, so one call's billed reads never reach the next.
-        readAllowance: new RunReadAllowance(MCP_CALL_READ_ALLOWANCE),
+        readAllowance: new RunReadAllowance(MCP_CALL_READ_ALLOWANCE, { scope: "call" }),
       }),
     tool.signal,
     deadline,

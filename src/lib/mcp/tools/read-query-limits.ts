@@ -1,3 +1,4 @@
+import { ReadAllowanceExceededError } from "@/lib/db/errors";
 import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
 import {
   READ_ONLY_REFUSAL_OPENINGS,
@@ -49,6 +50,9 @@ export function classifyReadQueryFailure(
   texts: Partial<Record<Exclude<ReadOnlyRefusalKind, "time">, string>> = {},
 ): ReadQueryFailure {
   if (settledAt >= deadline) return { kind: "timeout" };
+  // The call's read allowance, refused by this server before anything was sent: its own sentence, never the
+  // database's error.
+  if (error instanceof ReadAllowanceExceededError) return { kind: "too-large", text: error.message };
   const message = error instanceof Error ? error.message : String(error);
   const refusal = READ_ONLY_REFUSALS.find(({ prefix }) => message.startsWith(prefix));
   if (refusal === undefined) return { kind: "engine", error };

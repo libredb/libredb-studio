@@ -22,6 +22,7 @@ import { McpConnectionContext } from "@/lib/mcp/context";
 import {
   MCP_CALL_READ_ALLOWANCE,
   MCP_CANCELLED_TEXT,
+  MCP_ENGINE_ERROR_PREFIX,
   MCP_NOT_VISIBLE_TEXT,
   MCP_RESULT_CAP_BYTES,
   MCP_UNTRUSTED_NOTICE,
@@ -332,9 +333,17 @@ describe("the read allowance", () => {
       billing.restore();
     }
     expect(result.isError).toBe(true);
-    expect(result.content.map((block) => block.text).join("\n")).toContain(READ_ALLOWANCE_PREFIX);
+    // Studio's own refusal, given before anything was sent: in this server's words, for a call rather than a run,
+    // never as the database's error inside the untrusted-content notice.
+    expect(result.content).toEqual([
+      {
+        type: "text",
+        text: `${READ_ALLOWANCE_PREFIX}: the statement needs ${MCP_CALL_READ_ALLOWANCE + 1} billed reads, and ${MCP_CALL_READ_ALLOWANCE} of the ${MCP_CALL_READ_ALLOWANCE} this call may spend is left`,
+      },
+    ]);
+    expect(result.content[0]?.text.startsWith(MCP_ENGINE_ERROR_PREFIX)).toBe(false);
     expect(billing.seen[0]?.allowance?.remaining()).toBe(MCP_CALL_READ_ALLOWANCE);
-    expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_execution_failed" });
+    expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_result_too_large" });
   });
 });
 
