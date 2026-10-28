@@ -43,8 +43,17 @@ export interface ReviewBody {
   };
 }
 
-/** What the next requests get: an answer from the grants, a scripted status and body, or no answer at all. */
-export type FakeAnswer = "grants" | "hang" | { readonly status: number; readonly body: string };
+/** A scripted status and body. */
+export interface ScriptedAnswer {
+  readonly status: number;
+  readonly body: string;
+}
+
+/**
+ * What the next requests get: an answer from the grants, a scripted status and body, no answer at all, or a choice
+ * between a scripted answer and the grants made per review.
+ */
+export type FakeAnswer = "grants" | "hang" | ScriptedAnswer | ((body: ReviewBody) => ScriptedAnswer | "grants");
 
 export const REVIEW_PATH = "/apis/authorization.k8s.io/v1/subjectaccessreviews";
 /** Clearly not a credential: gitleaks scans every commit. */
@@ -170,7 +179,7 @@ export async function startFakeKubernetesApi(): Promise<FakeKubernetesApi> {
         contentType: request.headers["content-type"],
         body,
       });
-      const answer = fake.answer;
+      const answer = typeof fake.answer === "function" ? fake.answer(body) : fake.answer;
       if (answer === "hang") return;
       const reply = () => {
         if (answer === "grants") {

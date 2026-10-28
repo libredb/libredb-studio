@@ -76,6 +76,10 @@ const UPDATE_STUDIO = {
   name: "libredb-studio",
 };
 
+/** The default sign-in review, list Rancher's NavLinks at cluster scope, which every role a cluster grants allows. */
+const LIST_NAVLINKS = { verb: "list", apiGroup: "ui.cattle.io", resource: "navlinks", namespace: "", name: "" };
+const member = (user: string) => ({ user, ...LIST_NAVLINKS });
+
 let api: FakeKubernetesApi;
 let log: ReturnType<typeof spyOn>;
 let warn: ReturnType<typeof spyOn>;
@@ -98,6 +102,8 @@ beforeEach(() => {
   mockMapOIDCRole.mockClear();
   mockReadRoleClaimValues.mockClear();
   claims = { ...RANCHER_CLAIMS };
+  // dev-a and the administrator are members of the cluster; u-zs9b2, as in the lab, has no role in it.
+  api.grants = [member("u-rjs2h"), member("user-mf77b")];
   process.env.NEXT_PUBLIC_AUTH_PROVIDER = "oidc";
   process.env.KUBERNETES_ACCESS_REVIEW = "on";
   process.env.KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT = "libredb-studio/libredb-studio";
@@ -153,23 +159,65 @@ describe("with the access review on", () => {
       idpIssuer: ISSUER,
     });
     expect(recordedGroups(ISSUER, "u-rjs2h")).toEqual([]);
-    expect(api.seen).toHaveLength(1);
-    expect(api.seen[0].body.spec).toEqual({
-      user: "u-rjs2h",
-      groups: [],
-      resourceAttributes: {
-        verb: "update",
-        group: "apps",
-        resource: "deployments",
-        namespace: "libredb-studio",
-        name: "libredb-studio",
+    expect(api.seen.map((seen) => seen.body.spec)).toEqual([
+      {
+        user: "u-rjs2h",
+        groups: [],
+        resourceAttributes: { verb: "list", group: "ui.cattle.io", resource: "navlinks", namespace: "", name: "" },
       },
-    });
+      {
+        user: "u-rjs2h",
+        groups: [],
+        resourceAttributes: {
+          verb: "update",
+          group: "apps",
+          resource: "deployments",
+          namespace: "libredb-studio",
+          name: "libredb-studio",
+        },
+      },
+    ]);
+  });
+
+  test("a Rancher user without a role in the cluster is refused with oidc_no_role: no session, no record, no admin review", async () => {
+    claims = { ...RANCHER_CLAIMS, sub: "u-zs9b2" };
+    api.grants.push({ user: "u-zs9b2", ...UPDATE_STUDIO });
+    const response = await signIn();
+    expect(response.headers.get("location")).toBe("https://studio.example.com/login?error=oidc_no_role");
+    expect(setCookies.has("auth-token")).toBe(false);
+    expect(deleted).toContain("oidc-state");
+    expect(recordedGroups(ISSUER, "u-zs9b2")).toBeNull();
+    expect(api.seen).toHaveLength(1);
+    expect(auditLines()).toContainEqual(
+      expect.objectContaining({ event: "login_failure", reason: "oidc_no_role", actor: "u-zs9b2" }),
+    );
+  });
+
+  test.each([
+    ["a Kubernetes system user", "system:admin"],
+    ["a ServiceAccount", "system:serviceaccount:kube-system:default"],
+    ["an over-long subject", `u-${"x".repeat(300)}`],
+    ["a control character", "u-rjs2h\rsystem:masters"],
+  ])("a subject that is %s is refused with oidc_no_role before any review runs", async (_case, sub) => {
+    claims = { ...RANCHER_CLAIMS, sub };
+    api.grants.push(member(sub), { user: sub, ...UPDATE_STUDIO });
+    const response = await signIn();
+    expect(response.headers.get("location")).toBe("https://studio.example.com/login?error=oidc_no_role");
+    expect(setCookies.has("auth-token")).toBe(false);
+    expect(recordedGroups(ISSUER, sub)).toBeNull();
+    expect(api.seen).toHaveLength(0);
+  });
+
+  test("a sign-in review that fails refuses the sign-in", async () => {
+    api.answer = { status: 500, body: "{}" };
+    const response = await signIn();
+    expect(response.headers.get("location")).toBe("https://studio.example.com/login?error=oidc_no_role");
+    expect(setCookies.has("auth-token")).toBe(false);
   });
 
   test("a person the review allows to update Studio's Deployment is an admin", async () => {
     claims = { ...RANCHER_CLAIMS, sub: "user-mf77b" };
-    api.grants = [{ user: "user-mf77b", ...UPDATE_STUDIO }];
+    api.grants.push({ user: "user-mf77b", ...UPDATE_STUDIO });
     const response = await signIn();
     expect(response.headers.get("location")).toBe("https://studio.example.com/admin");
     expect(await minted()).toMatchObject({ role: "admin", idpSubject: "user-mf77b" });
@@ -177,10 +225,13 @@ describe("with the access review on", () => {
 
   test("a group the review binds counts, and the record keeps the claim's groups sorted", async () => {
     claims = { ...RANCHER_CLAIMS, groups: ["okta_group://owners", "github_team://7"] };
-    api.grants = [{ group: "okta_group://owners", ...UPDATE_STUDIO }];
+    api.grants.push({ group: "okta_group://owners", ...UPDATE_STUDIO });
     await signIn();
     expect(await minted()).toMatchObject({ role: "admin" });
-    expect(api.seen[0].body.spec?.groups).toEqual(["github_team://7", "okta_group://owners"]);
+    expect(api.seen.map((seen) => seen.body.spec?.groups)).toEqual([
+      ["github_team://7", "okta_group://owners"],
+      ["github_team://7", "okta_group://owners"],
+    ]);
     expect(recordedGroups(ISSUER, "u-rjs2h")).toEqual(["github_team://7", "okta_group://owners"]);
   });
 
@@ -192,9 +243,9 @@ describe("with the access review on", () => {
     expect(mockReadRoleClaimValues).not.toHaveBeenCalled();
   });
 
-  test("a review that fails makes the sign-in a user, never an admin", async () => {
-    api.grants = [{ user: "u-rjs2h", ...UPDATE_STUDIO }];
-    api.answer = { status: 500, body: "{}" };
+  test("an admin review that fails makes the sign-in a user, never an admin", async () => {
+    api.grants.push({ user: "u-rjs2h", ...UPDATE_STUDIO });
+    api.answer = (body) => (body.spec?.resourceAttributes?.verb === "update" ? { status: 500, body: "{}" } : "grants");
     await signIn();
     expect(await minted()).toMatchObject({ role: "user" });
   });

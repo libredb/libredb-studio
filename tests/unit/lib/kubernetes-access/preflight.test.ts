@@ -52,6 +52,7 @@ const UNSET = [
   "LIBREDB_AGENT_ENABLED",
   "KUBERNETES_ACCESS_REVIEW_API_URL",
   "KUBERNETES_ACCESS_REVIEW_CACHE_SECONDS",
+  "KUBERNETES_ACCESS_REVIEW_SIGN_IN",
 ] as const;
 
 const KEYS = [...Object.keys(reviewed()), ...UNSET];
@@ -121,6 +122,11 @@ const REFUSED: readonly { readonly variable: string; readonly value: string | un
     variable: "KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT",
     value: "libredb-studio",
     says: "KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT must name Studio's Deployment",
+  },
+  {
+    variable: "KUBERNETES_ACCESS_REVIEW_SIGN_IN",
+    value: "list",
+    says: "KUBERNETES_ACCESS_REVIEW_SIGN_IN must be a review as kubectl auth can-i takes it",
   },
   { variable: "KUBERNETES_ACCESS_REVIEW_API_URL", value: "http://kubernetes.default.svc", says: "must use https" },
   {

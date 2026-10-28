@@ -16,6 +16,7 @@ import {
   accessReviewCacheMs,
   accessReviewCaPath,
   accessReviewEnabled,
+  accessReviewSignIn,
   accessReviewSwitch,
   accessReviewTokenPath,
 } from "@/lib/kubernetes-access/config";
@@ -29,6 +30,7 @@ const KEYS = [
   "KUBERNETES_ACCESS_REVIEW_CA_PATH",
   "KUBERNETES_ACCESS_REVIEW_CACHE_SECONDS",
   "KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT",
+  "KUBERNETES_ACCESS_REVIEW_SIGN_IN",
 ] as const;
 
 let saved: Record<string, string | undefined> = {};
@@ -187,6 +189,64 @@ describe("the admin Deployment", () => {
     process.env.KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT = value;
     expect(refusal(accessReviewAdminDeployment)).toBe(
       "KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT must name Studio's Deployment as <namespace>/<name>, such as libredb-studio/libredb-studio",
+    );
+  });
+});
+
+describe("the sign-in review", () => {
+  test("defaults to list on Rancher's NavLinks at cluster scope, which a cluster member may and a user without a role may not", () => {
+    expect(accessReviewSignIn()).toEqual({
+      verb: "list",
+      group: "ui.cattle.io",
+      resource: "navlinks",
+      namespace: "",
+      name: "",
+    });
+    process.env.KUBERNETES_ACCESS_REVIEW_SIGN_IN = "  ";
+    expect(accessReviewSignIn()).toEqual({
+      verb: "list",
+      group: "ui.cattle.io",
+      resource: "navlinks",
+      namespace: "",
+      name: "",
+    });
+  });
+
+  test.each([
+    [
+      "get services/libredb-studio -n libredb-studio",
+      { verb: "get", group: "", resource: "services", namespace: "libredb-studio", name: "libredb-studio" },
+    ],
+    [
+      " get  deployments.apps/libredb-studio  -n  tools ",
+      { verb: "get", group: "apps", resource: "deployments", namespace: "tools", name: "libredb-studio" },
+    ],
+    ["list namespaces", { verb: "list", group: "", resource: "namespaces", namespace: "", name: "" }],
+    ["list pods -n team-a", { verb: "list", group: "", resource: "pods", namespace: "team-a", name: "" }],
+    [
+      "* clusters.postgresql.cnpg.io",
+      { verb: "*", group: "postgresql.cnpg.io", resource: "clusters", namespace: "", name: "" },
+    ],
+  ])("reads %p as kubectl auth can-i does", (value, attributes) => {
+    process.env.KUBERNETES_ACCESS_REVIEW_SIGN_IN = value;
+    expect(accessReviewSignIn()).toEqual(attributes);
+  });
+
+  test.each([
+    "list",
+    "list navlinks.ui.cattle.io extra",
+    "List navlinks",
+    "list Navlinks",
+    "list navlinks -n",
+    "list navlinks -n Team-A",
+    "list navlinks --namespace team-a",
+    "list services/",
+    "list .apps",
+    "list navlinks..ui",
+  ])("refuses %p", (value) => {
+    process.env.KUBERNETES_ACCESS_REVIEW_SIGN_IN = value;
+    expect(refusal(accessReviewSignIn)).toBe(
+      "KUBERNETES_ACCESS_REVIEW_SIGN_IN must be a review as kubectl auth can-i takes it, <verb> <resource>[.<group>][/<name>] [-n <namespace>], such as list navlinks.ui.cattle.io",
     );
   });
 });

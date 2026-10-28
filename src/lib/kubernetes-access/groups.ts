@@ -24,6 +24,8 @@ const MAX_RECORDS = 4096;
 const MAX_GROUPS = 512;
 const MAX_GROUP_BYTES = 256;
 const RESERVED_PREFIX = "system:";
+/** OpenID Connect Core 1.0, section 2: a `sub` must not exceed 255 ASCII characters. */
+const MAX_SUBJECT_BYTES = 255;
 
 const NOT_A_LIST = "the ID token's groups claim is not a list of group names";
 const TOO_MANY = `the ID token's groups claim lists more than ${MAX_GROUPS} groups`;
@@ -70,6 +72,30 @@ export function readGroupsClaim(claims: Readonly<Record<string, unknown>>): Grou
     return { ok: false, problem: TOO_LONG };
   if (groups.some((group) => group.startsWith(RESERVED_PREFIX))) return { ok: false, problem: RESERVED };
   return { ok: true, groups };
+}
+
+/** Whether `text` holds a C0 or C1 control character or DEL. */
+const holdsControlCharacter = (text: string): boolean =>
+  [...text].some((character) => {
+    const code = character.codePointAt(0) as number;
+    return code < 0x20 || (code >= 0x7f && code <= 0x9f);
+  });
+
+/**
+ * Why a verified ID token's `sub` cannot be a review's `user`, or null when it can. A subject under `system:` would ask
+ * as a Kubernetes system user or ServiceAccount, `system:serviceaccount:kube-system:...` among them, so it is refused
+ * before any review runs, and so are an empty subject, one longer than OpenID Connect allows, and one holding a
+ * control character. The problem names no subject.
+ */
+export function reviewSubjectProblem(subject: string): string | null {
+  if (subject === "") return "the ID token's sub is empty";
+  if (subject.startsWith(RESERVED_PREFIX)) {
+    return `the ID token's sub starts with ${RESERVED_PREFIX}, which names a Kubernetes system user`;
+  }
+  if (Buffer.byteLength(subject, "utf8") > MAX_SUBJECT_BYTES) {
+    return `the ID token's sub is longer than ${MAX_SUBJECT_BYTES} bytes`;
+  }
+  return holdsControlCharacter(subject) ? "the ID token's sub holds a control character" : null;
 }
 
 const recordKey = (issuer: string, subject: string): string => JSON.stringify([issuer, subject]);

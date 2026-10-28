@@ -9,7 +9,13 @@
  * the store is bounded, evicting the oldest record first.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { readGroupsClaim, recordedGroups, recordGroups, resetGroupRecords } from "@/lib/kubernetes-access/groups";
+import {
+  readGroupsClaim,
+  recordedGroups,
+  recordGroups,
+  resetGroupRecords,
+  reviewSubjectProblem,
+} from "@/lib/kubernetes-access/groups";
 
 const ISSUER = "https://rancher.example.com/oidc";
 const T = Date.parse("2026-10-28T08:00:00.000Z");
@@ -132,5 +138,30 @@ describe("the records", () => {
     groups.push("okta_group://admins");
     expect(recordedGroups(ISSUER, "u-rjs2h", T)).toEqual(["okta_group://dbas"]);
     expect(Object.isFrozen(recordedGroups(ISSUER, "u-rjs2h", T))).toBe(true);
+  });
+});
+
+describe("the subject a review asserts", () => {
+  test.each([
+    "u-rjs2h",
+    "user-mf77b",
+    "0f6c8d3e-5b1a-4c2e-9d7f-2a4b6c8e0f13",
+    "System:masters",
+    `u-${"x".repeat(253)}`,
+  ])("%p can be asserted", (subject) => {
+    expect(reviewSubjectProblem(subject)).toBeNull();
+  });
+
+  test.each([
+    ["", "is empty"],
+    ["system:admin", "starts with system:"],
+    ["system:serviceaccount:kube-system:default", "starts with system:"],
+    [`u-${"x".repeat(254)}`, "longer than 255 bytes"],
+    ["é".repeat(128), "longer than 255 bytes"],
+    ["u-rjs2h\u0000", "control character"],
+    ["u-rjs2h\u007f", "control character"],
+    ["u-rjs2h\u009f", "control character"],
+  ])("%p cannot", (subject, reason) => {
+    expect(reviewSubjectProblem(subject)).toContain(reason);
   });
 });

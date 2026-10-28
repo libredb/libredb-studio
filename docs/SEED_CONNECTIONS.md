@@ -1154,6 +1154,14 @@ The price is the safe direction: a Secret readable only through a binding to one
 An ID token whose `groups` claim names a `system:` group is refused at sign-in with `oidc_groups_refused`, and so is a claim that is not a list of names, lists more than 512 groups or one longer than 256 bytes.
 An absent claim, which Rancher sends every user without group principals and so every local user, is an empty list.
 
+### Sign-in
+
+With the review on, signing in through the identity provider is not enough to use Studio.
+The callback refuses, with `oidc_no_role`, a subject that is empty, starts with `system:`, is longer than the 255 characters OpenID Connect allows or holds a control character, before any review runs, because a review asserting it would ask as a Kubernetes system user or ServiceAccount.
+It then asks the sign-in review, `KUBERNETES_ACCESS_REVIEW_SIGN_IN`, and refuses with `oidc_no_role` a person it does not allow, a failed review included.
+The review is written as `kubectl auth can-i` takes it, `<verb> <resource>[.<group>][/<name>] [-n <namespace>]`, and defaults to `list navlinks.ui.cattle.io`: on Rancher every role a cluster grants allows it, and a Rancher user without a role in the cluster does not.
+On a cluster without Rancher, set it to something every person meant to use Studio may do, such as `get services/libredb-studio -n libredb-studio` with a RoleBinding for them, or only cluster administrators will pass.
+
 ### Admin
 
 With the review on, a Studio admin is whoever the review allows to `update` Studio's own Deployment, named in `KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT`, decided once at each sign-in.
@@ -1184,7 +1192,7 @@ With the review on, the server refuses to start, naming every variable to fix, w
 - `OIDC_ROLE_CLAIM` or `OIDC_BEARER_AUDIENCE` is set;
 - `LIBREDB_MCP_ENABLED` or `LIBREDB_AGENT_ENABLED` switches either on;
 - `AUTH_SESSION_TTL_SECONDS` is unset, which keeps 86400, or above 900;
-- `KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT`, `KUBERNETES_ACCESS_REVIEW_API_URL` or `KUBERNETES_ACCESS_REVIEW_CACHE_SECONDS` is missing or invalid;
+- `KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT`, `KUBERNETES_ACCESS_REVIEW_SIGN_IN`, `KUBERNETES_ACCESS_REVIEW_API_URL` or `KUBERNETES_ACCESS_REVIEW_CACHE_SECONDS` is missing or invalid;
 - the token file cannot be read or is empty, or the CA file cannot be read or holds no certificate.
 
 ### Setting it up
@@ -1197,6 +1205,7 @@ With the review on, the server refuses to start, naming every variable to fix, w
 | `KUBERNETES_ACCESS_REVIEW_CA_PATH` | The CA the API server's certificate must chain to, read again for every review | `/var/run/secrets/kubernetes.io/serviceaccount/ca.crt` |
 | `KUBERNETES_ACCESS_REVIEW_CACHE_SECONDS` | How long an answer is kept, whole seconds from 0 to 60 | `30` |
 | `KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT` | Studio's own Deployment as `<namespace>/<name>`; required | none |
+| `KUBERNETES_ACCESS_REVIEW_SIGN_IN` | The review a person must pass to sign in, as `kubectl auth can-i` takes it | `list navlinks.ui.cattle.io` |
 
 Studio authenticates its reviews with its pod's ServiceAccount token and uses that token for nothing else; the Kubernetes database provider never reads it.
 The ServiceAccount needs one right, `create` on `subjectaccessreviews`:

@@ -27,6 +27,7 @@ import {
   accessReviewCacheMs,
   accessReviewCaPath,
   accessReviewEnabled,
+  accessReviewSignIn,
   accessReviewSwitch,
   accessReviewTokenPath,
 } from "./config";
@@ -134,6 +135,7 @@ function accessReviewEnvProblems(): string[] {
 
   problems.push(
     refusalOf(accessReviewAdminDeployment),
+    refusalOf(accessReviewSignIn),
     refusalOf(accessReviewApiUrl),
     refusalOf(accessReviewCacheMs),
     tokenProblem(),

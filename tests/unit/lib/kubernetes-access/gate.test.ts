@@ -11,7 +11,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, te
 import { type FakeKubernetesApi, startFakeKubernetesApi } from "../../../helpers/kubernetes-access/fake-api";
 import { resetAccessReviewDecisions } from "@/lib/kubernetes-access/decisions";
 import {
-  accessReviewRole,
+  accessReviewSignInRole,
   connectionsUnderAccessReview,
   connectionUnderAccessReview,
 } from "@/lib/kubernetes-access/gate";
@@ -196,7 +196,7 @@ describe("one connection", () => {
   });
 });
 
-describe("the admin role at sign-in", () => {
+describe("the role at sign-in", () => {
   const updateStudio = {
     verb: "update",
     apiGroup: "apps",
@@ -204,53 +204,161 @@ describe("the admin role at sign-in", () => {
     namespace: "libredb-studio",
     name: "libredb-studio",
   };
+  /** The default sign-in review: list Rancher's NavLinks at cluster scope, which every cluster role allows. */
+  const member = (user: string) => ({
+    user,
+    verb: "list",
+    apiGroup: "ui.cattle.io",
+    resource: "navlinks",
+    namespace: "",
+    name: "",
+  });
 
-  test("is admin when the review allows update on Studio's Deployment, for the user or one of its groups", async () => {
+  test("a cluster member the review allows to update Studio's Deployment, as a user or through a group, is an admin", async () => {
     api.grants = [
+      member("user-mf77b"),
+      {
+        group: "okta_group://members",
+        verb: "list",
+        apiGroup: "ui.cattle.io",
+        resource: "navlinks",
+        namespace: "",
+        name: "",
+      },
       { user: "user-mf77b", ...updateStudio },
       { group: "okta_group://owners", ...updateStudio },
     ];
-    expect(await accessReviewRole("user-mf77b", [])).toBe("admin");
-    expect(await accessReviewRole("u-cjdkh", ["okta_group://owners"])).toBe("admin");
-    expect(api.seen[0].body.spec).toEqual({
-      user: "user-mf77b",
-      groups: [],
-      resourceAttributes: {
-        verb: "update",
-        group: "apps",
-        resource: "deployments",
+    expect(await accessReviewSignInRole("user-mf77b", [])).toBe("admin");
+    expect(await accessReviewSignInRole("u-cjdkh", ["okta_group://members", "okta_group://owners"])).toBe("admin");
+    expect(api.seen.slice(0, 2).map((seen) => seen.body.spec)).toEqual([
+      {
+        user: "user-mf77b",
+        groups: [],
+        resourceAttributes: { verb: "list", group: "ui.cattle.io", resource: "navlinks", namespace: "", name: "" },
+      },
+      {
+        user: "user-mf77b",
+        groups: [],
+        resourceAttributes: {
+          verb: "update",
+          group: "apps",
+          resource: "deployments",
+          namespace: "libredb-studio",
+          name: "libredb-studio",
+        },
+      },
+    ]);
+  });
+
+  test("a cluster member the review does not allow to update it is a user", async () => {
+    api.grants = [member("u-rjs2h")];
+    expect(await accessReviewSignInRole("u-rjs2h", [])).toBe("user");
+    expect(api.seen).toHaveLength(2);
+  });
+
+  test("a user the sign-in review does not allow, a Rancher user without a role in the cluster, may not sign in, and no admin review runs", async () => {
+    api.grants = [{ user: "u-zs9b2", ...updateStudio }];
+    expect(await accessReviewSignInRole("u-zs9b2", [])).toBeNull();
+    expect(api.seen).toHaveLength(1);
+  });
+
+  test("the sign-in review is the one KUBERNETES_ACCESS_REVIEW_SIGN_IN names", async () => {
+    process.env.KUBERNETES_ACCESS_REVIEW_SIGN_IN = "get services/libredb-studio -n libredb-studio";
+    api.grants = [
+      {
+        user: "u-rjs2h",
+        verb: "get",
+        apiGroup: "",
+        resource: "services",
         namespace: "libredb-studio",
         name: "libredb-studio",
       },
-    });
+    ];
+    try {
+      expect(await accessReviewSignInRole("u-rjs2h", [])).toBe("user");
+      expect(api.seen[0].body.spec?.resourceAttributes).toEqual({
+        verb: "get",
+        group: "",
+        resource: "services",
+        namespace: "libredb-studio",
+        name: "libredb-studio",
+      });
+    } finally {
+      delete process.env.KUBERNETES_ACCESS_REVIEW_SIGN_IN;
+    }
   });
 
-  test("is user when the review denies or fails", async () => {
-    expect(await accessReviewRole("u-rjs2h", [])).toBe("user");
-    api.answer = { status: 403, body: "{}" };
+  test("an unreadable sign-in review refuses everyone, with a warning that names the setting, and asks nothing", async () => {
+    process.env.KUBERNETES_ACCESS_REVIEW_SIGN_IN = "list";
+    api.grants = [member("user-mf77b"), { user: "user-mf77b", ...updateStudio }];
     const warn = spyOn(logger, "warn").mockImplementation(() => {});
     try {
-      expect(await accessReviewRole("user-mf77b", [])).toBe("user");
+      expect(await accessReviewSignInRole("user-mf77b", [])).toBeNull();
+      expect(api.seen).toHaveLength(0);
+      expect(String(warn.mock.calls[0][1]?.problem)).toContain("KUBERNETES_ACCESS_REVIEW_SIGN_IN must be a review");
+    } finally {
+      warn.mockRestore();
+      delete process.env.KUBERNETES_ACCESS_REVIEW_SIGN_IN;
+    }
+  });
+
+  test.each([
+    ["an empty subject", ""],
+    ["a Kubernetes system user", "system:admin"],
+    ["a ServiceAccount", "system:serviceaccount:kube-system:default"],
+    ["a subject longer than OpenID Connect allows", `u-${"x".repeat(254)}`],
+    ["a control character", "u-rjs2h\nsystem:masters"],
+    ["a C1 control character", "u-rjs2h\u0085"],
+  ])("%s is refused before any review runs, and the warning names no subject", async (_case, subject) => {
+    api.grants = [member(subject), { user: subject, ...updateStudio }];
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      expect(await accessReviewSignInRole(subject, [])).toBeNull();
+      expect(api.seen).toHaveLength(0);
+      expect(warn).toHaveBeenCalledTimes(1);
+      if (subject !== "") expect(JSON.stringify(warn.mock.calls)).not.toContain(subject);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("a subject of 255 bytes is accepted", async () => {
+    const subject = `u-${"x".repeat(253)}`;
+    api.grants = [member(subject)];
+    expect(await accessReviewSignInRole(subject, [])).toBe("user");
+  });
+
+  test("a sign-in review that fails refuses, and an admin review that fails makes a user", async () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      api.answer = { status: 403, body: "{}" };
+      expect(await accessReviewSignInRole("user-mf77b", [])).toBeNull();
+      api.grants = [member("user-mf77b"), { user: "user-mf77b", ...updateStudio }];
+      api.answer = (body) =>
+        body.spec?.resourceAttributes?.verb === "update" ? { status: 500, body: "{}" } : "grants";
+      expect(await accessReviewSignInRole("user-mf77b", [])).toBe("user");
     } finally {
       warn.mockRestore();
     }
   });
 
   test("asks again at every sign-in instead of trusting a cached answer", async () => {
-    api.grants = [{ user: "user-mf77b", ...updateStudio }];
-    expect(await accessReviewRole("user-mf77b", [])).toBe("admin");
+    api.grants = [member("user-mf77b"), { user: "user-mf77b", ...updateStudio }];
+    expect(await accessReviewSignInRole("user-mf77b", [])).toBe("admin");
+    api.grants = [member("user-mf77b")];
+    expect(await accessReviewSignInRole("user-mf77b", [])).toBe("user");
     api.grants = [];
-    expect(await accessReviewRole("user-mf77b", [])).toBe("user");
-    expect(api.seen).toHaveLength(2);
+    expect(await accessReviewSignInRole("user-mf77b", [])).toBeNull();
+    expect(api.seen).toHaveLength(5);
   });
 
   test("is user, with a warning that names the setting, when Studio's Deployment is not configured", async () => {
     delete process.env.KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT;
-    api.grants = [{ user: "user-mf77b", ...updateStudio }];
+    api.grants = [member("user-mf77b"), { user: "user-mf77b", ...updateStudio }];
     const warn = spyOn(logger, "warn").mockImplementation(() => {});
     try {
-      expect(await accessReviewRole("user-mf77b", [])).toBe("user");
-      expect(api.seen).toHaveLength(0);
+      expect(await accessReviewSignInRole("user-mf77b", [])).toBe("user");
+      expect(api.seen).toHaveLength(1);
       expect(String(warn.mock.calls[0][1]?.problem)).toContain("KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT is not set");
     } finally {
       warn.mockRestore();

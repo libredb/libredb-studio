@@ -27,7 +27,7 @@ import { emitAuditEvent, type AuditReason } from "@/lib/audit";
 import { AuthConfigError } from "@/lib/auth-errors";
 import { governanceEnabled } from "@/lib/governance/config";
 import { accessReviewEnabled } from "@/lib/kubernetes-access/config";
-import { accessReviewRole } from "@/lib/kubernetes-access/gate";
+import { accessReviewSignInRole } from "@/lib/kubernetes-access/gate";
 import { readGroupsClaim, recordGroups } from "@/lib/kubernetes-access/groups";
 import { governedIdentityAccepted, governedSignInRevoked } from "@/lib/local-accounts";
 
@@ -124,7 +124,8 @@ export async function GET(request: Request) {
 
     // With the Kubernetes access review on (docs/SEED_CONNECTIONS.md), the ID token's groups are what every review of
     // this subject asserts, so a claim the store cannot hold refuses the sign-in, and the role claim is not read at
-    // all: admin comes only from a review of update on Studio's own Deployment, decided here, once per sign-in.
+    // all: the subject must pass the sign-in review, and admin comes only from a review of update on Studio's own
+    // Deployment, both decided here, once per sign-in.
     const reviewed = accessReviewEnabled();
     const groupsReading = reviewed
       ? readGroupsClaim(claims as Record<string, unknown>)
@@ -142,7 +143,7 @@ export async function GET(request: Request) {
     // Map role from claims
     const claimValues = reviewed ? [] : readRoleClaimValues(claims as Record<string, unknown>, oidcConfig.roleClaim);
     const role = reviewed
-      ? await accessReviewRole(claims.sub, groupsReading.groups)
+      ? await accessReviewSignInRole(claims.sub, groupsReading.groups)
       : mapOIDCRole(
           claims as Record<string, unknown>,
           oidcConfig.roleClaim,
@@ -151,7 +152,8 @@ export async function GET(request: Request) {
         );
 
     if (role === null) {
-      // The account holds none of OIDC_ADMIN_ROLES or OIDC_USER_ROLES, so it gets no session. The
+      // The account holds none of OIDC_ADMIN_ROLES or OIDC_USER_ROLES, or, with the Kubernetes access review on, its
+      // subject cannot be reviewed or the sign-in review does not allow it, so it gets no session. The
       // exchange consumed the state, so its cookie is deleted as after a sign-in. The provider
       // authenticated the account, so the record names it the way login_success does.
       cookieStore.delete({ name: "oidc-state", path: getBasePath() || "/" });
