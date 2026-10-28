@@ -536,7 +536,7 @@ export function readSqlSpan(sql: string, index: number, grammar: SqlGrammar = DE
   // now, and it is deliberately NOT widened: PostgreSQL reads `//` as an operator
   // NAME and the other five refuse the characters where they stand.
   if (opensLineComment(sql, index, grammar)) {
-    // A line feed ends the comment, and under `lineCommentEndsAtCarriageReturn` (Spark) a carriage return does too,
+    // A line feed ends the comment, and under `lineCommentEndsAtCarriageReturn` a carriage return does too,
     // taking the line feed right after it, so a CR LF pair ends it once.
     const lineEnd = grammar.lineCommentEndsAtCarriageReturn ? /\r\n?|\n/g : /\n/g;
     lineEnd.lastIndex = index;

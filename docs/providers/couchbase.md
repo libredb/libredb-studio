@@ -668,7 +668,7 @@ Every fact was read off the query service's own lexer (`parser/n1ql/n1ql.nex` in
 |------|---------|-------|
 | `#` | code, never a comment | `SELECT 1 AS a # note` is 3000 "syntax error ... at: #" |
 | `[…]` | an array literal or subscript: it nests and a literal inside it is a literal | `SELECT [1,[2,3]][1][0] AS a` answers 2, `SELECT {"a]b": 7}.["a]b"] AS a` answers 7, `SELECT 1 AS [a]` is a syntax error |
-| `/* … */` | flat: the first `*/` closes it, and a `/*+` hint has the same extent | `SELECT /* a /* b */ 1 AS a` answers 1, `SELECT /* a /* b */ c */ 1 AS a` is a syntax error, `SELECT /*+ 'x */ 1 AS a` answers 1 |
+| `/* … */` | flat: the first `*/` closes it, and a `/*+` hint has the same extent; a run holding a `*`, one character and a `/` (`/* a*b/c */`) is no comment to the engine but a syntax error, so the flat reading is the fail-safe one | `SELECT /* a /* b */ 1 AS a` answers 1, `SELECT /* a /* b */ c */ 1 AS a` is a syntax error, `SELECT /*+ 'x */ 1 AS a` answers 1 |
 | `q'…'` | not a form | `SELECT q'[x]' AS a` is a syntax error |
 | `//` | code, never a comment | `SELECT 4 // 2 AS a` is a syntax error |
 | `\` in `'…'` and `"…"` | always an escape, and a doubled `'` still is one | `SELECT 'it\'s' AS a` and `SELECT 'it''s' AS a` answer `it's`, `SELECT "it\"s" AS a` answers `it"s` |

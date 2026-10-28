@@ -7,7 +7,8 @@ import { splitStatements } from "@/lib/sql/statement-splitter";
 
 // Each fact is read off the SQL++ lexer (`parser/n1ql/n1ql.nex` in couchbase/query, the 8.0 branch) and the SQL++
 // language reference, and each was measured on 2026-10-28 on couchbase:community-8.0.2 over `POST /query/service`,
-// the endpoint the provider sends on. Every input below is one the compatibility default reads differently. Where
+// the endpoint the provider sends on. A test pinning a fact that differs from the compatibility default uses an input
+// the default reads differently; the rest pin established facts that happen to equal the default. Where
 // SQL++ refuses a form the shared reader cannot follow (a backslash before a line feed inside a literal), the test
 // pins the reader's refusal, the fail-safe direction.
 const grammar = resolveSqlGrammar("couchbase");

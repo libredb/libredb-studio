@@ -26,7 +26,9 @@ const COUCHBASE_GRAMMAR: SqlGrammar = {
   bracket: "subscript",
   // FLAT: the block comment token runs to the first `*/`. `SELECT /* a /* b */ 1 AS a` answers 1, and
   // `SELECT /* a /* b */ c */ 1 AS a` is 3000 "syntax error ... at: /". A `/*+` hint is a token of the same extent:
-  // `SELECT /*+ 'x */ 1 AS a` answers 1.
+  // `SELECT /*+ 'x */ 1 AS a` answers 1. The token is stricter than "to the first `*/`": a run holding a `*`, one
+  // character and a `/` (`/* a*b/c */`) is no comment to the engine but code opening with `/` `*`, always a syntax
+  // error there, so reading it as a flat comment is the fail-safe direction.
   blockComment: "flat",
   // `SELECT q'[x]' AS a` is 3000 "syntax error ... at: '[x]'".
   alternateQuoting: false,

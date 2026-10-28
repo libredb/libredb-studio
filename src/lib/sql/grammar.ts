@@ -189,8 +189,8 @@ export interface SqlGrammar {
    * others close the literal, and guessing moves the end of every construct after it.
    * Backtick and bracket runs never take the escape.
    *
-   * True on Databend's row alone, whose lexer escapes with a backslash in both quotes under
-   * every dialect setting. MySQL is the dialect that escapes by default, and it is still
+   * True only on a row whose lexer escapes with a backslash in both quotes under every
+   * session setting. MySQL is the dialect that escapes by default, and it is still
    * false there: `NO_BACKSLASH_ESCAPES` in `sql_mode` turns the escape off per session, so
    * no row can state it for every connection (BACKLOG S2).
    */
@@ -204,8 +204,8 @@ export interface SqlGrammar {
    */
   readonly tripleQuotedStrings?: boolean;
   /**
-   * Whether a backslash escapes the next character inside a backtick identifier (a\`b is one name). GoogleSQL's
-   * form; every other dialect doubles the backtick instead. Absent means false.
+   * Whether a backslash escapes the next character inside a backtick identifier (a\`b is one name). Absent means
+   * false, and only a doubled backtick escapes; where true, a doubled backtick still escapes too.
    *
    * It is a fact the text cannot settle: `a\` WHERE x = '` is one identifier here and an identifier plus code
    * under the doubling reading, so a `;` after it would hide inside the name or run as a statement.
