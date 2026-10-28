@@ -1,0 +1,92 @@
+{
+  "provenance": "libredb-studio",
+  "note": "The Kubernetes discovery contract's golden cases, owned by LibreDB Studio: each resource maps to its credential Secret, its connection id, the connection Studio builds and the link that opens it. Studio's exporter, its mapping and the Rancher extension must all agree with it; the extension copies this file byte for byte from a released Studio tag.",
+  "cases": [
+    {
+      "resource": {
+        "apiVersion": "postgresql.cnpg.io/v1",
+        "kind": "Cluster",
+        "metadata": { "namespace": "team-a", "name": "orders" },
+        "spec": { "bootstrap": { "initdb": { "database": "orders", "owner": "orders" } } }
+      },
+      "secretName": "orders-app",
+      "secretData": {
+        "username": "orders",
+        "password": "not-a-real-password-orders",
+        "dbname": "orders",
+        "port": "5432",
+        "host": "orders-rw"
+      },
+      "connectionId": "k8s-cnpg-75c1a60b8980",
+      "connection": {
+        "name": "team-a/orders (CloudNativePG)",
+        "group": "team-a",
+        "type": "postgres",
+        "host": "orders-rw.team-a.svc",
+        "port": 5432,
+        "database": "orders",
+        "user": "orders",
+        "password": "not-a-real-password-orders",
+        "ssl": { "mode": "require" }
+      },
+      "toURL": "https://studio.example.com",
+      "link": "https://studio.example.com/?connection=seed%3Ak8s-cnpg-75c1a60b8980"
+    },
+    {
+      "resource": {
+        "apiVersion": "postgresql.cnpg.io/v1",
+        "kind": "Cluster",
+        "metadata": { "namespace": "team-b", "name": "analytics" },
+        "spec": {}
+      },
+      "secretName": "analytics-app",
+      "secretData": {
+        "username": "app",
+        "password": "not-a-real-password-analytics",
+        "dbname": "app",
+        "port": "5432"
+      },
+      "connectionId": "k8s-cnpg-d06590026498",
+      "connection": {
+        "name": "team-b/analytics (CloudNativePG)",
+        "group": "team-b",
+        "type": "postgres",
+        "host": "analytics-rw.team-b.svc",
+        "port": 5432,
+        "database": "app",
+        "user": "app",
+        "password": "not-a-real-password-analytics",
+        "ssl": { "mode": "require" }
+      },
+      "toURL": "https://studio.example.com/",
+      "link": "https://studio.example.com/?connection=seed%3Ak8s-cnpg-d06590026498"
+    },
+    {
+      "resource": {
+        "apiVersion": "postgresql.cnpg.io/v1",
+        "kind": "Cluster",
+        "metadata": { "namespace": "prod", "name": "billing-db" },
+        "spec": { "bootstrap": { "initdb": { "database": "billing", "secret": { "name": "billing-owner" } } } }
+      },
+      "secretName": "billing-owner",
+      "secretData": {
+        "username": "billing_owner",
+        "password": "not-a-real-password-billing"
+      },
+      "connectionId": "k8s-cnpg-37c1c823437f",
+      "connection": {
+        "name": "prod/billing-db (CloudNativePG)",
+        "group": "prod",
+        "type": "postgres",
+        "host": "billing-db-rw.prod.svc",
+        "port": 5432,
+        "database": "billing",
+        "user": "billing_owner",
+        "password": "not-a-real-password-billing",
+        "ssl": { "mode": "require" }
+      },
+      "toURL": "https://tools.example.com/studio",
+      "link": "https://tools.example.com/studio/?connection=seed%3Ak8s-cnpg-37c1c823437f"
+    }
+  ]
+}
