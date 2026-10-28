@@ -5,8 +5,11 @@ which a namespace never holds, so two releases cannot render the same name. A cl
 name takes up to 253 characters, so nothing is cut. app.kubernetes.io/name stays
 libredb-studio whatever nameOverride says, because that is the label the LibreDB Rancher
 extension finds the link by. The link is always
-https, the only scheme the LibreDB Rancher extension opens. Rendered only where the cluster
-serves the API; NOTES.txt says when it does not. The guards live in _helpers.tpl.
+https, the only scheme the LibreDB Rancher extension opens. The icon defaults to the LibreDB
+logo inline as a data URI, files/logo.svg being a copy of the app's public/logo.svg, so
+the browser fetches nothing from another host; without one Rancher draws a book. Rendered
+only where the cluster serves the API; NOTES.txt says when it does not. The guards live in
+_helpers.tpl.
 */}}
 {{- $navLink := get (.Values.rancher | default dict) "navLink" | default dict }}
 {{- if and (get $navLink "enabled") (.Capabilities.APIVersions.Has "ui.cattle.io/v1/NavLink") }}
@@ -23,4 +26,5 @@ spec:
   group: {{ get $navLink "group" | quote }}
   target: {{ get $navLink "target" | quote }}
   toURL: {{ printf "https://%s%s" (include "libredb-studio.navLinkHost" .) (.Values.config.basePath | default "") | quote }}
+  iconSrc: {{ get $navLink "iconSrc" | default (printf "data:image/svg+xml;base64,%s" (.Files.Get "files/logo.svg" | b64enc)) | quote }}
 {{- end }}

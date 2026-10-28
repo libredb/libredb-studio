@@ -2,7 +2,7 @@ apiVersion: v2
 name: libredb-studio
 description: Web-based SQL IDE for cloud-native teams supporting forty-two engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Apache Spark, Apache Cassandra, libSQL, Prometheus, Apache Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, Weaviate, InfluxDB, InfluxDB 3, Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA, MTConnect, Modbus, NETCONF, SNMP and Sparkplug B
 type: application
-version: 0.1.107
+version: 0.1.108
 appVersion: "1.1.0"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
@@ -307,10 +307,9 @@ annotations:
   # miss: a data-modifying WITH list, EXPLAIN ANALYZE of a write, and a statement after a bare
   # carriage return in a line comment. No template, value or default moves, so the upgrade is the
   # image.
-  # False: 0.1.107 adds the second half of Rancher mode: the Kubernetes access review
-  # (accessReview), the CloudNativePG discovery exporter with its RBAC (discovery.kubernetes),
-  # their render guards and questions.yaml for Rancher's Apps form. Every new block is off by
-  # default, so an install that sets none of them renders exactly as before.
+  # False: 0.1.108 gives the Rancher NavLink the LibreDB logo (rancher.navLink.iconSrc) and
+  # writes LIBREDB_AGENT_THREAD_CONTEXT only for a boolean agent.threadContext, so Rancher's
+  # Apps install and a helm upgrade with the same values render the same pod template.
   artifacthub.io/containsSecurityUpdates: "false"
   artifacthub.io/images: |
     - name: libredb-studio
@@ -326,10 +325,8 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - "Add accessReview: the Kubernetes access review decides sign-in, admin and each connection, with create on subjectaccessreviews only"
-    - "Add discovery.kubernetes: the CloudNativePG discovery exporter, its per-namespace RBAC and the export Studio mounts read-only"
-    - "Fail the render for every access review and discovery combination Studio refuses to start with"
-    - "Add questions.yaml so Rancher's Apps page draws a form for the Rancher-mode values"
+    - "Show the LibreDB logo on the Rancher NavLink instead of Rancher's default icon; rancher.navLink.iconSrc takes another"
+    - "Write LIBREDB_AGENT_THREAD_CONTEXT only for a boolean agent.threadContext, so an Apps install no longer writes it empty and a later helm upgrade no longer rolls the pod"
     - "Track app release 1.1.0"
 dependencies:
   - name: postgresql
