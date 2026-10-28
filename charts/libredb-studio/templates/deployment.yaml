@@ -175,9 +175,10 @@ spec:
                   key: {{ .Values.secrets.existingSecretKeys.adminEmail }}
                   optional: true
             {{- end }}
-            {{- /* Never under governance, whose preflight refuses ADMIN_PASSWORD and USER_PASSWORD:
-                   the guards refuse the inline values, and an existingSecret is not read for them. */}}
-            {{- if and (or .Values.secrets.adminPassword .Values.secrets.existingSecret) (not (include "libredb-studio.governanceEnabled" .)) }}
+            {{- /* Never under governance or the access review, whose boot checks refuse ADMIN_PASSWORD and
+                   USER_PASSWORD: the guards refuse the inline values, and an existingSecret is not read for them. */}}
+            {{- $passwordsOff := or (include "libredb-studio.governanceEnabled" .) (include "libredb-studio.accessReviewEnabled" .) }}
+            {{- if and (or .Values.secrets.adminPassword .Values.secrets.existingSecret) (not $passwordsOff) }}
             - name: ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -190,7 +191,7 @@ spec:
                   optional: true
                   {{- end }}
             {{- end }}
-            {{- if and (or .Values.secrets.userPassword .Values.secrets.existingSecret) (not (include "libredb-studio.governanceEnabled" .)) }}
+            {{- if and (or .Values.secrets.userPassword .Values.secrets.existingSecret) (not $passwordsOff) }}
             - name: USER_EMAIL
               valueFrom:
                 secretKeyRef:
@@ -299,8 +300,43 @@ spec:
             {{- if .Values.seedConnections.enabled }}
             - name: SEED_CONFIG_PATH
               value: "/app/config/{{ .Values.seedConnections.configMapKey | default "seed-connections.yaml" }}"
+            {{- end }}
+            {{- /* The managed list's cache also paces how soon the discovery export is read again. */}}
+            {{- if or .Values.seedConnections.enabled (include "libredb-studio.discoveryEnabled" .) }}
             - name: SEED_CACHE_TTL_MS
               value: {{ .Values.seedConnections.cacheTTL | default 60000 | quote }}
+            {{- end }}
+            {{- /* Kubernetes discovery: the export.json of the export Secret mounted below. */}}
+            {{- if include "libredb-studio.discoveryEnabled" . }}
+            - name: SEED_KUBERNETES_DISCOVERY_PATH
+              value: "{{ include "libredb-studio.discoveryMountDir" . }}/export.json"
+            {{- $maxAge := get .Values.discovery.kubernetes "maxAgeMs" }}
+            {{- if and (not (kindIs "invalid" $maxAge)) (ne (toString $maxAge) "") }}
+            - name: SEED_KUBERNETES_DISCOVERY_MAX_AGE_MS
+              value: {{ $maxAge | int64 | toString | quote }}
+            {{- end }}
+            {{- end }}
+            {{- /* The Kubernetes access review: its switch, Studio's own Deployment as the admin review's
+                   target, and the projected token and CA mounted below. */}}
+            {{- if include "libredb-studio.accessReviewEnabled" . }}
+            {{- $review := .Values.accessReview }}
+            - name: KUBERNETES_ACCESS_REVIEW
+              value: "on"
+            - name: KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT
+              value: {{ printf "%s/%s" .Release.Namespace (include "libredb-studio.fullname" .) | quote }}
+            - name: KUBERNETES_ACCESS_REVIEW_TOKEN_PATH
+              value: "{{ include "libredb-studio.accessReviewDir" . }}/token"
+            - name: KUBERNETES_ACCESS_REVIEW_CA_PATH
+              value: "{{ include "libredb-studio.accessReviewDir" . }}/ca.crt"
+            {{- $cache := get $review "cacheSeconds" }}
+            {{- if and (not (kindIs "invalid" $cache)) (ne (toString $cache) "") }}
+            - name: KUBERNETES_ACCESS_REVIEW_CACHE_SECONDS
+              value: {{ $cache | int64 | toString | quote }}
+            {{- end }}
+            {{- with get $review "signIn" }}
+            - name: KUBERNETES_ACCESS_REVIEW_SIGN_IN
+              value: {{ . | quote }}
+            {{- end }}
             {{- end }}
             {{- /* Only when the operator said something. Unset writes nothing, so the app
                    derives availability from the AI configuration and the ledger (#331 T5);
@@ -395,6 +431,16 @@ spec:
               mountPath: {{ include "libredb-studio.governanceKeyringDir" . }}
               readOnly: true
             {{- end }}
+            {{- if include "libredb-studio.discoveryEnabled" . }}
+            - name: kubernetes-discovery
+              mountPath: {{ include "libredb-studio.discoveryMountDir" . }}
+              readOnly: true
+            {{- end }}
+            {{- if include "libredb-studio.accessReviewEnabled" . }}
+            - name: access-review
+              mountPath: {{ include "libredb-studio.accessReviewDir" . }}
+              readOnly: true
+            {{- end }}
             {{- with .Values.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -446,6 +492,28 @@ spec:
             items:
               - key: {{ include "libredb-studio.governanceSecretKey" (dict "root" . "name" "governancePrivateKeys") }}
                 path: keyring.json
+        {{- end }}
+        {{- /* The export Secret, whole: it starts with no key, and export.json appears once the exporter
+               has written it, which a projection of that one key would not wait for. */}}
+        {{- if include "libredb-studio.discoveryEnabled" . }}
+        - name: kubernetes-discovery
+          secret:
+            secretName: {{ include "libredb-studio.discoveryExportSecret" . }}
+        {{- end }}
+        {{- /* A short-lived token of Studio's ServiceAccount for the reviews only, and the cluster's CA
+               from the kube-root-ca.crt ConfigMap every namespace carries; the kubelet renews the token. */}}
+        {{- if include "libredb-studio.accessReviewEnabled" . }}
+        - name: access-review
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: {{ .Values.accessReview.tokenExpirationSeconds | default 3600 | int64 }}
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
         {{- end }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}

@@ -754,3 +754,77 @@ rancher:
     group: "Databases"
     # -- The browser target the link opens in
     target: "_blank"
+
+# =============================================================================
+# Kubernetes access review (docs/SEED_CONNECTIONS.md, "Kubernetes access review")
+# =============================================================================
+# Studio asks the Kubernetes API, through a SubjectAccessReview as the signed-in
+# identity provider subject, who may sign in, who is an admin (whoever may update
+# Studio's own Deployment) and who may use each Kubernetes-discovered database
+# (whoever may get its credential Secret). Until enabled is true, nothing below is
+# rendered.
+#
+# Enabled, the chart writes KUBERNETES_ACCESS_REVIEW=on and the admin Deployment,
+# grants Studio's ServiceAccount create on subjectaccessreviews through a
+# ClusterRole and ClusterRoleBinding named <namespace>.<fullname>-access-review,
+# and mounts a projected token and the cluster's CA for the reviews only, read-only
+# at /var/run/secrets/libredb/access-review; the pod's own token mount stays as
+# serviceAccount.automountServiceAccountToken says. The ClusterRole needs a cluster
+# owner to install. It writes no ADMIN_PASSWORD, USER_EMAIL or USER_PASSWORD from
+# secrets.existingSecret. The render fails, naming the value, for every combination
+# Studio refuses to start with: authProvider other than oidc, config.oidcRoleClaim,
+# mcp.enabled, agent.enabled=true, governance.enabled, secrets.adminPassword or
+# secrets.userPassword, config.sessionTtlSeconds unset or above 900, more than one
+# replica or autoscaling (the groups record and the caches live in one process),
+# serviceAccount.create=false with no serviceAccount.name (the namespace's default
+# account would get the right), or an extraEnv entry named KUBERNETES_ACCESS_REVIEW*.
+accessReview:
+  # -- Switch the access review on.
+  enabled: false
+  # -- KUBERNETES_ACCESS_REVIEW_CACHE_SECONDS: how long an answer is kept, whole
+  # seconds from 0 to 60. null (the default) writes nothing and the app keeps 30;
+  # Rancher installs use 15.
+  cacheSeconds: null
+  # -- KUBERNETES_ACCESS_REVIEW_SIGN_IN: the review a person must pass to sign in,
+  # as kubectl auth can-i takes it. Empty (the default) writes nothing and the app
+  # keeps "list navlinks.ui.cattle.io", which on Rancher every role a cluster grants
+  # allows; set it on a cluster without Rancher.
+  signIn: ""
+  # -- Lifetime of the projected token the reviews authenticate with, in seconds,
+  # from 600 to 86400. The kubelet renews it before it expires.
+  tokenExpirationSeconds: 3600
+
+# =============================================================================
+# Kubernetes discovery (docs/SEED_CONNECTIONS.md, "Platform discovery (Kubernetes)")
+# =============================================================================
+discovery:
+  # Lists the CloudNativePG databases of the namespaces below as managed connections.
+  # Until enabled is true, nothing below is rendered.
+  #
+  # Enabled, the chart runs the exporter (docker/discover-kubernetes.mjs) as a
+  # Deployment <fullname>-discovery of one replica from Studio's image, with a
+  # ServiceAccount of its own, gives that account list on clusters.postgresql.cnpg.io
+  # and get on secrets in each namespace below (a Role and RoleBinding
+  # <fullname>-discovery there, so the namespaces must exist) and get and update on
+  # the export Secret by name, creates the export Secret <fullname>-discovery-export
+  # with no data, mounts it read-only into Studio's pod and writes
+  # SEED_KUBERNETES_DISCOVERY_PATH and SEED_CACHE_TTL_MS (seedConnections.cacheTTL).
+  # Without the access review the discovered databases are listed for admins only.
+  # The render fails with no namespace, with governance.enabled, with more than one
+  # replica or autoscaling, or with an extraEnv entry named SEED_KUBERNETES_DISCOVERY*.
+  kubernetes:
+    # -- Run the exporter and read its export.
+    enabled: false
+    # -- The namespaces to discover, at most 256 (KUBERNETES_DISCOVERY_NAMESPACES).
+    namespaces: []
+    # -- Time between scans in milliseconds, at least 5000 (KUBERNETES_DISCOVERY_INTERVAL_MS).
+    intervalMs: 30000
+    # -- The kinds to discover. Empty (the default) writes nothing and the exporter
+    # reads every supported kind; cnpg is the only one today.
+    kinds: []
+    # -- SEED_KUBERNETES_DISCOVERY_MAX_AGE_MS: age of the last good scan after which
+    # the discovered connections are withdrawn. null (the default) writes nothing and
+    # the app keeps 180000; keep it above intervalMs plus 90000.
+    maxAgeMs: null
+    # -- Resources of the exporter container.
+    resources: {}

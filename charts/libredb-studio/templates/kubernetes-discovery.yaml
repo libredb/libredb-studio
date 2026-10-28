@@ -1,0 +1,144 @@
+{{- /*
+Kubernetes discovery (docs/SEED_CONNECTIONS.md, "Platform discovery (Kubernetes)"): the exporter
+runs as a Deployment of its own from Studio's image, with a ServiceAccount of its own whose token
+it reads from the default mount. Its rights are the ones that page lists and no others: list on
+CloudNativePG Clusters and get on Secrets in each discovered namespace, and get and update on the
+export Secret by name. The export Secret is created with no data: the exporter never creates it,
+and a manifest without a data field leaves what the exporter wrote alone on every upgrade. Studio
+mounts it read-only (deployment.yaml). The guards live in _helpers.tpl.
+*/}}
+{{- if include "libredb-studio.discoveryEnabled" . }}
+{{- $kube := .Values.discovery.kubernetes }}
+{{- $name := include "libredb-studio.discoveryName" . }}
+{{- $export := include "libredb-studio.discoveryExportSecret" . }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "libredb-studio.discoveryLabels" . | nindent 4 }}
+automountServiceAccountToken: true
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $export }}
+  labels:
+    {{- include "libredb-studio.discoveryLabels" . | nindent 4 }}
+type: Opaque
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $export }}
+  labels:
+    {{- include "libredb-studio.discoveryLabels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: [{{ $export | quote }}]
+    verbs: ["get", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $export }}
+  labels:
+    {{- include "libredb-studio.discoveryLabels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $export }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+{{- range $namespace := $kube.namespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "libredb-studio.discoveryLabels" $ | nindent 4 }}
+rules:
+  - apiGroups: ["postgresql.cnpg.io"]
+    resources: ["clusters"]
+    verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "libredb-studio.discoveryLabels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ $.Release.Namespace }}
+{{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "libredb-studio.discoveryLabels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "libredb-studio.discoverySelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "libredb-studio.discoveryLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ $name }}
+      automountServiceAccountToken: true
+      securityContext:
+        {{- include "libredb-studio.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: discovery-exporter
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: {{ include "libredb-studio.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["node", "/usr/local/lib/libredb-studio/discover-kubernetes.mjs"]
+          env:
+            - name: KUBERNETES_DISCOVERY_NAMESPACES
+              value: {{ join "," $kube.namespaces | quote }}
+            - name: KUBERNETES_DISCOVERY_EXPORT_SECRET
+              value: {{ printf "%s/%s" .Release.Namespace $export | quote }}
+            - name: KUBERNETES_DISCOVERY_INTERVAL_MS
+              value: {{ $kube.intervalMs | default 30000 | int64 | toString | quote }}
+            {{- with $kube.kinds }}
+            - name: KUBERNETES_DISCOVERY_KINDS
+              value: {{ join "," . | quote }}
+            {{- end }}
+          {{- with $kube.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

@@ -802,6 +802,76 @@
           }
         }
       }
+    },
+    "accessReview": {
+      "type": "object",
+      "description": "Kubernetes access review (KUBERNETES_ACCESS_REVIEW); see docs/SEED_CONNECTIONS.md",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Switch the access review on; needs authProvider=oidc and config.sessionTtlSeconds of at most 900"
+        },
+        "cacheSeconds": {
+          "anyOf": [{ "type": "null" }, { "type": "string", "maxLength": 0 }, { "type": "integer", "minimum": 0, "maximum": 60 }],
+          "description": "KUBERNETES_ACCESS_REVIEW_CACHE_SECONDS: null (default) writes nothing and the app keeps 30, otherwise whole seconds from 0 to 60"
+        },
+        "signIn": {
+          "type": "string",
+          "default": "",
+          "description": "KUBERNETES_ACCESS_REVIEW_SIGN_IN: empty (default) writes nothing and the app keeps list navlinks.ui.cattle.io"
+        },
+        "tokenExpirationSeconds": {
+          "type": "integer",
+          "minimum": 600,
+          "maximum": 86400,
+          "default": 3600,
+          "description": "Lifetime of the projected token the reviews authenticate with"
+        }
+      }
+    },
+    "discovery": {
+      "type": "object",
+      "description": "Platform discovery",
+      "additionalProperties": false,
+      "properties": {
+        "kubernetes": {
+          "type": "object",
+          "description": "Kubernetes discovery: the exporter Deployment, its RBAC, the export Secret and Studio's mount; see docs/SEED_CONNECTIONS.md",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean", "default": false, "description": "Run the exporter and read its export" },
+            "namespaces": {
+              "type": "array",
+              "maxItems": 256,
+              "uniqueItems": true,
+              "default": [],
+              "items": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" },
+              "description": "The namespaces to discover (KUBERNETES_DISCOVERY_NAMESPACES)"
+            },
+            "intervalMs": {
+              "type": "integer",
+              "minimum": 5000,
+              "maximum": 2147483647,
+              "default": 30000,
+              "description": "KUBERNETES_DISCOVERY_INTERVAL_MS"
+            },
+            "kinds": {
+              "type": "array",
+              "uniqueItems": true,
+              "default": [],
+              "items": { "type": "string", "enum": ["cnpg"] },
+              "description": "KUBERNETES_DISCOVERY_KINDS: empty (default) writes nothing and the exporter reads every supported kind"
+            },
+            "maxAgeMs": {
+              "anyOf": [{ "type": "null" }, { "type": "string", "maxLength": 0 }, { "type": "integer", "minimum": 1 }],
+              "description": "SEED_KUBERNETES_DISCOVERY_MAX_AGE_MS: null (default) writes nothing and the app keeps 180000"
+            },
+            "resources": { "type": "object", "default": {}, "description": "Resources of the exporter container" }
+          }
+        }
+      }
     }
   }
 }

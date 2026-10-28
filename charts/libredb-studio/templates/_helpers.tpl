@@ -502,9 +502,9 @@ with fails the render instead, naming the value to fix. Included from deployment
 
 {{/*
 Guards for the values a Rancher-mode install sets (seedConnections.existingSecret,
-secrets.oidcExistingSecret, rancher.navLink). Each refuses a combination whose meaning would
-otherwise depend on a precedence nobody chose, naming the value to fix. Included from
-deployment.yaml.
+secrets.oidcExistingSecret, rancher.navLink, accessReview, discovery.kubernetes). Each refuses a
+combination whose meaning would otherwise depend on a precedence nobody chose, or that Studio would
+refuse to start with, naming the value to fix. Included from deployment.yaml.
 */}}
 {{- define "libredb-studio.rancherModeGuards" -}}
 {{- $seed := .Values.seedConnections }}
@@ -520,6 +520,13 @@ deployment.yaml.
 {{- end }}
 {{- if or .Values.secrets.oidcClientId .Values.secrets.oidcClientSecret }}
 {{- fail "secrets.oidcExistingSecret refuses secrets.oidcClientId and secrets.oidcClientSecret beside it: the client credentials come from that Secret only" }}
+{{- end }}
+{{- end }}
+{{- include "libredb-studio.accessReviewGuards" . }}
+{{- include "libredb-studio.discoveryGuards" . }}
+{{- if or (include "libredb-studio.accessReviewEnabled" .) (include "libredb-studio.discoveryEnabled" .) }}
+{{- if or .Values.autoscaling.enabled (gt (int .Values.replicaCount) 1) }}
+{{- fail "accessReview.enabled and discovery.kubernetes.enabled run one replica only: the groups record of each sign-in and the review and export caches live in one process, so set replicaCount=1 and leave autoscaling.enabled false" }}
 {{- end }}
 {{- end }}
 {{- $navLink := get (get (.Values.rancher | default dict) "navLink" | default dict) "enabled" }}
@@ -543,3 +550,124 @@ The host the NavLink points at: the first ingress host, empty when there is none
 {{- with .Values.ingress.hosts }}{{ (first .).host | default "" }}{{ end }}
 {{- end }}
 
+
+{{/*
+Whether the Kubernetes access review is on (accessReview.enabled). `default dict` keeps a values set
+that predates the block, as an upgrade with --reuse-values carries, rendering as before.
+*/}}
+{{- define "libredb-studio.accessReviewEnabled" -}}
+{{- if get (.Values.accessReview | default dict) "enabled" }}
+{{- true }}
+{{- end }}
+{{- end }}
+
+{{/* Whether Kubernetes discovery is on (discovery.kubernetes.enabled). */}}
+{{- define "libredb-studio.discoveryEnabled" -}}
+{{- if get (get (.Values.discovery | default dict) "kubernetes" | default dict) "enabled" }}
+{{- true }}
+{{- end }}
+{{- end }}
+
+{{/* The ClusterRole and ClusterRoleBinding of the access review: cluster-scoped, so the namespace keeps two releases apart. */}}
+{{- define "libredb-studio.accessReviewName" -}}
+{{- printf "%s.%s-access-review" .Release.Namespace (include "libredb-studio.fullname" .) }}
+{{- end }}
+
+{{/* Where the access review's projected token and CA are mounted. */}}
+{{- define "libredb-studio.accessReviewDir" -}}
+/var/run/secrets/libredb/access-review
+{{- end }}
+
+{{/* The exporter's Deployment, ServiceAccount and per-namespace Role and RoleBinding. */}}
+{{- define "libredb-studio.discoveryName" -}}
+{{- printf "%s-discovery" (include "libredb-studio.fullname" .) }}
+{{- end }}
+
+{{/* The export Secret the exporter writes and Studio mounts. */}}
+{{- define "libredb-studio.discoveryExportSecret" -}}
+{{- printf "%s-discovery-export" (include "libredb-studio.fullname" .) }}
+{{- end }}
+
+{{/* Where Studio mounts the export Secret; its export.json is SEED_KUBERNETES_DISCOVERY_PATH. */}}
+{{- define "libredb-studio.discoveryMountDir" -}}
+/var/run/libredb/kubernetes-discovery
+{{- end }}
+
+{{/*
+The exporter's selector labels. Its app.kubernetes.io/name is not Studio's, so Studio's Service,
+PodDisruptionBudget and NetworkPolicy, which select on Studio's name and instance, never match it.
+*/}}
+{{- define "libredb-studio.discoverySelectorLabels" -}}
+app.kubernetes.io/name: {{ printf "%s-discovery" (include "libredb-studio.name" .) | trunc 63 | trimSuffix "-" }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+
+{{- define "libredb-studio.discoveryLabels" -}}
+helm.sh/chart: {{ include "libredb-studio.chart" . }}
+{{ include "libredb-studio.discoverySelectorLabels" . }}
+app.kubernetes.io/component: discovery-exporter
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
+{{/*
+The access review guards (docs/SEED_CONNECTIONS.md, "Kubernetes access review"). Each mirrors a refusal
+of Studio's boot check with the review on (src/lib/kubernetes-access/preflight.ts), so a values set
+Studio would refuse to start with fails the render instead, naming the value to fix.
+*/}}
+{{- define "libredb-studio.accessReviewGuards" -}}
+{{- if include "libredb-studio.accessReviewEnabled" . }}
+{{- if ne (.Values.authProvider | toString | trim | lower) "oidc" }}
+{{- fail (printf "accessReview.enabled requires authProvider=oidc, not %q: a review asks about the identity provider subject of an OIDC sign-in" (.Values.authProvider | toString)) }}
+{{- end }}
+{{- if .Values.config.oidcRoleClaim }}
+{{- fail "accessReview.enabled refuses config.oidcRoleClaim: with the review on, a Studio admin is whoever may update Studio's Deployment, and no identity provider claim may grant it; leave it empty" }}
+{{- end }}
+{{- if get (.Values.mcp | default dict) "enabled" }}
+{{- fail "accessReview.enabled refuses mcp.enabled: this version does not run MCP under the access review" }}
+{{- end }}
+{{- if eq (get (.Values.agent | default dict) "enabled" | toString) "true" }}
+{{- fail "accessReview.enabled refuses agent.enabled=true: this version does not run the agent under the access review; leave agent.enabled unset or set it to false" }}
+{{- end }}
+{{- if include "libredb-studio.governanceEnabled" . }}
+{{- fail "accessReview.enabled refuses governance.enabled: governance decides who opens a connection from its own grants; switch one of the two off" }}
+{{- end }}
+{{- if .Values.secrets.adminPassword }}
+{{- fail "accessReview.enabled refuses secrets.adminPassword: with the review on, every sign-in goes through the identity provider" }}
+{{- end }}
+{{- if .Values.secrets.userPassword }}
+{{- fail "accessReview.enabled refuses secrets.userPassword: with the review on, every sign-in goes through the identity provider" }}
+{{- end }}
+{{- $ttl := get .Values.config "sessionTtlSeconds" }}
+{{- if or (kindIs "invalid" $ttl) (eq (toString $ttl) "") (gt (int $ttl) 900) }}
+{{- fail "accessReview.enabled requires config.sessionTtlSeconds of at most 900: a session keeps the groups of its sign-in, and signing out of the identity provider does not end it" }}
+{{- end }}
+{{- if and (not .Values.serviceAccount.create) (not .Values.serviceAccount.name) }}
+{{- fail "accessReview.enabled requires serviceAccount.create=true or a serviceAccount.name: otherwise the namespace's default ServiceAccount, which every other pod there runs as, would be granted the review" }}
+{{- end }}
+{{- range .Values.extraEnv }}
+{{- if hasPrefix "KUBERNETES_ACCESS_REVIEW" (.name | default "" | toString) }}
+{{- fail (printf "accessReview.enabled refuses extraEnv entry %s: the chart writes every KUBERNETES_ACCESS_REVIEW variable from the accessReview values" .name) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/* The Kubernetes discovery guards (docs/SEED_CONNECTIONS.md, "Platform discovery (Kubernetes)"). */}}
+{{- define "libredb-studio.discoveryGuards" -}}
+{{- if include "libredb-studio.discoveryEnabled" . }}
+{{- if not .Values.discovery.kubernetes.namespaces }}
+{{- fail "discovery.kubernetes.enabled requires discovery.kubernetes.namespaces, the namespaces to discover, such as {team-a,team-b}" }}
+{{- end }}
+{{- if include "libredb-studio.governanceEnabled" . }}
+{{- fail "discovery.kubernetes.enabled refuses governance.enabled: the governance source is the only catalog of connections" }}
+{{- end }}
+{{- range .Values.extraEnv }}
+{{- if hasPrefix "SEED_KUBERNETES_DISCOVERY" (.name | default "" | toString) }}
+{{- fail (printf "discovery.kubernetes.enabled refuses extraEnv entry %s: the chart writes every SEED_KUBERNETES_DISCOVERY variable from the discovery values" .name) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
