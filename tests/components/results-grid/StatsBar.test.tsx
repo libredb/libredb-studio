@@ -271,6 +271,35 @@ describe("results-grid/StatsBar", () => {
     expect(queryByText("1 of 2 columns")).not.toBeNull();
   });
 
+  test("marks a hidden column in the column list as off, and the others as on", () => {
+    const { getByTestId, queryByText } = render(
+      <StatsBar
+        result={makeResult()}
+        filteredRowCount={2}
+        activeFilterCount={0}
+        onClearFilters={mock(() => {})}
+        viewMode="table"
+        onSetViewMode={mock(() => {})}
+        wrapText={false}
+        onToggleWrapText={mock(() => {})}
+        hasSensitive={false}
+        effectiveMaskingEnabled={false}
+        userCanToggle={false}
+        hiddenColumns={new Set(["name"])}
+        onToggleColumn={mock(() => {})}
+      />,
+    );
+
+    fireEvent.click(queryByText("1 of 2 columns")!);
+    const menu = getByTestId("column-visibility-menu");
+    const hidden = menu.querySelector<HTMLElement>('[data-column="name"]')!;
+    const shown = menu.querySelector<HTMLElement>('[data-column="id"]')!;
+    expect(hidden.getAttribute("aria-pressed")).toBe("false");
+    expect(hidden.querySelector(".lucide-eye-off")).not.toBeNull();
+    expect(shown.getAttribute("aria-pressed")).toBe("true");
+    expect(shown.querySelector(".lucide-eye")).not.toBeNull();
+  });
+
   /**
    * The control. A surface that supplies no writer keeps inert text, so the assertion
    * above cannot pass on a strip that made the count clickable unconditionally: a
@@ -405,6 +434,27 @@ describe("results-grid/StatsBar", () => {
       />,
     );
     expect(queryByText("masked")).not.toBeNull();
+  });
+
+  test("shows no masking control when masking is off and the user cannot toggle it", () => {
+    const { queryByText, queryByTitle } = render(
+      <StatsBar
+        result={makeResult()}
+        filteredRowCount={2}
+        activeFilterCount={0}
+        onClearFilters={mock(() => {})}
+        viewMode="card"
+        onSetViewMode={mock(() => {})}
+        wrapText={false}
+        onToggleWrapText={mock(() => {})}
+        hasSensitive
+        effectiveMaskingEnabled={false}
+        userCanToggle={false}
+      />,
+    );
+    expect(queryByText("masked")).toBeNull();
+    expect(queryByText("MASK")).toBeNull();
+    expect(queryByTitle("Mask sensitive data")).toBeNull();
   });
 
   test("renders no warnings badge when the engine reported none", () => {
