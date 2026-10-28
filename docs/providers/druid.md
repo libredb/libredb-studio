@@ -546,6 +546,7 @@ terminating semicolon and any trailing comment are outside what its probes see) 
 distinguishes an `OFFSET` that follows a `LIMIT` (the ordinary paginated form, which the limiter
 leaves alone anyway) from one that stands alone. When the statement has an `OFFSET` and no `LIMIT`, it
 returns the query **untouched** with `wasLimited: false`.
+The same holds for `OFFSET n ROWS`, Calcite's SQL:2008 spelling, because the grammar row declares the trailing `ROWS` as a clause after the bound ([§5.7](#57-sql-grammar)).
 
 Routing that decision through the shared analyzer is also what fixed `SELECT … OFFSET 2 -- paged`
 here with no edit to this provider: the probe was anchored at the end of the raw text, so a trailing
@@ -862,11 +863,8 @@ await provider.query('SELECT COUNT(*) AS c FROM "libredb_demo" WHERE region = ?'
 (`supportsExternalQueryLimiting: true`) unless the statement ends in an `OFFSET` with no `LIMIT`
 ([§3.9](#39-the-preparequery-override-offset-with-no-limit)).
 
-The limiter is told which dialect it is reading (#292), and Druid is one of the dialects deliberately
-left at the **compatibility default**: no authoritative source was established for how Druid SQL reads
-`#`, and guessing it from a neighbouring dialect is what that channel exists to stop. The reading here
-is therefore unchanged — `#` opens a line comment unless the next character makes a PostgreSQL
-operator — and a statement ending in a `#` run is returned unbounded rather than bounded on a guess
+The limiter is told which dialect it is reading (#292), and reads Druid under its own grammar ([§5.7](#57-sql-grammar)):
+an array literal holding a `]`, a quoted name ending in a backslash and a trailing `//` comment end where Druid ends them, so the bound is written after the first two and before the third, and an existing `LIMIT ALL` or a `LIMIT` before an `OFFSET n ROWS` is kept
 ([which dialect the readers are reading](../editor/query-optimization.md#which-dialect-the-readers-are-reading)).
 
 A write is **not special-cased**. Every write form Druid rejects, it rejects with a message that names
@@ -1001,9 +999,33 @@ Druid's planner publishes none.
 ### 5.7 SQL grammar
 
 How this engine's statement text is read is declared once, in [`src/lib/db/providers/sql/druid/sql-grammar.ts`](../../src/lib/db/providers/sql/druid/sql-grammar.ts), the `druid` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
-Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, because no rule was established for Druid SQL, not because Druid SQL agrees with the default.
+Its grammar is `DRUID_GRAMMAR`.
+Druid SQL is parsed by Apache Calcite 1.37 (`calcite.version` in Druid's `pom.xml`), from the `Parser.jj` Druid generates in `sql/src/main/codegen/templates/` at the `druid-37.0.0` tag, and `DruidSqlParser.PARSER_CONFIG` sets `Quoting.DOUBLE_QUOTE`, so the lexer runs in its `DQID` state: `"…"` quotes a name, and neither `[` nor a backtick does.
+Every fact was read off that lexer and grammar, and each was probed on 2026-10-28 on `apache/druid:37.0.0` over `POST /druid/v2/sql` on the Router, the endpoint the provider sends on:
+
+| Fact | Reading | Probe |
+|------|---------|-------|
+| `#` | code, never a comment: the lexer has no `#` token | `SELECT 1 AS a # note` is 400 "Lexical error at line 1, column 15. Encountered: "#"" |
+| `[…]` | an array constructor or subscript: it nests and a literal inside it is a literal | `SELECT ARRAY_LENGTH(ARRAY[ARRAY[1,2],ARRAY[3,4]]) AS a` answers 2, `SELECT ARRAY_OFFSET(ARRAY['a]b','c'], 0) AS a` answers `a]b`, `SELECT 1 AS [a]` is a syntax error |
+| `/* … */` | flat: the first `*/` closes it | `SELECT /* a /* b */ 1 AS a` answers 1, `SELECT /* a /* b */ c */ 1 AS a` is 400 "Received an unexpected token [*/]" |
+| `/*+ … */` | an optimizer hint, which is code: a literal inside it is a literal, and inside a comment `/*+` is text | `SELECT /*+ h('*/') */ 1 AS a` answers 1, `SELECT /* a /*+ b */ 1 AS a` answers 1 |
+| `q'…'` | not a form | `SELECT q'[x]' AS a` is 400 "Expecting alias, found character literal" |
+| `//` | a line comment, like `--` | `SELECT 4 // 2 AS a` answers 4, `SELECT 1 AS a // note; SELECT 999` answers 1 alone, `SELECT 1 AS a // note<LF>, 2 AS b` answers both columns |
+| a carriage return in a `--` or `//` comment | ends it, and a backslash continues nothing | `SELECT 1 AS a -- note<CR>, 2 AS b` and the same with `//` answer both columns, and so does `SELECT 1 AS a -- note \<LF>, 2 AS b` |
+| `\` in `'…'` | the literal's own text in a plain literal, an escape in an `E'…'` literal, so the reader leaves a quote after it unresolved | `SELECT 'a\' AS a` answers `a\`, `SELECT 'it\'s' AS a` is a syntax error, `SELECT E'it\'s' AS a` answers `it's` |
+| `\` in `"…"` | part of the name | `SELECT 1 AS "a\"` answers a column named `a\` |
+| `$tag$` | code: `$` is an identifier character | `SELECT 1 AS $t$` answers a column named `$t$` |
+| script | one statement per cut, no procedural body; a request may carry `SET` statements before its one query | `SELECT 1 AS a; SELECT 2 AS b` is 400 "Only SET statements can appear before the final statement in a statement list" |
+| clauses after the row bound | an `OFFSET` may end in `ROW` or `ROWS`, so a `LIMIT` before `OFFSET n ROWS` is read as the bound | `SELECT 1 AS a LIMIT 5 OFFSET 0 ROWS` answers the row, and a `LIMIT 500` after it is 400 "Received an unexpected token [LIMIT]" |
+| non-numeric bounds | `LIMIT ALL` is the statement's own bound, meaning none | `SELECT 1 AS a LIMIT ALL` answers the row, `... LIMIT ALL LIMIT 500` is a syntax error, `LIMIT NULL` is a syntax error |
+
+Four readings stay the shared reader's, each in the fail-safe direction.
+A quote after a backslash in a `'…'` literal is unresolved to the span reader, because Druid closes a plain literal there and escapes in an `E'…'` literal, so such a statement asks for a confirmation and is not bounded.
+A `"…"` run holding a line feed is one name to the span reader, while Druid refuses it, because its quoted identifier excludes `\n` and `\r`.
+A backtick run is a name to the span reader, while Druid refuses the character: ``SELECT 1 AS `a` `` is a lexical error.
+An untagged `$$` run is a dollar string to the span reader, while Druid reads `$` as an identifier character (`SELECT $$x$$ AS a` is "Column '$$x$$' not found"), so text the run holds is refused with it, or, after a `--` or `//` inside the run, is a comment Druid reads where the span reader reads code; Druid SQL has no statement that writes ([§5.5](#55-druid-sql-cannot-write-and-the-server-says-so-clearly)), so the most such a run can cost is a bound.
 `readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.
-Redaction is `none`, since the engine has no grammar of its own: a redacted statement is stored as `?`, because a reader guessing where a literal ends can store the literal.
+Redaction is `none`: a redacted statement is stored as `?`, because no Druid SQL redaction reader exists, and a reader guessing where a literal ends can store the literal.
 
 ## 6. Schema introspection
 
