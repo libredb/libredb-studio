@@ -64,6 +64,7 @@ import {
   NO_ACTIVE_TRANSACTION,
 } from "../../errors";
 import { assertReadOnlyBudget, byteBudgetSentence, measureResultBytes, rowBudgetSentence } from "./read-only-budget";
+import { MSSQL_CUT_VALUE_PREFIX, MSSQL_SERIALISED_PREFIX, MSSQL_TIME_BUDGET_PREFIX } from "./mssql-read-only-refusals";
 import { formatBytes } from "../../utils/pool-manager";
 import { analyzeQuery, assertRowBounds, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../utils/query-limiter";
 import { measuredNullableAggregate } from "../../utils/measured-aggregate";
@@ -2497,7 +2498,7 @@ export class MSSQLProvider extends SQLBaseProvider {
         const size = typeof value === "string" ? value.length : Buffer.isBuffer(value) ? value.length : -1;
         if (size !== ceiling && size !== unicodeCut) continue;
         throw new QueryError(
-          `Read-only execution refused a value the server cut at the byte budget: ${column} came back at exactly the ${ceiling}-byte ceiling, so what it holds cannot be told from the whole value. Project fewer or smaller columns.`,
+          `${MSSQL_CUT_VALUE_PREFIX}: ${column} came back at exactly the ${ceiling}-byte ceiling, so what it holds cannot be told from the whole value. Project fewer or smaller columns.`,
           "mssql",
           sql,
         );
@@ -2568,7 +2569,7 @@ export class MSSQLProvider extends SQLBaseProvider {
     } catch (error) {
       if (!deadlineFired) throw error;
       throw new QueryError(
-        `Read-only execution exceeded its time budget: the statement was cancelled after ${deadlineMs} ms`,
+        `${MSSQL_TIME_BUDGET_PREFIX}: the statement was cancelled after ${deadlineMs} ms`,
         "mssql",
         sql,
       );
@@ -2642,7 +2643,7 @@ export class MSSQLProvider extends SQLBaseProvider {
     const serialising = classes.filter((type) => MSSQLProvider.AGENT_SERIALISING_STATEMENT_TYPES.has(type));
     if (serialising.length > 0) {
       throw new QueryError(
-        `Read-only execution cannot bound a serialised result: SQL Server compiled this as ${serialising.join(", ")}, and the row budget would silently cut the rows underneath the FOR JSON or FOR XML clause. Ask for the rows themselves instead.`,
+        `${MSSQL_SERIALISED_PREFIX}: SQL Server compiled this as ${serialising.join(", ")}, and the row budget would silently cut the rows underneath the FOR JSON or FOR XML clause. Ask for the rows themselves instead.`,
         "mssql",
         sql,
       );

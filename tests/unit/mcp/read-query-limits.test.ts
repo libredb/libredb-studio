@@ -11,10 +11,16 @@ import { join } from "node:path";
 import { rowBudgetRefusal } from "@/lib/db/providers/document/mongodb/agent-read";
 import { READ_QUERY_FORMS, readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
 import {
+  MSSQL_CUT_VALUE_PREFIX,
+  MSSQL_SERIALISED_PREFIX,
+  MSSQL_TIME_BUDGET_PREFIX,
+} from "@/lib/db/providers/sql/mssql-read-only-refusals";
+import {
   BYTE_BUDGET_PREFIX,
   byteBudgetSentence,
   ROW_BUDGET_PREFIX,
   rowBudgetSentence,
+  TIME_BUDGET_PREFIX,
 } from "@/lib/db/providers/sql/read-only-budget";
 import {
   classifyReadQueryFailure,
@@ -217,14 +223,16 @@ describe("the prefixes the mapper matches still start a message in each provider
   const SHARED = "src/lib/db/providers/sql/read-only-budget.ts";
   // The row and byte openings are constants of the shared module, so they are checked as declared there.
   const SHARED_PREFIXES = [ROW_BUDGET_PREFIX, BYTE_BUDGET_PREFIX];
-  const RAISED_IN: Record<string, readonly string[]> = {
-    "Read-only execution refused a value the server cut at the byte budget": ["src/lib/db/providers/sql/mssql.ts"],
-    "Read-only execution cannot bound a serialised result": ["src/lib/db/providers/sql/mssql.ts"],
-    "Read-only execution exceeded the time budget": [
-      "src/lib/db/providers/sql/sqlite.ts",
-      "src/lib/db/providers/sql/duckdb/index.ts",
-    ],
-    "Read-only execution exceeded its time budget": ["src/lib/db/providers/sql/mssql.ts"],
+  // Each opening an engine raises on its own, by the constant that declares it beside the provider and the files
+  // that open a message with it.
+  const RAISED_IN: Record<string, { readonly prefix: string; readonly files: readonly string[] }> = {
+    MSSQL_CUT_VALUE_PREFIX: { prefix: MSSQL_CUT_VALUE_PREFIX, files: ["src/lib/db/providers/sql/mssql.ts"] },
+    MSSQL_SERIALISED_PREFIX: { prefix: MSSQL_SERIALISED_PREFIX, files: ["src/lib/db/providers/sql/mssql.ts"] },
+    TIME_BUDGET_PREFIX: {
+      prefix: TIME_BUDGET_PREFIX,
+      files: ["src/lib/db/providers/sql/sqlite.ts", "src/lib/db/providers/sql/duckdb/index.ts"],
+    },
+    MSSQL_TIME_BUDGET_PREFIX: { prefix: MSSQL_TIME_BUDGET_PREFIX, files: ["src/lib/db/providers/sql/mssql.ts"] },
   };
   // Each provider with a queryReadOnly, by the files that raise its row or byte refusal.
   const SHARED_USERS: Record<string, readonly string[]> = {
@@ -245,16 +253,24 @@ describe("the prefixes the mapper matches still start a message in each provider
 
   test("every prefix the mapper matches is listed here", () => {
     expect(READ_ONLY_REFUSALS.map((refusal) => refusal.prefix).sort()).toEqual(
-      [...SHARED_PREFIXES, ...Object.keys(RAISED_IN)].sort(),
+      [...SHARED_PREFIXES, ...Object.values(RAISED_IN).map(({ prefix }) => prefix)].sort(),
     );
   });
 
-  test.each(Object.entries(RAISED_IN).flatMap(([prefix, files]) => files.map((file) => [prefix, file] as const)))(
-    "%p opens a message in %s",
-    (prefix, file) => {
-      expect(read(file)).toContain(`\`${prefix}`);
+  test.each(Object.entries(RAISED_IN).flatMap(([name, { files }]) => files.map((file) => [name, file] as const)))(
+    "%s opens a message in %s",
+    (name, file) => {
+      expect(read(file)).toContain("`${" + name + "}");
     },
   );
+
+  // The MCP mapper answers a refusal by its opening and names no engine: every opening, and every engine's own
+  // answer text, is declared beside the provider that raises it.
+  test("the MCP module spells no refusal opening and no engine's answer of its own", () => {
+    const source = read("src/lib/mcp/tools/read-query-limits.ts");
+    expect(source.match(/["'`]Read-only execution[^"'`]*/g) ?? []).toEqual([]);
+    expect(source.match(/SQL Server|SQLite|DuckDB/g) ?? []).toEqual([]);
+  });
 
   test.each(SHARED_PREFIXES)("%p is written once, in the shared module", (prefix) => {
     expect(read(SHARED).split(prefix)).toHaveLength(2);

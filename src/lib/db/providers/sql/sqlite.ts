@@ -45,7 +45,13 @@ import {
   QueryError,
   mapDatabaseError,
 } from "../../errors";
-import { assertReadOnlyBudget, byteBudgetSentence, measureResultBytes, rowBudgetSentence } from "./read-only-budget";
+import {
+  assertReadOnlyBudget,
+  byteBudgetSentence,
+  measureResultBytes,
+  rowBudgetSentence,
+  TIME_BUDGET_PREFIX,
+} from "./read-only-budget";
 import { formatBytes } from "../../utils/pool-manager";
 import {
   loadSQLiteDriver,
@@ -1682,7 +1688,7 @@ export class SQLiteProvider extends SQLBaseProvider {
     return await new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.worker?.terminate();
-        reject(new QueryError(`Read-only execution exceeded the time budget: ${timeoutMs}ms allowed`, "sqlite", sql));
+        reject(new QueryError(`${TIME_BUDGET_PREFIX}: ${timeoutMs}ms allowed`, "sqlite", sql));
       }, timeoutMs);
       fn().then(
         (value) => {
@@ -1815,7 +1821,7 @@ export class SQLiteProvider extends SQLBaseProvider {
       // if it had been within budget.
       if (executionTime > budget.statementTimeoutMs) {
         throw new QueryError(
-          `Read-only execution exceeded the time budget: ${executionTime}ms > ${budget.statementTimeoutMs}ms allowed`,
+          `${TIME_BUDGET_PREFIX}: ${executionTime}ms > ${budget.statementTimeoutMs}ms allowed`,
           "sqlite",
           sql,
         );

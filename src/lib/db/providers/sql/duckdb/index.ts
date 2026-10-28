@@ -94,7 +94,13 @@ import {
   QueryError,
   mapDatabaseError,
 } from "../../../errors";
-import { assertReadOnlyBudget, byteBudgetSentence, measureResultBytes, rowBudgetSentence } from "../read-only-budget";
+import {
+  assertReadOnlyBudget,
+  byteBudgetSentence,
+  measureResultBytes,
+  rowBudgetSentence,
+  TIME_BUDGET_PREFIX,
+} from "../read-only-budget";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
 import { findCodeWord } from "@/lib/sql/words";
@@ -945,7 +951,7 @@ export class DuckDBProvider extends SQLBaseProvider {
       // recorded as follow-up work in `docs/providers/duckdb.md` rather than claimed.
       if (executionTime > budget.statementTimeoutMs) {
         throw new QueryError(
-          `Read-only execution exceeded the time budget: ${executionTime}ms > ${budget.statementTimeoutMs}ms allowed`,
+          `${TIME_BUDGET_PREFIX}: ${executionTime}ms > ${budget.statementTimeoutMs}ms allowed`,
           "duckdb",
           sql,
         );

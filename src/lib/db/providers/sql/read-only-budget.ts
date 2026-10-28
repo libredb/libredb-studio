@@ -40,6 +40,9 @@ export const ROW_BUDGET_PREFIX = "Read-only execution exceeded the row budget";
 /** The opening of the byte refusal, the row prefix's twin. */
 export const BYTE_BUDGET_PREFIX = "Read-only execution exceeded the byte budget";
 
+/** The opening of the time refusal SQLite and DuckDB raise when a statement outruns its budget. */
+export const TIME_BUDGET_PREFIX = "Read-only execution exceeded the time budget";
+
 /**
  * The refusal of a result past the row budget, in the one sentence every provider with a
  * `queryReadOnly` raises (D367). It is a parsed contract, not prose: MCP's `run_read_query`

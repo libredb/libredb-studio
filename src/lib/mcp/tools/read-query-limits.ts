@@ -1,5 +1,9 @@
 import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
-import { BYTE_BUDGET_PREFIX, ROW_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import {
+  READ_ONLY_REFUSAL_OPENINGS,
+  type ReadOnlyRefusalKind,
+  type ReadOnlyRefusalOpening,
+} from "@/lib/db/providers/sql/read-only-refusals";
 import { analyzeQuery } from "@/lib/db/utils/query-limiter";
 import type { DatabaseType } from "@/lib/types";
 
@@ -9,10 +13,11 @@ import type { DatabaseType } from "@/lib/types";
  * A provider's read-only budget refusal is recognised by the fixed opening of this repository's
  * own messages, and answered in this server's words. The row and byte refusals are built once, by
  * the constructors in src/lib/db/providers/sql/read-only-budget.ts that every provider with a
- * queryReadOnly calls, and their openings are imported from there rather than typed again here; the
- * rest are SQL Server's, SQLite's and DuckDB's own. A test reads those files and fails when an
- * opening no longer occurs, so a reworded message cannot fall through to
- * an engine error. A time-budget refusal, and any failure that settles once the
+ * queryReadOnly calls; every other opening, and the answer to a kind only one engine raises, is
+ * declared beside the provider that raises it. All of them are read from READ_ONLY_REFUSAL_OPENINGS
+ * in src/lib/db/providers/sql/read-only-refusals.ts rather than typed again here. A test reads the
+ * provider files and fails when an opening no longer occurs, so a reworded message cannot fall
+ * through to an engine error. A time-budget refusal, and any failure that settles once the
  * deadline has passed, is the timeout, so which of the two settles first never changes what the
  * client reads. The deadline race stops the wait for a statement, not the statement: no provider
  * can cancel a read-only statement yet (docs/BACKLOG.md D128).
@@ -21,25 +26,14 @@ import type { DatabaseType } from "@/lib/types";
  * engine's row in src/lib/db/providers/sql/read-query-forms.ts rather than one engine's words for all.
  */
 
-export type ReadOnlyRefusalKind = "rows" | "bytes" | "cut-value" | "serialised" | "time";
+export type { ReadOnlyRefusalKind };
 
-export const READ_ONLY_REFUSALS: readonly { readonly prefix: string; readonly kind: ReadOnlyRefusalKind }[] = [
-  { prefix: ROW_BUDGET_PREFIX, kind: "rows" },
-  { prefix: BYTE_BUDGET_PREFIX, kind: "bytes" },
-  { prefix: "Read-only execution refused a value the server cut at the byte budget", kind: "cut-value" },
-  { prefix: "Read-only execution cannot bound a serialised result", kind: "serialised" },
-  { prefix: "Read-only execution exceeded the time budget", kind: "time" },
-  { prefix: "Read-only execution exceeded its time budget", kind: "time" },
-];
+export const READ_ONLY_REFUSALS: readonly ReadOnlyRefusalOpening[] = READ_ONLY_REFUSAL_OPENINGS;
 
-const TOO_LARGE_TEXTS: Record<Exclude<ReadOnlyRefusalKind, "time">, string> = {
+const TOO_LARGE_TEXTS: Record<"rows" | "bytes", string> = {
   rows: "The result has more than 1000 rows, the most this server reads for one call. Add a LIMIT of 1000 or less, or remove your own LIMIT and page with offset.",
   bytes:
     "The result is larger than 1 MiB, the most this server reads for one call. Select fewer or narrower columns, or add a smaller LIMIT.",
-  "cut-value":
-    "One value in this result is 1 MiB or larger, and SQL Server cut it at the most this server reads for one call. Select fewer or narrower columns, for example a substring of a long text column.",
-  serialised:
-    "SQL Server returns a FOR JSON or FOR XML result as one serialised value, which this server cannot bound. Select the rows themselves, without the FOR JSON or FOR XML clause.",
 };
 
 export type ReadQueryFailure =
@@ -59,7 +53,8 @@ export function classifyReadQueryFailure(
   const refusal = READ_ONLY_REFUSALS.find(({ prefix }) => message.startsWith(prefix));
   if (refusal === undefined) return { kind: "engine", error };
   if (refusal.kind === "time") return { kind: "timeout" };
-  return { kind: "too-large", text: texts[refusal.kind] ?? TOO_LARGE_TEXTS[refusal.kind] };
+  const own = "tooLargeText" in refusal ? refusal.tooLargeText : TOO_LARGE_TEXTS[refusal.kind];
+  return { kind: "too-large", text: texts[refusal.kind] ?? own };
 }
 
 export function inSqlPaging(type: DatabaseType): string {
