@@ -96,7 +96,7 @@ The webview build swaps three imports for shims through `shimPlugin` in `scripts
 | Masking | `src/webview/masking.ts` (`EXTENSION_MASKING_CONFIG`) | `DEFAULT_MASKING_CONFIG` in `src/lib/data-masking.ts` and the grid's masking | The only change is that the `user` role may toggle and reveal |
 
 The provider layer itself is unchanged.
-A provider maps its driver's errors with `mapDatabaseError` (`src/lib/db/errors.ts`, called from `src/lib/db/base-provider.ts`), and the child turns those error classes into an answer with `databaseErrorBody`, as the routes do.
+A provider maps its driver's errors with `mapDatabaseError` (`src/lib/db/map-database-error.ts`, called from `src/lib/db/base-provider.ts`), and the child turns those error classes into an answer with `databaseErrorBody`, as the routes do.
 Row limits come from the provider's `prepareQuery` and the query limiter, reached through `runEditorQuery`.
 
 ## 4. Lifecycle

@@ -45,7 +45,8 @@ import {
 // The BSON parser, reached through a namespace import for the reason `index.ts` gives: bun does not see `BSON` as a
 // named export of the driver's CommonJS entry.
 import * as mongodbDriver from "mongodb";
-import { ConnectionError, QueryError, mapDatabaseError } from "../../../errors";
+import { ConnectionError, QueryError } from "../../../errors";
+import { mapDatabaseError } from "../../../map-database-error";
 import {
   assertReadOnlyBudget,
   byteBudgetSentence,

@@ -38,13 +38,8 @@ import {
   type IndexStats,
   type StorageStats,
 } from "../../types";
-import {
-  DatabaseConfigError,
-  ConnectionError,
-  ExecutionProfileError,
-  QueryError,
-  mapDatabaseError,
-} from "../../errors";
+import { DatabaseConfigError, ConnectionError, ExecutionProfileError, QueryError } from "../../errors";
+import { mapDatabaseError } from "../../map-database-error";
 import {
   assertReadOnlyBudget,
   byteBudgetSentence,

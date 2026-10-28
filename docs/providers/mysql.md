@@ -2441,7 +2441,7 @@ NaN and the infinities are written as NULL, `NULL_NON_FINITE`.
 ## 11. Error handling
 
 Native `mysql2` errors are mapped by the shared `mapDatabaseError()`
-([errors.ts](../../src/lib/db/errors.ts)). What reliably maps for MySQL:
+([map-database-error.ts](../../src/lib/db/map-database-error.ts)). What reliably maps for MySQL:
 
 | Situation | Error |
 |-----------|-------|

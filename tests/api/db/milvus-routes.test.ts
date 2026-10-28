@@ -19,12 +19,12 @@ import {
   isQueryError,
   isRetryableError,
   isTimeoutError,
-  mapDatabaseError,
   PoolExhaustedError,
   QueryCancelledError,
   QueryError,
   TimeoutError,
 } from "@/lib/db/errors";
+import { mapDatabaseError } from "@/lib/db/map-database-error";
 import { MilvusError } from "@/lib/db/providers/vector/milvus/client";
 import { MilvusProvider } from "@/lib/db/providers/vector/milvus/index";
 import type { DatabaseConnection } from "@/lib/db/types";

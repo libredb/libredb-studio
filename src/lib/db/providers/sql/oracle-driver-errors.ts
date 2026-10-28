@@ -1,9 +1,9 @@
 import type { AccessRefusal, DriverErrorClassifier } from "@/lib/db/driver-errors/types";
 
 /**
- * What `oracledb` errors say, for `mapDatabaseError` (`src/lib/db/errors.ts`) to classify them: Thin-mode refusals
- * (#538), the error numbers of a refused statement and of a refused caller, and the ORA- words of a connection the
- * listener refused and of a missing table.
+ * What `oracledb` errors say, for `mapDatabaseError` (`src/lib/db/map-database-error.ts`) to classify them: Thin-mode
+ * refusals (#538), the error numbers of a refused statement and of a refused caller, and the ORA- words of a connection
+ * the listener refused and of a missing table.
  */
 
 /**

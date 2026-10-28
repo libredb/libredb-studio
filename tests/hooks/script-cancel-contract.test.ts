@@ -21,8 +21,8 @@ import {
   isTimeoutError,
   isAuthenticationError,
   isRetryableError,
-  mapDatabaseError,
 } from "@/lib/db/errors";
+import { mapDatabaseError } from "@/lib/db/map-database-error";
 import type { DatabaseConnection, QueryTab } from "@/lib/types";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 

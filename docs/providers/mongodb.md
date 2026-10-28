@@ -1264,7 +1264,7 @@ The module's `insertDocuments` writes the test data generator's insert as this p
 
 ## 10. Error handling
 
-MongoDB uses the shared `mapDatabaseError()` ([errors.ts](../../src/lib/db/errors.ts)), which reads the
+MongoDB uses the shared `mapDatabaseError()` ([map-database-error.ts](../../src/lib/db/map-database-error.ts)), which reads the
 server's `code` beside its `codeName` for the two refusals of the caller and has no other MongoDB-specific
 branch:
 

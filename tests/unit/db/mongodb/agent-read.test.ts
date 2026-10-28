@@ -10,7 +10,8 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import * as mongodbDriver from "mongodb";
 import { Binary, Decimal128, Long, ObjectId, UUID, type MongoClient } from "mongodb";
-import { ConnectionError, QueryError, mapDatabaseError } from "@/lib/db/errors";
+import { ConnectionError, QueryError } from "@/lib/db/errors";
+import { mapDatabaseError } from "@/lib/db/map-database-error";
 import {
   AGENT_COMMAND_COMMENT,
   AGENT_DEADLINE_BACKSTOP_MS,

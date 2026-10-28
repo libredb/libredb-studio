@@ -35,7 +35,8 @@ import {
   type QueryPrepareOptions,
   DEFAULT_QUERY_TIMEOUT,
 } from "./types";
-import { DatabaseConfigError, mapDatabaseError } from "./errors";
+import { DatabaseConfigError } from "./errors";
+import { mapDatabaseError } from "./map-database-error";
 import { mergePoolConfig, formatDuration } from "./utils/pool-manager";
 
 // ============================================================================

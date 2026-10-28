@@ -2481,7 +2481,7 @@ Each name in `standsAlone` was measured, one `CREATE TABLE probe (c <name>)` per
 
 ## 11. Error handling
 
-Native `pg` errors are mapped by `mapDatabaseError()` ([errors.ts](../../src/lib/db/errors.ts)) onto
+Native `pg` errors are mapped by `mapDatabaseError()` ([map-database-error.ts](../../src/lib/db/map-database-error.ts)) onto
 the shared hierarchy:
 
 | Situation | Error |

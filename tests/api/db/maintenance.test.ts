@@ -24,8 +24,8 @@ import {
   isTimeoutError,
   isAuthenticationError,
   isRetryableError,
-  mapDatabaseError,
 } from "@/lib/db/errors";
+import { mapDatabaseError } from "@/lib/db/map-database-error";
 
 // ─── Create mock objects ────────────────────────────────────────────────────
 const mockProvider = createMockProvider();

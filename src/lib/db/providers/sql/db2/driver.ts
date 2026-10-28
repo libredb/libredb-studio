@@ -30,7 +30,8 @@
  * their own statements give.
  */
 
-import { ConnectionError, DatabaseError, QueryError, TimeoutError, mapDatabaseError } from "../../../errors";
+import { ConnectionError, DatabaseError, QueryError, TimeoutError } from "../../../errors";
+import { mapDatabaseError } from "../../../map-database-error";
 
 /** One result column as db2-node describes it. */
 export interface Db2ColumnMeta {

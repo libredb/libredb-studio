@@ -28,8 +28,8 @@ import {
   isTimeoutError,
   isAuthenticationError,
   isRetryableError,
-  mapDatabaseError,
 } from "@/lib/db/errors";
+import { mapDatabaseError } from "@/lib/db/map-database-error";
 import type { DatabaseConnection } from "@/lib/types";
 import type { QueryEventRow } from "@/lib/query-events/types";
 import type { QueryEventBatchWrite, QueryEventWriteFailure } from "@/lib/query-events/postgres-sink";

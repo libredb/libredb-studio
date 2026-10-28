@@ -57,11 +57,11 @@ import {
   DatabaseConfigError,
   DatabaseError,
   ExecutionProfileError,
-  mapDatabaseError,
   PoolExhaustedError,
   QueryError,
   TimeoutError,
 } from "@/lib/db/errors";
+import { mapDatabaseError } from "@/lib/db/map-database-error";
 import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
 import { TABLE_LABELS } from "../../../fixtures/provider-labels";
 import type { DatabaseConnection, QueryResult } from "@/lib/types";

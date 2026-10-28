@@ -20,11 +20,11 @@ import {
   AuthenticationError,
   ConnectionError,
   DatabaseConfigError,
-  mapDatabaseError,
   QueryCancelledError,
   QueryError,
   TimeoutError,
 } from "@/lib/db/errors";
+import { mapDatabaseError } from "@/lib/db/map-database-error";
 import type { DatabaseType } from "@/lib/types";
 import { type PrometheusErrorDetail, PrometheusTransportError } from "./transport";
 

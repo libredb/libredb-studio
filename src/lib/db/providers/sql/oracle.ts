@@ -54,13 +54,8 @@ import {
   findKind,
 } from "../../object-kinds";
 import { comparePaths } from "../../object-path";
-import {
-  DatabaseConfigError,
-  ConnectionError,
-  QueryError,
-  mapDatabaseError,
-  NO_ACTIVE_TRANSACTION,
-} from "../../errors";
+import { DatabaseConfigError, ConnectionError, QueryError, NO_ACTIVE_TRANSACTION } from "../../errors";
+import { mapDatabaseError } from "../../map-database-error";
 import { describeOracleClientLoadFailure } from "./oracle-driver-errors";
 import { formatBytes } from "../../utils/pool-manager";
 import { analyzeQuery, assertRowBounds, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../utils/query-limiter";

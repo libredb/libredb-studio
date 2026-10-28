@@ -1,6 +1,6 @@
 /**
  * The driver error contract: what one database driver states about the errors it raises, for `mapDatabaseError` in
- * `src/lib/db/errors.ts` to classify them.
+ * `src/lib/db/map-database-error.ts` to classify them.
  *
  * A row is keyed by the driver's own error fields and words, never by a type id: several providers share a driver,
  * and the classification reads the fields whichever provider handed the error over. Each row is declared beside the

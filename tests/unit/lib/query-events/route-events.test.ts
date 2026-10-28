@@ -17,7 +17,8 @@ mock.module("@/lib/query-events/sink", () => ({
 const { queryEventRequest, recordExecutedUnit, recordRefusedRequest, requestedConnectionId } = await import(
   "@/lib/query-events/route-events"
 );
-const { mapDatabaseError, QueryCancelledError } = await import("@/lib/db/errors");
+const { QueryCancelledError } = await import("@/lib/db/errors");
+const { mapDatabaseError } = await import("@/lib/db/map-database-error");
 const { queryEventStart } = await import("@/lib/query-events/build");
 
 const session = { role: "user" as const, username: "alice@example.com", idpSubject: "subject-1" };

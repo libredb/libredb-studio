@@ -127,7 +127,8 @@ by family on disk:
 src/lib/db/
 ├── base-provider.ts          # abstract base: state, helpers, default metadata, getMonitoringData()
 ├── types.ts                  # DatabaseProvider interface + all DTOs
-├── errors.ts                 # DatabaseError hierarchy + mapDatabaseError()
+├── errors.ts                 # DatabaseError hierarchy
+├── map-database-error.ts     # mapDatabaseError(): a native driver error onto that hierarchy
 ├── factory.ts                # createDatabaseProvider() — dynamic import per type + provider cache
 └── providers/
     ├── sql/                  # postgres, mysql, sqlite, oracle, mssql (extend SQLBaseProvider)

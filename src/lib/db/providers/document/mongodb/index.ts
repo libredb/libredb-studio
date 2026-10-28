@@ -63,9 +63,9 @@ import {
   ConnectionError,
   QueryError,
   ExecutionProfileError,
-  mapDatabaseError,
   PermissionDeniedError,
 } from "../../../errors";
+import { mapDatabaseError } from "../../../map-database-error";
 import { formatBytes } from "../../../utils/pool-manager";
 import { unionFields, uniquelyKeyedRows } from "../../../utils/result-fields";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";

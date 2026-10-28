@@ -1,12 +1,7 @@
 import "../setup";
 import { describe, test, expect } from "bun:test";
-import {
-  DatabaseError,
-  QueryCancelledError,
-  isQueryCancelledError,
-  mapDatabaseError,
-  TimeoutError,
-} from "@/lib/db/errors";
+import { DatabaseError, QueryCancelledError, isQueryCancelledError, TimeoutError } from "@/lib/db/errors";
+import { mapDatabaseError } from "@/lib/db/map-database-error";
 
 describe("QueryCancelledError", () => {
   test("has correct name, code, provider, and query", () => {

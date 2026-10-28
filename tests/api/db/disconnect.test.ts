@@ -15,8 +15,8 @@ import {
   isTimeoutError,
   isAuthenticationError,
   isRetryableError,
-  mapDatabaseError,
 } from "@/lib/db/errors";
+import { mapDatabaseError } from "@/lib/db/map-database-error";
 import { providerCacheKey, providerOwner } from "@/lib/db/provider-cache-key";
 import type { EditorExecutionContext } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";

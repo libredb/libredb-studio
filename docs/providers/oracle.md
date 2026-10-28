@@ -2347,7 +2347,7 @@ A zoned column is written through `FROM_TZ(..., 'UTC')`, which keeps the instant
 
 ## 11. Error handling
 
-`mapDatabaseError()` ([errors.ts](../../src/lib/db/errors.ts)) reads the `oracledb` row of `DRIVER_ERROR_CLASSIFIERS` ([oracle-driver-errors.ts](../../src/lib/db/providers/sql/oracle-driver-errors.ts)) for the **Oracle-specific** cases:
+`mapDatabaseError()` ([map-database-error.ts](../../src/lib/db/map-database-error.ts)) reads the `oracledb` row of `DRIVER_ERROR_CLASSIFIERS` ([oracle-driver-errors.ts](../../src/lib/db/providers/sql/oracle-driver-errors.ts)) for the **Oracle-specific** cases:
 
 | Situation | Error |
 |-----------|-------|

@@ -17,8 +17,8 @@ import {
   isTimeoutError,
   isAuthenticationError,
   isRetryableError,
-  mapDatabaseError,
 } from "@/lib/db/errors";
+import { mapDatabaseError } from "@/lib/db/map-database-error";
 import { SYNTHETIC_ENTITY_CAPABILITIES, SYNTHETIC_PREVIEW } from "../../fixtures/maintenance-entity-operations";
 
 /**

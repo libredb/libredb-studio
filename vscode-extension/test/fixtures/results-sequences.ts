@@ -119,7 +119,7 @@ export const FAILURES: Record<"pageFailed" | "runFailed" | "cancelled" | "backen
 
 /**
  * SYNTHETIC, not recorded: a failure that carries the driver's detail, for the cases that check how the webview shows
- * one. No live run on the four v0 engines answers a detail today, because mapDatabaseError in src/lib/db/errors.ts
+ * one. No live run on the four v0 engines answers a detail today, because mapDatabaseError in src/lib/db/map-database-error.ts
  * builds QueryError without it (docs/BACKLOG.md D389), so this sequence is left out of the integration leg's
  * comparison with live runs by name. The message and detail are what PostgreSQL itself raises for a unique violation.
  * Part H's presenter test and the browser leg's criterion 9 read it; D389 replaces it with a recorded live sequence.

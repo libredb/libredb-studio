@@ -54,8 +54,8 @@ import {
   isTimeoutError,
   isAuthenticationError,
   isRetryableError,
-  mapDatabaseError,
 } from "@/lib/db/errors";
+import { mapDatabaseError } from "@/lib/db/map-database-error";
 
 // NOTE: the mocks below are inline rather than in a shared helper, and the request is built by
 // `createMockRequest` with the session supplied by a mocked `@/lib/auth`. That is the ONE pattern

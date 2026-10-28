@@ -18,6 +18,7 @@ src/lib/db/
 ├── index.ts                    # Public exports
 ├── types.ts                    # Interfaces & Types
 ├── errors.ts                   # Custom error classes
+├── map-database-error.ts       # mapDatabaseError(): native driver errors onto those classes
 ├── factory.ts                  # Provider Factory
 ├── base-provider.ts            # Abstract base class
 ├── graph/                      # The graph layer (pure core shipped to the browser; bolt/ and the base server only)

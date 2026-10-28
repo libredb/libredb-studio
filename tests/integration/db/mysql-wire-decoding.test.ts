@@ -15,7 +15,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import type { AddressInfo } from "node:net";
 import mysql2 from "mysql2";
-import * as errors from "@/lib/db/errors";
+import * as errorMapping from "@/lib/db/map-database-error";
 import { DatabaseError } from "@/lib/db/errors";
 import { MySQLProvider } from "@/lib/db/providers/sql/mysql";
 import type { DatabaseConnection } from "@/lib/types";
@@ -426,7 +426,7 @@ describe("a server that labels UTF-8 text utf8mb3 (Databend, StarRocks, Doris)",
    * and `sqlState`. Only the stack differs, because the wrapper rewrites it to the caller's.
    */
   test("a statement the server refuses fails exactly as it does on mysql2's own path", async () => {
-    const raw = spyOn(errors, "mapDatabaseError");
+    const raw = spyOn(errorMapping, "mapDatabaseError");
     const refusal = async (port: number) => {
       const provider = await connected(port);
       const mapped = await provider.query("BROKEN").catch((error: unknown) => error);

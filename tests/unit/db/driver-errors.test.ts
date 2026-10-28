@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import ts from "typescript";
 import { DRIVER_ERROR_CLASSIFIERS } from "@/lib/db/driver-errors";
-import { mapDatabaseError } from "@/lib/db/errors";
+import { mapDatabaseError } from "@/lib/db/map-database-error";
 import {
   CORPUS_FIELDS,
   CORPUS_MESSAGES,
@@ -47,22 +47,36 @@ describe("driver error classification", () => {
     expect(Object.isFrozen(DRIVER_ERROR_CLASSIFIERS)).toBe(true);
   });
 
-  test("the shared module names no engine, driver or driver code in a string or an identifier", () => {
+  test("the error types import no driver row, so a reader of an error class never bundles a provider", () => {
     const file = "src/lib/db/errors.ts";
     const source = ts.createSourceFile(file, readFileSync(join(ROOT, file), "utf8"), ts.ScriptTarget.Latest, true);
-    const words =
-      /oracle|mssql|tedious|mysql|maria|sqlite|postgres|\bpg\b|db2|mongo|ora-|njs-|dpi-|tns:|ecancel|login failed/i;
-    const found: string[] = [];
-    const visit = (node: ts.Node): void => {
-      if ((ts.isStringLiteralLike(node) || ts.isIdentifier(node)) && words.test(node.text)) found.push(node.text);
-      if (ts.isTemplateExpression(node)) {
-        for (const part of [node.head, ...node.templateSpans.map((span) => span.literal)]) {
-          if (words.test(part.text)) found.push(part.text);
-        }
-      }
-      ts.forEachChild(node, visit);
-    };
-    visit(source);
-    expect(found).toEqual([]);
+    const specifiers = source.statements
+      .filter((statement) => ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement))
+      .map((statement) => (statement as ts.ImportDeclaration).moduleSpecifier)
+      .filter((specifier): specifier is ts.StringLiteral => specifier !== undefined && ts.isStringLiteral(specifier))
+      .map((specifier) => specifier.text);
+    expect(specifiers.length).toBeGreaterThan(0);
+    expect(specifiers.filter((specifier) => /driver-errors|providers\//.test(specifier))).toEqual([]);
   });
+
+  test.each(["src/lib/db/errors.ts", "src/lib/db/map-database-error.ts"])(
+    "the shared module %s names no engine, driver or driver code in a string or an identifier",
+    (file) => {
+      const source = ts.createSourceFile(file, readFileSync(join(ROOT, file), "utf8"), ts.ScriptTarget.Latest, true);
+      const words =
+        /oracle|mssql|tedious|mysql|maria|sqlite|postgres|\bpg\b|db2|mongo|ora-|njs-|dpi-|tns:|ecancel|login failed/i;
+      const found: string[] = [];
+      const visit = (node: ts.Node): void => {
+        if ((ts.isStringLiteralLike(node) || ts.isIdentifier(node)) && words.test(node.text)) found.push(node.text);
+        if (ts.isTemplateExpression(node)) {
+          for (const part of [node.head, ...node.templateSpans.map((span) => span.literal)]) {
+            if (words.test(part.text)) found.push(part.text);
+          }
+        }
+        ts.forEachChild(node, visit);
+      };
+      visit(source);
+      expect(found).toEqual([]);
+    },
+  );
 });

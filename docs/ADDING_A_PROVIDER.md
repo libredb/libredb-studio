@@ -1212,7 +1212,8 @@ Those three reach code and tests only; the four prose greps of the published blo
 - [ ] `src/lib/db/driver-errors/index.ts`: only if the driver's errors carry code fields or words of their own,
       a `<provider>-driver-errors.ts` row beside the provider (`DriverErrorClassifier`,
       `src/lib/db/driver-errors/types.ts`), added to `DRIVER_ERROR_CLASSIFIERS` in its fixed order;
-      `mapDatabaseError` reads that row, and `src/lib/db/errors.ts` names no driver
+      `mapDatabaseError` (`src/lib/db/map-database-error.ts`) reads that row, and neither it nor
+      `src/lib/db/errors.ts` names a driver
 - [ ] `src/lib/db/sql-grammar/`: write your engine's grammar module, `<family>/<id>/sql-grammar.ts`
       under `src/lib/db/providers/` (or `<family>/<id>-sql-grammar.ts` beside a provider that is one
       flat file), exporting `<ID>_SQL_GRAMMAR` with every fact of `SqlGrammarSpec`, and add its row to

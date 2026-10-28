@@ -84,10 +84,10 @@ import {
   ExecutionProfileError,
   PoolExhaustedError,
   QueryError,
-  mapDatabaseError,
   NO_TRANSACTION_OPENED,
   NO_ACTIVE_TRANSACTION,
 } from "../../errors";
+import { mapDatabaseError } from "../../map-database-error";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import type { QueryResultSet } from "@/lib/types";
 import { assertReadOnlyBudget, byteBudgetSentence, measureResultBytes, rowBudgetSentence } from "./read-only-budget";

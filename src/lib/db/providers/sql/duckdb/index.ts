@@ -92,8 +92,8 @@ import {
   ExecutionProfileError,
   QueryCancelledError,
   QueryError,
-  mapDatabaseError,
 } from "../../../errors";
+import { mapDatabaseError } from "../../../map-database-error";
 import {
   assertReadOnlyBudget,
   byteBudgetSentence,

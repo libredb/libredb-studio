@@ -20,9 +20,9 @@ import {
   isTimeoutError,
   isAuthenticationError,
   isRetryableError,
-  mapDatabaseError,
   NO_TRANSACTION_OPENED,
 } from "@/lib/db/errors";
+import { mapDatabaseError } from "@/lib/db/map-database-error";
 import type { BeginTransactionOptions, BeginTransactionResult } from "@/lib/db/types";
 import type { QueryEventInput } from "@/lib/query-events/types";
 

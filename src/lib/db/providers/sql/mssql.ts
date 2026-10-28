@@ -60,9 +60,9 @@ import {
   ConnectionError,
   ExecutionProfileError,
   QueryError,
-  mapDatabaseError,
   NO_ACTIVE_TRANSACTION,
 } from "../../errors";
+import { mapDatabaseError } from "../../map-database-error";
 import { assertReadOnlyBudget, byteBudgetSentence, measureResultBytes, rowBudgetSentence } from "./read-only-budget";
 import { MSSQL_CUT_VALUE_PREFIX, MSSQL_SERIALISED_PREFIX, MSSQL_TIME_BUDGET_PREFIX } from "./mssql-read-only-refusals";
 import { formatBytes } from "../../utils/pool-manager";
