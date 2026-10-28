@@ -41,7 +41,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B139 · 70
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B139 · 69
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP3 · 3
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
@@ -7879,17 +7879,6 @@ A new language must therefore edit both components, and the language boundary gu
 Found 2026-10-19 while splitting the agent core into language packs (#1821).
 
 **Done when:** the hand-over chips are a member of each language's client pack and `ConsentCard.tsx` reads them through `languageClientPack`, the no-connection default in `AgentRail.tsx` is named in the client tier rather than written as a literal, and the existing ConsentCard and AgentRail tests pass unchanged; cited in `docs/AGENT.md`.
-
-### B124. MySQL's estimating plan doubles a FORMAT=JSON the model already wrote
-
-`composeEstimatingExplain("mysql", "EXPLAIN FORMAT=JSON SELECT 1")` in `src/lib/agent/composed-sql.ts` returns `EXPLAIN FORMAT=JSON FORMAT=JSON SELECT 1`.
-`withoutEstimatingPrefix` strips the estimating prefixes the engines declare (`planEstimate.prefix`) and do not opt out of the strip, which today are a leading `EXPLAIN`, `EXPLAIN QUERY PLAN` and `EXPLAIN (FORMAT JSON)`, the PostgreSQL, DuckDB and SQLite spellings.
-MySQL's prefix is declared `strippedWhenRestated: false` in its engine overlay (`src/lib/agent/languages/sql/engines/mysql.ts`), which keeps its `FORMAT=JSON` tail out of the strip, so the prefix is put in front of a format clause that is still there.
-The engine-dialect golden (`tests/fixtures/agent/engine-dialect/`) pins this as current behaviour.
-
-Found 2026-10-19 while moving the estimating prefixes onto the engine overlays (#1821).
-
-**Done when:** the `strippedWhenRestated: false` declaration is gone from MySQL's overlay, a statement that already carries MySQL's estimating prefix is composed with it once, the golden entry is regenerated in that change with the reason, and a test covers `EXPLAIN FORMAT=JSON` in upper and lower case; cited in `docs/AGENT.md`.
 
 ### B125. A catalog read's declared schema is folded on SQLite only
 
