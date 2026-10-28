@@ -383,6 +383,25 @@ describe("the /launch page in a browser signed in as someone else", () => {
       expect(localStorage.getItem("libredb_workspace_owner")).toBe("ada@example.com");
     });
 
+    test("a storage mode that cannot be read says the sign-out failed, and posts no sign-out", async () => {
+      const logout = mock(async () => answer(200, { success: true }));
+      const fetchMock = serveConflict(logout);
+      fetchMock.mockImplementation(async (url: string) => {
+        if (String(url).endsWith("/api/auth/me")) return SIGNED_IN();
+        if (String(url).endsWith("/api/storage/config")) return answer(503, { error: "Service unavailable" });
+        return String(url).endsWith("/api/auth/logout") ? logout() : answer(409, CONFLICT);
+      });
+      const view = render(<LaunchPage />);
+      fireEvent.click(await view.findByRole("button", { name: "Sign out" }));
+      expect(
+        await view.findByText(
+          "Studio could not sign you out. Sign out from the editor, then open Studio again from the platform.",
+        ),
+      ).not.toBeNull();
+      expect(logout).not.toHaveBeenCalled();
+      expect(localStorage.getItem("libredb_workspace_owner")).toBe("ada@example.com");
+    });
+
     test("local mode: the copy stays", async () => {
       serveConflict(async () => answer(200, { success: true }));
       const view = render(<LaunchPage />);
