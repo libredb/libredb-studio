@@ -2,8 +2,8 @@
  * The seam around each engine's execution UI module: an engine module reads only the registry's leaves (`types`,
  * `shared`, and a type-only `@/lib/types`), never the registry index, the no-connection or unknown-type spec, the
  * explain request, another engine's module, a hook or a component, so one engine's commit keyword or consent deadline
- * can never reach another's output. `shared.ts` reads at most `types`, `explain-request.ts` reads nothing, and every
- * module loads in a fresh process on its own.
+ * can never reach another's output. `shared.ts` reads at most `types`, `explain-request.ts` reads only the default
+ * connection type, a leaf that loads nothing at run time, and every module loads in a fresh process on its own.
  */
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
@@ -151,9 +151,13 @@ describe("the engine execution UI modules", () => {
     expect(specifiers.filter((specifier) => specifier !== "./types" && specifier !== TYPES)).toEqual([]);
   });
 
-  test("explain-request.ts imports nothing", () => {
+  test("explain-request.ts imports only the default connection type, which loads nothing at run time", () => {
     const path = join(REGISTRY, "explain-request.ts");
-    expect(importFacts(path, readFileSync(path, "utf8"))).toEqual([]);
+    expect(importFacts(path, readFileSync(path, "utf8"))).toEqual([
+      { specifier: "@/lib/db/default-connection-type", typeOnly: false },
+    ]);
+    const leaf = join(ROOT, "src/lib/db/default-connection-type.ts");
+    expect(importFacts(leaf, readFileSync(leaf, "utf8")).every(({ typeOnly }) => typeOnly)).toBe(true);
   });
 
   test("no engine module imports the no-connection or unknown-type spec", () => {
