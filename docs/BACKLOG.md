@@ -5572,11 +5572,11 @@ Found 2026-10-12 in a browser pass of the RabbitMQ provider, reproduced with scr
 
 ### U124. Firestore's Database ID box carries a sentence about Create Table and SHOW SCHEMAS
 
-The connection dialog draws one fixed sentence under the schema box for every engine that takes the field (`src/components/ConnectionModal.tsx:1063`, `:1080-1083`): "Used for unqualified table names in queries and Create Table. Leave empty to qualify names yourself. Run SHOW SCHEMAS to list the catalog's schemas."
+The connection dialog draws one fixed sentence under the schema box for every engine that takes the field and declares no schema placeholder (the `note` of the `schema` row of `CONNECTION_FIELD_DESCRIPTORS` in `src/lib/db/connection-fields.ts`, drawn by `src/components/ConnectionFieldControl.tsx`): "Used for unqualified table names in queries and Create Table. Leave empty to qualify names yourself. Run SHOW SCHEMAS to list the catalog's schemas."
 It was written for Trino, and the box is also Firestore's "Database ID" (the `firestore` entry of `CONNECTION_FORM` in `src/lib/db/connection-form.ts`), where the provider declares no `createTable` (`src/lib/db/providers/document/firestore/index.ts`) and there is no `SHOW SCHEMAS`.
 So a Firestore user reads, under the engine's own hint ("Empty for the (default) database"), advice about table names and a statement the engine does not have.
 BigQuery's "Default dataset" box (the `bigquery` entry of `CONNECTION_FORM` in `src/lib/db/connection-form.ts`) takes the same sentence, and whether it holds there is not measured.
-The sentence is not a declared field, so an engine entry cannot replace or drop it the way `fieldHints` and `fieldPlaceholders` do.
+The sentence is the dialog's own words in the shared descriptor table, not an engine declaration: an engine entry drops it only by declaring a schema placeholder (Snowflake declares an empty one, Spark its own), which is a side effect rather than a statement that the sentence does not apply, and cannot replace it the way `fieldHints` does.
 
 Found 2026-10-12 while reading the connection dialog for a new provider.
 
