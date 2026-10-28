@@ -49,6 +49,7 @@
   "ignoreBinaries": [
     "genhtml",
     "java",
+    "kubectl",
     "openssl",
     "ss"
   ],

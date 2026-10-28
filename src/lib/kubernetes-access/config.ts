@@ -129,10 +129,7 @@ export function accessReviewAdminDeployment(): DeploymentRef {
   const parts = raw.split("/");
   const [namespace, name] = parts;
   const valid =
-    parts.length === 2 &&
-    NAMESPACE_NAME.test(namespace) &&
-    name.length <= MAX_SUBDOMAIN &&
-    SUBDOMAIN.test(name);
+    parts.length === 2 && NAMESPACE_NAME.test(namespace) && name.length <= MAX_SUBDOMAIN && SUBDOMAIN.test(name);
   if (!valid) throw new AccessReviewConfigError(ADMIN_DEPLOYMENT_INVALID_MESSAGE);
   return { namespace, name };
 }
