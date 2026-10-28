@@ -764,6 +764,28 @@ describe("LibSQLProvider monitoring", () => {
     expect(await provider.getStorageStats()).toEqual([{ name: "main", size: "276 KB", sizeBytes: 282624 }]);
     await provider.disconnect();
   });
+
+  test("a token that expires mid-session fails every monitoring read and the integrity check as authentication", async () => {
+    const provider = await connected();
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ error: "JWT error: ExpiredSignature" }), { status: 401 }),
+      )) as unknown as typeof fetch;
+
+    const reads: [string, () => Promise<unknown>][] = [
+      ["getHealth", () => provider.getHealth()],
+      ["getOverview", () => provider.getOverview()],
+      ["getTableStats", () => provider.getTableStats()],
+      ["getIndexStats", () => provider.getIndexStats()],
+      ["getStorageStats", () => provider.getStorageStats()],
+      ["runMaintenance", () => provider.runMaintenance("check")],
+    ];
+    for (const [name, read] of reads) {
+      const refusal = await read().catch((error: unknown) => error);
+      expect([name, refusal instanceof AuthenticationError]).toEqual([name, true]);
+      expect((refusal as Error).message).toContain("ExpiredSignature");
+    }
+  });
 });
 
 // ============================================================================
@@ -1900,6 +1922,33 @@ describe("LibSQLProvider object surface (#789)", () => {
     // table. Nobody declared it and nobody can drop it, and the Indexes folder excludes
     // it by the same predicate, so the two surfaces cannot disagree.
     expect(regions.indexes).toEqual([]);
+  });
+
+  test("a composite index lists every key column, in seqno order, on the single and the bulk read", async () => {
+    objects = await connectedWithObjects();
+    const base = objectServer();
+    // CREATE INDEX idx_orders_customer ON orders(customer_id, placed_at): two rows of one index.
+    server = (sql, args) => {
+      if (/JOIN pragma_index_info/.test(sql)) {
+        const answer = base(sql, args) as { response: { result: { rows: (Cell | null)[][] } } };
+        const rows = answer.response.result.rows;
+        const at = rows.findIndex((row) => (row[1] as Cell).value === "idx_orders_customer");
+        rows.splice(at + 1, 0, [text("orders"), text("idx_orders_customer"), text("placed_at")]);
+        return answer as Cell;
+      }
+      if (/pragma_index_info/.test(sql) && args[0] === "idx_orders_customer") {
+        return result([["name", null]], [[text("customer_id")], [text("placed_at")]]);
+      }
+      return base(sql, args);
+    };
+    const expected = [
+      { name: "idx_orders_customer", columns: ["customer_id", "placed_at"], unique: false },
+      { name: "idx_orders_placed", columns: [], unique: false },
+    ];
+
+    expect((await objects.describeObject(["orders"], "table")).indexes).toEqual(expected);
+    const bulk = await objects.describeObjects([], "table");
+    expect(bulk.details.find((detail) => detail.path.join(".") === "orders")?.indexes).toEqual(expected);
   });
 
   test("a foreign key that names no column resolves to the parent's primary key", async () => {
