@@ -228,6 +228,13 @@ annotations:
 
 Any change to configuration values triggers a rolling restart automatically.
 
+With a volume claim on `/app/data` (`persistence.enabled`, or `config.storageProvider=sqlite`, which turns it on) and one replica, that restart stops the old pod before it creates the new one, which then waits for the claim: the Deployment gets `maxSurge: 0` and `maxUnavailable: 1`.
+The Kubernetes default keeps the old pod until the new one is ready, and the new one can never mount an exclusive claim the old one holds, a ReadWriteOnce volume attached to another node (Longhorn, a cloud block volume) or a ReadWriteOncePod claim, so the rollout waits until `helm --wait` gives up.
+Every Rancher-mode install has that shape, one replica with persistence on.
+The cost is a short outage on each upgrade or restart while the new pod starts.
+The type stays `RollingUpdate`: the API server defaults `rollingUpdate` on a Deployment the chart already installed, and a server-side apply (Helm 4, Rancher's Apps page) cannot remove a field no manager owns, so an upgrade to `Recreate` is refused.
+More than one replica shares the claim, which needs ReadWriteMany, and keeps the default; `tests/unit/helm-chart-rollout-strategy.test.ts` pins both.
+
 ### 8. Seed Connections
 
 When `seedConnections.enabled=true`, the chart provisions a set of pre-defined database connections at startup:

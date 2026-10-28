@@ -60,6 +60,22 @@ spec:
   {{- if not (include "libredb-studio.autoscalingEnabled" .) }}
   replicas: {{ .Values.replicaCount }}
   {{- end }}
+  {{- /* With one pod on a volume claim, the old pod is stopped before the new one is created, and
+         the new one waits for the claim. The default rolling update keeps the old pod until the new
+         one is ready, and the new one never gets an exclusive claim the old one holds: a
+         ReadWriteOnce volume attached to another node (Longhorn, a cloud block volume) or a
+         ReadWriteOncePod claim, so the rollout waits until helm --wait gives up. Not type Recreate:
+         the API server defaults rollingUpdate on every Deployment already installed, and a
+         server-side apply (Helm 4, Rancher's Apps page) cannot remove a field no manager owns, so
+         an upgrade to Recreate is refused. More than one replica shares the claim, which only
+         ReadWriteMany allows, and keeps the default. */}}
+  {{- if and (include "libredb-studio.persistenceEnabled" .) (not (include "libredb-studio.multiReplica" .)) }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  {{- end }}
   selector:
     matchLabels:
       {{- include "libredb-studio.selectorLabels" . | nindent 6 }}
