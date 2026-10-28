@@ -94,6 +94,11 @@ const TLS_CAUSE_TEXTS: ReadonlyArray<readonly [string, OxiaErrorFields["tlsFailu
   ["Error: write EPROTO alert certificate required", "client-certificate-required"],
   ["Error: write EPROTO alert unknown ca", "client-certificate-refused"],
   ["Error: write EPROTO alert bad certificate", "client-certificate-refused"],
+  // BoringSSL, under Bun from 1.4.4, names the alerts in capitals.
+  ["error:10000415:SSL routines:OPENSSL_internal:SSLV3_ALERT_CERTIFICATE_EXPIRED", "client-certificate-expired"],
+  ["error:1000045c:SSL routines:OPENSSL_internal:TLSV1_ALERT_CERTIFICATE_REQUIRED", "client-certificate-required"],
+  ["error:10000418:SSL routines:OPENSSL_internal:TLSV1_ALERT_UNKNOWN_CA", "client-certificate-refused"],
+  ["error:10000412:SSL routines:OPENSSL_internal:SSLV3_ALERT_BAD_CERTIFICATE", "client-certificate-refused"],
   ["Error [ERR_TLS_CERT_ALTNAME_INVALID]: Hostname/IP does not match certificate's altnames", "name"],
   ["Error: unable to verify the first certificate", "chain"],
   ["Error: self signed certificate", "chain"],
