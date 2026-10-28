@@ -52,6 +52,7 @@ const { MongoDBProvider } = await import("@/lib/db/providers/document/mongodb");
 const {
   AuthenticationError,
   DatabaseConfigError,
+  DatabaseError,
   ConnectionError,
   ExecutionProfileError,
   PermissionDeniedError,
@@ -940,6 +941,29 @@ describe("MongoDBProvider", () => {
       expect(result.rowCount).toBe(1);
     });
 
+    test("a write with nothing to write is refused by name before the driver is called", async () => {
+      const refusals: [Record<string, unknown>, string][] = [
+        [{ operation: "insertOne" }, "Document is required for insertOne"],
+        [{ operation: "insertOne", documents: [] }, "Document is required for insertOne"],
+        [{ operation: "insertMany", documents: [] }, "Documents are required for insertMany"],
+        [{ operation: "updateOne", filter: {} }, "Update document is required for updateOne"],
+        [{ operation: "updateMany", filter: {} }, "Update document is required for updateMany"],
+      ];
+      for (const [query, sentence] of refusals) {
+        mongoDriver.args = {};
+        const attempt = provider.query(JSON.stringify({ collection: "users", ...query }));
+        await expect(attempt).rejects.toBeInstanceOf(QueryError);
+        await expect(attempt).rejects.toThrow(sentence);
+        expect(Object.keys(mongoDriver.args)).toEqual([]);
+      }
+    });
+
+    test("a query that names no operation is refused by name", async () => {
+      await expect(provider.query(JSON.stringify({ collection: "users" }))).rejects.toThrow(
+        "Operation is required in query (find, findOne, aggregate, etc.)",
+      );
+    });
+
     test("unsupported operation throws QueryError", async () => {
       await expect(provider.query(JSON.stringify({ collection: "users", operation: "drop" }))).rejects.toThrow();
     });
@@ -1205,6 +1229,15 @@ describe("MongoDBProvider", () => {
       await provider.connect();
     });
 
+    test("a profiler that cannot be read is reported as the placeholder row the doc describes", async () => {
+      mongoDriver.findErrors["testdb.system.profile"] = serverErrorReply("profiler unavailable");
+      const health = await provider.getHealth();
+      expect(health.slowQueries).toEqual([
+        { query: "Profiler not enabled. Run db.setProfilingLevel(1) to enable.", calls: 0, avgTime: "N/A" },
+      ]);
+      delete mongoDriver.findErrors["testdb.system.profile"];
+    });
+
     test("returns health info with connections and database size", async () => {
       const health = await provider.getHealth();
       expect(health.activeConnections).toBe(5);
@@ -1406,6 +1439,37 @@ describe("MongoDBProvider", () => {
       await provider.disconnect();
     });
 
+    test("reindex answers that the command is gone rather than running anything", async () => {
+      const before = mongoDriver.commands.length;
+      const result = await provider.runMaintenance("reindex");
+      expect(result.success).toBe(false);
+      expect(result.message).toContain("not supported in MongoDB 6.0+");
+      expect(mongoDriver.commands.length).toBe(before);
+    });
+
+    test("check sends dbCheck on the named collection, and refuses without one", async () => {
+      const result = await provider.runMaintenance("check", "users");
+      expect(result.success).toBe(true);
+      expect(result.message).toContain("Database check completed for users");
+      expect(mongoDriver.commands.at(-1)?.command).toEqual({ dbCheck: "users" });
+      await expect(provider.runMaintenance("check")).rejects.toThrow(
+        "Collection name is required for dbCheck operation",
+      );
+    });
+
+    test("kill without an operation id is refused before killOp is sent", async () => {
+      await expect(provider.runMaintenance("kill")).rejects.toThrow("Operation ID is required for kill operation");
+      expect(mongoDriver.killOpCommands).toEqual([]);
+    });
+
+    test("a server failure during maintenance leaves as this provider's error, carrying the server's words", async () => {
+      mongoDriver.maintenanceRefusals.users = mongoServerError(8000, "the validate command failed on the server");
+      const refused = await provider.runMaintenance("analyze", "users").catch((error: unknown) => error);
+      expect(refused).toBeInstanceOf(DatabaseError);
+      expect((refused as Error).message).toContain("the validate command failed on the server");
+      expect((refused as { provider?: string }).provider).toBe("mongodb");
+    });
+
     test("unsupported maintenance type throws", async () => {
       await expect(provider.runMaintenance("flush" as never)).rejects.toThrow();
     });
@@ -1479,6 +1543,16 @@ describe("MongoDBProvider", () => {
   describe("getOverview()", () => {
     beforeEach(async () => {
       await provider.connect();
+    });
+
+    test("a view in the listing adds no indexes and does not stop the count of the collections after it", async () => {
+      // The server refuses listIndexes on a view (code 166); the stand-in does the same.
+      mongoDriver.collections = [
+        { name: "active_users", type: "view" },
+        { name: "users", type: "collection" },
+      ];
+      const overview = await provider.getOverview();
+      expect(overview.indexCount).toBe(2);
     });
 
     test("returns version, uptime, connections, size, counts", async () => {
@@ -1907,6 +1981,15 @@ describe("MongoDBProvider", () => {
       await provider.connect();
     });
 
+    test("a view the server will not give collStats for is left out, and the collections after it are not", async () => {
+      mongoDriver.collections = [
+        { name: "active_users", type: "view" },
+        { name: "users", type: "collection" },
+      ];
+      const stats = await provider.getTableStats();
+      expect(stats.map((row) => row.tableName)).toEqual(["users"]);
+    });
+
     test("skips system.* collections and keeps one whose name only starts with those letters", async () => {
       // Monitoring listed `system.views` and `system.buckets.readings` while the tree hid both
       // (#1428). The bucket here has no time-series parent, so the earlier duplicate-bucket
@@ -1947,6 +2030,15 @@ describe("MongoDBProvider", () => {
       await provider.connect();
     });
 
+    test("a view is skipped, and the collection after it still answers its indexes", async () => {
+      mongoDriver.collections = [
+        { name: "active_users", type: "view" },
+        { name: "users", type: "collection" },
+      ];
+      const stats = await provider.getIndexStats();
+      expect(stats.map((row) => row.tableName)).toEqual(["users", "users"]);
+    });
+
     test("returns index stats for collections", async () => {
       const stats = await provider.getIndexStats();
       expect(stats).toBeArray();
@@ -1960,6 +2052,13 @@ describe("MongoDBProvider", () => {
   describe("getStorageStats()", () => {
     beforeEach(async () => {
       await provider.connect();
+    });
+
+    test("a database whose stats cannot be read answers no figures rather than invented ones", async () => {
+      mongoDriver.dbStats = () => {
+        throw serverErrorReply("dbStats refused");
+      };
+      expect(await provider.getStorageStats()).toEqual([]);
     });
 
     test("returns storage stats", async () => {

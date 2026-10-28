@@ -229,6 +229,16 @@ describe("parseConnectionString", () => {
       expect(result!.password).toBe("p@ss");
     });
 
+    test("a malformed percent-escape keeps the pasted string and fills no field it could not read", () => {
+      // decodeURIComponent refuses `%zz`; the database is decoded first, so nothing after it is set either.
+      const pasted = "mongodb://user:pass@localhost:27017/my%zzdb";
+      const result = parseConnectionString(pasted);
+      expect(result!.type).toBe("mongodb");
+      expect(result!.connectionString).toBe(pasted);
+      expect(result!.database).toBeUndefined();
+      expect(result!.host).toBeUndefined();
+    });
+
     test("handles mongodb URL without database path", () => {
       const result = parseConnectionString("mongodb://localhost:27017");
       expect(result!.type).toBe("mongodb");
