@@ -1186,9 +1186,11 @@ It needs no `watch`, and no `list` on Secrets.
 Studio mounts the export Secret read-only and points `SEED_KUBERNETES_DISCOVERY_PATH` at the `export.json` file in that mount.
 
 A Secret is exported only when it belongs to its Cluster.
-The `<name>-app` Secret must carry an ownerReference to the Cluster's UID or the label `cnpg.io/cluster=<name>`, as CloudNativePG writes it, and a Secret named by `.spec.bootstrap.initdb.secret.name` must be of type `kubernetes.io/basic-auth`, as CloudNativePG requires.
+A Secret tied to the Cluster, by an ownerReference to the Cluster's UID or the label `cnpg.io/cluster=<name>` as CloudNativePG writes them, belongs to it, and the `<name>-app` Secret must be tied that way.
+A Secret named by `.spec.bootstrap.initdb.secret.name` that is tied to nothing at all, with no ownerReference and no `cnpg.io/cluster` label, also belongs to it when it is of type `kubernetes.io/basic-auth`, as CloudNativePG requires.
+Any other Secret does not, another Cluster's `<name>-app` among them, which is of type `kubernetes.io/basic-auth` too but owned by that Cluster.
 Whoever may create a Cluster in a discovered namespace chooses the read-write Service Studio sends that Cluster's credentials to, so without this rule a Cluster could name another workload's Secret and have its credentials sent to a server of their choosing.
-A Secret that fails the rule is exported as `not_owned`, without its values.
+A Secret that fails the rule is exported as `not_owned`, without its values, and the connection of a Secret that passes always names the Secret the exporter read, which is the one the access review asks about.
 
 A 403 on a namespace's list, where the exporter's Role is missing, and a 404, where the CloudNativePG CRD is not installed, are answers about that namespace: its databases are withdrawn, the export says why, and the other namespaces are exported.
 Any other failure fails the whole scan: an unreachable API server, a 401, a 5xx or an answer that is not a list.

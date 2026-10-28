@@ -713,7 +713,41 @@ describe("Secret ownership", () => {
     ]);
   });
 
-  test("exports an initdb Secret only of type kubernetes.io/basic-auth", async () => {
+  // decisions: S3 Secret ownership, tightened. Another Cluster's <name>-app Secret is kubernetes.io/basic-auth too, so
+  // the type alone would let Cluster B name Cluster A's credentials and have them sent to B's read-write Service.
+  test("refuses an initdb Secret that belongs to another Cluster, by its owner or its label", async () => {
+    api.addCluster("team-a", "alpha");
+    api.addAppSecret("team-a", "alpha", DATA);
+    api.addSecret("team-a", "alpha-labelled", DATA, "kubernetes.io/basic-auth", {
+      labels: { "cnpg.io/cluster": "alpha" },
+    });
+    api.addSecret("team-a", "operator-owned", DATA, "kubernetes.io/basic-auth", {
+      ownerReferences: [
+        { apiVersion: "external-secrets.io/v1", kind: "ExternalSecret", name: "x", uid: "uid-external" },
+      ],
+    });
+    for (const [cluster, secret] of [
+      ["beta", "alpha-app"],
+      ["gamma", "alpha-labelled"],
+      ["delta", "operator-owned"],
+    ] as const) {
+      api.addCluster("team-a", cluster, { bootstrap: { initdb: { secret: { name: secret } } } });
+    }
+    const result = await scanOnce({ client: client(), config: config({ KUBERNETES_DISCOVERY_NAMESPACES: "team-a" }) });
+    expect(
+      result.databases.map((entry: { resource: { metadata: { name: string } }; secret: unknown }) => [
+        entry.resource.metadata.name,
+        entry.secret,
+      ]),
+    ).toEqual([
+      ["alpha", { name: "alpha-app", data: DATA }],
+      ["beta", { name: "alpha-app", problem: "not_owned" }],
+      ["gamma", { name: "alpha-labelled", problem: "not_owned" }],
+      ["delta", { name: "operator-owned", problem: "not_owned" }],
+    ]);
+  });
+
+  test("keeps a plain basic-auth initdb Secret with no owner and no label, and refuses one of another type", async () => {
     api.addCluster("team-a", "custom", { bootstrap: { initdb: { secret: { name: "custom-owner" } } } });
     api.addSecret("team-a", "custom-owner", DATA);
     api.addCluster("team-a", "opaque", { bootstrap: { initdb: { secret: { name: "app-config" } } } });
@@ -723,6 +757,33 @@ describe("Secret ownership", () => {
       { name: "custom-owner", data: DATA },
       { name: "app-config", problem: "not_owned" },
     ]);
+  });
+
+  test("keeps an initdb Secret this Cluster owns or labels, whatever its type", async () => {
+    api.addCluster("team-a", "mine", { bootstrap: { initdb: { secret: { name: "mine-owner" } } } });
+    api.addSecret("team-a", "mine-owner", DATA, "Opaque", { labels: { "cnpg.io/cluster": "mine" } });
+    api.addCluster("team-a", "held", { bootstrap: { initdb: { secret: { name: "held-owner" } } } });
+    api.addSecret("team-a", "held-owner", DATA, "Opaque", {
+      ownerReferences: [{ apiVersion: "postgresql.cnpg.io/v1", kind: "Cluster", name: "held", uid: "uid-team-a-held" }],
+    });
+    const result = await scanOnce({ client: client(), config: config({ KUBERNETES_DISCOVERY_NAMESPACES: "team-a" }) });
+    expect(result.databases.map((entry: { secret: unknown }) => entry.secret)).toEqual([
+      { name: "mine-owner", data: DATA },
+      { name: "held-owner", data: DATA },
+    ]);
+  });
+
+  test("the Secret Studio's review asks about is the Secret the exporter read", async () => {
+    api.addCluster("team-a", "billing-db", {
+      bootstrap: { initdb: { database: "billing", secret: { name: "billing-owner" } } },
+    });
+    api.addSecret("team-a", "billing-owner", DATA);
+    const result = await scanOnce({ client: client(), config: config({ KUBERNETES_DISCOVERY_NAMESPACES: "team-a" }) });
+    const secretReads = api.seen.filter((seen) => seen.path.includes("/secrets/")).map((seen) => seen.path);
+    expect(secretReads).toEqual(["/api/v1/namespaces/team-a/secrets/billing-owner"]);
+    const mapped = mapKubernetesDatabase(result.databases[0]);
+    if (!mapped.ok) throw new Error(mapped.reason);
+    expect(mapped.secret).toEqual({ namespace: "team-a", name: "billing-owner" });
   });
 
   test("writes and logs no value of a Secret it did not export", async () => {

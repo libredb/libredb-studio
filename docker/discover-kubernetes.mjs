@@ -11,7 +11,8 @@
  *   - it asks for three things only: a paged `list` of each contract kind per namespace, a `get` of each credential
  *     Secret by name, and a `get` and an `update` of the export Secret; it never lists Secrets and never watches;
  *   - it keeps a Secret only when it belongs to the resource that names it (an ownerReference or CloudNativePG's
- *     label, or the basic-auth type of an initdb Secret), so a Cluster cannot point it at another workload's Secret;
+ *     label naming it, or, for an initdb Secret tied to nothing, the basic-auth type), so a Cluster cannot point it at
+ *     another workload's Secret;
  *   - it keeps only the contract's keys of a Secret, decoded, each at most LIMITS.valueBytes and valid UTF-8, and of a
  *     resource only the contract's fields; it interprets nothing else: the mapping to a connection, the id rule,
  *     staleness and validation live in src/lib/seed/, where the coverage gate measures them;
@@ -67,18 +68,21 @@ export const CONTRACT = Object.freeze([
     },
     /**
      * Whether `secret` belongs to `cluster`, so a Cluster cannot point the exporter at another workload's Secret of
-     * its namespace: the `<name>-app` Secret must carry an ownerReference to the Cluster's UID or the label
-     * cnpg.io/cluster=<name>, as CloudNativePG writes it, and a Secret named by initdb must be of type
-     * kubernetes.io/basic-auth, as CloudNativePG itself requires.
+     * its namespace (decisions: S3 Secret ownership). A Secret tied to this Cluster, by an ownerReference to its UID
+     * or the label cnpg.io/cluster=<name> CloudNativePG writes, belongs to it. A Secret named by initdb that is tied
+     * to nothing at all, no ownerReference and no cnpg.io/cluster label, belongs to it when it is of type
+     * kubernetes.io/basic-auth, as CloudNativePG requires. Any other Secret does not: another Cluster's `<name>-app`
+     * is basic-auth too, and owned by that Cluster.
      */
     owns(secret, cluster) {
-      if (text(cluster?.spec?.bootstrap?.initdb?.secret?.name) !== undefined) {
-        return secret?.type === "kubernetes.io/basic-auth";
-      }
       const uid = text(cluster?.metadata?.uid);
       const references = Array.isArray(secret?.metadata?.ownerReferences) ? secret.metadata.ownerReferences : [];
-      const owned = uid !== undefined && references.some((reference) => reference?.uid === uid);
-      return owned || secret?.metadata?.labels?.["cnpg.io/cluster"] === cluster?.metadata?.name;
+      const label = secret?.metadata?.labels?.["cnpg.io/cluster"];
+      const ownedHere = uid !== undefined && references.some((reference) => reference?.uid === uid);
+      const labelledHere = typeof label === "string" && label === cluster?.metadata?.name;
+      if (ownedHere || labelledHere) return true;
+      if (text(cluster?.spec?.bootstrap?.initdb?.secret?.name) === undefined) return false;
+      return secret?.type === "kubernetes.io/basic-auth" && references.length === 0 && label === undefined;
     },
     /** The resource with only the fields the contract reads, or null when it has no namespace and name. */
     prune(resource) {

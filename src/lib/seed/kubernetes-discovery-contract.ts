@@ -86,7 +86,7 @@ export const CNPG_CLUSTER: KubernetesContractRow = Object.freeze({
   notOwned(resource: KubernetesDiscoveredResource, secretName: string): string {
     return present(resource.spec?.bootstrap?.initdb?.secret?.name) === undefined
       ? `the credential Secret ${secretName} is neither owned by the Cluster nor labelled cnpg.io/cluster=${resource.metadata.name}, so the exporter did not export it`
-      : `the credential Secret ${secretName} is not of type kubernetes.io/basic-auth, so the exporter did not export it`;
+      : `the credential Secret ${secretName} belongs to another resource or is not of type kubernetes.io/basic-auth, so the exporter did not export it`;
   },
   fields(resource: KubernetesDiscoveredResource, secretName: string, data: SecretData): Fields {
     const user = present(data.username);
