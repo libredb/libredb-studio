@@ -122,10 +122,10 @@ export const CONNECTION_STRING_PASTE_ORDER: readonly DatabaseType[] = Object.fre
   "clickhouse",
 ]);
 
-/** Two rows that may both claim one text, `first` walked first and so taking it, with a text both claim. */
+/** Two rows that may both claim one text, `first` walked first and so taking it from `second`, with a text both claim. */
 export interface PasteOverlap {
   readonly first: DatabaseType;
-  readonly then: DatabaseType;
+  readonly second: DatabaseType;
   readonly text: string;
 }
 
@@ -135,9 +135,9 @@ export interface PasteOverlap {
  * a new row that claims ClickHouse's `http://` is a pair nobody declared.
  */
 export const CONNECTION_STRING_PASTE_OVERLAPS: readonly PasteOverlap[] = Object.freeze([
-  { first: "databend", then: "snowflake", text: "BENDSQL_DSN=x.snowflakecomputing.com" },
-  { first: "snowflake", then: "mssql", text: "Server=x.snowflakecomputing.com" },
-  { first: "snowflake", then: "clickhouse", text: "https://x.snowflakecomputing.com" },
+  { first: "databend", second: "snowflake", text: "BENDSQL_DSN=x.snowflakecomputing.com" },
+  { first: "snowflake", second: "mssql", text: "Server=x.snowflakecomputing.com" },
+  { first: "snowflake", second: "clickhouse", text: "https://x.snowflakecomputing.com" },
 ]);
 
 /** One engine's paste reader, with the type it belongs to. */

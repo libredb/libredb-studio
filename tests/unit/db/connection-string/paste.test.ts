@@ -63,7 +63,7 @@ const DETECT_FIXTURES = [
 
 type Row = { readonly type: DatabaseType; readonly paste: ConnectionStringPaste };
 
-const DECLARED = new Set(CONNECTION_STRING_PASTE_OVERLAPS.map(({ first, then }) => `${first}, ${then}`));
+const DECLARED = new Set(CONNECTION_STRING_PASTE_OVERLAPS.map(({ first, second }) => `${first}, ${second}`));
 
 /**
  * The rows that claim `text`, in the order they are walked, and each pair of them the registry does not declare as an
@@ -126,11 +126,13 @@ describe("the paste order", () => {
   });
 
   test("each declared overlap names two rows in the order, the first walked first, and its text is claimed by both", () => {
-    for (const { first, then, text } of CONNECTION_STRING_PASTE_OVERLAPS) {
+    for (const { first, second, text } of CONNECTION_STRING_PASTE_OVERLAPS) {
       expect(CONNECTION_STRING_PASTE_ORDER.indexOf(first)).toBeGreaterThan(-1);
-      expect(CONNECTION_STRING_PASTE_ORDER.indexOf(then)).toBeGreaterThan(CONNECTION_STRING_PASTE_ORDER.indexOf(first));
+      expect(CONNECTION_STRING_PASTE_ORDER.indexOf(second)).toBeGreaterThan(
+        CONNECTION_STRING_PASTE_ORDER.indexOf(first),
+      );
       expect(claimants(CONNECTION_STRING_PASTES, pasteText(text), "claims")).toEqual({
-        taking: [first, then],
+        taking: [first, second],
         undeclared: [],
       });
       expect(parseConnectionString(text)?.type).toBe(first);
