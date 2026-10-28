@@ -1175,13 +1175,17 @@ describe("the golden fixture, end to end", () => {
 
 describe("as a program, under node", () => {
   const exporter = fileURLToPath(new URL("../../docker/discover-kubernetes.mjs", import.meta.url));
+  // The process environment without any exporter setting, so a developer's .env cannot change what a case runs.
+  const inherited = Object.fromEntries(
+    Object.entries(process.env).filter(([name]) => !name.startsWith("KUBERNETES_DISCOVERY_")),
+  );
 
   test("scans once, writes the export and exits 0", async () => {
     seedLab();
     const child = Bun.spawn(["node", exporter], {
       stdout: "pipe",
       stderr: "pipe",
-      env: { ...process.env, ...api.env() },
+      env: { ...inherited, ...api.env() },
     });
     expect(await child.exited).toBe(0);
     expect(await new Response(child.stdout).text()).toContain(
@@ -1194,7 +1198,7 @@ describe("as a program, under node", () => {
     const child = Bun.spawn(["node", exporter], {
       stdout: "pipe",
       stderr: "pipe",
-      env: { ...process.env, ...api.env({ KUBERNETES_DISCOVERY_INTERVAL_MS: "10" }) },
+      env: { ...inherited, ...api.env({ KUBERNETES_DISCOVERY_INTERVAL_MS: "10" }) },
     });
     expect(await child.exited).toBe(2);
     expect(await new Response(child.stderr).text()).toContain("KUBERNETES_DISCOVERY_INTERVAL_MS must be an integer");
@@ -1206,7 +1210,7 @@ describe("as a program, under node", () => {
     const child = Bun.spawn(["node", exporter], {
       stdout: "pipe",
       stderr: "pipe",
-      env: { ...process.env, ...api.env({ KUBERNETES_DISCOVERY_ONCE: "" }) },
+      env: { ...inherited, ...api.env({ KUBERNETES_DISCOVERY_ONCE: "" }) },
     });
     try {
       await eventually(() => api.seen.length === 1, "the first request", 5000);
