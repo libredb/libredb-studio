@@ -8,14 +8,15 @@ import type { SqlGrammar, SqlGrammarSpec } from "@/lib/db/sql-grammar/types";
  * name and neither `[` nor a backtick does. Each fact was measured on 2026-10-28 on apache/druid:37.0.0 over
  * `POST /druid/v2/sql` on the Router, the endpoint the provider sends on.
  *
- * Four readings are left at the shared reader's, each in the fail-safe direction and each measured. A quote after a
- * backslash in a `'…'` literal is unresolved to the span reader: Druid closes a plain literal there (`SELECT 'a\' AS
- * a` answers `a\`) but escapes in an `E'…'` literal (`SELECT E'it\'s' AS a` answers `it's`). A `"…"` run holding a line
- * feed is one name to the span reader, and Druid refuses it (`QUOTED_IDENTIFIER` excludes `\n` and `\r`). A backtick
- * run is a name to the span reader, and Druid refuses the character (`Lexical error ... Encountered: "`"`). And an
- * untagged `$$` run is a dollar string to the span reader, while Druid reads `$` as an identifier character
- * (`SELECT $$x$$ AS a` is "Column '$$x$$' not found"), so text the run holds is either refused with it or, after a
- * `--` or `//` inside the run, a comment Druid reads where the span reader reads code.
+ * Four readings are left at the shared reader's, each measured, and all but the last in the fail-safe direction. A
+ * quote after a backslash in a `'…'` literal is unresolved to the span reader: Druid closes a plain literal there
+ * (`SELECT 'a\' AS a` answers `a\`) but escapes in an `E'…'` literal (`SELECT E'it\'s' AS a` answers `it's`). A `"…"`
+ * run holding a line feed is one name to the span reader, and Druid refuses it (`QUOTED_IDENTIFIER` excludes `\n` and
+ * `\r`). A backtick run is a name to the span reader, and Druid refuses the character (`Lexical error ... Encountered:
+ * "`"`). And an untagged `$$` run is a dollar string to the span reader, while Druid reads `$` as an identifier
+ * character (`SELECT $$x$$ AS a` is "Column '$$x$$' not found"), so text the run holds is either refused with it or,
+ * after a `--` or `//` inside the run, a comment Druid reads where the span reader reads code. That last reading is not
+ * fail-safe: the limiter can write its bound inside such a comment and report the statement bounded.
  */
 const DRUID_GRAMMAR: SqlGrammar = {
   // CODE: the lexer has no `#` token, and `SELECT 1 AS a # note` is 400 "Lexical error ... Encountered: \"#\"".

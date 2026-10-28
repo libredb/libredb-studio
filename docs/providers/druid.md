@@ -1019,11 +1019,12 @@ Every fact was read off that lexer and grammar, and each was probed on 2026-10-2
 | clauses after the row bound | an `OFFSET` may end in `ROW` or `ROWS`, so a `LIMIT` before `OFFSET n ROWS` is read as the bound | `SELECT 1 AS a LIMIT 5 OFFSET 0 ROWS` answers the row, and a `LIMIT 500` after it is 400 "Received an unexpected token [LIMIT]" |
 | non-numeric bounds | `LIMIT ALL` is the statement's own bound, meaning none | `SELECT 1 AS a LIMIT ALL` answers the row, `... LIMIT ALL LIMIT 500` is a syntax error, `LIMIT NULL` is a syntax error |
 
-Four readings stay the shared reader's, each in the fail-safe direction.
+Four readings stay the shared reader's, and the first three are in the fail-safe direction.
 A quote after a backslash in a `'…'` literal is unresolved to the span reader, because Druid closes a plain literal there and escapes in an `E'…'` literal, so such a statement asks for a confirmation and is not bounded.
 A `"…"` run holding a line feed is one name to the span reader, while Druid refuses it, because its quoted identifier excludes `\n` and `\r`.
 A backtick run is a name to the span reader, while Druid refuses the character: ``SELECT 1 AS `a` `` is a lexical error.
 An untagged `$$` run is a dollar string to the span reader, while Druid reads `$` as an identifier character (`SELECT $$x$$ AS a` is "Column '$$x$$' not found"), so text the run holds is refused with it, or, after a `--` or `//` inside the run, is a comment Druid reads where the span reader reads code; Druid SQL has no statement that writes ([§5.5](#55-druid-sql-cannot-write-and-the-server-says-so-clearly)), so the most such a run can cost is a bound.
+That reading is not fail-safe: `SELECT id AS $$ FROM libredb_demo -- $$` gets its `LIMIT` appended after the `-- $$`, inside Druid's comment, and the limiter still reports a bounded read (docs/BACKLOG.md S3).
 `readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.
 Redaction is `none`: a redacted statement is stored as `?`, because no Druid SQL redaction reader exists, and a reader guessing where a literal ends can store the literal.
 

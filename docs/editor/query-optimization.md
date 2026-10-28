@@ -337,7 +337,9 @@ Some dialects have a clause that is written **after** the row bound and refused 
 (#1398). The dialect grammar declares them: `AS OF [AT LEAST] <t>` for Materialize's
 `postgres` route, `ALLOW FILTERING`, `BYPASS CACHE` and `USING TIMEOUT <duration>` for the
 `cassandra` type-id (Apache Cassandra and ScyllaDB), `FORMAT <name>` for Databend, `FOR UPDATE [NOWAIT | WAIT <n>]` for Snowflake, `OFFSET n` for Apache Spark and the `ROW` or `ROWS` that may end an `OFFSET n` for Druid.
-The bound is placed **before** the declared run, which is re-attached verbatim:
+The bound is placed **before** the declared run, which is re-attached verbatim.
+A Druid `OFFSET n ROWS` with no `LIMIT` is the exception: the shared limiter would write the bound inside the `OFFSET` clause, so the Druid provider leaves that statement unbounded and never rewrites it.
+
 
 | Statement | Emitted SQL |
 |-----------|-------------|

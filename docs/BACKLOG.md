@@ -73,6 +73,11 @@ Those fixtures need shapes that stay unresolvable once `\` is understood before 
 - **MySQL connection charset.** On a `latin1` connection a leading U+00A0 executes. `buildPoolConfig`
   passes the user's connection string straight to mysql2 as `uri`, so the charset is outside the
   readers' view.
+- **Druid's untagged `$$`.** The span reader reads an untagged `$$ … $$` run as a dollar string on every
+  dialect, and Druid reads `$` as an identifier character. So in `SELECT id AS $$ FROM libredb_demo -- $$`
+  Druid sees a `--` comment where the reader sees a string, and the limiter writes its bound inside that
+  comment and reports the read as bounded. Druid SQL cannot write, so the cost is an unbounded read.
+  Closing it needs a grammar fact that turns the untagged form off, a change to the shared reader.
 
 ### S4. MSSQL: a parameterised page is still unrecognised
 

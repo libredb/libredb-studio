@@ -98,6 +98,10 @@ describe("the Druid SQL grammar", () => {
   test("a backtick quotes nothing, and the reader's name reading costs only text Druid refuses", () => {
     // `SELECT 1 AS \`a\`` is 400 "Lexical error ... Encountered: \"`\"".
     expect(grammar.backtickBackslashEscapes).toBeUndefined();
+    // The span reader still reads a backtick run as a quoted name, so a `--` inside one is name text and the bound is
+    // written before the comment after it. Druid refuses the statement either way.
+    expect(readSqlSpan("`a`", 0, grammar)).toEqual({ kind: "quoted-identifier", end: 3, terminated: true });
+    expect(limited("SELECT `a--` FROM t -- `").sql).toBe("SELECT `a--` FROM t LIMIT 500 -- `");
   });
 
   test("a carriage return ends a line comment, and a backslash does not continue one", () => {
