@@ -234,6 +234,28 @@ describe("a failed statement is told what the table actually holds", () => {
     expect(told).toContain("is not one of them");
   });
 
+  test("but an alias over a column no table holds is answered with the engine's words alone", async () => {
+    // Nothing in the inventory names it, so there is no table to point the join at, and a
+    // sentence saying so would lead nowhere: the inventory is already in the prompt.
+    const run = await open({
+      answer: async () => {
+        throw new QueryError("no such column: e.salary_band");
+      },
+    });
+    const scripted = scriptedModel(
+      callsTool("run_read_query", { sql: "SELECT e.salary_band FROM engineering e", rationale: "count" }),
+      answersProse("I could not read that."),
+      answersProse("done"),
+    );
+
+    await run.driveModel(await modelOver(scripted.fetch, "https://api.openai.com/v1", "granite4.1:8b"));
+
+    const told = scripted.turns.at(-1)?.transcript ?? "";
+    expect(told).toContain("no such column: e.salary_band");
+    expect(told).not.toContain("salary_band is in");
+    expect(told).not.toContain("is not one of them");
+  });
+
   test("and the ledger records that answering it is what made the attempt free", async () => {
     /*
       The other half of the same decision, and the half a reader of the ledger could not see.

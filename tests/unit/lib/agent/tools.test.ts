@@ -4251,6 +4251,23 @@ describe("recommendChangeTool — a change the run proposes and does not make", 
     expect(outcome.reasonCode).toBe("INVALID_TOOL_INPUT");
   });
 
+  test("and a one-key wrapper whose value carries no source is left for the schema to refuse", () => {
+    // Unwrapping is for a REFERENCE one level down. A bare id under a key is not one, and
+    // promoting it would hand the schema something the model never wrote.
+    const h = harness();
+
+    const outcome = recommendChangeTool(h.context, run, {
+      change: "index",
+      statement: INDEX_DDL,
+      rationale: "the filtered column has no index",
+      evidence: [{ artifact: { correlationId: "corr-1" } }],
+    });
+
+    if (outcome.kind === "recommended") throw new Error("expected a refusal");
+    expect(outcome.reasonCode).toBe("INVALID_TOOL_INPUT");
+    expect(outcome.detail).toContain("evidence.0.source");
+  });
+
   test("evidence serialized as a string is read, the same reading claims already get", () => {
     /*
       Captured 2026-09-17 on `llama3.1:8b`, optimize: the call is otherwise perfect - `change` is
@@ -4807,6 +4824,14 @@ describe("profileTableTool — the model names a table, the server decides the r
 
     if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
     expect(outcome.reasonCode).toBe("TABLE_NOT_INVENTORIED");
+  });
+
+  test("a run that captured no inventory refuses every table, and offers no names it never read", () => {
+    const outcome = planTableProfile(harness().context, { runId: "run-1", events: [] }, { table: "orders" });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
+    expect(outcome.reasonCode).toBe("TABLE_NOT_INVENTORIED");
+    expect(outcome.detail).toBeUndefined();
   });
 
   test("a table the inventory does not list is answered with names it does list", () => {

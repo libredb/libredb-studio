@@ -221,6 +221,40 @@ describe("a profile's artifact is an artifact like any other", () => {
   });
 });
 
+describe("a table wider than one profile batch", () => {
+  test("is profiled sixteen columns at a time, and the answer says where the next batch starts", async () => {
+    const columns = Array.from({ length: 20 }, (_unused, index) => ({
+      name: `c${index}`,
+      type: "text",
+      nullable: "YES",
+    }));
+    const counts: Record<string, unknown> = { row_count: 10 };
+    for (let index = 0; index < 16; index += 1) counts[`present_${index}`] = 10;
+    const run = await openEvalRun({
+      workflowType: "database-assessment",
+      objective: "Assess this database.",
+      catalogAnswer: (sql) =>
+        sql.includes("information_schema.columns")
+          ? {
+              rows: [{ table_schema: "public", table_name: "wide", columns }],
+              fields: ["table_schema", "table_name", "columns"],
+              rowCount: 1,
+              executionTime: 3,
+            }
+          : null,
+      answer: async () => ({ rows: [counts], fields: Object.keys(counts), rowCount: 1, executionTime: 5 }),
+    });
+    runs.push(run);
+
+    const drive = await run.drive([profiles("wide"), answersProse("Profiled."), answersProse("Profiled.")]);
+
+    expect(drive.kinds).toContain("table-profiled");
+    expect(drive.transcripts[1]).toContain(
+      "4 further column(s) are NOT covered by this profile; call profile_table again with fromColumn=16 to reach them.",
+    );
+  });
+});
+
 describe("a profile can only be aimed at a table the run has inventoried", () => {
   test("a table the schema capture never returned is refused before any database reach", async () => {
     const run = await open("postgres");

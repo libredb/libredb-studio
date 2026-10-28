@@ -2477,6 +2477,26 @@ describe("captureContextSnapshot — the object surface that says what each entr
     expect(snapshot.objects.filter((object) => object.kind !== undefined)).toHaveLength(1_000);
   });
 
+  test("more objects than the inventory may hold stops the listing at the object limit, and says so", async () => {
+    const snapshot = await inventoryOf(
+      objectHarness({
+        containers: () => [{ path: ["app"], name: "app", level: 0 }],
+        counts: () => ({ table: { count: 5_200 }, view: { count: 0 }, function: { count: 0 } }),
+        objects: (container, kind) =>
+          kind === "table"
+            ? Array.from({ length: 5_200 }, (_unused, index) => ({
+                path: [...container, `t_${index}`],
+                name: `t_${index}`,
+                kind,
+              }))
+            : [],
+      }),
+    );
+
+    expect(snapshot.truncated).toEqual({ limit: 5_000, reason: "inventory limit reached" });
+    expect(snapshot.objects.filter((object) => object.kind === "table")).toHaveLength(5_000);
+  });
+
   /**
    * An engine that declares no kind has nothing to list, and on this path that is the WHOLE
    * inventory rather than a missing label (#789).
@@ -3015,6 +3035,18 @@ describe("an inventory that knows what its objects ARE", () => {
     });
 
     expect(asTable).not.toBe(asView);
+  });
+
+  test("a table whose indexes could not be read does not fingerprint like one that has none", () => {
+    const columns = [{ name: "id", type: "integer", nullable: false, isPrimary: true }];
+    const inventory = (indexes: readonly never[] | { readonly unavailable: string }) =>
+      fingerprintInventory({
+        objects: [{ path: ["app", "orders"], name: "orders", kind: "table", columns, indexes, foreignKeys: [] }],
+      });
+    const refused = { unavailable: "Not enough privileges to read the index list" };
+
+    expect(inventory(refused)).not.toBe(inventory([]));
+    expect(inventory(refused)).toBe(inventory({ ...refused }));
   });
 
   test("two readings of one kinded inventory still agree, which is what the reuse is keyed on", () => {
