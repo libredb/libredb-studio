@@ -16,7 +16,7 @@
 import { describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, normalize } from "node:path";
+import { join, posix } from "node:path";
 
 const ROOT = join(import.meta.dir, "..", "..", "..");
 const SOURCE_FILE = /\.(c|m)?(t|j)sx?$/;
@@ -48,7 +48,8 @@ export function importedPaths(path: string, text: string): string[] {
   for (const match of text.matchAll(IMPORT_SPECIFIER)) {
     const specifier = match[1];
     if (specifier.startsWith("@/")) paths.push(`src/${specifier.slice(2)}`);
-    else if (specifier.startsWith(".")) paths.push(normalize(join(dirname(path), specifier)));
+    // Repository paths use "/" on every platform, so a relative import resolves with posix rules.
+    else if (specifier.startsWith(".")) paths.push(posix.normalize(posix.join(posix.dirname(path), specifier)));
   }
   return paths;
 }
