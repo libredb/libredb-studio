@@ -8,7 +8,8 @@
  *
  * The answer is a trust boundary: an allowed review opens a database's credentials to a person. So it is `allowed` only
  * for a 2xx `SubjectAccessReview` that echoes the asked user and says `allowed: true` without `denied: true`, and every
- * other outcome is `failed`, which every caller treats as a deny: a setting, token or CA that cannot be used, a
+ * other outcome is `failed`, which every caller treats as a deny: a setting, token or CA that cannot be used (a CA
+ * file without a PEM certificate included, so no runtime falls back to its public roots), a
  * connection or TLS failure, the two-second deadline, a status that is not 2xx (a redirect is never followed), and a
  * body that is not JSON, too large, of another kind or for another user. A failure names its reason and, for a status,
  * the status, and never the token, the groups or the object.
@@ -54,6 +55,8 @@ const REVIEW_TIMEOUT_MS = 2000;
 /** A review's answer is a few hundred bytes; anything this large is not one. */
 const MAX_RESPONSE_BYTES = 64 * 1024;
 const REVIEW_PATH = "/apis/authorization.k8s.io/v1/subjectaccessreviews";
+/** What a PEM CA bundle holds at least once. */
+const CERTIFICATE_BLOCK = "-----BEGIN CERTIFICATE-----";
 
 const ALLOWED: ReviewOutcome = Object.freeze({ kind: "allowed" });
 const DENIED: ReviewOutcome = Object.freeze({ kind: "denied" });
@@ -180,8 +183,10 @@ export async function requestAccessReview(
   }
   const token = (await readText(accessReviewTokenPath()))?.trim();
   if (!token) return failed("token");
+  // A `ca` without a certificate must never reach node:https: depending on the runtime an empty one is ignored, and
+  // the public roots would then vouch for the API server. So it fails here, before any connection.
   const ca = await readText(accessReviewCaPath());
-  if (ca === null) return failed("ca");
+  if (ca === null || !ca.includes(CERTIFICATE_BLOCK)) return failed("ca");
 
   const body = JSON.stringify({
     apiVersion: "authorization.k8s.io/v1",

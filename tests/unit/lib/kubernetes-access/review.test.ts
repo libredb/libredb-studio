@@ -198,12 +198,24 @@ describe("the TLS check", () => {
     expect(api.seen).toHaveLength(0);
   });
 
-  test("a CA file that holds no certificate fails, and gets no request", async () => {
-    writeFileSync(api.caPath, "not a certificate");
-    const outcome = await requestAccessReview(DEV_A, SECRET);
-    expect(outcome.kind).toBe("failed");
+  // An empty or certificate-less `ca` must never reach node:https: depending on the runtime it is ignored, and the
+  // public roots would then vouch for the API server. It fails as a CA problem before any connection.
+  test.each([
+    ["empty", ""],
+    ["blank", " \n\t"],
+    ["not a certificate", "not a certificate"],
+    ["a PEM block of another kind", "-----BEGIN PUBLIC KEY-----\nbm90IGEga2V5\n-----END PUBLIC KEY-----\n"],
+  ])("a CA file that is %s fails as a CA problem, and no connection is made", async (_case, text) => {
+    writeFileSync(api.caPath, text);
+    expect(await requestAccessReview(DEV_A, SECRET)).toEqual({ kind: "failed", reason: "ca" });
     expect(api.seen).toHaveLength(0);
   });
+});
+
+test("a CA file whose certificate is damaged fails before any request reaches the server", async () => {
+  writeFileSync(api.caPath, "-----BEGIN CERTIFICATE-----\nbm90IGEgY2VydGlmaWNhdGU=\n-----END CERTIFICATE-----\n");
+  expect(await requestAccessReview(DEV_A, SECRET)).toEqual({ kind: "failed", reason: "tls" });
+  expect(api.seen).toHaveLength(0);
 });
 
 test("an address nothing listens on fails as a network failure", async () => {
