@@ -201,6 +201,7 @@ A seed that sets `connectionString` or `readOnly: true` for `spark` is refused w
 ### Connection string
 
 Apache Spark has no connection string scheme, no `readTls` and no seed load check ([`connection-string.ts`](../../src/lib/db/providers/sql/spark/connection-string.ts)).
+Its `paste` claims `sc://`, read by `parseSparkConnectUri`, and `jdbc:sc://`, which it refuses; `detectConnectionStringType` names no type for either.
 It has no scheme on purpose, though its `sc://` address is pasted and decomposed by `parseSparkConnectUri`: the login signature prints every scheme with the tail `user@db.internal:<port>/app`, and Spark's grammar refuses both a user part and a path, so the hero would show an address the product refuses.
 
 ### Execution UI

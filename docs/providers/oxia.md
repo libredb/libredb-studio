@@ -314,7 +314,7 @@ The URL is not pasted whole: type `host` in Host, `6648` in Port and `ns` in Nam
 
 ### Connection string
 
-`oxia` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/keyvalue/oxia/connection-string.ts)).
+`oxia` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/keyvalue/oxia/connection-string.ts)).
 
 ### Execution UI
 

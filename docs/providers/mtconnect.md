@@ -212,7 +212,7 @@ It is a path only: a query, a fragment, percent-encoding, a space or an empty, `
 
 ### Connection string
 
-`mtconnect` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/industrial/mtconnect/connection-string.ts)).
+`mtconnect` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/industrial/mtconnect/connection-string.ts)).
 
 ### Execution UI
 

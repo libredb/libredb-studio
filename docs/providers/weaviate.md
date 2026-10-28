@@ -168,7 +168,7 @@ Weaviate Cloud and DigitalOcean Managed Weaviate are claimed nowhere until a tes
 
 ### Connection string
 
-`weaviate` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/vector/weaviate/connection-string.ts)).
+`weaviate` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/vector/weaviate/connection-string.ts)).
 
 ### Execution UI
 

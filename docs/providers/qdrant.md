@@ -189,7 +189,7 @@ Its strict mode answers "Limit exceeded", "Index required but not found", "Exact
 
 ### Connection string
 
-`qdrant` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/vector/qdrant/connection-string.ts)).
+`qdrant` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/vector/qdrant/connection-string.ts)).
 
 ### Execution UI
 

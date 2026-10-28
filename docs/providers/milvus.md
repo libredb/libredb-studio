@@ -209,7 +209,7 @@ A search that names no metric and no search parameter runs without the IndexDeta
 
 ### Connection string
 
-`milvus` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/vector/milvus/connection-string.ts)).
+`milvus` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/vector/milvus/connection-string.ts)).
 
 ### Execution UI
 

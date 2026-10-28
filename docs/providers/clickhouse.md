@@ -780,6 +780,7 @@ redirect would take the Basic credential and the statement to wherever the serve
 
 The scheme shown for ClickHouse is `clickhouse://`, and the parser also accepts `http://` and `https://`.
 Its row in `CONNECTION_STRING` is declared in [`connection-string.ts`](../../src/lib/db/providers/sql/clickhouse/connection-string.ts).
+Its `paste` claims `clickhouse://`, `http://` and `https://`, and it is the one catch-all row: it takes an `http://` or `https://` text only when no other row claims that text as its own, so an `https://` URL on a Snowflake host stays Snowflake's.
 It has no `readTls`: `clickhouse://` names no transport and leaves the form's SSL mode alone, while for `http(s)://` the scheme is the transport and already decided, `disable` for `http://` and `require` for `https://`.
 It runs no seed load check.
 

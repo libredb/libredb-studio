@@ -259,7 +259,7 @@ That identity's RBAC decides what the agent can see, so give it a ServiceAccount
 
 ### Connection string
 
-`kubernetes` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/platform/kubernetes/connection-string.ts)).
+`kubernetes` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/platform/kubernetes/connection-string.ts)).
 
 ### Execution UI
 

@@ -171,7 +171,7 @@ the connection under Node, and under Bun it never reaches the application.
 
 ### Connection string
 
-`modbus` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/industrial/modbus/connection-string.ts)).
+`modbus` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/industrial/modbus/connection-string.ts)).
 
 ### Execution UI
 

@@ -188,7 +188,7 @@ A tunnel is offered; through it, the plaintext rule judges and the TLS identity 
 
 ### Connection string
 
-`influxdb3` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`influxdb3-connection-string.ts`](../../src/lib/db/providers/timeseries/influxdb/influxdb3-connection-string.ts)).
+`influxdb3` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`influxdb3-connection-string.ts`](../../src/lib/db/providers/timeseries/influxdb/influxdb3-connection-string.ts)).
 
 ### Execution UI
 

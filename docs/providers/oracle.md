@@ -501,6 +501,7 @@ addition.
 
 The scheme shown for Oracle is `oracle://`.
 Its row in `CONNECTION_STRING` is declared in [`oracle-connection-string.ts`](../../src/lib/db/providers/sql/oracle-connection-string.ts).
+Its `paste` claims `oracle://`, with port 1521 by default.
 It has no `readTls`, so a pasted `oracle://` URL carries no SSL mode into the form, and it runs no seed load check.
 
 ### Execution UI

@@ -147,6 +147,7 @@ Then paste `ca.arm` (it is PEM) into the SSL panel's CA certificate field, set t
 
 The scheme shown for Db2 is `db2://`.
 Its row in `CONNECTION_STRING` is declared in [`connection-string.ts`](../../src/lib/db/providers/sql/db2/connection-string.ts).
+Its `paste` claims `db2://`, with port 50000 by default.
 Its `readTls` reads `security` first and the boolean `ssl` only without it (#786).
 `security=SSL` is the keyword Db2's own CLI and JDBC drivers read, and it maps to `verify-system`, a verifying mode, because the Db2 provider fails closed on unverified transport: without TLS the password crosses the network in cleartext.
 `ssl` maps `true` and `1` onto that same mode, and `false` and `0` onto `disable`.

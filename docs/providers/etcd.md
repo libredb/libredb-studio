@@ -229,7 +229,7 @@ Typed commands and the surfaces that walk no key (the member, lease, user and ro
 
 ### Connection string
 
-`etcd` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/keyvalue/etcd/connection-string.ts)).
+`etcd` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/keyvalue/etcd/connection-string.ts)).
 
 ### Execution UI
 

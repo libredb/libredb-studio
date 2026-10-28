@@ -161,7 +161,7 @@ Through an SSH tunnel the certificate is checked against the broker the user nam
 
 ### Connection string
 
-`sparkplug` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/industrial/sparkplug/connection-string.ts)).
+`sparkplug` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/industrial/sparkplug/connection-string.ts)).
 
 ### Execution UI
 

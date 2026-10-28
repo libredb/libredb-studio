@@ -249,6 +249,7 @@ It refuses the file with `Seed connection "<id>": <field> is refused: <sentence>
 ### Connection string
 
 Snowflake has no connection string scheme and no `readTls` ([`connection-string.ts`](../../src/lib/db/providers/sql/snowflake/connection-string.ts)); a pasted URL is read as section 2.6 describes.
+Its `paste` claims a `jdbc:snowflake://` or `snowflake://` URL, an `https://` URL on a Snowflake host or Snowsight, and a bare Snowflake host ([`paste.ts`](../../src/lib/db/providers/sql/snowflake/paste.ts)).
 Its `validateSeed` runs at seed load the checks its provider makes in `connect()` before any socket, each skipped for a field that holds a `${...}` reference, and every refusal is the provider's own sentence.
 The checks are, in order: `host`, the account, by `checkSnowflakeAccount`; `user`, which may not be empty; `authMethod`, which must be `keypair` (the default) or `pat`; `privateKey`, which a key pair needs; `password`, which holds the token `pat` needs; and `role`, which may not be empty.
 

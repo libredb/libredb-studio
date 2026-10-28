@@ -8,7 +8,7 @@
 >
 > The Strategy Pattern keeps provider *logic* self-contained: no route, no shared component and no
 > existing provider needs to know your engine exists. It does not remove the integration work. The
-> union, the exhaustive UI maps, the factory, the connection-string parser, the query generators and
+> union, the exhaustive UI maps, the factory, the connection-string registry, the query generators and
 > the explain registry each carry one entry per provider, and Couchbase touched every one of them.
 
 ---
@@ -1111,7 +1111,7 @@ The integration points, all of which need an entry. This is the list the Strateg
 - [ ] `src/lib/db/connection-form.ts`: the type's `CONNECTION_FORM` entry, with its label, default port and fields
 - [ ] `src/lib/db-ui-config.ts`: the icon and colour, as `branded(CONNECTION_FORM.<type>, <Icon>, "<colour>")`
 - [ ] `src/lib/db/connection-fields.ts`: the type's row of `CONNECTION_FIELDS`, which the entry's `connectionFields` reads by reference, and its row of `SEED_ONLY_FIELDS`, which is `null` unless only this engine's provider reads a field
-- [ ] `src/lib/db/providers/<family>/<type-id>/connection-string.ts` (or `<type-id>-connection-string.ts` beside a flat provider file): **new:** the type's `ConnectionStringSpec`, with its scheme, `readTls` and `validateSeed`, each `null` when the engine has none; add its row to `CONNECTION_STRING` in `src/lib/db/connection-string/index.ts` and run `UPDATE_GOLDEN=1` for `tests/unit/db/connection-string/golden.test.ts` and `tests/unit/db/connection-form/golden.test.tsx`
+- [ ] `src/lib/db/providers/<family>/<type-id>/connection-string.ts` (or `<type-id>-connection-string.ts` beside a flat provider file): **new:** the type's `ConnectionStringSpec`, with its scheme, `readTls`, `paste` and `validateSeed`, each `null` when the engine has none; add its row to `CONNECTION_STRING` in `src/lib/db/connection-string/index.ts`. A `paste` claims only the engine's own spellings, names the ones `detectConnectionStringType` reports, and parses them; list its type in `CONNECTION_STRING_PASTE_ORDER` in the same file, where `tests/unit/db/connection-string/paste.test.ts` refuses a row that claims another engine's text. `src/lib/connection-string-parser.ts` is not edited and run `UPDATE_GOLDEN=1` for `tests/unit/db/connection-string/golden.test.ts` and `tests/unit/db/connection-form/golden.test.tsx`
 - [ ] `src/lib/db/providers/<family>/<type-id>/execution-ui.ts` (or `<type-id>-execution-ui.ts` beside a flat provider file): **new:** the type's `ExecutionUiSpec`, its `commitKeyword` (`SQL_COMMIT_KEYWORD` unless the engine keeps a transaction with another keyword) and `consentDeadline` (`null` unless a long read ends differently on it); add its row to `EXECUTION_UI` in `src/lib/db/execution-ui/index.ts` and run `UPDATE_GOLDEN=1` for `tests/unit/db/execution-ui/golden.test.tsx`
 - [ ] `src/lib/db/connection-form.ts`: **append** to `CONNECTION_PICKER_ORDER` (do not retype the array)
 - [ ] `src/components/icons/db-icons.tsx` — the engine's mark (`strokeWidth={1.5}`, no HTML size attrs)

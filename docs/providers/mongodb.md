@@ -408,7 +408,8 @@ before the mode reached the driver `require` failed the same way `disable` does.
 
 The scheme shown for MongoDB is `mongodb://`, and the parser also accepts `mongodb+srv://`.
 Its row in `CONNECTION_STRING` is declared in [`connection-string.ts`](../../src/lib/db/providers/document/mongodb/connection-string.ts).
-It has no `readTls`: the URI's `tls`, `ssl`, `tlsInsecure`, `tlsAllowInvalidCertificates` and `tlsCAFile` options are read by `readMongoTLS` in `src/lib/connection-string-parser.ts` instead, as described under `tls=true` in a pasted URI (D26).
+Its `paste` claims `mongodb://` and `mongodb+srv://`, and keeps the pasted URI as the connection string.
+It has no `readTls`: the URI's `tls`, `ssl`, `tlsInsecure`, `tlsAllowInvalidCertificates` and `tlsCAFile` options are read by `readMongoTLS` in its row's module instead, as described under `tls=true` in a pasted URI (D26).
 It runs no seed load check.
 
 ### Execution UI

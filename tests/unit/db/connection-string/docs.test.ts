@@ -9,7 +9,8 @@ import type { DatabaseType } from "@/lib/types";
  * The provider triad's connection string leg: every provider document carries one `Connection string` subsection, at
  * whatever level the document's own scheme gives it, and that subsection says what the engine's `CONNECTION_STRING`
  * row declares. The scheme it shows (or that it shows none), each query parameter its `readTls` reads (or that it has
- * no `readTls`), each field its `validateSeed` refuses (or that it runs no seed load check), and each field its
+ * no `readTls`), whether its `paste` reads a pasted connection string (or that it has no `paste`), each field its
+ * `validateSeed` refuses (or that it runs no seed load check), and each field its
  * `SEED_ONLY_FIELDS` entry refuses on every other engine.
  */
 
@@ -95,6 +96,12 @@ describe("each provider document's Connection string subsection", () => {
         expect(params).toBeDefined();
         const spans = codeSpans(section);
         for (const param of params ?? []) expect(spans.has(param)).toBe(true);
+      });
+
+      test("says what its paste claims, or that it has no paste", () => {
+        const section = sectionOf(type);
+        if (spec.paste === null) expect(section).toContain("no `paste`");
+        else expect(section).toContain("Its `paste` claims");
       });
 
       test("names each field its validateSeed refuses, or says it runs no seed load check", () => {

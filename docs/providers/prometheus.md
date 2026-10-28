@@ -384,7 +384,7 @@ The host field cannot carry the prefix instead: a host holding `/` is refused be
 
 ### Connection string
 
-`prometheus` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/timeseries/prometheus/connection-string.ts)).
+`prometheus` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/timeseries/prometheus/connection-string.ts)).
 
 ### Execution UI
 

@@ -345,6 +345,7 @@ to the newer name would change the wording on the form without changing a single
 
 The scheme shown for SQL Server is `mssql://`, and the parser also accepts `sqlserver://` and the ADO.NET `Server=...;` form.
 Its row in `CONNECTION_STRING` is declared in [`mssql-connection-string.ts`](../../src/lib/db/providers/sql/mssql-connection-string.ts).
+Its `paste` claims `mssql://`, `sqlserver://` and the ADO.NET keyword form, whose `Server=` key is matched in any case, with port 1433 by default.
 Its `readTls` reads the ADO.NET pair `Encrypt` and `TrustServerCertificate` from the URL query, by the same `readADONetTLS` the ADO.NET form is read with.
 `Encrypt` on with `TrustServerCertificate` on is `require`: encrypted, chain unchecked.
 `Encrypt` on with `TrustServerCertificate` off or absent, the documented default, validates the chain and the name, so `verify-full`.

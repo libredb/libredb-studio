@@ -144,7 +144,7 @@ A `readOnly: true` seed with the `guest`/`guest` pair is refused, as the dialog 
 
 ### Connection string
 
-`rabbitmq` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/stream/rabbitmq/connection-string.ts)).
+`rabbitmq` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/stream/rabbitmq/connection-string.ts)).
 
 ### Execution UI
 

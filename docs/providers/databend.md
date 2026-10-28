@@ -446,7 +446,8 @@ The live check passed on v1.2.881 for everything it covers except materialized v
 
 The scheme shown for Databend is `databend://`, and the parser also accepts `databend+http://` and `databend+https://`.
 Its row in `CONNECTION_STRING` is declared in [`connection-string.ts`](../../src/lib/db/providers/sql/databend/connection-string.ts).
-It has no `readTls`: `parseDatabendDSN` in `src/lib/connection-string-parser.ts` reads a DSN's `sslmode` itself, by BendSQL's own rules.
+Its `paste` claims `databend://`, `databend+http://` and `databend+https://`, and refuses by name a `BENDSQL_DSN=` shell line, a `jdbc:databend://` URL and a `databend+flight://` or `databend+grpc://` DSN, each with the sentence that says what to paste instead ([`paste.ts`](../../src/lib/db/providers/sql/databend/paste.ts)).
+It has no `readTls`: `parseDatabendDSN` in its `paste.ts` reads a DSN's `sslmode` itself, by BendSQL's own rules.
 It runs no seed load check.
 
 ### Execution UI

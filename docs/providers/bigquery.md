@@ -103,7 +103,7 @@ Do not set `DB_HTTP_BLOCK_PRIVATE_HOSTS=true` on such a deployment: it blocks th
 
 ### Connection string
 
-`bigquery` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/sql/bigquery/connection-string.ts)).
+`bigquery` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/sql/bigquery/connection-string.ts)).
 
 ### Execution UI
 

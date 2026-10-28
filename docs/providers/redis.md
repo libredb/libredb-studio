@@ -533,6 +533,7 @@ it stay visible in the server log. The message only, for the same reason as abov
 
 The scheme shown for Redis is `redis://`, and the parser also accepts `rediss://`.
 Its row in `CONNECTION_STRING` is declared in [`redis-connection-string.ts`](../../src/lib/db/providers/keyvalue/redis-connection-string.ts).
+Its `paste` claims `redis://` and `rediss://`, with port 6379 by default.
 It has no `readTls`: the scheme itself is the TLS, so `rediss://` sets `require` and `redis://` sets `disable`.
 It runs no seed load check.
 

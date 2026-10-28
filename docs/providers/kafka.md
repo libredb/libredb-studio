@@ -285,7 +285,7 @@ An `sshTunnel` that is not an object, such as `true`, is refused the same way, a
 
 ### Connection string
 
-`kafka` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/stream/kafka/connection-string.ts)).
+`kafka` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/stream/kafka/connection-string.ts)).
 
 ### Execution UI
 

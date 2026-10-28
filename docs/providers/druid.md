@@ -834,7 +834,7 @@ redirect would take the Basic credential and the statement to wherever the serve
 
 ### Connection string
 
-`druid` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/sql/druid/connection-string.ts)).
+`druid` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/sql/druid/connection-string.ts)).
 Druid is reached over plain HTTP through the form, so inventing `druid://` would put a scheme on the login page that `parseConnectionString` rejects.
 
 ### Execution UI

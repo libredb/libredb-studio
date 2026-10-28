@@ -419,6 +419,7 @@ Its credential is the token in `?authToken=` or the password in its authority, s
 
 The scheme shown for libSQL is `libsql://`.
 Its row in `CONNECTION_STRING` is declared in [`connection-string.ts`](../../src/lib/db/providers/sql/libsql/connection-string.ts).
+Its `paste` claims `libsql://`, with port 443 by default, and reads the token from `authToken`.
 It has no `readTls`: a `libsql://` URL is TLS always and has no plaintext form, so a paste sets `require`.
 It runs no seed load check.
 

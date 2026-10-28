@@ -233,7 +233,7 @@ credential all end in the same refusal.
 
 ### Connection string
 
-`netconf` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/network/netconf/connection-string.ts)).
+`netconf` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/network/netconf/connection-string.ts)).
 
 ### Execution UI
 

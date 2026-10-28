@@ -1503,6 +1503,7 @@ this precedence:
 
 The scheme shown for PostgreSQL is `postgres://`, and the parser also accepts `postgresql://`.
 Its row in `CONNECTION_STRING` is declared in [`postgres-connection-string.ts`](../../src/lib/db/providers/sql/postgres-connection-string.ts).
+Its `paste` claims `postgres://` and `postgresql://`, with port 5432 by default, and libpq's `host`, `port`, `user`, `password` and `dbname` query keywords replace the URL's own parts.
 Its `readTls` reads `sslmode` first, and the boolean `ssl` only when no `sslmode` is present: a string carrying both said the specific thing on purpose.
 `sslmode` maps libpq's `disable`, `require`, `verify-ca` and `verify-full`, and leaves `prefer` and `allow` unmapped: they mean "encrypt if the server offers it", which no SSL mode describes.
 `verify-system` is not in that table either, since it is this form's own mode name and not a libpq one.

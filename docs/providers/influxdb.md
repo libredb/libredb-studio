@@ -269,7 +269,7 @@ Create the mapping with `influx v1 dbrp create --bucket-id <bucket-id> --db <dat
 
 ### Connection string
 
-`influxdb` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`influxdb-connection-string.ts`](../../src/lib/db/providers/timeseries/influxdb/influxdb-connection-string.ts)).
+`influxdb` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`influxdb-connection-string.ts`](../../src/lib/db/providers/timeseries/influxdb/influxdb-connection-string.ts)).
 
 ### Execution UI
 

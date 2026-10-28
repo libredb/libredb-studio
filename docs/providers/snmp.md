@@ -52,7 +52,7 @@ Reaching past this machine with a community needs the operator's explicit consen
 
 ### Connection string
 
-`snmp` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/network/snmp/connection-string.ts)).
+`snmp` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/network/snmp/connection-string.ts)).
 
 ### Execution UI
 

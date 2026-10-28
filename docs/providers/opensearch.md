@@ -521,7 +521,7 @@ redirect would take the Basic credential and the statement to wherever the serve
 
 ### Connection string
 
-`opensearch` has no connection string scheme, no `readTls` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`opensearch-connection-string.ts`](../../src/lib/db/providers/sql/search/opensearch-connection-string.ts)).
+`opensearch` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`opensearch-connection-string.ts`](../../src/lib/db/providers/sql/search/opensearch-connection-string.ts)).
 
 ### Execution UI
 
