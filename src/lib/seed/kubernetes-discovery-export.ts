@@ -47,7 +47,7 @@ const NamespaceStatusSchema = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(true) }),
   z.object({
     ok: z.literal(false),
-    code: z.enum(["forbidden", "crd_missing"]),
+    code: z.enum(["forbidden", "crd_missing", "limit_exceeded"]),
     httpStatus: z.number().int().optional(),
     message: MESSAGE,
   }),

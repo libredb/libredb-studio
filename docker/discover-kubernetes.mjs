@@ -13,6 +13,9 @@
  *   - it keeps a Secret only when it belongs to the resource that names it (an ownerReference or CloudNativePG's
  *     label naming it, or, for an initdb Secret tied to nothing, the basic-auth type), so a Cluster cannot point it at
  *     another workload's Secret;
+ *   - one namespace's answers never decide another's: a refusal, a list page over the size bound or a list that does
+ *     not end withdraws that namespace alone, and the database and export bounds are shared fairly among the
+ *     namespaces, so the editors of one namespace cannot push another's databases out of the export;
  *   - it keeps only the contract's keys of a Secret, decoded, each at most LIMITS.valueBytes and valid UTF-8, and of a
  *     resource only the contract's fields; it interprets nothing else: the mapping to a connection, the id rule,
  *     staleness and validation live in src/lib/seed/, where the coverage gate measures them;
@@ -67,21 +70,20 @@ export const CONTRACT = Object.freeze([
       return text(resource?.spec?.bootstrap?.initdb?.secret?.name) ?? `${resource.metadata.name}-app`;
     },
     /**
-     * Whether `secret` belongs to `cluster`, so a Cluster cannot point the exporter at another workload's Secret of
-     * its namespace (decisions: S3 Secret ownership). A Secret tied to this Cluster, by an ownerReference to its UID
-     * or the label cnpg.io/cluster=<name> CloudNativePG writes, belongs to it. A Secret named by initdb that is tied
-     * to nothing at all, no ownerReference and no cnpg.io/cluster label, belongs to it when it is of type
+     * Whether `secret` belongs to the Cluster `resource` prunes, whose UID is `uid`, so a Cluster cannot point the
+     * exporter at another workload's Secret of its namespace. A Secret tied to this Cluster, by an ownerReference to
+     * its UID or the label cnpg.io/cluster=<name> CloudNativePG writes, belongs to it. A Secret named by initdb that is
+     * tied to nothing at all, no ownerReference and no cnpg.io/cluster label, belongs to it when it is of type
      * kubernetes.io/basic-auth, as CloudNativePG requires. Any other Secret does not: another Cluster's `<name>-app`
      * is basic-auth too, and owned by that Cluster.
      */
-    owns(secret, cluster) {
-      const uid = text(cluster?.metadata?.uid);
+    owns(secret, resource, uid) {
       const references = Array.isArray(secret?.metadata?.ownerReferences) ? secret.metadata.ownerReferences : [];
       const label = secret?.metadata?.labels?.["cnpg.io/cluster"];
       const ownedHere = uid !== undefined && references.some((reference) => reference?.uid === uid);
-      const labelledHere = typeof label === "string" && label === cluster?.metadata?.name;
+      const labelledHere = typeof label === "string" && label === resource.metadata.name;
       if (ownedHere || labelledHere) return true;
-      if (text(cluster?.spec?.bootstrap?.initdb?.secret?.name) === undefined) return false;
+      if (text(resource.spec?.bootstrap?.initdb?.secret?.name) === undefined) return false;
       return secret?.type === "kubernetes.io/basic-auth" && references.length === 0 && label === undefined;
     },
     /**
@@ -128,7 +130,8 @@ export const LIMITS = Object.freeze({
   // A Secret holds at most 1 MiB; this leaves room for the key.
   exportBytes: 983040,
   responseBytes: 16777216,
-  pageSize: 50,
+  // etcd keeps no object over 1.5 MiB by default, so a full page stays under responseBytes.
+  pageSize: 10,
   pages: 100,
   requestTimeoutMs: 10000,
   messageChars: 512,
@@ -137,6 +140,8 @@ export const LIMITS = Object.freeze({
 /** The longest delay setTimeout honours: a longer one, and Infinity, becomes 1 ms, a back-to-back rescan. */
 const MAX_TIMER_DELAY_MS = 2147483647;
 const LOG_PREFIX = "libredb-kubernetes-discovery:";
+/** How a status says a bound was shared among the namespaces (fairShares). */
+const FAIR_CUT = "each namespace kept a fair share and the rest was left out";
 const CERTIFICATE_BLOCK = "-----BEGIN CERTIFICATE-----";
 const EXPORT_SECRET_MESSAGE =
   "KUBERNETES_DISCOVERY_EXPORT_SECRET must name the export Secret as <namespace>/<name>, such as libredb-studio/libredb-studio-discovery-export";
@@ -440,13 +445,13 @@ function keepSecretData(row, secret) {
 }
 
 /**
- * The credential Secret of the listed `item`: its kept keys, or the problem that stopped the exporter keeping them. A
- * Secret that does not belong to the item is kept whole out of the export (decisions: S3 Secret ownership).
+ * The credential Secret of a listed resource: its kept keys, or the problem that stopped the exporter keeping them. A
+ * Secret that does not belong to the resource is kept whole out of the export.
  */
-async function readCredentialSecret(client, row, item, namespace, secretName) {
+async function readCredentialSecret(client, { row, resource, uid, secretName }) {
   try {
-    const secret = await client.get(`/api/v1/namespaces/${namespace}/secrets/${secretName}`);
-    if (!row.owns(secret, item)) return { name: secretName, problem: "not_owned" };
+    const secret = await client.get(`/api/v1/namespaces/${resource.metadata.namespace}/secrets/${secretName}`);
+    if (!row.owns(secret, resource, uid)) return { name: secretName, problem: "not_owned" };
     return { name: secretName, ...keepSecretData(row, secret) };
   } catch (error) {
     if (error?.statusCode === 404) return { name: secretName, problem: "not_found" };
@@ -456,85 +461,147 @@ async function readCredentialSecret(client, row, item, namespace, secretName) {
 }
 
 /**
- * One listing of every namespace and kind. Never throws; a failure comes back as a status. A 403 or a 404 on a list
- * is an answer about one namespace, which withdraws its databases and leaves the others; any other failure fails the
- * whole scan, and the caller keeps its last good one. A resource without Kubernetes names is left out and counted,
- * and no request is built from one. Past `limits.databases` the rest is cut and `truncated` is set.
+ * How many of each group's items to keep under `budget`, shared max-min fairly: `sizes[g]` lists the sizes of group
+ * g's items in order, and each group keeps the longest prefix of them its share holds. The groups are served from the
+ * smallest total up, each with an equal part of what is left, so a group that needs less than its part leaves the rest
+ * to the larger ones, and every group's share is an equal part of the budget at least, or all it needs. The exporter
+ * shares its database and export bounds among the namespaces this way, so one namespace's editors cannot push another
+ * namespace's databases out of the export by creating resources.
+ */
+export function fairShares(sizes, budget) {
+  const totals = sizes.map((items) => items.reduce((sum, size) => sum + size, 0));
+  const order = totals.map((_, index) => index).sort((a, b) => totals[a] - totals[b] || a - b);
+  const kept = sizes.map(() => 0);
+  let left = budget;
+  for (const [served, group] of order.entries()) {
+    const share = Math.floor(left / (order.length - served));
+    let used = 0;
+    for (const size of sizes[group]) {
+      if (used + size > share) break;
+      used += size;
+      kept[group] += 1;
+    }
+    left -= used;
+  }
+  return kept;
+}
+
+/** The status of a failed list that answers for its namespace alone, or null for a failure that fails the scan. */
+function namespaceRefusal(error, row, namespace) {
+  const what = `${row.plural}.${row.group}`;
+  if (error?.statusCode === 403) {
+    return {
+      ok: false,
+      code: "forbidden",
+      httpStatus: 403,
+      message: `the exporter may not list ${what} in ${namespace} (HTTP 403): grant its ServiceAccount list on them there`,
+    };
+  }
+  if (error?.statusCode === 404) {
+    return {
+      ok: false,
+      code: "crd_missing",
+      httpStatus: 404,
+      message: `the API server does not serve ${what} (HTTP 404): install the operator, or leave ${row.slug} out of KUBERNETES_DISCOVERY_KINDS`,
+    };
+  }
+  if (error?.code === "ERESPONSETOOLARGE") {
+    return { ok: false, code: "limit_exceeded", message: `${what} in ${namespace} are too large to list: ${error.message}` };
+  }
+  return null;
+}
+
+/**
+ * One namespace's resources of every kind, in list order: at most `limits.databases` of them, and whether it holds
+ * more, which ends its reading, since no share of the bound could take them. A 403, a 404, a page over the response
+ * bound and a list that does not end within `limits.pages` answer for this namespace alone, whose editors decide how
+ * many and how large its resources are: the namespace gets that status and none of its resources, those of earlier
+ * pages included. Any other failure throws and fails the scan.
+ */
+async function listNamespace({ client, config, namespace, limits }) {
+  const found = [];
+  let leftOut = 0;
+  for (const row of config.kinds) {
+    const path = `/apis/${row.group}/${row.version}/namespaces/${namespace}/${row.plural}`;
+    let continueToken = "";
+    for (let page = 0; ; page += 1) {
+      if (page >= limits.pages) {
+        const message = `${row.plural}.${row.group} in ${namespace} are too many to list: GET ${path} did not end within ${limits.pages} pages`;
+        return { status: { ok: false, code: "limit_exceeded", message } };
+      }
+      const query = `?limit=${limits.pageSize}${continueToken === "" ? "" : `&continue=${encodeURIComponent(continueToken)}`}`;
+      let list;
+      try {
+        // oxlint-disable-next-line no-await-in-loop -- pages come one after another by their continue token.
+        list = await client.get(`${path}${query}`);
+      } catch (error) {
+        const status = namespaceRefusal(error, row, namespace);
+        if (status === null) throw error;
+        return { status };
+      }
+      if (!Array.isArray(list?.items)) {
+        throw codedError(`GET ${path} answered with something other than a list`, "EBADLIST");
+      }
+      for (const item of list.items) {
+        const resource = row.prune(item);
+        if (resource === null || resource.metadata.namespace !== namespace || !isObjectName(resource.metadata.name)) {
+          leftOut += 1;
+          continue;
+        }
+        const secretName = row.secretName(resource);
+        if (!isObjectName(secretName)) {
+          leftOut += 1;
+          continue;
+        }
+        if (found.length === limits.databases) return { status: { ok: true }, found, more: true, leftOut };
+        found.push({ row, resource, uid: text(item?.metadata?.uid), secretName });
+      }
+      continueToken = typeof list.metadata?.continue === "string" ? list.metadata.continue : "";
+      if (continueToken === "") break;
+    }
+  }
+  return { status: { ok: true }, found, more: false, leftOut };
+}
+
+/**
+ * One listing of every namespace and kind. Never throws; a failure comes back as a status. An answer about one
+ * namespace withdraws its databases and leaves the others (listNamespace); any other failure fails the whole scan,
+ * and the caller keeps its last good one. A resource without Kubernetes names is left out and counted, and no request
+ * is built from one. Past `limits.databases` the namespaces share the bound fairly (fairShares), only the databases
+ * within a share have their Secret read, and `truncated` is set.
  */
 export async function scanOnce({ client, config, limits = LIMITS }) {
   const namespaces = [];
-  const databases = [];
+  const listings = [];
   let leftOut = 0;
-  let truncated = false;
   try {
     for (const namespace of config.namespaces) {
-      let status = { ok: true };
-      for (const row of config.kinds) {
-        const path = `/apis/${row.group}/${row.version}/namespaces/${namespace}/${row.plural}`;
-        const what = `${row.plural}.${row.group}`;
-        let continueToken = "";
-        for (let page = 0; !truncated; page += 1) {
-          if (page >= limits.pages) throw codedError(`GET ${path} did not end within ${limits.pages} pages`, "EBADLIST");
-          const query = `?limit=${limits.pageSize}${continueToken === "" ? "" : `&continue=${encodeURIComponent(continueToken)}`}`;
-          let list;
-          try {
-            // oxlint-disable-next-line no-await-in-loop -- pages come one after another by their continue token.
-            list = await client.get(`${path}${query}`);
-          } catch (error) {
-            if (error?.statusCode === 403) {
-              status = {
-                ok: false,
-                code: "forbidden",
-                httpStatus: 403,
-                message: `the exporter may not list ${what} in ${namespace} (HTTP 403): grant its ServiceAccount list on them there`,
-              };
-              break;
-            }
-            if (error?.statusCode === 404) {
-              status = {
-                ok: false,
-                code: "crd_missing",
-                httpStatus: 404,
-                message: `the API server does not serve ${what} (HTTP 404): install the operator, or leave ${row.slug} out of KUBERNETES_DISCOVERY_KINDS`,
-              };
-              break;
-            }
-            throw error;
-          }
-          if (!Array.isArray(list?.items)) {
-            throw codedError(`GET ${path} answered with something other than a list`, "EBADLIST");
-          }
-          for (const item of list.items) {
-            if (databases.length >= limits.databases) {
-              truncated = true;
-              break;
-            }
-            const resource = row.prune(item);
-            if (resource === null || resource.metadata.namespace !== namespace || !isObjectName(resource.metadata.name)) {
-              leftOut += 1;
-              continue;
-            }
-            const secretName = row.secretName(resource);
-            if (!isObjectName(secretName)) {
-              leftOut += 1;
-              continue;
-            }
-            // oxlint-disable-next-line no-await-in-loop -- one request at a time keeps the API server's load flat.
-            const secret = await readCredentialSecret(client, row, item, namespace, secretName);
-            databases.push({ kind: row.slug, resource, secret });
-          }
-          continueToken = typeof list.metadata?.continue === "string" ? list.metadata.continue : "";
-          if (continueToken === "") break;
-        }
-        if (!status.ok || truncated) break;
-      }
-      namespaces.push({ name: namespace, status });
-      if (truncated) break;
+      // oxlint-disable-next-line no-await-in-loop -- one namespace at a time keeps the API server's load flat.
+      const listing = await listNamespace({ client, config, namespace, limits });
+      namespaces.push({ name: namespace, status: listing.status });
+      if (!listing.status.ok) continue;
+      leftOut += listing.leftOut;
+      listings.push(listing);
     }
+    // A namespace that holds more than it kept counts one more, so its share is always short of what it holds.
+    const held = listings.map((listing) => listing.found.length + (listing.more ? 1 : 0));
+    const shares = fairShares(
+      held.map((count) => new Array(count).fill(1)),
+      limits.databases,
+    );
+    const databases = [];
+    for (const [index, listing] of listings.entries()) {
+      for (const candidate of listing.found.slice(0, shares[index])) {
+        // oxlint-disable-next-line no-await-in-loop -- one request at a time keeps the API server's load flat.
+        const secret = await readCredentialSecret(client, candidate);
+        databases.push({ kind: candidate.row.slug, resource: candidate.resource, secret });
+      }
+    }
+    const truncated = held.some((count, index) => shares[index] < count);
+    return { ok: true, namespaces, databases, truncated, leftOut };
   } catch (error) {
     return { ok: false, status: classifyApiError(error) };
   }
-  return { ok: true, namespaces, databases, truncated, leftOut };
 }
 
 /** The status object as the export carries it. */
@@ -565,8 +632,9 @@ export function buildExport({ now, status, generatedAt, namespaces, databases })
 }
 
 /**
- * The export's text, at most `limits.exportBytes` bytes. Over the bound, databases are kept in order while they fit,
- * and an ok status becomes limit_exceeded; a status that is already an error keeps its code.
+ * The export's text, at most `limits.exportBytes` bytes. Over the bound, the namespaces share it fairly (fairShares),
+ * each keeping its databases in order while they fit its share, and an ok status becomes limit_exceeded; a status
+ * that is already an error keeps its code.
  */
 export function serializeExport(data, limits = LIMITS) {
   const whole = JSON.stringify(data);
@@ -575,18 +643,15 @@ export function serializeExport(data, limits = LIMITS) {
     ? {
         ok: false,
         code: "limit_exceeded",
-        message: `the export would exceed ${limits.exportBytes} bytes; the rest was left out`,
+        message: `the export would exceed ${limits.exportBytes} bytes; ${FAIR_CUT}`,
       }
     : data.status;
-  let budget = limits.exportBytes - Buffer.byteLength(JSON.stringify({ ...data, status, databases: [] }), "utf8");
-  const kept = [];
-  for (const database of data.databases) {
-    const size = Buffer.byteLength(JSON.stringify(database), "utf8") + (kept.length > 0 ? 1 : 0);
-    if (size > budget) break;
-    budget -= size;
-    kept.push(database);
-  }
-  return JSON.stringify({ ...data, status, databases: kept });
+  const budget = limits.exportBytes - Buffer.byteLength(JSON.stringify({ ...data, status, databases: [] }), "utf8");
+  const groups = [...Map.groupBy(data.databases, (database) => database.resource.metadata.namespace).values()];
+  // Each database costs its own bytes and at most one comma.
+  const sizes = groups.map((group) => group.map((database) => Buffer.byteLength(JSON.stringify(database), "utf8") + 1));
+  const shares = fairShares(sizes, budget);
+  return JSON.stringify({ ...data, status, databases: groups.flatMap((group, index) => group.slice(0, shares[index])) });
 }
 
 /**
@@ -620,7 +685,7 @@ function summarize(result, limits) {
   const unreadable = result.namespaces.filter((namespace) => !namespace.status.ok).length;
   const counts = `scan ok: ${result.databases.length} databases in ${result.namespaces.length} namespaces exported`;
   if (unreadable === 0 && result.leftOut === 0 && !result.truncated) return counts;
-  const cut = result.truncated ? `, cut to the first ${limits.databases}` : "";
+  const cut = result.truncated ? `, cut to fair shares of ${limits.databases}` : "";
   return `${counts}, ${unreadable} namespaces could not be read, ${result.leftOut} resources left out${cut}`;
 }
 
@@ -645,7 +710,7 @@ export function createExporter({ config, client, now, info, warn, limits = LIMIT
         ? {
             ok: false,
             code: "limit_exceeded",
-            message: `more than ${limits.databases} databases in the discovered namespaces; the rest was left out`,
+            message: `more than ${limits.databases} databases in the discovered namespaces; ${FAIR_CUT}`,
           }
         : { ok: true };
     }

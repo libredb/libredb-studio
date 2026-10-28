@@ -70,7 +70,7 @@ describe("parseKubernetesDiscoveryExport", () => {
     },
   );
 
-  it("accepts the exporter's statuses: a failed scan, a forbidden namespace, a missing CRD and Secret problems", () => {
+  it("accepts the exporter's statuses: a failed scan, a forbidden namespace, a missing CRD, a namespace over a bound and Secret problems", () => {
     const result = parse(
       document({
         status: { ok: false, code: "api_error", httpStatus: 500, message: "the API server answered HTTP 500" },
@@ -78,6 +78,7 @@ describe("parseKubernetesDiscoveryExport", () => {
           { name: "team-a", status: { ok: true } },
           { name: "team-b", status: { ok: false, code: "forbidden", httpStatus: 403, message: "forbidden" } },
           { name: "team-c", status: { ok: false, code: "crd_missing", httpStatus: 404, message: "not found" } },
+          { name: "team-d", status: { ok: false, code: "limit_exceeded", message: "too large to list" } },
         ],
         databases: [
           database(),

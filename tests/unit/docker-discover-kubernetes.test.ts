@@ -13,7 +13,9 @@
  *  - The contract row is the same data as Studio's table: a drift reads one Secret and makes Studio ask the review
  *    about another, or keeps a key Studio never reads.
  *  - Only the contract's keys leave a Secret, and no value reaches a log line.
- *  - 403 and 404 are answers that withdraw a namespace's databases; every other failure keeps the last good scan.
+ *  - 403, 404 and a list over the size or page bound are answers that withdraw one namespace's databases, and the
+ *    database and export bounds are shared fairly, so one namespace's editors cannot crowd another out; every other
+ *    failure keeps the last good scan.
  *  - The write keeps the Secret's Helm metadata and fails over to one retry on a conflict, never to a blind write.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
@@ -33,6 +35,7 @@ import {
   createApiClient,
   createExporter,
   DEFAULTS,
+  fairShares,
   isDirectExecution,
   LIMITS,
   main,
@@ -154,13 +157,20 @@ describe("the reviewed constants", () => {
       valueBytes: 1024,
       exportBytes: 983040,
       responseBytes: 16777216,
-      pageSize: 50,
+      pageSize: 10,
       pages: 100,
       requestTimeoutMs: 10000,
       messageChars: 512,
     });
     // A Secret holds at most 1 MiB; the export leaves room for its key.
     expect(LIMITS.exportBytes).toBeLessThan(1024 * 1024);
+  });
+
+  // etcd refuses a request over 1.5 MiB by default (--max-request-bytes), so no object a list returns is larger, and a
+  // full page of the largest objects a namespace's editors can make stays under the response bound.
+  test("a full page of the largest objects etcd keeps fits the response bound", () => {
+    const etcdMaxRequestBytes = 1.5 * 1024 * 1024;
+    expect(LIMITS.pageSize * etcdMaxRequestBytes).toBeLessThan(LIMITS.responseBytes);
   });
 
   test("the contract rows are Studio's, row for row", () => {
@@ -528,9 +538,9 @@ describe("scanOnce", () => {
     });
     const lists = api.seen.filter((seen) => seen.path.includes("/clusters"));
     expect(lists.map((seen) => seen.path)).toEqual([
-      "/apis/postgresql.cnpg.io/v1/namespaces/team-a/clusters?limit=50",
-      "/apis/postgresql.cnpg.io/v1/namespaces/team-a/clusters?limit=50&continue=1",
-      "/apis/postgresql.cnpg.io/v1/namespaces/team-b/clusters?limit=50",
+      "/apis/postgresql.cnpg.io/v1/namespaces/team-a/clusters?limit=10",
+      "/apis/postgresql.cnpg.io/v1/namespaces/team-a/clusters?limit=10&continue=1",
+      "/apis/postgresql.cnpg.io/v1/namespaces/team-b/clusters?limit=10",
     ]);
     // GET only: the scan never writes, and it never lists Secrets.
     expect(new Set(api.seen.map((seen) => seen.method))).toEqual(new Set(["GET"]));
@@ -587,6 +597,99 @@ describe("scanOnce", () => {
           "the API server does not serve clusters.postgresql.cnpg.io (HTTP 404): install the operator, or leave cnpg out of KUBERNETES_DISCOVERY_KINDS",
       });
     }
+  });
+
+  test.each([
+    [403, "Forbidden", "forbidden"],
+    [404, "NotFound", "crd_missing"],
+  ] as const)(
+    "a %d on a later page withdraws what the namespace's earlier pages found",
+    async (code, reason, status) => {
+      seedLab();
+      api.addCluster("team-a", "reports");
+      api.addAppSecret("team-a", "reports", {
+        username: "app",
+        password: "not-a-real-password-reports",
+        dbname: "app",
+        port: "5432",
+      });
+      const [first] = api.clusters.get("team-a") ?? [];
+      api.scripted.set("/apis/postgresql.cnpg.io/v1/namespaces/team-a/clusters", [
+        { status: 200, body: JSON.stringify({ metadata: { continue: "1" }, items: [first] }) },
+        { status: code, body: statusBody(code, reason, "refused on page 2") },
+      ]);
+      const result = await scan({ client: client(), config: config() });
+      expect(result.ok).toBe(true);
+      expect(result.namespaces.map((namespace) => [namespace.name, namespace.status.code ?? "ok"])).toEqual([
+        ["team-a", status],
+        ["team-b", "ok"],
+      ]);
+      expect(result.databases.map((entry) => entry.resource.metadata.name)).toEqual(["analytics"]);
+      // A withdrawn namespace's Secrets are not read at all.
+      expect(api.seen.some((seen) => seen.path.includes("/namespaces/team-a/secrets/"))).toBe(false);
+    },
+  );
+
+  // One namespace's editors decide how large its Clusters are, so its list answer being over the bound is an answer
+  // about that namespace, like a 403, and never stops the others from being exported.
+  test("withdraws a namespace whose list page is over the response bound, and exports the others", async () => {
+    seedLab();
+    api.addCluster("team-a", "bulky", { description: "x".repeat(8192) });
+    const result = await scan({ client: client({ maxBytes: 4096 }), config: config() });
+    expect(result.ok).toBe(true);
+    expect(result.namespaces).toEqual([
+      {
+        name: "team-a",
+        status: {
+          ok: false,
+          code: "limit_exceeded",
+          message:
+            "clusters.postgresql.cnpg.io in team-a are too large to list: GET /apis/postgresql.cnpg.io/v1/namespaces/team-a/clusters answered with more than 4096 bytes",
+        },
+      },
+      { name: "team-b", status: { ok: true } },
+    ]);
+    expect(result.databases.map((entry) => entry.resource.metadata.name)).toEqual(["analytics"]);
+  });
+
+  test("withdraws a namespace whose list does not end within the page bound, and exports the others", async () => {
+    seedLab();
+    const listPath = "/apis/postgresql.cnpg.io/v1/namespaces/team-a/clusters";
+    api.scripted.set(
+      listPath,
+      Array.from({ length: 3 }, () => ({
+        status: 200,
+        body: JSON.stringify({ items: [], metadata: { continue: "again" } }),
+      })),
+    );
+    const result = await scan({ client: client(), config: config(), limits: limitsWith({ pages: 3 }) });
+    expect(result.ok).toBe(true);
+    expect(result.namespaces).toEqual([
+      {
+        name: "team-a",
+        status: {
+          ok: false,
+          code: "limit_exceeded",
+          message: `clusters.postgresql.cnpg.io in team-a are too many to list: GET ${listPath} did not end within 3 pages`,
+        },
+      },
+      { name: "team-b", status: { ok: true } },
+    ]);
+    expect(result.databases.map((entry) => entry.resource.metadata.name)).toEqual(["analytics"]);
+  });
+
+  // The production bounds, as one namespace's editors could use them: twelve Clusters of 1.4 MB, each under etcd's
+  // default 1.5 MiB, are 16.8 MB, over the 16 MiB response bound in one page, and fit it in pages of ten.
+  test("lists a namespace of Clusters near etcd's object bound in pages under the response bound", async () => {
+    seedLab();
+    for (let index = 0; index < 12; index += 1) {
+      api.addCluster("team-a", `bulky-${index}`, { description: "x".repeat(1_400_000) });
+    }
+    const result = await scan({ client: client(), config: config() });
+    expect(result.ok).toBe(true);
+    expect(result.namespaces.map((namespace) => namespace.status)).toEqual([{ ok: true }, { ok: true }]);
+    expect(result.databases.map((entry) => entry.resource.metadata.name)).toContain("analytics");
+    expect(result.databases).toHaveLength(14);
   });
 
   test("records a missing or forbidden Secret as its problem, and lists the database", async () => {
@@ -671,19 +774,52 @@ describe("scanOnce", () => {
     });
   });
 
-  test("cuts the databases at the bound, in order, and says so", async () => {
+  // The namespaces are read in name order, so cutting in order would let the editors of the first namespace push every
+  // later namespace out of the export by creating Clusters.
+  test("shares the database bound fairly among the namespaces, and says it cut", async () => {
     seedLab();
-    const result = await scan({ client: client(), config: config(), limits: limitsWith({ databases: 1 }) });
+    for (const name of ["reports", "billing", "audit"]) {
+      api.addCluster("team-a", name);
+      api.addAppSecret("team-a", name, { username: "app", password: `not-a-real-password-${name}`, dbname: "app" });
+    }
+    const result = await scan({ client: client(), config: config(), limits: limitsWith({ databases: 3 }) });
     expect(result).toMatchObject({ ok: true, truncated: true });
-    expect(result.databases).toHaveLength(1);
-    // team-b was read, and its database is the one past the bound.
+    expect(
+      result.databases.map((entry) => `${entry.resource.metadata.namespace}/${entry.resource.metadata.name}`),
+    ).toEqual(["team-a/orders", "team-a/reports", "team-b/analytics"]);
     expect(result.namespaces).toEqual([
       { name: "team-a", status: { ok: true } },
       { name: "team-b", status: { ok: true } },
     ]);
+    // A database past its namespace's share costs no Secret read.
+    expect(api.seen.filter((seen) => seen.path.includes("/secrets/")).map((seen) => seen.path)).toEqual([
+      "/api/v1/namespaces/team-a/secrets/orders-app",
+      "/api/v1/namespaces/team-a/secrets/reports-app",
+      "/api/v1/namespaces/team-b/secrets/analytics-app",
+    ]);
   });
 
-  test("fails the scan on any other answer: a 401, a 500, a list that is not a list or does not end", async () => {
+  test("stops reading a namespace once it holds more databases than the bound could export from it", async () => {
+    for (let index = 0; index < 5; index += 1) api.addCluster("team-a", `db-${index}`);
+    api.pageSize = 1;
+    const result = await scan({
+      client: client(),
+      config: config({ KUBERNETES_DISCOVERY_NAMESPACES: "team-a" }),
+      limits: limitsWith({ databases: 2 }),
+    });
+    expect(result).toMatchObject({ ok: true, truncated: true });
+    expect(result.databases.map((entry) => entry.resource.metadata.name)).toEqual(["db-0", "db-1"]);
+    expect(api.seen.filter((seen) => seen.path.includes("/clusters")).length).toBe(3);
+  });
+
+  test("does not report a cut when every namespace fits its share", async () => {
+    seedLab();
+    const result = await scan({ client: client(), config: config(), limits: limitsWith({ databases: 2 }) });
+    expect(result).toMatchObject({ ok: true, truncated: false });
+    expect(result.databases).toHaveLength(2);
+  });
+
+  test("fails the scan on any other answer: a 401, a 500, a list that is not a list", async () => {
     seedLab();
     const listPath = "/apis/postgresql.cnpg.io/v1/namespaces/team-a/clusters";
     api.scripted.set(listPath, { status: 401, body: statusBody(401, "Unauthorized", "Unauthorized") });
@@ -707,12 +843,6 @@ describe("scanOnce", () => {
       code: "api_error",
       message: `GET ${listPath} answered with something other than a list`,
     });
-    api.scripted.set(listPath, { status: 200, body: JSON.stringify({ items: [], metadata: { continue: "again" } }) });
-    expect((await scan({ client: client(), config: config(), limits: limitsWith({ pages: 3 }) })).status).toEqual({
-      ok: false,
-      code: "api_error",
-      message: `GET ${listPath} did not end within 3 pages`,
-    });
     api.scripted.set("/api/v1/namespaces/team-a/secrets/orders-app", { status: 500, body: statusBody(500, "x", "y") });
     api.scripted.delete(listPath);
     expect((await scan({ client: client(), config: config() })).status).toMatchObject({
@@ -735,9 +865,9 @@ describe("scanOnce", () => {
 /*
  * A namespace editor can point a Cluster at any Secret of its namespace, and the exporter may get every one of them,
  * while the Cluster's own read-write Service decides where Studio sends the credentials. So a Secret is exported only
- * when it belongs to the resource (decisions: S3 Secret ownership): the <name>-app Secret by an ownerReference to the
- * Cluster's UID or CloudNativePG's cnpg.io/cluster label, and an initdb Secret by the kubernetes.io/basic-auth type
- * CloudNativePG itself requires.
+ * when it belongs to the resource: the <name>-app Secret by an ownerReference to the Cluster's UID or CloudNativePG's
+ * cnpg.io/cluster label, and an initdb Secret the same way, or by the kubernetes.io/basic-auth type CloudNativePG
+ * itself requires when it is tied to no resource at all.
  */
 describe("Secret ownership", () => {
   const DATA = { username: "u", password: "not-a-real-password-unowned", dbname: "d", port: "5432" };
@@ -763,8 +893,8 @@ describe("Secret ownership", () => {
     ]);
   });
 
-  // decisions: S3 Secret ownership, tightened. Another Cluster's <name>-app Secret is kubernetes.io/basic-auth too, so
-  // the type alone would let Cluster B name Cluster A's credentials and have them sent to B's read-write Service.
+  // Another Cluster's <name>-app Secret is kubernetes.io/basic-auth too, so the type alone would let Cluster B name
+  // Cluster A's credentials and have them sent to B's read-write Service.
   test("refuses an initdb Secret that belongs to another Cluster, by its owner or its label", async () => {
     api.addCluster("team-a", "alpha");
     api.addAppSecret("team-a", "alpha", DATA);
@@ -883,7 +1013,11 @@ describe("buildExport and serializeExport", () => {
   });
 
   test("keeps an export under the bound whole, and cuts the databases of one over it, in order", () => {
-    const database = (index: number) => ({ kind: "cnpg", index, padding: "x".repeat(1000) });
+    const database = (index: number) => ({
+      kind: "cnpg",
+      resource: { metadata: { namespace: "team-a", name: `db-${index}` } },
+      secret: { name: `db-${index}-app`, data: { password: "x".repeat(1000) } },
+    });
     const data = buildExport({ now: T0, status, generatedAt: null, namespaces, databases: [] });
     const whole = { ...data, generatedAt: new Date(T0).toISOString(), databases: [database(0), database(1)] };
     expect(JSON.parse(serializeExport(whole))).toEqual(whole);
@@ -893,12 +1027,79 @@ describe("buildExport and serializeExport", () => {
     expect(cut.status).toEqual({
       ok: false,
       code: "limit_exceeded",
-      message: `the export would exceed ${size + 500} bytes; the rest was left out`,
+      message: `the export would exceed ${size + 500} bytes; each namespace kept a fair share and the rest was left out`,
     });
     const failing = { ...whole, status: { ok: false, code: "api_error", message: "m" } };
     expect(JSON.parse(serializeExport(failing, limitsWith({ exportBytes: size + 500 }))).status).toEqual(
       failing.status,
     );
+  });
+
+  // A namespace's editors choose its Secrets' values, up to 1024 bytes each, so cutting in order would let the first
+  // namespace's large values push every later namespace out of the export.
+  test("shares the export's bytes fairly among the namespaces", () => {
+    const database = (namespace: string, index: number, bytes: number) => ({
+      kind: "cnpg",
+      resource: { metadata: { namespace, name: `db-${index}` } },
+      secret: { name: `db-${index}-app`, data: { password: "x".repeat(bytes) } },
+    });
+    const large = Array.from({ length: 6 }, (_, index) => database("team-a", index, 1000));
+    const small = [database("team-b", 0, 10), database("team-b", 1, 10)];
+    const whole = {
+      ...buildExport({ now: T0, status, generatedAt: new Date(T0).toISOString(), namespaces, databases: [] }),
+      databases: [...large, ...small],
+    };
+    // Room for four of team-a's databases and a little more: in order, team-a would take it all.
+    const limited = (bytes: number) => ({
+      ok: false,
+      code: "limit_exceeded",
+      message: `the export would exceed ${bytes} bytes; each namespace kept a fair share and the rest was left out`,
+    });
+    const room = 4 * (Buffer.byteLength(JSON.stringify(large[0])) + 1) + 20;
+    let bound = 0;
+    for (let round = 0; round < 3; round += 1) {
+      bound = Buffer.byteLength(JSON.stringify({ ...whole, status: limited(bound), databases: [] })) + room;
+    }
+    const text = serializeExport(whole, limitsWith({ exportBytes: bound }));
+    expect(Buffer.byteLength(text)).toBeLessThanOrEqual(bound);
+    expect(JSON.parse(text)).toMatchObject({ status: limited(bound), databases: [...large.slice(0, 3), ...small] });
+  });
+});
+
+describe("fairShares", () => {
+  test("gives every group all of its items when they fit the budget", () => {
+    expect(fairShares([[1, 1], [1], []], 5)).toEqual([2, 1, 0]);
+  });
+
+  test("leaves what a small group does not need to the larger ones, and cuts each to an equal share at least", () => {
+    expect(fairShares([[1, 1, 1, 1, 1, 1], [1], [1, 1, 1]], 6)).toEqual([3, 1, 2]);
+    expect(
+      fairShares(
+        [
+          [1, 1, 1, 1],
+          [1, 1, 1, 1],
+        ],
+        5,
+      ),
+    ).toEqual([2, 3]);
+  });
+
+  test("keeps a prefix of each group by size, never an item past its share", () => {
+    expect(
+      fairShares(
+        [
+          [30, 30, 30],
+          [5, 5],
+        ],
+        70,
+      ),
+    ).toEqual([2, 2]);
+    expect(fairShares([[100], [5]], 50)).toEqual([0, 1]);
+  });
+
+  test("keeps nothing of a budget of zero or less", () => {
+    expect(fairShares([[1], [1]], 0)).toEqual([0, 0]);
+    expect(fairShares([[1]], -5)).toEqual([0]);
   });
 });
 
@@ -985,6 +1186,7 @@ describe("createExporter", () => {
     seedLab();
     api.forbiddenNamespaces.add("team-b");
     api.addCluster("team-a", "odd", { bootstrap: { initdb: { secret: { name: "Not_A_Name" } } } });
+    api.addCluster("team-a", "reports");
     const out = logs();
     const exporter = createExporter({
       config: config(),
@@ -997,12 +1199,13 @@ describe("createExporter", () => {
     await exporter.scanAndWrite();
     await exporter.scanAndWrite();
     expect(out.out).toEqual([
-      "scan ok: 1 databases in 1 namespaces exported, 0 namespaces could not be read, 0 resources left out, cut to the first 1\n",
+      "scan ok: 1 databases in 2 namespaces exported, 1 namespaces could not be read, 1 resources left out, cut to fair shares of 1\n",
     ]);
     expect((api.writtenExport() as { status: unknown }).status).toEqual({
       ok: false,
       code: "limit_exceeded",
-      message: "more than 1 databases in the discovered namespaces; the rest was left out",
+      message:
+        "more than 1 databases in the discovered namespaces; each namespace kept a fair share and the rest was left out",
     });
 
     const second = logs();
@@ -1015,7 +1218,7 @@ describe("createExporter", () => {
     });
     await again.scanAndWrite();
     expect(second.out).toEqual([
-      "scan ok: 1 databases in 2 namespaces exported, 1 namespaces could not be read, 1 resources left out\n",
+      "scan ok: 2 databases in 2 namespaces exported, 1 namespaces could not be read, 1 resources left out\n",
     ]);
   });
 
