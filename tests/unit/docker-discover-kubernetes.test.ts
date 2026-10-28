@@ -1407,28 +1407,40 @@ describe("as a program, under node", () => {
     expect(await new Response(child.stderr).text()).toContain("KUBERNETES_DISCOVERY_INTERVAL_MS must be an integer");
   }, 10000);
 
-  test("SIGTERM while a request is in flight aborts it: exit code 0 at once, and nothing written", async () => {
-    seedLab();
-    api.scripted.set("/apis/postgresql.cnpg.io/v1/namespaces/team-a/clusters", "hang");
-    const child = Bun.spawn(["node", exporter], {
-      stdout: "pipe",
-      stderr: "pipe",
-      env: { ...inherited, ...api.env({ KUBERNETES_DISCOVERY_ONCE: "" }) },
-    });
-    try {
-      await eventually(() => api.seen.length === 1, "the first request", 5000);
-      const sent = Date.now();
-      child.kill("SIGTERM");
-      expect(await child.exited).toBe(0);
-      expect(Date.now() - sent).toBeLessThan(1500);
-      expect(api.seen.some((seen) => seen.method === "PUT")).toBe(false);
-      expect(await new Response(child.stdout).text()).toContain(
-        "libredb-kubernetes-discovery: received SIGTERM, exiting",
-      );
-    } finally {
-      child.kill("SIGKILL");
-    }
-  }, 10000);
+  /*
+   * Null on Linux and macOS, a reason on Windows, which never delivers SIGTERM to a child: the kill ends it at once
+   * with exit 143, so the handler this case checks cannot run there. The cases under main drive the same handler
+   * through an EventEmitter on every platform, and the exporter only ever runs in a Linux container.
+   */
+  const missingPosixSignals =
+    process.platform === "win32" ? "POSIX signals: Windows ends a child at a kill without running its handler" : null;
+
+  test.skipIf(missingPosixSignals !== null)(
+    `SIGTERM while a request is in flight aborts it: exit code 0 at once, and nothing written${missingPosixSignals === null ? "" : ` [skipped: ${missingPosixSignals}]`}`,
+    async () => {
+      seedLab();
+      api.scripted.set("/apis/postgresql.cnpg.io/v1/namespaces/team-a/clusters", "hang");
+      const child = Bun.spawn(["node", exporter], {
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...inherited, ...api.env({ KUBERNETES_DISCOVERY_ONCE: "" }) },
+      });
+      try {
+        await eventually(() => api.seen.length === 1, "the first request", 5000);
+        const sent = Date.now();
+        child.kill("SIGTERM");
+        expect(await child.exited).toBe(0);
+        expect(Date.now() - sent).toBeLessThan(1500);
+        expect(api.seen.some((seen) => seen.method === "PUT")).toBe(false);
+        expect(await new Response(child.stdout).text()).toContain(
+          "libredb-kubernetes-discovery: received SIGTERM, exiting",
+        );
+      } finally {
+        child.kill("SIGKILL");
+      }
+    },
+    10000,
+  );
 });
 
 describe("isDirectExecution", () => {
