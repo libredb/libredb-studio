@@ -634,6 +634,20 @@ describe("every surface a server does not have", () => {
     await provider.disconnect();
   });
 
+  test("a Good ServerStatus fills the overview's version and uptime, and the size stays unknown", async () => {
+    const status = {
+      startTime: "2026-10-12T15:28:49.204Z",
+      currentTime: "2026-10-12T19:06:57.320Z",
+      buildInfo: { productName: "IoT Edge OPC UA PLC", softwareVersion: "2.15.10" },
+    };
+    const { provider } = await open({}, {}, { "i=2256": { nodeId: "i=2256", value: status, statusCode: "Good" } });
+    const overview = await provider.getOverview();
+    expect(overview.version).toBe("IoT Edge OPC UA PLC 2.15.10");
+    expect(overview.uptime).not.toBe("unknown");
+    expect(overview.databaseSize).toBe("unknown");
+    await provider.disconnect();
+  });
+
   /** A number a server does not publish is "unknown", and a session count is not a session list. */
   test("the health and overview reads name what is unknown", async () => {
     const { provider } = await open();

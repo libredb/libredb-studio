@@ -60,6 +60,15 @@ describe("the security mode", () => {
   });
 });
 
+describe("the security policy", () => {
+  test("a typed policy URI is carried trimmed, and a blank one is absent rather than empty", () => {
+    const policy = "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256";
+    expect(readConnection(connection({ securityPolicyUri: `  ${policy}  ` }), ENV).policyUri).toBe(policy);
+    expect(readConnection(connection({ securityPolicyUri: "   " }), ENV).policyUri).toBeUndefined();
+    expect(readConnection(connection({}), ENV).policyUri).toBeUndefined();
+  });
+});
+
 describe("the identity", () => {
   test("no username is an anonymous session", () => {
     const options = readConnection(connection({}), ENV);

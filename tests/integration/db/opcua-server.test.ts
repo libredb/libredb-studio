@@ -23,12 +23,12 @@
  *    code OPC PLC gives too.
  */
 import "@/lib/db/providers/industrial/opcua/hostname-guard";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { OPCUACertificateManager } from "node-opcua-certificate-manager";
-import { DataType, Variant } from "node-opcua-client";
+import { DataType, type EndpointDescription, OPCUAClient, Variant } from "node-opcua-client";
 import { OPCUAServer } from "node-opcua-server";
 import { OPCUA_LIBRARY_BRIDGE } from "@/lib/db/providers/industrial/opcua/library";
 import { openReadOnlySession } from "@/lib/db/providers/industrial/opcua/session";
@@ -163,6 +163,40 @@ describe("GetEndpoints, before any session exists", () => {
       for (const token of endpoint.userIdentityTokens) {
         expect(["Anonymous", "UserName", "Certificate", "IssuedToken"]).toContain(token.tokenType);
       }
+    }
+  });
+
+  /**
+   * An endpoint may arrive with no certificate. It is shaped with neither the bytes nor a
+   * thumbprint, so a pin is compared against nothing rather than against an empty certificate.
+   */
+  test("an endpoint that carries no certificate is shaped with no certificate and no thumbprint", async () => {
+    const create = OPCUAClient.create.bind(OPCUAClient);
+    const spy = spyOn(OPCUAClient, "create").mockImplementation((settings) => {
+      const client = create(settings);
+      // Taken before it is replaced. The library's promise form calls its own callback form through
+      // the same name, so a call carrying a callback is passed straight through.
+      const real = client.getEndpoints.bind(client) as unknown as (...args: unknown[]) => unknown;
+      Object.assign(client, {
+        getEndpoints: (...args: unknown[]) =>
+          typeof args[args.length - 1] === "function"
+            ? real(...args)
+            : (real(...args) as Promise<EndpointDescription[]>).then((endpoints) =>
+                endpoints.map((endpoint) => Object.assign(endpoint, { serverCertificate: null })),
+              ),
+      });
+      return client;
+    });
+    try {
+      const endpoints = await OPCUA_LIBRARY_BRIDGE.readEndpoints(options());
+      expect(endpoints.length).toBeGreaterThan(0);
+      for (const endpoint of endpoints) {
+        expect(endpoint.serverCertificate).toBeUndefined();
+        expect(endpoint.serverCertificateThumbprint).toBeUndefined();
+        expect(endpoint.securityPolicyUri).toContain("http://opcfoundation.org/UA/SecurityPolicy#");
+      }
+    } finally {
+      spy.mockRestore();
     }
   });
 
