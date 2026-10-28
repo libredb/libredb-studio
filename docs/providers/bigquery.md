@@ -76,6 +76,7 @@ Tokens are cached and refreshed a minute before they expire, and concurrent call
 
 A server credentials file that cannot be read is reported without its path (the path goes to the server log).
 The provider cache key includes `location`, so changing it gets a new provider instead of the cached one.
+The agent's connection identity includes it too, because a moved location is another catalog view: a held inventory is not served under the new location, so plan mode reads the catalog again, and a follow-up question does not carry the conversation over.
 The shared transport treats `Authorization` as a connection header, so each token gets its own transport, and a replaced one closes once its in-flight requests finish.
 
 The agent's own credential is a service-account key JSON in `agentPassword` alone, because BigQuery declares `agentCredential: "service-account-key"`: the provider mints that key's token itself, so Studio chooses the scope the token carries.

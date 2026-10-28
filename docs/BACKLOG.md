@@ -3367,15 +3367,6 @@ Found 2026-10-12 while designing the Snowflake provider.
 
 **Done when:** `tests/unit/db/bigquery/seam-guard.test.ts` holds the same layered rules as Databend's guard, each proven against the real sources and against a planted violation.
 
-### D337. BigQuery's `location` is not part of the connection identity
-
-`credentialDigest` in `src/lib/db/provider-cache-key.ts` frames BigQuery's `location`, so a moved location gets a new provider, while `connectionIdentity` in `src/lib/agent/context-snapshot.ts` does not frame it.
-A plan held under one location is therefore still matched after the location changes; adding the field moves every existing BigQuery identity, which is why it is a decision and not a fix.
-
-Found 2026-10-12 while designing the Snowflake provider.
-
-**Done when:** the decision is recorded, and if `location` joins `connectionIdentity`, the identity tests pin it and the release note says existing BigQuery plans are re-grounded.
-
 ### D338. BigQuery offers the column profiler, and each profile bills scanned bytes
 
 The profiler opt-out (`supportsColumnProfiling: false`) exists and Snowflake takes it; BigQuery does not, so each profile click runs up to 20 full-column statements that bill the bytes they scan and cannot be cancelled.
