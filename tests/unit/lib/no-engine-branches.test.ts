@@ -9,10 +9,10 @@
  * lists, and each entry names how many findings its declaration holds, so a branch added inside a listed declaration
  * fails as one added anywhere else does:
  *
- * The provider layer is `src/lib/db/providers/**`, the statement-language packs under `src/lib/agent/languages/**`
- * and the engine contract directories, whose index files collect one row per engine declared beside its provider.
- * The rest of `src/lib/db/` is a shared core like any other and is scanned: its tables keyed by type id are listed as
- * registries, and `factory.ts` as the composition root.
+ * The provider layer is `src/lib/db/providers/**` and the statement-language packs under `src/lib/agent/languages/**`.
+ * The rest of `src/lib/db/` is a shared core like any other and is scanned, the engine contract directories with it:
+ * their index tables, which collect one row per engine declared beside its provider, are listed as registries, as are
+ * the other tables keyed by type id, and `factory.ts` as the composition root.
  *
  * 1. `REGISTRIES`, the mappings of spec 5.6 that stay, because their job is the mapping;
  * 2. `FALSE_POSITIVES`, a word spelled like a type id that names something else, each with what it names;
@@ -34,7 +34,7 @@ import { type BranchFinding, findEngineBranches } from "./no-engine-branches/sca
 
 const ROOT = join(import.meta.dir, "..", "..", "..");
 const SOURCE_FILE = /\.(c|m)?(t|j)sx?$/;
-/** The engine contract directories: each index collects one row per engine, imported from beside its provider. */
+/** The engine contract directories, scanned like the rest of the shared db core. */
 const CONTRACT_DIRECTORIES = [
   "src/lib/db/connection-string/",
   "src/lib/db/execution-ui/",
@@ -42,7 +42,7 @@ const CONTRACT_DIRECTORIES = [
   "src/lib/db/sql-grammar/",
   "src/lib/db/sql-writing/",
 ];
-const PROVIDER_LAYER = ["src/lib/db/providers/", "src/lib/agent/languages/", ...CONTRACT_DIRECTORIES];
+const PROVIDER_LAYER = ["src/lib/db/providers/", "src/lib/agent/languages/"];
 const THIS_FILE = "tests/unit/lib/no-engine-branches.test.ts";
 const CREATE_TABLE_MODAL = "src/components/CreateTableModal.tsx";
 const TYPE_IDS: ReadonlySet<string> = new Set([...EXTERNAL_DATABASE_TYPES, "libredb"]);
@@ -69,6 +69,8 @@ const AGENT_LEG = "the agent-leg pattern, guarded by its own tests";
 const STORAGE_BACKEND = "the storage backend `STORAGE_PROVIDER` names, not an engine";
 const COMPATIBILITY = "a total per-engine compatibility table, compile-enforced over the type-id union";
 const FIELDS = "the UI-free connection field table, compile-enforced over the type-id union";
+const CONTRACT = "an engine contract's index, which collects the row each engine declares beside its provider";
+const NO_CONNECTION = "the engine a view with no connection open has always named, kept as the no-connection row";
 
 /** The registries of spec 5.6, which stay. */
 export const REGISTRIES: readonly Listed[] = [
@@ -91,6 +93,43 @@ export const REGISTRIES: readonly Listed[] = [
     count: 1,
     reason: FIELDS,
   })),
+  ...[
+    ["src/lib/db/connection-string/index.ts", "CONNECTION_STRING"],
+    ["src/lib/db/execution-ui/index.ts", "EXECUTION_UI"],
+    ["src/lib/db/migration-ddl/index.ts", "MIGRATION_DDL"],
+    ["src/lib/db/sql-grammar/index.ts", "SQL_GRAMMAR"],
+    ["src/lib/db/sql-writing/index.ts", "SQL_WRITING"],
+  ].map(([path, declaration]) => ({ path, declaration, count: 1, reason: CONTRACT })),
+  {
+    path: "src/lib/db/connection-string/index.ts",
+    declaration: "CONNECTION_STRING_PASTE_ORDER",
+    count: 1,
+    reason: "the order the parser offers a paste to the rows that read one, the one place that order is kept",
+  },
+  {
+    path: "src/lib/db/connection-string/index.ts",
+    declaration: "pasteRows",
+    count: 1,
+    reason: "the parameter type of the connection string index it is handed, which holds no row here",
+  },
+  {
+    path: "src/lib/db/connection-string/index.ts",
+    declaration: "ENGINE_URI_SCHEMES",
+    count: 1,
+    reason: "the scheme of each row that has one, built from the connection string index",
+  },
+  {
+    path: "src/lib/db/execution-ui/explain-request.ts",
+    declaration: "explainRequestEngine",
+    count: 1,
+    reason: NO_CONNECTION,
+  },
+  {
+    path: "src/lib/db/migration-ddl/index.ts",
+    declaration: "migrationDialectHeader",
+    count: 1,
+    reason: NO_CONNECTION,
+  },
   {
     path: "src/lib/db/connection-form.ts",
     declaration: "CONNECTION_FORM",
@@ -293,7 +332,12 @@ describe("type-id branches outside the provider layer", () => {
 
   test("scan the shared db core, the MCP server and the components", () => {
     const scanned = scannedFiles();
-    for (const shared of ["src/lib/db/factory.ts", "src/lib/db/destructive-commands.ts", "src/lib/db/utils/"]) {
+    for (const shared of [
+      "src/lib/db/factory.ts",
+      "src/lib/db/destructive-commands.ts",
+      "src/lib/db/utils/",
+      ...CONTRACT_DIRECTORIES,
+    ]) {
       expect(
         scanned.some((path) => path.startsWith(shared)),
         shared,
