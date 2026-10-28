@@ -205,6 +205,21 @@ describe("the answer", () => {
     expect(JSON.stringify([wide, indexed])).not.toContain("TRUNCATED");
   });
 
+  test("passes on an engine's refused index read as unavailable, never as an empty list", async () => {
+    // ClickHouse answers this way when the account may read the table but not its skip indexes.
+    const reason = "Not enough privileges to read the index list";
+    const original = SQLiteProvider.prototype.describeObject;
+    SQLiteProvider.prototype.describeObject = async function (this: SQLiteProvider, path, kind) {
+      return { ...(await original.call(this, path, kind)), indexes: { unavailable: reason } };
+    };
+    try {
+      const result = await inspect({ connection_id: "seed:shop", table: "indexed", include_indexes: true });
+      expect(tableNamed(result, "indexed")).toMatchObject({ indexes: { unavailable: reason }, indexes_omitted: 0 });
+    } finally {
+      SQLiteProvider.prototype.describeObject = original;
+    }
+  });
+
   test("returns a table whose name carries an instruction in the same shape, behind the notice", async () => {
     const result = await inspect({ connection_id: "seed:shop", table: INSTRUCTION_TABLE });
     expect(result.content[0].text).toBe(MCP_UNTRUSTED_NOTICE);

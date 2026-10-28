@@ -39,6 +39,12 @@ describe("MCP Safe Serializer", () => {
     expect(safeJsonStringify(row)).toBe('{"__proto__":1,"doc":{"__proto__":{"polluted":true}}}');
   });
 
+  test("writes a symbol or a function as its string form, where JSON.stringify would drop the key", () => {
+    const raw = { tag: Symbol("driver-tag"), hook: function onRow() {} };
+
+    expect(JSON.parse(safeJsonStringify(raw))).toEqual({ tag: "Symbol(driver-tag)", hook: "function onRow() {}" });
+  });
+
   test("serializes Date to ISO string", () => {
     const d = new Date("2026-09-20T21:00:00.000Z");
     const raw = { created_at: d };

@@ -15,7 +15,7 @@ import { editorExecutionContext } from "@/lib/api/execution-context";
 import { acquireExecutionProfileProvider, getOrCreateProvider } from "@/lib/db/factory";
 import { SQLiteProvider } from "@/lib/db/providers/sql/sqlite";
 import { logger } from "@/lib/logger";
-import { MCP_CONNECTIONS_UNREADABLE, McpConnectionContext } from "@/lib/mcp/context";
+import { MCP_CONNECTIONS_UNREADABLE, McpConnectionContext, mcpCaller } from "@/lib/mcp/context";
 import {
   countMethod,
   createDuckdbFile,
@@ -127,6 +127,30 @@ describe("the seed file", () => {
       if (origPrefix !== undefined) process.env.OIDC_ROLE_PREFIX = origPrefix;
       else delete process.env.OIDC_ROLE_PREFIX;
     }
+  });
+});
+
+describe("mcpCaller", () => {
+  const authInfo = (extra: Record<string, unknown> | undefined) => ({
+    token: "not-a-real-token",
+    clientId: "test:caller",
+    scopes: ["mcp:read"],
+    ...(extra === undefined ? {} : { extra }),
+  });
+
+  test("reads the username, role and claim roles the verifier put on the token", () => {
+    expect(mcpCaller(authInfo({ username: "alice", role: "user", claimRoles: ["db-readers"] }))).toEqual({
+      username: "alice",
+      role: "user",
+      claimRoles: ["db-readers"],
+    });
+  });
+
+  test("refuses an identity with no username or an unknown role, rather than serving an anonymous caller", () => {
+    const refusal = "The verified MCP identity carries no username and role";
+    expect(() => mcpCaller(authInfo(undefined))).toThrow(refusal);
+    expect(() => mcpCaller(authInfo({ username: "", role: "admin" }))).toThrow(refusal);
+    expect(() => mcpCaller(authInfo({ username: "alice", role: "owner" }))).toThrow(refusal);
   });
 });
 
