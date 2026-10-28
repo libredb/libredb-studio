@@ -480,7 +480,7 @@ const ORDER_COLUMNS = [
 ];
 
 describe("describeObject", () => {
-  const script = (hybrid: string) =>
+  const script = (hybrid: string, indexes: (string | null)[][] = [["BY_NOTE", "Y", "[NOTE, AT]"]]) =>
     fakeRunner([
       [/^SHOW COLUMNS IN /, () => showResult(COLUMN_COLUMNS, ORDER_COLUMNS)],
       [/^SHOW PRIMARY KEYS /, () => showResult(["table_name", "column_name", "key_sequence"], [["ORDERS", "ID", "1"]])],
@@ -495,7 +495,7 @@ describe("describeObject", () => {
             ],
           ),
       ],
-      [/^SHOW INDEXES /, () => showResult(["name", "is_unique", "columns"], [["BY_NOTE", "Y", "[NOTE, AT]"]])],
+      [/^SHOW INDEXES /, () => showResult(["name", "is_unique", "columns"], indexes)],
     ]);
 
   test("a table: its columns, primary key and catalog row, tagged describe", async () => {
@@ -525,6 +525,18 @@ describe("describeObject", () => {
     const detail = await describeObject(run, TABLE_PATH, "table");
     expect(calls.at(-1)).toEqual({ sql: `SHOW INDEXES IN TABLE ${QUALIFIED}`, tag: SNOWFLAKE_QUERY_TAGS.describe });
     expect(detail.indexes).toEqual([{ name: "BY_NOTE", columns: ["NOTE", "AT"], unique: true }]);
+  });
+
+  test("an index whose columns cell is empty or absent lists no columns rather than one blank name", async () => {
+    const { run } = script("Y", [
+      ["BY_NOTHING", "N", "[]"],
+      ["BY_NULL", "N", null],
+    ]);
+    const detail = await describeObject(run, TABLE_PATH, "table");
+    expect(detail.indexes).toEqual([
+      { name: "BY_NOTHING", columns: [], unique: false },
+      { name: "BY_NULL", columns: [], unique: false },
+    ]);
   });
 
   test("the LIKE wildcard's other match is never read as the table's row", async () => {

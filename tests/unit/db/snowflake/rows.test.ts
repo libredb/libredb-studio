@@ -586,6 +586,17 @@ describe("an oversized first answer read as a stream (SF-032)", () => {
     );
   });
 
+  test("metadata the skipper passes over but JSON does not parse is refused as unreadable", async () => {
+    for (const text of [
+      '{"resultSetMetaData":{"a":1,,},"data":[["1"]]}',
+      '{"resultSetMetaData":{"a" 1},"data":[["1"]]}',
+      '{"resultSetMetaData":{"rowType":[01]},"data":[["1"]]}',
+    ]) {
+      const refused = readOversizedFirstAnswer(answerOf(text, false));
+      await expect(refused).rejects.toMatchObject(unreadableRefusal);
+    }
+  });
+
   test("a scalar or string value before the metadata is skipped, and unnamed columns are numbered", async () => {
     const text = `{"code" : 1 ,"message":"a}b","resultSetMetaData":{"rowType":[{"type":"text"},null]},"data":[["a","b"]]}`;
     const { meta: read, outcome } = await readOversizedFirstAnswer(answerOf(text, false));
