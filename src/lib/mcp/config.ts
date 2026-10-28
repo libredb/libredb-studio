@@ -1,7 +1,8 @@
 /**
  * The MCP server's configuration (#246): four variables, read from process.env on every call, as
  * src/lib/agent/config.ts reads its own, so a changed value is seen by the next request, and the
- * governance hold, which keeps MCP off in governance mode whatever those variables say.
+ * governance and Kubernetes access review holds, which keep MCP off in either mode whatever those
+ * variables say.
  *
  * A problem names its variable and the rule it broke and never quotes the configured value: the
  * status endpoint shows problems to every signed-in user, and a URL can carry credentials in its
@@ -10,6 +11,7 @@
  * rebinding is the attacker's name.
  */
 import { governanceEnabled } from "@/lib/governance/config";
+import { accessReviewEnabled } from "@/lib/kubernetes-access/config";
 
 export const MCP_PATH = "/api/mcp";
 export const MCP_ENABLED_ENV = "LIBREDB_MCP_ENABLED";
@@ -28,6 +30,7 @@ const OFF_VALUES = new Set(["false", "off", "0", ""]);
 
 const SWITCH_OFF_PROBLEM = `${MCP_ENABLED_ENV} is off: set it to true, on or 1 to enable MCP`;
 const GOVERNANCE_HOLD_PROBLEM = `GOVERNANCE_SOURCE is set: this version of Studio does not run MCP under governance, so MCP stays off whatever ${MCP_ENABLED_ENV} says`;
+const ACCESS_REVIEW_HOLD_PROBLEM = `KUBERNETES_ACCESS_REVIEW is on: this version of Studio does not run MCP under the Kubernetes access review, so MCP stays off whatever ${MCP_ENABLED_ENV} says`;
 const URL_FIX = "set it to the address clients use, such as https://studio.example.com/api/mcp";
 
 export type McpSwitchReading =
@@ -63,8 +66,17 @@ export function isMcpHeldByGovernance(): boolean {
   return governanceEnabled();
 }
 
+/**
+ * Whether the Kubernetes access review holds MCP off (docs/SEED_CONNECTIONS.md, "Kubernetes access review"). An MCP
+ * token carries no groups record, so no review could decide what its tools open; the hold answers off before the
+ * switch is read, as governance's does, also where the boot preflight that refuses LIBREDB_MCP_ENABLED was bypassed.
+ */
+function isMcpHeldByAccessReview(): boolean {
+  return accessReviewEnabled();
+}
+
 export function readMcpSwitch(): McpSwitchReading {
-  if (isMcpHeldByGovernance()) return { state: "off" };
+  if (isMcpHeldByGovernance() || isMcpHeldByAccessReview()) return { state: "off" };
   const raw = process.env[MCP_ENABLED_ENV] ?? "";
   const value = raw.trim().toLowerCase();
   if (OFF_VALUES.has(value)) return { state: "off" };
@@ -119,6 +131,9 @@ export function mcpChannelStatus(): McpChannelStatus {
   // Under the hold no setting enables MCP, so the hold is the one problem named, and no address is offered.
   if (isMcpHeldByGovernance()) {
     return { state: "off", problems: [GOVERNANCE_HOLD_PROBLEM], url: null, tokenTtlDays: null };
+  }
+  if (isMcpHeldByAccessReview()) {
+    return { state: "off", problems: [ACCESS_REVIEW_HOLD_PROBLEM], url: null, tokenTtlDays: null };
   }
   const reading = readMcpSwitch();
   const url = readMcpUrl();

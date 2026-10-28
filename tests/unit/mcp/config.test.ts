@@ -22,7 +22,14 @@ import {
   readMcpUrl,
 } from "@/lib/mcp/config";
 
-const NAMES = [MCP_ENABLED_ENV, MCP_URL_ENV, MCP_TOKEN_LABEL_ENV, MCP_TOKEN_TTL_DAYS_ENV, "GOVERNANCE_SOURCE"];
+const NAMES = [
+  MCP_ENABLED_ENV,
+  MCP_URL_ENV,
+  MCP_TOKEN_LABEL_ENV,
+  MCP_TOKEN_TTL_DAYS_ENV,
+  "GOVERNANCE_SOURCE",
+  "KUBERNETES_ACCESS_REVIEW",
+];
 const saved = new Map<string, string | undefined>();
 
 beforeEach(() => {
@@ -242,6 +249,33 @@ describe("the governance hold", () => {
     process.env[MCP_URL_ENV] = "https://mcp-host.test/api/mcp";
     process.env[MCP_TOKEN_LABEL_ENV] = "label-one";
     expect(mcpChannelStatus()).toEqual({ state: "off", problems: [GOVERNANCE_HOLD], url: null, tokenTtlDays: null });
+  });
+});
+
+describe("the Kubernetes access review hold", () => {
+  const ACCESS_REVIEW_HOLD =
+    "KUBERNETES_ACCESS_REVIEW is on: this version of Studio does not run MCP under the Kubernetes access review, so MCP stays off whatever LIBREDB_MCP_ENABLED says";
+
+  test.each(["on", "enabled"])("KUBERNETES_ACCESS_REVIEW=%p holds MCP off, an unknown value included", (value) => {
+    process.env.KUBERNETES_ACCESS_REVIEW = value;
+    for (const switched of ["true", "on", "1"]) {
+      process.env[MCP_ENABLED_ENV] = switched;
+      expect(readMcpSwitch(), switched).toEqual({ state: "off" });
+    }
+  });
+
+  test("the channel is off and names the review's hold alone", () => {
+    process.env.KUBERNETES_ACCESS_REVIEW = "on";
+    process.env[MCP_ENABLED_ENV] = "true";
+    process.env[MCP_URL_ENV] = "https://mcp-host.test/api/mcp";
+    process.env[MCP_TOKEN_LABEL_ENV] = "label-one";
+    expect(mcpChannelStatus()).toEqual({ state: "off", problems: [ACCESS_REVIEW_HOLD], url: null, tokenTtlDays: null });
+  });
+
+  test("with the review off, MCP answers its switch as before", () => {
+    process.env.KUBERNETES_ACCESS_REVIEW = "off";
+    process.env[MCP_ENABLED_ENV] = "true";
+    expect(readMcpSwitch()).toEqual({ state: "on" });
   });
 });
 

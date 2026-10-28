@@ -2,6 +2,7 @@ import { access, constants, mkdir, readFile, unlink, writeFile } from "fs/promis
 import * as path from "path";
 import { governanceEnabled } from "@/lib/governance/config";
 import { runtimeSetting } from "@/lib/governance/settings";
+import { accessReviewEnabled } from "@/lib/kubernetes-access/config";
 import { resolveConfig, validateConfig } from "@/lib/llm/utils/config";
 import { AGENT_MODEL_TURN_TIMEOUT_MS, AGENT_WORKFLOW_BUDGETS } from "./execution-policy";
 
@@ -38,7 +39,8 @@ import { AGENT_MODEL_TURN_TIMEOUT_MS, AGENT_WORKFLOW_BUDGETS } from "./execution
  * Start must fail would give that back.
  *
  * Governance mode holds the agent off before any of that is read: this version does
- * not run the agent under governance (`isAgentHeldByGovernance` below).
+ * not run the agent under governance (`isAgentHeldByGovernance` below). The
+ * Kubernetes access review holds it off the same way (`readAgentEnableFlag`).
  *
  * An unrecognised backend is **refused**, not defaulted away. The storage factory
  * can safely fall back to `local` because every value it accepts is one of its
@@ -226,9 +228,12 @@ export type AgentRuntimeConfig =
  * `GOVERNANCE_HOLD` is separate from `OPERATOR_DISABLED` for the same reason:
  * governance mode holds the agent off whatever `LIBREDB_AGENT_ENABLED` says, so an
  * operator sent to that variable would find nothing there to change.
+ * `ACCESS_REVIEW_HOLD` is the Kubernetes access review's hold, kept apart from
+ * governance's because the variable that lifts it is another one.
  */
 export type AgentUnavailableReason =
   | "GOVERNANCE_HOLD"
+  | "ACCESS_REVIEW_HOLD"
   | "OPERATOR_DISABLED"
   | "NO_MODEL_CONFIGURED"
   | "LEDGER_UNAVAILABLE"
@@ -277,6 +282,9 @@ const runtimeDisabledMessage = (): string =>
 const governanceHoldMessage = (): string =>
   "GOVERNANCE_SOURCE is set: this version of Studio does not run the agent under governance, so this server runs no agent whatever else is configured";
 
+const accessReviewHoldMessage = (): string =>
+  "KUBERNETES_ACCESS_REVIEW is on: this version of Studio does not run the agent under the Kubernetes access review, so this server runs no agent whatever else is configured";
+
 const ledgerUnwritableMessage = (directory: string, cause: string): string =>
   `the agent's durable ledger cannot be written at "${directory}" (${cause}); point ${AGENT_LOCAL_DATA_DIR_ENV} at a writable directory`;
 
@@ -318,9 +326,13 @@ export function isAgentHeldByGovernance(): boolean {
  * hold rather than an off-switch nobody set, and it is decided before the variable
  * is read. `runtime-off` is the control plane's `agent.enabled` set to false, kept
  * apart for the same reason: the answer names the setting, not the variable.
+ * `review-held` is the Kubernetes access review's hold: a run keeps no groups record
+ * to review the connections it opens with, so the agent stays off while the review is
+ * on, decided before the variable is read, as governance's hold is.
  */
-function readAgentEnableFlag(): "held" | "runtime-off" | "off" | "auto" {
+function readAgentEnableFlag(): "held" | "review-held" | "runtime-off" | "off" | "auto" {
   if (isAgentHeldByGovernance()) return "held";
+  if (accessReviewEnabled()) return "review-held";
   // A valid runtime value from the control plane wins over the variable (docs/GOVERNANCE.md#runtime-settings), and true
   // still needs a model. Only governance sets one, and governance holds the agent above, so in this version the value
   // has no effect.
@@ -416,6 +428,9 @@ function availabilityWithoutIO(): AgentAvailability {
   const flag = readAgentEnableFlag();
   if (flag === "held") {
     return { available: false, reason: "GOVERNANCE_HOLD", detail: governanceHoldMessage() };
+  }
+  if (flag === "review-held") {
+    return { available: false, reason: "ACCESS_REVIEW_HOLD", detail: accessReviewHoldMessage() };
   }
   if (flag === "runtime-off") {
     return { available: false, reason: "OPERATOR_DISABLED", detail: runtimeDisabledMessage() };

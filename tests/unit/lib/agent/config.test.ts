@@ -42,6 +42,7 @@ const ENV_KEYS = [
   "LLM_MODEL_EFFORT",
   AGENT_THREAD_CONTEXT_ENV,
   "GOVERNANCE_SOURCE",
+  "KUBERNETES_ACCESS_REVIEW",
 ] as const;
 
 let originalEnv: Record<string, string | undefined>;
@@ -355,6 +356,33 @@ describe("the governance hold", () => {
     } finally {
       warn.mockRestore();
     }
+  });
+});
+
+describe("the Kubernetes access review hold", () => {
+  test("with the review on the agent answers off although an LLM is configured and the switch is on", async () => {
+    configureModel();
+    process.env[AGENT_ENABLED_ENV] = "true";
+    process.env.KUBERNETES_ACCESS_REVIEW = "on";
+    const dataDir = path.join(freshLedgerDir(), "never-created");
+    process.env.WORKFLOW_LOCAL_DATA_DIR = dataDir;
+
+    expect(isAgentRuntimeEnabled()).toBe(false);
+    expect(await resolveAgentAvailability()).toEqual({
+      available: false,
+      reason: "ACCESS_REVIEW_HOLD",
+      detail:
+        "KUBERNETES_ACCESS_REVIEW is on: this version of Studio does not run the agent under the Kubernetes access review, so this server runs no agent whatever else is configured",
+    });
+    expect(fs.existsSync(dataDir)).toBe(false);
+  });
+
+  test("an unknown switch value holds it too, and governance's hold is named first when both are set", async () => {
+    configureModel();
+    process.env.KUBERNETES_ACCESS_REVIEW = "enabled";
+    expect(await resolveAgentAvailability()).toMatchObject({ available: false, reason: "ACCESS_REVIEW_HOLD" });
+    process.env.GOVERNANCE_SOURCE = "postgres";
+    expect(await resolveAgentAvailability()).toMatchObject({ available: false, reason: "GOVERNANCE_HOLD" });
   });
 });
 
