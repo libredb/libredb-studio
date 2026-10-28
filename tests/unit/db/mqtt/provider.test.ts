@@ -174,6 +174,23 @@ describe("the connection's own fields, refused before a socket is opened", () =>
     }
   });
 
+  test("a username or password longer than an MQTT string can carry is refused by name, before any dial", async () => {
+    let dialled = false;
+    const record: MqttTransportFactory = () => {
+      dialled = true;
+      throw new QueryError("the dial must not happen", "mqtt");
+    };
+    const long = "u".repeat(65_536);
+    for (const over of [{ user: long }, { user: "sensor", password: long }]) {
+      const attempt = new MqttProvider(connection({ ...over, ssl: { mode: "require" } }), {}, record).connect();
+      await expect(attempt).rejects.toThrow(DatabaseConfigError);
+    }
+    await expect(
+      new MqttProvider(connection({ password: long, ssl: { mode: "require" } }), {}, record).connect(),
+    ).rejects.toThrow(/An MQTT password holds at most 65,535 bytes, and this one is 65,536/);
+    expect(dialled).toBe(false);
+  });
+
   /**
    * THE NAME PROMISED A TRANSPORT DECISION AND THE BODY CHECKED CONSTRUCTION. It built two providers and
    * asserted both were `MqttProvider`, which is true however the SSL mode is read - including if it were

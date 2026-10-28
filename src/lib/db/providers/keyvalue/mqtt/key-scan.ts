@@ -14,7 +14,7 @@
 import type { KeyScanCapability, KeyScanOptions, KeyScanPage } from "@/lib/db/types";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { MQTT_KEY_SCAN_DEFAULT_COUNT, MQTT_KEY_SCAN_MAX_COUNT, MQTT_TOPIC_SEPARATOR, MQTT_TYPE } from "./constants";
-import type { MqttTopicRow } from "./session";
+import type { MqttEndReason, MqttTopicRow } from "./session";
 
 /**
  * `/` as the separator, a prefix pattern, no count and no resumable cursor.
@@ -108,7 +108,7 @@ function subackRefusalSentence(code: number | undefined): string {
     : `${sentence}${tail}.`;
 }
 
-export function endReasonSentence(reason: string, code?: number): string {
+export function endReasonSentence(reason: MqttEndReason, code?: number): string {
   switch (reason) {
     case "budget-time":
       return "the read reached its time budget. Reading again, or narrowing the topic filter, sees more.";
@@ -132,8 +132,6 @@ export function endReasonSentence(reason: string, code?: number): string {
       return subackRefusalSentence(code);
     case "transport-closed":
       return "the connection closed before the budget ran out, so the list is short of what the filter matched.";
-    default:
-      return reason;
   }
 }
 
@@ -148,7 +146,7 @@ export function mqttKeyScanPage(
   options: KeyScanOptions,
   outcome?: {
     readonly scope: "incomplete" | "unknown";
-    readonly endReason: string;
+    readonly endReason: MqttEndReason;
     readonly provenLoss: readonly string[];
     /** The broker's own reason code, where the end had one, so the sentence can name the right remedy. */
     readonly endCode?: number;

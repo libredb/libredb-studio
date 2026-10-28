@@ -15,7 +15,7 @@ import {
   topicCell,
 } from "@/lib/db/providers/keyvalue/mqtt/key-scan";
 import { MQTT_KEY_SCAN_MAX_COUNT } from "@/lib/db/providers/keyvalue/mqtt/constants";
-import { readFilter, type MqttTopicRow } from "@/lib/db/providers/keyvalue/mqtt/session";
+import { readFilter, type MqttEndReason, type MqttTopicRow } from "@/lib/db/providers/keyvalue/mqtt/session";
 
 const row = (over: Partial<MqttTopicRow> = {}): MqttTopicRow => ({ retained: true, payloadBytes: 4, ...over });
 
@@ -172,7 +172,7 @@ describe("what the page tells the reader about the read itself (#1635)", () => {
   });
 
   test("every end reason becomes a sentence a reader can act on, and none is empty", () => {
-    const reasons = [
+    const reasons: MqttEndReason[] = [
       "budget-time",
       "budget-messages",
       "budget-bytes",

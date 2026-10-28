@@ -602,6 +602,13 @@ describe("a session the broker drives out of order", () => {
     expect(escaped()).toBeUndefined();
   });
 
+  test("a broker that hangs up before any CONNACK is reported as having closed, not as silent", async () => {
+    const { factory } = recording([]);
+    const attempt = readTopics({ ...BASE, openTransport: factory });
+    await expect(attempt).rejects.toThrow(/closed the connection without answering the handshake/);
+    await expect(attempt).rejects.toThrow(/empty topic tree would be a wrong answer/);
+  });
+
   test("a DISCONNECT before the CONNACK is reported with the broker's own reason code", async () => {
     const disconnect = Buffer.from([0xe0, 0x02, 0x87, 0x00]);
     const { factory } = recording([disconnect]);

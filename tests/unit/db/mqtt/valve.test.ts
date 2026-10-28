@@ -88,6 +88,14 @@ describe("the outbound half refuses everything but the five packets", () => {
     expect(() => guardOutboundPacket(withWill)).toThrow(/Will/);
   });
 
+  test("a CONNECT whose Remaining Length never ends is refused rather than read past", () => {
+    // 0x10 is CONNECT; a length byte with its continuation bit set and nothing after it never completes.
+    expect(() => guardOutboundPacket(Uint8Array.from([0x10, 0x80]))).toThrow(/carries no readable length/);
+    // Five continuation bytes are more than the four a Variable Byte Integer may use.
+    const overlong = Uint8Array.from([0x10, 0x80, 0x80, 0x80, 0x80, 0x01]);
+    expect(() => guardOutboundPacket(overlong)).toThrow(QueryError);
+  });
+
   test("our encoder exports no function that writes a PUBLISH", async () => {
     const encoder = await import("@/lib/db/providers/keyvalue/mqtt/encoder");
     const writers = Object.keys(encoder).filter((name) => name.startsWith("encode"));
