@@ -54,7 +54,7 @@ describe("the agent's plan readings live in the explain strategies", () => {
     }
   });
 
-  test("a reading is frozen, so no caller can swap a format's rule at run time", () => {
+  test("each reading object is frozen, so no caller can change a reading's rule in place", () => {
     for (const format of FORMATS) {
       const reading = getExplainStrategy(format)?.agentReading;
       if (reading !== undefined) expect(Object.isFrozen(reading), format).toBe(true);

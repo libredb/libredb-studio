@@ -165,8 +165,8 @@ describe("condition 2: the plan gate, per engine, with unknown resolving to risk
   test("PostgreSQL: the same flag would refuse there too, though nothing sets it", () => {
     // The gate reads the signal before it reaches either engine's rule, so a reading
     // that starts reporting it for PostgreSQL is refused rather than newly admitted.
-    // `summarisePlan` does not set it for that engine today, and `plan-summary.ts`
-    // pins that with the reasoning.
+    // `summarisePlan` does not set it for that engine today, and the PostgreSQL explain
+    // strategy (`src/lib/explain/postgres-json.ts`) pins that with the reasoning.
     const decision = evaluateAutoExecute({
       ...passing(),
       plan: {

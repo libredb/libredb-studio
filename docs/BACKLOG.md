@@ -7861,7 +7861,7 @@ A run that optimizes a command answers from one inspected plan instead, under `a
 
 Filed 2026-10-17 with agent execution on MongoDB (#1790).
 
-**Done when:** `plan-summary.ts` reads a MongoDB `queryPlanner` plan, the same reading B118 needs, the mongo `query-optimization` variant offers `compare_plans`, and a test compares two plans of one command; cited in `docs/AGENT.md`.
+**Done when:** a MongoDB explain strategy carries an `agentReading` of the `queryPlanner` plan, the same reading B118 needs, the mongo `query-optimization` variant offers `compare_plans`, and a test compares two plans of one command; cited in `docs/AGENT.md`.
 
 ### B120. Replica-set secondaries and `mongos` are unmeasured under the MongoDB profile
 
@@ -7905,7 +7905,7 @@ Found 2026-10-19 while splitting the agent core into language packs (#1821).
 ### B124. MySQL's estimating plan doubles a FORMAT=JSON the model already wrote
 
 `composeEstimatingExplain("mysql", "EXPLAIN FORMAT=JSON SELECT 1")` in `src/lib/agent/composed-sql.ts` returns `EXPLAIN FORMAT=JSON FORMAT=JSON SELECT 1`.
-`withoutEstimatingPrefix` strips every engine's declared estimating prefix (`planEstimate.prefix`), so a leading `EXPLAIN`, `EXPLAIN QUERY PLAN` and `EXPLAIN (FORMAT JSON)`, the PostgreSQL, DuckDB and SQLite spellings.
+`withoutEstimatingPrefix` strips the estimating prefixes the engines declare (`planEstimate.prefix`) and do not opt out of the strip, which today are a leading `EXPLAIN`, `EXPLAIN QUERY PLAN` and `EXPLAIN (FORMAT JSON)`, the PostgreSQL, DuckDB and SQLite spellings.
 MySQL's prefix is declared `strippedWhenRestated: false` in its engine overlay (`src/lib/agent/languages/sql/engines/mysql.ts`), which keeps its `FORMAT=JSON` tail out of the strip, so the prefix is put in front of a format clause that is still there.
 The engine-dialect golden (`tests/fixtures/agent/engine-dialect/`) pins this as current behaviour.
 
@@ -8104,7 +8104,7 @@ The passkey work added one derivation, `derivedSigningKey(label)` in `src/lib/co
 The copies are:
 
 - Three HMAC(`JWT_SECRET`, label) derivations: `driveSigningKey` in `src/lib/agent/drive-token.ts`, `mcpSigningKey` in `src/lib/mcp/token.ts` and `planSigningKey` in `src/lib/api/object-edit-plan-token.ts`.
-- Twelve private `isRecord` functions (`src/lib/agent/history.ts`, `src/lib/agent/plan-summary.ts`, `src/lib/agent/run-store.ts`, `src/lib/local-accounts.ts`, `src/lib/api/object-edit-wire.ts`, `src/lib/explain/duckdb-json.ts`, `src/lib/explain/trino-json.ts`, `src/lib/explain/couchbase-json.ts`, `src/lib/explain/clickhouse-json.ts`, `src/lib/explain/druid-native.ts`, `src/components/object-source/source-reader.ts`, `src/components/object-tree/use-tree-nodes.ts`) and the exported one in `src/lib/explain/text-plan.ts`.
+- Eleven private `isRecord` functions (`src/lib/agent/history.ts`, `src/lib/agent/run-store.ts`, `src/lib/local-accounts.ts`, `src/lib/api/object-edit-wire.ts`, `src/lib/explain/duckdb-json.ts`, `src/lib/explain/trino-json.ts`, `src/lib/explain/couchbase-json.ts`, `src/lib/explain/clickhouse-json.ts`, `src/lib/explain/druid-native.ts`, `src/components/object-source/source-reader.ts`, `src/components/object-tree/use-tree-nodes.ts`) and the exported one in `src/lib/explain/text-plan.ts`.
 - Four separate tests of OIDC mode and the storage provider inside `src/lib/local-accounts.ts` (`requireAccountStore`, the login user lookup, `storedAccountAllows` and `ownFactorStatus`).
 
 Each derived key must keep its label, so that a token of one purpose still never verifies as another, and each converged site must keep its current behaviour.
