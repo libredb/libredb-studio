@@ -1932,7 +1932,8 @@ export interface ProviderLabels {
  *   once the statement returns, and an overrun result is refused rather than served.
  *
  * The three caps bound one statement. `readAllowance` is the one bound that spans statements:
- * the billed-read allowance of the run, or of the MCP call, the statement belongs to.
+ * the billed-read allowance of the agent run, or of the single call (an MCP statement call, the
+ * editor's replay of a run's answer), the statement belongs to.
  */
 export interface ReadOnlyStatementBudget {
   statementTimeoutMs: number;
@@ -1941,8 +1942,9 @@ export interface ReadOnlyStatementBudget {
   /**
    * The billed reads the run this statement belongs to may still spend (`read-allowance.ts`).
    * The same object rides in every budget one agent drive hands out, grounding and catalog
-   * reads included, and MCP gives each call its own, so it carries the run identity that a
-   * provider shared by many runs cannot keep. An engine that bills every read charges it
+   * reads included, opened with what the run's earlier drives spent; an MCP call and a
+   * hand-over replay each get their own. So it carries the run identity that a provider shared
+   * by many runs cannot keep. An engine that bills every read charges it
    * before each request it sends, with what that request may cost at most, and refuses a
    * budget that carries none; every other engine ignores it. Optional, like every field added
    * to this published interface after the fact, so an external implementer keeps compiling.

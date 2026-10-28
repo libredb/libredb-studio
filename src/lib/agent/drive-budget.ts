@@ -6,8 +6,9 @@
  * resumed after a process death was handed a fresh set and started each ceiling
  * again, so N resumes cost up to N times one drive's budget. This module is the
  * missing read: it folds the run's persisted history into the ceilings a drive
- * starts with, and derives the artifact allowance the same way (#999). The
- * repair ledger stays per drive (`docs/BACKLOG.md` B6).
+ * starts with, and derives the artifact allowance the same way (#999), and the
+ * billed reads the run has spent (`billedReadsSpent`). The repair ledger stays
+ * per drive (`docs/BACKLOG.md` B6).
  *
  * Two clocks meet here and are kept apart on purpose. The deadline is derived
  * from `record.createdAtMs`, a WALL-CLOCK timestamp written when the run opened,
@@ -62,4 +63,21 @@ export function deriveDriveCeilings(
     executedMs,
     artifactAllowance: budget.policy.budgets.maxStatementsPerRun,
   };
+}
+
+/**
+ * The billed reads the run's earlier drives spent, the figure a drive opens its read allowance with.
+ *
+ * Each settled step records the run's whole spend so far (`readsSpent`), so this is the largest figure, not a sum. A
+ * drive that dies spends what it spent after its last settled step without recording it, as it spends the database
+ * time of a statement it never settled.
+ */
+export function billedReadsSpent(events: readonly AgentRunEvent[]): number {
+  let spent = 0;
+  for (const event of events) {
+    if ((event.kind === "tool-completed" || event.kind === "tool-refused") && event.readsSpent !== undefined) {
+      spent = Math.max(spent, event.readsSpent);
+    }
+  }
+  return spent;
 }

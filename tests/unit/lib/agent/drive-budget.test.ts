@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { ArtifactStoreError, ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { BudgetAccountingError, ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
-import { deriveDriveCeilings } from "@/lib/agent/drive-budget";
+import { billedReadsSpent, deriveDriveCeilings } from "@/lib/agent/drive-budget";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import type { AgentRunEvent } from "@/lib/agent/types";
 
@@ -185,5 +185,29 @@ describe("ExecutionArtifactStore.setRunAllowance", () => {
   test("refuses a non-positive allowance", () => {
     const store = new ExecutionArtifactStore({ ttlMs: 60_000, maxArtifacts: 10 });
     expect(() => store.setRunAllowance("run_a", 0)).toThrow(ArtifactStoreError);
+  });
+});
+
+describe("billedReadsSpent", () => {
+  test("a run whose ledger records no billed read has spent none", () => {
+    expect(billedReadsSpent([])).toBe(0);
+    expect(billedReadsSpent([completedEvent("s1", 5)])).toBe(0);
+  });
+
+  test("is the largest run-wide figure a settled step recorded, refused steps included", () => {
+    // Each settled step records what the whole run had spent when it settled, so the figure only grows and the
+    // latest is the largest; a refused step spent reads too, before it was refused.
+    const events: AgentRunEvent[] = [
+      { ...completedEvent("s1", 5), readsSpent: 40 } as AgentRunEvent,
+      {
+        kind: "tool-refused",
+        atMs: CREATED_AT + 9,
+        stepId: "s2",
+        refusal: { class: "policy-denied", reasonCode: "TARGET_OUT_OF_SCOPE" },
+        readsSpent: 90,
+      },
+      completedEvent("s3", 7),
+    ];
+    expect(billedReadsSpent(events)).toBe(90);
   });
 });

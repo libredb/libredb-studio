@@ -110,6 +110,7 @@ import {
   AGENT_RUN_READ_ALLOWANCE,
   AGENT_WORKFLOW_BUDGETS,
 } from "./execution-policy";
+import { billedReadsSpent } from "./drive-budget";
 import {
   type AgentModel,
   agentProviderOptions,
@@ -2773,8 +2774,9 @@ export async function runInvestigation(
       actor: record.actor,
       // Created here, with the drive's own context, and never taken from the caller: the allowance is
       // what tells this run's reads from another run's on the same cached provider, so two drives may
-      // never be handed one.
-      readAllowance: new RunReadAllowance(AGENT_RUN_READ_ALLOWANCE),
+      // never be handed one. Opened with what the run's earlier drives spent, read back from the ledger,
+      // so a resume continues the run's allowance rather than starting a fresh one.
+      readAllowance: new RunReadAllowance(AGENT_RUN_READ_ALLOWANCE, { spent: billedReadsSpent(record.events) }),
     };
     /*
       How this model is asked for a call, decided by the capability gate when the run opened
@@ -4372,11 +4374,16 @@ async function handleCall(input: {
   // closure because the settlement the ledger records deliberately does not carry
   // prose.
   let modelText = "";
-  const result = await service.runStep(record.runId, invocation, async () => {
-    const outcome = await invokeDatabaseTool(context, name, call.input, snapshot);
-    modelText = outcome.modelText;
-    return settlementOf(outcome);
-  });
+  const result = await service.runStep(
+    record.runId,
+    invocation,
+    async () => {
+      const outcome = await invokeDatabaseTool(context, name, call.input, snapshot);
+      modelText = outcome.modelText;
+      return settlementOf(outcome);
+    },
+    context.readAllowance,
+  );
 
   if (result.kind === "cancelled") return { kind: "cancelled" };
   if (result.kind === "paused") return { kind: "paused" };
@@ -4447,6 +4454,7 @@ export async function profileTable(
       });
       return { kind: "completed", artifact: outcome.artifact };
     },
+    context.readAllowance,
   );
 
   if (result.kind === "cancelled") return { kind: "cancelled" };
@@ -4506,6 +4514,7 @@ async function readEvidence(
       if (event !== null) await service.recordEvent(context.runId, event);
       return settlementOf(outcome);
     },
+    context.readAllowance,
   );
 
   if (result.kind === "cancelled") return { kind: "cancelled" };

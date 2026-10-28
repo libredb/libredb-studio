@@ -77,6 +77,45 @@ describe("RunReadAllowance", () => {
     expect(second.remaining()).toBe(4);
   });
 
+  test("reports what it has spent, the figure a run records so its next drive starts from it", () => {
+    const allowance = new RunReadAllowance(10);
+    expect(allowance.spent()).toBe(0);
+    allowance.charge(3, "a read");
+    expect(allowance.spent()).toBe(3);
+  });
+
+  test("an allowance opened with what earlier drives spent has only the rest left", () => {
+    const allowance = new RunReadAllowance(10, { spent: 7 });
+    expect(allowance.spent()).toBe(7);
+    expect(allowance.remaining()).toBe(3);
+    expect(() => allowance.charge(4, "the statement")).toThrow(
+      `${READ_ALLOWANCE_PREFIX}: the statement needs 4 billed reads, and 3 of the 10 this run may spend is left`,
+    );
+    allowance.charge(3, "the rest");
+    expect(allowance.spent()).toBe(10);
+  });
+
+  test("a recorded spend past the limit leaves nothing, not a negative balance", () => {
+    // A run recorded under a larger limit and resumed under a smaller one.
+    const allowance = new RunReadAllowance(10, { spent: 12 });
+    expect(allowance.remaining()).toBe(0);
+    expect(() => allowance.charge(1, "one more")).toThrow(ReadAllowanceExceededError);
+  });
+
+  test.each([-1, 0.5, Number.NaN, Number.POSITIVE_INFINITY])(
+    "a recorded spend of %p is refused: what was spent is a whole number of reads, zero or more",
+    (spent) => {
+      expect(() => new RunReadAllowance(10, { spent })).toThrow(RangeError);
+    },
+  );
+
+  test("an MCP call's allowance names the call, which has no run, in its refusal", () => {
+    const allowance = new RunReadAllowance(5, { scope: "call" });
+    expect(() => allowance.charge(6, "the statement")).toThrow(
+      `${READ_ALLOWANCE_PREFIX}: the statement needs 6 billed reads, and 5 of the 5 this call may spend is left`,
+    );
+  });
+
   test.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1])(
     "a limit of %p is refused: an allowance is a positive whole number of reads",
     (limit) => {

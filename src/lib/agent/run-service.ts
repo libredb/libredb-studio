@@ -51,6 +51,7 @@ import { type AgentGoalVerifierId, verifyRunGoal } from "./goal-verifier";
 import type { AgentHistoryCursor, AgentHistoryPage } from "./history";
 import type { AgentPackEvidenceRunEvent } from "./languages/client";
 import type { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
+import type { RunReadAllowance } from "@/lib/db/read-allowance";
 import type { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import type { QueryResult } from "@/lib/types";
 import { AgentRunStoreError } from "./run-store";
@@ -632,11 +633,16 @@ export class AgentRunService {
    * module never touches a database itself. An `execute` that throws leaves the
    * invocation recorded and the step unsettled — the honest record of "it was
    * asked for and we do not know what happened".
+   *
+   * `readAllowance` is the drive's billed-read allowance: the outcome records what
+   * the run has spent of it by then (`readsSpent`), so a resumed drive opens its own
+   * with what is left.
    */
   async runStep(
     runId: string,
     invocation: AgentRunInvocation,
     execute: () => Promise<AgentRunStepSettlement>,
+    readAllowance?: RunReadAllowance,
   ): Promise<AgentRunStepResult> {
     const view = await this.readOrThrow(runId);
     if (view.terminal) {
@@ -674,18 +680,24 @@ export class AgentRunService {
     });
 
     const settlement = await execute();
-    const outcome = this.settlementEvent(invocation.stepId, settlement);
+    const outcome = this.settlementEvent(invocation.stepId, settlement, readAllowance?.spent() ?? 0);
     if (outcome !== null) await this.store.appendEvent(runId, outcome);
     return { kind: "performed", settlement };
   }
 
-  private settlementEvent(stepId: string, settlement: AgentRunStepSettlement): AgentSettledStepEvent | null {
+  private settlementEvent(
+    stepId: string,
+    settlement: AgentRunStepSettlement,
+    readsSpent: number,
+  ): AgentSettledStepEvent | null {
     const atMs = this.clock();
+    // Written only once the run has spent a billed read, so a run on an engine that bills none records nothing new.
+    const spend = readsSpent > 0 ? { readsSpent } : {};
     if (settlement.kind === "completed") {
-      return { kind: "tool-completed", atMs, stepId, artifact: settlement.artifact };
+      return { kind: "tool-completed", atMs, stepId, artifact: settlement.artifact, ...spend };
     }
     if (settlement.kind === "refused") {
-      return { kind: "tool-refused", atMs, stepId, refusal: settlement.refusal };
+      return { kind: "tool-refused", atMs, stepId, refusal: settlement.refusal, ...spend };
     }
     return null;
   }

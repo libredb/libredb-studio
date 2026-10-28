@@ -76,7 +76,9 @@ function billingProvider(costOf: (sql: string) => number): { provider: DatabaseP
     queryReadOnly: async (sql: string, budget: ReadOnlyStatementBudget): Promise<QueryResult> => {
       const allowance = budget.readAllowance;
       reads.push({ sql, allowance, remainingBefore: allowance?.remaining() });
-      allowance?.charge(costOf(sql), "the read");
+      const cost = costOf(sql);
+      // An engine that bills nothing for a read never charges.
+      if (cost > 0) allowance?.charge(cost, "the read");
       return { rows: [{ n: 1 }], fields: ["n"], rowCount: 1, executionTime: 1 };
     },
     listContainers: async () => [],
@@ -87,22 +89,37 @@ function billingProvider(costOf: (sql: string) => number): { provider: DatabaseP
   return { provider, reads };
 }
 
-/** One agent-mode drive over `provider`: the events it recorded and the requests it sent the model. */
-async function drive(
-  provider: DatabaseProvider,
-  turns: readonly ScriptedTurn[],
-): Promise<{ readonly events: readonly AgentRunEvent[]; readonly turns: readonly Turn[] }> {
-  // A cold process per drive, so each one takes its own grounding read.
-  forgetHeldSnapshots();
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-read-allowance-"));
-  dataDirs.push(dataDir);
+/** A process over the ledger in `dataDir`: its store and service, and the resources a drive over `provider` takes. */
+function boot(dataDir: string, provider: DatabaseProvider) {
   const store = new AgentRunStore({ world: createLocalWorld({ dataDir, recoverActiveRuns: false }) });
   const tracker = new ExecutionBudgetTracker();
   const artifacts = new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 });
   const service = new AgentRunService({ store, resources: { tracker, artifacts } });
+  const resources = {
+    connection,
+    capabilities,
+    labels: TABLE_LABELS,
+    registry: createCanonicalOperationRegistry(),
+    scope: createTargetScope(connection.id),
+    tracker,
+    artifacts,
+    deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS.investigation.runDeadlineMs, () => 10_000),
+    repairs: new AgentRepairLedger(),
+    acquireProvider: async () => provider,
+  };
+  return { store, service, resources };
+}
+
+function freshDataDir(): string {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-read-allowance-"));
+  dataDirs.push(dataDir);
+  return dataDir;
+}
+
+async function startRun(service: AgentRunService) {
   const availability = workflowAvailability("agent", "investigation", connection.type);
   if (!availability.open) throw new Error("an investigation does not open on postgres");
-  const run = await service.start({
+  return service.start({
     mode: "agent",
     workflowType: "investigation",
     ...persistedRunFacts("agent", "investigation", availability),
@@ -110,26 +127,30 @@ async function drive(
     connectionId: connection.id,
     objective: "How many orders are there?",
   });
+}
+
+async function eventsOf(store: AgentRunStore, runId: string): Promise<readonly AgentRunEvent[]> {
+  const view = await store.read(runId);
+  if (!view) throw new Error(`run ${runId} has no ledger`);
+  return view.record.events;
+}
+
+/** One agent-mode drive over `provider`: the events it recorded and the requests it sent the model. */
+async function drive(
+  provider: DatabaseProvider,
+  turns: readonly ScriptedTurn[],
+): Promise<{ readonly events: readonly AgentRunEvent[]; readonly turns: readonly Turn[] }> {
+  // A cold process per drive, so each one takes its own grounding read.
+  forgetHeldSnapshots();
+  const { store, service, resources } = boot(freshDataDir(), provider);
+  const run = await startRun(service);
   const script = scriptedModel(...turns, answersProse("No report."), answersProse("No report."));
   await runInvestigation(run.runId, {
     service,
     model: await modelOver(script.fetch),
-    resources: {
-      connection,
-      capabilities,
-      labels: TABLE_LABELS,
-      registry: createCanonicalOperationRegistry(),
-      scope: createTargetScope(connection.id),
-      tracker,
-      artifacts,
-      deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS.investigation.runDeadlineMs, () => 10_000),
-      repairs: new AgentRepairLedger(),
-      acquireProvider: async () => provider,
-    },
+    resources,
   }).catch(() => undefined);
-  const view = await store.read(run.runId);
-  if (!view) throw new Error(`run ${run.runId} has no ledger`);
-  return { events: view.record.events, turns: script.turns };
+  return { events: await eventsOf(store, run.runId), turns: script.turns };
 }
 
 const countOrders = (id: string): ScriptedTurn =>
@@ -193,5 +214,59 @@ describe("the run read allowance", () => {
     if (next === undefined) throw new Error("the run ended at the refusal instead of asking the model again");
     expect(promptText(next)).toContain(READ_ALLOWANCE_PREFIX);
     expect(events.some((event) => event.kind === "tool-refused")).toBe(true);
+    // This server refused it, before anything was sent, so it is said in the server's own voice: never fenced as
+    // the database's error, and followed by what to do about it.
+    expect(promptText(next)).not.toContain("database error; operation");
+    expect(promptText(next)).toContain("refused by this server before it was sent; the database was not asked");
+  });
+
+  test("is the run's, not the drive's: a resumed drive starts from what the ledger says the run spent", async () => {
+    const { provider, reads } = billingProvider(() => 5);
+    forgetHeldSnapshots();
+    const dataDir = freshDataDir();
+    const first = boot(dataDir, provider);
+    const run = await startRun(first.service);
+    // The process dies after the statement settles: the model is asked again and nothing answers.
+    const dying = scriptedModel(countOrders("call_1"));
+    await expect(
+      runInvestigation(run.runId, {
+        service: first.service,
+        model: await modelOver(dying.fetch),
+        resources: first.resources,
+      }),
+    ).rejects.toThrow();
+    const firstSpend = 5 * reads.length;
+    const settled = (await eventsOf(first.store, run.runId)).find((event) => event.kind === "tool-completed");
+    // The settled step records what the whole run had spent by then, the grounding's catalog reads included.
+    expect(settled).toMatchObject({ readsSpent: firstSpend });
+
+    const firstDriveReads = reads.length;
+    const second = boot(dataDir, provider);
+    const resumed = scriptedModel(
+      callsTool("run_read_query", { sql: "SELECT count(*) FROM orders WHERE id > 0", rationale: "count again" }, "c2"),
+      answersProse("No report."),
+      answersProse("No report."),
+    );
+    await runInvestigation(run.runId, {
+      service: second.service,
+      model: await modelOver(resumed.fetch),
+      resources: second.resources,
+    }).catch(() => undefined);
+
+    const secondDrive = reads.slice(firstDriveReads);
+    expect(secondDrive.length).toBeGreaterThan(0);
+    // Not a fresh allowance: the resumed drive found only what the first one left.
+    expect(secondDrive[0]?.remainingBefore).toBe(AGENT_RUN_READ_ALLOWANCE - firstSpend);
+    expect(secondDrive[0]?.allowance?.limit).toBe(AGENT_RUN_READ_ALLOWANCE);
+    const recorded = (await eventsOf(second.store, run.runId)).filter((event) => event.kind === "tool-completed");
+    expect(recorded.at(-1)).toMatchObject({ readsSpent: 5 * reads.length });
+  });
+
+  test("a run on an engine that charges nothing records no spend", async () => {
+    const { provider } = billingProvider(() => 0);
+    const { events } = await drive(provider, [countOrders("call_1")]);
+    const settled = events.filter((event) => event.kind === "tool-completed" || event.kind === "tool-refused");
+    expect(settled.length).toBeGreaterThan(0);
+    for (const event of settled) expect(event).not.toHaveProperty("readsSpent");
   });
 });

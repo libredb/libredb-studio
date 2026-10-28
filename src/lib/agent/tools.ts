@@ -61,7 +61,14 @@
 import { z } from "zod";
 import { type AuditReason, emitAuditEvent } from "@/lib/audit";
 import type { ExecutionProfile } from "@/lib/db/factory";
-import { ConnectionError, DatabaseConfigError, DatabaseError, PoolExhaustedError, QueryError } from "@/lib/db/errors";
+import {
+  ConnectionError,
+  DatabaseConfigError,
+  DatabaseError,
+  PoolExhaustedError,
+  QueryError,
+  ReadAllowanceExceededError,
+} from "@/lib/db/errors";
 import type { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import type { ExecutionBudget, ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import {
@@ -325,11 +332,11 @@ export interface AgentToolContext {
   readonly repairs: AgentRepairLedger;
   readonly acquireProvider: AgentProviderAcquirer;
   /**
-   * The billed-read allowance of this drive, handed to the provider inside every budget the
-   * drive's reads carry (`readOnlyBudgetFor`), so the grounding's catalog reads and the model's
+   * The run's billed-read allowance, handed to the provider inside every budget the drive's
+   * reads carry (`readOnlyBudgetFor`), so the grounding's catalog reads and the model's
    * statements draw on one allowance and two runs on one cached provider never share one.
-   * `runInvestigation` creates it with the drive's context; a context built outside a drive may
-   * leave it out, and its reads then carry none.
+   * `runInvestigation` creates it with the drive's context, opened with what the run's earlier
+   * drives spent; a context built outside a drive may leave it out, and its reads then carry none.
    */
   readonly readAllowance?: RunReadAllowance;
   /** Injected for the audited-execution elapsed measurement, as in `execution.ts`. */
@@ -1595,6 +1602,10 @@ function columnsThatExist(message: string, connection: DatabaseConnection): stri
  * written in that language. The catalog branch is the language's own too, and only SQL has one (its pack's
  * `catalogAdvice`): a foreign catalog is a SQL mistake.
  */
+/** What the model reads after the run's read allowance refused a read, in this server's own voice. */
+const READ_ALLOWANCE_ADVICE =
+  "That read was refused by this server before it was sent; the database was not asked. This run cannot pay for a read that large: ask for a smaller one that fits what is left, or answer from what you have already read.";
+
 function otherStatementAdvice(
   message: string,
   engine: string,
@@ -1773,15 +1784,20 @@ export async function runAuditedAgentCall(
       So `columns` decides the cost, and the advice the model reads is still whichever of the three
       applies. `columnsThatExist` is computed once and used for both rather than called twice.
     */
-    const columns = columnsThatExist(error.message, context.connection);
-    const advice =
-      columns ??
-      otherStatementAdvice(
-        error.message,
-        context.connection.type,
-        call.fingerprintSource,
-        call.fingerprintLanguage ?? CURATED_CALL_LANGUAGE,
-      );
+    // The run's read allowance refused this read before it was sent, so the sentence is this server's and the
+    // database never saw the statement: it is not fenced as the database's words, and its advice is the server's.
+    // It still costs a repair attempt, because the repair is a smaller read the model has to author.
+    const ownRefusal = error instanceof ReadAllowanceExceededError;
+    const columns = ownRefusal ? undefined : columnsThatExist(error.message, context.connection);
+    const advice = ownRefusal
+      ? READ_ALLOWANCE_ADVICE
+      : (columns ??
+        otherStatementAdvice(
+          error.message,
+          context.connection.type,
+          call.fingerprintSource,
+          call.fingerprintLanguage ?? CURATED_CALL_LANGUAGE,
+        ));
     const answered = columns !== undefined;
     context.repairs.recordFailure(fingerprint, answered ? "database-error-answered" : "database-error");
     return {
@@ -1806,11 +1822,13 @@ export async function runAuditedAgentCall(
       // The advice follows OUTSIDE the fence, because it is this server's sentence and not the
       // engine's: putting it inside would attribute our instruction to the database.
       modelText: [
-        fenceUntrustedContent(error.message, {
-          label: "database error",
-          operationId: call.operationId,
-          reference: fingerprint,
-        }),
+        ownRefusal
+          ? error.message
+          : fenceUntrustedContent(error.message, {
+              label: "database error",
+              operationId: call.operationId,
+              reference: fingerprint,
+            }),
         // EVERY model, unlike the worked examples three tools below. Those are a whole call built
         // from the run's own ledger and long enough to crowd a small model's turn, so they stay
         // behind a lever a measurement opened. This is one sentence naming columns the operator's

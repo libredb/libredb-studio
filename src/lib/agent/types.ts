@@ -973,6 +973,14 @@ export type AgentGuidanceNotice =
   | "tool-call-as-text";
 
 /**
+ * The billed reads the whole run had spent when a step settled (`RunReadAllowance` in `src/lib/db/read-allowance.ts`),
+ * earlier drives included, so the figure only grows and the latest settled step holds the run's total. Absent while
+ * the run has spent none, which on every engine that does not bill its reads is always. A resumed drive opens its
+ * allowance with the largest figure the ledger holds (`billedReadsSpent` in `drive-budget.ts`).
+ */
+export type AgentRunReadsSpent = number;
+
+/**
  * The semantic events one run emits, in the vocabulary a user reads in the rail
  * and a resumed run replays. Deliberately coarse: one entry per thing that
  * HAPPENED, not per token or per SDK stream chunk.
@@ -1202,8 +1210,14 @@ export type AgentRunEvent =
       readonly kind: "tool-completed";
       readonly stepId: string;
       readonly artifact: AgentArtifactReference;
+      readonly readsSpent?: AgentRunReadsSpent;
     })
-  | (AgentRunEventBase & { readonly kind: "tool-refused"; readonly stepId: string; readonly refusal: AgentToolRefusal })
+  | (AgentRunEventBase & {
+      readonly kind: "tool-refused";
+      readonly stepId: string;
+      readonly refusal: AgentToolRefusal;
+      readonly readsSpent?: AgentRunReadsSpent;
+    })
   | (AgentRunEventBase & { readonly kind: "report-composed"; readonly claims: readonly AgentReportClaim[] })
   | (AgentRunEventBase & {
       /**
