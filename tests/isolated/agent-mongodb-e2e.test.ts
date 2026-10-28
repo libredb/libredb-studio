@@ -11,6 +11,7 @@ import type { AgentRunEvent, AgentRunFailureReason, AgentRunMode, AgentRunWorkfl
 import { type ExecutionProfileDenyCode, ExecutionProfileError } from "@/lib/db/errors";
 import * as realFactory from "@/lib/db/factory";
 import type { ExecutionProfile } from "@/lib/db/factory";
+import { RunReadAllowance } from "@/lib/db/read-allowance";
 import * as realResolveConnection from "@/lib/seed/resolve-connection";
 import type { DatabaseConnection } from "@/lib/types";
 import { mongoDriver, mongoDriverModule, resetMongoDriver } from "../helpers/mongodb-driver";
@@ -422,7 +423,12 @@ describe("agent runs on a MongoDB connection, scored by their own verifiers", ()
       expect(catalog.mock.calls).toEqual([
         [
           { container: "app", object: "orders" },
-          { statementTimeoutMs: 10_000, maxResultRows: 200, maxResultBytes: 262_144 },
+          {
+            statementTimeoutMs: 10_000,
+            maxResultRows: 200,
+            maxResultBytes: 262_144,
+            readAllowance: expect.any(RunReadAllowance),
+          },
         ],
       ]);
       expect(statements).not.toHaveBeenCalled();

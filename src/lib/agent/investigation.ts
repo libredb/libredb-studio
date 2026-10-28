@@ -107,6 +107,7 @@ import {
   AGENT_TRANSPORT_TURN_RETRIES,
   AGENT_UNREADABLE_TOOL_CALL_ANSWERS,
   AGENT_REPORT_RESERVE_TURNS,
+  AGENT_RUN_READ_ALLOWANCE,
   AGENT_WORKFLOW_BUDGETS,
 } from "./execution-policy";
 import {
@@ -173,6 +174,7 @@ import {
   neutraliseUntrustedMarkers,
 } from "./untrusted-content";
 import { isStatementReadOperation } from "@/lib/db/operations/descriptors";
+import { RunReadAllowance } from "@/lib/db/read-allowance";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import { editorLanguageForTabType, resolveTabType } from "@/lib/editor/tab-language";
 import type { DatabaseType } from "@/lib/types";
@@ -180,7 +182,7 @@ import type { DatabaseType } from "@/lib/types";
 /** Everything a tool call needs EXCEPT what the run's own record decides. */
 export type AgentToolResources = Omit<
   AgentToolContext,
-  "runId" | "modelId" | "mode" | "workflowType" | "statementLanguage" | "actor"
+  "runId" | "modelId" | "mode" | "workflowType" | "statementLanguage" | "actor" | "readAllowance"
 >;
 
 export interface AgentInvestigationOptions {
@@ -2769,6 +2771,10 @@ export async function runInvestigation(
       workflowType: record.workflowType,
       ...(record.statementLanguage === undefined ? {} : { statementLanguage: record.statementLanguage }),
       actor: record.actor,
+      // Created here, with the drive's own context, and never taken from the caller: the allowance is
+      // what tells this run's reads from another run's on the same cached provider, so two drives may
+      // never be handed one.
+      readAllowance: new RunReadAllowance(AGENT_RUN_READ_ALLOWANCE),
     };
     /*
       How this model is asked for a call, decided by the capability gate when the run opened

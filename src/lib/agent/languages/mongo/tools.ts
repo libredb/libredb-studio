@@ -42,6 +42,7 @@ import {
   type AgentToolContext,
   type AgentToolOutcome,
   executeAgentOperation,
+  readOnlyBudgetFor,
   runAuditedAgentCall,
 } from "../../tools";
 import {
@@ -130,11 +131,10 @@ export async function mongoInspectSchemaTool(
       // pipeline settles as a refusal the model can act on (a database the principal cannot read, a collection
       // name the engine refuses) rather than an error that ends the run.
       phase.statementSent = true;
-      reading = await provider.readCatalogReadOnly(catalogTarget(snapshot, schema, table), {
-        statementTimeoutMs: budget.statementTimeoutMs,
-        maxResultRows: budget.maxResultRows,
-        maxResultBytes: budget.maxResultBytes,
-      });
+      reading = await provider.readCatalogReadOnly(
+        catalogTarget(snapshot, schema, table),
+        readOnlyBudgetFor(context, budget),
+      );
       return { ...catalogRows(reading, kind), executionTime: (context.clock?.() ?? Date.now()) - startedAtMs };
     },
   });

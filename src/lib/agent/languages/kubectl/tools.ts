@@ -15,6 +15,7 @@ import {
   type AgentToolContext,
   type AgentToolOutcome,
   parseToolInput,
+  readOnlyBudgetFor,
   runAuditedAgentCall,
 } from "../../tools";
 
@@ -44,11 +45,7 @@ async function runClusterUsage(
   const provider = await context.acquireProvider(context.connection, AGENT_EXECUTION_PROFILE);
   if (typeof provider.readClusterUsage !== "function") throw new AgentCuratedReadError("KIND_UNSUPPORTED_BY_PROVIDER");
   phase.statementSent = true;
-  const reading = await provider.readClusterUsage(input, {
-    statementTimeoutMs: budget.statementTimeoutMs,
-    maxResultRows: budget.maxResultRows,
-    maxResultBytes: budget.maxResultBytes,
-  });
+  const reading = await provider.readClusterUsage(input, readOnlyBudgetFor(context, budget));
   if (reading.kind === "metrics-unavailable") throw new AgentCuratedReadError("METRICS_UNAVAILABLE");
   if (reading.kind === "over-ceiling")
     throw new AgentCuratedReadError("READING_OVER_BUDGET", CLUSTER_OVER_CEILING_TEXT);
@@ -103,11 +100,7 @@ async function runWorkloadProfile(
     throw new AgentCuratedReadError("KIND_UNSUPPORTED_BY_PROVIDER");
   }
   phase.statementSent = true;
-  const reading = await provider.readWorkloadProfile(input, {
-    statementTimeoutMs: budget.statementTimeoutMs,
-    maxResultRows: budget.maxResultRows,
-    maxResultBytes: budget.maxResultBytes,
-  });
+  const reading = await provider.readWorkloadProfile(input, readOnlyBudgetFor(context, budget));
   if (reading.kind === "over-ceiling")
     throw new AgentCuratedReadError("READING_OVER_BUDGET", WORKLOADS_OVER_CEILING_TEXT);
   const bytes = measureResultBytes(reading.result.rows);

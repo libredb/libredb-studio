@@ -360,6 +360,23 @@ export const AGENT_WORKFLOW_BUDGETS: Readonly<Record<AgentRunWorkflowType, Agent
 } satisfies Record<AgentRunWorkflowType, AgentWorkflowBudget>);
 
 /**
+ * The most billed reads one drive of a run may spend, on an engine that bills every read (`RunReadAllowance` in
+ * `src/lib/db/read-allowance.ts`).
+ *
+ * One figure for every workflow, sized from the rows above rather than chosen beside them: the largest statement
+ * ceiling, 45, times one more than the 200-row cap a result may carry (a read that finds a 201st row to refuse has
+ * billed it) comes to 9,045 billed reads, so 10,000 lets every statement the run may send read a full result with
+ * room left for the grounding's catalog and sampling reads. So on such an engine the allowance binds only where a
+ * request bills more than the rows it returns. It is a starting figure the first engine that bills its reads
+ * measures, and the unit is that engine's own: its provider doc says what one billed read is.
+ *
+ * A drive is given a fresh allowance, like its turn ceiling and repair ledger: the spend is not yet recorded in the
+ * ledger, so a resumed drive starts whole. An engine that charges it reads it off the budget it is handed; no engine
+ * charges it yet.
+ */
+export const AGENT_RUN_READ_ALLOWANCE = 10_000;
+
+/**
  * The longest ONE model call may take before the loop stops waiting for it.
  *
  * The run deadline used to be the only bound on a single request, and a measured run

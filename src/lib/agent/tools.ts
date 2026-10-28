@@ -82,9 +82,11 @@ import type {
   ObjectKindSpec,
   ProviderCapabilities,
   ProviderLabels,
+  ReadOnlyStatementBudget,
   ReadOnlyStatementMode,
 } from "@/lib/db/types";
 import type { ContainerEnumeration } from "@/lib/db/container-walk";
+import type { RunReadAllowance } from "@/lib/db/read-allowance";
 import {
   enumerationOf,
   kindsByContainer,
@@ -322,8 +324,30 @@ export interface AgentToolContext {
   readonly deadline: AgentRunDeadline;
   readonly repairs: AgentRepairLedger;
   readonly acquireProvider: AgentProviderAcquirer;
+  /**
+   * The billed-read allowance of this drive, handed to the provider inside every budget the
+   * drive's reads carry (`readOnlyBudgetFor`), so the grounding's catalog reads and the model's
+   * statements draw on one allowance and two runs on one cached provider never share one.
+   * `runInvestigation` creates it with the drive's context; a context built outside a drive may
+   * leave it out, and its reads then carry none.
+   */
+  readonly readAllowance?: RunReadAllowance;
   /** Injected for the audited-execution elapsed measurement, as in `execution.ts`. */
   readonly clock?: () => number;
+}
+
+/**
+ * The per-statement budget a provider read of this run is handed: the caps the pipeline allowed
+ * the call, and the run's read allowance. Every agent read that takes a budget builds it here, so
+ * no read of a run can reach the provider without the allowance the rest of the run spends.
+ */
+export function readOnlyBudgetFor(context: AgentToolContext, budget: ExecutionBudget): ReadOnlyStatementBudget {
+  return {
+    statementTimeoutMs: budget.statementTimeoutMs,
+    maxResultRows: budget.maxResultRows,
+    maxResultBytes: budget.maxResultBytes,
+    ...(context.readAllowance === undefined ? {} : { readAllowance: context.readAllowance }),
+  };
 }
 
 /**
@@ -1375,15 +1399,7 @@ async function runStatement(
   // separates a wrong agent credential from `permission denied for table secrets`
   // without inspecting message text.
   phase.statementSent = true;
-  return provider.queryReadOnly(
-    sql,
-    {
-      statementTimeoutMs: budget.statementTimeoutMs,
-      maxResultRows: budget.maxResultRows,
-      maxResultBytes: budget.maxResultBytes,
-    },
-    mode,
-  );
+  return provider.queryReadOnly(sql, readOnlyBudgetFor(context, budget), mode);
 }
 
 /**

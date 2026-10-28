@@ -37,7 +37,8 @@ import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
 import { QueryError } from "@/lib/db/errors";
-import type { DatabaseProvider, ReadOnlyCatalogReading } from "@/lib/db/types";
+import { RunReadAllowance } from "@/lib/db/read-allowance";
+import type { DatabaseProvider, ReadOnlyCatalogReading, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type {
   AgentArtifactReference,
   AgentContextSnapshot,
@@ -321,6 +322,13 @@ describe("run_read_query on mongo", () => {
 });
 
 describe("inspect_schema on mongo", () => {
+  test("the catalog read is handed the run's read allowance in its budget, as every read of the run is", async () => {
+    const readAllowance = new RunReadAllowance(10);
+    const h = harness({ readAllowance });
+    await mongoInspectSchemaTool(h.context, {}, null);
+    expect((h.readCatalogReadOnly.mock.calls[0]?.[1] as ReadOnlyStatementBudget).readAllowance).toBe(readAllowance);
+  });
+
   test("a database-scoped read asks the provider for the bound database's collections, never a guessed one", async () => {
     const h = harness();
     const outcome = await mongoInspectSchemaTool(h.context, {}, null);
