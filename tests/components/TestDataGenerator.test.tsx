@@ -352,6 +352,30 @@ describe("TestDataGenerator", () => {
 
   // ── MongoDB insertMany JSON generation ──────────────────────────────────────
 
+  // The JSON request is the engine's own grammar, written by its sql-writing row; a JSON engine whose row declares
+  // none is refused in words rather than handed another engine's request.
+  test("refuses a JSON language whose engine's writing row declares no document insert", () => {
+    expect(() =>
+      render(
+        <TestDataGenerator
+          isOpen
+          onClose={mock(() => {})}
+          tablePath={["users"]}
+          tableSchema={{
+            name: "users",
+            kind: "table",
+            path: ["users"],
+            indexes: [],
+            columns: [{ name: "name", type: "VARCHAR(100)", nullable: false, isPrimary: false }],
+          }}
+          databaseType="redis"
+          capabilities={capsOf({ queryLanguage: "json" })}
+          onExecuteQuery={mock(() => {})}
+        />,
+      ),
+    ).toThrow("declares no document insert");
+  });
+
   test("generates MongoDB insertMany JSON when queryLanguage is json", () => {
     const { container } = render(
       <TestDataGenerator
@@ -368,6 +392,7 @@ describe("TestDataGenerator", () => {
             { name: "email", type: "VARCHAR(255)", nullable: false, isPrimary: false },
           ],
         }}
+        databaseType="mongodb"
         capabilities={jsonCaps}
         onExecuteQuery={mock(() => {})}
       />,
@@ -407,6 +432,7 @@ describe("TestDataGenerator", () => {
         onClose={mock(() => {})}
         tablePath={["shop", "customers"]}
         tableSchema={nestedSchema}
+        databaseType="mongodb"
         capabilities={jsonCaps}
         onExecuteQuery={onExecuteQuery}
       />,
@@ -447,6 +473,7 @@ describe("TestDataGenerator", () => {
         onClose={mock(() => {})}
         tablePath={["shop", "profiles"]}
         tableSchema={nestedSchema}
+        databaseType="mongodb"
         capabilities={jsonCaps}
         onExecuteQuery={onExecuteQuery}
       />,
@@ -479,6 +506,7 @@ describe("TestDataGenerator", () => {
         onClose={mock(() => {})}
         tablePath={["shop", "profiles"]}
         tableSchema={nestedSchema}
+        databaseType="mongodb"
         capabilities={jsonCaps}
         onExecuteQuery={onExecuteQuery}
       />,
@@ -793,6 +821,7 @@ describe("TestDataGenerator", () => {
         onClose={mock(() => {})}
         tablePath={["shop", "profiles"]}
         tableSchema={richSchema}
+        databaseType="mongodb"
         capabilities={jsonCaps}
         onExecuteQuery={onExecuteQuery}
       />,
@@ -875,6 +904,7 @@ describe("TestDataGenerator", () => {
         onClose={mock(() => {})}
         tablePath={["shop", "events"]}
         tableSchema={typedSchema}
+        databaseType="mongodb"
         capabilities={jsonCaps}
         onExecuteQuery={onExecuteQuery}
       />,
@@ -966,6 +996,7 @@ describe("TestDataGenerator", () => {
         onClose={mock(() => {})}
         tablePath={["sample_shop", "customers"]}
         tableSchema={{ ...customers, path: ["sample_shop", "customers"] }}
+        databaseType="mongodb"
         capabilities={jsonCaps}
         onExecuteQuery={mock(() => {})}
       />,
@@ -1098,6 +1129,7 @@ describe("TestDataGenerator value typing (#1468)", () => {
         onClose={mock(() => {})}
         tablePath={customers.path}
         tableSchema={customers}
+        databaseType="mongodb"
         capabilities={jsonCaps}
         onExecuteQuery={mock(() => {})}
       />,
@@ -1209,6 +1241,7 @@ describe("TestDataGenerator value typing (#1468)", () => {
         onClose={mock(() => {})}
         tablePath={typed.path}
         tableSchema={typed}
+        databaseType="mongodb"
         capabilities={jsonCaps}
         onExecuteQuery={mock(() => {})}
       />,

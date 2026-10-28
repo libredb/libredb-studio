@@ -294,7 +294,10 @@ describe("type-id branches outside the provider layer", () => {
   test("scan the shared db core, the MCP server and the components", () => {
     const scanned = scannedFiles();
     for (const shared of ["src/lib/db/factory.ts", "src/lib/db/destructive-commands.ts", "src/lib/db/utils/"]) {
-      expect(scanned.some((path) => path.startsWith(shared)), shared).toBe(true);
+      expect(
+        scanned.some((path) => path.startsWith(shared)),
+        shared,
+      ).toBe(true);
     }
     for (const shared of ["src/lib/mcp/", "src/components/"]) {
       expect(scanned.filter((path) => path.startsWith(shared)).length, shared).toBeGreaterThan(0);
@@ -334,6 +337,37 @@ describe("type-id branches outside the provider layer", () => {
     const keys = Object.values(LISTS).flatMap((list) => list.map(key));
     expect(keys.filter((entry, at) => keys.indexOf(entry) !== at)).toEqual([]);
     expect(DEBT.filter((entry) => !(entry.pr >= 2 && entry.pr <= 8)).map(key)).toEqual([]);
+  });
+});
+
+/** The statement text of `path`, with its comments blanked so prose about an engine is not read as a branch. */
+function codeOf(path: string): string {
+  return readFileSync(join(ROOT, path), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, (comment) => comment.replace(/[^\n]/g, ""))
+    .replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
+}
+
+/** The members of a string-literal union type alias declared in `path`. */
+function unionMembers(path: string, alias: string): string[] {
+  const source = readFileSync(join(ROOT, path), "utf8");
+  const start = source.indexOf(`export type ${alias} =`);
+  const end = source.indexOf(";", start);
+  return [...source.slice(start, end).matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+}
+
+// An engine fact the scan cannot see, because its value is not a type id, held to the module that owns it.
+describe("engine facts spelled by a value other than a type id", () => {
+  test("the Studio shell names no explain format: a strategy declares its live estimate", () => {
+    const formats = unionMembers("src/lib/db/types.ts", "ExplainFormat");
+    expect(formats.length).toBeGreaterThan(0);
+    const code = codeOf("src/components/Studio.tsx");
+    expect(
+      formats.filter((format) => ['"', "'", "`"].some((quote) => code.includes(`${quote}${format}${quote}`))),
+    ).toEqual([]);
+  });
+
+  test("the test data generator names no engine's request operation: the sql-writing row writes it", () => {
+    expect(codeOf("src/components/TestDataGenerator.tsx")).not.toMatch(/["'`]insertMany["'`]/);
   });
 });
 

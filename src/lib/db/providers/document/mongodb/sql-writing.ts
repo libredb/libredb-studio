@@ -44,4 +44,6 @@ export const MONGODB_SQL_WRITING: SqlWritingSpec = {
     nonFinite: NULL_NON_FINITE,
     insertForm: "values",
   },
+  // The test data generator's insert is the provider's own request: one `insertMany` at the collection's address.
+  insertDocuments: (address, documents) => JSON.stringify({ ...address, operation: "insertMany", documents }, null, 2),
 };

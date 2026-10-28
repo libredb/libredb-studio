@@ -7,6 +7,7 @@ import { CopyButton } from "@/components/copy-button";
 import { DatabaseType } from "@/lib/types";
 import type { DetailedObject } from "@/lib/db/detailed-object";
 import { quoteLiteral, temporalLiteral } from "@/lib/sql/values";
+import { sqlWritingFor } from "@/lib/db/sql-writing";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import { objectPathLabel, pathKey } from "@/lib/db/object-path";
 import { jsonCommandAddress, quoteIdentifier, quoteObjectPath } from "@/lib/query-generators";
@@ -441,7 +442,13 @@ export function TestDataGenerator({
     // Read through `capabilities` rather than `queryLanguage` so the declaration is in hand
     // for the address below; `queryLanguage` is the same field and stays in the deps.
     if (capabilities?.queryLanguage === "json") {
-      // MongoDB insertMany
+      // The request is the engine's own, written by its sql-writing row.
+      const insertDocuments = sqlWritingFor(databaseType).insertDocuments;
+      if (insertDocuments === undefined) {
+        throw new Error(
+          `Cannot generate test data: the ${databaseType ?? "unconnected"} writing row declares no document insert.`,
+        );
+      }
       // The inferred schema contains parent paths alongside their dotted children.
       // Generate values for leaves and rebuild those paths as nested objects.
       const leafCols = cols.filter(
@@ -461,11 +468,7 @@ export function TestDataGenerator({
       });
       // The database rides as its own key: without it the insert landed in the connected
       // database's same-named collection, a write to the wrong place (#843).
-      return JSON.stringify(
-        { ...jsonCommandAddress(tablePath, capabilities), operation: "insertMany", documents: docs },
-        null,
-        2,
-      );
+      return insertDocuments(jsonCommandAddress(tablePath, capabilities), docs);
     }
 
     // SQL INSERT

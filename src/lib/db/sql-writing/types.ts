@@ -25,6 +25,14 @@ export interface SqlWritingSpec {
   readonly inlineEdit: InlineEditSpec;
   /** The CREATE TABLE types and INSERT literals the result export writes for this engine. */
   readonly export: ExportSpec;
+  /**
+   * The request that inserts `documents` at `address`, for an engine whose console text is a JSON request rather than
+   * a statement; the test data generator writes it in place of an INSERT. Absent where the engine declares none.
+   */
+  readonly insertDocuments?: (
+    address: Readonly<Record<string, unknown>>,
+    documents: readonly Readonly<Record<string, unknown>>[],
+  ) => string;
 }
 
 /**

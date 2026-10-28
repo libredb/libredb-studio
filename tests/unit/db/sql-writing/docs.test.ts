@@ -30,7 +30,7 @@ import { ENGINE_MODULES, ROOT, TYPED_LITERAL_MODULES } from "./engine-modules";
  *
  * It also names `inlineEdit`, and for each key-column name set either the shared set it
  * holds, by that set's name, or the field itself where the engine states its own set. A
- * `boundEdit`, where one exists, is named too.
+ * `boundEdit`, where one exists, is named too, and so is an `insertDocuments`.
  *
  * And it names `export`: the binary literal form by function name, each export fact either
  * by the shared constant it holds or by its field name, `insertForm` where the engine writes
@@ -77,6 +77,7 @@ describe("provider docs name their SQL writing rules", () => {
         expect(text).toContain(`\`${spec.placeholder.name}\``);
       }
       if (spec.temporalLiteral !== null) expect(text).toContain("`temporalLiteral`");
+      if (spec.insertDocuments !== undefined) expect(text).toContain("`insertDocuments`");
       expect(text).toContain("`inlineEdit`");
       const { inlineEdit } = spec;
       const sets = [
