@@ -1799,28 +1799,22 @@
         "columns": [
           {
             "selector": {},
-            "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"libsql\""
-            }
+            "sql": "SELECT name, type, sql FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite@_%' ESCAPE '@' ORDER BY type, name"
           },
           {
             "selector": {
               "schema": "Sales"
             },
             "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"libsql\""
+              "reasonCode": "SELECTOR_UNSUPPORTED_BY_DIALECT",
+              "message": "libSQL serves one schema on the agent path (\"main\"), so \"Sales\" cannot be selected"
             }
           },
           {
             "selector": {
               "schema": "MAIN"
             },
-            "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"libsql\""
-            }
+            "sql": "SELECT name, type, sql FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite@_%' ESCAPE '@' ORDER BY type, name"
           },
           {
             "selector": {
@@ -1828,36 +1822,30 @@
               "table": "orders"
             },
             "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"libsql\""
+              "reasonCode": "SELECTOR_UNSUPPORTED_BY_DIALECT",
+              "message": "libSQL serves one schema on the agent path (\"main\"), so \"public\" cannot be selected"
             }
           }
         ],
         "relations": [
           {
             "selector": {},
-            "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"libsql\""
-            }
+            "sql": "SELECT name, type, sql FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite@_%' ESCAPE '@' ORDER BY type, name"
           },
           {
             "selector": {
               "schema": "Sales"
             },
             "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"libsql\""
+              "reasonCode": "SELECTOR_UNSUPPORTED_BY_DIALECT",
+              "message": "libSQL serves one schema on the agent path (\"main\"), so \"Sales\" cannot be selected"
             }
           },
           {
             "selector": {
               "schema": "MAIN"
             },
-            "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"libsql\""
-            }
+            "sql": "SELECT name, type, sql FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite@_%' ESCAPE '@' ORDER BY type, name"
           },
           {
             "selector": {
@@ -1865,36 +1853,30 @@
               "table": "orders"
             },
             "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"libsql\""
+              "reasonCode": "SELECTOR_UNSUPPORTED_BY_DIALECT",
+              "message": "libSQL serves one schema on the agent path (\"main\"), so \"public\" cannot be selected"
             }
           }
         ],
         "indexes": [
           {
             "selector": {},
-            "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"libsql\""
-            }
+            "sql": "SELECT name, tbl_name, sql FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL AND name NOT LIKE 'sqlite@_%' ESCAPE '@' ORDER BY tbl_name, name"
           },
           {
             "selector": {
               "schema": "Sales"
             },
             "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"libsql\""
+              "reasonCode": "SELECTOR_UNSUPPORTED_BY_DIALECT",
+              "message": "libSQL serves one schema on the agent path (\"main\"), so \"Sales\" cannot be selected"
             }
           },
           {
             "selector": {
               "schema": "MAIN"
             },
-            "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"libsql\""
-            }
+            "sql": "SELECT name, tbl_name, sql FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL AND name NOT LIKE 'sqlite@_%' ESCAPE '@' ORDER BY tbl_name, name"
           },
           {
             "selector": {
@@ -1902,36 +1884,30 @@
               "table": "orders"
             },
             "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"libsql\""
+              "reasonCode": "SELECTOR_UNSUPPORTED_BY_DIALECT",
+              "message": "libSQL serves one schema on the agent path (\"main\"), so \"public\" cannot be selected"
             }
           }
         ],
         "statistics": [
           {
             "selector": {},
-            "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"libsql\""
-            }
+            "sql": "SELECT m.name AS table_name, s.idx AS index_name, s.stat AS stat FROM sqlite_master m LEFT JOIN sqlite_stat1 s ON s.tbl = m.name WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite@_%' ESCAPE '@' ORDER BY m.name, s.idx"
           },
           {
             "selector": {
               "schema": "Sales"
             },
             "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"libsql\""
+              "reasonCode": "SELECTOR_UNSUPPORTED_BY_DIALECT",
+              "message": "libSQL serves one schema on the agent path (\"main\"), so \"Sales\" cannot be selected"
             }
           },
           {
             "selector": {
               "schema": "MAIN"
             },
-            "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"libsql\""
-            }
+            "sql": "SELECT m.name AS table_name, s.idx AS index_name, s.stat AS stat FROM sqlite_master m LEFT JOIN sqlite_stat1 s ON s.tbl = m.name WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite@_%' ESCAPE '@' ORDER BY m.name, s.idx"
           },
           {
             "selector": {
@@ -1939,8 +1915,8 @@
               "table": "orders"
             },
             "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"libsql\""
+              "reasonCode": "SELECTOR_UNSUPPORTED_BY_DIALECT",
+              "message": "libSQL serves one schema on the agent path (\"main\"), so \"public\" cannot be selected"
             }
           }
         ]
@@ -1949,43 +1925,43 @@
         {
           "sql": "SELECT 1",
           "composed": {
-            "reasonCode": "UNSUPPORTED_DIALECT",
-            "message": "no verified estimating EXPLAIN for provider type \"libsql\""
+            "sql": "EXPLAIN QUERY PLAN SELECT 1",
+            "mode": "execute"
           }
         },
         {
           "sql": "  explain select 1",
           "composed": {
-            "reasonCode": "UNSUPPORTED_DIALECT",
-            "message": "no verified estimating EXPLAIN for provider type \"libsql\""
+            "sql": "EXPLAIN QUERY PLAN select 1",
+            "mode": "execute"
           }
         },
         {
           "sql": "EXPLAIN QUERY PLAN SELECT 1",
           "composed": {
-            "reasonCode": "UNSUPPORTED_DIALECT",
-            "message": "no verified estimating EXPLAIN for provider type \"libsql\""
+            "sql": "EXPLAIN QUERY PLAN SELECT 1",
+            "mode": "execute"
           }
         },
         {
           "sql": "EXPLAIN (FORMAT JSON) SELECT 1",
           "composed": {
-            "reasonCode": "UNSUPPORTED_DIALECT",
-            "message": "no verified estimating EXPLAIN for provider type \"libsql\""
+            "sql": "EXPLAIN QUERY PLAN SELECT 1",
+            "mode": "execute"
           }
         },
         {
           "sql": "EXPLAIN FORMAT=JSON SELECT 1",
           "composed": {
-            "reasonCode": "UNSUPPORTED_DIALECT",
-            "message": "no verified estimating EXPLAIN for provider type \"libsql\""
+            "sql": "EXPLAIN QUERY PLAN SELECT 1",
+            "mode": "execute"
           }
         },
         {
           "sql": "EXPLAIN ANALYZE SELECT 1",
           "composed": {
-            "reasonCode": "UNSUPPORTED_DIALECT",
-            "message": "no verified estimating EXPLAIN for provider type \"libsql\""
+            "sql": "EXPLAIN QUERY PLAN EXPLAIN ANALYZE SELECT 1",
+            "mode": "execute"
           }
         },
         {
@@ -1996,30 +1972,18 @@
           }
         }
       ],
-      "statisticsAvailabilityProbe": {
-        "reasonCode": "UNSUPPORTED_DIALECT",
-        "message": "no verified statistics composition for provider type \"libsql\""
-      },
+      "statisticsAvailabilityProbe": "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_stat1'",
       "tableProfile": {
-        "basic": {
-          "reasonCode": "UNSUPPORTED_DIALECT",
-          "message": "no verified profile composition for provider type \"libsql\""
-        },
-        "distribution": {
-          "reasonCode": "UNSUPPORTED_DIALECT",
-          "message": "no verified profile composition for provider type \"libsql\""
-        },
-        "pattern": {
-          "reasonCode": "UNSUPPORTED_DIALECT",
-          "message": "no verified profile composition for provider type \"libsql\""
-        },
+        "basic": "SELECT count(*) AS row_count, count(\"c_int\") AS present_0, count(\"c_varchar\") AS present_1, count(\"c_text\") AS present_2, count(\"c_ntext\") AS present_3, count(\"c_image\") AS present_4, count(\"c_json\") AS present_5, count(\"c_jsonb\") AS present_6, count(\"c_xml\") AS present_7, count(\"c_geography\") AS present_8, count(\"c_geometry\") AS present_9, count(\"c_point\") AS present_10, count(\"c_uuid\") AS present_11, count(\"c_phone\") AS present_12 FROM \"Sales\".\"Orders\"",
+        "distribution": "SELECT count(*) AS row_count, count(\"c_int\") AS present_0, count(DISTINCT \"c_int\") AS distinct_0, count(\"c_varchar\") AS present_1, count(DISTINCT \"c_varchar\") AS distinct_1, count(\"c_text\") AS present_2, count(DISTINCT \"c_text\") AS distinct_2, count(\"c_ntext\") AS present_3, count(DISTINCT \"c_ntext\") AS distinct_3, count(\"c_image\") AS present_4, count(DISTINCT \"c_image\") AS distinct_4, count(\"c_json\") AS present_5, count(\"c_jsonb\") AS present_6, count(\"c_xml\") AS present_7, count(\"c_geography\") AS present_8, count(DISTINCT \"c_geography\") AS distinct_8, count(\"c_geometry\") AS present_9, count(DISTINCT \"c_geometry\") AS distinct_9, count(\"c_point\") AS present_10, count(\"c_uuid\") AS present_11, count(DISTINCT \"c_uuid\") AS distinct_11, count(\"c_phone\") AS present_12, count(DISTINCT \"c_phone\") AS distinct_12 FROM \"Sales\".\"Orders\"",
+        "pattern": "SELECT count(*) AS row_count, count(\"c_int\") AS present_0, count(DISTINCT \"c_int\") AS distinct_0, count(\"c_varchar\") AS present_1, count(DISTINCT \"c_varchar\") AS distinct_1, count(CASE WHEN \"c_varchar\" LIKE '%_@_%._%' THEN 1 END) AS shaped_1, count(CASE WHEN \"c_varchar\" GLOB '*[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]*' THEN 1 END) AS digits_1, count(\"c_text\") AS present_2, count(DISTINCT \"c_text\") AS distinct_2, count(CASE WHEN \"c_text\" LIKE '%_@_%._%' THEN 1 END) AS shaped_2, count(CASE WHEN \"c_text\" GLOB '*[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]*' THEN 1 END) AS digits_2, count(\"c_ntext\") AS present_3, count(DISTINCT \"c_ntext\") AS distinct_3, count(CASE WHEN \"c_ntext\" LIKE '%_@_%._%' THEN 1 END) AS shaped_3, count(CASE WHEN \"c_ntext\" GLOB '*[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]*' THEN 1 END) AS digits_3, count(\"c_image\") AS present_4, count(DISTINCT \"c_image\") AS distinct_4, count(\"c_json\") AS present_5, count(\"c_jsonb\") AS present_6, count(\"c_xml\") AS present_7, count(\"c_geography\") AS present_8, count(DISTINCT \"c_geography\") AS distinct_8, count(\"c_geometry\") AS present_9, count(DISTINCT \"c_geometry\") AS distinct_9, count(\"c_point\") AS present_10, count(\"c_uuid\") AS present_11, count(DISTINCT \"c_uuid\") AS distinct_11, count(\"c_phone\") AS present_12, count(DISTINCT \"c_phone\") AS distinct_12, count(CASE WHEN \"c_phone\" LIKE '%_@_%._%' THEN 1 END) AS shaped_12, count(CASE WHEN \"c_phone\" GLOB '*[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]*' THEN 1 END) AS digits_12 FROM \"Sales\".\"Orders\"",
         "noColumns": {
-          "reasonCode": "UNSUPPORTED_DIALECT",
-          "message": "no verified profile composition for provider type \"libsql\""
+          "reasonCode": "INVALID_SELECTOR",
+          "message": "that table has no columns to profile"
         },
         "noSegments": {
-          "reasonCode": "UNSUPPORTED_DIALECT",
-          "message": "no verified profile composition for provider type \"libsql\""
+          "reasonCode": "INVALID_SELECTOR",
+          "message": "a profile needs one table name of a usable length"
         }
       }
     }

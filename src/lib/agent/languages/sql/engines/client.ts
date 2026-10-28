@@ -7,6 +7,7 @@
 import type { ClientDialectOf } from "../../pack";
 import type { CLICKHOUSE_SERVER_OVERLAY } from "./clickhouse";
 import type { DUCKDB_SERVER_OVERLAY } from "./duckdb";
+import type { LIBSQL_SERVER_OVERLAY } from "./libsql";
 import type { MSSQL_SERVER_OVERLAY } from "./mssql";
 import type { MYSQL_SERVER_OVERLAY } from "./mysql";
 import type { POSTGRES_SERVER_OVERLAY } from "./postgres";
@@ -54,3 +55,10 @@ export const CLICKHOUSE_CLIENT_OVERLAY = {
     catalogCapture: "unsupported",
   } satisfies ClientDialectOf<(typeof CLICKHOUSE_SERVER_OVERLAY)["dialect"]>),
 } as const satisfies { dialect: ClientDialectOf<(typeof CLICKHOUSE_SERVER_OVERLAY)["dialect"]> };
+export const LIBSQL_CLIENT_OVERLAY = {
+  dialect: Object.freeze({
+    catalogRead: "supported",
+    planEstimate: "supported",
+    catalogCapture: "unsupported",
+  } satisfies ClientDialectOf<(typeof LIBSQL_SERVER_OVERLAY)["dialect"]>),
+} as const satisfies { dialect: ClientDialectOf<(typeof LIBSQL_SERVER_OVERLAY)["dialect"]> };

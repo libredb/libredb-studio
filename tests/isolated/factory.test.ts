@@ -652,6 +652,40 @@ describe("createDatabaseProvider", () => {
     expect(sent).toEqual(["SELECT 1"]);
   });
 
+  test("the execution context rides along to libsql: queryReadOnly answers only under the agent profile", async () => {
+    const conn = makeConnection("libsql", { port: 18081, password: "not-a-real-token" });
+    const profiled = await createDatabaseProvider(conn, {}, { readOnly: true, sendsStatements: true });
+    const editor = await createDatabaseProvider(conn);
+    if (profiled.queryReadOnly === undefined || editor.queryReadOnly === undefined) throw new Error("no queryReadOnly");
+    // A transport in place of a connection, answering one row, so only the context tells the two apart.
+    const sent: string[] = [];
+    const transport = {
+      kind: "hrana-http",
+      execute: async (sql: string) => {
+        sent.push(sql);
+        return {
+          rows: [{ x: 1 }],
+          fieldNames: ["x"],
+          columnTypes: {},
+          affectedRowCount: 0,
+          lastInsertRowId: null,
+          executionTimeMs: 1,
+        };
+      },
+      close: async () => undefined,
+    };
+    for (const provider of [profiled, editor]) {
+      Object.assign(provider, { transport, connected: true });
+      Object.assign(provider, { ensureConnected: () => undefined });
+    }
+    await expect(editor.queryReadOnly("SELECT 1", AGENT_BUDGET)).rejects.toThrow(
+      "Read-only execution requires a provider opened under the agent read-only profile",
+    );
+    expect(sent).toEqual([]);
+    await expect(profiled.queryReadOnly("SELECT 1", AGENT_BUDGET)).resolves.toMatchObject({ rows: [{ x: 1 }] });
+    expect(sent).toEqual(["SELECT 1"]);
+  });
+
   test('creates provider for type "druid"', async () => {
     // No `database` field: Druid reports exactly one catalog, always named
     // `druid`, so the provider ignores the connection's database entirely.

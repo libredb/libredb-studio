@@ -16,12 +16,11 @@
  *   offers `reindex` and `check` and nothing else. Offering a vacuum that always
  *   fails is the Cloud Spanner shape - a control that reports success while
  *   nothing happens, or fails every time - and #424 refuses rows for it.
- * - `PRAGMA query_only = true` is refused as well, which is why this provider
- *   implements no `queryReadOnly`: the agent read-only profile delegates
- *   enforcement to the engine (`sqlite.ts`), and here there is nothing to delegate
- *   to. A read-only Turso token is an engine-side answer to the same question and
- *   is the right route if the profile is ever wanted - it is a credential the user
- *   mints, not a statement this provider can issue.
+ * - `PRAGMA query_only = true` is refused as well, so the agent read-only profile
+ *   cannot be a statement this provider issues, as it is on SQLite (`sqlite.ts`).
+ *   It is the credential instead: a read-only token, which the server refuses every
+ *   write for and which the open proves with a write the server must refuse
+ *   (`agent-boundary.ts`, `agent-read.ts`).
  * - `dbstat` IS available on both deployments, so per-table and per-index bytes are
  *   measured here - which `bun:sqlite` cannot do at all.
  * - There is no file to `stat` and no handle to hold: sizes come from the page
@@ -48,14 +47,26 @@ import {
   type ObjectSourceDocument,
   type PerformanceMetrics,
   type ProviderCapabilities,
+  type ProviderExecutionContext,
   type ProviderLabels,
   type ProviderOptions,
   type QueryResult,
+  type ReadOnlyStatementBudget,
+  type ReadOnlyStatementMode,
   type SlowQueryStats,
   type StorageStats,
   type TableStats,
 } from "@/lib/db/types";
-import { AuthenticationError, ConnectionError, DatabaseConfigError, QueryError } from "@/lib/db/errors";
+import {
+  AuthenticationError,
+  ConnectionError,
+  DatabaseConfigError,
+  ExecutionProfileError,
+  QueryError,
+} from "@/lib/db/errors";
+import { assertReadOnlyBudget, byteBudgetSentence, TIME_BUDGET_PREFIX } from "../read-only-budget";
+import { assertAgentConnection, verifyAgentProfile, WRITE_FORBIDDEN_STATUS } from "./agent-boundary";
+import { agentBodyCap, readAgentAnswer } from "./agent-read";
 import { LibSQLHranaTransport } from "./hrana-transport";
 import {
   readActiveSessions,
@@ -76,7 +87,13 @@ import {
   listObjectContainers,
   readLibSQLObjectSource,
 } from "./objects";
-import { type LibSQLStatementResult, type LibSQLTransport, LibSQLTransportError } from "./transport";
+import {
+  LibSQLBodyLimitError,
+  LibSQLDeadlineError,
+  type LibSQLStatementResult,
+  type LibSQLTransport,
+  LibSQLTransportError,
+} from "./transport";
 
 // ============================================================================
 // Constants
@@ -100,6 +117,9 @@ const AUTH_TOKEN_PARAM = "authToken";
 
 /** Statuses a libSQL deployment answers a credential problem with. */
 const AUTH_STATUSES = new Set([400, 401, 403]);
+
+/** The deadline the open's write probe runs under: one statement that touches nothing, so a server too slow fails it. */
+const AGENT_PROOF_TIMEOUT_MS = 10_000;
 
 // ============================================================================
 // Connection resolution
@@ -177,9 +197,19 @@ export class LibSQLProvider extends SQLBaseProvider {
 
   private readonly connection: DatabaseConnection;
 
-  constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
+  /**
+   * Whether this provider was opened to send an agent's statements: under an execution profile (`readOnly`) whose
+   * acquisition calls `queryReadOnly` (`sendsStatements`). Only then does `connect()` prove the token read-only
+   * (`agent-boundary.ts`), and only then does `queryReadOnly` answer. The operations profile's acquisitions send no
+   * statement, so they open unproven, as an editor connection does, and plan mode keeps grounding on a connection whose
+   * token writes.
+   */
+  private readonly readOnlyProfile: boolean;
+
+  constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderExecutionContext = {}) {
     super(config, options);
     this.connection = resolveConnection(config);
+    this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
     this.validate();
   }
 
@@ -203,6 +233,9 @@ export class LibSQLProvider extends SQLBaseProvider {
       supportsTestDataGeneration: true,
       // SQLite's grammar over the wire: `LIMIT n OFFSET m` from the shared limiter.
       supportsResultPagination: true,
+      // The agent signs in with a token of its own, a read-only one the open proves, sent as the bearer credential in
+      // place of the connection's; a user name beside it would turn it into HTTP Basic, which has no read-only form.
+      agentCredential: "token",
       // libSQL HAS transactions - `BEGIN` is accepted and Hrana keeps an
       // interactive stream alive with a `baton` to continue one - but this provider
       // closes its stream in the same request as the statement, so it holds no
@@ -275,13 +308,25 @@ export class LibSQLProvider extends SQLBaseProvider {
   public async connect(): Promise<void> {
     if (this.transport) return;
 
+    if (this.readOnlyProfile) {
+      try {
+        assertAgentConnection(this.connection);
+      } catch (error) {
+        this.setError(error as Error);
+        throw error;
+      }
+    }
+
     const transport = new LibSQLHranaTransport(this.connection);
 
     try {
       await transport.execute(CONNECT_PROBE_SQL, { timeoutMs: this.queryTimeout });
+      if (this.readOnlyProfile) {
+        await verifyAgentProfile((sql) => transport.execute(sql, { timeoutMs: AGENT_PROOF_TIMEOUT_MS }));
+      }
     } catch (error) {
       await transport.close();
-      const failure = this.describeConnectFailure(error);
+      const failure = error instanceof ExecutionProfileError ? error : this.describeConnectFailure(error);
       this.setError(failure);
       throw failure;
     }
@@ -316,6 +361,71 @@ export class LibSQLProvider extends SQLBaseProvider {
 
       return toQueryResult(result, executionTime);
     });
+  }
+
+  /**
+   * The agent read-only execution profile's statement path.
+   *
+   * The token holds the boundary: the open proved the server refuses it a write (`agent-boundary.ts`), and sqld
+   * classifies every statement before running it, so a write is refused for the whole request with 403, which reaches
+   * the caller as a statement refusal in the server's own words. The statement goes alone, one statement step in one
+   * request that closes its stream, and the server refuses a second statement in the same text.
+   *
+   * Budgets refuse rather than truncate: the transport stops reading an answer past the wire cap (`agentBodyCap`), and
+   * the parsed rows are held to the row and byte budgets again. The deadline is the transport's own: Hrana has no
+   * cancel request, and closing the request at the deadline is what stops the statement on sqld (`LibSQLDeadlineError`).
+   *
+   * Refused outside the profile: a provider opened without the proof has no boundary to run agent semantics on.
+   */
+  public async queryReadOnly(
+    sql: string,
+    budget: ReadOnlyStatementBudget,
+    mode: ReadOnlyStatementMode = "execute",
+  ): Promise<QueryResult> {
+    const transport = this.requireTransport();
+    if (!this.readOnlyProfile) {
+      throw new QueryError(
+        "Read-only execution requires a provider opened under the agent read-only profile",
+        this.type,
+        sql,
+      );
+    }
+    assertReadOnlyBudget(budget, this.type);
+    if (mode !== "execute") {
+      throw new QueryError(
+        "libSQL composes its estimating plan as a statement, so the estimate-plan session mode is refused",
+        this.type,
+        sql,
+      );
+    }
+
+    return this.trackQuery(async () => {
+      const { result, executionTime } = await this.measureExecution(async () => {
+        try {
+          return await transport.execute(sql, {
+            timeoutMs: budget.statementTimeoutMs,
+            maxBodyBytes: agentBodyCap(budget),
+          });
+        } catch (error) {
+          throw this.agentReadFailure(error, budget, sql);
+        }
+      });
+      return readAgentAnswer(result, budget, sql, executionTime);
+    });
+  }
+
+  /** A failure on the agent's path as the shared refusal it is, or as the error every other path maps it to. */
+  private agentReadFailure(error: unknown, budget: ReadOnlyStatementBudget, sql: string): Error {
+    if (error instanceof LibSQLBodyLimitError) {
+      return new QueryError(byteBudgetSentence(error.bytesRead, budget.maxResultBytes), this.type, sql);
+    }
+    if (error instanceof LibSQLDeadlineError) {
+      return new QueryError(`${TIME_BUDGET_PREFIX}: no answer within ${error.timeoutMs}ms`, this.type, sql);
+    }
+    if (error instanceof LibSQLTransportError && error.status === WRITE_FORBIDDEN_STATUS) {
+      return new QueryError(error.message, this.type, sql);
+    }
+    return this.mapLibSQLError(error, sql);
   }
 
   // ==========================================================================

@@ -231,17 +231,116 @@ statement the user never typed.
 `SQL_PARSE_ERROR`, so a provider that matched on text would have been wrong on one of them from the
 first day.
 
-### 3.6 `PRAGMA query_only` is refused, so there is no agent read-only profile
+### 3.6 The agent read-only profile rests on a read-only token
 
-`sqlite.ts` implements `queryReadOnly` by setting `query_only` and verifying the readback, per
-statement — that is what refuses `VACUUM INTO '<path>'` from a read-only handle. libSQL has no such
-lever: the pragma is refused on both deployments. So this provider implements **no** `queryReadOnly`,
-and the agent read-only profile stays PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB and ClickHouse.
+`sqlite.ts` implements `queryReadOnly` by setting `query_only` and verifying the readback, per statement.
+libSQL has no such lever: the pragma is refused on both deployments, for every credential.
+So the boundary here is credential-enforced: a token the server refuses every write for.
+A self-hosted sqld started with `SQLD_AUTH_JWT_KEY` checks a JWT signed by that key, and refuses a write from one whose claims carry `"a": "ro"`; Turso mints the same kind of token with `turso db tokens create --read-only`.
+sqld classifies every statement before it runs it, and refuses a request that carries a write from such a token as a whole, with HTTP 403 (`Authorization forbidden: Current session doesn't not have Write permission to namespace default`), on each HTTP statement route measured (`/v2/pipeline`, `/v3/pipeline`, `/v1/execute`, `/v1/batch` and `/`); Hrana over WebSocket was not measured, and this provider never speaks it.
+Agent mode executes statements on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse and libSQL; on libSQL the provider implements `queryReadOnly` in [`index.ts`](../../src/lib/db/providers/sql/libsql/index.ts), with the open's proof in [`agent-boundary.ts`](../../src/lib/db/providers/sql/libsql/agent-boundary.ts) and the reading of an answer in [`agent-read.ts`](../../src/lib/db/providers/sql/libsql/agent-read.ts).
 
-That is a gap with an engine-side answer when it is wanted: Turso mints **read-only tokens**
-(`turso db tokens create --read-only`) and the API can `block_writes` on a database. Both are
-credentials the user creates, not statements this provider can issue, which is why the profile is
-absent rather than faked.
+#### The open's proof
+
+The proof runs in `connect()` only when the execution context sets both `readOnly` and `sendsStatements`, the agent and hand-over profiles.
+The operations profile and plan mode send no statement of the model's, so they open unproven, and plan mode keeps grounding on a connection whose token writes.
+`queryReadOnly` refuses on any handle opened without that context, an ordinary editor handle included, before it sends anything.
+Any answer the proof cannot read refuses the profile.
+
+1. The connection must send a bearer token. A connection that names a user signs in with HTTP Basic, which sqld (`SQLD_HTTP_AUTH`) grants every statement and has no read-only form for, and is refused `PROFILE_PRIVILEGES_TOO_BROAD`. A connection with no token reaches only a server that checks no credential, and is refused `PROFILE_SERVER_UNENFORCED`. Both are refused before anything is sent.
+2. After the connect probe, `DROP TABLE IF EXISTS "libredb_agent_probe_<32 hex digits>"` goes with the agent's token, on a name made fresh for the open, so it changes nothing on any outcome. sqld classifies it as a write. Only a 403 admits the profile. A server that runs it, which is what a writable token and a server with no credential check both do, refuses the profile `PROFILE_SERVER_UNENFORCED`; any other status, a statement error included, refuses it `PROFILE_UNSUPPORTED_TARGET`.
+
+The proof runs at open only: a token whose rights change after the open is seen at the next open of a profiled handle.
+Turso Cloud was not measured for this profile: a Turso read-only token is admitted exactly when Turso answers the probe 403, and refused otherwise.
+
+#### The agent token
+
+The agent credential takes the token form: the agent token alone, sent as the bearer credential in place of the connection's own token, with an agent user beside it refused.
+An agent token beside a connection string is refused (`AGENT_CREDENTIAL_WITH_CONNECTION_STRING`), since the URL's own `authToken` would win; with no agent token the agent runs with the connection's own token, which the open must admit.
+A connection that names a user cannot carry an agent token: the user would turn it into HTTP Basic, which the open refuses.
+A token sqld admits, with a key pair made for the server and the claims `{"a": "ro"}`; the public key goes in `SQLD_AUTH_JWT_KEY` as the raw 32 bytes in URL-safe base64:
+
+```ts
+import { createPublicKey, generateKeyPairSync, sign } from "node:crypto";
+const { privateKey } = generateKeyPairSync("ed25519");
+const part = (value: object) => Buffer.from(JSON.stringify(value)).toString("base64url");
+const body = `${part({ alg: "EdDSA", typ: "JWT" })}.${part({ a: "ro" })}`;
+console.log("SQLD_AUTH_JWT_KEY", createPublicKey(privateKey).export({ format: "jwk" }).x);
+console.log("token", `${body}.${sign(null, Buffer.from(body), privateKey).toString("base64url")}`);
+```
+
+#### The statement path
+
+Each call sends one statement as the single statement step of one request that closes its own stream, so nothing a statement opens outlives the call: a `BEGIN IMMEDIATE` answers the read-only token, and a write with another token right after it runs.
+sqld refuses a second statement in the same text (`SQL_MANY_STATEMENTS`).
+A write the server refuses reaches the caller as a statement refusal in the server's own words, not as a failed credential.
+Hrana has no server-side row or byte bound, so the transport reads the answer in chunks and stops at six times the byte budget plus a 1 MiB envelope (`agentBodyCap`), since a value on the wire takes at most a little over five times the bytes it takes in the caller's row; the parsed rows are then held to the row and byte budgets, and every refusal is the shared sentence of [`read-only-budget.ts`](../../src/lib/db/providers/sql/read-only-budget.ts).
+The deadline is the transport's own, and a statement past it is refused as over the time budget.
+Hrana has no cancel request; closing the request at the deadline is what stops the statement: a recursive count held a core at 100% until the abort, and the server was idle within two seconds of it.
+An estimating plan is the `EXPLAIN QUERY PLAN` prefix the agent composes, sent in the ordinary execute mode; the estimate-plan session mode is refused.
+
+#### What only the server stops
+
+Every statement below is refused by the server for every token, the writable one included, with its own statement error rather than a 403: `ATTACH DATABASE` (`unsupported statement`), `VACUUM` and `VACUUM INTO`, `ANALYZE`, `CREATE TEMP TABLE`, `PRAGMA journal_mode`, `PRAGMA writable_schema` and `PRAGMA query_only` with a value (`unsupported statement`), `SELECT load_extension(...)` (`not authorized`), and `CREATE FUNCTION ... LANGUAGE wasm` (a syntax error).
+No namespace or admin route answers on the statement port (`/v1/namespaces/...` is 404); the admin API listens only where the operator starts it on a port of its own.
+The read-only token can read `GET /dump`, which is a read of the whole database, and is never sent by this provider.
+`EXPLAIN` of a write compiles it without running it, and answers the read-only token.
+
+#### Boundary record
+
+Measured on `ghcr.io/tursodatabase/libsql-server:v0.24.33` (`sqld 0.24.33 (40a151bd 2025-12-19)`, SQLite 3.45.1) on 2026-10-29, by [`tests/live/libsql-agent-boundary.ts`](../../tests/live/libsql-agent-boundary.ts), with Studio's agent admission bypassed: 85 checks, all passing.
+Three servers: one checking JWTs with a read-only and a writable token signed by its key, one started with HTTP Basic, and one checking no credential.
+
+| Probe | Read-only token, through `queryReadOnly` | Writable token, positive control on a scratch table |
+| --- | --- | --- |
+| `INSERT`, `INSERT ... RETURNING`, `INSERT ... ON CONFLICT DO UPDATE`, `REPLACE`, `UPDATE`, `DELETE`, `WITH ... DELETE` | 403 | ran |
+| `CREATE TABLE`, `CREATE INDEX`, `CREATE VIEW`, `CREATE TRIGGER`, `ALTER TABLE ... ADD COLUMN`, `DROP INDEX`, `DROP TABLE` | 403 | ran |
+| `REINDEX`, `PRAGMA user_version = 5`, `PRAGMA foreign_keys = OFF` | 403 | ran |
+| `ATTACH`, `VACUUM`, `VACUUM INTO`, `ANALYZE`, `CREATE TEMP TABLE`, `PRAGMA journal_mode`, `PRAGMA writable_schema`, `PRAGMA query_only = 0` | `unsupported statement` | `unsupported statement` |
+| `SELECT load_extension(...)` | `not authorized` | `not authorized` |
+| `CREATE FUNCTION ... LANGUAGE wasm` | syntax error | syntax error |
+| `SELECT 1; DELETE ...` | `SQL_MANY_STATEMENTS` | `SQL_MANY_STATEMENTS` |
+| a write in a batch, a sequence or a stored statement, and on `/v3/pipeline`, `/v1/execute`, `/v1/batch` and `/` | 403 | not sent |
+
+The tables, rows, indexes, views, triggers and `user_version` read back the same before and after the refused statements.
+At open, the read-only token was admitted, and these were refused: the writable token (`PROFILE_SERVER_UNENFORCED`), a user name and password on the Basic server (`PROFILE_PRIVILEGES_TOO_BROAD`, nothing sent), the read-only token on the Basic server (its connect probe answered 401), and the server that checks no credential, with no token (`PROFILE_SERVER_UNENFORCED`, nothing sent) and with a token (`PROFILE_SERVER_UNENFORCED`, the probe ran).
+The operations profile opened the writable token unproven, and read the object surface plan mode grounds on.
+An editor handle refused `queryReadOnly` before sending anything.
+The catalog reads, the statistics probe, the estimating plan and the pattern table profile the agent composes each answered the read-only token.
+The budgets: 51 rows under a budget of 50, 100,000 bytes of hex under 65,536, and a statement past a one-second deadline were each refused, and the server answered the next statement.
+A token whose permission claims the server cannot read is refused 401 at connect, before the proof.
+
+Run it against servers you may write to; it creates tables with the `libredb_lb_` prefix and drops them on exit:
+
+```sh
+docker run -d -e SQLD_NODE=primary -e SQLD_AUTH_JWT_KEY=<public key> -p 18181:8080 ghcr.io/tursodatabase/libsql-server:v0.24.33
+docker run -d -e SQLD_NODE=primary -e SQLD_HTTP_AUTH=basic:<base64 of user:password> -p 18182:8080 ghcr.io/tursodatabase/libsql-server:v0.24.33
+docker run -d -e SQLD_NODE=primary -p 18183:8080 ghcr.io/tursodatabase/libsql-server:v0.24.33
+LIBREDB_LIVE_LIBSQL_JWT_PORT=18181 LIBREDB_LIVE_LIBSQL_RO_TOKEN=<ro token> LIBREDB_LIVE_LIBSQL_RW_TOKEN=<rw token> \
+  LIBREDB_LIVE_LIBSQL_BASIC_PORT=18182 LIBREDB_LIVE_LIBSQL_BASIC_USER=<user> LIBREDB_LIVE_LIBSQL_BASIC_PASSWORD=<password> \
+  LIBREDB_LIVE_LIBSQL_OPEN_PORT=18183 bun tests/live/libsql-agent-boundary.ts
+```
+
+#### Agent language pack
+
+Statement-language family: `sql`.
+Overlay: [`src/lib/agent/languages/sql/engines/libsql.ts`](../../src/lib/agent/languages/sql/engines/libsql.ts), with its client row in [`src/lib/agent/languages/sql/engines/client.ts`](../../src/lib/agent/languages/sql/engines/client.ts).
+The agent reads it through `runServerPack` and `agentEnginePack`, and the dialect through `engineServerDialect`.
+
+| Member | Kind | Value |
+| --- | --- | --- |
+| `catalogRead` | Dialect-bound | Supplied |
+| `planEstimate` | Dialect-bound | Supplied |
+| `profileComposition` | Dialect-bound | Supplied |
+| `statistics` | Dialect-bound | Supplied |
+| `catalogCapture` | Dialect-bound | `"unsupported"` |
+
+This overlay overrides no Shared member, so every Shared member is the `sql` statement-language family's own.
+Every statement it composes is SQLite's, and each kind was run with the read-only token: the catalog reads off `sqlite_master`, the `sqlite_stat1` probe, `EXPLAIN QUERY PLAN`, and the table profile's `LIKE` and `GLOB` counts.
+The server refuses `ANALYZE` for every token, so `sqlite_stat1` exists only in a database that brought one with it, and the probe reads its absence as statistics absent.
+The grounding capture is unsupported because it reads through the read-only path, which a token that writes cannot open, and plan mode grounds on such a connection; grounding asks the provider to describe its schema instead.
+A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
+MCP's statement read stays closed on libSQL (`MCP_STATEMENT_READ.libsql` is false) until a change of its own opens it.
 
 ### 3.7 `notnull` must be quoted, and only a live server says so
 
@@ -369,7 +468,7 @@ row and two engines cannot own one scheme.
 
 ```bash
 turso db tokens create <database>              # full access
-turso db tokens create <database> --read-only  # read-only, the engine-side answer to §3.6
+turso db tokens create <database> --read-only  # read-only, the token agent mode takes (§3.6)
 ```
 
 A self-hosted `sqld` started without authentication takes no token at all, and sending an empty one
@@ -948,6 +1047,7 @@ attached database, exactly as `sqlite.ts` does.
 | `supportsTestDataGeneration` | `true` | Generate Test Data offered on tables (one multi-row `INSERT INTO ... VALUES`) |
 | `supportsResultPagination` | `true` | `LIMIT n OFFSET m`, the grammar it shares with SQLite (#816) |
 | `supportsTransactions` | `false` | Stateless request stream closed with each statement; no interactive session held |
+| `agentCredential` | `"token"` | The agent's own token alone, sent as the bearer credential ([§3.6](#36-the-agent-read-only-profile-rests-on-a-read-only-token)) |
 | `maintenanceOperations` | `["reindex", "check"]` | Only `REINDEX` and `PRAGMA integrity_check` are permitted by server allowlist |
 | `maintenanceOperationSpecs` | `reindex` (`perEntity: true`, `global: true`), `check` (`perEntity: false`, `global: true`) | Placement rules for per-table and global maintenance actions |
 | `createTable` | declared, see [Create Table form](#create-table-form) | `CREATE TABLE` works as an ordinary SQL statement |
@@ -1107,7 +1207,8 @@ await provider.disconnect();
 | Limitation | Cause | Owner |
 |---|---|---|
 | No transaction controls | The provider closes its Hrana stream with each statement, so it holds no session | Ours. Hrana's `baton` is exactly the feature that would carry one |
-| No agent read-only profile | `PRAGMA query_only` is refused by the server | The engine's; a read-only Turso token is its answer |
+| Agent mode needs a read-only token | `PRAGMA query_only` is refused by the server, so the token is the only lever ([§3.6](#36-the-agent-read-only-profile-rests-on-a-read-only-token)) | The engine's; mint a read-only token |
+| No MCP statement read | `MCP_STATEMENT_READ.libsql` is false | Ours, until a change of its own opens it |
 | No Vacuum, Analyze or Optimize | Refused by the server's statement allowlist | The engine's |
 | No slow queries, no sessions, no uptime, no cache ratio | libSQL publishes none of them | The engine's |
 | No WAL size on the Storage tab | No statement reports it, and `PRAGMA wal_checkpoint` is refused | The engine's |

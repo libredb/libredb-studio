@@ -37,7 +37,7 @@ export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
   spark: null,
   mysql: "sql",
   sqlite: "sql",
-  libsql: null,
+  libsql: "sql",
   duckdb: "sql",
   oracle: null,
   db2: null,

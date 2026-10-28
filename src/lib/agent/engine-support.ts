@@ -11,7 +11,7 @@ import type { DatabaseType } from "@/lib/types";
  * boundary it declares (`providers/sql/postgres.ts`, `providers/sql/sqlite.ts`,
  * `providers/sql/duckdb/`, `providers/sql/mssql.ts`, `providers/sql/mysql.ts`,
  * `providers/platform/kubernetes/`, `providers/document/mongodb/index.ts`,
- * `providers/sql/clickhouse/index.ts`), and that probe
+ * `providers/sql/clickhouse/index.ts`, `providers/sql/libsql/index.ts`), and that probe
  * stays the real rule: replacing it with this list would let the list go stale against the
  * drivers.
  *
@@ -30,7 +30,8 @@ import type { DatabaseType } from "@/lib/types";
  * with the provider's command reader in front of the engine and `maxTimeMS` plus Studio's kill of
  * a read's session as its deadline. ClickHouse refuses writes for the request itself, under
  * `readonly = 1`, and its user is proven at open to hold nothing that setting leaves usable.
- * Each provider's own `queryReadOnly` argues its own case.
+ * libSQL's boundary is the token: one the server refuses every write for, proven at open by a
+ * write that changes nothing and that the server must refuse. Each provider's own `queryReadOnly` argues its own case.
  * `tests/unit/lib/agent/engine-support.test.ts` is what keeps the two equal - it walks EVERY
  * id in the `DatabaseType` union, reads `queryReadOnly` off the real provider class the
  * factory would construct, and fails if this array and the drivers diverge in either direction.
@@ -54,6 +55,7 @@ export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = [
   "kubernetes",
   "mongodb",
   "clickhouse",
+  "libsql",
 ];
 
 /**

@@ -71,6 +71,7 @@ describe("the requirement mirrors", () => {
       "mssql",
       "mysql",
       "clickhouse",
+      "libsql",
     ]);
     expect(Object.isFrozen(AGENT_REQUIREMENT_ENGINES["sql-composers"])).toBe(true);
   });

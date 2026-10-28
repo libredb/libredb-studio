@@ -25,6 +25,7 @@ const DECLARED_FORMS: Readonly<Partial<Record<DatabaseType, AgentCredentialForm>
   kubernetes: "token",
   qdrant: "token",
   weaviate: "token",
+  libsql: "token",
   bigquery: "service-account-key",
   libredb: "none",
 };

@@ -25,7 +25,14 @@
  */
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
-import { AuthenticationError, ConnectionError, DatabaseConfigError, DatabaseError, QueryError } from "@/lib/db/errors";
+import {
+  AuthenticationError,
+  ConnectionError,
+  DatabaseConfigError,
+  DatabaseError,
+  ExecutionProfileError,
+  QueryError,
+} from "@/lib/db/errors";
 import {
   containerDepth,
   isCountUnavailable,
@@ -37,7 +44,13 @@ import { LibSQLProvider } from "@/lib/db/providers/sql/libsql";
 import { SQLITE_CREATE_TABLE } from "@/lib/db/providers/sql/sqlite-create-table";
 import { buildResultExport } from "@/lib/export/result-export";
 import { countLibSQLObjects, type LibSQLObjectReader } from "@/lib/db/providers/sql/libsql/objects";
-import type { DatabaseConnection, DatabaseProvider, ObjectKindSpec } from "@/lib/db/types";
+import type {
+  DatabaseConnection,
+  DatabaseProvider,
+  ObjectKindSpec,
+  ProviderExecutionContext,
+  ReadOnlyStatementBudget,
+} from "@/lib/db/types";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { comparePaths } from "@/lib/db/object-path";
@@ -3143,5 +3156,222 @@ describe("LibSQLProvider column defaults (#1029)", () => {
     const batch = await objects.describeObjects([], "table");
     const bulk = batch.details.find((detail) => detail.path[0] === "column_defaults")!;
     expect(defaultsOf(bulk.columns)).toEqual(EXPECTED);
+  });
+});
+
+// ============================================================================
+// The agent read-only profile
+// ============================================================================
+
+describe("LibSQLProvider agent read-only profile", () => {
+  const AGENT: ProviderExecutionContext = { readOnly: true, sendsStatements: true };
+  const BUDGET: ReadOnlyStatementBudget = { statementTimeoutMs: 5_000, maxResultRows: 10, maxResultBytes: 4_096 };
+  const PROBE = /^DROP TABLE IF EXISTS "libredb_agent_probe_[0-9a-f]{32}"$/;
+  /** The body sqld answers a read-only token's write with, for the whole request (measured on sqld 0.24.33). */
+  const FORBIDDEN = {
+    error: "Authorization forbidden: Current session doesn't not have Write permission to namespace default",
+  };
+
+  /**
+   * A server whose token is read-only: a request carrying a write is answered 403 as a whole, everything else as the
+   * fixture answers it. `write` decides what a write statement is, the way sqld classifies one before it runs.
+   */
+  function readOnlyToken(
+    write: (sql: string) => boolean = (sql) => /^\s*(DROP|INSERT|DELETE|UPDATE|CREATE)\b/i.test(sql),
+  ): void {
+    const answering = globalThis.fetch;
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      const body = init?.body === undefined ? "" : String(init.body);
+      const requests = (JSON.parse(body || "{}") as { requests?: { stmt?: { sql?: string } }[] }).requests ?? [];
+      if (requests.some((request) => write(String(request.stmt?.sql ?? "")))) {
+        calls.push({ url: String(input), body });
+        return Promise.resolve(new Response(JSON.stringify(FORBIDDEN), { status: 403 }));
+      }
+      return answering(input, init);
+    }) as unknown as typeof fetch;
+  }
+
+  async function opened(
+    overrides: Partial<DatabaseConnection> = {},
+    execution: ProviderExecutionContext = AGENT,
+  ): Promise<LibSQLProvider> {
+    const provider = new LibSQLProvider(connection({ password: "not-a-real-token", ...overrides }), {}, execution);
+    await provider.connect();
+    return provider;
+  }
+
+  async function refusal(run: () => Promise<unknown>): Promise<Error> {
+    try {
+      await run();
+    } catch (error) {
+      return error as Error;
+    }
+    throw new Error("expected a refusal");
+  }
+
+  test("declares the token form for the agent's own credential", () => {
+    expect(new LibSQLProvider(connection()).getCapabilities().agentCredential).toBe("token");
+  });
+
+  test("opens under the profile on the 403 a read-only token is answered, after the connect probe", async () => {
+    readOnlyToken();
+    const provider = await opened();
+
+    const sent = sentStatements();
+    expect(sent).toHaveLength(2);
+    expect(sent[0]).toBe("SELECT 1");
+    expect(sent[1]).toMatch(PROBE);
+    expect(provider.isConnected()).toBe(true);
+    await provider.disconnect();
+  });
+
+  test("refuses a token the server lets write, and stays closed", async () => {
+    // No 403 anywhere: the fixture runs the probe as it runs every statement, as a writable token's server does.
+    const provider = new LibSQLProvider(connection({ password: "not-a-real-token" }), {}, AGENT);
+
+    const error = await refusal(() => provider.connect());
+
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_SERVER_UNENFORCED");
+    expect(provider.isConnected()).toBe(false);
+    await expect(provider.queryReadOnly("SELECT 1", BUDGET)).rejects.toThrow();
+  });
+
+  test("refuses a user name and password, and a connection with no token, before sending anything", async () => {
+    for (const overrides of [{ user: "admin", password: "not-a-real-password" }, { password: undefined }]) {
+      calls = [];
+      const provider = new LibSQLProvider(connection(overrides), {}, AGENT);
+
+      expect(await refusal(() => provider.connect())).toBeInstanceOf(ExecutionProfileError);
+      expect(calls).toEqual([]);
+    }
+  });
+
+  test("a connection string's token is the agent's credential, its user ignored as on every URL", async () => {
+    readOnlyToken();
+    const provider = await opened({
+      host: undefined,
+      port: undefined,
+      user: "ignored",
+      password: undefined,
+      connectionString: "libsql://db.example.invalid?authToken=not-a-real-token",
+    });
+
+    expect(provider.isConnected()).toBe(true);
+    await provider.disconnect();
+  });
+
+  test("an editor handle opens unproven and queryReadOnly refuses on it before sending anything", async () => {
+    const provider = await opened({}, {});
+    expect(sentStatements()).toEqual(["SELECT 1"]);
+    calls = [];
+
+    await expect(provider.queryReadOnly("SELECT 1", BUDGET)).rejects.toThrow(
+      "Read-only execution requires a provider opened under the agent read-only profile",
+    );
+    expect(calls).toEqual([]);
+    await provider.disconnect();
+  });
+
+  test("the operations profile sends no statement of the model's, so it opens unproven and has no read path", async () => {
+    const provider = await opened(
+      { user: "admin", password: "not-a-real-password" },
+      { readOnly: true, sendsStatements: false },
+    );
+    expect(sentStatements()).toEqual(["SELECT 1"]);
+
+    await expect(provider.queryReadOnly("SELECT 1", BUDGET)).rejects.toThrow(
+      "Read-only execution requires a provider opened under the agent read-only profile",
+    );
+    await provider.disconnect();
+  });
+
+  test("sends the statement alone, in one request, and answers its rows", async () => {
+    readOnlyToken();
+    const provider = await opened();
+    calls = [];
+
+    const result = await provider.queryReadOnly("SELECT name FROM sqlite_master WHERE type = 'table'", BUDGET);
+
+    expect(result.rows).toEqual([{ name: "probe_customers" }, { name: "probe_orders" }]);
+    expect(result.rowCount).toBe(2);
+    expect(calls).toHaveLength(1);
+    const requests = (JSON.parse(String(calls[0]?.body)) as { requests: { type: string }[] }).requests;
+    expect(requests.map((request) => request.type)).toEqual(["execute", "close"]);
+    await provider.disconnect();
+  });
+
+  test("a write the server refuses for the token is a statement refusal carrying the server's words", async () => {
+    readOnlyToken();
+    const provider = await opened();
+
+    const error = await refusal(() => provider.queryReadOnly("DELETE FROM probe_orders", BUDGET));
+
+    expect(error).toBeInstanceOf(QueryError);
+    expect(error).not.toBeInstanceOf(AuthenticationError);
+    expect(error.message).toContain("Authorization forbidden");
+    await provider.disconnect();
+  });
+
+  test("refuses a budget that is not one, and the estimate-plan session mode, before sending anything", async () => {
+    readOnlyToken();
+    const provider = await opened();
+    calls = [];
+
+    await expect(provider.queryReadOnly("SELECT 1", { ...BUDGET, maxResultRows: 0 })).rejects.toThrow(
+      "Read-only execution budget field maxResultRows must be a positive integer",
+    );
+    await expect(provider.queryReadOnly("SELECT 1", BUDGET, "estimate-plan")).rejects.toThrow(
+      "libSQL composes its estimating plan as a statement, so the estimate-plan session mode is refused",
+    );
+    expect(calls).toEqual([]);
+    await provider.disconnect();
+  });
+
+  test("refuses a result past the row budget and one past the byte budget", async () => {
+    readOnlyToken();
+    const provider = await opened();
+
+    await expect(
+      provider.queryReadOnly("SELECT name FROM sqlite_master WHERE type = 'table'", { ...BUDGET, maxResultRows: 1 }),
+    ).rejects.toThrow("Read-only execution exceeded the row budget: 2 rows > 1 allowed");
+    await expect(
+      provider.queryReadOnly("SELECT name FROM sqlite_master WHERE type = 'table'", { ...BUDGET, maxResultBytes: 10 }),
+    ).rejects.toThrow("Read-only execution exceeded the byte budget");
+    await provider.disconnect();
+  });
+
+  test("stops reading an answer past the wire cap and refuses it as over the byte budget", async () => {
+    readOnlyToken();
+    const provider = await opened();
+    server = () => result([["blob", null]], [[text("x".repeat(20_000))]]);
+
+    await expect(provider.queryReadOnly("SELECT big", { ...BUDGET, maxResultBytes: 1 })).rejects.toThrow(
+      /^Read-only execution exceeded the byte budget: \d+ bytes > 1 allowed$/,
+    );
+    await provider.disconnect();
+  });
+
+  test("refuses a statement its deadline ended as over the time budget", async () => {
+    readOnlyToken();
+    const provider = await opened();
+    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+      })) as unknown as typeof fetch;
+
+    await expect(provider.queryReadOnly("SELECT 1", { ...BUDGET, statementTimeoutMs: 5 })).rejects.toThrow(
+      "Read-only execution exceeded the time budget: no answer within 5ms",
+    );
+    await provider.disconnect();
+  });
+
+  test("an unreachable server is still a connection failure", async () => {
+    readOnlyToken();
+    const provider = await opened();
+    globalThis.fetch = (() => Promise.reject(new Error("connect ECONNREFUSED"))) as unknown as typeof fetch;
+
+    expect(await refusal(() => provider.queryReadOnly("SELECT 1", BUDGET))).toBeInstanceOf(ConnectionError);
+    await provider.disconnect();
   });
 });

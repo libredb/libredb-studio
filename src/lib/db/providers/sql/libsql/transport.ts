@@ -188,8 +188,9 @@ export class LibSQLBodyLimitError extends LibSQLTransportError {
 /**
  * A request its own deadline (`LibSQLExecuteOptions.timeoutMs`) ended before the answer was read whole. Status 0, like
  * every failure that got no answer, so a caller that does not ask reads it as before; one that does can tell a
- * statement that ran out of time from a server it could not reach. The deadline ends the wait, not the work: Hrana
- * offers no way to stop a statement the server is running.
+ * statement that ran out of time from a server it could not reach. Hrana has no cancel request of its own; the abort
+ * closes the request, and sqld 0.24.33 stopped the statement then (measured: a recursive count held a core at 100%
+ * until the abort and the server was idle within two seconds of it).
  */
 export class LibSQLDeadlineError extends LibSQLTransportError {
   constructor(

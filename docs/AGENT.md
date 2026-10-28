@@ -28,7 +28,7 @@ Three properties frame everything below, and each of them is load-bearing rather
   ([`tools.ts`](../src/lib/agent/tools.ts)) is its only production call site, and the editor's
   `/api/db/query` reaches the provider directly in `POST()`
   ([`query/route.ts`](../src/app/api/db/query/route.ts)).
-- **Agent mode requires PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB or ClickHouse, except the `operations` workflow, which runs anywhere.**
+- **Agent mode requires PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse or libSQL, except the `operations` workflow, which runs anywhere.**
   They are the only providers implementing `queryReadOnly`:
   [`postgres.ts`](../src/lib/db/providers/sql/postgres.ts),
   [`sqlite.ts`](../src/lib/db/providers/sql/sqlite.ts),
@@ -36,12 +36,14 @@ Three properties frame everything below, and each of them is load-bearing rather
   [`mssql.ts`](../src/lib/db/providers/sql/mssql.ts),
   [`mysql.ts`](../src/lib/db/providers/sql/mysql.ts),
   [`kubernetes/index.ts`](../src/lib/db/providers/platform/kubernetes/index.ts),
-  [`mongodb/index.ts`](../src/lib/db/providers/document/mongodb/index.ts) and
-  [`clickhouse/index.ts`](../src/lib/db/providers/sql/clickhouse/index.ts).
+  [`mongodb/index.ts`](../src/lib/db/providers/document/mongodb/index.ts),
+  [`clickhouse/index.ts`](../src/lib/db/providers/sql/clickhouse/index.ts) and
+  [`libsql/index.ts`](../src/lib/db/providers/sql/libsql/index.ts).
   On the SQL engines the database itself bounds an agent statement: on PostgreSQL a read-only transaction, run by a role verified at open to hold no superuser, server-file or program privilege, because the transaction alone does not stop `COPY … TO PROGRAM`; on SQLite and DuckDB a read-only handle; on MySQL and MariaDB a principal verified before the first statement to hold nothing past `SELECT` and `SHOW VIEW`, with `START TRANSACTION READ ONLY` behind it, because DDL, `GRANT` and `SET GLOBAL` each commit implicitly and so end a read-only transaction ([`docs/providers/mysql.md`](./providers/mysql.md) section 12.1); and on SQL Server, which has no read-only transaction or session switch, a principal verified at open plus an optimizer admission of each statement.
   Kubernetes has no read-only transaction, so there the boundary is Studio's request allowlist, checked on the final method and path of every request before it is sent, together with the RBAC of the identity the agent runs as; the kubectl reader in front of it explains a refusal to the model and is never the boundary ([On a Kubernetes connection](#on-a-kubernetes-connection)).
   MongoDB has no read-only session or transaction either, so there the boundary is the connection's user: when a run that sends commands opens its connection, the server must report that the user holds only read privileges on the bound database and must refuse a write from it, and Studio's command fence in front of the engine refuses writes, write stages, server-side JavaScript and diagnostic stages; every command carries `maxTimeMS` and Studio kills the session of a read the server does not end, and a `find` or `aggregate` stops on the server one row past the row budget ([On a MongoDB connection](#on-a-mongodb-connection)).
   On ClickHouse the engine refuses the write for the request itself: every agent request carries `readonly = 1`, and the connection's user is proven at open to hold only `SELECT` and `SHOW` on named databases or tables, no source grant, no grant `readonly` leaves usable, no table that reads an external source and no executable function on the server ([`docs/providers/clickhouse.md`](./providers/clickhouse.md) section 5.6).
+  On libSQL the boundary is the connection's token: when a run that sends statements opens its connection, the server must refuse a write sent with that token, so a token that writes, a user name and password, and a server that checks no credential are refused, and the server refuses a read-only token every write for the whole request ([`docs/providers/libsql.md`](./providers/libsql.md) section 3.6).
   On any other engine an agent-mode run whose workflow sends a statement is
   **refused when it is started**: `POST /api/agent/runs` answers `400` with the posture's own
   paragraph before a run id exists or a model turn is spent (#512). The provider factory's gate sits
@@ -1339,7 +1341,7 @@ storage pressure — and it is the one workflow that is **not** built on the rea
 | `inspect_operations`, `recommend_change`, `compose_report` | `inspect_schema`, `run_read_query`, `inspect_plan`, `profile_table`, `compare_plans` |
 
 **Everything it leaves out is left out for one reason: those tools send statements.**
-All three read-class tools reach the database under the `agent-read-only` profile, which the factory grants only to a provider with `queryReadOnly`, and only PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB and ClickHouse implement it, so offering any of them here would reintroduce, tool by tool, the exact engine restriction this workflow exists to escape.
+All three read-class tools reach the database under the `agent-read-only` profile, which the factory grants only to a provider with `queryReadOnly`, and only PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse and libSQL implement it, so offering any of them here would reintroduce, tool by tool, the exact engine restriction this workflow exists to escape.
 `compare_plans` is left out because it names two `inspect_plan` artifacts this run cannot produce: a tool that could only ever refuse is worse than no tool.
 
 **It is grounded, and with a different inventory from every other workflow** (#411). Until then this

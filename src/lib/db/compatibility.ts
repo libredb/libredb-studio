@@ -603,6 +603,7 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   spark: false,
   mysql: true,
   sqlite: true,
+  // Agent mode executes statements on libSQL, and MCP read stays closed on it until a change of its own opens it.
   libsql: false,
   duckdb: true,
   oracle: false,
