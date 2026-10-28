@@ -205,7 +205,7 @@ honest about being one.
 
 Open the repository in GitHub Codespaces, or use **Dev Containers: Reopen in Container** in VS Code
 with Docker running. [`.devcontainer/devcontainer.json`](.devcontainer/devcontainer.json) provides
-Node.js 24, Bun 1.4.2 and Helm 4.1.3, matching the required Node version and the Bun/Helm versions
+Node.js 24, Bun 1.4.4 and Helm 4.1.3, matching the required Node version and the Bun/Helm versions
 used by CI, plus 7-Zip for the packaging tests. The first creation installs the locked JavaScript
 dependencies and builds the chart's PostgreSQL dependency, so it needs access to the npm registry
 and the chart registries.
@@ -224,7 +224,7 @@ The suite runs on Linux, macOS and Windows, from whichever shell the platform gi
 
 | Tool | Version | Needed for |
 | --- | --- | --- |
-| [Bun](https://bun.sh/) | 1.4.2, the `packageManager` pin | Installing, the dev server, the build, and the test runner itself |
+| [Bun](https://bun.sh/) | 1.4.4, the `packageManager` pin | Installing, the dev server, the build, and the test runner itself |
 | [Node.js](https://nodejs.org/) | 24+, the `engines` floor | The `scripts/*.mjs` gates, including `merge-lcov.mjs` and `check-coverage.mjs` |
 | Git | any | Cloning, and on Windows it is also where the POSIX tools below come from |
 | [Helm](https://helm.sh/) | 4.1.3, the version CI runs | Optional locally: the chart tests, see below |

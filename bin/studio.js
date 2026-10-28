@@ -22,7 +22,7 @@
  * Dockerfile). Drop the shebang and a bunx user gets Bun instead.
  * `assessNodeRuntime` cannot tell, because Bun reports a
  * `process.versions.node` well above the floor - 26.3.0 on Bun 1.4.0, and
- * still 26.3.0 on the pinned 1.4.2. That path used to segfault while
+ * still 26.3.0 on the pinned 1.4.4. That path used to segfault while
  * `better-sqlite3`, the STORAGE_PROVIDER=sqlite backend, was a NAN addon
  * (oven-sh/bun#4290); since v13 it is a Node-API addon, and the standalone
  * server signs in and stores to SQLite under Bun 1.4.2. Only `bunx --bun`

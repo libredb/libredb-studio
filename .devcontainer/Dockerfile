@@ -1,7 +1,7 @@
 FROM mcr.microsoft.com/devcontainers/javascript-node:5-24-bookworm
 
 # Keep these versions aligned with .github/workflows/ci.yml.
-ARG BUN_VERSION=1.4.2
+ARG BUN_VERSION=1.4.4
 ARG HELM_VERSION=4.1.3
 
 USER root

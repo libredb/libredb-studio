@@ -76,7 +76,7 @@
 # Channel E2E job now runs it against this image.
 # ==============================================================================
 
-FROM oven/bun:1.4.2-alpine AS deps
+FROM oven/bun:1.4.4-alpine AS deps
 WORKDIR /usr/src/app
 RUN apk add --no-cache python3 make g++
 COPY package.json bun.lock ./
