@@ -497,13 +497,8 @@ export class LibreDBProvider extends BaseDatabaseProvider {
    * cannot open unexpected locations.
    */
   private resolveDatabasePath(): string {
-    const configured = this.config.database;
-    if (!configured) {
-      throw new DatabaseConfigError(
-        'LibreDB requires a file path (use the "database" field, e.g. /data/app.libredb)',
-        "libredb",
-      );
-    }
+    // `connect` runs `validate()` first, and that refuses an absent or empty path.
+    const configured = this.config.database as string;
     const resolved = path.resolve(configured);
     if (resolved !== path.normalize(resolved) || configured.includes("\0")) {
       throw new DatabaseConfigError("Invalid database path: path traversal is not allowed", "libredb");

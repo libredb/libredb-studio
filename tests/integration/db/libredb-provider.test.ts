@@ -570,6 +570,41 @@ describe("LibreDBProvider — 0.2.x error mapping & locking", () => {
     }
   });
 
+  test("a write-ahead log damaged mid-file is refused (CORRUPT_WAL) and left byte-for-byte untouched", async () => {
+    // tmpFile holds four committed records. One byte of the FIRST record's payload is flipped, so its
+    // checksum fails with intact records after it: damage, not a torn tail. The file header is 8 bytes
+    // and a record header 12 (@libredb/libredb 0.2.2), so the payload starts at offset 20.
+    const bytes = fs.readFileSync(tmpFile);
+    bytes[8 + 12] = (bytes[8 + 12] as number) ^ 0xff;
+    fs.writeFileSync(tmpFile, bytes);
+    const before = fs.readFileSync(tmpFile);
+
+    const provider = new LibreDBProvider(makeConn(tmpFile));
+    const error = await provider.connect().then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect((error as Error).message).toMatch(/write-ahead log is corrupt mid-file; refusing to open/);
+    expect(fs.readFileSync(tmpFile).equals(before)).toBe(true);
+  });
+
+  test("a close that fails during disconnect still leaves the provider disconnected", async () => {
+    const provider = new LibreDBProvider(makeConn(tmpFile));
+    await provider.connect();
+    const held = (provider as unknown as { db: { close: () => void } }).db;
+    const close = held.close.bind(held);
+    held.close = () => {
+      close();
+      throw new Error("EIO: i/o error, close");
+    };
+    await provider.disconnect();
+    expect(provider.isConnected()).toBe(false);
+    // The lock was released by the close that ran, so the file opens again.
+    await provider.connect();
+    await provider.disconnect();
+  });
+
   test("a malformed UTF-16 put value (lone surrogate) is a QueryError, and the connection survives", async () => {
     const provider = new LibreDBProvider(makeConn(tmpFile));
     await provider.connect();
