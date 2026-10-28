@@ -639,7 +639,7 @@ The private-host egress guard does not cover a Spark connection, because grpc-js
 
 Known limits:
 
-- under Bun, a client-certificate failure reads as no Spark Connect server answering, because the TLS proxy's alert reaches the status text under Node only.
+- under a Bun before 1.4.4, a client-certificate failure reads as no Spark Connect server answering, because the TLS proxy's alert does not reach the status text there; Node and Bun 1.4.4 report it.
 - a result of more than about 16,000 tiny batches is cut by the 16 MiB budget, with its bytes warning, because each kept batch counts 1,024 bytes beside its values.
 - a legacy negative-scale decimal whose scale is below -38 is refused as unreadable.
 

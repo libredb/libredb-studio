@@ -192,13 +192,28 @@ describe("the connect and transport rows", () => {
       S.tlsCertificateDates,
     ],
     [
-      "no client certificate where the proxy requires one (Node; Bun says Failed to connect)",
+      "no client certificate where the proxy requires one (Node)",
       "No connection established. Last error: 0002344DC0720000:error:0A00045C:SSL routines:ssl3_read_bytes:tlsv13 alert certificate required:../deps/openssl/openssl/ssl/record/rec_layer_s3.c:918:SSL alert number 116\n (2026-10-13T12:27:23.824Z). Resolution note: ",
       S.tlsClientCertificateRequired,
     ],
     [
-      "a client certificate from a CA the proxy does not trust (Node; Bun says Failed to connect)",
+      "a client certificate from a CA the proxy does not trust (Node)",
       "No connection established. Last error: 0082AEB216720000:error:0A000418:SSL routines:ssl3_read_bytes:tlsv1 alert unknown ca:../deps/openssl/openssl/ssl/record/rec_layer_s3.c:918:SSL alert number 48\n (2026-10-13T12:28:58.950Z). Resolution note: ",
+      S.tlsClientCertificateRefused,
+    ],
+    [
+      "no client certificate where the proxy requires one (Bun from 1.4.4)",
+      "No connection established. Last error: error:1000045c:SSL routines:OPENSSL_internal:TLSV1_ALERT_CERTIFICATE_REQUIRED (2026-10-28T15:16:56.754Z). Resolution note: ",
+      S.tlsClientCertificateRequired,
+    ],
+    [
+      "a client certificate from a CA the proxy does not trust (Bun from 1.4.4)",
+      "No connection established. Last error: error:10000418:SSL routines:OPENSSL_internal:TLSV1_ALERT_UNKNOWN_CA (2026-10-28T15:16:56.760Z). Resolution note: ",
+      S.tlsClientCertificateRefused,
+    ],
+    [
+      "alert 42, BoringSSL's reason name, written by hand",
+      "No connection established. Last error: error:10000412:SSL routines:OPENSSL_internal:SSLV3_ALERT_BAD_CERTIFICATE (2026-10-28T12:00:00.000Z). Resolution note: ",
       S.tlsClientCertificateRefused,
     ],
     [

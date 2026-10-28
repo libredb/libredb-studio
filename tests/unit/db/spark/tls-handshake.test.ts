@@ -3,8 +3,8 @@
  * under Bun and in a Node child, the production runtime, so a change of grpc-js's or a runtime's text fails
  * here. The certificates are tests/fixtures/tls. `openssl s_server` stands in for a TLS proxy that requires a client
  * certificate trusted through the unrelated CA, and refuses a missing or an untrusted one with a TLS alert; a grpc-js
- * server only closes the connection on an untrusted one. Under Bun no alert reaches the status text, which says
- * "Failed to connect", so both alert cases read as not-connected there. The certificate dates are pinned in
+ * server only closes the connection on an untrusted one. Under Bun the alert reaches the status text from 1.4.4, in
+ * BoringSSL's words; 1.4.2 said "Failed to connect" there, which read as not-connected. The certificate dates are pinned in
  * errors.test.ts only: the fixtures hold no expired certificate, and no CA key to sign one.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -182,10 +182,12 @@ function expected(item: SparkHandshakeCase, runtime: Runtime): Expected {
     case "a certificate that does not list the IP":
     case "verify-ca checks the name as verify-full does":
       return { category: "tls", message: S.tlsNameMismatch(host) };
+    // Both runtimes read the proxy's alert: Node in OpenSSL's words, Bun from 1.4.4 in BoringSSL's (1.4.2 said only
+    // "Failed to connect", which read as not-connected).
     case "no client certificate where the proxy requires one":
-      return runtime === "node" ? { category: "tls", message: S.tlsClientCertificateRequired } : notConnected;
+      return { category: "tls", message: S.tlsClientCertificateRequired };
     case "a client certificate from a CA the proxy does not trust":
-      return runtime === "node" ? { category: "tls", message: S.tlsClientCertificateRefused } : notConnected;
+      return { category: "tls", message: S.tlsClientCertificateRefused };
     // Under Node on Windows this case read as not-connected (measured on windows-latest, Node 24.21.0): grpc-js named
     // no cause there, as it names none for a TLS port. Bun on Windows and Node on Linux and macOS read the answer.
     case "plaintext to a port that answers HTTP/1.1": {
@@ -229,8 +231,10 @@ function expectRun(outcomes: readonly SparkHandshakeOutcome[], runtime: Runtime)
   // grpc-js's own text for its client's cancel (call.ts cancel()), the one CANCELLED text that is the user's.
   expect(raw("the client's own cancel")).toMatchObject({ code: 1, details: "Cancelled on client" });
   if (runtime === "bun") {
-    expect(raw("no client certificate where the proxy requires one").details).toContain("Failed to connect");
-    expect(raw("a client certificate from a CA the proxy does not trust").details).toContain("Failed to connect");
+    expect(raw("no client certificate where the proxy requires one").details).toContain(
+      "TLSV1_ALERT_CERTIFICATE_REQUIRED",
+    );
+    expect(raw("a client certificate from a CA the proxy does not trust").details).toContain("TLSV1_ALERT_UNKNOWN_CA");
   }
 }
 

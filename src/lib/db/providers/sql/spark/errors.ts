@@ -207,12 +207,12 @@ const TLS_PORT_EXPECTED = /Protocol error/;
 const UNTRUSTED =
   /unable to verify the first certificate|self[- ]signed certificate|unable to get local issuer certificate/;
 // Measured under Bun and Node: a certificate that does not name the TLS identity, a name or an IP, and one outside its
-// dates. A TLS proxy's two client-certificate alerts reach the text under Node only; under Bun it says "Failed to
-// connect", which reads as not-connected (tls-handshake.test.ts).
+// dates. A TLS proxy's two client-certificate alerts reach the text under Node, in OpenSSL's words, and under Bun from
+// 1.4.4, in BoringSSL's capitals; Bun 1.4.2 said "Failed to connect", which reads as not-connected (tls-handshake.test.ts).
 const NAME_MISMATCH = /does not match certificate's altnames|ERR_TLS_CERT_ALTNAME_INVALID/;
 const CERTIFICATE_DATES = /certificate has expired|certificate is not yet valid/;
-const CLIENT_CERTIFICATE_REQUIRED = /alert certificate required/;
-const CLIENT_CERTIFICATE_REFUSED = /alert (?:unknown ca|bad certificate)/;
+const CLIENT_CERTIFICATE_REQUIRED = /alert certificate required|ALERT_CERTIFICATE_REQUIRED/;
+const CLIENT_CERTIFICATE_REFUSED = /alert (?:unknown ca|bad certificate)|ALERT_(?:UNKNOWN_CA|BAD_CERTIFICATE)/;
 /** grpc-js's own text for its client's call.cancel() (call.ts); a peer's RST_STREAM CANCEL is "Call cancelled". */
 const CLIENT_CANCEL = "Cancelled on client";
 const PROXY_ANSWER = /^Received (?:RST_STREAM with code \d+|HTTP status code \d+)/;
