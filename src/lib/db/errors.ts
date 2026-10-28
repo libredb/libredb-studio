@@ -464,7 +464,6 @@ const CREDENTIAL_WORDS = [
   "password",
   "authentication",
   "access denied",
-  "login failed",
   ...DRIVER_ERROR_CLASSIFIERS.flatMap((row) => row.credentialWords ?? []),
 ];
 

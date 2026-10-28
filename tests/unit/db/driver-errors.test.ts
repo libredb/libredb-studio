@@ -50,7 +50,8 @@ describe("driver error classification", () => {
   test("the shared module names no engine, driver or driver code in a string or an identifier", () => {
     const file = "src/lib/db/errors.ts";
     const source = ts.createSourceFile(file, readFileSync(join(ROOT, file), "utf8"), ts.ScriptTarget.Latest, true);
-    const words = /oracle|mssql|tedious|mysql|maria|sqlite|postgres|\bpg\b|db2|mongo|ora-|njs-|dpi-|tns:|ecancel/i;
+    const words =
+      /oracle|mssql|tedious|mysql|maria|sqlite|postgres|\bpg\b|db2|mongo|ora-|njs-|dpi-|tns:|ecancel|login failed/i;
     const found: string[] = [];
     const visit = (node: ts.Node): void => {
       if ((ts.isStringLiteralLike(node) || ts.isIdentifier(node)) && words.test(node.text)) found.push(node.text);

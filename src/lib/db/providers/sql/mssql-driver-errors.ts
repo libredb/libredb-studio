@@ -21,7 +21,7 @@ const MSSQL_STATEMENT_ERRORS = new Set([
 /**
  * SQL Server error numbers of a refused privilege, from its Database Engine errors: 229 on an object, 230 on a column,
  * 262 in a database, 297 for an action, 300 on a server-level object, 916 a database the login may not enter. tedious
- * raises a refused login as `ELOGIN` without the server's 18456, so the words decide that one.
+ * raises a refused login as `ELOGIN` without the server's 18456, so the words decide that one: `credentialWords`.
  */
 const MSSQL_ACCESS_REFUSALS: ReadonlyMap<number, AccessRefusal> = new Map([
   [229, "privilege"],
@@ -46,6 +46,7 @@ const MSSQL_ACCESS_REFUSALS: ReadonlyMap<number, AccessRefusal> = new Map([
 export const MSSQL_DRIVER_ERRORS = Object.freeze({
   driver: "mssql",
   missingDatabase: (message) => message.includes("cannot open database"),
+  credentialWords: Object.freeze(["login failed"]),
   accessRefusal: (fields) => (typeof fields.number === "number" ? MSSQL_ACCESS_REFUSALS.get(fields.number) : undefined),
   carriesCode: (fields) => typeof fields.number === "number",
   statementFault: (fields) =>
