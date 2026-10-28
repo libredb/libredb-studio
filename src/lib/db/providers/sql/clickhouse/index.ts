@@ -38,6 +38,7 @@ import {
   AuthenticationError,
   ConnectionError,
   DatabaseConfigError,
+  ExecutionProfileError,
   QueryCancelledError,
   QueryError,
   TimeoutError,
@@ -60,10 +61,13 @@ import {
   type ObjectDetailBatch,
   type ObjectSourceDocument,
   type ProviderCapabilities,
+  type ProviderExecutionContext,
   type ProviderLabels,
   type ProviderOptions,
   type QueryPrepareOptions,
   type QueryResult,
+  type ReadOnlyStatementBudget,
+  type ReadOnlyStatementMode,
   type SlowQuery,
   type SlowQueryStats,
   type StorageStats,
@@ -73,6 +77,15 @@ import { formatCacheHitRatio } from "@/lib/monitoring-cache-ratio";
 import { formatBytes } from "@/lib/db/utils/pool-manager";
 import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
 import { readStatementEnd } from "@/lib/sql/statement-end";
+import { assertReadOnlyBudget, byteBudgetSentence } from "../read-only-budget";
+import { verifyAgentProfile } from "./agent-boundary";
+import {
+  agentBodyCap,
+  agentRequestSettings,
+  assertNoRemoteTableFunction,
+  readAgentAnswer,
+  rowOverflowRefusal,
+} from "./agent-read";
 import { ClickHouseHttpTransport } from "./http-transport";
 import { CLICKHOUSE_SYSTEM_DATABASES } from "./introspect";
 import {
@@ -87,6 +100,7 @@ import {
   readObjectSource as readSourceDocument,
 } from "./objects";
 import {
+  ClickHouseBodyLimitError,
   type ClickHouseQueryResult,
   type ClickHouseRow,
   type ClickHouseTransport,
@@ -101,6 +115,19 @@ import {
 const DEFAULT_DATABASE = "default";
 
 const CONNECT_PROBE_SQL = "SELECT 1";
+
+/** The code ClickHouse refuses a result past `max_result_rows` with, under `result_overflow_mode = throw`. */
+const TOO_MANY_ROWS_OR_BYTES = 396;
+
+/**
+ * The budget the open's proof runs under: each of its statements answers one row or a handful, from memory, so the
+ * bounds are for a server too loaded to answer, which then fails the open rather than holds it.
+ */
+const AGENT_PROOF_BUDGET: ReadOnlyStatementBudget = Object.freeze({
+  statementTimeoutMs: 10_000,
+  maxResultRows: 1_000,
+  maxResultBytes: 1024 * 1024,
+});
 
 const UNKNOWN_VERSION = "unknown";
 
@@ -504,10 +531,20 @@ export class ClickHouseProvider extends SQLBaseProvider {
    */
   private readonly runningQueryIds = new Map<string, string>();
 
-  constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
+  /**
+   * Whether this provider was opened to send an agent's statements: under an execution profile (`readOnly`) whose
+   * acquisition calls `queryReadOnly` (`sendsStatements`). Only then does `connect()` prove the profile's boundary
+   * (`verifyAgentProfile` in `agent-boundary.ts`), and only then does `queryReadOnly` answer. The operations
+   * profile's acquisitions send no statement, so they open unproven, as an editor connection does, and plan mode keeps
+   * grounding on a connection whose user is privileged.
+   */
+  private readonly readOnlyProfile: boolean;
+
+  constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderExecutionContext = {}) {
     super(config, options);
     this.validate();
     this.connection = resolveConnection(config);
+    this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
   }
 
   // ==========================================================================
@@ -684,9 +721,15 @@ export class ClickHouseProvider extends SQLBaseProvider {
       // statement - so the cheapest possible statement proves the server, the
       // credentials and the database together, here, where the user is looking.
       await transport.query(CONNECT_PROBE_SQL, { timeoutMs: this.queryTimeout });
+      if (this.readOnlyProfile) {
+        await verifyAgentProfile(
+          (sql) => transport.query(sql, this.agentQueryOptions(AGENT_PROOF_BUDGET)),
+          this.pinnedDatabase,
+        );
+      }
     } catch (error) {
       await transport.close();
-      const failure = this.describeConnectFailure(error);
+      const failure = error instanceof ExecutionProfileError ? error : this.describeConnectFailure(error);
       this.setError(failure);
       throw failure;
     }
@@ -800,6 +843,66 @@ export class ClickHouseProvider extends SQLBaseProvider {
    */
   private deadlineSeconds(): number {
     return Math.ceil(this.queryTimeout / MILLISECONDS_PER_SECOND);
+  }
+
+  /**
+   * The agent read-only execution profile's statement path.
+   *
+   * The engine holds the boundary: the request carries `readonly = 1`, under which ClickHouse refuses every write,
+   * DDL, SYSTEM statement, grant, temporary table and change of a setting (`agent-read.ts`), and the open proved the
+   * server applies it and the principal holds nothing `readonly` leaves open (`agent-boundary.ts`). The table
+   * functions that reach another server are refused here as defence in depth, read with this engine's grammar, and an
+   * estimating plan is refused because this engine composes none for the agent.
+   *
+   * Budgets refuse rather than truncate: the server refuses a result past the row budget (`max_result_rows` under
+   * `result_overflow_mode = throw`), the transport stops reading an answer past the byte budget and its envelope, and
+   * the parsed rows are checked against both again. The deadline is the server's `max_execution_time` and the
+   * transport's own, and a request the client abandons is cancelled on the server.
+   *
+   * Refused outside the profile: a provider opened without the proof has no boundary to run agent semantics on.
+   */
+  public async queryReadOnly(
+    sql: string,
+    budget: ReadOnlyStatementBudget,
+    mode: ReadOnlyStatementMode = "execute",
+  ): Promise<QueryResult> {
+    const transport = this.requireTransport();
+    if (!this.readOnlyProfile) {
+      throw new QueryError(
+        "Read-only execution requires a provider opened under the agent read-only profile",
+        this.type,
+        sql,
+      );
+    }
+    assertReadOnlyBudget(budget, this.type);
+    if (mode !== "execute") {
+      throw new QueryError("ClickHouse composes no estimating plan for the agent", this.type, sql);
+    }
+    assertNoRemoteTableFunction(sql, resolveSqlGrammar(this.type));
+
+    const { result, executionTime } = await this.measureExecution(async () => {
+      try {
+        return await transport.query(sql, this.agentQueryOptions(budget));
+      } catch (error) {
+        if (error instanceof ClickHouseBodyLimitError) {
+          throw new QueryError(byteBudgetSentence(error.bytesRead, budget.maxResultBytes), this.type, sql);
+        }
+        if (error instanceof ClickHouseTransportError && error.code === TOO_MANY_ROWS_OR_BYTES) {
+          throw rowOverflowRefusal(error.message, budget, sql);
+        }
+        throw this.mapClickHouseError(error, sql);
+      }
+    });
+    return readAgentAnswer(result, budget, sql, executionTime);
+  }
+
+  /** What every agent request carries: the profile's settings, the client deadline and the body cap. */
+  private agentQueryOptions(budget: ReadOnlyStatementBudget) {
+    return {
+      settings: agentRequestSettings(budget),
+      timeoutMs: budget.statementTimeoutMs,
+      maxBodyBytes: agentBodyCap(budget),
+    };
   }
 
   /**

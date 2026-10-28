@@ -64,7 +64,14 @@ describe("the requirement mirrors", () => {
   });
 
   test("sql-composers is frozen, in this order", () => {
-    expect(AGENT_REQUIREMENT_ENGINES["sql-composers"]).toEqual(["postgres", "sqlite", "duckdb", "mssql", "mysql"]);
+    expect(AGENT_REQUIREMENT_ENGINES["sql-composers"]).toEqual([
+      "postgres",
+      "sqlite",
+      "duckdb",
+      "mssql",
+      "mysql",
+      "clickhouse",
+    ]);
     expect(Object.isFrozen(AGENT_REQUIREMENT_ENGINES["sql-composers"])).toBe(true);
   });
 

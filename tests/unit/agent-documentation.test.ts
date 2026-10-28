@@ -473,6 +473,7 @@ const READ_ONLY_PROVIDER_FILES: Readonly<Record<string, string>> = {
   mysql: "src/lib/db/providers/sql/mysql.ts",
   kubernetes: "src/lib/db/providers/platform/kubernetes/index.ts",
   mongodb: "src/lib/db/providers/document/mongodb/index.ts",
+  clickhouse: "src/lib/db/providers/sql/clickhouse/index.ts",
 };
 
 /**
@@ -581,8 +582,8 @@ describe("every agent-mode engine sentence is the one engine list (#246)", () =>
   const list = namedList(AGENT_EXECUTION_ENGINES.map((type) => getDBConfig(type).label));
   const prose = (relative: string) => read(relative).replace(/\n[ \t]*(?:\*|\/\/|#)?[ \t]*/g, " ");
 
-  test("the derived list is today's seven engines", () => {
-    expect(list).toBe("PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes and MongoDB");
+  test("the derived list is today's eight engines", () => {
+    expect(list).toBe("PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB and ClickHouse");
   });
 
   test(".env.example states it, and says plan mode is grounded on every engine", () => {

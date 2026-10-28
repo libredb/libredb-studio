@@ -156,9 +156,11 @@ case 'clickhouse': {
   // The explicit /index specifier keeps this dynamic import statically analysable:
   // a bare directory resolves only at runtime, which the bundler cannot trace into a chunk.
   const { ClickHouseProvider } = await import('./providers/sql/clickhouse/index');
-  return new ClickHouseProvider(connection, options);
+  return new ClickHouseProvider(connection, options, execution);
 }
 ```
+
+The third argument is the execution context, which the agent read-only profile's open-time proof keys on ([§5.6](#56-agent-read-only-execution-profile)).
 
 `connect()` proves the server, the credentials, and the database together with one `SELECT 1` —
 the cheapest statement that exercises all three at once. This matters here specifically because a
@@ -886,6 +888,119 @@ Block comments nest, as the same reference states with a nested example.
 Read as code, `SELECT number FROM numbers(1000) // note` was bounded as `... // note LIMIT 5` and returned 1000 rows while reporting `wasLimited: true`; with the fact carried it is `... LIMIT 5 // note` and returns 5 (both measured).
 `readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.
 Redaction is `sql` with no name quote: a redacted statement keeps its words, and every literal and quoted run becomes `?`.
+
+### 5.6 Agent read-only execution profile
+
+Agent mode executes statements on ClickHouse through `queryReadOnly` in [`index.ts`](../../src/lib/db/providers/sql/clickhouse/index.ts).
+The boundary is engine-enforced: every agent request carries `readonly = 1`, under which the server refuses every write, DDL, SYSTEM statement, grant, temporary table and change of a setting with code `164`, whatever the statement says.
+What `readonly = 1` leaves open is the principal's to hold, so the user the agent runs as is proven at open to be least-privilege, from the server's own answers ([`agent-boundary.ts`](../../src/lib/db/providers/sql/clickhouse/agent-boundary.ts)).
+Studio's agent admission in front of the provider, and the provider's own table-function fence, are defence in depth on top of those two.
+
+The factory passes the execution context as the constructor's third argument.
+The proof runs in `connect()` only when the context sets both `readOnly` and `sendsStatements`, the agent and hand-over profiles; the operations profile and plan mode send no statement of the model's, so they open unproven, and plan mode keeps grounding on a privileged connection.
+`queryReadOnly` refuses on any handle opened without that context, an ordinary editor handle included, before it sends anything.
+
+#### Request settings
+
+[`agent-read.ts`](../../src/lib/db/providers/sql/clickhouse/agent-read.ts) builds them from the statement budget, and the open's probes carry them too.
+
+| Setting | Value | Why |
+| --- | --- | --- |
+| `readonly` | `1`, never `2` | `2` lets a statement change settings; under `1` a trailing `SETTINGS` of any setting answers `164`, `readonly` and `max_result_rows` included |
+| `max_execution_time` | the budget's milliseconds in whole seconds, rounded up | the server's own deadline, `159` past it; the transport's client deadline ends the wait at the budget itself |
+| `max_result_rows` | the row budget | with `result_overflow_mode = throw` the server refuses a result past it with `396`: 10 rows under a bound of 10 answer, 11 are refused |
+| `result_overflow_mode` | `throw` | refuse rather than cut |
+| `cancel_http_readonly_queries_on_client_close` | `1` | a request the client abandons, at its deadline or at the body cap, is cancelled on the server: measured, the abandoned statement left `system.processes` with the setting, and was still running 3 s later without it |
+
+The transport reads the answer in chunks and stops at the byte budget plus a 1 MiB envelope allowance (`maxBodyBytes`), so an oversized answer is never held whole.
+The parsed rows are then held to the row and byte budgets again, and every refusal is the shared sentence of [`read-only-budget.ts`](../../src/lib/db/providers/sql/read-only-budget.ts).
+An answer in a format the statement chose (`FORMAT TSV`) is refused, because its rows cannot be counted or measured.
+An estimating plan is the `EXPLAIN json = 1, indexes = 1` prefix the agent composes, sent in the ordinary execute mode; the estimate-plan session mode is refused.
+The run read allowance is not charged: ClickHouse does not bill per read.
+
+#### The open's proof
+
+Each step runs under the request settings above, and any answer the proof cannot read refuses the profile.
+
+1. `SELECT version(), currentUser(), toString(getSetting('readonly'))`: the release must be one whose lists below were checked (`CLICKHOUSE_CHECKED_RELEASES`, 26.7 today), and `readonly` must read `1`. Another release is refused `PROFILE_UNSUPPORTED_TARGET` until its lists are checked again.
+2. `SELECT 1 SETTINGS readonly = 0` must answer `164`. A user whose settings profile marks `readonly` `CHANGEABLE_IN_READONLY` runs it and answers `1`, and is refused `PROFILE_SERVER_UNENFORCED`.
+3. `CREATE DATABASE IF NOT EXISTS` on the bound database, a write that changes nothing on any outcome because the connect probe already ran in that database, must be refused with `164` or `497`. A least-privilege user answers `497`, because the grant check comes first, and an unrestricted one `164`. `DROP TABLE IF EXISTS` on an absent table cannot serve as this probe: it answers success under `readonly = 1`.
+4. `SHOW GRANTS FINAL` lists the user's grants merged with every role granted to it, default or not: a role granted with `SET DEFAULT ROLE NONE` still lists its grants. Each privilege must be `SELECT` or `SHOW` and its four parts (`CLICKHOUSE_AGENT_PRIVILEGES`), on one named database or table outside `system` and `INFORMATION_SCHEMA`, without the grant option. Any other privilege is refused `PROFILE_PRIVILEGES_TOO_BROAD` by name: a source grant (`CLICKHOUSE_SOURCE_PRIVILEGES`: SOURCES, READ, WRITE and every source 26.7 lists) and a grant `readonly` leaves usable (`CLICKHOUSE_READONLY_EXEMPT_PRIVILEGES`: BACKUP, UNDROP TABLE, ALTER DATABASE SETTINGS, the named-collection group, KILL QUERY and CLUSTER) are said as such.
+5. `SELECT 1 FROM system.query_log LIMIT 0` must answer `497`, or `60` where the log is off: the query log holds every user's statements.
+6. `system.tables` must show the user no table outside the local engines (`CLICKHOUSE_LOCAL_TABLE_ENGINES`: the MergeTree family, `Memory`, the log engines, `Null`, `Set`, `Join` and the two view engines), and no view or materialized view whose SQL SECURITY is `DEFINER` or `NONE`. `system.dictionaries` must be unreadable to it (`497`) or empty. Every other engine 26.7 lists is in `CLICKHOUSE_REFUSED_TABLE_ENGINES`, and the two lists are held to cover 26.7's `system.table_engines` exactly.
+
+The check is of what `system.tables` shows, so a `SHOW TABLES` grant that makes a URL-engine table visible refuses the user even without `SELECT` on it.
+The proof runs at open only: a grant added to the user after the open is seen at the next open of a profiled handle, not before.
+
+#### The agent user
+
+The agent credential takes a user and a password, both required, the form every engine without an `agentCredential` declaration takes.
+An agent credential beside a connection string is refused (`AGENT_CREDENTIAL_WITH_CONNECTION_STRING`), since the URL's own user and password would win; with no agent credential the agent runs as the connection's own user, which the open must admit.
+A user the open admits:
+
+```sql
+CREATE USER libredb_agent IDENTIFIED WITH sha256_password BY '<secret>';
+GRANT SELECT ON demo.orders, SELECT ON demo.customers TO libredb_agent;
+```
+
+Grant `SELECT` per table, or per database where every table in it uses a local engine; a database holding a URL-engine table, a dictionary or a definer view refuses a user who can see it.
+
+#### What only the fence or the operator stops
+
+- `cluster()` and `clusterAllReplicas()` answer an unrestricted user under `readonly = 1`, measured; a least-privilege user is refused them with `497` (`READ ON REMOTE`), and the open refuses any REMOTE grant. The provider fence (`assertNoRemoteTableFunction`) refuses `remote`, `remoteSecure`, `cluster` and `clusterAllReplicas` before anything is sent, quoted names and `\xHH` escapes included, reading the statement with this engine's registered grammar (`resolveSqlGrammar`), so it is defence in depth, lexer-only on its own.
+- `KILL QUERY` is not refused by `readonly`, for a user's own statements at any `readonly` value. On 26.7 it reads `system.processes`, so the least-privilege user is refused even its own (`497`, `SELECT ON system.processes`), and the KILL QUERY grant that would reach other users' statements is refused at open.
+- `DESCRIBE TABLE` over a table function runs under `readonly = 1` and may reach the source to infer a schema; it needs the source's grant, which the open refuses.
+- Two statements in one request are refused by the server as a syntax error (`62`, "Multi-statements are not allowed"), the one refusal that is not a read-only or authorization code.
+
+#### Boundary record
+
+Measured on `clickhouse/clickhouse-server:26.7.1.1315` (2026-10-29) by [`tests/live/clickhouse-agent-boundary.ts`](../../tests/live/clickhouse-agent-boundary.ts), with Studio's agent admission bypassed: 92 checks, all passing.
+
+| Probe | Least-privilege user | Writable admin under `readonly = 1` | Writable admin, positive control |
+| --- | --- | --- | --- |
+| `INSERT`, `ALTER TABLE ... UPDATE` and `DELETE`, lightweight `DELETE`, `OPTIMIZE`, `TRUNCATE` | `497` | `164` | ran |
+| `CREATE TABLE`, `RENAME TABLE`, `DROP TABLE`, `CREATE TEMPORARY TABLE`, `CREATE FUNCTION` | `497` | `164` | ran |
+| `INSERT INTO FUNCTION null(...)`, `SYSTEM FLUSH LOGS`, `GRANT` | `497` | `164` | ran |
+| `SELECT` from `url(...)` and `remote(...)` | `497` | `164` | ran |
+| `SELECT` from `cluster(...)` | `497` | answered | answered |
+| trailing `SETTINGS readonly = 0` | `164` | `164` | not sent |
+| a second statement | `62` | `62` | `62` |
+| `KILL QUERY` | `497` | not sent | not sent |
+
+The engine's tables, row counts, users, roles, named collections and functions read back the same before and after the refused statements.
+Through `queryReadOnly` each statement above was refused too, the table functions by the provider fence before anything was sent.
+At open, the least-privilege user was admitted, and these were refused, each by the step that names it: a user whose profile marks `readonly` changeable (step 2); users holding REMOTE, `READ ON URL`, BACKUP, NAMED COLLECTION, ALTER DATABASE SETTINGS, UNDROP TABLE, INSERT, `SELECT ON system.query_log` or a grant option, and users holding BACKUP and REMOTE only through a role, one of them not a default role (step 4); users who could see a URL-engine table, a dictionary and a definer view over the URL table (step 6).
+The operations profile opened the writable admin unproven.
+The budgets: 51 rows under a budget of 50, 100,010 bytes under 65,536, an answer past the body cap, a statement past a one-second deadline and a `FORMAT TSV` result were each refused.
+
+Run it against a server you may write to, as a user with access management and `named_collection_control`; on the compose service that takes a `users.d` snippet such as `<clickhouse><users><libredb><named_collection_control>1</named_collection_control></libredb></users></clickhouse>` in `/etc/clickhouse-server/users.d/`.
+Everything it creates carries the `libredb_lb_` prefix and is dropped on exit.
+
+```sh
+LIBREDB_LIVE_CLICKHOUSE_PORT=8123 LIBREDB_LIVE_CLICKHOUSE_USER=<admin> LIBREDB_LIVE_CLICKHOUSE_PASSWORD=<secret> \
+  bun tests/live/clickhouse-agent-boundary.ts
+```
+
+#### Agent language pack
+
+Statement-language family: `sql`.
+Overlay: [`src/lib/agent/languages/sql/engines/clickhouse.ts`](../../src/lib/agent/languages/sql/engines/clickhouse.ts), with its client row in [`src/lib/agent/languages/sql/engines/client.ts`](../../src/lib/agent/languages/sql/engines/client.ts).
+The agent reads it through `runServerPack` and `agentEnginePack`, and the dialect through `engineServerDialect`.
+
+| Member | Kind | Value |
+| --- | --- | --- |
+| `catalogRead` | Dialect-bound | Supplied |
+| `planEstimate` | Dialect-bound | Supplied |
+| `profileComposition` | Dialect-bound | `"unsupported"` |
+| `statistics` | Dialect-bound | `"unsupported"` |
+| `catalogCapture` | Dialect-bound | `"unsupported"` |
+
+This overlay overrides no Shared member, so every Shared member is the `sql` statement-language family's own.
+The catalog read takes `system.columns` and `system.tables`, which the server filters to what the user may see; the index kind is each table's primary and sorting key, since `system.data_skipping_indices` answers the least-privilege user `497`, and the relation kind is always empty, since ClickHouse keeps no foreign key.
+Each kind was run as the least-privilege user under `readonly = 1`.
+`profile_table` is still offered here and answers `UNSUPPORTED_DIALECT`, and `compare_plans` reads every plan as `unknown`, because the `clickhouse-json` strategy has no agent reading (B140).
+A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
+MCP's statement read stays closed on ClickHouse (`MCP_STATEMENT_READ.clickhouse` is false) until a change of its own opens it.
 
 ## 6. Schema introspection
 

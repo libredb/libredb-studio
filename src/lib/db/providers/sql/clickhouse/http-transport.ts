@@ -503,10 +503,12 @@ async function readCappedBody(response: Response, limit: number): Promise<string
   const chunks: Uint8Array[] = [];
   let bytesRead = 0;
   for (;;) {
+    // oxlint-disable-next-line no-await-in-loop -- a stream is read one chunk at a time, each counted before the next.
     const { done, value } = await reader.read();
     if (done) break;
     bytesRead += value.byteLength;
     if (bytesRead > limit) {
+      // oxlint-disable-next-line no-await-in-loop -- the read stops here; the loop does not continue past the cancel.
       await reader.cancel();
       throw new ClickHouseBodyLimitError(bytesRead, limit);
     }

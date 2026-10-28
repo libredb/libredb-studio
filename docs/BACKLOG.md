@@ -41,7 +41,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B139 · 69
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B140 · 70
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP3 · 3
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
@@ -8022,6 +8022,17 @@ The catalog a plan run grounds on is in place: `listObjects`, `describeObject` a
 Found 2026-10-27 while designing read-only agent and MCP execution for every provider.
 
 **Done when:** the provider implements `queryReadOnly` over its closed four-command grammar and the `valve.ts` Read Class check, with a test that pins both, and joins `AGENT_EXECUTION_ENGINES`; MCP stays closed until a per-engine exposure ruling opens it; cited in `docs/AGENT.md`.
+
+### B140. ClickHouse is offered profile_table and compare_plans with nothing to read them by
+
+Agent mode executes statements on ClickHouse, and its engine overlay (`src/lib/agent/languages/sql/engines/clickhouse.ts`) supplies the catalog read and the estimating plan only.
+`profile_table` is offered to the database-assessment and data-analysis workflows there, and the overlay declares its `profileComposition` `"unsupported"`, so every call answers `UNSUPPORTED_DIALECT`, as B111 records for DuckDB.
+`compare_plans` is offered to the query-optimization workflow, and the `clickhouse-json` explain strategy (`src/lib/explain/clickhouse-json.ts`) carries no `agentReading`, so `summarisePlan` reads every ClickHouse plan as `unknown` and a comparison states that two plans reach their rows by `unknown`; the same reading keeps the data-analysis workflow from offering to run its answer, which fails closed.
+Kept so that the engine joined with the members measured on it, and nothing composed from another engine's rule.
+
+Found 2026-10-29 with agent execution on ClickHouse.
+
+**Done when:** the ClickHouse overlay gains a profile composition measured on the engine, or its SQL variants stop offering `profile_table` through a requirement, and the `clickhouse-json` strategy gains an `agentReading` verified against the engine's plans, with tests for both; cited in `docs/AGENT.md`.
 
 ## Passkey deferrals (#785)
 

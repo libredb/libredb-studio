@@ -608,6 +608,7 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   oracle: false,
   db2: false,
   mssql: true,
+  // Agent mode executes statements on ClickHouse, and MCP read stays closed on it until a change of its own opens it.
   clickhouse: false,
   druid: false,
   trino: false,

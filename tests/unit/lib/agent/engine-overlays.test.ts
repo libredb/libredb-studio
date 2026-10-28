@@ -14,6 +14,7 @@ import { MONGO_PACK } from "@/lib/agent/languages/mongo/index";
 import { defineOverlay, dialectOnly, ENGINE_OVERRIDABLE_SERVER_MEMBERS } from "@/lib/agent/languages/overlay";
 import type { AgentEngineClientDialect, AgentEngineServerDialect } from "@/lib/agent/languages/pack";
 import { languageServerPack } from "@/lib/agent/languages/server";
+import * as CLICKHOUSE from "@/lib/agent/languages/sql/engines/clickhouse";
 import * as SQL_CLIENT_OVERLAYS from "@/lib/agent/languages/sql/engines/client";
 import * as DUCKDB from "@/lib/agent/languages/sql/engines/duckdb";
 import * as MSSQL from "@/lib/agent/languages/sql/engines/mssql";
@@ -58,6 +59,7 @@ const ENGINE_MODULES: Readonly<Record<string, Readonly<Record<string, unknown>>>
   "sql/engines/duckdb": DUCKDB,
   "sql/engines/mssql": MSSQL,
   "sql/engines/mysql": MYSQL,
+  "sql/engines/clickhouse": CLICKHOUSE,
   "sql/engines/client": SQL_CLIENT_OVERLAYS,
   "mongo/engines/mongodb": MONGODB,
   "mongo/engines/client": MONGO_CLIENT_OVERLAYS,
@@ -78,8 +80,8 @@ const without = (facet: object, key: string): Record<string, unknown> =>
 
 describe("the engine registry", () => {
   test("holds the engines that speak a statement language, in registry order", () => {
-    expect(ENGINES).toEqual(["postgres", "mysql", "sqlite", "duckdb", "mssql", "mongodb", "kubernetes"]);
-    expect(SQL_ENGINES).toEqual(["postgres", "mysql", "sqlite", "duckdb", "mssql"]);
+    expect(ENGINES).toEqual(["postgres", "mysql", "sqlite", "duckdb", "mssql", "clickhouse", "mongodb", "kubernetes"]);
+    expect(SQL_ENGINES).toEqual(["postgres", "mysql", "sqlite", "duckdb", "mssql", "clickhouse"]);
   });
 
   test.each(ALL_TYPES)("%s has a client pack exactly when it speaks a language, over that language's facet", (type) => {
@@ -109,7 +111,7 @@ describe("the engine registry", () => {
 
   test("every engine module's server overlay holds a dialect and overridable members, its client one a dialect alone (ruling 2)", () => {
     const exported = exportedOverlays();
-    expect(exported).toHaveLength(14);
+    expect(exported).toHaveLength(16);
     // The one other export is the PostgreSQL retry's rewrite, which its tests call directly.
     expect(
       Object.entries(ENGINE_MODULES)
@@ -198,13 +200,15 @@ describe("engineServerDialect", () => {
     }
   });
 
-  test("planEstimate is supplied on every SQL engine: a prefix on four, SQL Server's session mode", () => {
+  test("planEstimate is supplied on every SQL engine: a prefix on five, SQL Server's session mode", () => {
     expect(Object.fromEntries(SQL_ENGINES.map((type) => [type, engineServerDialect(type).planEstimate]))).toEqual({
       postgres: { kind: "prefix", prefix: "EXPLAIN (FORMAT JSON)" },
       mysql: { kind: "prefix", prefix: "EXPLAIN FORMAT=JSON" },
       sqlite: { kind: "prefix", prefix: "EXPLAIN QUERY PLAN" },
       duckdb: { kind: "prefix", prefix: "EXPLAIN (FORMAT JSON)" },
       mssql: { kind: "session-mode", mode: "estimate-plan" },
+      // Outside the restated-prefix strip, as MySQL's is.
+      clickhouse: { kind: "prefix", prefix: "EXPLAIN json = 1, indexes = 1", strippedWhenRestated: false },
     });
     for (const type of SQL_ENGINES) expect(Object.isFrozen(engineServerDialect(type).planEstimate)).toBe(true);
   });
@@ -222,7 +226,7 @@ describe("engineServerDialect", () => {
       expect(Object.isFrozen(compose)).toBe(true);
     }
     expect(composers("sqlite").relations).toBe(composers("sqlite").columns);
-    for (const type of ["postgres", "duckdb", "mssql", "mysql"] as const) {
+    for (const type of ["postgres", "duckdb", "mssql", "mysql", "clickhouse"] as const) {
       expect(composers(type).relations).not.toBe(composers(type).columns);
     }
   });
@@ -250,6 +254,7 @@ describe("engineServerDialect", () => {
     expect(supplied).toEqual(["postgres", "sqlite", "mssql"]);
     expect(engineServerDialect("duckdb").statistics).toBe("unsupported");
     expect(engineServerDialect("mysql").statistics).toBe("unsupported");
+    expect(engineServerDialect("clickhouse").statistics).toBe("unsupported");
     const reading = (type: DatabaseType) => {
       const statistics = engineServerDialect(type).statistics;
       if (statistics === "unsupported") throw new Error(`${type} has no statistics`);
@@ -278,7 +283,7 @@ describe("engineServerDialect", () => {
   test("catalogCapture is supplied on PostgreSQL and SQLite, each with its own kinds, builder and kind words", () => {
     const supplied = SQL_ENGINES.filter((type) => engineServerDialect(type).catalogCapture !== "unsupported");
     expect(supplied).toEqual(["postgres", "sqlite"]);
-    for (const type of ["duckdb", "mssql", "mysql"] as const) {
+    for (const type of ["duckdb", "mssql", "mysql", "clickhouse"] as const) {
       expect(engineServerDialect(type).catalogCapture).toBe("unsupported");
     }
     const capture = (type: DatabaseType) => {
@@ -329,6 +334,7 @@ describe("the client dialect", () => {
       sqlite: { catalogRead: "supported", planEstimate: "supported", catalogCapture: "supported" },
       duckdb: { catalogRead: "supported", planEstimate: "supported", catalogCapture: "unsupported" },
       mssql: { catalogRead: "supported", planEstimate: "supported", catalogCapture: "unsupported" },
+      clickhouse: { catalogRead: "supported", planEstimate: "supported", catalogCapture: "unsupported" },
     });
     for (const type of SQL_ENGINES) expect(Object.isFrozen(clientDialect(type))).toBe(true);
     for (const type of ["mongodb", "kubernetes"] as const) expect(engineClientPack(type).dialect).toBeUndefined();
@@ -350,7 +356,7 @@ describe("the client dialect", () => {
 
   test("enginesSupporting answers frozen, in registry order, the engines supplying every member asked", () => {
     const composers = enginesSupporting("catalogRead", "planEstimate");
-    expect(composers).toEqual(["postgres", "sqlite", "duckdb", "mssql", "mysql"]);
+    expect(composers).toEqual(["postgres", "sqlite", "duckdb", "mssql", "mysql", "clickhouse"]);
     expect(Object.isFrozen(composers)).toBe(true);
     const capture = enginesSupporting("catalogCapture");
     expect(capture).toEqual(["postgres", "sqlite"]);
@@ -367,7 +373,7 @@ describe("the client dialect", () => {
  * provider declares no EXPLAIN at all.
  */
 describe("the estimating EXPLAIN agrees with the editor's strategy", () => {
-  test.each(["postgres", "sqlite", "duckdb", "mysql"] as const)(
+  test.each(["postgres", "sqlite", "duckdb", "mysql", "clickhouse"] as const)(
     "%s composes what the strategy of its declared format builds",
     async (type) => {
       const provider = await createDatabaseProvider(

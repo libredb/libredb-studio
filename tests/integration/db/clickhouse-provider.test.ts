@@ -40,6 +40,7 @@ import {
   AuthenticationError,
   ConnectionError,
   DatabaseConfigError,
+  ExecutionProfileError,
   QueryCancelledError,
   QueryError,
   TimeoutError,
@@ -4210,5 +4211,231 @@ describe("endOpenQueryTransaction()", () => {
     expect(ABSENCES.filter((absence) => doc.includes(absence))).toEqual([
       "the engine has no transaction to leave open",
     ]);
+  });
+});
+
+// ============================================================================
+// The agent read-only execution profile
+// ============================================================================
+
+const AGENT_BUDGET = { statementTimeoutMs: 2_000, maxResultRows: 3, maxResultBytes: 500 };
+const AGENT_PROFILE = { readOnly: true, sendsStatements: true };
+
+/** The open's proof as 26.7.1.1315 answered it for the least-privilege user `agent_ro`, then `answer` for the rest. */
+function agentReply(answer: (sql: string) => Reply): (sql: string) => Reply {
+  return (sql) => {
+    if (sql === "SELECT 1") return jsonReply([{ "1": 1 }]);
+    if (sql.startsWith("SELECT version() AS version, currentUser()")) {
+      return jsonReply([{ version: "26.7.1.1315", user: "agent_ro", readonly: "1" }]);
+    }
+    if (sql === "SELECT 1 SETTINGS readonly = 0") {
+      return exceptionReply(164, "READONLY", "Cannot modify 'readonly' setting in readonly mode", 500);
+    }
+    if (sql.startsWith("CREATE DATABASE IF NOT EXISTS")) return DENIED();
+    if (sql === "SHOW GRANTS FINAL") {
+      return jsonReply([{ "GRANTS FINAL": "GRANT SELECT ON demo.orders TO agent_ro" }]);
+    }
+    if (sql === "SELECT 1 FROM system.query_log LIMIT 0") return DENIED();
+    if (sql.startsWith("SELECT database, name, engine FROM system.tables")) {
+      return jsonReply(
+        [],
+        [
+          { name: "database", type: "String" },
+          { name: "name", type: "String" },
+          { name: "engine", type: "String" },
+        ],
+      );
+    }
+    if (sql.startsWith("SELECT database, name FROM system.dictionaries")) return DENIED();
+    return answer(sql);
+  };
+}
+
+async function agentProvider(
+  answer: (sql: string) => Reply = () => jsonReply([{ id: "1" }], [{ name: "id", type: "UInt64" }]),
+  execution: { readOnly?: boolean; sendsStatements?: boolean } = AGENT_PROFILE,
+): Promise<ClickHouseProvider> {
+  replyFor = agentReply(answer);
+  const provider = new ClickHouseProvider(makeConnection({ user: "agent_ro" }), {}, execution);
+  await provider.connect();
+  return provider;
+}
+
+async function readOnlyRefusal(run: Promise<unknown>): Promise<Error> {
+  try {
+    await run;
+  } catch (error) {
+    return error as Error;
+  }
+  throw new Error("expected a refusal");
+}
+
+describe("ClickHouseProvider agent read-only profile", () => {
+  test("an ordinary editor handle refuses queryReadOnly and sends nothing", async () => {
+    const provider = await connectProvider();
+    sentSql = [];
+
+    const error = await readOnlyRefusal(provider.queryReadOnly("SELECT 1", AGENT_BUDGET));
+
+    expect(error).toBeInstanceOf(QueryError);
+    expect(error.message).toBe("Read-only execution requires a provider opened under the agent read-only profile");
+    expect(sentSql).toEqual([]);
+  });
+
+  test("a handle opened read-only for no statement is not proven at open, and refuses queryReadOnly", async () => {
+    const provider = await agentProvider(undefined, { readOnly: true });
+
+    expect(sentSql).toEqual(["SELECT 1"]);
+    expect((await readOnlyRefusal(provider.queryReadOnly("SELECT 1", AGENT_BUDGET))).message).toContain(
+      "agent read-only profile",
+    );
+  });
+
+  test("an open that sends statements proves the boundary, every probe under readonly = 1", async () => {
+    await agentProvider();
+
+    expect(sentSql).toEqual([
+      "SELECT 1",
+      "SELECT version() AS version, currentUser() AS user, toString(getSetting('readonly')) AS readonly",
+      "SELECT 1 SETTINGS readonly = 0",
+      "CREATE DATABASE IF NOT EXISTS `demo`",
+      "SHOW GRANTS FINAL",
+      "SELECT 1 FROM system.query_log LIMIT 0",
+      sqlWith("FROM system.tables"),
+      "SELECT database, name FROM system.dictionaries LIMIT 1",
+    ]);
+    for (const url of sentUrls.slice(1)) expect(new URL(url).searchParams.get("readonly")).toBe("1");
+  });
+
+  test("an open whose proof fails is refused and left disconnected", async () => {
+    replyFor = (sql) =>
+      sql === "SHOW GRANTS FINAL"
+        ? jsonReply([{ "GRANTS FINAL": "GRANT SELECT ON demo.orders, BACKUP ON demo.* TO agent_ro" }])
+        : agentReply(() => jsonReply([]))(sql);
+    const provider = new ClickHouseProvider(makeConnection({ user: "agent_ro" }), {}, AGENT_PROFILE);
+
+    const error = await readOnlyRefusal(provider.connect());
+
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+    expect(provider.isConnected()).toBe(false);
+  });
+
+  test("an open whose proof cannot reach the server is a connection failure", async () => {
+    replyFor = (sql) => {
+      if (sql === "SHOW GRANTS FINAL") networkFailure = new Error("connect ECONNREFUSED 127.0.0.1:8123");
+      return agentReply(() => jsonReply([]))(sql);
+    };
+    const provider = new ClickHouseProvider(makeConnection({ user: "agent_ro" }), {}, AGENT_PROFILE);
+
+    await expect(provider.connect()).rejects.toBeInstanceOf(ConnectionError);
+    expect(provider.isConnected()).toBe(false);
+  });
+
+  test("a read carries the budget as the server's own bounds and answers the rows", async () => {
+    const provider = await agentProvider();
+
+    const result = await provider.queryReadOnly("SELECT id FROM demo.orders", AGENT_BUDGET);
+
+    expect(result).toMatchObject({ rows: [{ id: "1" }], fields: ["id"], rowCount: 1, columnTypes: { id: "UInt64" } });
+    const params = new URL(urlWith("SELECT id FROM demo.orders")).searchParams;
+    expect(params.get("readonly")).toBe("1");
+    expect(params.get("max_execution_time")).toBe("2");
+    expect(params.get("max_result_rows")).toBe("3");
+    expect(params.get("result_overflow_mode")).toBe("throw");
+    expect(params.get("cancel_http_readonly_queries_on_client_close")).toBe("1");
+    expect(params.get("database")).toBe(DATABASE);
+  });
+
+  test("a write the engine refuses is the engine's refusal", async () => {
+    const provider = await agentProvider(() =>
+      exceptionReply(164, "READONLY", "agent_ro: Cannot execute query in readonly mode", 500),
+    );
+
+    const error = await readOnlyRefusal(provider.queryReadOnly("DROP TABLE demo.orders", AGENT_BUDGET));
+
+    expect(error).toBeInstanceOf(QueryError);
+    expect(error.message).toContain("Cannot execute query in readonly mode");
+  });
+
+  test("a result the server refuses past max_result_rows is the shared row refusal", async () => {
+    const provider = await agentProvider(() =>
+      exceptionReply(
+        396,
+        "TOO_MANY_ROWS_OR_BYTES",
+        "Limit for result exceeded, max rows: 3.00, current rows: 4.00",
+        500,
+      ),
+    );
+
+    const error = await readOnlyRefusal(provider.queryReadOnly("SELECT number FROM numbers(4)", AGENT_BUDGET));
+
+    expect(error.message).toBe("Read-only execution exceeded the row budget: 4 rows > 3 allowed");
+  });
+
+  test("an answer past the body cap is the shared byte refusal", async () => {
+    const big = "x".repeat(AGENT_BUDGET.maxResultBytes + 1024 * 1024 + 1);
+    const provider = await agentProvider(() => jsonReply([{ s: big }]));
+
+    const error = await readOnlyRefusal(provider.queryReadOnly("SELECT s FROM demo.wide", AGENT_BUDGET));
+
+    expect(error.message).toMatch(/^Read-only execution exceeded the byte budget: \d+ bytes > 500 allowed$/);
+  });
+
+  test("a result past the byte budget under the body cap is refused too", async () => {
+    const provider = await agentProvider(() => jsonReply([{ s: "x".repeat(600) }]));
+
+    const error = await readOnlyRefusal(provider.queryReadOnly("SELECT s FROM demo.wide", AGENT_BUDGET));
+
+    expect(error.message).toBe("Read-only execution exceeded the byte budget: 610 bytes > 500 allowed");
+  });
+
+  test("a table function that reaches another server is refused before anything is sent", async () => {
+    const provider = await agentProvider();
+    sentSql = [];
+
+    const error = await readOnlyRefusal(
+      provider.queryReadOnly("SELECT * FROM cluster('default', demo.orders)", AGENT_BUDGET),
+    );
+
+    expect(error.message).toContain("reaches another server");
+    expect(sentSql).toEqual([]);
+  });
+
+  test("an invalid budget is refused before anything is sent", async () => {
+    const provider = await agentProvider();
+    sentSql = [];
+
+    await expect(provider.queryReadOnly("SELECT 1", { ...AGENT_BUDGET, maxResultRows: 0 })).rejects.toBeInstanceOf(
+      QueryError,
+    );
+    expect(sentSql).toEqual([]);
+  });
+
+  test("an estimating plan is refused: this engine composes none", async () => {
+    const provider = await agentProvider();
+
+    expect((await readOnlyRefusal(provider.queryReadOnly("SELECT 1", AGENT_BUDGET, "estimate-plan"))).message).toBe(
+      "ClickHouse composes no estimating plan for the agent",
+    );
+  });
+
+  test("a deadline the server enforces is a timeout", async () => {
+    const provider = await agentProvider(() =>
+      exceptionReply(
+        TIMEOUT_EXCEEDED,
+        "TIMEOUT_EXCEEDED",
+        "Timeout exceeded: elapsed 2000.1 ms, maximum: 2000 ms",
+        500,
+      ),
+    );
+
+    await expect(provider.queryReadOnly("SELECT sleep(3)", AGENT_BUDGET)).rejects.toBeInstanceOf(TimeoutError);
+  });
+
+  test("queryReadOnly before connect is refused", async () => {
+    const provider = new ClickHouseProvider(makeConnection(), {}, AGENT_PROFILE);
+
+    await expect(provider.queryReadOnly("SELECT 1", AGENT_BUDGET)).rejects.toBeInstanceOf(DatabaseConfigError);
   });
 });

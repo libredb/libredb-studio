@@ -54,6 +54,7 @@ const DIALECT_MEMBER_OF: Readonly<Record<(typeof ARMED_TOOLS)[number], keyof Age
  */
 const UNSERVED_OFFERS: Readonly<Partial<Record<DatabaseType, readonly AgentToolName[]>>> = {
   duckdb: ["profile_table"],
+  clickhouse: ["profile_table"],
 };
 
 /** Inputs no adapter may throw on: a statement, the empty one, and every non-string a ledger or a model can send. */
