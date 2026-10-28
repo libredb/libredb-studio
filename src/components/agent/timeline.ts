@@ -29,7 +29,7 @@ import {
 /**
  * One run's ledger, turned into the timeline a user reads (#329 T10a).
  *
- * Types only from the runtime modules: this file runs in the browser, and the
+ * Mostly types from the runtime modules: this file runs in the browser, and the
  * modules that define these contracts reach the durable backend and the database
  * drivers. `import type` erases, so the rail carries the vocabulary without
  * carrying the runtime (the boundary T12 pins mechanically).
@@ -47,23 +47,27 @@ import {
  *    A database error is the only variant with a message, and that message is
  *    `quoted`, not narrated.
  *
- * THREE value imports from the runtime modules, and all three are deliberate (#329
- * T10b, the per-workflow ceilings, and #414): `execution-policy.ts`, because the
- * budget meter's ceilings have to be the numbers the server actually enforces rather
- * than a second copy that can drift from them; `DEFAULT_AGENT_WORKFLOW_TYPE` from
- * `types.ts`, because a header written before the workflow field must fold to the same
- * workflow the server reads it as; and `TABLE_INVENTORY_NOUN` from
- * `inventory-noun.ts`, because a ledger written before the noun existed must fold to
- * the word it was written under, and spelling "table"/"tables" a second time here is
- * exactly the drift that default exists to prevent. All three modules are frozen
- * constants and type declarations whose own imports are types only, so none of them
- * puts anything in the browser bundle — the property `plan-draft-boundary.test.ts`
- * measures, and the one a directly-inspected import list once got wrong.
+ * The value imports from the runtime modules are each deliberate (#329 T10b, the
+ * per-workflow ceilings, #396 and #414): `execution-policy.ts`, because the budget
+ * meter's ceilings have to be the numbers the server actually enforces rather than a
+ * second copy that can drift from them; `DEFAULT_AGENT_WORKFLOW_TYPE` from `types.ts`,
+ * because a header written before the workflow field must fold to the same workflow
+ * the server reads it as; `TABLE_INVENTORY_NOUN` from `inventory-noun.ts`, because a
+ * ledger written before the noun existed must fold to the word it was written under,
+ * and spelling "table"/"tables" a second time here is exactly the drift that default
+ * exists to prevent; `readPlanStatement` from `plan-draft.ts`, because the rail must
+ * read a plan run's deliverable with the reader the server records it with; and
+ * `languages/client.ts`, the packs' client tier, for the evidence events a language
+ * pack declares, so the rail names none of their kinds.
  *
- * The evidence events a language pack declares are read from `languages/client.ts`,
- * the packs' client tier, which reaches no server module (the R3 tiers of
- * `language-boundary.test.ts`) and which `agent-manifest.ts` already brings into the
- * browser; the rail names none of their kinds.
+ * Some of these modules have value imports of their own (a query limit, the SQL
+ * splitter, the packs' client facets and their leaves), so "types only" is not what
+ * keeps server code out of the browser bundle. What does is measured, not described:
+ * the walk in `client-import-boundary.test.ts` follows every value import from
+ * `AgentRail.tsx`, this file included, and fails on any server module it reaches;
+ * `plan-draft-boundary.test.ts` pins `plan-draft.ts` on its own; and the client tier
+ * of `language-boundary.test.ts` keeps every pack's client facet from reaching a
+ * server module.
  */
 
 export type AgentTimelineTone = "neutral" | "progress" | "refused" | "done";
