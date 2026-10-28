@@ -132,6 +132,30 @@ describe("SessionsTab", () => {
     expect(queryByText("65s")).not.toBeNull();
   });
 
+  test("shows a session's application name under its user, and marks a 10 to 60 second session apart", () => {
+    const data = makeData();
+    data.activeSessions = [
+      {
+        pid: 303,
+        user: "reporter",
+        database: "db",
+        state: "active",
+        query: "SELECT count(*) FROM orders",
+        duration: "30s",
+        durationMs: 30000,
+        applicationName: "nightly-report",
+      },
+    ] as MonitoringData["activeSessions"];
+    const { queryByText } = render(<SessionsTab data={data} loading={false} onKillSession={mock(async () => true)} />);
+
+    expect(queryByText("nightly-report")).not.toBeNull();
+    // Over ten seconds and under a minute: neither the quiet secondary badge nor the red one.
+    const duration = queryByText("30s")!;
+    expect(duration.className).toContain("text-foreground");
+    expect(duration.className).not.toContain("bg-destructive");
+    expect(duration.className).not.toContain("bg-secondary");
+  });
+
   test("renders badges for idle, aborted and unknown session states", () => {
     const data = {
       ...makeData(),
