@@ -880,9 +880,17 @@ describe("the wire module's import closure stays free of the server", () => {
     expect([...walked].map(repoRelative).sort()).toEqual([
       "src/lib/api/error-codes.ts",
       "src/lib/api/object-edit-wire.ts",
+      "src/lib/db/driver-errors/index.ts",
       "src/lib/db/errors.ts",
       "src/lib/db/object-edit.ts",
       "src/lib/db/object-kinds.ts",
+      "src/lib/db/providers/document/mongodb/driver-errors.ts",
+      "src/lib/db/providers/sql/db2/driver-errors.ts",
+      "src/lib/db/providers/sql/mssql-driver-errors.ts",
+      "src/lib/db/providers/sql/mysql-driver-errors.ts",
+      "src/lib/db/providers/sql/oracle-driver-errors.ts",
+      "src/lib/db/providers/sql/postgres-driver-errors.ts",
+      "src/lib/db/providers/sql/sqlite-driver-errors.ts",
     ]);
   });
 });
