@@ -11,6 +11,7 @@ import {
   buildIdentification,
   buildRead,
   checkRead,
+  expectationOf,
   ModbusRequestError,
 } from "@/lib/db/providers/industrial/modbus/pdu";
 
@@ -36,6 +37,23 @@ describe("the module exports no way to send another function code", () => {
       expect(frame[7]).toBe(0x2b);
       expect(frame[8]).toBe(0x0e);
     }
+  });
+});
+
+describe("the identification builder checks what it is given", () => {
+  test("a unit id outside 1 to 255 is refused before a byte exists", () => {
+    for (const unit of [0, 256, 1.5]) {
+      expect(() => buildIdentification(1, unit, "basic")).toThrow("Unit id must be a whole number from 1 to 255.");
+    }
+  });
+  test("an object id that is not a byte is refused", () => {
+    for (const objectId of [-1, 256, 0.5]) {
+      expect(() => buildIdentification(1, 1, "basic", objectId)).toThrow("Object id must be a byte.");
+    }
+  });
+  test("its expectation carries no quantity, because 43/14 answers a length the device chooses", () => {
+    const expected = expectationOf(buildIdentification(0x0102, 7, "regular", 3));
+    expect(expected).toEqual({ transactionId: 0x0102, unitId: 7, functionCode: 0x2b });
   });
 });
 

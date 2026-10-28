@@ -92,6 +92,19 @@ describe("unit ids", () => {
   });
 });
 
+describe("each point is an object with numeric scale and offset", () => {
+  test("a point that is not an object is refused, counted from one", () => {
+    for (const bad of ["1", "null", '"v"', "[]"]) {
+      expect(() => parseRegisterMap(`[${one().slice(1, -1)},${bad}]`)).toThrow("point 2 is not an object.");
+    }
+  });
+  test("a scale or an offset given as text is refused by name, not read as a number", () => {
+    expect(() => parseRegisterMap(one({ scale: "0.1" }))).toThrow('point 1 ("v") has a scale that is not a number.');
+    expect(() => parseRegisterMap(one({ offset: "5" }))).toThrow('point 1 ("v") has an offset that is not a number.');
+    expect(parseRegisterMap(one({ scale: 0.1, offset: 5 })).points[0]).toMatchObject({ scale: 0.1, offset: 5 });
+  });
+});
+
 describe("a point wider than one register must state both orders", () => {
   test("a uint32 without a word order is refused, and the reason is said", () => {
     expect(() => parseRegisterMap(one({ type: "uint32" }))).toThrow(/word order/);

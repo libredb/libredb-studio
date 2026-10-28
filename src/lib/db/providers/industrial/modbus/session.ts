@@ -23,7 +23,7 @@
  * answered later with the NEXT request's transaction id, because the server read its last PDU after
  * the delay. A client that pipelines therefore cannot tell whose answer it is holding.
  */
-import { MAX_TRANSACTIONS_IN_FLIGHT, REQUEST_TIMEOUT_MS } from "./constants";
+import { REQUEST_TIMEOUT_MS } from "./constants";
 import type { Exchange } from "./framing";
 
 export class ModbusTimeout extends Error {
@@ -60,11 +60,13 @@ export interface SessionOptions {
  * Serialises every exchange to one endpoint and gives each one its own timer. Transaction ids are
  * handed out once and never reused on a connection, so a late answer can be recognised as late
  * rather than mistaken for the current one (TCP 4.4.1.3).
+ *
+ * The queue is what holds `MAX_TRANSACTIONS_IN_FLIGHT` at one: an exchange starts only after the
+ * previous one has settled, its `finally` included, so no second request can be on the wire.
  */
 export class ModbusSession {
   private queue: Promise<unknown> = Promise.resolve();
   private nextTransactionId = 1;
-  private inFlight = 0;
   private lastFinishedAt = 0;
   private readonly timeoutMs: number;
   private readonly minIntervalMs: number;
@@ -96,15 +98,11 @@ export class ModbusSession {
    */
   async exchange(build: (transactionId: number) => Buffer): Promise<Exchange> {
     const run = this.queue.then(async () => {
-      if (this.inFlight >= MAX_TRANSACTIONS_IN_FLIGHT)
-        throw new Error("A second request reached the session while one was in flight.");
-
       const since = this.now() - this.lastFinishedAt;
       if (this.minIntervalMs > 0 && this.lastFinishedAt > 0 && since < this.minIntervalMs)
         await this.sleep(this.minIntervalMs - since);
 
       const adu = build(this.takeTransactionId());
-      this.inFlight += 1;
       const started = this.now();
       const signal = { aborted: false };
       try {
@@ -113,7 +111,6 @@ export class ModbusSession {
         this.wire.close(error instanceof ModbusTimeout ? "request timed out" : "request failed");
         throw error;
       } finally {
-        this.inFlight -= 1;
         this.lastFinishedAt = this.now();
       }
     });

@@ -48,36 +48,33 @@ export function orderedBytes(words: readonly number[], layout: Layout): Buffer {
   return out;
 }
 
+/**
+ * How each type reads its bytes, keyed like `REGISTERS_OF_TYPE`. A table rather than a switch, so a
+ * type with a width and no reader is refused by the same check as an unknown one, not decoded as
+ * something else.
+ */
+const READ_OF_TYPE: Readonly<Record<string, (b: Buffer) => number | bigint>> = Object.freeze({
+  uint16: (b: Buffer) => b.readUInt16BE(0),
+  int16: (b: Buffer) => b.readInt16BE(0),
+  uint32: (b: Buffer) => b.readUInt32BE(0),
+  int32: (b: Buffer) => b.readInt32BE(0),
+  float32: (b: Buffer) => b.readFloatBE(0),
+  uint64: (b: Buffer) => b.readBigUInt64BE(0),
+  int64: (b: Buffer) => b.readBigInt64BE(0),
+  float64: (b: Buffer) => b.readDoubleBE(0),
+});
+
 export function decodeScalar(
   type: keyof typeof REGISTERS_OF_TYPE,
   words: readonly number[],
   layout: Layout,
 ): number | bigint {
   const need = REGISTERS_OF_TYPE[type];
-  if (need === undefined) throw new ModbusDecodeError(`Unknown type "${type}".`);
+  const read = READ_OF_TYPE[type];
+  if (need === undefined || read === undefined) throw new ModbusDecodeError(`Unknown type "${type}".`);
   if (words.length !== need)
     throw new ModbusDecodeError(`Type ${type} needs ${need} register(s) and ${words.length} were given.`);
-  const b = orderedBytes(words, layout);
-  switch (type) {
-    case "uint16":
-      return b.readUInt16BE(0);
-    case "int16":
-      return b.readInt16BE(0);
-    case "uint32":
-      return b.readUInt32BE(0);
-    case "int32":
-      return b.readInt32BE(0);
-    case "float32":
-      return b.readFloatBE(0);
-    case "uint64":
-      return b.readBigUInt64BE(0);
-    case "int64":
-      return b.readBigInt64BE(0);
-    case "float64":
-      return b.readDoubleBE(0);
-    default:
-      throw new ModbusDecodeError(`Unknown type "${type}".`);
-  }
+  return read(orderedBytes(words, layout));
 }
 
 /** Applies scale and offset, and never to a `bigint`: that would lose the exactness it is there for. */

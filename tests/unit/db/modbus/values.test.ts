@@ -14,6 +14,7 @@ import {
   decodeScalar,
   ModbusDecodeError,
   orderedBytes,
+  REGISTERS_OF_TYPE,
   type Layout,
 } from "@/lib/db/providers/industrial/modbus/values";
 
@@ -108,6 +109,16 @@ describe("what the decoder refuses", () => {
   test("a word count that does not match the type", () => {
     expect(() => decodeScalar("uint32", [1], HF)).toThrow(/needs 2/);
     expect(() => decodeScalar("uint16", [1, 2], HF)).toThrow(/needs 1/);
+  });
+  test("every type that has a width also has a reader, so none is refused as unknown", () => {
+    for (const [type, width] of Object.entries(REGISTERS_OF_TYPE)) {
+      const zero = decodeScalar(
+        type,
+        Array.from({ length: width }, () => 0),
+        HF,
+      );
+      expect(zero === 0 || zero === BigInt(0)).toBe(true);
+    }
   });
   test("an unknown type is refused BY NAME, not merely refused", () => {
     // The class alone left this blind: six places throw ModbusDecodeError, and a refusal carrying
