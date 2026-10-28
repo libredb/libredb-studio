@@ -774,6 +774,31 @@ describe("ResultsGrid", () => {
     });
   });
 
+  test("a column the provider exempts from masking shows its reason in both table headers", () => {
+    mockShouldMask.mockReturnValue(true);
+    mockDetectSensitiveColumnsFromConfig.mockReturnValue(new Map([["email", "email"]]));
+    const reason = "Not a person's address: the engine's own register name.";
+    const { container, getByTestId } = render(
+      React.createElement(ResultsGrid, {
+        result: mockResult,
+        maskingEnabled: true,
+        maskingExemptColumns: { column: "^email$", reason },
+      }),
+    );
+    fireEvent.click(getByTestId("view-table"));
+
+    // The desktop header carries the reason as the open lock's tooltip.
+    const desktopHeader = container.querySelector<HTMLElement>("[data-desktop-grid]")!;
+    expect(desktopHeader.querySelector(`span[title="${reason}"]`)).not.toBeNull();
+    // The mobile header ships it as screen-reader text beside the column name.
+    const srTexts = Array.from(container.querySelectorAll<HTMLElement>(".sr-only")).map((el) => el.textContent);
+    expect(srTexts).toContain(`, ${reason}`);
+    // An exempt column is shown as it is, never masked.
+    expect(
+      within(findContextMenuForMode(container, "alice@example.com", "desktop")).getByText("alice@example.com"),
+    ).not.toBeNull();
+  });
+
   test("offers no cell action for the row-detail column", () => {
     // That column holds a control, not a value, so there is nothing in it to copy.
     const { container, getByTestId } = render(React.createElement(ResultsGrid, { result: mockResult }));
