@@ -1,4 +1,4 @@
-import type { RawParam, TLSIntent } from "./types";
+import type { ParsedConnection, QueryParams, RawParam, TLSIntent } from "./types";
 
 /** The modes a TLS table maps onto, named through `TLSIntent` so this leaf imports nothing but `./types`. */
 type TLSMode = NonNullable<TLSIntent["sslMode"]>;
@@ -68,4 +68,71 @@ export function readADONetTLS(get: (key: string) => string | undefined): TLSInte
   if (trusted === "true" || trusted === "yes") return { sslMode: "require" };
   if (trusted === "false" || trusted === "no") return { sslMode: "verify-full" };
   return { unmappedTLSParam: `TrustServerCertificate=${trust}` };
+}
+
+/**
+ * Percent-decode a component, keeping it verbatim when it is not a valid escape
+ * sequence. Couchbase bucket names may legally contain a literal "%".
+ */
+export function safeDecodeURIComponent(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+/**
+ * Attach a scheme's TLS intent, preserving the null a malformed URL parses to. The mode
+ * overwrites whatever the form was holding - pasting is not a merge.
+ *
+ * A scheme is read more weakly than the boolean *parameter* beside it, and that is a
+ * decision rather than an artefact (D28). D26 settled the rule for a boolean parameter:
+ * it maps onto the mode matching what the engine's own driver does with it, never onto a
+ * weaker one. A scheme cannot answer to that rule, because the secure scheme is the only
+ * spelling a self-hosted deployment has: `rediss://`, `couchbases://` and ClickHouse's
+ * `https://` all describe servers that present a self-signed certificate by default, so
+ * a verifying mode here would refuse the ordinary `--tls-port` install with a chain
+ * error. `require` therefore encrypts without ever claiming to have checked a chain, and
+ * the connection panel stays the one place verification is turned on. The per-scheme
+ * reason is recorded at each engine's paste reader; this is the rule they share.
+ */
+export function withSSLMode(
+  parsed: ParsedConnection | null,
+  sslMode: NonNullable<ParsedConnection["sslMode"]>,
+): ParsedConnection | null {
+  return parsed && { ...parsed, sslMode };
+}
+
+/**
+ * A URL with a host, port, user, password and database path, as the form's fields, or null when `new URL` rejects
+ * it. The TLS its query string carries is read by the engine's own `readTls`, and with none it carries none: for
+ * `rediss://`, `couchbases://` and ClickHouse's `http(s)://` the scheme IS the transport and already decided.
+ */
+export function parseGenericURL(
+  uri: string,
+  type: ParsedConnection["type"],
+  defaultPort: string,
+  readTls: ((params: QueryParams) => TLSIntent) | null,
+): ParsedConnection | null {
+  try {
+    const url = new URL(uri);
+    const params = new Map<string, RawParam>();
+    for (const [name, value] of url.searchParams) params.set(name.toLowerCase(), { name, value });
+
+    return {
+      type,
+      host: url.hostname || "localhost",
+      port: url.port || defaultPort,
+      user: url.username ? decodeURIComponent(url.username) : undefined,
+      password: url.password ? decodeURIComponent(url.password) : undefined,
+      // The pathname keeps a space, non-ASCII letter or reserved character percent-encoded.
+      // Decode it the way the user, the password and the MongoDB database already are, and
+      // keep a broken escape as written. An empty path is no database.
+      database: url.pathname.length > 1 ? safeDecodeURIComponent(url.pathname.slice(1)) : undefined,
+      ...(readTls === null ? {} : readTls(params)),
+    };
+  } catch {
+    return null;
+  }
 }

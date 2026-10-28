@@ -1,5 +1,6 @@
 import type { ConnectionStringSpec, SeedCheckedFields, SeedFieldRefusal } from "@/lib/db/connection-string/types";
 import { checkSnowflakeAccount, SNOWFLAKE_FIELD_SENTENCES } from "@/lib/db/providers/sql/snowflake/account-host";
+import { isSnowflakePaste, parseSnowflakeURL } from "@/lib/db/providers/sql/snowflake/paste";
 
 const blank = (value: string | undefined): boolean => value === undefined || value.trim() === "";
 
@@ -36,9 +37,13 @@ function snowflakeLoadRefusals(
   return found;
 }
 
-/** `snowflake`: no connection string scheme, no TLS read from a URL query, its provider's checks run at seed load. */
+/**
+ * `snowflake`: no connection string scheme, no TLS read from a URL query, a paste of a `jdbc:snowflake://`,
+ * `snowflake://` or Snowflake `https://` URL or a bare Snowflake host, its provider's checks run at seed load.
+ */
 export const SNOWFLAKE_CONNECTION_STRING: ConnectionStringSpec = {
   scheme: null,
   readTls: null,
+  paste: { catchAll: false, claims: isSnowflakePaste, names: isSnowflakePaste, parse: parseSnowflakeURL },
   validateSeed: snowflakeLoadRefusals,
 };

@@ -1,4 +1,4 @@
-import { mapTLSValue } from "@/lib/db/connection-string/shared";
+import { mapTLSValue, parseGenericURL } from "@/lib/db/connection-string/shared";
 import type { ConnectionStringSpec, QueryParams, TLSIntent } from "@/lib/db/connection-string/types";
 import type { SSLMode } from "@/lib/types";
 
@@ -27,9 +27,20 @@ function readDb2TLS(params: QueryParams): TLSIntent {
   return ssl ? mapTLSValue(ssl, DB2_SSL) : {};
 }
 
-/** `db2`: the `db2://` scheme, the TLS its URL query carries, no seed load check. */
+const claimsDb2 = (text: string): boolean => text.startsWith("db2://");
+
+/**
+ * `db2`: the `db2://` scheme, the TLS its URL query carries, a paste of `db2://` (Db2 LUW, #786) whose TLS rides in
+ * the query string, no seed load check.
+ */
 export const DB2_CONNECTION_STRING: ConnectionStringSpec = {
   scheme: "db2",
   readTls: readDb2TLS,
+  paste: {
+    catchAll: false,
+    claims: claimsDb2,
+    names: claimsDb2,
+    parse: (text) => parseGenericURL(text, "db2", "50000", readDb2TLS),
+  },
   validateSeed: null,
 };

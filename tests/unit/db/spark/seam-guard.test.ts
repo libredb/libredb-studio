@@ -50,11 +50,7 @@ const GENERATOR_IMPORTERS: readonly string[] = [DESCRIPTOR_TEST, HARNESS];
 /** The provider files that import src/lib/db/grpc/, type-only imports included, as the shared guard's G5 counts them. */
 const TRANSPORT_IMPORTERS: readonly string[] = [`${SPARK}/connection-options.ts`, ADAPTER];
 /** The only files under src/ outside the provider directory that may import a Spark module. */
-const OUTSIDE_IMPORTERS_ALLOWED: readonly string[] = [
-  "src/lib/db/factory.ts",
-  "src/lib/connection-string-parser.ts",
-  "src/lib/db/sql-grammar/index.ts",
-];
+const OUTSIDE_IMPORTERS_ALLOWED: readonly string[] = ["src/lib/db/factory.ts", "src/lib/db/sql-grammar/index.ts"];
 /** Each per-engine contract's registry, with the one Spark module, the engine's declaration, it may import. */
 const CONTRACT_REGISTRIES: Readonly<Record<string, string>> = {
   "src/lib/db/connection-string/index.ts": `${SPARK}/connection-string`,

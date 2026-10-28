@@ -21,7 +21,7 @@
  *   otherwise working connection.
  */
 
-import { safeDecodeURIComponent } from "@/lib/connection-string-parser";
+import { safeDecodeURIComponent } from "@/lib/db/connection-string/shared";
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import {
   applySourceBound,

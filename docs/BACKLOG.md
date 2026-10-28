@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S9 · 6
-- [Drivers and connections](#drivers-and-connections) — D1-D392, U17 · 285
+- [Drivers and connections](#drivers-and-connections) — D1-D392, U17 · 284
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U148 · 134
@@ -2104,7 +2104,7 @@ Not fixed there: the Prometheus provider is outside that work.
 
 ### D164. A pasted http or https URL loses an explicit default port
 
-`parseGenericURL` (`src/lib/connection-string-parser.ts:657-668`) takes the port as `url.port || defaultPort`, and the WHATWG URL parser reports an explicit default port of a special scheme as an empty string, so `https://host:443` pasted into the connection-string box becomes ClickHouse on port 8443 and `http://host:80` becomes port 8123.
+`parseGenericURL` (`src/lib/db/connection-string/shared.ts`) takes the port as `url.port || defaultPort`, and the WHATWG URL parser reports an explicit default port of a special scheme as an empty string, so `https://host:443` pasted into the connection-string box becomes ClickHouse on port 8443 and `http://host:80` becomes port 8123.
 Measured 2026-10-03 on Node 24.14.0: `new URL("https://h.example:443").port` and `new URL("http://h.example:80").port` are both `""`, while `new URL("https://h.example:8443").port` is `"8443"`.
 Only `http:` and `https:` are affected, because other schemes have no default port in the URL standard; the user who typed the port explicitly gets another one with no notice.
 
@@ -2625,7 +2625,7 @@ Found 2026-10-08 by the red-team round of the Databend provider (HD-1); pre-exis
 
 ### D251. A pasted URL whose password holds an unencoded `/` or `?` is read with the password's tail as the database
 
-`parseGenericURL` in `src/lib/connection-string-parser.ts`, which reads `postgres://`, `mysql://`, `redis://`, `oracle://`, `mssql://`, `db2://`, `clickhouse://` and `http(s)://` and their aliases, hands the text to `new URL`, which ends a URL's address part at the first `/` or `?`.
+`parseGenericURL` in `src/lib/db/connection-string/shared.ts`, which reads `postgres://`, `mysql://`, `redis://`, `oracle://`, `mssql://`, `db2://`, `clickhouse://` and `http(s)://` and their aliases, hands the text to `new URL`, which ends a URL's address part at the first `/` or `?`.
 So an unencoded `/` in the password moves the split: `postgres://app:2024/Secret-Tail@db.example.com:5432/prod` reads as host `app`, port `2024` and database `Secret-Tail@db.example.com:5432/prod`, and the dialog reports a green "parsed successfully" with that text in Database and in the auto-filled Name; with `?` the tail is dropped.
 Measured 2026-10-08 on `origin/main` (575eb8ccd) for `postgres://` and `mysql://`.
 The Databend DSN parser refuses every string with an `@` after its first `/` or `?` before `new URL`, since a password can also hold an unencoded `@` before its `/`, with a sentence that names each percent-encoding (`DATABEND_DSN_REFUSALS.userinfo`), as it refuses `#`.
@@ -3524,17 +3524,6 @@ Verified 2026-10-14 by reading `ci.yml`, the `Dockerfile` and the test on `main`
 Found 2026-10-14 in the final review of the Apache Spark provider (#1759).
 
 **Done when:** the existing Node 26 step's runner command also names `tests/unit/db/spark/grpc-runtimes.test.ts` (no new step), and the CI log of that step shows the Spark runtime cases passing under Node 26.
-
-### D354. A type-only import cycle joins the connection-string parser and Spark's sc:// reader
-
-`src/lib/db/providers/sql/spark/sc-uri.ts` imports `type { ParsedConnection }` from `src/lib/connection-string-parser.ts`, and that file imports `parseSparkConnectUri` from `sc-uri.ts`.
-Nothing cycles at run time, since the import is type-only and `TYPE_ONLY` in `tests/unit/db/spark/pure-seam-guard.test.ts` keeps it so.
-A cycle checker that counts type imports reports one more cycle under `src/` than on 22543b91b (the review counted 15 against 14, the new one being this pair).
-Verified 2026-10-14 by reading both files' imports on `main` at 5b77948ee.
-
-Found 2026-10-14 in the final review of the Apache Spark provider (#1759).
-
-**Done when:** `ParsedConnection` lives in a types module both files import, or `sc-uri.ts` declares the shape it returns structurally, and `tests/unit/db/spark/pure-seam-guard.test.ts` asserts that `sc-uri.ts` imports nothing from `@/lib/connection-string-parser`.
 
 ### D355. A discarded Spark metadata session is never released, so each server restart leaves one session open until its idle timeout
 

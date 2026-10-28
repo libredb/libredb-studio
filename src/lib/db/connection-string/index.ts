@@ -43,7 +43,7 @@ import { SQLITE_CONNECTION_STRING } from "@/lib/db/providers/sql/sqlite-connecti
 import { TRINO_CONNECTION_STRING } from "@/lib/db/providers/sql/trino/connection-string";
 import type { DatabaseType } from "@/lib/types";
 import { NO_CONNECTION_CONNECTION_STRING } from "./no-connection";
-import type { ConnectionStringSpec } from "./types";
+import type { ConnectionStringPaste, ConnectionStringSpec } from "./types";
 import { UNKNOWN_TYPE_CONNECTION_STRING } from "./unknown-type";
 
 /**
@@ -97,6 +97,57 @@ export const CONNECTION_STRING: Readonly<Record<DatabaseType, ConnectionStringSp
 });
 
 /**
+ * The engines whose row reads a pasted connection string, in the order the parser offers a paste to them: the first
+ * row that claims the text parses it. This is the one place that order is kept, and it matters in two cases only.
+ * ClickHouse's `http://` and `https://` are a catch-all, so it comes last, after Snowflake, which claims an `https://`
+ * URL on a Snowflake host as its own. And a bare Snowflake host claims any text with no space, `/`, `:`, `?`, `#` or
+ * `@` before its suffix, so Databend's `BENDSQL_DSN=` shell line comes before it and SQL Server's `Server=` keyword
+ * form after it, as each always has. Every other text is claimed by one row alone, which
+ * `tests/unit/db/connection-string/paste.test.ts` holds for every text the parser tests paste.
+ */
+export const CONNECTION_STRING_PASTE_ORDER: readonly DatabaseType[] = Object.freeze([
+  "databend",
+  "spark",
+  "snowflake",
+  "mongodb",
+  "postgres",
+  "mysql",
+  "redis",
+  "oracle",
+  "mssql",
+  "db2",
+  "couchbase",
+  "libsql",
+  "clickhouse",
+]);
+
+/** One engine's paste reader, with the type it belongs to. */
+export interface PasteRow {
+  readonly type: DatabaseType;
+  readonly paste: ConnectionStringPaste;
+}
+
+/** The paste reader of each type in `order`, from `rows`, in that order; a listed row that reads no paste is refused. */
+export function pasteRows(
+  order: readonly DatabaseType[],
+  rows: Readonly<Record<DatabaseType, ConnectionStringSpec>>,
+): readonly PasteRow[] {
+  return Object.freeze(
+    order.map((type) => {
+      const paste = rows[type].paste;
+      if (paste === null) throw new Error(`the paste order lists ${type}, whose row reads no paste`);
+      return { type, paste };
+    }),
+  );
+}
+
+/** Each row's paste reader with its type, in `CONNECTION_STRING_PASTE_ORDER`: the rows the parser walks. */
+export const CONNECTION_STRING_PASTES: readonly PasteRow[] = pasteRows(
+  CONNECTION_STRING_PASTE_ORDER,
+  CONNECTION_STRING,
+);
+
+/**
  * The spec for a connection's type: `NO_CONNECTION_CONNECTION_STRING` without one, the engine's row for a shipped
  * id, otherwise `UNKNOWN_TYPE_CONNECTION_STRING`. `Object.hasOwn`, so `"constructor"` or `"__proto__"` never reaches
  * an Object.prototype member.
@@ -143,7 +194,7 @@ export function connectionStringFor(type: string | undefined): ConnectionStringS
  *
  * `tests/unit/lib/connection-string-parser.test.ts` pins the entries against the parser
  * itself - every scheme here must round-trip to its own `DatabaseType` - so the map cannot
- * drift away from the parser's `startsWith` checks without failing CI.
+ * drift away from the rows' paste claims without failing CI.
  */
 export const ENGINE_URI_SCHEMES: Partial<Record<DatabaseType, string>> = Object.fromEntries(
   Object.entries(CONNECTION_STRING).flatMap(([type, spec]) => (spec.scheme === null ? [] : [[type, spec.scheme]])),

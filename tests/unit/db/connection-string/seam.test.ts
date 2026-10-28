@@ -1,13 +1,13 @@
 /**
  * The seam around each engine's connection string module: an engine module reads only the registry's leaves
- * (`types`, `shared`, and for Snowflake its own browser-safe `account-host`), never the parser, the seed loader, the
- * dialog's table, the registry index or another engine's module, so one engine's scheme, URL TLS or seed checks can
- * never reach another's output. The seed loader and the connection-field record reach neither the icon set nor the
+ * (`types`, `shared`) and the modules of its own provider directory (Snowflake's browser-safe `account-host`, a paste
+ * reader beside its provider), never the parser, the seed loader, the dialog's table, the registry index or another
+ * engine's module, so one engine's scheme, URL TLS, paste or seed checks can never reach another's output. The seed loader and the connection-field record reach neither the icon set nor the
  * dialog's table at run time, and every module loads in a fresh process on its own.
  */
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 import ts from "typescript";
 import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 
@@ -18,6 +18,11 @@ const ALL: readonly string[] = [...EXTERNAL_DATABASE_TYPES, "libredb"].sort();
 const TYPES = "@/lib/db/connection-string/types";
 const SHARED = "@/lib/db/connection-string/shared";
 const ACCOUNT_HOST = "@/lib/db/providers/sql/snowflake/account-host";
+const PARSER = join(ROOT, "src/lib/connection-string-parser.ts");
+const PROVIDERS = join(ROOT, "src/lib/db/providers");
+
+/** A repository path with `/` separators, so a comparison reads the same on Windows. */
+const slashed = (path: string): string => path.replaceAll("\\", "/");
 
 function parse(path: string, source: string): ts.SourceFile {
   const kind = path.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
@@ -105,13 +110,31 @@ function engineModules(): { id: string; specifier: string; path: string }[] {
 const MODULES = engineModules();
 
 /**
+ * The provider directory an engine module owns: the directory it sits in when that directory is named for the engine
+ * (`sql/snowflake/connection-string.ts`), otherwise none, since a flat module shares its directory with other engines.
+ */
+function ownDirectory(id: string, path: string): string | null {
+  return basename(dirname(path)) === id ? slashed(dirname(path)) : null;
+}
+
+/** Whether `specifier`, imported by `path`, names a module of the engine's own directory that no other row is. */
+function inOwnDirectory(id: string, path: string, specifier: string): boolean {
+  const own = ownDirectory(id, path);
+  if (own === null || !(specifier.startsWith("@/") || specifier.startsWith("."))) return false;
+  const resolved = resolveLocal(path, specifier);
+  if (resolved === null || !slashed(resolved).startsWith(`${own}/`)) return false;
+  return !MODULES.some((module) => module.id !== id && slashed(module.path) === slashed(resolved));
+}
+
+/**
  * Each import of an engine module that the seam does not allow, named by the engine: only the registry's `types` and
- * `shared`, a type-only `@/lib/types`, and `account-host` for Snowflake alone.
+ * `shared`, a type-only `@/lib/types`, and a module of the engine's own provider directory.
  */
 function engineFindings(id: string, path: string, source: string): string[] {
-  const allowed = new Set([TYPES, SHARED, ...(id === "snowflake" ? [ACCOUNT_HOST] : [])]);
+  const allowed = new Set([TYPES, SHARED]);
   return importFacts(path, source)
     .filter(({ specifier, typeOnly }) => !allowed.has(specifier) && !(specifier === "@/lib/types" && typeOnly))
+    .filter(({ specifier }) => !inOwnDirectory(id, path, specifier))
     .map(({ specifier }) => `${id}: ${relative(ROOT, path)} imports ${specifier}`);
 }
 
@@ -162,9 +185,38 @@ describe("the engine connection string modules", () => {
       expect(engineFindings("mysql", mysql.path, `import { x } from "${forbidden}";\n`)).toHaveLength(1);
     }
     expect(engineFindings("mysql", mysql.path, `import { x } from "${ACCOUNT_HOST}";\n`)).toHaveLength(1);
+    const snowflake = MODULES.find(({ id }) => id === "snowflake");
+    if (snowflake === undefined) throw new Error("no snowflake module");
+    expect(engineFindings("snowflake", snowflake.path, `import { x } from "${ACCOUNT_HOST}";\n`)).toEqual([]);
+    expect(engineFindings("snowflake", snowflake.path, 'import { x } from "./paste";\n')).toEqual([]);
+    expect(
+      engineFindings("snowflake", snowflake.path, 'import { x } from "@/lib/db/providers/sql/databend/paste";\n'),
+    ).toHaveLength(1);
+    const influxdb = MODULES.find(({ id }) => id === "influxdb");
+    if (influxdb === undefined) throw new Error("no influxdb module");
+    expect(engineFindings("influxdb", influxdb.path, 'import { x } from "./influxdb3-connection-string";\n')).toEqual([
+      `influxdb: ${relative(ROOT, influxdb.path)} imports ./influxdb3-connection-string`,
+    ]);
     expect(engineFindings("mysql", mysql.path, 'import { SSL } from "@/lib/types";\n')).toHaveLength(1);
     expect(engineFindings("mysql", mysql.path, 'import type { SSLMode } from "@/lib/types";\n')).toEqual([]);
   });
+
+  test.each(MODULES.map(({ id, path }) => [id, path] as const))(
+    "%s reaches at run time neither the parser, the registry index, nor another engine's provider module",
+    (id, path) => {
+      const own = ownDirectory(id, path);
+      const found = reachedImports(path)
+        .filter(({ resolved }) => resolved !== null)
+        .filter(({ resolved }) => {
+          const target = slashed(resolved as string);
+          if (target === slashed(PARSER) || target === slashed(join(REGISTRY, "index.ts"))) return true;
+          if (!target.startsWith(`${slashed(PROVIDERS)}/`)) return false;
+          return target !== slashed(path) && (own === null || !target.startsWith(`${own}/`));
+        })
+        .map(({ from, specifier }) => `${relative(ROOT, from)} imports ${specifier}`);
+      expect(found).toEqual([]);
+    },
+  );
 
   test("shared.ts imports only the registry's types", () => {
     const path = join(REGISTRY, "shared.ts");

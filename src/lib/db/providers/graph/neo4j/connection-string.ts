@@ -4,5 +4,6 @@ import type { ConnectionStringSpec } from "@/lib/db/connection-string/types";
 export const NEO4J_CONNECTION_STRING: ConnectionStringSpec = {
   scheme: null,
   readTls: null,
+  paste: null,
   validateSeed: null,
 };

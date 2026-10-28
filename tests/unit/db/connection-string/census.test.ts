@@ -103,7 +103,7 @@ describe("connection string registry census", () => {
     }
     expect(NO_CONNECTION_CONNECTION_STRING).not.toBe(UNKNOWN_TYPE_CONNECTION_STRING);
     for (const spec of [NO_CONNECTION_CONNECTION_STRING, UNKNOWN_TYPE_CONNECTION_STRING]) {
-      expect(spec).toEqual({ scheme: null, readTls: null, validateSeed: null });
+      expect(spec).toEqual({ scheme: null, readTls: null, paste: null, validateSeed: null });
     }
     expect(connectionStringFor("postgres")).toBe(CONNECTION_STRING.postgres);
   });

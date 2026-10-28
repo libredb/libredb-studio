@@ -4,7 +4,8 @@ import { basename, join } from "node:path";
 
 /**
  * The guard over the Spark provider's pure modules. The sc:// reader is
- * imported by the connection-string parser, which the browser bundle carries, so it imports types only; every pure
+ * imported by Spark's connection string row, which the connection-string parser and so the browser bundle carry, so it
+ * imports types only, and none from the parser; every pure
  * module imports no I/O, no logger and no transport, and a sibling it imports, by a relative path or through the `@/`
  * alias, is only another pure module, the directory's constants, its errors or its name spelling. The lists name
  * the decoder modules, and only the listed files import apache-arrow, by an import, a re-export or a require() call,
@@ -108,9 +109,15 @@ function filesUnder(dir: string): string[] {
 
 describe("the Spark pure-module seam guard", () => {
   test("the reader finds imports, so an empty answer below is not a reader that reads nothing", () => {
-    const parser = importLines("src/lib/connection-string-parser.ts").map((line) => line.specifier);
-    expect(parser).toContain("@/lib/db/providers/sql/spark/sc-uri");
+    const row = importLines(`${SPARK}/connection-string.ts`).map((line) => line.specifier);
+    expect(row).toContain("@/lib/db/providers/sql/spark/sc-uri");
     expect(importLines(`${SPARK}/sc-uri.ts`).length).toBeGreaterThan(0);
+  });
+
+  test("the sc:// reader imports nothing from the connection-string parser, which reaches it through Spark's row", () => {
+    const specifiers = importLines(`${SPARK}/sc-uri.ts`).map((line) => line.specifier);
+    expect(specifiers).not.toContain("@/lib/connection-string-parser");
+    expect(specifiers).toContain("@/lib/db/connection-string/types");
   });
 
   test("the type-only modules import types only", () => {

@@ -1,11 +1,11 @@
-import type { ParsedConnection } from "@/lib/connection-string-parser";
+import type { ParsedConnection } from "@/lib/db/connection-string/types";
 
 /**
  * The Paste URL reader of an Apache Spark Connect address: Spark's documented grammar
  * `sc://host[:port][/][;key=value]*`, the scheme fixed, the path empty, parameter names case-sensitive, port 15002 by
- * default. Pure, with type-only imports: `src/lib/connection-string-parser.ts` imports it, and the browser carries
- * that module. A refusal fills nothing and never repeats the text it refuses; when the text may hold a secret, a token
- * or a user part, it also sets `discardPaste`, so the form clears the paste box.
+ * default. Pure, with type-only imports: Spark's connection string row imports it, and the browser carries the parser
+ * that walks the rows. A refusal fills nothing and never repeats the text it refuses; when the text may hold a secret,
+ * a token or a user part, it also sets `discardPaste`, so the form clears the paste box.
  *
  * `token` and `use_ssl` are read as Spark's 4.2.0 Python and Scala clients read them: the token percent-decoded,
  * `use_ssl` true or false in any case, and TLS on when `use_ssl` is true or when a token is set and the host is not

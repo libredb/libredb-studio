@@ -58,7 +58,7 @@ describe("the rows", () => {
   });
 
   test("there is no connection string scheme", () => {
-    expect(WEAVIATE_CONNECTION_STRING).toEqual({ scheme: null, readTls: null, validateSeed: null });
+    expect(WEAVIATE_CONNECTION_STRING).toEqual({ scheme: null, readTls: null, paste: null, validateSeed: null });
   });
 
   test("the execution UI names COMMIT and has no consent deadline", () => {
