@@ -1,7 +1,9 @@
 import * as fs from "fs";
 import { governanceEnabled } from "@/lib/governance/config";
+import { accessReviewEnabled } from "@/lib/kubernetes-access/config";
 import { filterByRoles } from "./connection-filter";
 import { getDiscoveredConnections } from "./discovery-loader";
+import { getKubernetesDiscoveredConnections } from "./kubernetes-discovery-loader";
 import { isSampleEnabled, resolveSamplePath, buildSampleConnection } from "./libredb-sample";
 import { loadOperatorSources } from "./operator-loader";
 import type { OperatorEntry } from "./sources/types";
@@ -38,7 +40,8 @@ function projectOperatorEntries(entries: readonly OperatorEntry[], roles: string
 }
 
 /**
- * The seed connections these roles may see: the operator entries, then the discovered connections, then the samples.
+ * The seed connections these roles may see: the operator entries, then the discovered connections of CapRover and of
+ * Kubernetes, then the samples.
  *
  * Governance mode (`GOVERNANCE_SOURCE`, docs/GOVERNANCE.md) replaces all three with the governance source, so under it
  * this reads no source at all and answers an empty list, whatever the environment says: not the seed file at its
@@ -68,7 +71,26 @@ export async function getManagedConnections(roles: string[]): Promise<ManagedCon
     .filter((conn) => !operator.declaredIds.has(conn.seedId))
     .map((conn) => Object.assign(conn, { literal: true as const }));
 
-  const out = [...fromOperators, ...discovered];
+  /*
+    Kubernetes-discovered connections (docs/SEED_CONNECTIONS.md, "Platform discovery (Kubernetes)") come after the
+    CapRover ones. Each names the Secret its credentials came from. With the Kubernetes access review on, a review of
+    `get` on that Secret is its only gate (src/lib/kubernetes-access/gate.ts), so its roles are `*`; with the review off
+    no review can run, so its roles are `admin`, the rule CapRover's discovered connections follow. The roles, the
+    literal marker and the Secret marker are set here together, the markers after filterByRoles for the reason
+    projectOperatorEntries gives, so no connection leaves with roles `*` and without the marker its gate reads. The
+    roles are read from the switch on every call, never cached with the export. An id an operator source declares is
+    dropped, as above.
+  */
+  const reviewedRoles = accessReviewEnabled() ? ["*"] : ["admin"];
+  const kubernetes = (await getKubernetesDiscoveredConnections())
+    .flatMap(({ connection, secret }) =>
+      filterByRoles([{ ...connection, roles: reviewedRoles }], roles).map((conn) =>
+        Object.assign(conn, { literal: true as const, kubernetesSecret: secret }),
+      ),
+    )
+    .filter((conn) => !operator.declaredIds.has(conn.seedId));
+
+  const out = [...fromOperators, ...discovered, ...kubernetes];
 
   /*
     The SQLite sample leads the built-ins, and the order is the point: a client with

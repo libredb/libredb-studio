@@ -38,6 +38,13 @@ delete process.env.SEED_LITERAL_VALUES;
 for (const name of Object.keys(process.env)) {
   if (name.startsWith("KUBERNETES_ACCESS_REVIEW")) delete process.env[name];
 }
+/*
+  And for the Kubernetes discovery source. A developer's `.env` that names an export file would add its databases to
+  every managed list a seed suite compares. The tests that need the source set it themselves.
+*/
+for (const name of Object.keys(process.env)) {
+  if (name.startsWith("SEED_KUBERNETES_DISCOVERY")) delete process.env[name];
+}
 
 // ─── In-memory localStorage mock (SSR/test environment) ────────────────────
 if (typeof globalThis.localStorage === "undefined") {

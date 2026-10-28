@@ -453,7 +453,7 @@ describe("routes that reach a provider require a session", () => {
     "@/lib/oidc-identity":
       "the issuer comparison and the username rule for identity provider claims; pure, imports nothing",
     "@/lib/seed":
-      "reads seed connection metadata from config and the CapRover discovery export; its only network use is a bare node:net reachability probe for built-image candidates, through ./discovery-loader, never a database or LLM provider",
+      "reads seed connection metadata from config and the CapRover and Kubernetes discovery exports; its only network use is a bare node:net reachability probe for built-image candidates, through ./discovery-loader, never a database or LLM provider",
     "@/lib/seed/discovery-loader":
       "reads the CapRover discovery export file and builds its status; its only network use is a bare node:net reachability probe for built-image candidates, never a database or LLM provider",
     "@/lib/seed/operator-loader":
