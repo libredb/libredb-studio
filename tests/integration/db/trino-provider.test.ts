@@ -743,6 +743,18 @@ describe("TrinoProvider lifecycle", () => {
     await provider.disconnect();
   });
 
+  test.each([undefined, ""])("refuses the overview when the connection pins no catalog (%s)", async (database) => {
+    const provider = await connectProvider({ database });
+    const before = sentSql.length;
+
+    const refused = await provider.getOverview().catch((error: unknown) => error);
+
+    expect(refused).toBeInstanceOf(DatabaseConfigError);
+    expect((refused as Error).message).toContain("pins no Trino catalog");
+    expect(sentSql.length).toBe(before);
+    await provider.disconnect();
+  });
+
   test("a catalog read the cluster refuses does not refuse the connect", async () => {
     // The connect is proven by SELECT 1; a cluster that withholds system.metadata
     // keeps the behaviour it had rather than turning the check into a new refusal.
@@ -1018,6 +1030,30 @@ describe("TrinoProvider cancellation", () => {
     expect(deletes[0]?.url).toContain("/v1/query/20260820_000000_00003_libre");
   });
 
+  test("answers false and logs, rather than throwing, when the termination request fails", async () => {
+    const provider = await connectProvider();
+    const harness = globalThis.fetch;
+    globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) =>
+      init?.method === "DELETE" ? Promise.reject(new TypeError("fetch failed")) : harness(input, init)) as typeof fetch;
+    const logged = spyOn(console, "error").mockImplementation(() => {});
+    let cancelled: Promise<boolean> = Promise.resolve(true);
+    overrideSurface("SELECT nationkey", (id) => {
+      cancelled = provider.cancelQuery("client-token");
+      return { body: page(id, DEMO_COLUMNS, DEMO_ROWS) };
+    });
+
+    try {
+      await provider.query("SELECT nationkey, name FROM tpch.tiny.nation", undefined, "client-token");
+
+      expect(await cancelled).toBe(false);
+      expect(logged.mock.calls.some(([message]) => String(message).startsWith("[DB:trino] cancelQuery failed:"))).toBe(
+        true,
+      );
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
   test("answers false for a token it never recorded, rather than cancelling something else", async () => {
     const provider = await connectProvider();
 
@@ -1037,6 +1073,26 @@ describe("TrinoProvider cancellation", () => {
     await provider.query("SELECT nationkey, name FROM tpch.tiny.nation");
 
     expect(await provider.cancelQuery("client-token")).toBe(false);
+  });
+
+  test("reports a statement the cluster stopped at its time limit as a timeout", async () => {
+    const provider = await connectProvider();
+    overrideSurface(
+      "SELECT nationkey",
+      refusal({
+        message: "Query exceeded maximum time limit of 1.00m",
+        errorCode: 66,
+        errorName: "EXCEEDED_TIME_LIMIT",
+        errorType: "INSUFFICIENT_RESOURCES",
+      }),
+    );
+
+    const refused = await provider
+      .query("SELECT nationkey, name FROM tpch.tiny.nation")
+      .catch((error: unknown) => error);
+
+    expect(refused).toBeInstanceOf(TimeoutError);
+    expect((refused as TimeoutError).message).toContain("Query exceeded maximum time limit");
   });
 
   test("reports a statement the cluster cancelled as a cancellation", async () => {
@@ -2399,6 +2455,19 @@ describe("Trino object containers, listings and detail", () => {
     await expect(provider.listObjects!(["iceberg", "warehouse"], "sequence")).rejects.toThrow(
       'Trino declares the kind "sequence" but no information_schema table_type answers for it',
     );
+  });
+
+  test("a refused SHOW FUNCTIONS makes the function count unavailable with the engine's sentence", async () => {
+    const provider = await objectProvider({ database: "memory", schema: "app" });
+    serveInstead(
+      trinoFunctionListSql("memory", "app"),
+      refusal({ ...CATALOG_NOT_FOUND, message: "Access Denied: Cannot show functions of memory.app" }),
+    );
+
+    const counts = await provider.countObjects!(["memory", "app"]);
+
+    expect(counts.function).toEqual({ unavailable: expect.stringContaining("Cannot show functions of memory.app") });
+    expect(counts.table).toEqual({ count: 2 });
   });
 
   test("a refused read carries the engine's own sentence rather than a zero nobody measured", async () => {
@@ -4722,6 +4791,27 @@ describe("Trino object edit: the apply", () => {
     const outcome = await applyWithTrinoError(new TimeoutError("Query timed out"));
     if (outcome.outcome !== "interrupted") throw new Error("narrowing");
     expect(outcome.committed).toBe("unknown");
+  });
+
+  test("a failure that is not the transport's own, such as an egress refusal, is interrupted with its sentence", async () => {
+    const outcome = await applyWithTrinoError(new DatabaseConfigError("The host resolves to a blocked address"));
+    if (outcome.outcome !== "interrupted") throw new Error("narrowing");
+    expect(outcome.committed).toBe("unknown");
+    expect(outcome.sentence).toBe("The host resolves to a blocked address");
+  });
+
+  test("a plan whose function segment is not name(argumentTypes) raises before anything is sent", async () => {
+    const provider = await editProvider();
+    const plan = await forcedPlan(EDITED);
+    const mark = sentSql.length;
+
+    const raised = await provider.applyObjectEdit!({ ...plan, path: ["memory", "app", "plus_one"] }).catch(
+      (error: unknown) => error,
+    );
+
+    expect(raised).toBeInstanceOf(QueryError);
+    expect((raised as Error).message).toBe('A Trino function path segment is name(argumentTypes), received "plus_one"');
+    expect(sentSql.length).toBe(mark);
   });
 
   test("the engine's OWN timeout fault is interrupted too, which is the arm the mapper would 504", async () => {
