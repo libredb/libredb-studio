@@ -37,7 +37,7 @@ const ExportStatusSchema = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(true) }),
   z.object({
     ok: z.literal(false),
-    code: z.enum(["api_unreachable", "unauthorized", "api_error", "limit_exceeded"]),
+    code: z.enum(["api_unreachable", "credentials_unavailable", "unauthorized", "api_error", "limit_exceeded"]),
     httpStatus: z.number().int().optional(),
     message: MESSAGE,
   }),

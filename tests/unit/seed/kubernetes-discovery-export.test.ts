@@ -10,9 +10,11 @@
 import { describe, expect, it } from "bun:test";
 import {
   KUBERNETES_DISCOVERY_FILE_MAX_BYTES,
+  KUBERNETES_DISCOVERY_SECRET_KEYS,
   parseKubernetesDiscoveryExport,
   type KubernetesDiscoveryExport,
 } from "@/lib/seed/kubernetes-discovery-export";
+import { CONTRACT, LIMITS } from "../../../docker/discover-kubernetes.mjs";
 
 const NOW = "2026-10-28T08:00:00.000Z";
 const PASSWORD = "not-a-real-password-orders";
@@ -60,6 +62,13 @@ describe("parseKubernetesDiscoveryExport", () => {
       secret: { name: "orders-app", data: { username: "orders", password: PASSWORD, dbname: "orders", port: "5432" } },
     });
   });
+
+  it.each([["api_unreachable"], ["credentials_unavailable"], ["unauthorized"], ["api_error"], ["limit_exceeded"]])(
+    "accepts the exporter's status code %p",
+    (code) => {
+      expect(parse(document({ status: { ok: false, code, message: "m" } })).ok).toBe(true);
+    },
+  );
 
   it("accepts the exporter's statuses: a failed scan, a forbidden namespace, a missing CRD and Secret problems", () => {
     const result = parse(
@@ -206,6 +215,40 @@ describe("parseKubernetesDiscoveryExport", () => {
     expect(refusal(document({ status: { ok: false, code: "api_error", message: "m".repeat(513) } }))).toBe(
       "the file does not match the export schema at status.message (too_big)",
     );
+  });
+
+  /*
+   * The schema repeats the exporter's bounds as literals (LIMITS in docker/discover-kubernetes.mjs): whatever the
+   * exporter writes at its bound must parse here, and one past it must not.
+   */
+  describe("the exporter's bounds", () => {
+    it("accepts as many databases and namespaces as the exporter writes, and refuses one more", () => {
+      const databases = Array.from({ length: LIMITS.databases }, () => database());
+      const namespaces = Array.from({ length: LIMITS.namespaces }, (_, index) => ({
+        name: `n${index}`,
+        status: { ok: true },
+      }));
+      expect(parse(document({ databases, namespaces })).ok).toBe(true);
+      expect(parse(document({ databases: [...databases, database()] })).ok).toBe(false);
+      expect(parse(document({ namespaces: [...namespaces, { name: "one-more", status: { ok: true } }] })).ok).toBe(
+        false,
+      );
+    });
+
+    it("accepts a value of the exporter's byte bound and a message of its length, and refuses longer ones", () => {
+      const value = "v".repeat(LIMITS.valueBytes);
+      const secret = (password: string) => ({ name: "orders-app", data: { username: "orders", password } });
+      expect(parse(document({ databases: [database({ secret: secret(value) })] })).ok).toBe(true);
+      expect(parse(document({ databases: [database({ secret: secret(`${value}v`) })] })).ok).toBe(false);
+      const status = (message: string) => ({ ok: false, code: "api_error", message });
+      expect(parse(document({ status: status("m".repeat(LIMITS.messageChars)) })).ok).toBe(true);
+      expect(parse(document({ status: status("m".repeat(LIMITS.messageChars + 1)) })).ok).toBe(false);
+    });
+
+    it("reads a file of the exporter's size bound, and keeps exactly the keys its contract row keeps", () => {
+      expect(LIMITS.exportBytes).toBeLessThanOrEqual(KUBERNETES_DISCOVERY_FILE_MAX_BYTES);
+      expect([...KUBERNETES_DISCOVERY_SECRET_KEYS]).toEqual([...CONTRACT[0].secretKeys]);
+    });
   });
 
   describe("before the first successful scan", () => {

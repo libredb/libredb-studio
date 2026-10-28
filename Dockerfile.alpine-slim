@@ -218,6 +218,9 @@ COPY docker/bind-address.mjs /usr/local/lib/libredb-studio/bind-address.mjs
 # so it is copied WITHOUT --chown: the uid 1001 web process must never be able
 # to rewrite it. No image creates the directory it writes to.
 COPY docker/discover.mjs /usr/local/lib/libredb-studio/discover.mjs
+# The Kubernetes discovery exporter's token reads the credential Secrets of the
+# opted-in namespaces, so it is copied WITHOUT --chown too.
+COPY docker/discover-kubernetes.mjs /usr/local/lib/libredb-studio/discover-kubernetes.mjs
 
 EXPOSE 3000/tcp
 ENV PORT=3000

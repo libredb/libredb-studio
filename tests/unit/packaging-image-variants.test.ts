@@ -160,6 +160,16 @@ describe("published image variants", () => {
     expect(lines.join("\n")).not.toContain("/app/discovery");
   });
 
+  test.each(VARIANTS)("%s copies the Kubernetes discovery exporter root-owned, beside the other scripts", (variant) => {
+    const lines = instructions(readRepoFile(variant));
+
+    // Exactly this instruction: the exporter's token reads the credential Secrets of every opted-in namespace, so a
+    // --chown here would let a uid 1001 process rewrite the script that holds it.
+    expect(lines.filter((line) => line.includes("docker/discover-kubernetes.mjs"))).toEqual([
+      "COPY docker/discover-kubernetes.mjs /usr/local/lib/libredb-studio/discover-kubernetes.mjs",
+    ]);
+  });
+
   test.each(VARIANTS)("%s starts as root so the entrypoint can chown the volume and drop privileges", (variant) => {
     const dockerfile = readRepoFile(variant);
 

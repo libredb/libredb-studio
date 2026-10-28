@@ -258,6 +258,11 @@ COPY docker/bind-address.mjs /usr/local/lib/libredb-studio/bind-address.mjs
 # socket. No image creates the directory it writes to; Docker creates the named
 # volume's root as root:root 0755, the only shape the exporter accepts.
 COPY docker/discover.mjs /usr/local/lib/libredb-studio/discover.mjs
+# The Kubernetes discovery exporter (docker/discover-kubernetes.mjs) sits next
+# to them. It runs as a Deployment of its own whose token reads the credential
+# Secrets of the opted-in namespaces, so it is copied WITHOUT --chown as well:
+# no uid 1001 process may rewrite it.
+COPY docker/discover-kubernetes.mjs /usr/local/lib/libredb-studio/discover-kubernetes.mjs
 
 # Render uses PORT env variable, default to 3000
 EXPOSE 3000/tcp
