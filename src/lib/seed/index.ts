@@ -108,24 +108,12 @@ export async function getManagedConnections(roles: string[]): Promise<ManagedCon
   */
   const sqliteSampleConsidered = process.env.NODE_ENV !== "test" || !!process.env.SQLITE_EMBEDDED_SAMPLE_PATH;
   if (isSqliteSampleEnabled() && sqliteSampleConsidered && roles.includes("admin")) {
-    try {
-      if (fs.existsSync(resolveSqliteSamplePath())) {
-        out.push(buildSqliteSampleConnection());
-      }
-    } catch {
-      /* fs error -> omit the sample */
-    }
+    if (fs.existsSync(resolveSqliteSamplePath())) out.push(buildSqliteSampleConnection());
   }
 
   const libredbSampleConsidered = process.env.NODE_ENV !== "test" || !!process.env.LIBREDB_EMBEDDED_SAMPLE_PATH;
   if (isSampleEnabled() && libredbSampleConsidered) {
-    try {
-      if (fs.existsSync(resolveSamplePath())) {
-        out.push(buildSampleConnection());
-      }
-    } catch {
-      /* fs error -> omit the sample */
-    }
+    if (fs.existsSync(resolveSamplePath())) out.push(buildSampleConnection());
   }
 
   return out;
