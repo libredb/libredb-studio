@@ -1578,6 +1578,44 @@ describe("the sticky strip above the object rows", () => {
     expect(labels[1]).toMatch(/^Tables/);
   });
 
+  test("a chain deeper than the strip holds keeps the root and the nearest parent, with a gap between", async () => {
+    const columns: ColumnSchema[] = Array.from({ length: 20 }, (_, index) => ({
+      name: `c_${index}`,
+      type: "integer",
+      nullable: true,
+      isPrimary: false,
+    }));
+    installFetch({
+      containers: (body) =>
+        body.parent === undefined
+          ? [{ path: ["prod"], name: "prod", level: 0 }]
+          : [{ path: ["prod", "app"], name: "app", level: 1 }],
+      counts: () => ({ table: { count: 1 } }),
+      list: () => [{ path: ["prod", "app", "orders"], name: "orders", kind: "table" }],
+      describe: (body) => ({ path: body.path, columns, indexes: [], foreignKeys: [] }),
+    });
+    const twoLevelsWithColumns = capabilitiesOf({
+      containerLevels: twoLevels.containerLevels,
+      objectKinds: [{ id: "table", role: "relation", label: "Table", labelPlural: "Tables", hasColumns: true }],
+    });
+    render(<ObjectTree connection={connectionOf("trino")} capabilities={twoLevelsWithColumns} />);
+    await userEvent.click(await screen.findByRole("treeitem", { name: /prod/ }));
+    await userEvent.click(await screen.findByRole("treeitem", { name: /app/ }));
+    await userEvent.click(await screen.findByRole("treeitem", { name: /Tables/ }));
+    await userEvent.click(
+      within(await screen.findByRole("treeitem", { name: /orders/ })).getByTestId("tree-row-twisty"),
+    );
+    await waitFor(() => expect(screen.getByText("c_0")).toBeTruthy());
+
+    // A 280px box holds three strip rows, and a column row sits under four ancestors.
+    scrolled(TREE_ROW_HEIGHT * 6);
+    const labels = stripLabels();
+    expect(labels).toHaveLength(2);
+    expect(labels[0]).toMatch(/^prod/);
+    expect(labels[1]).toMatch(/^orders/);
+    expect(screen.getByTestId("object-tree-sticky-gap")).toBeTruthy();
+  });
+
   test("draws nothing until an ancestor is fully scrolled off", async () => {
     render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
     await openTables();
