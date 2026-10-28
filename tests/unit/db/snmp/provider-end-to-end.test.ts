@@ -355,6 +355,19 @@ describe("a statement reaches a real agent and its answer reaches the caller", (
     expect(overview.uptime).toBe(SNMP_NO_COUNT);
   });
 
+  /**
+   * An agent answers a Get for an object outside its view with noSuchObject (RFC 3416 4.2.1), a
+   * value with no content. Rendered as a value it was an empty version or uptime on the card.
+   */
+  test("an overview whose agent answers noSuchObject says it has no figure, not an empty string", async () => {
+    const port = await listeningAgent([], new Map());
+    opened = new SnmpProvider(connectionTo(port));
+    await opened.connect();
+    const overview = await opened.getOverview();
+    expect(overview.version).toBe(SNMP_NO_COUNT);
+    expect(overview.uptime).toBe(SNMP_NO_COUNT);
+  });
+
   test("an overview whose read gets no answer at all shows no figures rather than failing the card", async () => {
     const port = await listeningAgent(
       [],

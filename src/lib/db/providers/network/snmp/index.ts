@@ -592,8 +592,14 @@ export class SnmpProvider extends BaseDatabaseProvider {
       throw new DatabaseConfigError("This connection is not open: `connect` comes before an overview.");
     }
     const answer = await exchange.send(PDU_GET, nextRequestId(), [SYS_DESCR, SYS_UPTIME], undefined);
+    // An exception (noSuchObject and the rest) carries no value, so it is read as no answer rather
+    // than rendered as an empty one.
     const read = (oid: readonly number[]) =>
-      "varbinds" in answer ? answer.varbinds.find((varbind) => varbind.oid.join(".") === oid.join(".")) : undefined;
+      "varbinds" in answer
+        ? answer.varbinds.find(
+            (varbind) => varbind.oid.join(".") === oid.join(".") && EXCEPTION_TAGS[varbind.tag] === undefined,
+          )
+        : undefined;
     const descr = read(SYS_DESCR);
     const uptime = read(SYS_UPTIME);
     return {

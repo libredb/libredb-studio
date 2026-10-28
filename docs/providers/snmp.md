@@ -12,7 +12,7 @@ measured, the document says so instead of estimating.
 `connect` checks the connection record, resolves the host through the repository's shared egress
 policy, and opens one UDP socket connected to the agent. `query` parses the statement before the
 socket is touched, asks, and renders each value by the tag the AGENT put on it. `getOverview`
-reads `sysDescr.0` and `sysUpTime.0` from the device. `disconnect` closes the socket.
+reads `sysDescr.0` and `sysUpTime.0` from the device; one the agent does not answer, or answers with an exception such as `noSuchObject`, is shown as no figure rather than as an empty one. `disconnect` closes the socket.
 
 `listObjects`, `describeObject` and `describeObjects` answer from the bundled MIB modules and send nothing (section 6).
 `getHealth` is a real read of the agent (section 6.3).
