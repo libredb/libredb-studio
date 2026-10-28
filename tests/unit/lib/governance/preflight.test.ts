@@ -50,6 +50,7 @@ const UNSET = [
   "SQLITE_EMBEDDED_SAMPLE",
   "SEED_CONFIG_PATH",
   "SEED_DISCOVERY_PATH",
+  "SEED_KUBERNETES_DISCOVERY_PATH",
   "OIDC_ROLE_PREFIX",
   "BIGQUERY_SERVER_CREDENTIALS",
   "FIRESTORE_SERVER_CREDENTIALS",
@@ -145,6 +146,7 @@ const REFUSED: readonly { readonly variable: string; readonly value: string | un
   { variable: "SQLITE_EMBEDDED_SAMPLE", value: " false" },
   { variable: "SEED_CONFIG_PATH", value: "/app/config/seed-connections.yaml" },
   { variable: "SEED_DISCOVERY_PATH", value: "/app/discovery/services.json" },
+  { variable: "SEED_KUBERNETES_DISCOVERY_PATH", value: "/var/run/libredb/kubernetes-discovery/export.json" },
   { variable: "OIDC_ROLE_PREFIX", value: "team-" },
   { variable: "ADMIN_PASSWORD", value: PASSWORD },
   { variable: "USER_PASSWORD", value: PASSWORD },
@@ -197,7 +199,7 @@ describe("governance/preflight verifyGovernanceEnvAtBoot", () => {
   test("each refused variable stops the boot with a banner that names it, one case per condition", () => {
     // Every variable of docs/GOVERNANCE.md#boot-checks, and every GOVERNANCE_* setting but the switch, which the next
     // test covers.
-    expect(new Set(REFUSED.map((refused) => refused.variable)).size).toBe(24);
+    expect(new Set(REFUSED.map((refused) => refused.variable)).size).toBe(25);
     for (const { variable, value } of REFUSED) {
       setEnv(variable, value);
       const run = runPreflight();
@@ -327,6 +329,7 @@ describe("governance/preflight verifyGovernanceEnvAtBoot", () => {
       SQLITE_EMBEDDED_SAMPLE: ["", "false"],
       SEED_CONFIG_PATH: [""],
       SEED_DISCOVERY_PATH: [""],
+      SEED_KUBERNETES_DISCOVERY_PATH: [""],
       OIDC_ROLE_PREFIX: [""],
       ADMIN_PASSWORD: [""],
       USER_PASSWORD: [""],

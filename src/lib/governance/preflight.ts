@@ -126,6 +126,7 @@ function governanceEnvProblems(): string[] {
   for (const [name, value] of [
     ["SEED_CONFIG_PATH", process.env.SEED_CONFIG_PATH],
     ["SEED_DISCOVERY_PATH", process.env.SEED_DISCOVERY_PATH],
+    ["SEED_KUBERNETES_DISCOVERY_PATH", process.env.SEED_KUBERNETES_DISCOVERY_PATH],
     ["OIDC_ROLE_PREFIX", process.env.OIDC_ROLE_PREFIX],
   ] as const) {
     if (isSet(value)) {

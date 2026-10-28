@@ -117,7 +117,7 @@ It prints one banner that names every variable to fix and never prints a secret,
 - `ADMIN_PASSWORD`, `USER_PASSWORD` or `LAUNCH_TOKEN_SECRET` is set.
 - `ALLOW_CUSTOM_CONNECTIONS` is set to anything but empty or a value that switches custom connections off: `false`, `0`, `off` or `no`.
 - `LIBREDB_EMBEDDED_SAMPLE` or `SQLITE_EMBEDDED_SAMPLE` is set to anything but empty or `false`.
-- `SEED_CONFIG_PATH` or `SEED_DISCOVERY_PATH` is set.
+- `SEED_CONFIG_PATH`, `SEED_DISCOVERY_PATH` or `SEED_KUBERNETES_DISCOVERY_PATH` is set.
 - `BIGQUERY_SERVER_CREDENTIALS` or `FIRESTORE_SERVER_CREDENTIALS` is `true`, because the server's own identity would stand in for the credential a grant selects.
 - `LIBREDB_MCP_ENABLED` or `LIBREDB_AGENT_ENABLED` is set to anything but empty or a value that switches it off: `false`, `off` or `0`.
 - `GOVERNANCE_POSTGRES_URL`, `GOVERNANCE_INSTANCE_ID`, `GOVERNANCE_PRIVATE_KEYS_FILE` or `STORAGE_POSTGRES_SCHEMA` is missing.
