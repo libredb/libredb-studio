@@ -16,6 +16,6 @@ const claimsSpark = (text: string): boolean => text.startsWith("sc://") || text.
 export const SPARK_CONNECTION_STRING: ConnectionStringSpec = {
   scheme: null,
   readTls: null,
-  paste: { catchAll: false, claims: claimsSpark, names: () => false, parse: parseSparkConnectUri },
+  paste: { catchAll: false, claims: claimsSpark, names: () => false, parse: parseSparkConnectUri, formats: ["sc://"] },
   validateSeed: null,
 };

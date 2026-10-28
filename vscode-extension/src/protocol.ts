@@ -184,6 +184,8 @@ export interface EngineForm {
 
 export interface EngineCatalog {
   engines: EngineForm[];
+  /** PASTE_FORMATS_TEXT of src/lib/connection-paste-formats.ts: the forms the paste box reads, as one phrase. */
+  pasteFormats: string;
 }
 
 /** The text a person pasted: a credential, which no trace ever writes. */

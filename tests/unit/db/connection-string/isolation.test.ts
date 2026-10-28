@@ -37,7 +37,7 @@ function childScript(group: readonly string[], out: string): string {
   ${id.toUpperCase()}_CONNECTION_STRING: {
     scheme: "sentinel",
     readTls: () => ({ sslMode: "verify-full" }),
-    paste: { catchAll: false, claims: () => false, names: () => false, parse: () => null },
+    paste: { catchAll: false, claims: () => false, names: () => false, parse: () => null, formats: [] },
     validateSeed: () => [{ field: "host", sentence: "SENTINEL" }],
   },
 }));`,

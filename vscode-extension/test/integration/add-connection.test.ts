@@ -16,7 +16,7 @@ import {
   type FlowStep,
   notOffered,
   TEST_AGAIN,
-  UNREADABLE_PASTE,
+  unreadablePaste,
 } from "../../src/host/connections/add-connection-flow";
 import { FIELD_PROMPTS } from "../../src/host/connections/field-prompts";
 import {
@@ -320,7 +320,7 @@ describe("the add-connection flow on the built child against PostgreSQL, SQL Ser
     flow = flowFor("paste-hello");
     walkToParse(flow, "postgres", "hello");
     const again = flow.advance({ kind: "parsed", answer: unreadable });
-    assert.equal(again.kind === "input" && again.validationMessage, UNREADABLE_PASTE);
+    assert.equal(again.kind === "input" && again.validationMessage, unreadablePaste(catalog.pasteFormats));
   });
 
   for (const fixture of ENGINES) {

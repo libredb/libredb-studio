@@ -65,6 +65,7 @@ export const MSSQL_CONNECTION_STRING: ConnectionStringSpec = {
     names: claimsMssql,
     parse: (text) =>
       ADO_NET.test(text) ? parseADONetString(text) : parseGenericURL(text, "mssql", "1433", readMssqlTLS),
+    formats: ["mssql://", "Server=… (ADO.NET)"],
   },
   validateSeed: null,
 };

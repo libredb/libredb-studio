@@ -3,7 +3,7 @@ import type * as vscode from "vscode";
 import { engineCatalog } from "../../../src/backend/engine-catalog";
 import { BackendError, BackendExitedError } from "../../../src/host/backend-client";
 import { BackendUnavailableError } from "../../../src/host/backend-supervisor";
-import { PORT_REFUSAL, UNREADABLE_PASTE } from "../../../src/host/connections/add-connection-flow";
+import { PORT_REFUSAL, unreadablePaste } from "../../../src/host/connections/add-connection-flow";
 import {
   type AddConnectionDeps,
   addConnection,
@@ -35,6 +35,7 @@ import {
 import { TEST_PASSWORD } from "../../fakes/credentials";
 
 const CATALOG: EngineCatalog = engineCatalog(["postgres", "mssql", "mysql", "mongodb"]);
+const UNREADABLE_PASTE = unreadablePaste(CATALOG.pasteFormats);
 const NOW = new Date("2026-10-20T10:14:03.512Z");
 const PASS: TestConnectionResult = { success: true, message: "Connection successful", latency: 12 };
 const FAILED = 'password authentication failed for user "app"';

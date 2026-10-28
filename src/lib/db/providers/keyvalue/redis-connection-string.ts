@@ -28,6 +28,6 @@ function parseRedisURL(text: string): ParsedConnection | null {
 export const REDIS_CONNECTION_STRING: ConnectionStringSpec = {
   scheme: "redis",
   readTls: null,
-  paste: { catchAll: false, claims: claimsRedis, names: claimsRedis, parse: parseRedisURL },
+  paste: { catchAll: false, claims: claimsRedis, names: claimsRedis, parse: parseRedisURL, formats: ["redis://"] },
   validateSeed: null,
 };

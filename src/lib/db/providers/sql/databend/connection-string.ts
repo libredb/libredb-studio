@@ -8,6 +8,12 @@ import { claimsDatabendPaste, namesDatabendPaste, parseDatabendPaste } from "@/l
 export const DATABEND_CONNECTION_STRING: ConnectionStringSpec = {
   scheme: "databend",
   readTls: null,
-  paste: { catchAll: false, claims: claimsDatabendPaste, names: namesDatabendPaste, parse: parseDatabendPaste },
+  paste: {
+    catchAll: false,
+    claims: claimsDatabendPaste,
+    names: namesDatabendPaste,
+    parse: parseDatabendPaste,
+    formats: ["databend://"],
+  },
   validateSeed: null,
 };

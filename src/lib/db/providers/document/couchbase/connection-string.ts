@@ -52,6 +52,12 @@ const claimsCouchbase = (text: string): boolean => text.startsWith("couchbase://
 export const COUCHBASE_CONNECTION_STRING: ConnectionStringSpec = {
   scheme: "couchbase",
   readTls: null,
-  paste: { catchAll: false, claims: claimsCouchbase, names: claimsCouchbase, parse: parseCouchbasePaste },
+  paste: {
+    catchAll: false,
+    claims: claimsCouchbase,
+    names: claimsCouchbase,
+    parse: parseCouchbasePaste,
+    formats: ["couchbase://"],
+  },
   validateSeed: null,
 };

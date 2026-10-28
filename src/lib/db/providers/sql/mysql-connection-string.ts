@@ -37,6 +37,7 @@ export const MYSQL_CONNECTION_STRING: ConnectionStringSpec = {
     claims: claimsMysql,
     names: claimsMysql,
     parse: (text) => parseGenericURL(text, "mysql", "3306", readMysqlTLS),
+    formats: ["mysql://"],
   },
   validateSeed: null,
 };

@@ -174,12 +174,13 @@ export interface ParsedConnection {
 /**
  * How one engine reads a pasted connection string. The parser walks the rows that have one in the order the registry
  * declares (`CONNECTION_STRING_PASTE_ORDER`) and hands the text to the first row that claims it, so a row claims only
- * its own engine's spellings, and a test holds every fixture text to exactly one claimant.
+ * its own engine's spellings, and a test holds every fixture text to exactly one claimant or a declared overlap.
  */
 export interface ConnectionStringPaste {
   /**
-   * Whether this row claims the generic transport schemes it reads (`http://`, `https://`) only when no row claims
-   * the text as its own spelling: such a row sits after every other row in the order.
+   * Whether this row claims generic transport schemes (`http://`, `https://`) that other rows can claim on their own
+   * hosts: such a row sits after every other row in the order, and each row that shares a text with it is declared
+   * in `CONNECTION_STRING_PASTE_OVERLAPS`.
    */
   readonly catchAll: boolean;
   /**
@@ -194,6 +195,11 @@ export interface ConnectionStringPaste {
   readonly names: (text: string) => boolean;
   /** The text this row claims, as the form's fields, or null when it is no URL the row can read. */
   readonly parse: (text: string) => ParsedConnection | null;
+  /**
+   * The forms the connection dialog's Paste URL box names for this row, in the words its hint and its refusal both
+   * use: only forms `parse` connects with, so the box never promises a paste the form cannot honour.
+   */
+  readonly formats: readonly string[];
 }
 
 /** What one engine's connection string is: the scheme shown for it, the TLS its URL query carries, its seed checks. */

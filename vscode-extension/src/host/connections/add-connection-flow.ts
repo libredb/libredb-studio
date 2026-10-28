@@ -2,7 +2,6 @@
 // "What the rules produce for the four v0 engines", "Review" and "Test"): it turns the engine catalogue, the person's
 // answers and the backend's replies into the next step, and imports no vscode, so add-connection-ui.ts only renders what
 // it answers. Every per-engine fact comes from the catalogue; no code here compares a type id with a literal.
-import { PASTE_FORMATS_TEXT } from "@/lib/connection-paste-formats";
 import type { ParsedConnection } from "@/lib/connection-string-parser";
 import type { ConnectionField } from "@/lib/db/connection-fields";
 import type { SSLMode } from "@/lib/types";
@@ -93,7 +92,10 @@ export type FlowInput =
 
 export const PORT_REFUSAL = "Enter a port from 1 to 65535, or leave it empty.";
 export const NAME_BLANK = "Enter a name for this connection.";
-export const UNREADABLE_PASTE = `LibreDB could not read this connection string. Supported formats: ${PASTE_FORMATS_TEXT}`;
+/** The refusal of a paste no engine reads, naming the formats the catalogue says the paste box reads. */
+export function unreadablePaste(formats: string): string {
+  return `LibreDB could not read this connection string. Supported formats: ${formats}`;
+}
 
 export function nameTaken(name: string): string {
   return `A connection named ${name} already exists.`;
@@ -360,7 +362,7 @@ export class AddConnectionFlow {
   private read({ parsed, label }: PastedConnection): FlowStep {
     const text = (this.shown as Extract<FlowStep, { kind: "parse" }>).text;
     const { fromReview } = this.position as Extract<Position, { at: "parse" }>;
-    if (parsed === null) return this.pasteStep(text, fromReview, UNREADABLE_PASTE);
+    if (parsed === null) return this.pasteStep(text, fromReview, unreadablePaste(this.init.catalog.pasteFormats));
     if (parsed.refusal !== undefined) {
       return this.pasteStep(parsed.discardPaste ? "" : text, fromReview, parsed.refusal);
     }

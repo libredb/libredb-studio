@@ -41,6 +41,7 @@ export const DB2_CONNECTION_STRING: ConnectionStringSpec = {
     claims: claimsDb2,
     names: claimsDb2,
     parse: (text) => parseGenericURL(text, "db2", "50000", readDb2TLS),
+    formats: ["db2://"],
   },
   validateSeed: null,
 };

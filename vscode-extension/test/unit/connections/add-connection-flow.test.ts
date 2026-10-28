@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { PASTE_FORMATS_TEXT } from "@/lib/connection-paste-formats";
 import type { ConnectionField } from "@/lib/db/connection-fields";
 import { engineCatalog } from "../../../src/backend/engine-catalog";
 import {
@@ -16,7 +15,7 @@ import {
   SAVE_ANYWAY,
   TEST_AGAIN,
   type TestOutcome,
-  UNREADABLE_PASTE,
+  unreadablePaste,
 } from "../../../src/host/connections/add-connection-flow";
 import type {
   EngineCatalog,
@@ -47,7 +46,9 @@ const FIXTURE: EngineForm = {
 };
 const CATALOG: EngineCatalog = {
   engines: [...engineCatalog(["postgres", "mssql", "mysql", "mongodb"]).engines, FIXTURE],
+  pasteFormats: "fixture://, postgres://",
 };
+const UNREADABLE_PASTE = unreadablePaste(CATALOG.pasteFormats);
 const NOW = new Date("2026-10-20T10:14:03.512Z");
 const CREATED = "2026-10-20T10:14:03.512Z";
 const ID = "1kq2v7x93j0ab";
@@ -433,9 +434,10 @@ describe("AddConnectionFlow", () => {
     it("keeps the box with its text for a string LibreDB cannot read", () => {
       const box = pasteAgain("nonsense", { parsed: null, label: null });
       assert.deepEqual([box.value, box.validationMessage], ["nonsense", UNREADABLE_PASTE]);
+      // The formats are the catalogue's, which the child takes from the web box's list.
       assert.equal(
         UNREADABLE_PASTE,
-        `LibreDB could not read this connection string. Supported formats: ${PASTE_FORMATS_TEXT}`,
+        "LibreDB could not read this connection string. Supported formats: fixture://, postgres://",
       );
     });
 

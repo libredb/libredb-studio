@@ -37,6 +37,6 @@ const claimsLibSQL = (text: string): boolean => text.startsWith("libsql://");
 export const LIBSQL_CONNECTION_STRING: ConnectionStringSpec = {
   scheme: "libsql",
   readTls: null,
-  paste: { catchAll: false, claims: claimsLibSQL, names: claimsLibSQL, parse: parseLibSQLURL },
+  paste: { catchAll: false, claims: claimsLibSQL, names: claimsLibSQL, parse: parseLibSQLURL, formats: ["libsql://"] },
   validateSeed: null,
 };

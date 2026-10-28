@@ -32,6 +32,12 @@ const claimsClickHouse = (text: string): boolean =>
 export const CLICKHOUSE_CONNECTION_STRING: ConnectionStringSpec = {
   scheme: "clickhouse",
   readTls: null,
-  paste: { catchAll: true, claims: claimsClickHouse, names: claimsClickHouse, parse: parseClickHousePaste },
+  paste: {
+    catchAll: true,
+    claims: claimsClickHouse,
+    names: claimsClickHouse,
+    parse: parseClickHousePaste,
+    formats: ["clickhouse://", "http(s)://"],
+  },
   validateSeed: null,
 };

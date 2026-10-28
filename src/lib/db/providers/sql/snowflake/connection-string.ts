@@ -44,6 +44,14 @@ function snowflakeLoadRefusals(
 export const SNOWFLAKE_CONNECTION_STRING: ConnectionStringSpec = {
   scheme: null,
   readTls: null,
-  paste: { catchAll: false, claims: isSnowflakePaste, names: isSnowflakePaste, parse: parseSnowflakeURL },
+  paste: {
+    catchAll: false,
+    claims: isSnowflakePaste,
+    names: isSnowflakePaste,
+    parse: parseSnowflakeURL,
+    // An account identifier with no `.snowflakecomputing.com` suffix is not offered: it is a single word, which would
+    // claim any text pasted.
+    formats: ["jdbc:snowflake://", "snowflake://", "a Snowflake account URL or host"],
+  },
   validateSeed: snowflakeLoadRefusals,
 };

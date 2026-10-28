@@ -102,8 +102,9 @@ export const CONNECTION_STRING: Readonly<Record<DatabaseType, ConnectionStringSp
  * ClickHouse's `http://` and `https://` are a catch-all, so it comes last, after Snowflake, which claims an `https://`
  * URL on a Snowflake host as its own. And a bare Snowflake host claims any text with no space, `/`, `:`, `?`, `#` or
  * `@` before its suffix, so Databend's `BENDSQL_DSN=` shell line comes before it and SQL Server's `Server=` keyword
- * form after it, as each always has. Every other text is claimed by one row alone, which
- * `tests/unit/db/connection-string/paste.test.ts` holds for every text the parser tests paste.
+ * form after it, as each always has. Each such pair is declared in `CONNECTION_STRING_PASTE_OVERLAPS` below; every
+ * other text is claimed by one row alone, which `tests/unit/db/connection-string/paste.test.ts` holds for every text
+ * the parser tests paste.
  */
 export const CONNECTION_STRING_PASTE_ORDER: readonly DatabaseType[] = Object.freeze([
   "databend",
@@ -119,6 +120,24 @@ export const CONNECTION_STRING_PASTE_ORDER: readonly DatabaseType[] = Object.fre
   "couchbase",
   "libsql",
   "clickhouse",
+]);
+
+/** Two rows that may both claim one text, `first` walked first and so taking it, with a text both claim. */
+export interface PasteOverlap {
+  readonly first: DatabaseType;
+  readonly then: DatabaseType;
+  readonly text: string;
+}
+
+/**
+ * The only pairs of rows that may both claim a text; the paste order above decides each. A text two rows claim that is
+ * not a pair here is a row taking another engine's text, and the paste tests fail on it by name, a catch-all included:
+ * a new row that claims ClickHouse's `http://` is a pair nobody declared.
+ */
+export const CONNECTION_STRING_PASTE_OVERLAPS: readonly PasteOverlap[] = Object.freeze([
+  { first: "databend", then: "snowflake", text: "BENDSQL_DSN=x.snowflakecomputing.com" },
+  { first: "snowflake", then: "mssql", text: "Server=x.snowflakecomputing.com" },
+  { first: "snowflake", then: "clickhouse", text: "https://x.snowflakecomputing.com" },
 ]);
 
 /** One engine's paste reader, with the type it belongs to. */
@@ -168,7 +187,7 @@ export function connectionStringFor(type: string | undefined): ConnectionStringS
  * Deliberately partial, and the gaps are the point: SQLite is a file path, LibreDB is
  * embedded in the process, and Druid is reached over plain HTTP through the form. Inventing
  * `sqlite://` or `druid://` to make the map look complete would put a scheme on the login
- * page that `parseConnectionString` (src/lib/connection-string-parser.ts) rejects - a claim the product does not honour,
+ * page that no row's `paste` reads - a claim the product does not honour,
  * which is the class of defect issue #425 exists to remove.
  *
  * Cassandra is absent for a different reason again, and a stronger one: its driver needs

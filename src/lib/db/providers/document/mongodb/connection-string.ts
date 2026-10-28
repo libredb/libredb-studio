@@ -137,6 +137,12 @@ const claimsMongoDB = (text: string): boolean => text.startsWith("mongodb://") |
 export const MONGODB_CONNECTION_STRING: ConnectionStringSpec = {
   scheme: "mongodb",
   readTls: null,
-  paste: { catchAll: false, claims: claimsMongoDB, names: claimsMongoDB, parse: parseMongoDBString },
+  paste: {
+    catchAll: false,
+    claims: claimsMongoDB,
+    names: claimsMongoDB,
+    parse: parseMongoDBString,
+    formats: ["mongodb://"],
+  },
   validateSeed: null,
 };

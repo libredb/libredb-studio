@@ -2,6 +2,7 @@
 // add-connection flow offers, with the form facts LibreDB declares for it.
 // The form table and the connection-string rows value-import modules that live beside the providers, so only the
 // child bundles this module; it constructs no provider.
+import { PASTE_FORMATS_TEXT } from "@/lib/connection-paste-formats";
 import { CONNECTION_FORM_URI_MODE, isExternalDatabaseType } from "@/lib/db/compatibility";
 import {
   CONNECTION_FIELDS,
@@ -70,5 +71,6 @@ export function engineCatalog(enabled: readonly DatabaseType[] | null): EngineCa
     engines: CONNECTION_PICKER_ORDER.filter(
       (type) => isExternalDatabaseType(type) && (allowed === null || allowed.has(type)),
     ).map(engineForm),
+    pasteFormats: PASTE_FORMATS_TEXT,
   };
 }

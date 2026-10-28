@@ -106,6 +106,12 @@ const claimsPostgres = (text: string): boolean => text.startsWith("postgres://")
 export const POSTGRES_CONNECTION_STRING: ConnectionStringSpec = {
   scheme: "postgres",
   readTls: readPostgresTLS,
-  paste: { catchAll: false, claims: claimsPostgres, names: claimsPostgres, parse: parsePostgresURL },
+  paste: {
+    catchAll: false,
+    claims: claimsPostgres,
+    names: claimsPostgres,
+    parse: parsePostgresURL,
+    formats: ["postgres://"],
+  },
   validateSeed: null,
 };

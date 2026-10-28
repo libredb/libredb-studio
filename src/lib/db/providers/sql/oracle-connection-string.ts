@@ -12,6 +12,7 @@ export const ORACLE_CONNECTION_STRING: ConnectionStringSpec = {
     claims: claimsOracle,
     names: claimsOracle,
     parse: (text) => parseGenericURL(text, "oracle", "1521", null),
+    formats: ["oracle://"],
   },
   validateSeed: null,
 };
