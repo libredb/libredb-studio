@@ -21,6 +21,7 @@
  * and the routes that read it are separate Next.js bundles; a restart empties it.
  */
 import { sessionTtlSeconds } from "@/lib/config/auth-env";
+import { byCodeUnits } from "@/lib/governance/jcs";
 
 const STORE_KEY = Symbol.for("libredb-studio.kubernetes-access-groups");
 const MAX_RECORDS = 4096;
@@ -64,14 +65,17 @@ export function resetGroupRecords(limit = MAX_RECORDS): void {
   (globalThis as StoreHolder)[STORE_KEY] = { limit, records: new Map() };
 }
 
-/** The verified ID token's groups as a review asserts them, sorted and without duplicates, or why they cannot be. */
+/**
+ * The verified ID token's groups as a review asserts them, without duplicates and sorted by code unit, never by the
+ * server's locale, or why they cannot be.
+ */
 export function readGroupsClaim(claims: Readonly<Record<string, unknown>>): GroupsClaimReading {
   const value = claims.groups;
   if (value === undefined || value === null) return { ok: true, groups: [] };
   if (!Array.isArray(value) || !value.every((group) => typeof group === "string" && group !== "")) {
     return { ok: false, problem: NOT_A_LIST };
   }
-  const groups = [...new Set(value as string[])].sort();
+  const groups = [...new Set(value as string[])].sort(byCodeUnits);
   if (groups.length > MAX_GROUPS) return { ok: false, problem: TOO_MANY };
   const sizes = groups.map((group) => Buffer.byteLength(group, "utf8"));
   if (sizes.some((size) => size > MAX_GROUP_BYTES)) return { ok: false, problem: TOO_LONG };

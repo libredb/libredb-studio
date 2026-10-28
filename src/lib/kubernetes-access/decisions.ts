@@ -15,6 +15,7 @@
  * variable would hold one cache per route (src/lib/governance/state.ts does the same).
  */
 import { createHash } from "node:crypto";
+import { byCodeUnits } from "@/lib/governance/jcs";
 import { logger } from "@/lib/logger";
 import { accessReviewCacheMs } from "./config";
 import {
@@ -64,9 +65,12 @@ export function resetAccessReviewDecisions(limit = MAX_DECISIONS): void {
   (globalThis as StoreHolder)[STORE_KEY] = newStore(limit);
 }
 
-/** One key per user, set of groups and attributes, hashed so the map holds no group or object name. */
+/**
+ * One key per user, set of groups and attributes, hashed so the map holds no group or object name. The groups are
+ * sorted by code unit, so the key never depends on the server's locale.
+ */
 function decisionKey(subject: ReviewSubject, attributes: ResourceAttributes): string {
-  const groups = [...new Set(subject.groups)].sort();
+  const groups = [...new Set(subject.groups)].sort(byCodeUnits);
   const { verb, group, resource, namespace, name } = attributes;
   return createHash("sha256")
     .update(JSON.stringify([subject.user, groups, verb, group, resource, namespace, name]))

@@ -93,8 +93,15 @@ export function accessReviewApiUrl(): URL {
   if (url.search !== "" || url.hash !== "" || raw.includes("?") || raw.includes("#")) {
     throw new AccessReviewConfigError(`${API_URL_ENV} must not carry a query or a fragment`);
   }
-  url.pathname = url.pathname.replace(/\/+$/, "");
+  url.pathname = withoutTrailingSlashes(url.pathname);
   return url;
+}
+
+/** `path` without its trailing slashes, in one pass: a pattern such as `\/+$` backtracks over a run of slashes. */
+function withoutTrailingSlashes(path: string): string {
+  let end = path.length;
+  while (end > 0 && path[end - 1] === "/") end -= 1;
+  return path.slice(0, end);
 }
 
 /** The ServiceAccount token file, read again for every review, so a rotated token is used at once. */

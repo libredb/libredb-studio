@@ -85,6 +85,12 @@ describe("the request", () => {
     expect(api.seen[0].path).toBe(`/prefix${REVIEW_PATH}`);
   });
 
+  test("goes to the review path itself when the API URL has no path, or only slashes", async () => {
+    process.env.KUBERNETES_ACCESS_REVIEW_API_URL = `${api.url}//`;
+    await requestAccessReview(DEV_A, SECRET);
+    expect(api.seen[0].path).toBe(REVIEW_PATH);
+  });
+
   test("reads the token again for every review, so a rotated token is used at once", async () => {
     await requestAccessReview(DEV_A, SECRET);
     api.setToken("not-a-real-token-2\n");

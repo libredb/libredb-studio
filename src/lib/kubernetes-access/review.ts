@@ -116,8 +116,9 @@ function post(
           method: "POST",
           hostname: url.hostname.replace(/^\[|\]$/g, ""),
           port: url.port === "" ? 443 : Number(url.port),
-          // A URL with no path still has the pathname "/", which the review path must not follow.
-          path: `${url.pathname.replace(/\/+$/, "")}${REVIEW_PATH}`,
+          // A URL with no path still has the pathname "/", which the review path must not follow; every other trailing
+          // slash is gone already (accessReviewApiUrl).
+          path: `${url.pathname === "/" ? "" : url.pathname}${REVIEW_PATH}`,
           ca,
           signal,
           headers: {
@@ -190,7 +191,7 @@ export async function requestAccessReview(
   // A `ca` without a certificate must never reach node:https: depending on the runtime an empty one is ignored, and
   // the public roots would then vouch for the API server. So it fails here, before any connection.
   const ca = await readText(accessReviewCaPath());
-  if (ca === null || !ca.includes(CERTIFICATE_BLOCK)) return failed("ca");
+  if (!ca?.includes(CERTIFICATE_BLOCK)) return failed("ca");
 
   const body = JSON.stringify({
     apiVersion: "authorization.k8s.io/v1",

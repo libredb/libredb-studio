@@ -103,6 +103,13 @@ describe("the API server address", () => {
     expect(accessReviewApiUrl().pathname).toBe("/prefix");
   });
 
+  test("drops every trailing slash, and keeps the ones inside the path", () => {
+    process.env.KUBERNETES_ACCESS_REVIEW_API_URL = "https://api.example.internal/a//prefix///";
+    expect(accessReviewApiUrl().pathname).toBe("/a//prefix");
+    process.env.KUBERNETES_ACCESS_REVIEW_API_URL = "https://api.example.internal//";
+    expect(accessReviewApiUrl().pathname).toBe("/");
+  });
+
   test.each([
     ["http://kubernetes.default.svc", "must use https"],
     ["not a url", "is not an absolute URL"],
