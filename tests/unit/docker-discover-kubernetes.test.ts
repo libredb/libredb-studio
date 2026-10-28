@@ -203,9 +203,10 @@ describe("the reviewed constants", () => {
       metadata: { namespace: "prod", name: "billing-db" },
       spec: { bootstrap: { initdb: { database: "billing", secret: { name: "billing-owner" } } } },
     });
+    // A database that is not a name Studio accepts leaves the resource out rather than connecting to another one.
     expect(
       row.prune({ metadata: { namespace: "a", name: "b" }, spec: { bootstrap: { initdb: { database: 1 } } } }),
-    ).toEqual({ metadata: { namespace: "a", name: "b" } });
+    ).toBeNull();
     expect(row.prune({ metadata: { namespace: "a", name: "b" } })).toEqual({ metadata: { namespace: "a", name: "b" } });
     for (const odd of [null, {}, { metadata: { name: "b" } }, { metadata: { namespace: "a", name: 7 } }]) {
       expect(row.prune(odd)).toBeNull();
@@ -641,6 +642,33 @@ describe("scanOnce", () => {
     const result = await scan({ client: client(), config: config() });
     expect(result).toMatchObject({ ok: true, databases: [], leftOut: 3 });
     expect(api.seen.some((seen) => seen.path.includes("/secrets/"))).toBe(false);
+  });
+
+  // Studio's schema refuses the whole export for one database name over PostgreSQL's 63-byte identifier bound, so the
+  // resource is left out here, as an odd service is by the CapRover exporter.
+  test("leaves out a Cluster whose initdb database name Studio's schema would refuse, and exports the others", async () => {
+    seedLab();
+    api.addCluster("team-a", "odd", { bootstrap: { initdb: { database: "d".repeat(64) } } });
+    api.addAppSecret("team-a", "odd", {
+      username: "u",
+      password: "not-a-real-password-odd",
+      dbname: "d",
+      port: "5432",
+    });
+    api.addCluster("team-a", "blank", { bootstrap: { initdb: { database: "" } } });
+    const result = await scan({ client: client(), config: config() });
+    expect(result.leftOut).toBe(2);
+    expect(result.databases.map((entry) => entry.resource.metadata.name)).toEqual(["orders", "analytics"]);
+    const [row] = CONTRACT;
+    expect(
+      row.prune({
+        metadata: { namespace: "a", name: "b" },
+        spec: { bootstrap: { initdb: { database: "d".repeat(63) } } },
+      }),
+    ).toEqual({
+      metadata: { namespace: "a", name: "b" },
+      spec: { bootstrap: { initdb: { database: "d".repeat(63) } } },
+    });
   });
 
   test("cuts the databases at the bound, in order, and says so", async () => {

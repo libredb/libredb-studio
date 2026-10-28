@@ -84,12 +84,20 @@ export const CONTRACT = Object.freeze([
       if (text(cluster?.spec?.bootstrap?.initdb?.secret?.name) === undefined) return false;
       return secret?.type === "kubernetes.io/basic-auth" && references.length === 0 && label === undefined;
     },
-    /** The resource with only the fields the contract reads, or null when it has no namespace and name. */
+    /**
+     * The resource with only the fields the contract reads, or null when it has no namespace and name, or names an
+     * initdb database that is not 1 to 63 characters, PostgreSQL's identifier bound: Studio's schema would refuse the
+     * whole export for it, and dropping it would connect to another database.
+     */
     prune(resource) {
       const namespace = resource?.metadata?.namespace;
       const name = resource?.metadata?.name;
       if (typeof namespace !== "string" || typeof name !== "string") return null;
       const initdb = resource.spec?.bootstrap?.initdb;
+      const database = initdb?.database;
+      if (database !== undefined && !(typeof database === "string" && database.length >= 1 && database.length <= 63)) {
+        return null;
+      }
       const kept = {
         ...(text(initdb?.database) === undefined ? {} : { database: initdb.database }),
         ...(text(initdb?.secret?.name) === undefined ? {} : { secret: { name: initdb.secret.name } }),
