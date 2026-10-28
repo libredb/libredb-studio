@@ -3761,10 +3761,9 @@ export class MySQLProvider extends SQLBaseProvider {
     sql: string,
     budget: ReadOnlyStatementBudget,
   ): Promise<ReadOnlyStreamedAnswer> {
-    const core = (conn as { connection?: object }).connection as CoreStreamingConnection | undefined;
-    if (core === undefined) {
-      throw new QueryError("Read-only execution could not reach the connection's streaming interface", "mysql", sql);
-    }
+    // mysql2's promise connection always holds its callback connection as `connection` (set in
+    // its constructor), so there is no connection without one to refuse.
+    const core = (conn as unknown as { connection: CoreStreamingConnection }).connection;
     const command = core.query({ sql, rowsAsArray: true });
     let fields: FieldPacket[] | undefined;
     command.on("fields", (declared) => {

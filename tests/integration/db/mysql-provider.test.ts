@@ -13,6 +13,7 @@ import type { DatabaseProvider, MaintenanceOperation, ObjectKindSpec } from "@/l
 import { maintenanceControl } from "@/lib/db/types";
 import {
   AuthenticationError,
+  ConnectionError,
   DatabaseConfigError,
   ExecutionProfileError,
   NO_TRANSACTION_OPENED,
@@ -225,6 +226,10 @@ interface RoSessionRecord {
 }
 let roSessions: RoSessionRecord[] = [];
 
+/** The events a read-only pool was asked to listen for, and how many read-only pools were ended. */
+let roPoolListeners: string[] = [];
+let roPoolEnds = 0;
+
 /**
  * The streaming command the read-only statement is read through: mysql2's callback
  * `query(...)` with NO callback hands back the command object, and `.stream()` on it
@@ -355,8 +360,12 @@ const buildRoPool = () => {
       roSessions.push(record);
       return makeRoConnection(record);
     },
-    end: async () => {},
-    on: () => {},
+    end: async () => {
+      roPoolEnds += 1;
+    },
+    on: (event: string) => {
+      roPoolListeners.push(event);
+    },
     query: (sql: string | { sql: string }) => {
       const sent = typeof sql === "string" ? sql : sql.sql;
       return answerStatement("query", sent);
@@ -391,6 +400,8 @@ afterEach(() => {
   fixtureViolations = [];
   roPoolConfigs = [];
   roSessions = [];
+  roPoolListeners = [];
+  roPoolEnds = 0;
   expect(violations).toEqual([]);
 });
 
@@ -1080,6 +1091,24 @@ describe("MySQLProvider", () => {
       expect(provider.isConnected()).toBe(true);
     });
 
+    test("a server that refuses the first connection fails connect() and ends the pool it built", async () => {
+      const refusal = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:3306"), { code: "ECONNREFUSED" });
+      const getConnection = spyOn(mockPool, "getConnection").mockRejectedValueOnce(refusal);
+      const end = spyOn(mockPool, "end");
+      try {
+        provider = new MySQLProvider(makeMySQLConfig());
+        const failure = await provider.connect().catch((error: unknown) => error);
+
+        expect(failure).toBeInstanceOf(ConnectionError);
+        expect((failure as Error).message).toBe("Failed to connect to MySQL: connect ECONNREFUSED 127.0.0.1:3306");
+        expect(end).toHaveBeenCalledTimes(1);
+        expect(provider.isConnected()).toBe(false);
+      } finally {
+        getConnection.mockRestore();
+        end.mockRestore();
+      }
+    });
+
     test("disconnect() sets connected to false", async () => {
       provider = new MySQLProvider(makeMySQLConfig());
       await provider.connect();
@@ -1675,6 +1704,16 @@ describe("MySQLProvider", () => {
       await expect(provider.runMaintenance("kill")).rejects.toThrow("Target connection ID is required");
     });
 
+    test("kill with a target that is not a connection id is refused before anything is sent", async () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      protocolCalls = [];
+      await expect(provider.runMaintenance("kill", "not-a-thread")).rejects.toThrow(
+        "Invalid connection ID for kill operation",
+      );
+      expect(protocolCalls.some((call) => call.sql.toLowerCase().startsWith("kill"))).toBe(false);
+    });
+
     test("kill with valid target returns success", async () => {
       provider = new MySQLProvider(makeMySQLConfig());
       await provider.connect();
@@ -2267,6 +2306,46 @@ describe("MySQLProvider", () => {
       }
     });
 
+    test("expireTransaction still ends the transaction when the rollback itself fails", async () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      await provider.beginTransaction();
+      const rollback = spyOn(mockConnection, "rollback").mockRejectedValue(new Error("Connection lost"));
+      const warn = spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        await provider.expireTransaction();
+      } finally {
+        rollback.mockRestore();
+        warn.mockRestore();
+      }
+
+      expect(provider.isInTransaction()).toBe(false);
+      await expect(provider.queryInTransaction("SELECT 1")).rejects.toThrow("No active transaction");
+    });
+
+    test("a statement the server refuses inside the transaction is mapped, and the transaction stays open", async () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      await provider.beginTransaction();
+      mockExecuteFn = (sql: string) =>
+        sql.startsWith("SELECT nope")
+          ? Promise.reject(
+              Object.assign(new Error("Unknown column 'nope' in 'field list'"), {
+                errno: 1054,
+                code: "ER_BAD_FIELD_ERROR",
+                sqlState: "42S22",
+              }),
+            )
+          : defaultMockExecute(sql);
+
+      const failure = await provider.queryInTransaction("SELECT nope").catch((error: unknown) => error);
+
+      expect(failure).toBeInstanceOf(QueryError);
+      expect((failure as QueryError).message).toContain("Unknown column 'nope'");
+      expect(provider.isInTransaction()).toBe(true);
+      await provider.rollbackTransaction();
+    });
+
     test("expireTransaction is no-op when no active transaction", async () => {
       provider = new MySQLProvider(makeMySQLConfig());
       await provider.connect();
@@ -2585,6 +2664,26 @@ describe("MySQLProvider", () => {
       expect(overview.version).toBe("MySQL 8.0.35");
     });
 
+    test.each([
+      ["3,720 seconds", "3720", "1h 2m"],
+      ["125 seconds", "125", "2m"],
+    ])("formats an uptime of %s without a day count", async (_label, seconds, expected) => {
+      mockExecuteFn = (sql: string) =>
+        sql.trim().toLowerCase().startsWith("show status")
+          ? Promise.resolve([
+              [
+                { Variable_name: "Uptime", Value: seconds },
+                { Variable_name: "Threads_connected", Value: "3" },
+              ],
+              [],
+            ])
+          : defaultMockExecute(sql);
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+
+      expect((await provider.getOverview()).uptime).toBe(expected);
+    });
+
     test("picks the status rows case-insensitively", async () => {
       // `SHOW STATUS LIKE 'Uptime'` matched case-insensitively on every MySQL-family
       // server, so the client-side pick that replaces it has to match the same way.
@@ -2776,6 +2875,35 @@ describe("MySQLProvider", () => {
       expect(typeof first.query).toBe("string");
       expect(typeof first.duration).toBe("string");
       expect(typeof first.durationMs).toBe("number");
+    });
+
+    test.each([
+      ["65 seconds", "65", "1m 5s"],
+      ["3,720 seconds", "3720", "1h 2m"],
+    ])("a session running %s reads in minutes or hours", async (_label, seconds, expected) => {
+      mockExecuteFn = (sql: string) =>
+        sql.toLowerCase().includes("processlist")
+          ? Promise.resolve([
+              [
+                {
+                  pid: 9,
+                  user: "app",
+                  database_name: "testdb",
+                  state: "Query",
+                  query: "SELECT SLEEP(9999)",
+                  client_addr: "10.0.0.5:51234",
+                  duration_seconds: seconds,
+                },
+              ],
+              [],
+            ])
+          : defaultMockExecute(sql);
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+
+      const [session] = await provider.getActiveSessions();
+      expect(session.duration).toBe(expected);
+      expect(session.durationMs).toBe(Number(seconds) * 1000);
     });
 
     test("Daemon and any other command are other, and the match is case-insensitive", async () => {
@@ -3046,6 +3174,27 @@ describe("MySQLProvider", () => {
     });
   });
 
+  describe("getStorageStats() without binary logging or InnoDB variables", () => {
+    test("a refused SHOW BINARY LOGS and a refused innodb_data_file_path leave only the data row", async () => {
+      mockExecuteFn = (sql: string) => {
+        const normalized = sql.trim().toLowerCase();
+        if (normalized === "show binary logs") {
+          return Promise.reject(Object.assign(new Error("You are not using binary logging"), { errno: 1381 }));
+        }
+        if (normalized.includes("innodb_data_file_path")) {
+          return Promise.reject(Object.assign(new Error("Access denied"), { errno: 1227 }));
+        }
+        return defaultMockExecute(sql);
+      };
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+
+      const stats = await provider.getStorageStats();
+
+      expect(stats.map((entry) => entry.name)).toEqual(["Data"]);
+    });
+  });
+
   // --------------------------------------------------------------------------
   // A real BASE TABLE's INDEX_LENGTH is NULL on StarRocks, always, never 0 -
   // measured 2026-09-16 on StarRocks 4.1.4 and 3.3.22 alike against a table with
@@ -3186,15 +3335,15 @@ describe("MySQLProvider", () => {
   // --------------------------------------------------------------------------
 
   describe("buildSSLConfig()", () => {
-    test("cloud provider auto-enables SSL", () => {
-      // A cloud hostname should trigger SSL auto-enable
+    test("cloud provider auto-enables SSL", async () => {
+      // A cloud hostname with no SSL settings of its own turns TLS on, unverified.
       provider = new MySQLProvider(
         makeMySQLConfig({
           host: "my-db.supabase.co",
         }),
       );
-      // If no error during construction, SSL config was built
-      expect(provider).toBeDefined();
+      await provider.connect();
+      expect(lastPoolConfig.ssl).toEqual({ rejectUnauthorized: false });
     });
 
     test("explicit ssl mode disable", async () => {
@@ -4263,6 +4412,41 @@ describe("MySQLProvider wire protocol", () => {
     await running;
 
     expect(methodFor("kill query 42")).toBe("query");
+  });
+
+  test("a KILL QUERY the server refuses answers false rather than throwing at the cancel button", async () => {
+    let releaseStatement: () => void = () => {};
+    let statementStarted: () => void = () => {};
+    const inFlight = new Promise<void>((resolve) => {
+      releaseStatement = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      statementStarted = resolve;
+    });
+
+    const p = await connected();
+    mockExecuteFn = async (sql: string) => {
+      if (sql.toLowerCase().includes("sleep")) {
+        statementStarted();
+        await inFlight;
+      }
+      if (sql.toLowerCase().startsWith("kill query")) {
+        throw Object.assign(new Error("Unknown thread id: 42"), { errno: 1094, code: "ER_NO_SUCH_THREAD" });
+      }
+      return [[], []];
+    };
+    const logged = spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      const running = p.query("SELECT SLEEP(5)", undefined, "q1");
+      await started;
+      expect(await p.cancelQuery("q1")).toBe(false);
+      expect(logged.mock.calls[0]?.[0]).toBe("[MySQL] Failed to cancel query:");
+      releaseStatement();
+      await running;
+    } finally {
+      logged.mockRestore();
+    }
   });
 });
 
@@ -8384,6 +8568,62 @@ describe("queryReadOnly() - the agent read-only execution profile (#1612)", () =
   // --------------------------------------------------------------------------
   // The gate: a provider outside the profile serves nothing
   // --------------------------------------------------------------------------
+
+  describe("the read-only pool carries the main pool's per-server markings", () => {
+    test("utf8mb3 relabelling and client-side binding are marked on it too, and disconnect ends it", async () => {
+      // A Databend-like server: it labels 4-byte UTF-8 utf8mb3 and refuses COM_STMT_PREPARE. The
+      // main pool marks every acquired core for both; this core stands in for mysql2's callback
+      // connection under the promise wrapper, answering through the same fixture funnel.
+      const answer = (
+        method: "query" | "execute",
+        sql: MockStatement,
+        params: unknown[] | undefined,
+        done: CoreDone,
+      ) => {
+        answerStatement(method, sql, params).then(
+          ([rows, fields]) => done(null, rows, fields ?? []),
+          (error: Error) => done(error, undefined, []),
+        );
+        return { on: () => undefined };
+      };
+      type CoreDone = (error: Error | null, rows: unknown, fields: unknown[]) => void;
+      const core = {
+        query: (sql: MockStatement, done: CoreDone) => answer("query", sql, undefined, done),
+        execute: (sql: MockStatement, params: unknown[], done: CoreDone) => answer("execute", sql, params, done),
+        format: (sql: string) => sql,
+      };
+      const main = mockPool as unknown as { on?: (event: string, listener: (core: object) => void) => void };
+      const held = mockConnection as unknown as { connection?: object };
+      main.on = (_event, listener) => listener(core);
+      held.connection = core;
+      mockExecuteFn = (sql: string) => {
+        if (sql === "SELECT '\u{1F600}' AS probe") {
+          return Promise.resolve([[{ probe: "\uFFFD\uFFFD" }], [{ name: "probe", encoding: "cesu8" }]]);
+        }
+        if (sql === "SELECT ? AS bound") {
+          return Promise.reject(Object.assign(new Error("unsupported prepared statement"), { errno: 1105 }));
+        }
+        if (sql.startsWith("SELECT '") && sql.endsWith(" AS bound")) {
+          return Promise.resolve([[{ bound: "\0\b\t\n\r\x1a\"'\\ probe" }], []]);
+        }
+        return profileDefault(sql);
+      };
+      const info = spyOn(console, "info").mockImplementation(() => {});
+      try {
+        provider = new MySQLProvider(makeMySQLConfig(), {}, { readOnly: true });
+        await provider.connect();
+        await provider.queryReadOnly("SELECT 1", budget());
+
+        expect(roPoolListeners).toEqual(["acquire", "acquire"]);
+        await provider.disconnect();
+        expect(roPoolEnds).toBe(1);
+      } finally {
+        info.mockRestore();
+        delete main.on;
+        delete held.connection;
+      }
+    });
+  });
 
   describe("the profile gate", () => {
     test("a provider opened outside the profile refuses queryReadOnly outright", async () => {
