@@ -737,6 +737,92 @@ describe("OverviewTab", () => {
     });
   });
 
+  test("a fleet with a degraded connection and no error reads Degraded Performance", async () => {
+    fetchMock = mockGlobalFetch({
+      "/api/admin/audit": { json: { events: [] } },
+      "/api/admin/fleet-health": {
+        json: {
+          results: [
+            {
+              connectionId: "c1",
+              connectionName: "PG Staging",
+              type: "postgres",
+              status: "degraded",
+              latencyMs: 120,
+              databaseSize: "10 MB",
+            },
+          ],
+        },
+      },
+    });
+
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OverviewTab user={{ username: "admin", role: "admin" }} />);
+    });
+    const { queryByText } = renderResult!;
+
+    await waitFor(() => {
+      const status = queryByText("Degraded Performance");
+      expect(status).not.toBeNull();
+      expect(status!.className).toContain("text-warning");
+    });
+    expect(queryByText("All Systems Operational")).toBeNull();
+    expect(queryByText("Attention Required")).toBeNull();
+  });
+
+  test("a fleet card shows the connection's environment badge", async () => {
+    fetchMock = mockGlobalFetch({
+      "/api/admin/audit": { json: { events: [] } },
+      "/api/admin/fleet-health": {
+        json: {
+          results: [
+            {
+              connectionId: "c1",
+              connectionName: "PG Dev",
+              type: "postgres",
+              status: "healthy",
+              latencyMs: 15,
+              environment: "production",
+            },
+          ],
+        },
+      },
+    });
+
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OverviewTab user={{ username: "admin", role: "admin" }} />);
+    });
+    const { queryByText } = renderResult!;
+
+    await waitFor(() => {
+      expect(queryByText("PROD")).not.toBeNull();
+    });
+  });
+
+  test("a fleet-health request that fails leaves no card and no spinner behind", async () => {
+    fetchMock = mockGlobalFetch({
+      "/api/admin/audit": { json: { events: [] } },
+      "/api/admin/fleet-health": () => {
+        throw new TypeError("Failed to fetch");
+      },
+    });
+
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OverviewTab user={{ username: "admin", role: "admin" }} />);
+    });
+    const { queryByText, container } = renderResult!;
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/admin/fleet-health"))).toBe(true);
+      expect(queryByText("0 endpoints")).not.toBeNull();
+      // The loading skeleton cards are gone once the failed request settled.
+      expect(container.querySelectorAll(".rounded-xl.border.border-hairline.bg-panel.p-4").length).toBe(0);
+    });
+  });
+
   // A connection that resumes billed compute (a Databend Cloud warehouse) is answered
   // `not-checked` by the route, which sent it nothing: the card says why in one sentence, and
   // the row counts as neither healthy nor unhealthy, nor as a 0 ms answer in the average.
