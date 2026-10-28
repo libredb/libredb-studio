@@ -65,7 +65,7 @@ The factory imports the directory's `index.ts`, which re-exports the two provide
 | `index.ts` | The composition root the factory imports |
 
 `influxql-lexer.ts`, `influxql-policy.ts`, `influxql-quote.ts` and `influxql-generators.ts` are pure and shipped to the browser, because the editor, the confirmation gate and the tree read them; they import only each other and types.
-The editor's InfluxQL language and completion live in `src/lib/editor/influxql-language.ts` and `influxql-completions.ts`, over the same lexer.
+The editor's InfluxQL language and completion live in `src/lib/db/providers/timeseries/influxdb/influxql-editor-syntax.ts` and `influxql-editor-completions.ts`, over the same lexer, and `influxql-editor-language.ts` declares them to the editor.
 Two tests hold the layout: `tests/unit/db/influxdb/seam-guard.test.ts` fails when a file imports from another provider directory, or an `influxql-*` module imports an `sql-*` module or the reverse, and `tests/unit/db/influxdb/browser-modules.test.ts` fails when a browser module imports a Node built-in, `Buffer` or a server module.
 
 ### 2.3 Registration & lifecycle
@@ -275,6 +275,7 @@ Create the mapping with `influx v1 dbrp create --bucket-id <bucket-id> --db <dat
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `influxdb` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is declared in [`influxdb-execution-ui.ts`](../../src/lib/db/providers/timeseries/influxdb/influxdb-execution-ui.ts).
+Its editor language, `influxql`, is the row in `EDITOR_LANGUAGES` declared in [`influxql-editor-language.ts`](../../src/lib/db/providers/timeseries/influxdb/influxql-editor-language.ts): how the editor registers and tints it, and its completion source and formatter where it has one.
 
 ## 5. Query interface
 

@@ -80,7 +80,7 @@ The embedded workspace has no Keys panel, no connection dialog and no Explain bu
 | `sampling.ts`, `key-scan.ts`, `cursor.ts`, `objects.ts` | Field sampling, Keys panel levels, the cursor envelope, the object surface | Yes, no, yes, no |
 | `errors.ts` | Google's errors to Studio's error classes and sentences | Yes |
 
-The editor language is `src/lib/editor/firestore-language.ts` and `firestore-completions.ts`, and the Explain strategy is `src/lib/explain/firestore-explain.ts`.
+The editor language is `src/lib/db/providers/document/firestore/editor-syntax.ts` and `editor-completions.ts`, declared to the editor by `editor-language.ts` beside them, and the Explain strategy is `src/lib/explain/firestore-explain.ts`.
 
 ### 2.2 Request path
 
@@ -219,6 +219,7 @@ The shared transport has no HTTPS proxy support, so a Studio whose egress goes t
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `firestore` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/document/firestore/execution-ui.ts).
+Its editor language, `firestore`, is the row in `EDITOR_LANGUAGES` declared in [`editor-language.ts`](../../src/lib/db/providers/document/firestore/editor-language.ts): how the editor registers and tints it, and its completion source and formatter where it has one.
 
 ## 5. Query interface
 

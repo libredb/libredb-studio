@@ -415,6 +415,7 @@ It runs no seed load check.
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `mongodb` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/document/mongodb/execution-ui.ts).
+Its editor language, `json`, is the row in `EDITOR_LANGUAGES` declared in [`editor-language.ts`](../../src/lib/db/providers/document/mongodb/editor-language.ts): how the editor registers and tints it, and its completion source and formatter where it has one. The `json` language is also the one every JSON read request renders in; its MongoDB completion source registers only where the connection declares no dialect.
 
 ---
 

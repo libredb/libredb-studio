@@ -369,6 +369,7 @@ LibreDB is embedded in the process, so there is no address to write a scheme for
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `libredb` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is declared in [`libredb-execution-ui.ts`](../../src/lib/db/providers/embedded/libredb-execution-ui.ts).
+Its editor language, `libredb`, is the row in `EDITOR_LANGUAGES` declared in [`libredb-editor-language.ts`](../../src/lib/db/providers/embedded/libredb-editor-language.ts): how the editor registers and tints it, and its completion source and formatter where it has one.
 
 ---
 

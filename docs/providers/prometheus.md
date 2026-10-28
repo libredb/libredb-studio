@@ -218,7 +218,7 @@ There is no server-side session: `disconnect()` ends every query still running o
 `ProviderCapabilities.queryLanguage` was the closed union `"sql" | "json"`, with `queryDialect` separating the JSON-shaped command languages (`libredb`, `redis`).
 Prometheus widens `queryLanguage` to `"sql" | "json" | "promql"` and declares no `queryDialect`, because `queryDialect` distinguishes kinds of JSON and PromQL is not JSON.
 A third member is not neutral by default: a reader written `=== "json"` sends it into its SQL branch, and one written `!== "sql"` sends it into its MongoDB branch.
-Every reader was classified when the union widened (#1085, section 3.2): the editor has a `promql` tab type and a Monarch tokenizer (`src/lib/editor/promql-language.ts`), the two generators have a PromQL arm built through `promql.ts`, and the profile route refuses a language it cannot profile.
+Every reader was classified when the union widened (#1085, section 3.2): the editor has a `promql` tab type and a Monarch tokenizer (`src/lib/db/providers/timeseries/prometheus/editor-syntax.ts`), the two generators have a PromQL arm built through `promql.ts`, and the profile route refuses a language it cannot profile.
 On a metric row both row menus withhold Profile and Code Generator, through `offersColumnProfiling` and `offersCodeGeneration`, which offer neither for `promql`, and Generate Test Data, because no kind declares `acceptsRowWrites`; the tree's menu for a metric keeps Generate Query and View Source.
 Both menus also withhold Generate Count Query, through `offersCountQuery` (#702): PromQL's `count()` counts series at an instant, which is not the row count that action promises.
 A plan-mode draft is fenced with the canonical type-id, `prometheus`, which `ENGINE_FENCE_TAGS` accepts; a block tagged `promql` is accepted too, and that alias names the `prometheus` type-id (`ALIAS_ENGINES` in `src/lib/sql/fence-tags.ts`), because every PromQL server this product reaches, VictoriaMetrics included, connects through it.
@@ -390,6 +390,7 @@ The host field cannot carry the prefix instead: a host holding `/` is refused be
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `prometheus` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/timeseries/prometheus/execution-ui.ts).
+Its editor language, `promql`, is the row in `EDITOR_LANGUAGES` declared in [`editor-language.ts`](../../src/lib/db/providers/timeseries/prometheus/editor-language.ts): how the editor registers and tints it, and its completion source and formatter where it has one.
 
 ---
 
@@ -414,7 +415,7 @@ On a PromQL tab there is no formatter: no Format button, no Format SQL entry in 
 In the standalone app the run shortcut on a PromQL tab sends the selection when there is one and otherwise the whole buffer, never cut at a `;`.
 In the embedded `StudioWorkspace` the run shortcut, the Run Query menu entry and Run Selected reach no listener, so only the toolbar Run sends, and it sends the whole buffer (`docs/BACKLOG.md` U47).
 Both shells type a Prometheus connection's tabs from its declared `queryLanguage`, the embedded `StudioWorkspace` as the standalone app does, and the editor reads its shortcuts' handlers when one is invoked, so a tab mounted before the connection's capabilities arrived behaves as a PromQL tab once it is one.
-The editor's tokenizer (`src/lib/editor/promql-language.ts`) colours a `#` comment wherever the lexer starts one: at the top level, inside `{}` and inside a range's `[]`; inside a raw string, between backticks, a `#` is text.
+The editor's tokenizer (`src/lib/db/providers/timeseries/prometheus/editor-syntax.ts`) colours a `#` comment wherever the lexer starts one: at the top level, inside `{}` and inside a range's `[]`; inside a raw string, between backticks, a `#` is text.
 
 ### 5.2 Result shaping
 
@@ -767,7 +768,7 @@ The refusal reason it prints, verbatim:
 ## 14. References
 
 - Source: [`src/lib/db/providers/timeseries/prometheus/`](../../src/lib/db/providers/timeseries/prometheus/)
-- Editor language: [`src/lib/editor/promql-language.ts`](../../src/lib/editor/promql-language.ts)
+- Editor language: [`src/lib/db/providers/timeseries/prometheus/editor-syntax.ts`](../../src/lib/db/providers/timeseries/prometheus/editor-syntax.ts)
 - Design: [#1085](https://github.com/libredb/libredb-studio/issues/1085)
 - Prometheus HTTP API: <https://prometheus.io/docs/prometheus/3.13/querying/api/>
 - PromQL: <https://prometheus.io/docs/prometheus/3.13/querying/basics/>

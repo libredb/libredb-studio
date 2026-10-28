@@ -542,6 +542,7 @@ An open Redis transaction is a `MULTI`, and the keyword that keeps it is `EXEC`,
 D74 gave the single-statement route the same `finally` as the script route, and `redis` implements the surface, so the notice reaches a reader whose open transaction is a `MULTI`.
 Naming `COMMIT` would tell them to type a command their engine does not have.
 Its row in `EXECUTION_UI` is declared in [`redis-execution-ui.ts`](../../src/lib/db/providers/keyvalue/redis-execution-ui.ts).
+Its editor language, `redis`, is the row in `EDITOR_LANGUAGES` declared in [`redis-editor-language.ts`](../../src/lib/db/providers/keyvalue/redis-editor-language.ts): how the editor registers and tints it, and its completion source and formatter where it has one.
 The agent's consent card has no consent deadline chip or sentence for it.
 
 ---
@@ -832,7 +833,7 @@ Shape rules:
   loop, so the cheatsheet documents the continuation instead of hiding it.
 
 A Redis tab is typed `redis` and rendered by a dedicated Monaco language
-([`src/lib/editor/redis-language.ts`](../../src/lib/editor/redis-language.ts)) — command verbs as
+([`src/lib/db/providers/keyvalue/redis-editor-syntax.ts`](../../src/lib/db/providers/keyvalue/redis-editor-syntax.ts)) — command verbs as
 keywords, argument words such as `MATCH` / `COUNT` / `WITHSCORES` as functions, `#` line comments.
 Before #427 a Redis tab was typed `mongodb` and highlighted as JSON, which flagged every command as
 a syntax error.

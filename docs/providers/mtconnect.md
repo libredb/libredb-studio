@@ -218,6 +218,7 @@ It is a path only: a query, a fragment, percent-encoding, a space or an empty, `
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `mtconnect` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/industrial/mtconnect/execution-ui.ts).
+Its editor language, `mtconnect`, is the row in `EDITOR_LANGUAGES` declared in [`editor-language.ts`](../../src/lib/db/providers/industrial/mtconnect/editor-language.ts): how the editor registers and tints it, and its completion source and formatter where it has one.
 
 ## 5. Query interface
 

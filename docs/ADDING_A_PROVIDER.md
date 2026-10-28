@@ -269,9 +269,11 @@ For most SQL databases, the existing `'sql'` type is sufficient. You only need a
 A new tab type is reached one of two ways, and both are wired in `src/lib/editor/tab-language.ts` and its neighbours.
 A language that is a kind of JSON declares a `queryDialect` on the provider and gets a record in `QUERY_DIALECTS` (`src/lib/db/query-dialects.ts`), whose `tabType` `resolveTabType()` reads **before** the `queryLanguage === 'json'` rung; skipping the dialect leaves the tab typed `mongodb`, which is exactly what #427 fixed.
 A language that is neither SQL nor JSON widens `ProviderCapabilities.queryLanguage` instead, as PromQL did (#1085), and every reader of that union then needs an explicit arm or a test pinning that its branch is right, because a reader written `=== 'json'` sends the new member into its SQL branch and one written `!== 'sql'` into its JSON branch.
-Either way the type gets a record in `DIALECT_EDITORS` (`src/lib/editor/dialect-editors.ts`), its Monaco language for `editorLanguageForTabType()` and its formatter, if any, for `QueryEditor`'s Format button, and that language module is registered in `QueryEditor`'s `handleBeforeMount` alongside `registerLibreDBLanguage`, `registerRedisLanguage`, `registerPromqlLanguage`, `registerEtcdLanguage`, `registerOxiaLanguage` and `registerCypherLanguage`.
+Either way the type gets a record in `DIALECT_EDITORS` (`src/lib/editor/dialect-editors.ts`), its Monaco language for `editorLanguageForTabType()`.
+A language of its own is an `EditorLanguageContribution` declared beside the provider in `editor-language.ts` (its Monaco id, its registration or console, its completion source and formatter, if any, and its answer card accent), and one row in `EDITOR_LANGUAGES` (`src/lib/db/editor-language/index.ts`).
+`QueryEditor` registers, completes, formats and tints from those rows alone, and no file under `src/components/`, `src/hooks/` or `src/lib/editor/` imports a provider module, which `tests/unit/editor/editor-language-boundary.test.ts` holds.
 A JSON kind may instead render in Monaco's built-in `json` mode and register no module, as Kafka's read request does (#1088).
-Then the MongoDB completion provider `QueryEditor` registers for `json` must stay off it: it registers only where the declared capabilities name no JSON dialect, so its MongoDB snippets and column completions never reach a tab whose parser refuses them.
+Then the MongoDB completion source the `json` row registers must stay off it: it registers only where the declared capabilities name no JSON dialect, so its MongoDB snippets and column completions never reach a tab whose parser refuses them.
 
 ## Step 2: Create the Provider Class
 
@@ -1161,11 +1163,11 @@ Those three reach code and tests only; the four prose greps of the published blo
 - [ ] `src/lib/db/query-dialects.ts`: a record in `QUERY_DIALECTS`, the dialect's tab type and its answers for the row menus' `offersColumnProfiling`, `offersCodeGeneration` and `offersCountQuery`.
       Profiling reads a dialect only beside `"json"`, while the count reads any declared dialect.
       A console whose grammar takes credential flags declares them as `historyMask` on the record, so query history stores their values masked (`src/lib/history-mask.ts`).
-- [ ] `src/lib/editor/dialect-editors.ts`: a record in `DIALECT_EDITORS` for the dialect's tab type, the Monaco language it renders in and its formatter, if it has one.
-      Tab types that render in one Monaco language share its formatter, which `tests/unit/editor/dialect-editors.test.ts` holds.
+- [ ] `src/lib/editor/dialect-editors.ts`: a record in `DIALECT_EDITORS` for the dialect's tab type, the Monaco language it renders in.
+      A language of its own also takes an `editor-language.ts` row beside the provider and a key in `EDITOR_LANGUAGES` (`src/lib/db/editor-language/index.ts`), which carries its formatter, if it has one.
 - [ ] `src/lib/query-generators.ts`: a record in `DIALECT_GENERATORS`, what a tree click and Generate Query write, read before the `json` arm, or a tree click auto-executes a MongoDB document.
       `docs/providers/kafka.md` section 3.1 is the worked case.
-- [ ] `src/components/QueryEditor.tsx`: the MongoDB completion provider registers only where the declared capabilities name no JSON dialect.
+- [ ] `src/lib/db/providers/document/mongodb/editor-language.ts`: the MongoDB completion source registers only where the declared capabilities name no JSON dialect.
 - [ ] `tests/unit/lib/dialect-reader-allowlist.test.ts`: every other line under `src/` that compares `queryDialect`, reads `queryLanguage === "json"` or negates `queryLanguage` is on its closed list with its owner.
       A new reader goes into a registry, or onto the list with the reason it is not one.
 
