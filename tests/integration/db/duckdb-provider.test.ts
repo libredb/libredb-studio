@@ -1248,6 +1248,30 @@ describe("cancelQuery()", () => {
 
     expect(await provider.cancelQuery("anything")).toBe(false);
   });
+
+  test("an interrupt the driver refuses answers false and is logged, rather than thrown at the caller", async () => {
+    provider = new DuckDBProvider(makeConfig());
+    await provider.connect();
+    const running = provider.query("SELECT count(*) FROM range(100000000000) t(i)", undefined, "long");
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const client = (provider as unknown as { client: { interrupt(): void } }).client;
+    const interrupt = spyOn(client, "interrupt").mockImplementation(() => {
+      throw new Error("interrupt refused");
+    });
+    const logged = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(await provider.cancelQuery("long")).toBe(false);
+      expect(logged.mock.calls.map(([message]) => String(message))).toContain(
+        "[DB:duckdb] cancelQuery failed: interrupt refused",
+      );
+    } finally {
+      interrupt.mockRestore();
+      logged.mockRestore();
+    }
+    // The real interrupt still stops the statement, so the test leaves nothing running.
+    expect(await provider.cancelQuery("long")).toBe(true);
+    expect(await running.catch((error: unknown) => (error as Error).message)).toMatch(/cancelled/i);
+  }, 30_000);
 });
 
 // ============================================================================

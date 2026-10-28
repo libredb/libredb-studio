@@ -669,6 +669,23 @@ describe("readStorageStats", () => {
     });
   });
 
+  test("a file database whose WAL size was unreadable carries no WAL fields on its row", async () => {
+    const client = stubClient([
+      ["pragma_database_size()", [{ ...DB_SIZE_ROW, wal_size: "not a size" }]],
+      ["duckdb_databases()", [{ path: "/tmp/libredb-duckdb/warehouse.duckdb" }]],
+      ["duckdb_temporary_files()", []],
+    ]);
+
+    expect(await readStorageStats(client)).toEqual([
+      {
+        name: "Main Database",
+        location: "/tmp/libredb-duckdb/warehouse.duckdb",
+        size: "2 MB",
+        sizeBytes: 2097152,
+      },
+    ]);
+  });
+
   test("a checkpointed file with no .wal lists no WAL row", async () => {
     const client = stubClient([
       ["pragma_database_size()", [DB_SIZE_ROW]],
