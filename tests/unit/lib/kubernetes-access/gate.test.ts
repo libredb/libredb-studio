@@ -104,9 +104,14 @@ describe("connections, with the review on", () => {
   test("keeps a reviewed connection only where the review allows get on its Secret, and never reviews another", async () => {
     api.grants = [getSecret("u-rjs2h", "team-a", "orders-app")];
     expect(await connectionsUnderAccessReview(DEV_A, [ORDERS, ANALYTICS, PLAIN])).toEqual([ORDERS, PLAIN]);
-    expect(api.seen.map((seen) => seen.body.spec?.resourceAttributes)).toEqual([
-      { verb: "get", group: "", resource: "secrets", namespace: "team-a", name: "orders-app" },
+    // The reviews of one list run together, so they reach the server in either order.
+    expect(
+      api.seen
+        .map((seen) => seen.body.spec?.resourceAttributes)
+        .sort((a, b) => String(a?.name).localeCompare(String(b?.name))),
+    ).toEqual([
       { verb: "get", group: "", resource: "secrets", namespace: "team-b", name: "analytics-app" },
+      { verb: "get", group: "", resource: "secrets", namespace: "team-a", name: "orders-app" },
     ]);
     expect(api.seen.every((seen) => seen.body.spec?.user === "u-rjs2h")).toBe(true);
   });

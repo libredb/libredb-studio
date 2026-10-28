@@ -428,6 +428,14 @@ describe("routes that reach a provider require a session", () => {
     "@/lib/governance/visible":
       "lists the connections a session may see: without governance through @/lib/seed, and under governance from the in-process governance snapshot by the session's grants; opens nothing, the governance source included",
     "@/lib/is-record": "a plain-object type guard; data only",
+    "@/lib/kubernetes-access/config":
+      "reads KUBERNETES_ACCESS_REVIEW and the other KUBERNETES_ACCESS_REVIEW_* settings from process.env; opens nothing",
+    "@/lib/kubernetes-access/gate":
+      "the access review's sign-in and admin decisions: SubjectAccessReviews sent to the Kubernetes API with the pod's ServiceAccount token, never a database or LLM provider",
+    "@/lib/kubernetes-access/groups":
+      "the in-process groups store and the checks of the ID token's groups claim and subject; data only, opens nothing",
+    "@/lib/kubernetes-access/session-guard":
+      "decides from the in-process groups store whether a session keeps its groups record, and names the retry marker cookie; opens nothing",
     "@/lib/launch/config": "reads the three LAUNCH_TOKEN_* variables; opens nothing",
     "@/lib/launch/verify":
       "verifies a launch token with jose and spends its jti in an in-process map; computation only",

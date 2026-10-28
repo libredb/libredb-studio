@@ -7,22 +7,17 @@
  * the reviewed connections whose Secret the review lets it get, with no credential, and neither the Secret marker nor
  * the literal marker ever leaves the server.
  */
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import * as realAuth from "@/lib/auth";
-import * as realSeed from "@/lib/seed";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import * as auth from "@/lib/auth";
+import * as seedIndex from "@/lib/seed";
 import type { ManagedConnection } from "@/lib/seed/types";
 import { type FakeKubernetesApi, startFakeKubernetesApi } from "../../helpers/kubernetes-access/fake-api";
 
 const ISSUER = "https://rancher.example.com/oidc";
-type Session = realAuth.UserPayload & { readonly groups?: readonly string[] };
+type Session = auth.UserPayload & { readonly groups?: readonly string[] };
 const DEV_A: Session = { role: "user", username: "u-rjs2h", idpSubject: "u-rjs2h", idpIssuer: ISSUER };
 
 let session: Session | null = DEV_A;
-mock.module("@/lib/auth", () => ({
-  ...realAuth,
-  getSession: mock(async () => session),
-  readSession: mock(async () => (session ? { kind: "authenticated", session } : { kind: "anonymous" })),
-}));
 
 function reviewed(id: string, namespace: string, secret: string): ManagedConnection {
   return {
@@ -61,17 +56,12 @@ const SOURCE: ManagedConnection[] = [
   },
 ];
 
-// Copies, as the real loader hands out: the route must not depend on a shared object.
-mock.module("@/lib/seed", () => ({
-  ...realSeed,
-  getManagedConnections: mock(async () => SOURCE.map((connection) => ({ ...connection }))),
-}));
-
 const { GET } = await import("@/app/api/connections/managed/route");
 const { recordGroups, resetGroupRecords } = await import("@/lib/kubernetes-access/groups");
 const { resetAccessReviewDecisions } = await import("@/lib/kubernetes-access/decisions");
 
 let api: FakeKubernetesApi;
+const spies: { mockRestore(): void }[] = [];
 
 beforeAll(async () => {
   api = await startFakeKubernetesApi();
@@ -93,9 +83,20 @@ beforeEach(() => {
   api.grants = [
     { user: "u-rjs2h", verb: "get", apiGroup: "", resource: "secrets", namespace: "team-a", name: "orders-app" },
   ];
+  spies.push(
+    spyOn(auth, "getSession").mockImplementation(async () => session),
+    spyOn(auth, "readSession").mockImplementation(async () =>
+      session ? { kind: "authenticated", session } : { kind: "anonymous" },
+    ),
+    // Copies, as the real loader hands out: the route must not depend on a shared object.
+    spyOn(seedIndex, "getManagedConnections").mockImplementation(async () =>
+      SOURCE.map((connection) => ({ ...connection })),
+    ),
+  );
 });
 
 afterEach(() => {
+  for (const spy of spies.splice(0)) spy.mockRestore();
   api.restoreEnv();
   delete process.env.KUBERNETES_ACCESS_REVIEW;
   delete process.env.AUTH_SESSION_TTL_SECONDS;
