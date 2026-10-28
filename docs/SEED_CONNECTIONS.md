@@ -1145,7 +1145,7 @@ It has no dependency and no listening port, writes nothing to its filesystem, an
 
 Every `KUBERNETES_DISCOVERY_INTERVAL_MS` (30 seconds by default) it:
 
-1. lists the CloudNativePG `Cluster` objects of each namespace in `KUBERNETES_DISCOVERY_NAMESPACES`, 50 per page;
+1. lists the CloudNativePG `Cluster` objects of each namespace in `KUBERNETES_DISCOVERY_NAMESPACES`, 10 per page, so a full page of the largest objects etcd keeps by default, 1.5 MiB each, stays under its 16 MiB bound on an answer;
 2. gets each Cluster's credential Secret by the name [the contract](#the-cloudnativepg-contract) gives it, and keeps it only when it belongs to that Cluster;
 3. keeps the Secret's `username`, `password`, `dbname` and `port`, decoded, and of the Cluster only its namespace, its name and the two initdb fields the contract reads;
 4. writes one export into the Secret `KUBERNETES_DISCOVERY_EXPORT_SECRET` names, under the key `export.json`: it reads that Secret, replaces only its data, keeps its labels, annotations and type, and updates it with the resourceVersion it read as the precondition, so a write that crosses another one is refused, read again and retried once.
@@ -1193,11 +1193,16 @@ Whoever may create a Cluster in a discovered namespace chooses the read-write Se
 A Secret that fails the rule is exported as `not_owned`, without its values, and the connection of a Secret that passes always names the Secret the exporter read, which is the one the access review asks about.
 
 A 403 on a namespace's list, where the exporter's Role is missing, and a 404, where the CloudNativePG CRD is not installed, are answers about that namespace: its databases are withdrawn, the export says why, and the other namespaces are exported.
+So are a list page over 16 MiB and a list that does not end within 100 pages, both `limit_exceeded`, because a namespace's editors decide how many and how large its Clusters are.
+A namespace that fails on a later page loses what its earlier pages found too.
 Any other failure fails the whole scan: an unreachable API server, a 401, a 5xx or an answer that is not a list.
 The export then keeps the namespaces, databases and `generatedAt` of the last good scan and updates only the status and `checkedAt`, as the CapRover exporter does.
 A Secret that is missing, forbidden, or holds a kept value over 1024 bytes or one that is not UTF-8 text is exported with that problem and without its values.
 A Cluster whose name, namespace or initdb Secret name is not a Kubernetes name is left out, and no request is built from it.
-Past 500 databases, or past 983040 bytes of export (a Secret holds at most 1 MiB), the rest is cut in order and the status is `limit_exceeded`.
+So is a Cluster whose `.spec.bootstrap.initdb.database` is not 1 to 63 characters, PostgreSQL's bound on a name, because Studio's schema would refuse the whole export for it, and leaving the field out would connect to another database.
+Past 500 databases, or past 983040 bytes of export (a Secret holds at most 1 MiB), the namespaces share the bound fairly and the status is `limit_exceeded`.
+Each namespace keeps its databases in list order up to its share, and a namespace that needs less than an equal share leaves the rest to the others, so the editors of one namespace cannot push another namespace's databases out of the export by creating Clusters.
+Only the databases within a share have their Secret read, and the exporter stops listing a namespace once it holds more databases than the bound could take.
 It reads its token and CA files again for every request, so a rotated projected token is used at once, and it refuses a CA file that holds no certificate before any connection.
 It never logs a value: its log has one summary line per changed scan outcome, and the API server's own message for a refusal.
 Its variables are listed in `.env.example` under "Kubernetes Discovery Exporter".
@@ -1222,6 +1227,7 @@ The golden fixture `tests/fixtures/kubernetes-discovery-golden.json` pins the th
 ### What every Kubernetes-discovered connection gets
 
 - id `k8s-cnpg-` followed by the first 12 hex characters of sha256 of `<namespace>/<name>`, name `<namespace>/<name> (CloudNativePG)`, group `<namespace>`; one Studio serves one cluster, so the cluster is not part of the id;
+- when the name would be over the seed schema's 128 characters, the start of `<namespace>/<name>` is cut to `…`, keeping the Cluster's name at its end, and the group still shows the namespace whole;
 - the link `/?connection=seed%3A<id>` opens it ([Linking to a Connection](#linking-to-a-connection));
 - `ssl: { mode: "require" }`, `managed: true`, no `mcp`, no `readOnly` and no `connectionString`, all set in code and never read from the export;
 - roles `*` while `KUBERNETES_ACCESS_REVIEW` is on, so the review is its only gate, and `admin` while it is off, read from the switch on every request;
@@ -1240,7 +1246,7 @@ The default is longer because a changed Secret reaches the pod only at the kubel
 Keep `SEED_KUBERNETES_DISCOVERY_MAX_AGE_MS` above `KUBERNETES_DISCOVERY_INTERVAL_MS` plus 90 seconds.
 A role removed in the cluster does not wait for the export: with the access review on, the review decides each list and open within its own cache lifetime.
 A namespace removed from `KUBERNETES_DISCOVERY_NAMESPACES`, which restarts the exporter, leaves the export at its next scan, and Studio withdraws its databases once the kubelet shows that export.
-The exporter's codes are `api_unreachable`, `credentials_unavailable`, `unauthorized`, `api_error` and `limit_exceeded`; a namespace it could not read carries `forbidden` or `crd_missing`.
+The exporter's codes are `api_unreachable`, `credentials_unavailable`, `unauthorized`, `api_error` and `limit_exceeded`; a namespace it could not read carries `forbidden`, `crd_missing` or `limit_exceeded`.
 A write the exporter cannot make, to an export Secret that is missing or that its Role may not update, writes nothing, so Studio reads the last export it wrote until that turns stale; the exporter logs each failed write.
 
 ### Kubernetes admin status
@@ -1271,6 +1277,7 @@ Its roles are `*`, so the review is its only gate, for admins and users alike:
   With the review on, so does a seed the caller's role may not see, which answers 403 otherwise; each miss is audited as `permission_denied` on the target `kubernetes-access/connection`.
   Only the timing differs: the first open of an existing reviewed id within one cache lifetime waits one review round trip, which an unknown id never does, so a caller who times its requests can tell that a reviewed id exists, though not what it holds.
 - An answer is kept for `KUBERNETES_ACCESS_REVIEW_CACHE_SECONDS`, 30 by default and at most 60, per subject, set of groups and Secret. A role or binding removed in the cluster reaches the next list or open within that time; an open tab drops the connection at its next list refresh after it ([In an open tab](#in-an-open-tab)).
+- One list runs at most 16 reviews at a time, so a list of many discovered databases does not send every review to the API server at once.
 - With the review off, a reviewed connection is shown to the admin role only, as a discovered CapRover connection is.
 
 The review asserts no group that starts with `system:`.
@@ -1585,7 +1592,7 @@ This is expected: deleting a `managed: false` connection adds its seed ID to `li
 3. `waiting`: the export file does not exist yet.
    Check that Studio mounts the export Secret where `SEED_KUBERNETES_DISCOVERY_PATH` points, and that the exporter's log says `scan ok`.
 4. `stale`: the exporter stopped writing, or its writes fail, and its log says `write failed` with the reason, such as an export Secret that does not exist or a Role without `update` on it.
-5. A namespace with `forbidden`: the exporter's ServiceAccount may not `list` `clusters.postgresql.cnpg.io` there; with `crd_missing`, CloudNativePG is not installed.
+5. A namespace with `forbidden`: the exporter's ServiceAccount may not `list` `clusters.postgresql.cnpg.io` there; with `crd_missing`, CloudNativePG is not installed; with `limit_exceeded`, its Clusters are too large or too many to list, and the message says which.
 6. A database in the skipped list carries its reason: a credential Secret that does not exist, that the exporter may not read, or that does not belong to its Cluster, a field the Secret lacks, or an id the seed file already uses.
 
 ---
