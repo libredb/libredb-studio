@@ -37,6 +37,7 @@ let capturedAgentRailProps: Record<string, unknown> = {};
 let capturedProfilerProps: Record<string, unknown> = {};
 let capturedCodeGenProps: Record<string, unknown> = {};
 let capturedTestDataProps: Record<string, unknown> = {};
+let capturedCreateTableProps: Record<string, unknown> = {};
 let originalFetch: typeof globalThis.fetch;
 let originalMatchMedia: typeof window.matchMedia;
 
@@ -474,6 +475,7 @@ mock.module("@/components/CreateTableModal", () => ({
   CreateTableModal: (props: { isOpen?: boolean; container?: readonly string[] }) => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
+    capturedCreateTableProps = props;
     return props.isOpen
       ? React.createElement(
           "div",
@@ -615,6 +617,7 @@ describe("Studio", () => {
     capturedProfilerProps = {};
     capturedCodeGenProps = {};
     capturedTestDataProps = {};
+    capturedCreateTableProps = {};
 
     // Reset overrides
     connMgrOverride = {};
@@ -1495,6 +1498,13 @@ describe("Studio", () => {
       await (capturedTestDataProps.onExecuteQuery as (sql: string) => unknown)("INSERT 1");
     });
     expect(mockExecuteQuery).toHaveBeenLastCalledWith("INSERT 1", undefined, false, { catalog: "shop" });
+
+    // A table created from a folder in another database is created there too.
+    act(() => sidebarActions().onCreateObject?.(["shop", "dbo"]));
+    await act(async () => {
+      await (capturedCreateTableProps.onTableCreated as (sql: string) => unknown)("CREATE TABLE t (id int)");
+    });
+    expect(mockExecuteQuery).toHaveBeenLastCalledWith("CREATE TABLE t (id int)", undefined, false, { catalog: "shop" });
 
     // The tree is where the database is chosen and shown: activating a database or anything inside
     // one makes it active, the active one again changes nothing, and its row is the current one.
