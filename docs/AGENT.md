@@ -2798,13 +2798,14 @@ Agent mode reads statements in three statement languages, `sql`, `kubectl` and `
 The agent imports the database layer, and the database layer never imports the agent.
 The core (`investigation.ts`, `tools.ts` and the modules beside them) names no statement language a pack owns and no engine, which the guard at the end of this section holds.
 
-**The interface.** `AgentLanguagePack` in `languages/pack.ts` has three facets, one per tier:
+**The interface.** `AgentLanguagePack` in `languages/pack.ts` has three facets, one per tier, and each language declares a fourth, its MCP facet, beside them:
 
 | Facet | Tier rule | What it holds | Read through |
 | --- | --- | --- | --- |
 | `client` | Browser-safe: it reaches no server module and no `node:` builtin | the copy, the workflow variants, the plan-estimate operation and the posture sentences | `languageClientPack` |
 | `server` | Below `tools.ts`: it never reaches the execution tier | the adapter, the tool overrides and base definitions, the recommendation card, grounding, the tool rules and the shortfall notices | `languageServerPack` |
 | `execution` | Above `tools.ts`: only the run loop reads it | the tool arms and the evidence tools | `agentLanguagePack` |
+| `mcp` | Data only: it never reaches the execution tier or `src/lib/mcp/`, which reads it | the MCP statement tool's name and title, the statement argument's input field, the `database` key and paging mode, `holdsNoTables`, the description, and the words its refusals and cut results use | `AGENT_LANGUAGE_MCP_FACETS` in `languages/mcp.ts` |
 
 **The three member kinds.**
 
@@ -2860,11 +2861,16 @@ Every member an overlay cannot override stays keyed by the persisted family, so 
 4. Add the `Agent language pack` subsection to `docs/providers/<type-id>.md`, which `tests/unit/lib/agent/engine-docs.test.ts` holds to the overlay row for row.
 5. Run `engine-overlays.test.ts` and `engine-pack-contract.test.ts` under `tests/unit/lib/agent/`, which read the engine list from the manifest, so the new engine joins every case.
 
-**The guard.** `tests/unit/lib/agent/language-boundary.test.ts` reads every core file under `src/lib/agent/` outside `languages/`, and its allowlist holds each finding the core keeps on purpose with an exact count:
+**Where a new statement language's MCP tool lives.** In its own pack, at `languages/<statement-language>/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS` in `languages/mcp.ts`.
+That registry is total over `AgentStatementLanguageId`, so a new language does not compile until it declares its facet, or `null` while it has no MCP tool.
+`src/lib/mcp/tools/statement-arms.ts` builds every statement tool from the registry and names no language, and the tool names MCP keeps, the audit actions, `list_connections`' `read_tool` and the route's schema map, are derived from it, so the language edits no file under `src/lib/mcp/`.
+The tool serves an engine only once that engine's `MCP_STATEMENT_READ` row in `src/lib/db/compatibility.ts` opens it.
+
+**The guard.** `tests/unit/lib/agent/language-boundary.test.ts` reads every core file under `src/lib/agent/` outside `languages/`, and every file under `src/lib/mcp/`, and its allowlist holds each finding they keep on purpose with an exact count:
 
 - R1: no pack id other than `sql` as a literal, a property or part of an identifier, and no operation, verifier or fingerprint id that starts with one.
 - R2: no import of a module that belongs to one pack, only of the shared entries of `languages/`.
-- R3: the tiers hold: no server module reaches the execution tier, no client pack reaches a server module or a builtin, and no runtime cycle passes through `languages/`.
+- R3: the tiers hold: no server module reaches the execution tier, no client pack reaches a server module or a builtin, no MCP facet reaches the execution tier or `src/lib/mcp/`, and no runtime cycle passes through `languages/`.
 - R4: the allowlist is exact, so it can only shrink.
 - R5: no `sql` literal, no `sql` read off a language-keyed table, no id that starts with `sql`, and an exact count of the references to `DEFAULT_STATEMENT_LANGUAGE` and `CURATED_CALL_LANGUAGE`.
 - R6: every engine overlay is declared `satisfies` its overlay type, so the excess-property check holds it to its family's dialect.
