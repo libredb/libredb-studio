@@ -91,7 +91,9 @@ async function listeningAgent(
       .filter((oid) => !quirks.omit?.has(oid))
       .map((oid) => {
         const value =
-          status === 0 ? (values.get(oid) ?? { tag: 0x80, bytes: new Uint8Array(0) }) : { tag: 0x05, bytes: new Uint8Array(0) };
+          status === 0
+            ? (values.get(oid) ?? { tag: 0x80, bytes: new Uint8Array(0) })
+            : { tag: 0x05, bytes: new Uint8Array(0) };
         return writeSequence([writeOid(oid.split(".").map(Number)), writeField(value.tag, value.bytes)]);
       });
     const answer = writeSequence([
@@ -526,11 +528,9 @@ describe("health is read from the agent, and claims nothing the agent did not sa
   });
 
   test("an answer that leaves an object out is said to have answered nothing for it", async () => {
-    const port = await listeningAgent(
-      [],
-      new Map([[SYS_UPTIME.join("."), { tag: 0x43, bytes: Uint8Array.of(1) }]]),
-      { omit: new Set([SYS_DESCR.join(".")]) },
-    );
+    const port = await listeningAgent([], new Map([[SYS_UPTIME.join("."), { tag: 0x43, bytes: Uint8Array.of(1) }]]), {
+      omit: new Set([SYS_DESCR.join(".")]),
+    });
     opened = new SnmpProvider(connectionTo(port));
     await opened.connect();
     const health = await opened.getHealth();
