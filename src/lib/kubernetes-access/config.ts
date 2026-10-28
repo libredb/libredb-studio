@@ -32,8 +32,8 @@ const DEFAULT_TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 const DEFAULT_CA_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt";
 /**
  * Who may sign in: a cluster member. Rancher's NavLinks are readable to every role a cluster grants and to no one
- * without a role in the cluster (probe P12 on Rancher 2.15.2), which a review of the subject's own Secret access
- * cannot tell apart.
+ * without a role in the cluster (measured on Rancher 2.15.2), which a review of the subject's own Secret access cannot
+ * tell apart.
  */
 const DEFAULT_SIGN_IN = "list navlinks.ui.cattle.io";
 const DEFAULT_CACHE_SECONDS = 30;

@@ -17,8 +17,9 @@
  * `ok   <case>` or `FAIL <case>` with the reason, exits non-zero when any case failed, and deletes everything it created
  * either way.
  *
- * On a Rancher downstream cluster it can also replay what Rancher decides for real users (probes P3 and P12), with the
- * identities passed in, never written here:
+ * On a Rancher downstream cluster it can also replay what Rancher decides for real users, a Project Member allowed and
+ * a Read Only member denied a Secret and a user without a role in the cluster refused at sign-in, with the identities
+ * passed in, never written here:
  *   LIBREDB_LIVE_SIGN_IN_ROLES="<user id>=admin|user|refused,..."  the role each Rancher user id signs in with, under
  *     the default sign-in review and KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT, which the caller sets
  *   LIBREDB_LIVE_SECRET_DECISIONS="<user id>@<namespace>/<secret>=allowed|denied,..."  get on a Secret, no groups
@@ -318,7 +319,7 @@ const CASES: LiveCase[] = [
     },
   },
   {
-    name: "the sign-in role of each Rancher user id in LIBREDB_LIVE_SIGN_IN_ROLES (P12: a user without a role is refused)",
+    name: "the sign-in role of each Rancher user id in LIBREDB_LIVE_SIGN_IN_ROLES (a user without a role in the cluster is refused)",
     run: async () => {
       if (!process.env.LIBREDB_LIVE_SIGN_IN_ROLES) return "skipped";
       for (const [user, expected] of pairs(process.env.LIBREDB_LIVE_SIGN_IN_ROLES)) {
@@ -329,7 +330,7 @@ const CASES: LiveCase[] = [
     },
   },
   {
-    name: "the Secret decision of each case in LIBREDB_LIVE_SECRET_DECISIONS (P3: Member allowed, Read Only denied)",
+    name: "the Secret decision of each case in LIBREDB_LIVE_SECRET_DECISIONS (a Project Member allowed, Read Only denied)",
     run: async () => {
       if (!process.env.LIBREDB_LIVE_SECRET_DECISIONS) return "skipped";
       for (const [target, expected] of pairs(process.env.LIBREDB_LIVE_SECRET_DECISIONS)) {

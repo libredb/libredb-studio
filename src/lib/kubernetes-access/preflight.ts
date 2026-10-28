@@ -32,7 +32,10 @@ import {
   accessReviewTokenPath,
 } from "./config";
 
-/** D8: the longest session the review's mode allows, in seconds. */
+/**
+ * The longest session the review's mode allows, in seconds: a session keeps the groups of its sign-in, and signing out
+ * of the identity provider does not end it.
+ */
 const MAX_SESSION_SECONDS = 900;
 /** The spellings that switch MCP (`src/lib/mcp/config.ts`) or the agent (`src/lib/agent/config.ts`) off. */
 const SWITCH_OFF = new Set(["false", "off", "0"]);
