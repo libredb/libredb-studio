@@ -46,6 +46,7 @@ import {
   type LibSQLStatement,
   type LibSQLStatementResult,
   type LibSQLTransport,
+  LibSQLBodyLimitError,
   LibSQLTransportError,
 } from "./transport";
 
@@ -417,6 +418,31 @@ function authorizationFor(config: DatabaseConnection): string | undefined {
   return config.password ? `Bearer ${config.password}` : undefined;
 }
 
+/**
+ * The body read in chunks, counted in bytes, and abandoned at the first chunk that takes it past `limit`: the reader is
+ * cancelled, which closes the exchange, so the rest of an oversized answer is never pulled into memory. A body read
+ * whole is decoded once, so a character split across two chunks still decodes as one.
+ */
+async function readCappedBody(response: Response, limit: number): Promise<string> {
+  if (response.body === null) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let bytesRead = 0;
+  for (;;) {
+    // oxlint-disable-next-line no-await-in-loop -- a stream is read one chunk at a time, each counted before the next.
+    const { done, value } = await reader.read();
+    if (done) break;
+    bytesRead += value.byteLength;
+    if (bytesRead > limit) {
+      // oxlint-disable-next-line no-await-in-loop -- the read stops here; the loop does not continue past the cancel.
+      await reader.cancel();
+      throw new LibSQLBodyLimitError(bytesRead, limit);
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 // ============================================================================
 // Transport
 // ============================================================================
@@ -435,7 +461,7 @@ export class LibSQLHranaTransport implements LibSQLTransport {
   }
 
   public async execute(sql: string, options: LibSQLExecuteOptions = {}): Promise<LibSQLStatementResult> {
-    const [outcome] = await this.pipeline([{ sql, params: options.params }], options.timeoutMs);
+    const [outcome] = await this.pipeline([{ sql, params: options.params }], options);
     // A single statement raises its own failure rather than handing one back: the
     // caller asked one question, so there is no other panel for the answer to
     // cost. `executeBatch` is the shape for the other case.
@@ -448,7 +474,7 @@ export class LibSQLHranaTransport implements LibSQLTransport {
     options: LibSQLExecuteOptions = {},
   ): Promise<LibSQLBatchOutcome[]> {
     if (statements.length === 0) return [];
-    return this.pipeline(statements, options.timeoutMs);
+    return this.pipeline(statements, options);
   }
 
   /**
@@ -459,7 +485,7 @@ export class LibSQLHranaTransport implements LibSQLTransport {
    * continue it; a provider that never continues one must close it in the same
    * request, or every call leaves a stream for the server to time out.
    */
-  private async pipeline(statements: LibSQLStatement[], timeoutMs?: number): Promise<LibSQLBatchOutcome[]> {
+  private async pipeline(statements: LibSQLStatement[], options: LibSQLExecuteOptions): Promise<LibSQLBatchOutcome[]> {
     const requests: Record<string, unknown>[] = statements.map((statement) => {
       const stmt: Record<string, unknown> = { sql: statement.sql };
       // Omitted rather than sent empty: an `args` member on a statement with no
@@ -470,7 +496,7 @@ export class LibSQLHranaTransport implements LibSQLTransport {
     });
     requests.push({ type: "close" });
 
-    const text = await this.send(PIPELINE_PATH, JSON.stringify({ requests }), timeoutMs);
+    const text = await this.send(PIPELINE_PATH, JSON.stringify({ requests }), options.timeoutMs, options.maxBodyBytes);
 
     const envelope = asRecord(parseJson(text)) as HranaPipelineEnvelope | null;
     const results = envelope?.results;
@@ -507,13 +533,23 @@ export class LibSQLHranaTransport implements LibSQLTransport {
     return Promise.resolve();
   }
 
+  /** The capped read, with a stream that fails part-way leaving as the seam's own error, as a failed fetch does. */
+  private async readCapped(response: Response, maxBodyBytes: number, url: string): Promise<string> {
+    try {
+      return await readCappedBody(response, maxBodyBytes);
+    } catch (cause) {
+      if (cause instanceof LibSQLBodyLimitError) throw cause;
+      throw new LibSQLTransportError(`libSQL request failed: ${describeFetchFailure(cause, url)}`, 0);
+    }
+  }
+
   private headers(): Record<string, string> {
     const headers: Record<string, string> = { "content-type": "application/json" };
     if (this.authorization) headers.authorization = this.authorization;
     return headers;
   }
 
-  private async send(path: string, body: string, timeoutMs?: number): Promise<string> {
+  private async send(path: string, body: string, timeoutMs?: number, maxBodyBytes?: number): Promise<string> {
     const url = endpointUrl(this.origin, path);
     let response: Response;
     try {
@@ -533,7 +569,8 @@ export class LibSQLHranaTransport implements LibSQLTransport {
       throw new LibSQLTransportError(`libSQL request failed: ${describeFetchFailure(cause, url)}`, 0);
     }
 
-    const text = await response.text();
+    const text =
+      maxBodyBytes === undefined ? await response.text() : await this.readCapped(response, maxBodyBytes, url);
     rejectRedirect(response, url);
     if (!response.ok) throw httpError(response.status, text);
     return text;

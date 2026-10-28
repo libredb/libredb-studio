@@ -19,7 +19,7 @@
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { LibSQLHranaTransport } from "@/lib/db/providers/sql/libsql/hrana-transport";
-import { LibSQLTransportError } from "@/lib/db/providers/sql/libsql/transport";
+import { LibSQLBodyLimitError, LibSQLTransportError } from "@/lib/db/providers/sql/libsql/transport";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
 import type { DatabaseConnection, DatabaseType } from "@/lib/db/types";
 
@@ -1104,5 +1104,134 @@ describe("LibSQLHranaTransport executeBatch", () => {
     handler = () => respond("<html>proxy</html>");
 
     await expect(transport().executeBatch([{ sql: "SELECT 1" }])).rejects.toThrow(/not a libSQL answer/);
+  });
+});
+
+// ============================================================================
+// The body cap
+// ============================================================================
+
+/** A response whose body arrives as `chunks`, recording how many were pulled and whether the reader cancelled. */
+function streamed(
+  chunks: string[],
+  status = 200,
+): { response: Response; pulled: () => number; cancelled: () => boolean } {
+  let index = 0;
+  let wasCancelled = false;
+  const encoder = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (index >= chunks.length) {
+        controller.close();
+        return;
+      }
+      controller.enqueue(encoder.encode(chunks[index++]));
+    },
+    cancel() {
+      wasCancelled = true;
+    },
+  });
+  return { response: new Response(body, { status }), pulled: () => index, cancelled: () => wasCancelled };
+}
+
+async function captureError(run: () => Promise<unknown>): Promise<Error> {
+  try {
+    await run();
+  } catch (error) {
+    return error as Error;
+  }
+  throw new Error("expected a rejection");
+}
+
+describe("LibSQLHranaTransport body cap", () => {
+  test("reads an answer within the cap whole", async () => {
+    const result = await transport().execute("SELECT name, type FROM sqlite_master", { maxBodyBytes: 4096 });
+
+    expect(result.rows).toEqual([{ name: "probe_customers", type: "table" }]);
+  });
+
+  test("an answer of exactly the cap is read", async () => {
+    const body = JSON.stringify(pipeline(okStep(masterResult())));
+    handler = () => respond(body);
+
+    const result = await transport().execute("SELECT 1", { maxBodyBytes: Buffer.byteLength(body) });
+
+    expect(result.rows).toHaveLength(1);
+  });
+
+  // The cap stops the READ: the chunks after the one that crosses it are never pulled, and the stream is cancelled,
+  // which closes the connection the server is still writing to.
+  test("stops reading at the chunk that crosses the cap and names what it read", async () => {
+    const body = streamed(["a".repeat(600), "b".repeat(600), "c".repeat(600), "d".repeat(600)]);
+    handler = () => body.response;
+
+    const error = await captureError(() => transport().execute("SELECT 1", { maxBodyBytes: 1000 }));
+
+    expect(error).toBeInstanceOf(LibSQLBodyLimitError);
+    expect(error).toBeInstanceOf(LibSQLTransportError);
+    const limited = error as LibSQLBodyLimitError;
+    expect(limited.bytesRead).toBe(1200);
+    expect(limited.limit).toBe(1000);
+    expect(limited.status).toBe(0);
+    expect(limited.message).toBe("libSQL answered more than 1000 bytes");
+    expect(body.pulled()).toBeLessThan(4);
+    expect(body.cancelled()).toBe(true);
+  });
+
+  test("counts bytes, not characters", async () => {
+    handler = () => respond("ş".repeat(600));
+
+    const error = await captureError(() => transport().execute("SELECT 1", { maxBodyBytes: 1000 }));
+
+    expect((error as LibSQLBodyLimitError).bytesRead).toBe(1200);
+  });
+
+  test("a refusal's body is capped too", async () => {
+    handler = () => respond("x".repeat(50), { status: 403 });
+
+    expect(await captureError(() => transport().execute("SELECT 1", { maxBodyBytes: 10 }))).toBeInstanceOf(
+      LibSQLBodyLimitError,
+    );
+  });
+
+  test("a refusal within the cap keeps its status", async () => {
+    handler = () => respond({ error: "Authorization forbidden" }, { status: 403 });
+
+    const error = await captureError(() => transport().execute("SELECT 1", { maxBodyBytes: 1000 }));
+
+    expect(error).not.toBeInstanceOf(LibSQLBodyLimitError);
+    expect((error as LibSQLTransportError).status).toBe(403);
+  });
+
+  test("an answer with no body under a cap is not an envelope", async () => {
+    handler = () => new Response(null, { status: 200 });
+
+    expect((await captureError(() => transport().execute("SELECT 1", { maxBodyBytes: 10 }))).message).toMatch(
+      /not a libSQL answer/,
+    );
+  });
+
+  test("a stream that fails part-way leaves as the seam's own error, with status 0", async () => {
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.error(new Error("socket hang up"));
+      },
+    });
+    handler = () => new Response(body, { status: 200 });
+
+    const error = await captureError(() => transport().execute("SELECT 1", { maxBodyBytes: 100 }));
+
+    expect(error).not.toBeInstanceOf(LibSQLBodyLimitError);
+    expect(error).toBeInstanceOf(LibSQLTransportError);
+    expect((error as LibSQLTransportError).status).toBe(0);
+    expect(error.message).toBe("libSQL request failed: socket hang up");
+  });
+
+  test("a batch's answer is capped the same way", async () => {
+    handler = () => respond(pipeline(okStep(masterResult())));
+
+    expect(
+      await captureError(() => transport().executeBatch([{ sql: "SELECT 1" }], { maxBodyBytes: 10 })),
+    ).toBeInstanceOf(LibSQLBodyLimitError);
   });
 });
