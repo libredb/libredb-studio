@@ -37,6 +37,7 @@ const RUN_READ_QUERY_ARM = mcpStatementArm("run_read_query");
 const RUN_KUBECTL_READ_ARM = mcpStatementArm("run_kubectl_read");
 const RUN_MONGO_COMMAND_ARM = mcpStatementArm("run_mongo_command");
 const RunKubectlReadInputSchema = RUN_KUBECTL_READ_ARM.inputSchema;
+const RunReadQueryInputSchema = RUN_READ_QUERY_ARM.inputSchema;
 const RunMongoCommandInputSchema = RUN_MONGO_COMMAND_ARM.inputSchema;
 
 /** True only when `A` and `B` are the same union, member for member. */
@@ -143,6 +144,23 @@ describe("the SQL arm", () => {
     expect(RUN_READ_QUERY_ARM.tooLarge("SELECT 1")).toEqual({});
   });
 
+  test("takes a database, drops an unknown key rather than refusing it, and refuses an empty statement in its own words", () => {
+    expect(RUN_READ_QUERY_ARM.title).toBe("Run a read-only query");
+    expect(RUN_READ_QUERY_ARM.inputSchema.shape).toHaveProperty("database");
+    const parsed = RunReadQueryInputSchema.safeParse({
+      connection_id: "seed:s",
+      sql: "SELECT 1",
+      database: "app",
+      extra: 1,
+    });
+    expect(parsed.success).toBe(true);
+    expect(parsed.data).toMatchObject({ connection_id: "seed:s", sql: "SELECT 1", database: "app" });
+    expect(parsed.data).not.toHaveProperty("extra");
+    const empty = RunReadQueryInputSchema.safeParse({ connection_id: "seed:s", sql: "" });
+    expect(empty.success).toBe(false);
+    expect(empty.error?.issues.map((issue) => issue.message)).toEqual(["SQL cannot be empty"]);
+  });
+
   test("sends a client on another engine to the read_tool list_connections names, not to inspect_schema", () => {
     expect(RUN_READ_QUERY_ARM.description).toContain(
       `Runs on ${RUN_READ_QUERY_ARM.engines}; other engines refuse it, and list_connections' read_tool names the tool that reads each connection.`,
@@ -156,6 +174,7 @@ describe("the MongoDB arm", () => {
   const find = JSON.stringify({ collection: "orders", operation: "find" });
 
   test("takes the command object, no offset, and sends the command as written", () => {
+    expect(RUN_MONGO_COMMAND_ARM.title).toBe("Run a read-only MongoDB command");
     expect(RUN_MONGO_COMMAND_ARM.argument).toBe("command");
     expect(RUN_MONGO_COMMAND_ARM.paging).toBe("none");
     expect(RUN_MONGO_COMMAND_ARM.inputSchema.shape).not.toHaveProperty("offset");
@@ -221,6 +240,9 @@ describe("the MongoDB arm", () => {
       `More rows exist than this result holds, and this tool does not page with offset. ${server.rowCapAdvice(find, "100")} To read past the 100 rows returned, skip them with a find's "skip" or a $skip stage.`,
     );
     expect(RUN_MONGO_COMMAND_ARM.rowOverCap).not.toContain("column");
+    expect(RUN_MONGO_COMMAND_ARM.rowOverCap).toBe(
+      "One row of this result is larger than the 32 KiB result limit. Narrow the read to fewer or smaller fields, and run it again.",
+    );
   });
 
   test("a cut at the result cap advises fewer fields and skipping the rows that fitted, never the same limit", () => {
@@ -237,6 +259,7 @@ describe("the kubectl arm", () => {
   const server = languageServer("kubectl");
 
   test("takes one statement line, no offset and no database, and sends it as written", () => {
+    expect(RUN_KUBECTL_READ_ARM.title).toBe("Run a read-only kubectl read");
     expect(RUN_KUBECTL_READ_ARM.argument).toBe("statement");
     expect(RUN_KUBECTL_READ_ARM.paging).toBe("none");
     expect(RUN_KUBECTL_READ_ARM.types).toEqual(["kubernetes"]);
