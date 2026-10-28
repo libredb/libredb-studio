@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { DatabaseConfigError } from "@/lib/db/errors";
 import { createSocket, type Socket } from "node:dgram";
 
 import {
@@ -10,6 +11,7 @@ import {
   writeSequence,
 } from "@/lib/db/providers/network/snmp/ber";
 import { SnmpProvider } from "@/lib/db/providers/network/snmp";
+import { SNMP_NO_COUNT } from "@/lib/db/providers/network/snmp/labels";
 import { MIB_TABLES } from "@/lib/db/providers/network/snmp/mib-objects";
 import { StatementError } from "@/lib/db/providers/network/snmp/statement";
 import type { DatabaseConnection } from "@/lib/types";
@@ -219,6 +221,28 @@ describe("a statement reaches a real agent and its answer reaches the caller", (
     expect(String(result.rows[0].value)).not.toBe("");
   });
 
+  test("with no MIB entry, an IpAddress, a Counter64 and an Opaque are read by the tag the agent put on them", async () => {
+    // An enterprise arc no bundled module names, so nothing but the tag decides the rendering.
+    const base = "1.3.6.1.4.1.99999";
+    const port = await listeningAgent(
+      [],
+      new Map([
+        [`${base}.1.0`, { tag: 0x40, bytes: Uint8Array.of(10, 0, 0, 1) }],
+        [`${base}.2.0`, { tag: 0x46, bytes: Uint8Array.of(1, 0, 0, 0, 0, 0, 0, 0) }],
+        [`${base}.3.0`, { tag: 0x44, bytes: Uint8Array.of(0xde, 0xad) }],
+      ]),
+    );
+    opened = new SnmpProvider(connectionTo(port));
+    await opened.connect();
+    const result = await opened.query(`get ${base}.1.0 ${base}.2.0 ${base}.3.0`);
+    const shown = result.rows.map((row) => String(row.value));
+    expect(shown[0]).toBe("10.0.0.1");
+    // 2^56: past what a Number holds exactly, so it travels as its decimal digits.
+    expect(shown[1]).toBe("72057594037927936");
+    expect(shown[2]).not.toBe("\u00de\u00ad");
+    expect(shown[2].toLowerCase()).toContain("dead");
+  });
+
   test("two objects travel in one request, not two", async () => {
     const seen: Seen[] = [];
     const port = await listeningAgent(
@@ -311,6 +335,42 @@ describe("a statement reaches a real agent and its answer reaches the caller", (
    * The connection's cautions and the bundled MIB notices ride with the FIRST result and then
    * stop. A notice repeated on every read is a notice an operator stops reading.
    */
+  test("an overview needs an open connection", async () => {
+    await expect(new SnmpProvider(connectionTo(1)).getOverview()).rejects.toThrow(DatabaseConfigError);
+  });
+
+  test("an overview whose answer leaves sysUpTime out says it has no figure rather than an empty one", async () => {
+    const port = await listeningAgent(
+      [],
+      new Map([
+        [SYS_DESCR.join("."), { tag: 0x04, bytes: new TextEncoder().encode("Linux agent 6.1") }],
+        [SYS_UPTIME.join("."), { tag: 0x43, bytes: Uint8Array.of(1) }],
+      ]),
+      { omit: new Set([SYS_UPTIME.join(".")]) },
+    );
+    opened = new SnmpProvider(connectionTo(port));
+    await opened.connect();
+    const overview = await opened.getOverview();
+    expect(overview.version).toBe("Linux agent 6.1");
+    expect(overview.uptime).toBe(SNMP_NO_COUNT);
+  });
+
+  test("an overview whose read gets no answer at all shows no figures rather than failing the card", async () => {
+    const port = await listeningAgent(
+      [],
+      new Map([[SYS_DESCR.join("."), { tag: 0x04, bytes: new TextEncoder().encode("Linux agent 6.1") }]]),
+    );
+    // A short deadline, so a platform that reports no refusal for a UDP datagram ends the read by silence.
+    opened = new SnmpProvider({ ...connectionTo(port), queryTimeout: 500 } as DatabaseConnection);
+    await opened.connect();
+    // The agent goes away after the connect probe: on Linux loopback the next datagram is refused at once.
+    agent?.close();
+    agent = undefined;
+    const overview = await opened.getOverview();
+    expect(overview.version).toBe(SNMP_NO_COUNT);
+    expect(overview.uptime).toBe(SNMP_NO_COUNT);
+  });
+
   test("the first result carries the notices and the second does not", async () => {
     const port = await listeningAgent(
       [],
