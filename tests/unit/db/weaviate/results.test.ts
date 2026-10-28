@@ -230,6 +230,25 @@ describe("the searches", () => {
     });
   });
 
+  test("GraphQL's score becomes a number and its explainScore stays the text it is", () => {
+    const facts = factsOf("Article");
+    const asked = model({ returnProperties: ["title"], returnMetadata: ["score", "explainScore"] });
+    const graphql = weaviateResult(
+      JSON.stringify({
+        data: {
+          Get: {
+            Article: [
+              { title: "t", _additional: { id: "a", score: "1.5", explainScore: ", BM25F_vector_frequency:2" } },
+            ],
+          },
+        },
+      }),
+      shape("search_bm25", { facts, path: "graphql", model: asked }),
+      OPTIONS,
+    );
+    expect(graphql.rows[0]).toMatchObject({ $score: 1.5, $explainScore: ", BM25F_vector_frequency:2" });
+  });
+
   test("with no property named, every plain property, then any the answer adds; a missing value is null", () => {
     const facts = factsOf("Author");
     const result = weaviateResult(
