@@ -194,6 +194,16 @@ describe("CustomProvider", () => {
       const provider = new CustomProvider(makeConfig(), NO_BACKOFF);
       await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(LLMStreamError);
     });
+
+    test("a non-JSON error body falls back to the HTTP status", async () => {
+      // A proxy in front of the endpoint answers with an HTML page, not the API's JSON error.
+      fetchSpy.mockImplementation(async () => new Response("<html>Bad Gateway</html>", { status: 502 }));
+
+      const provider = new CustomProvider(makeConfig(), NO_BACKOFF);
+      const error = await provider.stream(makeStreamOptions()).catch((err: unknown) => err);
+      expect(error).toBeInstanceOf(LLMStreamError);
+      expect((error as Error).message).toBe("Custom API error: HTTP 502");
+    });
   });
 
   // --------------------------------------------------------------------------

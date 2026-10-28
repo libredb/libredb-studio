@@ -174,6 +174,24 @@ describe("GeminiProvider", () => {
       const text = await readStream(stream);
       expect(text).toBe("");
     });
+
+    test("skips a safety-blocked chunk and keeps the rest of the stream", async () => {
+      // The SDK's chunk.text() throws when the candidate was blocked by a safety rating.
+      async function* withBlockedChunk() {
+        yield { text: () => "Hello" };
+        yield {
+          text: () => {
+            throw new Error("Candidate was blocked due to SAFETY");
+          },
+        };
+        yield { text: () => " World" };
+      }
+      mockGenerateContentStream = async () => ({ stream: withBlockedChunk() });
+
+      const provider = new GeminiProvider(makeConfig(), NO_BACKOFF);
+      const stream = await provider.stream(makeStreamOptions());
+      expect(await readStream(stream)).toBe("Hello World");
+    });
   });
 
   // --------------------------------------------------------------------------

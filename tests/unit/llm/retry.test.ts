@@ -113,6 +113,19 @@ describe("withRetry", () => {
     expect(attempts).toBe(3);
   });
 
+  test("a raw network TypeError from fetch is retried", async () => {
+    let attempts = 0;
+    const fn = mock(async () => {
+      attempts++;
+      if (attempts === 1) throw new TypeError("fetch failed");
+      return "connected on the second attempt";
+    });
+
+    const result = await withRetry(fn, { maxAttempts: 3, initialDelay: 1, maxDelay: 5 });
+    expect(result).toBe("connected on the second attempt");
+    expect(attempts).toBe(2);
+  });
+
   test("maxAttempts=1 means no retry", async () => {
     const fn = mock(async () => {
       throw new LLMRateLimitError("rate limited", "openai");
