@@ -108,6 +108,17 @@ describe("the payload shapes the facade refuses to read", () => {
     );
   });
 
+  test("a send in a shape the library does not have is refused, not guessed at", async () => {
+    const call = socket.send as unknown as (...args: unknown[]) => void;
+    expect(await send(() => call(GET, PORT))).toBe(`threw ${EgressRefusal.name}`);
+    expect(() => call(GET, PORT)).toThrow("refused a send in a shape this wrapper does not know (2 arguments)");
+  });
+
+  test("a write PDU to the right agent with no callback throws the valve's refusal", async () => {
+    const call = socket.send as unknown as (...args: unknown[]) => void;
+    expect(() => call(SET, 0, SET.length, PORT, "127.0.0.1")).toThrow(ValveRefusal);
+  });
+
   test("a wrong target with no callback throws rather than reporting", async () => {
     // The callback form answers the caller; without one there is nowhere to answer, and the only
     // honest move left is to throw. Both arms are held, because a refusal that silently returns

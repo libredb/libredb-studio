@@ -37,6 +37,27 @@ const CAPTURED: Record<string, number[]> = JSON.parse(
 
 const bytes = (octets: number[]): Uint8Array => new Uint8Array(octets);
 
+describe("a message whose version field is not one this process writes", () => {
+  test("a first field that is not an INTEGER is refused as no version", () => {
+    // SEQUENCE { OCTET STRING 01, OCTET STRING "", GetRequest {} }
+    const run = () => inspectOutbound(bytes([0x30, 0x07, 0x04, 0x01, 0x01, 0x04, 0x00, 0xa0, 0x00]));
+    expect(run).toThrow(ValveRefusal);
+    expect(run).toThrow("refused an outgoing message whose first field is not the version");
+  });
+
+  test("a version two octets wide is refused rather than read from its first octet", () => {
+    // INTEGER 0x0001 is version 1 (v2c) written wide; read by its first octet it would be v1.
+    const wide = bytes([0x30, 0x08, 0x02, 0x02, 0x00, 0x01, 0x04, 0x00, 0xa0, 0x00]);
+    expect(() => inspectOutbound(wide)).toThrow("refused an outgoing message with a wide version field");
+  });
+
+  test("an SNMPv3 msgData that is neither an encrypted PDU nor a scoped PDU is refused by its tag", () => {
+    // SEQUENCE { INTEGER 3, SEQUENCE {}, OCTET STRING "", INTEGER 0 }
+    const v3 = bytes([0x30, 0x0a, 0x02, 0x01, 0x03, 0x30, 0x00, 0x04, 0x00, 0x02, 0x01, 0x00]);
+    expect(() => inspectOutbound(v3)).toThrow("refused an SNMPv3 message whose msgData tag is 0x2");
+  });
+});
+
 describe("the valve reads the PDU type where the datagram carries it", () => {
   test("a v2c Get is allowed and named", () => {
     expect(inspectOutbound(bytes(CAPTURED.v2cGet))).toEqual({ kind: "allowed", pduType: PDU_GET });

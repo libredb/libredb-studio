@@ -33,7 +33,6 @@ export type UsmFailure =
   | "engineIdWidth"
   | "saltWidth"
   | "counterRange"
-  | "privacyKeyTooShort"
   | "digestWidth"
   | "digestMismatch"
   | "noPrivacyKey"
@@ -180,19 +179,20 @@ export function aesIv(engineBoots: number, engineTime: number, salt: Buffer): Bu
   return iv;
 }
 
-/** AES-128 in CFB mode, as RFC 3826 specifies, over the scoped PDU and nothing else. */
+/**
+ * AES-128 in CFB mode, as RFC 3826 specifies, over the scoped PDU and nothing else.
+ *
+ * The key is the first 16 octets of a localized key, which is a whole digest of one of
+ * `AUTH_HASHES` (20 octets at the shortest, SHA-1), so it is never short.
+ */
 export function encryptScopedPdu(scopedPdu: Buffer, localizedPrivKey: Buffer, iv: Buffer): Buffer {
   const key = localizedPrivKey.subarray(0, AES_KEY_BYTES);
-  if (key.length !== AES_KEY_BYTES)
-    throw new UsmError("the localized privacy key is shorter than AES-128 needs", "privacyKeyTooShort");
   const cipher = createCipheriv("aes-128-cfb", key, iv);
   return Buffer.concat([cipher.update(scopedPdu), cipher.final()]);
 }
 
 export function decryptScopedPdu(ciphertext: Buffer, localizedPrivKey: Buffer, iv: Buffer): Buffer {
   const key = localizedPrivKey.subarray(0, AES_KEY_BYTES);
-  if (key.length !== AES_KEY_BYTES)
-    throw new UsmError("the localized privacy key is shorter than AES-128 needs", "privacyKeyTooShort");
   const decipher = createDecipheriv("aes-128-cfb", key, iv);
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
 }

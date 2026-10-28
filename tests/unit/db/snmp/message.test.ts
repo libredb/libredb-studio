@@ -132,6 +132,12 @@ describe("a response is read, and an unreadable one is refused rather than halve
     const v1 = Uint8Array.from(CAPTURED.v1Get);
     expect(() => decodeResponse(v1)).toThrow(/version 0/);
   });
+  test("a message with fewer than three fields is refused, not read as a partial answer", () => {
+    // SEQUENCE { INTEGER 1, OCTET STRING "" }: a version and a community, and no PDU.
+    const run = () => decodeResponse(Uint8Array.from([0x30, 0x05, 0x02, 0x01, 0x01, 0x04, 0x00]));
+    expect(run).toThrow(BerError);
+    expect(run).toThrow("a message holds a version, a community and a PDU");
+  });
   test("a truncated message is refused", () => {
     expect(() => decodeResponse(Uint8Array.from(CAPTURED.v2cGet).slice(0, 10))).toThrow(BerError);
   });

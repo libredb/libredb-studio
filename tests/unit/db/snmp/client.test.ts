@@ -916,4 +916,30 @@ describe("a send the socket itself refuses", () => {
     expect("varbinds" in answer).toBe(false);
     expect(JSON.stringify(answer)).toContain("defect here");
   });
+
+  test("a request that times out after the socket reported an error answers with that error, not with silence", async () => {
+    // A refusal can arrive while nothing is waiting, the ICMP for an earlier datagram on a real
+    // network. The next request that hears nothing is told what the socket said, not that the agent
+    // was silent.
+    let onError: ((error: Error) => void) | undefined;
+    const { socket } = fakeSocket(() => undefined);
+    const on = (socket as unknown as { on: (event: string, handler: never) => unknown }).on;
+    Object.assign(socket, {
+      on: (event: string, handler: never) => {
+        if (event === "error") onError = handler;
+        return on(event, handler);
+      },
+    });
+    const exchange = await openExchange({
+      target: await resolveTarget("127.0.0.1", 161),
+      community: "public",
+      deadlineMs: 120,
+      createRawSocket: () => socket,
+    });
+    opened = exchange;
+    onError?.(Object.assign(new Error("recvmsg ECONNREFUSED"), { code: "ECONNREFUSED" }));
+    const answer = await exchange.send(PDU_GET, 14, [SYS_DESCR]);
+    expect("varbinds" in answer).toBe(false);
+    expect(JSON.stringify(answer)).toContain("nothing is listening");
+  });
 });

@@ -63,6 +63,11 @@ describe("an instance suffix decodes by the shape its INDEX clause declares", ()
   test("a suffix with a sub-identifier left over is refused", () => {
     expect(() => decodeIndex([3, 97, 98, 99, 99], [{ kind: "lengthPrefixedText" }])).toThrow(IndexDecodeError);
   });
+  test("a text index holding a sub-identifier that is not a byte is refused", () => {
+    const run = () => decodeIndex([2, 97, 256], [{ kind: "lengthPrefixedText" }]);
+    expect(run).toThrow(IndexDecodeError);
+    expect(run).toThrow("index text holds a sub-identifier that is not a byte");
+  });
   test("a suffix that ends early is refused", () => {
     expect(() => decodeIndex([3, 97, 98], [{ kind: "lengthPrefixedText" }])).toThrow(IndexDecodeError);
   });

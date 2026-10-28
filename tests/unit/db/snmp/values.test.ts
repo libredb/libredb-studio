@@ -13,6 +13,22 @@ import { isShowableText, readUnsigned, renderValue } from "@/lib/db/providers/ne
 
 const bytes = (hex: string) => new Uint8Array((hex.match(/../g) ?? []).map((pair) => Number.parseInt(pair, 16)));
 
+describe("an address the agent sent at the wrong width", () => {
+  test("an IpAddress that is not four octets is shown as hex, not as a dotted quad", () => {
+    expect(renderValue({ kind: "ipAddress" }, new Uint8Array([10, 0, 0]))).toMatchObject({ as: "hex" });
+    expect(renderValue({ kind: "ipAddress" }, new Uint8Array([10, 0, 0, 1]))).toMatchObject({
+      display: "10.0.0.1",
+      as: "dotted",
+    });
+  });
+
+  test("a MAC address that is not six octets is shown as plain hex, without colons", () => {
+    const short = renderValue({ kind: "macAddress" }, new Uint8Array([0xde, 0xad, 0xbe, 0xef]));
+    expect(short.as).toBe("hex");
+    expect(short.display).not.toContain(":");
+  });
+});
+
 describe("a 64 bit counter survives as a decimal string", () => {
   test("2^53+1 is exact, where a Number is not", () => {
     const rendered = renderValue({ kind: "counter64" }, bytes("20000000000001"));

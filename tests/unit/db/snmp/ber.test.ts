@@ -77,4 +77,10 @@ describe("an object identifier this encoder will not write", () => {
     expect(() => writeOid([1, 3, 6, 1, -1])).toThrow(/sub-identifier/);
     expect(() => writeOid([1, 3, 6, 1, 1.5])).toThrow(/sub-identifier/);
   });
+
+  test("a first arc above 2, or a second arc above 39 under 0 or 1, is refused rather than folded", () => {
+    // 1.40 would encode as 80, which every reader decodes as 2.0: a different object entirely.
+    expect(() => writeOid([3, 1, 1])).toThrow("3.1 is not a legal start for an object identifier");
+    expect(() => writeOid([1, 40, 1])).toThrow("1.40 is not a legal start for an object identifier");
+  });
 });
