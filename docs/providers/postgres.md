@@ -2272,6 +2272,7 @@ cached provider never loses its maintenance to a transient fault. Only the measu
 opened nothing" offers none of the three. The probe never fails the connection, and a `ROLLBACK`
 that fails releases the connect client with that error, so `pg` destroys it instead of pooling a
 client still inside the probe's block.
+The `ROLLBACK` is sent whenever the `BEGIN` was sent, including when the `BEGIN` itself rejects: a server can open the block and the reply can still be lost, so a rejected `BEGIN` is no proof that no block is open.
 
 `REINDEX DATABASE` names the configured database, or for a connection string that names none,
 the one `SELECT current_database()` reports (asked only for that statement), so the probe and the

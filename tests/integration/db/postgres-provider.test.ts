@@ -6265,6 +6265,23 @@ describe("PostgresProvider maintenance probe (#1387)", () => {
     await provider.disconnect();
   });
 
+  test("a BEGIN the server opened but whose reply was lost is still rolled back before the client is pooled", async () => {
+    // The server took the BEGIN (the mock reports `T`, as the next ReadyForQuery would) and the
+    // reply never arrived, so the BEGIN rejects. The block is open all the same, and a client
+    // pooled inside it hands the next borrower somebody else's transaction.
+    mockQueryFn = async (sql) => {
+      if (sql === "BEGIN") throw new Error("Connection terminated unexpectedly");
+      return defaultMockQuery(sql);
+    };
+    const provider = await ask();
+
+    const begin = mockWire.indexOf("BEGIN");
+    expect(begin).toBeGreaterThan(-1);
+    expect(mockWire.slice(begin)).toEqual(["BEGIN", "ROLLBACK"]);
+    expect(mockTxStatus).toBe("I");
+    await provider.disconnect();
+  });
+
   test("a ROLLBACK that fails destroys the connect client instead of pooling it", async () => {
     const release = spyOn(mockClient, "release");
     const fault = new Error("Connection terminated unexpectedly");

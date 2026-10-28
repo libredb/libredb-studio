@@ -5496,8 +5496,10 @@ export class PostgresProvider extends SQLBaseProvider {
     let discard: Error | undefined;
     const answer = async (): Promise<MaintenanceProbe["measured"]> => {
       const database = await this.maintenanceDatabase(client);
-      await client.query("BEGIN");
+      // Marked before the reply, not after it: a BEGIN the server opened and whose reply this
+      // client never read rejects here, and the block is open all the same.
       began = true;
+      await client.query("BEGIN");
       try {
         await client.query(STATEMENT_COUNT_POISON_SQL);
       } catch {
