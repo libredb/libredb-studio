@@ -18,13 +18,15 @@ const GOVERNED_CACHE_HINT_MS = 10_000;
 
 /**
  * The server-only markers are not part of this response's shape, so they are removed before anything reaches the
- * browser: the literal marker (src/lib/seed/types.ts) tells the server how to resolve a connection's values, and the
- * grant level (src/lib/governance/visible.ts) which credential a governed record carries. The level itself is no secret
- * and goes out as `access`, so a client can say a connection is read only before a write fails.
+ * browser: the literal marker (src/lib/seed/types.ts) tells the server how to resolve a connection's values, the
+ * Kubernetes Secret marker which Secret the access review asks about, and the grant level
+ * (src/lib/governance/visible.ts) which credential a governed record carries. The level itself is no secret and goes
+ * out as `access`, so a client can say a connection is read only before a write fails.
  */
 function withoutServerMarkers(conn: GovernedRecord): ManagedConnection {
   const { grantLevel, ...copy } = conn;
   delete copy.literal;
+  delete copy.kubernetesSecret;
   return grantLevel === undefined ? copy : { ...copy, access: grantLevel };
 }
 

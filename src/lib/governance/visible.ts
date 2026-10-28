@@ -3,8 +3,10 @@
  * `GET /api/connections/managed` and `resolveConnection` ask, so the list a browser shows and the connection a route
  * opens can never disagree.
  *
- * Without governance it answers exactly what Studio always answered: the seed connections the caller's role may see,
- * through `getManagedConnections` and `getSeedConnectionById`, and the options change nothing.
+ * Without governance it answers the seed connections the caller's role may see, through `getManagedConnections` and
+ * `getSeedConnectionById`, less any connection the Kubernetes access review keeps from the caller
+ * (src/lib/kubernetes-access/gate.ts), which touches only a connection that names its Kubernetes Secret; the options
+ * change nothing.
  *
  * Under governance (`GOVERNANCE_SOURCE`, docs/GOVERNANCE.md) it answers from the governance snapshot alone, for the
  * identity provider subject of the session:
@@ -27,6 +29,7 @@
  * Like `state.ts` and `freshness.ts`, this module imports no `pg`: it reads the snapshot the loader swapped in.
  */
 import { ApiErrorCode } from "@/lib/api/error-codes";
+import { connectionsUnderAccessReview, connectionUnderAccessReview } from "@/lib/kubernetes-access/gate";
 import { getManagedConnections, getSeedConnectionById, seedRolesOf, type ManagedConnection } from "@/lib/seed";
 import { governanceEnabled } from "./config";
 import { governanceServable } from "./freshness";
@@ -38,6 +41,8 @@ export interface Principal {
   readonly role: string;
   readonly username: string;
   readonly idpSubject?: string;
+  /** The identity provider's issuer, which keys the Kubernetes access review's groups record with the subject. */
+  readonly idpIssuer?: string;
   readonly claimRoles?: readonly string[];
 }
 
@@ -112,14 +117,16 @@ const byNameThenId = (a: ManagedConnection, b: ManagedConnection): number =>
   a.name.localeCompare(b.name) || a.id.localeCompare(b.id);
 
 /**
- * The connections `principal` may see: with governance off the seed connections of its role, and under governance
- * the connections its subject holds an unexpired grant on, by name.
+ * The connections `principal` may see: with governance off the seed connections of its role that the Kubernetes access
+ * review lets it use, and under governance the connections its subject holds an unexpired grant on, by name.
  */
 export async function visibleConnections(
   principal: Principal,
   options: VisibilityOptions = {},
 ): Promise<ManagedConnection[]> {
-  if (!governanceEnabled()) return getManagedConnections(seedRolesOf(principal));
+  if (!governanceEnabled()) {
+    return connectionsUnderAccessReview(principal, await getManagedConnections(seedRolesOf(principal)));
+  }
   const nowMs = Date.now();
   const snapshot = servableSnapshot(nowMs);
   const subject = subjectOf(principal);
@@ -134,14 +141,17 @@ export async function visibleConnections(
 
 /**
  * The connection `id` (without the `seed:` prefix) as `principal` may open it, or null: with governance off the seed
- * connection its role may see, and under governance the connection its subject holds an unexpired grant on.
+ * connection its role may see and the Kubernetes access review lets it use, and under governance the connection its
+ * subject holds an unexpired grant on.
  */
 export async function visibleConnectionById(
   principal: Principal,
   id: string,
   options: VisibilityOptions = {},
 ): Promise<ManagedConnection | null> {
-  if (!governanceEnabled()) return getSeedConnectionById(id, seedRolesOf(principal));
+  if (!governanceEnabled()) {
+    return connectionUnderAccessReview(principal, await getSeedConnectionById(id, seedRolesOf(principal)));
+  }
   const nowMs = Date.now();
   const snapshot = servableSnapshot(nowMs);
   const subject = subjectOf(principal);

@@ -426,6 +426,14 @@ export interface ManagedConnection extends DatabaseConnection {
    */
   literal?: true;
   /**
+   * The Kubernetes Secret this connection's credentials come from. Set in code after the role filter, by a Kubernetes
+   * discovery source, as `literal` is; never read from a file, because SeedConnectionSchema does not declare it;
+   * stripped by GET /api/connections/managed. With the Kubernetes access review on, the connection is listed and opened
+   * only for a session the review allows to `get` this Secret, and with it off for the admin role only
+   * (src/lib/kubernetes-access/gate.ts).
+   */
+  kubernetesSecret?: { readonly namespace: string; readonly name: string };
+  /**
    * Under governance only, set by GET /api/connections/managed from the grant level the record was resolved for: "read"
    * when statements run under the connection's read credential. Never read from a file.
    */
