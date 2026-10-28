@@ -1016,7 +1016,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
     [remoteReads],
   );
 
-  const getActionBadge = (action: string) => {
+  const getActionBadge = (action: TableDiff["action"]) => {
     switch (action) {
       case "added":
         return (
@@ -1039,8 +1039,6 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
             {"Modified"}
           </Badge>
         );
-      default:
-        return null;
     }
   };
 
