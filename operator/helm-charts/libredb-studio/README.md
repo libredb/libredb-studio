@@ -40,7 +40,7 @@ helm install libredb libredb/libredb-studio \
 
 ```bash
 helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
-  --version 0.1.106 \
+  --version 0.1.107 \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123
 ```
@@ -249,7 +249,50 @@ The link is always https, so serve TLS for that host, through `ingress.tls` or i
 A `NavLink` is cluster-scoped, so installing it needs a cluster owner, and its name is the release namespace and the release's full name joined by a dot.
 Its `app.kubernetes.io/name` label stays `libredb-studio` whatever `nameOverride` says, because the LibreDB Rancher extension finds the link by that label.
 The render fails when the link is on without `ingress.enabled` and a concrete first host; a wildcard host such as `*.example.com` is refused.
-Rancher mode is not offered through the OLM operator: its role grants no `NavLink`, so set these values with Helm or Rancher's Apps page.
+
+With the Kubernetes access review and discovery, Studio lists the CloudNativePG databases of the namespaces a cluster owner chose, and opens each one only for a Rancher user the cluster lets `get` its credential Secret ([docs/SEED_CONNECTIONS.md](https://github.com/libredb/libredb-studio/blob/main/docs/SEED_CONNECTIONS.md#kubernetes-access-review)):
+
+```yaml
+authProvider: oidc
+config:
+  oidcIssuer: https://rancher.example.com/oidc
+  oidcScope: openid profile groups
+  oidcPrompt: omit
+  oidcAutoRedirect: true
+  sessionTtlSeconds: 900          # at most 900 with the review on
+  allowCustomConnections: false
+secrets:
+  oidcExistingSecret: libredb-studio-oidc
+agent:
+  enabled: false
+seedConnections:
+  cacheTTL: 10000                 # the managed list, discovered databases included, is read again every 10 s
+accessReview:
+  enabled: true
+  cacheSeconds: 15
+discovery:
+  kubernetes:
+    enabled: true
+    namespaces: [team-a, team-b]
+```
+
+`accessReview.enabled` writes `KUBERNETES_ACCESS_REVIEW=on`, names Studio's own Deployment as the one whose `update` right makes a Studio admin, and grants Studio's ServiceAccount `create` on `subjectaccessreviews` through a ClusterRole and ClusterRoleBinding named `<namespace>.<fullname>-access-review`.
+The reviews authenticate with a projected token of that ServiceAccount and the cluster's CA, mounted read-only at `/var/run/secrets/libredb/access-review`; the pod's own token mount stays off.
+`accessReview.cacheSeconds` (0 to 60), `accessReview.signIn` and `accessReview.tokenExpirationSeconds` (600 to 86400, 3600 when unset) are written only when set.
+With the review on, admin comes only from that review, so the chart writes no `ADMIN_PASSWORD`, `USER_EMAIL` or `USER_PASSWORD` from `secrets.existingSecret`.
+The render fails, naming the value, for every combination Studio refuses to start with: `authProvider` other than `oidc`, `config.oidcRoleClaim`, `mcp.enabled`, `agent.enabled=true`, `governance.enabled`, `secrets.adminPassword` or `secrets.userPassword`, `config.sessionTtlSeconds` unset or above 900, `serviceAccount.create=false` without a `serviceAccount.name`, which would grant the namespace's default account, and an `extraEnv` entry named `KUBERNETES_ACCESS_REVIEW*`.
+
+`discovery.kubernetes.enabled` runs the exporter as a Deployment `<fullname>-discovery` of one replica, from Studio's image and with a ServiceAccount of its own.
+It gets `list` on `clusters.postgresql.cnpg.io` and `get` on Secrets in each namespace of `discovery.kubernetes.namespaces`, through a Role and RoleBinding `<fullname>-discovery` there, so those namespaces must exist first, and `get` and `update` on the export Secret by name; no rule lists or watches Secrets.
+The chart creates that Secret, `<fullname>-discovery-export`, with no data, so an upgrade keeps what the exporter wrote, and Studio mounts it read-only for `SEED_KUBERNETES_DISCOVERY_PATH`.
+`discovery.kubernetes.intervalMs` (30000), `discovery.kubernetes.kinds` (every supported kind when empty, `cnpg` today), `discovery.kubernetes.maxAgeMs` and `discovery.kubernetes.resources` tune it, and `seedConnections.cacheTTL` is written as `SEED_CACHE_TTL_MS` with discovery on.
+Without the access review, the discovered databases are listed for admins only.
+The render fails with no namespace, with `governance.enabled`, and with an `extraEnv` entry named `SEED_KUBERNETES_DISCOVERY*`.
+
+The access review and discovery each run one replica, because the groups of each sign-in and the review and export caches live in one process: `replicaCount` above 1 or `autoscaling.enabled` fails the render.
+The ClusterRole, the Roles in other namespaces and the `NavLink` need a cluster owner to install.
+Rancher's Apps page draws a form for these values from `questions.yaml`; the form cannot name a list entry, so set the ingress host and TLS in its YAML view.
+Rancher mode is not offered through the OLM operator in this release: its role grants no `NavLink`, ClusterRole, ClusterRoleBinding, Role, RoleBinding or SubjectAccessReview, so set these values with Helm or Rancher's Apps page.
 
 ## Governance
 

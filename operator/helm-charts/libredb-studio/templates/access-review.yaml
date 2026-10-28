@@ -1,0 +1,35 @@
+{{- /*
+The Kubernetes access review's one right (docs/SEED_CONNECTIONS.md, "Kubernetes access review"):
+create on subjectaccessreviews, for the ServiceAccount Studio runs as. Cluster-scoped, so the name
+carries the namespace, joined with a dot, which a namespace never holds, to keep two releases apart.
+The projected token and CA the reviews use are mounted by deployment.yaml; the guards live in
+_helpers.tpl.
+*/}}
+{{- if include "libredb-studio.accessReviewEnabled" . }}
+{{- $name := include "libredb-studio.accessReviewName" . }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "libredb-studio.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["authorization.k8s.io"]
+    resources: ["subjectaccessreviews"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "libredb-studio.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "libredb-studio.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

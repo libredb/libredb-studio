@@ -1,0 +1,165 @@
+# The form Rancher's Apps page draws for this chart. It asks only for the Rancher-mode values; every
+# other value, the ingress host and TLS among them, is set in the form's YAML view. Rancher sets each
+# answer at the dotted path of its variable, so no variable can name a list entry.
+# Every variable here is a key of values.yaml with the same type (tests/unit/helm-chart-rancher-questions.test.ts).
+questions:
+  - variable: authProvider
+    label: Sign-in provider
+    description: oidc signs users in through Rancher's OIDC provider; local keeps Studio's own email and password sign-in.
+    type: enum
+    options: ["local", "oidc"]
+    default: "local"
+    group: Rancher sign-in
+    show_subquestion_if: oidc
+    subquestions:
+      - variable: config.oidcIssuer
+        label: OIDC issuer
+        description: Rancher's issuer, the Rancher server URL followed by /oidc, such as https://rancher.example.com/oidc.
+        type: string
+        default: ""
+        group: Rancher sign-in
+      - variable: config.oidcScope
+        label: OIDC scopes
+        description: openid profile groups on Rancher 2.15 and later, openid profile before; Rancher refuses the email scope.
+        type: string
+        default: "openid profile email"
+        group: Rancher sign-in
+      - variable: secrets.oidcExistingSecret
+        label: OIDC client Secret
+        description: A Secret in this namespace holding the client Rancher generated, under the keys oidc-client-id and oidc-client-secret.
+        type: string
+        default: ""
+        group: Rancher sign-in
+      - variable: config.oidcPrompt
+        label: OIDC prompt
+        description: omit signs a user with a Rancher session in without a prompt; empty keeps the app's default, login.
+        type: string
+        default: ""
+        group: Rancher sign-in
+      - variable: config.oidcAutoRedirect
+        label: Go straight to Rancher's sign-in
+        description: Send a signed-out visitor of the login page to Rancher at once.
+        type: boolean
+        default: false
+        group: Rancher sign-in
+      - variable: config.sessionTtlSeconds
+        label: Session lifetime in seconds
+        description: From 300 to 86400; at most 900 with the access review on, since signing out of Rancher does not end a Studio session. Empty keeps 86400.
+        type: int
+        group: Rancher sign-in
+
+  - variable: accessReview.enabled
+    label: Kubernetes access review
+    description: Decide who signs in, who is an admin (whoever may update Studio's Deployment) and who opens each discovered database (whoever may get its credential Secret) by asking Kubernetes as the signed-in Rancher user. Needs oidc sign-in and a session of at most 900 seconds, and installs a ClusterRole, so it needs a cluster owner.
+    type: boolean
+    default: false
+    group: Access review
+    show_subquestion_if: true
+    subquestions:
+      - variable: accessReview.cacheSeconds
+        label: Answer cache in seconds
+        description: How long an answer is kept, from 0 to 60; a role removed in Rancher reaches Studio within it. Empty keeps 30; Rancher installs use 15.
+        type: int
+        group: Access review
+      - variable: accessReview.signIn
+        label: Sign-in review
+        description: The review a person must pass to sign in, as kubectl auth can-i takes it. Empty keeps list navlinks.ui.cattle.io, which every role of this cluster allows.
+        type: string
+        default: ""
+        group: Access review
+
+  - variable: discovery.kubernetes.enabled
+    label: Discover CloudNativePG databases
+    description: Run the discovery exporter, which reads the credential Secrets of the CloudNativePG Clusters in the namespaces below and hands them to Studio inside the cluster. Without the access review the databases are listed for admins only.
+    type: boolean
+    default: false
+    group: Kubernetes discovery
+    show_subquestion_if: true
+    subquestions:
+      - variable: discovery.kubernetes.namespaces
+        label: Namespaces
+        description: The namespaces to discover; each gets a Role for the exporter, so they must exist.
+        type: array
+        default: []
+        group: Kubernetes discovery
+      - variable: discovery.kubernetes.intervalMs
+        label: Scan interval in milliseconds
+        description: Time between scans, at least 5000.
+        type: int
+        default: 30000
+        group: Kubernetes discovery
+      - variable: discovery.kubernetes.maxAgeMs
+        label: Withdraw after milliseconds
+        description: Age of the last good scan after which the databases are withdrawn. Empty keeps 180000; keep it above the interval plus 90000.
+        type: int
+        group: Kubernetes discovery
+
+  - variable: rancher.navLink.enabled
+    label: Link in the cluster navigation
+    description: Add a link to Studio in this cluster's navigation, pointing at https and the first ingress host, which the YAML view sets. Needs a cluster owner.
+    type: boolean
+    default: false
+    group: Rancher mode
+    show_subquestion_if: true
+    subquestions:
+      - variable: rancher.navLink.label
+        label: Link text
+        description: The text of the link.
+        type: string
+        default: "LibreDB Studio"
+        group: Rancher mode
+      - variable: rancher.navLink.group
+        label: Link group
+        description: The navigation group the link appears under.
+        type: string
+        default: "Databases"
+        group: Rancher mode
+      - variable: rancher.navLink.target
+        label: Link target
+        description: The browser target the link opens in.
+        type: string
+        default: "_blank"
+        group: Rancher mode
+
+  - variable: config.allowCustomConnections
+    label: Allow custom connections
+    description: false keeps every user to the managed connections, so Studio cannot be pointed at other services in the cluster network. Leave it unset to keep the app's default, on.
+    type: boolean
+    group: Rancher mode
+  - variable: config.seedLiteralValues
+    label: Literal seed values
+    description: Use every seed value as written, resolving no environment or Vault reference.
+    type: boolean
+    default: false
+    group: Rancher mode
+  - variable: seedConnections.cacheTTL
+    label: Connection list cache in milliseconds
+    description: How often the managed connections, discovered ones included, are read again; Rancher installs use 10000.
+    type: int
+    default: 60000
+    group: Rancher mode
+  - variable: seedConnections.enabled
+    label: Seed connections
+    description: Add connections from a seed file.
+    type: boolean
+    default: false
+    group: Rancher mode
+    show_subquestion_if: true
+    subquestions:
+      - variable: seedConnections.existingSecret
+        label: Seed file Secret
+        description: A Secret holding the seed file under the key seed-connections.yaml.
+        type: string
+        default: ""
+        group: Rancher mode
+  - variable: agent.enabled
+    label: Agent
+    description: false switches the investigation agent off, which the access review requires.
+    type: boolean
+    group: Rancher mode
+  - variable: mcp.enabled
+    label: MCP server
+    description: Serve /api/mcp; the access review requires it off.
+    type: boolean
+    default: false
+    group: Rancher mode
