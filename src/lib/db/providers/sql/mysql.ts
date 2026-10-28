@@ -67,9 +67,9 @@ import {
   mapDatabaseError,
   NO_TRANSACTION_OPENED,
   TRANSACTION_STATE_UNREPORTED,
-  MYSQL_ACCOUNT_LIMIT_ERRNOS,
   NO_ACTIVE_TRANSACTION,
 } from "../../errors";
+import { MYSQL_ACCOUNT_LIMIT_ERRNOS } from "./mysql-driver-errors";
 import type { ProviderExecutionContext, ReadOnlyStatementBudget, ReadOnlyStatementMode } from "../../types";
 import { assertReadOnlyBudget, byteBudgetSentence, measureRowBytes, rowBudgetSentence } from "./read-only-budget";
 import {

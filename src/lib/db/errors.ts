@@ -5,6 +5,8 @@
 
 import type { DatabaseType } from "./types";
 import { ApiErrorCode } from "@/lib/api/error-codes";
+import { DRIVER_ERROR_CLASSIFIERS } from "@/lib/db/driver-errors";
+import type { AccessRefusal, DriverErrorClassifier, DriverErrorFields } from "@/lib/db/driver-errors/types";
 
 const QUERY_PREVIEW_MAX_LENGTH = 100;
 
@@ -379,123 +381,6 @@ export function isRetryableError(error: unknown): boolean {
   return true;
 }
 
-// ============================================================================
-// Oracle Thick-mode diagnostics (#538)
-// ============================================================================
-
-/**
- * The one remedy every Thin-mode refusal shares, written once. Both the reason
- * strings below and the constructor's load failures point at the same place, and
- * two prose copies of one instruction drift.
- */
-const ORACLE_THICK_MODE_REMEDY =
-  "Thick mode is the remedy: set ORACLE_CLIENT_LIB_DIR to an installed Oracle Instant Client " +
-  "directory (on Linux the directory must also be on the loader path). See " +
-  "docs/providers/oracle.md section 4.4.";
-
-/**
- * Why node-oracledb's Thin mode refused this connection, or `null` if the error
- * is not a Thin-mode refusal at all.
- *
- * These are the messages a DBA turns into "you must use Thick mode", and until
- * #538 only `NJS-138` was recognised. The rest fell through to the generic
- * retryable `ConnectionError`, which tells the operator to try again for a
- * condition that will never clear on its own - the exact defect #228 fixed for
- * `NJS-138`.
- *
- * `message` is expected already lower-cased (mapDatabaseError does that once).
- */
-export function describeOracleThinModeRefusal(message: string): string | null {
-  if (message.includes("njs-138")) {
-    return "Oracle server version predates 12.1, which Thin mode does not support";
-  }
-  if (message.includes("njs-116")) {
-    return (
-      "the account's password verifier is 10G-only, and Thin mode can only use a 12C verifier. " +
-      "A DBA can fix this without Thick mode by resetting the account's password, which writes " +
-      "a 12C verifier (given a suitable SQLNET.ALLOWED_LOGON_VERSION_SERVER)"
-    );
-  }
-  if (message.includes("njs-533")) {
-    return (
-      "the server requires Oracle Native Network Encryption or data integrity checksumming, " +
-      "which Thin mode does not implement"
-    );
-  }
-  if (message.includes("njs-529")) {
-    // ERR_WALLET_TYPE_NOT_SUPPORTED in the driver's lib/errors.js. Its text says
-    // nothing about Thin mode, so the generic substring below never catches it,
-    // and it is the one refusal here with a way out that costs nothing: Thin
-    // mode reads PEM, so converting the wallet is enough.
-    return (
-      "Thin mode reads only a PEM wallet, and this one is not PEM (typically an sso-only " +
-      "cwallet.sso). Converting it to ewallet.pem avoids Thick mode entirely " +
-      "(orapki wallet pkcs12_to_pem, or openssl against the PKCS#12); otherwise use Thick mode, " +
-      "which reads the sso wallet as it stands"
-    );
-  }
-  if (message.includes("njs-089")) {
-    // Measured against node-oracledb 6.10.0's own source rather than assumed:
-    // NJS-089 is raised for CLIENT-side features (heterogeneous pooling in
-    // lib/thin/pool.js, some database object types in lib/thin/dbObject.js,
-    // Advanced Queuing in aqArray.js and aqBase.js, a few protocol features in
-    // withData.js). It is not the code for Kerberos, LDAP naming or a wallet.
-    return "this uses a client-side feature Thin mode does not implement";
-  }
-  if (message.includes("not supported by node-oracledb in thin mode")) {
-    return "the driver reports a feature Thin mode does not implement";
-  }
-  return null;
-}
-
-/**
- * What to tell the operator when `initOracleClient({ libDir })` throws.
- *
- * The old message said one thing for every failure - "verify the path points at
- * an installed Instant Client 'lib' directory" - and for the two failures that
- * actually happen that advice is wrong in both directions:
- *
- * - `NJS-045` is not about the path at all. It means this build has no
- *   node-oracledb Thick-mode addon to load, which is a defect of how the app was
- *   packaged, not of anything the operator configured. The operator can stare at
- *   a perfectly good Instant Client directory forever.
- * - `DPI-1047` means the addon loaded and then could not pull in the client
- *   libraries. On Linux that is almost never a wrong path: `libclntsh.so` has no
- *   RUNPATH, so its siblings (`libnnz*.so`, `libclntshcore.so`) are found only
- *   through the system library search path, and node-oracledb's own
- *   documentation says never to rely on `libDir` there.
- *
- * Exported so the mapping is testable without constructing a provider.
- */
-export function describeOracleClientLoadFailure(libDir: string, detail: string): string {
-  const lower = detail.toLowerCase();
-  if (lower.includes("njs-045")) {
-    return (
-      `This build has no node-oracledb Thick mode binary for ${process.platform}-${process.arch}, ` +
-      `so ORACLE_CLIENT_LIB_DIR=${libDir} could not be used: ${detail}. ` +
-      "This is a packaging defect of the build, not a problem with the path - the driver's native " +
-      "addon is missing or was resolved from a rewritten directory. Report it with the platform and " +
-      "architecture above; see docs/providers/oracle.md section 4.4."
-    );
-  }
-  if (lower.includes("dpi-1047")) {
-    return (
-      `The Oracle Client libraries in ORACLE_CLIENT_LIB_DIR=${libDir} could not be loaded: ${detail}. ` +
-      "On Linux the directory must ALSO be on the system library search path - add it to a file under " +
-      "/etc/ld.so.conf.d/ and run ldconfig, or set LD_LIBRARY_PATH before Node starts - because " +
-      "libclntsh has no RUNPATH and cannot find its own siblings otherwise. On Debian 13 also check " +
-      "that libaio.so.1 resolves (the distribution ships libaio.so.1t64 and the client asks for " +
-      "libaio.so.1). See docs/providers/oracle.md section 4.4."
-    );
-  }
-  return (
-    `Failed to load the Oracle Instant Client from ORACLE_CLIENT_LIB_DIR=${libDir}: ${detail}. ` +
-    "Verify the path points at an installed Oracle Instant Client directory " +
-    "(Instant Client 19c is required to reach Oracle 11.2 servers); see " +
-    "docs/providers/oracle.md section 4.4."
-  );
-}
-
 /**
  * The SQLSTATE classes that name a fault of the statement itself (#1427): `0A` feature not
  * supported, `21` cardinality violation, `22` data exception, `23` integrity constraint
@@ -507,101 +392,33 @@ export function describeOracleClientLoadFailure(libDir: string, detail: string):
  */
 const STATEMENT_SQLSTATE = /^(0A|2[123]|4[24])[0-9A-Z]{3}$/;
 
-/**
- * MySQL errors that carry SQLSTATE `42000` and are not the statement's fault: `1203`
- * `max_user_connections` and `1226` a per-account resource limit such as `max_questions`. The
- * account hit a limit; the same statement runs once it clears, so it keeps its 5xx class.
- */
-export const MYSQL_ACCOUNT_LIMIT_ERRNOS = new Set([1203, 1226]);
-
-/**
- * SQL Server error numbers for a statement the server parsed or ran and refused (#1427).
- * Severity alone would not do: a deadlock victim (1205) is severity 13, a user-correctable
- * level, and it is the transaction's fault, not the statement's.
- */
-const MSSQL_STATEMENT_ERRORS = new Set([
-  // Syntax: incorrect syntax near a token, near a keyword, and a missing or misused clause.
-  102, 103, 105, 156, 170, 319,
-  // A name that resolves to nothing: column, object, procedure, function, and an ambiguous column.
-  207, 208, 209, 2812, 4121,
-  // Constraints and values: NOT NULL, a FOREIGN KEY or CHECK conflict, a unique key, a value that
-  // does not convert, an arithmetic overflow, a divide by zero, and a truncated string.
-  515, 547, 2601, 2627, 245, 8114, 8115, 8134, 2628, 8152,
-  // An object that already exists. A permission the principal lacks is an access refusal
-  // (`MSSQL_ACCESS_REFUSALS`), decided before this list is read.
-  2714,
-]);
-
-/**
- * Oracle error numbers for a statement the server parsed or ran and refused (#1427): unique
- * constraint (1), the `ORA-009xx` parse and name-resolution range, NOT NULL (1400, 1407),
- * invalid number (1722), a value larger than its column (1438, 12899), date format errors
- * (1830 to 1861), check and referential constraints (2290 to 2292) and a PL/SQL compilation
- * error (6550). Insufficient privileges (1031) is an access refusal (`ORACLE_ACCESS_REFUSALS`).
- */
-function isOracleStatementError(errorNum: number): boolean {
-  return (
-    errorNum === 1 ||
-    (errorNum >= 900 && errorNum <= 999) ||
-    errorNum === 1400 ||
-    errorNum === 1407 ||
-    errorNum === 1438 ||
-    errorNum === 1722 ||
-    (errorNum >= 1830 && errorNum <= 1861) ||
-    (errorNum >= 2290 && errorNum <= 2292) ||
-    errorNum === 6550 ||
-    errorNum === 12899
-  );
+/** The first answer a driver row gives, in the registry's order, or undefined when none gives one. */
+function firstAnswer<Answer>(ask: (row: DriverErrorClassifier) => Answer | undefined): Answer | undefined {
+  for (const row of DRIVER_ERROR_CLASSIFIERS) {
+    const answer = ask(row);
+    if (answer !== undefined) return answer;
+  }
+  return undefined;
 }
-
-/**
- * SQLite primary result codes for a statement the library refused (#1427): `SQLITE_ERROR` (1,
- * a syntax error or an unknown table or column), `SQLITE_CONSTRAINT` (19), `SQLITE_MISMATCH`
- * (20) and `SQLITE_RANGE` (25, a bind index out of range). An extended code carries its primary
- * code in its low byte, which is how `SQLITE_CONSTRAINT_UNIQUE` (2067) reads as 19.
- */
-const SQLITE_STATEMENT_RESULT_CODES = new Set([1, 19, 20, 25]);
 
 /**
  * Whether the driver's own code fields say the STATEMENT is at fault (#1427).
  *
  * Read from codes and never from the message, so a table named `pool_items` or `timeouts`
  * cannot decide the class (BACKLOG B4). Each driver publishes its own field, measured on the
- * installed drivers on 2026-10-04:
+ * installed drivers on 2026-10-04: the SQLSTATE in `code`, `sqlState` or `sqlstate`, read here,
+ * and every other field by the driver's row in `DRIVER_ERROR_CLASSIFIERS`, which may also say a
+ * code is not the statement's fault before any SQLSTATE is read.
  *
- * - `pg` puts the SQLSTATE in `code` (`42601`), `mysql2` in `sqlState` (`42000`), `db2-node` in
- *   `sqlstate`. MySQL-wire relatives answer through `mysql2` too, so TiDB's `ER_PARSE_ERROR`
- *   reads `42000` like MySQL's.
- * - `mssql` puts the error number in `number` (`2812` for an unknown procedure).
- * - `oracledb` puts it in `errorNum` (`900` for `ORA-00900`).
- * - `bun:sqlite` names the result code in `code` (`SQLITE_CONSTRAINT_PRIMARYKEY`) and
- *   `node:sqlite` puts the extended code in `errcode` under `code: "ERR_SQLITE_ERROR"`.
- *
- * A code this function does not know answers false, and the caller's other branches decide.
+ * A code no row knows answers false, and the caller's other branches decide.
  */
 function isStatementFault(error: Error): boolean {
-  const fields = error as Error & {
-    code?: unknown;
-    sqlState?: unknown;
-    sqlstate?: unknown;
-    number?: unknown;
-    errorNum?: unknown;
-    errcode?: unknown;
-    errno?: unknown;
-  };
-  if (typeof fields.errno === "number" && MYSQL_ACCOUNT_LIMIT_ERRNOS.has(fields.errno)) return false;
+  const fields = error as DriverErrorFields;
+  if (DRIVER_ERROR_CLASSIFIERS.some((row) => row.notStatementFault?.(fields) === true)) return false;
   for (const state of [fields.code, fields.sqlState, fields.sqlstate]) {
     if (typeof state === "string" && STATEMENT_SQLSTATE.test(state)) return true;
   }
-  if (typeof fields.number === "number" && MSSQL_STATEMENT_ERRORS.has(fields.number)) return true;
-  if (typeof fields.errorNum === "number" && isOracleStatementError(fields.errorNum)) return true;
-  if (typeof fields.code === "string" && fields.code.startsWith("SQLITE_")) {
-    return /^SQLITE_(ERROR|CONSTRAINT|MISMATCH|RANGE)(_|$)/.test(fields.code);
-  }
-  if (fields.code === "ERR_SQLITE_ERROR" && typeof fields.errcode === "number") {
-    return SQLITE_STATEMENT_RESULT_CODES.has(fields.errcode & 0xff);
-  }
-  return false;
+  return firstAnswer((row) => row.statementFault?.(fields)) ?? false;
 }
 
 /** A SQLSTATE: five digits or uppercase letters, with a digit, so a system code such as `EPIPE` is not read as one. */
@@ -616,12 +433,6 @@ function driverSqlstate(error: Error): string | undefined {
 }
 
 /**
- * What a server's refusal of the caller is: `privilege`, a privilege the credential lacks, answered 403, or
- * `credential`, the credential itself refused, answered 401.
- */
-type AccessRefusal = "privilege" | "credential";
-
-/**
  * SQLSTATEs of a refused privilege: `42501` insufficient_privilege (PostgreSQL's Appendix A, also Db2's SQL0551N) and
  * `42502` (Db2's SQL0552N). Class `28`, invalid authorization specification, is a refused credential: PostgreSQL's
  * `28000` and `28P01`, and the `28000` MySQL gives its 1045 and 1698.
@@ -630,115 +441,35 @@ const PRIVILEGE_SQLSTATES = new Set(["42501", "42502"]);
 const CREDENTIAL_SQLSTATE_CLASS = "28";
 
 /**
- * MySQL and MariaDB error numbers of an access refusal, from their error references. A privilege, each with SQLSTATE
- * `42000`: 1044 a database, 1142 a table, 1143 a column, 1227 a global privilege such as SUPER, 1370 a routine. The
- * account: 1045 and 1698 a refused login, 1820 and 1862 an expired password, 3118 a locked account and 3955 one
- * blocked after failed logins, the last four with SQLSTATE `HY000`.
- */
-const MYSQL_ACCESS_REFUSALS: ReadonlyMap<number, AccessRefusal> = new Map([
-  [1044, "privilege"],
-  [1142, "privilege"],
-  [1143, "privilege"],
-  [1227, "privilege"],
-  [1370, "privilege"],
-  [1045, "credential"],
-  [1698, "credential"],
-  [1820, "credential"],
-  [1862, "credential"],
-  [3118, "credential"],
-  [3955, "credential"],
-]);
-
-/**
- * SQL Server error numbers of a refused privilege, from its Database Engine errors: 229 on an object, 230 on a column,
- * 262 in a database, 297 for an action, 300 on a server-level object, 916 a database the login may not enter. tedious
- * raises a refused login as `ELOGIN` without the server's 18456, so the words decide that one.
- */
-const MSSQL_ACCESS_REFUSALS: ReadonlyMap<number, AccessRefusal> = new Map([
-  [229, "privilege"],
-  [230, "privilege"],
-  [262, "privilege"],
-  [297, "privilege"],
-  [300, "privilege"],
-  [916, "privilege"],
-]);
-
-/**
- * Oracle error numbers of an access refusal, from Oracle's error help: ORA-01031 insufficient privileges and ORA-01045
- * a user without CREATE SESSION; ORA-01017 an invalid credential, ORA-01005 a null password, ORA-28000 a locked
- * account and ORA-28001 an expired one.
- */
-const ORACLE_ACCESS_REFUSALS: ReadonlyMap<number, AccessRefusal> = new Map([
-  [1031, "privilege"],
-  [1045, "privilege"],
-  [1017, "credential"],
-  [1005, "credential"],
-  [28000, "credential"],
-  [28001, "credential"],
-]);
-
-/**
- * Db2 SQLCODEs of an access refusal whose SQLSTATE is a connection class: SQL1060N, a user without the CONNECT
- * privilege (`08004`), and SQL30082N, security processing failed (`08001`).
- */
-const DB2_ACCESS_REFUSALS: ReadonlyMap<number, AccessRefusal> = new Map([
-  [-1060, "privilege"],
-  [-30082, "credential"],
-]);
-
-/** MongoDB server codes of an access refusal, from its error codes: 13 `Unauthorized`, 18 `AuthenticationFailed`. */
-const MONGODB_ACCESS_REFUSALS: ReadonlyMap<number, AccessRefusal> = new Map([
-  [13, "privilege"],
-  [18, "credential"],
-]);
-
-/** The refusal `code` names in `table`, when it is a number the table holds. */
-function refusalIn(table: ReadonlyMap<number, AccessRefusal>, code: unknown): AccessRefusal | undefined {
-  return typeof code === "number" ? table.get(code) : undefined;
-}
-
-/**
  * Whether the driver's own code fields say the server refused the caller, and how: a refusal, `null` when the code
  * names neither, and `undefined` when the error carries no code this module reads. Only the last is read by its
  * words, so a column called `password` is the statement's fault and never a refused credential.
  *
- * The fields are the ones `isStatementFault` reads, plus `db2-node`'s `sqlcode` and the MongoDB driver's numeric
- * `code` beside its `codeName`. mysql2's `errno` counts only beside the `sqlState` every server error carries, which
- * `bun:sqlite`'s `errno` and a system error's do not.
+ * The SQLSTATE is read here; every other code field by the driver rows, in the registry's order.
  */
 function accessRefusalOf(error: Error): AccessRefusal | null | undefined {
-  const fields = error as Error & {
-    code?: unknown;
-    codeName?: unknown;
-    sqlState?: unknown;
-    errno?: unknown;
-    number?: unknown;
-    errorNum?: unknown;
-    sqlcode?: unknown;
-    errcode?: unknown;
-  };
+  const fields = error as DriverErrorFields;
   const sqlstate = driverSqlstate(error);
   if (sqlstate !== undefined && PRIVILEGE_SQLSTATES.has(sqlstate)) return "privilege";
   if (sqlstate?.startsWith(CREDENTIAL_SQLSTATE_CLASS)) return "credential";
-  const mysqlErrno = typeof fields.sqlState === "string" ? fields.errno : undefined;
-  const mongoCode = typeof fields.codeName === "string" ? fields.code : undefined;
-  const refusal =
-    refusalIn(MYSQL_ACCESS_REFUSALS, mysqlErrno) ??
-    refusalIn(MSSQL_ACCESS_REFUSALS, fields.number) ??
-    refusalIn(ORACLE_ACCESS_REFUSALS, fields.errorNum) ??
-    refusalIn(DB2_ACCESS_REFUSALS, fields.sqlcode) ??
-    refusalIn(MONGODB_ACCESS_REFUSALS, mongoCode);
+  const refusal = firstAnswer((row) => row.accessRefusal?.(fields));
   if (refusal !== undefined) return refusal;
   const carriesCode =
-    sqlstate !== undefined ||
-    [mysqlErrno, mongoCode, fields.number, fields.errorNum, fields.sqlcode].some((code) => typeof code === "number") ||
-    (typeof fields.code === "string" && fields.code.startsWith("SQLITE_")) ||
-    (fields.code === "ERR_SQLITE_ERROR" && typeof fields.errcode === "number");
+    sqlstate !== undefined || DRIVER_ERROR_CLASSIFIERS.some((row) => row.carriesCode?.(fields) === true);
   return carriesCode ? null : undefined;
 }
 
-/** The words of a refused credential, read only in an error that carries no code. */
-const CREDENTIAL_WORDS = ["password", "authentication", "access denied", "login failed", "ora-01017"];
+/** The words of a refused credential, read only in an error that carries no code, beside each driver row's own. */
+const CREDENTIAL_WORDS = [
+  "password",
+  "authentication",
+  "access denied",
+  "login failed",
+  ...DRIVER_ERROR_CLASSIFIERS.flatMap((row) => row.credentialWords ?? []),
+];
+
+/** The words of a cancelled statement any driver may use, beside each driver row's own. */
+const CANCELLED_WORDS = ["query was cancelled", "kill query"];
 
 /**
  * Map native database errors to our error types, keeping the driver's SQLSTATE on the mapped error.
@@ -760,6 +491,7 @@ export function mapDatabaseError(error: unknown, provider: DatabaseType, query?:
 
 function mapNativeError(error: Error, provider: DatabaseType, query?: string): DatabaseError {
   const message = error.message.toLowerCase();
+  const fields = error as DriverErrorFields;
 
   // Connection errors
   if (
@@ -771,19 +503,13 @@ function mapNativeError(error: Error, provider: DatabaseType, query?: string): D
     return new ConnectionError(`Failed to connect to ${provider} database: ${error.message}`, provider);
   }
 
-  // Oracle Thin-mode refusals. This runs BEFORE the access refusals on
-  // purpose: NJS-116 carries no server code and its own text is "password
-  // verifier type 0x... is not supported by node-oracledb in Thin mode", so the
-  // `password` match below would otherwise turn a configuration problem into
-  // "wrong credentials" and send the operator to reset something that is not broken.
-  const thinModeRefusal = describeOracleThinModeRefusal(message);
-  if (thinModeRefusal) {
-    return new DatabaseConfigError(`${thinModeRefusal}: ${error.message}. ${ORACLE_THICK_MODE_REMEDY}`, provider);
-  }
+  // A refusal of the driver's own configuration, read before the access refusals: its text may hold a credential
+  // word for a condition no credential repairs.
+  const configRefusal = firstAnswer((row) => row.configRefusal?.(message, error) ?? undefined);
+  if (configRefusal !== undefined) return new DatabaseConfigError(configRefusal, provider);
 
-  // SQL Server's 4060, a database the login cannot open. Read before the access refusals: its own sentence ends in
-  // "The login failed.", so the credential words would answer a missing database as a wrong password (#1451).
-  if (message.includes("cannot open database")) {
+  // A database the login cannot open, read before the access refusals for the same reason.
+  if (DRIVER_ERROR_CLASSIFIERS.some((row) => row.missingDatabase?.(message) === true)) {
     return new ConnectionError(`Database not found: ${error.message}`, provider);
   }
 
@@ -808,30 +534,16 @@ function mapNativeError(error: Error, provider: DatabaseType, query?: string): D
     return new QueryError(error.message, provider, query, (error as { position?: number }).position);
   }
 
-  // PostgreSQL preemption vs. operator cancel (#1145). Both a `statement_timeout`
-  // and a `lock_timeout` are reported as `canceling statement due to <statement|lock>
-  // timeout`, sharing the `canceling statement` prefix an operator cancel
-  // (`pg_cancel_backend`, `due to user request`) uses. Both are TIMEOUTS — a time
-  // budget elapsed and the statement never ran to completion — so they map to
-  // TimeoutError carrying the engine's own text, exactly as every other engine's
-  // query timeout does. This MUST run before the cancellation branch below, which
-  // would otherwise match `canceling statement` first and discard the wording that
-  // tells a timeout apart from a cancel.
-  if (message.includes("canceling statement due to statement timeout") || message.includes("due to lock timeout")) {
+  // An engine's own report of a time budget that elapsed, in its own words, read before the cancellation words a
+  // driver row may share with it.
+  if (DRIVER_ERROR_CLASSIFIERS.some((row) => row.timeout?.(message) === true)) {
     return new TimeoutError(error.message, provider, undefined, query);
   }
 
-  // Query cancellation, checked before timeout: 'canceling statement' is cancellation, not timeout.
-  // `mssql` and `tedious` end a cancelled request with `RequestError('Canceled.', 'ECANCEL')`, whose sentence
-  // holds none of the words below, so it is read from the driver's code. No other installed driver raises
-  // `ECANCEL`; the POSIX `ECANCELED` is a different string. A cancel the SQL Server provider's own deadline
-  // made never reaches here: `runWithDeadline` answers it as its time-budget QueryError first.
+  // Query cancellation, checked before timeout: a cancel is not a timeout.
   if (
-    (error as { code?: unknown }).code === "ECANCEL" ||
-    message.includes("canceling statement") ||
-    message.includes("query execution was interrupted") ||
-    message.includes("query was cancelled") ||
-    message.includes("kill query")
+    DRIVER_ERROR_CLASSIFIERS.some((row) => row.cancelled?.(message, fields) === true) ||
+    CANCELLED_WORDS.some((word) => message.includes(word))
   ) {
     return new QueryCancelledError("Query was cancelled", provider, query);
   }
@@ -841,19 +553,17 @@ function mapNativeError(error: Error, provider: DatabaseType, query?: string): D
     return new TimeoutError(`Query timeout: ${error.message}`, provider, undefined, query);
   }
 
-  // Oracle errors. ORA-01017 is an access refusal, decided above with the others.
-  if (message.includes("ora-12541") || message.includes("ora-12154") || message.includes("tns:")) {
-    return new ConnectionError(`Failed to connect to Oracle: ${error.message}`, provider);
-  }
-  if (message.includes("ora-00942")) {
-    return new QueryError(`Table or view does not exist: ${error.message}`, provider, query);
-  }
-  // NJS-138 and its siblings are handled above, before the access refusals -
-  // see describeOracleThinModeRefusal().
-
-  // Query errors (PostgreSQL specific)
-  if (message.includes("syntax error") || message.includes("column") || message.includes("relation")) {
-    return new QueryError(error.message, provider, query, (error as { position?: number }).position);
+  // What a driver row reads from the message last: a connection its listener refused, a missing object, or the words
+  // of a statement error.
+  const late = firstAnswer((row) => row.late?.(message, error));
+  if (late?.kind === "connection") return new ConnectionError(late.message, provider);
+  if (late?.kind === "query") {
+    return new QueryError(
+      late.message,
+      provider,
+      query,
+      late.keepsPosition ? (error as { position?: number }).position : undefined,
+    );
   }
 
   // Pool errors

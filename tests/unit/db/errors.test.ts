@@ -17,11 +17,13 @@ import {
   isAuthenticationError,
   isRetryableError,
   mapDatabaseError,
-  describeOracleThinModeRefusal,
-  describeOracleClientLoadFailure,
   waitedSeconds,
   connectPhase,
 } from "@/lib/db/errors";
+import {
+  describeOracleClientLoadFailure,
+  describeOracleThinModeRefusal,
+} from "@/lib/db/providers/sql/oracle-driver-errors";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 
 // ============================================================================

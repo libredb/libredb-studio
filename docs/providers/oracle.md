@@ -508,6 +508,7 @@ It has no `readTls`, so a pasted `oracle://` URL carries no SSL mode into the fo
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `oracle` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is declared in [`oracle-execution-ui.ts`](../../src/lib/db/providers/sql/oracle-execution-ui.ts).
+How `mapDatabaseError` classifies its driver's errors, its Thin-mode refusals, its statement and access-refusal error numbers and its ORA- connection and missing-table words, is the `oracledb` row of `DRIVER_ERROR_CLASSIFIERS`, declared in [`oracle-driver-errors.ts`](../../src/lib/db/providers/sql/oracle-driver-errors.ts).
 
 ---
 

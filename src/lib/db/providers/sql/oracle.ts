@@ -59,9 +59,9 @@ import {
   ConnectionError,
   QueryError,
   mapDatabaseError,
-  describeOracleClientLoadFailure,
   NO_ACTIVE_TRANSACTION,
 } from "../../errors";
+import { describeOracleClientLoadFailure } from "./oracle-driver-errors";
 import { formatBytes } from "../../utils/pool-manager";
 import { analyzeQuery, assertRowBounds, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../utils/query-limiter";
 import { measuredNullableAggregate } from "../../utils/measured-aggregate";

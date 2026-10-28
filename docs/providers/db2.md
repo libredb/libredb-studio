@@ -157,6 +157,7 @@ It runs no seed load check.
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `db2` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/sql/db2/execution-ui.ts).
+How `mapDatabaseError` classifies its driver's errors, its SQLCODEs of an access refusal, is the `db2` row of `DRIVER_ERROR_CLASSIFIERS`, declared in [`driver-errors.ts`](../../src/lib/db/providers/sql/db2/driver-errors.ts).
 
 ## 4. Known issues (db2-node 1.0.25)
 
