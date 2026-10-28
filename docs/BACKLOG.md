@@ -8046,11 +8046,11 @@ Found 2026-10-27 while designing read-only agent and MCP execution for every pro
 ### B139. SNMP has no agent execution and no MCP surface
 
 `MCP_EXPOSABLE.snmp` is false and the provider implements no `queryReadOnly`, so agent execution and every MCP tool refuse an SNMP connection.
-`listObjects`, `describeObject`, `describeObjects` and `getHealth` in `src/lib/db/providers/network/snmp/index.ts` throw `notWired` today while `connect` and `query` work, so a plan run has no catalog to ground on and an agent path has no inventory to read first.
+The catalog a plan run grounds on is in place: `listObjects`, `describeObject` and `describeObjects` answer from the bundled MIB modules and `getHealth` reads the agent (`docs/providers/snmp.md` section 6).
 
 Found 2026-10-27 while designing read-only agent and MCP execution for every provider.
 
-**Done when:** the catalog is wired from the bundled MIB tree, the provider implements `queryReadOnly` over its closed four-command grammar and the `valve.ts` Read Class check, with a test that pins both, and joins `AGENT_EXECUTION_ENGINES`; MCP stays closed until a per-engine exposure ruling opens it; cited in `docs/AGENT.md`.
+**Done when:** the provider implements `queryReadOnly` over its closed four-command grammar and the `valve.ts` Read Class check, with a test that pins both, and joins `AGENT_EXECUTION_ENGINES`; MCP stays closed until a per-engine exposure ruling opens it; cited in `docs/AGENT.md`.
 
 ## Passkey deferrals (#785)
 
