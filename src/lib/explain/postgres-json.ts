@@ -1,6 +1,7 @@
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { classifySelectPrefix, hasDataModifyingStatement } from "./select-prefix";
-import type { ExplainPlanResult, ExplainStrategy } from "./types";
+import { type AccessTally, type AgentPlanSummary, accessOf, isRecord, reportedNumber } from "./plan-access";
+import type { ExplainAgentReading, ExplainPlanResult, ExplainStrategy } from "./types";
 
 /**
  * This strategy's dialect, resolved once.
@@ -54,6 +55,68 @@ export function isExplainableUnderPostgresGrammar(sql: string): boolean {
   return prefix === "select" || !hasDataModifyingStatement(sql);
 }
 
+// ─── the agent's reading ────────────────────────────────────────────────────
+
+/**
+ * `EXPLAIN (FORMAT JSON)` answers one row, one column named `QUERY PLAN`, holding
+ * an array whose first element carries the root `Plan`. The driver parses the JSON
+ * itself, so this reads values rather than text.
+ */
+function planRoot(rows: readonly Record<string, unknown>[]): Record<string, unknown> | null {
+  const column = rows[0]?.["QUERY PLAN"];
+  if (!Array.isArray(column)) return null;
+  const first = column[0];
+  if (!isRecord(first)) return null;
+  const plan = first.Plan;
+  return isRecord(plan) ? plan : null;
+}
+
+/** Node types that reach rows through an index, and the one that reads a relation whole. */
+const INDEX_NODE = /Index (Only )?Scan|Bitmap Index Scan/;
+const SCAN_NODE = /^(Seq Scan|Parallel Seq Scan)$/;
+
+function tallyNode(node: Record<string, unknown>, tally: AccessTally): void {
+  const nodeType = typeof node["Node Type"] === "string" ? node["Node Type"] : "";
+  if (INDEX_NODE.test(nodeType)) tally.indexed = true;
+  else if (SCAN_NODE.test(nodeType)) tally.scanned = true;
+  const children = node.Plans;
+  if (!Array.isArray(children)) return;
+  for (const child of children) if (isRecord(child)) tallyNode(child, tally);
+}
+
+/**
+ * PostgreSQL sets NO `uninterpretedStep`, and the omission is a decision (#373 review).
+ *
+ * A PG plan is mostly nodes this reading does not tally — `Sort`, `Hash Join`,
+ * `Aggregate`, `Gather`, `Materialize` — and none of them is a relation access, so
+ * flagging them would mean flagging nearly every plan the engine can produce. What
+ * makes that trade different from SQLite's is that the two engines give the gate
+ * different things to hold on to: PostgreSQL reports a numeric `Total Cost` for the
+ * WHOLE plan, which the gate already weighs against a ceiling, and it preempts a
+ * statement that overruns `statement_timeout`. So an unrecognised node there is
+ * covered by a bound that is already enforced. SQLite reports no cost at all, does not
+ * preempt, and blocks writers while a read runs, which leaves the access reading as
+ * the gate's entire evidence — and a reading that skipped a step is not evidence.
+ */
+function summarise(rows: readonly Record<string, unknown>[]): AgentPlanSummary {
+  const root = planRoot(rows);
+  if (root === null) return { access: "unknown" };
+  const tally: AccessTally = { scanned: false, indexed: false, uninterpreted: false };
+  tallyNode(root, tally);
+  // The ROOT's estimates: they describe the whole plan, and a child's would describe
+  // one step of it while reading as though it were the answer.
+  const estimatedRows = reportedNumber(root["Plan Rows"]);
+  const estimatedCost = reportedNumber(root["Total Cost"]);
+  return {
+    access: accessOf(tally),
+    ...(estimatedRows === undefined ? {} : { estimatedRows }),
+    ...(estimatedCost === undefined ? {} : { estimatedCost }),
+  };
+}
+
+/** Costed: the root's `Total Cost` covers the whole plan, and the engine preempts an overrun. */
+const AGENT_READING: ExplainAgentReading = Object.freeze({ costed: true, summarise });
+
 export const postgresJsonStrategy: ExplainStrategy = {
   format: "postgres-json",
   /**
@@ -78,4 +141,5 @@ export const postgresJsonStrategy: ExplainStrategy = {
     if (!Array.isArray(raw) || raw.length === 0) return null;
     return { kind: "postgres-json", plan: raw as ExplainPlanResult[] };
   },
+  agentReading: AGENT_READING,
 };

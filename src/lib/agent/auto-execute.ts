@@ -22,7 +22,7 @@
  *     close to free and it removes most of the risk class on its own, because the
  *     agent path REFUSES rather than truncates: an artifact exists only for a
  *     statement that provably came back inside the row, byte and time ceilings.
- *  2. **The plan reads as safe**, per engine, with unknown resolving to risky — and
+ *  2. **The plan reads as safe** by its format's own reading, with unknown resolving to risky — and
  *     so does a plan the server could only PARTLY read, which is the same rule applied
  *     one step down (`uninterpretedStep`, #373).
  *  3. **The run measured that execution as quick** — `artifact.summary.elapsedMs`,
@@ -34,6 +34,7 @@
  */
 
 import type { ExplainFormat } from "@/lib/db/types";
+import { getExplainStrategy } from "@/lib/explain";
 import type { AgentPlanSummary } from "./plan-summary";
 
 /**
@@ -54,10 +55,10 @@ import type { AgentPlanSummary } from "./plan-summary";
 export const AGENT_AUTO_EXECUTE_MAX_ELAPSED_MS = 2_000;
 
 /**
- * The PostgreSQL planner-cost ceiling.
+ * The planner-cost ceiling a costed reading (`ExplainAgentReading.costed`) is weighed against.
  *
- * Also a calibration. At the default `seq_page_cost = 1.0` it corresponds to
- * roughly 50 000 pages, about 400 MB of sequential reading — seconds, not minutes.
+ * Also a calibration, made on PostgreSQL, the costed reading verified first. At the
+ * default `seq_page_cost = 1.0` it corresponds to roughly 50 000 pages, about 400 MB of sequential reading — seconds, not minutes.
  * The number is in arbitrary planner units calibrated by `seq_page_cost` /
  * `random_page_cost` and by how recently `ANALYZE` ran; it is not a time and does
  * not convert to one, which is exactly why it is not the only condition.
@@ -66,7 +67,7 @@ export const AGENT_AUTO_EXECUTE_MAX_PLAN_COST = 50_000;
 
 /** An estimating plan for the answer's statement, as the server read it. */
 export interface AgentAutoExecutePlan {
-  /** Which engine's grammar the summary was read from. An unverified dialect is risky. */
+  /** Which format's reading the summary came from. A format with no verified reading is risky. */
   readonly format: ExplainFormat | undefined;
   readonly summary: AgentPlanSummary;
 }
@@ -95,14 +96,16 @@ export type AgentAutoExecuteDecision =
     };
 
 /**
- * Condition 2, per engine.
+ * Condition 2, per format.
  *
- * PostgreSQL and SQLite are read by their own rules and every other dialect is
+ * A format is weighed only through its explain strategy's `agentReading`
+ * (`src/lib/explain/<format>.ts`), and a format whose strategy carries none is
  * risky — the same fail-closed posture `summarisePlan` takes, and for the same
  * reason: applying one engine's rule to another's grammar would be a claim about a
- * plan nobody has looked at.
+ * plan nobody has looked at. The reading says which of two rules applies through its
+ * `costed` flag, so this gate names no format and no engine.
  *
- * `unknown` fails on BOTH engines, which is why this is written as a membership
+ * `unknown` fails under BOTH rules, which is why this is written as a membership
  * test rather than as `access !== "full-scan"`. A plan the server could not
  * interpret says nothing about how the statement reaches its rows, and "said
  * nothing" must not read as "said it was cheap".
@@ -114,21 +117,23 @@ export type AgentAutoExecuteDecision =
  * `uninterpretedStep`, and it is refused HERE, before either engine's rule, because
  * the sentence above is about a reading rather than about a dialect.
  *
- * Only the SQLite reading sets the flag; PostgreSQL's does not, and that asymmetry is
- * argued in `plan-summary.ts` rather than assumed. The short of it: PostgreSQL reports
- * a numeric `Total Cost` for the whole plan that condition 2 already weighs, and it
- * preempts a statement that overruns, so a node this server did not recognise is
- * bounded by something other than the reading. On SQLite the reading is the only
- * evidence there is. The check below is written over the summary rather than inside
- * the SQLite branch so that a reading which later starts reporting the flag for another
- * engine is refused by default rather than admitted by omission.
+ * Only an uncosted reading sets the flag (today SQLite's); a costed one does not (today
+ * PostgreSQL's), and that asymmetry is argued in the PostgreSQL strategy
+ * (`src/lib/explain/postgres-json.ts`) rather than assumed. The short of it: a costed
+ * reading reports a numeric cost for the whole plan that condition 2 already weighs, and
+ * its engine preempts a statement that overruns, so a node this server did not recognise
+ * is bounded by something other than the reading. Under an uncosted reading the access
+ * is the only evidence there is. The check below is written over the summary rather than
+ * inside the uncosted rule so that a reading which later starts reporting the flag is
+ * refused by default rather than admitted by omission.
  *
- * SQLite is stricter than PostgreSQL and deliberately so. PostgreSQL reports a cost
- * that can be weighed and preempts a statement that overruns; SQLite reports no cost
- * and no row estimate at all, does not preempt, and a read that runs long blocks
- * writers and this application until it finishes. So a `mixed` plan passes on
- * PostgreSQL and does not pass here: any `SCAN` is a full read of a table whose size
- * nothing in the plan states.
+ * The uncosted rule is stricter than the costed one and deliberately so. A costed
+ * reading reports a cost that can be weighed and its engine preempts a statement that
+ * overruns; an uncosted one (SQLite) reports no cost and no row estimate at all, its
+ * engine does not preempt, and a read that runs long blocks writers and this
+ * application until it finishes. So a `mixed` plan passes under the costed rule and does
+ * not pass under the uncosted one: any full read is of a table whose size nothing in the
+ * plan states.
  *
  * It answers WHICH reading refused rather than whether one did (#387 review). The five
  * are distinguishable and this function has always known which applied; it used to
@@ -160,20 +165,19 @@ type PlanRefusal =
 function planRefusal(plan: AgentAutoExecutePlan | undefined): PlanRefusal | null {
   if (plan === undefined) return "no-plan";
   if (plan.summary.uninterpretedStep === true) return "unreadable-step";
-  if (plan.format === "postgres-json") {
+  const reading = getExplainStrategy(plan.format)?.agentReading;
+  if (reading === undefined) return "unverified-dialect";
+  if (reading.costed) {
     if (plan.summary.access === "unknown") return "unreadable-access";
     if (plan.summary.access !== "index" && plan.summary.access !== "mixed") return "reads-whole-table";
     if (plan.summary.estimatedCost === undefined) return "no-estimate";
     return plan.summary.estimatedCost <= AGENT_AUTO_EXECUTE_MAX_PLAN_COST ? null : "over-ceiling";
   }
-  // SQLite carries no cost at all, so `access` is the whole reading: anything wholly
-  // indexed passes, an unreadable plan says so, and everything else reads a table whose
-  // size nothing in the plan states.
-  if (plan.format === "sqlite-queryplan") {
-    if (plan.summary.access === "index") return null;
-    return plan.summary.access === "unknown" ? "unreadable-access" : "reads-whole-table";
-  }
-  return "unverified-dialect";
+  // An uncosted reading carries no cost at all, so `access` is the whole reading:
+  // anything wholly indexed passes, an unreadable plan says so, and everything else
+  // reads a table whose size nothing in the plan states.
+  if (plan.summary.access === "index") return null;
+  return plan.summary.access === "unknown" ? "unreadable-access" : "reads-whole-table";
 }
 
 /**

@@ -34,6 +34,9 @@
  * - R8c: any other identifier with a whole segment, or a run of adjacent segments, (split at `_` and at case changes,
  *   then lowercased) that is an engine id: `postgresThing` and `duckDbPlan` are, `redistribute` is not. An import or export specifier is no reference, as for
  *   R5c, so an imported name is read where the file uses it.
+ * - R8d: a string literal or literal type that is an `ExplainFormat` id, or starts with an engine id and a `-`
+ *   (`"postgres-json"`), and any identifier with a whole segment that is an engine's alias rather than its id (`PG_`):
+ *   a plan format names its engine, so the core asks the format's explain strategy instead of matching the id.
  * - R9: a read of a server member an engine overlay may override (`ENGINE_OVERRIDABLE_SERVER_MEMBERS`) through a
  *   family resolver, so an engine's override is never bypassed: the receiver chain starts at a call to
  *   `agentLanguagePack`, `languageServerPack` or `languageServer`, under any import name or off a namespace, or at a
@@ -88,6 +91,10 @@ const ANY_ID = new RegExp(IDS, "i");
 /** The engine names, the keys of the one total `DatabaseType` map. */
 const ENGINE_IDS = new Set(Object.keys(AGENT_STATEMENT_LANGUAGE));
 const PLAN_STAGE = /COLLSCAN|IXSCAN/;
+/** A literal that starts with an engine id and a `-`: a format, mode or variant id that names its engine (R8d). */
+const ENGINE_PREFIXED = new RegExp(`^(${[...ENGINE_IDS].join("|")})-`);
+/** The segments that name an engine without being its id, as `PG_INDEX_NODE` names PostgreSQL (R8d). */
+const ENGINE_ALIASES: ReadonlySet<string> = new Set(["pg"]);
 const COMPOUND_ID = [new RegExp(`^(${IDS})[.:-]`), new RegExp(`-(${IDS})\\.\\d+$`)];
 /** The tools the languages' MCP facets declare: each is a language's, so a core file reads it off the registry. */
 const FACET_TOOLS: ReadonlySet<string> = new Set(
@@ -149,8 +156,8 @@ const SHARED_ENTRIES = new Set(
  * - `kubernetes` in the cluster-* requirements, the mirror of the provider's `agentReadings`;
  * - the execution gate, which the spec keeps in `AGENT_EXECUTION_ENGINES`;
  * - `postgres` as the `@workflow` durable world, which is no `DatabaseType`;
- * - the plan readers keyed by the provider-declared `ExplainFormat`, which the spec says a plan format is read from.
- * - `libredb` as the MCP server's name in each client's configuration snippet, which names the product, not the engine.
+ * - `libredb` as the MCP server's name in each client's configuration snippet, and as the first word of the MCP server's
+ *   name, its token type and its VS Code input id, each of which names the product, not the engine.
  *
  * The operation and verifier ids a family owns are its rows in `AgentFamilyOperationIds` and `AgentFamilyVerifierIds`
  * in `languages/pack.ts`.
@@ -195,19 +202,10 @@ const ALLOWLIST: Readonly<Record<string, number>> = Object.freeze({
   [`${AGENT}/config.ts#AgentDurableBackend: R8a "postgres"`]: 1,
   [`${AGENT}/config.ts#SANCTIONED_WORLD_TARGETS: R8a "postgres"`]: 1,
   [`${AGENT}/config.ts#resolveAgentAvailability: R8a "postgres"`]: 1,
-  [`${AGENT}/plan-summary.ts#postgresRoot: R8c postgresRoot`]: 1,
-  [`${AGENT}/plan-summary.ts#root: R8c postgresRoot`]: 1,
-  [`${AGENT}/plan-summary.ts#tallyPostgres: R8c tallyPostgres`]: 2,
-  [`${AGENT}/plan-summary.ts#summarisePostgres: R8c summarisePostgres`]: 1,
-  [`${AGENT}/plan-summary.ts#summarisePostgres: R8c tallyPostgres`]: 1,
-  [`${AGENT}/plan-summary.ts#SQLITE_INDEX_STEP: R8c SQLITE_INDEX_STEP`]: 1,
-  [`${AGENT}/plan-summary.ts#SQLITE_SCAN_STEP: R8c SQLITE_SCAN_STEP`]: 1,
-  [`${AGENT}/plan-summary.ts#summariseSqlite: R8c summariseSqlite`]: 1,
-  [`${AGENT}/plan-summary.ts#summariseSqlite: R8c SQLITE_INDEX_STEP`]: 1,
-  [`${AGENT}/plan-summary.ts#summariseSqlite: R8c SQLITE_SCAN_STEP`]: 1,
-  [`${AGENT}/plan-summary.ts#PLAN_READINGS: R8c summarisePostgres`]: 1,
-  [`${AGENT}/plan-summary.ts#PLAN_READINGS: R8c summariseSqlite`]: 1,
   [`${MCP}/client-config.ts#mcpClientConfigs: R8b libredb`]: 5,
+  [`${MCP}/client-config.ts#MCP_VSCODE_INPUT_ID: R8d "libredb-mcp-token"`]: 1,
+  [`${MCP}/server.ts#MCP_SERVER_NAME: R8d "libredb-studio-mcp"`]: 1,
+  [`${MCP}/token.ts#MCP_TOKEN_TYPE: R8d "libredb-mcp+jwt"`]: 1,
 });
 
 /** Declarations too wide to key an allowlist entry on: one entry would excuse a whole run loop or file. */
@@ -309,6 +307,21 @@ function sourcesUnder(directory: string): string[] {
 type Planted = Readonly<Record<string, string>>;
 const read = (file: string): string => readFileSync(join(ROOT, file), "utf8");
 const textOf = (file: string, planted: Planted): string => planted[file] ?? read(file);
+
+/** The `ExplainFormat` ids, read off the union in `src/lib/db/types.ts`, so a format added there is held the day it lands (R8d). */
+const EXPLAIN_FORMATS: ReadonlySet<string> = (() => {
+  const formats = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    if (ts.isTypeAliasDeclaration(node) && node.name.text === "ExplainFormat" && ts.isUnionTypeNode(node.type)) {
+      for (const member of node.type.types) {
+        if (ts.isLiteralTypeNode(member) && ts.isStringLiteral(member.literal)) formats.add(member.literal.text);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(parse("src/lib/db/types.ts", read("src/lib/db/types.ts")));
+  return formats;
+})();
 
 /** The name of the innermost function, method, class, variable, type alias or interface around `node`. */
 function declarationOf(node: ts.Node): string {
@@ -475,6 +488,8 @@ function coreFileFindings(file: string, text: string, exemptEngineMap = true): s
         if (isPropertyName(node)) engineProperty(node, node.text);
         else add(node, "R8a", literal);
       }
+      if (!isSpecifier && (EXPLAIN_FORMATS.has(node.text) || ENGINE_PREFIXED.test(node.text)))
+        add(node, "R8d", literal);
     }
     if (ts.isStringLiteral(node) || ts.isTemplateLiteralToken(node)) {
       if (PLAN_STAGE.test(node.text)) add(node, "R1d", JSON.stringify(node.text));
@@ -494,6 +509,9 @@ function coreFileFindings(file: string, text: string, exemptEngineMap = true): s
       if (DEFAULT_LANGUAGE_CONSTANTS.has(node.text) && !isSpecifierName(node)) add(node, "R5c", node.text);
       if (ENGINE_IDS.has(node.text) && isPropertyName(node)) engineProperty(node, node.text);
       else if (!isSpecifierName(node) && namesEngine(node.text)) add(node, "R8c", node.text);
+      if (!isSpecifierName(node) && segmentsOf(node.text).some((segment) => ENGINE_ALIASES.has(segment))) {
+        add(node, "R8d", node.text);
+      }
       if (
         OVERRIDABLE_SERVER_MEMBERS.has(node.text) &&
         ts.isPropertyAccessExpression(parent) &&
@@ -1169,6 +1187,35 @@ describe("planted violations yield exactly their findings", () => {
       `${posture}#duckDbPlan: R8c duckDbPlan`,
     ]);
     expect(boundaryFindings(prepend(posture, "const MsSqlCap = 2;"))).toEqual([`${posture}#MsSqlCap: R8c MsSqlCap`]);
+  });
+
+  test("a plan format id, an engine-prefixed literal or an engine alias fails R8d", () => {
+    const posture = `${AGENT}/posture.ts`;
+    expect(boundaryFindings(plantInFunction(TOOLS, "readCatalog", 'if (format === "sqlite-queryplan") {}'))).toEqual([
+      `${TOOLS}#readCatalog: R8d "sqlite-queryplan"`,
+    ]);
+    // A format id with no engine in its first word is still a format: the union is read, not guessed at.
+    expect(boundaryFindings(prepend(posture, 'type F = "mysql-json" | "druid-native";'))).toEqual([
+      `${posture}#F: R8d "druid-native"`,
+      `${posture}#F: R8d "mysql-json"`,
+    ]);
+    expect(boundaryFindings(prepend(posture, 'const mode = "mssql-showplan";'))).toEqual([
+      `${posture}#mode: R8d "mssql-showplan"`,
+    ]);
+    expect(boundaryFindings(prepend(posture, "const PG_SCAN_NODE = 1;"))).toEqual([
+      `${posture}#PG_SCAN_NODE: R8d PG_SCAN_NODE`,
+    ]);
+    // An engine id spelled in an identifier stays R8c's, and a word that only contains an alias is no alias.
+    expect(boundaryFindings(prepend(posture, "const SQLITE_SCAN_STEP = 1;"))).toEqual([
+      `${posture}#SQLITE_SCAN_STEP: R8c SQLITE_SCAN_STEP`,
+    ]);
+    expect(boundaryFindings(prepend(posture, "const pgnLimit = 1; const upgrade = 2;"))).toEqual([]);
+  });
+
+  test("the plan format ids R8d holds are the whole ExplainFormat union", () => {
+    expect(EXPLAIN_FORMATS.size).toBeGreaterThan(10);
+    expect(EXPLAIN_FORMATS.has("postgres-json")).toBe(true);
+    expect(EXPLAIN_FORMATS.has("druid-native")).toBe(true);
   });
 
   test("an overridable member read through a family resolver, an alias, a pattern or a projection fails R9", () => {
