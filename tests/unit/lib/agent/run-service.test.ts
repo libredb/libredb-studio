@@ -1067,6 +1067,47 @@ describe("AgentRunService — drive ownership", () => {
 
     expect((await h.reader().read(runId))?.driveClaim).toBeNull();
   });
+
+  test("a claim another process holds durably refuses here, though this process holds none", async () => {
+    const h = harness();
+    const { runId } = await h.service.start(START_INPUT);
+    // Another process's drive, written to the same ledger and not yet expired.
+    expect(await h.reader().tryClaimDrive(runId, "drive-elsewhere", Date.now() + 60_000)).toMatchObject({
+      claimed: true,
+    });
+
+    const refusal = await captureServiceError(async () => h.service.claimDrive(runId));
+    expect(refusal.reasonCode).toBe("RUN_ALREADY_DRIVEN");
+    expect(refusal.message).toBe(`agent run "${runId}" is already being driven`);
+  });
+
+  test("a release the ledger cannot record is logged, and the claim lapses at its expiry instead", async () => {
+    const h = harness();
+    const { runId } = await h.service.start(START_INPUT);
+    await h.service.claimDrive(runId);
+    const failure = new Error("ledger write failed");
+    const release = spyOn(h.store, "releaseDrive").mockImplementation(async () => {
+      throw failure;
+    });
+    const error = spyOn(logger, "error").mockImplementation(() => {});
+    try {
+      await h.service.releaseDrive(runId);
+
+      expect(error).toHaveBeenCalledWith(
+        `agent run ${runId}: failed to record the drive release; the claim lapses at its expiry`,
+        failure,
+        { runId },
+      );
+      // The durable claim is still there, so the next drive is refused until it lapses.
+      expect((await h.reader().read(runId))?.driveClaim).not.toBeNull();
+      expect((await captureServiceError(async () => h.service.claimDrive(runId))).reasonCode).toBe(
+        "RUN_ALREADY_DRIVEN",
+      );
+    } finally {
+      release.mockRestore();
+      error.mockRestore();
+    }
+  });
 });
 
 // ─── run history (#830) ────────────────────────────────────────────────────
