@@ -17,7 +17,7 @@
 import { afterAll, afterEach, describe, expect, mock, test } from "bun:test";
 import type { LookupAddress } from "node:dns";
 import { EventEmitter } from "node:events";
-import type { NetConnectOpts, Server, Socket } from "node:net";
+import type { TcpNetConnectOpts, Server, Socket } from "node:net";
 
 const realDns = { ...(await import("node:dns")) };
 const realNet = { ...(await import("node:net")) };
@@ -45,11 +45,11 @@ mock.module("node:dns", () => ({
 }));
 
 /** What each dial asked `net.connect` for, and the address the public answer's lookup handed back. */
-const dials: NetConnectOpts[] = [];
+const dials: TcpNetConnectOpts[] = [];
 const handedBack: string[] = [];
 
 /** Runs the installed lookup the way a socket does and stops before connecting: no packet leaves for a public address. */
-function lookupOnly(options: NetConnectOpts & { host: string }): Socket {
+function lookupOnly(options: TcpNetConnectOpts & { host: string }): Socket {
   const socket = Object.assign(new EventEmitter(), { write: () => true, destroy: () => socket });
   options.lookup?.(options.host, {}, (error, address) => {
     queueMicrotask(() => {
@@ -66,7 +66,7 @@ function lookupOnly(options: NetConnectOpts & { host: string }): Socket {
 mock.module("node:net", () => ({
   ...realNet,
   connect(...args: unknown[]) {
-    const options = args[0] as NetConnectOpts & { host: string };
+    const options = args[0] as TcpNetConnectOpts & { host: string };
     dials.push(options);
     if (options.host === "public.test") return lookupOnly(options);
     return (realNet.connect as (...a: unknown[]) => Socket)(...args);
