@@ -5,8 +5,8 @@ Solutions Catalog (PCSC), requested by SUSE as part of the SUSE Ready for Ranche
 certification (see rancher/partner-charts#1158 and tracking issue #166). This file is
 the single source for the catalog text.
 The overlay Rancher renders is cut from it into `app-readme.md` beside this file, which is
-what a partner-charts submission copies; the refresh submitted on 2026-09-09 is still open
-(see the delivery note at the end).
+what a partner-charts submission copies; the refresh submitted on 2026-09-09 as
+rancher/partner-charts#1168 merged on 2026-09-23 (see the delivery note at the end).
 `E2E_VALIDATION_TASK.md` covers the validation side.
 
 The listing went live on 2026-08-05 from an earlier revision of this file.
@@ -230,9 +230,9 @@ pre-Couchbase app-readme, so merging it would have offered a months-old version 
 Rancher catalog. The overlay in that PR now carries the ten-engine wording from this
 file. The corrections above have **not** been mailed to SUSE yet.
 
-**2026-09-09.** rancher/partner-charts#1168 is OPEN, submitted from `libredb/partner-charts`,
-and refreshes the overlay to the sixteen-engine wording.
-The catalog keeps rendering the ten-engine text until it merges.
+**2026-09-09.** rancher/partner-charts#1168 was submitted from `libredb/partner-charts`
+to refresh the overlay to the sixteen-engine wording, and merged on 2026-09-23; the overlay
+reaches the catalog with the next chart version partner-charts CI integrates, as the note below says.
 It had stayed on the ten-engine text from 2026-08-18 while the chart's own description moved
 to sixteen, because the file Rancher renders lives in that repository and nothing here could
 read it.
