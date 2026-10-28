@@ -211,7 +211,6 @@ function inferDocumentFakerType(path: string, declared: string): { generator: st
     case "null":
     case "undefined":
       return { generator: "null", example: "null" };
-    case "bool":
     case "boolean":
       return { generator: "boolean", example: "true" };
     case "date":
