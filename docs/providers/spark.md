@@ -143,7 +143,7 @@ What a user sees for each outcome:
 | A token the server does not check | caution, Test connection only | the second caution of [section 2.3](#23-a-server-without-a-token) |
 
 The version in a sentence is the server's text, withheld whole when it holds the token and otherwise cut to 64 characters.
-The two client-certificate rows are read under Node; under Bun the same failures read as nothing listening ([section 10](#10-security)).
+The two client-certificate rows are read under Node and under Bun from 1.4.4; under a Bun before 1.4.4 the same failures read as nothing listening ([section 10](#10-security)).
 The row of a port that is not gRPC needs that port's answer: a TLS server that closes on plaintext bytes, and under Node on Windows a port that answers HTTP/1.1, read as nothing listening.
 
 ### 2.5 Paste URL

@@ -227,7 +227,10 @@ export interface MilvusErrorConnection {
   readonly port: number;
   /** Absent on a plaintext channel; `serverName` is the identity the certificate is checked against (E6). */
   readonly tls?: { readonly serverName: string; readonly clientCertificate: boolean };
-  /** False under Bun, which reports no TLS alert (R42 F5). */
+  /**
+   * False under Bun. From 1.4.4 Bun names the server's TLS alerts, so the flag only picks the wording of a TLS
+   * failure that names no cause; a Bun before 1.4.4 named none (R42 F5).
+   */
   readonly runtimeReportsTlsCause: boolean;
   readonly receiveCapBytes: number;
   /** The deadline the call ran under. */

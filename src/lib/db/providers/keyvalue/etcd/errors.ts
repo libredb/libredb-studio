@@ -316,8 +316,8 @@ export interface EtcdErrorConnection {
   /** Absent on a plaintext channel. `serverName` is the identity the certificate is checked against (spec E5). */
   readonly tls?: { readonly serverName: string; readonly clientCertificate: boolean };
   /**
-   * False under Bun, where a handshake the server refused carries no cause, while a chain, name or not-TLS failure is
-   * named (spec E5, R07).
+   * False under Bun. It only picks the wording of a TLS failure that names no cause: from 1.4.4 Bun names the
+   * server's alerts as well as a chain, name or not-TLS failure, while a Bun before 1.4.4 named no alert (spec E5, R07).
    */
   readonly runtimeReportsTlsCause: boolean;
   /** The channel's maximum receive size `M` (spec 5.4, KE4). */

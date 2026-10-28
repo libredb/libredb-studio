@@ -824,6 +824,41 @@ describe("declaredColumns() bridges the two spellings (#273)", () => {
     ]);
   });
 
+  // A Bun before 1.4.4 refused `declaredTypes` until the statement had run. The real driver
+  // no longer shows that, so this stand-in does: the adapter must not read it at prepare().
+  test("the bun adapter reads declaredTypes only after the rows, as a Bun before 1.4.4 needs", () => {
+    let executed = false;
+    class RunFirstDatabase implements BunDatabaseLike {
+      exec(): void {}
+      prepare(): ReturnType<BunDatabaseLike["prepare"]> {
+        return {
+          ...statementReturning({}),
+          values: () => {
+            executed = true;
+            return [[1, 2.5]];
+          },
+          columnNames: ["id", "price"],
+          get declaredTypes(): (string | null)[] {
+            if (!executed) throw new Error("Statement must be executed before accessing declaredTypes");
+            return ["INTEGER", "REAL"];
+          },
+        };
+      }
+      close(): void {}
+      readonly inTransaction = false;
+    }
+    const stmt = new (createBunSQLiteDriver(RunFirstDatabase as BunSQLiteConstructor))(":memory:").prepare(
+      "SELECT id, price FROM d",
+    );
+
+    expect(stmt.returnsRows()).toBe(true);
+    expect(stmt.values()).toEqual([[1, 2.5]]);
+    expect(declaredPairs(stmt)).toEqual([
+      ["id", "INTEGER"],
+      ["price", "REAL"],
+    ]);
+  });
+
   // The whole point of a bridge: one stand-in, two adapters, ONE answer. A mapping that
   // drifted on either side would show up here rather than on whichever runtime shipped.
   test("both adapters answer the same pairs for the same statement", () => {
