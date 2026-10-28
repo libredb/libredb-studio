@@ -337,6 +337,17 @@ describe("StorageTab", () => {
     expect(queryByText("users")).not.toBeNull();
   });
 
+  test("a tablespace whose engine reports no usage share reads a dash, with no bar", () => {
+    const data = makeMonitoringData();
+    data.storage = [{ name: "fast_ssd", location: "/mnt/ssd", size: "40 GB", sizeBytes: 42949672960 }];
+    const { getByText } = render(<StorageTab data={data} loading={false} />);
+
+    const row = getByText("/mnt/ssd").closest("tr")!;
+    const cells = row.querySelectorAll("td");
+    expect(cells[cells.length - 1].textContent).toBe("-");
+    expect(row.querySelector('[role="progressbar"]')).toBeNull();
+  });
+
   test("the index total is the per-table figure, not the sum of the index rows", () => {
     // InnoDB has no separate primary-key index: the clustered index IS the table, so
     // `mysql.innodb_index_stats` reports the PRIMARY row's size as the row data. Summing every
