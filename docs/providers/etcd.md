@@ -340,7 +340,7 @@ A prefix delete asks for the prefix typed exactly, `/app/` and `/App/` being dif
 
 How this engine's statement text is read is declared once, in [`src/lib/db/providers/keyvalue/etcd/sql-grammar.ts`](../../src/lib/db/providers/keyvalue/etcd/sql-grammar.ts), the `etcd` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
 `readsSqlText` is `false`: `etcd` takes an etcdctl command line (#1089), whose words are read by the shell's quoting rules and a txn body by etcdctl's own, and a key may be spelled like any SQL keyword; the provider extends `BaseDatabaseProvider` and parses the text itself.
-The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` in `src/lib/db/destructive-commands.ts` instead of a SQL reading.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/providers/keyvalue/etcd/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
 Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
 

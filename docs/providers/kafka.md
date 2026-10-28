@@ -134,7 +134,7 @@ Every reader of either field has a Kafka arm or a test pinning that its branch i
 On a topic row both row menus withhold Profile, through `offersColumnProfiling`, Code Generator, through `offersCodeGeneration`, and Generate Test Data, because no kind declares `acceptsRowWrites`.
 Code generation is withheld because the models it writes over a topic's fixed columns reject the rows a read returns: a `Date` timestamp against the ISO string, a record-typed value against text, base64 and the Confluent label.
 Both menus also withhold Generate Count Query, through `offersCountQuery` (#702): a read request is JSON of its own dialect, with no count grammar.
-The execution confirmation gate never asks on a Kafka connection: a read request cannot write, so the `kafka` row of `NON_SQL_DESTRUCTIVE_VOCABULARY` in `src/lib/db/destructive-commands.ts` names no operation and is the gate's whole answer, and a topic named `delete` or `drop` is never read as SQL.
+The execution confirmation gate never asks on a Kafka connection: a read request cannot write, so the `kafka` row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/providers/stream/kafka/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) names no operation and is the gate's whole answer, and a topic named `delete` or `drop` is never read as SQL.
 No Monaco language and no JSON schema for the request are registered; a schema with completion and validation is recorded in `docs/BACKLOG.md`.
 Widening the published `queryDialect` union breaks an external consumer's exhaustive switch over it, and that ships with a release note rather than a compatibility layer.
 
@@ -427,7 +427,7 @@ None: `supportsExplain` is `false`, and the plan view is not offered.
 
 How this engine's statement text is read is declared once, in [`src/lib/db/providers/stream/kafka/sql-grammar.ts`](../../src/lib/db/providers/stream/kafka/sql-grammar.ts), the `kafka` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
 `readsSqlText` is `false`: `kafka` takes a JSON read request (#1088), one object naming a topic and where to read it from, whose strings escape with a backslash as a MongoDB document's do; the provider extends `BaseDatabaseProvider` and parses the text itself.
-The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` in `src/lib/db/destructive-commands.ts` instead of a SQL reading.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/providers/stream/kafka/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
 Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
 

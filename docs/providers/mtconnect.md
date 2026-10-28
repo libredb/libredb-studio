@@ -277,7 +277,7 @@ shown as the word the agent printed rather than as an empty cell.
 
 How this engine's statement text is read is declared once, in [`src/lib/db/providers/industrial/mtconnect/sql-grammar.ts`](../../src/lib/db/providers/industrial/mtconnect/sql-grammar.ts), the `mtconnect` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
 `readsSqlText` is `false`: the console takes one request line in the agent's own URL grammar, so no span of it is SQL (#1722).
-The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` in `src/lib/db/destructive-commands.ts` instead of a SQL reading.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/providers/industrial/mtconnect/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
 Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
 

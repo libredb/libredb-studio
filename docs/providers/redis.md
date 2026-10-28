@@ -303,7 +303,7 @@ one command runs it, and running the whole buffer runs its first one (#427). The
 provider is line-based too: it runs its first non-comment line ([`libredb.md`](libredb.md) §5.1).
 
 Since S8 the **execution confirmation gate reads a buffer the same way**, and since this rule with the
-same function: `src/lib/db/destructive-commands.ts` reads the text with `readRedisCommandText()`,
+same function: `src/lib/db/providers/keyvalue/redis-destructive.ts` reads the text with `readRedisCommandText()`,
 dispatches on a leading `{` as §3.4 does, and asks before running any command in its Redis destructive
 vocabulary - key, expiry, string, hash, list, set, sorted-set and stream writes, the scripting
 entry points, and the server and access commands, with container commands such as `CONFIG SET`
@@ -874,7 +874,7 @@ prefixes rather than objects — so it is offered here and nowhere else: a catal
 
 How this engine's statement text is read is declared once, in [`src/lib/db/providers/keyvalue/redis-sql-grammar.ts`](../../src/lib/db/providers/keyvalue/redis-sql-grammar.ts), the `redis` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
 `readsSqlText` is `false`: Redis takes a command line, which never reaches the SQL readers on the query path, since the provider extends `BaseDatabaseProvider` and never calls `prepareQuery`; it reaches the confirmation gate because both execution paths ask about whatever is in the editor before running it (#297).
-The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` in `src/lib/db/destructive-commands.ts` instead of a SQL reading.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/providers/keyvalue/redis-destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
 Redaction is `command`, read by the module's own reader over the one command `readRedisCommandText()` reads for the provider: a redacted statement keeps that command's name, upper-cased as the provider sends it, and one `?` for every argument, keys and values alike.
 A text that sends nothing (blank, only comments, a second command or an unclosed quote) keeps nothing (`?`), and so does a JSON command the provider would refuse.

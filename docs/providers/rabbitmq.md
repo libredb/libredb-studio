@@ -224,7 +224,7 @@ From 4.3.7 such messages are delivered with those values removed ([§5.3](#53-re
 
 How this engine's statement text is read is declared once, in [`src/lib/db/providers/stream/rabbitmq/sql-grammar.ts`](../../src/lib/db/providers/stream/rabbitmq/sql-grammar.ts), the `rabbitmq` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
 `readsSqlText` is `false`: the console takes one JSON read request naming a vhost and a stream ([§5.1](#51-the-read-request)), which the provider parses itself, so no span of it is SQL.
-The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` in `src/lib/db/destructive-commands.ts` instead of a SQL reading.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/providers/stream/rabbitmq/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
 Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
 

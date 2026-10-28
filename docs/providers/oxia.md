@@ -514,7 +514,7 @@ On a namespace that sorts keys naturally, a list or scan with those bounds carri
 
 How this engine's statement text is read is declared once, in [`src/lib/db/providers/keyvalue/oxia/sql-grammar.ts`](../../src/lib/db/providers/keyvalue/oxia/sql-grammar.ts), the `oxia` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
 `readsSqlText` is `false`: `oxia` takes one `oxia client` read command, words split by POSIX shell rules, and a SQL span reader would report its quoting as unreadable and prompt on every run.
-The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` in `src/lib/db/destructive-commands.ts` instead of a SQL reading.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/providers/keyvalue/oxia/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
 Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
 

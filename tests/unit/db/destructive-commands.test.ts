@@ -1,4 +1,7 @@
 import { afterEach, describe, test, expect } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import ts from "typescript";
 import { isDangerousQuery } from "@/components/QuerySafetyDialog";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import {
@@ -439,6 +442,50 @@ describe("NON_SQL_DESTRUCTIVE_VOCABULARY", () => {
   test("carries a row for a type exactly when readsSqlText says its text is not SQL", () => {
     const notSql = SHIPPED_DATABASE_TYPES.filter((type) => !readsSqlText(type));
     expect(Object.keys(NON_SQL_DESTRUCTIVE_VOCABULARY).sort()).toEqual([...notSql].sort());
+  });
+
+  // The shared gate names no engine's vocabulary: each row is a module beside its provider, and this table only
+  // collects them, so a new engine adds a row file of its own and one line here.
+  test("collects rows each declared beside its provider, and declares none of its own", () => {
+    const path = "src/lib/db/destructive-commands.ts";
+    const source = ts.createSourceFile(
+      path,
+      readFileSync(join(import.meta.dir, "../../..", path), "utf8"),
+      ts.ScriptTarget.Latest,
+      true,
+    );
+    const importedFrom = new Map<string, string>();
+    let table: ts.ObjectLiteralExpression | undefined;
+    for (const statement of source.statements) {
+      if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)) {
+        const bindings = statement.importClause?.namedBindings;
+        if (bindings !== undefined && ts.isNamedImports(bindings)) {
+          for (const element of bindings.elements) importedFrom.set(element.name.text, statement.moduleSpecifier.text);
+        }
+      }
+      if (ts.isVariableStatement(statement)) {
+        for (const declaration of statement.declarationList.declarations) {
+          if (
+            ts.isIdentifier(declaration.name) &&
+            declaration.name.text === "NON_SQL_DESTRUCTIVE_VOCABULARY" &&
+            declaration.initializer !== undefined &&
+            ts.isObjectLiteralExpression(declaration.initializer)
+          ) {
+            table = declaration.initializer;
+          }
+        }
+      }
+    }
+    expect(table).toBeDefined();
+    const inline = (table?.properties ?? [])
+      .filter((property) => {
+        const value = ts.isPropertyAssignment(property) ? property.initializer : undefined;
+        if (value === undefined || !ts.isIdentifier(value)) return true;
+        const from = importedFrom.get(value.text) ?? "";
+        return !(from.startsWith("@/lib/db/providers/") && /(^|[/-])destructive$/.test(from));
+      })
+      .map((property) => property.name?.getText(source));
+    expect(inline).toEqual([]);
   });
 
   test("names no MongoDB operation the provider cannot dispatch", () => {

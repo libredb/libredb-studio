@@ -588,7 +588,7 @@ Its `options`, when sent, must be an object as well: anything else (`null`, a nu
 
 **A connection type's console text bound:**
 
-A connection type can declare a bound on its statement text in UTF-8 bytes, on its row in `src/lib/db/destructive-commands.ts`.
+A connection type can declare a bound on its statement text in UTF-8 bytes, on its row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/destructive-commands.ts`), declared in the provider's `destructive.ts` module.
 For such a type this route counts the bytes of `sql` after resolving the connection and before reading `params`, building the provider or preparing the statement, so an oversize text opens no socket.
 The bound is read after the request body is parsed, because the type that selects it is inside the body.
 

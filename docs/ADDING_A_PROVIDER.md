@@ -1153,6 +1153,7 @@ Those three reach code and tests only; the four prose greps of the published blo
 **Also always, and not named above until the Kafka provider found them (#1088):** each is a record, a population or a pinned list no search above prints by itself.
 
 - [ ] `src/lib/db/destructive-commands.ts`: `NON_SQL_DESTRUCTIVE_VOCABULARY`, a row for every id whose grammar module declares `readsSqlText: false`, which `tests/unit/db/destructive-commands.test.ts` holds to exactly those ids.
+      The row is declared beside the provider, in its own `destructive.ts` module, and the table only imports it; the same test fails on a row written inline.
       A text that cannot write takes the row that names no operation and decides alone, the Prometheus and Kafka shape.
 - [ ] `src/lib/db/migration-ddl/index.ts`: the new id's row in `MIGRATION_DDL`, which the compiler holds complete.
       Write the row's module beside the provider at the placement rule, `<family>/<id>-migration-ddl.ts` for a flat provider or `<family>/<id>/migration-ddl.ts` for a directory one, as a `MigrationDdlSpec`: `tableDdl: "refused"` with its one `refusal` line for an engine whose diff gets no table DDL at all, or `"written"` with every statement kind and a `transactionWrapper` decision (#284), sharing PostgreSQL's spelling only by importing a named building block from `shared.ts` (#269).

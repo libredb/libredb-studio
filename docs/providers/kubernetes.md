@@ -319,7 +319,7 @@ Query history masks the values of `--token`, `--password`, `--client-key`, `--cl
 
 How this engine's statement text is read is declared once, in [`src/lib/db/providers/platform/kubernetes/sql-grammar.ts`](../../src/lib/db/providers/platform/kubernetes/sql-grammar.ts), the `kubernetes` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
 `readsSqlText` is `false`: `kubernetes` takes one kubectl subset statement, words split by POSIX shell rules, and a SQL span reader would report its quoting as unreadable and prompt on every run.
-The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` in `src/lib/db/destructive-commands.ts` instead of a SQL reading.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/providers/platform/kubernetes/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
 Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
 

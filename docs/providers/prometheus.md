@@ -409,7 +409,7 @@ Ranges are written in PromQL itself: `x[1h]` returns raw samples and `rate(x[5m]
 A row click in the tree runs the metric's selector as an instant query, the action the labels name "Run Instant Query".
 Generate Query writes that selector as the one runnable line, below the two range forms as `#` comments, so the buffer run whole is exactly one expression.
 The execution confirmation gate never asks on a Prometheus connection.
-PromQL has no statement that writes, and editor text only ever reaches `POST /api/v1/query`, so the `prometheus` row of `NON_SQL_DESTRUCTIVE_VOCABULARY` in `src/lib/db/destructive-commands.ts` names no operation and is the gate's whole answer.
+PromQL has no statement that writes, and editor text only ever reaches `POST /api/v1/query`, so the `prometheus` row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/providers/timeseries/prometheus/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) names no operation and is the gate's whole answer.
 The gate's SQL keyword test, which still reads a MongoDB or Redis buffer first, never reads PromQL: a metric may legally be named `update`, `delete` or `drop`, and read as SQL its bare selector is a write.
 On a PromQL tab there is no formatter: no Format button, no Format SQL entry in the editor's menu, and the format shortcut does nothing.
 In the standalone app the run shortcut on a PromQL tab sends the selection when there is one and otherwise the whole buffer, never cut at a `;`.
@@ -478,7 +478,7 @@ None: `supportsExplain` is `false`, and the plan view is not offered.
 
 How this engine's statement text is read is declared once, in [`src/lib/db/providers/timeseries/prometheus/sql-grammar.ts`](../../src/lib/db/providers/timeseries/prometheus/sql-grammar.ts), the `prometheus` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
 `readsSqlText` is `false`: `prometheus` takes a PromQL expression (#1085), whose strings escape with a backslash, so a SQL span reader reads `'it\'s'` as a literal that never closes, the false prompt #297 measured on Redis; the provider extends `BaseDatabaseProvider`.
-The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` in `src/lib/db/destructive-commands.ts` instead of a SQL reading.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/providers/timeseries/prometheus/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
 Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
 

@@ -331,7 +331,7 @@ A node or relationship found under a column the grid masks by name has every pro
 
 How this engine's statement text is read is declared once, in [`src/lib/db/providers/graph/neo4j/sql-grammar.ts`](../../src/lib/db/providers/graph/neo4j/sql-grammar.ts), the `neo4j` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
 `readsSqlText` is `false`: `neo4j` takes one Cypher statement, whose strings escape with a backslash, where `//` opens a comment and a backtick quotes a name, so a SQL span reader would misread where a literal ends; the provider reads it with the graph lexer (`src/lib/db/graph/cypher/lexer.ts`) and refuses every write before sending it.
-The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` in `src/lib/db/destructive-commands.ts` instead of a SQL reading.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/providers/graph/neo4j/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
 Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
 

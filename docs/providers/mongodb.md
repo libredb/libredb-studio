@@ -140,7 +140,7 @@ Supported operations: `find`, `findOne`, `aggregate`, `count`, `distinct`, `inse
 [`CLAUDE.md`](../../CLAUDE.md) for the request shape.
 
 Since S8 the **execution confirmation gate reads this same shape**:
-`src/lib/db/destructive-commands.ts` names `deleteOne`, `deleteMany`, `updateOne`, `updateMany` and
+`src/lib/db/providers/document/mongodb/destructive.ts` names `deleteOne`, `deleteMany`, `updateOne`, `updateMany` and
 the top-level `$out` / `$merge` aggregate stages as the destructive operations here - so each of
 them asks before it runs, exactly as a `DELETE FROM` does on a SQL engine, and a payload the reader
 cannot read as a document with a string `operation` (mongosh syntax such as
@@ -492,7 +492,7 @@ fallback: the caller shape-checks for the method and this provider does not answ
 
 How this engine's statement text is read is declared once, in [`src/lib/db/providers/document/mongodb/sql-grammar.ts`](../../src/lib/db/providers/document/mongodb/sql-grammar.ts), the `mongodb` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
 `readsSqlText` is `false`: MongoDB takes a JSON document, which never reaches the SQL readers on the query path, since the provider extends `BaseDatabaseProvider` and never calls `prepareQuery`; it reaches the confirmation gate because both execution paths ask about whatever is in the editor before running it (#297).
-The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` in `src/lib/db/destructive-commands.ts` instead of a SQL reading.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/providers/document/mongodb/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
 Redaction is `command`, read by the module's own reader: a redacted statement keeps the document's keys and its top-level `collection`, `operation` and `database` names as SQL keeps table names, replaces every other value with `?` as compact JSON, and keeps nothing (`?`) of text that is not one JSON document, since the provider does not run it either.
 The document is walked with a stack of its own rather than by recursion, because `JSON.parse` reads a document nested far deeper than a recursive walk can follow.
