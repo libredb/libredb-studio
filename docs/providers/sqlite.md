@@ -1384,8 +1384,9 @@ A binary cell is written by `binaryStandardHex`: measured through `bun:sqlite`, 
 
 ## 10. Error handling
 
-SQLite uses the shared `mapDatabaseError()` ([errors.ts](../../src/lib/db/errors.ts)) with **no**
-SQLite-specific branches; the provider names the read-only file cases itself
+SQLite uses the shared `mapDatabaseError()` ([errors.ts](../../src/lib/db/errors.ts)), which reads only
+the result codes of a refused statement from the `sqlite` row of `DRIVER_ERROR_CLASSIFIERS`
+([sqlite-driver-errors.ts](../../src/lib/db/providers/sql/sqlite-driver-errors.ts)); the provider names the read-only file cases itself
 ([§3.7](#37-a-database-file-this-process-cannot-write)):
 
 | Situation | Error |

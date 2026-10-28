@@ -360,7 +360,7 @@ at most once regardless of how many `OracleProvider` instances (i.e. connections
 Oracle Instant Client itself must already be installed at the given path — this provider does not
 download or bundle it. If the client cannot be loaded, the constructor fails fast with a
 `DatabaseConfigError` that names `ORACLE_CLIENT_LIB_DIR` and says which of the three failures it is
-(`describeOracleClientLoadFailure()` in [errors.ts](../../src/lib/db/errors.ts) decides the wording;
+(`describeOracleClientLoadFailure()` in [oracle-driver-errors.ts](../../src/lib/db/providers/sql/oracle-driver-errors.ts) decides the wording;
 [§11](#11-error-handling) lists the codes).
 
 #### On Linux the variable alone is not enough
@@ -2347,7 +2347,7 @@ A zoned column is written through `FROM_TZ(..., 'UTC')`, which keeps the instant
 
 ## 11. Error handling
 
-`mapDatabaseError()` ([errors.ts](../../src/lib/db/errors.ts)) has **Oracle-specific** branches:
+`mapDatabaseError()` ([errors.ts](../../src/lib/db/errors.ts)) reads the `oracledb` row of `DRIVER_ERROR_CLASSIFIERS` ([oracle-driver-errors.ts](../../src/lib/db/providers/sql/oracle-driver-errors.ts)) for the **Oracle-specific** cases:
 
 | Situation | Error |
 |-----------|-------|
@@ -2651,7 +2651,7 @@ It prints no refusal reason.
 - SQL base: [`src/lib/db/providers/sql/sql-base.ts`](../../src/lib/db/providers/sql/sql-base.ts)
 - Query limiter: [`src/lib/db/utils/query-limiter.ts`](../../src/lib/db/utils/query-limiter.ts)
 - Interface & DTOs: [`src/lib/db/types.ts`](../../src/lib/db/types.ts)
-- Errors (incl. `ORA-*` mapping): [`src/lib/db/errors.ts`](../../src/lib/db/errors.ts)
+- Errors: [`src/lib/db/errors.ts`](../../src/lib/db/errors.ts), and the `ORA-*` mapping in [`src/lib/db/providers/sql/oracle-driver-errors.ts`](../../src/lib/db/providers/sql/oracle-driver-errors.ts)
 - Tests: [`tests/integration/db/oracle-provider.test.ts`](../../tests/integration/db/oracle-provider.test.ts)
 - API contract: [`docs/API_DOCS.md`](../API_DOCS.md)
 - Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Trino](./trino.md) · [Redis](./redis.md)

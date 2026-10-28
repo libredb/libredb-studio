@@ -1545,7 +1545,7 @@ It writes a `datetime` or `smalldatetime` cell's `yyyy-mm-dd hh:mi:ss[.mmm]` tex
 
 ## 11. Error handling
 
-`mapDatabaseError()` ([errors.ts](../../src/lib/db/errors.ts)) has **SQL-Server-specific** branches:
+`mapDatabaseError()` ([errors.ts](../../src/lib/db/errors.ts)) reads the `mssql` row of `DRIVER_ERROR_CLASSIFIERS` ([mssql-driver-errors.ts](../../src/lib/db/providers/sql/mssql-driver-errors.ts)) for the **SQL-Server-specific** cases:
 
 | Situation | Error |
 |-----------|-------|
@@ -2060,7 +2060,7 @@ It prints no refusal reason.
 - SQL base: [`src/lib/db/providers/sql/sql-base.ts`](../../src/lib/db/providers/sql/sql-base.ts)
 - Query limiter: [`src/lib/db/utils/query-limiter.ts`](../../src/lib/db/utils/query-limiter.ts)
 - Interface & DTOs: [`src/lib/db/types.ts`](../../src/lib/db/types.ts)
-- Errors (incl. SQL Server mapping): [`src/lib/db/errors.ts`](../../src/lib/db/errors.ts)
+- Errors: [`src/lib/db/errors.ts`](../../src/lib/db/errors.ts), and the SQL Server mapping in [`src/lib/db/providers/sql/mssql-driver-errors.ts`](../../src/lib/db/providers/sql/mssql-driver-errors.ts)
 - Tests: [`tests/integration/db/mssql-provider.test.ts`](../../tests/integration/db/mssql-provider.test.ts)
 - API contract: [`docs/API_DOCS.md`](../API_DOCS.md)
 - Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Oracle](./oracle.md) · [Trino](./trino.md) · [Redis](./redis.md)

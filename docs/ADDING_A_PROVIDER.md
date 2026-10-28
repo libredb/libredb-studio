@@ -393,7 +393,8 @@ stand in for, because both read the WHOLE fleet at once:
 
 Wrap native driver errors with `mapDatabaseError(err, '<type-id>', query)` — the 3rd argument is the
 raw query string (SQL **or** JSON, per `src/lib/db/errors.ts`) — so they normalise onto the shared
-error classes. For the exact DTO shapes see [Reference: Interface Contracts](#reference-interface-contracts);
+error classes. What your driver's own code fields and words mean is a row of `DRIVER_ERROR_CLASSIFIERS`
+(`src/lib/db/driver-errors/index.ts`), declared beside the provider; the shared mapping names no driver. For the exact DTO shapes see [Reference: Interface Contracts](#reference-interface-contracts);
 for worked, code-verified examples see each provider's **Design decisions** section in
 [`docs/providers/`](./providers/README.md).
 
@@ -1178,7 +1179,7 @@ Those three reach code and tests only; the four prose greps of the published blo
       A console whose grammar takes credential flags declares them as `historyMask` on the record, so query history stores their values masked (`src/lib/history-mask.ts`).
 - [ ] `src/lib/editor/dialect-editors.ts`: a record in `DIALECT_EDITORS` for the dialect's tab type, the Monaco language it renders in.
       A language of its own also takes an `editor-language.ts` row beside the provider and a key in `EDITOR_LANGUAGES` (`src/lib/db/editor-language/index.ts`), which carries its formatter, if it has one.
-- [ ] `generators.ts` beside the provider: the dialect's `DialectGenerators` row, what a tree click and Generate Query write, and its key in `DIALECT_GENERATORS` (`src/lib/db/query-generators/index.ts`), read before the `json` arm, or a tree click auto-executes a MongoDB document.
+- [ ] `generators.ts` beside the provider: the dialect's `DialectGenerators` row, what a tree click and Generate Query write, and its key in `DIALECT_GENERATORS` (`src/lib/db/query-generators/index.ts`), read before the `json` language's row, or a tree click auto-executes a MongoDB document.
       `docs/providers/kafka.md` section 3.1 is the worked case.
 - [ ] `src/lib/db/providers/document/mongodb/editor-language.ts`: the MongoDB completion source of the shared `json` row (`src/lib/db/editor-language/json.ts`) registers only where the declared capabilities name no JSON dialect.
 - [ ] `tests/unit/lib/dialect-reader-allowlist.test.ts`: every other line under `src/` that compares `queryDialect`, reads `queryLanguage === "json"` or negates `queryLanguage` is on its closed list with its owner.
@@ -1208,6 +1209,10 @@ Those three reach code and tests only; the four prose greps of the published blo
 - [ ] `src/lib/db/query-generators/index.ts`: only if the engine needs its own forms or quoting, a
       `SqlPortGenerators` row beside the provider, keyed by its default port; the default is
       PostgreSQL-shaped, so check before assuming it fits
+- [ ] `src/lib/db/driver-errors/index.ts`: only if the driver's errors carry code fields or words of their own,
+      a `<provider>-driver-errors.ts` row beside the provider (`DriverErrorClassifier`,
+      `src/lib/db/driver-errors/types.ts`), added to `DRIVER_ERROR_CLASSIFIERS` in its fixed order;
+      `mapDatabaseError` reads that row, and `src/lib/db/errors.ts` names no driver
 - [ ] `src/lib/db/sql-grammar/`: write your engine's grammar module, `<family>/<id>/sql-grammar.ts`
       under `src/lib/db/providers/` (or `<family>/<id>-sql-grammar.ts` beside a provider that is one
       flat file), exporting `<ID>_SQL_GRAMMAR` with every fact of `SqlGrammarSpec`, and add its row to
