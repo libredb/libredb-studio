@@ -11,7 +11,7 @@ import { describe, expect, test } from "bun:test";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import type { DatabaseConnection } from "@/lib/types";
 import { QUERY_DIALECTS } from "@/lib/db/query-dialects";
-import { SNMP_LABELS, SNMP_NO_COUNT } from "@/lib/db/providers/network/snmp/labels";
+import { SNMP_LABELS } from "@/lib/db/providers/network/snmp/labels";
 import { SNMP_KINDS } from "@/lib/db/providers/network/snmp/objects";
 import { SnmpProvider } from "@/lib/db/providers/network/snmp";
 import { QueryError } from "@/lib/db/errors";
@@ -48,14 +48,23 @@ describe("the dialect is this provider's own, not another engine's by default", 
   });
 });
 
-describe("a count is never a zero this provider did not measure", () => {
-  test("every kind answers unavailable, with its reason", async () => {
-    const counts = await provider().countObjects();
+/**
+ * A kind's count is the number of objects its folder lists, which is the size of the bundled
+ * catalog, and never a number of instances on the agent.
+ *
+ * It used to be `{ unavailable }` for both kinds, and the object tree draws a refused folder as a
+ * leaf, so once the catalog was wired the two folders could not be opened at all: found by opening
+ * them in a browser against the fixture.
+ */
+describe("a kind's count is the size of the catalog it lists", () => {
+  test("every kind answers the number of objects its listing holds", async () => {
+    const p = provider();
+    const counts = await p.countObjects();
     expect(Object.keys(counts).sort()).toEqual([...SNMP_KINDS].sort());
-    for (const value of Object.values(counts)) {
-      expect(value).toEqual({ unavailable: SNMP_NO_COUNT });
-      expect(value).not.toHaveProperty("count");
+    for (const kind of SNMP_KINDS) {
+      expect(counts[kind]).toEqual({ count: (await p.listObjects([], kind)).length });
     }
+    expect(counts.table).toEqual({ count: MIB_TABLES.length });
   });
 });
 

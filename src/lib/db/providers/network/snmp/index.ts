@@ -488,8 +488,10 @@ export class SnmpProvider extends BaseDatabaseProvider {
   }
 
   public async countObjects(): Promise<Record<string, KindCount>> {
-    // Never a zero. See SNMP_NO_COUNT for the measurement that makes a zero a claim.
-    return Object.fromEntries(SNMP_KINDS.map((kind) => [kind, { unavailable: SNMP_NO_COUNT }]));
+    // The number of objects each folder lists, from the bundled catalog. It counts definitions,
+    // never instances on the agent, which are not counted: see SNMP_NO_COUNT. A refused count would
+    // make the object tree draw the folder as a leaf that cannot be opened.
+    return Object.fromEntries(SNMP_KINDS.map((kind) => [kind, { count: catalogObjects(kind).length }]));
   }
 
   /**
