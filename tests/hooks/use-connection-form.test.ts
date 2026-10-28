@@ -179,7 +179,7 @@ import {
   databendNotAppliedNotice,
 } from "@/lib/connection-string-parser";
 import { READ_ONLY_ENFORCED, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
-import { CONNECTION_PICKER_ORDER } from "@/lib/db/connection-form";
+import { CONNECTION_FORM, CONNECTION_PICKER_ORDER } from "@/lib/db/connection-form";
 
 // =============================================================================
 // useConnectionForm Tests
@@ -4750,5 +4750,48 @@ describe("a Snowflake paste, applied field by field", () => {
     expect(result.current.user).toBe("");
     expect(result.current.password).toBe("");
     expect(result.current.authMethod).toBe("keypair");
+  });
+});
+
+describe("the form's values and setters by field, for the dialog's one field renderer", () => {
+  const props = {
+    isOpen: true,
+    onClose: mock(() => {}),
+    onConnect: mock<(connection: DatabaseConnection) => void>(() => {}),
+    editConnection: null as DatabaseConnection | null,
+  };
+
+  test("fieldValues holds each typed field's own state, and setFieldValue writes that state", () => {
+    const { result } = renderHook(() => useConnectionForm(props));
+    const fields = Object.keys(result.current.fieldValues) as (keyof typeof result.current.fieldValues)[];
+    expect(fields.length).toBeGreaterThanOrEqual(28);
+    expect(fields).not.toContain("allowInsecureAuth");
+    for (const field of fields) {
+      // The select and the Sign-in setter store a choice; any text stands in for one here.
+      act(() => result.current.setFieldValue(field, `typed-${field}`));
+    }
+    for (const field of fields) {
+      expect({ field, value: result.current.fieldValues[field] }).toEqual({ field, value: `typed-${field}` });
+      expect({ field, value: (result.current as Record<string, unknown>)[field] }).toEqual({
+        field,
+        value: `typed-${field}`,
+      });
+    }
+  });
+
+  test("the Sign-in setter by field clears the credential the other method draws, as the select's own does", () => {
+    const { result } = renderHook(() => useConnectionForm(props));
+    act(() => result.current.setType("snowflake"));
+    act(() => result.current.setPrivateKey("not-a-real-key"));
+    act(() => result.current.setFieldValue("authMethod", "pat"));
+    expect(result.current.authMethod).toBe("pat");
+    expect(result.current.privateKey).toBe("");
+  });
+});
+
+describe("the form's first engine", () => {
+  test("is the picker's first engine, with that engine's port", () => {
+    expect(CONNECTION_FORM_DEFAULTS.type).toBe(CONNECTION_PICKER_ORDER[0] as DatabaseType);
+    expect(CONNECTION_FORM_DEFAULTS.port).toBe(CONNECTION_FORM[CONNECTION_FORM_DEFAULTS.type].defaultPort);
   });
 });

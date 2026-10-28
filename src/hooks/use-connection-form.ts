@@ -23,7 +23,8 @@ import {
   offersSslPanel,
   type ConnectionField,
 } from "@/lib/db-ui-config";
-import { CONNECTION_PICKER_ORDER } from "@/lib/db/connection-form";
+import { CONNECTION_FORM, CONNECTION_PICKER_ORDER, DEFAULT_CONNECTION_TYPE } from "@/lib/db/connection-form";
+import type { TypedConnectionField } from "@/lib/db/connection-fields";
 import type { ImportedContext, ImportedField, ImportedSsl } from "@/lib/connection-import";
 import { databendNotAppliedNotice, parseConnectionString } from "@/lib/connection-string-parser";
 import { PASTE_FORMATS_TEXT } from "@/lib/connection-paste-formats";
@@ -181,10 +182,10 @@ function preservedFields<T extends object>(
  * acknowledgement) is not here: it resets on every close, edit mode included.
  */
 export const CONNECTION_FORM_DEFAULTS = {
-  type: "postgres" as DatabaseType,
+  type: DEFAULT_CONNECTION_TYPE,
   name: "",
   host: "localhost",
-  port: "5432",
+  port: CONNECTION_FORM[DEFAULT_CONNECTION_TYPE].defaultPort,
   user: "",
   password: "",
   database: "",
@@ -1168,9 +1169,9 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
 
     /*
       Write only the addressing fields this engine actually takes — the same list the
-      modal renders inputs from, which is now true: `ConnectionModal` gates its Username
-      and Database inputs on `takesConnectionField`, so a box exists exactly where a value
-      is written. It did not hold when this comment was first written, and the gap was
+      modal renders inputs from, which is now true: the dialog draws a box only for a field
+      the engine declares (src/lib/db/connection-field-layout.ts), so a box exists exactly
+      where a value is written. It did not hold when this comment was first written, and the gap was
       silent in both directions — libSQL and the search engines drew boxes nothing carried,
       while Redis had its ACL user discarded by a list that omitted the field its own
       provider authenticates with. A file-addressed engine (SQLite, LibreDB) takes a
@@ -1729,10 +1730,85 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     password,
   });
 
+  /**
+   * Each typed field's value and setter, keyed by field, for the dialog's one field renderer: the same state and
+   * setters returned one by one below, so the dialog maps a field's descriptor to its box without naming the field.
+   * Keyed over every typed field, so a field added to `ConnectionField` without an entry here fails the typecheck.
+   */
+  const fieldValues: { readonly [F in TypedConnectionField]: string } = {
+    host,
+    port,
+    user,
+    password,
+    database,
+    schema,
+    connectionString,
+    serviceName,
+    instanceName,
+    localDataCenter,
+    authSource,
+    apiKeyId,
+    apiKeySecret,
+    saslMechanism,
+    dataServers,
+    warehouse,
+    location,
+    region,
+    apiPath,
+    namespaces,
+    tlsServerName,
+    amqpPort,
+    authMethod,
+    privateKey,
+    privateKeyPassphrase,
+    role,
+    securityMode,
+    serverCertificateThumbprint,
+    registerMap,
+    hostKeyFingerprint,
+  };
+  const fieldSetters: { readonly [F in TypedConnectionField]: (value: string) => void } = {
+    host: setHostFromInput,
+    port: setPort,
+    user: setUser,
+    password: setPassword,
+    database: setDatabase,
+    schema: setSchema,
+    connectionString: setConnectionString,
+    serviceName: setServiceName,
+    instanceName: setInstanceName,
+    localDataCenter: setLocalDataCenter,
+    authSource: setAuthSource,
+    apiKeyId: setApiKeyId,
+    apiKeySecret: setApiKeySecret,
+    // The select offers only the engine's declared choices and None.
+    saslMechanism: (value) => setSaslMechanism(value as ConnectionFormDefaults["saslMechanism"]),
+    dataServers: setDataServers,
+    warehouse: setWarehouse,
+    location: setLocation,
+    region: setRegion,
+    apiPath: setApiPath,
+    namespaces: setNamespaces,
+    tlsServerName: setTlsServerName,
+    amqpPort: setAmqpPort,
+    // The Sign-in select's own setter, which clears the credential the other method draws.
+    authMethod: (value) => selectAuthMethod(value as NonNullable<DatabaseConnection["authMethod"]>),
+    privateKey: setPrivateKey,
+    privateKeyPassphrase: setPrivateKeyPassphrase,
+    role: setRole,
+    securityMode: setSecurityMode,
+    serverCertificateThumbprint: setServerCertificateThumbprint,
+    registerMap: setRegisterMap,
+    hostKeyFingerprint: setHostKeyFingerprint,
+  };
+  const setFieldValue = (field: TypedConnectionField, value: string) => fieldSetters[field](value);
+
   return {
     // Connection fields
     type,
     setType: chooseType,
+    fieldValues,
+    setFieldValue,
     name,
     setName,
     host,
