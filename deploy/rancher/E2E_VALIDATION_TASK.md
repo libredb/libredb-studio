@@ -282,6 +282,53 @@ Common conventions for every scenario:
   expected, is tracked in `CATALOG_LISTING.md`, and must NOT be reported as a rendering
   failure. Record a screenshot/API dump of the card.
 
+## Phase 3b - Rancher mode scenarios (R1-R6)
+
+These scenarios validate [Embedding in Rancher](../../docs/RANCHER.md#embedding-in-rancher): single sign-on through Rancher, Kubernetes discovery, the access review and the `NavLink`.
+Run them only against a Studio release that carries Rancher mode, the first release after 1.1.0, and its chart; against an earlier image every R scenario is SKIPPED, not FAIL.
+They need more than Phase 1 sets up, and the R workers share it, so run them serially after the S matrix:
+
+- The `oidc-provider` feature flag on (enabling it restarts Rancher) and an `OIDCClient` with Studio's callback URL and the scopes of the Rancher line ([OIDC.md, Rancher](../../docs/OIDC.md#rancher)).
+- A cluster managed by that Rancher, with CloudNativePG installed with `rbac.aggregateClusterRoles=true`, the Cluster `orders` in a namespace of project `team-a` and `analytics` in a namespace of project `team-b`, each holding a few rows.
+- Four Rancher users: `admin` (administrator), `cluster-owner` (Cluster Owner, not an administrator), `dev-a` (Member of team-a, Read Only in team-b) and `no-role` (only the global role "user").
+- Studio installed in its own namespace outside every project, on an HTTPS host that both the browser and the cluster's pods resolve, with Rancher's CA when it is private, and the Rancher-mode values of the [chart README](../../charts/libredb-studio/README.md#rancher-mode-values): `accessReview.cacheSeconds: 15`, `seedConnections.cacheTTL: 10000`, discovery of the two namespaces and the `NavLink`.
+
+Sign-in steps drive a real browser (Playwright), because single sign-on rides on Rancher's own session; take a screenshot of every landing page.
+Users' passwords are read from files under `results/`, as the admin token is, and never appear in a verdict.
+Every database id below is the `seed:` id Studio's managed list shows for that Cluster.
+
+### R1 - Single sign-on and deep link
+
+- As `dev-a`, sign in to Rancher, then open `https://<studio host>/?connection=` followed by the URL-encoded `seed:` id of `orders`.
+- Sign out of Rancher, clear Studio's cookie, and open the same link again.
+- Expect: the first visit lands in Studio signed in with no Studio form, `GET /api/auth/me` shows the username and subject as `dev-a`'s Rancher user id with role `user`, and `orders` is selected; the second visit shows Rancher's sign-in page, and after `dev-a` signs in there, Studio opens with `orders` selected.
+
+### R2 - Kubernetes discovery
+
+- As `admin`, read `GET /api/admin/discovery`; then remove `team-b` from `discovery.kubernetes.namespaces` with `helm upgrade` and read it again after the exporter's next scan.
+- Expect: the discovery exporter Deployment is Ready; the status reports the Kubernetes source fresh with both databases, then with `orders` only, and `analytics` leaves every user's list; the exporter's log holds no password; the export Secret holds only the contract's keys.
+
+### R3 - Review gate on list and open
+
+- As `dev-a`, read `GET /api/connections/managed`, run a query on `orders`, and try to open `analytics` by its id, both through the `?connection=` link and through an API call that names it, next to an id that does not exist.
+- As `dev-a`, send a query whose request supplies its own connection to another Service in the cluster, as a custom connection does.
+- Expect: the list holds `orders` and not `analytics`; the query on `orders` succeeds and no response the browser received holds its password; `analytics` and the unknown id answer the same `404 CONNECTION_NOT_FOUND`; the supplied connection is refused with `403 CUSTOM_CONNECTIONS_DISABLED`.
+
+### R4 - Sign-in gate and admin rule
+
+- Sign in to Studio as each of the four users, and try password sign-in with `POST /api/auth/login`.
+- Expect: `admin` and `cluster-owner` get role `admin`, `dev-a` gets role `user`, `no-role` is sent back to the login page with `oidc_no_role`; password sign-in answers 403 with reason `password_login_disabled`.
+
+### R5 - Revocation
+
+- With `dev-a` signed in and Studio open on `orders`, remove `dev-a` from project team-a in Rancher, and time the next query, a fresh open and the open tab's list; then add `dev-a` back.
+- Expect: within Rancher's propagation plus 15 seconds a query and an open of `orders` fail, and within that plus 10 seconds `orders` leaves the open tab's list (at once on a reload after the 15 seconds); after the grant `orders` returns within the same bounds; record the measured times.
+
+### R6 - NavLink
+
+- Read the `NavLink`s of the cluster, then, as `dev-a`, open the cluster in Rancher and use the LibreDB Studio entry of its menu.
+- Expect: one `NavLink` carries the label `app.kubernetes.io/name: libredb-studio` and an `https://` `toURL` that is Studio's ingress host; the entry appears in the cluster's menu and opens Studio, signed in as `dev-a`, in a new tab.
+
 ## Phase 4 - UI evidence (best effort, do not block the matrix)
 
 If browser automation is available (Playwright), capture into
@@ -302,7 +349,7 @@ Write `deploy/rancher/results/RESULTS-<YYYY-MM-DD>.md` (date obtained by an agen
 
 1. Environment table: Rancher version, bundled K3s version, Kubernetes version, chart
    version, appVersion, host OS/kernel, Docker version, port mapping.
-2. Scenario verdict table: S1-S9, PASS/FAIL/BLOCKED/SKIPPED, one-line evidence each.
+2. Scenario verdict table: S1-S9 and R1-R6, PASS/FAIL/BLOCKED/SKIPPED, one-line evidence each.
 3. Full evidence appendix per scenario (commands + trimmed outputs).
 4. A ready-to-paste row for the `docs/RANCHER.md` "Validated combinations" table:
    `| Rancher <version> (single-node Docker) | v<k8s> | <date> | bundled K3s <ver>; installed via Rancher Apps catalog |`
@@ -313,6 +360,7 @@ Write `deploy/rancher/results/RESULTS-<YYYY-MM-DD>.md` (date obtained by an agen
 
 ```bash
 helm uninstall --ignore-not-found ... (every scenario release, every namespace)
+kubectl delete oidcclient <the R scenarios' client> (and the users, projects and CloudNativePG Clusters they created)
 kubectl delete clusterrepo libredb (and the S9 repo if created)
 docker rm -f rancher-e2e
 # Remove ONLY volumes this task explicitly created by name (none by default -

@@ -9,6 +9,8 @@
  * Its "Embedding in Rancher" section is a map into the other documents, so every link in
  * it must land on a file and a heading that exist, and it must not claim a listing for the
  * LibreDB Rancher extension, which is neither released nor listed.
+ * `deploy/rancher/E2E_VALIDATION_TASK.md` carries the Rancher-mode scenarios R1 to R6,
+ * each with what to expect.
  */
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
@@ -117,5 +119,19 @@ describe("docs/RANCHER.md", () => {
 
   test("says which Studio release Rancher mode needs", () => {
     expect(embedding).toMatch(/first Studio release after 1\.1\.0/);
+  });
+});
+
+describe("deploy/rancher/E2E_VALIDATION_TASK.md", () => {
+  const task = read("deploy/rancher/E2E_VALIDATION_TASK.md");
+
+  test("carries the Rancher-mode scenarios R1 to R6, each with what to expect", () => {
+    const ids = [...task.matchAll(/^### (R\d) - /gm)].map((m) => m[1]);
+    expect(ids).toEqual(["R1", "R2", "R3", "R4", "R5", "R6"]);
+    for (const id of ids) {
+      const start = task.indexOf(`### ${id} - `);
+      const next = task.indexOf("\n### ", start + 1);
+      expect(task.slice(start, next < 0 ? undefined : next)).toContain("Expect:");
+    }
   });
 });
