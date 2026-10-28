@@ -1,3 +1,4 @@
+import { KUBECTL_QUERY_DIALECT } from "@/lib/db/providers/platform/kubernetes/query-dialect";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import type { QueryTab } from "@/lib/types";
 
@@ -120,9 +121,6 @@ export const QUERY_DIALECTS: Readonly<Record<QueryDialect, DialectSpec>> = Objec
     offersCountQuery: false,
     offersSqlExport: false,
   }),
-  // Kubernetes: one statement of a read-only kubectl subset. Its grids are the API server's own columns, so no
-  // profile, model or count statement of its grammar applies, and neither SQL export format applies.
-
   // MQTT (#1635). The provider has no query console: its surface is the Keys panel, and a broker has no
   // query language to write in. The entry exists so a connection does not fall through to MongoDB's tab,
   // which is the exact fault `queryDialect` was added for (#427): a provider declaring `queryLanguage: "json"`
@@ -153,26 +151,8 @@ export const QUERY_DIALECTS: Readonly<Record<QueryDialect, DialectSpec>> = Objec
     offersCountQuery: false,
     offersSqlExport: false,
   }),
-  kubectl: Object.freeze({
-    tabType: "kubectl",
-    offersColumnProfiling: false,
-    offersCodeGeneration: false,
-    offersCountQuery: false,
-    offersSqlExport: false,
-    // A line pasted from a shell may carry kubectl's credential flags or a Secret's values, which the console refuses;
-    // query history keeps none of their values. Written here rather than imported, so this registry imports nothing
-    // from a provider.
-    historyMask: Object.freeze({
-      credentialFlags: Object.freeze([
-        "--token",
-        "--password",
-        "--client-key",
-        "--client-certificate",
-        "--from-literal",
-        "--docker-password",
-      ]),
-    }),
-  }),
+  // Kubernetes: the provider's own row, whose history mask is its console's list of credential flags.
+  kubectl: KUBECTL_QUERY_DIALECT,
 
   // OPC UA: one JSON read request, either current values or raw history. Its grids are the server's own
   // DataValues, so no profile, model or count statement of its grammar applies. The SQL export formats

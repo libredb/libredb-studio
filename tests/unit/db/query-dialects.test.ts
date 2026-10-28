@@ -6,6 +6,8 @@ import {
   QUERY_DIALECTS,
   registeredDialect,
 } from "@/lib/db/query-dialects";
+import { CREDENTIAL_FLAGS } from "@/lib/db/providers/platform/kubernetes/console/commands";
+import { KUBECTL_QUERY_DIALECT } from "@/lib/db/providers/platform/kubernetes/query-dialect";
 import type { ProviderCapabilities } from "@/lib/db/types";
 
 function makeCaps(overrides: Partial<ProviderCapabilities> = {}): ProviderCapabilities {
@@ -29,6 +31,11 @@ function hostDeclaring(dialect: string): ProviderCapabilities {
 }
 
 describe("QUERY_DIALECTS", () => {
+  test("the kubectl record is the Kubernetes provider's row, masking the very flags its console refuses", () => {
+    expect(QUERY_DIALECTS.kubectl).toBe(KUBECTL_QUERY_DIALECT);
+    expect(QUERY_DIALECTS.kubectl.historyMask?.credentialFlags).toBe(CREDENTIAL_FLAGS);
+  });
+
   test("holds one record per member of the queryDialect union, and nothing else", () => {
     expect(Object.keys(QUERY_DIALECTS).sort()).toEqual([
       "etcd",
