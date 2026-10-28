@@ -23,7 +23,6 @@ const MONITORING_NS = "urn:ietf:params:xml:ns:yang:ietf-netconf-monitoring";
 
 export type ConfigDatastore = "running" | "candidate" | "startup";
 export type NmdaDatastore = "running" | "candidate" | "startup" | "operational" | "intended";
-export type WithDefaults = "report-all" | "report-all-tagged" | "trim" | "explicit";
 
 /** Escapes text for an element body or an attribute value. */
 export function escapeXml(text: string): string {
@@ -125,18 +124,6 @@ export interface GetDataRequest {
    * only, 5000 of 5000. So 1 is never sent and 2 is what a level listing asks for.
    */
   readonly maxDepth?: number;
-  /**
-   * Sent only where the capability says the server supports it for that datastore.
-   *
-   * MEASURED 2026-10-13 on Netopeer2, and stated as an observation rather than a general rule
-   * (decision K-91): on `operational`, `report-all` and `trim` in the NMDA namespace both answered
-   * the same 24,695 bytes as the request without the parameter, the same parameter in the older
-   * `ietf-netconf-with-defaults` namespace was refused with `operation-failed`, and an invalid mode
-   * was refused with `operation-failed` where RFC 8526 section 4 asks for `invalid-value`. That
-   * fixture holds few default valued leaves, so it does not separate "ignored" from "applied with
-   * nothing to add". The provider therefore never tells the user that a mode took effect.
-   */
-  readonly withDefaults?: WithDefaults;
 }
 
 export interface GetSchemaRequest {
@@ -180,13 +167,10 @@ function buildOperation(request: NetconfRequest): string {
       }</get-config>`;
     case "get-data": {
       const depth = request.maxDepth === undefined ? "" : `<max-depth>${assertDepth(request.maxDepth)}</max-depth>`;
-      const defaults = request.withDefaults
-        ? `<with-defaults xmlns="${NMDA_NS}">${request.withDefaults}</with-defaults>`
-        : "";
       return (
         `<get-data xmlns="${NMDA_NS}" xmlns:ds="${DATASTORE_NS}">` +
         `<datastore>ds:${request.datastore}</datastore>` +
-        `${request.filter ? nmdaSubtreeFilter(request.filter) : ""}${depth}${defaults}` +
+        `${request.filter ? nmdaSubtreeFilter(request.filter) : ""}${depth}` +
         `</get-data>`
       );
     }

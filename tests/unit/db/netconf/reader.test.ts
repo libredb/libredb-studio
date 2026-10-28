@@ -184,6 +184,28 @@ test("a container whose only child is a keyed list is read as that list, and one
   expectBe(held.rows.length, 1);
 });
 
+test("a read whose path names no module is refused before anything is sent", async () => {
+  const h = harness([LIBRARY]);
+  const reader = await open(h);
+  const asked = h.asked.length;
+  await expectRejects(reader.rows("running", [{ name: "interfaces" }], 10), /names a module and then the list/);
+  expectBe(h.asked.length, asked);
+});
+
+test("a list whose parent the device does not hold reads as no rows, not as a failure", async () => {
+  const h = harness([LIBRARY]);
+  const reader = await open(h);
+  h.answer(reply([data([])]));
+  const result = await reader.rows(
+    "running",
+    [{ name: "interfaces", module: "ietf-interfaces" }, { name: "interface" }],
+    10,
+  );
+  expectEqual(result.rows, []);
+  expectEqual(result.fields, []);
+  expectBe(result.rowCount, 0);
+});
+
 test("the datastores are running plus the ones the hello and the library allow", async () => {
   const reader = await open(harness([LIBRARY]));
   expectEqual(reader.facts.datastores, ["running", "candidate", "startup", "operational", "intended"]);

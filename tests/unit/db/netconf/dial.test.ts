@@ -62,6 +62,8 @@ function ports(
      * meeting, which is the whole question.
      */
     libraryErrorAfterRefusal?: boolean;
+    /** ssh2's `end()` throwing while a client that never finished connecting is torn down. */
+    endThrows?: boolean;
   } = {},
 ): {
   ssh: SshPort;
@@ -110,6 +112,7 @@ function ports(
         },
         end: () => {
           seen.ended += 1;
+          if (over.endThrows) throw new Error("the teardown failed");
         },
       };
     },
@@ -416,4 +419,17 @@ test("a dial that fails ends its client, and a second error after that changes n
   // The teardown runs in a microtask, so it is awaited rather than assumed.
   await new Promise((resolve) => setTimeout(resolve, 0));
   expectBe(seen.ended, 1, "the client was ended, so the socket is not left open");
+});
+
+test("a teardown that throws is not a second failure: the dial reports the first one, and nothing escapes", async () => {
+  // The teardown runs in a microtask, where a throw would be an uncaught exception in the server.
+  const { ssh, socket, seen } = ports({
+    connectError: new Error("Timed out while waiting for handshake"),
+    endThrows: true,
+  });
+  const caught = await dialNetconf(config(), ssh, socket).catch((error: unknown) => error);
+  expectTruthy(caught instanceof DialError);
+  expectBe((caught as DialError).failure.kind, "transport");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expectBe(seen.ended, 1);
 });

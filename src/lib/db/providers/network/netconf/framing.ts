@@ -166,13 +166,8 @@ export class FrameReader {
     for (;;) {
       if (startsWith(this.buffer, END)) {
         this.buffer = this.buffer.subarray(END.length);
-        if (this.assembled.length > this.limits.maxMessageBytes) {
-          return this.fail({
-            kind: "message-too-large",
-            bytes: this.assembled.length,
-            cap: this.limits.maxMessageBytes,
-          });
-        }
+        // No cap check here: every chunk was checked against it as it was appended below, so a
+        // message that reaches its terminator is already within it.
         // The one decode: the whole message's bytes are here, so no character can be cut.
         messages.push(this.assembled.toString("utf8"));
         this.assembled = Buffer.alloc(0);

@@ -48,6 +48,11 @@ test("an entity DECLARATION is reported as a doctype, because it cannot appear o
   expectEqual(faultOf('<!DOCTYPE a [<!ENTITY x "y">]><a>&x;</a>'), { kind: "doctype" });
 });
 
+test("an entity declaration outside any DOCTYPE is refused as an entity, not passed as markup", () => {
+  // No DOCTYPE comes first here, so the declaration itself is what the reader names.
+  expectEqual(faultOf('<!ENTITY x "y"><a/>'), { kind: "entity", name: "" });
+});
+
 test("a document past the depth bound is refused, with no depth claimed", () => {
   // -1 rather than 4: the inherited reader stops at the bound and does not report where, and a
   // number invented here would be read as the document's own.

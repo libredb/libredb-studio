@@ -117,11 +117,12 @@ export async function dialNetconf(config: DialConfig, ssh: SshPort, socket: Sock
   // says this is.
   let connected: Awaited<ReturnType<typeof socket.connect>>;
   try {
-    connected = await socket.connect(
-      lookup === undefined
-        ? { host: config.host, port, noDelay: true }
-        : { host: config.host, port, noDelay: true, lookup },
-    );
+    connected = await socket.connect({
+      host: config.host,
+      port,
+      noDelay: true,
+      ...(lookup === undefined ? {} : { lookup }),
+    });
   } catch (error) {
     throw new DialError({ kind: "transport", message: error instanceof Error ? error.message : String(error) });
   }

@@ -380,17 +380,7 @@ test("no sixth operation element can be emitted, read from the source rather tha
   );
   // The elements a request body may open, besides the five operation names, are the arguments the
   // five take. Anything outside this list is a new element reaching the wire.
-  const arguments_ = new Set([
-    "source",
-    "datastore",
-    "max-depth",
-    "with-defaults",
-    "identifier",
-    "version",
-    "format",
-    "filter",
-    "rpc",
-  ]);
+  const arguments_ = new Set(["source", "datastore", "max-depth", "identifier", "version", "format", "filter", "rpc"]);
   const operations = [...emitted].filter((name) => !arguments_.has(name));
   expectEqual(operations.sort(), ["close-session", "get", "get-config", "get-data", "get-schema"]);
 });
@@ -551,6 +541,12 @@ test("a message exactly at the cap is read and one byte more is refused, in both
   expectBe(new FrameReader("eom", tight).feed(frame(`${atCap}m`, "eom")).fault?.kind, "message-too-large");
   expectEqual(new FrameReader("chunked", tight).feed(frame(atCap, "chunked")).messages, [atCap]);
   expectBe(new FrameReader("chunked", tight).feed(frame(`${atCap}m`, "chunked")).fault?.kind, "message-too-large");
+});
+
+test("a chunk header that is not a decimal size is refused, naming what arrived", () => {
+  const step = new FrameReader("chunked", limits).feed("\n#abc\n");
+  expectBe(step.fault?.kind, "chunk-header-malformed");
+  expectBe((step.fault as { header?: string } | undefined)?.header, "\n#abc\n");
 });
 
 test("the buffer cap allows its exact size and refuses one byte past it", () => {

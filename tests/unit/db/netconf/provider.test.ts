@@ -433,6 +433,10 @@ test("a path of the wrong shape is refused with what was expected, not read wron
   await expectRejects(provider.readObjectSource(["running"], "node"), /three names/);
   await expectRejects(provider.readObjectSource(["running", "a"], "key"), /one name/);
   await expectRejects(provider.readObjectSource(["running", "x", "y"], "folder"), /no source text for the kind folder/);
+  // One name, but a datastore alone or an empty datastore names no key.
+  for (const keyPath of ["running", "/ietf-interfaces:interfaces"]) {
+    await expectRejects(provider.readObjectSource([keyPath], "key"), /key path, which begins with the datastore/);
+  }
 });
 
 /**

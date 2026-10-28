@@ -178,6 +178,28 @@ test("close sends close-session and then closes the transport, and never kill-se
   expectBe(transport.closedByUs, true);
 });
 
+test("a device that drops the channel on close-session still leaves the session closed, by us", async () => {
+  const transport = new FakeTransport();
+  const opening = NetconfSession.open(transport, limits);
+  transport.send(helloWith([BASE10]));
+  const { session } = await opening;
+  const closing = session.close();
+  transport.drop();
+  await closing;
+  expectBe(transport.closedByUs, true);
+});
+
+test("a request after this side closed the session is refused with the sentence for that ending", async () => {
+  const transport = new FakeTransport();
+  const opening = NetconfSession.open(transport, limits);
+  transport.send(helloWith([BASE10]));
+  const { session } = await opening;
+  const closing = session.close();
+  transport.send(`<rpc-reply message-id="1"><ok/></rpc-reply>${EOM}`);
+  await closing;
+  await expectRejects(session.request({ operation: "get" }), /this session was closed/);
+});
+
 test("a device that drops the channel fails the request in flight with a sentence", async () => {
   const transport = new FakeTransport();
   const opening = NetconfSession.open(transport, limits);
