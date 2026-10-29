@@ -479,6 +479,7 @@ const READ_ONLY_PROVIDER_FILES: Readonly<Record<string, string>> = {
   elasticsearch: "src/lib/db/providers/sql/search/index.ts",
   opensearch: "src/lib/db/providers/sql/search/index.ts",
   oracle: "src/lib/db/providers/sql/oracle/index.ts",
+  db2: "src/lib/db/providers/sql/db2/index.ts",
 };
 
 /**
@@ -587,9 +588,9 @@ describe("every agent-mode engine sentence is the one engine list (#246)", () =>
   const list = namedList(AGENT_EXECUTION_ENGINES.map((type) => getDBConfig(type).label));
   const prose = (relative: string) => read(relative).replace(/\n[ \t]*(?:\*|\/\/|#)?[ \t]*/g, " ");
 
-  test("the derived list is today's thirteen engines", () => {
+  test("the derived list is today's fourteen engines", () => {
     expect(list).toBe(
-      "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch and Oracle",
+      "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle and Db2 LUW",
     );
   });
 

@@ -16,6 +16,7 @@ import {
   ConnectionError,
   DatabaseConfigError,
   DatabaseError,
+  ExecutionProfileError,
   NO_ACTIVE_TRANSACTION,
   PermissionDeniedError,
   QueryError,
@@ -65,12 +66,22 @@ import type {
   Db2QueryResult,
   Db2Transaction,
 } from "@/lib/db/providers/sql/db2/driver";
+import {
+  AGENT_PRINCIPAL_STATEMENTS,
+  boundAgentStatement,
+  describeAgentStatement,
+} from "@/lib/db/providers/sql/db2/agent-read";
 import { Db2Provider } from "@/lib/db/providers/sql/db2/index";
 import { MAINTENANCE_TARGET_TYPE_SQL } from "@/lib/db/providers/sql/db2/maintenance";
 import { OBJECT_COUNTS_SQL, TABLE_STATS_SQL, VERSION_SQL } from "@/lib/db/providers/sql/db2/monitoring";
 import { SOURCE_TRUNCATION_REASON } from "@/lib/db/providers/sql/db2/objects";
 import { DB2_PREVIEW_PROJECTION } from "@/lib/db/providers/sql/db2/values";
-import type { DatabaseConnection, ProviderCapabilities } from "@/lib/db/types";
+import type {
+  DatabaseConnection,
+  ProviderCapabilities,
+  ProviderExecutionContext,
+  ReadOnlyStatementBudget,
+} from "@/lib/db/types";
 import { TUNNEL_FAR_END } from "@/lib/types";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 
@@ -595,12 +606,21 @@ const baseConfig: DatabaseConnection = {
   ssl: { mode: "verify-full", caCert: "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n" },
 };
 
-function makeProvider(overrides: Partial<DatabaseConnection> = {}): Db2Provider {
-  return new Db2Provider({ ...baseConfig, ...overrides }, {}, { loadDriver: async () => driver, caFileSystem });
+function makeProvider(
+  overrides: Partial<DatabaseConnection> = {},
+  execution: ProviderExecutionContext = {},
+): Db2Provider {
+  return new Db2Provider({ ...baseConfig, ...overrides }, {}, execution, {
+    loadDriver: async () => driver,
+    caFileSystem,
+  });
 }
 
-async function connected(overrides: Partial<DatabaseConnection> = {}): Promise<Db2Provider> {
-  const provider = makeProvider(overrides);
+async function connected(
+  overrides: Partial<DatabaseConnection> = {},
+  execution: ProviderExecutionContext = {},
+): Promise<Db2Provider> {
+  const provider = makeProvider(overrides, execution);
   await provider.connect();
   return provider;
 }
@@ -712,7 +732,6 @@ describe("Db2Provider: declaration", () => {
   test("declares none of the methods this version leaves out", () => {
     const provider = makeProvider() as unknown as Record<string, unknown>;
     for (const method of [
-      "queryReadOnly",
       "endOpenQueryTransaction",
       "cancelQuery",
       "buildObjectEdit",
@@ -1197,6 +1216,7 @@ describe("Db2Provider: transactions", () => {
     const provider = new Db2Provider(
       baseConfig,
       { queryTimeout: 20 },
+      {},
       { loadDriver: async () => driver, caFileSystem },
     );
     await provider.connect();
@@ -1233,6 +1253,7 @@ describe("Db2Provider: transactions", () => {
       const provider = new Db2Provider(
         baseConfig,
         { queryTimeout: 5 },
+        {},
         { loadDriver: async () => driver, caFileSystem },
       );
       await provider.connect();
@@ -1257,6 +1278,7 @@ describe("Db2Provider: transactions", () => {
     const provider = new Db2Provider(
       baseConfig,
       { queryTimeout: 20 },
+      {},
       { loadDriver: async () => driver, caFileSystem },
     );
     await provider.connect();
@@ -1990,3 +2012,258 @@ describe("Db2Provider: monitoring", () => {
     await expect(provider.getTableStats()).rejects.toThrow("SQL0551N");
   });
 });
+
+// ============================================================================
+// The agent read-only profile
+// ============================================================================
+
+describe("Db2Provider: queryReadOnly under the agent read-only profile", () => {
+  const AGENT = { readOnly: true, sendsStatements: true } as const;
+  const budget: ReadOnlyStatementBudget = { statementTimeoutMs: 1_000, maxResultRows: 2, maxResultBytes: 1_000 };
+  const CHECKS = Object.values(AGENT_PRINCIPAL_STATEMENTS);
+  const STATEMENT = "SELECT ID, NAME FROM APP.CUSTOMERS ORDER BY ID";
+
+  /** A server that admits the user and answers `rows` under `columns` for the statement. */
+  function server(
+    rows: unknown[][] = [[1, "Ada"]],
+    columns: Db2ColumnMeta[] = [column("ID", "Integer"), column("NAME", "VarChar(100)")],
+    answer: Partial<Record<string, () => Promise<Db2ArrayQueryResult>>> = {},
+  ) {
+    transactionQuery = async (sql) => {
+      const own = answer[sql];
+      if (own !== undefined) return own();
+      if (sql === AGENT_PRINCIPAL_STATEMENTS.user) {
+        return { rows: [{ USERNAME: "AGENT_RO" }], rowCount: 1, columns: [], diagnostics: [] } as never;
+      }
+      if (CHECKS.includes(sql)) return { rows: [], rowCount: 0, columns: [], diagnostics: [] };
+      if (sql === describeAgentStatement(STATEMENT)) return { rows: [], rowCount: 0, columns, diagnostics: [] };
+      if (sql === boundAgentStatement(STATEMENT, budget.maxResultRows)) {
+        return { rows, rowCount: rows.length, columns, diagnostics: [] };
+      }
+      throw new Error(`the fake server does not know this statement: ${sql}`);
+    };
+  }
+
+  /** The calls one agent session made: BEGIN, the checks, the description, the statement, ROLLBACK. */
+  const answered = (session: number) => [
+    { session, call: "BEGIN" },
+    ...CHECKS.map((sql) => ({ session, call: sql, params: undefined })),
+    { session, call: describeAgentStatement(STATEMENT), params: undefined, options: { rowMode: "array" } },
+    {
+      session,
+      call: boundAgentStatement(STATEMENT, budget.maxResultRows),
+      params: undefined,
+      options: { rowMode: "array" },
+    },
+    { session, call: "ROLLBACK" },
+  ];
+
+  test("refuses an editor handle and the operations profile before it sends anything", async () => {
+    for (const execution of [
+      {},
+      { readOnly: true },
+      { readOnly: true, sendsStatements: false },
+      { sendsStatements: true },
+    ]) {
+      const provider = await connected({}, execution);
+      const refused = await provider.queryReadOnly(STATEMENT, budget).catch((caught: unknown) => caught);
+      expect(refused).toEqual(
+        new QueryError(
+          "Read-only execution requires a provider opened under the agent read-only profile",
+          "db2",
+          STATEMENT,
+        ),
+      );
+    }
+    expect(transactionCalls).toEqual([]);
+    expect(built).toHaveLength(4);
+  });
+
+  test("refuses before connect, an invalid budget and the estimating plan before it opens a session", async () => {
+    await expect(makeProvider({}, AGENT).queryReadOnly(STATEMENT, budget)).rejects.toThrow("not connected");
+    const provider = await connected({}, AGENT);
+    await expect(provider.queryReadOnly(STATEMENT, { ...budget, maxResultRows: 0 })).rejects.toThrow(
+      "Read-only execution budget field maxResultRows must be a positive integer",
+    );
+    await expect(provider.queryReadOnly(STATEMENT, budget, "estimate-plan")).rejects.toThrow(
+      new QueryError("Db2 composes no estimating plan for the agent", "db2", STATEMENT),
+    );
+    expect(built).toHaveLength(1);
+    expect(transactionCalls).toEqual([]);
+  });
+
+  test("runs each call on a connection of its own: the check, the description and the bounded statement, then rolls back and closes", async () => {
+    server();
+    const provider = await connected({}, AGENT);
+    const shared = sent.length;
+
+    const first = await provider.queryReadOnly(STATEMENT, budget);
+    expect(first.rows).toEqual([{ ID: 1, NAME: "Ada" }]);
+    expect(first.fields).toEqual(["ID", "NAME"]);
+    expect(typeof first.executionTime).toBe("number");
+    await provider.queryReadOnly(STATEMENT, budget);
+
+    // Opened like the shared client, never the shared client itself, and nothing reached the shared client.
+    expect(built).toHaveLength(3);
+    expect(built[1]).toEqual(built[0]);
+    expect(built[2]).toEqual(built[0]);
+    expect(sent.length).toBe(shared);
+    expect(transactionCalls).toEqual([...answered(1), ...answered(2)]);
+    expect(closedSessions).toEqual([1, 2]);
+    expect(removed).toEqual([join(tmpdir(), "libredb-db2-test"), join(tmpdir(), "libredb-db2-test")]);
+    expect(provider.isInTransaction()).toBe(false);
+  });
+
+  test("a check that refuses the user leaves as it came, sends no statement, and still rolls back and closes", async () => {
+    server();
+    const base = transactionQuery;
+    transactionQuery = async (sql) =>
+      sql === AGENT_PRINCIPAL_STATEMENTS.code
+        ? ({
+            rows: [
+              {
+                GRANTEE: "PUBLIC",
+                GRANTEETYPE: "G",
+                PRIVILEGE: "EXECUTE",
+                KIND: "PROCEDURE",
+                SCHEMA: "SYSPROC",
+                NAME: "ADMIN_CMD",
+              },
+            ],
+            rowCount: 1,
+            columns: [],
+            diagnostics: [],
+          } as never)
+        : base(sql);
+    const provider = await connected({}, AGENT);
+
+    const refused = await provider.queryReadOnly(STATEMENT, budget).catch((caught: unknown) => caught);
+    expect(refused).toBeInstanceOf(ExecutionProfileError);
+    expect((refused as ExecutionProfileError).message).toContain(
+      'REVOKE EXECUTE ON SPECIFIC PROCEDURE "SYSPROC"."ADMIN_CMD" FROM PUBLIC RESTRICT',
+    );
+    expect(transactionCalls.map((call) => call.call)).toEqual(["BEGIN", ...CHECKS, "ROLLBACK"]);
+    expect(closedSessions).toEqual([1]);
+  });
+
+  test("a check the server will not answer is the environment's failure, not the statement's", async () => {
+    server();
+    refusedCheck(AGENT_PRINCIPAL_STATEMENTS.reach, new Error("SQL0551N  not authorized to SYSCAT.TABDEP"));
+    const provider = await connected({}, AGENT);
+
+    const refused = await provider.queryReadOnly(STATEMENT, budget).catch((caught: unknown) => caught);
+    expect(refused).toBeInstanceOf(ConnectionError);
+    expect((refused as Error).message).toStartWith(
+      "The agent read-only execution profile's check of the Db2 user could not be read: ",
+    );
+    expect((refused as Error).message).toContain("SQL0551N  not authorized to SYSCAT.TABDEP");
+    expect(transactionCalls.at(-1)?.call).toBe("ROLLBACK");
+    expect(closedSessions).toEqual([1]);
+  });
+
+  test("a LOB or XML column is refused from the description, and the statement is never sent", async () => {
+    server([], [column("ID", "Integer"), column("NOTE", "CLOB")]);
+    const provider = await connected({}, AGENT);
+
+    await expect(provider.queryReadOnly(STATEMENT, budget)).rejects.toThrow(
+      "Read-only execution refused column NOTE of type CLOB",
+    );
+    expect(transactionCalls.map((call) => call.call)).not.toContain(
+      boundAgentStatement(STATEMENT, budget.maxResultRows),
+    );
+    expect(transactionCalls.at(-1)?.call).toBe("ROLLBACK");
+    expect(closedSessions).toEqual([1]);
+  });
+
+  test("a statement the server refuses is mapped with its own text, and the call still rolls back and closes", async () => {
+    server([], undefined, {
+      [describeAgentStatement(STATEMENT)]: async () => {
+        throw new Error(
+          'SQL Error [SQLSTATE=42501, SQLCODE=-551]: "AGENT_RO" does not have the privilege to perform operation "SELECT"',
+        );
+      },
+    });
+    const provider = await connected({}, AGENT);
+
+    const refused = await provider.queryReadOnly(STATEMENT, budget).catch((caught: unknown) => caught);
+    expect(refused).toBeInstanceOf(DatabaseError);
+    expect((refused as DatabaseError & { query?: string }).query).toBe(STATEMENT);
+    expect(transactionCalls.at(-1)?.call).toBe("ROLLBACK");
+    expect(closedSessions).toEqual([1]);
+  });
+
+  test("a result one row past the row budget is refused, not cut, and one past the byte budget too", async () => {
+    server([
+      [1, "Ada"],
+      [2, "Grace"],
+      [3, "Linus"],
+    ]);
+    const provider = await connected({}, AGENT);
+    await expect(provider.queryReadOnly(STATEMENT, budget)).rejects.toThrow(
+      "Read-only execution exceeded the row budget: 3 rows > 2 allowed",
+    );
+
+    server([[1, "x".repeat(2_000)]]);
+    await expect(provider.queryReadOnly(STATEMENT, budget)).rejects.toThrow(
+      /^Read-only execution exceeded the byte budget: \d+ bytes > 1000 allowed$/,
+    );
+  });
+
+  test("a session that cannot be opened is a connection failure, and nothing is sent", async () => {
+    const provider = await connected({}, AGENT);
+    connectError = new Error("ECONNREFUSED");
+
+    const refused = await provider.queryReadOnly(STATEMENT, budget).catch((caught: unknown) => caught);
+    expect(refused).toBeInstanceOf(ConnectionError);
+    expect((refused as Error).message).toBe("Failed to connect to Db2: ECONNREFUSED");
+    expect(transactionCalls).toEqual([]);
+  });
+
+  test("past the deadline the wait ends with the time refusal, and the session is closed without waiting for it", async () => {
+    server();
+    let finish: (error: Error) => void = () => {};
+    const base = transactionQuery;
+    transactionQuery = (sql) =>
+      sql === boundAgentStatement(STATEMENT, 2) ? new Promise((_, reject) => (finish = reject)) : base(sql);
+    let release: () => void = () => {};
+    closeGate = new Promise((resolve) => (release = resolve));
+    const provider = await connected({}, AGENT);
+
+    const refused = await provider
+      .queryReadOnly(STATEMENT, { ...budget, statementTimeoutMs: 20 })
+      .catch((caught: unknown) => caught);
+    expect(refused).toEqual(
+      new QueryError("Read-only execution exceeded the time budget: no answer within 20ms", "db2", STATEMENT),
+    );
+    // Retired, not rolled back: the close ends the unit of work, and Db2 rolls it back then.
+    expect(transactionCalls.map((call) => call.call)).not.toContain("ROLLBACK");
+    expect(closedSessions).toEqual([1]);
+    expect(removed).toEqual([]);
+
+    finish(new Error("SQL30081N  the connection was closed"));
+    release();
+    await settle();
+    expect(removed).toHaveLength(1);
+  });
+
+  test("the call settles once a session that fails to close is logged, and a failed rollback still closes it", async () => {
+    server();
+    endError = new Error("SQL30081N  rollback lost");
+    closeError = new Error("socket already gone");
+    const provider = await connected({}, AGENT);
+
+    await expect(provider.queryReadOnly(STATEMENT, budget)).resolves.toMatchObject({ rows: [{ ID: 1, NAME: "Ada" }] });
+    expect(transactionCalls.at(-1)?.call).toBe("ROLLBACK");
+    expect(closedSessions).toEqual([1]);
+    expect(removed).toHaveLength(1);
+  });
+});
+
+/** Makes the fake server refuse one statement inside a transaction, answering every other as before. */
+function refusedCheck(sql: string, error: Error): void {
+  const base = transactionQuery;
+  transactionQuery = async (sent) => {
+    if (sent === sql) throw error;
+    return base(sent);
+  };
+}

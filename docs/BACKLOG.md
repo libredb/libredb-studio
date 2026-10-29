@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B147 · 77
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B148 · 78
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP4 · 4
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
@@ -3937,7 +3937,7 @@ Found 2026-10-27 in the review of the change that added MCP `run_kubectl_read` (
 
 ### D392. Db2 cannot cancel a running statement on the server
 
-A Db2 statement is bounded only on Studio's side: a transaction statement past the query timeout closes its session, and `close()` returns only once the statement has ended on the server, so the work runs to its end; `query()` on the shared client is not bounded at all.
+A Db2 statement is bounded only on Studio's side: a transaction statement past the query timeout, and an agent statement past its budget, closes its connection, and `close()` returns only once the statement has ended on the server, so the work runs to its end; `query()` on the shared client is not bounded at all.
 `db2-node` 1.0.24 offers `Client.cancel()` and a `queryTimeout` that cancel the statement on the server through `SYSPROC.WLM_CANCEL_ACTIVITY` on a second session, which needs activity-monitoring privileges and `EXECUTE` on that procedure, so a plain application user may not be able to cancel at all.
 
 Found 2026-10-28 when Db2 gained transactions and a client-side deadline.
@@ -8291,10 +8291,10 @@ The database assessment workflow requires only `sql-catalog` of the dialect, so 
 Its verdict also needs a table profile, which only `profile_table` records, and on an engine whose overlay declares `profileComposition` `"unsupported"` that call answers `UNSUPPORTED_DIALECT`, so the verdict can never be met there.
 Measured 2026-10-29 on OpenSearch 3.8.0 in a browser pass: the run ends with "No table was profiled".
 Elasticsearch has no profile composition either and opens assessment by the same requirement, so it likely ends the same way; that was reasoned from the code, not measured.
-Oracle is in the same position: its overlay supplies the catalog read and declares `profileComposition` `"unsupported"`, so assessment opens there and its verdict can never be met; also reasoned from the code, not measured.
+Oracle and Db2 are in the same position: each overlay supplies the catalog read and declares `profileComposition` `"unsupported"`, so assessment opens there and its verdict can never be met; also reasoned from the code, not measured.
 `docs/AGENT.md` records the choice to leave that need unheld (B111, B140, B143, B144); this entry is the claim that it should change, since a workflow offered on an engine where it cannot pass reads as a broken one.
 
-**Done when:** the database assessment workflow's requirement admits an engine only where its pass check can be met, derived from a dialect capability such as a supplied profile composition rather than a type-id branch, so it is not offered on OpenSearch, Elasticsearch or Oracle until they gain one, with a test that holds the requirement to the pass check; cited in `docs/AGENT.md`.
+**Done when:** the database assessment workflow's requirement admits an engine only where its pass check can be met, derived from a dialect capability such as a supplied profile composition rather than a type-id branch, so it is not offered on OpenSearch, Elasticsearch, Oracle or Db2 until they gain one, with a test that holds the requirement to the pass check; cited in `docs/AGENT.md`.
 
 ### B147. Oracle composes no estimating plan, profile, statistics reading or grounding capture
 
@@ -8307,6 +8307,18 @@ Kept so that the engine joined on the members measured on it, and nothing compos
 Found 2026-10-29 with agent execution on Oracle.
 
 **Done when:** the Oracle overlay gains an estimating plan measured as a READ ONLY user and an explain strategy with an `agentReading` verified against its plans, so query optimization opens there, and a profile composition measured on it, or a recorded decision that it keeps none, with tests for each; cited in `docs/AGENT.md`.
+
+### B148. Db2 composes no estimating plan, profile, statistics reading or grounding capture
+
+Db2's engine overlay (`src/lib/agent/languages/sql/engines/db2.ts`) supplies the catalog read alone, over the `SYSCAT` views.
+The other four dialect members are `"unsupported"`: the estimating plan, the profile composition, the statistics reading and the grounding capture.
+Db2's `EXPLAIN` writes its rows into the explain tables, a write the agent user, which holds `CONNECT` and `SELECT` alone, is refused, so no estimating plan can be composed the way the editor asks for one; `SYSPROC.EXPLAIN_FROM_SECTION` reads a plan from the package cache but writes it into explain tables as well, never measured.
+So investigation, database assessment and data analysis open on Db2, where `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`, and database assessment, which needs a table profile, opens but cannot pass (B146); the `sql-composers` requirement holds query optimization out; plan mode drafts there and grounds under the operations profile.
+Kept so that the engine joined on the members measured on it, and nothing composed from another engine's rule.
+
+Found 2026-10-29 with agent execution on Db2.
+
+**Done when:** the Db2 overlay gains an estimating plan measured as the least-privilege agent user and an explain strategy with an `agentReading` verified against its plans, so query optimization opens there, and a profile composition measured on it, or a recorded decision that it keeps none, with tests for each; cited in `docs/AGENT.md`.
 
 ## Passkey deferrals (#785)
 

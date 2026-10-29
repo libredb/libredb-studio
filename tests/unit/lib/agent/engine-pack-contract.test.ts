@@ -66,6 +66,8 @@ const UNSERVED_OFFERS: Readonly<Partial<Record<DatabaseType, readonly AgentToolN
   opensearch: ["inspect_plan", "profile_table"],
   // And on Oracle, whose EXPLAIN PLAN writes into PLAN_TABLE, refused to its read-only user.
   oracle: ["inspect_plan", "profile_table"],
+  // And on Db2, whose EXPLAIN writes into the explain tables, which the agent user may not write.
+  db2: ["inspect_plan", "profile_table"],
 };
 
 /**

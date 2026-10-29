@@ -405,6 +405,7 @@ Measured on 12.1.0.0 through 1.0.25: `close()` called while a statement runs ret
 So the timeout error says the statement keeps running, that the transaction is over and is rolled back once the connection closes, and that a new transaction is needed to continue.
 The shared client is not bounded the same way, because closing it would wait for the statement just the same and then end every other request on it.
 
+An agent statement is bounded the same way, by its call's own connection (section 10.1).
 Cancelling the statement on the server is D392: `db2-node` 1.0.24 does it through `Client.cancel()` and a `queryTimeout`, given a user with monitoring privileges and `EXECUTE` on `SYSPROC.WLM_CANCEL_ACTIVITY`, which this provider does not ask a user to hold.
 For a production database, bound statements on the server, with a Db2 workload management threshold such as `ACTIVITYTOTALTIME`, so an expensive query from any client ends there.
 
@@ -479,12 +480,156 @@ Only the table list can fail: a refused read is reported on that panel with the 
 
 ## 10. Agent and MCP
 
-Db2 takes Oracle's posture.
-Plan mode drafts SQL for it and `inspect_schema` reads its schema through the provider's object surface.
-The provider has no `queryReadOnly`, so an agent run executes nothing on Db2 and the MCP tool `run_read_query` refuses a Db2 connection.
-`READ_ONLY_ENFORCED` is false for Db2, so a seed that asks for a read-only Db2 connection is refused.
+Plan mode drafts SQL for Db2 and `inspect_schema` reads its schema through the provider's object surface on any connection, whatever its user.
+Agent mode executes statements on Db2 through `queryReadOnly` in [`index.ts`](../../src/lib/db/providers/sql/db2/index.ts), under the profile section 10.1 describes.
+MCP's statement read stays closed on Db2 (`MCP_STATEMENT_READ.db2` is false) until a change of its own opens it, so the MCP tool `run_read_query` refuses a Db2 connection.
+`READ_ONLY_ENFORCED` is false for Db2, so a seed that asks for a read-only Db2 connection is refused: the read-only boundary below holds only for the agent's own statements.
 
 `endOpenQueryTransaction()` is not implemented, because `query()` leaves no transaction open: it autocommits every statement on the shared client, and an interactive transaction runs on a session of its own (section 7.7).
+
+### 10.1 Agent read-only execution profile
+
+The boundary is credential-enforced.
+Db2 has no read-only user or session, so the agent signs in as a user that holds `CONNECT` and `SELECT` and nothing that writes, which the server refuses every write.
+What those two privileges do not stop is what the user reaches through others, so before every statement the user is checked, as itself, to reach none of it ([`agent-read.ts`](../../src/lib/db/providers/sql/db2/agent-read.ts)).
+Studio's agent admission in front of the provider is defence in depth on top of those two.
+
+The factory passes the execution context as the constructor's third argument; the driver seams a test replaces moved to the fourth.
+`queryReadOnly` answers only when that context sets both `readOnly` and `sendsStatements`, the agent and hand-over profiles; it refuses on any other handle, an ordinary editor handle and the operations profile's included, before it opens anything.
+The operations profile and plan mode send no statement of the model's, so they open unchecked, and plan mode keeps grounding on a privileged connection.
+
+#### What CONNECT and SELECT refuse, and what they do not
+
+Measured on Db2 Community Edition 12.1.0.0 (`icr.io/db2_community/db2`, digest pinned in `run.sh`), with the scripts and their answers in [`tests/fixtures/db2/12.1.0.0/agent-boundary/`](../../tests/fixtures/db2/12.1.0.0/agent-boundary/):
+
+- A user holding `CONNECT` and `SELECT` on two tables is refused an `INSERT`, a data change in `FINAL TABLE`, a `BEGIN ATOMIC` block that inserts, and `NEXT VALUE FOR` on a sequence it holds no `USAGE` on, each with `SQL0551N`, and `CREATE TABLE` with `SQL0552N`; a declared temporary table fails with `SQL0286N`, for want of a user temporary tablespace (captures 02 and 08).
+- It is not refused `LOCK TABLE ... IN EXCLUSIVE MODE` on a table it may read, `SET CURRENT SCHEMA` or `SET CURRENT PATH`, which last for its session (capture 02).
+- A fresh database grants `PUBLIC` `EXECUTE` on 456 `SYSPROC` routines, `SYSPROC.ADMIN_CMD` among them, which exported a table to a server file as that user; `CREATEIN` on `SYSTOOLS`, where the user created a function; `CREATEIN` and `DROPIN` on `SYSPUBLIC`, the public alias schema; `UPDATE` on fourteen `SYSSTAT` statistics views; `EXECUTE` on eleven `SYSIBMADM` modules, `DBMS_JOB` among them; `BIND` and `EXECUTE` on IBM's packages in `NULLID`; and `SELECT` on the catalog (captures 00, 02 and 03). It grants `PUBLIC` no `CONNECT`.
+- A granted SQL table function that `MODIFIES SQL DATA` wrote a row, with its owner's authority, into a table the user may not insert into; a granted view that calls a function read, with its owner's authority, a table the user may not read; and a column mask whose secured function reads such a table returns that table's data to the user's plain `SELECT` (captures 02 and 03, and the live check).
+- `NEXT VALUE FOR` advanced a sequence the user was granted `USAGE` on, and the advance outlives a rollback (captures 02 and 03).
+- An administrator cannot create in `SYSPROC`, `SYSCAT`, `SYSIBM` or `SYSIBMADM` (`SQL0553N`), and what it creates in `SYSTOOLS` is owned by it, `OWNERTYPE` U, while every object the database made for itself reads `OWNERTYPE` S; the five row and column access controls of a fresh database are IBM's own masks on its catalog tables (capture 00).
+- The packages db2-node sends dynamic SQL through, `NULLID.SYSSH200` and `SYSLH200`, are IBM's, `DYNAMICRULES` R; a `REBIND` of one, and a `BIND` of the CLI packages with `DYNAMICRULES BIND`, by the instance owner leave them bound by `SYSIBM` with `DYNAMICRULES` R (measured).
+
+#### The check before each statement
+
+Every `queryReadOnly` call runs the check on its own connection, as the agent user, inside the unit of work the statement then runs in, and keeps no verdict: a grant or a control added after one call refuses the next call on the same handle, and a refusal lifted between two calls admits the second (measured).
+Each catalog view is named `SYSCAT.<view>` and each function `SYSPROC.<name>`: an unqualified name resolves through the session's schema and path, and an object in the user's schema or a public alias, which `PUBLIC` may create on a fresh database, could stand in for it.
+An object is IBM's only when its own catalog row says the system owns it, `OWNERTYPE` S, and for a package `BOUNDBYTYPE` S as well, never by its schema.
+The session's grantees are the user, `PUBLIC`, the user's operating-system groups (`AUTH_LIST_GROUPS_FOR_AUTHID`) and every role it holds, directly or through a group, `PUBLIC` or another role (`AUTH_LIST_ROLES_FOR_AUTHID`).
+
+1. The user holds no database or instance authority but `CONNECT`, in any of those ways (`AUTH_LIST_AUTHORITIES_FOR_AUTHID`).
+2. Its grantees hold no table, column or index privilege but `SELECT`, no schema privilege (`CREATEIN` and `SELECTIN` included), no tablespace `USE`, no sequence privilege, since `NEXT VALUE FOR` advances a sequence and the rollback does not take that back, no role's `ADMIN OPTION`, no `PASSTHRU` and no `SETSESSIONUSER` (`SYSCAT.TABAUTH`, `COLAUTH`, `INDEXAUTH`, `SCHEMAAUTH`, `TBSPACEAUTH`, `SEQUENCEAUTH`, `ROLEAUTH`, `PASSTHRUAUTH`, `SURROGATEAUTHIDS`).
+3. They may execute no routine, module or package that is not IBM's, since that code runs with its owner's authority, and none of IBM's routines and modules that write a server file, reach another server or another session, or schedule work outside the call: `SYSPROC.ADMIN_CMD`, `ADMIN_TASK_ADD`, `ADMIN_TASK_UPDATE`, `DB2LOAD`, `REMOTE_QUERY`, `SNAP_WRITE_FILE` and `SYSTS_ADMIN_CMD`, and the `SYSIBMADM` modules `DBMS_ALERT`, `DBMS_JOB`, `DBMS_PIPE`, `UTL_DIR`, `UTL_FILE`, `UTL_MAIL`, `UTL_SMTP` and `UTL_TCP`; a grant on every routine of a schema is refused when any routine there is not admitted. They may read or write no global variable that is not IBM's, whose default can call code (`SYSCAT.ROUTINEAUTH`, `MODULEAUTH`, `PACKAGEAUTH`, `VARIABLEAUTH`).
+4. They may read no table object that is not IBM's and is a nickname, which reads another server, or a view that is not valid, which a `SELECT` revalidates and runs as it reads now, or a view whose dependencies (`SYSCAT.TABDEP`) hold anything but a table, a function or variable that is IBM's, a view that is IBM's or one this check also examines, or an alias of a table object this check examines.
+5. `SYSCAT.CONTROLS` lists no row permission or column mask anywhere in the database that is not IBM's, enabled or not: Db2 evaluates it for any reader of the table it guards, through a view included, and it can call a secured function with its owner's authority. A database that holds one is refused whatever the user is granted, since which tables the user reaches through views is not proven.
+
+Each finding is collected, and one `PROFILE_PRIVILEGES_TOO_BROAD` refusal names them all, as the statements that lift them or, for a control, as the control.
+A check read that fails is reported as a connection failure rather than as a failure of the model's statement, so the agent does not offer it to the model to repair.
+On the measured database the check's six reads take about 170 ms, and a whole call, its own connection included, about 260 ms.
+
+#### Each statement
+
+[`index.ts`](../../src/lib/db/providers/sql/db2/index.ts) runs each call on a connection opened for it alone, with the profile's user and the connection's TLS settings, never the shared client:
+
+- the connection begins a unit of work, runs the check above in it, then describes the statement in a derived table under `WHERE 1 = 0`, so its column types are read before any row is fetched, and a `CLOB`, `DBCLOB`, `BLOB` or `XML` column is refused unread, since db2-node fetches each value whole and a row can carry up to 2 GB of one;
+- the statement is then sent inside `SELECT * FROM (` ... `) AS LIBREDB_AGENT_READ ORDER BY ORDER OF LIBREDB_AGENT_READ FETCH FIRST n ROWS ONLY`, where n is one past the row budget, its own text on lines of its own with its terminator and trailing comments left out, so a result past the budget is refused rather than cut, and its own order is kept;
+- only a fullselect fits there, `WITH` and `VALUES` included: a `CALL`, a `SET`, `COMMIT`, `LOCK TABLE`, a declared temporary table and a compound block are refused by the server's parser with `SQL0104N`, a data change with `SQL20165N`, also when the statement closes the derived table early to put it in the outer `FROM`, and `NEXT VALUE FOR` with `SQL0348N` (capture 04, and the live check); the privileges the check proves are the boundary behind that, measured raw (capture 08);
+- every value is counted against the byte budget;
+- the unit of work is rolled back and the connection closed on every path, an answered call included, so nothing one call set on its session, a special register included, reaches the next.
+
+The deadline is the statement budget, over the whole call: past it the call answers the shared time refusal and the connection is closed without waiting (`boundByClose` in [`driver.ts`](../../src/lib/db/providers/sql/db2/driver.ts)), which ends the wait, not the work, as section 7.4 records for a transaction; Db2 rolls the unit of work back when the connection closes.
+No server-side cancel is sent, so the agent user needs no `WLM_CANCEL_ACTIVITY` grant or monitoring privilege (D392).
+Every refusal is a sentence of [`read-only-budget.ts`](../../src/lib/db/providers/sql/read-only-budget.ts) or the server's own error.
+The estimate-plan session mode is refused: Db2's `EXPLAIN` writes its rows into the explain tables, a write the agent user is refused, so the agent composes no estimating plan here (B148).
+
+#### The agent user
+
+The agent credential takes a user and a password, both required, the form every engine without an `agentCredential` declaration takes.
+An agent credential beside a connection string is refused (`AGENT_CREDENTIAL_WITH_CONNECTION_STRING`); with no agent credential the agent signs in as the connection's own user, which the check must admit.
+A Db2 LUW user is an operating-system user of the server; give it `CONNECT` and `SELECT` on the tables it may read, and nothing else:
+
+```sql
+GRANT CONNECT ON DATABASE TO USER LIBREDB_AGENT;
+GRANT SELECT ON APP.ORDERS TO USER LIBREDB_AGENT;
+GRANT SELECT ON APP.CUSTOMERS TO USER LIBREDB_AGENT;
+```
+
+A fresh database refuses that user, because of what it grants `PUBLIC`.
+Run the revokes the refusal names; on the measured 12.1.0.0 they are those in [`docker/db2-init/02-agent-principal.sql`](../../docker/db2-init/02-agent-principal.sql), which seeds the compose service's `AGENT_RO` the same way:
+
+```sql
+REVOKE UPDATE ON SYSSTAT.COLDIST FROM PUBLIC;  -- and the thirteen other SYSSTAT views
+REVOKE CREATEIN, DROPIN ON SCHEMA SYSPUBLIC FROM PUBLIC;
+REVOKE CREATEIN ON SCHEMA SYSTOOLS FROM PUBLIC;
+REVOKE EXECUTE ON SPECIFIC PROCEDURE SYSPROC.ADMIN_CMD FROM PUBLIC RESTRICT;
+REVOKE EXECUTE ON SPECIFIC PROCEDURE SYSPROC.ADMIN_TASK_ADD FROM PUBLIC RESTRICT;
+REVOKE EXECUTE ON SPECIFIC PROCEDURE SYSPROC.ADMIN_TASK_UPDATE FROM PUBLIC RESTRICT;
+REVOKE EXECUTE ON SPECIFIC PROCEDURE SYSPROC.DB2LOAD FROM PUBLIC RESTRICT;
+REVOKE EXECUTE ON SPECIFIC PROCEDURE SYSPROC.REMOTE_QUERY FROM PUBLIC RESTRICT;
+REVOKE EXECUTE ON SPECIFIC PROCEDURE SYSPROC.SNAP_WRITE_FILE FROM PUBLIC RESTRICT;
+REVOKE EXECUTE ON SPECIFIC PROCEDURE SYSPROC.SYSTS_ADMIN_CMD FROM PUBLIC RESTRICT;
+REVOKE EXECUTE ON MODULE SYSIBMADM.DBMS_JOB FROM PUBLIC;
+```
+
+Revoking from `PUBLIC` reaches every user of the database: grant a privilege back to each user or role that needs it before revoking.
+Grant `SELECT` on tables, or on views whose definitions read only tables, views the user may also read, and IBM's functions: a view that calls a function of yours refuses the user.
+A table with a row permission or a column mask anywhere in the database refuses every agent user; dropping the control, at the cost of what it protects, is the one remedy.
+
+What the agent reads beyond the tables needs no grant: the catalog reads below and plan-mode grounding read the `SYSCAT` views, which `PUBLIC` may read on a fresh database.
+
+#### What only the operator stops
+
+- IBM's own routines, modules and packages that `PUBLIC` may execute, apart from those item 3 names, and IBM's views are trusted as the vendor's boundary. Inside the derived table only a function can be invoked, so no procedure, IBM's or not, is reachable from an agent statement, whatever the grants.
+- `LOCK TABLE` and `SET` are not residuals: the user may run them raw, and neither fits inside the derived table.
+- A role a trusted connection would acquire is not read: db2-node opens no trusted connection, so the agent's session holds none.
+
+#### Boundary record
+
+Measured on 12.1.0.0 (the digest `run.sh` pins, 2026-10-29) by [`tests/live/db2-agent-boundary.ts`](../../tests/live/db2-agent-boundary.ts), with Studio's agent admission bypassed: 78 checks, all passing.
+
+| Probe | Admitted agent user, through `queryReadOnly` | The same user, raw | Instance owner, positive control |
+| --- | --- | --- | --- |
+| `INSERT` | `SQL0104N` | `SQL0551N` | ran |
+| a data change in `FINAL TABLE`, and in the outer `FROM` | `SQL20165N` | `SQL0551N` | ran |
+| `NEXT VALUE FOR` | `SQL0348N` | `SQL0551N` | ran |
+| `BEGIN ATOMIC` with an `INSERT` | `SQL0104N` | `SQL0551N` | ran |
+| `CALL SYSPROC.ADMIN_CMD('EXPORT ...')` | `SQL0104N` | `SQL0551N` after the revoke | not sent |
+| `SET CURRENT SCHEMA`, a declared temporary table, `LOCK TABLE`, `COMMIT`, a second statement | `SQL0104N` | not sent | `LOCK TABLE` ran |
+| `CREATE TABLE`, a function in `SYSTOOLS`, `UPDATE SYSSTAT.TABLES` | not sent | `SQL0552N`, `SQL0551N`, `SQL0551N` | not sent |
+
+The rows and `APP.ORDER_SEQ` read back the same before and after.
+The check refused, and admitted again once the grant or the object was gone: `EXECUTE` on an SQL table function that writes, granted to the user, to `PUBLIC`, to a role and through a grant on every function of its schema, measured to write a row for the user; `EXECUTE` on a module and on a package of the owner's; `READ` on a variable of the owner's; `USAGE` on a sequence; `INSERT` on a table; `CREATEIN` on a schema; `CREATETAB` and `IMPLICIT_SCHEMA` to `PUBLIC`; `DBADM`; `SETSESSIONUSER`; a role's `ADMIN OPTION`; `SELECT` on a view that calls a function of the owner's, on a view over a view the user may not read, lifted by granting the inner view, on a view over an alias of a table the user may not read, and on a view left inoperative by a dropped table; and a column mask on a table the user may not read.
+It admitted a view over a table, a view over a view the user may read, and a view calling `UPPER` and `LENGTH`.
+On one handle a call ran, an `INSERT` granted after it refused the next call, and the call after its revoke ran; each call read the agent user's own `CURRENT SCHEMA`.
+The operations profile opened the instance owner unchecked and listed its tables; it and an editor handle refused `queryReadOnly` before sending anything.
+The four catalog kinds answered as the agent user.
+The budgets: a result of more than 3 rows under a budget of 3 was refused at the 4th, a result past a 20-byte budget was refused, a `CLOB`, a `BLOB` and an `XML` column were refused before any row was read, and a cross join under a 1.5-second deadline was refused at 1.5 seconds, the next call answering.
+
+The script creates objects carrying the `LIBREDB_AB` prefix and drops them on exit; run it on a disposable database holding the fixture and the seeded agent user, such as the compose service:
+
+```sh
+LIBREDB_LIVE_DB2_PORT=50000 LIBREDB_LIVE_DB2_PASSWORD=<db2inst1's password> bun tests/live/db2-agent-boundary.ts
+```
+
+#### Agent language pack
+
+Statement-language family: `sql`.
+Overlay: [`src/lib/agent/languages/sql/engines/db2.ts`](../../src/lib/agent/languages/sql/engines/db2.ts), with its client row in [`src/lib/agent/languages/sql/engines/client.ts`](../../src/lib/agent/languages/sql/engines/client.ts).
+The agent reads it through `runServerPack` and `agentEnginePack`, and the dialect through `engineServerDialect`.
+
+| Member | Kind | Value |
+| --- | --- | --- |
+| `catalogRead` | Dialect-bound | Supplied |
+| `planEstimate` | Dialect-bound | `"unsupported"` |
+| `profileComposition` | Dialect-bound | `"unsupported"` |
+| `statistics` | Dialect-bound | `"unsupported"` |
+| `catalogCapture` | Dialect-bound | `"unsupported"` |
+
+This overlay overrides no Shared member, so every Shared member is the `sql` statement-language family's own.
+The catalog read takes `SYSCAT.COLUMNS` for the column kind, `SYSCAT.REFERENCES` and `SYSCAT.KEYCOLUSE` for the foreign keys, `SYSCAT.INDEXES` and `SYSCAT.INDEXCOLUSE` for the indexes, and `SYSCAT.TABLES.CARD` for the row estimates, which the last `RUNSTATS` recorded; every kind leaves out the schemas the system owns (`SYSCAT.SCHEMATA.OWNERTYPE` S), names are trimmed, and a selector's schema and table are compared as string literals, exactly as the catalog spells them, an undelimited name in upper case.
+Each kind was run as the agent user through `queryReadOnly`.
+Investigation, database assessment and data analysis open on Db2; assessment cannot pass there, because its verdict needs a table profile and the engine composes none (B146); query optimization stays closed, and `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`, because the engine composes no estimating plan and no table profile (B148).
+A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
 
 ## 11. Schema diff
 
@@ -516,8 +661,8 @@ Only linux x64 was measured; arm64, macOS and Windows load the addon in the rele
 ## 13. Testing
 
 - `tests/integration/db/db2-provider.test.ts` drives the provider against a mocked driver that mirrors the fixture, and ends with the shared object-surface conformance check.
-- `tests/unit/db/db2/` holds the unit tests of each module.
-- `tests/live/db2-known-issues.ts` prints `PRESENT` or `GONE` for every row of section 4 and for the K rows fixed in 1.0.24 and 1.0.25, so a regression back to a fixed defect shows as `PRESENT`, and `tests/live/db2-live-check.ts` runs the provider against a live Db2, writes, transactions and the transaction deadline included; neither runs in `bun run test`.
+- `tests/unit/db/db2/` holds the unit tests of each module, the agent check's statements pinned whole in `agent-read.test.ts`.
+- `tests/live/db2-known-issues.ts` prints `PRESENT` or `GONE` for every row of section 4 and for the K rows fixed in 1.0.24 and 1.0.25, so a regression back to a fixed defect shows as `PRESENT`, and `tests/live/db2-live-check.ts` runs the provider against a live Db2, writes, transactions and the transaction deadline included, and `tests/live/db2-agent-boundary.ts` runs the agent read-only profile (section 10.1); none runs in `bun run test`.
 
 The integration test needs no Db2, and runs on its own with:
 
@@ -528,6 +673,7 @@ bun tests/run-tests.ts tests/integration/db/db2-provider.test.ts
 The `db2` service of `database-compose.yml` runs `icr.io/db2_community/db2:12.1.0.0` unprivileged, with `cap_add: [IPC_LOCK, IPC_OWNER]`, on port 50000.
 Its first boot creates the instance and the database and takes several minutes; wait for the health check before you connect.
 The service has no TLS, so a Studio connection to it needs "Send the password without TLS" ticked, or the provider refuses it (section 3.3).
+The seed under `docker/db2-init/` also creates the agent's least-privilege user `AGENT_RO` and revokes what a fresh database grants `PUBLIC` that its check refuses (section 10.1).
 The fixture under `docker/db2-init/` creates the schemas `APP` and `REPORTING` with tables, a cross-schema foreign key, a view, an invalid view, a materialized query table, an alias, a sequence, a procedure, an overloaded function, an external function, two triggers (one cross-schema), a module, `APP."Mixed Case"`, `APP."O'Brien"` for the maintenance quoting, and `APP.ALLTYPES` and `APP.EMPTY_T` for the value checks.
 
 ```bash

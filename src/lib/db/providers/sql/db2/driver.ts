@@ -92,8 +92,12 @@ export interface Db2Client {
   close(): Promise<void>;
 }
 
-/** One unit of work on one connection, as `Db2Client.beginTransaction()` opens it. */
+/**
+ * One unit of work on one connection, as `Db2Client.beginTransaction()` opens it. The agent's check reads object rows
+ * there, keyed by the names its own statements give; every other statement reads array rows.
+ */
 export interface Db2Transaction {
+  query(sql: string, params?: unknown[]): Promise<Db2QueryResult>;
   query(sql: string, params: unknown[] | undefined, options: Db2ArrayRows): Promise<Db2ArrayQueryResult>;
   commit(): Promise<void>;
   rollback(): Promise<void>;

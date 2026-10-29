@@ -12,7 +12,8 @@ import type { DatabaseType } from "@/lib/types";
  * `providers/sql/duckdb/`, `providers/sql/mssql.ts`, `providers/sql/mysql.ts`,
  * `providers/platform/kubernetes/`, `providers/document/mongodb/index.ts`,
  * `providers/sql/clickhouse/index.ts`, `providers/sql/libsql/index.ts`,
- * `providers/timeseries/influxdb/sql-provider.ts`, `providers/sql/search/index.ts`), and that probe
+ * `providers/timeseries/influxdb/sql-provider.ts`, `providers/sql/search/index.ts`,
+ * `providers/sql/db2/index.ts`), and that probe
  * stays the real rule: replacing it with this list would let the list go stale against the
  * drivers.
  *
@@ -43,7 +44,10 @@ import type { DatabaseType } from "@/lib/types";
  * fresh name is refused) and checks the server is the measured 3.8 line. Oracle's is the user's: one set READ ONLY,
  * which the server refuses every write for, proven before every statement to reach no code, sequence, package,
  * directory, system privilege or database link that runs outside it, with every statement in a read-only transaction
- * the driver rolls back. Each provider's own `queryReadOnly` argues its own case.
+ * the driver rolls back. Db2's is the user's too: one holding CONNECT and SELECT, proven before every statement to hold
+ * nothing else that writes and to reach no code, view, sequence or control that runs with another's authority, with
+ * every statement a fullselect in a unit of work rolled back on a connection of its own. Each provider's own
+ * `queryReadOnly` argues its own case.
  * `tests/unit/lib/agent/engine-support.test.ts` is what keeps the two equal - it walks EVERY
  * id in the `DatabaseType` union, reads `queryReadOnly` off the real provider class the
  * factory would construct, and fails if this array and the drivers diverge in either direction.
@@ -72,6 +76,7 @@ export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = [
   "elasticsearch",
   "opensearch",
   "oracle",
+  "db2",
 ];
 
 /**

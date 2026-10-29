@@ -16,6 +16,7 @@ import { defineOverlay, dialectOnly } from "../overlay";
 import type { AgentEngineClientDialect, AgentEngineClientOverlays, AgentEnginePack, AgentEngineType } from "../pack";
 import {
   CLICKHOUSE_CLIENT_OVERLAY,
+  DB2_CLIENT_OVERLAY,
   DUCKDB_CLIENT_OVERLAY,
   ELASTICSEARCH_CLIENT_OVERLAY,
   INFLUXDB3_CLIENT_OVERLAY,
@@ -40,6 +41,7 @@ const CLIENT_OVERLAYS: AgentEngineClientOverlays = Object.freeze({
   elasticsearch: Object.freeze({ family: "sql", overlay: dialectOnly(ELASTICSEARCH_CLIENT_OVERLAY) }),
   opensearch: Object.freeze({ family: "sql", overlay: dialectOnly(OPENSEARCH_CLIENT_OVERLAY) }),
   oracle: Object.freeze({ family: "sql", overlay: dialectOnly(ORACLE_CLIENT_OVERLAY) }),
+  db2: Object.freeze({ family: "sql", overlay: dialectOnly(DB2_CLIENT_OVERLAY) }),
   mongodb: Object.freeze({ family: "mongo", overlay: dialectOnly(MONGODB_CLIENT_OVERLAY) }),
   kubernetes: Object.freeze({ family: "kubectl", overlay: dialectOnly(KUBERNETES_CLIENT_OVERLAY) }),
 } satisfies AgentEngineClientOverlays);

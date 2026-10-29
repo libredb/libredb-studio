@@ -40,7 +40,7 @@ export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
   libsql: "sql",
   duckdb: "sql",
   oracle: "sql",
-  db2: null,
+  db2: "sql",
   mssql: "sql",
   clickhouse: "sql",
   druid: null,

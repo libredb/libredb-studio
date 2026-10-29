@@ -22,6 +22,7 @@ import * as SQL_CLIENT_OVERLAYS from "@/lib/agent/languages/sql/engines/client";
 import * as DUCKDB from "@/lib/agent/languages/sql/engines/duckdb";
 import * as MSSQL from "@/lib/agent/languages/sql/engines/mssql";
 import * as MYSQL from "@/lib/agent/languages/sql/engines/mysql";
+import * as DB2 from "@/lib/agent/languages/sql/engines/db2";
 import * as OPENSEARCH from "@/lib/agent/languages/sql/engines/opensearch";
 import * as ORACLE from "@/lib/agent/languages/sql/engines/oracle";
 import * as POSTGRES from "@/lib/agent/languages/sql/engines/postgres";
@@ -70,6 +71,7 @@ const ENGINE_MODULES: Readonly<Record<string, Readonly<Record<string, unknown>>>
   "sql/engines/elasticsearch": ELASTICSEARCH,
   "sql/engines/opensearch": OPENSEARCH,
   "sql/engines/oracle": ORACLE,
+  "sql/engines/db2": DB2,
   "sql/engines/client": SQL_CLIENT_OVERLAYS,
   "mongo/engines/mongodb": MONGODB,
   "mongo/engines/client": MONGO_CLIENT_OVERLAYS,
@@ -97,6 +99,7 @@ describe("the engine registry", () => {
       "libsql",
       "duckdb",
       "oracle",
+      "db2",
       "mssql",
       "clickhouse",
       "elasticsearch",
@@ -112,6 +115,7 @@ describe("the engine registry", () => {
       "libsql",
       "duckdb",
       "oracle",
+      "db2",
       "mssql",
       "clickhouse",
       "elasticsearch",
@@ -147,7 +151,7 @@ describe("the engine registry", () => {
 
   test("every engine module's server overlay holds a dialect and overridable members, its client one a dialect alone (ruling 2)", () => {
     const exported = exportedOverlays();
-    expect(exported).toHaveLength(26);
+    expect(exported).toHaveLength(28);
     // The one other export is the PostgreSQL retry's rewrite, which its tests call directly.
     expect(
       Object.entries(ENGINE_MODULES)
@@ -236,7 +240,7 @@ describe("engineServerDialect", () => {
     }
   });
 
-  test("planEstimate is supplied on every SQL engine but the two search engines: a prefix on seven, SQL Server's session mode", () => {
+  test("planEstimate is supplied on every SQL engine but the two search engines, Oracle and Db2: a prefix on seven, SQL Server's session mode", () => {
     expect(Object.fromEntries(SQL_ENGINES.map((type) => [type, engineServerDialect(type).planEstimate]))).toEqual({
       postgres: { kind: "prefix", prefix: "EXPLAIN (FORMAT JSON)" },
       mysql: { kind: "prefix", prefix: "EXPLAIN FORMAT=JSON" },
@@ -250,6 +254,8 @@ describe("engineServerDialect", () => {
       opensearch: "unsupported",
       // Its EXPLAIN PLAN writes into PLAN_TABLE, which the read-only user is refused.
       oracle: "unsupported",
+      // Its EXPLAIN writes into the explain tables, which the agent user may not write.
+      db2: "unsupported",
       libsql: { kind: "prefix", prefix: "EXPLAIN QUERY PLAN" },
       influxdb3: { kind: "prefix", prefix: "EXPLAIN" },
     });
@@ -282,6 +288,7 @@ describe("engineServerDialect", () => {
       "influxdb3",
       "elasticsearch",
       "opensearch",
+      "db2",
     ] as const) {
       expect(composers(type).relations).not.toBe(composers(type).columns);
     }
@@ -357,6 +364,7 @@ describe("engineServerDialect", () => {
       "influxdb3",
       "elasticsearch",
       "opensearch",
+      "db2",
     ] as const) {
       expect(engineServerDialect(type).catalogCapture).toBe("unsupported");
     }
@@ -412,6 +420,7 @@ describe("the client dialect", () => {
       elasticsearch: { catalogRead: "supported", planEstimate: "unsupported", catalogCapture: "unsupported" },
       opensearch: { catalogRead: "supported", planEstimate: "unsupported", catalogCapture: "unsupported" },
       oracle: { catalogRead: "supported", planEstimate: "unsupported", catalogCapture: "unsupported" },
+      db2: { catalogRead: "supported", planEstimate: "unsupported", catalogCapture: "unsupported" },
       libsql: { catalogRead: "supported", planEstimate: "supported", catalogCapture: "unsupported" },
       influxdb3: { catalogRead: "supported", planEstimate: "supported", catalogCapture: "unsupported" },
     });

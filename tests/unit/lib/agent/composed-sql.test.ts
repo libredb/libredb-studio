@@ -1744,3 +1744,63 @@ describe("composeCatalogRead — Oracle", () => {
     }
   });
 });
+
+/**
+ * Db2's catalog read runs as the agent user too, whose own schema or a public alias could hold an object named like a
+ * catalog view; an unqualified name resolves to that first. So every view is named SYSCAT.<view>, the schemas the system
+ * owns are left out by SYSCAT.SCHEMATA.OWNERTYPE rather than by their names, and each kind is pinned whole here, a
+ * selector's literals included.
+ */
+describe("composeCatalogRead — Db2", () => {
+  const EXCLUDED = (column: string) =>
+    `${column} NOT IN (SELECT s.SCHEMANAME FROM SYSCAT.SCHEMATA s WHERE s.OWNERTYPE = 'S')`;
+
+  test("each kind is exactly the statement below, every catalog view named SYSCAT.<view>", () => {
+    const selector = { schema: "APP", table: "ORDERS" };
+    expect(composeCatalogRead("db2", { ...selector, kind: "columns" })).toBe(
+      'SELECT RTRIM(c.TABSCHEMA) AS "table_schema", c.TABNAME AS "table_name", c.COLNAME AS "column_name", ' +
+        'RTRIM(c.TYPENAME) AS "data_type", c.NULLS AS "is_nullable", c.COLNO + 1 AS "ordinal_position" ' +
+        `FROM SYSCAT.COLUMNS c WHERE ${EXCLUDED("c.TABSCHEMA")} AND c.TABSCHEMA = 'APP' AND c.TABNAME = 'ORDERS' ` +
+        "ORDER BY c.TABSCHEMA, c.TABNAME, c.COLNO",
+    );
+    expect(composeCatalogRead("db2", { ...selector, kind: "relations" })).toBe(
+      'SELECT RTRIM(r.TABSCHEMA) AS "table_schema", r.TABNAME AS "table_name", k.COLNAME AS "column_name", ' +
+        'RTRIM(r.REFTABSCHEMA) AS "referenced_schema", r.REFTABNAME AS "referenced_table", ' +
+        'p.COLNAME AS "referenced_column" ' +
+        "FROM SYSCAT.REFERENCES r " +
+        "JOIN SYSCAT.KEYCOLUSE k ON k.TABSCHEMA = r.TABSCHEMA AND k.TABNAME = r.TABNAME AND k.CONSTNAME = r.CONSTNAME " +
+        "JOIN SYSCAT.KEYCOLUSE p ON p.TABSCHEMA = r.REFTABSCHEMA AND p.TABNAME = r.REFTABNAME " +
+        "AND p.CONSTNAME = r.REFKEYNAME AND p.COLSEQ = k.COLSEQ " +
+        `WHERE ${EXCLUDED("r.TABSCHEMA")} AND r.TABSCHEMA = 'APP' AND r.TABNAME = 'ORDERS' ` +
+        "ORDER BY r.TABSCHEMA, r.TABNAME, r.CONSTNAME, k.COLSEQ",
+    );
+    expect(composeCatalogRead("db2", { ...selector, kind: "indexes" })).toBe(
+      'SELECT RTRIM(i.TABSCHEMA) AS "table_schema", i.TABNAME AS "table_name", i.INDNAME AS "index_name", ' +
+        "CASE WHEN i.UNIQUERULE IN ('P', 'U') THEN 'YES' ELSE 'NO' END AS \"is_unique\", " +
+        "CASE WHEN i.UNIQUERULE = 'P' THEN 'YES' ELSE 'NO' END AS \"is_primary\", " +
+        'u.COLNAME AS "column_name" ' +
+        "FROM SYSCAT.INDEXES i JOIN SYSCAT.INDEXCOLUSE u ON u.INDSCHEMA = i.INDSCHEMA AND u.INDNAME = i.INDNAME " +
+        `WHERE ${EXCLUDED("i.TABSCHEMA")} AND i.TABSCHEMA = 'APP' AND i.TABNAME = 'ORDERS' ` +
+        "ORDER BY i.TABSCHEMA, i.TABNAME, i.INDNAME, u.COLSEQ",
+    );
+    expect(composeCatalogRead("db2", { ...selector, kind: "statistics" })).toBe(
+      'SELECT RTRIM(t.TABSCHEMA) AS "table_schema", t.TABNAME AS "table_name", NULLIF(t.CARD, -1) AS "estimated_rows" ' +
+        `FROM SYSCAT.TABLES t WHERE t.TYPE IN ('T', 'S') AND ${EXCLUDED("t.TABSCHEMA")} AND t.TABSCHEMA = 'APP' ` +
+        "AND t.TABNAME = 'ORDERS' ORDER BY t.TABSCHEMA, t.TABNAME",
+    );
+  });
+
+  test("no kind names a catalog view without SYSCAT., and each passes the agent's input guard", () => {
+    for (const kind of ["columns", "relations", "indexes", "statistics"] as const) {
+      const sql = composeCatalogRead("db2", { kind });
+      expect(guardAccepts(sql), kind).toBe(true);
+      for (const [, source] of sql.matchAll(/\b(?:FROM|JOIN)\s+([A-Za-z_$#][\w$#.]*)/g)) {
+        expect(source.startsWith("SYSCAT."), `${kind}: ${source}`).toBe(true);
+      }
+    }
+  });
+
+  test("it composes no estimating plan, since Db2's EXPLAIN writes into the explain tables", () => {
+    expect(() => composeEstimatingExplain("db2", "SELECT 1")).toThrow(AgentComposedSqlError);
+  });
+});

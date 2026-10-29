@@ -281,7 +281,7 @@ export async function createDatabaseProvider(
 
     case "db2": {
       const { Db2Provider } = await import("./providers/sql/db2/index");
-      return new Db2Provider(connection, options);
+      return new Db2Provider(connection, options, execution);
     }
 
     case "mssql": {
@@ -1367,7 +1367,7 @@ export type ExecutionProfile = "agent-read-only" | "agent-operations" | "agent-h
  * handle or transaction, a least-privilege principal the server's own answers prove, or a
  * Studio-enforced request allowlist plus the identity's own authorization), and only the
  * providers of AGENT_EXECUTION_ENGINES implement that: PostgreSQL, SQLite,
- * DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch and Oracle (`src/lib/agent/engine-support.ts`). `agent-operations` sends no statement
+ * DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle and Db2 LUW (`src/lib/agent/engine-support.ts`). `agent-operations` sends no statement
  * at all — it calls the curated reporting methods every provider implements — so
  * requiring a read-only STATEMENT path of it would refuse an engine over a capability
  * the profile never uses. `agent-handover` sends a statement too — the one a run

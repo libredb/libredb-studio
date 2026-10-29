@@ -6,6 +6,7 @@
  */
 import type { ClientDialectOf } from "../../pack";
 import type { CLICKHOUSE_SERVER_OVERLAY } from "./clickhouse";
+import type { DB2_SERVER_OVERLAY } from "./db2";
 import type { DUCKDB_SERVER_OVERLAY } from "./duckdb";
 import type { ELASTICSEARCH_SERVER_OVERLAY } from "./elasticsearch";
 import type { INFLUXDB3_SERVER_OVERLAY } from "./influxdb3";
@@ -94,3 +95,10 @@ export const ORACLE_CLIENT_OVERLAY = {
     catalogCapture: "unsupported",
   } satisfies ClientDialectOf<(typeof ORACLE_SERVER_OVERLAY)["dialect"]>),
 } as const satisfies { dialect: ClientDialectOf<(typeof ORACLE_SERVER_OVERLAY)["dialect"]> };
+export const DB2_CLIENT_OVERLAY = {
+  dialect: Object.freeze({
+    catalogRead: "supported",
+    planEstimate: "unsupported",
+    catalogCapture: "unsupported",
+  } satisfies ClientDialectOf<(typeof DB2_SERVER_OVERLAY)["dialect"]>),
+} as const satisfies { dialect: ClientDialectOf<(typeof DB2_SERVER_OVERLAY)["dialect"]> };

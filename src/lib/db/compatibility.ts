@@ -609,6 +609,7 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   duckdb: true,
   // Agent mode executes statements on Oracle, and MCP read stays closed on it until a change of its own opens it.
   oracle: false,
+  // Agent mode executes statements on Db2, and MCP read stays closed on it until a change of its own opens it.
   db2: false,
   mssql: true,
   // Agent mode executes statements on ClickHouse, and MCP read stays closed on it until a change of its own opens it.

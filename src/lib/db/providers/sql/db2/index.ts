@@ -17,12 +17,12 @@
  * One shared client per provider, no pool: four concurrent queries on one client were measured
  * correct, and a pool would multiply the cleartext-password exposure of a connection that opted
  * out of TLS. An interactive transaction opens a second client, its session, for its own life, so
- * that nothing else this provider sends runs inside it; COMMIT and ROLLBACK close it.
+ * that nothing else this provider sends runs inside it; COMMIT and ROLLBACK close it. So does each
+ * agent statement under the read-only profile (`queryReadOnly`, `agent-read.ts`).
  *
- * Absent on purpose: `queryReadOnly` and `endOpenQueryTransaction` (no read-only profile in this
- * version, and `query()` autocommits on the shared client), `cancelQuery` (the driver's
- * `Client.cancel()` and server-side `queryTimeout` need monitoring and cancel privileges and are a
- * change of their own, D392), and the object-edit pair.
+ * Absent on purpose: `endOpenQueryTransaction` (`query()` autocommits on the shared client),
+ * `cancelQuery` (the driver's `Client.cancel()` and server-side `queryTimeout` need monitoring and
+ * cancel privileges and are a change of their own, D392), and the object-edit pair.
  */
 
 import type {
@@ -41,19 +41,36 @@ import type {
   PerformanceMetrics,
   PreparedQuery,
   ProviderCapabilities,
+  ProviderExecutionContext,
   ProviderLabels,
   ProviderOptions,
   QueryPrepareOptions,
   QueryResult,
+  ReadOnlyStatementBudget,
+  ReadOnlyStatementMode,
   SlowQueryStats,
   StorageStats,
   TableStats,
 } from "../../../types";
-import { DatabaseConfigError, NO_ACTIVE_TRANSACTION, QueryError } from "../../../errors";
+import {
+  ConnectionError,
+  DatabaseConfigError,
+  ExecutionProfileError,
+  NO_ACTIVE_TRANSACTION,
+  QueryError,
+} from "../../../errors";
 import { analyzeQuery, assertRowBounds, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../../utils/query-limiter";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { readStatementEnd } from "@/lib/sql/statement-end";
+import { assertReadOnlyBudget, TIME_BUDGET_PREFIX } from "../read-only-budget";
 import { SQLBaseProvider } from "../sql-base";
+import {
+  assertAgentColumnTypes,
+  boundAgentStatement,
+  describeAgentStatement,
+  readAgentAnswer,
+  verifyAgentPrincipal,
+} from "./agent-read";
 import { db2Capabilities, db2Labels } from "./capabilities";
 import { CODE_PAGE_SQL, decodeCatalogRow } from "./catalog";
 import {
@@ -93,6 +110,9 @@ interface Db2Session extends OpenedClient {
 const TRANSACTION_ENDED =
   "That ends this transaction: Db2 rolls back everything it did once the connection closes. Begin a new transaction to continue.";
 
+/** What a statement past the deadline means to the agent call it ran in. */
+const AGENT_CALL_ENDED = "Db2 rolls back the call's unit of work once the connection closes.";
+
 /** The refusal a BEGIN gets when the provider was disconnected while it opened its session. */
 const DISCONNECTED_WHILE_OPENING =
   "The connection was closed while this transaction was opening, so it was not opened. Begin it again.";
@@ -110,14 +130,28 @@ export class Db2Provider extends SQLBaseProvider {
   private readonly loadDriver: () => Promise<Db2Driver>;
   private readonly caFileSystem: CaFileSystem;
 
+  /**
+   * Whether this provider was opened to send an agent's statements: under an execution profile (`readOnly`) whose
+   * acquisition calls `queryReadOnly` (`sendsStatements`). Only then does `queryReadOnly` answer, and only after the
+   * user is proved on the statement's own connection (`verifyAgentPrincipal` in `agent-read.ts`). The operations
+   * profile sends no statement, so plan mode keeps grounding on a connection whose user is privileged.
+   */
+  private readonly readOnlyProfile: boolean;
+
   /** The object surface's way to the catalog: decoded rows, and the code page they need. */
   private readonly reader: objects.CatalogReader = {
     read: (sql, params) => this.readCatalog(sql, params),
     codePage: () => this.codePage(),
   };
 
-  constructor(config: Db2Connection, options: ProviderOptions = {}, seams: Db2ProviderSeams = {}) {
+  constructor(
+    config: Db2Connection,
+    options: ProviderOptions = {},
+    execution: ProviderExecutionContext = {},
+    seams: Db2ProviderSeams = {},
+  ) {
     super(config, options);
+    this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
     this.loadDriver = seams.loadDriver ?? loadDb2Driver;
     this.caFileSystem = seams.caFileSystem ?? NODE_CA_FILE_SYSTEM;
     this.validate();
@@ -203,6 +237,117 @@ export class Db2Provider extends SQLBaseProvider {
       });
       return { ...readResult(result, sql), executionTime };
     });
+  }
+
+  /**
+   * One agent statement under the read-only profile.
+   *
+   * The boundary is the agent user's: it holds CONNECT and SELECT, and the check proves it reaches nothing that writes
+   * or runs code with another's authority (`agent-read.ts`). Each call opens a connection of its own with the profile's
+   * user, as `beginTransaction()` opens a session, never the shared client: a session keeps its special registers
+   * (`CURRENT SCHEMA`, `CURRENT PATH`) and its declared temporary tables across statements (measured), and the shared
+   * client is the editor's. On it the call begins a unit of work, runs the check, keeping no verdict between calls, so
+   * a grant or a control added after one call refuses the next and a lifted refusal admits it, describes the statement
+   * without fetching a row, refusing a LOB or XML column, then sends it in a derived table bounded at one row past the
+   * row budget (`boundAgentStatement`), rolls the unit of work back and closes the connection, on every path.
+   *
+   * The deadline is the statement budget, over the whole call: past it the wait ends with the shared time refusal and
+   * the connection is closed without waiting (`boundByClose`), which ends the wait, not the work. Db2 rolls the unit of
+   * work back when the connection closes. No server-side cancel is sent, so the user needs no WLM privilege.
+   *
+   * Refused outside the profile: a provider opened without it has no proven user to run agent semantics on.
+   */
+  public async queryReadOnly(
+    sql: string,
+    budget: ReadOnlyStatementBudget,
+    mode: ReadOnlyStatementMode = "execute",
+  ): Promise<QueryResult> {
+    this.connected();
+    if (!this.readOnlyProfile) {
+      throw new QueryError(
+        "Read-only execution requires a provider opened under the agent read-only profile",
+        "db2",
+        sql,
+      );
+    }
+    assertReadOnlyBudget(budget, "db2");
+    if (mode !== "execute") throw new QueryError("Db2 composes no estimating plan for the agent", "db2", sql);
+
+    return this.trackQuery(async () => {
+      const { result, executionTime } = await this.measureExecution(() =>
+        this.withAgentSession(sql, budget, async (transaction) => {
+          await this.verifyAgentPrincipalOn(transaction);
+          try {
+            const described = await transaction.query(describeAgentStatement(sql), undefined, { rowMode: "array" });
+            assertAgentColumnTypes(described.columns, sql);
+            return await transaction.query(boundAgentStatement(sql, budget.maxResultRows), undefined, {
+              rowMode: "array",
+            });
+          } catch (error) {
+            if (error instanceof QueryError) throw error;
+            throw mapDb2Error(error, sql);
+          }
+        }),
+      );
+      return readAgentAnswer({ ...readResult(result, sql), executionTime }, budget, sql);
+    });
+  }
+
+  /** The check of the agent user, on the call's own connection, before the statement. */
+  private async verifyAgentPrincipalOn(transaction: Db2Transaction): Promise<void> {
+    try {
+      await verifyAgentPrincipal(async (check) => (await transaction.query(check, undefined)).rows);
+    } catch (error) {
+      if (error instanceof ExecutionProfileError) throw error;
+      // The environment's failure, not the statement's: the agent must not offer it to the model as one to repair.
+      throw new ConnectionError(
+        `The agent read-only execution profile's check of the Db2 user could not be read: ${mapDb2Error(error).message}`,
+        "db2",
+      );
+    }
+  }
+
+  /**
+   * Runs `work` in a unit of work on a connection opened for it alone, under the budget's deadline, then rolls it back
+   * and closes the connection. Past the deadline the connection is retired instead, without waiting, and the call
+   * answers the time refusal.
+   */
+  private async withAgentSession<T>(
+    sql: string,
+    budget: ReadOnlyStatementBudget,
+    work: (transaction: Db2Transaction) => Promise<T>,
+  ): Promise<T> {
+    const opened = await openClient(this.config, this.loadDriver, this.caFileSystem);
+    let transaction: Db2Transaction | undefined;
+    let retired = false;
+    try {
+      return await boundByClose(
+        (async () => {
+          transaction = await opened.client.beginTransaction();
+          return work(transaction);
+        })(),
+        budget.statementTimeoutMs,
+        () => {
+          retired = true;
+          this.retireSession(opened);
+        },
+        sql,
+        AGENT_CALL_ENDED,
+      );
+    } catch (error) {
+      if (retired) {
+        throw new QueryError(`${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`, "db2", sql);
+      }
+      throw error;
+    } finally {
+      if (!retired) {
+        // A rollback that fails leaves the unit of work to the close, which rolls it back all the same.
+        await transaction?.rollback().catch(() => {});
+        await this.closeSession(opened).catch((error: unknown) => {
+          console.warn(`[Db2] Closing an agent call's connection failed: ${(error as Error).message}`);
+        });
+      }
+    }
   }
 
   // ============================================================================

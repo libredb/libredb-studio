@@ -668,6 +668,37 @@ describe("createDatabaseProvider", () => {
     expect(sent).toEqual(["SELECT 1"]);
   });
 
+  test("the execution context rides along to db2: queryReadOnly answers only under the agent profile", async () => {
+    const conn = makeConnection("db2", { port: 50000, database: "TESTDB", allowInsecureAuth: true });
+    const profiled = await createDatabaseProvider(conn, {}, { readOnly: true, sendsStatements: true });
+    const editor = await createDatabaseProvider(conn);
+    if (profiled.queryReadOnly === undefined || editor.queryReadOnly === undefined) throw new Error("no queryReadOnly");
+    // A driver whose connect fails in place of db2-node, so only the context tells the two apart: the editor handle
+    // is refused before it opens anything, and the profiled one goes on to open the agent call's own connection.
+    const opened: string[] = [];
+    const driver = {
+      Client: class {
+        constructor(options: { user: string }) {
+          opened.push(options.user);
+        }
+        async connect() {
+          throw new Error("no server here");
+        }
+      },
+    };
+    for (const provider of [profiled, editor]) {
+      Object.assign(provider, { loadDriver: async () => driver, ensureConnected: () => undefined });
+    }
+    await expect(editor.queryReadOnly("SELECT 1 FROM SYSIBM.SYSDUMMY1", AGENT_BUDGET)).rejects.toThrow(
+      "Read-only execution requires a provider opened under the agent read-only profile",
+    );
+    expect(opened).toEqual([]);
+    await expect(profiled.queryReadOnly("SELECT 1 FROM SYSIBM.SYSDUMMY1", AGENT_BUDGET)).rejects.toThrow(
+      "Failed to connect to Db2: no server here",
+    );
+    expect(opened).toEqual(["test"]);
+  });
+
   test("the execution context rides along to clickhouse: queryReadOnly answers only under the agent profile", async () => {
     const conn = makeConnection("clickhouse", { port: 8123, database: "demo" });
     const profiled = await createDatabaseProvider(conn, {}, { readOnly: true, sendsStatements: true });
