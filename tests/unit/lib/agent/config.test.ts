@@ -43,6 +43,7 @@ const ENV_KEYS = [
   AGENT_THREAD_CONTEXT_ENV,
   "GOVERNANCE_SOURCE",
   "KUBERNETES_ACCESS_REVIEW",
+  "NEXT_PUBLIC_AUTH_PROVIDER",
 ] as const;
 
 let originalEnv: Record<string, string | undefined>;
@@ -383,6 +384,33 @@ describe("the Kubernetes access review hold", () => {
     expect(await resolveAgentAvailability()).toMatchObject({ available: false, reason: "ACCESS_REVIEW_HOLD" });
     process.env.GOVERNANCE_SOURCE = "postgres";
     expect(await resolveAgentAvailability()).toMatchObject({ available: false, reason: "GOVERNANCE_HOLD" });
+  });
+});
+
+describe("the openshift sign-in hold", () => {
+  test.each(["openshift", "OpenShift"])(
+    "NEXT_PUBLIC_AUTH_PROVIDER=%p holds the agent with its switch on",
+    async (mode) => {
+      configureModel();
+      process.env[AGENT_ENABLED_ENV] = "true";
+      process.env.NEXT_PUBLIC_AUTH_PROVIDER = mode;
+      expect(isAgentRuntimeEnabled()).toBe(false);
+      expect(await resolveAgentAvailability()).toEqual({
+        available: false,
+        reason: "ACCESS_REVIEW_HOLD",
+        detail:
+          "NEXT_PUBLIC_AUTH_PROVIDER is not local or oidc: this version of Studio does not run the agent with OpenShift sign-in, so this server runs no agent whatever else is configured",
+      });
+    },
+  );
+
+  test("the review's hold is named when the review is on as well", async () => {
+    configureModel();
+    process.env.NEXT_PUBLIC_AUTH_PROVIDER = "openshift";
+    process.env.KUBERNETES_ACCESS_REVIEW = "on";
+    const availability = await resolveAgentAvailability();
+    expect(availability).toMatchObject({ available: false, reason: "ACCESS_REVIEW_HOLD" });
+    expect((availability as { detail: string }).detail).toStartWith("KUBERNETES_ACCESS_REVIEW is on");
   });
 });
 

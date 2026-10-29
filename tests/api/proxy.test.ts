@@ -822,3 +822,57 @@ describe("proxy under a nested basePath", () => {
     });
   });
 });
+
+// openshift sign-in mode: the cluster is the only way in, so a signed-out GET /login goes straight to the OpenShift
+// login route (no variable turns it off), carrying `next` only when it is safe; with `error` present the page renders,
+// so a failure shows its message instead of looping. Both OpenShift routes are reachable signed out.
+describe("proxy in openshift sign-in mode", () => {
+  test("a signed-out GET /login goes to the OpenShift login route, with a safe next only", async () => {
+    await withAutoRedirectEnv("openshift", undefined, async () => {
+      const plain = await proxy(createNextRequest("/login"));
+      expect(plain.status).toBe(307);
+      expect(getRedirectLocation(plain)).toBe("http://localhost:3000/api/auth/openshift/login");
+      const withNext = await proxy(createNextRequest("/login?next=%2Fsql"));
+      expect(getRedirectLocation(withNext)).toBe("http://localhost:3000/api/auth/openshift/login?next=%2Fsql");
+      const unsafe = await proxy(createNextRequest("/login?next=%2F%2Fevil.example"));
+      expect(getRedirectLocation(unsafe)).toBe("http://localhost:3000/api/auth/openshift/login");
+    });
+  });
+
+  test("the redirect keeps the base path", async () => {
+    await withBasePathEnv("/studio", async () => {
+      await withAutoRedirectEnv("openshift", undefined, async () => {
+        const res = await proxy(createNextRequest("/login"));
+        expect(getRedirectLocation(res)).toBe("http://localhost:3000/studio/api/auth/openshift/login");
+      });
+    });
+  });
+
+  test("with an error code the login page renders, so a failure is shown instead of looping", async () => {
+    await withAutoRedirectEnv("openshift", undefined, async () => {
+      const res = await proxy(createNextRequest("/login?error=openshift_scope"));
+      expect(isRedirect(res)).toBe(false);
+    });
+  });
+
+  test("OIDC's automatic redirect stays off in openshift mode, and local mode renders the page", async () => {
+    await withAutoRedirectEnv("openshift", "true", async () => {
+      expect(getRedirectLocation(await proxy(createNextRequest("/login")))).toBe(
+        "http://localhost:3000/api/auth/openshift/login",
+      );
+    });
+    await withAutoRedirectEnv("local", undefined, async () => {
+      expect(isRedirect(await proxy(createNextRequest("/login")))).toBe(false);
+    });
+  });
+
+  test("both OpenShift routes are reachable signed out", async () => {
+    await withAutoRedirectEnv("openshift", undefined, async () => {
+      for (const path of ["/api/auth/openshift/login", "/api/auth/openshift/callback?code=x&state=y"]) {
+        const res = await proxy(createNextRequest(path));
+        expect(res.status, path).toBe(200);
+        expect(isRedirect(res), path).toBe(false);
+      }
+    });
+  });
+});

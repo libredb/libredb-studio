@@ -50,7 +50,7 @@ describe("the sign-in mode has one reader", () => {
     const offenders = sourceFiles().filter(
       (name) => name !== READER && readsTheMode(readFileSync(join(process.cwd(), name), "utf8"), name),
     );
-    expect(offenders).toEqual(["src/app/api/auth/logout/route.ts", "src/app/login/page.tsx", "src/proxy.ts"]);
+    expect(offenders).toEqual(["src/app/login/page.tsx"]);
   });
 
   test("the mode reader itself reads the variable", () => {

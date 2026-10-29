@@ -94,6 +94,7 @@ export const PROGRAMME_CONTROL_IDS = [
   "3.23",
   "3.24",
   "3.25",
+  "3.26",
   "3.27",
 ];
 

@@ -15,6 +15,8 @@ import { mcpOriginHostRefusal } from "@/lib/mcp/origin-policy";
 import { authenticateBearer, type BearerAuthentication } from "@/lib/oidc-bearer";
 import { getJwtSecret } from "@/lib/config/auth-env";
 import { readOidcAutoRedirect } from "@/lib/config/oidc-auto-redirect";
+import { authProvider } from "@/lib/config/auth-provider";
+import { OPENSHIFT_LOGIN_PATH } from "@/lib/openshift-auth/config";
 import { governanceEnabled } from "@/lib/governance/config";
 import { withSecurityHeaders } from "@/lib/security/config";
 import { RETURN_PATH_PARAM, safeReturnPath, sessionRequiredBody, signInPath } from "@/lib/api/session-ended";
@@ -162,8 +164,9 @@ export async function proxy(request: NextRequest) {
         logger.debug("Invalid token on login page, allowing access", { route: "proxy" });
       }
     }
-    // No valid token: the identity provider when OIDC_AUTO_REDIRECT asks for it, else the login page
-    return withSecurityHeaders(oidcAutoRedirect(request) ?? NextResponse.next());
+    // No valid token: the identity provider when OIDC_AUTO_REDIRECT asks for it, the OpenShift login route in openshift
+    // sign-in mode, else the login page
+    return withSecurityHeaders(oidcAutoRedirect(request) ?? openShiftAutoRedirect(request) ?? NextResponse.next());
   }
 
   // The agent runtime's drive callback (#329). It is deliberately NOT on the public list
@@ -361,12 +364,26 @@ function bearerAnswer(request: NextRequest, pathname: string, bearer: TakenBeare
  * /login?error=..., so a failing provider shows its error instead of looping.
  */
 function oidcAutoRedirect(request: NextRequest): NextResponse | null {
-  if (request.method !== "GET" || process.env.NEXT_PUBLIC_AUTH_PROVIDER !== "oidc") return null;
+  if (request.method !== "GET" || authProvider() !== "oidc") return null;
   const { searchParams } = request.nextUrl;
   if (searchParams.has("error") || !readOidcAutoRedirect()) return null;
   const returnPath = safeReturnPath(searchParams.get(RETURN_PATH_PARAM));
   const query = returnPath === null ? "" : `?${new URLSearchParams({ [RETURN_PATH_PARAM]: returnPath })}`;
   return NextResponse.redirect(new URL(withBasePath(`/api/auth/oidc/login${query}`), request.url));
+}
+
+/**
+ * In openshift sign-in mode the cluster's OAuth server is the only way in, so a signed-out GET /login always goes to
+ * the OpenShift login route, with no variable to turn it off, carrying `next` only when safeReturnPath accepts it. With
+ * `error` present the page renders, so a failed sign-in shows its message instead of looping.
+ */
+function openShiftAutoRedirect(request: NextRequest): NextResponse | null {
+  if (request.method !== "GET" || authProvider() !== "openshift") return null;
+  const { searchParams } = request.nextUrl;
+  if (searchParams.has("error")) return null;
+  const returnPath = safeReturnPath(searchParams.get(RETURN_PATH_PARAM));
+  const query = returnPath === null ? "" : `?${new URLSearchParams({ [RETURN_PATH_PARAM]: returnPath })}`;
+  return NextResponse.redirect(new URL(withBasePath(`${OPENSHIFT_LOGIN_PATH}${query}`), request.url));
 }
 
 /**
