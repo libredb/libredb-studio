@@ -6505,10 +6505,7 @@ describe("OracleProvider.queryReadOnly", () => {
   test("proves the user once, at first use, on a connection it rolls back and releases, before the statement", async () => {
     await provider.queryReadOnly("SELECT id, name FROM app_owner.t1", BUDGET);
     await provider.queryReadOnly("SELECT id, name FROM app_owner.t1", BUDGET);
-    // A user that reaches nothing of a schema Oracle does not maintain is not asked for the policy catalog.
-    const checks = Object.values(AGENT_PRINCIPAL_STATEMENTS).filter(
-      (sql) => sql !== AGENT_PRINCIPAL_STATEMENTS.catalogPolicies,
-    );
+    const checks = Object.values(AGENT_PRINCIPAL_STATEMENTS);
     expect(executed()).toEqual([
       ...checks,
       "SET TRANSACTION READ ONLY",

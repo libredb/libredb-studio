@@ -1684,3 +1684,63 @@ describe("composeEstimatingExplain — the MySQL arm (#1612)", () => {
     expect(composed.mode).toBe("execute");
   });
 });
+
+/**
+ * Oracle's catalog read runs as the agent user, whose own schema, or a PUBLIC synonym, could hold an object named like
+ * a dictionary view; an unqualified name resolves to that first. So every view is named SYS.<view>, and each kind is
+ * pinned whole here, a selector's literals included.
+ */
+describe("composeCatalogRead — Oracle", () => {
+  const EXCLUDED = (column: string) =>
+    `${column} NOT IN (SELECT u.USERNAME FROM SYS.ALL_USERS u WHERE u.ORACLE_MAINTAINED = 'Y')`;
+
+  test("each kind is exactly the statement below, every dictionary view named SYS.<view>", () => {
+    const selector = { schema: "APP", table: "ORDERS" };
+    expect(composeCatalogRead("oracle", { ...selector, kind: "columns" })).toBe(
+      'SELECT c.OWNER AS "table_schema", c.TABLE_NAME AS "table_name", c.COLUMN_NAME AS "column_name", ' +
+        'c.DATA_TYPE AS "data_type", c.NULLABLE AS "is_nullable", c.COLUMN_ID AS "ordinal_position" ' +
+        `FROM SYS.ALL_TAB_COLUMNS c WHERE ${EXCLUDED("c.OWNER")} AND c.OWNER = 'APP' AND c.TABLE_NAME = 'ORDERS' ` +
+        "ORDER BY c.OWNER, c.TABLE_NAME, c.COLUMN_ID",
+    );
+    expect(composeCatalogRead("oracle", { ...selector, kind: "relations" })).toBe(
+      'SELECT c.OWNER AS "table_schema", c.TABLE_NAME AS "table_name", cc.COLUMN_NAME AS "column_name", ' +
+        'r.OWNER AS "referenced_schema", r.TABLE_NAME AS "referenced_table", rc.COLUMN_NAME AS "referenced_column" ' +
+        "FROM SYS.ALL_CONSTRAINTS c " +
+        "JOIN SYS.ALL_CONS_COLUMNS cc ON cc.OWNER = c.OWNER AND cc.CONSTRAINT_NAME = c.CONSTRAINT_NAME " +
+        "JOIN SYS.ALL_CONSTRAINTS r ON r.OWNER = c.R_OWNER AND r.CONSTRAINT_NAME = c.R_CONSTRAINT_NAME " +
+        "JOIN SYS.ALL_CONS_COLUMNS rc ON rc.OWNER = r.OWNER AND rc.CONSTRAINT_NAME = r.CONSTRAINT_NAME " +
+        "AND rc.POSITION = cc.POSITION " +
+        `WHERE c.CONSTRAINT_TYPE = 'R' AND ${EXCLUDED("c.OWNER")} AND c.OWNER = 'APP' AND c.TABLE_NAME = 'ORDERS' ` +
+        "ORDER BY c.OWNER, c.TABLE_NAME, c.CONSTRAINT_NAME, cc.POSITION",
+    );
+    expect(composeCatalogRead("oracle", { ...selector, kind: "indexes" })).toBe(
+      'SELECT i.TABLE_OWNER AS "table_schema", i.TABLE_NAME AS "table_name", i.INDEX_NAME AS "index_name", ' +
+        "CASE WHEN i.UNIQUENESS = 'UNIQUE' THEN 'YES' ELSE 'NO' END AS \"is_unique\", " +
+        "CASE WHEN EXISTS (SELECT 1 FROM SYS.ALL_CONSTRAINTS k WHERE k.CONSTRAINT_TYPE = 'P' AND k.OWNER = i.TABLE_OWNER " +
+        "AND k.TABLE_NAME = i.TABLE_NAME AND k.INDEX_NAME = i.INDEX_NAME) THEN 'YES' ELSE 'NO' END AS \"is_primary\", " +
+        'ic.COLUMN_NAME AS "column_name" ' +
+        "FROM SYS.ALL_INDEXES i JOIN SYS.ALL_IND_COLUMNS ic ON ic.INDEX_OWNER = i.OWNER AND ic.INDEX_NAME = i.INDEX_NAME " +
+        `WHERE ${EXCLUDED("i.TABLE_OWNER")} AND i.TABLE_OWNER = 'APP' AND i.TABLE_NAME = 'ORDERS' ` +
+        "ORDER BY i.TABLE_OWNER, i.TABLE_NAME, i.INDEX_NAME, ic.COLUMN_POSITION",
+    );
+    expect(composeCatalogRead("oracle", { ...selector, kind: "statistics" })).toBe(
+      'SELECT t.OWNER AS "table_schema", t.TABLE_NAME AS "table_name", t.NUM_ROWS AS "estimated_rows" ' +
+        `FROM SYS.ALL_TABLES t WHERE ${EXCLUDED("t.OWNER")} AND t.OWNER = 'APP' AND t.TABLE_NAME = 'ORDERS' ` +
+        "ORDER BY t.OWNER, t.TABLE_NAME",
+    );
+  });
+
+  test("no kind names a dictionary view without SYS., and each passes the agent's input guard", () => {
+    for (const kind of ["columns", "relations", "indexes", "statistics"] as const) {
+      const sql = composeCatalogRead("oracle", { kind });
+      expect(guardAccepts(sql), kind).toBe(true);
+      expect(
+        [...sql.matchAll(/(?<![\w.$#])(?:ALL|USER|DBA)_[A-Z_$#]+/g)].map((m) => m[0]),
+        kind,
+      ).toEqual([]);
+      for (const [, source] of sql.matchAll(/\b(?:FROM|JOIN)\s+([A-Za-z_$#][\w$#.]*)/g)) {
+        expect(source.startsWith("SYS."), `${kind}: ${source}`).toBe(true);
+      }
+    }
+  });
+});

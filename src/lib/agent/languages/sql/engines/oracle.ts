@@ -4,8 +4,10 @@
  *
  * The catalog is read from the `ALL_*` dictionary views, which Oracle filters to the objects the user may see, so the
  * read-only agent user reads them with no grant beyond its SELECT on the tables themselves. The schemas Oracle
- * maintains (`ALL_USERS.ORACLE_MAINTAINED`) are left out of every read. Each name a selector carries is a string
- * literal compared exactly, as the dictionary spells it: an unquoted Oracle name is stored in upper case.
+ * maintains (`ALL_USERS.ORACLE_MAINTAINED`) are left out of every read. Each view is named `SYS.<view>`, so an object
+ * or synonym of the same name in the user's own schema, or a PUBLIC synonym, cannot stand in for it. Each name a
+ * selector carries is a string literal compared exactly, as the dictionary spells it: an unquoted Oracle name is stored
+ * in upper case.
  *
  * The estimating plan stays unsupported: `EXPLAIN PLAN` writes its rows into `PLAN_TABLE`, a write the read-only user
  * is refused. The profile composition, the statistics reading and the grounding capture have no composition measured
@@ -16,7 +18,7 @@ import type { AgentEngineServerOverlay, SqlServerDialect } from "../../pack";
 
 /** The owners Oracle maintains, excluded from every catalog read below. */
 function oracleSchemaExclusion(column: string): string {
-  return `${column} NOT IN (SELECT u.USERNAME FROM ALL_USERS u WHERE u.ORACLE_MAINTAINED = 'Y')`;
+  return `${column} NOT IN (SELECT u.USERNAME FROM SYS.ALL_USERS u WHERE u.ORACLE_MAINTAINED = 'Y')`;
 }
 
 /**
@@ -27,7 +29,7 @@ function composeOracleColumns(selector: AgentCatalogSelector): string {
   return (
     'SELECT c.OWNER AS "table_schema", c.TABLE_NAME AS "table_name", c.COLUMN_NAME AS "column_name", ' +
     'c.DATA_TYPE AS "data_type", c.NULLABLE AS "is_nullable", c.COLUMN_ID AS "ordinal_position" ' +
-    `FROM ALL_TAB_COLUMNS c WHERE ${oracleSchemaExclusion("c.OWNER")}` +
+    `FROM SYS.ALL_TAB_COLUMNS c WHERE ${oracleSchemaExclusion("c.OWNER")}` +
     equalsClause("c.OWNER", selector.schema, "schema", "oracle") +
     equalsClause("c.TABLE_NAME", selector.table, "table", "oracle") +
     " ORDER BY c.OWNER, c.TABLE_NAME, c.COLUMN_ID"
@@ -39,10 +41,10 @@ function composeOracleRelations(selector: AgentCatalogSelector): string {
   return (
     'SELECT c.OWNER AS "table_schema", c.TABLE_NAME AS "table_name", cc.COLUMN_NAME AS "column_name", ' +
     'r.OWNER AS "referenced_schema", r.TABLE_NAME AS "referenced_table", rc.COLUMN_NAME AS "referenced_column" ' +
-    "FROM ALL_CONSTRAINTS c " +
-    "JOIN ALL_CONS_COLUMNS cc ON cc.OWNER = c.OWNER AND cc.CONSTRAINT_NAME = c.CONSTRAINT_NAME " +
-    "JOIN ALL_CONSTRAINTS r ON r.OWNER = c.R_OWNER AND r.CONSTRAINT_NAME = c.R_CONSTRAINT_NAME " +
-    "JOIN ALL_CONS_COLUMNS rc ON rc.OWNER = r.OWNER AND rc.CONSTRAINT_NAME = r.CONSTRAINT_NAME " +
+    "FROM SYS.ALL_CONSTRAINTS c " +
+    "JOIN SYS.ALL_CONS_COLUMNS cc ON cc.OWNER = c.OWNER AND cc.CONSTRAINT_NAME = c.CONSTRAINT_NAME " +
+    "JOIN SYS.ALL_CONSTRAINTS r ON r.OWNER = c.R_OWNER AND r.CONSTRAINT_NAME = c.R_CONSTRAINT_NAME " +
+    "JOIN SYS.ALL_CONS_COLUMNS rc ON rc.OWNER = r.OWNER AND rc.CONSTRAINT_NAME = r.CONSTRAINT_NAME " +
     "AND rc.POSITION = cc.POSITION " +
     `WHERE c.CONSTRAINT_TYPE = 'R' AND ${oracleSchemaExclusion("c.OWNER")}` +
     equalsClause("c.OWNER", selector.schema, "schema", "oracle") +
@@ -59,10 +61,10 @@ function composeOracleIndexes(selector: AgentCatalogSelector): string {
   return (
     'SELECT i.TABLE_OWNER AS "table_schema", i.TABLE_NAME AS "table_name", i.INDEX_NAME AS "index_name", ' +
     "CASE WHEN i.UNIQUENESS = 'UNIQUE' THEN 'YES' ELSE 'NO' END AS \"is_unique\", " +
-    "CASE WHEN EXISTS (SELECT 1 FROM ALL_CONSTRAINTS k WHERE k.CONSTRAINT_TYPE = 'P' AND k.OWNER = i.TABLE_OWNER " +
+    "CASE WHEN EXISTS (SELECT 1 FROM SYS.ALL_CONSTRAINTS k WHERE k.CONSTRAINT_TYPE = 'P' AND k.OWNER = i.TABLE_OWNER " +
     "AND k.TABLE_NAME = i.TABLE_NAME AND k.INDEX_NAME = i.INDEX_NAME) THEN 'YES' ELSE 'NO' END AS \"is_primary\", " +
     'ic.COLUMN_NAME AS "column_name" ' +
-    "FROM ALL_INDEXES i JOIN ALL_IND_COLUMNS ic ON ic.INDEX_OWNER = i.OWNER AND ic.INDEX_NAME = i.INDEX_NAME " +
+    "FROM SYS.ALL_INDEXES i JOIN SYS.ALL_IND_COLUMNS ic ON ic.INDEX_OWNER = i.OWNER AND ic.INDEX_NAME = i.INDEX_NAME " +
     `WHERE ${oracleSchemaExclusion("i.TABLE_OWNER")}` +
     equalsClause("i.TABLE_OWNER", selector.schema, "schema", "oracle") +
     equalsClause("i.TABLE_NAME", selector.table, "table", "oracle") +
@@ -77,7 +79,7 @@ function composeOracleIndexes(selector: AgentCatalogSelector): string {
 function composeOracleStatistics(selector: AgentCatalogSelector): string {
   return (
     'SELECT t.OWNER AS "table_schema", t.TABLE_NAME AS "table_name", t.NUM_ROWS AS "estimated_rows" ' +
-    `FROM ALL_TABLES t WHERE ${oracleSchemaExclusion("t.OWNER")}` +
+    `FROM SYS.ALL_TABLES t WHERE ${oracleSchemaExclusion("t.OWNER")}` +
     equalsClause("t.OWNER", selector.schema, "schema", "oracle") +
     equalsClause("t.TABLE_NAME", selector.table, "table", "oracle") +
     " ORDER BY t.OWNER, t.TABLE_NAME"

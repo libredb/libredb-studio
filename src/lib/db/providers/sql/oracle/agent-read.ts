@@ -9,7 +9,9 @@
  * Free 23.26.3, `tests/fixtures/oracle/23.26.3-free/agent-boundary/`). What READ ONLY does not stop is what the user
  * can reach through others: a sequence's `NEXTVAL` advances, and a granted definer's-rights function runs with its
  * owner's privileges, `ALTER SYSTEM` and `NEXTVAL` included (captures 05 to 09). So the user is proved to reach none
- * of that before its first statement, from the dictionary views it reads as itself:
+ * of that before its first statement, from the dictionary views it reads as itself. Each is named `SYS.<view>`: an
+ * unqualified name resolves first to an object or a private synonym in the user's own schema, then to a PUBLIC
+ * synonym, either of which could stand in for the view and hide what it lists.
  *
  * 1. `USER_USERS.READ_ONLY` reads YES. A server without the column (ORA-00904) is older than 23ai and is refused.
  * 2. Every role granted to it, directly or through PUBLIC, is a default role. `SET ROLE` is permitted under READ ONLY
@@ -34,12 +36,14 @@
  *    column of a function-based index can be selected by name (both measured). Every one is refused, a built-in
  *    expression such as `UPPER(NAME)` and the hidden column extended statistics add included, since the expression is
  *    not proved; a granted view that leaves it out is the remedy.
- * 7. `ALL_POLICIES` lists no row-level security policy whose function such a schema owns, on a table, a view or a
- *    synonym: a SELECT runs the policy function with its owner's rights (measured).
- * 8. When the check starts from anything, `DBA_POLICIES` and `DBA_AUDIT_POLICIES` list no row-level security policy
- *    and no fine-grained auditing handler whose function such a schema owns on what it starts from or on what that
- *    depends on, a table read only through a granted view included, which `ALL_POLICIES` does not list and whose
- *    `ALL_AUDIT_POLICIES` the user may not read (measured); a user that may not read the two views is refused.
+ * 7. `DBA_POLICIES` lists no row-level security policy anywhere in the database whose function such a schema owns,
+ *    on any object, one Oracle maintains included: a SELECT of what it guards runs the function with its owner's
+ *    rights, and the user can reach a guarded object the check cannot follow it to, behind a view or among Oracle's
+ *    own tables (measured). A database that holds one is refused whatever the user is granted.
+ * 8. `DBA_AUDIT_POLICIES` lists no fine-grained auditing policy anywhere with an audit condition, which a read
+ *    evaluates and which can call a function with its owner's rights (measured), or with a handler such a schema owns,
+ *    which a read runs. The condition is not parsed to prove it built-in. A fresh 26ai database holds no such policy
+ *    and no such row-level policy (capture 00). A user that may not read either view is refused, naming its grant.
  * 9. They hold no privilege on a sequence such a schema owns, and the user owns no sequence.
  * 10. They hold EXECUTE on none of the packages that reach the network or the server's files, and no privilege on a
  *    directory, which `BFILENAME` reads server files through.
@@ -47,7 +51,9 @@
  * 12. `ALL_DB_LINKS` lists no link, PUBLIC or its own, since a link reaches another database under its stored
  *    credential.
  *
- * Every finding is collected and named in one refusal, as the statements that lift it. Oracle-maintained schemas'
+ * Every finding is collected and named in one refusal, as the statements that lift it, or, for a policy, as the
+ * policy. A revoke can uncover the next finding: a granted view over a view the refusal names is refused once that
+ * inner grant is gone, so the check is run again until it admits. Oracle-maintained schemas'
  * PUBLIC grants are the vendor's boundary and are not refused: their four sequences can still be advanced, which moves
  * a counter and changes no data (capture 07).
  */
@@ -61,7 +67,7 @@ type Rows = readonly Record<string, unknown>[];
 export type OracleAgentReader = (sql: string) => Promise<Rows>;
 
 /** The grantees whose privileges the session holds: the user, the roles enabled in it, and PUBLIC. */
-const SESSION_GRANTEES = "(p.GRANTEE IN (USER, 'PUBLIC') OR p.GRANTEE IN (SELECT ROLE FROM SESSION_ROLES))";
+const SESSION_GRANTEES = "(p.GRANTEE IN (USER, 'PUBLIC') OR p.GRANTEE IN (SELECT ROLE FROM SYS.SESSION_ROLES))";
 
 /** An owner ALL_USERS does not mark as Oracle-maintained, an owner it does not list included, fail closed. */
 const NOT_ORACLE_MAINTAINED = "NVL(u.ORACLE_MAINTAINED, 'N') <> 'Y'";
@@ -74,11 +80,11 @@ const NOT_ORACLE_MAINTAINED = "NVL(u.ORACLE_MAINTAINED, 'N') <> 'Y'";
  * DEBUG on a view, shows the user none of its dependencies either (measured).
  */
 const ROOTS =
-  "WITH r AS (SELECT p.GRANTEE, p.TABLE_SCHEMA AS OWNER, p.TABLE_NAME AS NAME FROM ALL_TAB_PRIVS p " +
-  "JOIN ALL_OBJECTS o ON o.OWNER = p.TABLE_SCHEMA AND o.OBJECT_NAME = p.TABLE_NAME " +
-  `LEFT JOIN ALL_USERS u ON u.USERNAME = p.TABLE_SCHEMA WHERE NVL(p.TYPE, '-') <> 'USER' AND ${NOT_ORACLE_MAINTAINED} ` +
+  "WITH r AS (SELECT p.GRANTEE, p.TABLE_SCHEMA AS OWNER, p.TABLE_NAME AS NAME FROM SYS.ALL_TAB_PRIVS p " +
+  "JOIN SYS.ALL_OBJECTS o ON o.OWNER = p.TABLE_SCHEMA AND o.OBJECT_NAME = p.TABLE_NAME " +
+  `LEFT JOIN SYS.ALL_USERS u ON u.USERNAME = p.TABLE_SCHEMA WHERE NVL(p.TYPE, '-') <> 'USER' AND ${NOT_ORACLE_MAINTAINED} ` +
   `AND ${SESSION_GRANTEES} ` +
-  "UNION SELECT NULL, USER, OBJECT_NAME FROM USER_OBJECTS WHERE OBJECT_TYPE IN ('TABLE', 'VIEW', 'MATERIALIZED VIEW'))";
+  "UNION SELECT NULL, USER, OBJECT_NAME FROM SYS.USER_OBJECTS WHERE OBJECT_TYPE IN ('TABLE', 'VIEW', 'MATERIALIZED VIEW'))";
 
 /** The packages and types whose EXECUTE reaches the network or the server's files. */
 const REACHING_PACKAGES: readonly string[] = [
@@ -96,22 +102,23 @@ const REACHING_PACKAGES: readonly string[] = [
 
 /** The check's statements, in the order they are sent. Each is one SELECT the agent user may run on any 23ai. */
 export const AGENT_PRINCIPAL_STATEMENTS = Object.freeze({
-  readOnly: "SELECT USERNAME, READ_ONLY FROM USER_USERS",
+  readOnly: "SELECT USERNAME, READ_ONLY FROM SYS.USER_USERS",
   roles:
-    "SELECT USERNAME AS GRANTEE, GRANTED_ROLE FROM USER_ROLE_PRIVS WHERE NVL(DEFAULT_ROLE, 'NO') <> 'YES' " +
+    "SELECT USERNAME AS GRANTEE, GRANTED_ROLE FROM SYS.USER_ROLE_PRIVS WHERE NVL(DEFAULT_ROLE, 'NO') <> 'YES' " +
     "ORDER BY 2, 1",
   units:
     "SELECT p.GRANTEE, p.TABLE_SCHEMA AS OWNER, p.TABLE_NAME AS NAME, p.TYPE AS OBJECT_TYPE " +
-    "FROM ALL_TAB_PRIVS p LEFT JOIN ALL_USERS u ON u.USERNAME = p.TABLE_SCHEMA " +
+    "FROM SYS.ALL_TAB_PRIVS p LEFT JOIN SYS.ALL_USERS u ON u.USERNAME = p.TABLE_SCHEMA " +
     `WHERE p.PRIVILEGE = 'EXECUTE' AND ${NOT_ORACLE_MAINTAINED} AND ${SESSION_GRANTEES} ` +
     "ORDER BY 2, 3, 1",
   views:
     `${ROOTS} SELECT p.GRANTEE, d.OWNER, d.NAME, d.REFERENCED_OWNER || '.' || d.REFERENCED_NAME AS CALLS ` +
-    "FROM ALL_DEPENDENCIES d JOIN r p ON p.OWNER = d.OWNER AND p.NAME = d.NAME " +
-    "LEFT JOIN ALL_USERS u ON u.USERNAME = d.OWNER " +
-    "LEFT JOIN ALL_USERS ru ON ru.USERNAME = d.REFERENCED_OWNER " +
-    "LEFT JOIN ALL_SYNONYMS s ON s.OWNER = d.REFERENCED_OWNER AND s.SYNONYM_NAME = d.REFERENCED_NAME AND s.DB_LINK IS NULL " +
-    "LEFT JOIN ALL_USERS su ON su.USERNAME = s.TABLE_OWNER " +
+    "FROM SYS.ALL_DEPENDENCIES d JOIN r p ON p.OWNER = d.OWNER AND p.NAME = d.NAME " +
+    "LEFT JOIN SYS.ALL_USERS u ON u.USERNAME = d.OWNER " +
+    "LEFT JOIN SYS.ALL_USERS ru ON ru.USERNAME = d.REFERENCED_OWNER " +
+    "LEFT JOIN SYS.ALL_SYNONYMS s ON s.OWNER = d.REFERENCED_OWNER AND s.SYNONYM_NAME = d.REFERENCED_NAME " +
+    "AND s.DB_LINK IS NULL " +
+    "LEFT JOIN SYS.ALL_USERS su ON su.USERNAME = s.TABLE_OWNER " +
     "WHERE d.TYPE = 'VIEW' AND (d.REFERENCED_TYPE NOT IN ('TABLE', 'VIEW', 'SYNONYM', 'MATERIALIZED VIEW', 'NON-EXISTENT') " +
     "OR d.REFERENCED_TYPE = 'VIEW' AND NVL(ru.ORACLE_MAINTAINED, 'N') <> 'Y' AND NOT EXISTS (SELECT 1 FROM r v " +
     "WHERE v.OWNER = d.REFERENCED_OWNER AND v.NAME = d.REFERENCED_NAME) " +
@@ -120,51 +127,45 @@ export const AGENT_PRINCIPAL_STATEMENTS = Object.freeze({
     `AND ${NOT_ORACLE_MAINTAINED} ORDER BY 2, 3, 1, 4`,
   invalidViews:
     `${ROOTS} SELECT p.GRANTEE, o.OWNER, o.OBJECT_NAME AS NAME, o.STATUS ` +
-    "FROM ALL_OBJECTS o JOIN r p ON p.OWNER = o.OWNER AND p.NAME = o.OBJECT_NAME " +
-    "LEFT JOIN ALL_USERS u ON u.USERNAME = o.OWNER " +
+    "FROM SYS.ALL_OBJECTS o JOIN r p ON p.OWNER = o.OWNER AND p.NAME = o.OBJECT_NAME " +
+    "LEFT JOIN SYS.ALL_USERS u ON u.USERNAME = o.OWNER " +
     `WHERE o.OBJECT_TYPE = 'VIEW' AND o.STATUS <> 'VALID' AND ${NOT_ORACLE_MAINTAINED} ORDER BY 2, 3, 1`,
   virtualColumns:
     "SELECT p.GRANTEE, c.OWNER, c.TABLE_NAME AS NAME, c.COLUMN_NAME " +
-    "FROM ALL_TAB_COLS c LEFT JOIN ALL_USERS u ON u.USERNAME = c.OWNER " +
-    `LEFT JOIN ALL_TAB_PRIVS p ON p.TABLE_SCHEMA = c.OWNER AND p.TABLE_NAME = c.TABLE_NAME AND ${SESSION_GRANTEES} ` +
+    "FROM SYS.ALL_TAB_COLS c LEFT JOIN SYS.ALL_USERS u ON u.USERNAME = c.OWNER " +
+    `LEFT JOIN SYS.ALL_TAB_PRIVS p ON p.TABLE_SCHEMA = c.OWNER AND p.TABLE_NAME = c.TABLE_NAME AND ${SESSION_GRANTEES} ` +
     `WHERE c.VIRTUAL_COLUMN = 'YES' AND ${NOT_ORACLE_MAINTAINED} ORDER BY 2, 3, 1, 4`,
   policies:
-    "SELECT DISTINCT p.GRANTEE, a.OBJECT_OWNER AS OWNER, a.OBJECT_NAME AS NAME, " +
-    "CASE WHEN s.SYNONYM_NAME IS NULL THEN 'N' ELSE 'Y' END AS IS_SYNONYM " +
-    "FROM ALL_POLICIES a LEFT JOIN ALL_USERS u ON u.USERNAME = a.PF_OWNER " +
-    "LEFT JOIN ALL_SYNONYMS s ON s.OWNER = a.OBJECT_OWNER AND s.SYNONYM_NAME = a.OBJECT_NAME " +
-    `LEFT JOIN ALL_TAB_PRIVS p ON p.TABLE_SCHEMA = a.OBJECT_OWNER AND p.TABLE_NAME = a.OBJECT_NAME AND ${SESSION_GRANTEES} ` +
-    `WHERE ${NOT_ORACLE_MAINTAINED} ORDER BY 2, 3, 1`,
-  reachable: `${ROOTS} SELECT OWNER, NAME FROM r FETCH FIRST 1 ROWS ONLY`,
-  catalogPolicies:
-    `${ROOTS}, t AS (SELECT GRANTEE, OWNER, NAME, OWNER AS T_OWNER, NAME AS T_NAME FROM r ` +
-    "UNION SELECT r.GRANTEE, r.OWNER, r.NAME, d.REFERENCED_OWNER, d.REFERENCED_NAME " +
-    "FROM r JOIN ALL_DEPENDENCIES d ON d.OWNER = r.OWNER AND d.NAME = r.NAME) " +
-    "SELECT DISTINCT t.GRANTEE, t.OWNER, t.NAME FROM t JOIN " +
-    "(SELECT a.OBJECT_OWNER AS T_OWNER, a.OBJECT_NAME AS T_NAME, a.PF_OWNER AS F_OWNER FROM DBA_POLICIES a " +
-    "UNION ALL SELECT f.OBJECT_SCHEMA, f.OBJECT_NAME, f.PF_SCHEMA " +
-    "FROM DBA_AUDIT_POLICIES f WHERE f.PF_FUNCTION IS NOT NULL OR f.PF_PACKAGE IS NOT NULL) g " +
-    "ON g.T_OWNER = t.T_OWNER AND g.T_NAME = t.T_NAME LEFT JOIN ALL_USERS u ON u.USERNAME = g.F_OWNER " +
-    `WHERE ${NOT_ORACLE_MAINTAINED} ORDER BY 2, 3, 1`,
+    "SELECT a.OBJECT_OWNER AS OWNER, a.OBJECT_NAME AS NAME, a.POLICY_NAME AS POLICY " +
+    "FROM SYS.DBA_POLICIES a LEFT JOIN SYS.ALL_USERS u ON u.USERNAME = a.PF_OWNER " +
+    `WHERE ${NOT_ORACLE_MAINTAINED} ORDER BY 1, 2, 3`,
+  auditPolicies:
+    "SELECT f.OBJECT_SCHEMA AS OWNER, f.OBJECT_NAME AS NAME, f.POLICY_NAME AS POLICY " +
+    "FROM SYS.DBA_AUDIT_POLICIES f LEFT JOIN SYS.ALL_USERS u ON u.USERNAME = f.PF_SCHEMA " +
+    "WHERE f.POLICY_TEXT IS NOT NULL OR (f.PF_PACKAGE IS NOT NULL OR f.PF_FUNCTION IS NOT NULL) " +
+    `AND ${NOT_ORACLE_MAINTAINED} ORDER BY 1, 2, 3`,
   sequences:
     "SELECT p.GRANTEE, p.TABLE_SCHEMA AS OWNER, p.TABLE_NAME AS NAME, 'N' AS OWNED " +
-    "FROM ALL_TAB_PRIVS p LEFT JOIN ALL_USERS u ON u.USERNAME = p.TABLE_SCHEMA " +
+    "FROM SYS.ALL_TAB_PRIVS p LEFT JOIN SYS.ALL_USERS u ON u.USERNAME = p.TABLE_SCHEMA " +
     `WHERE p.TYPE = 'SEQUENCE' AND ${NOT_ORACLE_MAINTAINED} AND ${SESSION_GRANTEES} ` +
-    "UNION ALL SELECT USER, USER, SEQUENCE_NAME, 'Y' FROM USER_SEQUENCES ORDER BY 2, 3, 1",
+    "UNION ALL SELECT USER, USER, SEQUENCE_NAME, 'Y' FROM SYS.USER_SEQUENCES ORDER BY 2, 3, 1",
   reach:
     "SELECT p.GRANTEE, p.TABLE_SCHEMA AS OWNER, p.TABLE_NAME AS NAME, p.PRIVILEGE, p.TYPE AS OBJECT_TYPE " +
-    "FROM ALL_TAB_PRIVS p " +
+    "FROM SYS.ALL_TAB_PRIVS p " +
     `WHERE ((p.PRIVILEGE = 'EXECUTE' AND p.TABLE_NAME IN (${REACHING_PACKAGES.map((name) => `'${name}'`).join(", ")})) ` +
     `OR p.TYPE = 'DIRECTORY') AND ${SESSION_GRANTEES} ORDER BY 3, 4, 1`,
   systemPrivileges:
-    "SELECT p.PRIVILEGE, g.GRANTEE FROM SESSION_PRIVS p LEFT JOIN " +
-    "(SELECT USERNAME AS GRANTEE, PRIVILEGE FROM USER_SYS_PRIVS UNION ALL SELECT ROLE, PRIVILEGE FROM ROLE_SYS_PRIVS) g " +
+    "SELECT p.PRIVILEGE, g.GRANTEE FROM SYS.SESSION_PRIVS p LEFT JOIN " +
+    "(SELECT USERNAME AS GRANTEE, PRIVILEGE FROM SYS.USER_SYS_PRIVS UNION ALL SELECT ROLE, PRIVILEGE FROM SYS.ROLE_SYS_PRIVS) g " +
     "ON g.PRIVILEGE = p.PRIVILEGE WHERE p.PRIVILEGE <> 'CREATE SESSION' ORDER BY 1, 2",
-  links: "SELECT OWNER, DB_LINK FROM ALL_DB_LINKS ORDER BY 1, 2",
+  links: "SELECT OWNER, DB_LINK FROM SYS.ALL_DB_LINKS ORDER BY 1, 2",
 });
 
 /** At most this many statements are listed in a refusal; the rest are counted. */
 const LISTED_STATEMENTS = 20;
+
+/** At most this many policies are named in one finding; the rest are counted. */
+const LISTED_POLICIES = 10;
 
 /** An identifier as a quoted Oracle name, exactly as the dictionary spells it. */
 function quoted(name: string): string {
@@ -280,55 +281,59 @@ function virtualColumnsFinding(rows: Rows, user: string): Finding | null {
   };
 }
 
-function policiesFinding(rows: Rows, user: string): Finding | null {
-  if (rows.length === 0) return null;
-  return {
-    what: "it may read an object a row-level security policy guards whose function a schema Oracle does not maintain owns, which a SELECT runs with its owner's rights",
-    statements: rows.map((row) => {
-      const [owner, name, synonym] = text(row, "ALL_POLICIES", "OWNER", "NAME", "IS_SYNONYM");
-      if (synonym === "Y") {
-        return owner === "PUBLIC"
-          ? `DROP PUBLIC SYNONYM ${quoted(name)}`
-          : `DROP SYNONYM ${quoted(owner)}.${quoted(name)}`;
-      }
-      return lift(row, user, owner, name);
-    }),
-  };
-}
-
 /** Whether `error` is the server's answer that the user may not read a catalog view. */
 function isUnreadableCatalog(error: unknown): boolean {
   return error instanceof Error && /\bORA-00942\b/.test(error.message);
 }
 
+/** The two policy catalogs the check reads database wide, each with what its finding says. */
+const POLICY_CATALOGS = {
+  policies: {
+    view: "DBA_POLICIES",
+    lists: "the row-level security policies of the database",
+    holds:
+      "a row-level security policy whose function a schema Oracle does not maintain owns, which Oracle runs with that owner's rights when any user reads what it guards",
+  },
+  auditPolicies: {
+    view: "DBA_AUDIT_POLICIES",
+    lists: "the fine-grained auditing policies of the database",
+    holds:
+      "a fine-grained auditing policy with an audit condition, which Oracle evaluates when any user reads what it audits and which can call a function, or with a handler a schema Oracle does not maintain owns, which Oracle runs with that owner's rights",
+  },
+} as const;
+
 /**
- * The row-level policies and fine-grained auditing handlers a schema Oracle does not maintain owns, on what the check
- * starts from and on what those depend on, a table read only through a granted view included. `ALL_POLICIES` does not
- * list a policy behind a view and `ALL_AUDIT_POLICIES` is not readable by the user, so `DBA_POLICIES` and
- * `DBA_AUDIT_POLICIES` are read; a user that reaches anything and may not read them is refused, naming the grants.
+ * The policies a catalog lists that no user of the database can be proven outside (see the module docblock, items 7
+ * and 8). No revoke of the user's grants lifts one, so the finding names the policies rather than a statement; a user
+ * that may not read the catalog is refused, naming the grant, which only SYS may run.
  */
-async function catalogPoliciesFinding(read: OracleAgentReader, user: string): Promise<Finding | null> {
-  if ((await read(AGENT_PRINCIPAL_STATEMENTS.reachable)).length === 0) return null;
+async function policyCatalogFinding(
+  read: OracleAgentReader,
+  catalog: keyof typeof POLICY_CATALOGS,
+  user: string,
+): Promise<Finding | null> {
+  const { view, lists, holds } = POLICY_CATALOGS[catalog];
   let rows: Rows;
   try {
-    rows = await read(AGENT_PRINCIPAL_STATEMENTS.catalogPolicies);
+    rows = await read(AGENT_PRINCIPAL_STATEMENTS[catalog]);
   } catch (error) {
     if (!isUnreadableCatalog(error)) throw error;
     return {
-      what: "the check cannot read DBA_POLICIES and DBA_AUDIT_POLICIES, which list the row-level security policies and fine-grained auditing handlers a SELECT of what it reads runs, those on a table behind a view included",
-      statements: [
-        `GRANT SELECT ON SYS.DBA_POLICIES TO ${quoted(user)} (as SYS)`,
-        `GRANT SELECT ON SYS.DBA_AUDIT_POLICIES TO ${quoted(user)} (as SYS)`,
-      ],
+      what: `the check cannot read SYS.${view}, which lists ${lists}`,
+      statements: [`GRANT SELECT ON SYS.${view} TO ${quoted(user)} (as SYS)`],
     };
   }
   if (rows.length === 0) return null;
+  const named = rows.map((row) => {
+    const [owner, name, policy] = text(row, view, "OWNER", "NAME", "POLICY");
+    return `${quoted(owner)}.${quoted(name)} policy ${quoted(policy)}`;
+  });
+  const rest = named.length - LISTED_POLICIES;
   return {
-    what: "it may read an object that a row-level security policy or a fine-grained auditing handler guards, or that reads one so guarded, whose function a schema Oracle does not maintain owns, which a SELECT runs with its owner's rights",
-    statements: rows.map((row) => {
-      const [owner, name] = text(row, "DBA_POLICIES", "OWNER", "NAME");
-      return lift(row, user, owner, name);
-    }),
+    what: `the database holds ${holds}, so agent mode is not offered on this database while it exists: ${named
+      .slice(0, LISTED_POLICIES)
+      .join(", ")}${rest > 0 ? `, and ${rest} more` : ""}`,
+    statements: [],
   };
 }
 
@@ -426,8 +431,8 @@ export async function verifyAgentPrincipal(read: OracleAgentReader): Promise<voi
     viewsFinding(await read(AGENT_PRINCIPAL_STATEMENTS.views), user),
     invalidViewsFinding(await read(AGENT_PRINCIPAL_STATEMENTS.invalidViews), user),
     virtualColumnsFinding(await read(AGENT_PRINCIPAL_STATEMENTS.virtualColumns), user),
-    policiesFinding(await read(AGENT_PRINCIPAL_STATEMENTS.policies), user),
-    await catalogPoliciesFinding(read, user),
+    await policyCatalogFinding(read, "policies", user),
+    await policyCatalogFinding(read, "auditPolicies", user),
     sequencesFinding(await read(AGENT_PRINCIPAL_STATEMENTS.sequences)),
     reachFinding(await read(AGENT_PRINCIPAL_STATEMENTS.reach)),
     systemPrivilegesFinding(await read(AGENT_PRINCIPAL_STATEMENTS.systemPrivileges)),
@@ -439,10 +444,12 @@ export async function verifyAgentPrincipal(read: OracleAgentReader): Promise<voi
   const statements = [...new Set(findings.flatMap((found) => found.statements))];
   const listed = statements.slice(0, LISTED_STATEMENTS).join("; ");
   const rest = statements.length - LISTED_STATEMENTS;
+  const run =
+    statements.length === 0 ? "" : ` Run, as an administrator: ${listed}${rest > 0 ? `; and ${rest} more` : ""}.`;
   throw new ExecutionProfileError(
     `The agent read-only execution profile refuses the Oracle user ${user}: ${findings
       .map((found) => found.what)
-      .join("; ")}. Run, as an administrator: ${listed}${rest > 0 ? `; and ${rest} more` : ""}.`,
+      .join("; ")}.${run}`,
     "PROFILE_PRIVILEGES_TOO_BROAD",
   );
 }
