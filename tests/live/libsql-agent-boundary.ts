@@ -8,6 +8,8 @@
  * (`createDatabaseProvider` with the profile's execution context, then `connect` and `queryReadOnly`), and through raw
  * requests for the shapes the provider never sends (a batch, a sequence, a stored statement, the other routes):
  *
+ *  - the open's three probes: each is refused the read-only token with the server's authorization refusal, and the
+ *    writable token runs the first and is told the table does not exist by the other two, so none changes anything;
  *  - the open: the read-only token is admitted; the writable token, a user name and password on a server started with
  *    HTTP Basic, and a server that checks no credential (with no token and with a token) are each refused; the
  *    operations profile opens the writable token unproven and reads the object surface, which is what plan mode grounds
@@ -49,6 +51,7 @@ import {
   composeStatisticsAvailabilityProbe,
 } from "@/lib/agent/composed-sql";
 import { composeTableProfile } from "@/lib/agent/table-profile";
+import { agentProbeStatements, probeTableName } from "@/lib/db/providers/sql/libsql/agent-boundary";
 import { LibSQLHranaTransport } from "@/lib/db/providers/sql/libsql/hrana-transport";
 import { LibSQLTransportError } from "@/lib/db/providers/sql/libsql/transport";
 import type { DatabaseProvider } from "@/lib/db/types";
@@ -214,6 +217,29 @@ async function cleanup(): Promise<void> {
 
 async function main(): Promise<void> {
   await seed();
+
+  // The open's probes, one by one: each must be the server's authorization refusal for the read-only token, and is
+  // a no-op for the writable one, which runs the first and is told the table does not exist by the other two.
+  const reader = new LibSQLHranaTransport(connection(JWT_PORT, { password: RO }));
+  const probes = agentProbeStatements(probeTableName());
+  for (const sql of probes) {
+    let answer = "ran";
+    try {
+      await reader.execute(sql, { timeoutMs: 30_000 });
+    } catch (error) {
+      answer = error instanceof LibSQLTransportError ? `${error.status} ${error.message}` : String(error);
+    }
+    check(
+      answer.startsWith("403 libSQL request failed: Authorization forbidden: "),
+      `probe, read-only token: ${sql} -> ${answer.slice(0, 60)}`,
+    );
+  }
+  const control: string[] = [];
+  for (const sql of probes) control.push(await writableAnswer(sql));
+  check(
+    control[0] === "ran" && control.slice(1).every((answer) => answer.includes("no such table")),
+    `probe, writable token: ${control.join(" / ")}`,
+  );
 
   // The open.
   check(

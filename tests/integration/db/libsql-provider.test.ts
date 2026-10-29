@@ -3166,7 +3166,18 @@ describe("LibSQLProvider column defaults (#1029)", () => {
 describe("LibSQLProvider agent read-only profile", () => {
   const AGENT: ProviderExecutionContext = { readOnly: true, sendsStatements: true };
   const BUDGET: ReadOnlyStatementBudget = { statementTimeoutMs: 5_000, maxResultRows: 10, maxResultBytes: 4_096 };
-  const PROBE = /^DROP TABLE IF EXISTS "libredb_agent_probe_[0-9a-f]{32}"$/;
+  const NAME = '"libredb_agent_probe_[0-9a-f]{32}"';
+  const PROBES = [
+    new RegExp(`^DROP TABLE IF EXISTS ${NAME}$`),
+    new RegExp(`^DELETE FROM ${NAME} WHERE 0$`),
+    new RegExp(`^INSERT INTO ${NAME} SELECT 1 WHERE 0$`),
+  ];
+  /** A token shaped like a JWT, built here so no literal token sits in the source; the signature is not one. */
+  const fakeToken = (claims: unknown): string => {
+    const part = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+    return `${part({ alg: "EdDSA", typ: "JWT" })}.${part(claims)}.not-a-real-signature`;
+  };
+  const READ_ONLY_TOKEN = fakeToken({ a: "ro" });
   /** The body sqld answers a read-only token's write with, for the whole request (measured on sqld 0.24.33). */
   const FORBIDDEN = {
     error: "Authorization forbidden: Current session doesn't not have Write permission to namespace default",
@@ -3195,7 +3206,7 @@ describe("LibSQLProvider agent read-only profile", () => {
     overrides: Partial<DatabaseConnection> = {},
     execution: ProviderExecutionContext = AGENT,
   ): Promise<LibSQLProvider> {
-    const provider = new LibSQLProvider(connection({ password: "not-a-real-token", ...overrides }), {}, execution);
+    const provider = new LibSQLProvider(connection({ password: READ_ONLY_TOKEN, ...overrides }), {}, execution);
     await provider.connect();
     return provider;
   }
@@ -3213,21 +3224,21 @@ describe("LibSQLProvider agent read-only profile", () => {
     expect(new LibSQLProvider(connection()).getCapabilities().agentCredential).toBe("token");
   });
 
-  test("opens under the profile on the 403 a read-only token is answered, after the connect probe", async () => {
+  test("opens under the profile when every probe is refused for the token, after the connect probe", async () => {
     readOnlyToken();
     const provider = await opened();
 
     const sent = sentStatements();
-    expect(sent).toHaveLength(2);
+    expect(sent).toHaveLength(4);
     expect(sent[0]).toBe("SELECT 1");
-    expect(sent[1]).toMatch(PROBE);
+    PROBES.forEach((probe, index) => expect(sent[index + 1]).toMatch(probe));
     expect(provider.isConnected()).toBe(true);
     await provider.disconnect();
   });
 
   test("refuses a token the server lets write, and stays closed", async () => {
     // No 403 anywhere: the fixture runs the probe as it runs every statement, as a writable token's server does.
-    const provider = new LibSQLProvider(connection({ password: "not-a-real-token" }), {}, AGENT);
+    const provider = new LibSQLProvider(connection({ password: READ_ONLY_TOKEN }), {}, AGENT);
 
     const error = await refusal(() => provider.connect());
 
@@ -3254,11 +3265,45 @@ describe("LibSQLProvider agent read-only profile", () => {
       port: undefined,
       user: "ignored",
       password: undefined,
-      connectionString: "libsql://db.example.invalid?authToken=not-a-real-token",
+      connectionString: `libsql://db.example.invalid?authToken=${READ_ONLY_TOKEN}`,
     });
 
     expect(provider.isConnected()).toBe(true);
     await provider.disconnect();
+  });
+
+  test("refuses a token whose claims do not say read-only, even when the server refused every probe", async () => {
+    readOnlyToken();
+    for (const password of [fakeToken({ a: "rw" }), "not-a-real-token"]) {
+      const provider = new LibSQLProvider(connection({ password }), {}, AGENT);
+
+      const error = await refusal(() => provider.connect());
+
+      expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+      expect(provider.isConnected()).toBe(false);
+    }
+  });
+
+  test("refuses a 403 whose body is not the server's authorization refusal", async () => {
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      const body = init?.body === undefined ? "" : String(init.body);
+      if (body.includes("libredb_agent_probe_")) {
+        return Promise.resolve(new Response("<html>403 Forbidden</html>", { status: 403 }));
+      }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ baton: null, base_url: null, results: [result([["1", null]], [[int(1)]]), { type: "ok" }] }),
+          {
+            status: 200,
+          },
+        ),
+      );
+    }) as unknown as typeof fetch;
+    const provider = new LibSQLProvider(connection({ password: READ_ONLY_TOKEN }), {}, AGENT);
+
+    const error = await refusal(() => provider.connect());
+
+    expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_UNSUPPORTED_TARGET");
   });
 
   test("an editor handle opens unproven and queryReadOnly refuses on it before sending anything", async () => {

@@ -10,15 +10,21 @@
  * batch, a sequence or a stored statement all answered 403, and the table read back the same. `PRAGMA query_only`, the
  * lever the SQLite provider uses, is refused by the server for every credential, so the token is the only lever.
  *
- * The open proves it with the server's own answer rather than by reading the token, whose claims Studio cannot verify:
+ * The open proves it with the server's own answers, and reads the token's claims on top of them:
  *
  * 1. **The connection sends a bearer token** (`assertAgentConnection`). A user name and password go as HTTP Basic,
  *    which sqld grants every statement (`SQLD_HTTP_AUTH`) and has no read-only form for, and a connection with no
  *    token reaches only a server that checks no credential; both are refused before anything is sent.
- * 2. **The server refuses a write sent with that token** (`verifyAgentProfile`). `DROP TABLE IF EXISTS` on a name made
- *    fresh for the open changes nothing on any outcome, since no table holds the name, and sqld classifies it as a
- *    write: a read-only token is answered 403, a writable token and a server with no credential check run it
- *    (measured). Only a 403 admits the profile; any other answer refuses it, fail closed.
+ * 2. **The server refuses writes sent with that token** (`verifyAgentProfile`). Three write-shaped statements on a name
+ *    made fresh for the open, so no table holds it and each changes nothing on any outcome: `DROP TABLE IF EXISTS`, a
+ *    `DELETE ... WHERE 0` and an `INSERT ... SELECT ... WHERE 0`. sqld classifies each as a write before it looks for
+ *    the table: a read-only token is answered 403 with its authorization refusal for every one, a writable token and a
+ *    server with no credential check run the first and answer the other two "no such table" (measured). Only that 403
+ *    with that refusal admits a probe, a 403 with any other body included (a proxy's is not the server's), and every
+ *    probe must be admitted.
+ * 3. **The token declares read-only access** (`assertReadOnlyClaims`). Its JWT claims must carry `"a": "ro"`, the claim
+ *    sqld reads; Studio cannot verify the signature, so this checks the token's own statement against the server's
+ *    answers above, never instead of them.
  */
 import { randomUUID } from "node:crypto";
 import { ExecutionProfileError } from "@/lib/db/errors";
@@ -34,7 +40,7 @@ export type AgentProofExecute = (sql: string) => Promise<LibSQLStatementResult>;
  */
 export const WRITE_FORBIDDEN_STATUS = 403;
 
-/** A table name made fresh for one open, so the probe's `DROP TABLE IF EXISTS` can never find a table to drop. */
+/** A table name made fresh for one open, so no probe can ever find a table to drop, delete from or insert into. */
 export function probeTableName(): string {
   return `libredb_agent_probe_${randomUUID().replaceAll("-", "")}`;
 }
@@ -59,23 +65,71 @@ export function assertAgentConnection(connection: DatabaseConnection): void {
 }
 
 /**
- * Sends the write probe with the agent's token and admits the profile only on the 403 a read-only token is refused a
- * write with. A request that got no answer (status 0) and an error that is not the seam's leave as they are, for the
- * connect to report as the connection failure it is.
+ * sqld's own refusal of a write from a read-only token, as the transport reports its body: `{"error": "Authorization
+ * forbidden: Current session doesn't not have Write permission to namespace <name>"}` (measured on sqld 0.24.33).
+ */
+const AUTHORIZATION_REFUSAL = /^libSQL request failed: Authorization forbidden: /;
+
+/** The probes, each a write on `table` that changes nothing whether it runs, fails or is refused. */
+export function agentProbeStatements(table: string): readonly string[] {
+  return [
+    `DROP TABLE IF EXISTS "${table}"`,
+    `DELETE FROM "${table}" WHERE 0`,
+    `INSERT INTO "${table}" SELECT 1 WHERE 0`,
+  ];
+}
+
+/**
+ * Sends each probe with the agent's token and admits the profile only when the server refused every one with its own
+ * authorization refusal. A request that got no answer (status 0) and an error that is not the seam's leave as they are,
+ * for the connect to report as the connection failure it is.
  */
 export async function verifyAgentProfile(execute: AgentProofExecute, table: string = probeTableName()): Promise<void> {
+  for (const sql of agentProbeStatements(table)) {
+    // oxlint-disable-next-line no-await-in-loop -- one probe at a time: the first answer that is not a refusal ends the open.
+    await assertWriteRefused(execute, sql);
+  }
+}
+
+async function assertWriteRefused(execute: AgentProofExecute, sql: string): Promise<void> {
   try {
-    await execute(`DROP TABLE IF EXISTS "${table}"`);
+    await execute(sql);
   } catch (error) {
     if (!(error instanceof LibSQLTransportError) || error.status === 0) throw error;
-    if (error.status === WRITE_FORBIDDEN_STATUS) return;
+    if (error.status === WRITE_FORBIDDEN_STATUS && AUTHORIZATION_REFUSAL.test(error.message)) return;
     throw new ExecutionProfileError(
-      `libSQL answered the agent's write probe with status ${error.status} (${error.message}), not the 403 a read-only token is refused a write with, so the agent read-only profile is refused`,
+      `libSQL answered the agent's write probe with status ${error.status} (${error.message}), not the authorization refusal a read-only token is refused a write with, so the agent read-only profile is refused`,
       "PROFILE_UNSUPPORTED_TARGET",
     );
   }
   throw new ExecutionProfileError(
-    "libSQL ran a write sent with the agent's token, so the token is not read-only or the server checks no token, and the agent read-only profile is refused",
+    `libSQL ran the write probe ${sql} sent with the agent's token, so the token is not read-only or the server checks no token, and the agent read-only profile is refused`,
     "PROFILE_SERVER_UNENFORCED",
   );
+}
+
+/** The claims a JWT carries, or null for a token that is not one this check can read. */
+function jwtClaims(token: string): unknown {
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  try {
+    return JSON.parse(Buffer.from(parts[1] as string, "base64url").toString("utf8")) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Refuses a token whose claims do not declare read-only access: `"a": "ro"`, the claim sqld reads. Anything else, a
+ * token that is no JWT included, is refused, fail closed.
+ */
+export function assertReadOnlyClaims(token: string): void {
+  const claims = jwtClaims(token);
+  const access = typeof claims === "object" && claims !== null ? (claims as { a?: unknown }).a : undefined;
+  if (access !== "ro") {
+    throw new ExecutionProfileError(
+      'The libSQL token does not declare read-only access (a JWT whose claims carry "a": "ro"), so the agent read-only profile is refused',
+      "PROFILE_PRIVILEGES_TOO_BROAD",
+    );
+  }
 }

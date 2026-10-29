@@ -248,10 +248,11 @@ The operations profile and plan mode send no statement of the model's, so they o
 Any answer the proof cannot read refuses the profile.
 
 1. The connection must send a bearer token. A connection that names a user signs in with HTTP Basic, which sqld (`SQLD_HTTP_AUTH`) grants every statement and has no read-only form for, and is refused `PROFILE_PRIVILEGES_TOO_BROAD`. A connection with no token reaches only a server that checks no credential, and is refused `PROFILE_SERVER_UNENFORCED`. Both are refused before anything is sent.
-2. After the connect probe, `DROP TABLE IF EXISTS "libredb_agent_probe_<32 hex digits>"` goes with the agent's token, on a name made fresh for the open, so it changes nothing on any outcome. sqld classifies it as a write. Only a 403 admits the profile. A server that runs it, which is what a writable token and a server with no credential check both do, refuses the profile `PROFILE_SERVER_UNENFORCED`; any other status, a statement error included, refuses it `PROFILE_UNSUPPORTED_TARGET`.
+2. After the connect probe, three writes go with the agent's token, each on a name made fresh for the open (`libredb_agent_probe_<32 hex digits>`), so none changes anything on any outcome: `DROP TABLE IF EXISTS "<name>"`, `DELETE FROM "<name>" WHERE 0` and `INSERT INTO "<name>" SELECT 1 WHERE 0`. sqld classifies each as a write before it looks for the table. Each must be answered 403 with the server's own authorization refusal (`Authorization forbidden: ...`); a 403 with any other body, such as a proxy's, does not count. A probe the server runs, which is what a writable token and a server with no credential check both do with the first, refuses the profile `PROFILE_SERVER_UNENFORCED`; any other answer, a statement error such as "no such table" included, refuses it `PROFILE_UNSUPPORTED_TARGET`.
+3. The token's own claims must declare read-only access: it must be a JWT whose claims carry `"a": "ro"`, the claim sqld reads, or the profile is refused `PROFILE_PRIVILEGES_TOO_BROAD`. Studio cannot verify the signature, so this checks the token's statement against the server's answers above, never instead of them.
 
 The proof runs at open only: a token whose rights change after the open is seen at the next open of a profiled handle.
-Turso Cloud was not measured for this profile: a Turso read-only token is admitted exactly when Turso answers the probe 403, and refused otherwise.
+Turso Cloud was not measured for this profile: a Turso read-only token is admitted only when Turso answers every probe with the same 403 and refusal wording and the token carries `"a": "ro"`, and refused otherwise.
 
 #### The agent token
 
@@ -288,7 +289,7 @@ The read-only token can read `GET /dump`, which is a read of the whole database,
 
 #### Boundary record
 
-Measured on `ghcr.io/tursodatabase/libsql-server:v0.24.33` (`sqld 0.24.33 (40a151bd 2025-12-19)`, SQLite 3.45.1) on 2026-10-29, by [`tests/live/libsql-agent-boundary.ts`](../../tests/live/libsql-agent-boundary.ts), with Studio's agent admission bypassed: 85 checks, all passing.
+Measured on `ghcr.io/tursodatabase/libsql-server:v0.24.33` (`sqld 0.24.33 (40a151bd 2025-12-19)`, SQLite 3.45.1) on 2026-10-29, by [`tests/live/libsql-agent-boundary.ts`](../../tests/live/libsql-agent-boundary.ts), with Studio's agent admission bypassed: 89 checks, all passing.
 Three servers: one checking JWTs with a read-only and a writable token signed by its key, one started with HTTP Basic, and one checking no credential.
 
 | Probe | Read-only token, through `queryReadOnly` | Writable token, positive control on a scratch table |
@@ -303,6 +304,7 @@ Three servers: one checking JWTs with a read-only and a writable token signed by
 | a write in a batch, a sequence or a stored statement, and on `/v3/pipeline`, `/v1/execute`, `/v1/batch` and `/` | 403 | not sent |
 
 The tables, rows, indexes, views, triggers and `user_version` read back the same before and after the refused statements.
+Each of the open's three probes answered the read-only token 403 with `Authorization forbidden: Current session doesn't not have Write permission to namespace default`; the writable token ran the `DROP TABLE IF EXISTS` and was told "no such table" by the other two, so none changed anything.
 At open, the read-only token was admitted, and these were refused: the writable token (`PROFILE_SERVER_UNENFORCED`), a user name and password on the Basic server (`PROFILE_PRIVILEGES_TOO_BROAD`, nothing sent), the read-only token on the Basic server (its connect probe answered 401), and the server that checks no credential, with no token (`PROFILE_SERVER_UNENFORCED`, nothing sent) and with a token (`PROFILE_SERVER_UNENFORCED`, the probe ran).
 The operations profile opened the writable token unproven, and read the object surface plan mode grounds on.
 An editor handle refused `queryReadOnly` before sending anything.

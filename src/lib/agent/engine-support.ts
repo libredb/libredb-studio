@@ -30,8 +30,9 @@ import type { DatabaseType } from "@/lib/types";
  * with the provider's command reader in front of the engine and `maxTimeMS` plus Studio's kill of
  * a read's session as its deadline. ClickHouse refuses writes for the request itself, under
  * `readonly = 1`, and its user is proven at open to hold nothing that setting leaves usable.
- * libSQL's boundary is the token: one the server refuses every write for, proven at open by a
- * write that changes nothing and that the server must refuse. Each provider's own `queryReadOnly` argues its own case.
+ * libSQL's boundary is the token: one the server refuses every write for, proven at open by
+ * writes that change nothing and that the server must refuse, and by the token's own read-only
+ * claim. Each provider's own `queryReadOnly` argues its own case.
  * `tests/unit/lib/agent/engine-support.test.ts` is what keeps the two equal - it walks EVERY
  * id in the `DatabaseType` union, reads `queryReadOnly` off the real provider class the
  * factory would construct, and fails if this array and the drivers diverge in either direction.

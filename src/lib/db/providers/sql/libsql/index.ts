@@ -19,7 +19,7 @@
  * - `PRAGMA query_only = true` is refused as well, so the agent read-only profile
  *   cannot be a statement this provider issues, as it is on SQLite (`sqlite.ts`).
  *   It is the credential instead: a read-only token, which the server refuses every
- *   write for and which the open proves with a write the server must refuse
+ *   write for and which the open proves with writes the server must refuse
  *   (`agent-boundary.ts`, `agent-read.ts`).
  * - `dbstat` IS available on both deployments, so per-table and per-index bytes are
  *   measured here - which `bun:sqlite` cannot do at all.
@@ -65,7 +65,12 @@ import {
   QueryError,
 } from "@/lib/db/errors";
 import { assertReadOnlyBudget, byteBudgetSentence, TIME_BUDGET_PREFIX } from "../read-only-budget";
-import { assertAgentConnection, verifyAgentProfile, WRITE_FORBIDDEN_STATUS } from "./agent-boundary";
+import {
+  assertAgentConnection,
+  assertReadOnlyClaims,
+  verifyAgentProfile,
+  WRITE_FORBIDDEN_STATUS,
+} from "./agent-boundary";
 import { agentBodyCap, readAgentAnswer } from "./agent-read";
 import { LibSQLHranaTransport } from "./hrana-transport";
 import {
@@ -118,7 +123,7 @@ const AUTH_TOKEN_PARAM = "authToken";
 /** Statuses a libSQL deployment answers a credential problem with. */
 const AUTH_STATUSES = new Set([400, 401, 403]);
 
-/** The deadline the open's write probe runs under: one statement that touches nothing, so a server too slow fails it. */
+/** The deadline each of the open's write probes runs under: each touches nothing, so a server too slow fails the open. */
 const AGENT_PROOF_TIMEOUT_MS = 10_000;
 
 // ============================================================================
@@ -323,6 +328,8 @@ export class LibSQLProvider extends SQLBaseProvider {
       await transport.execute(CONNECT_PROBE_SQL, { timeoutMs: this.queryTimeout });
       if (this.readOnlyProfile) {
         await verifyAgentProfile((sql) => transport.execute(sql, { timeoutMs: AGENT_PROOF_TIMEOUT_MS }));
+        // `assertAgentConnection` above admitted only a connection with a token.
+        assertReadOnlyClaims(this.connection.password as string);
       }
     } catch (error) {
       await transport.close();
