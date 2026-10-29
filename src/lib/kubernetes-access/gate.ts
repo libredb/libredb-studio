@@ -10,7 +10,8 @@
  * (groups.ts); a session without a subject, an issuer or a record is denied without a request. The gate is handed only
  * those connections, so it denies, without a request, a connection without `kubernetesSecret` (a defect: a projection
  * lost the marker) and every connection while the review is off (the listing sets none apart then, and lists them to
- * the admin role only through the role filter, the rule platform discovery uses).
+ * the admin role only through the role filter, the rule platform discovery uses). Both functions return the very
+ * connection objects they were handed, never a copy, because the dispatcher keeps the rows they allow by identity.
  *
  * Sign-in: while the review is on, a verified sign-in may use this Studio only when its subject can be asserted at
  * all and a fresh review of `KUBERNETES_ACCESS_REVIEW_SIGN_IN` allows it, by default `list` on Rancher's NavLinks at

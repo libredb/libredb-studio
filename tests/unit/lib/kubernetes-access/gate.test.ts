@@ -190,6 +190,17 @@ describe("connections, with the review on", () => {
     expect(api.maxOpen).toBeGreaterThan(1);
   });
 
+  // The dispatcher (src/lib/governance/visible.ts) keeps what the gate returns in a Set and filters its listing by it,
+  // so a copy of an allowed row would be dropped from the list.
+  test("returns the very objects it was handed, never a copy", async () => {
+    api.grants = [getSecret("u-rjs2h", "team-a", "orders-app"), getSecret("u-rjs2h", "team-b", "analytics-app")];
+    const kept = await connectionsUnderAccessReview(DEV_A, [ORDERS, ANALYTICS]);
+    expect(kept).toHaveLength(2);
+    expect(kept[0]).toBe(ORDERS);
+    expect(kept[1]).toBe(ANALYTICS);
+    expect(await connectionUnderAccessReview(DEV_A, ANALYTICS)).toBe(ANALYTICS);
+  });
+
   test("an invalid switch counts as on", async () => {
     process.env.KUBERNETES_ACCESS_REVIEW = "enabled";
     expect(await connectionsUnderAccessReview(ADMIN, [ORDERS, PLAIN])).toEqual([]);
