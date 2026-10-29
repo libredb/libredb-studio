@@ -2861,6 +2861,8 @@ The core (`investigation.ts`, `tools.ts` and the modules beside them) names no s
   The provider's own `queryReadOnly` fence and the engine's read-only boundary still run on the admitted command.
   The repair ledger keys an admitted command apart from every model statement, so the model's refused copy of the same text never blocks the catalog read, and that copy stays refused for the rest of the run.
   `engine-pack-contract.test.ts` holds each declaring overlay's composers to one statement the fence admits by identity, with every name it takes quoted.
+  It hands them names that break out of each delimiter a grammar reads as quoting (single and double quotes, backticks and brackets), both with a terminator or comment and with plain words alone, and requires every name to sit inside one literal or quoted name whose content, its doubled delimiters undone, is exactly that name.
+  It reads the composed text with both the fence's grammar and the engine's own grammar row, so a bracket the engine reads as a subscript quotes nothing.
 - **Optional:** the adapter's `inventoryProblem` and `planDraftIdentifiers`, which a pack with no such check leaves out.
 
 Some members are global by name, because a reader dispatches on the name before it reads a run's language: every pack's `baseDefinitions`, `shortfallNotices` and `evidenceTools` are merged into `LANGUAGE_BASE_DEFINITIONS`, `LANGUAGE_SHORTFALL_NOTICES` and `AGENT_EVIDENCE_TOOLS`, and every pack's `evidenceEvents` into `AGENT_EVIDENCE_EVENTS` by event kind; a name two packs both hold fails at load.

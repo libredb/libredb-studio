@@ -12,7 +12,7 @@ import { type AgentToolName, agentToolDefinition } from "@/lib/agent/tools";
 import { AGENT_WORKFLOW_SENDS_STATEMENTS, type AgentRunWorkflowType } from "@/lib/agent/types";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { admitComposedStatement, agentQueryReadSqlInput } from "@/lib/db/operations/statement-guard";
-import { DEFAULT_SQL_GRAMMAR } from "@/lib/sql/grammar";
+import { DEFAULT_SQL_GRAMMAR, resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
 import { readSqlSpan } from "@/lib/sql/spans";
 import type { DatabaseType } from "@/lib/types";
 import { toolsNamedIn } from "../../../helpers/agent-tool-rules";
@@ -158,37 +158,77 @@ const COMMAND_CATALOG_READS: readonly DatabaseType[] = [];
 /** A name no composer writes on its own, so where it shows in a composed statement, a selector put it there. */
 const SENTINEL_NAME = "zq_sentinel_name";
 
-/** Names a composer is handed: the sentinel, and names that would end the statement or open a comment unquoted. */
+/**
+ * Names a composer is handed: the sentinel, and for each delimiter a grammar reads as quoting (single and double
+ * quotes, backticks, brackets) three ways out of it: one that ends the statement or opens a comment, one that closes
+ * the quote and goes on in plain words, and one that keeps the sentinel quoted and puts plain words after the quote.
+ * The last two carry no terminator and no comment, so only the quoting check below catches a composer that lets them
+ * through.
+ */
 const COMMAND_NAMES: readonly string[] = [
   SENTINEL_NAME,
   `${SENTINEL_NAME}'; SHOW TABLES --`,
   `${SENTINEL_NAME}"; SHOW TABLES /*`,
+  `${SENTINEL_NAME}\`; SHOW TABLES --`,
+  `${SENTINEL_NAME}]; SHOW TABLES /*`,
+  ...[
+    ["'", "'"],
+    ['"', '"'],
+    ["`", "`"],
+    ["[", "]"],
+  ].flatMap(([open, close]) => [`x${close} ${SENTINEL_NAME} ${open}y`, `${SENTINEL_NAME}${close} IN ${open}other`]),
 ];
 
-/** The statement's text outside every literal and quoted name, where an unquoted name would show. */
-function unquotedText(sql: string): string {
-  let text = "";
+/** A quoted run's content, its doubled closers undoubled, or null for a run not quoted that way. */
+function decodedQuote(run: string): string | null {
+  const close = { "'": "'", '"': '"', "`": "`", "[": "]" }[run[0] ?? ""];
+  if (close === undefined || run.length < 2 || !run.endsWith(close)) return null;
+  const body = run.slice(1, -1);
+  return body.replaceAll(close + close, "").includes(close) ? null : body.replaceAll(close + close, close);
+}
+
+/**
+ * What a composed statement's quoting gets wrong for `name`, read with `grammar`: the sentinel shows outside every
+ * literal and quoted name (in code, a comment or a subscript), or a literal or quoted name holding it is not exactly
+ * `name` once its doubled delimiters are undone, so words outside the quote went with it.
+ */
+function quotingViolations(sql: string, name: string, grammar: SqlGrammar): string[] {
+  const violations = new Set<string>();
+  let unquoted = "";
   let i = 0;
   while (i < sql.length) {
-    const span = readSqlSpan(sql, i, DEFAULT_SQL_GRAMMAR);
+    const span = readSqlSpan(sql, i, grammar);
     if (span === null) {
-      text += sql[i];
+      unquoted += sql[i];
       i++;
       continue;
     }
-    if (span.kind !== "string" && span.kind !== "quoted-identifier") text += sql.slice(i, span.end);
+    const run = sql.slice(i, span.end);
+    if (!span.terminated) violations.add("a run its grammar never closes");
+    if (span.kind !== "string" && span.kind !== "quoted-identifier") unquoted += run;
+    else if (run.includes(SENTINEL_NAME) && decodedQuote(run) !== name) {
+      violations.add("a quoted name that is not the name it was given");
+    }
     i = span.end;
   }
-  return text;
+  if (unquoted.includes(SENTINEL_NAME)) violations.add("a name it does not quote");
+  return [...violations];
 }
 
 /**
  * What a command catalog read's composers get wrong over every kind and name; empty when they hold. Each statement it
  * composes is one the fence admits by identity (one determinate statement, no comment, no forbidden word), and every
- * name it takes is quoted. A composer that refuses a name, by throwing, holds: a refusal sends nothing.
+ * name it takes sits inside one literal or quoted name that holds exactly that name, read with each of `grammars`. A
+ * composer that refuses a name, by throwing, holds: a refusal sends nothing.
+ *
+ * The fence reads quoting with `DEFAULT_SQL_GRAMMAR`, where brackets quote a name, and an engine reads it with its own
+ * row, where they may be a subscript, so a declaring engine is held under both (`resolveSqlGrammar`).
  */
-function commandComposerViolations(compose: AgentCatalogRead["compose"]): string[] {
-  const violations: string[] = [];
+function commandComposerViolations(
+  compose: AgentCatalogRead["compose"],
+  grammars: readonly SqlGrammar[] = [DEFAULT_SQL_GRAMMAR],
+): string[] {
+  const violations = new Set<string>();
   for (const kind of CATALOG_KINDS) {
     for (const name of COMMAND_NAMES) {
       for (const selector of [
@@ -204,13 +244,15 @@ function commandComposerViolations(compose: AgentCatalogRead["compose"]): string
         }
         const where = `${kind} ${JSON.stringify(selector)}`;
         if (!agentQueryReadSqlInput.safeParse({ sql, composed: admitComposedStatement(sql) }).success) {
-          violations.push(`${where}: not one statement the fence admits by identity`);
+          violations.add(`${where}: not one statement the fence admits by identity`);
         }
-        if (unquotedText(sql).includes(SENTINEL_NAME)) violations.push(`${where}: a name it does not quote`);
+        for (const grammar of grammars) {
+          for (const violation of quotingViolations(sql, name, grammar)) violations.add(`${where}: ${violation}`);
+        }
       }
     }
   }
-  return violations;
+  return [...violations];
 }
 
 /** One composer for every kind. */
@@ -251,6 +293,52 @@ describe("the command catalog read contract", () => {
     const twoStatements = composingAll(() => "SHOW TABLES; SHOW COLUMNS");
     expect(commandComposerViolations(twoStatements)).toContain(
       `indexes {"kind":"indexes","table":"${SENTINEL_NAME}"}: not one statement the fence admits by identity`,
+    );
+  });
+
+  // A composer that wraps a name in a delimiter and never escapes it, one per delimiter the grammar reads as quoting.
+  test.each([
+    ["backticks", "`", "`"],
+    ["brackets", "[", "]"],
+    ["double quotes", '"', '"'],
+    ["single quotes", "'", "'"],
+  ])("names a composer that wraps a name in %s without escaping it", (_label, open, close) => {
+    const unescaped = composingAll(
+      (selector) => `SHOW COLUMNS FROM ${open}${selector.table ?? selector.schema}${close}`,
+    );
+    const violations = commandComposerViolations(unescaped);
+    // The quote closed early and the name goes on in plain words, no terminator and no comment.
+    expect(violations).toContain(
+      `columns ${JSON.stringify({ kind: "columns", table: `x${close} ${SENTINEL_NAME} ${open}y` })}: a name it does not quote`,
+    );
+    // The name stays quoted, and words of the model's choosing follow the quote.
+    expect(violations).toContain(
+      `columns ${JSON.stringify({ kind: "columns", table: `${SENTINEL_NAME}${close} IN ${open}other` })}: a quoted name that is not the name it was given`,
+    );
+  });
+
+  test("holds for composers that escape their own delimiter, whichever it is", () => {
+    for (const [open, close] of [
+      ["`", "`"],
+      ["[", "]"],
+      ['"', '"'],
+      ["'", "'"],
+    ]) {
+      const escaping = composingAll(
+        (selector) => `SHOW COLUMNS FROM ${open}${(selector.table ?? "t").replaceAll(close, close + close)}${close}`,
+      );
+      expect(commandComposerViolations(escaping)).toEqual([]);
+    }
+  });
+
+  test("reads a name with the grammar it is given, so brackets an engine reads as a subscript quote nothing", () => {
+    const bracketing = composingAll(
+      (selector) => `SHOW COLUMNS FROM [${(selector.table ?? "t").replaceAll("]", "]]")}]`,
+    );
+    const subscripting: SqlGrammar = { ...DEFAULT_SQL_GRAMMAR, bracket: "subscript" };
+    expect(commandComposerViolations(bracketing, [DEFAULT_SQL_GRAMMAR])).toEqual([]);
+    expect(commandComposerViolations(bracketing, [DEFAULT_SQL_GRAMMAR, subscripting])).toContain(
+      `columns {"kind":"columns","table":"${SENTINEL_NAME}"}: a name it does not quote`,
     );
   });
 });
@@ -352,7 +440,11 @@ describe.each(ENGINES)("%s", (type) => {
     const commandShaped =
       catalogRead !== undefined && catalogRead !== "unsupported" && catalogRead.commandShaped === true;
     expect(commandShaped).toBe(COMMAND_CATALOG_READS.includes(type));
-    if (commandShaped) expect(commandComposerViolations(catalogRead.compose)).toEqual([]);
+    if (commandShaped) {
+      expect(commandComposerViolations(catalogRead.compose, [DEFAULT_SQL_GRAMMAR, resolveSqlGrammar(type)])).toEqual(
+        [],
+      );
+    }
   });
 
   test("its adapter is total over the corpus", () => {
