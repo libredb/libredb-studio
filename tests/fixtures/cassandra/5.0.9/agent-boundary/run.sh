@@ -25,7 +25,7 @@
 #
 # Run it from the repository root once `nodetool status` reports UN on each Cassandra node and the default superuser
 # signs in, so probe.mjs resolves cassandra-driver from the root node_modules. Every role's password is
-# not-a-real-password; the image's superuser is cassandra/cassandra. 01 to 05, 10 and 12 depend on 00, and 12 on 11.
+# not-a-real-password; the image's superuser is cassandra/cassandra. 01 to 05, 10 and 12 depend on 00, and 12 on 11; 13 makes and drops its own.
 set -euo pipefail
 auth="$1"
 allow="$2"
@@ -59,3 +59,4 @@ run "$scylla" "" "" 09-scylla-no-credential
 run "$auth" agent_modify "$pw" 10-modify-second-keyspace-as-agent-modify
 run "$auth" cassandra cassandra 11-setup-built-in-names-as-cassandra
 run "$auth" agent_ro "$pw" 12-built-in-names-as-agent-ro probe
+node "$dir/13-fence-grammar-and-check-paging.mjs" "$auth" > "$dir/13-fence-grammar-and-check-paging.txt"

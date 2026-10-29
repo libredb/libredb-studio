@@ -50,6 +50,7 @@ import {
   RefusedBeforeSendError,
   TimeoutError,
 } from "@/lib/db/errors";
+import { cassandraAgentStatementRefusal } from "@/lib/db/providers/sql/cassandra/agent-boundary";
 import { CassandraDriverTransport, type CassandraSession } from "@/lib/db/providers/sql/cassandra/driver-transport";
 import { CassandraProvider } from "@/lib/db/providers/sql/cassandra/index";
 import type { DatabaseProvider } from "@/lib/db/types";
@@ -4061,9 +4062,9 @@ describe("the agent read-only profile", () => {
   });
 
   test("nothing a statement sets on its session reaches the next call: each call opens and closes its own", async () => {
-    const { provider, calls } = await agentProvider(() => ({ [STATEMENT]: CUSTOMERS, "USE other": VOID_RESULT }));
+    const { provider, calls } = await agentProvider(() => ({ [STATEMENT]: CUSTOMERS }));
     await provider.connect();
-    await provider.queryReadOnly("USE other", BUDGET);
+    await provider.queryReadOnly(STATEMENT, BUDGET);
     await provider.queryReadOnly(STATEMENT, BUDGET);
 
     expect(calls).toHaveLength(2);
@@ -4071,7 +4072,28 @@ describe("the agent read-only profile", () => {
       { connected: 1, shutdown: 1 },
       { connected: 1, shutdown: 1 },
     ]);
-    expect(calls[1].asked).not.toContain("USE other");
+  });
+
+  test.each([
+    ["a USE, which would move the session's keyspace", "USE other"],
+    [
+      "the role's own password change, which no grant stops",
+      "ALTER ROLE agent_ro WITH PASSWORD = 'not-a-real-password'",
+    ],
+    ["a SELECT followed by a second statement", `${STATEMENT}; DROP TABLE probe.customers`],
+  ])("queryReadOnly refuses %s before a session is opened or the role checked", async (_, sql) => {
+    const { provider, primary, calls } = await agentProvider(() => ({ [sql]: VOID_RESULT }));
+    await provider.connect();
+    const sent = primary.asked.length;
+
+    const error = await provider.queryReadOnly(sql, BUDGET).catch((failure: unknown) => failure);
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
+    expect((error as Error).message).toBe(cassandraAgentStatementRefusal(sql) as string);
+    expect((error as Error).message).toStartWith(
+      "The agent read-only execution profile sends one CQL statement, a SELECT, and nothing else; ",
+    );
+    expect(primary.asked).toHaveLength(sent);
+    expect(calls).toHaveLength(0);
   });
 
   test("a result past the row budget is refused, not cut", async () => {
@@ -4117,18 +4139,19 @@ describe("the agent read-only profile", () => {
   });
 
   test("a statement the server refuses answers with the server's own words", async () => {
-    const write = "INSERT INTO probe.customers (id, name) VALUES (99, 'x')";
+    // A SELECT the fence admits that calls a user-defined function the role holds no EXECUTE on (capture 02).
+    const call = "SELECT probe.plus_one(id) FROM probe.customers WHERE id = 1";
     const refused = responseError(
       8448,
-      "User agent_ro has no MODIFY permission on <table probe.customers> or any of its parents",
+      "User agent_ro has no EXECUTE permission on <function probe.plus_one(int)> or any of its parents",
     );
-    const { provider } = await agentProvider(() => ({ [write]: refused }));
+    const { provider } = await agentProvider(() => ({ [call]: refused }));
     await provider.connect();
 
-    const error = await provider.queryReadOnly(write, BUDGET).catch((failure: unknown) => failure);
+    const error = await provider.queryReadOnly(call, BUDGET).catch((failure: unknown) => failure);
     expect(error).toBeInstanceOf(QueryError);
     expect((error as Error).message).toBe(
-      "User agent_ro has no MODIFY permission on <table probe.customers> or any of its parents",
+      "User agent_ro has no EXECUTE permission on <function probe.plus_one(int)> or any of its parents",
     );
   });
 

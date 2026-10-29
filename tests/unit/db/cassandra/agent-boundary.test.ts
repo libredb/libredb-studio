@@ -8,6 +8,7 @@ import { ExecutionProfileError } from "@/lib/db/errors";
 import {
   CASSANDRA_AGENT_RELEASE_CQL,
   CASSANDRA_AGENT_SCYLLA_CQL,
+  cassandraAgentStatementRefusal,
   cassandraAgentStatements,
   verifyCassandraAgentProfile,
 } from "@/lib/db/providers/sql/cassandra/agent-boundary";
@@ -620,5 +621,107 @@ describe("the enforcement probe", () => {
     await expect(verifyCassandraAgentProfile(read, { role: "agent_ro", keyspace: "probe", nonce: NONCE })).rejects.toBe(
       lost,
     );
+  });
+});
+
+describe("a check read the server pages", () => {
+  const paged = (result: CassandraQueryResult): CassandraQueryResult => ({ ...result, pageState: "0400000001" });
+  const unread = (what: string) =>
+    `The agent read-only execution profile could not read the Cassandra role agent_ro's whole ${what} in one page, so a finding past it would go unseen, and the connection is refused.`;
+
+  test("refuses a role listing that is not the last page", async () => {
+    const statements = cassandraAgentStatements("agent_ro", "probe", NONCE);
+    const error = await refusal(healthy({ [statements.roles]: paged(rows([roleRow("agent_ro")])) }));
+    expect(error.reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+    expect(error.message).toBe(unread("roles listing"));
+  });
+
+  test("refuses a permission listing that is not the last page", async () => {
+    const statements = cassandraAgentStatements("agent_ro", "probe", NONCE);
+    const error = await refusal(
+      healthy({
+        [statements.permissions]: paged(rows([permissionRow("agent_ro", "<keyspace probe>", "SELECT")])),
+      }),
+    );
+    expect(error.reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+    expect(error.message).toBe(unread("permissions listing"));
+  });
+
+  test("refuses a mask read that is not the last page, even when the page it read holds no finding", async () => {
+    const statements = cassandraAgentStatements("agent_ro", "probe", NONCE);
+    const error = await refusal(healthy({ [statements.masks]: paged(NO_COLUMNS) }));
+    expect(error.reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+    expect(error.message).toBe(unread("column masks of the keyspace probe"));
+  });
+});
+
+describe("the statement fence: one statement, a SELECT, before anything is sent", () => {
+  const PREFIX = "The agent read-only execution profile sends one CQL statement, a SELECT, and nothing else";
+  const NOT_SELECT = `${PREFIX}; this statement does not begin with SELECT, so it was not sent. A Cassandra role can always change its own password, which no grant stops, so only a SELECT reaches the server.`;
+  const MORE = `${PREFIX}; this text goes on after its first statement's semicolon, so it was not sent. Send one SELECT at a time.`;
+  const UNREADABLE = `${PREFIX}; this text ends inside a comment, a string or a quoted name, so where it ends cannot be read, and it was not sent.`;
+  const TAGGED = `${PREFIX}; this text holds a tagged dollar-quoted run ($tag$ ... $tag$), which CQL does not have, so where its strings end cannot be read, and it was not sent.`;
+  const EMPTY = `${PREFIX}; this text holds no statement, so nothing was sent.`;
+
+  test.each([
+    ["a plain SELECT", "SELECT id FROM probe.customers"],
+    ["a lowercase select", "select id from probe.customers"],
+    ["a mixed-case select with no space before its star", "SeLeCt*FROM probe.customers"],
+    ["a leading -- comment", "-- the customers\nSELECT id FROM probe.customers"],
+    ["a leading // comment", "// the customers\nSELECT id FROM probe.customers"],
+    ["a leading block comment", "/* the customers */ SELECT id FROM probe.customers"],
+    ["a block comment right after the keyword", "SELECT/* x */id FROM probe.customers"],
+    ["one trailing semicolon", "SELECT id FROM probe.customers;"],
+    ["a trailing semicolon followed by whitespace and comments", "SELECT id FROM probe.customers ; -- done\n /* x */ "],
+    ["a semicolon inside a string literal", "SELECT id FROM probe.customers WHERE name = 'a; DROP TABLE probe.x'"],
+    ["a doubled quote inside a string literal", "SELECT id FROM probe.customers WHERE name = 'it''s; fine'"],
+    ["a semicolon inside a quoted name", 'SELECT "a;b" FROM probe.customers'],
+    ["a semicolon inside a $$ string", "SELECT id FROM probe.customers WHERE name = $$a; DROP TABLE probe.x$$"],
+    ["a string inside a subscript", "SELECT m['a;b'] FROM probe.t"],
+    ["comment markers inside a string", "SELECT id FROM probe.customers WHERE url = 'http://x/* -- '"],
+  ])("admits %s", (_, sql) => {
+    expect(cassandraAgentStatementRefusal(sql)).toBeNull();
+  });
+
+  test.each([
+    ["ALTER ROLE of the role itself", "ALTER ROLE agent_ro WITH PASSWORD = 'not-a-real-password'", NOT_SELECT],
+    ["a lowercase alter role", "alter role agent_ro with password = 'not-a-real-password'", NOT_SELECT],
+    ["BEGIN BATCH", "BEGIN BATCH INSERT INTO probe.t (id) VALUES (1); APPLY BATCH", NOT_SELECT],
+    ["INSERT", "INSERT INTO probe.customers (id, name) VALUES (9, 'x')", NOT_SELECT],
+    ["UPDATE", "UPDATE probe.customers SET name = 'x' WHERE id = 1", NOT_SELECT],
+    ["DELETE", "DELETE FROM probe.customers WHERE id = 1", NOT_SELECT],
+    ["TRUNCATE", "TRUNCATE probe.customers", NOT_SELECT],
+    ["DROP", "DROP TABLE probe.customers", NOT_SELECT],
+    ["GRANT", "GRANT MODIFY ON KEYSPACE probe TO agent_ro", NOT_SELECT],
+    ["USE", "USE other", NOT_SELECT],
+    ["LIST ROLES", "LIST ROLES", NOT_SELECT],
+    ["a word that only starts like SELECT", "SELECTED id FROM probe.customers", NOT_SELECT],
+    ["a word that starts with SELECT and an underscore", "SELECT_x FROM probe.customers", NOT_SELECT],
+    ["a SELECT hidden in a leading -- comment", "-- SELECT\nALTER ROLE agent_ro WITH PASSWORD = 'x'", NOT_SELECT],
+    ["a SELECT hidden in a leading // comment", "// SELECT\nDELETE FROM probe.customers WHERE id = 1", NOT_SELECT],
+    ["a SELECT hidden in a leading block comment", "/* SELECT */ DELETE FROM probe.customers WHERE id = 1", NOT_SELECT],
+    ["a statement starting with a semicolon", "; SELECT id FROM probe.customers", NOT_SELECT],
+    ["a string where the keyword should be", "'SELECT' id FROM probe.customers", NOT_SELECT],
+    ["a quoted name where the keyword should be", '"SELECT" id FROM probe.customers', NOT_SELECT],
+    ["a $$ string where the keyword should be", "$$SELECT$$ FROM probe.customers", NOT_SELECT],
+    ["a string before the keyword", "'x' SELECT id FROM probe.customers", NOT_SELECT],
+    ["a quoted name before the keyword", '"x" SELECT id FROM probe.customers', NOT_SELECT],
+    ["a $$ string before the keyword", "$$x$$ SELECT id FROM probe.customers", NOT_SELECT],
+    ["a hash, which CQL reads as code", "# x\nSELECT id FROM probe.customers", NOT_SELECT],
+    ["a SELECT followed by a second statement", "SELECT id FROM probe.customers; DROP TABLE probe.customers", MORE],
+    ["a SELECT followed by ALTER ROLE", "SELECT id FROM probe.customers;ALTER ROLE agent_ro WITH PASSWORD = 'x'", MORE],
+    ["a SELECT followed by a second SELECT", "SELECT id FROM probe.a; SELECT id FROM probe.b", MORE],
+    ["two semicolons", "SELECT id FROM probe.customers;;", MORE],
+    ["a string after the semicolon", "SELECT id FROM probe.customers; 'x'", MORE],
+    ["a semicolon inside a subscript", "SELECT [1; 2] FROM probe.t", MORE],
+    ["an unterminated block comment", "SELECT id FROM probe.customers /* ; DROP TABLE probe.x", UNREADABLE],
+    ["an unterminated string", "SELECT id FROM probe.customers WHERE name = 'x; DROP", UNREADABLE],
+    ["an unterminated quoted name", 'SELECT "x FROM probe.customers', UNREADABLE],
+    ["a tagged dollar-quoted run", "SELECT $t$x; DROP TABLE probe.x; $t$ FROM probe.t", TAGGED],
+    ["nothing", "", EMPTY],
+    ["whitespace only", " \n\t ", EMPTY],
+    ["comments only", "-- SELECT\n/* SELECT */ // x\n", EMPTY],
+  ])("refuses %s", (_, sql, reason) => {
+    expect(cassandraAgentStatementRefusal(sql)).toBe(reason);
   });
 });

@@ -1,0 +1,18 @@
+== the text the fence reads
+> "SELECT $t$x$t$ FROM system.local"
+  error ResponseError code=8192: line 1:8 mismatched character 't' expecting '$'
+> "SELECT $$x; y$$ FROM system.local WHERE key = 'local'"
+  error ResponseError code=8704: Cannot infer type for term 'x; y' in selection clause (try using a cast to force a type)
+> "SELECT release_version FROM system.local; SELECT key FROM system.local"
+  error ResponseError code=8192: line 1:42 mismatched input 'SELECT' expecting EOF (... release_version FROM system.local; [SELECT]...)
+> "SELECT release_version FROM system.local;;"
+  ok, 1 rows, page state absent
+> "/* a; */ -- b\n// c\nselect release_version from system.local ; -- d\n"
+  ok, 1 rows, page state absent
+== whether the check's reads come back in pages, at a fetch size of 1
+> "LIST ROLES OF 'fence13_agent'" {"fetchSize":1}
+  ok, 4 rows, page state absent
+> "LIST ALL PERMISSIONS OF 'fence13_agent'" {"fetchSize":1}
+  ok, 4 rows, page state absent
+> "SELECT keyspace_name, table_name, column_name, function_keyspace, function_name FROM system_schema.column_masks WHERE keyspace_name = 'fence13'" {"fetchSize":1}
+  ok, 1 rows, page state present

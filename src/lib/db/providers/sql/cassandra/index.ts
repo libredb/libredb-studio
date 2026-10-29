@@ -103,7 +103,7 @@ import {
   rowBudgetSentence,
   TIME_BUDGET_PREFIX,
 } from "../read-only-budget";
-import { verifyCassandraAgentProfile } from "./agent-boundary";
+import { cassandraAgentStatementRefusal, verifyCassandraAgentProfile } from "./agent-boundary";
 import { CASSANDRA_DEFAULT_PORT, CassandraDriverTransport } from "./driver-transport";
 import {
   CASSANDRA_IDENTITY_CQL,
@@ -656,7 +656,10 @@ export class CassandraProvider extends SQLBaseProvider {
    * refused, and so is a result past the byte budget. The deadline ends the wait, not the work: the protocol has no
    * cancellation, so the coordinator finishes what it started.
    *
-   * Refused outside the profile, and for an estimating plan, which CQL does not have, before anything is sent.
+   * Refused outside the profile, for an estimating plan, which CQL does not have, and for any text that is not one
+   * SELECT (`cassandraAgentStatementRefusal`), before anything is sent: a role can always change its own password, and
+   * no grant the check reads stops that, so only a SELECT reaches the server. A `USE` is refused with the rest, and each
+   * call still opens a session of its own.
    */
   public async queryReadOnly(
     sql: string,
@@ -675,6 +678,8 @@ export class CassandraProvider extends SQLBaseProvider {
     if (mode !== "execute") {
       throw new RefusedBeforeSendError("Apache Cassandra composes no estimating plan for the agent", this.type, sql);
     }
+    const fenced = cassandraAgentStatementRefusal(sql);
+    if (fenced !== null) throw new RefusedBeforeSendError(fenced, this.type, sql);
 
     return this.trackQuery(async () => {
       const { result, executionTime } = await this.measureExecution(() =>

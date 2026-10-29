@@ -15,17 +15,21 @@
  *    role that reads it; the operations profile opens the superuser unproven, so plan mode grounds on it;
  *  - the positive controls: the MODIFY role writes into the second keyspace through the driver, and the admitted role's
  *    SELECT of the masked column runs the function, which is why each is refused;
- *  - the boundary: each write, conditional write, BATCH, TRUNCATE, DDL statement, GRANT, REVOKE and role statement, and
- *    a call of a user-defined function and aggregate, is sent as the admitted role through `queryReadOnly` and refused
- *    by the server as Unauthorized, never a syntax error; the same statements run as the superuser on a scratch
- *    keyspace, the positive control that shows each would work; the keyspace's tables and rows, its functions and the
- *    roles read back the same before and after;
+ *  - the fence: each write, conditional write, BATCH, TRUNCATE, DDL statement, GRANT, REVOKE and role statement is
+ *    sent as the admitted role through `queryReadOnly` and refused before it is sent, as not a SELECT; a call of a
+ *    user-defined function and aggregate is a SELECT, reaches the server and is refused there as Unauthorized;
+ *  - the boundary behind the fence: the same statements, sent as the admitted role on a driver session of its own, are
+ *    each refused by the server as Unauthorized, never a syntax error; the same statements run as the superuser on a
+ *    scratch keyspace, the positive control that shows each would work; the keyspace's tables and rows, its functions
+ *    and the roles read back the same before and after;
  *  - the check before every statement: a grant of MODIFY, of a superuser role and a user-defined mask added after one
  *    call refuse the next on the same handle, and their removal admits the one after;
- *  - the session: a `USE` of another keyspace in one call leaves the next call's unqualified table in the connection's
- *    keyspace;
+ *  - the session: a `USE` is refused before it is sent, and an unqualified table reads the connection's keyspace;
+ *  - CQL's grammar: a tagged dollar run, which the fence refuses, is a syntax error on the server too;
  *  - the budgets: a result past the row budget and one past the byte budget are refused;
- *  - the residual: the admitted role changes its own password, which no grant stops (printed, not failed).
+ *  - the password: the admitted role's change of its own password through `queryReadOnly` is refused before it is sent
+ *    and the old password still signs in, while the same statement on a driver session of its own is accepted, the
+ *    write no grant stops and the reason the fence exists.
  *
  * It is NOT in `bun run test`: the runner excludes `tests/live/` by name. Run it against a Cassandra 5.0 node with
  * PasswordAuthenticator and CassandraAuthorizer, user-defined functions and dynamic data masking on, as a superuser
@@ -42,7 +46,7 @@
  */
 // oxlint-disable no-await-in-loop -- the checks run one at a time on purpose: each reads what the server holds after the one before.
 import { randomBytes } from "node:crypto";
-import { ExecutionProfileError, QueryError } from "@/lib/db/errors";
+import { ExecutionProfileError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { createDatabaseProvider, executionContextFor } from "@/lib/db/factory";
 import { CassandraDriverTransport } from "@/lib/db/providers/sql/cassandra/driver-transport";
 import { CassandraTransportError } from "@/lib/db/providers/sql/cassandra/transport";
@@ -386,16 +390,29 @@ async function main(): Promise<void> {
     "queryReadOnly refuses a handle opened for the editor",
   );
   await editor.disconnect();
+  const UNAUTHORIZED =
+    /^User libredb_lb_ro has no \w+ permission|does not have sufficient privileges|You aren't allowed/;
   for (const template of [...WRITES, ...ROLE_WRITES]) {
     const cql = template.replaceAll("@", KS);
     const { error } = await readOnly(reader, cql);
-    const unauthorized =
-      error instanceof QueryError &&
-      !(error instanceof ExecutionProfileError) &&
-      /^User libredb_lb_ro has no \w+ permission|does not have sufficient privileges|You aren't allowed/.test(
-        error.message,
-      );
-    check(unauthorized, `refused as Unauthorized: ${cql} -> ${error?.message ?? "ran"}`);
+    if (cql.startsWith("SELECT ")) {
+      const unauthorized =
+        error instanceof QueryError &&
+        !(error instanceof ExecutionProfileError) &&
+        !(error instanceof RefusedBeforeSendError) &&
+        UNAUTHORIZED.test(error.message);
+      check(unauthorized, `the fence admits a SELECT, the server refuses it: ${cql} -> ${error?.message ?? "ran"}`);
+    } else {
+      const fenced =
+        error instanceof RefusedBeforeSendError &&
+        error.message.includes("does not begin with SELECT, so it was not sent");
+      check(fenced, `the fence refuses before sending: ${cql} -> ${error?.message ?? "ran"}`);
+    }
+    const raw = await asRole(`${PREFIX}ro`, cql);
+    check(
+      raw !== null && raw.code === 8448 && UNAUTHORIZED.test(raw.message),
+      `behind the fence, refused as Unauthorized: ${cql} -> ${raw === null ? "ran" : raw.message}`,
+    );
   }
   for (const template of WRITES) {
     const cql = template.replaceAll("@", SCRATCH);
@@ -410,13 +427,32 @@ async function main(): Promise<void> {
     "the keyspace's rows, tables and functions and the roles read the same after the boundary",
   );
 
-  // The session: a USE in one call does not move the next.
-  await readOnly(reader, `USE ${OTHER}`);
+  // The session: a USE is refused before it is sent, and an unqualified table reads the connection's keyspace.
+  const use = await readOnly(reader, `USE ${OTHER}`);
+  check(
+    use.error instanceof RefusedBeforeSendError,
+    `a USE is refused before it is sent: ${use.error?.message ?? "ran"}`,
+  );
   const unqualified = await readOnly(reader, "SELECT id FROM customers");
   check(
     unqualified.rows?.length === 3,
-    `a USE does not reach the next call: ${unqualified.error?.message ?? `${unqualified.rows?.length} rows`}`,
+    `an unqualified table reads the connection's keyspace: ${unqualified.error?.message ?? `${unqualified.rows?.length} rows`}`,
   );
+  // Leading comments of all three forms, one holding a semicolon, and a lowercase keyword pass the fence and answer.
+  const commented = await readOnly(
+    reader,
+    `/* note; */ -- a\n// b\nselect id from ${KS}.customers where id = 1 ; -- done\n`,
+  );
+  check(
+    commented.rows?.length === 1,
+    `a SELECT behind comments, in lowercase, with a semicolon in a comment, is admitted: ${commented.error?.message ?? `${commented.rows?.length} rows`}`,
+  );
+  // CQL's grammar: the tagged dollar run the fence refuses is a syntax error on the server too.
+  const tagged = await admin("SELECT $t$x$t$ FROM system.local").then(
+    () => "ran",
+    (error: unknown) => (error as CassandraTransportError).category,
+  );
+  check(tagged === "syntax", `a tagged dollar run is a syntax error on the server: ${tagged}`);
 
   // The budgets.
   const rows = await readOnly(reader, `SELECT id FROM ${KS}.customers`, { ...BUDGET, maxResultRows: 2 });
@@ -508,11 +544,23 @@ async function main(): Promise<void> {
     );
   }
 
-  // The residual: a role changes its own password, which no grant stops; Studio's statement admission does.
+  // The password: a role can change its own password, which no grant stops, so the fence refuses it before sending.
   await sleep(PASSWORD_INTERVAL_MS);
+  const passwordReader = await open(`${PREFIX}ro`);
+  const fenced = await readOnly(passwordReader, `ALTER ROLE ${PREFIX}ro WITH PASSWORD = 'not-a-real-password'`);
+  await passwordReader.disconnect();
+  check(
+    fenced.error instanceof RefusedBeforeSendError,
+    `the role's own password change is refused before it is sent: ${fenced.error?.message ?? "ran"}`,
+  );
+  check(
+    (await asRole(`${PREFIX}ro`, `SELECT id FROM ${KS}.customers WHERE id = 1`)) === null,
+    "the old password still signs in after the refused change",
+  );
   const own = await asRole(`${PREFIX}ro`, `ALTER ROLE ${PREFIX}ro WITH PASSWORD = '${PASSWORD}'`);
-  console.log(
-    `RESIDUAL a SELECT-only role changes its own password: ${own === null ? "accepted" : `refused ${own.message}`}`,
+  check(
+    own === null,
+    `control: on a driver session of its own the server accepts the change: ${own === null ? "accepted" : own.message}`,
   );
 }
 

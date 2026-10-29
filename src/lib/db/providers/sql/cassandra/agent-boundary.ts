@@ -36,12 +36,18 @@
  * Every finding of checks 2 to 4 is collected and named in one refusal. A failure to reach the server leaves as it
  * came, and a check the server refuses to answer is a refusal of the profile, so no failure admits a role.
  *
- * Two writes no grant stops are named in `docs/providers/cassandra.md` as residuals: a role may always change its own
- * password (`ALTER ROLE <role> WITH PASSWORD`, capture 02), and after a REVOKE the server keeps enforcing the revoked
- * permission from its permission cache for up to `permissions_validity`, while the listing this check reads shows the
- * revoke at once (capture 05). Only Studio's statement admission stops either.
+ * A check read the server answers in more than one page is refused, never read in part: the listings and the mask
+ * read are ordinary reads the driver pages, and a finding on a later page would otherwise go unseen.
+ *
+ * One write no grant stops is a role changing its own password (`ALTER ROLE <role> WITH PASSWORD`, capture 02), so the
+ * agent path sends nothing but one SELECT (`cassandraAgentStatementRefusal`), refused before any session is opened.
+ * The other is named in `docs/providers/cassandra.md` as a residual: after a REVOKE the server keeps enforcing the
+ * revoked permission from its permission cache for up to `permissions_validity`, while the listing this check reads
+ * shows the revoke at once (capture 05). A fresh role, rather than a revoke, is the remedy.
  */
 import { ExecutionProfileError } from "../../../errors";
+import { readSqlSpan } from "@/lib/sql/spans";
+import { CASSANDRA_SQL_GRAMMAR } from "./sql-grammar";
 import { type CassandraQueryResult, CassandraTransportError, type CassandraFaultCategory } from "./transport";
 
 /** Runs one check statement as the agent role, on the statement's own session. */
@@ -120,6 +126,17 @@ async function assertMeasuredServer(read: CassandraAgentReader): Promise<void> {
   );
 }
 
+/** The rows of a check read, refused when the server says more pages follow: a finding past the first must not hide. */
+function wholeRows(result: CassandraQueryResult, role: string, what: string): readonly Record<string, unknown>[] {
+  if (result.pageState !== null) {
+    throw new ExecutionProfileError(
+      `The agent read-only execution profile could not read the Cassandra role ${role}'s whole ${what} in one page, so a finding past it would go unseen, and the connection is refused.`,
+      "PROFILE_PRIVILEGES_TOO_BROAD",
+    );
+  }
+  return result.rows;
+}
+
 /** One of the role's own listings, a server's refusal of it read as a server that does not enforce grants. */
 async function readListing(
   read: CassandraAgentReader,
@@ -127,8 +144,9 @@ async function readListing(
   role: string,
   what: "roles" | "permissions",
 ): Promise<readonly Record<string, unknown>[]> {
+  let result: CassandraQueryResult;
   try {
-    return (await read(cql)).rows;
+    result = await read(cql);
   } catch (error) {
     if (!isServerAnswer(error)) throw error;
     throw new ExecutionProfileError(
@@ -136,6 +154,7 @@ async function readListing(
       "PROFILE_SERVER_UNENFORCED",
     );
   }
+  return wholeRows(result, role, `${what} listing`);
 }
 
 function unreadable(role: string): ExecutionProfileError {
@@ -240,7 +259,7 @@ export async function verifyCassandraAgentProfile(
     role,
     keyspace,
   );
-  const masks = maskFindings((await read(statements.masks)).rows);
+  const masks = maskFindings(wholeRows(await read(statements.masks), role, `column masks of the keyspace ${keyspace}`));
 
   const scope = `the keyspace ${keyspace} or on its tables`;
   const findings = [
@@ -266,4 +285,62 @@ export async function verifyCassandraAgentProfile(
     );
   }
   await probeServerEnforcesGrants(read, statements.probe, target);
+}
+
+/** What every fence refusal starts with. */
+const FENCE = "The agent read-only execution profile sends one CQL statement, a SELECT, and nothing else";
+
+/** The statement's first keyword, read from its first code character, case aside and not a longer word. */
+const SELECT_KEYWORD = /^select(?![\w$])/i;
+
+/**
+ * The fence in front of every agent statement: `null` when `cql` is one statement whose first keyword is SELECT, else
+ * the reason it is refused, before any session is opened. A Cassandra role can always change its own password, which
+ * no grant stops (capture 02), so a role check alone cannot keep the agent from writing; only a SELECT is sent.
+ *
+ * The text is walked with the shared span reader under CQL's own grammar, so `--`, `//` and block comments and
+ * whitespace are skipped, and string literals, quoted names and `$$` strings are opaque. The first code character
+ * must open the keyword SELECT; a code semicolon ends the statement, and only comments and whitespace may follow it.
+ * A subscript's brackets are read as code, a literal inside them still opaque, so a semicolon there ends the
+ * statement too. Text that ends inside a comment, string or quoted name, and a tagged dollar run, which CQL does not
+ * have, cannot be bounded and are refused.
+ */
+export function cassandraAgentStatementRefusal(cql: string): string | null {
+  const grammar = CASSANDRA_SQL_GRAMMAR.grammar;
+  let opened = false;
+  let ended = false;
+  for (let at = 0; at < cql.length; ) {
+    const span = readSqlSpan(cql, at, grammar);
+    if (span !== null && span.kind !== "subscript") {
+      if (!span.terminated) {
+        return `${FENCE}; this text ends inside a comment, a string or a quoted name, so where it ends cannot be read, and it was not sent.`;
+      }
+      const trivia = span.kind === "whitespace" || span.kind === "line-comment" || span.kind === "block-comment";
+      if (!trivia) {
+        if (!opened) return notSelect();
+        if (ended) return goesOn();
+        if (span.kind === "dollar-string" && !cql.startsWith("$$", at)) {
+          return `${FENCE}; this text holds a tagged dollar-quoted run ($tag$ ... $tag$), which CQL does not have, so where its strings end cannot be read, and it was not sent.`;
+        }
+      }
+      at = span.end;
+      continue;
+    }
+    if (ended) return goesOn();
+    if (!opened) {
+      if (!SELECT_KEYWORD.test(cql.slice(at, at + 7))) return notSelect();
+      opened = true;
+    }
+    if (cql[at] === ";") ended = true;
+    at++;
+  }
+  return opened ? null : `${FENCE}; this text holds no statement, so nothing was sent.`;
+}
+
+function notSelect(): string {
+  return `${FENCE}; this statement does not begin with SELECT, so it was not sent. A Cassandra role can always change its own password, which no grant stops, so only a SELECT reaches the server.`;
+}
+
+function goesOn(): string {
+  return `${FENCE}; this text goes on after its first statement's semicolon, so it was not sent. Send one SELECT at a time.`;
 }
