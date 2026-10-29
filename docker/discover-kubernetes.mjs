@@ -12,9 +12,10 @@
  *     its row computes, a `get` of each credential Secret by name, and a `get` and an `update` of the export Secret; it
  *     never lists or watches Secrets or Services;
  *   - it requests no Secret whose name is reserved for an operator's key material or internal credentials, none that
- *     the spec of any listed resource of its namespace names for key material or another credential, and none whose
- *     row's Service is an ExternalName, or has no selector and is not controlled by the row's resource: RBAC cannot
- *     narrow `get secrets` by name, and resource editors choose part of every per-user name;
+ *     one of the spec fields a row's `reserves` reads names in a resource listed in its namespace (a Secret that any
+ *     other field names is the known limit of docs/SECURITY.md), and none whose row's Service is an ExternalName, or
+ *     has no selector and is not controlled by the row's resource: RBAC cannot narrow `get secrets` by name, and
+ *     resource editors choose part of every per-user name;
  *   - it keeps a Secret only when it is of its row's type, belongs to the resource that names it (an ownerReference, or
  *     for the CloudNativePG family its cluster label, or an initdb Secret tied to nothing), holds no key outside its
  *     row's measured set and every key its row requires, so a resource cannot point it at another workload's Secret;
