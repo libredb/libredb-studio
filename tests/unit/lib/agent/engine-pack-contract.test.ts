@@ -60,6 +60,8 @@ const UNSERVED_OFFERS: Readonly<Partial<Record<DatabaseType, readonly AgentToolN
   duckdb: ["profile_table"],
   clickhouse: ["profile_table"],
   influxdb3: ["profile_table"],
+  // The catalog-only workflows open on Elasticsearch and offer both; it composes no estimating plan and no profile.
+  elasticsearch: ["inspect_plan", "profile_table"],
 };
 
 /**
@@ -67,7 +69,7 @@ const UNSERVED_OFFERS: Readonly<Partial<Record<DatabaseType, readonly AgentToolN
  * whose catalog statement answers under column names no SELECT can rename. Held both ways, so an engine that gains a
  * mapper is named here and held to the mapper contract below.
  */
-const MAPPED_CATALOG_READS: readonly DatabaseType[] = [];
+const MAPPED_CATALOG_READS: readonly DatabaseType[] = ["elasticsearch"];
 
 const CATALOG_KINDS: readonly AgentCatalogKind[] = ["columns", "relations", "indexes", "statistics"];
 
@@ -153,7 +155,7 @@ test("the mapped catalog reads name only engines that speak a language", () => {
  * The engines whose catalog read is a command rather than a SELECT (`AgentCatalogRead.commandShaped`), exactly. Held
  * both ways, so an engine that declares it is named here and held to the composer contract below.
  */
-const COMMAND_CATALOG_READS: readonly DatabaseType[] = [];
+const COMMAND_CATALOG_READS: readonly DatabaseType[] = ["elasticsearch"];
 
 /** A name no composer writes on its own, so where it shows in a composed statement, a selector put it there. */
 const SENTINEL_NAME = "zq_sentinel_name";

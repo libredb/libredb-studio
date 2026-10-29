@@ -1226,9 +1226,9 @@ describe("the composers are reachable, which is the defect that put this file he
     const composers = AGENT_REQUIREMENT_ENGINES["sql-composers"];
     for (const dialect of SHIPPED_DATABASE_TYPES.filter((type) => AGENT_STATEMENT_LANGUAGE[type] === "sql")) {
       if (!composers.includes(dialect)) {
-        // An engine that declares no catalog read is held out of every workflow that requires the composers, so no run
-        // there is offered a tool that could only refuse; its declaration is what refuses here.
-        expect(() => composeCatalogRead(dialect, { kind: "columns" }), dialect).toThrow(AgentComposedSqlError);
+        // An engine that declares no estimating plan is held out of every workflow that requires the composers, so no
+        // run there needs a plan that could only refuse; its declaration is what refuses here.
+        expect(() => composeEstimatingExplain(dialect, "SELECT 1"), dialect).toThrow(AgentComposedSqlError);
         for (const [workflow, variant] of Object.entries(AGENT_WORKFLOW_VARIANTS.sql)) {
           if (!variant.requires.includes("sql-composers")) continue;
           expect(workflowAvailability("agent", workflow as AgentRunWorkflowType, dialect)).toMatchObject({

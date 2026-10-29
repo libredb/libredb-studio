@@ -73,7 +73,7 @@ export const INFLUXDB3_CLIENT_OVERLAY = {
 } as const satisfies { dialect: ClientDialectOf<(typeof INFLUXDB3_SERVER_OVERLAY)["dialect"]> };
 export const ELASTICSEARCH_CLIENT_OVERLAY = {
   dialect: Object.freeze({
-    catalogRead: "unsupported",
+    catalogRead: "supported",
     planEstimate: "unsupported",
     catalogCapture: "unsupported",
   } satisfies ClientDialectOf<(typeof ELASTICSEARCH_SERVER_OVERLAY)["dialect"]>),

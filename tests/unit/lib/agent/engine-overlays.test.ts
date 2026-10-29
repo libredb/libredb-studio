@@ -247,15 +247,13 @@ describe("engineServerDialect", () => {
     }
   });
 
-  test("catalogRead is supplied on every SQL engine but Elasticsearch, with SQLite's and libSQL's relation read their object read", () => {
+  test("catalogRead is supplied on every SQL engine, with SQLite's and libSQL's relation read their object read", () => {
     const composers = (type: DatabaseType) => {
       const catalogRead = engineServerDialect(type).catalogRead;
       if (catalogRead === "unsupported") throw new Error(`${type} has no catalog read`);
       return catalogRead.compose;
     };
-    // Elasticsearch reads its catalog through SHOW, DESCRIBE and SYS commands, whose columns no statement can rename.
-    expect(engineServerDialect("elasticsearch").catalogRead).toBe("unsupported");
-    for (const type of SQL_ENGINES.filter((engine) => engine !== "elasticsearch")) {
+    for (const type of SQL_ENGINES) {
       const compose = composers(type);
       expect(Object.keys(compose).sort()).toEqual(["columns", "indexes", "relations", "statistics"]);
       expect(Object.isFrozen(engineServerDialect(type).catalogRead)).toBe(true);
@@ -263,20 +261,21 @@ describe("engineServerDialect", () => {
     }
     expect(composers("sqlite").relations).toBe(composers("sqlite").columns);
     expect(composers("libsql").relations).toBe(composers("libsql").columns);
-    for (const type of ["postgres", "duckdb", "mssql", "mysql", "clickhouse", "influxdb3"] as const) {
+    for (const type of ["postgres", "duckdb", "mssql", "mysql", "clickhouse", "influxdb3", "elasticsearch"] as const) {
       expect(composers(type).relations).not.toBe(composers(type).columns);
     }
   });
 
-  test("only SQLite and libSQL fold the declared schema, only PostgreSQL retries a failed catalog read, and no engine maps its catalog rows", () => {
-    const supplied = (member: "declaredSchema" | "retry" | "mapRows") =>
+  test("only SQLite and libSQL fold the declared schema, only PostgreSQL retries a failed catalog read, and only Elasticsearch maps its catalog rows and reads its catalog with a command", () => {
+    const supplied = (member: "declaredSchema" | "retry" | "mapRows" | "commandShaped") =>
       SQL_ENGINES.filter((type) => {
         const catalogRead = engineServerDialect(type).catalogRead;
         return catalogRead !== "unsupported" && catalogRead[member] !== undefined;
       });
     expect(supplied("declaredSchema")).toEqual(["sqlite", "libsql"]);
     expect(supplied("retry")).toEqual(["postgres"]);
-    expect(supplied("mapRows")).toEqual([]);
+    expect(supplied("mapRows")).toEqual(["elasticsearch"]);
+    expect(supplied("commandShaped")).toEqual(["elasticsearch"]);
     const sqlite = engineServerDialect("sqlite").catalogRead;
     const postgres = engineServerDialect("postgres").catalogRead;
     if (sqlite === "unsupported" || postgres === "unsupported") throw new Error("catalog read missing");
@@ -379,7 +378,7 @@ describe("the client dialect", () => {
       duckdb: { catalogRead: "supported", planEstimate: "supported", catalogCapture: "unsupported" },
       mssql: { catalogRead: "supported", planEstimate: "supported", catalogCapture: "unsupported" },
       clickhouse: { catalogRead: "supported", planEstimate: "supported", catalogCapture: "unsupported" },
-      elasticsearch: { catalogRead: "unsupported", planEstimate: "unsupported", catalogCapture: "unsupported" },
+      elasticsearch: { catalogRead: "supported", planEstimate: "unsupported", catalogCapture: "unsupported" },
       libsql: { catalogRead: "supported", planEstimate: "supported", catalogCapture: "unsupported" },
       influxdb3: { catalogRead: "supported", planEstimate: "supported", catalogCapture: "unsupported" },
     });
