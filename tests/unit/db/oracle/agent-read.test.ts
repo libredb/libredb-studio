@@ -163,11 +163,33 @@ describe("verifyAgentPrincipal", () => {
       expect(error.message).toContain('REVOKE ALL ON "APP_OWNER"."NEXT_VIEW" FROM "APP_RO"');
     });
 
-    test("the check reads the view's own dependencies, leaving tables, views and synonyms out", () => {
+    test("the check reads the view's own dependencies, leaving tables and views out", () => {
       expect(AGENT_PRINCIPAL_STATEMENTS.views).toContain("ALL_DEPENDENCIES");
       expect(AGENT_PRINCIPAL_STATEMENTS.views).toContain(
         "d.REFERENCED_TYPE NOT IN ('TABLE', 'VIEW', 'SYNONYM', 'MATERIALIZED VIEW', 'NON-EXISTENT')",
       );
+    });
+
+    test("a synonym the view names is admitted only when it resolves to a table or view, or to an Oracle-maintained object", () => {
+      // A view that calls a definer's-rights function through a synonym lists only the synonym in ALL_DEPENDENCIES,
+      // and ALL_SYNONYMS does not show the agent user another schema's private synonym, so one it cannot resolve to a
+      // table or view, or to an object of a schema Oracle maintains (PUBLIC.DUAL, PUBLIC.DBMS_LOB), is refused.
+      const sql = AGENT_PRINCIPAL_STATEMENTS.views;
+      expect(sql).toContain(
+        "LEFT JOIN ALL_SYNONYMS s ON s.OWNER = d.REFERENCED_OWNER AND s.SYNONYM_NAME = d.REFERENCED_NAME AND s.DB_LINK IS NULL",
+      );
+      expect(sql).toContain("LEFT JOIN ALL_USERS su ON su.USERNAME = s.TABLE_OWNER");
+      expect(sql).toContain(
+        "d.REFERENCED_TYPE = 'SYNONYM' AND NVL(su.ORACLE_MAINTAINED, 'N') <> 'Y' AND NOT EXISTS (SELECT 1 FROM ALL_OBJECTS o " +
+          "WHERE o.OWNER = s.TABLE_OWNER AND o.OBJECT_NAME = s.TABLE_NAME AND o.OBJECT_TYPE IN ('TABLE', 'VIEW', 'MATERIALIZED VIEW'))",
+      );
+    });
+
+    test("refuses a granted view over a synonym it cannot resolve, naming the view's revoke", async () => {
+      const error = await refusal({
+        views: [{ GRANTEE: "APP_RO", OWNER: "APP_OWNER", NAME: "SYN_VIEW", CALLS: "APP_OWNER.NEXT_SYN" }],
+      });
+      expect(error.message).toContain('REVOKE ALL ON "APP_OWNER"."SYN_VIEW" FROM "APP_RO"');
     });
   });
 
@@ -249,9 +271,18 @@ describe("verifyAgentPrincipal", () => {
       expect(error.message).toContain('DROP PUBLIC DATABASE LINK "LOOPLINK"');
     });
 
-    test("refuses a private link the agent user owns too", async () => {
-      const error = await refusal({ links: [{ OWNER: "APP_RO", DB_LINK: "MINE.EXAMPLE" }] });
-      expect(error.message).toContain('DROP DATABASE LINK "MINE.EXAMPLE" (as APP_RO)');
+    test("refuses a private link the agent user owns too, naming the drop its owner can run only while READ WRITE", async () => {
+      // Only a private link's owner can drop it, and the owner is READ ONLY, which refuses the DROP with ORA-28194.
+      const error = await refusal({
+        links: [
+          { OWNER: "APP_RO", DB_LINK: "MINE.EXAMPLE" },
+          { OWNER: "APP_RO", DB_LINK: "OTHER.EXAMPLE" },
+        ],
+      });
+      expect(error.message).toContain(
+        'ALTER USER "APP_RO" READ WRITE; DROP DATABASE LINK "MINE.EXAMPLE" (as APP_RO); ' +
+          'DROP DATABASE LINK "OTHER.EXAMPLE" (as APP_RO); ALTER USER "APP_RO" READ ONLY',
+      );
     });
   });
 

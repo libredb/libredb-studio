@@ -2055,7 +2055,8 @@ export class OracleProvider extends SQLBaseProvider {
    *
    * Budgets refuse rather than truncate: the execute fetches one row past the row budget (`maxRows`), every value, a
    * CLOB or BLOB fetched whole as a string or a buffer included, is counted against the byte budget, and a column of a
-   * type the agent does not read (BFILE, object, cursor) is refused. The deadline is the driver's `callTimeout`: it ends
+   * type the agent does not read (BFILE, object, cursor) is refused from the result set's metadata, before any row is
+   * fetched, so a nested cursor is never expanded. The deadline is the driver's `callTimeout`: it ends
    * the wait, and the session that waited is dropped.
    *
    * Refused outside the profile: a provider opened without it has no proven user to run agent semantics on.
@@ -2083,20 +2084,29 @@ export class OracleProvider extends SQLBaseProvider {
       const { result, executionTime } = await this.measureExecution(() =>
         this.withAgentSession(budget, async (conn) => {
           await conn.execute("SET TRANSACTION READ ONLY", [], { autoCommit: false });
-          return conn.execute(sql, [], {
+          // A result set, so the metadata is read before any row: without one the driver fetches every row, and
+          // expands every nested cursor in full, before the execute returns.
+          const answered = await conn.execute(sql, [], {
             outFormat: oracledb.OUT_FORMAT_OBJECT,
             autoCommit: false,
-            maxRows: budget.maxResultRows + 1,
+            resultSet: true,
             fetchTypeHandler: rowFetchTypeHandler,
           });
+          const { resultSet, ...rest } = answered;
+          if (resultSet === undefined) return answered;
+          try {
+            assertAgentColumnTypes(
+              answered.metaData,
+              [oracledb.DB_TYPE_BFILE, oracledb.DB_TYPE_OBJECT, oracledb.DB_TYPE_CURSOR],
+              sql,
+            );
+            return { ...rest, rows: await resultSet.getRows(budget.maxResultRows + 1) };
+          } finally {
+            await resultSet.close();
+          }
         }).catch((error: unknown) => {
           throw agentDeadlineRefusal(error, budget, sql) ?? mapDatabaseError(error, "oracle", sql);
         }),
-      );
-      assertAgentColumnTypes(
-        result.metaData,
-        [oracledb.DB_TYPE_BFILE, oracledb.DB_TYPE_OBJECT, oracledb.DB_TYPE_CURSOR],
-        sql,
       );
       return readAgentAnswer(this.buildQueryResult(result, executionTime), budget, sql);
     });
@@ -2112,7 +2122,11 @@ export class OracleProvider extends SQLBaseProvider {
     ).catch((error: unknown) => {
       if (error instanceof ExecutionProfileError) throw error;
       this.agentPrincipal = null;
-      throw mapDatabaseError(error, "oracle");
+      // The environment's failure, not the statement's: the agent must not offer it to the model as one to repair.
+      throw new ConnectionError(
+        `The agent read-only execution profile's check of the Oracle user could not be read: ${mapDatabaseError(error, "oracle").message}`,
+        "oracle",
+      );
     });
     return this.agentPrincipal;
   }

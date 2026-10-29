@@ -10,8 +10,11 @@
  *  - the fresh database refuses its own read-only user, because PUBLIC holds EXECUTE on the network and file
  *    packages; the revoke script the refusal names, run as SYS, lifts it;
  *  - the check refuses a user that is not READ ONLY, one granted EXECUTE on a definer's-rights function, one granted a
- *    sequence, one holding a role that is not a default role, one granted a directory, one holding ALTER SYSTEM, and
- *    any user while a PUBLIC database link exists, and admits each again once the grant is gone;
+ *    view that calls it directly or through a private or PUBLIC synonym, one granted a view over a synonym it cannot
+ *    resolve, one granted a sequence, one holding a role that is not a default role, one granted a directory, one
+ *    holding ALTER SYSTEM, one owning a private database link, and any user while a PUBLIC database link exists, and
+ *    admits each again once the grant is gone, the private link dropped by its owner set READ WRITE; it admits a view
+ *    over DBMS_LOB through Oracle's PUBLIC synonym and one over a synonym for a granted table;
  *  - the boundary, with Studio's client admission bypassed: every write, DDL, temporary table, lock, transaction
  *    statement, PL/SQL write and second statement is sent through `queryReadOnly` as the admitted user and refused,
  *    each classified by its ORA- code; the same writes run as the schema owner through the editor path, the positive
@@ -22,8 +25,8 @@
  *  - the operations profile opens the schema owner, a writable user, unproven, and reads its objects, which is what
  *    plan mode grounds on; an editor handle refuses `queryReadOnly` before sending anything;
  *  - the catalog reads the overlay composes, each answered as the admitted user;
- *  - the budgets: a result past the row budget, one past the byte budget, a BFILE column and a statement past its
- *    deadline are refused, and a CLOB under them is answered as a string.
+ *  - the budgets: a result past the row budget, one past the byte budget, a BFILE column, a nested CURSOR column (before
+ *    any of it is fetched) and a statement past its deadline are refused, and a CLOB under them is answered as a string.
  *
  * It is NOT in `bun run test`: the runner excludes `tests/live/` by name. Run it against a server you may write to,
  * whose SYS and SYSTEM passwords are the one given, and whose pluggable database holds the schema owner APP_OWNER,
@@ -173,9 +176,20 @@ const SETUP_AS_SYSTEM: readonly string[] = [
   `CREATE INDEX ${OWNER}.${PREFIX}CHILD_DATA ON ${OWNER}.${PREFIX}CHILD (DATA_ID)`,
   `CREATE TABLE ${OWNER}.${PREFIX}SCRATCH (ID NUMBER)`,
   `CREATE TABLE ${OWNER}.${PREFIX}LOG (MSG VARCHAR2(100))`,
+  `CREATE OR REPLACE SYNONYM ${OWNER}.${PREFIX}LOG_SYN FOR ${OWNER}.${PREFIX}LOG`,
+  `CREATE OR REPLACE VIEW ${OWNER}.${PREFIX}LOG_SYN_VIEW AS SELECT MSG FROM ${OWNER}.${PREFIX}LOG_SYN`,
   `CREATE SEQUENCE ${OWNER}.${PREFIX}SEQ`,
   `CREATE OR REPLACE FUNCTION ${OWNER}.${PREFIX}NEXT RETURN NUMBER AS BEGIN RETURN ${OWNER}.${PREFIX}SEQ.NEXTVAL; END;`,
   `CREATE OR REPLACE VIEW ${OWNER}.${PREFIX}NEXT_VIEW AS SELECT ${OWNER}.${PREFIX}NEXT() AS N FROM DUAL`,
+  // The same function called through a private and a PUBLIC synonym: ALL_DEPENDENCIES lists only the synonym.
+  `CREATE OR REPLACE SYNONYM ${OWNER}.${PREFIX}NEXT_SYN FOR ${OWNER}.${PREFIX}NEXT`,
+  `CREATE OR REPLACE VIEW ${OWNER}.${PREFIX}SYN_VIEW AS SELECT ${OWNER}.${PREFIX}NEXT_SYN() AS N FROM DUAL`,
+  `CREATE OR REPLACE PUBLIC SYNONYM ${PREFIX}PSYN FOR ${OWNER}.${PREFIX}NEXT`,
+  `CREATE OR REPLACE VIEW ${OWNER}.${PREFIX}PSYN_VIEW AS SELECT ${PREFIX}PSYN() AS N FROM DUAL`,
+  // Synonyms that call no code: Oracle's DBMS_LOB through its PUBLIC synonym, a granted table, a table not granted.
+  `CREATE OR REPLACE VIEW ${OWNER}.${PREFIX}LOB_VIEW AS SELECT DBMS_LOB.GETLENGTH(TO_CLOB('x')) AS L FROM DUAL`,
+  `CREATE OR REPLACE SYNONYM ${OWNER}.${PREFIX}DATA_SYN FOR ${OWNER}.${PREFIX}DATA`,
+  `CREATE OR REPLACE VIEW ${OWNER}.${PREFIX}DATA_SYN_VIEW AS SELECT ID FROM ${OWNER}.${PREFIX}DATA_SYN`,
   `CREATE OR REPLACE FUNCTION ${OWNER}.${PREFIX}NEXT_DET(x NUMBER) RETURN NUMBER DETERMINISTIC AS BEGIN RETURN ${OWNER}.${PREFIX}SEQ.NEXTVAL; END;`,
   `CREATE TABLE ${OWNER}.${PREFIX}VIRT (ID NUMBER, N NUMBER GENERATED ALWAYS AS (${OWNER}.${PREFIX}NEXT_DET(ID)) VIRTUAL)`,
   `INSERT INTO ${OWNER}.${PREFIX}VIRT (ID) VALUES (1)`,
@@ -208,6 +222,15 @@ async function cleanup(): Promise<void> {
       `DROP ROLE ${PREFIX}ROLE`,
       `DROP PUBLIC DATABASE LINK ${PREFIX}LINK`,
       `DROP VIEW ${OWNER}.${PREFIX}NEXT_VIEW`,
+      `DROP VIEW ${OWNER}.${PREFIX}SYN_VIEW`,
+      `DROP VIEW ${OWNER}.${PREFIX}PSYN_VIEW`,
+      `DROP VIEW ${OWNER}.${PREFIX}LOB_VIEW`,
+      `DROP VIEW ${OWNER}.${PREFIX}DATA_SYN_VIEW`,
+      `DROP VIEW ${OWNER}.${PREFIX}LOG_SYN_VIEW`,
+      `DROP SYNONYM ${OWNER}.${PREFIX}NEXT_SYN`,
+      `DROP SYNONYM ${OWNER}.${PREFIX}DATA_SYN`,
+      `DROP SYNONYM ${OWNER}.${PREFIX}LOG_SYN`,
+      `DROP PUBLIC SYNONYM ${PREFIX}PSYN`,
       `DROP TABLE ${OWNER}.${PREFIX}VIRT PURGE`,
       `DROP FUNCTION ${OWNER}.${PREFIX}NEXT_DET`,
       `DROP FUNCTION ${OWNER}.${PREFIX}NEXT`,
@@ -345,6 +368,24 @@ async function main(): Promise<void> {
       names: `REVOKE ALL ON "${OWNER}"."${PREFIX}NEXT_VIEW" FROM "${RO}"`,
     },
     {
+      label: "a granted view that calls that function through a private synonym",
+      grant: [`GRANT SELECT ON ${OWNER}.${PREFIX}SYN_VIEW TO ${RO}`],
+      revoke: [`REVOKE SELECT ON ${OWNER}.${PREFIX}SYN_VIEW FROM ${RO}`],
+      names: `REVOKE ALL ON "${OWNER}"."${PREFIX}SYN_VIEW" FROM "${RO}"`,
+    },
+    {
+      label: "a granted view that calls that function through a PUBLIC synonym",
+      grant: [`GRANT SELECT ON ${OWNER}.${PREFIX}PSYN_VIEW TO ${RO}`],
+      revoke: [`REVOKE SELECT ON ${OWNER}.${PREFIX}PSYN_VIEW FROM ${RO}`],
+      names: `REVOKE ALL ON "${OWNER}"."${PREFIX}PSYN_VIEW" FROM "${RO}"`,
+    },
+    {
+      label: "a granted view over a private synonym for a table the user is not granted, which it cannot resolve",
+      grant: [`GRANT SELECT ON ${OWNER}.${PREFIX}LOG_SYN_VIEW TO ${RO}`],
+      revoke: [`REVOKE SELECT ON ${OWNER}.${PREFIX}LOG_SYN_VIEW FROM ${RO}`],
+      names: `REVOKE ALL ON "${OWNER}"."${PREFIX}LOG_SYN_VIEW" FROM "${RO}"`,
+    },
+    {
       label: "a granted sequence",
       grant: [`GRANT SELECT ON ${OWNER}.${PREFIX}SEQ TO ${RO}`],
       revoke: [`REVOKE SELECT ON ${OWNER}.${PREFIX}SEQ FROM ${RO}`],
@@ -369,6 +410,42 @@ async function main(): Promise<void> {
     await setup("SYSTEM", revoke);
     check((await verdict(RO)) === "admitted", `with ${label} gone the user is admitted again`);
   }
+  // Views whose synonyms resolve to no code are admitted: DBMS_LOB through Oracle's PUBLIC synonym, a granted table.
+  for (const view of [`${PREFIX}LOB_VIEW`, `${PREFIX}DATA_SYN_VIEW`]) {
+    await setup("SYSTEM", [`GRANT SELECT ON ${OWNER}.${view} TO ${RO}`]);
+    const admitted = await verdict(RO);
+    check(
+      admitted === "admitted",
+      `the check admits a granted view over a synonym that calls no code, ${view}: ${admitted}`,
+    );
+    await setup("SYSTEM", [`REVOKE SELECT ON ${OWNER}.${view} FROM ${RO}`]);
+  }
+  // A private link the user owns: only its owner drops it, and READ ONLY refuses the owner the DROP.
+  await setup("SYSTEM", [`ALTER USER ${RO} READ WRITE`, `GRANT CREATE DATABASE LINK TO ${RO}`]);
+  await setup(RO, [
+    `CREATE DATABASE LINK ${PREFIX}MINE CONNECT TO ${OWNER} IDENTIFIED BY "${PASSWORD}" USING 'localhost:1521/${SERVICE}'`,
+  ]);
+  await setup("SYSTEM", [`REVOKE CREATE DATABASE LINK FROM ${RO}`, `ALTER USER ${RO} READ ONLY`]);
+  const privateLink = await verdict(RO);
+  const linkName = privateLink.match(/DROP DATABASE LINK "([^"]+)"/)?.[1] ?? `${PREFIX}MINE`;
+  check(
+    privateLink.startsWith("PROFILE_PRIVILEGES_TOO_BROAD") &&
+      privateLink.includes(
+        `ALTER USER "${RO}" READ WRITE; DROP DATABASE LINK "${linkName}" (as ${RO}); ALTER USER "${RO}" READ ONLY`,
+      ),
+    `the check refuses a private link the user owns, naming the drop between READ WRITE and READ ONLY: ${privateLink}`,
+  );
+  let readOnlyDrop = "ran";
+  try {
+    await as(RO, `DROP DATABASE LINK "${linkName}"`);
+  } catch (error) {
+    readOnlyDrop = (error as Error).message;
+  }
+  check(/ORA-28194/.test(readOnlyDrop), `the READ ONLY owner is refused the DROP of its own link: ${readOnlyDrop}`);
+  await setup("SYSTEM", [`ALTER USER ${RO} READ WRITE`]);
+  await setup(RO, [`DROP DATABASE LINK "${linkName}"`]);
+  await setup("SYSTEM", [`ALTER USER ${RO} READ ONLY`]);
+  check((await verdict(RO)) === "admitted", "with the private link dropped as named the user is admitted again");
   await setup("SYS", [
     `CREATE OR REPLACE DIRECTORY ${PREFIX}DIR AS '/tmp'`,
     `GRANT READ ON DIRECTORY ${PREFIX}DIR TO ${RO}`,
@@ -513,6 +590,17 @@ async function main(): Promise<void> {
       "refused: Read-only execution refused column F of type BFILE",
     ),
     "a BFILE column is refused before any value is read",
+  );
+  // A nested cursor is refused from the metadata, before the driver fetches it: 51^3 rows if it expanded them.
+  const nested =
+    "SELECT CURSOR(SELECT CURSOR(SELECT LEVEL FROM DUAL CONNECT BY LEVEL <= 1000) FROM DUAL CONNECT BY LEVEL <= 1000) AS C1 FROM DUAL CONNECT BY LEVEL <= 1000";
+  const rssBefore = process.memoryUsage().rss;
+  const startedAt = Date.now();
+  const cursor = await agentAnswer(agent, nested);
+  const grewMb = Math.round((process.memoryUsage().rss - rssBefore) / 1024 / 1024);
+  check(
+    cursor.startsWith("refused: Read-only execution refused column C1 of type CURSOR") && grewMb < 20,
+    `a nested CURSOR column is refused before any of it is fetched, in ${Date.now() - startedAt}ms, RSS +${grewMb} MB: ${cursor}`,
   );
   check(
     (await agentAnswer(agent, "BEGIN DBMS_SESSION.SLEEP(5); END;", { ...BUDGET, statementTimeoutMs: 1_000 })) ===

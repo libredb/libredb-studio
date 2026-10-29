@@ -6431,11 +6431,29 @@ describe("OracleProvider.queryReadOnly", () => {
   beforeEach(async () => {
     connectionLog = [];
     answer = () => ROWS;
-    mockExecuteFn = async (sql: string) => {
+    mockExecuteFn = async (sql: string, _params?: unknown[], opts?: unknown) => {
       const answered = answer(sql);
       if (answered instanceof Error) throw answered;
-      if (answered !== undefined) return answered;
-      return sql === AGENT_PRINCIPAL_STATEMENTS.readOnly ? CLEAN_USER : { rows: [], metaData: [] };
+      if (answered === undefined) {
+        return sql === AGENT_PRINCIPAL_STATEMENTS.readOnly ? CLEAN_USER : { rows: [], metaData: [] };
+      }
+      if ((opts as { resultSet?: boolean } | undefined)?.resultSet !== true || !("rows" in (answered as object))) {
+        return answered;
+      }
+      // A result set, as the driver hands one back: the metadata at once, the rows only when fetched.
+      const { rows, metaData } = answered as { rows: unknown[]; metaData: unknown[] };
+      return {
+        metaData,
+        resultSet: {
+          getRows: async (count: number) => {
+            connectionLog.push({ event: `getRows ${count}` });
+            return rows.slice(0, count);
+          },
+          close: async () => {
+            connectionLog.push({ event: "closeResultSet" });
+          },
+        },
+      };
     };
     mockConnCloseFn = async () => {};
     mockRollbackFn = async () => {};
@@ -6501,10 +6519,14 @@ describe("OracleProvider.queryReadOnly", () => {
       "close",
       "execute",
       "execute",
+      `getRows ${BUDGET.maxResultRows + 1}`,
+      "closeResultSet",
       "rollback",
       "close",
       "execute",
       "execute",
+      `getRows ${BUDGET.maxResultRows + 1}`,
+      "closeResultSet",
       "rollback",
       "close",
     ]);
@@ -6518,7 +6540,8 @@ describe("OracleProvider.queryReadOnly", () => {
     const result = await provider.queryReadOnly("SELECT id, name FROM app_owner.t1", BUDGET);
     expect(result).toMatchObject({ rows: [{ ID: 1, NAME: "one" }], fields: ["ID", "NAME"], rowCount: 1 });
     const statement = connectionLog.filter((entry) => entry.event === "execute").at(-1);
-    expect(statement?.opts).toMatchObject({ autoCommit: false, maxRows: BUDGET.maxResultRows + 1, outFormat: 4002 });
+    expect(statement?.opts).toMatchObject({ autoCommit: false, resultSet: true, outFormat: 4002 });
+    expect(events().slice(-4)).toEqual([`getRows ${BUDGET.maxResultRows + 1}`, "closeResultSet", "rollback", "close"]);
     expect(typeof statement?.opts?.fetchTypeHandler).toBe("function");
     expect(connectionLog.filter((entry) => entry.sql === "SET TRANSACTION READ ONLY")[0]?.opts?.autoCommit).toBe(false);
   });
@@ -6555,7 +6578,7 @@ describe("OracleProvider.queryReadOnly", () => {
     ["BFILE", DB_TYPE_BFILE],
     ["OBJECT", DB_TYPE_OBJECT],
     ["CURSOR", DB_TYPE_CURSOR],
-  ])("refuses a %s column, reading no value of it", async (typeName, dbType) => {
+  ])("refuses a %s column from the metadata, fetching no row of it", async (typeName, dbType) => {
     answer = (sql) =>
       CHECKS.has(sql) || sql === "SET TRANSACTION READ ONLY"
         ? undefined
@@ -6563,6 +6586,18 @@ describe("OracleProvider.queryReadOnly", () => {
     await expect(provider.queryReadOnly("SELECT f FROM app_owner.files", BUDGET)).rejects.toThrow(
       `Read-only execution refused column F of type ${typeName}`,
     );
+    // Without a result set the driver would fetch every row, and expand every nested cursor in full, before the
+    // metadata could be read.
+    expect(connectionLog.filter((entry) => entry.event === "execute").at(-1)?.opts?.resultSet).toBe(true);
+    expect(events().filter((event) => event.startsWith("getRows"))).toEqual([]);
+    expect(events().slice(-3)).toEqual(["closeResultSet", "rollback", "drop"]);
+  });
+
+  test("a statement the server answers with no result set reads as an empty answer", async () => {
+    answer = (sql) => (CHECKS.has(sql) || sql === "SET TRANSACTION READ ONLY" ? undefined : { rowsAffected: 0 });
+    const result = await provider.queryReadOnly("CALL app_owner.noop()", BUDGET);
+    expect(result).toMatchObject({ rows: [], fields: [], rowCount: 0 });
+    expect(events().slice(-2)).toEqual(["rollback", "close"]);
   });
 
   test("a write the server refuses arrives as the database's refusal, and the session is dropped", async () => {
@@ -6618,7 +6653,10 @@ describe("OracleProvider.queryReadOnly", () => {
           ? undefined
           : ROWS;
     const error = await provider.queryReadOnly("SELECT 1 FROM DUAL", BUDGET).catch((e: unknown) => e);
-    expect(error).toBeInstanceOf(DatabaseError);
+    // An environment failure, so the agent never offers it to the model as a failure of its own statement.
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect((error as Error).message).toContain("check of the Oracle user could not be read");
+    expect((error as Error).message).toContain("ORA-03113");
     expect(executed()).not.toContain("SELECT 1 FROM DUAL");
     expect(events().slice(-2)).toEqual(["rollback", "drop"]);
 
@@ -6627,6 +6665,15 @@ describe("OracleProvider.queryReadOnly", () => {
     await provider.queryReadOnly("SELECT 1 FROM DUAL", BUDGET);
     expect(executed()).toContain(AGENT_PRINCIPAL_STATEMENTS.readOnly);
     expect(executed().at(-1)).toBe("SELECT 1 FROM DUAL");
+  });
+
+  test("a check read past the deadline is an environment failure too, never the statement's time refusal", async () => {
+    answer = (sql) =>
+      sql === AGENT_PRINCIPAL_STATEMENTS.views ? new Error("NJS-123: call timeout of 2500 ms exceeded") : undefined;
+    const error = await provider.queryReadOnly("SELECT 1 FROM DUAL", BUDGET).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect((error as Error).message).toContain("NJS-123");
+    expect(executed()).not.toContain("SELECT 1 FROM DUAL");
   });
 
   test("an Oracle older than 23ai is refused as an unsupported target", async () => {

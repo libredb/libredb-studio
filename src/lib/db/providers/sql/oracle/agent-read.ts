@@ -18,9 +18,12 @@
  * 3. It, its roles and PUBLIC hold EXECUTE on no PL/SQL unit, type, Java class or library a schema Oracle does not
  *    maintain owns (`ALL_USERS.ORACLE_MAINTAINED`), since such code runs with its owner's rights.
  * 4. They may read no view of such a schema whose definition calls code, a function, package or type, rather than a
- *    table, view or synonym: a plain SELECT on such a view runs the code with its owner's rights, and advanced a
- *    sequence for a READ ONLY user (measured). `ALL_DEPENDENCIES` lists the user the view's own dependencies only, so a
- *    view reached through another view, a virtual column and a row-level policy function are not seen here.
+ *    table or view: a plain SELECT on such a view runs the code with its owner's rights, and advanced a sequence for a
+ *    READ ONLY user (measured). A view that calls the code through a synonym lists only the synonym, and `ALL_SYNONYMS`
+ *    does not show the user another schema's private synonym, so a synonym is admitted only when it resolves to a
+ *    table or view the user can see, or to an object of a schema Oracle maintains (`PUBLIC.DUAL`), and is refused
+ *    otherwise, a private synonym for a table included. `ALL_DEPENDENCIES` lists the user the view's own dependencies
+ *    only, so a view reached through another view, a virtual column and a row-level policy function are not seen here.
  * 5. They hold no privilege on a sequence such a schema owns, and the user owns no sequence.
  * 6. They hold EXECUTE on none of the packages that reach the network or the server's files, and no privilege on a
  *    directory, which `BFILENAME` reads server files through.
@@ -76,7 +79,11 @@ export const AGENT_PRINCIPAL_STATEMENTS = Object.freeze({
     "SELECT p.GRANTEE, d.OWNER, d.NAME, d.REFERENCED_OWNER || '.' || d.REFERENCED_NAME AS CALLS " +
     "FROM ALL_DEPENDENCIES d JOIN ALL_TAB_PRIVS p ON p.TABLE_SCHEMA = d.OWNER AND p.TABLE_NAME = d.NAME " +
     "LEFT JOIN ALL_USERS u ON u.USERNAME = d.OWNER " +
-    "WHERE d.TYPE = 'VIEW' AND d.REFERENCED_TYPE NOT IN ('TABLE', 'VIEW', 'SYNONYM', 'MATERIALIZED VIEW', 'NON-EXISTENT') " +
+    "LEFT JOIN ALL_SYNONYMS s ON s.OWNER = d.REFERENCED_OWNER AND s.SYNONYM_NAME = d.REFERENCED_NAME AND s.DB_LINK IS NULL " +
+    "LEFT JOIN ALL_USERS su ON su.USERNAME = s.TABLE_OWNER " +
+    "WHERE d.TYPE = 'VIEW' AND (d.REFERENCED_TYPE NOT IN ('TABLE', 'VIEW', 'SYNONYM', 'MATERIALIZED VIEW', 'NON-EXISTENT') " +
+    "OR d.REFERENCED_TYPE = 'SYNONYM' AND NVL(su.ORACLE_MAINTAINED, 'N') <> 'Y' AND NOT EXISTS (SELECT 1 FROM ALL_OBJECTS o " +
+    "WHERE o.OWNER = s.TABLE_OWNER AND o.OBJECT_NAME = s.TABLE_NAME AND o.OBJECT_TYPE IN ('TABLE', 'VIEW', 'MATERIALIZED VIEW'))) " +
     `AND ${NOT_ORACLE_MAINTAINED} AND ${SESSION_GRANTEES} ORDER BY 2, 3, 1, 4`,
   sequences:
     "SELECT p.GRANTEE, p.TABLE_SCHEMA AS OWNER, p.TABLE_NAME AS NAME, 'N' AS OWNED " +
@@ -223,11 +230,18 @@ function linksFinding(rows: Rows): Finding | null {
   if (rows.length === 0) return null;
   return {
     what: "it can use a database link, which reaches another database under its stored credential",
-    statements: rows.map((row) => {
+    statements: rows.flatMap((row, index) => {
       const [owner, link] = text(row, "ALL_DB_LINKS", "OWNER", "DB_LINK");
-      return owner === "PUBLIC"
-        ? `DROP PUBLIC DATABASE LINK ${quoted(link)}`
-        : `DROP DATABASE LINK ${quoted(link)} (as ${owner})`;
+      if (owner === "PUBLIC") return [`DROP PUBLIC DATABASE LINK ${quoted(link)}`];
+      // Only its owner drops a private link, and the owner is the agent user, whose READ ONLY refuses the DROP: it is
+      // set READ WRITE around its drops. The rows are ordered by owner, so its links are consecutive.
+      const first = rows[index - 1]?.OWNER !== owner;
+      const last = rows[index + 1]?.OWNER !== owner;
+      return [
+        ...(first ? [`ALTER USER ${quoted(owner)} READ WRITE`] : []),
+        `DROP DATABASE LINK ${quoted(link)} (as ${owner})`,
+        ...(last ? [`ALTER USER ${quoted(owner)} READ ONLY`] : []),
+      ];
     }),
   };
 }

@@ -89,6 +89,17 @@ declare module "oracledb" {
       fetchTypeHandler?: FetchTypeHandler;
       /** The most rows a query fetches; the driver stops there. */
       maxRows?: number;
+      /**
+       * Answer a query as a `resultSet` that fetches on demand. Without it the driver fetches every row, and expands
+       * every nested cursor in full, before `execute` returns.
+       */
+      resultSet?: boolean;
+    }
+
+    /** A query's rows, fetched on demand; it must be closed. */
+    interface ResultSet {
+      getRows(count: number): Promise<unknown[]>;
+      close(): Promise<void>;
     }
 
     /**
@@ -100,6 +111,8 @@ declare module "oracledb" {
       rows?: unknown[];
       metaData?: Metadata[];
       rowsAffected?: number;
+      /** Present, in place of `rows`, when the execute asked for `resultSet`. */
+      resultSet?: ResultSet;
     }
 
     /** `INTERVAL YEAR TO MONTH` as the driver builds it. Both fields carry the sign. */
