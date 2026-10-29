@@ -867,6 +867,7 @@ An index outside the role answers as if it did not exist ("Unknown index"), meas
 #### The statement path
 
 Each call is one statement on the SQL endpoint, never through `query()`, in order: the profile is checked, the budget is checked, and the estimate-plan session mode is refused, because no estimating plan is composed for this engine.
+The profile's refusal and the mode's are `RefusedBeforeSendError`s, so the agent and MCP say the statement never reached the cluster rather than quoting Studio's sentence as the engine's.
 The request asks for a page of one row past the row budget (`fetch_size`), clamped to 10,000, since a hit query past `index.max_result_window`, 10,000 by default, fails ("Result window is too large", measured on 9.1.4); a budget past that is reached by following the cursor.
 The pages are followed while the rows read and their bytes, counted as the JSON array of the rows, stay inside both budgets; an answer past either is refused in the shared row or byte sentence of [`read-only-budget.ts`](../../src/lib/db/providers/sql/read-only-budget.ts), never cut.
 The cursor matters here: asking for a page size opens a search context on the node that only reading to the end, `POST /_sql/close` or the keep-alive releases (measured: `open_contexts` 1 while a cursor is held, 0 after the close), so a refusal closes the cursor it read before it throws.

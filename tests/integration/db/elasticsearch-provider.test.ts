@@ -52,6 +52,7 @@ import {
   OffsetUnsupportedError,
   QueryCancelledError,
   QueryError,
+  RefusedBeforeSendError,
   TimeoutError,
 } from "@/lib/db/errors";
 
@@ -3992,7 +3993,8 @@ describe("ElasticsearchProvider.queryReadOnly", () => {
 
     const error = await refusal(provider.queryReadOnly("SELECT 1", AGENT_BUDGET));
 
-    expect(error).toBeInstanceOf(QueryError);
+    // Nothing was sent, so the agent and MCP say so in Studio's voice rather than as the engine's refusal.
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
     expect(error.message).toBe("Read-only execution requires a provider opened under the agent read-only profile");
     expect(sent.length).toBe(before);
   });
@@ -4013,7 +4015,7 @@ describe("ElasticsearchProvider.queryReadOnly", () => {
 
     const error = await refusal(provider.queryReadOnly("SELECT 1", AGENT_BUDGET, "estimate-plan"));
 
-    expect(error).toBeInstanceOf(QueryError);
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
     expect(error.message).toBe("Elasticsearch composes no estimating plan for the agent");
     expect(sent.length).toBe(before);
   });
@@ -4040,6 +4042,7 @@ describe("ElasticsearchProvider.queryReadOnly", () => {
 
     const error = await refusal(shared.call(provider, "SELECT 1", AGENT_BUDGET, "execute"));
 
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
     expect(error.message).toBe(
       "OpenSearch SQL is not a query-only endpoint, so the agent read-only profile has no boundary to run on here",
     );

@@ -83,6 +83,7 @@ import {
   OffsetUnsupportedError,
   QueryCancelledError,
   QueryError,
+  RefusedBeforeSendError,
   TimeoutError,
 } from "@/lib/db/errors";
 import {
@@ -1060,7 +1061,9 @@ abstract class SearchProvider extends SQLBaseProvider {
    * deadline is the budget's and the client's alone, refused in the shared time-budget sentence; the cluster keeps
    * working on a statement whose wait ended.
    *
-   * Refused outside the profile: a provider opened for the editor has no business running agent semantics.
+   * Refused outside the profile: a provider opened for the editor has no business running agent semantics. Each
+   * refusal raised before the request, the profile's, the endpoint's and the estimate-plan mode's, is a
+   * `RefusedBeforeSendError`, so the agent and MCP say nothing reached the cluster.
    */
   protected async readOnlyStatement(
     sql: string,
@@ -1069,14 +1072,14 @@ abstract class SearchProvider extends SQLBaseProvider {
   ): Promise<QueryResult> {
     const transport = this.requireTransport();
     if (!this.readOnlyProfile) {
-      throw new QueryError(
+      throw new RefusedBeforeSendError(
         "Read-only execution requires a provider opened under the agent read-only profile",
         this.type,
         sql,
       );
     }
     if (!this.product.queryOnlySqlEndpoint) {
-      throw new QueryError(
+      throw new RefusedBeforeSendError(
         `${this.product.label} SQL is not a query-only endpoint, so the agent read-only profile has no boundary to run on here`,
         this.type,
         sql,
@@ -1084,7 +1087,11 @@ abstract class SearchProvider extends SQLBaseProvider {
     }
     assertReadOnlyBudget(budget, this.type);
     if (mode !== "execute") {
-      throw new QueryError(`${this.product.label} composes no estimating plan for the agent`, this.type, sql);
+      throw new RefusedBeforeSendError(
+        `${this.product.label} composes no estimating plan for the agent`,
+        this.type,
+        sql,
+      );
     }
 
     return this.trackQuery(async () => {
