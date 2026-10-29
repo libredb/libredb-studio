@@ -63,15 +63,17 @@ await changed.shutdown();
 // The server reads a sign-in from its credentials cache for credentials_validity (2000ms by default), so wait it out.
 await new Promise((resolve) => setTimeout(resolve, 3000));
 console.log("== which password signs in afterwards");
-for (const password of ["not-a-real-password", "\nSELECT id FROM fence14.t WHERE name = ", "changed-by-a-comment"]) {
+for (const [label, password] of [
+  ["the role's first password", "not-a-real-password"],
+  ["the literal the first text sets", "\nSELECT id FROM fence14.t WHERE name = "],
+  ["the literal the second text sets", "changed-by-a-comment"],
+]) {
   const probe = client("fence14_agent", password);
   try {
     await probe.connect();
-    console.log(`  ${JSON.stringify(password)}: signs in`);
+    console.log(`  ${label}: signs in`);
   } catch (error) {
-    console.log(
-      `  ${JSON.stringify(password)}: refused (${Object.values(error.innerErrors ?? {})[0]?.name ?? error.name})`,
-    );
+    console.log(`  ${label}: refused (${Object.values(error.innerErrors ?? {})[0]?.name ?? error.name})`);
   }
   await probe.shutdown();
 }

@@ -27,6 +27,6 @@
 > "-- x\rALTER ROLE fence14_agent WITH PASSWORD = 'changed-by-a-comment'"
   ok, no result columns
 == which password signs in afterwards
-  "not-a-real-password": refused (AuthenticationError)
-  "\nSELECT id FROM fence14.t WHERE name = ": refused (AuthenticationError)
-  "changed-by-a-comment": signs in
+  the role's first password: refused (AuthenticationError)
+  the literal the first text sets: refused (AuthenticationError)
+  the literal the second text sets: signs in

@@ -395,7 +395,7 @@ async function main(): Promise<void> {
   );
   await editor.disconnect();
   const UNAUTHORIZED =
-    /^User libredb_lb_ro has no \w+ permission|does not have sufficient privileges|You aren't allowed/;
+    /^(?:User libredb_lb_ro has no \w+ permission|.*does not have sufficient privileges|.*You aren't allowed)/;
   for (const template of [...WRITES, ...ROLE_WRITES]) {
     const cql = template.replaceAll("@", KS);
     const { error } = await readOnly(reader, cql);
