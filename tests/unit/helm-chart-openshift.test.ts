@@ -297,3 +297,73 @@ describe("charts/libredb-studio OpenShift API detection switch", () => {
     expect(renderDocs(["--set", "openshift=null", "--set", "openshiftRoute=null"])).toEqual(renderDocs([]));
   });
 });
+
+/**
+ * A NetworkPolicy is matched after the service address is rewritten to the
+ * endpoint, so on OpenShift DNS goes out on 5353 (the CoreDNS pods' port behind
+ * the dns-default Service's 53) and the API server on 6443 (behind
+ * kubernetes.default.svc's 443). Sign-in, self reviews and discovery all reach
+ * * the API server there.
+ */
+describe("charts/libredb-studio NetworkPolicy on OpenShift", () => {
+  const POLICY = ["--set", "networkPolicy.enabled=true"];
+
+  interface EgressRule {
+    ports?: Array<{ port: number; protocol: string }>;
+  }
+
+  function egressRules(args: string[]): EgressRule[] {
+    const policy = renderDocs([...POLICY, ...args]).find((doc) => doc.kind === "NetworkPolicy") as unknown as {
+      spec: { egress: EgressRule[] };
+    };
+    return policy.spec.egress;
+  }
+
+  function egressPorts(args: string[]): Array<{ port: number; protocol: string }> {
+    return egressRules(args).flatMap((rule) => rule.ports ?? []);
+  }
+
+  test("a vanilla render keeps today's egress ports", () => {
+    const ports = egressPorts([]).map((entry) => entry.port);
+    expect(ports).not.toContain(5353);
+    expect(ports).not.toContain(6443);
+  });
+
+  test("OpenShift adds UDP and TCP 5353 and TCP 6443 beside 53 and 443", () => {
+    const ports = egressPorts(OPENSHIFT_API);
+    for (const expected of [
+      { port: 5353, protocol: "UDP" },
+      { port: 5353, protocol: "TCP" },
+      { port: 6443, protocol: "TCP" },
+      { port: 53, protocol: "UDP" },
+      { port: 53, protocol: "TCP" },
+      { port: 443, protocol: "TCP" },
+    ]) {
+      expect(ports).toContainEqual(expected);
+    }
+  });
+
+  test("apis=force adds the same ports without detection", () => {
+    const ports = egressPorts(["--set", "global.compatibility.openshift.apis=force"]);
+    expect(ports).toContainEqual({ port: 5353, protocol: "UDP" });
+    expect(ports).toContainEqual({ port: 5353, protocol: "TCP" });
+    expect(ports).toContainEqual({ port: 6443, protocol: "TCP" });
+  });
+
+  test("6443 appears in exactly one egress rule when the access review is also on", () => {
+    const rules = egressRules([
+      ...OPENSHIFT_API,
+      "--set",
+      "authProvider=oidc",
+      "--set",
+      "config.oidcIssuer=https://rancher.example.com/oidc",
+      "--set",
+      "config.sessionTtlSeconds=900",
+      "--set",
+      "accessReview.enabled=true",
+    ]);
+    const with6443 = rules.filter((rule) => (rule.ports ?? []).some((entry) => entry.port === 6443));
+    expect(with6443).toHaveLength(1);
+    expect(with6443[0].ports?.filter((entry) => entry.port === 6443)).toHaveLength(1);
+  });
+});
