@@ -1,0 +1,21 @@
+{
+  "version": "2.19.4",
+  "name": "write-refusal/select-into",
+  "image": "opensearchproject/opensearch:2.19.4",
+  "capturedAt": "2026-10-29",
+  "request": {
+    "method": "POST",
+    "path": "/_plugins/_sql",
+    "body": {
+      "query": "SELECT * INTO libredb_wr_into FROM probe_orders"
+    },
+    "auth": "none"
+  },
+  "status": 200,
+  "contentType": "application/json; charset=UTF-8",
+  "body": "{\n  \"schema\": [\n    {\n      \"name\": \"total\",\n      \"type\": \"float\"\n    },\n    {\n      \"name\": \"id\",\n      \"type\": \"long\"\n    },\n    {\n      \"name\": \"customer\",\n      \"type\": \"text\"\n    }\n  ],\n  \"total\": 1,\n  \"datarows\": [[\n    9.5,\n    1,\n    \"acme\"\n  ]],\n  \"size\": 1,\n  \"status\": 200\n}",
+  "legacyRoute": {
+    "path": "/_opendistro/_sql",
+    "sameAnswer": true
+  }
+}

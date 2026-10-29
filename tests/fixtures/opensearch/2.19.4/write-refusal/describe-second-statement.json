@@ -1,0 +1,21 @@
+{
+  "version": "2.19.4",
+  "name": "write-refusal/describe-second-statement",
+  "image": "opensearchproject/opensearch:2.19.4",
+  "capturedAt": "2026-10-29",
+  "request": {
+    "method": "POST",
+    "path": "/_plugins/_sql",
+    "body": {
+      "query": "DESCRIBE TABLES LIKE 'probe_orders'; DELETE FROM probe_orders"
+    },
+    "auth": "none"
+  },
+  "status": 200,
+  "contentType": "application/json; charset=UTF-8",
+  "body": "{\n  \"schema\": [\n    {\n      \"name\": \"TABLE_CAT\",\n      \"type\": \"keyword\"\n    },\n    {\n      \"name\": \"TABLE_SCHEM\",\n      \"type\": \"keyword\"\n    },\n    {\n      \"name\": \"TABLE_NAME\",\n      \"type\": \"keyword\"\n    },\n    {\n      \"name\": \"COLUMN_NAME\",\n      \"type\": \"keyword\"\n    },\n    {\n      \"name\": \"DATA_TYPE\",\n      \"type\": \"integer\"\n    },\n    {\n      \"name\": \"TYPE_NAME\",\n      \"type\": \"keyword\"\n    },\n    {\n      \"name\": \"COLUMN_SIZE\",\n      \"type\": \"integer\"\n    },\n    {\n      \"name\": \"BUFFER_LENGTH\",\n      \"type\": \"integer\"\n    },\n    {\n      \"name\": \"DECIMAL_DIGITS\",\n      \"type\": \"integer\"\n    },\n    {\n      \"name\": \"NUM_PREC_RADIX\",\n      \"type\": \"integer\"\n    },\n    {\n      \"name\": \"NULLABLE\",\n      \"type\": \"integer\"\n    },\n    {\n      \"name\": \"REMARKS\",\n      \"type\": \"keyword\"\n    },\n    {\n      \"name\": \"COLUMN_DEF\",\n      \"type\": \"keyword\"\n    },\n    {\n      \"name\": \"SQL_DATA_TYPE\",\n      \"type\": \"integer\"\n    },\n    {\n      \"name\": \"SQL_DATETIME_SUB\",\n      \"type\": \"integer\"\n    },\n    {\n      \"name\": \"CHAR_OCTET_LENGTH\",\n      \"type\": \"integer\"\n    },\n    {\n      \"name\": \"ORDINAL_POSITION\",\n      \"type\": \"integer\"\n    },\n    {\n      \"name\": \"IS_NULLABLE\",\n      \"type\": \"keyword\"\n    },\n    {\n      \"name\": \"SCOPE_CATALOG\",\n      \"type\": \"keyword\"\n    },\n    {\n      \"name\": \"SCOPE_SCHEMA\",\n      \"type\": \"keyword\"\n    },\n    {\n      \"name\": \"SCOPE_TABLE\",\n      \"type\": \"keyword\"\n    },\n    {\n      \"name\": \"SOURCE_DATA_TYPE\",\n      \"type\": \"short\"\n    },\n    {\n      \"name\": \"IS_AUTOINCREMENT\",\n      \"type\": \"keyword\"\n    },\n    {\n      \"name\": \"IS_GENERATEDCOLUMN\",\n      \"type\": \"keyword\"\n    }\n  ],\n  \"total\": 0,\n  \"datarows\": [],\n  \"size\": 0,\n  \"status\": 200\n}",
+  "legacyRoute": {
+    "path": "/_opendistro/_sql",
+    "sameAnswer": true
+  }
+}

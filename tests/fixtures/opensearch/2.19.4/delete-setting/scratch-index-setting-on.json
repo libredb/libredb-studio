@@ -1,0 +1,17 @@
+{
+  "version": "2.19.4",
+  "name": "delete-setting/scratch-index-setting-on",
+  "image": "opensearchproject/opensearch:2.19.4",
+  "capturedAt": "2026-10-29",
+  "request": {
+    "method": "POST",
+    "path": "/_plugins/_sql",
+    "body": {
+      "query": "DELETE FROM libredb_wr_scratch"
+    },
+    "auth": "none"
+  },
+  "status": 200,
+  "contentType": "application/json; charset=UTF-8",
+  "body": "{\n  \"schema\": [{\n    \"name\": \"deleted_rows\",\n    \"type\": \"long\"\n  }],\n  \"total\": 1,\n  \"datarows\": [[1]],\n  \"size\": 1,\n  \"status\": 200\n}"
+}

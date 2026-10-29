@@ -1,0 +1,21 @@
+{
+  "version": "2.19.4",
+  "name": "write-refusal/second-statement-select",
+  "image": "opensearchproject/opensearch:2.19.4",
+  "capturedAt": "2026-10-29",
+  "request": {
+    "method": "POST",
+    "path": "/_plugins/_sql",
+    "body": {
+      "query": "SELECT * FROM probe_orders; DELETE FROM probe_orders"
+    },
+    "auth": "none"
+  },
+  "status": 400,
+  "contentType": "text/plain; charset=UTF-8",
+  "body": "{\n  \"error\": {\n    \"reason\": \"Invalid SQL query\",\n    \"details\": \"Illegal SQL expression : SELECT * FROM probe_orders; DELETE FROM probe_orders\",\n    \"type\": \"ParserException\"\n  },\n  \"status\": 400\n}",
+  "legacyRoute": {
+    "path": "/_opendistro/_sql",
+    "sameAnswer": true
+  }
+}

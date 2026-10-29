@@ -1,0 +1,22 @@
+{
+  "version": "3.8.0",
+  "name": "write-refusal/merge",
+  "image": "opensearchproject/opensearch:3.8.0",
+  "capturedAt": "2026-10-29",
+  "request": {
+    "method": "POST",
+    "path": "/_plugins/_sql",
+    "body": {
+      "query": "MERGE INTO probe_orders USING probe_orders AS s ON true WHEN MATCHED THEN DELETE"
+    },
+    "auth": "none"
+  },
+  "status": 400,
+  "contentType": "text/plain; charset=UTF-8",
+  "body": "{\n  \"error\": {\n    \"reason\": \"Invalid SQL query\",\n    \"details\": \"Query must start with SELECT, DELETE, SHOW or DESCRIBE: MERGE INTO probe_orders USING probe_orders AS s ON true WHEN MATCHED THEN DELETE\",\n    \"type\": \"SQLFeatureNotSupportedException\"\n  },\n  \"status\": 400\n}",
+  "legacyRoute": {
+    "path": "/_opendistro/_sql",
+    "status": 400,
+    "body": "{\"error\":\"no handler found for uri [/_opendistro/_sql] and method [POST]\"}"
+  }
+}

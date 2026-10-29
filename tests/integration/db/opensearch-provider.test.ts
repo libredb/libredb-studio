@@ -50,7 +50,7 @@
  * have tested nothing.
  */
 import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { DatabaseProvider } from "@/lib/db/types";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
@@ -2336,4 +2336,127 @@ describe("endOpenQueryTransaction()", () => {
       "the engine has no transaction to leave open",
     ]);
   });
+});
+
+// ============================================================================
+// The SQL route's write refusals, replayed
+// ============================================================================
+
+/** One capture of tests/fixtures/opensearch/<version>/write-refusal/, written by tests/live/opensearch-write-refusals.ts. */
+interface WriteRefusalCapture {
+  readonly version: string;
+  readonly name: string;
+  readonly image: string;
+  readonly request: {
+    readonly method: string;
+    readonly path: string;
+    readonly body: { readonly query: string };
+    readonly auth: string;
+  };
+  readonly status: number;
+  readonly body: string;
+  readonly legacyRoute: { readonly path: string; readonly sameAnswer?: boolean; readonly status?: number };
+}
+
+function readCaptures<T>(dir: string): readonly T[] {
+  const path = join(import.meta.dir, "../../fixtures/opensearch", dir);
+  return readdirSync(path)
+    .filter((file) => file.endsWith(".json"))
+    .sort()
+    .map((file) => JSON.parse(readFileSync(join(path, file), "utf8")) as T);
+}
+
+const WRITE_REFUSALS_3_8 = readCaptures<WriteRefusalCapture>("3.8.0/write-refusal");
+const WRITE_REFUSALS_2_19 = readCaptures<WriteRefusalCapture>("2.19.4/write-refusal");
+
+/** The three forms the plugin answers as plain reads: they write nothing, and the cluster read back unchanged. */
+const READ_ANSWERS = new Set([
+  "write-refusal/select-into",
+  "write-refusal/describe-second-statement",
+  "write-refusal/show-second-statement",
+]);
+
+/** The error a refusal capture carries. */
+function captureError(entry: WriteRefusalCapture): { type: string; details: string } {
+  return (JSON.parse(entry.body) as { error: { type: string; details: string } }).error;
+}
+
+/**
+ * The SQL route's boundary, replayed: what 3.8.0 and 2.19.4 answered each write and DDL statement sent raw to
+ * `/_plugins/_sql` on a node with security disabled (tests/live/opensearch-write-refusals.ts, 2026-10-29). The route
+ * carries free statement text, so the claim that it cannot write rests on these answers, and on the cluster reading
+ * back unchanged after each.
+ */
+describe("OpenSearch's write refusals, replayed", () => {
+  const verbOf = (entry: WriteRefusalCapture): string => entry.request.body.query.split(" ")[0];
+
+  test.each([
+    ["3.8.0", WRITE_REFUSALS_3_8],
+    ["2.19.4", WRITE_REFUSALS_2_19],
+  ] as const)("%s: 22 statements were captured raw on the SQL route, every write refused", (version, captures) => {
+    expect(captures).toHaveLength(22);
+    for (const entry of captures) {
+      expect(entry.version).toBe(version);
+      expect(entry.image).toBe(`opensearchproject/opensearch:${version}`);
+      expect([entry.request.method, entry.request.path, entry.request.auth]).toEqual([
+        "POST",
+        "/_plugins/_sql",
+        "none",
+      ]);
+      if (READ_ANSWERS.has(entry.name)) {
+        expect(entry.status).toBe(200);
+        continue;
+      }
+      expect(entry.status).toBe(400);
+      const error = captureError(entry);
+      if (error.type === "ParserException") {
+        expect(entry.request.body.query).toContain("; DELETE");
+        expect(error.details).toBe(`Illegal SQL expression : ${entry.request.body.query}`);
+      } else if (error.type === "SQLFeatureDisabledException") {
+        // 2.19.4 alone: its DELETE is behind the setting, off by default.
+        expect([version, verbOf(entry)]).toEqual(["2.19.4", "DELETE"]);
+        expect(error.details).toContain("plugins.sql.delete.enabled");
+      } else {
+        expect(error.type).toBe("SQLFeatureNotSupportedException");
+        expect(error.details).toBe(
+          `Query must start with SELECT, DELETE, SHOW or DESCRIBE: ${entry.request.body.query}`,
+        );
+      }
+    }
+  });
+
+  test("the captures cover INSERT, UPDATE, DELETE, CREATE, ALTER, DROP and a smuggled second statement", () => {
+    const verbs = new Set(WRITE_REFUSALS_3_8.map(verbOf));
+    for (const verb of ["INSERT", "UPDATE", "DELETE", "CREATE", "ALTER", "DROP", "TRUNCATE", "MERGE"]) {
+      expect(verbs).toContain(verb);
+    }
+    for (const reader of ["EXPLAIN", "WITH", "SELECT", "DESCRIBE", "SHOW"]) expect(verbs).toContain(reader);
+    expect(WRITE_REFUSALS_3_8.filter((entry) => entry.request.body.query.includes("; DELETE"))).toHaveLength(4);
+  });
+
+  test("3.8.0 serves no legacy route, and 2.19.4's legacy route answered every statement the same", () => {
+    for (const entry of WRITE_REFUSALS_3_8) {
+      expect(entry.legacyRoute).toMatchObject({ path: "/_opendistro/_sql", status: 400 });
+    }
+    for (const entry of WRITE_REFUSALS_2_19) {
+      expect(entry.legacyRoute).toEqual({ path: "/_opendistro/_sql", sameAnswer: true });
+    }
+  });
+
+  test.each(
+    WRITE_REFUSALS_3_8.filter((entry) => !READ_ANSWERS.has(entry.name)).map((entry) => [entry.name, entry] as const),
+  )(
+    "%s: the provider sends the captured request, and the refusal reaches the caller in the engine's words",
+    async (_name, entry) => {
+      const provider = await connectProvider();
+      overridePath("/_plugins/_sql", { status: entry.status, body: entry.body });
+
+      const error = await provider.query(entry.request.body.query).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(QueryError);
+      expect((error as Error).message).toContain(captureError(entry).details);
+      expect(sentBodies.at(-1)).toEqual(entry.request.body);
+      await provider.disconnect();
+    },
+  );
 });

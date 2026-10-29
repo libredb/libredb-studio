@@ -1,0 +1,18 @@
+{
+  "version": "3.8.0",
+  "name": "delete-setting/setting-on-write",
+  "image": "opensearchproject/opensearch:3.8.0",
+  "capturedAt": "2026-10-29",
+  "request": {
+    "method": "PUT",
+    "path": "/_cluster/settings",
+    "body": {
+      "transient": {
+        "plugins.sql.delete.enabled": true
+      }
+    }
+  },
+  "status": 400,
+  "contentType": "application/json; charset=UTF-8",
+  "body": "{\"error\":{\"root_cause\":[{\"type\":\"settings_exception\",\"reason\":\"transient setting [plugins.sql.delete.enabled], not recognized\"}],\"type\":\"settings_exception\",\"reason\":\"transient setting [plugins.sql.delete.enabled], not recognized\"},\"status\":400}"
+}

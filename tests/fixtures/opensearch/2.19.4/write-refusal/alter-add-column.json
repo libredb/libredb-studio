@@ -1,0 +1,21 @@
+{
+  "version": "2.19.4",
+  "name": "write-refusal/alter-add-column",
+  "image": "opensearchproject/opensearch:2.19.4",
+  "capturedAt": "2026-10-29",
+  "request": {
+    "method": "POST",
+    "path": "/_plugins/_sql",
+    "body": {
+      "query": "ALTER TABLE probe_orders ADD COLUMN libredb_wr INT"
+    },
+    "auth": "none"
+  },
+  "status": 400,
+  "contentType": "text/plain; charset=UTF-8",
+  "body": "{\n  \"error\": {\n    \"reason\": \"Invalid SQL query\",\n    \"details\": \"Query must start with SELECT, DELETE, SHOW or DESCRIBE: ALTER TABLE probe_orders ADD COLUMN libredb_wr INT\",\n    \"type\": \"SQLFeatureNotSupportedException\"\n  },\n  \"status\": 400\n}",
+  "legacyRoute": {
+    "path": "/_opendistro/_sql",
+    "sameAnswer": true
+  }
+}

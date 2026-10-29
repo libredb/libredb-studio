@@ -707,11 +707,18 @@ Measured on a stock 3.8.0 node, every mutation is HTTP 400 with
 | `UPDATE probe_orders SET customer = 'x' WHERE id = 1` | not in the grammar |
 | `CREATE TABLE t (id BIGINT)` | not in the grammar |
 | `ALTER TABLE probe_orders ADD COLUMN x INT` | not in the grammar |
-| `DELETE FROM probe_orders WHERE id = 99` | **is** in the grammar — the error names it — and is refused because the plugin's DELETE support is **off by default** |
+| `DELETE FROM probe_orders WHERE id = 99` | named in the error, and refused the same way |
 
-The error message is the same for all five, which is worth knowing: it enumerates what the grammar
-accepts, so "DELETE" appearing in a message about a refused DELETE is the plugin telling you the
-statement form exists and the setting does not permit it.
+The error message is the same for all five, and it enumerates what the plugin once accepted.
+On 3.8.0 the `DELETE` it names is gone: the plugin's statement dispatcher branches on `SELECT`, `SHOW` and `DESCRIBE` alone, and the `plugins.sql.delete.enabled` setting that used to turn `DELETE` on is not recognized (`PUT /_cluster/settings` answers 400 `settings_exception`).
+On 2.19.4 the setting exists, reads `false` by default, and a `DELETE` is refused with `SQLFeatureDisabledException` ("DELETE clause is disabled by default and will be deprecated"); turned on, the same `DELETE` deletes documents (HTTP 200, `deleted_rows`).
+
+The refusals are checked in as captures, not only quoted here.
+`tests/live/opensearch-write-refusals.ts` sent 22 statements raw to `POST /_plugins/_sql` on a 3.8.0 node and on a 2.19.4 node, each with security disabled, so no privilege stood between the statement and the plugin: INSERT (VALUES and SELECT), UPDATE, DELETE (with and without WHERE), CREATE TABLE, INDEX and VIEW, DROP TABLE and INDEX, ALTER TABLE, TRUNCATE, MERGE, a write behind `EXPLAIN` and `WITH`, `SELECT ... INTO`, and a second statement after `;` behind a `SELECT`, a `DESCRIBE` and a `SHOW`.
+Every write was refused, a second statement behind a `SELECT` with `ParserException` ("Illegal SQL expression"); `SELECT ... INTO` answered its rows and created nothing, and a catalog command with a `DELETE` behind it answered the command and ran no `DELETE`.
+The cluster read back unchanged after each: the index listing with its document counts, every mapping, the aliases and the templates.
+The same run captured the delete setting on both versions: its read, the attempt to turn it on, and a `DELETE` on a scratch index and on a name no index holds, before and after.
+The answers live in [`tests/fixtures/opensearch/`](../../tests/fixtures/opensearch/), and `tests/integration/db/opensearch-provider.test.ts` replays the 3.8.0 refusals through the provider.
 
 Consequences elsewhere in the product:
 

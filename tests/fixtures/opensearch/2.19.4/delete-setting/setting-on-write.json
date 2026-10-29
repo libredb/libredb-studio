@@ -1,0 +1,18 @@
+{
+  "version": "2.19.4",
+  "name": "delete-setting/setting-on-write",
+  "image": "opensearchproject/opensearch:2.19.4",
+  "capturedAt": "2026-10-29",
+  "request": {
+    "method": "PUT",
+    "path": "/_cluster/settings",
+    "body": {
+      "transient": {
+        "plugins.sql.delete.enabled": true
+      }
+    }
+  },
+  "status": 200,
+  "contentType": "application/json; charset=UTF-8",
+  "body": "{\"acknowledged\":true,\"persistent\":{},\"transient\":{\"plugins\":{\"sql\":{\"delete\":{\"enabled\":\"true\"}}}}}"
+}

@@ -1,0 +1,22 @@
+{
+  "version": "3.8.0",
+  "name": "write-refusal/show-second-statement",
+  "image": "opensearchproject/opensearch:3.8.0",
+  "capturedAt": "2026-10-29",
+  "request": {
+    "method": "POST",
+    "path": "/_plugins/_sql",
+    "body": {
+      "query": "SHOW TABLES LIKE 'probe_orders'; DELETE FROM probe_orders"
+    },
+    "auth": "none"
+  },
+  "status": 200,
+  "contentType": "application/json; charset=UTF-8",
+  "body": "{\n  \"schema\": [\n    {\n      \"name\": \"TABLE_CAT\",\n      \"type\": \"keyword\"\n    },\n    {\n      \"name\": \"TABLE_SCHEM\",\n      \"type\": \"keyword\"\n    },\n    {\n      \"name\": \"TABLE_NAME\",\n      \"type\": \"keyword\"\n    },\n    {\n      \"name\": \"TABLE_TYPE\",\n      \"type\": \"keyword\"\n    },\n    {\n      \"name\": \"REMARKS\",\n      \"type\": \"keyword\"\n    },\n    {\n      \"name\": \"TYPE_CAT\",\n      \"type\": \"keyword\"\n    },\n    {\n      \"name\": \"TYPE_SCHEM\",\n      \"type\": \"keyword\"\n    },\n    {\n      \"name\": \"TYPE_NAME\",\n      \"type\": \"keyword\"\n    },\n    {\n      \"name\": \"SELF_REFERENCING_COL_NAME\",\n      \"type\": \"keyword\"\n    },\n    {\n      \"name\": \"REF_GENERATION\",\n      \"type\": \"keyword\"\n    }\n  ],\n  \"total\": 0,\n  \"datarows\": [],\n  \"size\": 0,\n  \"status\": 200\n}",
+  "legacyRoute": {
+    "path": "/_opendistro/_sql",
+    "status": 400,
+    "body": "{\"error\":\"no handler found for uri [/_opendistro/_sql] and method [POST]\"}"
+  }
+}

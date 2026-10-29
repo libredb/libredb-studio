@@ -1,0 +1,22 @@
+{
+  "version": "3.8.0",
+  "name": "write-refusal/insert-select",
+  "image": "opensearchproject/opensearch:3.8.0",
+  "capturedAt": "2026-10-29",
+  "request": {
+    "method": "POST",
+    "path": "/_plugins/_sql",
+    "body": {
+      "query": "INSERT INTO probe_orders SELECT * FROM probe_orders"
+    },
+    "auth": "none"
+  },
+  "status": 400,
+  "contentType": "text/plain; charset=UTF-8",
+  "body": "{\n  \"error\": {\n    \"reason\": \"Invalid SQL query\",\n    \"details\": \"Query must start with SELECT, DELETE, SHOW or DESCRIBE: INSERT INTO probe_orders SELECT * FROM probe_orders\",\n    \"type\": \"SQLFeatureNotSupportedException\"\n  },\n  \"status\": 400\n}",
+  "legacyRoute": {
+    "path": "/_opendistro/_sql",
+    "status": 400,
+    "body": "{\"error\":\"no handler found for uri [/_opendistro/_sql] and method [POST]\"}"
+  }
+}

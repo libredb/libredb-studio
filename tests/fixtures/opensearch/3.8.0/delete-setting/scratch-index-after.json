@@ -1,0 +1,13 @@
+{
+  "version": "3.8.0",
+  "name": "delete-setting/scratch-index-after",
+  "image": "opensearchproject/opensearch:3.8.0",
+  "capturedAt": "2026-10-29",
+  "request": {
+    "method": "GET",
+    "path": "/_cat/indices/libredb_wr_scratch?format=json&h=index,docs.count"
+  },
+  "status": 200,
+  "contentType": "application/json; charset=UTF-8",
+  "body": "[{\"index\":\"libredb_wr_scratch\",\"docs.count\":\"1\"}]"
+}
