@@ -136,6 +136,28 @@ export type AuditReason =
    * was about to mint and none was minted. The record names the account, which the provider vouched for.
    */
   | "oidc_session_revoked"
+  /** openshift sign-in: a configuration variable or file, the JWT secret, or the OAuth metadata checks failed. */
+  | "openshift_config"
+  /** openshift sign-in: the API or OAuth server did not answer (transport, deadline, TLS, or a 3xx or 5xx). */
+  | "openshift_unreachable"
+  /** openshift sign-in: the cluster answered 404 for the OAuth metadata or users/~, so it signs in through external OIDC. */
+  | "openshift_external_oidc"
+  /** openshift sign-in: the callback arrived without the state cookie the login route set. */
+  | "openshift_state_missing"
+  /** openshift sign-in: the state cookie did not verify or had expired, or the callback's state differed from it. */
+  | "openshift_state_invalid"
+  /** openshift sign-in: the person pressed Deny on the cluster's Authorize Access page. */
+  | "openshift_denied"
+  /** openshift sign-in: the granted scope was not exactly user:info user:check-access, so the token was never used. */
+  | "openshift_scope"
+  /** openshift sign-in: users/~ gave no usable uid or name, or a `system:` name, as for a virtual account. */
+  | "openshift_no_uid"
+  /** openshift sign-in: the sign-in role seam refused the account. */
+  | "openshift_no_access"
+  /** openshift sign-in: any other failure, a refused code included. */
+  | "openshift_failed"
+  /** openshift sign-in: the loop guard tripped, because the session's token record went missing twice in a row. */
+  | "openshift_session_lost"
   /**
    * A `POST /api/auth/login` under governance (docs/GOVERNANCE.md), where the identity provider is the only way in.
    * Refused before the body is read, so the record names no submitted account and the actor is anonymous.
