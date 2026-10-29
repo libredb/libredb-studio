@@ -390,7 +390,7 @@ describe("mapKubernetesDatabase", () => {
       secret: { name: "billing-owner", problem: "not_owned" },
     });
     expect(refusalOf(entry)).toBe(
-      "the credential Secret billing-owner belongs to another resource or is not of type kubernetes.io/basic-auth, so the exporter did not export it",
+      "the credential Secret billing-owner is owned by or labelled for another resource, so the exporter did not export it",
     );
   });
 

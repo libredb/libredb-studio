@@ -200,7 +200,7 @@ function cnpgFamily(slug: string, label: string, group: string, clusterLabel: st
     notOwned(resource: CnpgResource, secretName: string): string {
       return present(resource.spec?.bootstrap?.initdb?.secret?.name) === undefined
         ? `the credential Secret ${secretName} is neither owned by the Cluster nor labelled ${clusterLabel}=${resource.metadata.name}, so the exporter did not export it`
-        : `the credential Secret ${secretName} belongs to another resource or is not of type kubernetes.io/basic-auth, so the exporter did not export it`;
+        : `the credential Secret ${secretName} is owned by or labelled for another resource, so the exporter did not export it`;
     },
     fields(resource: CnpgResource, secretName: string, data: SecretData, clusterDomain: string): Fields {
       const user = present(data.username);
