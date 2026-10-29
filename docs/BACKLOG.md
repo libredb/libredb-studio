@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S10 · 7
-- [Drivers and connections](#drivers-and-connections) — D1-D403, U17 · 293
+- [Drivers and connections](#drivers-and-connections) — D1-D405, U17 · 295
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U151 · 137
@@ -4055,6 +4055,25 @@ D360 is the same file's other load failure.
 Found 2026-10-29 while reading Windows job failures on `main` and its branches.
 
 **Done when:** the cross-runtime comparison treats a peer's admitted set as one outcome, or the peer is built so that only one bound can trip, and the file passes repeated runs on the Windows job.
+
+### D404. The Oracle Thin driver keeps a pooled session that `close({ drop: true })` asks it to drop
+
+Measured on node-oracledb 6.10 in Thin mode: a session closed with `close({ drop: true })` came back from the pool with the same session ID and the `CURRENT_SCHEMA` the previous call set.
+The agent profile no longer pools its sessions, so it is not exposed (`docs/providers/oracle.md` section 5.7), but every other path that drops a failed pooled session gets that session back.
+Newer driver lines (7.x) exist and were not measured.
+
+Found 2026-10-29 while reviewing the Oracle agent profile.
+
+**Done when:** the behaviour is re-measured on the driver version the lockfile pins, and either the drop works or every pooled path that means to drop a session closes it another way, with a live case that reads the session ID after the drop.
+
+### D405. An Oracle agent refusal may name a plain `REVOKE` for a rule or rule set that only `DBMS_RULE_ADM` can revoke
+
+A plain `REVOKE EXECUTE` on an evaluation context fails with `ORA-04042`, so the Oracle agent check names `DBMS_RULE_ADM.REVOKE_OBJECT_PRIVILEGE` for one (measured).
+Rules and rule sets are rules engine objects of the same kind, and the check still names a plain `REVOKE` for a grant on one; that was not measured.
+
+Found 2026-10-29 while reviewing the Oracle agent profile.
+
+**Done when:** a grant on a rule and on a rule set is measured live, and the refusal names the statement that lifts each, with a unit case per kind.
 
 ## Value interpolation
 
