@@ -4028,7 +4028,7 @@ Found 2026-10-28 while covering `src/lib` lines; pre-existing.
 ### D401. `bun run lint` reports a `prefer-const` warning in the MQTT session
 
 ESLint warns `'dial' is never reassigned. Use 'const' instead` on `let dial` in `readTopics` (`src/lib/db/providers/keyvalue/mqtt/session.ts`): the variable is declared without a value, read by the listeners above it, and assigned once, at the end of the executor.
-The warning does not fail the gate, so it stays in every lint run.
+It is one of five `prefer-const` warnings on `main` and the only one under `src/`; a warning does not fail the gate, so it stays in every lint run.
 
 Found 2026-10-28; pre-existing.
 
