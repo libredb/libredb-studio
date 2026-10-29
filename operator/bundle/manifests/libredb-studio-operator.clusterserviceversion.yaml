@@ -22,7 +22,7 @@ metadata:
     capabilities: Basic Install
     categories: Database, Developer Tools
     containerImage: ghcr.io/libredb/libredb-studio-operator:1.1.0
-    createdAt: "2026-10-24T15:32:40Z"
+    createdAt: "2026-10-29T23:19:51Z"
     description: Open-source web-based SQL IDE for forty-two engines - PostgreSQL,
       MySQL, Oracle, Db2 LUW, SQL Server, SQLite, DuckDB, MongoDB, Redis, Couchbase,
       Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery,
@@ -234,6 +234,68 @@ spec:
           - list
           - patch
           - update
+          - watch
+        - apiGroups:
+          - route.openshift.io
+          resources:
+          - routes
+          verbs:
+          - create
+          - delete
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - route.openshift.io
+          resources:
+          - routes/custom-host
+          verbs:
+          - create
+        - apiGroups:
+          - console.openshift.io
+          resources:
+          - consolelinks
+          verbs:
+          - create
+          - delete
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - postgresql.cnpg.io
+          resources:
+          - clusters
+          verbs:
+          - get
+          - list
+          - watch
+        - apiGroups:
+          - postgresql.k8s.enterprisedb.io
+          resources:
+          - clusters
+          verbs:
+          - get
+          - list
+          - watch
+        - apiGroups:
+          - postgres-operator.crunchydata.com
+          resources:
+          - postgresclusters
+          verbs:
+          - get
+          - list
+          - watch
+        - apiGroups:
+          - mongodbcommunity.mongodb.com
+          resources:
+          - mongodbcommunity
+          verbs:
+          - get
+          - list
           - watch
         - apiGroups:
           - authentication.k8s.io

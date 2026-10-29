@@ -176,5 +176,79 @@ rules:
   - patch
   - update
   - watch
+# openshiftRoute.enabled renders a route.openshift.io Route, and openshift sign-in
+# fixes its host at install time; setting spec.host needs create on
+# routes/custom-host, or the API server refuses the Route (OP23)
+- apiGroups:
+  - route.openshift.io
+  resources:
+  - routes
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - route.openshift.io
+  resources:
+  - routes/custom-host
+  verbs:
+  - create
+# openshift.consoleLink.enabled renders a cluster-scoped ConsoleLink, which the
+# chart renders only for the LibreDBStudio in the namespace the cluster admin
+# names (LIBREDB_CLUSTER_STUDIO_NAMESPACE). Every authenticated user may already
+# read ConsoleLinks, so no reader role ships. No consoleplugins rule: the console
+# plugin is not part of this release.
+- apiGroups:
+  - console.openshift.io
+  resources:
+  - consolelinks
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+# Kubernetes discovery renders a Role in each discovered namespace that lets the
+# exporter list these kinds (discovery.kubernetes.kinds), and Kubernetes lets
+# the operator create a Role only with verbs it holds itself. Read-only: the
+# operator never changes a database resource.
+- apiGroups:
+  - postgresql.cnpg.io
+  resources:
+  - clusters
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - postgresql.k8s.enterprisedb.io
+  resources:
+  - clusters
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - postgres-operator.crunchydata.com
+  resources:
+  - postgresclusters
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - mongodbcommunity.mongodb.com
+  resources:
+  - mongodbcommunity
+  verbs:
+  - get
+  - list
+  - watch
 
 # +kubebuilder:scaffold:rules
