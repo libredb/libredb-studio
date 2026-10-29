@@ -14,6 +14,14 @@ global:
       # "disabled" never does. The Bitnami postgresql subchart honours the
       # same value.
       adaptSecurityContext: auto
+      # -- How the chart decides that an OpenShift API is served, for every
+      # OpenShift-only object it renders (openshiftRoute,
+      # openshift.trustedCABundle, the NetworkPolicy's OpenShift DNS and API
+      # server ports): "auto" detects each API through the API server, "force"
+      # renders them without detection, for GitOps or an offline
+      # `helm template` that has no cluster to ask. Separate from
+      # adaptSecurityContext, which a GitOps render sets to "force" as well.
+      apis: auto
 
 # -- Number of replicas. Note: SQLite storage mode only supports 1 replica.
 # The agent runtime carries a second single-instance constraint: its zero-config

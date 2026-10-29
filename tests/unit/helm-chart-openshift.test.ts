@@ -274,3 +274,26 @@ describe("charts/libredb-studio PostgreSQL subchart contracts (#152)", () => {
     }
   });
 });
+
+/**
+ * One switch for every OpenShift-only object the chart renders: "auto" asks
+ * .Capabilities.APIVersions for the API each object needs, "force" treats every
+ * OpenShift API as served, for a GitOps or offline `helm template` that has no
+ * cluster to ask. It is separate from adaptSecurityContext, which speaks only of
+ * the pod security context.
+ */
+describe("charts/libredb-studio OpenShift API detection switch", () => {
+  test("an unknown global.compatibility.openshift.apis value fails schema validation", () => {
+    const run = helmTemplate(["--set", "global.compatibility.openshift.apis=maybe"]);
+    expect(run.exitCode).not.toBe(0);
+    expect(run.stderr).toContain("apis");
+  });
+
+  test("apis=force is accepted and changes nothing while every OpenShift object is off", () => {
+    expect(renderDocs(["--set", "global.compatibility.openshift.apis=force"])).toEqual(renderDocs([]));
+  });
+
+  test("a values set without the openshift blocks renders as before", () => {
+    expect(renderDocs(["--set", "openshift=null", "--set", "openshiftRoute=null"])).toEqual(renderDocs([]));
+  });
+});

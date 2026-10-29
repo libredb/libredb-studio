@@ -25,6 +25,11 @@
                   "type": "string",
                   "enum": ["auto", "force", "disabled"],
                   "description": "Drop fixed runAsUser/runAsGroup/fsGroup for OpenShift SCC compatibility: auto (detect), force, or disabled"
+                },
+                "apis": {
+                  "type": "string",
+                  "enum": ["auto", "force"],
+                  "description": "How OpenShift-only objects detect their API: auto (ask the API server) or force (render without detection, for GitOps or offline helm template)"
                 }
               }
             }
