@@ -65,3 +65,17 @@ describe.each(Object.entries(CSVS))("the %s CSV", (_name, file) => {
     expect(owned?.description).toContain("bundled PostgreSQL");
   });
 });
+
+describe("the bundle metadata", () => {
+  test("offers the bundle from OpenShift 4.16 on", () => {
+    const annotations = (parse(readFileSync(BUNDLE_ANNOTATIONS, "utf8")) as { annotations: Record<string, unknown> })
+      .annotations;
+    expect(annotations["com.redhat.openshift.versions"]).toBe("v4.16");
+  });
+
+  test("gets the floor from the bundle target, which checks it landed exactly once", () => {
+    const makefile = readFileSync(MAKEFILE, "utf8");
+    expect(makefile).toContain("OPENSHIFT_VERSIONS ?= v4.16\n");
+    expect(makefile).toMatch(/grep -c '\^ {2}com\.redhat\.openshift\.versions: "\$\(OPENSHIFT_VERSIONS\)"\$\$'/);
+  });
+});
