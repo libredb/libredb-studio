@@ -45,6 +45,7 @@ import {
   type ResourceAttributes,
   type ReviewOutcome,
 } from "../../src/lib/kubernetes-access/review";
+import { KUBERNETES_REVIEWED_ROLE } from "../../src/lib/seed/roles";
 import type { ManagedConnection } from "../../src/lib/seed/types";
 
 const kubeconfig = process.env.LIBREDB_LIVE_KUBECONFIG;
@@ -306,7 +307,7 @@ const CASES: LiveCase[] = [
         name: "live",
         type: "postgres",
         managed: true,
-        roles: ["*"],
+        roles: [KUBERNETES_REVIEWED_ROLE],
         createdAt: new Date(),
         kubernetesSecret: { namespace: NAMESPACE, name: SECRET },
       };
