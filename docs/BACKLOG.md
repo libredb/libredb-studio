@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D403, U17 · 293
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U148 · 134
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U149 · 135
 - [Dependencies](#dependencies) — P1-P12 · 10
 - [Documentation](#documentation) — DOC3-DOC35 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
@@ -5952,6 +5952,17 @@ The maintenance census test's own title reads "11 of 4041 type-ids".
 Found on #1849, whose golden capture this is.
 
 **Done when:** each golden holds only the engine's own fields, with the picker and the shared chrome pinned once elsewhere, and each count above derives from the type-id list (`EXTERNAL_DATABASE_TYPES` in `src/lib/db/compatibility.ts` with LibreDB) instead of a literal.
+
+### U149. The Query Safety Check describes an Elasticsearch DELETE as deleting documents, which that engine cannot do
+
+On an Elasticsearch connection, running `DELETE FROM <index>` in the editor opens the Query Safety Check dialog (`src/components/QuerySafetyDialog.tsx`), which tells the user the statement permanently deletes the matching documents.
+The engine's SQL endpoint cannot run it: its grammar has no write or DDL statement, and a `DELETE` sent there is refused with `parsing_exception` before anything runs (`docs/providers/elasticsearch.md`, section 5.6, and its checked-in captures).
+The dialog's reading of the statement is generic SQL: the client check treats any `DELETE` as destructive, and the analysis route `src/app/api/ai/query-safety/route.ts` asks the model about the statement with the database type named but no word on what that engine's grammar accepts.
+So the warning describes an effect that cannot happen, and the user is asked to confirm a deletion the engine would refuse.
+Seen 2026-10-29 in a browser pass over the Elasticsearch agent work.
+Any engine whose SQL surface is query-only would read the same way; that was reasoned from the code, not measured.
+
+**Done when:** on an engine whose SQL grammar holds no write statement, the dialog either does not open for a write or says the engine will refuse it, never that rows or documents will be deleted; the fact is read from a per-engine contract row or capability, not a type-id branch; and a test pins the Elasticsearch `DELETE` case.
 
 ## Dependencies
 
