@@ -4,6 +4,121 @@ entries:
   - annotations:
       artifacthub.io/category: database
       artifacthub.io/changes: |
+        - "Render an OpenShift Route under openshiftRoute values, with edge TLS, a plain HTTP redirect and a 120s router timeout, disabled by default"
+        - "Mount the cluster's injected trusted CA bundle as NODE_EXTRA_CA_CERTS under openshift.trustedCABundle.enabled, disabled by default"
+        - "Allow OpenShift's DNS port 5353 and API server port 6443 in the NetworkPolicy under networkPolicy.enabled when the cluster is OpenShift, including on an existing install"
+        - "Add optional OpenShift Topology labels under openshift.topology.partOf and openshift.topology.runtime"
+        - "Add a helm test hook pod that checks the health route through the Service"
+        - "Add the charts.openshift.io annotations the OpenShift console catalog reads"
+      artifacthub.io/containsSecurityUpdates: "false"
+      artifacthub.io/images: |
+        - name: libredb-studio
+          image: ghcr.io/libredb/libredb-studio:1.1.0
+          platforms:
+            - linux/amd64
+            - linux/arm64
+      artifacthub.io/license: MIT
+      artifacthub.io/links: |
+        - name: Documentation
+          url: https://github.com/libredb/libredb-studio#readme
+        - name: Container Image
+          url: https://github.com/libredb/libredb-studio/pkgs/container/libredb-studio
+        - name: Source
+          url: https://github.com/libredb/libredb-studio
+      artifacthub.io/prerelease: "false"
+      charts.openshift.io/name: LibreDB Studio
+      charts.openshift.io/provider: LibreDB
+      charts.openshift.io/providerType: community
+      charts.openshift.io/supportURL: https://github.com/libredb/libredb-studio/issues
+    apiVersion: v2
+    appVersion: 1.1.0
+    created: "2026-10-29T02:42:27.130719359Z"
+    dependencies:
+    - condition: postgresql.enabled
+      name: postgresql
+      repository: https://charts.bitnami.com/bitnami
+      version: 16.x.x
+    description: Web-based SQL IDE for cloud-native teams supporting forty-two engines
+      - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis,
+      Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino,
+      BigQuery, Snowflake, Apache Spark, Apache Cassandra, libSQL, Prometheus, Apache
+      Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, Weaviate, InfluxDB, InfluxDB
+      3, Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA, MTConnect,
+      Modbus, NETCONF, SNMP and Sparkplug B
+    digest: ffb01330f3e81c11baddc237fc365ac7afa17875cc2ea6d5211c5aabc1341b64
+    home: https://github.com/libredb/libredb-studio
+    icon: https://raw.githubusercontent.com/libredb/libredb-studio/main/public/logo.svg
+    keywords:
+    - sql
+    - ide
+    - database
+    - postgresql
+    - mysql
+    - mongodb
+    - redis
+    - sqlite
+    - oracle
+    - mssql
+    - couchbase
+    - clickhouse
+    - druid
+    - elasticsearch
+    - opensearch
+    - trino
+    - cassandra
+    - libsql
+    - turso
+    - duckdb
+    - prometheus
+    - promql
+    - kafka
+    - etcd
+    - db2
+    - ibm-db2
+    - neo4j
+    - cypher
+    - victoriametrics
+    - redpanda
+    - milvus
+    - qdrant
+    - weaviate
+    - influxdb
+    - influxql
+    - influxdb3
+    - oxia
+    - databend
+    - s3
+    - object-storage
+    - minio
+    - kubernetes
+    - bigquery
+    - snowflake
+    - spark
+    - mqtt
+    - firestore
+    - rabbitmq
+    - amqp
+    - opcua
+    - mtconnect
+    - modbus
+    - netconf
+    - snmp
+    - sparkplug
+    - web-ide
+    kubeVersion: '>=1.26.0-0'
+    maintainers:
+    - name: cevheri
+      url: https://github.com/cevheri
+    name: libredb-studio
+    sources:
+    - https://github.com/libredb/libredb-studio
+    type: application
+    urls:
+    - https://github.com/libredb/libredb-studio/releases/download/libredb-studio-0.1.110/libredb-studio-0.1.110.tgz
+    version: 0.1.110
+  - annotations:
+      artifacthub.io/category: database
+      artifacthub.io/changes: |
         - "Stop the old pod before creating the new one when one pod holds the /app/data volume claim, so an upgrade on a ReadWriteOnce volume attached to another node no longer stalls until helm --wait gives up"
       artifacthub.io/containsSecurityUpdates: "false"
       artifacthub.io/images: |
@@ -8005,4 +8120,4 @@ entries:
     urls:
     - https://github.com/libredb/libredb-studio/releases/download/libredb-studio-0.1.0/libredb-studio-0.1.0.tgz
     version: 0.1.0
-generated: "2026-10-28T16:26:41.026969082Z"
+generated: "2026-10-29T02:42:27.12411522Z"
