@@ -13,7 +13,17 @@ import type { DatabaseProvider } from "@/lib/db/types";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import { CouchbaseProvider } from "@/lib/db/providers/document/couchbase";
 import { COUCHBASE_CONTAINER_LEVELS, COUCHBASE_OBJECT_KINDS } from "@/lib/db/providers/document/couchbase/objects";
-import { AuthenticationError, ConnectionError, DatabaseConfigError, QueryError, TimeoutError } from "@/lib/db/errors";
+import {
+  AuthenticationError,
+  ConnectionError,
+  DatabaseConfigError,
+  ExecutionProfileError,
+  QueryError,
+  RefusedBeforeSendError,
+  TimeoutError,
+} from "@/lib/db/errors";
+import type { CouchbaseHttpTransportDeps } from "@/lib/db/providers/document/couchbase/http-transport";
+import { type NodeRequest, TransportError } from "@/lib/db/http/node-transport";
 import {
   declaredKinds,
   isSourcePartUnavailable,
@@ -2439,5 +2449,296 @@ describe("endOpenQueryTransaction()", () => {
     // tell the next reader to stop looking. What is missing is a way to name it: the HTTP
     // transport sends no `txid` field.
     expect(ABSENCES.filter((absence) => doc.includes(absence))).toEqual(["the driver cannot be asked"]);
+  });
+});
+
+// ============================================================================
+// The agent read-only profile (tests/fixtures/couchbase/8.0.2/agent-boundary/)
+// ============================================================================
+
+describe("CouchbaseProvider agent read-only profile", () => {
+  const AGENT_PROFILE = { readOnly: true, sendsStatements: true } as const;
+  const BUDGET = { statementTimeoutMs: 5000, maxResultRows: 3, maxResultBytes: 4096 };
+  const SELECT_ONLY = { role: "query_select", bucket_name: BUCKET, scope_name: "*", collection_name: "*" };
+  const PROBE_PREFIX = 'DELETE FROM `_default` USE KEYS "libredb-agent-probe-';
+  const MISSING_DELETE = errorPayload(
+    13014,
+    "User does not have credentials to run DELETE queries on default:travel._default._default. Add role query_delete on default:travel._default._default to allow the statement to run.",
+  );
+
+  interface Sent {
+    url: string;
+    method: string;
+    body: Record<string, unknown> | null;
+    maxResponseBytes: number;
+    signal: AbortSignal;
+  }
+
+  /** The cluster the agent path talks to: GET /whoami, the discovery read, the probe and the statement. */
+  interface AgentCluster {
+    sent: Sent[];
+    built: number;
+    closed: number;
+    roles: unknown[];
+    probe: { status: number; payload: unknown } | Error;
+    statement: (statement: string) => { status: number; payload: unknown } | Error;
+  }
+
+  function agentCluster(): AgentCluster {
+    return {
+      sent: [],
+      built: 0,
+      closed: 0,
+      roles: [SELECT_ONLY],
+      probe: { status: 401, payload: MISSING_DELETE },
+      statement: () => ({ status: 200, payload: queryPayload([{ n: 1 }, { n: 2 }], { signature: { n: "json" } }) }),
+    };
+  }
+
+  function nodeTransports(cluster: AgentCluster): CouchbaseHttpTransportDeps {
+    return {
+      createNodeTransport: () => {
+        cluster.built++;
+        return {
+          request: async (request: NodeRequest) => {
+            const path = new URL(request.url).pathname;
+            const body = request.body === undefined ? null : (JSON.parse(request.body) as Record<string, unknown>);
+            cluster.sent.push({
+              url: request.url,
+              method: request.method,
+              body,
+              maxResponseBytes: request.maxResponseBytes,
+              signal: request.signal,
+            });
+            let answer: { status: number; payload: unknown } | Error;
+            if (path === "/whoami") answer = { status: 200, payload: { roles: cluster.roles, id: "agent_ro" } };
+            else if (path === "/pools/default/nodeServices") answer = { status: 200, payload: NODE_SERVICES };
+            else if (String(body?.statement).startsWith(PROBE_PREFIX)) answer = cluster.probe;
+            else answer = cluster.statement(String(body?.statement));
+            if (answer instanceof Error) throw answer;
+            return {
+              status: answer.status,
+              contentType: "application/json",
+              retryAfter: null,
+              text: JSON.stringify(answer.payload),
+            };
+          },
+          close: () => {
+            cluster.closed++;
+          },
+        };
+      },
+    };
+  }
+
+  async function agentProvider(
+    cluster: AgentCluster,
+    execution: { readOnly?: boolean; sendsStatements?: boolean } = AGENT_PROFILE,
+  ): Promise<CouchbaseProvider> {
+    const provider = new CouchbaseProvider(
+      makeConnection({ user: "agent_ro" }),
+      {},
+      execution,
+      nodeTransports(cluster),
+    );
+    await provider.connect();
+    return provider;
+  }
+
+  /** What one checked agent call sends, after the open's own check. */
+  const paths = (sent: Sent[]) =>
+    sent.map((request) => {
+      const statement = request.body?.statement;
+      if (typeof statement !== "string") return `${request.method} ${new URL(request.url).pathname}`;
+      return statement.startsWith(PROBE_PREFIX) ? "probe" : statement;
+    });
+
+  test("an editor handle refuses queryReadOnly before anything is sent", async () => {
+    const cluster = agentCluster();
+    const provider = await agentProvider(cluster, {});
+    await expect(provider.queryReadOnly("SELECT 1 AS a", BUDGET)).rejects.toThrow(
+      new RefusedBeforeSendError(
+        "Read-only execution requires a provider opened under the agent read-only profile",
+        "couchbase",
+        "SELECT 1 AS a",
+      ),
+    );
+    expect(cluster.sent).toEqual([]);
+  });
+
+  test("the operations profile opens a privileged user with no check, and refuses queryReadOnly", async () => {
+    const cluster = agentCluster();
+    cluster.roles = [{ role: "admin" }];
+    const provider = await agentProvider(cluster, { readOnly: true, sendsStatements: false });
+    expect(provider.isConnected()).toBe(true);
+    await expect(provider.queryReadOnly("SELECT 1 AS a", BUDGET)).rejects.toBeInstanceOf(RefusedBeforeSendError);
+    expect(cluster.sent).toEqual([]);
+  });
+
+  test("the open of a handle that sends statements checks the user: GET /whoami, then the probe", async () => {
+    const cluster = agentCluster();
+    await agentProvider(cluster);
+    expect(paths(cluster.sent)).toEqual(["GET /whoami", "GET /pools/default/nodeServices", "probe"]);
+    const probe = cluster.sent[2];
+    expect(probe.url).toBe("http://127.0.0.1:8093/query/service");
+    expect(Object.keys(probe.body ?? {})).toEqual([
+      "statement",
+      "timeout",
+      "readonly",
+      "scan_consistency",
+      "query_context",
+    ]);
+    expect(probe.body).toMatchObject({
+      timeout: "15000ms",
+      readonly: false,
+      scan_consistency: "request_plus",
+      query_context: "default:`travel`",
+    });
+    expect(String(probe.body?.statement)).toMatch(/^DELETE FROM `_default` USE KEYS "libredb-agent-probe-[0-9a-f]{24}"$/);
+    expect(cluster.sent.map((request) => request.maxResponseBytes)).toEqual([65536, 65536, 65536]);
+  });
+
+  test("the open refuses a user holding more than query_select, and closes what it opened", async () => {
+    const cluster = agentCluster();
+    cluster.roles = [SELECT_ONLY, { role: "data_writer", bucket_name: BUCKET, scope_name: "*", collection_name: "*" }];
+    const provider = new CouchbaseProvider(makeConnection({ user: "agent_ro" }), {}, AGENT_PROFILE, nodeTransports(cluster));
+    const failure = await provider.connect().catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(ExecutionProfileError);
+    expect((failure as ExecutionProfileError).reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+    expect(provider.isConnected()).toBe(false);
+    expect(cluster.closed).toBe(cluster.built);
+  });
+
+  test("sends one statement after a fresh check of its own, with its full request text", async () => {
+    const cluster = agentCluster();
+    const provider = await agentProvider(cluster);
+    cluster.sent = [];
+
+    const result = await provider.queryReadOnly("SELECT d.n FROM `_default` AS d", BUDGET);
+
+    expect(result.rows).toEqual([{ n: 1 }, { n: 2 }]);
+    expect(result.fields).toEqual(["n"]);
+    expect(paths(cluster.sent)).toEqual(["GET /whoami", "probe", "SELECT d.n FROM `_default` AS d"]);
+    const statement = cluster.sent[2];
+    expect(statement.body).toEqual({
+      statement: "SELECT d.n FROM `_default` AS d",
+      timeout: "5000ms",
+      readonly: true,
+      scan_consistency: "request_plus",
+      query_context: "default:`travel`",
+    });
+    expect(statement.maxResponseBytes).toBe(2 * 4096 + 65536);
+    // One deadline bounds the whole call: the check and the statement wait on the same signal.
+    expect(new Set(cluster.sent.map((request) => request.signal)).size).toBe(1);
+  });
+
+  test("keeps no verdict: a role added between calls refuses the next, and taking it away admits the one after", async () => {
+    const cluster = agentCluster();
+    const provider = await agentProvider(cluster);
+
+    await provider.queryReadOnly("SELECT 1 AS a", BUDGET);
+    cluster.roles = [SELECT_ONLY, { role: "query_external_access" }];
+    cluster.sent = [];
+    const refused = await provider.queryReadOnly("SELECT 1 AS a", BUDGET).catch((error: unknown) => error);
+    expect(refused).toBeInstanceOf(ExecutionProfileError);
+    expect((refused as Error).message).toContain("query_external_access");
+    expect(paths(cluster.sent)).toEqual(["GET /whoami"]);
+
+    cluster.roles = [SELECT_ONLY];
+    await expect(provider.queryReadOnly("SELECT 1 AS a", BUDGET)).resolves.toMatchObject({ rowCount: 2 });
+  });
+
+  test("a check that cannot be read is the environment's failure, never the statement's", async () => {
+    const cluster = agentCluster();
+    const provider = await agentProvider(cluster);
+    cluster.probe = new TransportError("network", "The connection closed before the answer ended");
+    const failure = await provider.queryReadOnly("SELECT 1 AS a", BUDGET).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(ConnectionError);
+    expect(failure).not.toBeInstanceOf(ExecutionProfileError);
+    expect((failure as Error).message).toStartWith(
+      "The agent read-only execution profile's check of the Couchbase user could not be read: ",
+    );
+    expect((failure as Error).message).toContain("The connection closed before the answer ended");
+  });
+
+  test.each([
+    ["UPDATE STATISTICS FOR `_default` INDEX ALL", "does not begin with SELECT or WITH"],
+    ["EXECUTE admin_p", "does not begin with SELECT or WITH"],
+    ["SELECT 1 AS a; DELETE FROM `_default`", "goes on after its first statement's semicolon"],
+    ["-- x\rDELETE FROM `_default`", "carriage return inside a -- comment"],
+  ])("refuses %j before anything is sent", async (sql, reason) => {
+    const cluster = agentCluster();
+    const provider = await agentProvider(cluster);
+    cluster.sent = [];
+    const failure = await provider.queryReadOnly(sql, BUDGET).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(RefusedBeforeSendError);
+    expect((failure as Error).message).toContain(reason);
+    expect(cluster.sent).toEqual([]);
+  });
+
+  test("composes no estimating plan, and refuses an invalid budget, before anything is sent", async () => {
+    const cluster = agentCluster();
+    const provider = await agentProvider(cluster);
+    cluster.sent = [];
+    await expect(provider.queryReadOnly("SELECT 1 AS a", BUDGET, "estimate-plan")).rejects.toThrow(
+      "Couchbase composes no estimating plan for the agent",
+    );
+    await expect(provider.queryReadOnly("SELECT 1 AS a", { ...BUDGET, maxResultRows: 0 })).rejects.toThrow();
+    expect(cluster.sent).toEqual([]);
+  });
+
+  test("refuses a result past the row budget rather than cutting it", async () => {
+    const cluster = agentCluster();
+    cluster.statement = () => ({ status: 200, payload: queryPayload([{ n: 1 }, { n: 2 }, { n: 3 }, { n: 4 }]) });
+    const provider = await agentProvider(cluster);
+    await expect(provider.queryReadOnly("SELECT d.n FROM `_default` AS d", BUDGET)).rejects.toThrow(
+      new QueryError("Read-only execution exceeded the row budget: 4 rows > 3 allowed", "couchbase"),
+    );
+  });
+
+  test("refuses a result past the byte budget, as rows and as an answer cut by the transport", async () => {
+    const cluster = agentCluster();
+    cluster.statement = () => ({ status: 200, payload: queryPayload([{ text: "x".repeat(5000) }]) });
+    const provider = await agentProvider(cluster);
+    await expect(provider.queryReadOnly("SELECT d.text FROM `_default` AS d", BUDGET)).rejects.toThrow(
+      /^Read-only execution exceeded the byte budget: 50\d\d bytes > 4096 allowed$/,
+    );
+
+    cluster.statement = () => new TransportError("too-large", "The answer passed its byte cap");
+    await expect(provider.queryReadOnly("SELECT d.text FROM `_default` AS d", BUDGET)).rejects.toThrow(
+      "Read-only execution exceeded the byte budget: 73728 bytes > 4096 allowed; the server's answer passed that many bytes and was not read further",
+    );
+  });
+
+  test("refuses on the time budget at its own deadline and at the server's timeout", async () => {
+    const cluster = agentCluster();
+    const provider = await agentProvider(cluster);
+    cluster.statement = () => new TransportError("timeout", "no answer");
+    await expect(provider.queryReadOnly("SELECT 1 AS a", BUDGET)).rejects.toThrow(
+      "Read-only execution exceeded the time budget: no answer within 5000ms",
+    );
+    cluster.statement = () => ({ status: 200, payload: errorPayload(1080, "Timeout 5s exceeded") });
+    await expect(provider.queryReadOnly("SELECT 1 AS a", BUDGET)).rejects.toThrow(
+      "Read-only execution exceeded the time budget: no answer within 5000ms",
+    );
+  });
+
+  test("a statement the user's role does not allow is the statement's failure, so the agent can repair it", async () => {
+    const cluster = agentCluster();
+    cluster.statement = () => ({
+      status: 401,
+      payload: errorPayload(13014, "User does not have credentials to run SELECT queries on default:other."),
+    });
+    const provider = await agentProvider(cluster);
+    const failure = await provider.queryReadOnly("SELECT d.n FROM default:`other` AS d", BUDGET).catch((e: unknown) => e);
+    expect(failure).toBeInstanceOf(QueryError);
+    expect((failure as Error).message).toBe("User does not have credentials to run SELECT queries on default:other.");
+  });
+
+  test("a statement the cluster refuses otherwise keeps the editor's mapping", async () => {
+    const cluster = agentCluster();
+    cluster.statement = () => ({ status: 400, payload: errorPayload(3000, "syntax error") });
+    const provider = await agentProvider(cluster);
+    await expect(provider.queryReadOnly("SELECT 1 AS", BUDGET)).rejects.toThrow(new QueryError("syntax error"));
   });
 });

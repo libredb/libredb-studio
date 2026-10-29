@@ -19,8 +19,11 @@
  *   monitoring keyspaces need the "Query System Catalog" RBAC role, so a denied
  *   read is the NORMAL case for a restricted user and must not break an
  *   otherwise working connection.
+ * - Agent statements (`queryReadOnly`) run only on a handle opened under the agent read-only profile, for a user whose
+ *   only role is query_select on the connection's bucket, checked before every statement (`agent-boundary.ts`).
  */
 
+import { randomBytes } from "node:crypto";
 import { safeDecodeURIComponent } from "@/lib/db/connection-string/shared";
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import {
@@ -30,7 +33,16 @@ import {
   declaredKinds,
   findKind,
 } from "@/lib/db/object-kinds";
-import { AuthenticationError, ConnectionError, DatabaseConfigError, QueryError, TimeoutError } from "@/lib/db/errors";
+import {
+  AuthenticationError,
+  ConnectionError,
+  DatabaseConfigError,
+  ExecutionProfileError,
+  QueryError,
+  RefusedBeforeSendError,
+  TimeoutError,
+} from "@/lib/db/errors";
+import { TransportError } from "@/lib/db/http/node-transport";
 import {
   type ActiveSession,
   type ActiveSessionDetails,
@@ -50,10 +62,13 @@ import {
   type PerformanceMetrics,
   type PreparedQuery,
   type ProviderCapabilities,
+  type ProviderExecutionContext,
   type ProviderLabels,
   type ProviderOptions,
   type QueryPrepareOptions,
   type QueryResult,
+  type ReadOnlyStatementBudget,
+  type ReadOnlyStatementMode,
   type SlowQuery,
   type SlowQueryStats,
   type StorageStats,
@@ -63,7 +78,15 @@ import { formatCacheHitRatio } from "@/lib/monitoring-cache-ratio";
 import { formatBytes } from "@/lib/db/utils/pool-manager";
 import { applyQueryLimit, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "@/lib/db/utils/query-limiter";
 import { unionFields, uniquelyKeyedRows } from "@/lib/db/utils/result-fields";
-import { CouchbaseHttpTransport } from "./http-transport";
+import {
+  assertReadOnlyBudget,
+  byteBudgetSentence,
+  measureResultBytes,
+  rowBudgetSentence,
+  TIME_BUDGET_PREFIX,
+} from "@/lib/db/providers/sql/read-only-budget";
+import { couchbaseAgentStatementRefusal, verifyCouchbaseAgentProfile } from "./agent-boundary";
+import { CouchbaseHttpTransport, type CouchbaseHttpTransportDeps } from "./http-transport";
 import { CATALOG_TIMEOUT_MS, inferColumns, inferColumnsEach } from "./introspect";
 import { COUCHBASE_DEFAULT_SCOPE, keyspaceFromDisplayName, keyspacePath, quoteIdentifier } from "./keyspace";
 import {
@@ -131,6 +154,19 @@ const COUCHBASE_RAW_VALUE_COLUMN = "__value";
 const NO_INDEX_CODE = 4000;
 const REQUEST_TIMEOUT_CODE = 1080;
 const MISSING_CREDENTIALS_CODE = 13014;
+
+/** The most bytes an answer of the agent check may hold: a role listing or a refusal. */
+const AGENT_CHECK_MAX_BYTES = 65536;
+
+/** The deadline of the check at the open of a handle that sends statements. */
+const AGENT_OPEN_CHECK_TIMEOUT_MS = 15000;
+
+/**
+ * Bytes an agent statement's answer may hold past twice its byte budget: the envelope around the rows (signature,
+ * status, metrics) and the server's own whitespace. Past this cap the transport stops reading and the call is refused
+ * on the byte budget; under it, the rows themselves are measured against the budget.
+ */
+const AGENT_ENVELOPE_BYTES = 65536;
 
 /** HTTP codes the transport normalizes into the same numeric space. */
 const HTTP_UNAUTHORIZED = 401;
@@ -319,8 +355,26 @@ function indexColumns(row: CouchbaseRow): string[] {
 export class CouchbaseProvider extends BaseDatabaseProvider {
   private transport: CouchbaseTransport | null = null;
 
-  constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
+  /**
+   * Whether this provider was opened to send an agent's statements: under an execution profile (`readOnly`) whose
+   * acquisition calls `queryReadOnly` (`sendsStatements`). Only then does the open check the user
+   * (`verifyCouchbaseAgentProfile` in `agent-boundary.ts`) and does `queryReadOnly` answer. The operations profile
+   * sends no statement, so plan mode keeps grounding on a connection whose user is privileged.
+   */
+  private readonly readOnlyProfile: boolean;
+
+  /**
+   * `transportDeps` is the test seam of the transport the open builds: the factory passes three arguments, so a real
+   * connection always builds its own.
+   */
+  constructor(
+    config: DatabaseConnection,
+    options: ProviderOptions = {},
+    execution: ProviderExecutionContext = {},
+    private readonly transportDeps: CouchbaseHttpTransportDeps = {},
+  ) {
     super(config, options);
+    this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
     this.validate();
   }
 
@@ -442,7 +496,7 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
 
   public async connect(): Promise<void> {
     this.validate();
-    const transport = new CouchbaseHttpTransport(this.transportConfig());
+    const transport = new CouchbaseHttpTransport(this.transportConfig(), this.transportDeps);
 
     try {
       // Cheapest proof that the cluster is reachable AND the credentials work:
@@ -451,9 +505,12 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
       // The pools read says nothing about the bucket this connection is scoped to,
       // so the bucket's own path is asked next (see assertBucketExists).
       await this.assertBucketExists(transport);
+      // A handle that will send an agent's statements checks its user at the open, so an acquisition the user cannot
+      // serve is refused before any statement; every call checks it again.
+      if (this.readOnlyProfile) await this.verifyAgentUser(transport, AbortSignal.timeout(AGENT_OPEN_CHECK_TIMEOUT_MS));
     } catch (error) {
       await transport.close();
-      const failure = this.describeConnectFailure(error);
+      const failure = error instanceof ExecutionProfileError ? error : this.describeConnectFailure(error);
       this.setError(failure);
       throw failure;
     }
@@ -556,6 +613,133 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
       });
       return this.toQueryResult(result, executionTime);
     });
+  }
+
+  /**
+   * One agent statement under the read-only profile.
+   *
+   * The boundary is the user's: one whose only role is query_select on the connection's bucket is refused every write,
+   * DDL, GRANT, function call, CURL() and sequence statement by the query service, and the check proves the user is
+   * such a user on a server that enforces it (`agent-boundary.ts`). The check runs again before every statement,
+   * keeping no verdict between calls, so a role added after one call refuses the next and a role taken away admits it.
+   *
+   * Only one statement whose first keyword is SELECT or WITH is sent (`couchbaseAgentStatementRefusal`), anything else
+   * refused before anything is sent, because such a user may still run UPDATE STATISTICS, BEGIN WORK, PREPARE and the
+   * EXECUTE of another user's prepared statement. The statement goes out on a request of its own through the shared
+   * node transport, with `readonly: true` as defence in depth only, the budget's timeout on the server, and nothing a
+   * previous request set: no arguments, transaction id or prepared name, and the scan consistency and query context
+   * written into every request. One deadline, the budget's, bounds the check and the statement together; the server
+   * stops the statement at its own timeout, and the client's deadline ends the wait, not the work.
+   *
+   * Budgets refuse rather than truncate: an answer past twice the byte budget and its envelope is not read further,
+   * and a result past the row or the byte budget is refused. Refused outside the profile and for an estimating plan,
+   * which the agent does not compose here.
+   */
+  public async queryReadOnly(
+    sql: string,
+    budget: ReadOnlyStatementBudget,
+    mode: ReadOnlyStatementMode = "execute",
+  ): Promise<QueryResult> {
+    const transport = this.requireTransport();
+    if (!this.readOnlyProfile) {
+      throw new RefusedBeforeSendError(
+        "Read-only execution requires a provider opened under the agent read-only profile",
+        this.type,
+        sql,
+      );
+    }
+    assertReadOnlyBudget(budget, this.type);
+    if (mode !== "execute") {
+      throw new RefusedBeforeSendError("Couchbase composes no estimating plan for the agent", this.type, sql);
+    }
+    const fenced = couchbaseAgentStatementRefusal(sql);
+    if (fenced !== null) throw new RefusedBeforeSendError(fenced, this.type, sql);
+
+    return this.trackQuery(async () => {
+      const { result, executionTime } = await this.measureExecution(async () => {
+        const signal = AbortSignal.timeout(budget.statementTimeoutMs);
+        await this.verifyAgentUser(transport, signal).catch((error: unknown) => {
+          if (error instanceof ExecutionProfileError) throw error;
+          // The environment's failure, not the statement's: the agent must not offer it to the model as one to repair.
+          throw new ConnectionError(
+            `The agent read-only execution profile's check of the Couchbase user could not be read: ${this.mapCouchbaseError(error).message}`,
+            this.type,
+            this.config.host,
+            this.config.port,
+          );
+        });
+        const maxResponseBytes = 2 * budget.maxResultBytes + AGENT_ENVELOPE_BYTES;
+        return transport
+          .agentQuery(sql, { signal, maxResponseBytes, timeoutMs: budget.statementTimeoutMs, readonly: true })
+          .catch((error: unknown) => {
+            throw this.mapAgentStatementError(error, sql, budget, maxResponseBytes);
+          });
+      });
+      return this.readAgentAnswer(result, executionTime, budget, sql);
+    });
+  }
+
+  /** The check of the agent user, on the transport the statement goes out on, under `signal`. */
+  private verifyAgentUser(transport: CouchbaseTransport, signal: AbortSignal): Promise<void> {
+    const bounds = { signal, maxResponseBytes: AGENT_CHECK_MAX_BYTES };
+    return verifyCouchbaseAgentProfile(
+      {
+        whoami: () => transport.whoami(bounds),
+        probe: (statement) =>
+          transport.agentQuery(statement, { ...bounds, timeoutMs: AGENT_OPEN_CHECK_TIMEOUT_MS, readonly: false }),
+      },
+      {
+        user: this.config.user ?? "",
+        bucket: this.bucket,
+        // The probe's key carries a fresh suffix each time, so no document anyone wrote can be the one it names.
+        nonce: randomBytes(12).toString("hex"),
+      },
+    );
+  }
+
+  /** An agent statement's failure: a budget refusal, a statement the user's role does not allow, or the editor's mapping. */
+  private mapAgentStatementError(
+    error: unknown,
+    sql: string,
+    budget: ReadOnlyStatementBudget,
+    maxResponseBytes: number,
+  ): Error {
+    const timedOut =
+      (error instanceof TransportError && error.kind === "timeout") ||
+      (error instanceof CouchbaseError && error.code === REQUEST_TIMEOUT_CODE);
+    if (timedOut) {
+      return new QueryError(`${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`, this.type, sql);
+    }
+    if (error instanceof TransportError && error.kind === "too-large") {
+      return new QueryError(
+        `${byteBudgetSentence(maxResponseBytes, budget.maxResultBytes)}; the server's answer passed that many bytes and was not read further`,
+        this.type,
+        sql,
+      );
+    }
+    // A statement the user's role does not allow, such as a read of another bucket, is the statement's to repair.
+    if (error instanceof CouchbaseError && error.code === MISSING_CREDENTIALS_CODE) {
+      return new QueryError(error.message, this.type, sql);
+    }
+    return this.mapCouchbaseError(error, sql);
+  }
+
+  /** The agent's result, or the shared refusal: held to both budgets, never cut. */
+  private readAgentAnswer(
+    result: CouchbaseQueryResult,
+    executionTime: number,
+    budget: ReadOnlyStatementBudget,
+    sql: string,
+  ): QueryResult {
+    if (result.rows.length > budget.maxResultRows) {
+      throw new QueryError(rowBudgetSentence(result.rows.length, budget.maxResultRows), this.type, sql);
+    }
+    const answer = this.toQueryResult(result, executionTime);
+    const bytes = measureResultBytes(answer.rows);
+    if (bytes > budget.maxResultBytes) {
+      throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), this.type, sql);
+    }
+    return answer;
   }
 
   /**

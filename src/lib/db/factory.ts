@@ -374,7 +374,7 @@ export async function createDatabaseProvider(
       // analysable: a bare directory resolves only at runtime, which the bundler
       // cannot trace into a chunk.
       const { CouchbaseProvider } = await import("./providers/document/couchbase/index");
-      return new CouchbaseProvider(connection, options);
+      return new CouchbaseProvider(connection, options, execution);
     }
 
     case "firestore": {
