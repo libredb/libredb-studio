@@ -75,6 +75,7 @@
  */
 
 import { SQLBaseProvider } from "../sql-base";
+import { assertReadOnlyBudget, byteBudgetSentence, rowBudgetSentence, TIME_BUDGET_PREFIX } from "../read-only-budget";
 import {
   AuthenticationError,
   ConnectionError,
@@ -112,10 +113,13 @@ import {
   type PerformanceMetrics,
   type PreparedQuery,
   type ProviderCapabilities,
+  type ProviderExecutionContext,
   type ProviderLabels,
   type ProviderOptions,
   type QueryPrepareOptions,
   type QueryResult,
+  type ReadOnlyStatementBudget,
+  type ReadOnlyStatementMode,
   type SlowQueryStats,
   type StorageStats,
   type TableStats,
@@ -125,6 +129,7 @@ import { formatBytes } from "@/lib/db/utils/pool-manager";
 import { SearchHttpTransport } from "./http-transport";
 import { isSystemIndex, toColumns } from "./introspect";
 import {
+  SearchBoundsError,
   type SearchClusterHealth,
   type SearchDialectId,
   type SearchErrorCategory,
@@ -299,6 +304,22 @@ interface SearchProduct {
    * "SQL" alone did not survive contact with the model's prior about this engine.
    */
   readonly statementLanguage: string;
+
+  /**
+   * Whether the product's SQL endpoint answers queries alone, whatever statement it is sent: the boundary the agent
+   * read-only profile runs on, since that endpoint carries free statement text and no credential is asked to hold it.
+   *
+   * Elasticsearch 9.1.4: true, and checked in rather than asserted. Twenty write and DDL statements sent raw to the
+   * endpoint on a node with security disabled (INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, TRUNCATE, MERGE, a write
+   * behind EXPLAIN, DEBUG or WITH, SELECT ... INTO, a second statement) each answered 400 `parsing_exception`, and the
+   * cluster read back unchanged after each (`tests/fixtures/elasticsearch/9.1.4/write-refusal/`).
+   *
+   * OpenSearch 3.8.0: false. Its grammar holds a DELETE that the `plugins.sql.delete.enabled` setting turns on, so
+   * the endpoint is query-only only on a cluster that keeps the setting off, which nothing here proves.
+   *
+   * `readOnlyStatement` is the only reader.
+   */
+  readonly queryOnlySqlEndpoint: boolean;
 }
 
 export const ELASTICSEARCH_PRODUCT: SearchProduct = Object.freeze({
@@ -309,6 +330,7 @@ export const ELASTICSEARCH_PRODUCT: SearchProduct = Object.freeze({
   unprojectableTypes: Object.freeze(["flattened"]),
   statementLanguage:
     "Elasticsearch SQL, the product's own SQL endpoint - NOT the JSON query DSL, NOT an aggregation body, and NOT ES|QL",
+  queryOnlySqlEndpoint: true,
 });
 
 export const OPENSEARCH_PRODUCT: SearchProduct = Object.freeze({
@@ -319,6 +341,7 @@ export const OPENSEARCH_PRODUCT: SearchProduct = Object.freeze({
   unprojectableTypes: Object.freeze(["flat_object", "unsigned_long", "version"]),
   statementLanguage:
     "OpenSearch SQL, the SQL plugin's own dialect - NOT the JSON query DSL, NOT an aggregation body, and NOT PPL",
+  queryOnlySqlEndpoint: false,
 });
 
 // ============================================================================
@@ -697,9 +720,22 @@ abstract class SearchProvider extends SQLBaseProvider {
 
   protected readonly product: SearchProduct;
 
-  protected constructor(product: SearchProduct, config: DatabaseConnection, options: ProviderOptions = {}) {
+  /**
+   * Whether this provider was opened to send an agent's statements: under an execution profile (`readOnly`) whose
+   * acquisition calls `queryReadOnly` (`sendsStatements`). Only then does `readOnlyStatement` answer. The operations
+   * profile's acquisitions send no statement, so they open as an editor connection does.
+   */
+  private readonly readOnlyProfile: boolean;
+
+  protected constructor(
+    product: SearchProduct,
+    config: DatabaseConnection,
+    options: ProviderOptions = {},
+    execution: ProviderExecutionContext = {},
+  ) {
     super(config, options);
     this.product = product;
+    this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
     this.validate();
   }
 
@@ -1002,6 +1038,78 @@ abstract class SearchProvider extends SQLBaseProvider {
         try {
           return await transport.query(sql, this.deadline());
         } catch (error) {
+          throw this.mapSearchError(error, sql);
+        }
+      });
+
+      return toQueryResult(result, executionTime);
+    });
+  }
+
+  /**
+   * The agent read-only profile's statement path, shared so a second product can reach it, and named so that only a
+   * product class that declares `queryReadOnly` offers it: `engine-support.test.ts` and `agent-manifest.test.ts` read
+   * that method off each class, and OpenSearch, which shares this module, must keep answering "none" there.
+   *
+   * The boundary is the engine's, and it holds only where {@link SearchProduct.queryOnlySqlEndpoint} says it does:
+   * the endpoint's grammar refuses every write and DDL statement, so the statement goes out as written. Studio's own
+   * admission in front of it is defence in depth.
+   *
+   * Budgets refuse rather than truncate: the transport asks for one row past the row budget per page, follows the
+   * cursor only while the rows and their bytes stay inside both budgets, and closes the cursor before refusing. The
+   * deadline is the budget's and the client's alone, refused in the shared time-budget sentence; the cluster keeps
+   * working on a statement whose wait ended.
+   *
+   * Refused outside the profile: a provider opened for the editor has no business running agent semantics.
+   */
+  protected async readOnlyStatement(
+    sql: string,
+    budget: ReadOnlyStatementBudget,
+    mode: ReadOnlyStatementMode,
+  ): Promise<QueryResult> {
+    const transport = this.requireTransport();
+    if (!this.readOnlyProfile) {
+      throw new QueryError(
+        "Read-only execution requires a provider opened under the agent read-only profile",
+        this.type,
+        sql,
+      );
+    }
+    if (!this.product.queryOnlySqlEndpoint) {
+      throw new QueryError(
+        `${this.product.label} SQL is not a query-only endpoint, so the agent read-only profile has no boundary to run on here`,
+        this.type,
+        sql,
+      );
+    }
+    assertReadOnlyBudget(budget, this.type);
+    if (mode !== "execute") {
+      throw new QueryError(`${this.product.label} composes no estimating plan for the agent`, this.type, sql);
+    }
+
+    return this.trackQuery(async () => {
+      const { result, executionTime } = await this.measureExecution(async () => {
+        try {
+          return await transport.queryBounded(
+            sql,
+            { maxRows: budget.maxResultRows, maxBytes: budget.maxResultBytes },
+            AbortSignal.timeout(budget.statementTimeoutMs),
+          );
+        } catch (error) {
+          if (error instanceof SearchBoundsError) {
+            const sentence =
+              error.bound === "row"
+                ? rowBudgetSentence(error.measured, error.allowed)
+                : byteBudgetSentence(error.measured, error.allowed);
+            throw new QueryError(sentence, this.type, sql);
+          }
+          if (error instanceof SearchTransportError && error.category === "timeout") {
+            throw new QueryError(
+              `${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`,
+              this.type,
+              sql,
+            );
+          }
           throw this.mapSearchError(error, sql);
         }
       });
@@ -1781,8 +1889,20 @@ abstract class SearchProvider extends SQLBaseProvider {
  * rather than ES|QL.
  */
 export class ElasticsearchProvider extends SearchProvider {
-  constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
-    super(ELASTICSEARCH_PRODUCT, config, options);
+  constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderExecutionContext = {}) {
+    super(ELASTICSEARCH_PRODUCT, config, options, execution);
+  }
+
+  /**
+   * The agent read-only profile's statement path, over the shared mechanics in `readOnlyStatement`. Declared here and
+   * never on `SearchProvider`, so OpenSearch, whose endpoint is not query-only, keeps no `queryReadOnly`.
+   */
+  public queryReadOnly(
+    sql: string,
+    budget: ReadOnlyStatementBudget,
+    mode: ReadOnlyStatementMode = "execute",
+  ): Promise<QueryResult> {
+    return this.readOnlyStatement(sql, budget, mode);
   }
 }
 

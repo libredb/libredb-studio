@@ -35,8 +35,13 @@ import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
-import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
-import { ElasticsearchProvider } from "@/lib/db/providers/sql/search";
+import type {
+  DatabaseProvider,
+  ProviderCapabilities,
+  ProviderExecutionContext,
+  ReadOnlyStatementBudget,
+} from "@/lib/db/types";
+import { ElasticsearchProvider, OpenSearchProvider } from "@/lib/db/providers/sql/search";
 import { generateTableQuery } from "@/lib/query-generators";
 import { isSourcePartUnavailable } from "@/lib/db/object-kinds";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
@@ -3778,6 +3783,11 @@ describe("endOpenQueryTransaction()", () => {
   });
 });
 
+/** The agent read-only profile's acquisition: read-only, and it sends statements. */
+const AGENT_PROFILE: ProviderExecutionContext = { readOnly: true, sendsStatements: true };
+
+const AGENT_BUDGET: ReadOnlyStatementBudget = { statementTimeoutMs: 5_000, maxResultRows: 100, maxResultBytes: 65_536 };
+
 // ============================================================================
 // The grammar's write refusals, replayed
 // ============================================================================
@@ -3852,6 +3862,187 @@ describe("Elasticsearch 9.1.4's write refusals, replayed", () => {
       const request = sqlRequests().at(-1);
       expect(request?.body).toEqual({ ...entry.request.body, ...SQL_QUERY_OPTIONS });
       await provider.disconnect();
+
+      // And an agent read the grammar answers this way is refused in the engine's own words, never as rows.
+      const agent = new ElasticsearchProvider(makeConnection(), {}, AGENT_PROFILE);
+      replyFor = defaultReply;
+      await agent.connect();
+      overrideSql(fail(entry.status, entry.body));
+      const refused = await agent
+        .queryReadOnly(entry.request.body.query, AGENT_BUDGET)
+        .catch((caught: unknown) => caught);
+      expect(refused).toBeInstanceOf(QueryError);
+      expect((refused as Error).message).toContain(reason);
+      expect(sqlRequests().at(-1)?.body).toMatchObject(entry.request.body);
+      await agent.disconnect();
     },
   );
+});
+
+// ============================================================================
+// queryReadOnly: the agent read-only profile's statement path
+// ============================================================================
+
+describe("ElasticsearchProvider.queryReadOnly", () => {
+  async function agentProvider(execution: ProviderExecutionContext = AGENT_PROFILE): Promise<ElasticsearchProvider> {
+    const provider = new ElasticsearchProvider(makeConnection(), {}, execution);
+    await provider.connect();
+    return provider;
+  }
+
+  async function refusal(promise: Promise<unknown>): Promise<Error> {
+    const caught = await promise.catch((error: unknown) => error);
+    expect(caught).toBeInstanceOf(Error);
+    return caught as Error;
+  }
+
+  test("is Elasticsearch's alone: OpenSearch, which shares the module, declares none", () => {
+    expect(typeof ElasticsearchProvider.prototype.queryReadOnly).toBe("function");
+    expect((OpenSearchProvider.prototype as DatabaseProvider).queryReadOnly).toBeUndefined();
+  });
+
+  test("returns the rows of an answer inside the budget, asking for one row past the row budget", async () => {
+    const provider = await agentProvider();
+
+    const result = await provider.queryReadOnly("SELECT id, customer FROM probe_orders", AGENT_BUDGET);
+
+    expect(result.rows).toEqual([
+      { id: 1, customer: "acme", total: 9.5, created: "2026-08-19T00:00:00.000Z", note: "hi" },
+    ]);
+    expect(result.rowCount).toBe(1);
+    expect(result.fields).toEqual(["id", "customer", "total", "created", "note"]);
+    expect(result.columnTypes?.customer).toBe("keyword");
+    expect(sqlRequests().at(-1)?.body).toEqual({
+      query: "SELECT id, customer FROM probe_orders",
+      fetch_size: AGENT_BUDGET.maxResultRows + 1,
+      ...SQL_QUERY_OPTIONS,
+    });
+    // The budget's deadline, and it is the client's: the engine has no request field this path sends for one.
+    expect(armedDeadlines.at(-1)).toBe(AGENT_BUDGET.statementTimeoutMs);
+  });
+
+  test("refuses an answer past the row budget, after closing the cursor that answer left open", async () => {
+    const provider = await agentProvider();
+    overrideSql(ok(AGGREGATION_PAGE_ONE));
+
+    const error = await refusal(
+      provider.queryReadOnly("SELECT k, COUNT(*) FROM probe_buckets GROUP BY k", AGENT_BUDGET),
+    );
+
+    expect(error).toBeInstanceOf(QueryError);
+    expect(error.message).toBe(
+      `Read-only execution exceeded the row budget: 1000 rows > ${AGENT_BUDGET.maxResultRows} allowed`,
+    );
+    const close = sent.at(-1);
+    expect(close?.path).toBe("/_sql/close");
+    expect(close?.body).toEqual({ cursor: AGGREGATION_CURSOR });
+  });
+
+  test("refuses an answer past the byte budget", async () => {
+    const provider = await agentProvider();
+
+    const error = await refusal(
+      provider.queryReadOnly("SELECT id, customer, total, created, note FROM probe_orders", {
+        ...AGENT_BUDGET,
+        maxResultBytes: 10,
+      }),
+    );
+
+    expect(error).toBeInstanceOf(QueryError);
+    expect(error.message).toMatch(/^Read-only execution exceeded the byte budget: \d+ bytes > 10 allowed$/);
+  });
+
+  test("an engine refusal keeps the engine's words", async () => {
+    const provider = await agentProvider();
+    overrideSql(fail(400, MISSING_INDEX));
+
+    const error = await refusal(provider.queryReadOnly("SELECT * FROM nope_missing", AGENT_BUDGET));
+
+    expect(error).toBeInstanceOf(QueryError);
+    expect(error.message).toContain("Unknown index [nope_missing]");
+  });
+
+  test("a deadline that expires is the budget's, refused in the shared time-budget sentence", async () => {
+    const provider = await agentProvider();
+    abortReason = { use: true, reason: new DOMException("deadline", "TimeoutError") };
+
+    const error = await refusal(provider.queryReadOnly("SELECT 1", AGENT_BUDGET));
+
+    expect(error).toBeInstanceOf(QueryError);
+    expect(error.message).toBe(
+      `Read-only execution exceeded the time budget: no answer within ${AGENT_BUDGET.statementTimeoutMs}ms`,
+    );
+  });
+
+  test("a cancellation is not a deadline, and keeps the provider's own error", async () => {
+    const provider = await agentProvider();
+    abortReason = { use: true };
+
+    const error = await refusal(provider.queryReadOnly("SELECT 1", AGENT_BUDGET));
+
+    expect(error).toBeInstanceOf(QueryCancelledError);
+  });
+
+  test.each([
+    ["an editor handle", {}],
+    ["a read-only acquisition that sends no statement", { readOnly: true, sendsStatements: false }],
+  ] as const)("refuses on %s, with nothing sent", async (_name, execution) => {
+    const provider = await agentProvider(execution);
+    const before = sent.length;
+
+    const error = await refusal(provider.queryReadOnly("SELECT 1", AGENT_BUDGET));
+
+    expect(error).toBeInstanceOf(QueryError);
+    expect(error.message).toBe("Read-only execution requires a provider opened under the agent read-only profile");
+    expect(sent.length).toBe(before);
+  });
+
+  test("refuses a budget that is not a positive integer, with nothing sent", async () => {
+    const provider = await agentProvider();
+    const before = sent.length;
+
+    const error = await refusal(provider.queryReadOnly("SELECT 1", { ...AGENT_BUDGET, maxResultRows: 0 }));
+
+    expect(error.message).toContain("maxResultRows must be a positive integer");
+    expect(sent.length).toBe(before);
+  });
+
+  test("refuses the estimate-plan mode, with nothing sent: no plan is composed here", async () => {
+    const provider = await agentProvider();
+    const before = sent.length;
+
+    const error = await refusal(provider.queryReadOnly("SELECT 1", AGENT_BUDGET, "estimate-plan"));
+
+    expect(error).toBeInstanceOf(QueryError);
+    expect(error.message).toBe("Elasticsearch composes no estimating plan for the agent");
+    expect(sent.length).toBe(before);
+  });
+
+  test("refuses before a connect", async () => {
+    const provider = new ElasticsearchProvider(makeConnection(), {}, AGENT_PROFILE);
+
+    const error = await refusal(provider.queryReadOnly("SELECT 1", AGENT_BUDGET));
+
+    expect(error.message).toContain("not connected");
+    expect(sent).toHaveLength(0);
+  });
+
+  test("the shared statement path refuses a product whose SQL endpoint is not query-only", async () => {
+    // OpenSearch's grammar holds a DELETE that a cluster setting turns on, so its endpoint is not query-only and the
+    // shared path refuses it by that declaration, never by its type-id, even under the agent profile.
+    const provider = new OpenSearchProvider(makeConnection({ type: "opensearch" }));
+    replyFor = (request) => (request.path === "/_plugins/_sql" ? ok(PROBE_BODY) : defaultReply(request));
+    await provider.connect();
+    Object.assign(provider, { readOnlyProfile: true });
+    const before = sent.length;
+    const shared = (provider as unknown as { readOnlyStatement: ElasticsearchProvider["queryReadOnly"] })
+      .readOnlyStatement;
+
+    const error = await refusal(shared.call(provider, "SELECT 1", AGENT_BUDGET, "execute"));
+
+    expect(error.message).toBe(
+      "OpenSearch SQL is not a query-only endpoint, so the agent read-only profile has no boundary to run on here",
+    );
+    expect(sent.length).toBe(before);
+  });
 });

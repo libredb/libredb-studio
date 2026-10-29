@@ -162,6 +162,35 @@ export class SearchTransportError extends Error {
   }
 }
 
+/**
+ * A statement's answer that went past the bounds its caller set, refused rather than cut
+ * (`SearchTransport.queryBounded`).
+ *
+ * Not a `SearchTransportError`: the cluster answered and refused nothing, and the
+ * category table there describes the cluster's refusals alone. `measured` is what this
+ * client read when it stopped, so a row count is at least one past `allowed` and a byte
+ * count is at least the first byte past it; neither is the whole answer's size, which no
+ * one read.
+ */
+export class SearchBoundsError extends Error {
+  constructor(
+    readonly bound: "row" | "byte",
+    readonly measured: number,
+    readonly allowed: number,
+  ) {
+    super(`The answer went past its ${bound} bound: ${measured} > ${allowed}`);
+    this.name = "SearchBoundsError";
+  }
+}
+
+/** The most an answer may carry before `SearchTransport.queryBounded` refuses it. */
+export interface SearchQueryBounds {
+  /** Rows; the first row past this refuses the answer. */
+  readonly maxRows: number;
+  /** Bytes of the rows as JSON, measured the way `measureResultBytes` measures a result. */
+  readonly maxBytes: number;
+}
+
 /** A field in an index mapping, flattened to a path. */
 export interface SearchMappingField {
   /**
@@ -289,7 +318,7 @@ export type SearchObjectDefinition = Readonly<Record<string, unknown>>;
 /**
  * Everything the provider needs from a search cluster.
  *
- * Deliberately small: nine calls, each answering one question the provider asks.
+ * Deliberately small: each call answers one question the provider asks.
  * A second implementation - the official client library, a proxy, a test double -
  * satisfies this and nothing else.
  *
@@ -310,6 +339,18 @@ export interface SearchTransport {
    *   work - the distinction matters for the message a cancelled query shows.
    */
   query(sql: string, signal?: AbortSignal): Promise<SearchQueryResult>;
+
+  /**
+   * Run one SQL statement whose answer must stay within `bounds`, or be refused whole.
+   *
+   * The page size the request asks for is one row past the row bound, so an answer that
+   * goes past it does so on the page that crosses it, and the pages are followed only
+   * while the rows and bytes read stay inside both bounds. An answer that goes past
+   * either throws {@link SearchBoundsError}, and the paging cursor the cluster still
+   * holds for it is closed first, because that cursor is server-side state this call
+   * opened.
+   */
+  queryBounded(sql: string, bounds: SearchQueryBounds, signal?: AbortSignal): Promise<SearchQueryResult>;
 
   /** The server's own version string, and the product it reports itself as. */
   version(signal?: AbortSignal): Promise<{ version: string; product: string }>;

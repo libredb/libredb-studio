@@ -148,6 +148,9 @@ function createTransport(options: FakeOptions = {}) {
     query: (): Promise<SearchQueryResult> => {
       throw new Error("introspection ran a statement; the schema comes from the mapping");
     },
+    queryBounded: (): Promise<SearchQueryResult> => {
+      throw new Error("introspection ran a statement; the schema comes from the mapping");
+    },
     version: (): Promise<{ version: string; product: string }> => {
       throw new Error("introspection read the version");
     },

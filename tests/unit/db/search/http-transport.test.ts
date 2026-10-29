@@ -2,9 +2,10 @@
  * Search HTTP transport endpoints (Elasticsearch and OpenSearch)
  *
  * The rest of this transport is exercised through the two provider suites under
- * tests/integration/db. This file pins only how its URLs are built: the host and
- * port are validated when the transport is constructed, and a redirect is refused
- * rather than followed.
+ * tests/integration/db. This file pins how its URLs are built (the host and port are
+ * validated when the transport is constructed, and a redirect is refused rather than
+ * followed), how a 401 or 403 is read, and how a bounded statement pages, stops and
+ * closes its cursor.
  *
  * globalThis.fetch is replaced per test and restored in afterEach; mock.module()
  * is deliberately not used, since it is process-wide in bun.
@@ -12,7 +13,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
 import { SearchHttpTransport } from "@/lib/db/providers/sql/search/http-transport";
-import { SearchTransportError } from "@/lib/db/providers/sql/search/transport";
+import { SearchBoundsError, SearchTransportError } from "@/lib/db/providers/sql/search/transport";
 import type { DatabaseConnection, DatabaseType } from "@/lib/db/types";
 
 interface FetchCall {
@@ -202,5 +203,172 @@ describe.each(["elasticsearch", "opensearch"] as const)("SearchHttpTransport (%s
       const error = await failureOf(status, body);
       expect(error.category).toBe("auth");
     }
+  });
+});
+
+/**
+ * A bounded statement, against a fake cluster that answers the SQL endpoint from a queue of pages and the cursor
+ * close with the acknowledgement Elasticsearch 9.1.4 sends (measured: `{"succeeded":true}`). Each page is the
+ * product's own envelope, so the rows go through the same rebuild the editor's statements do.
+ */
+describe.each(["elasticsearch", "opensearch"] as const)("SearchHttpTransport (%s) bounded query", (dialect) => {
+  const CLOSE_PATH = dialect === "elasticsearch" ? "/_sql/close" : "/_plugins/_sql/close";
+
+  /** One page in this product's envelope: `k` keyword rows, and a cursor when one is given. */
+  function page(values: readonly string[], cursor?: string, withColumns = true): string {
+    const columns = [{ name: "k", type: "keyword" }];
+    const rows = values.map((value) => [value]);
+    const envelope =
+      dialect === "elasticsearch"
+        ? { ...(withColumns ? { columns } : {}), rows }
+        : { schema: columns, datarows: rows, total: rows.length, size: rows.length, status: 200 };
+    return JSON.stringify(cursor === undefined ? envelope : { ...envelope, cursor });
+  }
+
+  let pages: string[] = [];
+  let closeStatus = 200;
+
+  beforeEach(() => {
+    pages = [];
+    closeStatus = 200;
+    handler = (url) =>
+      new URL(url).pathname === CLOSE_PATH
+        ? new Response('{"succeeded":true}', { status: closeStatus, headers: { "content-type": "application/json" } })
+        : new Response(pages.shift() ?? "{}", { headers: { "content-type": "application/json" } });
+  });
+
+  function transport(): SearchHttpTransport {
+    return new SearchHttpTransport(dialect, makeConnection(dialect));
+  }
+
+  const bodies = (): Record<string, unknown>[] =>
+    calls.map((call) => JSON.parse(String(call.init?.body)) as Record<string, unknown>);
+  const paths = (): string[] => calls.map((call) => new URL(call.url).pathname);
+
+  async function refusal(promise: Promise<unknown>): Promise<SearchBoundsError> {
+    const caught = await promise.catch((error: unknown) => error);
+    expect(caught).toBeInstanceOf(SearchBoundsError);
+    return caught as SearchBoundsError;
+  }
+
+  test("asks for one row past the row bound, and returns an answer inside both bounds whole", async () => {
+    pages = [page(["a", "b"])];
+    const result = await transport().queryBounded("SELECT k FROM t", { maxRows: 3, maxBytes: 1_000 });
+
+    expect(result.rows).toEqual([{ k: "a" }, { k: "b" }]);
+    expect(result.fieldNames).toEqual(["k"]);
+    expect(bodies()[0]).toMatchObject({ query: "SELECT k FROM t", fetch_size: 4 });
+    expect(calls).toHaveLength(1);
+  });
+
+  test("an answer at exactly the row bound is returned", async () => {
+    pages = [page(["a", "b", "c"])];
+    const result = await transport().queryBounded("SELECT k FROM t", { maxRows: 3, maxBytes: 1_000 });
+
+    expect(result.rows).toHaveLength(3);
+  });
+
+  test("never asks for a page past the cluster's default result window", async () => {
+    pages = [page([])];
+    await transport().queryBounded("SELECT k FROM t", { maxRows: 50_000, maxBytes: 1_000 });
+
+    expect(bodies()[0]?.fetch_size).toBe(10_000);
+  });
+
+  test("a page past the row bound closes the cursor it carries, then refuses with the rows read", async () => {
+    pages = [page(["a", "b", "c", "d"], "c1")];
+    const error = await refusal(transport().queryBounded("SELECT k FROM t", { maxRows: 3, maxBytes: 1_000 }));
+
+    expect([error.bound, error.measured, error.allowed]).toEqual(["row", 4, 3]);
+    expect(paths().at(-1)).toBe(CLOSE_PATH);
+    expect(bodies().at(-1)).toEqual({ cursor: "c1" });
+  });
+
+  test("a page past the row bound with no cursor closes nothing", async () => {
+    pages = [page(["a", "b", "c", "d"])];
+    await refusal(transport().queryBounded("SELECT k FROM t", { maxRows: 3, maxBytes: 1_000 }));
+
+    expect(paths()).not.toContain(CLOSE_PATH);
+  });
+
+  test("follows a short page's cursor, keeps page one's columns, and stops on the page that crosses the bound", async () => {
+    pages = [page(["a"], "c1"), page(["b", "c"], "c2", false), page(["d"], "c3", false)];
+    const error = await refusal(transport().queryBounded("SELECT k FROM t", { maxRows: 3, maxBytes: 1_000 }));
+
+    expect([error.measured, error.allowed]).toEqual([4, 3]);
+    expect(bodies().slice(1, 3)).toEqual([{ cursor: "c1" }, { cursor: "c2" }]);
+    expect(bodies().at(-1)).toEqual({ cursor: "c3" });
+    expect(paths().at(-1)).toBe(CLOSE_PATH);
+  });
+
+  test("returns every page when the cursor runs out inside the bounds", async () => {
+    pages = [page(["a"], "c1"), page(["b"], undefined, false)];
+    const result = await transport().queryBounded("SELECT k FROM t", { maxRows: 3, maxBytes: 1_000 });
+
+    expect(result.rows).toEqual([{ k: "a" }, { k: "b" }]);
+    expect(paths()).not.toContain(CLOSE_PATH);
+  });
+
+  test("rows past the byte bound close the cursor and refuse with the bytes the rows measure as JSON", async () => {
+    pages = [page(["aaaa", "bbbb"], "c1")];
+    // [{"k":"aaaa"},{"k":"bbbb"}] is 27 bytes.
+    const error = await refusal(transport().queryBounded("SELECT k FROM t", { maxRows: 10, maxBytes: 26 }));
+
+    expect([error.bound, error.measured, error.allowed]).toEqual(["byte", 27, 26]);
+    expect(paths().at(-1)).toBe(CLOSE_PATH);
+  });
+
+  test("rows that measure exactly the byte bound are returned", async () => {
+    pages = [page(["aaaa", "bbbb"])];
+    const result = await transport().queryBounded("SELECT k FROM t", { maxRows: 10, maxBytes: 27 });
+
+    expect(result.rows).toHaveLength(2);
+  });
+
+  test("a body past its cap is abandoned unread and refused with the bytes read", async () => {
+    // The cap is three times the byte bound plus 64 KiB; this body is past it on its own.
+    pages = [page(["x".repeat(70_000)])];
+    const error = await refusal(transport().queryBounded("SELECT k FROM t", { maxRows: 10, maxBytes: 10 }));
+
+    expect(error.bound).toBe("byte");
+    expect(error.measured).toBeGreaterThan(10 * 3 + 65_536);
+    expect(error.allowed).toBe(10);
+  });
+
+  test("a refused cursor close does not hide the bound the answer went past", async () => {
+    closeStatus = 500;
+    pages = [page(["a", "b"], "c1")];
+    const error = await refusal(transport().queryBounded("SELECT k FROM t", { maxRows: 1, maxBytes: 1_000 }));
+
+    expect(error.bound).toBe("row");
+  });
+
+  test("a cursor that never runs out is closed and refused after the page limit", async () => {
+    pages = Array.from({ length: 1_001 }, (_, index) => page([], `c${index}`));
+    const caught = await transport()
+      .queryBounded("SELECT k FROM t", { maxRows: 3, maxBytes: 1_000 })
+      .catch((error: unknown) => error);
+
+    expect(caught).toBeInstanceOf(SearchTransportError);
+    expect((caught as Error).message).toContain("more result pages than this connection will follow");
+    expect(paths().at(-1)).toBe(CLOSE_PATH);
+  });
+
+  test("an unreadable page is refused as the editor's statements are", async () => {
+    pages = ["[]"];
+    const caught = await transport()
+      .queryBounded("SELECT k FROM t", { maxRows: 3, maxBytes: 1_000 })
+      .catch((error: unknown) => error);
+
+    expect(caught).toBeInstanceOf(SearchTransportError);
+  });
+
+  test("an unreadable later page is refused too", async () => {
+    pages = [page(["a"], "c1"), "[]"];
+    const caught = await transport()
+      .queryBounded("SELECT k FROM t", { maxRows: 3, maxBytes: 1_000 })
+      .catch((error: unknown) => error);
+
+    expect(caught).toBeInstanceOf(SearchTransportError);
   });
 });

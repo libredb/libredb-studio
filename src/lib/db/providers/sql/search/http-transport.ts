@@ -77,7 +77,9 @@ import { httpTransportFetch } from "@/lib/db/http/egress-policy";
 import type { DatabaseConnection } from "@/lib/db/types";
 import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
 import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
+import { measureRowBytes } from "../read-only-budget";
 import {
+  SearchBoundsError,
   type SearchClusterHealth,
   type SearchDialectId,
   type SearchErrorCategory,
@@ -85,6 +87,7 @@ import {
   type SearchMappingField,
   type SearchObjectDefinition,
   type SearchObjectInfo,
+  type SearchQueryBounds,
   type SearchQueryResult,
   type SearchRow,
   type SearchTransport,
@@ -328,6 +331,29 @@ const CURSOR_FIELD = "cursor";
  * pathological statement, not to trim a normal result.
  */
 const MAX_PAGES = 1000;
+
+/** The request member that sets a statement's page size; both products spell it the same way. */
+const FETCH_SIZE_FIELD = "fetch_size";
+
+/**
+ * The largest page a bounded statement asks for.
+ *
+ * Measured on Elasticsearch 9.1.4: `SELECT k FROM probe_buckets` with `fetch_size`
+ * 10000 answers its rows, and with 10001 it fails ("Result window is too large, from +
+ * size must be less than or equal to: [10000]"), the `index.max_result_window` default.
+ * An aggregation took 20001 without complaint, so the limit is the hit query's alone, and
+ * a bound past it is reached by following the cursor instead of by one larger page.
+ */
+const MAX_FETCH_SIZE = 10_000;
+
+/**
+ * How many bytes one page of a bounded statement may carry before it is abandoned unread:
+ * three times the byte bound plus this. A page carries its rows as arrays and its first
+ * page a column declaration, while the bound measures the rows as keyed objects, so a page
+ * within the bound is well inside the cap and the cap only stops a page that could never
+ * have been returned. The 64 KiB covers the declaration and the envelope of a small bound.
+ */
+const PAGE_ENVELOPE_ALLOWANCE = 65_536;
 
 /**
  * The `_cat/indices` columns this transport reads, by their wire spelling.
@@ -953,6 +979,53 @@ function responseFailure(spec: SearchDialectSpec, status: number, text: string):
  * image, Node in the published package), so reading only one place would leave the
  * other runtime's users with a message that says nothing.
  */
+/** A statement whose cursor outlived {@link MAX_PAGES}: refused, after the cursor was closed. */
+function tooManyPages(spec: SearchDialectSpec): SearchTransportError {
+  return new SearchTransportError(
+    "engine",
+    `${spec.label} returned more result pages than this connection will follow (${MAX_PAGES}). ` +
+      `Narrow the statement - add a LIMIT or a tighter WHERE - so the result fits.`,
+  );
+}
+
+/** The bound the rows read so far are past, rows first, or null while they are inside both. */
+function outsideBounds(rows: number, bytes: number, bounds: SearchQueryBounds): SearchBoundsError | null {
+  if (rows > bounds.maxRows) return new SearchBoundsError("row", rows, bounds.maxRows);
+  if (bytes > bounds.maxBytes) return new SearchBoundsError("byte", bytes, bounds.maxBytes);
+  return null;
+}
+
+/** How much of a body may be read before it is abandoned, and the byte bound a refusal of it names. */
+interface BodyCap {
+  readonly cap: number;
+  readonly allowed: number;
+}
+
+/**
+ * A body read in chunks, counted in bytes, and abandoned at the first chunk that takes it past its cap: the reader is
+ * cancelled, which closes the exchange, so the rest of an oversized page is never pulled into memory. A body read
+ * whole is decoded once, so a character split across two chunks still decodes as one.
+ */
+async function readCappedText(response: Response, { cap, allowed }: BodyCap): Promise<string> {
+  if (response.body === null) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let bytesRead = 0;
+  for (;;) {
+    // oxlint-disable-next-line no-await-in-loop -- a stream is read one chunk at a time, each counted before the next.
+    const { done, value } = await reader.read();
+    if (done) break;
+    bytesRead += value.byteLength;
+    if (bytesRead > cap) {
+      // oxlint-disable-next-line no-await-in-loop -- the read stops here; the loop does not continue past the cancel.
+      await reader.cancel();
+      throw new SearchBoundsError("byte", bytesRead, allowed);
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 function requestFailure(spec: SearchDialectSpec, cause: unknown, signal?: AbortSignal): SearchTransportError {
   if (signal?.aborted === true) {
     const reason = signal.reason as { name?: unknown } | undefined;
@@ -1271,13 +1344,80 @@ export class SearchHttpTransport implements SearchTransport {
       // Close the cursor we are abandoning, then say so. Silence here would
       // reintroduce the exact defect this loop was written to remove.
       await this.closeCursor(cursor, signal);
-      throw new SearchTransportError(
-        "engine",
-        `${this.spec.label} returned more result pages than this connection will follow (${MAX_PAGES}). ` +
-          `Narrow the statement - add a LIMIT or a tighter WHERE - so the result fits.`,
-      );
+      throw tooManyPages(this.spec);
     }
 
+    return result;
+  }
+
+  /**
+   * One statement whose answer must stay within `bounds`, or be refused whole.
+   *
+   * The page size is one row past the row bound, clamped to {@link MAX_FETCH_SIZE}, so
+   * a plain `SELECT` that goes past the bound does so on its first page. A page may still
+   * hold fewer rows than asked while the cursor goes on (a `HAVING` filters a page of
+   * groups after the engine cut it), so the pages are followed, and every one is checked
+   * against both bounds before the next is asked for. The rows' bytes are counted as
+   * `measureResultBytes` would count the rows read so far: the JSON array of them.
+   *
+   * The cursor matters here more than in {@link query}: asking for a page size opens a
+   * search context on the cluster that only reading to the end, closing the cursor or the
+   * keep-alive expiring releases (measured on 9.1.4: `open_contexts` 1 while the cursor is
+   * held, 0 after `/_sql/close`). So a refusal closes the cursor it read before it throws.
+   * A page past its byte cap is abandoned before its cursor could be read, and that one
+   * context waits for the engine's own keep-alive.
+   */
+  public async queryBounded(sql: string, bounds: SearchQueryBounds, signal?: AbortSignal): Promise<SearchQueryResult> {
+    const url = this.url(this.spec.sqlPath, this.spec.sqlQuery);
+    const pageCap = bounds.maxBytes * 3 + PAGE_ENVELOPE_ALLOWANCE;
+    const readPage = async (body: Record<string, unknown>, what: string): Promise<Record<string, unknown>> => {
+      const read = await this.request(url, signal, JSON.stringify(body), undefined, parseRowsJson, {
+        cap: pageCap,
+        allowed: bounds.maxBytes,
+      });
+      const page = asRecord(read);
+      if (page === null) throw unreadableBody(this.spec, what);
+      return page;
+    };
+
+    const first = await readPage(
+      {
+        query: sql,
+        [FETCH_SIZE_FIELD]: Math.min(bounds.maxRows + 1, MAX_FETCH_SIZE),
+        ...(this.spec.fieldMultiValueLeniency ? { field_multi_value_leniency: true } : {}),
+      },
+      "a SQL result",
+    );
+    const result = toQueryResult(this.spec, first);
+    let cursor = textField(first, CURSOR_FIELD);
+    // `[` and `]`, and one comma between each two rows: what JSON.stringify(rows) adds to the rows.
+    let bytes =
+      2 + result.rows.reduce((sum, row) => sum + measureRowBytes(row), 0) + Math.max(result.rows.length - 1, 0);
+    let pages = 1;
+
+    for (;;) {
+      const outside = outsideBounds(result.rows.length, bytes, bounds);
+      if (outside !== null) {
+        // oxlint-disable-next-line no-await-in-loop -- the loop ends here: the cursor is closed, then the refusal thrown.
+        if (cursor !== null && cursor !== "") await this.closeCursor(cursor, signal);
+        throw outside;
+      }
+      if (cursor === null || cursor === "" || pages >= MAX_PAGES) break;
+
+      // oxlint-disable-next-line no-await-in-loop -- each page is asked for only after the one before it was checked.
+      const next = await readPage({ cursor }, "a SQL result page");
+      for (const row of rebuildRows(this.spec, next, result.fieldNames)) {
+        bytes += measureRowBytes(row) + (result.rows.length > 0 ? 1 : 0);
+        result.rows.push(row);
+      }
+      cursor = textField(next, CURSOR_FIELD);
+      pages += 1;
+    }
+
+    if (cursor !== null && cursor !== "") {
+      await this.closeCursor(cursor, signal);
+      throw tooManyPages(this.spec);
+    }
     return result;
   }
 
@@ -1571,6 +1711,8 @@ export class SearchHttpTransport implements SearchTransport {
     absence?: AbsenceRule,
     /** How a successful body is read; {@link parseRowsJson} for the bodies that carry row values. */
     parse: (text: string) => unknown = parseJson,
+    /** Read the body no further than this; a bounded statement's pages alone pass one. */
+    bodyCap?: BodyCap,
   ): Promise<unknown> {
     let response: Response;
     let text: string;
@@ -1589,9 +1731,9 @@ export class SearchHttpTransport implements SearchTransport {
         redirect: "manual",
         ...(signal ? { signal } : {}),
       });
-      text = await response.text();
+      text = bodyCap === undefined ? await response.text() : await readCappedText(response, bodyCap);
     } catch (error) {
-      if (error instanceof DatabaseConfigError) throw error;
+      if (error instanceof DatabaseConfigError || error instanceof SearchBoundsError) throw error;
       // A refused socket, an unresolvable host, an abort and a truncated body all
       // arrive here, and all have to leave as the seam's own error type.
       throw requestFailure(this.spec, error, signal);
