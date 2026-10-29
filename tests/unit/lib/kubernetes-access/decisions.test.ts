@@ -7,8 +7,19 @@
  * the groups or the object.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, setSystemTime, spyOn, test } from "bun:test";
-import { type FakeKubernetesApi, startFakeKubernetesApi } from "../../../helpers/kubernetes-access/fake-api";
-import { accessReviewAllows, resetAccessReviewDecisions } from "@/lib/kubernetes-access/decisions";
+import {
+  type FakeKubernetesApi,
+  OPENSHIFT_PLATFORM,
+  startFakeKubernetesApi,
+} from "../../../helpers/kubernetes-access/fake-api";
+import {
+  ACCESS_TOKEN,
+  type FakeCluster,
+  SELF_REVIEW_PATH,
+  startFakeCluster,
+} from "../../../helpers/openshift-auth/fake-cluster";
+import { accessReviewAllows, accessReviewVerdict, resetAccessReviewDecisions } from "@/lib/kubernetes-access/decisions";
+import { resetPlatformCheck } from "@/lib/kubernetes-access/platform-check";
 import type { ResourceAttributes } from "@/lib/kubernetes-access/review";
 import { logger } from "@/lib/logger";
 
@@ -202,6 +213,185 @@ describe("failures", () => {
       expect(warn.mock.calls[0][1]).toEqual({ route: "kubernetes-access", reason: "config", heldBack: 0 });
     } finally {
       warn.mockRestore();
+    }
+  });
+});
+
+describe("the ServiceAccount review on an OpenShift cluster", () => {
+  test("denies, and is logged at error level once a minute with the sentence that names the fix", async () => {
+    resetPlatformCheck();
+    api.platformAnswer = OPENSHIFT_PLATFORM;
+    api.grants = [ORDERS_GRANT];
+    const error = spyOn(logger, "error").mockImplementation(() => {});
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      expect(await accessReviewVerdict(DEV_A, ORDERS)).toBe("denied");
+      expect(await accessReviewAllows(DEV_A, ORDERS)).toBe(false);
+      expect(error).toHaveBeenCalledTimes(1);
+      expect(error.mock.calls[0]).toEqual([
+        "Kubernetes access review: this cluster serves config.openshift.io/v1, where a ServiceAccount review cannot assert the cluster's user name for an OIDC subject, so every review is denied; sign in with NEXT_PUBLIC_AUTH_PROVIDER=openshift instead",
+        undefined,
+        { route: "kubernetes-access", reason: "platform", heldBack: 0 },
+      ]);
+      expect(warn).not.toHaveBeenCalled();
+      expect(api.seen).toHaveLength(0);
+    } finally {
+      error.mockRestore();
+      warn.mockRestore();
+      resetPlatformCheck();
+    }
+  });
+});
+
+describe("self reviews, with the signed-in user's own token", () => {
+  const ORDERS_SELF_GRANT = { ...ORDERS_GRANT, user: "dev-a" };
+  const H = { sessionHandle: "handle-h-not-a-real-handle-0000000000000000", token: ACCESS_TOKEN };
+  const K = { sessionHandle: "handle-k-not-a-real-handle-0000000000000000", token: "sha256~not-a-real-token-b" };
+  let cluster: FakeCluster;
+
+  beforeAll(async () => {
+    cluster = await startFakeCluster();
+  });
+
+  afterAll(async () => {
+    await cluster.close();
+  });
+
+  beforeEach(() => {
+    cluster.reset();
+    cluster.useEnv();
+    cluster.tokens[K.token] = { user: "dev-b", groups: ["system:authenticated"] };
+  });
+
+  afterEach(() => {
+    cluster.restoreEnv();
+  });
+
+  test("keep allowed and denied for 15 seconds by default in openshift mode, keyed by the session handle", async () => {
+    cluster.grants = [ORDERS_SELF_GRANT];
+    expect(await accessReviewVerdict(H, ORDERS)).toBe("allowed");
+    expect(await accessReviewVerdict(K, ORDERS)).toBe("denied");
+    cluster.grants = [];
+    setSystemTime(new Date(T + 14_999));
+    expect(await accessReviewVerdict(H, ORDERS)).toBe("allowed");
+    expect(await accessReviewAllows(K, ORDERS)).toBe(false);
+    expect(cluster.selfReviews()).toHaveLength(2);
+    setSystemTime(new Date(T + 15_000));
+    expect(await accessReviewVerdict(H, ORDERS)).toBe("denied");
+    expect(cluster.selfReviews()).toHaveLength(3);
+  });
+
+  test("two sessions of one person never share a decision: another handle asks with its own token", async () => {
+    const H2 = { ...H, sessionHandle: "handle-h2-not-a-real-handle-000000000000000" };
+    cluster.grants = [ORDERS_SELF_GRANT];
+    expect(await accessReviewVerdict(H, ORDERS)).toBe("allowed");
+    expect(await accessReviewVerdict(H2, ORDERS)).toBe("allowed");
+    expect(cluster.selfReviews()).toHaveLength(2);
+  });
+
+  test("an expired token is never kept and not logged here: the next ask goes out again", async () => {
+    const dead = { ...H, token: "sha256~not-a-real-token-dead" };
+    const logged = [spyOn(logger, "warn"), spyOn(logger, "error"), spyOn(logger, "info")];
+    for (const spy of logged) spy.mockImplementation(() => {});
+    try {
+      expect(await accessReviewVerdict(dead, ORDERS)).toBe("expired");
+      expect(await accessReviewVerdict(dead, ORDERS)).toBe("expired");
+      expect(await accessReviewAllows(dead, ORDERS)).toBe(false);
+      expect(cluster.selfReviews()).toHaveLength(3);
+      for (const spy of logged) expect(spy).not.toHaveBeenCalled();
+    } finally {
+      for (const spy of logged) spy.mockRestore();
+    }
+  });
+
+  test("a 403 denies, is never kept, and is logged at error level once a minute", async () => {
+    cluster.script(SELF_REVIEW_PATH, { status: 403, body: "{}" });
+    const error = spyOn(logger, "error").mockImplementation(() => {});
+    try {
+      expect(await accessReviewVerdict(H, ORDERS)).toBe("denied");
+      expect(await accessReviewVerdict(H, ORDERS)).toBe("denied");
+      expect(cluster.selfReviews()).toHaveLength(2);
+      expect(error).toHaveBeenCalledTimes(1);
+      expect(error.mock.calls[0]).toEqual([
+        "Kubernetes access review: the session's token may not create a SelfSubjectAccessReview (HTTP 403), so the request it decides is denied; sign-in should have refused a token without the user:check-access scope",
+        undefined,
+        { route: "kubernetes-access", reason: "forbidden", heldBack: 0 },
+      ]);
+      setSystemTime(new Date(T + 60_000));
+      expect(await accessReviewVerdict(H, ORDERS)).toBe("denied");
+      expect(error.mock.calls[1][2]).toEqual({ route: "kubernetes-access", reason: "forbidden", heldBack: 1 });
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  test("an empty session handle denies without a request unless the decision is fresh, which keeps nothing", async () => {
+    const unkeyed = { sessionHandle: "", token: ACCESS_TOKEN };
+    cluster.grants = [ORDERS_SELF_GRANT];
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      expect(await accessReviewVerdict(unkeyed, ORDERS)).toBe("denied");
+      expect(cluster.selfReviews()).toHaveLength(0);
+      expect(warn.mock.calls[0][1]).toEqual({ route: "kubernetes-access", reason: "config", heldBack: 0 });
+      expect(await accessReviewVerdict(unkeyed, ORDERS, { fresh: true })).toBe("allowed");
+      expect(await accessReviewVerdict(unkeyed, ORDERS, { fresh: true })).toBe("allowed");
+      expect(cluster.selfReviews()).toHaveLength(2);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("a fresh self decision passes an expired token through, so sign-in can tell it apart", async () => {
+    expect(await accessReviewVerdict({ ...H, token: "sha256~not-a-real-token-dead" }, ORDERS, { fresh: true })).toBe(
+      "expired",
+    );
+  });
+
+  test("concurrent asks of one key share one request", async () => {
+    cluster.grants = [ORDERS_SELF_GRANT];
+    const verdicts = await Promise.all([1, 2, 3].map(() => accessReviewVerdict(H, ORDERS)));
+    expect(verdicts).toEqual(["allowed", "allowed", "allowed"]);
+    expect(cluster.selfReviews()).toHaveLength(1);
+  });
+
+  test("the store holds neither the token nor the handle, in a key or a value", async () => {
+    cluster.grants = [ORDERS_SELF_GRANT];
+    cluster.script(SELF_REVIEW_PATH, (request) =>
+      request.body.includes("analytics-app") ? { status: 403, body: "{}" } : undefined,
+    );
+    const error = spyOn(logger, "error").mockImplementation(() => {});
+    try {
+      await accessReviewVerdict(H, ORDERS);
+      await accessReviewVerdict(H, { ...ORDERS, name: "analytics-app" });
+      const pending = accessReviewVerdict(K, ORDERS);
+      const held = (globalThis as Record<symbol, unknown>)[
+        Symbol.for("libredb-studio.kubernetes-access-decisions")
+      ] as {
+        decisions: Map<string, unknown>;
+        inFlight: Map<string, unknown>;
+        failures: Map<string, unknown>;
+      };
+      const dump = JSON.stringify([
+        [...held.decisions.entries()],
+        [...held.inFlight.keys()],
+        [...held.failures.entries()],
+      ]);
+      await pending;
+      // H allowed and K denied are kept; the 403 is not.
+      expect(held.decisions.size).toBe(2);
+      for (const secret of [
+        ACCESS_TOKEN,
+        K.token,
+        "sha256~",
+        H.sessionHandle,
+        K.sessionHandle,
+        "dev-a",
+        "orders-app",
+      ]) {
+        expect(dump).not.toContain(secret);
+      }
+    } finally {
+      error.mockRestore();
     }
   });
 });

@@ -9,7 +9,14 @@
  *
  * Failures are logged at most once a minute per reason, with how many were held back since the last line, because an
  * API server that is down fails every review of every list refresh. A line names the reason and a status, never the
- * token, the subject, the groups or the object.
+ * token, the subject, the groups or the object. Two reasons are an operator's to fix and log at error level: a token
+ * that may not create a self review (`forbidden`) and a ServiceAccount review on OpenShift (`platform`).
+ *
+ * A self review (openshift sign-in) is kept per session handle and attributes, so two sessions never share a decision
+ * or a request in flight, and neither the token nor the handle is ever part of a key or a value. Its `expired`
+ * verdict, the API server's 401, is never kept and never logged here: the gate ends the session's record and logs that
+ * once. A self review without a session handle could only share a key with every other, so it denies without a
+ * request unless the decision is fresh.
  *
  * The state lives on `globalThis` under a registered symbol: Next.js bundles each route handler apart, so a module
  * variable would hold one cache per route (src/lib/governance/state.ts does the same).
@@ -19,17 +26,29 @@ import { byCodeUnits } from "@/lib/governance/jcs";
 import { logger } from "@/lib/logger";
 import { accessReviewCacheMs } from "./config";
 import {
+  type AnyReviewSubject,
+  type FailedReview,
+  isSelfSubject,
   requestAccessReview,
   type ResourceAttributes,
   type ReviewFailureReason,
   type ReviewOutcome,
-  type ReviewSubject,
 } from "./review";
 
 const STORE_KEY = Symbol.for("libredb-studio.kubernetes-access-decisions");
 const MAX_DECISIONS = 10_000;
 const FAILURE_LOG_INTERVAL_MS = 60_000;
 const FAILURE_MESSAGE = "Kubernetes access review failed, so the request it decides is denied";
+/** The failures an operator has to fix, logged at error level with the sentence that names the fix. */
+const ERROR_MESSAGES: Partial<Record<ReviewFailureReason, string>> = {
+  forbidden:
+    "Kubernetes access review: the session's token may not create a SelfSubjectAccessReview (HTTP 403), so the request it decides is denied; sign-in should have refused a token without the user:check-access scope",
+  platform:
+    "Kubernetes access review: this cluster serves config.openshift.io/v1, where a ServiceAccount review cannot assert the cluster's user name for an OIDC subject, so every review is denied; sign in with NEXT_PUBLIC_AUTH_PROVIDER=openshift instead",
+};
+
+/** What a decision answers: allowed, denied (a failure included), or expired, a self review's token the API refused. */
+export type ReviewVerdict = "allowed" | "denied" | "expired";
 
 interface Decision {
   readonly allowed: boolean;
@@ -44,7 +63,7 @@ interface FailureLog {
 interface DecisionStore {
   readonly limit: number;
   readonly decisions: Map<string, Decision>;
-  readonly inFlight: Map<string, Promise<boolean>>;
+  readonly inFlight: Map<string, Promise<ReviewVerdict>>;
   readonly failures: Map<ReviewFailureReason, FailureLog>;
 }
 
@@ -66,19 +85,22 @@ export function resetAccessReviewDecisions(limit = MAX_DECISIONS): void {
 }
 
 /**
- * One key per user, set of groups and attributes, hashed so the map holds no group or object name. The groups are
- * sorted by code unit, so the key never depends on the server's locale.
+ * One key per user, set of groups and attributes, or per session handle and attributes for a self review, hashed so
+ * the map holds no handle, group or object name. The groups are sorted by code unit, so the key never depends on the
+ * server's locale.
  */
-function decisionKey(subject: ReviewSubject, attributes: ResourceAttributes): string {
-  const groups = [...new Set(subject.groups)].sort(byCodeUnits);
+function decisionKey(subject: AnyReviewSubject, attributes: ResourceAttributes): string {
   const { verb, group, resource, namespace, name } = attributes;
+  const who = isSelfSubject(subject)
+    ? ["self", subject.sessionHandle]
+    : [subject.user, [...new Set(subject.groups)].sort(byCodeUnits)];
   return createHash("sha256")
-    .update(JSON.stringify([subject.user, groups, verb, group, resource, namespace, name]))
+    .update(JSON.stringify([...who, verb, group, resource, namespace, name]))
     .digest("hex");
 }
 
 /** Logs a failure unless its reason was logged within the last minute, which it counts instead. */
-function noteFailure(outcome: Extract<ReviewOutcome, { kind: "failed" }>): void {
+function noteFailure(outcome: FailedReview): void {
   const { failures } = store();
   const now = Date.now();
   const last = failures.get(outcome.reason);
@@ -87,12 +109,10 @@ function noteFailure(outcome: Extract<ReviewOutcome, { kind: "failed" }>): void 
     return;
   }
   const status = outcome.status === undefined ? {} : { status: outcome.status };
-  logger.warn(FAILURE_MESSAGE, {
-    route: "kubernetes-access",
-    reason: outcome.reason,
-    ...status,
-    heldBack: last?.heldBack ?? 0,
-  });
+  const context = { route: "kubernetes-access", reason: outcome.reason, ...status, heldBack: last?.heldBack ?? 0 };
+  const severe = ERROR_MESSAGES[outcome.reason];
+  if (severe === undefined) logger.warn(FAILURE_MESSAGE, context);
+  else logger.error(severe, undefined, context);
   failures.set(outcome.reason, { loggedAt: now, heldBack: 0 });
 }
 
@@ -108,45 +128,61 @@ function remember(key: string, decision: Decision): void {
   decisions.set(key, decision);
 }
 
-/** Asks the API once, logging a failure; true only for an allowed answer. */
-async function decide(subject: ReviewSubject, attributes: ResourceAttributes): Promise<ReviewOutcome> {
+/** Asks the API once, logging a failure, and turns the outcome into a verdict: a failure denies. */
+async function decide(subject: AnyReviewSubject, attributes: ResourceAttributes): Promise<ReviewOutcome> {
   const outcome = await requestAccessReview(subject, attributes);
   if (outcome.kind === "failed") noteFailure(outcome);
   return outcome;
 }
 
+const verdictOf = (outcome: ReviewOutcome): ReviewVerdict => (outcome.kind === "failed" ? "denied" : outcome.kind);
+
 /**
- * Whether the access review allows `subject` to do what `attributes` name: from the cache while an answer is fresh,
+ * What the access review answers for `subject` and what `attributes` name: from the cache while an answer is fresh,
  * else from one review shared by every concurrent asker of the same key. `fresh` asks the API whatever is cached and
- * keeps nothing, for a decision taken once, such as the admin role at sign-in. Never throws; false for a failure.
+ * keeps nothing, for a decision taken once, such as the role at sign-in. Only allowed and denied are kept; expired and
+ * every failure are not, so the next ask goes out again. Never throws; a failure is denied.
  */
-export async function accessReviewAllows(
-  subject: ReviewSubject,
+export async function accessReviewVerdict(
+  subject: AnyReviewSubject,
   attributes: ResourceAttributes,
   options: { readonly fresh?: boolean } = {},
-): Promise<boolean> {
-  if (options.fresh) return (await decide(subject, attributes)).kind === "allowed";
+): Promise<ReviewVerdict> {
+  if (options.fresh) return verdictOf(await decide(subject, attributes));
+  if (isSelfSubject(subject) && subject.sessionHandle === "") {
+    noteFailure({ kind: "failed", reason: "config" });
+    return "denied";
+  }
   let lifetimeMs: number;
   try {
     lifetimeMs = accessReviewCacheMs();
   } catch {
     noteFailure({ kind: "failed", reason: "config" });
-    return false;
+    return "denied";
   }
   const { decisions, inFlight } = store();
   const key = decisionKey(subject, attributes);
   const cached = decisions.get(key);
-  if (cached !== undefined && cached.expiresAt > Date.now()) return cached.allowed;
+  if (cached !== undefined && cached.expiresAt > Date.now()) return cached.allowed ? "allowed" : "denied";
   const pending = inFlight.get(key);
   if (pending !== undefined) return pending;
   const asked = decide(subject, attributes)
     .then((outcome) => {
-      if (outcome.kind === "failed") return false;
-      const allowed = outcome.kind === "allowed";
-      if (lifetimeMs > 0) remember(key, { allowed, expiresAt: Date.now() + lifetimeMs });
-      return allowed;
+      const kept = outcome.kind === "allowed" || outcome.kind === "denied";
+      if (kept && lifetimeMs > 0)
+        remember(key, { allowed: outcome.kind === "allowed", expiresAt: Date.now() + lifetimeMs });
+      return verdictOf(outcome);
     })
     .finally(() => inFlight.delete(key));
   inFlight.set(key, asked);
   return asked;
+}
+
+/** Whether the access review allows `subject` to do what `attributes` name: true only for an allowed verdict. */
+export async function accessReviewAllows(
+  subject: AnyReviewSubject,
+  attributes: ResourceAttributes,
+  options: { readonly fresh?: boolean } = {},
+): Promise<boolean> {
+  return (await accessReviewVerdict(subject, attributes, options)) === "allowed";
 }
