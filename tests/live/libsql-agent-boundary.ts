@@ -10,9 +10,11 @@
  *
  *  - the open's three probes: each is refused the read-only token with the server's authorization refusal, and the
  *    writable token runs the first and is told the table does not exist by the other two, so none changes anything;
- *  - the open: the read-only token is admitted; the writable token, a read-only token whose permission claim widens it
- *    to writes (it writes, measured here), a user name and password on a server started with HTTP Basic, and a server
- *    that checks no credential (with no token and with a token) are each refused; the
+ *  - the open: the read-only token is admitted; the writable token and a read-only token whose permission claim widens
+ *    it to writes (it writes, measured here) are refused as tokens that can write, before a probe is sent with them; a
+ *    read-only token with a forged signature fails its connect probe; a user name and password on a server started
+ *    with HTTP Basic, and a server that checks no credential (with no token, and with a read-only or forged token,
+ *    whose probes it runs) are each refused; the
  *    operations profile opens the writable token unproven and reads the object surface, which is what plan mode grounds
  *    on; an editor handle refuses `queryReadOnly` before sending anything;
  *  - the boundary, with Studio's client admission bypassed: each write, DDL, writing pragma, attach, vacuum, extension
@@ -238,7 +240,9 @@ async function main(): Promise<void> {
       answer = error instanceof LibSQLTransportError ? `${error.status} ${error.message}` : String(error);
     }
     check(
-      answer.startsWith("403 libSQL request failed: Authorization forbidden: "),
+      /^403 libSQL request failed: Authorization forbidden: Current session doesn't not have Write permission to namespace \S+$/.test(
+        answer,
+      ),
       `probe, read-only token: ${sql} -> ${answer.slice(0, 60)}`,
     );
   }
@@ -255,11 +259,11 @@ async function main(): Promise<void> {
     "open: the read-only token is admitted",
   );
   check(
-    (await opening(connection(JWT_PORT, { password: RW }), "agent-read-only")) === "PROFILE_SERVER_UNENFORCED",
-    "open: the writable token is refused (PROFILE_SERVER_UNENFORCED)",
+    (await opening(connection(JWT_PORT, { password: RW }), "agent-read-only")) === "PROFILE_PRIVILEGES_TOO_BROAD",
+    "open: the writable token is refused as one that can write (PROFILE_PRIVILEGES_TOO_BROAD)",
   );
-  // A read-only token whose permission claim grants writes on the namespace: the server runs its writes, the open's
-  // probes refuse it, and its claims alone are refused too.
+  // A read-only token whose permission claim grants writes on the namespace: the server runs its writes, and the open
+  // refuses it on its claims, before a probe is sent with it.
   const widened = new LibSQLHranaTransport(connection(JWT_PORT, { password: WIDENED }));
   const widenedAnswers: string[] = [];
   for (const sql of [
@@ -279,8 +283,8 @@ async function main(): Promise<void> {
     `widened token: INSERT / DELETE ... WHERE 0 / DROP TABLE IF EXISTS -> ${widenedAnswers.join(" / ")}`,
   );
   check(
-    (await opening(connection(JWT_PORT, { password: WIDENED }), "agent-read-only")) === "PROFILE_SERVER_UNENFORCED",
-    "open: the widened token is refused, since the probe ran (PROFILE_SERVER_UNENFORCED)",
+    (await opening(connection(JWT_PORT, { password: WIDENED }), "agent-read-only")) === "PROFILE_PRIVILEGES_TOO_BROAD",
+    "open: the widened token is refused as one that can write (PROFILE_PRIVILEGES_TOO_BROAD)",
   );
   const claimAnswer = (token: string): string => {
     try {
@@ -294,6 +298,21 @@ async function main(): Promise<void> {
   check(
     claimAnswer(WIDENED) === "PROFILE_PRIVILEGES_TOO_BROAD",
     "claims: the widened token's claims are refused (PROFILE_PRIVILEGES_TOO_BROAD)",
+  );
+  // A token that declares read-only access but is signed by no key the server holds: the JWT server refuses it at the
+  // connect probe, and only a server that checks no token would run its probes.
+  const forged = `${RO.split(".").slice(0, 2).join(".")}.not-a-real-signature`;
+  check(
+    (await opening(connection(JWT_PORT, { password: forged }), "agent-read-only")) === "AuthenticationError",
+    "open: a read-only token with a forged signature fails its connect probe on the JWT server",
+  );
+  check(
+    (await opening(connection(OPEN_PORT, { password: forged }), "agent-read-only")) === "PROFILE_SERVER_UNENFORCED",
+    "open: the same forged token on the server that checks none is refused, since the probe ran (PROFILE_SERVER_UNENFORCED)",
+  );
+  check(
+    (await opening(connection(OPEN_PORT, { password: RW }), "agent-read-only")) === "PROFILE_PRIVILEGES_TOO_BROAD",
+    "open: the writable token on the server that checks none is refused as one that can write (PROFILE_PRIVILEGES_TOO_BROAD)",
   );
   check(
     (await opening(connection(BASIC_PORT, BASIC), "agent-read-only")) === "PROFILE_PRIVILEGES_TOO_BROAD",
