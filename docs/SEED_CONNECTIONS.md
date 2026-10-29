@@ -1313,6 +1313,18 @@ A write the exporter cannot make, to an export Secret that is missing or that it
 `GET /api/admin/discovery` reports this source under `kubernetesDiscovery` ([`docs/API_DOCS.md`](./API_DOCS.md#admin-api)), and the admin Overview page shows it in a card of its own beside CapRover's: the state and its message, the last successful scan, the exporter's error, each namespace with the reason it could not be read, the connected databases, and the skipped ones with their reasons.
 Neither carries a host or a Secret value.
 
+### Upgrading CloudNativePG discovery
+
+An installation that discovered CloudNativePG Clusters with an earlier release can see some of them refused after the upgrade, each reported as skipped with its reason:
+
+- an initdb Secret whose name ends in a reserved suffix, or that the spec of any resource listed in its namespace names, such as another Cluster's `spec.superuserSecret.name` or a managed role's `passwordSecret.name`, its own Cluster's included, is refused as `reserved_name` and never requested ([reserved names](#reserved-secret-names));
+- a credential Secret that is not of type `kubernetes.io/basic-auth` is refused as `wrong_type`, also when the Cluster owns or labels it, which an initdb Secret made by hand can be;
+- a credential Secret that holds a key outside CloudNativePG's measured set, the "Keys allowed" row of [the contract](#the-discovery-contract), is refused as `unexpected_key`;
+- a Cluster whose `<name>-rw` Service is missing, is an ExternalName, or has no selector and is not controlled by the Cluster is refused before its Secret is read, and the exporter now needs `get` on Services in each discovered namespace, which the Helm chart grants;
+- the exporter lists every page of each discovered namespace, so a namespace whose list does not end within 100 pages is withdrawn even when its first pages already filled the 500-database bound.
+
+The ids also change from 12 to 32 hex characters, and the export moves to format version 2, both described above.
+
 ---
 
 ## Kubernetes access review
