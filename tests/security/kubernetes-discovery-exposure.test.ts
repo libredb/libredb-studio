@@ -4,15 +4,15 @@
  * The discovery exporter's token can get every Secret of the namespaces it discovers, and the editors of those
  * namespaces choose the resources it reads, their user names and their Services. One adversarial fake cluster holds
  * the golden resources and, beside them, a resource for each way a namespace editor could try to have a Secret sent
- * where it does not belong: an ExternalName Service (F1), a selector-less Service not controlled by the resource (F2),
- * one controlled by another kind (F3), a PGO user or a MongoDB user and database that compose another resource's key
- * Secret name (F4, F5), an initdb Secret that names the operator's key material (F6), a Secret whose host was moved
- * (F7), and an SRV or foreign MongoDB connection string (F8).
+ * where it does not belong: an ExternalName Service, a selector-less Service not controlled by the resource, one
+ * controlled by another kind, a PGO user or a MongoDB user and database that compose another resource's key Secret
+ * name, an initdb Secret that names the operator's key material, a Secret whose host was moved, and an SRV or foreign
+ * MongoDB connection string.
  *
  * The exporter runs against it once, and Studio's discovery source reads what it wrote. What must hold: no reserved
- * or key-bearing Secret is requested (I3), Secrets and Services are never listed or watched (I4), a refused Service
- * costs no Secret read (I8), no value of a refused Secret reaches a log line, the export, Studio's skipped reasons or
- * its connections (I1), and Studio lists exactly the golden connections.
+ * or key-bearing Secret is requested and Secrets and Services are never listed or watched (row 3.32), no value of a
+ * refused Secret reaches a log line, the export, Studio's skipped reasons or its connections (row 3.33), a refused
+ * Service costs no Secret read (row 3.34), and Studio lists exactly the golden connections (row 3.35).
  */
 import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -50,7 +50,7 @@ const out: string[] = [];
 
 /** The values of every Secret no row may export: a password unique to each, and a private key. */
 const REFUSED_VALUES: string[] = [];
-/** The values of the Secrets the exporter exports but Studio refuses to map (F7, F8). */
+/** The values of the Secrets the exporter exports but Studio refuses to map: a moved host, an SRV or foreign string. */
 const UNMAPPED_VALUES: string[] = [];
 
 /** A full CloudNativePG `<name>-app` Secret, tied to its Cluster, holding a password unique to `tag`. */
@@ -77,25 +77,25 @@ function keySecret(namespace: string, name: string, type = "kubernetes.io/tls") 
 }
 
 function seedAdversaries(): void {
-  // F1: an ExternalName Service in place of the read-write Service.
+  // An ExternalName Service in place of the read-write Service.
   const alias = api.addResource("cnpg", "team-a", "alias");
   api.addService("team-a", "alias-rw", { type: "ExternalName", owners: [ownerReference(alias)] });
   appSecret("team-a", "alias", "alias-app", "f1", ownerReference(alias));
-  // F2: a selector-less Service the Cluster does not control, as hand-made Endpoints would need.
+  // A selector-less Service the Cluster does not control, as hand-made Endpoints would need.
   const endpoints = api.addResource("cnpg", "team-a", "endpoints");
   api.addService("team-a", "endpoints-rw", { selector: null });
   appSecret("team-a", "endpoints", "endpoints-app", "f2", ownerReference(endpoints));
-  // F3: a selector-less Service whose controller reference names another kind.
+  // A selector-less Service whose controller reference names another kind.
   const forged = api.addResource("cnpg", "team-a", "forged");
   api.addService("team-a", "forged-rw", { selector: null, owners: [{ ...ownerReference(forged), kind: "Pooler" }] });
   appSecret("team-a", "forged", "forged-app", "f3", ownerReference(forged));
-  // F4: a PGO user whose Secret name is another cluster's certificate Secret.
+  // A PGO user whose Secret name is another cluster's certificate Secret.
   const a = api.addResource("pgo", "team-b", "a", { users: [{ name: "b-cluster-cert", databases: ["a"] }] });
   api.addService("team-b", "a-primary", { selector: null, owners: [ownerReference(a)] });
   keySecret("team-b", "a-pguser-b-cluster-cert");
   keySecret("team-b", "analytics-cluster-cert");
   keySecret("team-b", "pgo-root-cacert", "Opaque");
-  // F5: MongoDB users whose computed or chosen Secret name is the operator's agent password or keyfile.
+  // MongoDB users whose computed or chosen Secret name is the operator's agent password or keyfile.
   api.addResource("mongo", "team-m", "vault", {
     users: [
       { name: "password", db: "agent", roles: [] },
@@ -104,7 +104,7 @@ function seedAdversaries(): void {
   });
   keySecret("team-m", "vault-agent-password", "Opaque");
   keySecret("team-m", "catalog-keyfile", "Opaque");
-  // F6: initdb Secrets that name another Cluster's superuser Secret, and a CA the Cluster's spec names.
+  // initdb Secrets that name another Cluster's superuser Secret, and a CA the Cluster's spec names.
   api.addCluster("team-a", "sneaky", { bootstrap: { initdb: { secret: { name: "orders-superuser" } } } });
   appSecret("team-a", "orders", "orders-superuser", "f6-superuser");
   api.addCluster("team-a", "sneaky-ca", {
@@ -112,7 +112,7 @@ function seedAdversaries(): void {
     bootstrap: { initdb: { secret: { name: "trust-store" } } },
   });
   keySecret("team-a", "trust-store", "kubernetes.io/basic-auth");
-  // F7: a PGO Secret whose host was moved; the exporter keeps it, Studio refuses to map it.
+  // A PGO Secret whose host was moved; the exporter keeps it, Studio refuses to map it.
   const moved = api.addResource("pgo", "team-f", "moved");
   api.addService("team-f", "moved-primary", { selector: null, owners: [ownerReference(moved)] });
   UNMAPPED_VALUES.push("not-a-real-password-f7");
@@ -129,7 +129,7 @@ function seedAdversaries(): void {
     "Opaque",
     { ownerReferences: [ownerReference(moved)] },
   );
-  // F8: MongoDB connection strings that name an SRV record or a host outside the resource's pods.
+  // MongoDB connection strings that name an SRV record or a host outside the resource's pods.
   const srv = api.addResource("mongo", "team-f", "srv", {
     users: [
       { name: "srvuser", db: "admin", roles: [{ db: "srv" }] },
@@ -203,7 +203,7 @@ afterAll(async () => {
 const deps = { now: () => T0, fileSeedIds: async () => new Set<string>() };
 
 describe("Kubernetes discovery exposure", () => {
-  test("I3: no reserved or key-bearing Secret is requested, whatever the resource says", () => {
+  test("no reserved or key-bearing Secret is requested, whatever the resource says (row 3.32)", () => {
     const requested = api.seen
       .map((seen) => seen.path)
       .filter((path) => path.startsWith("/api/v1/namespaces/") && path.includes("/secrets/") && path !== EXPORT_PATH)
@@ -218,7 +218,7 @@ describe("Kubernetes discovery exposure", () => {
     expect([...requested].sort()).toEqual([...new Set(expected)].sort());
   });
 
-  test("I4: Secrets and Services are never listed or watched, and nothing but the export is written", () => {
+  test("Secrets and Services are never listed or watched, and nothing but the export is written (row 3.32)", () => {
     for (const seen of api.seen) {
       expect(seen.path).not.toMatch(/\/(secrets|services)(\?|$)/);
       expect(seen.path).not.toContain("watch");
@@ -226,7 +226,7 @@ describe("Kubernetes discovery exposure", () => {
     }
   });
 
-  test("I8: a row whose Service is ExternalName or not controlled by its resource is refused before its Secret", () => {
+  test("a row whose Service is ExternalName or not controlled by its resource is refused before its Secret (row 3.34)", () => {
     const exported = JSON.parse(exportText) as {
       databases: { resource: { metadata: { name: string } }; secret: unknown }[];
     };
@@ -237,7 +237,7 @@ describe("Kubernetes discovery exposure", () => {
     expect(secretOf("forged")).toEqual({ name: "forged-app", problem: "service_not_controlled" });
   });
 
-  test("I1: no value of a refused Secret reaches the exporter's log, the export, Studio's status, logs or connections", async () => {
+  test("no value of a refused Secret reaches the exporter's log, the export, Studio's status, logs or connections (row 3.33)", async () => {
     const connections = await getKubernetesDiscoveredConnections(deps);
     const status = await getKubernetesDiscoveryStatus(deps);
     const studio = JSON.stringify({ status, logged });
@@ -257,7 +257,7 @@ describe("Kubernetes discovery exposure", () => {
     expect(studio).not.toContain("evil.example.com");
   });
 
-  test("Studio lists exactly the golden connections, and skips every adversarial row by its id key", async () => {
+  test("Studio lists exactly the golden connections, and skips every adversarial row by its id key (row 3.35)", async () => {
     const connections = await getKubernetesDiscoveredConnections(deps);
     expect(connections.map((entry) => entry.connection.id).sort()).toEqual(
       GOLDEN_CASES.map((c) => c.connectionId).sort(),
