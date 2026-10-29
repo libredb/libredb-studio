@@ -11,6 +11,8 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { parseAllDocuments } from "yaml";
+import { KUBERNETES_CONTRACT } from "@/lib/seed/kubernetes-discovery-contract";
+import { DEFAULTS } from "../../docker/discover-kubernetes.mjs";
 import { howItFailed } from "../helpers/spawn-outcome";
 
 const CHART_DIR = join(import.meta.dir, "../../charts/libredb-studio");
@@ -221,7 +223,7 @@ describe("the exporter's selector at a long name", () => {
 });
 
 describe("the exporter's RBAC", () => {
-  test("each discovered namespace gets a Role with list on clusters and get on secrets, bound to the exporter", () => {
+  test("each discovered namespace gets a Role with list on clusters and get on secrets and services, bound to the exporter", () => {
     const docs = render(ON);
     for (const namespace of ["team-a", "team-b"]) {
       const role = docs.find(
@@ -230,6 +232,7 @@ describe("the exporter's RBAC", () => {
       expect(role?.rules).toEqual([
         { apiGroups: ["postgresql.cnpg.io"], resources: ["clusters"], verbs: ["list"] },
         { apiGroups: [""], resources: ["secrets"], verbs: ["get"] },
+        { apiGroups: [""], resources: ["services"], verbs: ["get"] },
       ]);
       const binding = docs.find(
         (doc) =>
@@ -283,17 +286,64 @@ describe("the exporter's RBAC", () => {
     ]);
   });
 
-  test("no rule lists or watches Secrets, and no ClusterRole is rendered for discovery", () => {
-    const docs = render(ON);
+  test("no rule watches anything or lists Secrets or Services, and no ClusterRole is rendered for discovery", () => {
+    const docs = render([...ON, "--set", "discovery.kubernetes.kinds={mongo,pgo,edbpg,cnpg}"]);
     for (const role of docs.filter((doc) => doc.kind === "Role")) {
       for (const rule of role.rules ?? []) {
-        if (rule.resources.includes("secrets")) {
+        expect(rule.verbs).not.toContain("watch");
+        if (rule.resources.includes("secrets") || rule.resources.includes("services")) {
           expect(rule.verbs).not.toContain("list");
-          expect(rule.verbs).not.toContain("watch");
         }
       }
     }
     expect(docs.some((doc) => doc.kind === "ClusterRole")).toBe(false);
+  });
+
+  /** The rules of the Role in team-a for the kinds `kinds` sets, or for the default when it is undefined. */
+  function teamARules(kinds?: string) {
+    const docs = render(kinds === undefined ? ON : [...ON, "--set", `discovery.kubernetes.kinds={${kinds}}`]);
+    const role = docs.find(
+      (doc) => doc.kind === "Role" && doc.metadata.name === NAMESPACED_ROLE && doc.metadata.namespace === "team-a",
+    );
+    return role?.rules ?? [];
+  }
+
+  const READS = [
+    { apiGroups: [""], resources: ["secrets"], verbs: ["get"] },
+    { apiGroups: [""], resources: ["services"], verbs: ["get"] },
+  ];
+
+  test("per-kind list rules equal the contract's group and plural, in contract order, whatever order kinds names", () => {
+    expect(teamARules("mongo,pgo,edbpg,cnpg")).toEqual([
+      ...KUBERNETES_CONTRACT.map((row) => ({ apiGroups: [row.group], resources: [row.plural], verbs: ["list"] })),
+      ...READS,
+    ]);
+    for (const row of KUBERNETES_CONTRACT) {
+      expect(teamARules(row.slug)).toEqual([
+        { apiGroups: [row.group], resources: [row.plural], verbs: ["list"] },
+        ...READS,
+      ]);
+    }
+  });
+
+  test("the default rules are the exporter's default kinds", () => {
+    expect(DEFAULTS.kinds).toEqual(["cnpg"]);
+    expect(teamARules()).toEqual([
+      ...KUBERNETES_CONTRACT.filter((row) => DEFAULTS.kinds.includes(row.slug)).map((row) => ({
+        apiGroups: [row.group],
+        resources: [row.plural],
+        verbs: ["list"],
+      })),
+      ...READS,
+    ]);
+  });
+
+  test("the schema's kinds are the contract's slugs, each at most once", async () => {
+    const schema = await Bun.file(join(CHART_DIR, "values.schema.json")).json();
+    const kinds = schema.properties.discovery.properties.kubernetes.properties.kinds;
+    expect(kinds.items.enum).toEqual(KUBERNETES_CONTRACT.map((row) => row.slug));
+    expect(kinds.uniqueItems).toBe(true);
+    refused([...ON, "--set", "discovery.kubernetes.kinds={pgo,pgo}"], "kinds");
   });
 });
 
