@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D403, U17 · 293
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U149 · 135
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U150 · 136
 - [Dependencies](#dependencies) — P1-P12 · 10
 - [Documentation](#documentation) — DOC3-DOC35 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
@@ -5963,6 +5963,16 @@ Seen 2026-10-29 in a browser pass over the Elasticsearch agent work.
 Any engine whose SQL surface is query-only would read the same way; that was reasoned from the code, not measured.
 
 **Done when:** on an engine whose SQL grammar holds no write statement, the dialog either does not open for a write or says the engine will refuse it, never that rows or documents will be deleted; the fact is read from a per-engine contract row or capability, not a type-id branch; and a test pins the Elasticsearch `DELETE` case.
+
+### U150. The OpenSearch editor returns an answer the engine cut at its size limit as if it were whole
+
+OpenSearch's SQL plugin answers at most `plugins.query.size_limit` rows, 10,000 by default, and cuts the rest with no sign of the cut.
+Measured on 3.8.0 with the limit at 1,000: a 1,500-group aggregation answers 1,000 rows and no cursor.
+The agent path reads the limit at open and refuses an answer that reaches it (`docs/providers/opensearch.md`, "The statement path").
+The editor's `query()` in `src/lib/db/providers/sql/search/index.ts` does not, so the result grid shows the cut answer as complete.
+Seen 2026-10-29 in the live runs of the OpenSearch agent work.
+
+**Done when:** an editor answer that reaches the engine's size limit is either refused or shown with a notice that the engine may have cut it, the limit is read through the same transport call the agent path uses, and a test pins the 1,000-row cut.
 
 ## Dependencies
 
