@@ -1883,6 +1883,16 @@ export class OracleProvider extends SQLBaseProvider {
     };
   }
 
+  /** What a session signs in with, pooled or standalone: the user, the password, the connect string and TLS. */
+  private sessionAttributes(): oracledb.PoolAttributes {
+    return {
+      user: this.config.user,
+      password: this.config.password,
+      connectString: this.getConnectString(),
+      ...this.buildTLSAttributes(),
+    };
+  }
+
   public async connect(): Promise<void> {
     if (this.pool) {
       return;
@@ -1895,13 +1905,10 @@ export class OracleProvider extends SQLBaseProvider {
       // the internal `_afterPoolClose` and `_allCheckedIn`, and nothing under `oracledb/lib`
       // emits `error` at all. Connection failures surface through the awaiting call.
       this.pool = await oracledb.createPool({
-        user: this.config.user,
-        password: this.config.password,
-        connectString: this.getConnectString(),
+        ...this.sessionAttributes(),
         poolMin: this.poolConfig.min,
         poolMax: this.poolConfig.max,
         poolTimeout: Math.floor(this.poolConfig.idleTimeout / 1000),
-        ...this.buildTLSAttributes(),
       });
 
       // Test the connection
@@ -2046,14 +2053,15 @@ export class OracleProvider extends SQLBaseProvider {
    * policy or grant added after one call refuses the next and a lifted refusal admits it, then sends the statement in
    * one execute with `autoCommit: false`
    * (the constructor sets the process-wide default to true for the editor), ends with the driver's `rollback()`, which
-   * ends the read-only transaction where the SQL `ROLLBACK` is refused (capture 10), and returns the session to the
-   * pool. A failure drops the session instead.
+   * ends the read-only transaction where the SQL `ROLLBACK` is refused (capture 10), and signs the session off, on
+   * every path: the session is opened for the call alone, never taken from the pool, since a pooled session would
+   * carry what the statement set on it, `CURRENT_SCHEMA` included, into the next call.
    *
    * Budgets refuse rather than truncate: the execute fetches one row past the row budget (`maxRows`), every value, a
    * CLOB or BLOB fetched whole as a string or a buffer included, is counted against the byte budget, and a column of a
    * type the agent does not read (BFILE, object, cursor) is refused from the result set's metadata, before any row is
    * fetched, so a nested cursor is never expanded. The deadline is the driver's `callTimeout`: it ends
-   * the wait, and the session that waited is dropped.
+   * the wait, and the session that waited is signed off.
    *
    * Refused outside the profile: a provider opened without it has no proven user to run agent semantics on.
    */
@@ -2128,30 +2136,24 @@ export class OracleProvider extends SQLBaseProvider {
   }
 
   /**
-   * Runs `work` on a session of its own under the budget's deadline, then rolls the session back and returns it to the
-   * pool; a failure of `work` or of the rollback drops the session instead, so nothing it holds reaches another call.
+   * Runs `work` on a session opened for it alone under the budget's deadline, then rolls it back and ends it, on every
+   * path. The session is never pooled: a session keeps what a statement set on it, `ALTER SESSION SET CURRENT_SCHEMA`
+   * included, which the `USER_*` views the check reads follow, and the Thin driver returns a pooled session to its pool
+   * even when `close({ drop: true })` asks it to drop it (both measured, node-oracledb 6.10). A standalone session's
+   * `close()` signs it off, so nothing one call set reaches the next.
    */
   private async withAgentSession<T>(
     budget: ReadOnlyStatementBudget,
     work: (conn: oracledb.Connection) => Promise<T>,
   ): Promise<T> {
-    const conn = await this.pool!.getConnection();
+    const conn = await oracledb.getConnection(this.sessionAttributes());
     conn.callTimeout = budget.statementTimeoutMs;
-    let clean = true;
     try {
       return await work(conn);
-    } catch (error) {
-      clean = false;
-      throw error;
     } finally {
-      try {
-        await conn.rollback();
-      } catch {
-        clean = false;
-      }
-      // The pool hands the session to the next call with what it was given, the deadline included.
-      conn.callTimeout = 0;
-      await (clean ? conn.close() : conn.close({ drop: true })).catch(() => {});
+      // A rollback that fails leaves the session to the sign-off, which ends its transaction all the same.
+      await conn.rollback().catch(() => {});
+      await conn.close().catch(() => {});
     }
   }
 

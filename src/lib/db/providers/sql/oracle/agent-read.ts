@@ -19,9 +19,9 @@
  * SYSTEM.HELP, which PUBLIC may read, ran it with SYSTEM's rights for a READ ONLY user (measured).
  *
  * 1. `USER_USERS.READ_ONLY` reads YES. A server without the column (ORA-00904) is older than 23ai and is refused.
- * 2. Every role granted to it, directly or through PUBLIC, is a default role. `SET ROLE` is permitted under READ ONLY
- *    and a pooled session keeps the role it enabled, while `ALL_TAB_PRIVS` lists only the grants of enabled roles, so
- *    a role the check cannot see the grants of is refused.
+ * 2. Every role granted to it, directly or through PUBLIC, is a default role. `SET ROLE` is permitted under READ ONLY,
+ *    while `ALL_TAB_PRIVS` lists only the grants of enabled roles, so a role the check cannot see the grants of is
+ *    refused.
  * 3. It, its roles and PUBLIC hold EXECUTE on no PL/SQL unit, type, Java class or library that is not Oracle's, since
  *    such code runs with its owner's rights.
  * 4. They may read no view that is not Oracle's whose definition calls code, a function, package or type, rather than a

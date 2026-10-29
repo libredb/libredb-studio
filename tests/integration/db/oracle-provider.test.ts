@@ -47,10 +47,17 @@ let lastPoolAttrs: Record<string, unknown> = {};
 // nowhere else: it is a per-call option and the provider keeps no copy.
 let lastExecuteOpts: Record<string, unknown> = {};
 
-// What happened to each connection, in order, across every connection the pool handed out: each execute's statement,
-// options and the connection's `callTimeout` at the time, and each `rollback` and `close` (`drop` for a close that
-// drops the session). The agent's read-only path is observable nowhere else.
-let connectionLog: { event: string; sql?: string; opts?: Record<string, unknown>; callTimeout?: number }[] = [];
+// What happened to each connection, in order, across every connection the pool handed out and every standalone one
+// (`connect`, with the attributes it was opened with, and `acquire` for one taken from a pool): each execute's
+// statement, options and the connection's `callTimeout` at the time, and each `rollback` and `close` (`drop` for a
+// close that drops the session). The agent's read-only path is observable nowhere else.
+let connectionLog: {
+  event: string;
+  sql?: string;
+  opts?: Record<string, unknown>;
+  callTimeout?: number;
+  attrs?: Record<string, unknown>;
+}[] = [];
 let mockRollbackFn: () => Promise<void> = async () => {};
 
 const createMockConnection = () => {
@@ -75,8 +82,15 @@ const createMockConnection = () => {
   return conn;
 };
 
+// A standalone connection, as `oracledb.getConnection` opens one: the agent's read-only path opens one per call.
+let mockStandaloneConnectFn: () => Promise<ReturnType<typeof createMockConnection>> = async () =>
+  createMockConnection();
+
 const createMockPool = () => ({
-  getConnection: async () => createMockConnection(),
+  getConnection: async () => {
+    connectionLog.push({ event: "acquire" });
+    return createMockConnection();
+  },
   close: () => mockPoolCloseFn(),
   connectionsOpen: 5,
   connectionsInUse: 2,
@@ -140,6 +154,10 @@ mock.module("oracledb", () => {
     createPool: (attrs: Record<string, unknown>) => {
       lastPoolAttrs = attrs;
       return mockCreatePoolFn();
+    },
+    getConnection: async (attrs: Record<string, unknown>) => {
+      connectionLog.push({ event: "connect", attrs });
+      return mockStandaloneConnectFn();
     },
   };
   return { default: oracledbMock };
@@ -6460,6 +6478,7 @@ describe("OracleProvider.queryReadOnly", () => {
     mockBreakFn = async () => {};
     mockPoolCloseFn = async () => {};
     mockCreatePoolFn = async () => createMockPool();
+    mockStandaloneConnectFn = async () => createMockConnection();
     provider = new OracleProvider(baseConfig, {}, AGENT);
     await provider.connect();
     connectionLog = [];
@@ -6517,6 +6536,7 @@ describe("OracleProvider.queryReadOnly", () => {
       "SELECT id, name FROM app_owner.t1",
     ]);
     const call = [
+      "connect",
       "execute",
       ...checks.map(() => "execute"),
       "execute",
@@ -6586,7 +6606,7 @@ describe("OracleProvider.queryReadOnly", () => {
     // metadata could be read.
     expect(connectionLog.filter((entry) => entry.event === "execute").at(-1)?.opts?.resultSet).toBe(true);
     expect(events().filter((event) => event.startsWith("getRows"))).toEqual([]);
-    expect(events().slice(-3)).toEqual(["closeResultSet", "rollback", "drop"]);
+    expect(events().slice(-3)).toEqual(["closeResultSet", "rollback", "close"]);
   });
 
   test("a statement the server answers with no result set reads as an empty answer", async () => {
@@ -6596,7 +6616,7 @@ describe("OracleProvider.queryReadOnly", () => {
     expect(events().slice(-2)).toEqual(["rollback", "close"]);
   });
 
-  test("a write the server refuses arrives as the database's refusal, and the session is dropped", async () => {
+  test("a write the server refuses arrives as the database's refusal, and the session is ended", async () => {
     answer = (sql) =>
       CHECKS.has(sql) || sql === "SET TRANSACTION READ ONLY"
         ? undefined
@@ -6604,10 +6624,10 @@ describe("OracleProvider.queryReadOnly", () => {
     const error = await provider.queryReadOnly("DELETE FROM app_owner.t1", BUDGET).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(DatabaseError);
     expect((error as Error).message).toContain("ORA-28194");
-    expect(events().slice(-2)).toEqual(["rollback", "drop"]);
+    expect(events().slice(-2)).toEqual(["rollback", "close"]);
   });
 
-  test("a call past its deadline is refused in the shared time sentence, and the session is dropped", async () => {
+  test("a call past its deadline is refused in the shared time sentence, and the session is ended", async () => {
     answer = (sql) =>
       CHECKS.has(sql) || sql === "SET TRANSACTION READ ONLY"
         ? undefined
@@ -6615,18 +6635,50 @@ describe("OracleProvider.queryReadOnly", () => {
     await expect(provider.queryReadOnly("SELECT 1 FROM DUAL", BUDGET)).rejects.toThrow(
       "Read-only execution exceeded the time budget: no answer within 2500ms",
     );
-    expect(events().slice(-2)).toEqual(["rollback", "drop"]);
+    expect(events().slice(-2)).toEqual(["rollback", "close"]);
   });
 
-  test("a rollback that fails drops the session rather than returning it to the pool", async () => {
+  test("every call opens a session of its own and ends it after the rollback, never taking one from the pool", async () => {
+    // A session keeps what the statement set on it, ALTER SESSION SET CURRENT_SCHEMA included, which the USER_* views
+    // the check reads follow: a pooled session would hand the next call another schema's answers (measured), and the
+    // Thin driver returns a session to its pool even when `close({ drop: true })` asks it not to (node-oracledb 6.10).
+    await provider.queryReadOnly("ALTER SESSION SET CURRENT_SCHEMA = APP_OWNER", BUDGET);
+    await provider.queryReadOnly("SELECT 1 FROM DUAL", BUDGET);
+    expect(events()).not.toContain("acquire");
+    expect(events().filter((event) => ["connect", "rollback", "close", "drop"].includes(event))).toEqual([
+      "connect",
+      "rollback",
+      "close",
+      "connect",
+      "rollback",
+      "close",
+    ]);
+    // Opened as the pool is, the same user, password, connect string and TLS attributes, and no pool sizing.
+    const { poolMin, poolMax, poolTimeout, ...pooled } = lastPoolAttrs;
+    expect([poolMin, poolMax, poolTimeout].every((value) => value !== undefined)).toBe(true);
+    for (const entry of connectionLog.filter((logged) => logged.event === "connect")) {
+      expect(entry.attrs).toEqual(pooled);
+    }
+  });
+
+  test("a rollback that fails still ends the session, and the call answers", async () => {
     mockRollbackFn = async () => {
       throw new Error("DPI-1010: not connected");
     };
-    await provider.queryReadOnly("SELECT 1 FROM DUAL", BUDGET);
-    expect(events().at(-1)).toBe("drop");
+    await expect(provider.queryReadOnly("SELECT 1 FROM DUAL", BUDGET)).resolves.toMatchObject({ rowCount: 1 });
+    expect(events().slice(-2)).toEqual(["rollback", "close"]);
   });
 
-  test("a user the check refuses is refused, the statement never sent and the session dropped", async () => {
+  test("a session that cannot be opened fails the call, sending nothing", async () => {
+    mockStandaloneConnectFn = async () => {
+      throw new Error("ORA-12541: Cannot connect. No listener at host localhost port 1521.");
+    };
+    const error = await provider.queryReadOnly("SELECT 1 FROM DUAL", BUDGET).catch((e: unknown) => e);
+    expect((error as Error).message).toContain("ORA-12541");
+    expect(executed()).toEqual([]);
+  });
+
+  test("a user the check refuses is refused, the statement never sent and the session ended", async () => {
     answer = (sql) =>
       sql === AGENT_PRINCIPAL_STATEMENTS.links ? { rows: [{ OWNER: "PUBLIC", DB_LINK: "LOOPLINK" }] } : undefined;
     const first = await provider.queryReadOnly("SELECT 1 FROM DUAL", BUDGET).catch((e: unknown) => e);
@@ -6634,7 +6686,7 @@ describe("OracleProvider.queryReadOnly", () => {
     expect((first as ExecutionProfileError).reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
     expect((first as Error).message).toContain('DROP PUBLIC DATABASE LINK "LOOPLINK"');
     expect(executed()).not.toContain("SELECT 1 FROM DUAL");
-    expect(events().slice(-2)).toEqual(["rollback", "drop"]);
+    expect(events().slice(-2)).toEqual(["rollback", "close"]);
   });
 
   test("a policy added after a call on the same handle refuses the next call", async () => {
@@ -6681,7 +6733,7 @@ describe("OracleProvider.queryReadOnly", () => {
     expect((error as Error).message).toContain("check of the Oracle user could not be read");
     expect((error as Error).message).toContain("ORA-03113");
     expect(executed()).not.toContain("SELECT 1 FROM DUAL");
-    expect(events().slice(-2)).toEqual(["rollback", "drop"]);
+    expect(events().slice(-2)).toEqual(["rollback", "close"]);
 
     failing = false;
     connectionLog = [];
