@@ -11,9 +11,11 @@
  * whether it calls it or only passes it on. Each such file must be an entry of REVIEWED_CALLERS, under that function,
  * with its reason; an entry no file matches any more is stale and fails too. A module that gives a gated function on,
  * by `export ... from` or by exporting a name it imported, is gated for it as well, under the name it gives, so
- * importing it through a barrel is counted like importing it from its own module.
+ * importing it through a barrel is counted like importing it from its own module; a namespace of a gated module given
+ * on, by `export * as` or by exporting the name a namespace import bound, gives every gated function of that module.
  *
- * A form that would hide a caller from the census fails unless NAMESPACE_IMPORT_ALLOWED names the file with its reason:
+ * A form that would hide a caller from the census fails unless HIDDEN_FORMS_ALLOWED lists it, by the gated module it
+ * names and the form, under the file that holds it, with its reason; a file is allowed only the forms listed under it:
  * a namespace or default import of a gated module; an `import()` or `require()` of one, with a string or a template
  * without substitutions, whose result is not destructured; an `import()` or `require()` whose specifier is not such a
  * literal, since it could name any module, a gated one included; a re-export of a gated function; and, in a gated
@@ -225,16 +227,50 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
   },
 };
 
-/** Files that import a gated module in a form that hides its callers, each with the reason it may. */
-const NAMESPACE_IMPORT_ALLOWED: Readonly<Record<string, string>> = {
-  "src/lib/db/index.ts":
-    "the provider barrel re-exports getOrCreateProvider and createDatabaseProvider from the factory; the census gates the barrel for both, so every importer through it is a reviewed caller above",
-  "src/exports/providers.ts":
-    "the npm package surface re-exports the factory for embedders, who build providers for connections of their own with no Studio session, listing or review; nothing in the app imports it",
-  "src/exports/index.ts":
-    "the npm package entry re-exports the package surface, ./providers included; nothing in the app imports it",
-  "src/exports/index.js":
-    "the CommonJS package entry for bundlers that cannot read TypeScript requires ./index.ts as a whole; nothing in the app requires it",
+/** A form a file may hold that hides a gated function from the census: the gated module it names, and the form. */
+interface Allowance {
+  readonly origin: string | null;
+  readonly form: HiddenForm;
+  readonly reason: string;
+}
+
+/**
+ * Every hidden import, computed or dynamic load and alias the census allows, by file, each with the reason it may. A
+ * file is allowed exactly the entries listed under it, one hidden import each: any other it holds fails.
+ */
+const HIDDEN_FORMS_ALLOWED: Readonly<Record<string, readonly Allowance[]>> = {
+  "src/lib/db/index.ts": [
+    {
+      origin: "src/lib/db/factory.ts",
+      form: "re-export",
+      reason:
+        "the provider barrel re-exports getOrCreateProvider and createDatabaseProvider from the factory; the census gates the barrel for both, so every importer through it is a reviewed caller above",
+    },
+  ],
+  "src/exports/providers.ts": [
+    {
+      origin: "src/lib/db/factory.ts",
+      form: "re-export",
+      reason:
+        "the npm package surface re-exports the factory for embedders, who build providers for connections of their own with no Studio session, listing or review; nothing in the app imports it",
+    },
+  ],
+  "src/exports/index.ts": [
+    {
+      origin: "src/exports/providers.ts",
+      form: "re-export",
+      reason:
+        "the npm package entry re-exports the package surface, ./providers included; nothing in the app imports it",
+    },
+  ],
+  "src/exports/index.js": [
+    {
+      origin: "src/exports/index.ts",
+      form: "re-export",
+      reason:
+        "the CommonJS package entry for bundlers that cannot read TypeScript gives ./index.ts on as a whole; nothing in the app requires it",
+    },
+  ],
 };
 
 /**
@@ -295,7 +331,12 @@ interface FileFacts {
   /** `import { a as b }` and `const { a: b } = await import()` or `= require()`, by specifier. */
   readonly named: readonly { readonly specifier: string; readonly names: readonly Rename[] }[];
   /** A whole module bound to one name: namespace, default, `import x = require()`, or an undestructured load. */
-  readonly whole: readonly { readonly specifier: string; readonly form: "namespace" | "default" | "dynamic" }[];
+  readonly whole: readonly {
+    readonly specifier: string;
+    readonly form: "namespace" | "default" | "dynamic";
+    /** The name the module is bound to, or null for a load whose result is used in place. */
+    readonly local: string | null;
+  }[];
   /** How many `import()` and `require()` calls name their module with anything but a literal. */
   readonly computed: number;
   /**
@@ -387,7 +428,7 @@ function factsOf(file: string, text: string): FileFacts {
   if (cached?.text === text) return cached.facts;
   const own = new Set(GATED_MODULES[file] ?? []);
   const named: { specifier: string; names: Rename[] }[] = [];
-  const whole: { specifier: string; form: "namespace" | "default" | "dynamic" }[] = [];
+  const whole: FileFacts["whole"][number][] = [];
   const reExports: { specifier: string; names: Rename[] | "*" }[] = [];
   const localExports: Rename[] = [];
   const exported = new Set<string>();
@@ -399,11 +440,11 @@ function factsOf(file: string, text: string): FileFacts {
     const specifier = literal(node.moduleSpecifier);
     const clause = node.importClause;
     if (specifier === null || clause === undefined || clause.isTypeOnly) return;
-    if (clause.name !== undefined) whole.push({ specifier, form: "default" });
+    if (clause.name !== undefined) whole.push({ specifier, form: "default", local: clause.name.text });
     const bindings = clause.namedBindings;
     if (bindings === undefined) return;
     if (ts.isNamespaceImport(bindings)) {
-      whole.push({ specifier, form: "namespace" });
+      whole.push({ specifier, form: "namespace", local: bindings.name.text });
       return;
     }
     const names = bindings.elements.filter((element) => !element.isTypeOnly);
@@ -437,7 +478,7 @@ function factsOf(file: string, text: string): FileFacts {
     if (ts.isImportEqualsDeclaration(node)) {
       const reference = node.moduleReference;
       const specifier = ts.isExternalModuleReference(reference) ? literal(reference.expression) : null;
-      if (!node.isTypeOnly && specifier !== null) whole.push({ specifier, form: "namespace" });
+      if (!node.isTypeOnly && specifier !== null) whole.push({ specifier, form: "namespace", local: node.name.text });
       return;
     }
     if (ts.isTypeNode(node)) return;
@@ -450,10 +491,18 @@ function factsOf(file: string, text: string): FileFacts {
         destructured.add(load);
       }
     }
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer !== undefined) {
+      const load = unwrapped(node.initializer);
+      const specifier = isModuleLoad(load) ? literal(load.arguments[0]) : null;
+      if (specifier !== null) {
+        whole.push({ specifier, form: "dynamic", local: node.name.text });
+        destructured.add(load);
+      }
+    }
     if (isModuleLoad(node) && !destructured.has(node)) {
       const specifier = literal(node.arguments[0]);
       if (specifier === null) computed += 1;
-      else whole.push({ specifier, form: "dynamic" });
+      else whole.push({ specifier, form: "dynamic", local: null });
     }
     if (isWholeCommonJsExport(node)) {
       const load = unwrapped(node.right) as ts.CallExpression;
@@ -502,13 +551,18 @@ interface Binding {
   readonly local: string;
 }
 
-/** The gated functions by module, each by the name the module exports it under. */
-type Gated = ReadonlyMap<string, ReadonlyMap<string, string>>;
+/**
+ * The gated functions by module, by the name the module exports: one function for a function, every gated function of
+ * a module for a namespace of it.
+ */
+type Gated = ReadonlyMap<string, ReadonlyMap<string, readonly string[]>>;
+
+type HiddenForm = "namespace" | "default" | "dynamic" | "computed" | "re-export" | "alias";
 
 /** A form that hides which gated function a file uses, with the gated module it hides, or null when it may be any. */
 interface HiddenImport {
   readonly origin: string | null;
-  readonly form: "namespace" | "default" | "dynamic" | "computed" | "re-export" | "alias";
+  readonly form: HiddenForm;
 }
 
 interface FileImports {
@@ -522,52 +576,68 @@ function bindingsOf(file: string, facts: FileFacts, gated: Gated, known: Readonl
     const origin = resolveSpecifier(file, specifier, known);
     const functions = origin === null ? undefined : gated.get(origin);
     if (origin === null || functions === undefined) return [];
-    return names.flatMap(({ from, to }) => {
-      const fn = functions.get(from);
-      return fn === undefined ? [] : [{ origin, fn, local: to }];
-    });
+    return names.flatMap(({ from, to }) => (functions.get(from) ?? []).map((fn) => ({ origin, fn, local: to })));
   });
+}
+
+/** Every gated function a module gives on, once each: what a namespace of it carries. */
+const allOf = (functions: ReadonlyMap<string, readonly string[]> | undefined): string[] => [
+  ...new Set([...(functions?.values() ?? [])].flat()),
+];
+
+/** The gated functions each name `file` binds a gated module's value to: named imports and whole modules. */
+function boundIn(file: string, facts: FileFacts, gated: Gated, known: ReadonlySet<string>): Map<string, string[]> {
+  const bound = new Map<string, string[]>();
+  const bind = (local: string, fns: readonly string[]): void => {
+    if (fns.length > 0) bound.set(local, [...new Set([...(bound.get(local) ?? []), ...fns])]);
+  };
+  for (const fn of GATED_MODULES[file] ?? []) bind(fn, [fn]);
+  for (const { fn, local } of bindingsOf(file, facts, gated, known)) bind(local, [fn]);
+  for (const { specifier, form, local } of facts.whole) {
+    const functions = gated.get(resolveSpecifier(file, specifier, known) ?? "");
+    if (local === null || functions === undefined) continue;
+    bind(local, form === "default" ? (functions.get("default") ?? []) : allOf(functions));
+  }
+  return bound;
 }
 
 /**
  * GATED_MODULES closed under giving on: a module that re-exports a gated function, by name or with `export *`, or
  * exports under any name a gated function it imported or declares, is gated for it under that name, until no module
- * gains a function.
+ * gains a function. A namespace of a gated module given on, by `export * as` or by exporting the name a namespace
+ * import or a whole load bound, gives every gated function of that module under that name.
  */
 function closeUnderReExport(sources: ReadonlyMap<string, string>): Gated {
   const known = new Set(sources.keys());
   const facts = [...sources].map(([file, text]) => [file, factsOf(file, text)] as const);
   const gated = new Map(
-    Object.entries(GATED_MODULES).map(([origin, fns]) => [origin, new Map(fns.map((fn) => [fn, fn]))]),
+    Object.entries(GATED_MODULES).map(([origin, fns]) => [
+      origin,
+      new Map<string, readonly string[]>(fns.map((fn) => [fn, [fn]])),
+    ]),
   );
   for (let grew = true; grew; ) {
     grew = false;
     for (const [file, fact] of facts) {
-      const given: [string, string][] = [];
+      const given: [string, readonly string[]][] = [];
       for (const { specifier, names } of fact.reExports) {
         const from = gated.get(resolveSpecifier(file, specifier, known) ?? "");
         if (from === undefined) continue;
         if (names === "*") given.push(...from);
         else
           given.push(
-            ...names.flatMap(({ from: name, to }): [string, string][] => {
-              const fn = from.get(name);
-              return fn === undefined ? [] : [[to, fn]];
-            }),
+            ...names.map(({ from: name, to }): [string, readonly string[]] => [
+              to,
+              name === "*" ? allOf(from) : (from.get(name) ?? []),
+            ]),
           );
       }
-      const bound = new Map([
-        ...(GATED_MODULES[file] ?? []).map((fn): [string, string] => [fn, fn]),
-        ...bindingsOf(file, fact, gated, known).map(({ fn, local }): [string, string] => [local, fn]),
-      ]);
-      for (const { from, to } of fact.localExports) {
-        const fn = bound.get(from);
-        if (fn !== undefined) given.push([to, fn]);
-      }
-      const into = gated.get(file) ?? new Map<string, string>();
-      for (const [name, fn] of given) {
-        if (into.has(name)) continue;
-        into.set(name, fn);
+      const bound = boundIn(file, fact, gated, known);
+      for (const { from, to } of fact.localExports) given.push([to, bound.get(from) ?? []]);
+      const into = gated.get(file) ?? new Map<string, readonly string[]>();
+      for (const [name, fns] of given) {
+        if (fns.length === 0 || into.has(name)) continue;
+        into.set(name, fns);
         grew = true;
       }
       if (into.size > 0) gated.set(file, into);
@@ -597,6 +667,10 @@ function importsOf(file: string, source: string, gated: Gated, known: ReadonlySe
     }
   }
   const importedFrom = new Map(bindings.map(({ local, origin }) => [local, origin]));
+  for (const { specifier, local } of facts.whole) {
+    const origin = gatedOrigin(specifier);
+    if (local !== null && origin !== null) importedFrom.set(local, origin);
+  }
   for (const { from } of facts.localExports) {
     const origin = importedFrom.get(from);
     if (origin !== undefined) hidden.push({ origin, form: "re-export" });
@@ -629,6 +703,38 @@ function takeCensus(sources: ReadonlyMap<string, string>): Census {
 
 const census = takeCensus(SOURCES);
 const GATED = census.gated;
+
+const sameForm = (a: HiddenImport, b: HiddenImport | Allowance): boolean => a.origin === b.origin && a.form === b.form;
+
+/** The hidden imports of `found` no allowance of its file covers, each allowance covering one. */
+function unallowed(found: Census): string[] {
+  return [...found.hidden].flatMap(([file, imports]) => {
+    const left = [...(HIDDEN_FORMS_ALLOWED[file] ?? [])];
+    return imports.flatMap((hidden) => {
+      const index = left.findIndex((allowance) => sameForm(hidden, allowance));
+      if (index >= 0) {
+        left.splice(index, 1);
+        return [];
+      }
+      return [`${file}: ${hidden.form} of ${hidden.origin}`];
+    });
+  });
+}
+
+/** The allowances of HIDDEN_FORMS_ALLOWED no hidden import of their file uses, each hidden import using one. */
+function staleAllowances(found: Census): string[] {
+  return Object.entries(HIDDEN_FORMS_ALLOWED).flatMap(([file, allowances]) => {
+    const left = [...(found.hidden.get(file) ?? [])];
+    return allowances.flatMap((allowance) => {
+      const index = left.findIndex((hidden) => sameForm(hidden, allowance));
+      if (index >= 0) {
+        left.splice(index, 1);
+        return [];
+      }
+      return [`${file}: ${allowance.form} of ${allowance.origin}`];
+    });
+  });
+}
 
 const pairs = (importers: ReadonlyMap<string, ReadonlySet<string>>): string[] =>
   [...importers].flatMap(([fn, files]) => [...files].map((file) => `${fn} <- ${file}`)).sort();
@@ -723,8 +829,8 @@ describe("the census reads every import form", () => {
 
   test("a module that re-exports a gated function is gated for it, through every barrel above it", () => {
     expect([...(GATED.get("src/lib/db/index.ts") ?? [])].sort()).toEqual([
-      ["createDatabaseProvider", "createDatabaseProvider"],
-      ["getOrCreateProvider", "getOrCreateProvider"],
+      ["createDatabaseProvider", ["createDatabaseProvider"]],
+      ["getOrCreateProvider", ["getOrCreateProvider"]],
     ]);
     for (const barrel of ["src/exports/providers.ts", "src/exports/index.ts", "src/exports/index.js"]) {
       expect([...(GATED.get(barrel)?.keys() ?? [])].sort()).toEqual([
@@ -809,6 +915,42 @@ describe("the census reads every import form", () => {
     ]);
   });
 
+  test("(f) a namespace import or `export * as` of a gated module, given on, gives every gated function of it", () => {
+    const BARREL = "src/lib/census-probe/barrel.ts";
+    const SEED = "src/lib/seed/index.ts";
+    const barrel = [
+      'import * as seedNs from "@/lib/seed";',
+      "export { seedNs };",
+      'export * as seedNs2 from "@/lib/seed";',
+    ].join("\n");
+    const importer = 'import { seedNs, seedNs2 } from "./barrel";';
+    const gated = closeUnderReExport(new Map([...SOURCES, [BARREL, barrel], [FILE, importer]]));
+    const seedFns = [...GATED_MODULES[SEED]];
+    expect([...(gated.get(BARREL) ?? [])]).toEqual([
+      ["seedNs2", seedFns],
+      ["seedNs", seedFns],
+    ]);
+    expect(importsOf(FILE, importer, gated, new Set([...KNOWN, BARREL])).bindings).toEqual([
+      ...seedFns.map((fn) => ({ origin: BARREL, fn, local: "seedNs" })),
+      ...seedFns.map((fn) => ({ origin: BARREL, fn, local: "seedNs2" })),
+    ]);
+  });
+
+  test("(g) an allowed file is allowed only its own hidden imports, each by origin and form", () => {
+    const DB = "src/lib/db/index.ts";
+    const withExtra = (extra: string): string[] =>
+      unallowed(takeCensus(new Map([...SOURCES, [DB, `${SOURCES.get(DB)}\n${extra}\n`]])));
+    expect(unallowed(census)).toEqual([]);
+    expect(withExtra('import * as seedNs from "@/lib/seed";\nexport { seedNs };')).toEqual([
+      `${DB}: namespace of src/lib/seed/index.ts`,
+      `${DB}: re-export of src/lib/seed/index.ts`,
+    ]);
+    expect(withExtra('export * as seedNs from "@/lib/seed";')).toEqual([`${DB}: re-export of src/lib/seed/index.ts`]);
+    expect(withExtra('export { withOneShotTunnel } from "./factory";')).toEqual([
+      `${DB}: re-export of src/lib/db/factory.ts`,
+    ]);
+  });
+
   test("(c) a comment marker inside a string hides no code that follows it", () => {
     const found = importsOf(
       FILE,
@@ -859,20 +1001,19 @@ describe("the caller census of the seed lookups, the access review and the provi
   test("every reviewed caller and every allowance says why, in at least 20 characters", () => {
     const reasons = [
       ...Object.values(REVIEWED_CALLERS).flatMap((files) => Object.entries(files)),
-      ...Object.entries(NAMESPACE_IMPORT_ALLOWED),
+      ...Object.entries(HIDDEN_FORMS_ALLOWED).flatMap(([file, allowances]) =>
+        allowances.map(({ reason }) => [file, reason] as const),
+      ),
     ];
     expect(reasons.filter(([, reason]) => reason.trim().length < 20)).toEqual([]);
   });
 
   test("no file hides a gated module behind a namespace, default or dynamic import or a re-export, unless allowed", () => {
-    const hidden = [...census.hidden]
-      .filter(([file]) => !(file in NAMESPACE_IMPORT_ALLOWED))
-      .map(([file, imports]) => ({ file, imports }));
-    expect(hidden).toEqual([]);
+    expect(unallowed(census)).toEqual([]);
   });
 
   test("no allowance is stale", () => {
-    expect(Object.keys(NAMESPACE_IMPORT_ALLOWED).filter((file) => !census.hidden.has(file))).toEqual([]);
+    expect(staleAllowances(census)).toEqual([]);
   });
 
   test("the chain that sets reviewed connections apart, reviews them and hands them out has exactly its callers", () => {
