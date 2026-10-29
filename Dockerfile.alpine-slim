@@ -207,6 +207,17 @@ COPY --chown=nextjs:nodejs --from=builder /usr/src/app/seed-assets ./seed-assets
 # tarball does not carry (keep scripts/build-standalone-payload.sh in sync).
 COPY --chown=nextjs:nodejs --from=builder /usr/src/app/THIRD_PARTY_NOTICES.txt ./THIRD_PARTY_NOTICES.txt
 
+# Group 0 with the owner's bits on the two paths the app writes at run time, so
+# an arbitrary UID whose only group is 0 can write them, which is how
+# OpenShift's restricted-v2 SCC starts an image (PC-05): /app/data for storage,
+# /app/.next for the cache Next creates on first use (the image ships no
+# .next/cache). Nothing changes for a root start or for uid 1001. There is no
+# USER line, because a root-owned bind mount on /app/data needs the root start's
+# chown in docker-entrypoint.sh; the Helm chart remains the supported way to run
+# on OpenShift. After the COPYs above, which would reset the group of .next, and
+# not recursive, so no file is copied into a new layer.
+RUN chgrp 0 /app/data /app/.next && chmod g=u /app/data /app/.next
+
 # The db2-node load probe belongs here and not in the builder: this runtime is
 # Alpine's own nodejs, not the builder's node image, and the x64 musl addon
 # NEEDS libgcc_s.so.1, which only a require under this runtime proves present.

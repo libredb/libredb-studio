@@ -182,6 +182,50 @@ describe("published image variants", () => {
     expect(dockerfile).toContain('ENV HOSTNAME=""');
   });
 
+  test.each(VARIANTS)(
+    "%s gives /app/data and /app/.next group 0 and group permissions equal to the owner's",
+    (variant) => {
+      const cmds = commands(readRepoFile(variant));
+
+      // OpenShift's restricted-v2 SCC starts the image as an arbitrary UID whose
+      // only group is 0, so the root branch of the entrypoint never runs and
+      // nothing chowns these two paths for it. Group 0 with the owner's bits is
+      // what lets that UID write them. Non-recursive on purpose: a recursive pass
+      // over .next would copy the largest layer, which every variant forbids.
+      const chgrp = cmds.find((line) => /^(?:RUN\s+)?chgrp 0 [^;&]*\/app\/data/.test(line));
+      const chmod = cmds.find((line) => /^(?:RUN\s+)?chmod g=u [^;&]*\/app\/data/.test(line));
+
+      expect(chgrp).toBeDefined();
+      expect(chgrp).toContain("/app/.next");
+      expect(chgrp).not.toMatch(/\s-R\b/);
+      expect(chmod).toBeDefined();
+      expect(chmod).toContain("/app/.next");
+      expect(chmod).not.toMatch(/\s-R\b/);
+    },
+  );
+
+  test.each(VARIANTS)("%s ships no .next/cache directory", (variant) => {
+    // Next creates .next/cache at run time inside the group-writable parent; an
+    // image-made directory would carry the build user's group and mode instead.
+    for (const line of commands(readRepoFile(variant))) {
+      expect(line).not.toContain(".next/cache");
+    }
+  });
+
+  test.each(VARIANTS)("%s sets the group after the last instruction that writes .next or data", (variant) => {
+    const lines = instructions(readRepoFile(variant));
+    // A COPY that lands on .next replaces the directory's owner, group and mode,
+    // so a chgrp placed before it would be undone without a trace.
+    const lastWrite = lines.reduce(
+      (last, line, index) => (/^COPY\b.*\.next\/(standalone|static)/.test(line) ? index : last),
+      -1,
+    );
+    const chgrp = lines.findIndex((line) => /\bchgrp 0 [^;&]*\/app\/data/.test(line));
+
+    expect(lastWrite).toBeGreaterThan(-1);
+    expect(chgrp).toBeGreaterThan(lastWrite);
+  });
+
   test.each(VARIANTS)("%s prunes the repo tree out of the payload it ships", (variant) => {
     // Next's output file tracing sweeps the repository root into
     // `.next/standalone`, which the runner unpacks onto /app, so without this
