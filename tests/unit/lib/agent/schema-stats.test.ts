@@ -409,7 +409,7 @@ describe("readSchemaStatistics — SQLite", () => {
  * no column statistics. The server refuses `ANALYZE` for every token, so a database without `sqlite_stat1` is the
  * common case and reads as never collected.
  */
-describe("readSchemaStatistics — libSQL", () => {
+describe("readSchemaStatistics: libSQL", () => {
   test("probes for sqlite_stat1 first, and reads it only when it is there", async () => {
     const present = harness("libsql", answerSqlite(true));
     const absent = harness("libsql", answerSqlite(false));
