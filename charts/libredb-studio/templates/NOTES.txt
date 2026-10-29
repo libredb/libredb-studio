@@ -65,8 +65,17 @@ OpenShift sign-in:
 {{- if include "libredb-studio.discoveryEnabled" . }}
   Each person lists only the discovered databases whose credential Secret they may get.
 {{- if include "libredb-studio.networkPolicyEnabled" . }}
-  The NetworkPolicy {{ include "libredb-studio.fullname" . }} allows database egress only to {{ join ", " .Values.discovery.kubernetes.namespaces }}{{ if .Values.postgresql.enabled }} and {{ .Release.Namespace }}{{ end }};
+{{- $egressNamespaces := .Values.discovery.kubernetes.namespaces }}
+{{- if .Values.postgresql.enabled }}
+{{- $egressNamespaces = append $egressNamespaces .Release.Namespace }}
+{{- end }}
+  The NetworkPolicy {{ include "libredb-studio.fullname" . }} allows database egress only to {{ join ", " ($egressNamespaces | uniq) }};
   add other destinations in networkPolicy.additionalEgress, or set networkPolicy.enabled=false.
+{{- else }}
+  WARNING: no NetworkPolicy confines database egress, so the pod reaches any database port on any address.
+  It renders by default in this mode unless networkPolicy.enabled is false, and a --reuse-values upgrade
+  from chart 0.1.113 or earlier carries that release's false: upgrade with --reset-then-reuse-values,
+  or set networkPolicy.enabled=true.
 {{- end }}
 {{- $customConnections := get .Values.config "allowCustomConnections" }}
 {{- if or (kindIs "invalid" $customConnections) (eq (toString $customConnections) "") }}

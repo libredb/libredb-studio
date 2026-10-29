@@ -1359,6 +1359,30 @@ describe("install notes in openshift mode", () => {
     expect(text).toContain("ALLOW_CUSTOM_CONNECTIONS=false");
   });
 
+  test("a discovered release namespace is named once, as the policy does", () => {
+    const text = notes([
+      ...OPENSHIFT,
+      ...set(
+        "discovery.kubernetes.enabled=true",
+        `discovery.kubernetes.namespaces={${NAMESPACE},team-a}`,
+        "postgresql.enabled=true",
+      ),
+    ]);
+    expect(text).toContain(`database egress only to ${NAMESPACE}, team-a;`);
+  });
+
+  test("with the bundled PostgreSQL, the release namespace joins the list", () => {
+    const text = notes([...OPENSHIFT, ...DISCOVERY, ...set("postgresql.enabled=true")]);
+    expect(text).toContain(`database egress only to team-a, team-b, ${NAMESPACE};`);
+  });
+
+  test("without the policy, warns that database egress is open, and how a --reuse-values upgrade drops it", () => {
+    const text = notes([...OPENSHIFT, ...DISCOVERY, ...set("networkPolicy.enabled=false")]);
+    expect(text).not.toContain("database egress only to");
+    expect(text).toContain("WARNING: no NetworkPolicy confines database egress");
+    expect(text).toContain("--reset-then-reuse-values");
+  });
+
   test("local mode carries none of it", () => {
     expect(notes(set(`fullnameOverride=${RELEASE}`))).not.toContain("OpenShift sign-in:");
   });
