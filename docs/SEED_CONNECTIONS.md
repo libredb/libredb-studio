@@ -1130,7 +1130,9 @@ Pages that use the lighter connection list (the admin Overview and Operations ta
 
 ## Platform discovery (Kubernetes)
 
-Studio can list the CloudNativePG databases of a Kubernetes cluster as managed connections, with no seed file and no typed password.
+Studio can list the databases of four Kubernetes operators as managed connections, with no seed file and no typed password: CloudNativePG `Cluster`s, EDB Postgres for Kubernetes `Cluster`s, Crunchy PGO `PostgresCluster`s (`v1beta1`) and MongoDB Community `MongoDBCommunity` resources.
+CloudNativePG is discovered by default, and each other kind is opted in through `KUBERNETES_DISCOVERY_KINDS` (`discovery.kubernetes.kinds` in the chart), because a kind whose CRD the cluster does not serve withdraws every discovered namespace.
+The EDB row was checked against the contract and its tests, not against a live EDB cluster.
 An exporter with a ServiceAccount of its own reads each database's credential Secret in the namespaces a cluster owner opted in, and writes them into one Secret, which the kubelet projects into Studio's pod as a file.
 Studio's own pod never holds a token that can read a database Secret.
 It is off unless `SEED_KUBERNETES_DISCOVERY_PATH` is set, and always off in [governance mode](#governance-mode).
@@ -1145,10 +1147,28 @@ It has no dependency and no listening port, writes nothing to its filesystem, an
 
 Every `KUBERNETES_DISCOVERY_INTERVAL_MS` (30 seconds by default) it:
 
-1. lists the CloudNativePG `Cluster` objects of each namespace in `KUBERNETES_DISCOVERY_NAMESPACES`, 10 per page, so a full page of the largest objects etcd keeps by default, 1.5 MiB each, stays under its 16 MiB bound on an answer;
-2. gets each Cluster's credential Secret by the name [the contract](#the-cloudnativepg-contract) gives it, and keeps it only when it belongs to that Cluster;
-3. keeps the Secret's `username`, `password`, `dbname` and `port`, decoded, and of the Cluster only its namespace, its name and the two initdb fields the contract reads;
-4. writes one export into the Secret `KUBERNETES_DISCOVERY_EXPORT_SECRET` names, under the key `export.json`: it reads that Secret, replaces only its data, keeps its labels, annotations and type, and updates it with the resourceVersion it read as the precondition, so a write that crosses another one is refused, read again and retried once.
+1. lists each kind of `KUBERNETES_DISCOVERY_KINDS` (`cnpg` alone by default; `edbpg`, `pgo`, `mongo`) in each namespace of `KUBERNETES_DISCOVERY_NAMESPACES`, 10 per page, so a full page of the largest objects etcd keeps by default, 1.5 MiB each, stays under its 16 MiB bound on an answer;
+2. turns each listed resource into rows: one per CloudNativePG or EDB Cluster, one per user of a PGO PostgresCluster (its default user, named after the cluster, when `spec.users` is absent or empty), and one per user of a MongoDBCommunity;
+3. checks each row in the order below, getting the row's Service and then its credential Secret by the names [the contract](#the-discovery-contract) gives them only when every earlier check passed;
+4. keeps the row's kept keys of the Secret, decoded, and of the resource only the fields the contract reads;
+5. writes one export into the Secret `KUBERNETES_DISCOVERY_EXPORT_SECRET` names, under the key `export.json`, at format version 2: it reads that Secret, replaces only its data, keeps its labels, annotations and type, and updates it with the resourceVersion it read as the precondition, so a write that crosses another one is refused, read again and retried once.
+
+The checks of one row, the first failure deciding its problem:
+
+1. its names: a resource, user, database or Secret name Studio would refuse leaves the row out, counted, and no request is built from it;
+2. `unsupported_name`: a MongoDB user without `connectionStringSecretName` whose `<name>-<db>-<user>` the operator would have to normalize, and `other_namespace`: a MongoDB user whose connection string Secret is in another namespace;
+3. `no_database`: a PGO user that lists no database, whose Secret has no `dbname`;
+4. `reserved_name`: a Secret name reserved for an operator's key material or internal credentials, never requested ([reserved names](#reserved-secret-names));
+5. `service_invalid_name`: a Service name that is not a DNS-1035 label, so no such Service can exist;
+6. the row's Service, got once per scan: `service_forbidden` on a 403, `service_not_found` on a 404, `service_external_name` for an ExternalName Service, and `service_not_controlled` for a Service with no selector that the row's resource does not control (an ownerReference with `controller: true` and the resource's UID, kind and API group), which Crunchy PGO's primary Service is;
+7. the credential Secret: `forbidden` on a 403, `not_found` on a 404;
+8. `wrong_type`: the Secret is not of its row's type;
+9. `not_owned`: the Secret is not tied to the resource;
+10. `unexpected_key`: the Secret holds a key outside its row's measured set, which is never named, because whoever edits the Secret chooses it;
+11. `missing_key`: a key the row requires is absent or empty, named;
+12. `invalid_value`: a kept value is over 1024 bytes or not UTF-8 text, named by its key.
+
+Checks 1 to 6 make no Secret request, so a refused row costs no Secret read, and every problem is exported without a value.
 
 The export Secret must exist before the exporter starts: create it empty in Studio's namespace.
 The exporter never creates it, because a Role limited to its name cannot.
@@ -1162,11 +1182,16 @@ metadata:
   name: libredb-studio-discovery
   namespace: team-a
 rules:
+  # One list rule per kind of KUBERNETES_DISCOVERY_KINDS: postgresql.k8s.enterprisedb.io/clusters for edbpg,
+  # postgres-operator.crunchydata.com/postgresclusters for pgo, mongodbcommunity.mongodb.com/mongodbcommunity for mongo.
   - apiGroups: ["postgresql.cnpg.io"]
     resources: ["clusters"]
     verbs: ["list"]
   - apiGroups: [""]
     resources: ["secrets"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["services"]
     verbs: ["get"]
 ---
 # In Studio's namespace:
@@ -1182,24 +1207,36 @@ rules:
     verbs: ["get", "update"]
 ```
 
-It needs no `watch`, and no `list` on Secrets.
+It needs no `watch`, and no `list` on Secrets or Services.
 Studio mounts the export Secret read-only and points `SEED_KUBERNETES_DISCOVERY_PATH` at the `export.json` file in that mount.
 
-A Secret is exported only when it belongs to its Cluster.
-A Secret tied to the Cluster, by an ownerReference to the Cluster's UID or the label `cnpg.io/cluster=<name>` as CloudNativePG writes them, belongs to it, and the `<name>-app` Secret must be tied that way.
-A Secret named by `.spec.bootstrap.initdb.secret.name` that is tied to nothing at all, with no ownerReference and no `cnpg.io/cluster` label, also belongs to it when it is of type `kubernetes.io/basic-auth`, as CloudNativePG requires.
-Any other Secret does not, another Cluster's `<name>-app` among them, which is of type `kubernetes.io/basic-auth` too but owned by that Cluster.
-Whoever may create a Cluster in a discovered namespace chooses the read-write Service Studio sends that Cluster's credentials to, so without this rule a Cluster could name another workload's Secret and have its credentials sent to a server of their choosing.
-A Secret that fails the rule is exported as `not_owned`, without its values, and the connection of a Secret that passes always names the Secret the exporter read, which is the one the access review asks about.
+A Secret is exported only when it is of its row's type and belongs to its resource.
+For CloudNativePG and EDB, a `kubernetes.io/basic-auth` Secret tied to the Cluster, by an ownerReference to the Cluster's UID or the cluster label the operator writes (`cnpg.io/cluster=<name>`, or `k8s.enterprisedb.io/cluster=<name>` for EDB), belongs to it, and the `<name>-app` Secret must be tied that way.
+A Secret named by `.spec.bootstrap.initdb.secret.name` that is tied to nothing at all, with no ownerReference and no cluster label, also belongs to it, and it too must be of type `kubernetes.io/basic-auth`, as CloudNativePG requires.
+For Crunchy PGO and MongoDB Community, the Opaque Secret must carry an ownerReference to the resource's UID, as both operators write it.
+Any other Secret does not belong, another Cluster's `<name>-app` among them, which is owned by that Cluster.
+Whoever may create a resource in a discovered namespace chooses the Service Studio sends its credentials to, so without this rule a resource could name another workload's Secret and have its credentials sent to a server of their choosing.
+A Secret that fails the rule is exported as `wrong_type` or `not_owned`, without its values, and the connection of a Secret that passes always names the Secret the exporter read, which is the one the access review asks about.
+
+#### Reserved Secret names
+
+RBAC cannot narrow `get secrets` by name, and resource editors choose part of every per-user Secret name, so the exporter never requests a Secret whose name is reserved for an operator's key material or internal credentials, whatever the resource says:
+
+- a Cluster's own `<name>-ca`, `<name>-server`, `<name>-replication` and `<name>-superuser`, and every Secret its `spec.certificates` (`serverCASecret`, `serverTLSSecret`, `replicationTLSSecret`, `clientCASecret`) or `spec.superuserSecret.name` names;
+- `pgo-root-cacert`;
+- every name ending in `-ca`, `-server`, `-replication`, `-superuser`, `-cluster-cert`, `-replication-cert`, `-certs`, `-pgbackrest`, `-pgbouncer`, `-keyfile`, `-agent-password`, `-config`, `-scram-credentials`, `-ca-certificate`, `-server-certificate-key` or `-prometheus-certificate-key`.
+
+No default name (`<name>-app`, `<name>-pguser-<user>`, `<name>-<db>-<user>`) ends in one of these unless the resource's editor chose a user or database name that makes it so, which is what the rule stops; an initdb Secret you name yourself must avoid them too.
 
 A 403 on a namespace's list, where the exporter's Role is missing, and a 404, where the CloudNativePG CRD is not installed, are answers about that namespace: its databases are withdrawn, the export says why, and the other namespaces are exported.
 So are a list page over 16 MiB and a list that does not end within 100 pages, both `limit_exceeded`, because a namespace's editors decide how many and how large its Clusters are.
 A namespace that fails on a later page loses what its earlier pages found too.
 Any other failure fails the whole scan: an unreachable API server, a 401, a 5xx or an answer that is not a list.
 The export then keeps the namespaces, databases and `generatedAt` of the last good scan and updates only the status and `checkedAt`, as the CapRover exporter does.
-A Secret that is missing, forbidden, or holds a kept value over 1024 bytes or one that is not UTF-8 text is exported with that problem and without its values.
-A Cluster whose name, namespace or initdb Secret name is not a Kubernetes name is left out, and no request is built from it.
+A row refused by a check above is exported with its problem and without a value.
+A resource whose name, namespace or initdb Secret name is not a Kubernetes name is left out, and no request is built from it.
 So is a Cluster whose `.spec.bootstrap.initdb.database` is not 1 to 63 characters, PostgreSQL's bound on a name, because Studio's schema would refuse the whole export for it, and leaving the field out would connect to another database.
+A PGO user whose name is not `^[A-Za-z0-9_.@+-]{1,63}$` and an RFC 1123 label, a MongoDB user whose name is not `^[A-Za-z0-9_.@+-]{1,63}$`, a MongoDB database or role database that is not `^[A-Za-z0-9_-]{1,63}$`, and every user of a MongoDBCommunity whose `spec.statefulSet.spec.serviceName` is not a DNS-1035 label are left out the same way; a MongoDB user keeps its first 64 roles.
 Past 500 databases, or past 983040 bytes of export (a Secret holds at most 1 MiB), the namespaces share the bound fairly and the status is `limit_exceeded`.
 Each namespace keeps its databases in list order up to its share, and a namespace that needs less than an equal share leaves the rest to the others, so the editors of one namespace cannot push another namespace's databases out of the export by creating Clusters.
 Only the databases within a share have their Secret read, and the exporter stops listing a namespace once it holds more databases than the bound could take.
@@ -1208,40 +1245,52 @@ It never logs a value: its log has one summary line per changed scan outcome, an
 Its variables are listed in `.env.example` under "Kubernetes Discovery Exporter".
 A value it cannot honour stops it at start with exit code 2 and a line naming the variable.
 
-### The CloudNativePG contract
+### The discovery contract
 
-| Field | From the `<name>-app` Secret | With a Secret `.spec.bootstrap.initdb.secret.name` names |
-|-------|------------------------------|-----------------------------------------------------------|
-| user | `username` | `username` |
-| password | `password` | `password` |
-| database | `dbname` | `.spec.bootstrap.initdb.database`, else `app` |
-| port | `port` | 5432 |
-| host | `<name>-rw.<namespace>.svc.<cluster domain>.` | `<name>-rw.<namespace>.svc.<cluster domain>.` |
+| | CloudNativePG (`cnpg`) and EDB (`edbpg`) | Crunchy PGO (`pgo`) | MongoDB Community (`mongo`) |
+|-|-|-|-|
+| Resource | `postgresql.cnpg.io/v1` and `postgresql.k8s.enterprisedb.io/v1` `Cluster` | `postgres-operator.crunchydata.com/v1beta1` `PostgresCluster` | `mongodbcommunity.mongodb.com/v1` `MongoDBCommunity` |
+| Rows | one per Cluster | one per `spec.users` entry, or the default user `<name>` | one per `spec.users` entry |
+| Credential Secret | `.spec.bootstrap.initdb.secret.name`, else `<name>-app`, `kubernetes.io/basic-auth` | `<name>-pguser-<user>`, Opaque | the user's `connectionStringSecretName`, else `<name>-<db>-<user>`, Opaque |
+| Service checked | `<name>-rw` | `<name>-primary` | `spec.statefulSet.spec.serviceName`, else `<name>-svc` |
+| Keys allowed | `dbname`, `fqdn-jdbc-uri`, `fqdn-uri`, `host`, `jdbc-uri`, `password`, `pgpass`, `port`, `uri`, `user`, `username` | `dbname`, `host`, `jdbc-uri`, `password`, `port`, `uri`, `user`, `verifier` and the four `pgbouncer-*` keys | `connectionString.standard`, `connectionString.standardSrv`, `password`, `username` |
+| Keys kept | `username`, `password`, `dbname`, `port` | `user`, `password`, `host`, `port`, `dbname` | `connectionString.standard`, `username`, `password` |
+| user, password | `username`, `password` | `user`, which must be the row's user, `password` | `username`, which must be the row's user, `password` |
+| database | `dbname`; with an initdb Secret `.spec.bootstrap.initdb.database`, else `app` | `dbname` | the user's first role database that is not `admin`, else the user's `db` |
+| port | `port`; with an initdb Secret 5432 | `port` | the first host's port, else 27017 |
+| host | `<name>-rw.<namespace>.svc.<cluster domain>.` | `<name>-primary.<namespace>.svc.<cluster domain>.`, once the Secret's `host` equals `<name>-primary.<namespace>.svc` or that in the cluster domain | `<name>-<n>.<service>.<namespace>.svc.<cluster domain>.` of the connection string's first host, once every host is such a pod record, short or in the cluster domain |
+| authSource | none | none | the user's `db`, `admin` by default |
+| TLS | `require` | `require` | `require` when `spec.security.tls.enabled` is true, else `disable` |
 
 Every field the table takes from a Secret is required, and a database whose Secret lacks one is skipped with its reason.
-The host is the Cluster's read-write Service by its fully qualified name, because Studio runs in a namespace of its own and the Secret's `host` is the short name.
+The host is always built from the resource's names, never copied from a Secret, because Studio runs in a namespace of its own and a Secret's host is either a short name or text the Secret's editor chose; a PGO or MongoDB Secret whose host differs from the computed one is skipped.
+A MongoDB connection is built from these fields, never from the connection string, so none of the options the operator appends from the resource reaches the driver, and a `mongodb+srv://` string is refused.
+The driver still follows the replica set members the server advertises, by the names the server gives, which [docs/SECURITY.md](./SECURITY.md) row 3.34 describes.
 Discovered hosts are fully qualified names with a trailing dot, so the pod's DNS search path never applies.
-A Cluster whose name has a dot, or whose host would be over 253 characters or have a label that is not 1 to 63 characters, is skipped with a reason that names the field.
+A resource whose name has a dot, or whose host would be over 253 characters or have a label that is not 1 to 63 characters, is skipped with a reason that names the field.
 The cluster domain is `SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN`, which the Studio server reads, `cluster.local` by default; set it when the cluster's kubelets run with another `--cluster-domain`, with the Helm chart through `extraEnv`.
 While it is not a DNS name, Studio lists no Kubernetes-discovered database and reports each one as skipped, with a reason that names the variable.
 A value whose first label is `svc`, such as `svc.cluster.local`, is refused the same way, because every host already carries that label: name the cluster domain itself, such as `cluster.local`.
-CloudNativePG serves TLS with a CA of its own, whose Secret also holds that CA's private key, so the exporter never reads it, and Studio connects with `ssl: { mode: "require" }`, which encrypts without verifying the server's certificate.
-The table is data in three places that must agree: the exporter, Studio's mapping in `src/lib/seed/kubernetes-discovery-contract.ts`, and the LibreDB Rancher extension, which builds the link that opens a database.
+The PostgreSQL operators serve TLS with CAs of their own, whose Secrets also hold the CAs' private keys, so the exporter never reads them, and Studio connects with `ssl: { mode: "require" }`, which encrypts without verifying the server's certificate; Crunchy PGO refuses a connection without TLS.
+MongoDB Community serves no TLS unless the resource enables it, so a MongoDB row follows the resource, and its traffic crosses the cluster network in clear until then.
+The table is data in three places that must agree: the exporter, Studio's mapping in `src/lib/seed/kubernetes-discovery-contract.ts`, and the LibreDB Rancher extension, which builds the link that opens a CloudNativePG database.
 The golden fixture `tests/fixtures/kubernetes-discovery-golden.json` pins the three together, and the extension copies it from a released Studio tag.
 
 ### What every Kubernetes-discovered connection gets
 
-- id `k8s-cnpg-` followed by the first 12 hex characters of sha256 of `<namespace>/<name>`, name `<namespace>/<name> (CloudNativePG)`, group `<namespace>`; one Studio serves one cluster, so the cluster is not part of the id;
-- when the name would be over the seed schema's 128 characters, the start of `<namespace>/<name>` is cut to `…`, keeping the Cluster's name at its end, and the group still shows the namespace whole;
+- id `k8s-<kind>-` followed by the first 32 hex characters of sha256 of its key, `<namespace>/<name>`, or `<namespace>/<name>/<user>` for a PGO or MongoDB user; name `<key> (<operator>)`, such as `team-a/orders (CloudNativePG)` or `team-b/analytics/analyst (Crunchy PGO)`; group `<namespace>`; one Studio serves one cluster, so the cluster is not part of the id, and a CloudNativePG and an EDB Cluster of one name get different ids;
+- ids of 12 hex characters, which earlier releases gave, are not kept as aliases: a link that names one answers like an unknown id;
+- when the name would be over the seed schema's 128 characters, the start of the key is cut to `…`, keeping the resource's name and user at its end, and the group still shows the namespace whole;
 - the link `/?connection=seed%3A<id>` opens it ([Linking to a Connection](#linking-to-a-connection));
-- `ssl: { mode: "require" }`, `managed: true`, no `mcp`, no `readOnly` and no `connectionString`, all set in code and never read from the export;
+- its row's TLS mode (`require` for every PostgreSQL row), and for MongoDB its `authSource`, `managed: true`, no `mcp`, no `readOnly` and no `connectionString`, all set in code and never read from the export;
 - roles `*` while `KUBERNETES_ACCESS_REVIEW` is on, so the review is its only gate, and `admin` while it is off, read from the switch on every request;
 - the Secret its credentials came from, which the review asks about, and the literal marker, so a value written as `${NAME}` or `${vault:...}` is used as written, as for CapRover; `GET /api/connections/managed` strips both markers.
 
 ### Kubernetes precedence
 
 The managed list holds the seed-file connections, then CapRover's, then the Kubernetes ones, then the built-in samples.
-A Kubernetes id that an operator source declares is dropped and reported as skipped, with the reason "id taken by the seed file", and an export that lists one database twice keeps the first.
+A Kubernetes id that an operator source declares is dropped and reported as skipped, with the reason "id taken by the seed file".
+Two discovered rows that map to one id are both left out, with the reason "id shared with another discovered database, so both are left out", because list order, which the namespaces' editors control, would otherwise pick the winner.
 Naming a Kubernetes-discovered id the caller may not open answers the same 404 as an unknown id.
 
 ### Kubernetes freshness and state
@@ -1252,6 +1301,9 @@ Keep `SEED_KUBERNETES_DISCOVERY_MAX_AGE_MS` above `KUBERNETES_DISCOVERY_INTERVAL
 A role removed in the cluster does not wait for the export: with the access review on, the review decides each list and open within its own cache lifetime.
 A namespace removed from `KUBERNETES_DISCOVERY_NAMESPACES`, which restarts the exporter, leaves the export at its next scan, and Studio withdraws its databases once the kubelet shows that export.
 The exporter's codes are `api_unreachable`, `credentials_unavailable`, `unauthorized`, `api_error` and `limit_exceeded`; a namespace it could not read carries `forbidden`, `crd_missing` or `limit_exceeded`.
+A row it refused carries one of the problems of [the checks](#the-kubernetes-exporter), and Studio skips it with a reason that names the Secret, the Service, the key or the user, never a value.
+`crd_missing` in every namespace means a kind of `KUBERNETES_DISCOVERY_KINDS` whose operator is not installed; `service_forbidden` means the exporter's Role lacks `get` on Services, which earlier releases did not grant.
+An export of format version 1, written by an exporter of an earlier release, is refused whole as `invalid_export`, so during an upgrade the discovered connections read as unavailable until the new exporter writes its first export.
 A write the exporter cannot make, to an export Secret that is missing or that its Role may not update, writes nothing, so Studio reads the last export it wrote until that turns stale; the exporter logs each failed write.
 
 ### Kubernetes admin status
@@ -1494,7 +1546,7 @@ This is the standard application logger (`src/lib/logger.ts`), not a persisted a
 | `SEED_DISCOVERY_MAX_AGE_MS` | `60000` | Age of the export's `generatedAt` after which discovered connections are withdrawn; keep it well above the exporter's `DISCOVERY_INTERVAL_MS` (10000 by default) |
 | `SEED_KUBERNETES_DISCOVERY_PATH` | unset (off) | Path of the Kubernetes discovery export file, the `export.json` of the mounted export Secret; see [Platform discovery (Kubernetes)](#platform-discovery-kubernetes) |
 | `SEED_KUBERNETES_DISCOVERY_MAX_AGE_MS` | `180000` | Age of the Kubernetes export's `generatedAt` after which its connections are withdrawn; keep it above the exporter's `KUBERNETES_DISCOVERY_INTERVAL_MS` (30000 by default) plus 90000 |
-| `SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN` | `cluster.local` | The cluster's DNS domain, which every Kubernetes-discovered host ends in, read by the Studio server and not by the exporter; see [The CloudNativePG contract](#the-cloudnativepg-contract) |
+| `SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN` | `cluster.local` | The cluster's DNS domain, which every Kubernetes-discovered host ends in, read by the Studio server and not by the exporter; see [The discovery contract](#the-discovery-contract) |
 | `NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS` | `5000` | Shortest interval of an open tab's managed-list refresh, inlined at build time, so it only affects source builds and tests, not packaged artifacts |
 
 The `VAULT_*` variables that back `${vault:...}` references are listed under [Vault Environment Variables](#vault-environment-variables).
@@ -1680,8 +1732,8 @@ seed-connections.yaml (SEED_CONFIG_PATH)
 | `discovery-probe.ts` | TCP probe for environment-matched candidates: 1 s timeout, 30 s positive cache, 16 at a time |
 | `discovery-source.ts` | What every platform discovery source shares: the bounded file read, the cache, freshness and staleness, the states and the change log |
 | `discovery-loader.ts` | The CapRover discovery source: mapping, probe, admin status |
-| `kubernetes-discovery-export.ts` | Zod schema and parser of the Kubernetes discovery export, with its 1 MiB cap |
-| `kubernetes-discovery-contract.ts` | The contract table (CloudNativePG), the connection id rule and the mapping of an exported database to a seed connection |
-| `kubernetes-discovery-loader.ts` | The Kubernetes discovery source: mapping, id collisions, admin status |
+| `kubernetes-discovery-export.ts` | Zod schema and parser of the Kubernetes discovery export (format version 2, one schema per kind), with its 1 MiB cap |
+| `kubernetes-discovery-contract.ts` | The contract table (CloudNativePG, EDB Postgres for Kubernetes, Crunchy PGO, MongoDB Community), the 32-hex connection id rule and the mapping of an exported row to a seed connection |
+| `kubernetes-discovery-loader.ts` | The Kubernetes discovery source: mapping, id collisions (both rows left out), admin status |
 
 The exporters, `docker/discover.mjs` and `docker/discover-kubernetes.mjs`, live outside `src/`: they ship in the container images only, and Studio never imports them.

@@ -10,17 +10,36 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import * as auth from "@/lib/auth";
 import { resetCache } from "@/lib/seed";
+import type { KubernetesDiscoveredDatabase } from "@/lib/seed/kubernetes-discovery-export";
 import { resetKubernetesDiscoveryCache } from "@/lib/seed/kubernetes-discovery-loader";
 import { type FakeKubernetesApi, startFakeKubernetesApi } from "../../helpers/kubernetes-access/fake-api";
 import {
+  GOLDEN_CASES,
+  goldenDatabases,
+  goldenRow,
   writeKubernetesDiscoveryExport,
   type KubernetesDiscoveryExportFixture,
 } from "../../helpers/kubernetes-discovery-fixture";
 
 const ISSUER = "https://rancher.example.com/oidc";
-const ORDERS = "k8s-cnpg-75c1a60b8980";
-const ANALYTICS = "k8s-cnpg-d06590026498";
-const BILLING = "k8s-cnpg-37c1c823437f";
+// The ids come from the golden fixture, which the implementation generated: no id is typed by hand here.
+const [ORDERS, ANALYTICS, BILLING] = GOLDEN_CASES.filter((c) => goldenRow(c).slug === "cnpg").map(
+  (c) => c.connectionId,
+);
+/** A discovered id no export lists, and the 12-hex id of team-a/orders that earlier releases listed. */
+const UNKNOWN = `k8s-cnpg-${"0".repeat(32)}`;
+const LEGACY = "k8s-cnpg-75c1a60b8980";
+const ALL_KINDS = ["cnpg", "edbpg", "pgo", "mongo"];
+
+/** `databases` with the row of the Secret `secretName` refused as not_found, as the exporter writes a missing Secret. */
+function withRefused(databases: KubernetesDiscoveredDatabase[], secretName: string): KubernetesDiscoveredDatabase[] {
+  const refused = databases.filter((entry) => entry.secret.name !== secretName);
+  const row = databases.find((entry) => entry.secret.name === secretName);
+  if (row === undefined) throw new Error(`no golden row reads ${secretName}`);
+  const secret = { name: secretName, problem: "not_found" as const };
+  return [...refused, { kind: row.kind, resource: row.resource, secret } as KubernetesDiscoveredDatabase];
+}
+
 type Session = auth.UserPayload;
 const DEV_A: Session = { role: "user", username: "u-rjs2h", idpSubject: "u-rjs2h", idpIssuer: ISSUER };
 const ADMIN: Session = { role: "admin", username: "u-admin", idpSubject: "u-admin", idpIssuer: ISSUER };
@@ -127,7 +146,7 @@ describe("Kubernetes-discovered connections under the access review", () => {
     });
 
     const refusals = await Promise.all(
-      [ANALYTICS, BILLING, "k8s-cnpg-000000000000"].map(async (id) => {
+      [ANALYTICS, BILLING, UNKNOWN, LEGACY].map(async (id) => {
         try {
           await resolveConnection({ connectionId: `seed:${id}` }, DEV_A);
           return "opened";
@@ -139,6 +158,53 @@ describe("Kubernetes-discovered connections under the access review", () => {
     );
     expect(new Set(refusals).size).toBe(1);
     expect(refusals[0]).toContain("404");
+  });
+
+  test("a refused PGO row's id and a 12-hex legacy id answer exactly like an unknown id", async () => {
+    process.env.KUBERNETES_ACCESS_REVIEW = "off";
+    session = ADMIN;
+    const analyst = GOLDEN_CASES.find((c) => c.secretName === "analytics-pguser-analyst");
+    if (analyst === undefined) throw new Error("the golden fixture has no PGO analyst case");
+    exportFile.write({
+      databases: withRefused(goldenDatabases(ALL_KINDS), analyst.secretName),
+    });
+    resetKubernetesDiscoveryCache();
+    resetCache();
+    expect(await resolveConnection({ connectionId: `seed:${ORDERS}` }, ADMIN)).toMatchObject({ seedId: ORDERS });
+    const refusals = await Promise.all(
+      [analyst.connectionId, LEGACY, UNKNOWN].map(async (id) => {
+        try {
+          await resolveConnection({ connectionId: `seed:${id}` }, ADMIN);
+          return "opened";
+        } catch (error) {
+          // With the review off the refusal names the id it was asked for, as it does for every unknown id.
+          const { message, statusCode, code } = error as { message: string; statusCode?: number; code?: string };
+          return JSON.stringify({ message: message.replace(id, "<id>"), statusCode, code });
+        }
+      }),
+    );
+    expect(new Set(refusals).size).toBe(1);
+    expect(refusals[0]).toContain("404");
+  });
+
+  test("lists the MongoDB row without its password or a connection string", async () => {
+    process.env.KUBERNETES_ACCESS_REVIEW = "off";
+    session = ADMIN;
+    exportFile.write({ databases: goldenDatabases(ALL_KINDS) });
+    resetKubernetesDiscoveryCache();
+    resetCache();
+    const catalog = (await listed()).find(
+      (connection) => connection.name === "team-m/catalog/appuser (MongoDB Community)",
+    );
+    expect(catalog).toMatchObject({
+      type: "mongodb",
+      host: "catalog-0.catalog-svc.team-m.svc.cluster.local.",
+      database: "catalog",
+    });
+    for (const field of ["password", "connectionString", "kubernetesSecret", "literal"]) {
+      expect(field in (catalog as object)).toBe(false);
+    }
+    expect(JSON.stringify(await listed())).not.toContain("not-a-real-password");
   });
 
   test("with the review off, the admin role alone sees them, and no review is sent", async () => {

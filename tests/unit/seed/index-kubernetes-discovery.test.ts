@@ -10,20 +10,39 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { getManagedConnections, getSeedConnectionById, getSeedConnectionByIdUnfiltered, resetCache } from "@/lib/seed";
 import { resetDiscoveryCache } from "@/lib/seed/discovery-loader";
+import type { KubernetesDiscoveredDatabase } from "@/lib/seed/kubernetes-discovery-export";
 import {
   getKubernetesDiscoveredConnections,
   resetKubernetesDiscoveryCache,
 } from "@/lib/seed/kubernetes-discovery-loader";
 import { postgresService, writeDiscoveryExport, type DiscoveryExportFixture } from "../../helpers/discovery-fixture";
 import {
+  GOLDEN_CASES,
+  goldenDatabases,
+  goldenRow,
   writeKubernetesDiscoveryExport,
   type KubernetesDiscoveryExportFixture,
 } from "../../helpers/kubernetes-discovery-fixture";
 
-const ORDERS = "k8s-cnpg-75c1a60b8980";
-const ANALYTICS = "k8s-cnpg-d06590026498";
-const BILLING = "k8s-cnpg-37c1c823437f";
+// The ids come from the golden fixture, which the implementation generated: no id is typed by hand here.
+const [ORDERS, ANALYTICS, BILLING] = GOLDEN_CASES.filter((c) => goldenRow(c).slug === "cnpg").map(
+  (c) => c.connectionId,
+);
 const KUBERNETES_IDS = [ORDERS, ANALYTICS, BILLING];
+const ALL_KINDS = ["cnpg", "edbpg", "pgo", "mongo"];
+
+/** `databases` with the row of the Secret `secretName` refused as not_found, as the exporter writes a missing Secret. */
+function withRefused(databases: KubernetesDiscoveredDatabase[], secretName: string): KubernetesDiscoveredDatabase[] {
+  const refused = databases.filter((entry) => entry.secret.name !== secretName);
+  const row = databases.find((entry) => entry.secret.name === secretName);
+  if (row === undefined) throw new Error(`no golden row reads ${secretName}`);
+  const secret = { name: secretName, problem: "not_found" as const };
+  return [...refused, { kind: row.kind, resource: row.resource, secret } as KubernetesDiscoveredDatabase];
+}
+
+/** A discovered id no export lists, and the 12-hex id of team-a/orders that earlier releases listed. */
+const UNKNOWN = `k8s-cnpg-${"0".repeat(32)}`;
+const LEGACY = "k8s-cnpg-75c1a60b8980";
 
 // The hosts below are those of the default cluster domain.
 delete process.env.SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN;
@@ -134,6 +153,29 @@ describe("seed/index with the Kubernetes discovery source", () => {
   it("does not find a Kubernetes-discovered id through the unfiltered lookup", async () => {
     expect((await getSeedConnectionById(ORDERS, ["admin"]))?.seedId).toBe(ORDERS);
     expect(await getSeedConnectionByIdUnfiltered(ORDERS)).toBeNull();
+  });
+
+  it("lists every kind's row, and answers a refused PGO row's id and a 12-hex legacy id exactly like an unknown id", async () => {
+    const analyst = GOLDEN_CASES.find((c) => c.secretName === "analytics-pguser-analyst");
+    if (analyst === undefined) throw new Error("the golden fixture has no PGO analyst case");
+    kubernetes.write({
+      databases: withRefused(goldenDatabases(ALL_KINDS), analyst.secretName),
+    });
+    resetKubernetesDiscoveryCache();
+    const listed = (await getManagedConnections(["admin"]))
+      .filter((c) => c.seedId.startsWith("k8s-"))
+      .map((c) => c.seedId);
+    expect(listed.sort()).toEqual(
+      GOLDEN_CASES.map((c) => c.connectionId)
+        .filter((id) => id !== analyst.connectionId)
+        .sort(),
+    );
+    expect(LEGACY.startsWith(ORDERS.slice(0, 21))).toBe(true);
+    const found = await Promise.all(
+      [analyst.connectionId, LEGACY, UNKNOWN].map((id) => getSeedConnectionById(id, ["admin"])),
+    );
+    expect(found).toEqual([null, null, null]);
+    expect((await getSeedConnectionById(ORDERS, ["admin"]))?.seedId).toBe(ORDERS);
   });
 
   it("keeps a reference in a Secret value literal: nothing in it is resolved from Studio's environment", async () => {
