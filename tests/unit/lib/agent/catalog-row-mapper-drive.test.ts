@@ -114,7 +114,7 @@ async function drive(
       sent.push(sql);
       return sql === ENGINE_CATALOG
         ? {
-            rows: ENGINE_ROWS.map((row) => ({ ...row })),
+            rows: structuredClone([...ENGINE_ROWS]),
             fields: ["TABLE_NAME", "COLUMN_NAME", "TYPE_NAME"],
             rowCount: 2,
             executionTime: 1,
@@ -236,7 +236,7 @@ describe("an engine that composes its catalog read through a row mapper and no e
             query: async (sql: string): Promise<QueryResult> => {
               expect(sql).toBe(ENGINE_CATALOG);
               return {
-                rows: ENGINE_ROWS.map((row) => ({ ...row })),
+                rows: structuredClone([...ENGINE_ROWS]),
                 fields: ["TABLE_NAME", "COLUMN_NAME", "TYPE_NAME"],
                 rowCount: 2,
                 executionTime: 1,
