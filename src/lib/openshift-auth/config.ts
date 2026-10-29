@@ -61,7 +61,7 @@ export function openShiftClientId(): string {
 }
 
 /** An https URL without user info, query or fragment; `raw` catches an empty query or fragment the parser reports as "". */
-function httpsUrl(raw: string): URL | null {
+export function httpsUrl(raw: string): URL | null {
   const url = URL.parse(raw);
   if (url === null || url.protocol !== "https:" || url.username !== "" || url.password !== "") return null;
   if (url.search !== "" || url.hash !== "" || raw.includes("?") || raw.includes("#")) return null;
