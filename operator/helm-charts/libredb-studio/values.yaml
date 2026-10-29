@@ -647,8 +647,9 @@ openshift:
     enabled: false
   topology:
     # -- app.kubernetes.io/part-of on every Deployment the chart renders and its
-    # pod template, grouping them in the OpenShift console's Topology view, e.g.
-    # "libredb". Empty renders no label. The bundled PostgreSQL joins the group
+    # pod template, e.g. "libredb", shown as an application in the OpenShift
+    # console's Topology selector (a Helm install is grouped by its release).
+    # Empty renders no label. The bundled PostgreSQL takes the same label
     # through postgresql.commonLabels.
     partOf: ""
     # -- app.openshift.io/runtime on the same objects, the Topology node icon,
