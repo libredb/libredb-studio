@@ -1287,7 +1287,7 @@ The golden fixture `tests/fixtures/kubernetes-discovery-golden.json` pins the th
 ### What every Kubernetes-discovered connection gets
 
 - id `k8s-<kind>-` followed by the first 32 hex characters of sha256 of its key, `<namespace>/<name>`, or `<namespace>/<name>/<user>` for a PGO or MongoDB user; name `<key> (<operator>)`, such as `team-a/orders (CloudNativePG)` or `team-b/analytics/analyst (Crunchy PGO)`; group `<namespace>`; one Studio serves one cluster, so the cluster is not part of the id, and a CloudNativePG and an EDB Cluster of one name get different ids;
-- ids of 12 hex characters, which earlier releases gave, are not kept as aliases: a link that names one answers like an unknown id;
+- ids of 12 hex characters, which only images built from `main` before this change gave (no application release up to 1.1.0 carries Kubernetes discovery), are not kept as aliases: a link that names one answers like an unknown id;
 - when the name would be over the seed schema's 128 characters, the start of the key is cut to `…`, keeping the resource's name and user at its end, and the group still shows the namespace whole;
 - the link `/?connection=seed%3A<id>` opens it ([Linking to a Connection](#linking-to-a-connection));
 - its row's TLS mode (`require` for every PostgreSQL row), and for MongoDB its `authSource`, `managed: true`, no `mcp`, no `readOnly` and no `connectionString`, all set in code and never read from the export;
@@ -1312,7 +1312,7 @@ A namespace removed from `KUBERNETES_DISCOVERY_NAMESPACES`, which restarts the e
 The exporter's codes are `api_unreachable`, `credentials_unavailable`, `unauthorized`, `api_error` and `limit_exceeded`; a namespace it could not read carries `forbidden`, `crd_missing` or `limit_exceeded`.
 A row it refused carries one of the problems of [the checks](#the-kubernetes-exporter), and Studio skips it with a reason that names the Secret, the Service, the key, the user or the resource whose spec reserves the Secret's name, never a value.
 `crd_missing` in every namespace means a kind of `KUBERNETES_DISCOVERY_KINDS` whose operator is not installed; `service_forbidden` means the exporter's Role lacks `get` on Services, which earlier releases did not grant.
-An export of format version 1, written by an exporter of an earlier release, is refused whole as `invalid_export`, so during an upgrade the discovered connections read as unavailable until the new exporter writes its first export.
+An export of format version 1, written by an exporter from an image built from `main` before this change, is refused whole as `invalid_export`, so during an upgrade the discovered connections read as unavailable until the new exporter writes its first export.
 A write the exporter cannot make, to an export Secret that is missing or that its Role may not update, writes nothing, so Studio reads the last export it wrote until that turns stale; the exporter logs each failed write.
 
 ### Kubernetes admin status
@@ -1322,7 +1322,7 @@ Neither carries a host or a Secret value.
 
 ### Upgrading CloudNativePG discovery
 
-An installation that discovered CloudNativePG Clusters with an earlier release can see some of them refused after the upgrade, each reported as skipped with its reason:
+An installation that discovered CloudNativePG Clusters with an image built from `main` before this change can see some of them refused after the upgrade, each reported as skipped with its reason:
 
 - an initdb Secret whose name ends in a reserved suffix, or that a reserved spec field of any resource listed in its namespace names, such as another Cluster's `spec.superuserSecret.name` or a managed role's `passwordSecret.name`, its own Cluster's included, is refused as `reserved_name` and never requested ([reserved names](#reserved-secret-names));
 - a credential Secret that is not of type `kubernetes.io/basic-auth` is refused as `wrong_type`, also when the Cluster owns or labels it, which an initdb Secret made by hand can be;
