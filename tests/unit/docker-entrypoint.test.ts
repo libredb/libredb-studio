@@ -17,7 +17,7 @@
  * silently apply to only half of the deployments.
  */
 import { afterEach, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { MISSING_POSIX_FILE_MODES, describeIf, missingPosixShell, posixShell } from "../helpers/posix-tools";
@@ -128,5 +128,78 @@ describeIf(CANNOT_RUN, "docker-entrypoint.sh bind address (#432)", () => {
   test("forwards argv verbatim, so the app is still what gets exec'd", () => {
     const result = runEntrypoint('echo "::"', ["node", "server.js", "--extra"]);
     expect(result.stdout.toString()).toContain("ARGS=server.js --extra");
+  });
+});
+
+/**
+ * The two user branches, pinned before the image changes around them. As root the entrypoint chowns
+ * the data directory and drops to `nextjs:nodejs` through gosu (su-exec on alpine-slim, which takes the
+ * same `user:group cmd` argv); as any other UID, which is how OpenShift's restricted-v2 SCC starts the
+ * image (an arbitrary UID whose only group is 0), it execs the app directly and touches nothing. `id`,
+ * `gosu` and `chown` are stubs that log their argv, so the root branch runs without root.
+ */
+describeIf(CANNOT_RUN, "docker-entrypoint.sh user branches", () => {
+  const fixtureRoots: string[] = [];
+
+  afterEach(() => {
+    for (const root of fixtureRoots.splice(0)) rmSync(root, { recursive: true, force: true });
+  });
+
+  function writeStub(binDir: string, name: string, lines: string[]) {
+    const path = join(binDir, name);
+    writeFileSync(path, ["#!/bin/sh", ...lines, ""].join("\n"));
+    chmodSync(path, 0o755);
+  }
+
+  function runAs(uid: string) {
+    const root = mkdtempSync(join(tmpdir(), "libredb-entrypoint-user-"));
+    fixtureRoots.push(root);
+    const binDir = join(root, "bin");
+    mkdirSync(binDir, { recursive: true });
+    const callLog = join(root, "calls.log");
+    writeFileSync(callLog, "");
+
+    writeStub(binDir, "node", STUB_NODE_SCRIPT.split("\n").slice(1));
+    writeStub(binDir, "id", ['if [ "$1" = "-u" ]; then echo "$STUB_UID"; else echo 0; fi']);
+    writeStub(binDir, "gosu", ['echo "gosu $*" >> "$CALL_LOG"', "shift", 'exec "$@"']);
+    writeStub(binDir, "chown", ['echo "chown $*" >> "$CALL_LOG"']);
+
+    const dataDir = join(root, "data");
+    const result = Bun.spawnSync([SHELL!, ENTRYPOINT, "node", "server.js"], {
+      env: {
+        ...process.env,
+        PATH: `${binDir}${delimiter}${process.env.PATH}`,
+        // A resolver that does not exist: the root branch then makes no `gosu nextjs:nodejs node
+        // <resolver>` call, so the log holds only the calls under test.
+        LIBREDB_BIND_RESOLVER: join(root, "no-such-resolver.mjs"),
+        STORAGE_SQLITE_PATH: join(dataDir, "libredb-storage.db"),
+        STUB_UID: uid,
+        CALL_LOG: callLog,
+        HOSTNAME: "",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const calls = readFileSync(callLog, "utf8").split("\n").filter(Boolean);
+    return { result, calls, dataDir };
+  }
+
+  test("as uid 0 it chowns the data directory to nextjs:nodejs and execs the app through gosu", () => {
+    const { result, calls, dataDir } = runAs("0");
+
+    expect(result.exitCode).toBe(0);
+    expect(calls).toContain(`chown -R nextjs:nodejs ${dataDir}`);
+    expect(calls.filter((line) => line.startsWith("gosu "))).toEqual(["gosu nextjs:nodejs node server.js"]);
+    expect(existsSync(dataDir)).toBe(true);
+    expect(result.stdout.toString()).toContain("ARGS=server.js");
+  });
+
+  test("as an arbitrary uid whose only group is 0 it execs the app directly, with no chown and no gosu", () => {
+    const { result, calls } = runAs("1000680000");
+
+    expect(result.exitCode).toBe(0);
+    expect(calls.filter((line) => line.startsWith("chown "))).toEqual([]);
+    expect(calls.filter((line) => line.startsWith("gosu "))).toEqual([]);
+    expect(result.stdout.toString()).toContain("ARGS=server.js");
   });
 });
