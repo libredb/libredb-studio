@@ -40,9 +40,13 @@ export interface ReviewSubject {
   readonly groups: readonly string[];
 }
 
-/** The self review's subject: the session handle, which keys the decision cache only, and the user's own token. */
+/**
+ * The self review's subject: the session handle and the uid of the person it was issued to, which key the decision
+ * cache only, and the user's own token.
+ */
 export interface SelfReviewSubject {
   readonly sessionHandle: string;
+  readonly uid: string;
   readonly token: string;
 }
 

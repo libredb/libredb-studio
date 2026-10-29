@@ -1422,7 +1422,7 @@ With `NEXT_PUBLIC_AUTH_PROVIDER=openshift` ([OPENSHIFT.md](./OPENSHIFT.md)) the 
   A cluster that grants `get` on Secrets to `system:authenticated` therefore shows those databases to everyone, as OpenShift would let everyone read the Secrets.
 - The review names nothing of Studio's choosing about the person: no user, groups or scopes, only the five resource attributes.
   Studio's ServiceAccount needs no review rights in this mode, because a self review needs none.
-- The token is read from the session's server-side record before every decision, cached or not, and an answer is kept per session for `KUBERNETES_ACCESS_REVIEW_CACHE_SECONDS`, 15 by default in this mode, so two sessions never share an answer and none outlives its session.
+- The token is read from the session's server-side record before every decision, cached or not, and an answer is kept per session and the uid of its user for `KUBERNETES_ACCESS_REVIEW_CACHE_SECONDS`, 15 by default in this mode, so two sessions never share an answer, a session handle reused for another user inherits none, and none outlives its session.
   It goes only to `OPENSHIFT_API_URL`, trusting `OPENSHIFT_API_CA_FILE` only, with no environment proxy and no redirect, and never into a log, a response, a URL, a cookie or storage.
 - Every error, timeout, answer that is not 2xx, and answer that is malformed or does not echo the asked attributes denies.
   A 403 means the token lacks `user:check-access`, which sign-in should have refused; it denies and is logged as an error.

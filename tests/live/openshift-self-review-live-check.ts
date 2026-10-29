@@ -159,7 +159,7 @@ const GET_SECRET: ResourceAttributes = {
   name: SECRET,
 };
 
-const self = (name: string) => ({ sessionHandle: `live-${name}`, token: token(name) });
+const self = (name: string) => ({ sessionHandle: `live-${name}`, uid: `live-uid-${name}`, token: token(name) });
 
 function expectOutcome(outcome: ReviewOutcome, expected: ReviewOutcome): void {
   if (JSON.stringify(outcome) !== JSON.stringify(expected)) {

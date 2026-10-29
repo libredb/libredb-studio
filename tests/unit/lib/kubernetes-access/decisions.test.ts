@@ -245,8 +245,12 @@ describe("the ServiceAccount review on an OpenShift cluster", () => {
 
 describe("self reviews, with the signed-in user's own token", () => {
   const ORDERS_SELF_GRANT = { ...ORDERS_GRANT, user: "dev-a" };
-  const H = { sessionHandle: "handle-h-not-a-real-handle-0000000000000000", token: ACCESS_TOKEN };
-  const K = { sessionHandle: "handle-k-not-a-real-handle-0000000000000000", token: "sha256~not-a-real-token-b" };
+  const H = { sessionHandle: "handle-h-not-a-real-handle-0000000000000000", uid: "uid-dev-a", token: ACCESS_TOKEN };
+  const K = {
+    sessionHandle: "handle-k-not-a-real-handle-0000000000000000",
+    uid: "uid-dev-b",
+    token: "sha256~not-a-real-token-b",
+  };
   let cluster: FakeCluster;
 
   beforeAll(async () => {
@@ -289,6 +293,16 @@ describe("self reviews, with the signed-in user's own token", () => {
     expect(cluster.selfReviews()).toHaveLength(2);
   });
 
+  test("a handle that comes back for another person inherits none of its decisions: the uid is part of the key", async () => {
+    cluster.grants = [ORDERS_SELF_GRANT];
+    expect(await accessReviewVerdict(H, ORDERS)).toBe("allowed");
+    // H's handle, reused for dev-b with dev-b's own token: asked again, and dev-b holds no grant.
+    const reused = { sessionHandle: H.sessionHandle, uid: K.uid, token: K.token };
+    expect(await accessReviewVerdict(reused, ORDERS)).toBe("denied");
+    expect(await accessReviewVerdict(H, ORDERS)).toBe("allowed");
+    expect(cluster.selfReviews()).toHaveLength(2);
+  });
+
   test("an expired token is never kept and not logged here: the next ask goes out again", async () => {
     const dead = { ...H, token: "sha256~not-a-real-token-dead" };
     const logged = [spyOn(logger, "warn"), spyOn(logger, "error"), spyOn(logger, "info")];
@@ -325,8 +339,10 @@ describe("self reviews, with the signed-in user's own token", () => {
     }
   });
 
-  test("an empty session handle denies without a request unless the decision is fresh, which keeps nothing", async () => {
-    const unkeyed = { sessionHandle: "", token: ACCESS_TOKEN };
+  test.each([
+    ["session handle", { sessionHandle: "", uid: "uid-dev-a", token: ACCESS_TOKEN }],
+    ["uid", { sessionHandle: "handle-u-not-a-real-handle-0000000000000000", uid: "", token: ACCESS_TOKEN }],
+  ])("an empty %s denies without a request unless the decision is fresh, which keeps nothing", async (_field, unkeyed) => {
     cluster.grants = [ORDERS_SELF_GRANT];
     const warn = spyOn(logger, "warn").mockImplementation(() => {});
     try {

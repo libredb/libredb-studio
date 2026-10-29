@@ -12,11 +12,12 @@
  * token, the subject, the groups or the object. Two reasons are an operator's to fix and log at error level: a token
  * that may not create a self review (`forbidden`) and a ServiceAccount review on OpenShift (`platform`).
  *
- * A self review (openshift sign-in) is kept per session handle and attributes, so two sessions never share a decision
- * or a request in flight, and neither the token nor the handle is ever part of a key or a value. Its `expired`
- * verdict, the API server's 401, is never kept and never logged here: the gate ends the session's record and logs that
- * once. A self review without a session handle could only share a key with every other, so it denies without a
- * request unless the decision is fresh.
+ * A self review (openshift sign-in) is kept per session handle, uid and attributes, so two sessions never share a
+ * decision or a request in flight and a handle that comes back for another person inherits none; the token is never
+ * part of a key or a value, and the handle and the uid are only hashed into a key. Its `expired` verdict, the API
+ * server's 401, is never kept and never logged here: the gate ends the session's record and logs that once. A self
+ * review without a session handle or a uid could share a key with another, so it denies without a request unless the
+ * decision is fresh.
  *
  * The state lives on `globalThis` under a registered symbol: Next.js bundles each route handler apart, so a module
  * variable would hold one cache per route (src/lib/governance/state.ts does the same).
@@ -85,14 +86,14 @@ export function resetAccessReviewDecisions(limit = MAX_DECISIONS): void {
 }
 
 /**
- * One key per user, set of groups and attributes, or per session handle and attributes for a self review, hashed so
- * the map holds no handle, group or object name. The groups are sorted by code unit, so the key never depends on the
- * server's locale.
+ * One key per user, set of groups and attributes, or per session handle, uid and attributes for a self review, hashed
+ * so the map holds no handle, uid, group or object name. The groups are sorted by code unit, so the key never depends
+ * on the server's locale.
  */
 function decisionKey(subject: AnyReviewSubject, attributes: ResourceAttributes): string {
   const { verb, group, resource, namespace, name } = attributes;
   const who = isSelfSubject(subject)
-    ? ["self", subject.sessionHandle]
+    ? ["self", subject.sessionHandle, subject.uid]
     : [subject.user, [...new Set(subject.groups)].sort(byCodeUnits)];
   return createHash("sha256")
     .update(JSON.stringify([...who, verb, group, resource, namespace, name]))
@@ -149,7 +150,7 @@ export async function accessReviewVerdict(
   options: { readonly fresh?: boolean } = {},
 ): Promise<ReviewVerdict> {
   if (options.fresh) return verdictOf(await decide(subject, attributes));
-  if (isSelfSubject(subject) && subject.sessionHandle === "") {
+  if (isSelfSubject(subject) && (subject.sessionHandle === "" || subject.uid === "")) {
     noteFailure({ kind: "failed", reason: "config" });
     return "denied";
   }

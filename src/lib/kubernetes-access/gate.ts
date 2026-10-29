@@ -80,7 +80,7 @@ async function selfReviewVerdict(
   attributes: ResourceAttributes,
 ): Promise<ReviewVerdict> {
   const { key, token } = record;
-  const verdict = await accessReviewVerdict({ sessionHandle: key.sessionHandle, token }, attributes);
+  const verdict = await accessReviewVerdict({ sessionHandle: key.sessionHandle, uid: key.uid, token }, attributes);
   if (verdict === "expired" && endOpenShiftSession(key.sessionHandle)) {
     logger.info(EXPIRED_MESSAGE, { route: "kubernetes-access" });
   }
@@ -238,7 +238,7 @@ export async function accessReviewSignInRole(
  *    outage neither locks everyone out nor makes anyone admin.
  */
 export async function selfReviewSignInRole(accessToken: string): Promise<"admin" | "user" | null> {
-  const subject = { sessionHandle: "", token: accessToken };
+  const subject = { sessionHandle: "", uid: "", token: accessToken };
   const signIn = signInAttributes();
   if (signIn === undefined) return null;
   if (signIn !== null && (await accessReviewVerdict(subject, signIn, { fresh: true })) !== "allowed") return null;

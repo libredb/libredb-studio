@@ -31,7 +31,7 @@ const ORDERS: ResourceAttributes = {
   namespace: "team-a",
   name: "orders-app",
 };
-const DEV_A = { sessionHandle: "handle-of-dev-a", token: ACCESS_TOKEN };
+const DEV_A = { sessionHandle: "handle-of-dev-a", uid: "uid-dev-a", token: ACCESS_TOKEN };
 const ORDERS_GRANT = {
   user: "dev-a",
   verb: "get",
