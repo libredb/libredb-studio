@@ -11,11 +11,17 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import golden from "../../fixtures/kubernetes-discovery-golden.json";
 import {
   CNPG_CLUSTER,
+  EDB_CLUSTER,
   KUBERNETES_CONTRACT,
   kubernetesConnectionId,
+  kubernetesIdKey,
   mapKubernetesDatabase,
 } from "@/lib/seed/kubernetes-discovery-contract";
-import type { KubernetesDiscoveredDatabase } from "@/lib/seed/kubernetes-discovery-export";
+import {
+  KUBERNETES_DISCOVERY_PROBLEMS,
+  parseKubernetesDiscoveryExport,
+  type KubernetesDiscoveredDatabase,
+} from "@/lib/seed/kubernetes-discovery-export";
 
 const PASSWORD = "not-a-real-password-orders";
 const CLUSTER_DOMAIN = "SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN";
@@ -51,19 +57,66 @@ function refusalOf(entry: KubernetesDiscoveredDatabase): string {
   return result.reason;
 }
 
+/** The connection an entry maps to, or the refusal as a thrown error. */
+function connectionOf(entry: KubernetesDiscoveredDatabase) {
+  const result = mapKubernetesDatabase(entry);
+  if (!result.ok) throw new Error(result.reason);
+  return result.connection;
+}
+
+/** The first 32 hex characters of SHA-256 over `key`, written out here rather than taken from the module. */
+function sha256Prefix(key: string): string {
+  return createHash("sha256").update(key).digest("hex").slice(0, 32);
+}
+
+/** An entry as an export would carry it once Studio's parser has read it, so fields the schema drops are dropped. */
+function parsedEntry(entry: Record<string, unknown>): KubernetesDiscoveredDatabase {
+  const at = "2026-10-29T08:00:00.000Z";
+  const parsed = parseKubernetesDiscoveryExport(
+    JSON.stringify({
+      version: 2,
+      platform: "kubernetes",
+      generatedAt: at,
+      checkedAt: at,
+      status: { ok: true },
+      namespaces: [],
+      databases: [entry],
+    }),
+  );
+  if (!parsed.ok) throw new Error(parsed.reason);
+  return parsed.value.databases[0];
+}
+
 describe("the contract table", () => {
-  it("holds CloudNativePG Clusters only in the first release", () => {
-    expect(KUBERNETES_CONTRACT).toEqual([CNPG_CLUSTER]);
-    expect(CNPG_CLUSTER).toMatchObject({
-      slug: "cnpg",
-      label: "CloudNativePG",
-      group: "postgresql.cnpg.io",
+  it("holds the CloudNativePG family's rows: CloudNativePG and EDB Postgres for Kubernetes", () => {
+    expect(KUBERNETES_CONTRACT.slice(0, 2)).toEqual([CNPG_CLUSTER, EDB_CLUSTER]);
+    const family = {
       version: "v1",
       kind: "Cluster",
       plural: "clusters",
       type: "postgres",
+      perUser: false,
+      secretType: "kubernetes.io/basic-auth",
       secretKeys: ["username", "password", "dbname", "port"],
+    };
+    expect(CNPG_CLUSTER).toMatchObject({
+      ...family,
+      slug: "cnpg",
+      label: "CloudNativePG",
+      group: "postgresql.cnpg.io",
     });
+    expect(EDB_CLUSTER).toMatchObject({
+      ...family,
+      slug: "edbpg",
+      label: "EDB Postgres for Kubernetes",
+      group: "postgresql.k8s.enterprisedb.io",
+    });
+    for (const row of [CNPG_CLUSTER, EDB_CLUSTER]) {
+      const resource = { metadata: { namespace: "a", name: "db" } };
+      expect(row.user(resource)).toBeUndefined();
+      expect(row.serviceName(resource)).toBe("db-rw");
+      expect(row.ssl(resource)).toEqual({ mode: "require" });
+    }
   });
 
   it("names the CloudNativePG credential Secret <name>-app, or the initdb Secret when one is set", () => {
@@ -77,15 +130,40 @@ describe("the contract table", () => {
 });
 
 describe("kubernetesConnectionId", () => {
-  it('is k8s-<slug>-<first 12 hex characters of sha256("<namespace>/<name>")>', () => {
-    const digest = createHash("sha256").update("ns-1/db-1").digest("hex").slice(0, 12);
-    expect(kubernetesConnectionId("cnpg", "ns-1", "db-1")).toBe(`k8s-cnpg-${digest}`);
+  it("kubernetesConnectionId is k8s-<slug>- and the first 32 hex of sha256 of the key", () => {
+    const id = kubernetesConnectionId("cnpg", "team-a/orders");
+    expect(id).toBe(`k8s-cnpg-${createHash("sha256").update("team-a/orders").digest("hex").slice(0, 32)}`);
+    expect(id).toMatch(/^k8s-cnpg-[0-9a-f]{32}$/);
+    expect(kubernetesConnectionId("pgo", "team-b/analytics/analyst")).toBe(
+      `k8s-pgo-${sha256Prefix("team-b/analytics/analyst")}`,
+    );
   });
 
-  it("differs per namespace for the same name, and fits Studio's id rule whatever the names' length", () => {
-    expect(kubernetesConnectionId("cnpg", "team-a", "db")).not.toBe(kubernetesConnectionId("cnpg", "team-b", "db"));
-    const id = kubernetesConnectionId("cnpg", "n".repeat(63), "d".repeat(253));
+  it("takes the digest from its seam, so a test can make two keys share an id", () => {
+    expect(kubernetesConnectionId("cnpg", "team-a/orders", () => "f".repeat(64))).toBe(`k8s-cnpg-${"f".repeat(32)}`);
+  });
+
+  it("kubernetesIdKey adds /<user> for a per-user row", () => {
+    expect(kubernetesIdKey("team-a", "orders")).toBe("team-a/orders");
+    expect(kubernetesIdKey("team-b", "analytics", "analyst")).toBe("team-b/analytics/analyst");
+  });
+
+  it("the longest slug's id fits the seed id rule, whatever the names' length", () => {
+    const longest = KUBERNETES_CONTRACT.map((row) => row.slug).reduce((a, b) => (b.length > a.length ? b : a));
+    const id = kubernetesConnectionId(longest, kubernetesIdKey("n".repeat(63), "d".repeat(253), "u".repeat(63)));
     expect(id).toMatch(/^[a-z0-9-]{1,64}$/);
+    expect(id).toHaveLength(4 + longest.length + 1 + 32);
+  });
+
+  it("differs per namespace, name and user", () => {
+    const ids = [
+      kubernetesConnectionId("cnpg", kubernetesIdKey("team-a", "db")),
+      kubernetesConnectionId("cnpg", kubernetesIdKey("team-b", "db")),
+      kubernetesConnectionId("cnpg", kubernetesIdKey("team-a", "db2")),
+      kubernetesConnectionId("pgo", kubernetesIdKey("team-a", "db", "u1")),
+      kubernetesConnectionId("pgo", kubernetesIdKey("team-a", "db", "u2")),
+    ];
+    expect(new Set(ids).size).toBe(ids.length);
   });
 });
 
@@ -93,8 +171,9 @@ describe("mapKubernetesDatabase", () => {
   it("maps a Cluster's <name>-app Secret: user, password, database and port from the Secret", () => {
     expect(mapKubernetesDatabase(database())).toEqual({
       ok: true,
+      key: "team-a/orders",
       connection: {
-        id: kubernetesConnectionId("cnpg", "team-a", "orders"),
+        id: `k8s-cnpg-${sha256Prefix("team-a/orders")}`,
         name: "team-a/orders (CloudNativePG)",
         type: "postgres",
         host: "orders-rw.team-a.svc.cluster.local.",
@@ -336,7 +415,10 @@ describe("mapKubernetesDatabase", () => {
     expect(long.connection.name).toBe(`…${`${namespace}/${name}`.slice(3)} (CloudNativePG)`);
     expect(long.connection.name).toHaveLength(128);
     // The group shows the namespace whole, and the id is the namespace's and the name's, whatever the name shows.
-    expect(long.connection).toMatchObject({ group: namespace, id: kubernetesConnectionId("cnpg", namespace, name) });
+    expect(long.connection).toMatchObject({
+      group: namespace,
+      id: kubernetesConnectionId("cnpg", kubernetesIdKey(namespace, name)),
+    });
 
     // The longest name whose Service name is a DNS label, 60 characters and -rw.
     const longest = named(namespace, "d".repeat(60));
@@ -365,6 +447,146 @@ describe("mapKubernetesDatabase", () => {
     );
     expect(reason).toBe("the connection is not valid: database (invalid_type)");
     expect(reason).not.toContain(PASSWORD);
+  });
+});
+
+describe("the CloudNativePG family", () => {
+  it("a CloudNativePG and an EDB cluster of one namespace and name have different ids", () => {
+    const cnpg = connectionOf(database());
+    const edb = connectionOf(database({ kind: "edbpg" }));
+    expect(cnpg.id).toBe(`k8s-cnpg-${sha256Prefix("team-a/orders")}`);
+    expect(edb.id).toBe(`k8s-edbpg-${sha256Prefix("team-a/orders")}`);
+    expect(edb.id).not.toBe(cnpg.id);
+  });
+
+  it.each(golden.cases.filter((c) => c.resource.kind === "Cluster").map((c) => [c.secretName, c] as const))(
+    "EDB maps exactly as CloudNativePG except slug, group and label: %s",
+    (_, c) => {
+      const entry = (kind: "cnpg" | "edbpg") =>
+        parsedEntry({ kind, resource: c.resource, secret: { name: c.secretName, data: c.secretData } });
+      const cnpg = mapKubernetesDatabase(entry("cnpg"));
+      const edb = mapKubernetesDatabase(entry("edbpg"));
+      if (!cnpg.ok || !edb.ok) throw new Error("a golden case was refused");
+      expect(EDB_CLUSTER.secretName(c.resource)).toBe(CNPG_CLUSTER.secretName(c.resource));
+      expect(edb.secret).toEqual(cnpg.secret);
+      expect(edb.key).toBe(cnpg.key);
+      const { id: cnpgId, name: cnpgName, ...cnpgRest } = cnpg.connection;
+      const { id: edbId, name: edbName, ...edbRest } = edb.connection;
+      expect(edbRest).toEqual(cnpgRest);
+      expect(edbId).toBe(`k8s-edbpg-${sha256Prefix(cnpg.key)}`);
+      expect(cnpgId).toBe(`k8s-cnpg-${sha256Prefix(cnpg.key)}`);
+      expect(edbName).toBe(cnpgName.replace("(CloudNativePG)", "(EDB Postgres for Kubernetes)"));
+    },
+  );
+
+  it("names EDB's own label in an ownership refusal", () => {
+    expect(refusalOf(database({ kind: "edbpg", secret: { name: "orders-app", problem: "not_owned" } }))).toBe(
+      "the credential Secret orders-app is neither owned by the Cluster nor labelled k8s.enterprisedb.io/cluster=orders, so the exporter did not export it",
+    );
+  });
+
+  it("a CloudNativePG host key of <name>-rw maps to <name>-rw.<ns>.svc.cluster.local., and an initdb Secret without host maps to the computed host", () => {
+    for (const host of ["orders-rw", "orders-rw.team-a.svc", "evil.example.com"]) {
+      const entry = parsedEntry({
+        kind: "cnpg",
+        resource: { metadata: { namespace: "team-a", name: "orders" } },
+        secret: {
+          name: "orders-app",
+          data: { username: "u", password: PASSWORD, dbname: "orders", port: "5432", host },
+        },
+      });
+      expect(connectionOf(entry).host).toBe("orders-rw.team-a.svc.cluster.local.");
+    }
+    const supplied = parsedEntry({
+      kind: "edbpg",
+      resource: {
+        metadata: { namespace: "prod", name: "billing-db" },
+        spec: { bootstrap: { initdb: { secret: { name: "billing-owner" } } } },
+      },
+      secret: { name: "billing-owner", data: { username: "u", password: PASSWORD } },
+    });
+    expect(connectionOf(supplied).host).toBe("billing-db-rw.prod.svc.cluster.local.");
+  });
+
+  it("ssl.mode is require on every Postgres row whatever the export says", () => {
+    for (const kind of ["cnpg", "edbpg"]) {
+      const entry = parsedEntry({
+        kind,
+        ssl: { mode: "disable" },
+        resource: { metadata: { namespace: "team-a", name: "orders" }, spec: { ssl: { mode: "disable" } } },
+        secret: {
+          name: "orders-app",
+          data: { username: "u", password: PASSWORD, dbname: "orders", port: "5432", sslmode: "disable" },
+        },
+      });
+      expect(connectionOf(entry).ssl).toEqual({ mode: "require" });
+    }
+  });
+
+  it("every problem code has a reason naming no value", () => {
+    const reasons = new Set<string>();
+    for (const problem of KUBERNETES_DISCOVERY_PROBLEMS) {
+      const secret =
+        problem === "unsupported_name"
+          ? { problem }
+          : { name: "orders-app", problem, ...(problem === "missing_key" ? { key: "dbname" as const } : {}) };
+      const reason = refusalOf(database({ secret } as Partial<KubernetesDiscoveredDatabase>));
+      expect(reason).not.toContain(PASSWORD);
+      expect(reason).not.toContain("not-a-real");
+      reasons.add(reason);
+    }
+    expect(reasons.size).toBe(KUBERNETES_DISCOVERY_PROBLEMS.length);
+  });
+
+  it("explains each problem the exporter records", () => {
+    const reason = (secret: Record<string, unknown>) =>
+      refusalOf(database({ secret } as Partial<KubernetesDiscoveredDatabase>));
+    expect(reason({ name: "orders-app", problem: "reserved_name" })).toBe(
+      "the credential Secret orders-app has a name reserved for an operator's key material or internal credentials, so the exporter did not request it",
+    );
+    expect(reason({ name: "orders-app", problem: "wrong_type" })).toBe(
+      "the credential Secret orders-app is not of type kubernetes.io/basic-auth, so the exporter discarded it",
+    );
+    expect(reason({ name: "orders-app", problem: "unexpected_key" })).toBe(
+      "the credential Secret orders-app holds a key outside the CloudNativePG contract, so the exporter discarded it whole",
+    );
+    expect(reason({ name: "orders-app", problem: "missing_key", key: "dbname" })).toBe(
+      "the credential Secret orders-app has no dbname",
+    );
+    expect(reason({ name: "orders-app", problem: "missing_key" })).toBe(
+      "the credential Secret orders-app has no key the contract requires",
+    );
+    expect(reason({ name: "orders-app", problem: "service_not_found" })).toBe(
+      "the Service orders-rw does not exist, so the exporter did not read the credential Secret",
+    );
+    expect(reason({ name: "orders-app", problem: "service_forbidden" })).toBe(
+      "the exporter may not get the Service orders-rw: grant its ServiceAccount get on services in team-a",
+    );
+    expect(reason({ name: "orders-app", problem: "service_external_name" })).toBe(
+      "the Service orders-rw is of type ExternalName, which can send the connection outside the namespace, so the exporter did not read the credential Secret",
+    );
+    expect(reason({ name: "orders-app", problem: "service_not_controlled" })).toBe(
+      "the Service orders-rw has no selector and is not controlled by the Cluster orders, so the exporter did not read the credential Secret",
+    );
+    expect(reason({ name: "orders-app", problem: "service_invalid_name" })).toBe(
+      "orders-rw cannot be a Service name (a DNS-1035 label of at most 63 characters), so no such Service exists",
+    );
+  });
+
+  it("keys every mapping, refused or not, by its id key", () => {
+    expect(mapKubernetesDatabase(database())).toMatchObject({ ok: true, key: "team-a/orders" });
+    expect(mapKubernetesDatabase(database({ secret: { name: "orders-app", problem: "not_found" } }))).toMatchObject({
+      ok: false,
+      key: "team-a/orders",
+    });
+    process.env[CLUSTER_DOMAIN] = "Bad";
+    expect(mapKubernetesDatabase(database())).toMatchObject({ ok: false, key: "team-a/orders" });
+  });
+
+  it("takes the id's digest from its seam", () => {
+    const result = mapKubernetesDatabase(database(), () => "0".repeat(64));
+    if (!result.ok) throw new Error(result.reason);
+    expect(result.connection.id).toBe(`k8s-cnpg-${"0".repeat(32)}`);
   });
 });
 

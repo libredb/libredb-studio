@@ -17,7 +17,7 @@
         "port": "5432",
         "host": "orders-rw"
       },
-      "connectionId": "k8s-cnpg-75c1a60b8980",
+      "connectionId": "k8s-cnpg-75c1a60b898072af828207cff435c7e5",
       "connection": {
         "name": "team-a/orders (CloudNativePG)",
         "group": "team-a",
@@ -30,7 +30,7 @@
         "ssl": { "mode": "require" }
       },
       "toURL": "https://studio.example.com",
-      "link": "https://studio.example.com/?connection=seed%3Ak8s-cnpg-75c1a60b8980"
+      "link": "https://studio.example.com/?connection=seed%3Ak8s-cnpg-75c1a60b898072af828207cff435c7e5"
     },
     {
       "resource": {
@@ -46,7 +46,7 @@
         "dbname": "app",
         "port": "5432"
       },
-      "connectionId": "k8s-cnpg-d06590026498",
+      "connectionId": "k8s-cnpg-d0659002649870172fb93e83e6bfda2d",
       "connection": {
         "name": "team-b/analytics (CloudNativePG)",
         "group": "team-b",
@@ -59,7 +59,7 @@
         "ssl": { "mode": "require" }
       },
       "toURL": "https://studio.example.com/",
-      "link": "https://studio.example.com/?connection=seed%3Ak8s-cnpg-d06590026498"
+      "link": "https://studio.example.com/?connection=seed%3Ak8s-cnpg-d0659002649870172fb93e83e6bfda2d"
     },
     {
       "resource": {
@@ -73,7 +73,7 @@
         "username": "billing_owner",
         "password": "not-a-real-password-billing"
       },
-      "connectionId": "k8s-cnpg-37c1c823437f",
+      "connectionId": "k8s-cnpg-37c1c823437fce5734f68e0b5f65b3d3",
       "connection": {
         "name": "prod/billing-db (CloudNativePG)",
         "group": "prod",
@@ -86,7 +86,7 @@
         "ssl": { "mode": "require" }
       },
       "toURL": "https://tools.example.com/studio",
-      "link": "https://tools.example.com/studio/?connection=seed%3Ak8s-cnpg-37c1c823437f"
+      "link": "https://tools.example.com/studio/?connection=seed%3Ak8s-cnpg-37c1c823437fce5734f68e0b5f65b3d3"
     }
   ]
 }

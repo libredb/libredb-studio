@@ -99,9 +99,9 @@ describe("kubernetes-discovery-loader", () => {
       write();
       const listed = await getKubernetesDiscoveredConnections(deps());
       expect(listed.map((entry) => [entry.connection.id, entry.secret])).toEqual([
-        ["k8s-cnpg-75c1a60b8980", { namespace: "team-a", name: "orders-app" }],
-        ["k8s-cnpg-d06590026498", { namespace: "team-b", name: "analytics-app" }],
-        ["k8s-cnpg-37c1c823437f", { namespace: "prod", name: "billing-owner" }],
+        ["k8s-cnpg-75c1a60b898072af828207cff435c7e5", { namespace: "team-a", name: "orders-app" }],
+        ["k8s-cnpg-d0659002649870172fb93e83e6bfda2d", { namespace: "team-b", name: "analytics-app" }],
+        ["k8s-cnpg-37c1c823437fce5734f68e0b5f65b3d3", { namespace: "prod", name: "billing-owner" }],
       ]);
       expect(listed[0].connection).toMatchObject({ roles: ["admin"], managed: true, ssl: { mode: "require" } });
       expect(await statusNow()).toEqual({
@@ -141,7 +141,7 @@ describe("kubernetes-discovery-loader", () => {
         { name: "team-a", error: null },
         { name: "team-b", error: { code: "forbidden", message: "the exporter may not list clusters" } },
       ]);
-      expect(await ids()).toEqual(["k8s-cnpg-75c1a60b8980"]);
+      expect(await ids()).toEqual(["k8s-cnpg-75c1a60b898072af828207cff435c7e5"]);
     });
 
     it("waits while the export file is missing, then hints at its placement after twice the maximum age", async () => {
@@ -245,23 +245,29 @@ describe("kubernetes-discovery-loader", () => {
     it("skips a database whose mapping fails, by <namespace>/<name> with the reason, and lists the others", async () => {
       const [orders, ...rest] = goldenDatabases();
       write({ databases: [{ ...orders, secret: { name: "orders-app", problem: "not_found" } }, ...rest] });
-      expect(await ids()).toEqual(["k8s-cnpg-d06590026498", "k8s-cnpg-37c1c823437f"]);
+      expect(await ids()).toEqual([
+        "k8s-cnpg-d0659002649870172fb93e83e6bfda2d",
+        "k8s-cnpg-37c1c823437fce5734f68e0b5f65b3d3",
+      ]);
       expect((await statusNow()).skipped).toEqual([
         { resource: "team-a/orders", reason: "the credential Secret orders-app does not exist" },
       ]);
     });
 
     it("skips a discovered id the seed file already uses", async () => {
-      taken = new Set(["k8s-cnpg-75c1a60b8980"]);
+      taken = new Set(["k8s-cnpg-75c1a60b898072af828207cff435c7e5"]);
       write();
-      expect(await ids()).toEqual(["k8s-cnpg-d06590026498", "k8s-cnpg-37c1c823437f"]);
+      expect(await ids()).toEqual([
+        "k8s-cnpg-d0659002649870172fb93e83e6bfda2d",
+        "k8s-cnpg-37c1c823437fce5734f68e0b5f65b3d3",
+      ]);
       expect((await statusNow()).skipped).toEqual([{ resource: "team-a/orders", reason: "id taken by the seed file" }]);
     });
 
     it("keeps the first of two entries for the same database and skips the second", async () => {
       const [orders] = goldenDatabases();
       write({ databases: [orders, orders] });
-      expect(await ids()).toEqual(["k8s-cnpg-75c1a60b8980"]);
+      expect(await ids()).toEqual(["k8s-cnpg-75c1a60b898072af828207cff435c7e5"]);
       expect((await statusNow()).skipped).toEqual([
         { resource: "team-a/orders", reason: "id taken by another discovered database" },
       ]);
@@ -274,7 +280,7 @@ describe("kubernetes-discovery-loader", () => {
         [
           'version: "1"',
           "connections:",
-          "  - id: k8s-cnpg-75c1a60b8980",
+          "  - id: k8s-cnpg-75c1a60b898072af828207cff435c7e5",
           "    name: File seed",
           "    type: postgres",
           "    host: db.internal",
