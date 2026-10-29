@@ -108,20 +108,20 @@ describe("a check that gets no verdict", () => {
 });
 
 describe("clusterPlatform", () => {
-  test("answers openshift or kubernetes, and keeps the verdict until reset, as a restart forgets it", async () => {
+  test("answers openshift-cluster or plain-kubernetes, and keeps the verdict until reset, as a restart forgets it", async () => {
     const url = new URL(api.url);
     api.platformAnswer = OPENSHIFT_PLATFORM;
-    expect(await clusterPlatform(url, FAKE_TOKEN, ca)).toBe("openshift");
+    expect(await clusterPlatform(url, FAKE_TOKEN, ca)).toBe("openshift-cluster");
     api.platformAnswer = { status: 404, body: "{}" };
-    expect(await clusterPlatform(url, FAKE_TOKEN, ca)).toBe("openshift");
+    expect(await clusterPlatform(url, FAKE_TOKEN, ca)).toBe("openshift-cluster");
     resetPlatformCheck();
-    expect(await clusterPlatform(url, FAKE_TOKEN, ca)).toBe("kubernetes");
+    expect(await clusterPlatform(url, FAKE_TOKEN, ca)).toBe("plain-kubernetes");
     expect(api.platformChecks).toHaveLength(2);
   });
 
   test("keeps the verdict on globalThis under its registered symbol, as separate route bundles share it", async () => {
     await clusterPlatform(new URL(api.url), FAKE_TOKEN, ca);
     const holder = globalThis as Record<symbol, unknown>;
-    expect(holder[Symbol.for("libredb-studio.kubernetes-access-platform")]).toBe("kubernetes");
+    expect(holder[Symbol.for("libredb-studio.kubernetes-access-platform")]).toBe("plain-kubernetes");
   });
 });

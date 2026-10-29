@@ -305,8 +305,8 @@ export async function requestAccessReview(
   });
   const timeoutMs = options.timeoutMs ?? REVIEW_TIMEOUT_MS;
   const platform = await clusterPlatform(url, token, ca, timeoutMs);
-  if (platform === "openshift") return failed("platform");
-  if (platform !== "kubernetes") return platform;
+  if (platform === "openshift-cluster") return failed("platform");
+  if (platform !== "plain-kubernetes") return platform;
   const answer = await serviceAccountCall({ url, method: "POST", path: REVIEW_PATH, token, ca, body, timeoutMs });
   if ("kind" in answer) return answer;
   if (answer.status < 200 || answer.status > 299) return failed("status", answer.status);

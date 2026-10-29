@@ -13,7 +13,8 @@
  */
 import { type FailedReview, serviceAccountCall } from "./review";
 
-export type PlatformVerdict = "openshift" | "kubernetes";
+/** Labels of their own, never a connection type id, so no reader takes them for an engine branch. */
+export type PlatformVerdict = "openshift-cluster" | "plain-kubernetes";
 
 const VERDICT_KEY = Symbol.for("libredb-studio.kubernetes-access-platform");
 const PLATFORM_PATH = "/apis/config.openshift.io/v1";
@@ -37,7 +38,7 @@ export async function clusterPlatform(
   if (answer.status !== 200 && answer.status !== 404) {
     return { kind: "failed", reason: "status", status: answer.status };
   }
-  const verdict: PlatformVerdict = answer.status === 200 ? "openshift" : "kubernetes";
+  const verdict: PlatformVerdict = answer.status === 200 ? "openshift-cluster" : "plain-kubernetes";
   holder[VERDICT_KEY] = verdict;
   return verdict;
 }

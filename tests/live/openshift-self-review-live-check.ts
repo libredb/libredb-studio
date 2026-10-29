@@ -258,12 +258,12 @@ const CASES: LiveCase[] = [
     },
   },
   {
-    name: "the ServiceAccount review's platform check answers openshift, and its reviews refuse with platform",
+    name: "the ServiceAccount review's platform check answers openshift-cluster, and its reviews refuse with platform",
     run: async () => {
       resetPlatformCheck();
       const serviceAccountToken = oc(["create", "token", "live-reviewer", "-n", NAMESPACE, "--duration=10m"]).trim();
       const server = new URL(process.env.OPENSHIFT_API_URL as string);
-      expectEqual(await clusterPlatform(server, serviceAccountToken, readFileSync(CA_FILE, "utf8")), "openshift");
+      expectEqual(await clusterPlatform(server, serviceAccountToken, readFileSync(CA_FILE, "utf8")), "openshift-cluster");
       // The ServiceAccount review itself, configured as OIDC mode configures it, refuses before it sends a review.
       const tokenFile = path.join(dir, "service-account-token");
       writeFileSync(tokenFile, serviceAccountToken);
