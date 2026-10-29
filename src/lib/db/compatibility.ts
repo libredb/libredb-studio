@@ -345,7 +345,9 @@ export const READ_ONLY_ENFORCED: Record<DatabaseType, boolean> = Object.freeze({
   // identification, and there is no code in the provider that can build a write (#1723 MB-S1,
   // `src/lib/db/providers/industrial/modbus/valve.ts` re-checks every outbound byte).
   modbus: true,
-  // `get-schema` answered data.
+  // Structural rather than a mode: the request builder writes four read bodies and `<close-session>`, and no
+  // function in the provider builds an `<edit-config>` or any other write
+  // (`src/lib/db/providers/network/netconf/requests.ts`).
   netconf: true,
   snmp: true,
   // Structural rather than a mode, and the structure is an absence: `encoder.ts` encodes CONNECT, SUBSCRIBE,
@@ -415,7 +417,6 @@ export const READS_FILE_ACCESS_POSTURE: Readonly<Record<DatabaseType, boolean>> 
   opcua: false,
   mtconnect: false,
   modbus: false,
-  // `tests/unit/db/reads-file-access-posture-capability.test.ts`.
   netconf: false,
   snmp: false,
   sparkplug: false,
